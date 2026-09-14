@@ -121,6 +121,11 @@ mod workload_partition;
 // `CycleArm` / `ResolveCensus` / `Registration`) — T3/T4 assemble
 // `SolveCycle` on top of it; nothing consumes the types yet.
 mod solve_cycle;
+// 5WCRWZ T6: the executor A/B probe fixtures (heavy-CL corpus loader, shared
+// solve-cycle fixture, production LPT bin packer) live test-only beside their
+// consumers; `#[cfg(test)]` so the fixtures never compile into production.
+#[cfg(test)]
+mod executor_ab_probe;
 #[cfg(test)]
 mod tests;
 

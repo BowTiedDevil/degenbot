@@ -565,10 +565,8 @@ mod tests {
     };
     use degenbot_workers::posture::{FleetPosture, PostureOwner, PosturePolicy, ThrottleSample};
 
+    use super::super::executor_ab_probe::{load_corpus_fixture, probe_ctx, prod_lpt_bins};
     use super::super::lane_walk::solve_one_path;
-    use super::super::solver_dispatch::executor_ab_probe::{
-        load_corpus_fixture, probe_ctx, prod_lpt_bins,
-    };
     use super::WorkerRole;
     use super::{validate_bin_index, FleetSolveExecutor, SOLVE_BIN_KEY_BASE};
     use crate::arb_engine::executor::{

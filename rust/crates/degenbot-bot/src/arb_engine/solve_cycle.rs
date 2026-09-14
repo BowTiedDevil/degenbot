@@ -2514,7 +2514,7 @@ mod dissolution_t5_probe {
 
     #[test]
     fn solver_dispatch_no_longer_defines_the_statics_ride_consumers_items() {
-        const RETIRED_DEFINITIONS: [&str; 12] = [
+        const RETIRED_DEFINITIONS: [&str; 15] = [
             "pub(crate) static SIM_BOOT_REFUSAL_LOGGED",
             "pub(crate) fn record_cycle_arm_telemetry(",
             "pub(crate) const RESOLVE_CHUNK",
@@ -2527,6 +2527,14 @@ mod dissolution_t5_probe {
             "pub fn install_engine_stances(",
             "pub(crate) type PathTimesHeap",
             "pub(crate) static INLINE_SIM_ENABLED",
+            // 5WCRWZ T6: the detached-merge sidecar moves to
+            // `arb_engine::detached_cycle` (which already owns the sidecar
+            // spawn story) and the executor A/B probe fixtures move to
+            // `arb_engine::executor_ab_probe` (the module their consumers
+            // exercise).
+            "pub(crate) fn detached_merge_sidecar(",
+            "pub(super) mod executor_ab_probe {",
+            "pub(in crate::arb_engine) fn prod_lpt_bins(",
         ];
         for marker in RETIRED_DEFINITIONS {
             assert!(

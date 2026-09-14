@@ -353,7 +353,7 @@ mod dispatch_binning_properties {
     //! discovery mechanism again: a future binning regression shows up here
     //! as a shrunk counterexample, not a host-only SIGABRT.
     use super::lpt_partition;
-    use crate::arb_engine::solver_dispatch::executor_ab_probe::prod_lpt_bins;
+    use crate::arb_engine::executor_ab_probe::prod_lpt_bins;
     use degenbot_solvers::mixed::ResolvedMixedPath;
     use proptest::prelude::*;
     use std::sync::Arc;

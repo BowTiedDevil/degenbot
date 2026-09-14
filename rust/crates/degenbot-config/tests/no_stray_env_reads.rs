@@ -53,6 +53,12 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             ][..],
         );
         m.insert(
+            // 5WCRWZ T6: the probe fixture loader moved out of solver_dispatch
+            // into its own test-only module (corpus path override, cfg(test)).
+            "crates/degenbot-bot/src/arb_engine/executor_ab_probe.rs",
+            &["DEGENBOT_PROBE_FIXTURE"][..],
+        );
+        m.insert(
             "crates/degenbot-bot/src/arb_engine/epoch_delta_parity.rs",
             &["DBENCH_CAPTURES"][..], // offline parity fixture dir
         );

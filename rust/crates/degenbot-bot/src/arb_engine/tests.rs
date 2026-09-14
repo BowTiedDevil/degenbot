@@ -6865,8 +6865,8 @@ mod tests {
     #[cfg(feature = "otel")]
     #[test]
     fn detached_merge_event_parents_under_the_carried_solve_span() {
+        use crate::arb_engine::detached_cycle::detached_merge_sidecar;
         use crate::arb_engine::executor::LaneOutcome;
-        use crate::arb_engine::solver_dispatch::detached_merge_sidecar;
         use crate::{arb_engine::ArbitrageEngine, otel};
         use alloy::primitives::U256;
         use degenbot_solvers::mixed::SolvePathResult;
@@ -6950,8 +6950,8 @@ mod tests {
     /// dropped Receiver then makes every later send a COUNTED loss.
     #[test]
     fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
+        use crate::arb_engine::detached_cycle::detached_merge_sidecar;
         use crate::arb_engine::executor::LaneOutcome;
-        use crate::arb_engine::solver_dispatch::detached_merge_sidecar;
 
         let owner: &'static degenbot_workers::posture::PostureOwner = std::boxed::Box::leak(
             std::boxed::Box::new(degenbot_workers::posture::PostureOwner::new(

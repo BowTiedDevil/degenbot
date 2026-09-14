@@ -525,8 +525,8 @@ mod solve_path_span_tests {
 
         let capture = Capture::default();
         let subscriber = Registry::default().with(capture.clone());
-        let items = crate::arb_engine::solver_dispatch::executor_ab_probe::load_corpus_fixture();
-        let ctx = crate::arb_engine::solver_dispatch::executor_ab_probe::probe_ctx();
+        let items = crate::arb_engine::executor_ab_probe::load_corpus_fixture();
+        let ctx = crate::arb_engine::executor_ab_probe::probe_ctx();
         let solved = items.len();
         tracing::subscriber::with_default(subscriber, || {
             for (pid, item) in items.iter().enumerate() {
@@ -584,7 +584,7 @@ mod solve_path_span_tests {
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
 
-        let ctx = crate::arb_engine::solver_dispatch::executor_ab_probe::probe_ctx();
+        let ctx = crate::arb_engine::executor_ab_probe::probe_ctx();
         let resolved = ResolvedMixedPath {
             hops: Vec::new(),
             valid: true,

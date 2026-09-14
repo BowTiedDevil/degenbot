@@ -46,6 +46,7 @@ use std::sync::Arc;
 
 use super::executor::outcome_ledger::OutcomeLedger;
 use super::executor::LaneOutcome;
+use super::ArbitrageEngine;
 
 /// Design-locked in-flight depth safety valve (~8). WFF6MM: this is NO
 /// longer a runtime cap verdict (the in-cycle degrade it gated is retired);
@@ -482,6 +483,93 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
     }
 }
 
+// ---------------------------------------------------------------------------
+// DETACHED SOLVE CYCLE (epic SRQEK5, task WV62TX)
+// ---------------------------------------------------------------------------
+// DETACH-ALWAYS (design locked 2026-09-02; WFF6MM cutover retired the
+// in-cycle arm so this is now the unconditional shape): the whole solve
+// cycle RETURNS at ENQUEUE end — every result then flows through an
+// UNBOUNDED mpsc to the merge sidecar, a plain `std::thread` (see the
+// epic DEADLOCK note: a JOINING scope (a scoped rayon install of old, or
+// against a held `parking_lot` guard; `std::thread` cannot deadlock with
+// impatient pool) would starve against the Mutex; the sidecar cannot. The Q1a stale policy
+// (apply-if-unchanged / drop-on-touched) makes the enqueue-time per-hop
+// `update_block` snapshot a complete staleness oracle: a price-neutral
+// liquidity event (V3 Mint/Burn, V4 ModifyLiquidity) advances the pool
+// clock AND re-solves the path, so any stamp mismatch at merge time means
+// the straggler's intake is stale and the result is DROPPED, never applied.
+// This gate is now the SOLE staleness guard on the solve path (the ADR-021
+// in-process solver-state tripwire retired with task 2UVG3E; only the
+// upstream RPC-disagreement check survives at the Published edge).
+
+// P37YJG: the in-flight cap constant moved with the cap consult into the
+// one detached-cycle machine — `detached_cycle::DETACHED_INFLIGHT_CAP`.
+
+// The detached-merge CARRIER is `executor::LaneOutcome` (QR3NUS 43E3H3):
+// the former single-variant enum folded into the unified
+// `LaneOutcome::Solved(SolveOutcome)` — the typed `Solved`/`Suppressed`/
+// `Failed` records both solve arms deliver (the sidecar's
+// pipe now also carries the lane witness's `Failed` panic records). The
+// exactness ledger age moved with it (`executor::outcome_ledger::LEDGER_AGE`,
+// carried unchanged).
+
+/// The detached-merge SIDECAR thread body (epic SRQEK5 WV62TX): owns the
+/// unbounded mpsc `Receiver` of the merge pipe and applies each item under
+/// the engine Mutex — Q1a stale gate + the SAME merge/emit path as the
+/// in-cycle drain (`merge_one_result`, which carries the streaming
+/// delivery emission). Spawned by `EngineStages::solve_dirty` at the FIRST
+/// detached enqueue; runs until every `Sender` drops (engine teardown),
+/// so the pipe never strands items across the engine's lifetime.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the sidecar OWNS the merge Receiver for the engine's whole lifetime (the pipe must never be dropped early or borrowed from a shared slot); owning it is the contract, not an accident"
+)]
+pub(crate) fn detached_merge_sidecar(
+    engine: &std::sync::Arc<parking_lot::Mutex<ArbitrageEngine>>,
+    merge_rx: std::sync::mpsc::Receiver<LaneOutcome>,
+    owner: Option<&degenbot_workers::posture::PostureOwner>,
+) {
+    hotpath::measure_block!("arb_solve.detached_merge", {
+        // `recv` (not `for .. in merge_rx`) keeps ownership of the
+        // Receiver so the post-panic stranded-tail drain can `try_iter`.
+        while let Ok(item) = merge_rx.recv() {
+            // AQV6EF: a panicking merge must NEVER silently kill this
+            // thread — that drops the Receiver and strands every later
+            // send with no signal. catch_unwind converts the panic into
+            // the SAME typed drain-death terminal state as a failed send
+            // (sticky cordon + counter + loud log); the process lives.
+            let merged = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                engine.lock().merge_detached_item(item);
+            }));
+            if let Err(payload) = merged {
+                let message = if let Some(text) = payload.downcast_ref::<&str>() {
+                    Some((*text).to_owned())
+                } else {
+                    payload.downcast_ref::<String>().cloned()
+                };
+                crate::arb_engine::executor::drain_death_response(
+                    &crate::arb_engine::executor::DrainFailure::MergePanic { message },
+                    owner,
+                );
+                // The drain can never recover in-process. Count every
+                // outcome still queued behind the panicked item before the
+                // Receiver drops (the unbounded-queue tail), then end the
+                // sidecar; later sends hit the dead pipe and fire the SAME
+                // typed signal through the lane hook.
+                for stranded in merge_rx.try_iter() {
+                    crate::arb_engine::executor::drain_death_response(
+                        &crate::arb_engine::executor::DrainFailure::Stranded {
+                            pid: stranded.pid(),
+                        },
+                        owner,
+                    );
+                }
+                return;
+            }
+        }
+    });
+}
+
 /// Spawn the detached merge sidecar for the parked receiver (epic SRQEK5
 /// WV62TX; P37YJG: THE ONE spawn — both former `engine_stages` sites call
 /// this). The take-once is [`DetachedCycle::take_merge_rx`], done by the
@@ -501,7 +589,7 @@ pub(crate) fn spawn_merge_sidecar(
         .name(merge_sidecar_thread_name())
         .spawn(move || {
             // AQV6EF: production uses the process posture owner (None).
-            super::solver_dispatch::detached_merge_sidecar(&engine_arc, merge_rx, None);
+            detached_merge_sidecar(&engine_arc, merge_rx, None);
         })
     {
         // LOUD abort: a stranded merge pipe would silently orphan
