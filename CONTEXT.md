@@ -1093,6 +1093,31 @@ per-arm closures).
   registration is the only `&mut` caller. See
   [ADR-045](docs/adr/ADR-045-solve-cycle-extraction.md).
 
+### Engine seam deepening — EngineStages is the one driver seam (2026-09 arch review #11, candidate 2 — decided in grilling; filed as ergo epic `5TBT7L`)
+
+- **Driver seam** — the arb engine's ONE external interface: the stage
+  surface (`EngineStages`). Both adapters — the block pump (its
+  PumpControl/StageHandlers impls) and the Python driver's pyo3 engine
+  wrapper — cross it; construction, registration, observation, solve
+  control, and the `core()` handoff all cross it. The raw
+  `ArbitrageEngine` is `pub(crate)` machinery: registry + composition
+  root holding exactly ONE inherent impl block of real composition work
+  (constructors, pool registration, phase, core handoff).
+_Avoid_: "engine facade" (a facade fronts ANOTHER still-pub surface — the
+whole point is there is no second door), the inherent-twin shape (the same
+method existing on the engine AND its machine).
+- **Engine retune** — the typed operator re-parameterization value crossing
+  the driver seam: event-buffer max age (expiry enable), the admission trio
+  (target depth / retention blocks / enable), path cap, profit thresholds,
+  force-deferred. Applied once at construction and per operator retune at
+  runtime (`EngineStages::apply_retune`); a channel install
+  (`set_result_channel`) is wiring, not a retune. The engine's twin of the
+  fleet's centralized posture feeders + wake-on-retune.
+_Avoid_: "stance" (the fleet-migration stance, ADR-042; and the KAHU5W
+per-construction construction-stance values), "posture" (the fleet's
+cordon concept), "engine config" (the degenbot-config schema value feeds
+the retune but is not it).
+
 ## The worker fleet (FF-T5 glossary - epic OFQ2UW)
 
 The fleet's execution vocabulary - one meaning per word, closed set
