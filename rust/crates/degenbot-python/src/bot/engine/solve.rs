@@ -26,7 +26,8 @@ impl PyArbitrageEngine {
         // ZE67AE: route through the PumpControl trait (the inherent
         // `EngineStages` twin was hard-cut); the trait cursor is Epoch-typed.
         use degenbot_bot::bot_core::PumpControl;
-        PumpControl::last_processed_block(self.pump.stages.as_ref()).map(|e| e.block())
+        PumpControl::last_processed_block(self.pump.stages.as_ref())
+            .map(degenbot_bot::bot_core::Epoch::block)
     }
 
     /// Set the last processed block manually after Python backfill.
