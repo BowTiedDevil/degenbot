@@ -65,7 +65,7 @@ use super::path_registry::{PathRegistration, PathRegistrationError, PathRegistry
 use super::solver_capture::{gate_capture_from_cfg, CaptureVariant, HeavyPathCapture};
 use super::solver_dispatch::{
     min_profit_floor, LaneArmPolicy, LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut,
-    SolveCycleShared, WalkSubmitCtx, INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
+    WalkSubmitCtx, INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
 };
 use super::workload_partition::{
     lpt_partition, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
@@ -84,6 +84,62 @@ use degenbot_solvers::affected_keys::AffectedKey;
 use degenbot_workers::dispatcher::SeatSurvivesPolicy;
 use degenbot_workers::lane::LaneCtx;
 use std::sync::PoisonError;
+
+/// Per-cycle shared solve context (epic BXUSGL T1): everything the
+/// per-path dispatch touches besides the resolved snapshot. Bundled once
+/// per cycle so a worker handle is static for the dedicated-executor
+/// arm; the caller retains its own Arc for the drain + tail telemetry.
+pub(crate) struct SolveCycleShared {
+    pub(crate) solve_block: u64,
+    pub(crate) epoch: u64,
+    pub(crate) gate_capture: Option<::degenbot_solvers::profit_envelope::GateCaptureCfg>,
+    pub(crate) walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
+    /// KAHU5W: the instance-scoped solver runtime stance, threaded down —
+    /// the solver crate has no process-global config anymore.
+    pub(crate) runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig,
+    pub(crate) capture: Option<std::sync::Arc<HeavyPathCapture>>,
+    pub(crate) capture_mixed: Option<std::sync::Arc<HeavyPathCapture>>,
+    pub(crate) path_times: parking_lot::Mutex<PathTimesHeap>,
+    pub(crate) gate_total: parking_lot::Mutex<::degenbot_solvers::profit_envelope::GateStats>,
+    pub(crate) solve_cpu_us: std::sync::atomic::AtomicU64,
+    pub(crate) walk_pieces_total: std::sync::atomic::AtomicU64,
+    pub(crate) walk_sims_total: std::sync::atomic::AtomicU64,
+    pub(crate) walk_word_steps_total: std::sync::atomic::AtomicU64,
+    pub(crate) walk_refine_sims_total: std::sync::atomic::AtomicU64,
+    pub(crate) walk_ternary_total: std::sync::atomic::AtomicU64,
+    pub(crate) walk_grid_total: std::sync::atomic::AtomicU64,
+    /// Engine-owned per-path measured-sims recorder (Arc-d engine field).
+    pub(crate) sims_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
+    /// Engine-owned per-path gate-us recorder (Arc-d engine field).
+    pub(crate) gate_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
+    /// Test-only deterministic per-path delay hook (epic test knob).
+    #[cfg(test)]
+    pub(crate) test_solve_delay: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
+    /// 43E3H3 red-first: test-only per-path PANIC hook — a bin body that
+    /// dies mid-walk so the breaker suite can pin the detached arm's
+    /// witness (typed Failed records) and gauge pairing through a panic.
+    #[cfg(test)]
+    pub(crate) test_solve_panic: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
+    /// SIMPIPE2 T2: the shared core (Arc-cloned from the engine at cycle
+    /// build) — the WORKER-side clamp takes the same short core read the
+    /// merge-site clamp took; no engine state is touched (MQUKB6-T3 intact:
+    /// engine-then-core ordering, short read, no guard across awaits).
+    pub(crate) core: std::sync::Arc<crate::bot_core::state_lock::StateLock<BotState>>,
+    /// Per-path pool-ref snapshot, ALIGNED TO `to_solve` ORDER (index i in
+    /// every bin mirrors `to_solve[i]`): the worker clamp's pool list, taken
+    /// under the cycle's engine Mutex (stable for the whole cycle).
+    pub(crate) pool_refs: Vec<std::sync::Arc<MixedPath>>,
+    /// The cycle's block metadata (Copy) — the inline-sim request's block env
+    /// (solve block from `solve_block`; timestamp/base-fee from here).
+    pub(crate) metadata: BlockMetadata,
+    /// SIMPIPE2 T2 worker-side clamp gate (construction-time pack).
+    pub(crate) worker_clamp: bool,
+    /// SIMPIPE2 T3: the engine's inline-sim hook snapshot. `Some` + stance ON
+    /// → the worker resolves the per-path payload right after the clamp (no
+    /// engine lock — the same off-lock seam the worker clamp opened).
+    pub(crate) inline_sim:
+        Option<std::sync::Arc<dyn crate::arb_engine::inline_sim::InlineSimulator>>,
+}
 
 /// The solve cycle's owned state (ADR-045, ergo task `ANVHXW`).
 ///

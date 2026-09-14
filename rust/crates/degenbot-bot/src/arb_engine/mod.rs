@@ -105,6 +105,10 @@ pub mod fleet_wake;
 mod seat_host;
 mod snapshot_verify;
 mod solver_dispatch;
+// 5WCRWZ T3: the per-bin lane walk's home — `solve_one_path` (the per-path
+// solve + diagnostics body the Solver seats' bins execute) lives here; the
+// walk driver and Lane* policy types are later tasks' inhabitants.
+mod lane_walk;
 // 5WCRWZ T1: heavy-path capture diagnostics, extracted from the solver_dispatch
 // grab file (import-only move; the module owns its honesty probe + test island).
 mod solver_capture;

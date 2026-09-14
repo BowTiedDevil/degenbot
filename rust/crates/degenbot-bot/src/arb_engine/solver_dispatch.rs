@@ -2,15 +2,18 @@
 
 use alloy::primitives::{I256, U256};
 use degenbot_core::diag;
-use degenbot_core::{op_error, op_info, op_warn};
+use degenbot_core::op_info;
 
 use ::degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};
 use ::degenbot_pools::v4_state::v4_simulate_swap;
 
 use super::{ArbitrageEngine, BlockMetadata, HashMap};
-// 5WCRWZ T1: the capture writer moved to `arb_engine::solver_capture`; this
-// file only names the type in `SolveCycleShared`.
-use super::solver_capture::HeavyPathCapture;
+// 5WCRWZ T3: `solve_one_path` moved to `arb_engine::lane_walk`; the cycle
+// context moved to `arb_engine::solve_cycle`; the pipelined sim scheduler
+// moved to `arb_engine::inline_sim` (`PipelinedSims`). This grab file
+// imports all three.
+use super::lane_walk::solve_one_path;
+use super::solve_cycle::SolveCycleShared;
 
 // There is deliberately NO solve-time "staleness" pre-gate here (ergo YXHHKR,
 // resolved QNFYR5). The former TQ43TU `hop_is_too_stale` gate deferred a whole
@@ -32,25 +35,23 @@ use super::solver_capture::HeavyPathCapture;
 // data plane; stale results are dropped by the Q1a merge gate, never applied.
 
 use crate::arb_engine::executor::{LaneOutcome, SolveLane, SolveOutcome};
-use crate::arb_engine::inline_sim::{PendingSim, SimPoll, SimulatedPathResult};
+use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
 use crate::bot_core::BotState;
-use ::degenbot_solvers::mixed::{
-    HopType, MixedPath, MixedPoolRef, ResolvedMixedPath, SolvePathResult,
-};
+use ::degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
 
 /// How many slowest-path entries the solve-cycle completion event names
 /// (D63GSE intra-solve visibility).
-const SLOWEST_PATHS_K: usize = 5;
+pub(crate) const SLOWEST_PATHS_K: usize = 5;
 
 /// Q3 dense one-shot alert flag — the CONSUMER side of the moved alert: the
 /// walk reports `WalkStats::max_dense_words`; this logs once per process.
-static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
+pub(crate) static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 // FF-T1 (BPHR6F): one loud line for the sticky sim-fleet boot refusal — the
 // materializer surfaces the typed Err on EVERY dispatch; the log rides a
 // once-flag so a refused boot cannot spam the per-block cadence.
-static SIM_BOOT_REFUSAL_LOGGED: std::sync::atomic::AtomicBool =
+pub(crate) static SIM_BOOT_REFUSAL_LOGGED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// THE one arm-attribution wiring site (cold-start trace): the cycle span is
@@ -248,207 +249,6 @@ type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 /// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
 pub(crate) type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<PathTimeRecord>>;
 
-/// Per-path solve + diagnostics (epic BXUSGL T1): the former `solve_fn`
-/// closure moved out verbatim so every dispatch arm (the legacy
-/// the dedicated tokio executor - dispatch a path identically. Takes the
-/// shared per-cycle context by reference; workers touch NO engine state
-/// and NO core.lock (engine-then-core lock ordering preserved unchanged),
-/// and the passed span is re-entered per item exactly as the `par_iter`
-/// closure did (MQUKB6-T0: worker threads have no ambient context). Each
-/// item also emits a `degenbot.arb.path` DEBUG child span parented under
-/// that re-entered cycle span (MQUKB6-T2: per-path latency as attributes).
-#[expect(clippy::too_many_lines)] // the moved solve + diagnostics pipeline is one narrative
-pub(crate) fn solve_one_path(
-    ctx: &SolveCycleShared,
-    solve_span: &tracing::Span,
-    pid: u64,
-    resolved: &ResolvedMixedPath,
-) -> Option<(u64, SolvePathResult)> {
-    // Test-only deterministic slowen hook (the streaming-merge test).
-    #[cfg(test)]
-    if let Some(delay) = ctx.test_solve_delay.as_ref() {
-        delay(pid);
-    }
-    // 43E3H3 red-first: test-only panic hook — deliberately kill this
-    // path's solve mid-walk (catch_unwind on the seat/lane decides the
-    // disposition; the breaker suite pins that disposition).
-    #[cfg(test)]
-    if let Some(panic_pid) = ctx.test_solve_panic.as_ref() {
-        panic_pid(pid);
-    }
-    // Worker-local view of the cycle gate deps (BXUSGL T1): the Arc-d
-    // memo + owned capture cfg land in the shared ctx per cycle; the
-    // prefix cache is generationed by the block epoch - same semantics
-    // as the old single borrowed GateDeps shared by the scope workers.
-    let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps {
-        epoch: ctx.epoch,
-        prefix_cache: true,
-        capture: ctx.gate_capture.as_ref(),
-        walk_memo: Some(&*ctx.walk_memo),
-        runtime: ctx.runtime,
-    };
-    let _solve_ctx = solve_span.enter();
-    // MQUKB6-T2: per-path child span. Created BEFORE the walk (the exported
-    // duration is the real solve wall) and recorded after; the walk counters
-    // ride span ATTRIBUTES on this `degenbot.arb.path` node instead of
-    // events on the cycle span, making per-path latency a Jaeger query
-    // rather than a log grep. DEBUG level is the volume guard: production
-    // INFO runs keep one node per CYCLE (a 200-path solve must not fan out
-    // 200 Jaeger nodes by default); `RUST_LOG=degenbot::solver=debug` opts
-    // into per-path nodes.
-    let path_span = tracing::debug_span!(
-        target: "degenbot::solver",
-        "degenbot.arb.path",
-        path.id = pid,
-        path.us = tracing::field::Empty,
-        path.sims = tracing::field::Empty,
-        path.pieces = tracing::field::Empty,
-        gate.us = tracing::field::Empty,
-        path.profit = tracing::field::Empty,
-    );
-    let _path_ctx = path_span.enter();
-    ::degenbot_solvers::profit_envelope::reset_gate_stats();
-    let t0 = std::time::Instant::now();
-    let outcome = ::degenbot_solvers::mixed::solve_path_with_min_profit(
-        resolved,
-        min_profit_floor(),
-        &gate_deps,
-    );
-    let micros = t0.elapsed().as_micros();
-    ctx.solve_cpu_us.fetch_add(
-        u64::try_from(micros).unwrap_or(u64::MAX),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
-    let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
-    if let Some(p) = crate::instruments::pipeline() {
-        #[expect(clippy::cast_precision_loss)]
-        {
-            p.observe_per_path_solve_duration(micros as f64 / 1e6);
-            p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
-        }
-    }
-    ctx.gate_total.lock().merge(&gs);
-    // Walk telemetry OUT the return path (SU7MAE T2): the
-    // outcome carries this path's counters — no TLS
-    // read-back. The Q3 dense one-shot alert is the
-    // CONSUMER's decision.
-    let outcome_stats = &outcome.stats;
-    if outcome_stats.max_dense_words >= ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD
-        && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
-        op_warn!(
-            domain = solver,
-            max_dense_words = outcome_stats.max_dense_words,
-            threshold = ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD,
-            "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
-        );
-    }
-    let ws = *outcome_stats;
-    let (pieces, sims, word_steps, refine_sims, ternary_sims, grid_sims) = (
-        ws.pieces,
-        ws.sims,
-        ws.word_steps,
-        ws.refine_sims,
-        ws.ternary_sims,
-        ws.grid_sims,
-    );
-    // Record this block's measured walk sims for the next
-    // block's LPT cost (loop-12 KUKHMX).
-    ctx.sims_recorder
-        .lock()
-        .insert(pid, u64::try_from(sims).unwrap_or(0));
-    // Loop-18: record measured gate time for the LPT cost too
-    // (gate-heavy paths carry sims≈0 and were bin-packed cheap).
-    ctx.gate_recorder.lock().insert(pid, gate_us);
-    let (gate_derive_us, gate_compose_us, gate_search_us) = (
-        u64::try_from(gs.derive_ns / 1_000).unwrap_or(u64::MAX),
-        u64::try_from(gs.compose_ns / 1_000).unwrap_or(u64::MAX),
-        u64::try_from(gs.search_ns / 1_000).unwrap_or(u64::MAX),
-    );
-    ctx.walk_ternary_total.fetch_add(
-        u64::try_from(ternary_sims).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_grid_total.fetch_add(
-        u64::try_from(grid_sims).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_pieces_total.fetch_add(
-        u64::try_from(pieces).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_sims_total.fetch_add(
-        u64::try_from(sims).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_word_steps_total.fetch_add(
-        u64::try_from(word_steps).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_refine_sims_total.fetch_add(
-        u64::try_from(refine_sims).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    // MQUKB6-T2: seal the per-path span - walk counters become attributes
-    // on the `degenbot.arb.path` node (guard drops at fn end, so the
-    // recorded values are inside the exported duration).
-    path_span.record("path.us", u64::try_from(micros).unwrap_or(u64::MAX));
-    path_span.record("path.sims", u64::try_from(sims).unwrap_or(u64::MAX));
-    path_span.record("path.pieces", u64::try_from(pieces).unwrap_or(u64::MAX));
-    path_span.record("gate.us", gate_us);
-    if let Some(r) = outcome.result.as_ref() {
-        path_span.record("path.profit", tracing::field::display(r.profit));
-    }
-    let mut heap = ctx.path_times.lock();
-    {
-        let worst = heap.peek().map_or(
-            u128::MAX,
-            |std::cmp::Reverse((w, _, _, _, _, _, _, _, _, _))| *w,
-        );
-        if heap.len() < SLOWEST_PATHS_K || micros > worst {
-            heap.push(std::cmp::Reverse((
-                micros,
-                u64::try_from(pieces).unwrap_or(0),
-                u64::try_from(sims).unwrap_or(0),
-                u64::try_from(word_steps).unwrap_or(0),
-                u64::try_from(refine_sims).unwrap_or(0),
-                gate_us,
-                gate_derive_us,
-                gate_compose_us,
-                gate_search_us,
-                pid,
-            )));
-            if heap.len() > SLOWEST_PATHS_K {
-                heap.pop();
-            }
-        }
-    }
-    if let Some(cap) = ctx.capture.as_ref() {
-        cap.maybe_capture(
-            pid,
-            ctx.solve_block,
-            u64::try_from(micros).unwrap_or(u64::MAX),
-            u64::try_from(sims).unwrap_or(0),
-            u64::try_from(pieces).unwrap_or(0),
-            outcome.result.as_ref(),
-            resolved,
-        );
-    }
-    if let Some(cap) = ctx.capture_mixed.as_ref() {
-        cap.maybe_capture(
-            pid,
-            ctx.solve_block,
-            u64::try_from(micros).unwrap_or(u64::MAX),
-            u64::try_from(sims).unwrap_or(0),
-            u64::try_from(pieces).unwrap_or(0),
-            outcome.result.as_ref(),
-            resolved,
-        );
-    }
-    outcome.result.map(|r| (pid, r))
-}
-
 /// `DEGENBOT_SOLVE_INLINE_SIM` (SIMPIPE2 T2 → T4, task PIRX3W / AK7VJB):
 /// relocate the CL-hop clamp from the engine-Mutex merge site INTO the
 /// per-path solve worker, so the worker can simulate on the clamp-committed
@@ -562,166 +362,6 @@ fn inline_sim_payload(
     Some(payload)
 }
 
-/// One scheduled sim: pid + the receipt the worker polls/joins.
-#[derive(Default)]
-struct PipelinedSims {
-    pending: Vec<(u64, PendingSim)>,
-}
-
-impl PipelinedSims {
-    fn schedule_one(
-        &mut self,
-        ctx: &SolveCycleShared,
-        idx: usize,
-        pid: u64,
-        result: &SolvePathResult,
-        parent_span: &tracing::Span,
-    ) -> bool {
-        // No hook / clamp stance off: no sim can ever land, so the caller
-        // must flush the item immediately (payload None) — otherwise the
-        // held item would wait on a receipt that never exists.
-        if !ctx.worker_clamp || idx >= ctx.pool_refs.len() {
-            return false;
-        }
-        let Some(sim) = ctx.inline_sim.as_ref() else {
-            return false;
-        };
-        // 7LV6VN T1b: EXPLICIT parent at creation (TLS re-entry alone forked
-        // orphan roots on worker threads). The span is created and entered
-        // ON THE DRIVER THREAD (std thread context = no inherited span),
-        // mirroring the legacy `inline_sim_payload` worker span byte for
-        // byte so Jaeger nesting and the verdict records are unchanged:
-        // the span stays open until the sim completes instead of closing
-        // when the bin's synchronous call returns.
-        let request = crate::arb_engine::inline_sim::InlineSimRequest {
-            path_id: pid,
-            hops: std::clone::Clone::clone(&ctx.pool_refs[idx].pools),
-            optimal_input: result.optimal_input,
-            consumed_inputs: std::clone::Clone::clone(&result.consumed_inputs),
-            hop_outputs: std::clone::Clone::clone(&result.hop_outputs),
-            state_nonces: std::clone::Clone::clone(&result.state_nonces),
-            sim_block: ctx.solve_block,
-            block_timestamp: ctx.metadata.timestamp,
-            parent_base_fee: ctx.metadata.base_fee_per_gas.unwrap_or(0),
-            parent_gas_used: ctx.metadata.gas_used,
-            parent_gas_limit: ctx.metadata.gas_limit,
-        };
-        let sim = std::sync::Arc::clone(sim);
-        let parent = parent_span.clone();
-        let expected_profit = result.profit;
-        // Two-runtime pacing (7LV6VN T5): the slot is acquired INSIDE the
-        // driver thread, so a saturated sim pipeline parks queued sims at
-        // zero CPU cost instead of stalling the bins mid-walk (T5 window:
-        // schedule-time blocking starved the walks). Concurrent EXECUTING
-        // sims stay bounded by the budget-derived cap - the explicit
-        // The sim EXECUTION body is stance-invariant: one span
-        // (`degenbot.bundle.simulate`, explicitly parented under the
-        // caller's span — 7LV6VN T1b), one `simulate_path` call, the
-        // SIMSPANDUP verdict records, and the receipt send. The arms differ
-        // ONLY in the machinery that runs it.
-        let (tx, rx) = std::sync::mpsc::channel();
-        let run_sim_body = move || {
-            let span = tracing::info_span!(
-                target: "degenbot::solver",
-                parent: parent,
-                "degenbot.bundle.simulate",
-                sim.path = "worker_inline",
-                path_id = request.path_id,
-                sim_block = request.sim_block,
-                simulate.verdict = tracing::field::Empty,
-                simulate.expected_profit = tracing::field::Empty,
-                // SIMSPANDUP: declared so the seam-reused span keeps the
-                // ADR-040 error classification on the inline arm too.
-                simulate.error_reason = tracing::field::Empty,
-            );
-            let _enter = span.enter();
-            let payload = sim.simulate_path(request);
-            // SIMSPANDUP: as in the sync arm - the seam's SimSpanVerdict
-            // Drop stamps the failure verdict (`not_profitable`/`error` +
-            // error_reason) before the payload returns; not clobbering it
-            // keeps the richer classification. A `None` payload = hook
-            // miss (no sim ran), so honestly no verdict stamp at all.
-            if payload.as_ref().is_some_and(|p| p.failure.is_none()) {
-                span.record("simulate.verdict", "profitable");
-            }
-            span.record(
-                "simulate.expected_profit",
-                tracing::field::display(expected_profit),
-            );
-            let _ = tx.send(payload);
-        };
-        // ADR-042 F4 (LW-T9, sole posture): the fleet is the sole executor
-        // of inline sims — the request rides a pooled SimDriver unit
-        // (dispatch lane 2: queued sims drain before new Solver intake;
-        // cordon floors the sim intake and never cancels in-flight sims).
-        // The seat pool is the budget's sim slot cap — the fleet-side bound
-        // that replaced the SimSlots semaphore. Receipts ride the SAME
-        // per-request channel, so the poll/join contract is untouched.
-        // ADR-042 F4 (LW-T9): submit through the pooled-executor seam — arb_engine
-        // hosts TWO executor traits since LNQDOA: Executor (solve, bin-indexed)
-        // and FleetIntake (pooled sim/intake, fire-and-dispatch). Pooled SimDriver
-        // unit, lane-2 dispatch precedence; receipts stay on the caller's
-        // per-request channel (unchanged contract).
-        // FF-T1 (BPHR6F): a refused fleet boot surfaces the TYPED, sticky
-        // BootError here — never a process abort, and never a submit into a
-        // pipe that will not be drained. The walker's existing “no sim can
-        // ever land” arm (the same one a missing hook/clamp takes above)
-        // flushes the item immediately with a None payload: the outcome
-        // ledger counts it, the caller never parks. The refusal logs ONCE
-        // per process — every later dispatch re-derives the same sticky Err
-        // from the materializer without spamming the per-block cadence.
-        match crate::arb_engine::executor::global_sim_executor() {
-            Ok(intake) => intake.spawn(Box::new(run_sim_body)),
-            Err(err) => {
-                if !SIM_BOOT_REFUSAL_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    op_error!(domain = solver, error = %err,
-                        "sim dispatch skipped — the fleet boot was refused (typed, FF-T1); the item flushes un-simulated (None payload)"
-                    );
-                }
-                return false;
-            }
-        }
-        self.pending.push((pid, PendingSim::new(rx)));
-        true
-    }
-
-    /// Non-blocking sweep: hand back every sim that finished while the bin
-    /// kept walking. Each pid surfaces exactly once.
-    fn drain_ready(
-        &mut self,
-    ) -> Vec<(
-        u64,
-        Option<crate::arb_engine::inline_sim::SimulatedPathResult>,
-    )> {
-        let mut ready = Vec::new();
-        let mut still = Vec::with_capacity(self.pending.len());
-        for (pid, ps) in self.pending.drain(..) {
-            match ps.try_result() {
-                SimPoll::Ready(payload) => ready.push((pid, payload.map(|b| *b))),
-                SimPoll::InFlight => still.push((pid, ps)),
-            }
-        }
-        self.pending = still;
-        ready
-    }
-
-    /// Bin-tail join: block for every outstanding sim. Order preserved.
-    fn join_all(
-        self,
-    ) -> impl Iterator<
-        Item = (
-            u64,
-            Option<crate::arb_engine::inline_sim::SimulatedPathResult>,
-        ),
-    > {
-        self.pending.into_iter().map(|(pid, p)| (pid, p.result()))
-    }
-
-    fn is_empty(&self) -> bool {
-        self.pending.is_empty()
-    }
-}
-
 /// Stamp the sim payload onto the held Solved outcome and submit it —
 /// ONE flush shape for BOTH solve arms (7LV6VN T5 carry; unified by
 /// QR3NUS 43E3H3). The arms differ only in the `submit` closure:
@@ -753,62 +393,6 @@ fn flush_solved_item(
     if let Some(outcome) = outcome {
         submit(outcome);
     }
-}
-
-/// Per-cycle shared solve context (epic BXUSGL T1): everything the
-/// per-path dispatch touches besides the resolved snapshot. Bundled once
-/// per cycle so a worker handle is static for the dedicated-executor
-/// arm; the caller retains its own Arc for the drain + tail telemetry.
-pub(crate) struct SolveCycleShared {
-    pub(crate) solve_block: u64,
-    pub(crate) epoch: u64,
-    pub(crate) gate_capture: Option<::degenbot_solvers::profit_envelope::GateCaptureCfg>,
-    pub(crate) walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
-    /// KAHU5W: the instance-scoped solver runtime stance, threaded down —
-    /// the solver crate has no process-global config anymore.
-    pub(crate) runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig,
-    pub(crate) capture: Option<std::sync::Arc<HeavyPathCapture>>,
-    pub(crate) capture_mixed: Option<std::sync::Arc<HeavyPathCapture>>,
-    pub(crate) path_times: parking_lot::Mutex<PathTimesHeap>,
-    pub(crate) gate_total: parking_lot::Mutex<::degenbot_solvers::profit_envelope::GateStats>,
-    pub(crate) solve_cpu_us: std::sync::atomic::AtomicU64,
-    pub(crate) walk_pieces_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_sims_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_word_steps_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_refine_sims_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_ternary_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_grid_total: std::sync::atomic::AtomicU64,
-    /// Engine-owned per-path measured-sims recorder (Arc-d engine field).
-    pub(crate) sims_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
-    /// Engine-owned per-path gate-us recorder (Arc-d engine field).
-    pub(crate) gate_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
-    /// Test-only deterministic per-path delay hook (epic test knob).
-    #[cfg(test)]
-    pub(crate) test_solve_delay: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
-    /// 43E3H3 red-first: test-only per-path PANIC hook — a bin body that
-    /// dies mid-walk so the breaker suite can pin the detached arm's
-    /// witness (typed Failed records) and gauge pairing through a panic.
-    #[cfg(test)]
-    pub(crate) test_solve_panic: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
-    /// SIMPIPE2 T2: the shared core (Arc-cloned from the engine at cycle
-    /// build) — the WORKER-side clamp takes the same short core read the
-    /// merge-site clamp took; no engine state is touched (MQUKB6-T3 intact:
-    /// engine-then-core ordering, short read, no guard across awaits).
-    pub(crate) core: std::sync::Arc<crate::bot_core::state_lock::StateLock<BotState>>,
-    /// Per-path pool-ref snapshot, ALIGNED TO `to_solve` ORDER (index i in
-    /// every bin mirrors `to_solve[i]`): the worker clamp's pool list, taken
-    /// under the cycle's engine Mutex (stable for the whole cycle).
-    pub(crate) pool_refs: Vec<std::sync::Arc<MixedPath>>,
-    /// The cycle's block metadata (Copy) — the inline-sim request's block env
-    /// (solve block from `solve_block`; timestamp/base-fee from here).
-    pub(crate) metadata: BlockMetadata,
-    /// SIMPIPE2 T2 worker-side clamp gate (construction-time pack).
-    pub(crate) worker_clamp: bool,
-    /// SIMPIPE2 T3: the engine's inline-sim hook snapshot. `Some` + stance ON
-    /// → the worker resolves the per-path payload right after the clamp (no
-    /// engine lock — the same off-lock seam the worker clamp opened).
-    pub(crate) inline_sim:
-        Option<std::sync::Arc<dyn crate::arb_engine::inline_sim::InlineSimulator>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1591,10 +1175,8 @@ impl Default for ArbitrageEngine {
 mod profit_clamp_recompute_tests {
     #![expect(clippy::expect_used)] // tests assert recompute invariants
     use super::clamp_result_in_worker;
-    use super::{
-        ArbitrageEngine, BlockMetadata, HashMap, PathTimesHeap, SolveCycleShared, SolvePathResult,
-        U256,
-    };
+    use super::{ArbitrageEngine, BlockMetadata, HashMap, PathTimesHeap, SolvePathResult, U256};
+    use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::bot_core::{TickInfo, V4PoolKey};
     use degenbot_solvers::mixed::MixedPath;
     use std::sync::Arc;
@@ -2328,7 +1910,8 @@ pub(super) mod executor_ab_probe {
     use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles};
     use serde_json::Value;
 
-    use super::{BotState, PathTimesHeap, SolveCycleShared};
+    use super::{BotState, PathTimesHeap};
+    use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
     use hashbrown::HashMap;
 
@@ -2501,11 +2084,13 @@ mod fleet_sim_stance_tests {
     use std::sync::Arc;
 
     use super::executor_ab_probe::load_corpus_fixture;
-    use super::{PathTimesHeap, PipelinedSims, SolveCycleShared};
+    use super::PathTimesHeap;
+    use crate::arb_engine::inline_sim::PipelinedSims;
     use crate::arb_engine::inline_sim::{
         AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
         InlineSwapFamily, SimulatedPathResult,
     };
+    use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::arb_engine::BlockMetadata;
 
     // ---- deterministic sim stub ------------------------------------------------
