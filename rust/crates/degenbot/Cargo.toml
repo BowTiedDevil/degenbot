@@ -57,6 +57,15 @@ degenbot-uniswap.workspace = true
 # standalone Rust consumer.
 degenbot-workers.workspace = true
 
+[features]
+# OTel observability passthrough (Gap G6 / ergo ZOBXVC): forward
+# `degenbot-bot/otel` so a `cargo add degenbot, features = ["otel"]`
+# consumer reaches `degenbot::bot::{otel, metrics, instruments}`. Those
+# modules are `#[cfg(feature = "otel")]` in degenbot-bot, so without this
+# passthrough they are unreachable through the umbrella — the gap that left
+# the pure-Rust settlement-bot example with no telemetry at all.
+otel = ["degenbot-bot/otel"]
+
 [dev-dependencies]
 async-trait = "0.1"
 alloy = { version = "^2.4", features = ["full"] }

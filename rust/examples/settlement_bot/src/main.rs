@@ -66,6 +66,7 @@ mod run_loop;
 mod session_watch;
 mod sim_submit;
 mod submission;
+mod telemetry;
 
 use crate::discovery::{build_graph, DiscoveryParams, NATIVE_CURRENCY};
 use crate::pipeline::{run_offline, RegistrationPipeline};
@@ -558,6 +559,15 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = parse_cli(&args)?;
 
+    // ── Telemetry boot prelude (Gap G6, ergo ZOBXVC) ──
+    // The Python driver boots its subscriber / OTLP / metrics stack at `_ffi`
+    // import; the standalone parity twin boots the same stack here, before any
+    // driver diagnostic. Telemetry failure degrades loudly but never aborts the
+    // boot (logging stays up, telemetry is optional — `telemetry` module docs).
+    // The binding's `Drop` flushes + shuts the OTel provider and stops the
+    // scrape server on every exit path (ADR-043 section 6).
+    let _telemetry_boot = telemetry::init();
+
     // The Python example reads `examples/mainnet.env` from the repo root;
     // CARGO_MANIFEST_DIR is rust/examples/settlement_bot, so ../../../mainnet.env
     // is that same file.
@@ -582,6 +592,7 @@ fn run() -> Result<(), String> {
         cfg.node_http,
         cfg.node_ws,
     );
+    degenbot::op_info!(domain = pump, dry_run = cfg.dry_run, "driver config ready");
     println!(
         "[config] executor={} owner={} inject_code={} injected={} executor_runtime={:?}",
         cfg.executor_address,
@@ -637,6 +648,7 @@ fn run() -> Result<(), String> {
         db_path.display(),
         seed_block
     );
+    degenbot::op_info!(domain = state, seed_block = ?seed_block, "boot: snapshot loaded");
 
     // ── Candidate-pool discovery (ledger row 11): the read-only enumeration
     // `build_paths.py` performs over its SQLAlchemy ORM, now reachable through
@@ -660,6 +672,12 @@ fn run() -> Result<(), String> {
     println!(
         "[boot] discovery enumerated {} candidate pools (chain {discovery_chain}, read-only, held-tx)",
         discovered.len()
+    );
+    degenbot::op_info!(
+        domain = path,
+        candidates = discovered.len(),
+        chain_id = discovery_chain,
+        "boot: discovery enumerated"
     );
 
     // ── G3 pipeline (ledger rows 9 + 12 + 13, ergo XFEJUG) ──
@@ -687,6 +705,12 @@ fn run() -> Result<(), String> {
         built.candidate_tokens.len(),
         requested_kinds.len(),
         requested_kinds
+    );
+    degenbot::op_info!(
+        domain = path,
+        nodes = built.nodes.len(),
+        candidate_tokens = built.candidate_tokens.len(),
+        "boot: candidate graph built"
     );
 
     // 3. Start/end tokens (WETH + V4 native currency), resolved from the
@@ -755,6 +779,12 @@ fn run() -> Result<(), String> {
         report.dup_count,
         report.capped,
         batch_size,
+    );
+    degenbot::op_info!(
+        domain = solver,
+        candidates = report.candidates,
+        path_count = report.path_count,
+        "g3: offline-dry pipeline complete"
     );
     if !report.skip_reasons.is_empty() {
         let breakdown: Vec<String> = report
@@ -837,6 +867,7 @@ fn run() -> Result<(), String> {
     let max_paths = progress::parse_max_paths(std::env::var("DEGENBOT_MAX_PATHS").ok().as_deref())?;
     driver.set_path_cap(max_paths);
     println!("[registration] path cap = {max_paths:?} (DEGENBOT_MAX_PATHS)");
+    degenbot::op_info!(domain = path, path_cap = ?max_paths, "registration: path cap bound");
     // Attach the result consumer BEFORE resume — the BotRunner ordering
     // invariant (`BotRunner.run`: create the consumer, THEN resume). The
     // receiver is handed to the G4 consumer task (row 7 + row 16).
@@ -955,6 +986,14 @@ fn run() -> Result<(), String> {
             live_report.dup_count,
             live_report.capped,
         );
+        degenbot::op_info!(
+            domain = path,
+            path_count = live_report.path_count,
+            skips = live_report.skip_count,
+            engine_rejects = live_report.engine_reject_count,
+            register_fails = live_report.register_fail_count,
+            "g3: live registration arm complete"
+        );
 
         // ── RSP-10 run-until-shutdown phase (ergo SGCAJ5) ──
         // Registration is done; mirror `BotRunner.run`'s main loop and hold
@@ -985,10 +1024,18 @@ fn run() -> Result<(), String> {
                     "[session] heartbeat ticks={} blocks_seen={} current_block={}",
                     hb.ticks, hb.blocks_seen, hb.current_block
                 );
+                degenbot::op_info!(
+                    domain = pump,
+                    ticks = hb.ticks,
+                    blocks_seen = hb.blocks_seen,
+                    current_block = hb.current_block,
+                    "session heartbeat"
+                );
             },
         )
         .await;
         println!("[session] run loop ended: {run_end:?} (max_secs={max_secs:?})");
+        degenbot::op_info!(domain = pump, end = ?run_end, "session run loop ended");
         Ok::<_, String>((
             watch_task,
             (w, phase_after_start, phase_after_resume),
@@ -1049,9 +1096,23 @@ fn run() -> Result<(), String> {
         consumer_report.end,
         consumer_clock.current_block,
     );
+    degenbot::op_info!(
+        domain = pump,
+        batches = consumer_report.batches,
+        end_of_stream = consumer_report.end_of_stream,
+        current_block = consumer_clock.current_block,
+        "result consumer report"
+    );
     println!(
         "[engine] EngineDriver handshake OK: W={w} phase_after_start={phase_after_start:?} \
          phase_after_resume={phase_after_resume:?}"
+    );
+    degenbot::op_info!(
+        domain = pump,
+        w,
+        phase_after_start = ?phase_after_start,
+        phase_after_resume = ?phase_after_resume,
+        "engine handshake complete"
     );
     Ok(())
 }

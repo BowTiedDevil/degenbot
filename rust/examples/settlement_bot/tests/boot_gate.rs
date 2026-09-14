@@ -247,6 +247,10 @@ fn run_binary(discovery_chain_id: Option<&str>) -> String {
     command.env("DEGENBOT_FIXTURE_DB", db_path());
     command.env("DEGENBOT_RPC_HTTP_CHAINID_1", "http://127.0.0.1:1");
     command.env("DEGENBOT_RPC_WS_CHAINID_1", "ws://127.0.0.1:1");
+    // Hermetic telemetry (Gap G6 / ergo ZOBXVC): the example now boots the
+    // Prometheus scrape endpoint, so bind an ephemeral port per test binary
+    // instead of racing the default 127.0.0.1:9464 across parallel tests.
+    command.env("DEGENBOT_METRICS_ADDR", "127.0.0.1:0");
     if let Some(chain_id) = discovery_chain_id {
         command.env("DEGENBOT_DISCOVERY_CHAIN_ID", chain_id);
     }

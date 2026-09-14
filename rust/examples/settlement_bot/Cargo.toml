@@ -16,7 +16,7 @@ workspace = true
 # config.toml cascade layers [rpc]/[ws]/[database]). If a core capability is
 # needed, it must become reachable through `degenbot` — the compile error IS
 # the gap-discovery mechanism (see the parity ledger).
-degenbot = { path = "../../crates/degenbot" }
+degenbot = { path = "../../crates/degenbot", features = ["otel"] }
 # `alloy` is required for the U256/Address/Bytes value types the public
 # `degenbot::arbitrage` fee seam and `degenbot::submission` seams name in
 # their signatures (a `cargo add degenbot` consumer naming those seams needs
@@ -34,6 +34,15 @@ serde_json = "^1"
 # already depends on tokio; this is the pure-Rust consumer owning its own
 # task/claim primitives — NOT a core capability lifted into the example.
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync", "net", "signal"] }
+# Telemetry boot wiring (Gap G6 / ergo ZOBXVC). The driver composes its
+# console subscriber + optional OTel layer from the core `degenbot::bot::otel`
+# / `degenbot::bot::metrics` surfaces, exactly as `degenbot-python` composes
+# its own registry. `tracing` is required because the `op_info!`/`op_warn!`
+# facade macros expand to `::tracing::...` at the call site;
+# `tracing-subscriber` is the console sink. Version-locked to the same line
+# the core optional deps pin.
+tracing = "^0.1"
+tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
 
 [dev-dependencies]
 # start_paused + tokio::time::advance give the session-watch tests a
