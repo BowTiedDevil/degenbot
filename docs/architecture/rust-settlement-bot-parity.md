@@ -71,8 +71,76 @@ Status vocabulary for the ledger:
 - **G3 — discovery batching + registration pipeline** (ergo **XFEJUG**, rows 9, 12, 13 + claim TOCTOU): **CLOSED (driver-side, offline)**. `rust/examples/settlement_bot/src/` ships `discovery.rs` (graph build from the G2 discovery rows on the held-tx snapshot + batched lazy `OwnedPathFinder`), `policy.rs` (allowlist/hop-bounds/duplicate/permutation), `ledger.rs` (the four memos + typed build-refusal classification), `claims.rs` (tokio at-most-once verify claims), `retry.rs` (bounded RPC-only retry/backoff), `pipeline.rs` (the `_registration_unit` prep stages + offline-dry run + the claim/retry verification helper), and `live.rs` (the per-candidate `build_v2/v3/v4` → `BotState` registration → claim/retry verify lifecycle → `register_and_solve_path` arm, gated on `SMOKE_RPC_URL`), with 27 offline unit tests. The live arm is exercised only against a live node.
 - **G4 — consume/dispatch/submission** (ergo **L4E7RI**, rows 15–18): **CLOSED (driver-side, offline)**. `rust/examples/settlement_bot/src/` ships `consume.rs` (per-block ordered result-batch consumption + `BlockClock` + single end-of-stream on driver stop), `dispatch.rs` (typed `DispatchDecision` planning + `priority_fee`/`next_base_fee` wrappers + the `classify_revert`/`FailureKind` taxonomy), `sim_submit.rs` (bounded `Semaphore` fan-out + single ordered FIFO submitter + fail-loud), and `submission.rs` (the dry-run-safe `SubmissionSeam` over `dispatch_and_submit` + the config-window `monitor_with_config` nonce-expiry accounting), with 22 offline unit tests. All RPC-bound arms compile but are only exercised against a live node; the two new reach claims (row 17 `eth_feeHistory`, row 18 `TxSigner`) are compile-verified through the umbrella and none required a new G-row. The example now depends on `alloy` directly for the `U256`/`Address`/`Bytes` value types those public seams name (recorded as a nuance, not a gap: the umbrella exposes the functions but not the primitive aliases).
 - **G5 — session watch + operator channel + reconnect** (ergo **KPLWUM**, rows 19–20): **CLOSED (driver-side, offline)**. `session_watch.rs` ships the typed end-state verdict set + the heartbeat/stall watchdog wired over the live `EngineDriver` result-consumption loop, with the same-batch ranking and the observer-only cancellation discipline; `operator_channel.rs` ships the `--operator-socket` JSON-lines channel (the four ops, Python byte-compatible response shapes, unknown-op/error framing, graceful `close()`, plus the `--operator-inert` RPC-free serve mode the integration check drives). Fleet posture is reachable standalone through `degenbot::workers::posture::{process, PosturePolicyPatch}` (row 20 is DRIVER-POLICY, not a new G-row). The WS reconnect/abort-policy sub-item was not part of KPLWUM's landed slice (rows 19–20): the live arm keeps the existing `EngineDriver::start`/`stop` sequencing, and the SIGINT→stop→typed-consumer-report shutdown is covered by the inert mode + the live arm's `driver.stop()` ordering.
-- **E2E running gate** (ergo **23DLCY**): the ledger becomes executable — fixture boot smoke + recorded/anvil dual-driver comparison, with a seeded-divergence assertion proving the comparator has teeth.
+- **E2E running gate** (ergo **23DLCY**): **CLOSED (offline)**. The ledger is executable: the CI-safe fixture boot gate runs on both axes (Rust `boot_gate.rs` + Python `test_settlement_bot_boot_gate.py`) against the shared `fixtures/settlement_bot_boot.json` oracle, the recorded dual-driver decision diff (`dual_driver_gate.py` + `test_settlement_bot_dual_driver_gate.py`) diffs the Python/Rust streams modulo the documented permitted-divergence list, and seeded-divergence tests prove both comparators have teeth. The live anvil arm is wired behind `DEGENBOT_DUAL_DRIVER_GATE=1` + `DEGENBOT_FORK_RPC` (skip-by-default in CI). See [Running parity gate](#running-parity-gate-rsp-8-ergo-23dlcy).
 
+## Running parity gate (RSP-8, ergo 23DLCY)
+
+The ledger is executable. The gate has two CI-safe, offline halves and one
+opt-in live half; the extractor contract is `grep '^parity-ledger row='`.
+
+### 1. Fixture boot gate (offline, no RPC)
+
+Shared oracle: `tests/standalone_parity/fixtures/settlement_bot_boot.json`.
+Both consumers read the same JSON and must reproduce it:
+
+- **Rust consumer** — `rust/examples/settlement_bot/tests/boot_gate.rs`
+  shells the built example against
+  `rust/crates/degenbot-db/tests/fixtures/parity.db` with `--smoke-offline`
+  and parses the machine-checkable stdout.
+- **Python consumer** — `tests/standalone_parity/test_settlement_bot_boot_gate.py`
+  drives the PyO3 seams (`Bot.load_snapshot_from_db`, `build_path_graph`).
+
+The machine-checkable contract is the boot report itself: the
+`parity-ledger row=<id> status=<status> note=<note>` lines, the
+`parity-ledger snapshot-seed-block S=<None|u64>` line, the
+`[boot] discovery enumerated <n> candidate pools` line, the
+`[g3] graph built: <n> nodes, <n> candidate tokens, <n> requested kinds [...]`
+line, and the `[g3] offline-dry pipeline: key=value ...` line. The
+consume/dispatch decision rows the gate pins are:
+
+| Row | Pinned status | Decision contract |
+|---|---|---|
+| `06-engine-subscribe-resume` | `REACHED-via-EngineDriver` | `EngineDriver::start → subscribe → verify-config` (stops pre-resume); `resume` owns the `S+1..W` auto-backfill |
+| `07-result-batch-stream` | `REACHED-via-EngineDriver` | `EngineDriver::take_result_receiver` (attach pre-resume); `ResultBatch` end-of-stream once on `stop` |
+| `08-register-and-solve-path` | `REACHED-via-EngineDriver` | `EngineDriver::register_and_solve_path` delegates to `EngineStages` |
+| `15-dispatch-selection` | `REACHABLE` | core `dispatch_profitable_results` / `filter_thin_margin_results` + driver `DispatchDecision` planning |
+| `16-sim-fanout-submitter` | `DRIVER-POLICY` | `Semaphore(max_simulate_concurrent)` + single ordered FIFO submitter |
+| `18-live-submission` | `REACHABLE` | dry-run seam never signs; live seam is `dispatch_and_submit` |
+
+**Seeded-divergence proof (teeth).** The Rust test mutates one expected
+ledger status in an in-memory copy of the oracle and asserts the comparator
+fails; it also re-runs the real binary with the `DEGENBOT_DISCOVERY_CHAIN_ID`
+seam removed (enumeration drops 2 → 0) and asserts the comparator catches the
+live divergence. The Python test mutates `expected.snapshot_seed_block` and
+`python_reachable.graph_nodes` in memory and asserts the real PyO3 decisions
+do not match. The checked-in oracle is never modified.
+
+### 2. Dual-driver decision diff (recorded; anvil opt-in)
+
+`tests/standalone_parity/dual_driver_gate.py` diffs the Python driver's and
+the Rust driver's decision streams against the recorded fixture
+`tests/standalone_parity/fixtures/dual_driver_decisions.json`, modulo the
+fixture's `permitted_divergence` list (currently `graph.candidate_tokens`:
+the Rust boot applies the 15-token ETH-mainnet discovery allowlist while the
+Python probe reads the unfiltered graph — the documented row-13 split). The
+pytest half is `test_settlement_bot_dual_driver_gate.py`.
+
+Live mode (`--live`) requires `DEGENBOT_DUAL_DRIVER_GATE=1` +
+`DEGENBOT_FORK_RPC` (+ `DEGENBOT_FORK_BLOCK`): it starts
+`anvil --fork-url ... --fork-block-number ...`, runs both drivers dry-run
+against the pinned fork, and reads the per-batch decision streams named by
+`DEGENBOT_DECISION_STREAM` (JSONL
+`{block, path_id, decision}`), which are **not emitted by either driver
+yet** — so live mode fails loudly on a missing stream rather than passing
+silently. `--record` regenerates the recorded fixture from the offline
+probes (no RPC).
+
+### Invocation
+
+- `just test-settlement-parity` — Rust boot gate + pytest gates + recorded diff.
+- `uv run pytest tests/standalone_parity -q` — the standalone-parity axis.
+- `DEGENBOT_DUAL_DRIVER_GATE=1 DEGENBOT_FORK_RPC=<rpc> DEGENBOT_FORK_BLOCK=<n> uv run python tests/standalone_parity/dual_driver_gate.py --live`
+- `uv run python tests/standalone_parity/dual_driver_gate.py --record`
 ## Rust-ownership sweep (RSP-9 / ergo `IUGFLH`)
 
 The horizontal census sibling to the vertical RSP-2..RSP-8 slices. Every

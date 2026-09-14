@@ -245,3 +245,13 @@ engine. Recorded here so the epic does not invent an ADR for what is a doc-level
    identity) work — `erc20_builder`'s leaf `_ffi` import (fixed via a `degenbot.database`
    TYPE_CHECKING re-export) and `test_bot`'s stale `_io`/`build_v4_pool` fakes (extended
    to the `fetch_erc20_metadata_batch` seam + 11-field return surface).
+
+## Running parity gate (RSP-8, ergo 23DLCY)
+
+The Python driver and the pure-Rust driver (`rust/examples/settlement_bot`,
+the `cargo add degenbot` consumer twin) are continuously compared by the
+running parity gate: the offline fixture boot gate (shared oracle
+`tests/standalone_parity/fixtures/settlement_bot_boot.json`, driven on both
+axes) plus the recorded dual-driver decision diff. See
+[rust-settlement-bot-parity.md § Running parity gate](rust-settlement-bot-parity.md#running-parity-gate-rsp-8-ergo-23dlcy)
+and run `just test-settlement-parity`.

@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "description": "RSP-8 fixture boot gate (ergo 23DLCY): the EXPECTED offline boot decisions of the Rust settlement-bot example (rust/examples/settlement_bot) run against the frozen degenbot-db parity.db fixture with no RPC. Shared oracle read by rust/examples/settlement_bot/tests/boot_gate.rs (Rust consumer) and tests/standalone_parity/test_settlement_bot_boot_gate.py (Python consumer, python_reachable subset). Captured from the byte-exact offline boot; a seeded divergence must fail the comparator.",
+  "fixture": {
+    "db": "rust/crates/degenbot-db/tests/fixtures/parity.db",
+    "discovery_chain_id": 8453,
+    "args": [
+      "--smoke-offline"
+    ],
+    "extractor": "grep '^parity-ledger row='",
+    "env": {
+      "DEGENBOT_FIXTURE_DB": "<resolved at test runtime to the absolute fixture path>",
+      "DEGENBOT_DISCOVERY_CHAIN_ID": "8453",
+      "DEGENBOT_RPC_HTTP_CHAINID_1": "http://127.0.0.1:1",
+      "DEGENBOT_RPC_WS_CHAINID_1": "ws://127.0.0.1:1"
+    }
+  },
+  "expected": {
+    "snapshot_seed_block": null,
+    "discovery_count": 2,
+    "graph": {
+      "nodes": 2,
+      "candidate_tokens": 0,
+      "requested_kinds": [
+        "V2",
+        "V3",
+        "V4"
+      ]
+    },
+    "offline_dry": {
+      "candidates": 0,
+      "path_count": 0,
+      "skips": 0,
+      "policy_rejected": 0,
+      "direction_errors": 0,
+      "v4_hops": 0,
+      "dup": 0,
+      "cap": false,
+      "batch_size": 1000
+    },
+    "ledger_rows": {
+      "01-cli": "REACHABLE",
+      "02-driver-config": "REACHABLE",
+      "03-rpc-cascade": "REACHABLE",
+      "04-db-path": "REACHABLE",
+      "05-snapshot-load": "REACHABLE",
+      "06-engine-subscribe-resume": "REACHED-via-EngineDriver",
+      "07-result-batch-stream": "REACHED-via-EngineDriver",
+      "08-register-and-solve-path": "REACHED-via-EngineDriver",
+      "09-verify-lifecycles": "REACHABLE",
+      "10-pool-construction": "REACHABLE",
+      "11-discovery-db-enumeration": "REACHABLE",
+      "12-path-discovery-batching": "REACHABLE",
+      "13-path-policy": "DRIVER-POLICY",
+      "14-in-process-sim": "REACHABLE",
+      "15-dispatch-selection": "REACHABLE",
+      "16-sim-fanout-submitter": "DRIVER-POLICY",
+      "17-fee-determination": "REACHABLE",
+      "18-live-submission": "REACHABLE",
+      "19-session-watch": "DRIVER-POLICY",
+      "20-operator-channel": "DRIVER-POLICY"
+    }
+  },
+  "python_reachable": {
+    "snapshot_seed_block": null,
+    "graph_nodes": 2,
+    "graph_candidate_tokens": [
+      1
+    ],
+    "graph_edges": 0,
+    "note": "The Python consumer path reaches S via degenbot._ffi.Bot.load_snapshot_from_db and the parity.db graph via degenbot._ffi.build_path_graph (chain 8453). candidate_tokens here is UNFILTERED; the Rust boot applies the 15-token ETH mainnet discovery allowlist (row 13), which is why expected.graph.candidate_tokens is 0."
+  }
+}

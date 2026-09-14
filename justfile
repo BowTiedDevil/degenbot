@@ -587,3 +587,17 @@ setup-git-hooks:
     echo "    Bypass: git push --no-verify (CI still runs)."
     echo "✓ commit template configured."
 
+
+# ========== Settlement-Bot Parity Gate (RSP-8 / ergo 23DLCY) ==========
+#
+# The executable successor to the parity ledger
+# (docs/architecture/rust-settlement-bot-parity.md): the fixture boot gate
+# (Rust integration test + Python PyO3 probe against the shared oracle
+# tests/standalone_parity/fixtures/settlement_bot_boot.json) plus the
+# recorded dual-driver decision diff. CI-safe and offline (no RPC); the live
+# anvil arm is opt-in via DEGENBOT_DUAL_DRIVER_GATE=1 + DEGENBOT_FORK_RPC
+# (tests/standalone_parity/dual_driver_gate.py --live).
+test-settlement-parity:
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-settlement-bot-example --test boot_gate
+    uv run pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
+    uv run python tests/standalone_parity/dual_driver_gate.py --recorded

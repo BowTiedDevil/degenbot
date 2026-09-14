@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "provenance": "Recorded offline from the parity.db fixture boot (RSP-8 / ergo 23DLCY). 'python' is the Python consumer probe (degenbot._ffi Bot.load_snapshot_from_db + build_path_graph, chain 8453); 'rust' is the settlement-bot example offline boot decisions, which the Rust gate (rust/examples/settlement_bot/tests/boot_gate.rs) asserts byte-for-byte against fixtures/settlement_bot_boot.json. Regenerate with: uv run python tests/standalone_parity/dual_driver_gate.py --record",
+  "permitted_divergence": [
+    {
+      "key": "graph.candidate_tokens",
+      "reason": "The Rust boot applies the 15-token ETH-mainnet discovery allowlist (parity ledger row 13), so the fixture's single candidate token is filtered to 0; the Python probe reads the UNFILTERED build_path_graph output ([1]). Documented in the boot oracle python_reachable.note and the parity ledger row 13."
+    }
+  ],
+  "python": [
+    {
+      "key": "snapshot_seed_block",
+      "value": null
+    },
+    {
+      "key": "discovery_count",
+      "value": 2
+    },
+    {
+      "key": "graph.nodes",
+      "value": 2
+    },
+    {
+      "key": "graph.candidate_tokens",
+      "value": [
+        1
+      ]
+    }
+  ],
+  "rust": [
+    {
+      "key": "snapshot_seed_block",
+      "value": null
+    },
+    {
+      "key": "discovery_count",
+      "value": 2
+    },
+    {
+      "key": "graph.nodes",
+      "value": 2
+    },
+    {
+      "key": "graph.candidate_tokens",
+      "value": 0
+    }
+  ]
+}
