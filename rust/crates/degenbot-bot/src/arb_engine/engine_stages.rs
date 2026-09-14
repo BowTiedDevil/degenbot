@@ -493,6 +493,20 @@ mod candidate2_seam_pins {
             fn set_solve_anchor(&self, _t: TwinProbeToken);
             fn record_logs_this_block(&self, _t: TwinProbeToken);
             fn on_pump_ended(&self, _t: TwinProbeToken);
+            // Full driver surface (ergo 2NLZE3): the eight `StageHandlers`
+            // hooks + the remaining `PumpControl` methods are TRAIT methods
+            // on the stage surface — an inherent `EngineStages` twin would
+            // shadow them in the method calls below and fail to compile.
+            fn on_streaming_complete(&self, _t: TwinProbeToken);
+            fn on_resolve(&self, _t: TwinProbeToken);
+            fn on_solve(&self, _t: TwinProbeToken);
+            fn on_simulate(&self, _t: TwinProbeToken);
+            fn on_gate(&self, _t: TwinProbeToken);
+            fn on_publish(&self, _t: TwinProbeToken);
+            fn on_finalize(&self, _t: TwinProbeToken);
+            fn on_rewind(&self, _t: TwinProbeToken);
+            fn has_dirty_paths(&self, _t: TwinProbeToken);
+            fn notify_block(&self, _t: TwinProbeToken);
         }
         impl NoInherentTwinProbe for super::EngineStages {
             fn solve_dirty(&self, _t: TwinProbeToken) {}
@@ -503,6 +517,16 @@ mod candidate2_seam_pins {
             fn set_solve_anchor(&self, _t: TwinProbeToken) {}
             fn record_logs_this_block(&self, _t: TwinProbeToken) {}
             fn on_pump_ended(&self, _t: TwinProbeToken) {}
+            fn on_streaming_complete(&self, _t: TwinProbeToken) {}
+            fn on_resolve(&self, _t: TwinProbeToken) {}
+            fn on_solve(&self, _t: TwinProbeToken) {}
+            fn on_simulate(&self, _t: TwinProbeToken) {}
+            fn on_gate(&self, _t: TwinProbeToken) {}
+            fn on_publish(&self, _t: TwinProbeToken) {}
+            fn on_finalize(&self, _t: TwinProbeToken) {}
+            fn on_rewind(&self, _t: TwinProbeToken) {}
+            fn has_dirty_paths(&self, _t: TwinProbeToken) {}
+            fn notify_block(&self, _t: TwinProbeToken) {}
         }
         fn is_pump_control<T: crate::bot_core::PumpControl>() {}
         is_pump_control::<super::EngineStages>();
@@ -519,6 +543,79 @@ mod candidate2_seam_pins {
         stages.set_solve_anchor(TwinProbeToken);
         stages.record_logs_this_block(TwinProbeToken);
         stages.on_pump_ended(TwinProbeToken);
+        stages.on_streaming_complete(TwinProbeToken);
+        stages.on_resolve(TwinProbeToken);
+        stages.on_solve(TwinProbeToken);
+        stages.on_simulate(TwinProbeToken);
+        stages.on_gate(TwinProbeToken);
+        stages.on_publish(TwinProbeToken);
+        stages.on_finalize(TwinProbeToken);
+        stages.on_rewind(TwinProbeToken);
+        stages.has_dirty_paths(TwinProbeToken);
+        stages.notify_block(TwinProbeToken);
+    }
+
+    /// Driver-surface twin probe (ergo 2NLZE3 T1, epic 5TBT7L).
+    ///
+    /// The candidate-2 end state makes the `EngineStages` stage surface the
+    /// ONE driver interface: the pump drives `run_solve_cycle`,
+    /// `set_block_channel`, and the `StageHandlers` hooks, and
+    /// `ArbitrageEngine` recedes to `pub(crate)` machinery behind it. This
+    /// compile probe pins the surfaces themselves: none of the driver-surface
+    /// method names may exist as INHERENT `ArbitrageEngine` twins. If one
+    /// reappears, method resolution prefers the inherent method over this
+    /// probe's token-taking method at the call sites below and the
+    /// arity/type mismatch fails the build.
+    ///
+    /// The probed names are the members of the driver surface that are
+    /// poke-free on the engine TODAY (the engine's real surface is
+    /// `solve_dirty`, the lifecycle/delivery setters, and the machine
+    /// pokes), so the pin is green now and turns red exactly when a driver
+    /// name leaks onto the engine.
+    #[test]
+    fn candidate2_driver_surface_stays_off_the_engine() {
+        struct DriverTwinProbeToken;
+        trait NoInherentDriverTwinProbe {
+            fn run_solve_cycle(&self, _t: DriverTwinProbeToken);
+            fn set_block_channel(&self, _t: DriverTwinProbeToken);
+            fn on_streaming_complete(&self, _t: DriverTwinProbeToken);
+            fn on_resolve(&self, _t: DriverTwinProbeToken);
+            fn on_solve(&self, _t: DriverTwinProbeToken);
+            fn on_simulate(&self, _t: DriverTwinProbeToken);
+            fn on_gate(&self, _t: DriverTwinProbeToken);
+            fn on_publish(&self, _t: DriverTwinProbeToken);
+            fn on_finalize(&self, _t: DriverTwinProbeToken);
+            fn on_rewind(&self, _t: DriverTwinProbeToken);
+            fn has_dirty_paths(&self, _t: DriverTwinProbeToken);
+            fn notify_block(&self, _t: DriverTwinProbeToken);
+        }
+        impl NoInherentDriverTwinProbe for super::ArbitrageEngine {
+            fn run_solve_cycle(&self, _t: DriverTwinProbeToken) {}
+            fn set_block_channel(&self, _t: DriverTwinProbeToken) {}
+            fn on_streaming_complete(&self, _t: DriverTwinProbeToken) {}
+            fn on_resolve(&self, _t: DriverTwinProbeToken) {}
+            fn on_solve(&self, _t: DriverTwinProbeToken) {}
+            fn on_simulate(&self, _t: DriverTwinProbeToken) {}
+            fn on_gate(&self, _t: DriverTwinProbeToken) {}
+            fn on_publish(&self, _t: DriverTwinProbeToken) {}
+            fn on_finalize(&self, _t: DriverTwinProbeToken) {}
+            fn on_rewind(&self, _t: DriverTwinProbeToken) {}
+            fn has_dirty_paths(&self, _t: DriverTwinProbeToken) {}
+            fn notify_block(&self, _t: DriverTwinProbeToken) {}
+        }
+        let engine = super::ArbitrageEngine::new();
+        engine.run_solve_cycle(DriverTwinProbeToken);
+        engine.set_block_channel(DriverTwinProbeToken);
+        engine.on_streaming_complete(DriverTwinProbeToken);
+        engine.on_resolve(DriverTwinProbeToken);
+        engine.on_solve(DriverTwinProbeToken);
+        engine.on_simulate(DriverTwinProbeToken);
+        engine.on_gate(DriverTwinProbeToken);
+        engine.on_publish(DriverTwinProbeToken);
+        engine.on_finalize(DriverTwinProbeToken);
+        engine.on_rewind(DriverTwinProbeToken);
+        engine.has_dirty_paths(DriverTwinProbeToken);
+        engine.notify_block(DriverTwinProbeToken);
     }
 
     /// Minimal `tracing_subscriber::Layer` that records ERROR events

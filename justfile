@@ -147,6 +147,31 @@ check-no-pyo3-in-cores:
     done
     echo "OK: core crates + umbrella are pyo3-free under default features"
 
+# Structural gate for epic 5TBT7L (arch review #11, candidate 2): the engine
+# seam deepens until `EngineStages` is the ONE external driver surface and
+# every `impl ArbitrageEngine` block outside `arb_engine/mod.rs` is dissolved.
+# This is the standing RED: today the census is 12 blocks across 8 files
+# (lifecycle.rs, mod.rs x5, inline_sim.rs, block_cursor.rs, path_info.rs,
+# diagnostic.rs, event_routing.rs, delivery_policy.rs). NOT wired into
+# lint-rust-check/CI yet - epic slice T6 flips it into the Rust hygiene set.
+# The `{` anchor keeps the prose mention of `impl ArbitrageEngine` in
+# mod.rs's module-tree comment from being counted as a block.
+check-engine-impl-blocks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    matches=$(rg -n 'impl ArbitrageEngine\s*\{' rust/crates/degenbot-bot/src || true)
+    count=$(printf '%s\n' "$matches" | grep -c 'impl ArbitrageEngine' || true)
+    if [ "$count" -ne 1 ] || ! printf '%s\n' "$matches" | grep -q 'arb_engine/mod.rs'; then
+        echo "ERROR: 'impl ArbitrageEngine' is not consolidated to arb_engine/mod.rs (epic 5TBT7L)." >&2
+        echo "  expected exactly 1 block, in arb_engine/mod.rs; found $count" >&2
+        echo "  census (file: blocks):" >&2
+        printf '%s\n' "$matches" | cut -d: -f1 | sort | uniq -c | awk '{printf "    %s: %s\n", $2, $1}' >&2
+        echo "  matches:" >&2
+        printf '%s\n' "$matches" >&2
+        exit 1
+    fi
+    echo "ok: exactly one impl ArbitrageEngine block, in arb_engine/mod.rs"
+
 # Build Rust extension module (correct for Python extension)
 build-rust-extension:
     cargo build -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
