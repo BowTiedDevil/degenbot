@@ -4,7 +4,7 @@
 //! Mirrors [`PySubmitCandidate`]'s `#[new]` shape (a builder pyclass holding
 //! the core [`DispatchCandidate`]). The candidate resolves its
 //! [`composers::PathInfo`] directly from `path_id` via the
-//! [`PyArbitrageEngine::path_info_for_core`] projection over the shared
+//! [`PyArbEngine::path_info_for_core`] projection over the shared
 //! `BotState` — no Python `PathInfo` dataclass round-trip (NXM2BF, the
 //! encode-relay flatten).
 //!
@@ -19,7 +19,7 @@
 //! pyfunction then extracts the held `DispatchCandidate` (clone) into the
 //! async block + releases the GIL.
 
-use crate::bot::engine::PyArbitrageEngine;
+use crate::bot::engine::PyArbEngine;
 use crate::prelude::*;
 use degenbot_arbitrage::DispatchCandidate;
 use degenbot_bot::arb_engine::path_info::PathInfoBuildError;
@@ -52,7 +52,7 @@ impl PyDispatchCandidate {
     /// `BotState` — no Python `PathInfo` dataclass is threaded (NXM2BF).
     ///
     /// Args:
-    ///     `engine`: the `ArbitrageEngine` that owns `path_id` (the same
+    ///     `engine`: the engine wrapper that owns `path_id` (the same
     ///         engine that produced `engine_profit`/`hop_outputs`).
     ///     `path_id`: the unique arb path identifier.
     ///     `optimal_input`: the solver's optimal swap input (u128).
@@ -83,7 +83,7 @@ impl PyDispatchCandidate {
     #[expect(clippy::too_many_arguments, clippy::needless_pass_by_value)]
     fn new(
         py: Python<'_>,
-        engine: Py<PyArbitrageEngine>,
+        engine: Py<PyArbEngine>,
         path_id: u64,
         optimal_input: u128,
         engine_profit: u128,

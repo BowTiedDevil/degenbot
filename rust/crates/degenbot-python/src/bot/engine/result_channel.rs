@@ -1,12 +1,12 @@
-//! `PyO3` wrapper for the `ArbitrageEngine` — `result_channel` `#[pymethods]` slice.
+//! `PyO3` wrapper for the engine stage surface — `result_channel` `#[pymethods]` slice.
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
 //! mirroring `crates/degenbot-bot/src/arb_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbitrageEngine { … }`
+//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    mpsc, Address, Arc, BlockNotification, HopType, PyArbitrageEngine, PyDict, PyList,
+    mpsc, Address, Arc, BlockNotification, EngineStages, HopType, PyArbEngine, PyDict, PyList,
     PyStopAsyncIteration, ResultBatch, SolvePathResult, U256,
 };
 use crate::conversion::alloy::{PyI256, PyU256};
@@ -22,7 +22,7 @@ fn address_to_checksum<'py>(py: Python<'py>, a: &Address) -> Bound<'py, PyString
 }
 
 #[pymethods]
-impl PyArbitrageEngine {
+impl PyArbEngine {
     /// Read the last solved results and block number.
     ///
     /// Inspect a registered path by ID.
@@ -42,9 +42,7 @@ impl PyArbitrageEngine {
     fn inspect_path(&self, path_id: u64, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
         // Phase 1: Collect pool refs from the path. GIL hygiene: the engine
         // Mutex is acquired inside the accessor's py.detach.
-        let Some(pool_refs) = self.with_engine(py, |e| {
-            e.path_pools().get(&path_id).map(|p| p.pools.clone())
-        }) else {
+        let Some(pool_refs) = self.with_stages(py, |e| e.path_pool_refs(path_id)) else {
             return Ok(None);
         };
 
@@ -55,7 +53,7 @@ impl PyArbitrageEngine {
         // ADR-003: V2 state lives in BotState. One core-lock window covers all
         // V2 lookups in this loop (engine-then-core ordering; V3/V4 state still
         // reads the per-family engines, which are disjoint fields).
-        let hops: Vec<HopInfo> = self.with_engine_core(py, |core| {
+        let hops: Vec<HopInfo> = self.with_core(py, |core| {
             let mut hops = Vec::new();
 
             for pool_ref in &pool_refs {
@@ -188,10 +186,7 @@ impl PyArbitrageEngine {
     /// [`path_id_0`, `optimal_input_0`, `profit_0`, `path_id_1`, ...]
     fn latest_results(&self, py: Python<'_>) -> PyResult<(Py<PyList>, u64)> {
         // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
-        let (results, block_num) = self.with_engine(py, |e| {
-            let (results, block) = e.latest_results();
-            (results.clone(), block)
-        });
+        let (results, block_num) = self.with_stages(py, EngineStages::latest_results);
 
         let py_list = PyList::empty(py);
         for (path_id, solve_result) in results {
@@ -233,7 +228,7 @@ impl PyArbitrageEngine {
     /// Returns `true` if the path existed and was removed.
     #[pyo3(signature = (path_id))]
     fn deregister_path(&self, py: Python<'_>, path_id: u64) -> bool {
-        self.with_engine_mut(py, |e| e.deregister_path(path_id))
+        self.with_stages(py, |e| e.deregister_path(path_id))
     }
 
     /// Set the profit thresholds for the result batch channel.
@@ -263,7 +258,7 @@ impl PyArbitrageEngine {
             Some(obj) => crate::conversion::alloy::extract_python_u256(obj)?,
             None => U256::MAX,
         };
-        self.with_engine_mut(py, |e| e.set_profit_thresholds(min, max));
+        self.with_stages(py, |e| e.set_profit_thresholds(min, max));
         Ok(())
     }
 
@@ -284,7 +279,7 @@ impl PyArbitrageEngine {
         })?;
         // GIL hygiene: guards acquired inside the accessor's py.detach;
         // owned data comes out, the PyResult is assembled under the GIL.
-        Ok(self.with_engine_core(py, |core| {
+        Ok(self.with_core(py, |core| {
             let pool_id = core.pool_id_by_address(&addr)?;
             let state = core.get_v2_pool_state(pool_id)?;
             Some((
@@ -507,7 +502,7 @@ fn solve_result_to_py_tuple<'py>(
     )
         .into_pyobject(py)
 }
-/// One hop's view for [`PyArbitrageEngine::inspect_path`], built from the
+/// One hop's view for [`PyArbEngine::inspect_path`], built from the
 /// engine's sub-states before being projected into a Python dict by
 /// [`hop_info_to_pydict`].
 struct HopInfo {
@@ -551,13 +546,13 @@ fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py
 #[pyclass(name = "BlockStream", skip_from_py_object, module = "degenbot._ffi")]
 pub struct BlockStream {
     /// The block-notification receiver. `Option` + `put-back` mirrors
-    /// `PyArbitrageEngine::result_rx` so the coroutine can re-share the
+    /// `PyArbEngine::result_rx` so the coroutine can re-share the
     /// receiver across `__anext__` calls.
     block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
 }
 
 impl BlockStream {
-    /// Construct from the receiver handed out by `PyArbitrageEngine::block_stream`.
+    /// Construct from the receiver handed out by `PyArbEngine::block_stream`.
     #[must_use]
     pub fn new(block_rx: mpsc::UnboundedReceiver<BlockNotification>) -> Self {
         Self {

@@ -292,13 +292,11 @@ impl ArbitrageEngine {
     /// Set the sender for the result batch channel. Delegates to the
     /// [`DeliveryPolicy`]. The solve itself is channel-free — this only
     /// attaches the optional delivery sink.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
         self.delivery.set_result_channel(tx);
     }
     /// Set the profit thresholds for the result batch channel. Delegates to
     /// the [`DeliveryPolicy`].
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub const fn set_profit_thresholds(&mut self, min_profit: U256, max_profit: U256) {
         self.delivery.set_profit_thresholds(min_profit, max_profit);
     }
@@ -356,7 +354,6 @@ impl ArbitrageEngine {
     /// batch's `removed` field.
     ///
     /// Returns `true` if the path existed and was removed.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn deregister_path(&mut self, path_id: u64) -> bool {
         // Remove from the registry: drops the path, prunes the reverse index,
         // and clears the dedup signature.

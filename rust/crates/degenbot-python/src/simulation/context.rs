@@ -169,7 +169,7 @@ impl PySimulateContext {
 }
 
 #[pymethods]
-impl crate::bot::engine::PyArbitrageEngine {
+impl crate::bot::engine::PyArbEngine {
     /// SIMPIPE2 T4: install the production inline-sim hook — the
     /// `degenbot_bot`-defined `InlineSimulator` seam's concrete closure over
     /// THIS session's sim config + the engine's shared state (theADR-019 D7
@@ -208,7 +208,7 @@ impl crate::bot::engine::PyArbitrageEngine {
         // drives on THIS runtime, never on CPU seats; the cold-miss budget
         // ceiling is visible at the port's gauge surface.
         let escalation_port = hook.escalation_port();
-        self.with_engine_mut(py, |e| {
+        self.with_stages(py, |e| {
             e.set_inline_simulator(std::sync::Arc::new(hook));
         });
         degenbot_workers::lane::install_default_escalation_port(escalation_port);

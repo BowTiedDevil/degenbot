@@ -26,7 +26,7 @@
 //! captures were restored from that commit's parent for this gate.
 
 use alloy::primitives::U256;
-use degenbot::bot::arb_engine::ArbitrageEngine;
+use degenbot::bot::arb_engine::EngineStages;
 use degenbot::investigation::reconstruct::{
     build_v3_state, build_v4_state, register_v2, register_v3, register_v4, V2_DEFAULT_FEE,
 };
@@ -116,25 +116,25 @@ fn v4v4v2_path182449_terminal_v2_is_byte_exact() {
     let fx = PathFixture::load(FIXTURE_182449).unwrap_or_else(|e| panic!("{e}"));
     assert_recorded_incident(&fx);
 
-    let mut engine = ArbitrageEngine::new();
+    let core = std::sync::Arc::new(degenbot::bot_core::state_lock::StateLock::new(
+        degenbot::BotState::new(),
+    ));
+    let engine = EngineStages::with_core(
+        std::sync::Arc::clone(&core),
+        std::sync::Arc::new(degenbot::bot_core::EpochDelta::new(0u64)),
+    );
     let pid_a = register_v4(
-        &mut engine
-            .core()
-            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &mut core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
         &fx.pools["v4_a"],
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let pid_b = register_v4(
-        &mut engine
-            .core()
-            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &mut core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
         &fx.pools["v4_b"],
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let pid_c = register_v2(
-        &mut engine
-            .core()
-            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &mut core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
         &fx.pools["v2_c"],
     )
     .unwrap_or_else(|e| panic!("{e}"));
@@ -158,7 +158,7 @@ fn v4v4v2_path182449_terminal_v2_is_byte_exact() {
         })
         .collect();
 
-    let path_id = engine
+    let (path_id, _) = engine
         .register_and_solve_path(hops.clone())
         .expect("path registers");
     let (results, _) = engine.latest_results();
@@ -214,25 +214,25 @@ fn v3v4v2_path110302_terminal_v2_is_byte_exact() {
     let fx = PathFixture::load(FIXTURE_110302).unwrap_or_else(|e| panic!("{e}"));
     assert_recorded_incident(&fx);
 
-    let mut engine = ArbitrageEngine::new();
+    let core = std::sync::Arc::new(degenbot::bot_core::state_lock::StateLock::new(
+        degenbot::BotState::new(),
+    ));
+    let engine = EngineStages::with_core(
+        std::sync::Arc::clone(&core),
+        std::sync::Arc::new(degenbot::bot_core::EpochDelta::new(0u64)),
+    );
     let pid_a = register_v3(
-        &mut engine
-            .core()
-            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &mut core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
         &fx.pools["v3_0"],
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let pid_b = register_v4(
-        &mut engine
-            .core()
-            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &mut core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
         &fx.pools["v4"],
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let pid_c = register_v2(
-        &mut engine
-            .core()
-            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &mut core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
         &fx.pools["v2_2"],
     )
     .unwrap_or_else(|e| panic!("{e}"));
@@ -256,7 +256,7 @@ fn v3v4v2_path110302_terminal_v2_is_byte_exact() {
         })
         .collect();
 
-    let path_id = engine
+    let (path_id, _) = engine
         .register_and_solve_path(hops.clone())
         .expect("path registers");
     let (results, _) = engine.latest_results();

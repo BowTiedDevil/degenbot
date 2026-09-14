@@ -1,25 +1,25 @@
 //! Bot-owned pump / lifecycle state (ADR-006 D4).
 //!
 //! D4 relocates the pump lifecycle (`subscribe`, `backfill_from_snapshot`,
-//! `resume`) onto `PyBot`. Today these live on `PyArbitrageEngine` and touch
+//! `resume`) onto `PyBot`. Today these live on `PyArbEngine` and touch
 //! a cluster of fields also accessed by `snapshot.rs` (phase) and `solve.rs`
 //! (coordinator). Rather than move every fieldsite in one go, this module
-//! defines a shared [`PumpState`] that BOTH `PyBot` and `PyArbitrageEngine`
+//! defines a shared [`PumpState`] that BOTH `PyBot` and `PyArbEngine`
 //! hold — so the three pump methods can move to `PyBot` (owning the pump, per
 //! D4) while the engine's snapshot/solve slices keep reading the same shared
 //! state through their own `Arc<PumpState>` handle.
 //!
 //! `PumpState` is the lifecycle layer: engine phase, the pump handle, the
 //! subscribe state held between `subscribe` and `resume`, the engine stage
-//! surface + reorg coordinator + shutdown flag. The pure solve core (`Arc<Mutex<ArbitrageEngine>>`,
-//!   `BotState`, v3/v4 snapshot stores, verify config) stays on
-//!   `PyArbitrageEngine`.
+//! surface + reorg coordinator + shutdown flag. The pure solve core (the
+//!   shared `BotState`, v3/v4 snapshot stores, verify config) stays on
+//!   `PyArbEngine`, reached through the stage surface.
 
 use degenbot_core::diag;
 use degenbot_core::{op_error, op_info, op_warn};
 use std::sync::Arc;
 
-use degenbot_bot::arb_engine::{ArbitrageEngine, EnginePhase, EngineStages};
+use degenbot_bot::arb_engine::{EnginePhase, EngineStages};
 // (5WTYYQ) The pump’s stream element type is the ingestion crate’s
 // IngestEvent; the PyO3 layer consumes it like any other sink-side event.
 use degenbot_bot::bot_core::block_pump::BlockPump;
@@ -44,7 +44,7 @@ pub(crate) struct PySubscribeState {
 
 /// Shared lifecycle state for the pump (ADR-006 D4).
 ///
-/// Held by both `PyBot` (the D4 pump owner) and `PyArbitrageEngine` (whose
+/// Held by both `PyBot` (the D4 pump owner) and `PyArbEngine` (whose
 /// snapshot/solve slices still read `phase` / `coordinator`). One allocation
 /// per chain — both wrappers carry `Arc<PumpState>` to the same instance.
 ///
@@ -55,10 +55,9 @@ pub(crate) struct PySubscribeState {
 /// `PumpState` and be driven from `PyBot`. (T5 will delete `verify_on_register`
 /// + the `verify_*_block` fields; T6 re-stashes the blocks on the registry.)
 pub(crate) struct PumpState {
-    /// Shared engine state (for `process_backfill_logs` / `last_processed_block`).
-    pub(crate) engine: Arc<parking_lot::Mutex<ArbitrageEngine>>,
-    /// The engine's stage surface (SZJUKL seam retirement): the ONE
-    /// `StageHandlers` seam the pump drives — no coordinator, no fan-out.
+    /// The engine's stage surface (SZJUKL seam retirement / 5TBT7L Q2b): the
+    /// ONE `StageHandlers` seam the pump drives — no coordinator, no fan-out;
+    /// the engine type is `pub(crate)` machinery behind it.
     pub(crate) stages: Arc<EngineStages>,
     /// The per-event reorg coordinator (ADR-006 slice 7).
     pub(crate) reorg_coordinator: Arc<ReorgCoordinator>,
@@ -91,7 +90,6 @@ pub(crate) struct PumpState {
 impl PumpState {
     #[must_use]
     pub(crate) fn new(
-        engine: Arc<parking_lot::Mutex<ArbitrageEngine>>,
         stages: Arc<EngineStages>,
         reorg_coordinator: Arc<ReorgCoordinator>,
         bot: Arc<Bot>,
@@ -100,7 +98,6 @@ impl PumpState {
         >,
     ) -> Self {
         Self {
-            engine,
             stages,
             reorg_coordinator,
             bot,
@@ -122,23 +119,23 @@ impl PumpState {
         self.block_rx.lock().take()
     }
 
-    /// Read the current engine lifecycle phase (delegates to the core
-    /// `ArbitrageEngine` source of truth — ZU7RAF).
+    /// Read the current engine lifecycle phase (delegates to the stage
+    /// surface's core-owned source of truth — ZU7RAF).
     ///
     /// GIL-hygiene note: `PumpState` is shared between GIL-holding pymethod
-    /// threads and the pure-Rust pump task, so the `PyArbitrageEngine`
-    /// accessors are not reachable here. These two are sanctioned direct
-    /// locks: non-blocking phase flips, never extended across provider I/O
-    /// (the YLYJM2 rule). Anything heavier must go through a detached scope.
+    /// threads and the pure-Rust pump task, so the `PyArbEngine` accessors
+    /// are not reachable here. These two are sanctioned short lock visits:
+    /// non-blocking phase flips, never extended across provider I/O (the
+    /// YLYJM2 rule). Anything heavier must go through a detached scope.
     pub(crate) fn current_phase(&self) -> EnginePhase {
-        self.engine.lock().current_phase()
+        self.stages.current_phase()
     }
 
     /// Advance to `phase` (no ordering check — the caller validates).
-    /// Delegates to the core `ArbitrageEngine` (ZU7RAF). Same sanctioned
-    /// direct-lock note as [`Self::current_phase`].
+    /// Delegates to the stage surface (ZU7RAF). Same sanctioned short-lock
+    /// note as [`Self::current_phase`].
     pub(crate) fn set_phase(&self, phase: EnginePhase) {
-        self.engine.lock().set_phase(phase);
+        self.stages.set_phase(phase);
     }
 
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
@@ -444,10 +441,7 @@ impl PumpState {
         // a missing provider only fails fast (D-C) for a TRACKED pool that
         // actually reaches a verify step — Sparse / unregistered no-op paths
         // (and the sparse buffer drain) never need one.
-        let core = {
-            let engine = self.engine.lock();
-            Arc::clone(engine.core())
-        };
+        let core = self.stages.core();
         let provider = self.verify_provider.lock().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             use tracing::Instrument as _;
@@ -506,10 +500,7 @@ impl PumpState {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_id: {e}"))
         })?;
         let state_view = *self.verify_state_view.lock();
-        let core = {
-            let engine = self.engine.lock();
-            Arc::clone(engine.core())
-        };
+        let core = self.stages.core();
         let provider = self.verify_provider.lock().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             use tracing::Instrument as _;
@@ -565,10 +556,7 @@ impl PumpState {
         let pool_addr: alloy::primitives::Address = address.parse().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid V3 address: {e}"))
         })?;
-        let core = {
-            let engine = self.engine.lock();
-            Arc::clone(engine.core())
-        };
+        let core = self.stages.core();
         let provider = self.verify_provider.lock().clone();
         let result = py.detach(move || {
         use tracing::Instrument as _;
@@ -626,10 +614,7 @@ impl PumpState {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_id: {e}"))
         })?;
         let state_view = *self.verify_state_view.lock();
-        let core = {
-            let engine = self.engine.lock();
-            Arc::clone(engine.core())
-        };
+        let core = self.stages.core();
         let provider = self.verify_provider.lock().clone();
         let result = py.detach(move || {
         use tracing::Instrument as _;
@@ -787,13 +772,13 @@ mod tests {
     // unblocks immediately), and be idempotent (a second call is a no-op
     // `Ok(())` because the handle is `take()`n on the first). Building a
     // real `PumpState` mirrors the standalone (no-`py_bot`) path of
-    // `PyArbitrageEngine::new` — a fresh `Bot`/`BotState`/`ArbitrageEngine`/
-    // `EngineStages`/`ReorgCoordinator`. No WS connection is opened;
+    // `PyArbEngine::new` — a fresh `Bot`/`BotState`/`EngineStages`/
+    // `ReorgCoordinator`. No WS connection is opened;
     // the running-handle test installs a never-completing dummy task so
     // `stop()`'s abort path is exercised without the real pump.
 
     use super::PumpState;
-    use degenbot_bot::arb_engine::{ArbitrageEngine, EngineStages};
+    use degenbot_bot::arb_engine::EngineStages;
     use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
     use degenbot_bot::bot_core::state_lock::StateLock;
     use degenbot_bot::bot_core::{Bot, BotState};
@@ -802,20 +787,17 @@ mod tests {
     fn pump_state_for_test() -> std::sync::Arc<PumpState> {
         let core = std::sync::Arc::new(StateLock::new(BotState::new()));
         let bot = std::sync::Arc::new(Bot::with_core(std::sync::Arc::clone(&core)));
-        let mut engine = ArbitrageEngine::with_core(core);
-        let (result_tx, _result_rx) = mpsc::unbounded_channel();
-        engine.set_result_channel(result_tx);
-        let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
-        let stages = std::sync::Arc::new(EngineStages::new(
-            std::sync::Arc::clone(&engine),
+        let stages = std::sync::Arc::new(EngineStages::with_core(
+            core,
             std::sync::Arc::new(degenbot_bot::bot_core::EpochDelta::new(0u64)),
         ));
+        let (result_tx, _result_rx) = mpsc::unbounded_channel();
+        stages.set_result_channel(result_tx);
         let (block_tx, _block_rx) = mpsc::unbounded_channel();
         stages.set_block_channel(block_tx);
         let reorg_coordinator =
             std::sync::Arc::new(ReorgCoordinator::new(std::sync::Arc::clone(&bot)));
         std::sync::Arc::new(PumpState::new(
-            engine,
             stages,
             reorg_coordinator,
             bot,

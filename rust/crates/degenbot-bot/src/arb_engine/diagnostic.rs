@@ -340,93 +340,94 @@ fn fmt_u256(value: U256) -> String {
 fn u256_to_hex(value: U256) -> String {
     format!("0x{value:x}")
 }
-impl ArbitrageEngine {
-    /// Snapshot the engine-owned state for every hop in `path_id`.
-    ///
-    /// This method acquires the engine lock only long enough to copy the
-    /// immutable pool refs and the current scalar state from each sub-engine.
-    /// No RPC calls are made here.
-    ///
-    /// Returns `None` if the path is not registered.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
-    #[must_use]
-    pub fn diagnostic_path_state(&self, path_id: u64) -> Option<DiagnosticPathState> {
-        let path = self.registry.get(path_id)?;
-        let solve_block = if self.cycle.cursor.is_anchored() {
-            Some(self.cycle.cursor.results_block())
-        } else {
-            self.cycle.cursor.last_processed_block()
-        };
-        let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
-        // O5SKZ6: capture the engine's last-applied block alongside the
-        // published `solve_block`. When `engine_processed_block >
-        // solve_block`, the engine has advanced past the published solve block
-        // by the time the snapshot is read, so visible drift against an
-        // onchain fetch pinned to `solve_block` is a SNAPSHOT TIMING ARTIFACT
-        // (post-publish swap included in live engine_state but excluded by the
-        // pinned RPC), not real publish-time lag.
-        snapshot.engine_processed_block = self.cycle.cursor.last_processed_block();
-        // ADR-003: V2 state lives in BotState. One core-lock window covers all
-        // V2 lookups in this loop; V3/V4 state still reads the per-family
-        // block engines (disjoint fields, immutable borrows coexist).
-        let core = self
-            .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
-        let type_tags: Vec<&str> = path
-            .pools
-            .iter()
-            .map(|r| match r.hop_type {
-                HopType::V2 => "V2",
-                HopType::V3 => "V3",
-                HopType::V4 => "V4",
-                HopType::SolidlyStable => "Solidly",
-                HopType::BalancerWeighted => "BalW",
-                HopType::BalancerStable => "BalS",
-                HopType::CurveStableswap => "Crv",
-            })
-            .collect();
-        snapshot.path_type = type_tags.join("-");
-        for (position, pool_ref) in path.pools.iter().enumerate() {
-            let engine_state = build_engine_pool_state(&core, pool_ref);
-            let Some(engine_state) = engine_state else {
-                // Pool referenced by the path is missing from the sub-engine.
-                // This is itself a diagnostic signal; record a placeholder
-                // and continue so the rest of the hops are still visible.
-                snapshot.hops.push(DiagnosticHop {
-                    position,
-                    hop_type: type_tags[position].to_string(),
-                    zero_for_one: pool_ref.zero_for_one,
-                    engine_state: DiagnosticPoolState::V2 {
-                        address: "0x0000000000000000000000000000000000000000".to_string(),
-                        reserve_in: "0x0".to_string(),
-                        reserve_out: "0x0".to_string(),
-                        fee_denom: "0x0".to_string(),
-                        gamma_numer: "0x0".to_string(),
-                    },
-                    onchain_state: None,
-                    diff: vec![format!("missing pool_key={} in engine", pool_ref.pool_key)],
-                    drift: false,
-                    field_drift: Vec::new(),
-                });
-                continue;
-            };
+/// Snapshot the engine-owned state for every hop in `path_id`.
+///
+/// This function acquires the engine lock only long enough to copy the
+/// immutable pool refs and the current scalar state from each sub-engine.
+/// No RPC calls are made here.
+///
+/// Returns `None` if the path is not registered. A crate-internal free
+/// function (T5): the stage surface owns the public seam.
+#[must_use]
+pub(crate) fn diagnostic_path_state(
+    engine: &ArbitrageEngine,
+    path_id: u64,
+) -> Option<DiagnosticPathState> {
+    let path = engine.registry.get(path_id)?;
+    let solve_block = if engine.cycle.cursor.is_anchored() {
+        Some(engine.cycle.cursor.results_block())
+    } else {
+        engine.cycle.cursor.last_processed_block()
+    };
+    let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
+    // O5SKZ6: capture the engine's last-applied block alongside the
+    // published `solve_block`. When `engine_processed_block >
+    // solve_block`, the engine has advanced past the published solve block
+    // by the time the snapshot is read, so visible drift against an
+    // onchain fetch pinned to `solve_block` is a SNAPSHOT TIMING ARTIFACT
+    // (post-publish swap included in live engine_state but excluded by the
+    // pinned RPC), not real publish-time lag.
+    snapshot.engine_processed_block = engine.cycle.cursor.last_processed_block();
+    // ADR-003: V2 state lives in BotState. One core-lock window covers all
+    // V2 lookups in this loop; V3/V4 state still reads the per-family
+    // block engines (disjoint fields, immutable borrows coexist).
+    let core = engine
+        .core
+        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+    let type_tags: Vec<&str> = path
+        .pools
+        .iter()
+        .map(|r| match r.hop_type {
+            HopType::V2 => "V2",
+            HopType::V3 => "V3",
+            HopType::V4 => "V4",
+            HopType::SolidlyStable => "Solidly",
+            HopType::BalancerWeighted => "BalW",
+            HopType::BalancerStable => "BalS",
+            HopType::CurveStableswap => "Crv",
+        })
+        .collect();
+    snapshot.path_type = type_tags.join("-");
+    for (position, pool_ref) in path.pools.iter().enumerate() {
+        let engine_state = build_engine_pool_state(&core, pool_ref);
+        let Some(engine_state) = engine_state else {
+            // Pool referenced by the path is missing from the sub-engine.
+            // This is itself a diagnostic signal; record a placeholder
+            // and continue so the rest of the hops are still visible.
             snapshot.hops.push(DiagnosticHop {
                 position,
                 hop_type: type_tags[position].to_string(),
                 zero_for_one: pool_ref.zero_for_one,
-                engine_state,
+                engine_state: DiagnosticPoolState::V2 {
+                    address: "0x0000000000000000000000000000000000000000".to_string(),
+                    reserve_in: "0x0".to_string(),
+                    reserve_out: "0x0".to_string(),
+                    fee_denom: "0x0".to_string(),
+                    gamma_numer: "0x0".to_string(),
+                },
                 onchain_state: None,
-                diff: Vec::new(),
+                diff: vec![format!("missing pool_key={} in engine", pool_ref.pool_key)],
                 drift: false,
                 field_drift: Vec::new(),
             });
-        }
-        thread_solver_result_onto_snapshot(
-            &mut snapshot,
-            self.cycle.results.get(&path_id).as_deref(),
-        );
-        Some(snapshot)
+            continue;
+        };
+        snapshot.hops.push(DiagnosticHop {
+            position,
+            hop_type: type_tags[position].to_string(),
+            zero_for_one: pool_ref.zero_for_one,
+            engine_state,
+            onchain_state: None,
+            diff: Vec::new(),
+            drift: false,
+            field_drift: Vec::new(),
+        });
     }
+    thread_solver_result_onto_snapshot(
+        &mut snapshot,
+        engine.cycle.results.get(&path_id).as_deref(),
+    );
+    Some(snapshot)
 }
 /// Thread the solver's `optimal_input` + `hop_outputs` (the solver's REPORTED
 /// per-hop amounts — the EXPECTED basis the classifier compares captured
@@ -622,9 +623,7 @@ mod tests {
                 },
             ])
             .unwrap();
-        let snapshot = engine
-            .diagnostic_path_state(path_id)
-            .expect("path should exist");
+        let snapshot = super::diagnostic_path_state(&engine, path_id).expect("path should exist");
         assert_eq!(snapshot.path_id, path_id);
         assert_eq!(snapshot.path_type, "V2-V3-V4");
         assert_eq!(snapshot.hops.len(), 3);
@@ -653,7 +652,7 @@ mod tests {
     #[test]
     fn diagnostic_path_state_returns_none_for_unknown_path() {
         let engine = ArbitrageEngine::new();
-        assert!(engine.diagnostic_path_state(1234).is_none());
+        assert!(super::diagnostic_path_state(&engine, 1234).is_none());
     }
     /// O5SKZ6: the snapshot's `engine_processed_block` (the engine's
     /// last-applied block at snapshot time) MUST be present so the analyzer
@@ -694,12 +693,12 @@ mod tests {
             .unwrap();
         // No solve_dirty yet → both `solve_block` and
         // `engine_processed_block` are `None`.
-        let snap = engine.diagnostic_path_state(path_id).expect("path exists");
+        let snap = super::diagnostic_path_state(&engine, path_id).expect("path exists");
         assert_eq!(snap.engine_processed_block, engine.last_processed_block());
         assert_eq!(snap.engine_processed_block, None);
         // Drive a cycle at 123 → last_processed_block = Some(123).
         engine.run_test_cycle(123, &BlockMetadata::default(), &[]);
-        let snap = engine.diagnostic_path_state(path_id).expect("path exists");
+        let snap = super::diagnostic_path_state(&engine, path_id).expect("path exists");
         assert_eq!(
             snap.engine_processed_block,
             engine.last_processed_block(),
@@ -708,7 +707,7 @@ mod tests {
         assert_eq!(snap.engine_processed_block, Some(123));
         // Advance: a cycle at 124 → last_processed_block = Some(124).
         engine.run_test_cycle(124, &BlockMetadata::default(), &[]);
-        let snap = engine.diagnostic_path_state(path_id).expect("path exists");
+        let snap = super::diagnostic_path_state(&engine, path_id).expect("path exists");
         assert_eq!(snap.engine_processed_block, Some(124));
         // JSON round-trip preserves the field.
         let json = serde_json::to_string(&snap).expect("serializes");

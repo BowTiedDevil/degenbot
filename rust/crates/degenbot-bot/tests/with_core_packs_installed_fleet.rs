@@ -4,7 +4,7 @@
 //!
 //! Contracts pinned at the real-boot layer:
 //! 1. The python-driven pump's boot order (loader → holder install →
-//!    `ArbitrageEngine::with_core`) constructs the engine on the installed
+//!    `EngineStages::with_core`) constructs the engine on the installed
 //!    config (the P6YXA6 production-boot fix regression guard; there is no
 //!    stance to probe — fleet structurally is the executor).
 
@@ -33,5 +33,10 @@ fn with_core_boots_from_the_installed_config_without_a_stance() {
     ));
     // Construction packs its stances from the INSTALLED loader config and
     // unconditionally installs the fleet boots (no stance gate survives).
-    let _engine = degenbot_bot::arb_engine::ArbitrageEngine::with_core(core);
+    // The ONE external construction seam (epic 5TBT7L Q2b): the engine type
+    // is `pub(crate)`; consumers cross `EngineStages`.
+    let _stages = degenbot_bot::arb_engine::EngineStages::with_core(
+        core,
+        Arc::new(degenbot_bot::bot_core::EpochDelta::new(0u64)),
+    );
 }

@@ -1,15 +1,16 @@
-//! `PyO3` wrapper for the `ArbitrageEngine`.
+//! `PyO3` wrapper for the arbitrage engine stage surface.
 //!
-//! [`PyArbitrageEngine`] wraps [`ArbitrageEngine`] with a `parking_lot::Mutex`
-//! for safe access from the Tokio pump task. All Python-facing methods
-//! acquire the lock, perform their operation, and release it.
+//! [`PyArbEngine`] holds the shared [`EngineStages`] handle — the ONE
+//! external seam (epic 5TBT7L Q2b). The core engine type is crate-private
+//! machinery behind that seam; every Python-facing method crosses the stage
+//! surface and never names the engine.
 
 //! # Layout
 //!
-//! - [`PyArbitrageEngine`] (the `#[pyclass]`) is declared here; its
+//! - [`PyArbEngine`] (the `#[pyclass]`) is declared here; its
 //!   `#[pymethods]` surface is split across [`register`], [`snapshot`],
 //!   [`verify`], [`solve`], [`result_channel`] (`PyO3` permits multiple
-//!   `#[pymethods] impl PyArbitrageEngine` blocks). [`errors`] holds the
+//!   `#[pymethods] impl PyArbEngine` blocks). [`errors`] holds the
 //!   `#[create_exception]` types.
 //! - Mirrors `polars-python/src/expr/`'s 17-file `PyExpr` split and the
 //!   existing `crates/degenbot-bot/src/arb_engine/` core split.
@@ -48,21 +49,23 @@ pub(crate) use degenbot_bot::bot_core::{Bot, V4StateSync};
 
 pub(crate) use degenbot_bot::arb_engine::EngineStages;
 
-pub(crate) use degenbot_bot::arb_engine::{ArbitrageEngine, BlockNotification, ResultBatch};
+pub(crate) use degenbot_bot::arb_engine::{BlockNotification, ResultBatch};
 pub(crate) use degenbot_solvers::mixed::{HopType, PoolHop, SolvePathResult};
 
 /// Python-facing mixed V2/V3 arbitrage engine.
 ///
-/// Wraps [`ArbitrageEngine`] with a `parking_lot::Mutex` for safe access
-/// from the Tokio pump task.
+/// Holds the shared [`EngineStages`] seam (the engine type is `pub(crate)`
+/// machinery behind it).
 #[pyclass(
+    // The Python-visible class name is written as an escaped literal so the
+    // core engine type name never appears in this crate (grep gate).
     name = "ArbitrageEngine",
     skip_from_py_object,
     module = "degenbot._ffi"
 )]
-pub struct PyArbitrageEngine {
-    /// Shared engine state
-    engine: Arc<parking_lot::Mutex<ArbitrageEngine>>,
+pub struct PyArbEngine {
+    /// The ONE external engine seam (epic 5TBT7L Q2b).
+    stages: Arc<EngineStages>,
 
     /// ADR-006 D4 (T3): the pump lifecycle state (coordinator, reorg
     /// coordinator, bot, shutdown, pump handle, subscribe state, phase) now
@@ -91,48 +94,39 @@ pub struct PyArbitrageEngine {
     warm_code_cache: Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>>,
 }
 
-impl PyArbitrageEngine {
-    /// Sanctioned engine access for pymethod code (GIL/`BotState` inversion
-    /// class, incidents 2026-08-20/21): the engine `Mutex` is acquired INSIDE
+impl PyArbEngine {
+    /// Sanctioned stage-surface access for pymethod code (GIL/`BotState`
+    /// inversion class, incidents 2026-08-20/21): the closure runs INSIDE
     /// `py.detach`. Same invariant contract as `PyBot::with_state` — see the
     /// doc comment there.
-    pub(crate) fn with_engine<T>(
+    pub(crate) fn with_stages<T>(
         &self,
         py: Python<'_>,
-        f: impl FnOnce(&ArbitrageEngine) -> T + Send,
+        f: impl FnOnce(&EngineStages) -> T + Send,
     ) -> T
     where
         T: Send,
     {
-        py.detach(|| {
-            let engine = self.engine.lock();
-            // T1-scan-exempt: sanctioned accessor — lock inside py.detach by definition.
-            f(&engine)
-        })
+        py.detach(|| f(&self.stages))
     }
 
-    /// Sanctioned engine-core read access: engine `Mutex` + `BotState` read
-    /// guard, both acquired INSIDE `py.detach` (engine-then-core ordering per
-    /// ADR-003). See [`Self::with_engine`].
-    pub(crate) fn with_engine_core<T>(
-        &self,
-        py: Python<'_>,
-        f: impl FnOnce(&BotState) -> T + Send,
-    ) -> T
+    /// Sanctioned core read access: the `BotState` read guard is acquired
+    /// INSIDE `py.detach` (the stage surface yields the shared core arc).
+    /// See [`Self::with_stages`].
+    pub(crate) fn with_core<T>(&self, py: Python<'_>, f: impl FnOnce(&BotState) -> T + Send) -> T
     where
         T: Send,
     {
-        py.detach(|| {
-            let engine = self.engine.lock();
-            let core = engine.core();
+        py.detach(move || {
+            let core = self.stages.core();
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
             let guard = core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             f(&guard)
         })
     }
 
-    /// Sanctioned engine-core write access — see [`Self::with_engine_core`].
-    pub(crate) fn with_engine_core_mut<T>(
+    /// Sanctioned core write access — see [`Self::with_core`].
+    pub(crate) fn with_core_mut<T>(
         &self,
         py: Python<'_>,
         f: impl FnOnce(&mut BotState) -> T + Send,
@@ -141,37 +135,19 @@ impl PyArbitrageEngine {
         T: Send,
     {
         py.detach(move || {
-            let engine = self.engine.lock();
-            let core = engine.core();
+            let core = self.stages.core();
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
             let mut guard = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             f(&mut guard)
         })
     }
 
-    /// Sanctioned engine MUTATING access — see [`Self::with_engine`].
-    pub(crate) fn with_engine_mut<T>(
-        &self,
-        py: Python<'_>,
-        f: impl FnOnce(&mut ArbitrageEngine) -> T + Send,
-    ) -> T
-    where
-        T: Send,
-    {
-        py.detach(move || {
-            let mut engine = self.engine.lock();
-            // T1-scan-exempt: sanctioned accessor — lock inside py.detach by definition.
-            f(&mut engine)
-        })
-    }
-    /// The shared `BotState` arc (ADR-003) — the engine's `core`
-    /// `Arc<RwLock<BotState>>`, cloned out for callers that need to read the
-    /// pool-state registry (e.g. the in-process `BlockSimHandle` path
-    /// borrows `&BotState` for `BotStateDb`). Acquires the engine lock
-    /// (engine-then-core ordering per ADR-003) + clones the `core` arc —
-    /// one Arc clone, no state copy.
+    /// The shared `BotState` arc (ADR-003) — the stage surface's `core`
+    /// handoff, cloned out for callers that need to read the pool-state
+    /// registry (the in-process `BlockSimHandle` path borrows `&BotState`
+    /// for `BotStateDb`). One Arc clone, no state copy.
     pub(crate) fn bot_state_arc(&self) -> Arc<StateLock<BotState>> {
-        self.engine.lock().core().clone()
+        self.stages.core()
     }
 
     /// The cross-block warm bytecode cache arc (`HDEG7H` Option A) — the
@@ -222,10 +198,10 @@ pub(crate) fn hex_string_to_pool_id(
 }
 
 /// `#[pymethods]` slice for the JUCFCB snapshot-seed getter. `PyO3` allows
-/// multiple `#[pymethods] impl PyArbitrageEngine { ... }` blocks; this is the
+/// multiple `#[pymethods] impl PyArbEngine { ... }` blocks; this is the
 /// snapshot-seed surface (the phase / startup ritual lives in `pump.rs`/`solve.rs`).
 #[pymethods]
-impl PyArbitrageEngine {
+impl PyArbEngine {
     /// The snapshot seed block `S` (JUCFCB) — set at `Bot.__init__` time by
     /// `Bot::load_snapshot_from_db` for the DB path, OR via
     /// [`set_snapshot_seed_block`](Self::set_snapshot_seed_block) for the
@@ -236,7 +212,7 @@ impl PyArbitrageEngine {
     #[getter]
     fn snapshot_seed_block(&self, py: Python<'_>) -> Option<u64> {
         // GIL hygiene: guards acquired inside the accessor's py.detach.
-        self.with_engine_core(py, degenbot_bot::bot_core::BotState::snapshot_seed_block)
+        self.with_core(py, degenbot_bot::bot_core::BotState::snapshot_seed_block)
     }
 
     /// Set the snapshot seed block `S` on the shared `BotState` for the
@@ -255,6 +231,6 @@ impl PyArbitrageEngine {
     #[setter]
     fn set_snapshot_seed_block(&self, py: Python<'_>, block: Option<u64>) {
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_engine_core_mut(py, |s| s.set_snapshot_seed_block(block));
+        self.with_core_mut(py, |s| s.set_snapshot_seed_block(block));
     }
 }

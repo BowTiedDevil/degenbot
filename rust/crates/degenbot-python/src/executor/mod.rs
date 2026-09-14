@@ -15,7 +15,7 @@
 //! (`dispatch_profitable_py` calls `composers::encode_cmd_stream` internally —
 //! A5 "now called internally by the seam, not from the example"), and the
 //! candidate resolves its `composers::PathInfo` from a registered `path_id`
-//! via `PyArbitrageEngine::path_info_for_core` (NXM2BF). The `[profit]`
+//! via `PyArbEngine::path_info_for_core` (NXM2BF). The `[profit]`
 //! hop-detail render reads `outcome.path_infos` as plain `dict`s (built in
 //! `simulation/outcome.rs`). The Python `hop_info` dataclasses are deleted.
 //! No Python caller reaches `encode_cmd_stream` / `v4_*` on `degenbot._ffi`

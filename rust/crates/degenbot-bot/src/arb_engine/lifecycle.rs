@@ -99,7 +99,6 @@ impl ArbitrageEngine {
     ///
     /// Returns `Err` if any `pool_id` is not registered in the associated
     /// `BotState`.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn register_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, PathRegistrationError> {
         self.cycle
             .register_path(hops, &mut self.registry)
@@ -116,7 +115,6 @@ impl ArbitrageEngine {
     ///
     /// Returns `Err` if any `pool_id` is not registered in the associated
     /// `BotState` (see [`register_path`](Self::register_path)).
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn register_and_solve_path(
         &mut self,
         hops: Vec<PoolHop>,
@@ -131,7 +129,6 @@ impl ArbitrageEngine {
     /// LPEOBI: caches the stance ON the engine - with `None` the expiry is
     /// a provable no-op and `expire_buffered_events` skips the core write (each)
     /// write bought a ~2.9s writer-queue slot under the block-apply stream).
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.event_buffer_expiry_enabled = max_age.is_some();
         self.core
@@ -156,7 +153,6 @@ impl ArbitrageEngine {
     /// shards into an owned `HashMap` so the caller never holds a lock
     /// into the engine. `O(n_results)` — typically <50 entries (profitable
     /// solves only) per drain.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
         (
@@ -184,7 +180,6 @@ impl ArbitrageEngine {
     ///
     /// 6XB6NJ: a monotone advance on the block cursor — a lower value
     /// cannot pull the processed boundary backwards.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_last_processed_block(&mut self, block: u64) {
         self.cycle.cursor.advance_processed(block);
     }
@@ -194,6 +189,7 @@ impl ArbitrageEngine {
     /// solved block on join (ADR-006 D4). Starts at 0 (so the first header /
     /// tombstone `finalize_block(block > 0)` fires).
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub const fn last_solved_block(&self) -> u64 {
         self.cycle.cursor.last_solved_block()
     }
@@ -212,6 +208,7 @@ impl ArbitrageEngine {
     /// the empty-block branch sends the advance diff). Owned by the engine
     /// since LEZJAS; returns `false` until the first `record_logs_this_block`.
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub const fn has_logs_this_block(&self) -> bool {
         self.cycle.cursor.has_logs_this_block()
     }
@@ -230,7 +227,6 @@ impl ArbitrageEngine {
     /// Callers read results via `latest_results()`; none reads a dispatched
     /// `ResultBatch` from this entry (grep-verified across `tests/`, `examples/`,
     /// and `src/degenbot/`).
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[tracing::instrument(name = "degenbot.arb.solve_all", skip(self), fields(block_number, path_count = self.registry.len()))]
     pub fn solve_all_paths(&mut self, block_number: u64) {
         self.cycle.solve_all_paths(block_number, &self.registry);
@@ -257,7 +253,6 @@ impl ArbitrageEngine {
             .v4_pool_count()
     }
     /// Number of registered mixed paths.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn path_count(&self) -> usize {
         self.registry.len()
@@ -265,14 +260,12 @@ impl ArbitrageEngine {
     /// PRG-4 / IRUMXD: the engine path registry owns the registered-path cap
     /// (was the Python `MAX_REGISTERED_PATHS` counter). `None` = unlimited.
     /// The `PyO3` driver sets it once at boot from the typed config value.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_path_cap(&mut self, cap: Option<usize>) {
         self.registry.set_cap(cap);
     }
     /// PRG-4: dedup hits counted engine-side — a duplicate registration
     /// returns the existing id and never surfaces to the driver as a skip,
     /// so the `dup` telemetry needs this witness.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn path_dedups(&self) -> u64 {
         self.registry.dedups()
@@ -280,11 +273,13 @@ impl ArbitrageEngine {
     /// Total actual hop projections performed (cache misses) since engine
     /// construction. Test + telemetry observable for the projection memo.
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn hop_projection_count(&self) -> u64 {
         self.cycle.hop_projection_count
     }
     /// Return the list of registered V4 `PoolManager` addresses.
     #[must_use]
+    #[expect(dead_code)]
     pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
         self.core
             .read_at(crate::bot_core::state_lock::LockSite::Solver)

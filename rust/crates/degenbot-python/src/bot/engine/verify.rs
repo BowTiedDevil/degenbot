@@ -1,15 +1,15 @@
-//! `PyO3` wrapper for the `ArbitrageEngine` — verify `#[pymethods]` slice.
+//! `PyO3` wrapper for the engine stage surface — verify `#[pymethods]` slice.
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
 //! mirroring `crates/degenbot-bot/src/arb_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbitrageEngine { … }`
+//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
-use super::{hex_string_to_pool_id, Address, PyArbitrageEngine};
+use super::{hex_string_to_pool_id, Address, PyArbEngine};
 use crate::prelude::*;
 
 #[pymethods]
-impl PyArbitrageEngine {
+impl PyArbEngine {
     /// Run a single V3 pool's registration verify-lifecycle end-to-end
     /// (IKGQ6F / ADR-022 D1) — the core-owned
     /// `quarantine → seed-verify → drain+pin → post-drain-verify → set_live`
@@ -104,7 +104,7 @@ impl PyArbitrageEngine {
 
         // GIL hygiene: engine Mutex + read guard acquired inside py.detach;
         // owned pool data comes out, the PyErr (if any) is built under the GIL.
-        let v3_pools = self.with_engine_core(py, |core| {
+        let v3_pools = self.with_core(py, |core| {
             let key = core.pool_id_by_address(&pool_addr)?;
             let mut map = hashbrown::HashMap::new();
             if let (Some(identity), Some(pool)) = (core.get_v3_identity(key), core.get_v3_pool(key))
@@ -174,7 +174,7 @@ impl PyArbitrageEngine {
         // owned pool data comes out, the PyErr (if any) is built under the GIL.
         // ADR-003: single V4 entry per `(pool_manager, pool_id)` — no dual
         // forward/reverse keys. v4_pool_id_by_key returns Option<u64>.
-        let v4_pools = self.with_engine_core(py, |core| {
+        let v4_pools = self.with_core(py, |core| {
             let v4_key = core.v4_pool_id_by_key(Address::ZERO, &pool_id).or_else(|| {
                 // V4 pools are registered with the actual pool_manager address,
                 // not ZERO. Fallback: scan all V4 pools for matching pool_id.

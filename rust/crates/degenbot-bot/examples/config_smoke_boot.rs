@@ -7,7 +7,7 @@
 //!
 //! A full live boot needs RPC; this main()-level construction proves the
 //! same wiring the pump uses: loader (file layer) -> holder install ->
-//! stance-packing -> `ArbitrageEngine` construction with its instance
+//! stance-packing -> `EngineStages` construction with its instance
 //! `SolveRuntimeConfig`. Exits non-zero on any wiring breakage.
 
 #![expect(
@@ -54,7 +54,14 @@ fn main() -> Result<(), String> {
     let core = Arc::new(degenbot_bot::bot_core::state_lock::StateLock::new(
         degenbot_bot::bot_core::BotState::new(),
     ));
-    let engine = degenbot_bot::arb_engine::ArbitrageEngine::with_core_cfg(core, &cfg);
+    // The ONE external construction seam: `EngineStages` builds the engine
+    // internally (epic 5TBT7L Q2b — the engine type never crosses the crate
+    // boundary).
+    let stages = degenbot_bot::arb_engine::EngineStages::with_core_cfg(
+        core,
+        &cfg,
+        Arc::new(degenbot_bot::bot_core::EpochDelta::new(0u64)),
+    );
 
     // Observe the packed stances end-to-end (config file -> engine field):
     // the file sets pump.streaming_delivery=false and solve.min_profit_wei;
@@ -62,7 +69,7 @@ fn main() -> Result<(), String> {
     println!(
         "config-only smoke boot OK: file={path}, streaming_delivery={}, \
          min_profit_wei={}, solve_cpus_unset={}, metrics_addr={}",
-        engine.streaming_delivery_probe(),
+        stages.streaming_delivery_probe(),
         cfg.solve.min_profit_wei,
         cfg.solve.solve_cpus.is_none(),
         cfg.telemetry.metrics_addr,

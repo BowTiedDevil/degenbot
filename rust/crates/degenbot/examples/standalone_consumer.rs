@@ -193,8 +193,9 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
 
 #[expect(clippy::too_many_lines)]
 fn main() {
-    // 2b reaches ArbitrageEngine for the standalone lifecycle slice.
-    use degenbot::bot::arb_engine::{ArbitrageEngine, EnginePhase};
+    // 2b reaches EngineStages — the ONE external seam a standalone consumer
+    // crosses (the engine type is crate-private machinery, epic 5TBT7L Q2b).
+    use degenbot::bot::arb_engine::{EnginePhase, EngineStages};
 
     // 1. Construct the Rust-owned per-chain bot state (no Python).
     let mut bot = BotState::new();
@@ -234,13 +235,19 @@ fn main() {
         .expect("standalone: register V2");
     assert_eq!(pool_id, 1, "first registered pool gets id 1");
 
-    // 2b. Standalone engine lifecycle (ZU7RAF): the core `ArbitrageEngine`
-    //    owns EnginePhase — a cargo-add degenbot consumer observes + guards it.
-    let engine = ArbitrageEngine::new();
-    assert_eq!(engine.current_phase(), EnginePhase::Created);
-    assert!(engine.current_phase().allow_subscribe("subscribe").is_ok());
-    engine.set_phase(EnginePhase::Subscribed);
-    assert_eq!(engine.current_phase(), EnginePhase::Subscribed);
+    // 2b. Standalone stage-surface lifecycle (ZU7RAF): the seam owns
+    //    EnginePhase — a cargo-add degenbot consumer observes + guards it.
+    let lifecycle_core = Arc::new(degenbot::bot_core::state_lock::StateLock::new(
+        BotState::new(),
+    ));
+    let stages = EngineStages::with_core(
+        lifecycle_core,
+        Arc::new(degenbot::bot_core::EpochDelta::new(0u64)),
+    );
+    assert_eq!(stages.current_phase(), EnginePhase::Created);
+    assert!(stages.current_phase().allow_subscribe("subscribe").is_ok());
+    stages.set_phase(EnginePhase::Subscribed);
+    assert_eq!(stages.current_phase(), EnginePhase::Subscribed);
 
     // 3. Run a swap calc through the Rust core (the `degenbot-v2-math`
     //    `IntHopState` constant-product path). The same code path the PyO3 binding ships to

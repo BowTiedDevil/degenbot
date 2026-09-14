@@ -1,4 +1,4 @@
-//! `PyArbitrageEngine` — `payload_path_info` render-accessor slice (SIMPIPE2
+//! `PyArbEngine` — `payload_path_info` render-accessor slice (SIMPIPE2
 //! T3).
 //!
 //! The inline-sim payload entries bypass the FFI dispatch entirely (Python
@@ -13,21 +13,21 @@ use pyo3::types::PyDict;
 
 use crate::simulation::outcome::path_info_to_py_dict;
 
-use super::PyArbitrageEngine;
+use super::PyArbEngine;
 
 #[pymethods]
-impl PyArbitrageEngine {
+impl PyArbEngine {
     /// The `[profit]`-render `path_infos` dict for ONE registered path (the
     /// same shape `DispatchOutcome.path_infos[pid]` carries) or `None` when
     /// the path is unregistered/unresolvable. SIMPIPE2 T3: payload entries
     /// skip the FFI sim, so the driver enriches merged outcomes per entry.
     ///
-    /// GIL hygiene: the engine Mutex is acquired inside `with_engine` (the
+    /// GIL hygiene: the engine Mutex is acquired inside `with_stages` (the
     /// accessor's `py.detach`, same pattern as `inspect_path`).
     #[must_use]
     fn payload_path_info(&self, path_id: u64, py: Python<'_>) -> Option<Py<PyDict>> {
         let resolved = self
-            .with_engine(py, |e| e.path_info_for(path_id))
+            .with_stages(py, |e| e.path_info_for(path_id))
             .and_then(std::result::Result::ok)?;
         let dict = path_info_to_py_dict(py, &resolved).ok()?;
         Some(dict.unbind())

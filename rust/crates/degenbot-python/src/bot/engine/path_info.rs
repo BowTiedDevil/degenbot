@@ -1,7 +1,7 @@
-//! `PyArbitrageEngine` — `path_info_for` core accessor (NXM2BF).
+//! `PyArbEngine` — `path_info_for` core accessor (NXM2BF).
 //!
-//! [`PyArbitrageEngine::path_info_for_core`] exposes the core
-//! [`ArbitrageEngine::path_info_for`] projection as a `pub(crate)` accessor so
+//! [`PyArbEngine::path_info_for_core`] exposes the core
+//! the stage-surface `path_info_for` projection as a `pub(crate)` accessor so
 //! `PyDispatchCandidate::__new__` (`crate::simulation::candidate`) can resolve
 //! a path's `composers::PathInfo` from a registered `path_id` without a Python
 //! `PathInfo` dataclass round-trip.
@@ -18,9 +18,9 @@ use pyo3::Python;
 
 use degenbot_bot::arb_engine::path_info::PathInfoBuildError;
 
-use super::PyArbitrageEngine;
+use super::PyArbEngine;
 
-impl PyArbitrageEngine {
+impl PyArbEngine {
     /// Core-path accessor (no GIL): resolve `path_id` to its
     /// `composers::PathInfo` via the engine's stored path + the shared
     /// `BotState` identities.
@@ -35,6 +35,6 @@ impl PyArbitrageEngine {
         path_id: u64,
     ) -> Option<Result<PathInfo, PathInfoBuildError>> {
         // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
-        self.with_engine(py, |e| e.path_info_for(path_id))
+        self.with_stages(py, |e| e.path_info_for(path_id))
     }
 }

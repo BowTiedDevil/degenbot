@@ -1,18 +1,18 @@
-//! `PyO3` wrapper for the `ArbitrageEngine` — solve `#[pymethods]` slice.
+//! `PyO3` wrapper for the engine stage surface — solve `#[pymethods]` slice.
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
 //! mirroring `crates/degenbot-bot/src/arb_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbitrageEngine { … }`
+//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    hex_string_to_pool_id, make_tick_info, Address, HashMap, PyArbitrageEngine, PyList, V4StateSync,
+    hex_string_to_pool_id, make_tick_info, Address, HashMap, PyArbEngine, PyList, V4StateSync,
 };
 use crate::prelude::*;
 use std::sync::Arc;
 
 #[pymethods]
-impl PyArbitrageEngine {
+impl PyArbEngine {
     /// Last block number processed by the pump's drain phase. Routes through
     /// the engine's stage surface (`EngineStages`, SZJUKL): the engine's own
     /// cursor. The dissolved coordinator cursor (`last_drained_block` under
@@ -33,7 +33,7 @@ impl PyArbitrageEngine {
     /// Set the last processed block manually after Python backfill.
     #[pyo3(signature = (block))]
     fn set_last_processed_block(&self, py: Python<'_>, block: u64) {
-        self.with_engine_mut(py, |e| e.set_last_processed_block(block));
+        self.with_stages(py, |e| e.set_last_processed_block(block));
     }
 
     /// Resolve and solve all registered paths.
@@ -42,7 +42,7 @@ impl PyArbitrageEngine {
     /// removed `freeze()` + `initial_solve()`). Subsequent `process_logs`
     /// calls use dependency tracking to only re-solve affected paths.
     fn solve_all_paths(&self, py: Python<'_>, block_number: u64) {
-        self.with_engine_mut(py, |e| e.solve_all_paths(block_number));
+        self.with_stages(py, |e| e.solve_all_paths(block_number));
     }
 
     /// Set the maximum age (in blocks) for buffered liquidity events.
@@ -52,30 +52,30 @@ impl PyArbitrageEngine {
     /// are expired during `process_block`.
     #[pyo3(signature = (max_age))]
     fn set_event_buffer_max_age(&self, py: Python<'_>, max_age: Option<u64>) {
-        self.with_engine_mut(py, |e| e.set_event_buffer_max_age(max_age));
+        self.with_stages(py, |e| e.set_event_buffer_max_age(max_age));
     }
 
     /// Discard all buffered liquidity events for all unregistered pools.
     fn flush_event_buffer(&self, py: Python<'_>) {
-        self.with_engine_mut(
+        self.with_stages(
             py,
-            degenbot_bot::arb_engine::ArbitrageEngine::flush_event_buffer,
+            degenbot_bot::arb_engine::EngineStages::flush_event_buffer,
         );
     }
 
     /// Number of registered V2 pools.
     fn v2_pool_count(&self, py: Python<'_>) -> usize {
-        self.with_engine(py, degenbot_bot::arb_engine::ArbitrageEngine::v2_pool_count)
+        self.with_stages(py, degenbot_bot::arb_engine::EngineStages::v2_pool_count)
     }
 
     /// Number of registered V3 pools.
     fn v3_pool_count(&self, py: Python<'_>) -> usize {
-        self.with_engine(py, degenbot_bot::arb_engine::ArbitrageEngine::v3_pool_count)
+        self.with_stages(py, degenbot_bot::arb_engine::EngineStages::v3_pool_count)
     }
 
     /// Number of registered V4 pools.
     fn v4_pool_count(&self, py: Python<'_>) -> usize {
-        self.with_engine(py, degenbot_bot::arb_engine::ArbitrageEngine::v4_pool_count)
+        self.with_stages(py, degenbot_bot::arb_engine::EngineStages::v4_pool_count)
     }
 
     /// Apply all buffered **backfill** V3 Mint/Burn events for a pool address
@@ -97,21 +97,19 @@ impl PyArbitrageEngine {
         let addr = pool_address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
-        let engine = Arc::clone(&self.engine);
-        // YLYJM2: release the GIL across the engine `Mutex` + `core.write()`
-        // hold so the live pump + asyncio loop keep making GIL progress while
-        // the main thread awaits the locks. The SINGLE `core.write()` hold
-        // across both drains AND the post-drain pin is PRESERVED (the step-2
-        // rolling-start race fix — see `pin_v3_post_drain_snapshot`);
-        // `py.detach` wraps the OUTSIDE, it does NOT split the hold. Pre-fix
-        // this widened hold was the worst GIL-carrying park in `build_paths`
-        // (engine.lock() + core.write() across drain+pin). The closure touches
-        // no Python objects.
+        let stages = Arc::clone(&self.stages);
+        // YLYJM2: release the GIL across the `core.write()` hold so the live
+        // pump + asyncio loop keep making GIL progress while the main thread
+        // awaits the lock. The SINGLE `core.write()` hold across both drains
+        // AND the post-drain pin is PRESERVED (the step-2 rolling-start race
+        // fix — see `pin_v3_post_drain_snapshot`); `py.detach` wraps the
+        // OUTSIDE, it does NOT split the hold. Pre-fix this widened hold was
+        // the worst GIL-carrying park in `build_paths` (engine.lock() +
+        // core.write() across drain+pin). The closure touches no Python
+        // objects.
         py.detach(move || {
-            let engine = engine.lock();
-            let mut core = engine
-                .core()
-                .write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+            let core = stages.core();
+            let mut core = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             core.apply_backfill_buffer_v3(&addr);
             core.apply_pump_buffer_v3(&addr);
             core.pin_v3_post_drain_snapshot(addr);
@@ -133,16 +131,13 @@ impl PyArbitrageEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
-        let engine = Arc::clone(&self.engine);
-        // YLYJM2: release the GIL across the engine `Mutex` + `core.write()`
-        // hold (V4 twin of `apply_buffer_v3`). The single-write-hold invariant
-        // (the step-2 race fix) is preserved — `py.detach` wraps the
-        // OUTSIDE.
+        let stages = Arc::clone(&self.stages);
+        // YLYJM2: release the GIL across the `core.write()` hold (V4 twin of
+        // `apply_buffer_v3`). The single-write-hold invariant (the step-2
+        // race fix) is preserved — `py.detach` wraps the OUTSIDE.
         py.detach(move || {
-            let engine = engine.lock();
-            let mut core = engine
-                .core()
-                .write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+            let core = stages.core();
+            let mut core = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             core.apply_backfill_buffer_v4(pm, pool_id);
             core.apply_pump_buffer_v4(pm, pool_id);
             core.pin_v4_post_drain_snapshot(pm, &pool_id);
@@ -164,7 +159,7 @@ impl PyArbitrageEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_engine_core_mut(py, |s| s.set_v3_pool_quarantined(addr));
+        self.with_core_mut(py, |s| s.set_v3_pool_quarantined(addr));
         Ok(())
     }
 
@@ -183,7 +178,7 @@ impl PyArbitrageEngine {
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_engine_core_mut(py, |s| s.set_v4_pool_quarantined(pm, pool_id));
+        self.with_core_mut(py, |s| s.set_v4_pool_quarantined(pm, pool_id));
         Ok(())
     }
 
@@ -197,7 +192,7 @@ impl PyArbitrageEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_engine_core_mut(py, |s| s.set_v3_pool_live(addr));
+        self.with_core_mut(py, |s| s.set_v3_pool_live(addr));
         Ok(())
     }
 
@@ -215,7 +210,7 @@ impl PyArbitrageEngine {
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_engine_core_mut(py, |s| s.set_v4_pool_live(pm, pool_id));
+        self.with_core_mut(py, |s| s.set_v4_pool_live(pm, pool_id));
         Ok(())
     }
 
@@ -227,7 +222,7 @@ impl PyArbitrageEngine {
     #[expect(clippy::unnecessary_wraps)]
     fn release_all_v3_v4_quarantined(&self, py: Python<'_>) -> PyResult<()> {
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_engine_core_mut(
+        self.with_core_mut(
             py,
             degenbot_bot::bot_core::BotState::release_all_v3_v4_quarantined,
         );
@@ -253,7 +248,7 @@ impl PyArbitrageEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_engine_core_mut(py, |s| {
+        self.with_core_mut(py, |s| {
             s.buffer_backfill_v3_liquidity_update(
                 addr,
                 tick_lower,
@@ -271,7 +266,7 @@ impl PyArbitrageEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: guards acquired inside the accessor's py.detach.
-        let count = self.with_engine_core(py, |s| s.buffered_v3_event_count(&addr));
+        let count = self.with_core(py, |s| s.buffered_v3_event_count(&addr));
         Ok(count)
     }
 
@@ -288,7 +283,7 @@ impl PyArbitrageEngine {
         })?;
         // GIL hygiene: guards acquired inside the accessor's py.detach;
         // owned tick data comes out, the dict is built under the GIL below.
-        let tick_data = self.with_engine_core(py, |s| {
+        let tick_data = self.with_core(py, |s| {
             let key = s.pool_id_by_address(&addr)?;
             let pool = s.get_v3_pool(key)?;
             Some(pool.tick_data.clone())
@@ -309,7 +304,7 @@ impl PyArbitrageEngine {
     /// Number of registered paths.
     fn path_count(&self, py: Python<'_>) -> usize {
         // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
-        self.with_engine(py, degenbot_bot::arb_engine::ArbitrageEngine::path_count)
+        self.with_stages(py, degenbot_bot::arb_engine::EngineStages::path_count)
     }
 
     /// Snapshot the engine-owned state for every hop in a registered path.
@@ -339,7 +334,7 @@ impl PyArbitrageEngine {
     ) -> PyResult<pyo3::Py<pyo3::PyAny>> {
         let _ = rpc_url; // retained for API stability; onchain fetch retired (AM5AJW).
                          // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
-        let snapshot = self.with_engine(py, |e| e.diagnostic_path_state(path_id));
+        let snapshot = self.with_stages(py, |e| e.diagnostic_path_state(path_id));
 
         let Some(snapshot) = snapshot else {
             return Err(pyo3::exceptions::PyKeyError::new_err(format!(
@@ -423,7 +418,7 @@ impl PyArbitrageEngine {
             updates.push((addr, sqrt_price, liquidity, tick, rust_tick_data));
         }
 
-        self.with_engine_core_mut(py, |s| {
+        self.with_core_mut(py, |s| {
             for (addr, sqrt_price, liquidity, tick, tick_data) in updates {
                 s.sync_v3_pool_state(addr, sqrt_price, liquidity, tick, tick_data, block_number);
             }
@@ -499,7 +494,7 @@ impl PyArbitrageEngine {
             ));
         }
 
-        self.with_engine_core_mut(py, |s| {
+        self.with_core_mut(py, |s| {
             for (pool_manager, pool_id, sync) in updates {
                 s.sync_v4_pool_state(pool_manager, pool_id, sync);
             }

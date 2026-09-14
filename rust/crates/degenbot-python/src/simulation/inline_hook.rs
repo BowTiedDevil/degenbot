@@ -111,7 +111,7 @@ fn outputs_vec(req: &InlineSimRequest) -> Vec<u128> {
 
 impl InlineSimHook {
     /// Assemble the hook from the installed `PyO3` context (see
-    /// `PyArbitrageEngine::install_inline_simulator`).
+    /// `PyArbEngine::install_inline_simulator`).
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         provider: Arc<AlloyProvider>,

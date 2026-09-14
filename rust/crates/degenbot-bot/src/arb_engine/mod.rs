@@ -358,7 +358,7 @@ pub(crate) type DeferredReRecordHook =
 /// [`ArbitrageEngine::with_core`]; `new()` standalone sugar allocates its own)
 /// and reads/writes pool state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
-pub struct ArbitrageEngine {
+pub(crate) struct ArbitrageEngine {
     /// KAHU5W: the owner-loaded typed bot config (one loader process-wide;
     /// never re-read from the environment). Construction stances + capture
     /// config read from here. ADR-045 T4: the solve cycle owns its own clone
@@ -613,7 +613,6 @@ impl ArbitrageEngine {
     /// Read-only: `path_pools` must stay consistent with the `pool_to_paths`
     /// reverse index, which only the engine's internal register/deregister
     /// paths maintain — so no mutable accessor is exposed.
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn path_pools(&self) -> &HashMap<u64, std::sync::Arc<MixedPath>> {
         self.registry.path_pools()
@@ -645,6 +644,7 @@ impl ArbitrageEngine {
     ///
     /// Returns `Err(String)` describing the invalid transition when the phase
     /// is below `required`.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn require_phase(&self, required: EnginePhase, method_name: &str) -> Result<(), String> {
         self.current_phase().require(required, method_name)
     }
@@ -654,6 +654,7 @@ impl ArbitrageEngine {
     /// # Errors
     ///
     /// Returns `Err(String)` when the engine has already reached `phase`.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn require_phase_before(
         &self,
         phase: EnginePhase,

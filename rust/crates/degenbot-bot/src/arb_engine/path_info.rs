@@ -68,36 +68,37 @@ pub fn build_path_info(
     }
     Ok(PathInfo::new(hops))
 }
-impl ArbitrageEngine {
-    /// Build the engine-facing `composers::PathInfo` for `path_id` by
-    /// resolving each registered hop's identity from the shared `BotState`.
-    ///
-    /// Returns:
-    /// - `None` if `path_id` was never registered.
-    /// - `Some(Err(..))` if a hop's identity is missing or its family has no
-    ///   command-stream encoder arm.
-    ///
-    /// # Lock discipline
-    ///
-    /// Acquires the `BotState` read lock once for the whole projection
-    /// (engine-then-core is the only nested order — no re-entry into the
-    /// engine under the core lock).
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
-    #[must_use]
-    pub fn path_info_for(&self, path_id: u64) -> Option<Result<PathInfo, PathInfoBuildError>> {
-        let path = self.registry.get(path_id)?;
-        let core = self
-            .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
-        let mut hops = Vec::with_capacity(path.pools.len());
-        for pool_ref in &path.pools {
-            match build_hop_info(&core, pool_ref) {
-                Ok(hop) => hops.push(hop),
-                Err(e) => return Some(Err(e)),
-            }
+/// Build the engine-facing `composers::PathInfo` for `path_id` by
+/// resolving each registered hop's identity from the shared `BotState`.
+///
+/// Returns:
+/// - `None` if `path_id` was never registered.
+/// - `Some(Err(..))` if a hop's identity is missing or its family has no
+///   command-stream encoder arm.
+///
+/// # Lock discipline
+///
+/// Acquires the `BotState` read lock once for the whole projection
+/// (engine-then-core is the only nested order — no re-entry into the
+/// engine under the core lock). A crate-internal free function (T5): the
+/// stage surface owns the public seam.
+#[must_use]
+pub(crate) fn path_info_for(
+    engine: &ArbitrageEngine,
+    path_id: u64,
+) -> Option<Result<PathInfo, PathInfoBuildError>> {
+    let path = engine.registry.get(path_id)?;
+    let core = engine
+        .core
+        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+    let mut hops = Vec::with_capacity(path.pools.len());
+    for pool_ref in &path.pools {
+        match build_hop_info(&core, pool_ref) {
+            Ok(hop) => hops.push(hop),
+            Err(e) => return Some(Err(e)),
         }
-        Some(Ok(PathInfo::new(hops)))
     }
+    Some(Ok(PathInfo::new(hops)))
 }
 /// Telemetry helper: render one hop as `FAMILY:pool(zfo=N)`. Unresolvable
 /// identities degrade to the raw `pool_id` rather than failing — this only
@@ -288,8 +289,7 @@ mod tests {
                 },
             ])
             .expect("register_path");
-        let path = engine
-            .path_info_for(path_id)
+        let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("v2 supported");
         assert_eq!(path.hops.len(), 2);
@@ -377,8 +377,7 @@ mod tests {
                 },
             ])
             .expect("register_path");
-        let path = engine
-            .path_info_for(path_id)
+        let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("v2 supported");
         let HopInfo::V2(v2) = &path.hops[0] else {
@@ -427,8 +426,7 @@ mod tests {
                 },
             ])
             .expect("register_path");
-        let path = engine
-            .path_info_for(path_id)
+        let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("v3 supported");
         let HopInfo::V3(v3) = &path.hops[0] else {
@@ -486,8 +484,7 @@ mod tests {
                 },
             ])
             .expect("register_path");
-        let path = engine
-            .path_info_for(path_id)
+        let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("v4 supported");
         let HopInfo::V4(v4) = &path.hops[0] else {
@@ -506,7 +503,7 @@ mod tests {
     #[test]
     fn unknown_path_id_returns_none() {
         let engine = ArbitrageEngine::new();
-        assert!(engine.path_info_for(999).is_none());
+        assert!(super::path_info_for(&engine, 999).is_none());
     }
     /// A multi-hop V2→V3 path projects to a two-hop `PathInfo` in order.
     #[test]
@@ -549,8 +546,7 @@ mod tests {
                 },
             ])
             .expect("register_path");
-        let path = engine
-            .path_info_for(path_id)
+        let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("supported");
         assert_eq!(path.hops.len(), 2);

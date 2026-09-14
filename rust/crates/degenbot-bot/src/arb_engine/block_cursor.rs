@@ -169,11 +169,13 @@ impl BlockCursor {
     }
     /// The solved boundary (the finalize one-shot guard's left side).
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) const fn last_solved_block(&self) -> u64 {
         self.last_solved_block
     }
     /// Whether any forward log applied since the last [`Self::finalize`].
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) const fn has_logs_this_block(&self) -> bool {
         self.has_logs_this_block
     }

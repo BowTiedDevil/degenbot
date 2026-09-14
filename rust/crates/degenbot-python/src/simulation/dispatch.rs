@@ -99,7 +99,7 @@ pub fn dispatch_profitable_py<'py>(
     block_timestamp: u64,
     min_profit_net: u128,
     min_profit_margin_bps: u64,
-    engine: Option<Py<crate::bot::engine::PyArbitrageEngine>>,
+    engine: Option<Py<crate::bot::engine::PyArbEngine>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     // ── GIL-held arg extraction ──
     // Walk the candidate list: clone each held DispatchCandidate into the
@@ -174,7 +174,7 @@ pub fn dispatch_profitable_py<'py>(
     let fot_registry_arc = dispatcher.fot_registry_arc();
 
     // ── BotState extraction (for the in-process `BlockSimHandle` path).
-    // Done under the GIL: the `Py<PyArbitrageEngine>` is borrowed, the engine
+    // Done under the GIL: the `Py<PyArbEngine>` is borrowed, the engine
     // lock is acquired (engine-then-core ordering per ADR-003), + the `core`
     // `Arc<RwLock<BotState>>` is cloned out (cheap — one Arc clone). The arc
     // threads through the async fan-out; the per-block read guard is taken in
@@ -394,7 +394,7 @@ fn derive_path_pools(hops: &[HopInfo]) -> HashSet<PoolKey> {
 ///
 /// 1. The registered path's typed hops are resolved via the SAME
 ///    engine projection the FFI batch candidates use
-///    (`PyArbitrageEngine::path_info_for_core`) and routed through
+///    (`PyArbEngine::path_info_for_core`) and routed through
 ///    `join_sim_result` → `derive_path_pools` — the mutual-exclusion set is
 ///    byte-identical to the FFI batch row for the same path id, by
 ///    construction (V4 → `pool_id_hex`; V2/V3 → EIP-55 Display).
@@ -409,7 +409,7 @@ fn derive_path_pools(hops: &[HopInfo]) -> HashSet<PoolKey> {
 ///
 /// Args:
 ///     payloads: list of payload dicts (one per inline-sim entry).
-///     engine: the `PyArbitrageEngine` (the typed-hop resolver — the same
+///     engine: the `PyArbEngine` (the typed-hop resolver — the same
 ///         engine the payload-producing result batch came from).
 ///     `executor_address`: the session executor contract (the join stamps it
 ///         identically on every row, like `dispatch_profitable_py` does).
@@ -429,7 +429,7 @@ fn derive_path_pools(hops: &[HopInfo]) -> HashSet<PoolKey> {
 #[pyo3(signature = (payloads, engine, executor_address))]
 pub fn merge_payload_results_py(
     payloads: &Bound<'_, PyList>,
-    engine: &crate::bot::engine::PyArbitrageEngine,
+    engine: &crate::bot::engine::PyArbEngine,
     executor_address: &str,
 ) -> PyResult<PyPayloadOutcome> {
     let py = payloads.py();

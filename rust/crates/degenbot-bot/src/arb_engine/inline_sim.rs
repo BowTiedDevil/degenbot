@@ -36,6 +36,7 @@
 //! | `captured_swaps` (`Vec<CapturedSwap>`) | `captured_swaps: Vec<CapturedSwapRow>` |
 //! | `hop_count` | `hop_count` |
 //! | — (dispatch failures only) | `failure: Option<InlineSimFailure>` |
+#[cfg(test)]
 use crate::arb_engine::ArbitrageEngine;
 #[cfg(test)]
 use crate::arb_engine::BlockMetadata;
@@ -226,17 +227,6 @@ pub trait InlineSimulator: Send + Sync + 'static {
         let (tx, rx) = std::sync::mpsc::channel();
         let _ = tx.send(self.simulate_path(request));
         rx
-    }
-}
-impl ArbitrageEngine {
-    /// Install the inline-sim hook (engine construction/wiring, from the
-    /// outer driver; mirrors `set_result_channel`).
-    ///
-    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
-    pub fn set_inline_simulator(&mut self, sim: std::sync::Arc<dyn InlineSimulator>) {
-        // ADR-045 T4 / T3: the cycle owns the handle for the solve dispatch;
-        // the former engine-side copy died with the `inline_simulate` seam.
-        self.cycle.inline_sim = Some(sim);
     }
 }
 /// One scheduled sim: pid + the receipt the worker polls/joins.
@@ -530,7 +520,7 @@ mod inline_sim_tests {
             requests: Mutex::new(Vec::new()),
             payload: stub_payload(),
         });
-        engine.set_inline_simulator(sim.clone());
+        engine.cycle.inline_sim = Some(sim.clone());
         let got = engine
             .cycle
             .inline_simulate(
@@ -583,7 +573,7 @@ mod inline_sim_tests {
             "no hook installed → None"
         );
         let mut engine2 = engine;
-        engine2.set_inline_simulator(Arc::new(RecordingSim {
+        engine2.cycle.inline_sim = Some(Arc::new(RecordingSim {
             requests: Mutex::new(Vec::new()),
             payload: stub_payload(),
         }));

@@ -36,8 +36,11 @@
 //! StateLock-mediated core locking — this type adds NO lock layer.
 use super::solve_cycle::CycleOutcome;
 use super::ArbitrageEngine;
+use super::EnginePhase;
 use super::EngineRetune;
 use crate::bot_core::stage_handlers::StageHandlers;
+use crate::bot_core::state_lock::StateLock;
+use crate::bot_core::BotState;
 use crate::bot_core::{
     stage_handlers::{
         AffectedPaths, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish, PublishOutcome,
@@ -50,6 +53,14 @@ use degenbot_core::diag;
 use degenbot_core::op_error;
 use parking_lot::Mutex;
 use std::sync::Arc;
+
+use super::inline_sim::InlineSimulator;
+use super::path_info::PathInfoBuildError;
+use super::path_registry::PathRegistrationError;
+use super::{DiagnosticPathState, ResultBatch};
+use ::degenbot_solvers::mixed::{MixedPoolRef, PoolHop, SolvePathResult};
+use degenbot_executor::composers::PathInfo;
+use hashbrown::HashMap;
 /// THE one arm-attribution wiring site (cold-start trace): the cycle span is
 /// tagged with `cycle.arm` (`detached` | `skipped_empty` | `shed`; `unset`
 /// before any cycle). Pipeline-free by design: a consumer without the meter
@@ -99,8 +110,34 @@ impl EngineStages {
     /// deferral concept). This is the ONE engine access to the ledger
     /// (engine-side ownership was deliberately avoided — LXDY4C); lock order
     /// stays engine mutex outer, ledger mutex inner, matching `on_resolve`.
+    /// THE external construction seam (epic 5TBT7L Q2b): builds the engine
+    /// itself from the shared core + the caller's typed config, so no consumer
+    /// outside `degenbot-bot` ever names the engine type. The deferred-path
+    /// re-record hook installs exactly as in [`Self::new`].
     #[must_use]
-    pub fn new(engine: Arc<Mutex<ArbitrageEngine>>, delta: Arc<EpochDelta>) -> Self {
+    pub fn with_core_cfg(
+        core: Arc<StateLock<BotState>>,
+        cfg: &std::sync::Arc<::degenbot_config::BotConfig>,
+        delta: Arc<EpochDelta>,
+    ) -> Self {
+        let engine = ArbitrageEngine::with_core_cfg(core, cfg);
+        Self::new(Arc::new(Mutex::new(engine)), delta)
+    }
+
+    /// Config-from-holder sugar over [`Self::with_core_cfg`] — the installed
+    /// owner config (or the schema default in a clean env), byte-compatible
+    /// with the retired `ArbitrageEngine::with_core` entry the `PyO3` driver
+    /// used.
+    #[must_use]
+    pub fn with_core(core: Arc<StateLock<BotState>>, delta: Arc<EpochDelta>) -> Self {
+        Self::with_core_cfg(core, ::degenbot_config::holder::config_arc(), delta)
+    }
+
+    /// Construct over an already-built engine handle — crate-internal (the
+    /// engine type is `pub(crate)` machinery). External consumers use
+    /// [`Self::with_core_cfg`] / [`Self::with_core`].
+    #[must_use]
+    pub(crate) fn new(engine: Arc<Mutex<ArbitrageEngine>>, delta: Arc<EpochDelta>) -> Self {
         {
             let ledger = Arc::clone(&delta);
             engine
@@ -136,6 +173,168 @@ impl EngineStages {
     pub fn apply_retune(&self, retune: &EngineRetune) {
         self.engine.lock().apply_retune(retune);
     }
+    /// The shared core arc (ADR-003 / ADR-006 D1+D2) — the `PyBot` handoff.
+    /// Clones the `Arc` under the engine mutex; its identity stays pinned to
+    /// the one the stage surface and pump reference (no swap surface).
+    #[must_use]
+    pub fn core(&self) -> Arc<StateLock<BotState>> {
+        Arc::clone(self.engine.lock().core())
+    }
+
+    /// Read the current engine lifecycle phase (ZU7RAF core-owned truth).
+    #[must_use]
+    pub fn current_phase(&self) -> EnginePhase {
+        self.engine.lock().current_phase()
+    }
+
+    /// Advance to `phase` with NO ordering check (callers validate via the
+    /// `EnginePhase` gates).
+    pub fn set_phase(&self, phase: EnginePhase) {
+        self.engine.lock().set_phase(phase);
+    }
+
+    /// The packed streaming-delivery construction stance (smoke-boot probe).
+    #[must_use]
+    pub fn streaming_delivery_probe(&self) -> bool {
+        self.engine.lock().streaming_delivery_probe()
+    }
+
+    /// Number of registered paths.
+    #[must_use]
+    pub fn path_count(&self) -> usize {
+        self.engine.lock().path_count()
+    }
+
+    /// Dedup hits counted registry-side (PRG-4).
+    #[must_use]
+    pub fn path_dedups(&self) -> u64 {
+        self.engine.lock().path_dedups()
+    }
+
+    /// The immutable per-hop pool refs of one registered path (the diagnostic
+    /// read; cloned so no engine guard escapes the seam).
+    #[must_use]
+    pub fn path_pool_refs(&self, path_id: u64) -> Option<Vec<MixedPoolRef>> {
+        self.engine
+            .lock()
+            .path_pools()
+            .get(&path_id)
+            .map(|p| p.pools.clone())
+    }
+
+    /// Read the last solved results + block (RAYPAR snapshot).
+    #[must_use]
+    pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
+        self.engine.lock().latest_results()
+    }
+
+    /// Set the registered-path cap (PRG-4 / IRUMXD). `None` = unlimited.
+    pub fn set_path_cap(&self, cap: Option<usize>) {
+        self.engine.lock().set_path_cap(cap);
+    }
+
+    /// Register a mixed path, returning `(path_id, created)` — `created` is
+    /// the registry-growth signal the driver's crawl uses for dedup accounting.
+    ///
+    /// # Errors
+    /// Propagates the typed registration refusal (invalid hop / full registry).
+    pub fn register_path(&self, hops: Vec<PoolHop>) -> Result<(u64, bool), PathRegistrationError> {
+        let mut engine = self.engine.lock();
+        let before = engine.path_count();
+        let path_id = engine.register_path(hops)?;
+        Ok((path_id, engine.path_count() != before))
+    }
+
+    /// Register a path and eagerly solve it (same `(path_id, created)` shape).
+    ///
+    /// # Errors
+    /// Propagates the typed registration refusal.
+    pub fn register_and_solve_path(
+        &self,
+        hops: Vec<PoolHop>,
+    ) -> Result<(u64, bool), PathRegistrationError> {
+        let mut engine = self.engine.lock();
+        let before = engine.path_count();
+        let path_id = engine.register_and_solve_path(hops)?;
+        Ok((path_id, engine.path_count() != before))
+    }
+
+    /// De-register a path. Returns `true` if it existed.
+    pub fn deregister_path(&self, path_id: u64) -> bool {
+        self.engine.lock().deregister_path(path_id)
+    }
+
+    /// Resolve and solve all registered paths (cold-start / test sync entry).
+    pub fn solve_all_paths(&self, block_number: u64) {
+        self.engine.lock().solve_all_paths(block_number);
+    }
+
+    /// Set the last processed block manually (post-backfill).
+    pub fn set_last_processed_block(&self, block: u64) {
+        self.engine.lock().set_last_processed_block(block);
+    }
+
+    /// Set the V3/V4 buffered-event max age (`None` = no expiry).
+    pub fn set_event_buffer_max_age(&self, max_age: Option<u64>) {
+        self.engine.lock().set_event_buffer_max_age(max_age);
+    }
+
+    /// Flush all buffered V3/V4 liquidity events.
+    pub fn flush_event_buffer(&self) {
+        self.engine.lock().flush_event_buffer();
+    }
+
+    /// Number of registered V2 pools.
+    #[must_use]
+    pub fn v2_pool_count(&self) -> usize {
+        self.engine.lock().v2_pool_count()
+    }
+
+    /// Number of registered V3 pools.
+    #[must_use]
+    pub fn v3_pool_count(&self) -> usize {
+        self.engine.lock().v3_pool_count()
+    }
+
+    /// Number of registered V4 pools.
+    #[must_use]
+    pub fn v4_pool_count(&self) -> usize {
+        self.engine.lock().v4_pool_count()
+    }
+
+    /// Snapshot the engine-owned state for every hop in `path_id` (diagnostic).
+    #[must_use]
+    pub fn diagnostic_path_state(&self, path_id: u64) -> Option<DiagnosticPathState> {
+        super::diagnostic::diagnostic_path_state(&self.engine.lock(), path_id)
+    }
+
+    /// Resolve `path_id` to its encoder `PathInfo` projection.
+    #[must_use]
+    pub fn path_info_for(&self, path_id: u64) -> Option<Result<PathInfo, PathInfoBuildError>> {
+        super::path_info::path_info_for(&self.engine.lock(), path_id)
+    }
+
+    /// Attach the result-batch channel (the optional delivery sink).
+    pub fn set_result_channel(&self, tx: tokio::sync::mpsc::UnboundedSender<ResultBatch>) {
+        self.engine.lock().set_result_channel(tx);
+    }
+
+    /// Set the delivery profit thresholds.
+    pub fn set_profit_thresholds(
+        &self,
+        min_profit: alloy::primitives::U256,
+        max_profit: alloy::primitives::U256,
+    ) {
+        self.engine
+            .lock()
+            .set_profit_thresholds(min_profit, max_profit);
+    }
+
+    /// Install the inline-sim hook (construction-time wiring).
+    pub fn set_inline_simulator(&self, sim: Arc<dyn InlineSimulator>) {
+        self.engine.lock().cycle.inline_sim = Some(sim);
+    }
+
     /// The engine's solve cycle — the behavior port of the dissolved
     /// `EngineHandle::solve_dirty` hold/spans/sidecar logic, verbatim.
     ///
