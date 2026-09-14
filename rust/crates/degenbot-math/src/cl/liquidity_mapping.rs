@@ -1,9 +1,7 @@
 //! Liquidity-mapping + tick-bitmap mutation math.
 //!
-//! Pure-Rust port of the Python `apply_liquidity_mapping_update`
-//! (`src/degenbot/calculations/concentrated_liquidity.py`) and `flip_tick` /
-//! `get_tick_word_and_bit_position` (`src/degenbot/uniswap/v3_libraries/tick_bitmap.py`
-//! + `src/degenbot/uniswap/v3_functions.py`).
+//! Canonical Rust home for `apply_liquidity_mapping_update`, `flip_tick`,
+//! + `get_tick_word_and_bit_position`.
 //!
 //! These are the pure computation core of the DB-aware pool updater: given the
 //! current tick bitmap / tick-data maps and a single liquidity event (mint or
@@ -15,15 +13,15 @@
 //! `concentrated/types.py` models and `degenbot-bot`'s `TickInfo`:
 //! `liquidity_gross: U128`, `liquidity_net: I256`, `block: u64`. `liquidity_net`
 //! uses `I256` (not `I128`) so the intermediate `current_net + delta` never
-//! overflows for valid inputs — matching the Python oracle's arbitrary-precision
-//! arithmetic; the Solidity `int128` bound is the caller's concern.
+//! overflows for valid inputs — arbitrary-precision arithmetic; the Solidity
+//! `int128` bound is the caller's concern.
 //!
 //! # Parity
 //!
 //! `#[cfg(test)]` parity fixtures (see `tests/liquidity_mapping_fixtures.json`
-//! and the `apply_liquidity_mapping_update` step-chains) are generated directly
-//! from the Python oracle and assert byte-identical `tick_bitmap` / `tick_data`
-//! / `liquidity` output across in-range adjustments, out-of-range events,
+//! and the `apply_liquidity_mapping_update` step-chains) assert byte-identical
+//! `tick_bitmap` / `tick_data` / `liquidity` output across in-range
+//! adjustments, out-of-range events,
 //! tick initialization (flip on), gross-to-zero deletion (flip off), net-sign
 //! handling at the upper tick, large deltas, and the
 //! `update_block == initial_state_block` no-op path.
@@ -167,9 +165,9 @@ fn narrow_to_u128(v: I256) -> U128 {
 
 /// Apply a liquidity-mapping update to the tick bitmap and tick data maps.
 ///
-/// This is the pure computation core extracted from
-/// `UniswapV3Pool.update_liquidity_map` / `UniswapV4Pool.update_liquidity_map`
-/// (see `calculations/concentrated_liquidity.py`). The input maps are consumed
+/// This is the canonical Rust computation core for
+/// `UniswapV3Pool.update_liquidity_map` / `UniswapV4Pool.update_liquidity_map`.
+/// The input maps are consumed
 /// (moved) — the caller passes clones if it needs to retain the prior state.
 ///
 /// # Invariants (debug-checked, mirroring the Python `assert`s)

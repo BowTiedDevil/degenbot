@@ -55,10 +55,7 @@ pub fn add_concentrated_liquidity_math_module(m: &Bound<'_, PyModule>) -> PyResu
 ///
 /// ADR-005 single-source-of-truth: the canonical home is the
 /// `degenbot-concentrated-liquidity-math` core; the `PyO3` seam surfaces them so Python
-/// companions and a standalone Rust consumer share one source. The
-/// `uniswap/v3_libraries/__init__` package re-exports these names; the
-/// now-retired pure-Python `tick_math.py` constant definitions are gone
-/// (C8 task CM2YQ4).
+/// companions and a standalone Rust consumer share one source.
 fn register_tick_math_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
     use degenbot_math::cl::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
     let py = m.py();

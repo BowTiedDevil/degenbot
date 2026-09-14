@@ -1,6 +1,6 @@
 //! V3 tick bitmap walk — produces ordered initialized and boundary ticks.
 //!
-//! Port of `gen_ticks()` from `uniswap/v3_libraries/tick_bitmap.py`.
+//! Canonical Rust home for `gen_ticks()`.
 //!
 //! The tick bitmap is a `HashMap<i16, U256>` mapping word positions to
 //! 256-bit bitmap values. Each bit in the bitmap corresponds to an

@@ -2794,10 +2794,10 @@ mod tests {
 
     /// Word-of parity: the Rust sparse miss-detection model (`word_of`, used by
     /// both V3 + V4 `vX_simulate_swap` to decide whether the current tick's
-    /// bitmap word is "known") must match the Python companion's bitmap word
-    /// computation (`position(tick // tick_spacing)[0]` in
-    /// `v3_libraries/tick_bitmap.py`). Both use floored division (`div_euclid`
-    /// == Python `//`) + arithmetic right-shift (`>> 8`), so they agree for
+    /// bitmap word is "known") must match the bitmap word computation
+    /// (`position(tick // tick_spacing)[0]`, the canonical word-position math
+    /// in [`crate::tick_bitmap`]). Both use floored division (`div_euclid` ==
+    /// `//`) + arithmetic right-shift (`>> 8`), so they agree for
     /// negative non-multiple current ticks — the regime a crossing swap's
     /// post-step price lives in. This test locks that equivalence so the V4
     /// crossing-swap divergence under the fetch seam (slice 4) is NOT
@@ -2806,7 +2806,7 @@ mod tests {
     /// divergence lives elsewhere (fee accounting / boundary-tick walk / fetch
     /// merge semantics) and must be fork-validated.
     #[test]
-    fn word_of_matches_python_bitmap_word_position_for_edge_ticks() {
+    fn word_of_matches_bitmap_word_position_for_edge_ticks() {
         // (tick, tick_spacing) covering: positive + negative, multiples +
         // non-multiples of spacing, and cross-word boundaries.
         let cases: &[(i32, i32)] = &[
