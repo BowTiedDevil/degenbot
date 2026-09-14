@@ -2447,6 +2447,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-settlement-bot-example"
+version = "0.6.0-alpha.10"
+dependencies = [
+ "degenbot",
+ "toml",
+]
+
+[[package]]
 name = "degenbot-simulation"
 version = "0.6.0-alpha.10"
 dependencies = [

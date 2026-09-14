@@ -1,0 +1,20 @@
+[package]
+name = "degenbot-settlement-bot-example"
+description = "Rust-owned settlement-arbitrage bot — the external consumer's parity twin of examples/eth_settlement_arbitrage_v2_v3_v4_rust.py + src/degenbot/runner (epic RGZG4S; docs/architecture/rust-settlement-bot-parity.md). Depends ONLY on the umbrella `degenbot` crate (+ toml for config.toml reads), exercising exactly what `cargo add degenbot` gives a pure-Rust bot builder — including its gaps."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# External-consumer fidelity: ONLY the umbrella (+ toml to read the Python
+# config.toml cascade layers [rpc]/[ws]/[database]). If a core capability is
+# needed, it must become reachable through `degenbot` — the compile error IS
+# the gap-discovery mechanism (see the parity ledger).
+degenbot = { path = "../../crates/degenbot" }
+toml = "^1"

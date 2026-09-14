@@ -140,6 +140,11 @@ members = [
     "crates/degenbot-uniswap",
     "crates/degenbot-order-index",
     "crates/degenbot-workers",
+    # The Rust-owned settlement-arbitrage bot example — the pure-Rust parity
+    # twin of examples/eth_settlement_arbitrage_v2_v3_v4_rust.py (epic RGZG4S).
+    # Lives outside rust/crates/ deliberately: it depends ONLY on the umbrella
+    # `degenbot` crate, mirroring an external `cargo add degenbot` consumer.
+    "examples/settlement_bot",
 ]
 
 # Release profile.
