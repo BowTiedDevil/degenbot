@@ -13,10 +13,12 @@
 //! - engine struct (`arb_engine/mod.rs`): the four field defs + their
 //!   init (`results_block`, `last_processed_block`, `last_solved_block`,
 //!   `has_logs_this_block`) → one `cursor: BlockCursor`.
-//! - `event_routing.rs::finalize_block`: the hand-written guarded
-//!   four-field transition → [`BlockCursor::finalize`].
-//! - `event_routing.rs::solve_dirty` / `process_updates` tails and
-//!   `lifecycle.rs::set_last_processed_block`: unconditional
+//! - the retired `event_routing.rs::finalize_block` (now
+//!   `engine_stages.rs::StageHandlers::on_finalize`): the hand-written
+//!   guarded four-field transition → [`BlockCursor::finalize`].
+//! - the retired `event_routing.rs::solve_dirty` / `process_updates` tails
+//!   (now `engine_stages.rs::run_engine_cycle` / the `mod.rs` `process_updates`
+//!   test harness) and `lifecycle.rs::set_last_processed_block`: unconditional
 //!   `last_processed_block = Some(n)` writes →
 //!   [`BlockCursor::advance_processed`].
 //! - `solve_cycle.rs` solve stamps (the empty-fanout early return, the

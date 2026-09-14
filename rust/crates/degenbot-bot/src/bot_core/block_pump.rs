@@ -2304,7 +2304,7 @@ impl BlockPump {
     /// Fetches logs via the pump's own `AlloyProvider` (no `rpc_url` from
     /// Python) in `chunk_size` chunks via `build_backfill_filter`, applying
     /// each chunk via `BotState::process_backfill_logs` (the relocated engine
-    /// loop). No `solve_dirty` / no batches — the `Backfilled` phase invariant
+    /// loop). No solve cycle / no batches — the `Backfilled` phase invariant
     /// is "state advanced, no dispatch".
     ///
     /// Returns the count of blocks backfilled (`W - (S+1) + 1 = W-S`), or

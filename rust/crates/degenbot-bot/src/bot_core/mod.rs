@@ -1168,13 +1168,13 @@ impl BotState {
     /// liquidity logs and applies each via the same `apply_v3_swap` /
     /// `buffer_backfill_*_liquidity_update` / `apply_v4_swap` path the live
     /// loop uses; after the chunk, `expire_v3/v4_buffered(chunk_end)` advances
-    /// the liquidity buffers. No `dispatch` / `solve_dirty` — the `Backfilled`
+    /// the liquidity buffers. No `dispatch` / no solve cycle — the `Backfilled`
     /// phase invariant is "state advanced, no batches emitted".
     ///
     /// This is the BotState-level relocation of what was
-    /// `ArbitrageEngine::process_backfill_logs` (`arb_engine/
-    /// event_routing.rs`); the engine method is now a thin delegator +
-    /// `last_processed_block` stamp. `BotState` owns the state (ADR-003);
+    /// `ArbitrageEngine::process_backfill_logs` (the retired
+    /// `arb_engine/event_routing.rs`); the engine method is now a thin
+    /// delegator + `last_processed_block` stamp. `BotState` owns the state (ADR-003);
     /// `BlockPump::backfill_from_snapshot` (core) reaches it via `self.bot`.
     #[expect(clippy::too_many_lines)]
     pub fn process_backfill_logs(&mut self, logs: &[alloy::rpc::types::Log], chunk_end: u64) {

@@ -193,7 +193,7 @@ pub(crate) struct DetachedCycle {
     /// per-bin bin jobs. Carries the unified [`executor::LaneOutcome`]
     /// (QR3NUS 43E3H3).
     merge_tx: Option<std::sync::mpsc::Sender<LaneOutcome>>,
-    /// Receiver parked until `EngineStages::solve_dirty` spawns the merge
+    /// Receiver parked until `EngineStages::run_solve_cycle` spawns the merge
     /// sidecar (taken once via [`Self::take_merge_rx`]). `Mutex`-wrapped so
     /// the engine stays `Sync` (the parked Receiver behind the worker-only
     /// guard is touched exactly once, by the spawner thread).
@@ -289,7 +289,7 @@ impl DetachedCycle {
         self.solve_seq_ctr += 1;
         self.detached_issued_seq = self.solve_seq_ctr;
         // The merge pipe: open ONCE (the first detached cycle). The sidecar
-        // thread is spawned by EngineStages::solve_dirty right after this
+        // thread is spawned by EngineStages::run_solve_cycle right after this
         // enqueue half returns; the Receiver parks in the machine until
         // then.
         if self.merge_tx.is_none() {
@@ -418,7 +418,7 @@ impl DetachedCycle {
         self.outcome_ledger.lock().claim(k)
     }
     /// Hand the parked merge-pipe Receiver to the spawner (epic SRQEK5
-    /// WV62TX): `EngineStages::solve_dirty` takes it ONCE, at the FIRST
+    /// WV62TX): `EngineStages::run_solve_cycle` takes it ONCE, at the FIRST
     /// detached enqueue, and owns it inside the sidecar thread. `None` = the
     /// sidecar is already running (or no detached cycle ever enqueued).
     pub(crate) fn take_merge_rx(&mut self) -> Option<std::sync::mpsc::Receiver<LaneOutcome>> {
@@ -484,7 +484,7 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
 /// unbounded mpsc `Receiver` of the merge pipe and applies each item under
 /// the engine Mutex — Q1a stale gate + the SAME merge/emit path as the
 /// in-cycle drain (`merge_one_result`, which carries the streaming
-/// delivery emission). Spawned by `EngineStages::solve_dirty` at the FIRST
+/// delivery emission). Spawned by `EngineStages::run_solve_cycle` at the FIRST
 /// detached enqueue; runs until every `Sender` drops (engine teardown),
 /// so the pipe never strands items across the engine's lifetime.
 #[expect(
@@ -506,7 +506,14 @@ pub(crate) fn detached_merge_sidecar(
             // the SAME typed drain-death terminal state as a failed send
             // (sticky cordon + counter + loud log); the process lives.
             let merged = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                engine.lock().merge_detached_item(item);
+                // 5TBT7L T4: the terminated member now chains machine-direct
+                // (the engine-level `merge_detached_item` casing is gone).
+                // ONE engine acquisition per item; the machine's own drain
+                // never locks for itself.
+                let mut guard = engine.lock();
+                let e: &mut ArbitrageEngine = &mut guard;
+                e.cycle
+                    .merge_detached_item(item, &e.registry, &mut e.delivery);
             }));
             if let Err(payload) = merged {
                 let message = if let Some(text) = payload.downcast_ref::<&str>() {

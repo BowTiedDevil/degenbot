@@ -15,7 +15,7 @@
 //! - **BO5FBS (QMSTSV)** — the pump promotes `active_block` once before
 //!   `on_drain`, so on the pump path the engine's re-anchor is a defensive
 //!   no-op; it stays load-bearing for callers that bypass the pump (tests
-//!   driving `solve_dirty` directly).
+//!   driving the cycle directly).
 //! - **B2 / 0x99ac8c** — during a backfill/drain desync the pools sit AHEAD
 //!   of the lagging drain clock. A hop at the head (`update_block > raw
 //!   block`) is *LIVE* state, not a future price; aborting on it killed a

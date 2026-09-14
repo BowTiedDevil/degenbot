@@ -120,7 +120,7 @@ mod tests {
         // Process with no logs — should not panic. X35QKN: process_block was
         // retired (the parallel log-routing API); an empty-log process is just
         // solve_dirty over empty dirty sets + the last_processed_block stamp.
-        engine.solve_dirty(1, &BlockMetadata::default(), &[]);
+        engine.run_test_cycle(1, &BlockMetadata::default(), &[]);
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
         let _ = results; // May or may not have profitable results
@@ -897,7 +897,7 @@ mod tests {
             "solve must not advance `delivered` (Python has received nothing)"
         );
         // Only the explicit send drives the channel.
-        engine.send_result_batch(&BlockMetadata::default());
+        engine.compute_diff_and_send(&BlockMetadata::default());
         let batch = rx
             .try_recv()
             .expect("send_result_batch must deliver the batch");
@@ -962,7 +962,7 @@ mod tests {
         engine.cycle.cursor.set_results_block_for_test(100);
         // send_result_batch computes the diff, sends it, and advances
         // `delivered` to the above-threshold subset.
-        engine.send_result_batch(&BlockMetadata::default());
+        engine.compute_diff_and_send(&BlockMetadata::default());
         // Batch was actually delivered to the channel.
         let batch = rx
             .try_recv()
@@ -998,9 +998,9 @@ mod tests {
         let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
         // Pump seeds the settled resume boundary (block 500) at resume.
-        engine.set_solve_anchor(500);
+        engine.cycle.cursor.advance_solved(500);
         assert_eq!(
-            engine.results_block(),
+            engine.cycle.cursor.results_block(),
             500,
             "cold-start anchor seeded to settled resume block"
         );
@@ -1051,9 +1051,9 @@ mod tests {
         assert!(engine.delivery.delivered.contains_key(&path_id));
         // Never regress a real solve anchor: a later seed must not lower it.
         engine.cycle.cursor.set_results_block_for_test(900);
-        engine.set_solve_anchor(600);
+        engine.cycle.cursor.advance_solved(600);
         assert_eq!(
-            engine.results_block(),
+            engine.cycle.cursor.results_block(),
             900,
             "set_solve_anchor never clobbers a real anchor"
         );
@@ -1071,16 +1071,16 @@ mod tests {
     fn late_solve_stamp_cannot_regress_results_anchor() {
         let mut engine = ArbitrageEngine::new();
         // First solve cycle anchors at block 10.
-        engine.solve_dirty(10, &BlockMetadata::default(), &[]);
+        engine.run_test_cycle(10, &BlockMetadata::default(), &[]);
         assert_eq!(
-            engine.results_block(),
+            engine.cycle.cursor.results_block(),
             10,
             "the solve-stamp path anchors results_block at the cycle's solve block"
         );
         // A late/stale stamp through the same path must not regress it.
-        engine.solve_dirty(5, &BlockMetadata::default(), &[]);
+        engine.run_test_cycle(5, &BlockMetadata::default(), &[]);
         assert_eq!(
-            engine.results_block(),
+            engine.cycle.cursor.results_block(),
             10,
             "a stale solve stamp must never regress the results anchor"
         );
@@ -1259,9 +1259,8 @@ mod tests {
         // now OWNS this bookkeeping (the pump out-params retired in ergo task
         // LEZJAS) — drive it through the engine's own accessor so the test
         // exercises the same path the pump uses.
-        engine.set_last_solved_block(0);
-        engine.record_logs_this_block();
-        engine.finalize_block(10, &metadata);
+        engine.cycle.cursor.record_logs();
+        engine.finalize_for_test(10, &metadata);
         // The emitted batch must carry the passed metadata, not default.
         let batch = rx
             .try_recv()
@@ -2914,7 +2913,7 @@ mod tests {
         // Cycle 1: both paths resolve; every UNIQUE (pool,direction) is a
         // miss. Pool A appears in both paths with the same direction, so its
         // single projection serves both paths: A+B+C = 3, not 4 hops.
-        engine.solve_dirty(4, &BlockMetadata::default(), &[]);
+        engine.run_test_cycle(4, &BlockMetadata::default(), &[]);
         assert_eq!(engine.hop_projection_count(), 3);
         // Cycle 2: only pool B is dirty. Shared pool A must NOT re-project;
         // only B's hop in path 1 pays the walk (C's hops are untouched).
@@ -2924,7 +2923,7 @@ mod tests {
             5,
             &BlockMetadata::default(),
         );
-        engine.solve_dirty(5, &BlockMetadata::default(), &[]);
+        engine.run_test_cycle(5, &BlockMetadata::default(), &[]);
         // Only B's projection is fresh; A and C replay from the cache.
         assert_eq!(engine.hop_projection_count(), 4);
         // Cycle 3: A goes dirty. Its cached projection invalidates (nonce
@@ -2936,7 +2935,7 @@ mod tests {
             6,
             &BlockMetadata::default(),
         );
-        engine.solve_dirty(6, &BlockMetadata::default(), &oracle.to_affected_keys());
+        engine.run_test_cycle(6, &BlockMetadata::default(), &oracle.to_affected_keys());
         assert_eq!(engine.hop_projection_count(), 5);
     }
     #[test]
@@ -2978,8 +2977,8 @@ mod tests {
         engine.set_result_channel(tx);
         // Sanity: the balanced cycle is not profitable (an empty affected set
         // — the reorg keys below are explicit).
-        engine.solve_dirty(4, &BlockMetadata::default(), &[]);
-        engine.send_result_batch(&BlockMetadata::default());
+        engine.run_test_cycle(4, &BlockMetadata::default(), &[]);
+        engine.compute_diff_and_send(&BlockMetadata::default());
         let (results_before, _) = engine.latest_results();
         assert!(
             !results_before.contains_key(&path_id),
@@ -2993,7 +2992,7 @@ mod tests {
             5,
             &BlockMetadata::default(),
         );
-        engine.send_result_batch(&BlockMetadata::default());
+        engine.compute_diff_and_send(&BlockMetadata::default());
         let (results_after, _) = engine.latest_results();
         assert!(
             results_after.contains_key(&path_id),
@@ -3023,8 +3022,8 @@ mod tests {
             .keys()
             .map(|(hop, pool)| degenbot_solvers::affected_keys::AffectedKey::new(*hop, *pool))
             .collect();
-        engine.solve_dirty(5, &BlockMetadata::default(), &reorg_keys);
-        engine.send_result_batch(&BlockMetadata::default());
+        engine.run_test_cycle(5, &BlockMetadata::default(), &reorg_keys);
+        engine.compute_diff_and_send(&BlockMetadata::default());
         // The arb is gone.
         let (results_reorg, _) = engine.latest_results();
         assert!(
@@ -3478,7 +3477,7 @@ mod tests {
                     return;
                 }
                 // engine.lock() then, inside, core.write() — engine-then-core.
-                writer_engine.lock().solve_dirty(block, &metadata, &[]);
+                writer_engine.lock().run_test_cycle(block, &metadata, &[]);
             }
         });
         // Readers: companion-getter path — core.read() alone, never the engine.
@@ -3598,7 +3597,7 @@ mod tests {
     /// Bounded join; a real deadlock (bins re-entering the engine `Mutex`, or
     /// a re-entrant core guard) surfaces as a panic on the writer thread.
     #[test]
-    fn solve_dirty_parallel_fanout_survives_concurrent_readers_and_writer() {
+    fn solve_cycle_parallel_fanout_survives_concurrent_readers_and_writer() {
         use crate::bot_core::BlockMetadata;
         use std::sync::Arc;
         use std::thread;
@@ -3652,7 +3651,7 @@ mod tests {
                 if writer_done.load(std::sync::atomic::Ordering::Relaxed) {
                     return;
                 }
-                writer_engine.lock().solve_dirty(block, &metadata, &[]);
+                writer_engine.lock().run_test_cycle(block, &metadata, &[]);
             }
         });
         // Readers: core.read alone — the companion-getter path. Mirrors slice
@@ -5084,7 +5083,7 @@ mod tests {
     #[test]
     #[expect(clippy::expect_used)]
     #[expect(clippy::too_many_lines)]
-    fn solve_dirty_race_marks_dirty_work_with_solve_span() {
+    fn solve_cycle_race_marks_dirty_work_with_solve_span() {
         use crate::arb_engine::EngineStages;
         use std::collections::HashSet;
         use std::sync::Arc;
@@ -5280,7 +5279,7 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             engine_state
                 .lock()
-                .finalize_block(5, &BlockMetadata::default());
+                .finalize_for_test(5, &BlockMetadata::default());
         });
         let spans = log
             .lock()
@@ -5320,7 +5319,7 @@ mod tests {
             );
             assert!(!engine.has_logs_this_block());
             // Results anchor advanced for the terminal batch.
-            assert_eq!(engine.results_block(), 5);
+            assert_eq!(engine.cycle.cursor.results_block(), 5);
         }
         // Terminal publish: the boundary batch still flows to Python with the
         // finalized block as its solve_block.
@@ -5339,10 +5338,9 @@ mod tests {
         let mut engine = ArbitrageEngine::new();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         engine.set_result_channel(tx);
-        engine.set_last_solved_block(0);
         // Empty-logs branch: no dirt, no recorded logs — the pure
         // header-advance boundary.
-        engine.finalize_block(7, &BlockMetadata::default());
+        engine.finalize_for_test(7, &BlockMetadata::default());
         assert_eq!(engine.last_solved_block(), 7);
         assert!(!engine.has_logs_this_block());
         let batch = rx
@@ -5350,7 +5348,7 @@ mod tests {
             .expect("boundary batch must be emitted without dirt");
         assert_eq!(batch.solve_block, 7);
         // Guard no-ops the re-fired boundary.
-        engine.finalize_block(7, &BlockMetadata::default());
+        engine.finalize_for_test(7, &BlockMetadata::default());
         assert!(
             rx.try_recv().is_err(),
             "guard must not double-publish a settled boundary"
@@ -5449,7 +5447,7 @@ mod tests {
         );
     }
     /// KNEUQX: the arb.solve span records `cycle.solve_block` (the cycle's
-    /// anchored work block = `engine.results_block()`) alongside the entry
+    /// anchored work block = `engine.cycle.cursor.results_block()`) alongside the entry
     /// block.number tag. At a settle boundary the anchor is the pool-state
     /// head and can run one (or more) ahead of the entry block - the field
     /// makes that visible/self-documenting in Jaeger instead of showing a
@@ -5489,7 +5487,7 @@ mod tests {
             .iter()
             .find(|sp| sp.name.as_ref() == "degenbot.arb.solve")
             .expect("solve span must be exported");
-        let expected = engine_arc.lock().results_block();
+        let expected = engine_arc.lock().cycle.cursor.results_block();
         let recorded = solve
             .attributes
             .iter()
@@ -5505,7 +5503,7 @@ mod tests {
     #[cfg(feature = "otel")]
     #[test]
     #[expect(clippy::expect_used)]
-    fn solve_dirty_emits_arb_solve_span_with_block_number() {
+    fn solve_cycle_emits_arb_solve_span_with_block_number() {
         use crate::arb_engine::EngineStages;
         use crate::otel;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
@@ -5564,7 +5562,7 @@ mod tests {
     /// `degenbot.arb.expire` span, no queue position.
     #[cfg(feature = "otel")]
     #[test]
-    fn solve_dirty_skips_expire_spans_when_max_age_unset() {
+    fn solve_cycle_skips_expire_spans_when_max_age_unset() {
         use crate::arb_engine::EngineStages;
         use crate::otel;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
@@ -5686,7 +5684,7 @@ mod tests {
     /// one `degenbot.arb.expire` span with `lock_wait_us`/`expire_work_us`.
     #[cfg(feature = "otel")]
     #[test]
-    fn solve_dirty_emits_expire_spans_with_phase_split() {
+    fn solve_cycle_emits_expire_spans_with_phase_split() {
         use crate::arb_engine::EngineStages;
         use crate::otel;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
@@ -5758,7 +5756,7 @@ mod tests {
     /// recent-traces list and drowning the real solves.
     #[cfg(feature = "otel")]
     #[test]
-    fn solve_dirty_skips_span_when_nothing_dirty() {
+    fn solve_cycle_skips_span_when_nothing_dirty() {
         use crate::arb_engine::EngineStages;
         use crate::otel;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
@@ -6215,7 +6213,7 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         let stale_pid = path_ids[0];
         let fresh_pid = path_ids[1];
         assert!(
@@ -6254,7 +6252,7 @@ mod tests {
             )
         };
         // A straggler whose pools ALL ticked during the solve.
-        engine.merge_detached_item(item(stale_result, stale_stamp, stale_pid));
+        engine.merge_detached_for_test(item(stale_result, stale_stamp, stale_pid));
         assert_eq!(
             engine
                 .cycle
@@ -6273,7 +6271,7 @@ mod tests {
             applied_before
         );
         // The unchanged-intake twin APPLIES (apply-if-unchanged).
-        engine.merge_detached_item(item(fresh_result, fresh_stamp, fresh_pid));
+        engine.merge_detached_for_test(item(fresh_result, fresh_stamp, fresh_pid));
         assert_eq!(
             engine
                 .cycle
@@ -6311,7 +6309,7 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
         let applied_before = engine
             .cycle
@@ -6335,8 +6333,8 @@ mod tests {
                 },
             )
         };
-        engine.merge_detached_item(item(fresh_result.clone()));
-        engine.merge_detached_item(item(fresh_result));
+        engine.merge_detached_for_test(item(fresh_result.clone()));
+        engine.merge_detached_for_test(item(fresh_result));
         assert_eq!(
             engine
                 .cycle
@@ -6367,7 +6365,7 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
         assert!(engine.cycle.resolved_update_snapshot.contains_key(&pid));
         assert!(engine.cycle.path_status.contains_key(&pid));
@@ -6385,13 +6383,13 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
         let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
         let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
         assert!(engine.deregister_path(pid), "path must deregister");
         assert!(!engine.cycle.results.contains_key(&pid));
-        engine.merge_detached_item(crate::arb_engine::executor::LaneOutcome::Solved(
+        engine.merge_detached_for_test(crate::arb_engine::executor::LaneOutcome::Solved(
             crate::arb_engine::executor::SolveOutcome {
                 payload: None,
                 worker_clamp_twins: 0,
@@ -6578,7 +6576,7 @@ mod tests {
         stages.run_solve_cycle(&affected_keys_v2, 100, &meta);
         // The shipped cadence continues UNCHANGED mid-merge: a debounce publish
         // + further block cycles interleave with the sidecar's merges.
-        engine.lock().send_result_batch(&meta);
+        engine.lock().compute_diff_and_send(&meta);
         stages.run_solve_cycle(&[], 101, &meta);
         stages.run_solve_cycle(&[], 102, &meta);
         assert!(
@@ -6618,7 +6616,7 @@ mod tests {
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
         // In-cycle solve of the same block: all 3 paths land in `results`.
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
         assert!(
             engine.cycle.results.contains_key(&pid),
@@ -6648,7 +6646,7 @@ mod tests {
                 solve_span: tracing::Span::none(),
             },
         );
-        engine.merge_detached_item(item);
+        engine.merge_detached_for_test(item);
         assert_eq!(
             engine
                 .cycle
@@ -6689,7 +6687,7 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         let results_before = engine.cycle.results.len();
         // Seed directly into the sidecar ledger (pub(crate) state) with
         // pids not otherwise involved, at seq boundaries chosen to straddle
@@ -6710,7 +6708,7 @@ mod tests {
                     solve_span: tracing::Span::none(),
                 },
             );
-            engine.merge_detached_item(item);
+            engine.merge_detached_for_test(item);
         };
         // Drive the anchor forward by ONE detached merge at a high seq; the
         // seeds at (current-65) and (current-63) straddle the age edge.
@@ -6745,8 +6743,8 @@ mod tests {
         // the shared counter must NOT prune detached-keyed rows. Run two
         // in-cycle solves (the shared counter ticks), then re-assert the
         // retained row survived them.
-        engine.solve_dirty(101, &BlockMetadata::default(), &affected_keys_v2);
-        engine.solve_dirty(102, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(101, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(102, &BlockMetadata::default(), &affected_keys_v2);
         let ledger_rows_still = engine.cycle.detached_cycle.outcome_ledger.lock();
         assert!(
             ledger_rows_still.contains((current - 63, 2222)),
@@ -6932,9 +6930,9 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         assert_eq!(
-            engine.cycle_arm(),
+            engine.cycle.cycle_arm(),
             "detached",
             "the retired cap must no longer degrade a cycle to an in-cycle arm"
         );
@@ -6950,7 +6948,7 @@ mod tests {
     fn cycle_arm_label_latches_for_every_dispatch_arm() {
         let (mut engine, pool_ids, _path_ids) = detached_fixture(0);
         assert_eq!(
-            engine.cycle_arm(),
+            engine.cycle.cycle_arm(),
             "unset",
             "no cycle has been dispatched yet"
         );
@@ -6959,9 +6957,9 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         assert_eq!(
-            engine.cycle_arm(),
+            engine.cycle.cycle_arm(),
             "detached",
             "a sub-cap cycle under the detached stance must latch the detached arm"
         );
@@ -6972,9 +6970,9 @@ mod tests {
             .detached_cycle
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed); // == DETACHED_INFLIGHT_CAP
-        engine.solve_dirty(101, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(101, &BlockMetadata::default(), &affected_keys_v2);
         assert_eq!(
-            engine.cycle_arm(),
+            engine.cycle.cycle_arm(),
             "detached",
             "the retired cap gate must not divert a cycle off the one dispatch arm"
         );
@@ -6991,7 +6989,7 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        engine.solve_dirty(
+        engine.run_test_cycle(
             102,
             &BlockMetadata::default(),
             &[degenbot_solvers::affected_keys::AffectedKey::new(
@@ -7000,7 +6998,7 @@ mod tests {
             )],
         );
         assert_eq!(
-            engine.cycle_arm(),
+            engine.cycle.cycle_arm(),
             "skipped_empty",
             "a dirty key with no registered paths must latch the bookkeeping-only arm"
         );
@@ -7016,8 +7014,8 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
-        assert_eq!(engine.cycle_arm(), "detached");
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        assert_eq!(engine.cycle.cycle_arm(), "detached");
         // With a 400ms slow path the results land AFTER return (T2's read) —
         // at least the slow pid is absent.
         assert!(
@@ -7158,7 +7156,7 @@ mod tests {
             .expect("solve hook is infallible");
         let guard = engine.lock();
         assert_eq!(
-            guard.cycle_arm(),
+            guard.cycle.cycle_arm(),
             "shed",
             "a zero-budget cycle must latch the shed arm"
         );
@@ -7178,7 +7176,7 @@ mod tests {
             "the shed counter must fire exactly once"
         );
         assert_eq!(
-            guard.results_block(),
+            guard.cycle.cursor.results_block(),
             100,
             "a shed cycle advances the solved-block cursor like skipped_empty"
         );
@@ -7260,7 +7258,7 @@ mod tests {
             .expect("solve hook is infallible");
         {
             let guard = engine.lock();
-            assert_eq!(guard.cycle_arm(), "shed");
+            assert_eq!(guard.cycle.cycle_arm(), "shed");
             assert!(
                 guard.cycle.pending_new_paths.contains(&pid),
                 "a draw-zero shed must NOT consume the eager merge protection"
@@ -7408,7 +7406,7 @@ mod tests {
         }
         let guard = engine.lock();
         assert_eq!(
-            guard.cycle_arm(),
+            guard.cycle.cycle_arm(),
             "detached",
             "a positive-budget draw always detaches — there is no in-cycle response left"
         );
@@ -7587,9 +7585,9 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         assert_eq!(
-            engine.cycle_arm(),
+            engine.cycle.cycle_arm(),
             "detached",
             "flag OFF: the cycle still takes the one dispatch arm (WFF6MM)"
         );
@@ -7644,7 +7642,7 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
+        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
         let results_before = engine.cycle.results.len();
         let applied_before = engine
@@ -7673,7 +7671,7 @@ mod tests {
                 solve_span: tracing::Span::none(),
             },
         );
-        engine.merge_detached_item(item);
+        engine.merge_detached_for_test(item);
         assert_eq!(
             engine
                 .cycle
@@ -7937,7 +7935,7 @@ mod tests {
         engine.set_deferred_re_record(std::sync::Arc::new(move |keys, block| {
             seen_hook.lock().push((keys.to_vec(), block));
         }));
-        engine.solve_dirty(
+        engine.run_test_cycle(
             100,
             &BlockMetadata::default(),
             &kjwik5_affected_keys(&pool_ids),
@@ -7973,7 +7971,7 @@ mod tests {
         engine
             .cycle
             .set_force_deferred_for_test(HashSet::from([deferred]));
-        engine.solve_dirty(
+        engine.run_test_cycle(
             100,
             &BlockMetadata::default(),
             &kjwik5_affected_keys(&pool_ids),
@@ -7992,7 +7990,7 @@ mod tests {
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let affected = kjwik5_affected_keys(&pool_ids);
         let baseline = kjwik5_capture_deferred_counter(|| {
-            engine.solve_dirty(100, &BlockMetadata::default(), &affected);
+            engine.run_test_cycle(100, &BlockMetadata::default(), &affected);
         });
         assert!(
             !baseline.is_empty(),
@@ -8006,7 +8004,7 @@ mod tests {
             .cycle
             .set_force_deferred_for_test(HashSet::from([path_ids[0], path_ids[2]]));
         let forced = kjwik5_capture_deferred_counter(|| {
-            engine.solve_dirty(101, &BlockMetadata::default(), &affected);
+            engine.run_test_cycle(101, &BlockMetadata::default(), &affected);
         });
         assert!(
             forced.iter().all(|&count| count == 2),
@@ -8101,7 +8099,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert_eq!(
-            engine.lock().results_block(),
+            engine.lock().cycle.cursor.results_block(),
             101,
             "the retried path solves at the retry cycle's block"
         );
@@ -8157,7 +8155,7 @@ mod tests {
             .leads_expired
             .load(Ordering::Relaxed);
         // The re-record targeted cycle 1's solve block.
-        let defer_block = engine.lock().results_block();
+        let defer_block = engine.lock().cycle.cursor.results_block();
         // Cycle 2: narrow the window to zero and advance one block — the
         // cutoff prunes the deferred lead's bucket before the draw, so it is
         // never redrawn.

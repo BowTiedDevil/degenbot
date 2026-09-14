@@ -129,7 +129,7 @@ impl ArbitrageEngine {
     /// (ADR-003: both live on `BotState`).
     ///
     /// LPEOBI: caches the stance ON the engine - with `None` the expiry is
-    /// a provable no-op and `solve_dirty` skips the core write entirely (each
+    /// a provable no-op and `expire_buffered_events` skips the core write (each)
     /// write bought a ~2.9s writer-queue slot under the block-apply stream).
     /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
@@ -197,36 +197,6 @@ impl ArbitrageEngine {
     pub const fn last_solved_block(&self) -> u64 {
         self.cycle.cursor.last_solved_block()
     }
-    /// Seed the engine's `last_solved_block` (e.g. on mid-flight join: a late
-    /// engine inherits the pump's current solved block). Test helper too — the
-    /// `finalize_block_threads_metadata_into_send` test pre-seeds 0 to fire the
-    /// guard. Production pump path lets `finalize_block` advance it.
-    ///
-    /// 6XB6NJ: a monotone advance on the block cursor. Behavior-preserving
-    /// on every existing call path (the ADR-006 D4 inherit + tests): the
-    /// engine starts at 0 and the production stamps are non-decreasing, so
-    /// the max is the same value the old unconditional write landed.
-    pub fn set_last_solved_block(&mut self, block: u64) {
-        self.cycle.cursor.advance_solved_boundary(block);
-    }
-    /// Seed the cold-start `results_block` anchor to a **settled** block (the
-    /// pump calls this at resume with the backfill/resume boundary). Backfill
-    /// deliberately does not solve and `register_and_solve_path` eager-solves
-    /// without advancing `results_block`, so before the first real `on_drain`
-    /// it is `0`. Without a seed, delivery would either publish at block 0 (the
-    /// strategy sims every tracked pool as an EOA → code-less panic) or defer
-    /// every registration eager-solve until the first dirty event (losing a
-    /// capturable window). Seeding `results_block` to the settled resume block
-    /// — a completed, fully-applied block within the backfill window — lets
-    /// cold-start candidates deliver immediately at a valid, verification-safe
-    /// solve block.
-    ///
-    /// 6XB6NJ: a plain monotone advance on the block cursor — the old
-    /// only-if-zero guard is subsumed ("never regress" holds by
-    /// construction; see `BlockCursor::advance_solved`).
-    pub fn set_solve_anchor(&mut self, block: u64) {
-        self.cycle.cursor.advance_solved(block);
-    }
     /// KJWIK5: install the deferred-path re-record hook (the ledger carry).
     /// The `EngineStages` constructor is the production installer — it
     /// captures
@@ -245,14 +215,8 @@ impl ArbitrageEngine {
     pub const fn has_logs_this_block(&self) -> bool {
         self.cycle.cursor.has_logs_this_block()
     }
-    /// Record that at least one forward log applied this block (clears on the
-    /// next `finalize_block`). Replaces the pump's `has_logs_this_block = true;`
-    /// out-param write (ergo task LEZJAS).
-    pub fn record_logs_this_block(&mut self) {
-        self.cycle.cursor.record_logs();
-    }
     /// Resolve and solve all registered paths. **Solve-only — does NOT dispatch
-    /// a batch** (matches `solve_dirty`'s contract; dispatch is the pump's job
+    /// a batch** (matches the cycle's contract; dispatch is the pump's job
     /// via `send_result_batch`, driven by the debounce timer).
     ///
     /// Cold-start / test synchronization entry point (replaces the removed

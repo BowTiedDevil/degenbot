@@ -31,7 +31,6 @@
 //!
 //! | Module | Concern |
 //! |--------|---------|
-//! | [`event_routing`] | Log event routing, block processing, backfill |
 //! | [`lane_walk`] | THE ONE lane walk: per-bin solve, the pipelined-sim pacing, and the walk-adjacent clamp/flush helpers |
 //! | [`solve_cycle`] | The solve cycle as a deep module (ADR-045): the CL-hop clamp + profit recompute live here |
 //! | [`delivery_lifecycle`] | Delivery lifecycle: channel open/send/close + the end-of-stream contract (incident 2026-08-20 #2) |
@@ -46,9 +45,13 @@ use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
 use self::solve_cycle::SolveCycle;
+#[cfg(test)]
+use crate::arb_engine::tests::test_keys::affected_keys;
 use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
+#[cfg(test)]
+use crate::bot_core::V3SwapUpdate;
 use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
@@ -79,7 +82,6 @@ mod diagnostic;
 // oracle, GONE now that `EpochDelta` is sole authority) are deleted —
 // hard cutover, Q6.
 pub mod engine_stages;
-mod event_routing;
 pub(crate) mod executor;
 pub mod fleet_intake;
 mod fleet_registration_executor;
@@ -418,7 +420,7 @@ pub struct ArbitrageEngine {
     phase: std::sync::atomic::AtomicU8,
     /// LPEOBI: does the core hold a configured `max_age` for the V3/V4
     /// buffered-event expiry? With the cockpit default (`max_age=None`)
-    /// `expire` is a provable no-op, so `solve_dirty` must not take a core
+    /// `expire` is a provable no-op, so the stage cycle must not take a core
     /// write for it — each one bought a ~2.9s writer-queue slot under the
     /// block-apply stream. Flipped by [`Self::set_event_buffer_max_age`].
     event_buffer_expiry_enabled: bool,
@@ -755,5 +757,94 @@ impl ArbitrageEngine {
     #[cfg(test)]
     pub(crate) fn fleet_boot_stamp(&self) -> &BootStamp {
         &self.fleet_boot_stamp
+    }
+    /// 5TBT7L T4 test harness: the direct-engine cycle drive the unit tests
+    /// used to reach via the retired `ArbitrageEngine::solve_dirty`. Runs the
+    /// machine's `run_epoch` + the processed-cursor stamp. The PRODUCTION
+    /// pre-cycle expiry + sidecar spawn live on
+    /// `EngineStages::run_solve_cycle`, which the stage tests drive directly.
+    #[cfg(test)]
+    pub(crate) fn run_test_cycle(
+        &mut self,
+        block_number: u64,
+        metadata: &BlockMetadata,
+        affected: &[degenbot_solvers::affected_keys::AffectedKey],
+    ) -> solve_cycle::CycleOutcome {
+        let outcome = self.cycle.run_epoch(
+            affected,
+            block_number,
+            metadata,
+            &self.registry,
+            &mut self.delivery,
+        );
+        // 6XB6NJ: monotone advance on the block cursor.
+        self.cycle.cursor.advance_processed(block_number);
+        outcome
+    }
+    /// 5TBT7L T4 test harness: terminal disposition of one detached straggler
+    /// (the retired `ArbitrageEngine::merge_detached_item`). The production
+    /// caller is the detached-merge sidecar, which chains machine-direct.
+    #[cfg(test)]
+    pub(crate) fn merge_detached_for_test(
+        &mut self,
+        item: crate::arb_engine::executor::LaneOutcome,
+    ) {
+        self.cycle
+            .merge_detached_item(item, &self.registry, &mut self.delivery);
+    }
+    /// 5TBT7L T4 test harness: the guarded boundary advance + terminal
+    /// publish (the retired `ArbitrageEngine::finalize_block`, minus the
+    /// apply-telemetry diag which now rides `EngineStages::on_finalize`).
+    #[cfg(test)]
+    pub(crate) fn finalize_for_test(&mut self, block: u64, metadata: &BlockMetadata) {
+        if self.cycle.cursor.finalize(block) {
+            self.compute_diff_and_send(metadata);
+        }
+    }
+    /// Process pre-decoded updates for testing (moved here with epic 5TBT7L
+    /// T4; the `event_routing.rs` module was deleted).
+    #[cfg(test)]
+    pub(crate) fn process_updates(
+        &mut self,
+        v2_updates: &[(Address, U112, U112)],
+        v3_updates: &[V3SwapUpdate],
+        block_number: u64,
+        metadata: &BlockMetadata,
+    ) {
+        // Apply V2+V3 updates to BotState and collect affected pool ids (ADR-003)
+        let mut v2_affected = HashSet::new();
+        let mut v3_affected = HashSet::new();
+        {
+            let mut core = self
+                .core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver);
+            for &(addr, r0, r1) in v2_updates {
+                if let Some(pool_id) = core.apply_v2_sync(addr, r0, r1, block_number) {
+                    v2_affected.insert(pool_id);
+                }
+            }
+            for update in v3_updates {
+                if let Some(pool_id) = core.apply_v3_swap(
+                    update.pool_address,
+                    update.sqrt_price_x96,
+                    update.liquidity,
+                    update.tick,
+                    block_number,
+                    &update.tick_priors,
+                ) {
+                    v3_affected.insert(pool_id);
+                }
+            }
+        }
+        // Re-solve only paths containing updated pools (test-only intake)
+        self.cycle.run_epoch(
+            &affected_keys(&v2_affected, &v3_affected, &HashSet::new()),
+            block_number,
+            metadata,
+            &self.registry,
+            &mut self.delivery,
+        );
+        // 6XB6NJ: monotone advance on the block cursor.
+        self.cycle.cursor.advance_processed(block_number);
     }
 }

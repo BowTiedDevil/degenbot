@@ -735,6 +735,18 @@ fn recompute_clamped_profit(result: &SolvePathResult) -> Option<U256> {
 // names and event names are byte-identical.
 // ===========================================================================
 impl SolveCycle {
+    /// The CURRENT cycle's dispatch arm (ADR-045 T5): the latency
+    /// histograms' `arm` label, read by the caller that observes the cycle.
+    /// Backed by the typed `last_arm` latch, not a string stash; the stage
+    /// hook reads the `CycleOutcome` directly for its own span/duration.
+    /// Moved here from `event_routing.rs::ArbitrageEngine::cycle_arm` (epic
+    /// 5TBT7L T4) — the machine owns the cycle state. Test-only: the
+    /// production stage hook attributes the arm from `CycleOutcome`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn cycle_arm(&self) -> &'static str {
+        self.last_arm.map_or("unset", |arm| arm.label())
+    }
     #[cfg(test)]
     pub(crate) fn admission_budget_keys(&self) -> Option<usize> {
         if !self.solve_admission {

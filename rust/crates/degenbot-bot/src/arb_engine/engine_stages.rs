@@ -46,6 +46,7 @@ use crate::bot_core::{
     BlockMetadata, Epoch, EpochDelta, PumpControl, Rewind, RewindOutcome,
 };
 use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
+use degenbot_core::diag;
 use degenbot_core::op_error;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -142,8 +143,11 @@ impl EngineStages {
     /// (the solve entry that deliberately bypasses pump semantics). The
     /// driver arrives via `StageHandlers::on_solve`; the stage-span and
     /// detached-sidecar unit-test harnesses drive it directly. The
-    /// engine-level `ArbitrageEngine::solve_dirty` remains the internal
-    /// cycle fn. The eight inherent twins were hard-cut (no shims).
+    /// engine-level cycle method was RETIRED with epic 5TBT7L T4: the
+    /// buffered-event expiry now runs HERE, under this call's held engine
+    /// lock, ahead of `SolveCycle::run_epoch` (the whole
+    /// `event_routing.rs` module is gone). The eight inherent twins were
+    /// hard-cut (no shims).
     pub(crate) fn run_solve_cycle(
         &self,
         affected: &[degenbot_solvers::affected_keys::AffectedKey],
@@ -155,7 +159,7 @@ impl EngineStages {
         // ~2µs empty pass, gate + work under ONE mutex acquisition.
         let mut engine =
             hotpath::measure_block!("EngineStages::solve.probe_lock", self.engine.lock());
-        // WFF6MM: this path spawns the merge sidecar AFTER `solve_dirty`
+        // WFF6MM: this path spawns the merge sidecar AFTER the cycle
         // returns (below), and the machine's merge Receiver is take-once —
         // a direct-call inline drain (the synchronous unit-test harness)
         // would steal it. Disable the inline drain for every EngineStages-
@@ -163,9 +167,10 @@ impl EngineStages {
         #[cfg(test)]
         engine.cycle.set_sync_merge_for_test(false);
         if affected.is_empty() {
-            // Kept for inner bookkeeping parity (last_processed_block et al);
-            // provably cannot consume dirt under this continuous hold.
-            let outcome = engine.solve_dirty(block, metadata, affected);
+            // Kept for inner bookkeeping parity (last_processed_block et al)
+            // plus the pre-cycle expiry; provably cannot consume dirt under
+            // this continuous hold.
+            let outcome = run_engine_cycle(&mut engine, affected, block, metadata);
             drop(engine);
             self.spawn_detached_sidecar_if_pending();
             return outcome;
@@ -203,12 +208,14 @@ impl EngineStages {
             // (µs); the in-cycle arm is the backpressure safety valve only.
             let hold_start = std::time::Instant::now();
             cycle_outcome = if is_multi_thread_runtime() {
-                tokio::task::block_in_place(|| engine.solve_dirty(block, metadata, affected))
+                tokio::task::block_in_place(|| {
+                    run_engine_cycle(&mut engine, affected, block, metadata)
+                })
             } else {
-                engine.solve_dirty(block, metadata, affected)
+                run_engine_cycle(&mut engine, affected, block, metadata)
             };
             // KNEUQX: surface the cycle's anchored block on the span.
-            span.record("cycle.solve_block", engine.results_block());
+            span.record("cycle.solve_block", engine.cycle.cursor.results_block());
             // Cold-start trace (ADR-045 T5): attribute the cycle arm from the
             // typed OUTCOME, never a post-hoc engine stash.
             let _ = record_cycle_arm_telemetry(&span, cycle_outcome.arm_label());
@@ -250,6 +257,122 @@ impl EngineStages {
         };
         super::detached_cycle::spawn_merge_sidecar(&self.engine, merge_rx);
     }
+}
+/// One solve cycle under the caller's held engine lock: the pre-cycle
+/// buffered-event expiry (relocated from the deleted
+/// `event_routing.rs::solve_dirty` prologue), the machine's `run_epoch`, and the
+/// processed-cursor stamp.
+///
+/// LPEOBI/XC7SWD: the expiry core write runs FIRST, ahead of `run_epoch`,
+/// under the SAME engine lock — the engine-then-core nesting is
+/// byte-identical to the retired engine method (never takes the engine lock
+/// while holding the core lock).
+///
+/// LXDY4C: the affected keys arrive from the block's `EpochDelta` (consumed
+/// by the stage surface's `on_resolve` hook); no engine-local dirty-set
+/// intake remains.
+///
+/// 5WCRWZ T7 carry (the doc that lived on the deleted
+/// `rebuild_and_solve_affected`): re-resolve and re-solve only paths that
+/// contain updated pools, using the `pool_to_paths` reverse index to
+/// identify `affected_path_ids`; unaffected paths carry their previous
+/// results forward.
+///
+/// # Panics
+/// When the merged drain's outcome accounting undercounts (exactness fuse,
+/// QR3NUS/LW-T7): the cycle thread fails loudly, never silently mis-sizes.
+fn run_engine_cycle(
+    engine: &mut ArbitrageEngine,
+    affected: &[degenbot_solvers::affected_keys::AffectedKey],
+    block_number: u64,
+    metadata: &BlockMetadata,
+) -> CycleOutcome {
+    expire_buffered_events(engine, block_number);
+    let outcome = engine.cycle.run_epoch(
+        affected,
+        block_number,
+        metadata,
+        &engine.registry,
+        &mut engine.delivery,
+    );
+    // 6XB6NJ: monotone advance on the block cursor.
+    engine.cycle.cursor.advance_processed(block_number);
+    outcome
+}
+/// Expire stale buffered events in the V3/V4 buffers (ADR-003: both now live
+/// on `BotState`) — the relocation of the retired
+/// `event_routing.rs::solve_dirty` prologue.
+///
+/// XC7SWD: these `core.write()` calls ran uninstrumented and own a
+/// ~2.8-3.1s window of every engine mutex hold (`solve_duration` p95
+/// 4.85s vs the rebuild-cycle internal p95 of 0.46s; Jaeger children
+/// sum to <0.5s of a 3.1-3.3s solve span).
+///
+/// LPEOBI: with the cockpit default (`max_age=None`) the expiry is a
+/// provable no-op (`expire()` early-returns: "If `max_age` is `None`",
+/// `liquidity_event_buffer.rs`) - and each write still bought a ~2.9s
+/// writer-queue slot under the block-apply stream (lock WAIT p90
+/// 2.76-3.03s, work 0us in 4,298/4,298 samples). Skip lock-free when
+/// expiry is not configured (read from the T2 retune value).
+fn expire_buffered_events(engine: &ArbitrageEngine, block_number: u64) {
+    if engine.event_buffer_expiry_enabled {
+        let (v3_lock_wait_us, v3_work_us) =
+            expire_buffered_telemetry(engine, "v3", |core| core.expire_v3_buffered(block_number));
+        let (v4_lock_wait_us, v4_work_us) =
+            expire_buffered_telemetry(engine, "v4", |core| core.expire_v4_buffered(block_number));
+        diag!(
+            domain = solver,
+            block_number,
+            expire_v3_lock_wait_us = v3_lock_wait_us,
+            expire_v3_work_us = v3_work_us,
+            expire_v4_lock_wait_us = v4_lock_wait_us,
+            expire_v4_work_us = v4_work_us,
+            "buffered-event expiry (pre-cycle) complete"
+        );
+    } else {
+        diag!(
+            domain = solver,
+            block_number,
+            expiry_enabled = false,
+            "buffered-event expiry skipped (max_age unset)"
+        );
+    }
+}
+/// One buffered-event expiry round under its own `degenbot.arb.expire`
+/// span, split into lock-WAIT (time to acquire the core write lock -
+/// contention with the pump apply loop / Python bridge) vs expiry WORK
+/// (the expire pass itself under the held lock). Returns microseconds
+/// for the aggregated pre-cycle event.
+///
+/// Byte-stable telemetry per ADR-043: same span name, `kind` dimension, and
+/// `lock_wait_us`/`expire_work_us` fields as the retired engine method.
+fn expire_buffered_telemetry(
+    engine: &ArbitrageEngine,
+    kind: &'static str,
+    expire: impl FnOnce(&mut crate::bot_core::BotState),
+) -> (u64, u64) {
+    use std::time::Instant;
+    let span = tracing::info_span!(
+        target: "degenbot::solver",
+        "degenbot.arb.expire",
+        kind,
+        lock_wait_us = tracing::field::Empty,
+        expire_work_us = tracing::field::Empty,
+    );
+    let ctx = span.enter();
+    let lock_t0 = Instant::now();
+    let mut core = engine
+        .core
+        .write_at(crate::bot_core::state_lock::LockSite::Solver);
+    let lock_wait_us = u64::try_from(lock_t0.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let work_t0 = Instant::now();
+    expire(&mut core);
+    let expire_work_us = u64::try_from(work_t0.elapsed().as_micros()).unwrap_or(u64::MAX);
+    drop(core);
+    drop(ctx);
+    span.record("lock_wait_us", lock_wait_us);
+    span.record("expire_work_us", expire_work_us);
+    (lock_wait_us, expire_work_us)
 }
 // P37YJG: the sidecar's thread name + census row + the ONE spawn moved
 // into the machine — `detached_cycle::{merge_sidecar_thread_name,
@@ -302,7 +425,7 @@ impl StageHandlers for EngineStages {
     }
     /// Solved row: the engine's solve cycle over the affected keys. The
     /// in-process simulation (ADR-019) and the gate (ADR-040) run INSIDE
-    /// this engine cycle (`solve_dirty` → solver dispatch + inline sim);
+    /// this engine cycle (`run_epoch` → solver dispatch + inline sim);
     /// results stream on the delivery channel, not on the hook return.
     fn on_solve(&self, work: &Solve) -> Result<SolveOutcome, StageError> {
         // The cycle's typed outcome carries the anchor epoch it solved; pack
@@ -330,15 +453,48 @@ impl StageHandlers for EngineStages {
     /// result batch (delivery/submission/Python are sinks at THIS edge,
     /// not seams in front of the engine).
     fn on_publish(&self, work: &Publish) -> Result<PublishOutcome, StageError> {
-        self.engine.lock().send_result_batch(work.ctx.metadata());
+        // The debounced batch flush (the former send_result_batch one-line
+        // delegation, inlined at its ONE stage caller — epic 5TBT7L T4).
+        self.engine
+            .lock()
+            .compute_diff_and_send(work.ctx.metadata());
         Ok(PublishOutcome::default())
     }
     /// Finalized row: the boundary catch — advance + terminal publish, no
     /// solve cycle (PWPPAZ T1).
     fn on_finalize(&self, work: &Finalize) -> Result<FinalizeOutcome, StageError> {
-        self.engine
-            .lock()
-            .finalize_block(work.ctx.block(), work.ctx.metadata());
+        // The guarded boundary advance + terminal publish, inlined from the
+        // retired ArbitrageEngine::finalize_block (epic 5TBT7L T4). The
+        // block > last_solved_block guard lives on the cursor
+        // (BlockCursor::finalize); the terminal publish rides the same
+        // guard. Bookkeeping-only: this method NEVER runs a solve cycle.
+        let mut engine = self.engine.lock();
+        if engine.cycle.cursor.finalize(work.ctx.block()) {
+            engine.compute_diff_and_send(work.ctx.metadata());
+        }
+        // Authoritative per-family apply split (2SDIQW): hotpath labels do
+        // not aggregate reliably in impl_type mode, so the atomics summarize
+        // per block here. Format: calls:us per family.
+        let (apply_calls, apply_us) = crate::bot_core::apply_telemetry::snapshot_reset();
+        if apply_calls.iter().any(|&c| c > 0) {
+            let mut parts = Vec::with_capacity(5);
+            for i in 0..5 {
+                if apply_calls[i] > 0 {
+                    parts.push(format!(
+                        "{}={}:{}us",
+                        crate::bot_core::apply_telemetry::FAMILY_NAMES[i],
+                        apply_calls[i],
+                        apply_us[i] / 1_000
+                    ));
+                }
+            }
+            diag!(domain = solver, block_number = work.ctx.block(),
+                apply.block_us = apply_us.iter().sum::<u128>() / 1_000,
+                apply.families = %parts.join(","),
+                "block family split"
+            );
+        }
+        drop(engine);
         Ok(FinalizeOutcome {
             cutoff: work.ctx.epoch(),
         })
@@ -360,13 +516,25 @@ impl PumpControl for EngineStages {
         !self.delta.is_empty()
     }
     fn set_last_solved_block(&self, solved: Epoch) {
-        self.engine.lock().set_last_solved_block(solved.block());
+        // 6XB6NJ: machine-direct poke (the lifecycle engine twin was
+        // retired with epic 5TBT7L T4) — monotone solved-boundary advance.
+        self.engine
+            .lock()
+            .cycle
+            .cursor
+            .advance_solved_boundary(solved.block());
     }
     fn set_solve_anchor(&self, anchor: Epoch) {
-        self.engine.lock().set_solve_anchor(anchor.block());
+        // Machine-direct poke: monotone solve-anchor advance.
+        self.engine
+            .lock()
+            .cycle
+            .cursor
+            .advance_solved(anchor.block());
     }
     fn record_logs_this_block(&self) {
-        self.engine.lock().record_logs_this_block();
+        // Machine-direct poke: record at least one forward log this block.
+        self.engine.lock().cycle.cursor.record_logs();
     }
     fn last_processed_block(&self) -> Option<Epoch> {
         self.engine.lock().last_processed_block().map(Epoch::at)
@@ -543,14 +711,17 @@ mod candidate2_seam_pins {
     /// arity/type mismatch fails the build.
     ///
     /// The probed names are the members of the driver surface that are
-    /// poke-free on the engine TODAY (the engine's real surface is
-    /// `solve_dirty`, the lifecycle/delivery setters, and the machine
-    /// pokes), so the pin is green now and turns red exactly when a driver
-    /// name leaks onto the engine.
+    /// poke-free on the engine TODAY (the engine's remaining surface is the
+    /// lifecycle/delivery setters and the machine pokes), so the pin is
+    /// green now and turns red exactly when a driver name leaks onto the
+    /// engine. 5TBT7L T4 added `solve_dirty` to the probe: the engine-level
+    /// cycle method is GONE (the expiry now runs inside
+    /// `EngineStages::run_solve_cycle`).
     #[test]
     fn candidate2_driver_surface_stays_off_the_engine() {
         struct DriverTwinProbeToken;
         trait NoInherentDriverTwinProbe {
+            fn solve_dirty(&self, _t: DriverTwinProbeToken);
             fn run_solve_cycle(&self, _t: DriverTwinProbeToken);
             fn set_block_channel(&self, _t: DriverTwinProbeToken);
             fn on_streaming_complete(&self, _t: DriverTwinProbeToken);
@@ -565,6 +736,7 @@ mod candidate2_seam_pins {
             fn notify_block(&self, _t: DriverTwinProbeToken);
         }
         impl NoInherentDriverTwinProbe for super::ArbitrageEngine {
+            fn solve_dirty(&self, _t: DriverTwinProbeToken) {}
             fn run_solve_cycle(&self, _t: DriverTwinProbeToken) {}
             fn set_block_channel(&self, _t: DriverTwinProbeToken) {}
             fn on_streaming_complete(&self, _t: DriverTwinProbeToken) {}
@@ -579,6 +751,7 @@ mod candidate2_seam_pins {
             fn notify_block(&self, _t: DriverTwinProbeToken) {}
         }
         let engine = super::ArbitrageEngine::new();
+        engine.solve_dirty(DriverTwinProbeToken);
         engine.run_solve_cycle(DriverTwinProbeToken);
         engine.set_block_channel(DriverTwinProbeToken);
         engine.on_streaming_complete(DriverTwinProbeToken);
@@ -738,7 +911,7 @@ mod construction_ledger_pins {
 #[cfg(test)]
 mod dissolution_complete {
     const MOD_RS: &str = include_str!("mod.rs");
-    const EVENT_ROUTING: &str = include_str!("event_routing.rs");
+    const ENGINE_STAGES: &str = include_str!("engine_stages.rs");
     const LANE_WALK: &str = include_str!("lane_walk.rs");
     const SOLVE_CYCLE: &str = include_str!("solve_cycle.rs");
     /// The module tree no longer declares (or even names) `solver_dispatch`.
@@ -776,15 +949,13 @@ mod dissolution_complete {
                 "solve_cycle.rs must own {marker:?} (5WCRWZ T7)"
             );
         }
-        // The detached-merge engine surface moved to event_routing, which
-        // now chains directly to the cycle (no engine twin).
-        for marker in [
-            "pub(crate) fn merge_detached_item(",
-            "self.cycle.run_epoch(",
-        ] {
+        // The detached-merge chain `self.cycle.merge_detached_item(` moved
+        // to its sidecar caller, and the pre-cycle expiry was relocated onto
+        // the stage surface — event_routing.rs is GONE (epic 5TBT7L T4).
+        for marker in ["fn run_engine_cycle(", "fn expire_buffered_events("] {
             assert!(
-                EVENT_ROUTING.contains(marker),
-                "event_routing.rs must own {marker:?} (5WCRWZ T7)"
+                ENGINE_STAGES.contains(marker),
+                "engine_stages.rs must own {marker:?} (5TBT7L T4 expiry relocation)"
             );
         }
         // The Default impl moved beside the engine struct.

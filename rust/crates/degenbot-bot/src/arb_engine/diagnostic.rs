@@ -659,8 +659,8 @@ mod tests {
     /// last-applied block at snapshot time) MUST be present so the analyzer
     /// can distinguish post-publish snapshot timing artifacts (engine advanced
     /// past the published `solve_block`) from real publish-time state lags.
-    /// `solve_dirty(block)` advances `last_processed_block` to `block`
-    /// (`event_routing.rs`); the snapshot's
+    /// a solve cycle advances `last_processed_block` to `block`
+    /// (`EngineStages::run_solve_cycle`); the snapshot's
     /// `engine_processed_block == last_processed_block()`.
     #[test]
     fn diagnostic_path_state_includes_engine_processed_block() {
@@ -697,8 +697,8 @@ mod tests {
         let snap = engine.diagnostic_path_state(path_id).expect("path exists");
         assert_eq!(snap.engine_processed_block, engine.last_processed_block());
         assert_eq!(snap.engine_processed_block, None);
-        // Drive solve_dirty(123) → last_processed_block = Some(123).
-        engine.solve_dirty(123, &BlockMetadata::default(), &[]);
+        // Drive a cycle at 123 → last_processed_block = Some(123).
+        engine.run_test_cycle(123, &BlockMetadata::default(), &[]);
         let snap = engine.diagnostic_path_state(path_id).expect("path exists");
         assert_eq!(
             snap.engine_processed_block,
@@ -706,8 +706,8 @@ mod tests {
             "engine_processed_block must mirror last_processed_block"
         );
         assert_eq!(snap.engine_processed_block, Some(123));
-        // Advance: solve_dirty(124) → last_processed_block = Some(124).
-        engine.solve_dirty(124, &BlockMetadata::default(), &[]);
+        // Advance: a cycle at 124 → last_processed_block = Some(124).
+        engine.run_test_cycle(124, &BlockMetadata::default(), &[]);
         let snap = engine.diagnostic_path_state(path_id).expect("path exists");
         assert_eq!(snap.engine_processed_block, Some(124));
         // JSON round-trip preserves the field.
