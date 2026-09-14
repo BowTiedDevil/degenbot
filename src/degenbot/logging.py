@@ -91,7 +91,13 @@ _DOMAIN_AREAS = frozenset({
 
 
 def _area_for(logger_name: str) -> str:
-    """Derive the console area prefix from a record's logger name."""
+    """Derive the console area prefix from a record's logger name.
+
+    Returns:
+        The first logger-name segment that is a routed domain area (skipping
+        the root `degenbot` segment); the deepest segment when none match.
+
+    """
     parts = logger_name.split(".")
     for part in parts[1:] if len(parts) > 1 else parts:
         if part in _DOMAIN_AREAS:

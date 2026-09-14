@@ -179,6 +179,9 @@ allow-star-arg-any = true
 "src/degenbot/uniswap/deployments.py" = [
     "import-outside-top-level",  # lazy import avoids circular dependency (deployment_loader → pool classes → this module)
 ]
+"src/degenbot/logging.py" = [
+    "PLR6301",  # `logging.Formatter.format(self, record)` is the protocol-signature override; the body legitimately ignores `self`
+]
 "src/degenbot/runner/**" = [
     # These rules were carried forward from the ``examples/*`` accommodation the
     # backrun driver was developed under (epic 5TSYKN relocates it un-rewritten).
