@@ -7,6 +7,17 @@
 #[cfg(test)]
 #[expect(clippy::module_inception)]
 mod tests {
+    use crate::arb_engine::delivery_policy::{
+        compute_diff_and_send, deregister_path, set_profit_thresholds, set_result_channel,
+    };
+    use crate::arb_engine::lifecycle::{
+        latest_results, path_count, path_dedups, register_and_solve_path, register_path,
+        set_deferred_re_record, set_path_cap, solve_all_paths, v2_pool_count, v3_pool_count,
+    };
+    use crate::arb_engine::test_harness::{
+        finalize_for_test, has_logs_this_block, hop_projection_count, last_solved_block,
+        merge_detached_for_test, process_updates, run_test_cycle,
+    };
     use crate::arb_engine::{ArbitrageEngine, BlockMetadata, EnginePhase};
     use crate::bot_core::RegisterV3PoolParams;
     use crate::bot_core::RegisterV4PoolParams;
@@ -71,11 +82,12 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-        assert_eq!(engine.v2_pool_count(), 1);
-        assert_eq!(engine.v3_pool_count(), 1);
+        assert_eq!(v2_pool_count(&engine,), 1);
+        assert_eq!(v3_pool_count(&engine,), 1);
         // Register a mixed V2→V3 path
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -84,10 +96,11 @@ mod tests {
                     pool_id: v3_key,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         assert_eq!(path_id, 1);
-        assert_eq!(engine.path_count(), 1);
+        assert_eq!(path_count(&engine,), 1);
         // Path should be resolved
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert_eq!(resolved.hops.len(), 2);
@@ -105,8 +118,9 @@ mod tests {
         let v2_fwd1 =
             engine.register_v2_pool(v2_addr1, weth(800), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
         // Register a pure V2 path
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -115,13 +129,14 @@ mod tests {
                     pool_id: v2_fwd1,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Process with no logs — should not panic. X35QKN: process_block was
         // retired (the parallel log-routing API); an empty-log process is just
         // solve_dirty over empty dirty sets + the last_processed_block stamp.
-        engine.run_test_cycle(1, &BlockMetadata::default(), &[]);
-        let (results, block) = engine.latest_results();
+        run_test_cycle(&mut engine, 1, &BlockMetadata::default(), &[]);
+        let (results, block) = latest_results(&engine);
         assert_eq!(block, 1);
         let _ = results; // May or may not have profitable results
     }
@@ -172,8 +187,9 @@ mod tests {
             ..Default::default()
         });
         // Mixed V2→V3 path
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -182,8 +198,9 @@ mod tests {
                     pool_id: v3_key,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.hops[0].as_v2_state().is_some());
         assert!(matches!(resolved.hops[1], ResolvedHop::V3 { .. }));
@@ -212,16 +229,19 @@ mod tests {
         // Reference a non-existent V2 pool — ADR-006 D3: register_path
         // rejects a pool_id not present in the BotState rather than silently
         // producing an unresolved/invalid path.
-        let result = engine.register_path(vec![
-            PoolHop {
-                pool_id: 999, // Non-existent
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: v3_key,
-                zero_for_one: false,
-            },
-        ]);
+        let result = register_path(
+            &mut engine,
+            vec![
+                PoolHop {
+                    pool_id: 999, // Non-existent
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key,
+                    zero_for_one: false,
+                },
+            ],
+        );
         assert!(
             result.is_err(),
             "register_path must reject a pool_id not registered in the BotState"
@@ -238,8 +258,9 @@ mod tests {
         let v2_fwd1 =
             engine.register_v2_pool(v2_addr1, weth(800), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
         // Register V2-only path
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -248,16 +269,18 @@ mod tests {
                     pool_id: v2_fwd1,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Process updates
-        engine.process_updates(
+        process_updates(
+            &mut engine,
             &[(v2_addr, usdc(1_400_000), weth(750))],
             &[],
             42,
             &BlockMetadata::default(),
         );
-        let (_, block) = engine.latest_results();
+        let (_, block) = latest_results(&engine);
         assert_eq!(block, 42);
     }
     #[test]
@@ -289,8 +312,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_and_solve_path(vec![
+        let path_id = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -299,10 +323,12 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Pool A swaps at block 100 (advancing update_block to 100), then goes quiet.
-        engine.process_updates(
+        process_updates(
+            &mut engine,
             &[(v2_addr_a, usdc(1_400_000), weth(750))],
             &[],
             100,
@@ -320,7 +346,7 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-        let (results, _block) = engine.latest_results();
+        let (results, _block) = latest_results(&engine);
         let solve_result = results.get(&path_id).expect(
             "quiet-but-current path (hop 11 blocks quiet) must be solved, not deferred \
              (QNFYR5/YXHHKR)",
@@ -363,8 +389,9 @@ mod tests {
         );
         // 2-hop V3(empty) → V2. Registering succeeds (NotViable is recoverable,
         // not structural), but the path is Invalid with responsible={empty_v3}.
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: empty_v3,
                     zero_for_one: true,
@@ -373,8 +400,9 @@ mod tests {
                     pool_id: v2,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         match &engine.cycle.path_status[&path_id] {
             PathSolveStatus::Invalid { responsible } => {
                 assert_eq!(responsible.len(), 1);
@@ -440,8 +468,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -450,11 +479,13 @@ mod tests {
                     pool_id: v2_fwd2,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Registration is always-on; this should not panic
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -463,8 +494,9 @@ mod tests {
                     pool_id: v2_fwd2,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
     }
     use crate::arb_engine::lifecycle::PathRegistrationError;
     /// PRG-4 / IRUMXD: the engine path registry owns the registered-path
@@ -494,7 +526,7 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        engine.set_path_cap(Some(1));
+        set_path_cap(&mut engine, Some(1));
         // Two-hop path (usdc→weth then weth→usdc), per the dedicated
         // reversed-direction registration test above.
         let hops = vec![
@@ -507,13 +539,10 @@ mod tests {
                 zero_for_one: true,
             },
         ];
-        let id1 = engine
-            .register_path(hops.clone())
-            .expect("first registration fits the cap");
+        let id1 =
+            register_path(&mut engine, hops.clone()).expect("first registration fits the cap");
         // A duplicate at-cap still answers (dedup precedes the cap check).
-        let dup = engine
-            .register_path(hops.clone())
-            .expect("dedup is not capped");
+        let dup = register_path(&mut engine, hops.clone()).expect("dedup is not capped");
         assert_eq!(dup, id1, "duplicate registration returns the existing id");
         // A NEW path at the cap (same pools, reversed direction): the typed
         // benign-stop refusal.
@@ -527,9 +556,7 @@ mod tests {
                 zero_for_one: true,
             },
         ];
-        let err = engine
-            .register_path(hops2.clone())
-            .expect_err("cap reached");
+        let err = register_path(&mut engine, hops2.clone()).expect_err("cap reached");
         assert_eq!(
             err,
             PathRegistrationError::RegistryFull {
@@ -539,10 +566,8 @@ mod tests {
             "the refusal carries cap + registered counts"
         );
         // Raising the cap admits the queued registration.
-        engine.set_path_cap(Some(2));
-        let id2 = engine
-            .register_path(hops2)
-            .expect("registry grown by the operator");
+        set_path_cap(&mut engine, Some(2));
+        let id2 = register_path(&mut engine, hops2).expect("registry grown by the operator");
         assert_ne!(id1, id2);
     }
     /// PRG-4: dedup hits are counted engine-side (the `dup` skip telemetry
@@ -572,10 +597,14 @@ mod tests {
                 zero_for_one: true,
             },
         ];
-        let _ = engine.register_path(hops.clone()).expect("first register");
-        assert_eq!(engine.path_dedups(), 0, "first registration is not a dedup");
-        let _ = engine.register_path(hops).expect("dedup hit");
-        assert_eq!(engine.path_dedups(), 1, "the duplicate was counted");
+        let _ = register_path(&mut engine, hops.clone()).expect("first register");
+        assert_eq!(
+            path_dedups(&engine,),
+            0,
+            "first registration is not a dedup"
+        );
+        let _ = register_path(&mut engine, hops).expect("dedup hit");
+        assert_eq!(path_dedups(&engine,), 1, "the duplicate was counted");
     }
     /// FPGOYX: registering the same path (same pools + directions) twice
     /// must be idempotent — return the SAME `path_id`, not a new one.
@@ -606,14 +635,14 @@ mod tests {
                 zero_for_one: true,
             },
         ];
-        let id1 = engine.register_path(hops.clone()).expect("first register");
-        let id2 = engine.register_path(hops).expect("second register (dedup)");
+        let id1 = register_path(&mut engine, hops.clone()).expect("first register");
+        let id2 = register_path(&mut engine, hops).expect("second register (dedup)");
         assert_eq!(
             id1, id2,
             "duplicate path registration must return the same path_id"
         );
         assert_eq!(
-            engine.path_count(),
+            path_count(&engine,),
             1,
             "engine must not grow on duplicate registration"
         );
@@ -634,8 +663,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let id_fwd = engine
-            .register_path(vec![
+        let id_fwd = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -644,10 +674,12 @@ mod tests {
                     pool_id: v2_fwd2,
                     zero_for_one: true,
                 },
-            ])
-            .expect("fwd register");
-        let id_rev = engine
-            .register_path(vec![
+            ],
+        )
+        .expect("fwd register");
+        let id_rev = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: false,
@@ -656,11 +688,12 @@ mod tests {
                     pool_id: v2_fwd2,
                     zero_for_one: false,
                 },
-            ])
-            .expect("rev register");
+            ],
+        )
+        .expect("rev register");
         assert_ne!(id_fwd, id_rev, "reversed-direction path must be distinct");
         assert_eq!(
-            engine.path_count(),
+            path_count(&engine,),
             2,
             "two distinct paths should be registered"
         );
@@ -686,8 +719,9 @@ mod tests {
             FEE_DENOM_03,
         );
         // register_and_solve_path should eagerly solve and append to results
-        let path_id = engine
-            .register_and_solve_path(vec![
+        let path_id = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -696,12 +730,13 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Should be tracked as pending so run_epoch can merge
         assert!(engine.cycle.pending_new_paths.contains(&path_id));
         // Results should already contain the eagerly-solved path
-        let (results, _block) = engine.latest_results();
+        let (results, _block) = latest_results(&engine);
         let solve_result = results.get(&path_id);
         assert!(
             solve_result.is_some(),
@@ -732,8 +767,9 @@ mod tests {
             FEE_DENOM_03,
         );
         // Register path eagerly
-        let path_id = engine
-            .register_and_solve_path(vec![
+        let path_id = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -742,8 +778,9 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Process an empty block (no affected pools) — run_epoch
         // should still include the pending path and not drop it
         engine.cycle.run_epoch(
@@ -760,7 +797,7 @@ mod tests {
         // Pending set should be cleared
         assert!(engine.cycle.pending_new_paths.is_empty());
         // The path's result should survive the rebuild
-        let (results, block) = engine.latest_results();
+        let (results, block) = latest_results(&engine);
         assert_eq!(block, 1);
         assert!(
             results.contains_key(&path_id),
@@ -796,8 +833,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -806,11 +844,12 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
-        engine.solve_all_paths(1);
+            ],
+        )
+        .unwrap();
+        solve_all_paths(&mut engine, 1);
         // Solve actually ran: results populated with a profitable path.
-        let (results, block) = engine.latest_results();
+        let (results, block) = latest_results(&engine);
         assert_eq!(block, 1);
         let solve_result = results
             .get(&path_id)
@@ -845,7 +884,7 @@ mod tests {
         // still must not fire it).
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         // Two mispriced V2 pools → a profitable V2→V2 arb at solve time.
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
@@ -863,8 +902,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -873,10 +913,11 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Solve with a live channel — must NOT send.
-        engine.solve_all_paths(1);
+        solve_all_paths(&mut engine, 1);
         assert!(
             matches!(
                 rx.try_recv(),
@@ -886,7 +927,7 @@ mod tests {
              only send_result_batch sends"
         );
         // Solving did run: a profitable result is present but undelivered.
-        let (results, block) = engine.latest_results();
+        let (results, block) = latest_results(&engine);
         assert_eq!(block, 1);
         let solve_result = results
             .get(&path_id)
@@ -897,7 +938,7 @@ mod tests {
             "solve must not advance `delivered` (Python has received nothing)"
         );
         // Only the explicit send drives the channel.
-        engine.compute_diff_and_send(&BlockMetadata::default());
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
         let batch = rx
             .try_recv()
             .expect("send_result_batch must deliver the batch");
@@ -920,7 +961,7 @@ mod tests {
         // invariant; the previous test pins the cold-start one.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         // Defaults already min_profit=0, max_profit=MAX (window fully open).
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
@@ -938,8 +979,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_and_solve_path(vec![
+        let path_id = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -948,10 +990,11 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Eagerly solved → path is in `results` and above-threshold.
-        let (results_before, _) = engine.latest_results();
+        let (results_before, _) = latest_results(&engine);
         let solve_result = results_before
             .get(&path_id)
             .expect("eagerly solved path present");
@@ -962,7 +1005,7 @@ mod tests {
         engine.cycle.cursor.set_results_block_for_test(100);
         // send_result_batch computes the diff, sends it, and advances
         // `delivered` to the above-threshold subset.
-        engine.compute_diff_and_send(&BlockMetadata::default());
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
         // Batch was actually delivered to the channel.
         let batch = rx
             .try_recv()
@@ -996,7 +1039,7 @@ mod tests {
     fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         // Pump seeds the settled resume boundary (block 500) at resume.
         engine.cycle.cursor.advance_solved(500);
         assert_eq!(
@@ -1021,8 +1064,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_and_solve_path(vec![
+        let path_id = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -1031,12 +1075,13 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
-        let (results_before, _) = engine.latest_results();
+            ],
+        )
+        .unwrap();
+        let (results_before, _) = latest_results(&engine);
         assert!(!results_before.get(&path_id).unwrap().profit.is_zero());
         // Delivery uses the seeded settled anchor — immediate, no deferral.
-        engine.compute_diff_and_send(&BlockMetadata::default());
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
         let batch = rx
             .try_recv()
             .expect("compute_diff_and_send should deliver a batch");
@@ -1071,14 +1116,14 @@ mod tests {
     fn late_solve_stamp_cannot_regress_results_anchor() {
         let mut engine = ArbitrageEngine::new();
         // First solve cycle anchors at block 10.
-        engine.run_test_cycle(10, &BlockMetadata::default(), &[]);
+        run_test_cycle(&mut engine, 10, &BlockMetadata::default(), &[]);
         assert_eq!(
             engine.cycle.cursor.results_block(),
             10,
             "the solve-stamp path anchors results_block at the cycle's solve block"
         );
         // A late/stale stamp through the same path must not regress it.
-        engine.run_test_cycle(5, &BlockMetadata::default(), &[]);
+        run_test_cycle(&mut engine, 5, &BlockMetadata::default(), &[]);
         assert_eq!(
             engine.cycle.cursor.results_block(),
             10,
@@ -1099,7 +1144,7 @@ mod tests {
         // this bound) and drive `compute_diff_and_send`.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         // Defaults: min_profit = 0, max_profit = U256::MAX (cap fully open).
         let huge_profit = U256::from(u64::MAX) + U256::from(1u64);
         let path_id = 7u64;
@@ -1118,7 +1163,7 @@ mod tests {
         // once `results_block` is non-zero (solve-anchor delivery guard — a 0
         // anchor would sim at block 0, the 0x841820 code-less panic).
         engine.cycle.cursor.set_results_block_for_test(100);
-        engine.compute_diff_and_send(&BlockMetadata::default());
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
         let batch = rx
             .try_recv()
             .expect("compute_diff_and_send should deliver a batch");
@@ -1141,9 +1186,9 @@ mod tests {
         // Same injection strategy as the above-u64-max test.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         let profit = U256::from(1_000_000u64);
-        engine.set_profit_thresholds(U256::ZERO, profit);
+        set_profit_thresholds(&mut engine, U256::ZERO, profit);
         let path_id = 7u64;
         engine.cycle.results.insert(
             path_id,
@@ -1159,7 +1204,7 @@ mod tests {
         // Anchor the solve at a real block (solve-anchor delivery guard — see
         // `diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit`).
         engine.cycle.cursor.set_results_block_for_test(100);
-        engine.compute_diff_and_send(&BlockMetadata::default());
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
         let batch = rx
             .try_recv()
             .expect("compute_diff_and_send should deliver a batch");
@@ -1175,9 +1220,9 @@ mod tests {
         // `min_profit` must be excluded.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         let profit = U256::from(1_000_000u64);
-        engine.set_profit_thresholds(profit, U256::MAX);
+        set_profit_thresholds(&mut engine, profit, U256::MAX);
         let path_id = 7u64;
         engine.cycle.results.insert(
             path_id,
@@ -1190,7 +1235,7 @@ mod tests {
                 solver_pool_states: vec![],
             },
         );
-        engine.compute_diff_and_send(&BlockMetadata::default());
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
         let batch = rx
             .try_recv()
             .expect("compute_diff_and_send should deliver a batch");
@@ -1214,7 +1259,7 @@ mod tests {
         // underpriced transaction).
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         // Two V2 pools with price divergence → a profitable pure-V2 path
         // (same setup as `register_and_solve_path_eagerly_solves`).
         let v2_addr_a = Address::from([0x11u8; 20]);
@@ -1233,8 +1278,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_and_solve_path(vec![
+        let path_id = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -1243,8 +1289,9 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Mark a pool dirty so `has_dirty_paths()` is true (mirrors a WS log
         // having arrived). The eagerly-solved result is already in `results`.
         oracle.insert(v2_fwd_a, HopType::V2);
@@ -1260,7 +1307,7 @@ mod tests {
         // LEZJAS) — drive it through the engine's own accessor so the test
         // exercises the same path the pump uses.
         engine.cycle.cursor.record_logs();
-        engine.finalize_for_test(10, &metadata);
+        finalize_for_test(&mut engine, 10, &metadata);
         // The emitted batch must carry the passed metadata, not default.
         let batch = rx
             .try_recv()
@@ -1281,8 +1328,8 @@ mod tests {
         );
         // Guard advanced + logs flag cleared — now read from the engine
         // itself (the pump out-params were retired in ergo task LEZJAS).
-        assert_eq!(engine.last_solved_block(), 10);
-        assert!(!engine.has_logs_this_block());
+        assert_eq!(last_solved_block(&engine,), 10);
+        assert!(!has_logs_this_block(&engine,));
     }
     #[test]
     fn pure_v2_path_finds_profitable_arb() {
@@ -1306,8 +1353,9 @@ mod tests {
             FEE_DENOM_03,
         );
         // V2→V2 path: USDC → WETH (pool A) → USDC (pool B)
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a, // reserve0=USDC, reserve1=WETH
                     zero_for_one: true,
@@ -1316,8 +1364,9 @@ mod tests {
                     pool_id: v2_fwd_b, // reserve0=WETH, reserve1=USDC
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Solve
         let results = engine.cycle.solve_all(&engine.registry);
         // Should find a profitable arbitrage
@@ -1404,8 +1453,9 @@ mod tests {
             ..Default::default()
         });
         // V3→V3 path: pool A (zfo) → pool B (ofz)
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v3_key_a,
                     zero_for_one: true,
@@ -1414,8 +1464,9 @@ mod tests {
                     pool_id: v3_key_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         // V3-V3 arb depends on the exact price divergence — the important thing
         // is that the path resolves and the solver runs without panicking.
@@ -1466,8 +1517,9 @@ mod tests {
             ..Default::default()
         });
         // Mixed V2→V3 path
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -1476,8 +1528,9 @@ mod tests {
                     pool_id: v3_key,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Even if no profit found (depends on exact numbers),
         // solve_all should run without panicking
         let results = engine.cycle.solve_all(&engine.registry);
@@ -1485,6 +1538,7 @@ mod tests {
         let _ = results;
     }
     #[test]
+    #[expect(clippy::too_many_lines)]
     fn future_state_path_is_reanchored_to_pool_state_head() {
         let mut engine = ArbitrageEngine::new();
         // B2 (per-path re-anchor): a path whose price-clock `update_block` is
@@ -1509,8 +1563,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let fresh_path = engine
-            .register_and_solve_path(vec![
+        let fresh_path = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_a,
                     zero_for_one: true,
@@ -1519,8 +1574,9 @@ mod tests {
                     pool_id: v2_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // V3 pool whose price clock (`update_block`) is 100 — 50 blocks AHEAD
         // of the solve block 50 below (the two-stamp backfill/dispatch race).
         let mut tick_data = HashMap::new();
@@ -1557,8 +1613,9 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-        let future_path = engine
-            .register_and_solve_path(vec![
+        let future_path = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_a,
                     zero_for_one: true,
@@ -1567,8 +1624,9 @@ mod tests {
                     pool_id: v3_future,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Rebuild + solve at drain block 50, but the V3 pool's price clock is
         // at 100 (head). The solve block must re-anchor to head = 100, and the
         // path is solved (never skipped): a future-vs-drain-clock block is live
@@ -1584,7 +1642,7 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-        let (results, block) = engine.latest_results();
+        let (results, block) = latest_results(&engine);
         assert_eq!(
             block, 100,
             "solve block re-anchors to the pool-state head (max update_block 100), \
@@ -1646,8 +1704,9 @@ mod tests {
         let v2_fwd =
             engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
         // V3→V2 path
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v3_key,
                     zero_for_one: true,
@@ -1656,8 +1715,9 @@ mod tests {
                     pool_id: v2_fwd,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert_eq!(resolved.hops[0].hop_type(), HopType::V3);
         assert_eq!(resolved.hops[1].hop_type(), HopType::V2);
@@ -1686,8 +1746,9 @@ mod tests {
             FEE_DENOM_03,
         );
         // V2→V2 path
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -1696,18 +1757,20 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Initial solve
         let results_before = engine.cycle.solve_all(&engine.registry);
         // Apply V2 update to make pool A even more mispriced
-        engine.process_updates(
+        process_updates(
+            &mut engine,
             &[(v2_addr_a, usdc(1_400_000), weth(750))],
             &[],
             1,
             &BlockMetadata::default(),
         );
-        let (results_after, block) = engine.latest_results();
+        let (results_after, block) = latest_results(&engine);
         assert_eq!(block, 1);
         // Results should differ after the update
         let _ = results_before; // Just ensure initial solve didn't panic
@@ -1741,8 +1804,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_a,
                     zero_for_one: true,
@@ -1751,8 +1815,9 @@ mod tests {
                     pool_id: v2_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Prove the path IS profitable when fresh: advance both clocks to a block
         // within the window of the solve block, rebuild, and confirm a result.
         {
@@ -1773,7 +1838,7 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-        let (fresh, _) = engine.latest_results();
+        let (fresh, _) = latest_results(&engine);
         assert!(
             fresh.contains_key(&path_id),
             "a within-window (2-block) lag must NOT defer a profitable path"
@@ -1799,7 +1864,7 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-        let (stale_results, block) = engine.latest_results();
+        let (stale_results, block) = latest_results(&engine);
         assert_eq!(block, 500, "solve block anchors at max(drain, head) = 500");
         assert!(
             stale_results.contains_key(&path_id),
@@ -1828,8 +1893,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_a,
                     zero_for_one: true,
@@ -1838,8 +1904,9 @@ mod tests {
                     pool_id: v2_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Never-advanced pools (`update_block == 0`) at a far solve block are
         // NOT deferred — the ADR-021 verifier diffs them at the solve block.
         engine.cycle.run_epoch(
@@ -1853,7 +1920,7 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-        let (r0, _) = engine.latest_results();
+        let (r0, _) = latest_results(&engine);
         assert!(
             r0.contains_key(&path_id),
             "update_block == 0 pools must never be assumed stale"
@@ -1877,7 +1944,7 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-        let (r1, _) = engine.latest_results();
+        let (r1, _) = latest_results(&engine);
         assert!(
             r1.contains_key(&path_id),
             "staleness exactly at the window must not defer"
@@ -1901,7 +1968,7 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-        let (r2, _) = engine.latest_results();
+        let (r2, _) = latest_results(&engine);
         assert!(
             r2.contains_key(&path_id),
             "a pool 11 blocks past the old window is quiet-but-current — solved, not \
@@ -1972,8 +2039,9 @@ mod tests {
             })
             .expect("V4 registration failed");
         // Register path: V3 (zfo) → V4 (ofz, which will produce huge token0 output)
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v3_id,
                     zero_for_one: true,
@@ -1982,8 +2050,9 @@ mod tests {
                     pool_id: v4_id,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Resolve and solve all paths (replaces start() + initial_solve())
         {
             let core = engine
@@ -2010,7 +2079,7 @@ mod tests {
         for (pid, r) in results_map {
             engine.cycle.results.insert(pid, r);
         }
-        let (results, _block) = engine.latest_results();
+        let (results, _block) = latest_results(&engine);
         // The V4 hop's output (token0 at extreme price) would overflow int128.
         // The solver should reject this path — no result should be returned.
         if let Some(solve_result) = results.get(&path_id) {
@@ -2104,8 +2173,9 @@ mod tests {
                 fetcher: None,
             })
             .expect("V4 registration failed");
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v4_id,
                     zero_for_one: true,
@@ -2114,8 +2184,9 @@ mod tests {
                     pool_id: v2,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Committed values: the V2-input forward is deliberately above the
         // V4 twin's actual output; the V2 output is the STALE value the walk
         // reported for the un-clamped forward.
@@ -2236,8 +2307,9 @@ mod tests {
             })
             .expect("V4 registration failed");
         // Register a V2→V4 path (V4 is hop 1, over-fed).
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2,
                     zero_for_one: true,
@@ -2246,8 +2318,9 @@ mod tests {
                     pool_id: v4_id,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Over-feed the V4 hop with an absurdly large committed input far
         // beyond the pool's capacity.
         let huge = U256::from(1u128) << 120;
@@ -2391,8 +2464,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v4_id,
                     zero_for_one: true, // sell currency0; output = amount1
@@ -2401,8 +2475,9 @@ mod tests {
                     pool_id: v2,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let huge = U256::from(1u128) << 120;
         let mut result = SolvePathResult {
             optimal_input: huge,
@@ -2502,8 +2577,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v4_id,
                     zero_for_one: false,
@@ -2512,8 +2588,9 @@ mod tests {
                     pool_id: v2_id,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // A tiny in-capacity input — the pool fully converts it, no clamp.
         let small = U256::from(1u128);
         let mut result = SolvePathResult {
@@ -2609,8 +2686,9 @@ mod tests {
             })
             .expect("V4 registration should succeed");
         // Register a 3-hop path: V2 → V3 → V4
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -2623,8 +2701,9 @@ mod tests {
                     pool_id: v4_key,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Inspect the path
         let path = engine
             .registry
@@ -2741,10 +2820,11 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-        assert_eq!(engine.v3_pool_count(), 3);
+        assert_eq!(v3_pool_count(&engine,), 3);
         // Register 3-hop V3-V3-V3 path
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v3_key_a,
                     zero_for_one: true,
@@ -2757,10 +2837,11 @@ mod tests {
                     pool_id: v3_key_c,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         assert_eq!(path_id, 1);
-        assert_eq!(engine.path_count(), 1);
+        assert_eq!(path_count(&engine,), 1);
         // Verify the path is valid and resolved
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V3-V3-V3 path should be valid");
@@ -2838,8 +2919,9 @@ mod tests {
             FEE_DENOM_03,
         );
         // Register 3-hop mixed path: V2 → V3 → V2
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd_a,
                     zero_for_one: true,
@@ -2852,8 +2934,9 @@ mod tests {
                     pool_id: v2_fwd_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V2-V3-V2 path should be valid");
         assert_eq!(resolved.hops.len(), 3);
@@ -2886,8 +2969,9 @@ mod tests {
             engine.register_v2_pool(pool_b, weth(800), usdc(1_500_000), GAMMA_03, FEE_DENOM_03);
         let id_c =
             engine.register_v2_pool(pool_c, weth(900), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: id_a,
                     zero_for_one: true,
@@ -2896,10 +2980,12 @@ mod tests {
                     pool_id: id_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
-        engine
-            .register_path(vec![
+            ],
+        )
+        .unwrap();
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: id_a,
                     zero_for_one: true,
@@ -2908,35 +2994,43 @@ mod tests {
                     pool_id: id_c,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Cycle 1: both paths resolve; every UNIQUE (pool,direction) is a
         // miss. Pool A appears in both paths with the same direction, so its
         // single projection serves both paths: A+B+C = 3, not 4 hops.
-        engine.run_test_cycle(4, &BlockMetadata::default(), &[]);
-        assert_eq!(engine.hop_projection_count(), 3);
+        run_test_cycle(&mut engine, 4, &BlockMetadata::default(), &[]);
+        assert_eq!(hop_projection_count(&engine,), 3);
         // Cycle 2: only pool B is dirty. Shared pool A must NOT re-project;
         // only B's hop in path 1 pays the walk (C's hops are untouched).
-        engine.process_updates(
+        process_updates(
+            &mut engine,
             &[(pool_b, usdc(1_000_000), weth(800))],
             &[],
             5,
             &BlockMetadata::default(),
         );
-        engine.run_test_cycle(5, &BlockMetadata::default(), &[]);
+        run_test_cycle(&mut engine, 5, &BlockMetadata::default(), &[]);
         // Only B's projection is fresh; A and C replay from the cache.
-        assert_eq!(engine.hop_projection_count(), 4);
+        assert_eq!(hop_projection_count(&engine,), 4);
         // Cycle 3: A goes dirty. Its cached projection invalidates (nonce
         // advanced) and re-projects ONCE — both paths then share the fresh
         // entry; B and C's quiet hops still do not re-project.
-        engine.process_updates(
+        process_updates(
+            &mut engine,
             &[(pool_a, usdc(1_250_000), weth(800))],
             &[],
             6,
             &BlockMetadata::default(),
         );
-        engine.run_test_cycle(6, &BlockMetadata::default(), &oracle.to_affected_keys());
-        assert_eq!(engine.hop_projection_count(), 5);
+        run_test_cycle(
+            &mut engine,
+            6,
+            &BlockMetadata::default(),
+            &oracle.to_affected_keys(),
+        );
+        assert_eq!(hop_projection_count(&engine,), 5);
     }
     #[test]
     fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
@@ -2960,8 +3054,9 @@ mod tests {
         let id_b =
             engine.register_v2_pool(pool_b, weth(800), usdc(1_500_000), GAMMA_03, FEE_DENOM_03);
         // Path: A (USDC→WETH) → B (WETH→USDC). Initially balanced → no profit.
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: id_a,
                     zero_for_one: true,
@@ -2970,30 +3065,32 @@ mod tests {
                     pool_id: id_b,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // Install a result channel to capture the diff batches.
         let (tx, mut rx) = mpsc::unbounded_channel();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         // Sanity: the balanced cycle is not profitable (an empty affected set
         // — the reorg keys below are explicit).
-        engine.run_test_cycle(4, &BlockMetadata::default(), &[]);
-        engine.compute_diff_and_send(&BlockMetadata::default());
-        let (results_before, _) = engine.latest_results();
+        run_test_cycle(&mut engine, 4, &BlockMetadata::default(), &[]);
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
+        let (results_before, _) = latest_results(&engine);
         assert!(
             !results_before.contains_key(&path_id),
             "balanced cycle should not be profitable before the Sync"
         );
         // Sync pool A at block 5 to misprice it hard (A's WETH drops to 1250
         // USDC/WETH vs B's 1875 — clears the ~0.6% round-trip fee).
-        engine.process_updates(
+        process_updates(
+            &mut engine,
             &[(pool_a, usdc(1_000_000), weth(800))],
             &[],
             5,
             &BlockMetadata::default(),
         );
-        engine.compute_diff_and_send(&BlockMetadata::default());
-        let (results_after, _) = engine.latest_results();
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
+        let (results_after, _) = latest_results(&engine);
         assert!(
             results_after.contains_key(&path_id),
             "arbitrage should appear after the mispricing Sync"
@@ -3022,10 +3119,10 @@ mod tests {
             .keys()
             .map(|(hop, pool)| degenbot_solvers::affected_keys::AffectedKey::new(*hop, *pool))
             .collect();
-        engine.run_test_cycle(5, &BlockMetadata::default(), &reorg_keys);
-        engine.compute_diff_and_send(&BlockMetadata::default());
+        run_test_cycle(&mut engine, 5, &BlockMetadata::default(), &reorg_keys);
+        compute_diff_and_send(&mut engine, &BlockMetadata::default());
         // The arb is gone.
-        let (results_reorg, _) = engine.latest_results();
+        let (results_reorg, _) = latest_results(&engine);
         assert!(
             !results_reorg.contains_key(&path_id),
             "path should be unprofitable after reorg rollback"
@@ -3198,7 +3295,7 @@ mod tests {
         let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         // If the engine held a separate `BotState`, this would be 0; shared => 1.
         assert_eq!(
-            engine.v2_pool_count(),
+            v2_pool_count(&engine,),
             1,
             "engine must read the shared BotState's pools via with_core"
         );
@@ -3235,16 +3332,19 @@ mod tests {
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         // Bogus pool_id (never registered) — must Err.
         let bogus_id = real_pool_id + 1_000;
-        let result = engine.register_path(vec![
-            ::degenbot_solvers::mixed::PoolHop {
-                pool_id: real_pool_id,
-                zero_for_one: true,
-            },
-            ::degenbot_solvers::mixed::PoolHop {
-                pool_id: bogus_id,
-                zero_for_one: false,
-            },
-        ]);
+        let result = register_path(
+            &mut engine,
+            vec![
+                ::degenbot_solvers::mixed::PoolHop {
+                    pool_id: real_pool_id,
+                    zero_for_one: true,
+                },
+                ::degenbot_solvers::mixed::PoolHop {
+                    pool_id: bogus_id,
+                    zero_for_one: false,
+                },
+            ],
+        );
         assert!(
             result.is_err(),
             "register_path must reject a pool_id not present in the BotState"
@@ -3477,7 +3577,7 @@ mod tests {
                     return;
                 }
                 // engine.lock() then, inside, core.write() — engine-then-core.
-                writer_engine.lock().run_test_cycle(block, &metadata, &[]);
+                run_test_cycle(&mut writer_engine.lock(), block, &metadata, &[]);
             }
         });
         // Readers: companion-getter path — core.read() alone, never the engine.
@@ -3543,8 +3643,9 @@ mod tests {
                 GAMMA_03,
                 FEE_DENOM_03,
             );
-            let path_id = engine
-                .register_and_solve_path(vec![
+            let path_id = register_and_solve_path(
+                &mut engine,
+                vec![
                     PoolHop {
                         pool_id: v2_fwd_a,
                         zero_for_one: true,
@@ -3553,9 +3654,10 @@ mod tests {
                         pool_id: v2_fwd_b,
                         zero_for_one: true,
                     },
-                ])
-                .expect("path registration should succeed");
-            let (results, _block) = engine.latest_results();
+                ],
+            )
+            .expect("path registration should succeed");
+            let (results, _block) = latest_results(&engine);
             let eager = results
                 .get(&path_id)
                 .expect("register_and_solve_path must eagerly solve a profitable path");
@@ -3565,8 +3667,8 @@ mod tests {
         // whose solve loop gets parallelized. Equivalent eager results must
         // survive the batch re-solve (today in the resolve fan-out; a batch
         // `par_iter`).
-        engine.solve_all_paths(1);
-        let (results, block) = engine.latest_results();
+        solve_all_paths(&mut engine, 1);
+        let (results, block) = latest_results(&engine);
         assert_eq!(block, 1);
         assert_eq!(
             results.len(),
@@ -3623,8 +3725,9 @@ mod tests {
                 GAMMA_03,
                 FEE_DENOM_03,
             );
-            let _ = engine
-                .register_path(vec![
+            let _ = register_path(
+                &mut engine,
+                vec![
                     PoolHop {
                         pool_id: v2_fwd_a,
                         zero_for_one: true,
@@ -3633,8 +3736,9 @@ mod tests {
                         pool_id: v2_fwd_b,
                         zero_for_one: true,
                     },
-                ])
-                .expect("path registration should succeed");
+                ],
+            )
+            .expect("path registration should succeed");
         }
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3651,7 +3755,7 @@ mod tests {
                 if writer_done.load(std::sync::atomic::Ordering::Relaxed) {
                     return;
                 }
-                writer_engine.lock().run_test_cycle(block, &metadata, &[]);
+                run_test_cycle(&mut writer_engine.lock(), block, &metadata, &[]);
             }
         });
         // Readers: core.read alone — the companion-getter path. Mirrors slice
@@ -3729,8 +3833,8 @@ mod tests {
         use tokio::sync::mpsc::error::TryRecvError;
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_result_channel(result_tx);
-        engine.on_pump_ended();
+        set_result_channel(&mut engine, result_tx);
+        engine.delivery.lifecycle.close();
         match result_rx.try_recv() {
             Err(TryRecvError::Disconnected) => {}
             other => panic!("result stream must be Disconnected after drop, got {other:?}"),
@@ -3858,8 +3962,9 @@ mod tests {
     #[test]
     fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
         let (mut engine, aero_a, aero_b) = solidly_arb_engine();
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: aero_a,
                     zero_for_one: true,
@@ -3868,8 +3973,9 @@ mod tests {
                     pool_id: aero_b,
                     zero_for_one: false,
                 },
-            ])
-            .expect("path registers");
+            ],
+        )
+        .expect("path registers");
         let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
         let result = ::degenbot_solvers::mixed::solve_path(
             resolved,
@@ -3979,8 +4085,9 @@ mod tests {
             })
             .expect("test setup: V2 registration");
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: aero_id,
                     zero_for_one: true,
@@ -3989,8 +4096,9 @@ mod tests {
                     pool_id: v2_id,
                     zero_for_one: false,
                 },
-            ])
-            .expect("mixed V2+Solidly path registers");
+            ],
+        )
+        .expect("mixed V2+Solidly path registers");
         let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
         let result = ::degenbot_solvers::mixed::solve_path(
             resolved,
@@ -4025,8 +4133,9 @@ mod tests {
         let (mut engine, aero_a, _aero_b) = solidly_arb_engine();
         // A round-trip through the SAME pool (token0→token1 then token1→token0)
         // is always unprofitable after fees — the Möbius precheck must early-out.
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: aero_a,
                     zero_for_one: true,
@@ -4035,8 +4144,9 @@ mod tests {
                     pool_id: aero_a,
                     zero_for_one: false,
                 },
-            ])
-            .expect("path registers");
+            ],
+        )
+        .expect("path registers");
         let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
         assert!(
             ::degenbot_solvers::mixed::solve_path(
@@ -4107,8 +4217,9 @@ mod tests {
             })
             .expect("test setup: V3 registration");
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: aero,
                     zero_for_one: true,
@@ -4117,8 +4228,9 @@ mod tests {
                     pool_id: v3_id,
                     zero_for_one: false,
                 },
-            ])
-            .expect("path registers (resolve is per-arm)");
+            ],
+        )
+        .expect("path registers (resolve is per-arm)");
         let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
         // Solidly + CL is out of scope (p): solve_path returns None.
         assert!(::degenbot_solvers::mixed::solve_path(
@@ -4207,8 +4319,9 @@ mod tests {
                 1950,
             ));
         // Path: token0 → token1 (pool A) → token0 (pool B)
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: pool_a,
                     zero_for_one: true,
@@ -4217,8 +4330,9 @@ mod tests {
                     pool_id: pool_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
@@ -4251,8 +4365,9 @@ mod tests {
                 800_000,
                 195_000,
             ));
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: pool_a,
                     zero_for_one: true,
@@ -4261,8 +4376,9 @@ mod tests {
                     pool_id: pool_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
@@ -4323,8 +4439,9 @@ mod tests {
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_weighted_pool(&bw_params(Address::from([0xf4u8; 20]), 1000, 1950));
         // Solve V2-V2 path
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_a,
                     zero_for_one: true,
@@ -4333,8 +4450,9 @@ mod tests {
                     pool_id: v2_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let v2_results = engine.cycle.solve_all(&engine.registry);
         let v2_profit = v2_results.values().next().unwrap().profit;
         // Solve Balancer-V2-V2 path (clear and re-solve)
@@ -4343,8 +4461,9 @@ mod tests {
                 .core
                 .write_at(crate::bot_core::state_lock::LockSite::Solver),
         );
-        let bw_path = engine
-            .register_path(vec![
+        let bw_path = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: bw_a,
                     zero_for_one: true,
@@ -4353,8 +4472,9 @@ mod tests {
                     pool_id: bw_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // resolve + solve the bw path specifically
         let resolved = &engine.cycle.path_resolved[&bw_path];
         let bw_result = ::degenbot_solvers::mixed::solve_path(
@@ -4415,8 +4535,9 @@ mod tests {
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_weighted_pool(&bw_params);
         // V2 → Balancer weighted path
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2,
                     zero_for_one: true,
@@ -4425,8 +4546,9 @@ mod tests {
                     pool_id: bw,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         // V2+Balancer-weighted is all-V2-or-weighted with no CL — should solve
         assert!(!results.is_empty(), "should find V2+Balancer-weighted arb");
@@ -4464,8 +4586,9 @@ mod tests {
             })
             .expect("test setup: V3 registration");
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: bw,
                     zero_for_one: true,
@@ -4474,8 +4597,9 @@ mod tests {
                     pool_id: v3,
                     zero_for_one: false,
                 },
-            ])
-            .expect("path registers (resolve succeeds per-arm)");
+            ],
+        )
+        .expect("path registers (resolve succeeds per-arm)");
         let resolved = &engine.cycle.path_resolved[&path_id];
         // Balancer weighted + CL is out of scope — solve_path returns None.
         assert!(
@@ -4640,8 +4764,9 @@ mod tests {
                 1950,
             ));
         // Path: token0 → token1 (pool A) → token0 (pool B)
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: pool_a,
                     zero_for_one: true,
@@ -4650,8 +4775,9 @@ mod tests {
                     pool_id: pool_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
@@ -4684,8 +4810,9 @@ mod tests {
                 1000,
                 2000,
             ));
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: pool_a,
                     zero_for_one: true,
@@ -4694,8 +4821,9 @@ mod tests {
                     pool_id: pool_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             results.is_empty(),
@@ -4724,8 +4852,9 @@ mod tests {
                 1950,
             ));
         // V2 → Balancer stable path
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2,
                     zero_for_one: true,
@@ -4734,8 +4863,9 @@ mod tests {
                     pool_id: bs,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
@@ -4773,8 +4903,9 @@ mod tests {
             })
             .expect("test setup: V3 registration");
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: bs,
                     zero_for_one: true,
@@ -4783,8 +4914,9 @@ mod tests {
                     pool_id: v3,
                     zero_for_one: false,
                 },
-            ])
-            .expect("path registers (resolve succeeds per-arm)");
+            ],
+        )
+        .expect("path registers (resolve succeeds per-arm)");
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(
             ::degenbot_solvers::mixed::solve_path(
@@ -4865,8 +4997,9 @@ mod tests {
                 1000,
                 1950,
             ));
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: pool_a,
                     zero_for_one: true,
@@ -4875,8 +5008,9 @@ mod tests {
                     pool_id: pool_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         eprintln!("results: {}", results.len());
         assert!(
@@ -4909,8 +5043,9 @@ mod tests {
                 1000,
                 2000,
             ));
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: pool_a,
                     zero_for_one: true,
@@ -4919,8 +5054,9 @@ mod tests {
                     pool_id: pool_b,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             results.is_empty(),
@@ -4946,8 +5082,9 @@ mod tests {
                 1000,
                 1500,
             ));
-        engine
-            .register_path(vec![
+        register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2,
                     zero_for_one: true,
@@ -4956,8 +5093,9 @@ mod tests {
                     pool_id: cs,
                     zero_for_one: false,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(!results.is_empty(), "should find V2+Curve mixed arb");
     }
@@ -4992,8 +5130,9 @@ mod tests {
             })
             .expect("test setup: V3 registration");
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: cs,
                     zero_for_one: true,
@@ -5002,8 +5141,9 @@ mod tests {
                     pool_id: v3,
                     zero_for_one: false,
                 },
-            ])
-            .expect("path registers (resolve succeeds per-arm)");
+            ],
+        )
+        .expect("path registers (resolve succeeds per-arm)");
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(
             ::degenbot_solvers::mixed::solve_path(
@@ -5115,8 +5255,9 @@ mod tests {
                 GAMMA_03,
                 FEE_DENOM_03,
             );
-            let _ = engine
-                .register_path(vec![
+            let _ = register_path(
+                &mut engine,
+                vec![
                     PoolHop {
                         pool_id: a,
                         zero_for_one: true,
@@ -5125,8 +5266,9 @@ mod tests {
                         pool_id: b,
                         zero_for_one: true,
                     },
-                ])
-                .expect("path registration should succeed");
+                ],
+            )
+            .expect("path registration should succeed");
             pool_ids.push(a);
         }
         let engine = Arc::new(parking_lot::Mutex::new(engine));
@@ -5256,8 +5398,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let _pid = engine
-            .register_path(vec![
+        let _pid = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: a,
                     zero_for_one: true,
@@ -5266,20 +5409,19 @@ mod tests {
                     pool_id: b,
                     zero_for_one: true,
                 },
-            ])
-            .expect("path registers");
+            ],
+        )
+        .expect("path registers");
         oracle.insert(a, HopType::V2);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         let engine_state = Arc::new(parking_lot::Mutex::new(engine));
         let _handle = EngineStages::new(
             Arc::clone(&engine_state),
             Arc::new(crate::bot_core::EpochDelta::new(0u64)),
         );
         tracing::subscriber::with_default(subscriber, || {
-            engine_state
-                .lock()
-                .finalize_for_test(5, &BlockMetadata::default());
+            finalize_for_test(&mut engine_state.lock(), 5, &BlockMetadata::default());
         });
         let spans = log
             .lock()
@@ -5313,11 +5455,11 @@ mod tests {
         {
             let engine = engine_state.lock();
             assert_eq!(
-                engine.last_solved_block(),
+                last_solved_block(&engine,),
                 5,
                 "finalize must advance the solved boundary"
             );
-            assert!(!engine.has_logs_this_block());
+            assert!(!has_logs_this_block(&engine,));
             // Results anchor advanced for the terminal batch.
             assert_eq!(engine.cycle.cursor.results_block(), 5);
         }
@@ -5337,18 +5479,18 @@ mod tests {
     fn finalize_boundary_publishes_even_when_nothing_dirtied() {
         let mut engine = ArbitrageEngine::new();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        engine.set_result_channel(tx);
+        set_result_channel(&mut engine, tx);
         // Empty-logs branch: no dirt, no recorded logs — the pure
         // header-advance boundary.
-        engine.finalize_for_test(7, &BlockMetadata::default());
-        assert_eq!(engine.last_solved_block(), 7);
-        assert!(!engine.has_logs_this_block());
+        finalize_for_test(&mut engine, 7, &BlockMetadata::default());
+        assert_eq!(last_solved_block(&engine,), 7);
+        assert!(!has_logs_this_block(&engine,));
         let batch = rx
             .try_recv()
             .expect("boundary batch must be emitted without dirt");
         assert_eq!(batch.solve_block, 7);
         // Guard no-ops the re-fired boundary.
-        engine.finalize_for_test(7, &BlockMetadata::default());
+        finalize_for_test(&mut engine, 7, &BlockMetadata::default());
         assert!(
             rx.try_recv().is_err(),
             "guard must not double-publish a settled boundary"
@@ -5631,8 +5773,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let _path_id = engine
-            .register_path(vec![
+        let _path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: a,
                     zero_for_one: true,
@@ -5641,8 +5784,9 @@ mod tests {
                     pool_id: a2,
                     zero_for_one: true,
                 },
-            ])
-            .expect("path registers");
+            ],
+        )
+        .expect("path registers");
         tracing::subscriber::with_default(subscriber, || {
             engine.cycle.run_epoch(
                 &crate::arb_engine::tests::test_keys::affected_keys(
@@ -5697,7 +5841,7 @@ mod tests {
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         oracle.insert(0x0BAD_F00D, HopType::V2);
         // Gate ON: only a configured max_age justifies the core write.
-        engine.lock().set_event_buffer_max_age(Some(100));
+        crate::arb_engine::lifecycle::set_event_buffer_max_age(&mut engine.lock(), Some(100));
         let handle = EngineStages::new(
             engine,
             std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
@@ -5856,8 +6000,9 @@ mod tests {
             pool_ids.push(fwd);
             pool_ids.push(back);
             path_ids.push(
-                engine
-                    .register_path(vec![
+                register_path(
+                    &mut engine,
+                    vec![
                         PoolHop {
                             pool_id: fwd,
                             zero_for_one: true,
@@ -5866,8 +6011,9 @@ mod tests {
                             pool_id: back,
                             zero_for_one: true,
                         },
-                    ])
-                    .unwrap(),
+                    ],
+                )
+                .unwrap(),
             );
         }
         // Slowen path 0; STRUCTURAL interleaving (load-immune): the slow
@@ -5932,7 +6078,7 @@ mod tests {
             engine
         });
         let engine = joiner.join().unwrap();
-        let (results, _block) = engine.latest_results();
+        let (results, _block) = latest_results(&engine);
         // Structural streaming proof: the first probe entry must be a fast
         // path MERGE (a fast path merged before the slow solve released its
         // hook). Under the batched barrier the marker would land first: only
@@ -5971,7 +6117,7 @@ mod tests {
         let mut engine = ArbitrageEngine::new();
         engine.cycle.set_streaming_delivery(true);
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
-        engine.set_result_channel(result_tx);
+        set_result_channel(&mut engine, result_tx);
         let mut pool_ids = Vec::new();
         let mut path_ids = Vec::new();
         for i in 0u8..3 {
@@ -5992,8 +6138,9 @@ mod tests {
             pool_ids.push(fwd);
             pool_ids.push(back);
             path_ids.push(
-                engine
-                    .register_path(vec![
+                register_path(
+                    &mut engine,
+                    vec![
                         PoolHop {
                             pool_id: fwd,
                             zero_for_one: true,
@@ -6002,8 +6149,9 @@ mod tests {
                             pool_id: back,
                             zero_for_one: true,
                         },
-                    ])
-                    .unwrap(),
+                    ],
+                )
+                .unwrap(),
             );
         }
         // Structural interleave (mirror of the solve-orchestration test): the
@@ -6105,8 +6253,9 @@ mod tests {
             pool_ids.push(fwd);
             pool_ids.push(back);
             path_ids.push(
-                engine
-                    .register_path(vec![
+                register_path(
+                    &mut engine,
+                    vec![
                         PoolHop {
                             pool_id: fwd,
                             zero_for_one: true,
@@ -6115,8 +6264,9 @@ mod tests {
                             pool_id: back,
                             zero_for_one: true,
                         },
-                    ])
-                    .unwrap(),
+                    ],
+                )
+                .unwrap(),
             );
         }
         // The first registered path's id owns the injected delay.
@@ -6213,7 +6363,12 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         let stale_pid = path_ids[0];
         let fresh_pid = path_ids[1];
         assert!(
@@ -6252,7 +6407,7 @@ mod tests {
             )
         };
         // A straggler whose pools ALL ticked during the solve.
-        engine.merge_detached_for_test(item(stale_result, stale_stamp, stale_pid));
+        merge_detached_for_test(&mut engine, item(stale_result, stale_stamp, stale_pid));
         assert_eq!(
             engine
                 .cycle
@@ -6271,7 +6426,7 @@ mod tests {
             applied_before
         );
         // The unchanged-intake twin APPLIES (apply-if-unchanged).
-        engine.merge_detached_for_test(item(fresh_result, fresh_stamp, fresh_pid));
+        merge_detached_for_test(&mut engine, item(fresh_result, fresh_stamp, fresh_pid));
         assert_eq!(
             engine
                 .cycle
@@ -6309,7 +6464,12 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         let pid = path_ids[0];
         let applied_before = engine
             .cycle
@@ -6333,8 +6493,8 @@ mod tests {
                 },
             )
         };
-        engine.merge_detached_for_test(item(fresh_result.clone()));
-        engine.merge_detached_for_test(item(fresh_result));
+        merge_detached_for_test(&mut engine, item(fresh_result.clone()));
+        merge_detached_for_test(&mut engine, item(fresh_result));
         assert_eq!(
             engine
                 .cycle
@@ -6365,11 +6525,16 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         let pid = path_ids[0];
         assert!(engine.cycle.resolved_update_snapshot.contains_key(&pid));
         assert!(engine.cycle.path_status.contains_key(&pid));
-        assert!(engine.deregister_path(pid));
+        assert!(deregister_path(&mut engine, pid));
         assert!(!engine.cycle.resolved_update_snapshot.contains_key(&pid));
         assert!(!engine.cycle.path_status.contains_key(&pid));
     }
@@ -6383,25 +6548,33 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         let pid = path_ids[0];
         let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
         let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
-        assert!(engine.deregister_path(pid), "path must deregister");
+        assert!(deregister_path(&mut engine, pid), "path must deregister");
         assert!(!engine.cycle.results.contains_key(&pid));
-        engine.merge_detached_for_test(crate::arb_engine::executor::LaneOutcome::Solved(
-            crate::arb_engine::executor::SolveOutcome {
-                payload: None,
-                worker_clamp_twins: 0,
-                cycle_seq: 1,
-                solve_block: 100,
-                metadata: BlockMetadata::default(),
-                pid,
-                update_stamp: fresh_stamp,
-                result: fresh_result,
-                solve_span: tracing::Span::none(),
-            },
-        ));
+        merge_detached_for_test(
+            &mut engine,
+            crate::arb_engine::executor::LaneOutcome::Solved(
+                crate::arb_engine::executor::SolveOutcome {
+                    payload: None,
+                    worker_clamp_twins: 0,
+                    cycle_seq: 1,
+                    solve_block: 100,
+                    metadata: BlockMetadata::default(),
+                    pid,
+                    update_stamp: fresh_stamp,
+                    result: fresh_result,
+                    solve_span: tracing::Span::none(),
+                },
+            ),
+        );
         assert_eq!(
             engine
                 .cycle
@@ -6576,7 +6749,7 @@ mod tests {
         stages.run_solve_cycle(&affected_keys_v2, 100, &meta);
         // The shipped cadence continues UNCHANGED mid-merge: a debounce publish
         // + further block cycles interleave with the sidecar's merges.
-        engine.lock().compute_diff_and_send(&meta);
+        compute_diff_and_send(&mut engine.lock(), &meta);
         stages.run_solve_cycle(&[], 101, &meta);
         stages.run_solve_cycle(&[], 102, &meta);
         assert!(
@@ -6616,7 +6789,12 @@ mod tests {
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
         // In-cycle solve of the same block: all 3 paths land in `results`.
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         let pid = path_ids[0];
         assert!(
             engine.cycle.results.contains_key(&pid),
@@ -6646,7 +6824,7 @@ mod tests {
                 solve_span: tracing::Span::none(),
             },
         );
-        engine.merge_detached_for_test(item);
+        merge_detached_for_test(&mut engine, item);
         assert_eq!(
             engine
                 .cycle
@@ -6687,7 +6865,12 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         let results_before = engine.cycle.results.len();
         // Seed directly into the sidecar ledger (pub(crate) state) with
         // pids not otherwise involved, at seq boundaries chosen to straddle
@@ -6708,7 +6891,7 @@ mod tests {
                     solve_span: tracing::Span::none(),
                 },
             );
-            engine.merge_detached_for_test(item);
+            merge_detached_for_test(&mut engine, item);
         };
         // Drive the anchor forward by ONE detached merge at a high seq; the
         // seeds at (current-65) and (current-63) straddle the age edge.
@@ -6743,8 +6926,18 @@ mod tests {
         // the shared counter must NOT prune detached-keyed rows. Run two
         // in-cycle solves (the shared counter ticks), then re-assert the
         // retained row survived them.
-        engine.run_test_cycle(101, &BlockMetadata::default(), &affected_keys_v2);
-        engine.run_test_cycle(102, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            101,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
+        run_test_cycle(
+            &mut engine,
+            102,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         let ledger_rows_still = engine.cycle.detached_cycle.outcome_ledger.lock();
         assert!(
             ledger_rows_still.contains((current - 63, 2222)),
@@ -6930,7 +7123,12 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         assert_eq!(
             engine.cycle.cycle_arm(),
             "detached",
@@ -6957,7 +7155,12 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         assert_eq!(
             engine.cycle.cycle_arm(),
             "detached",
@@ -6970,7 +7173,12 @@ mod tests {
             .detached_cycle
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed); // == DETACHED_INFLIGHT_CAP
-        engine.run_test_cycle(101, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            101,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         assert_eq!(
             engine.cycle.cycle_arm(),
             "detached",
@@ -6989,7 +7197,8 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        engine.run_test_cycle(
+        run_test_cycle(
+            &mut engine,
             102,
             &BlockMetadata::default(),
             &[degenbot_solvers::affected_keys::AffectedKey::new(
@@ -7014,7 +7223,12 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         assert_eq!(engine.cycle.cycle_arm(), "detached");
         // With a 400ms slow path the results land AFTER return (T2's read) —
         // at least the slow pid is absent.
@@ -7210,8 +7424,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let pid = engine
-            .register_and_solve_path(vec![
+        let pid = register_and_solve_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: a,
                     zero_for_one: true,
@@ -7220,8 +7435,9 @@ mod tests {
                     pool_id: b,
                     zero_for_one: true,
                 },
-            ])
-            .expect("eager path registration succeeds");
+            ],
+        )
+        .expect("eager path registration succeeds");
         assert!(
             engine.cycle.pending_new_paths.contains(&pid),
             "the eager path starts in the merge pipe"
@@ -7585,7 +7801,12 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         assert_eq!(
             engine.cycle.cycle_arm(),
             "detached",
@@ -7642,7 +7863,12 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        engine.run_test_cycle(100, &BlockMetadata::default(), &affected_keys_v2);
+        run_test_cycle(
+            &mut engine,
+            100,
+            &BlockMetadata::default(),
+            &affected_keys_v2,
+        );
         let pid = path_ids[0];
         let results_before = engine.cycle.results.len();
         let applied_before = engine
@@ -7671,7 +7897,7 @@ mod tests {
                 solve_span: tracing::Span::none(),
             },
         );
-        engine.merge_detached_for_test(item);
+        merge_detached_for_test(&mut engine, item);
         assert_eq!(
             engine
                 .cycle
@@ -7725,8 +7951,9 @@ mod tests {
                     GAMMA_03,
                     FEE_DENOM_03,
                 );
-                let id = engine
-                    .register_and_solve_path(vec![
+                let id = register_and_solve_path(
+                    &mut engine,
+                    vec![
                         PoolHop {
                             pool_id: hub_a,
                             zero_for_one: true,
@@ -7739,8 +7966,9 @@ mod tests {
                             pool_id: hub_b,
                             zero_for_one: false,
                         },
-                    ])
-                    .unwrap();
+                    ],
+                )
+                .unwrap();
                 path_ids.push((id, unique, hub_a, hub_b));
             }
             (engine, path_ids, hub_a, hub_b)
@@ -7751,7 +7979,8 @@ mod tests {
             // process-global flip; no parallel-order dependence).
             engine.cycle.set_resolve_parallel_for_test(parallel);
             // Cycle 1: dirty BOTH hubs -> all N paths re-resolve in one cycle.
-            engine.process_updates(
+            process_updates(
+                &mut engine,
                 &[
                     (Address::from([0xaa_u8; 20]), usdc(990_000), weth(705)),
                     (Address::from([0xbb_u8; 20]), weth(895), usdc(1_210_000)),
@@ -7774,7 +8003,8 @@ mod tests {
             // Cycle 2: dirty hub_b only -> 600 affected paths again; hub_a must
             // be walked ONCE by the shared sharded cache (serial: also once).
             let projections_before = engine.cycle.hop_projection_count;
-            engine.process_updates(
+            process_updates(
+                &mut engine,
                 &[(Address::from([0xbb_u8; 20]), weth(880), usdc(1_230_000))],
                 &[],
                 501,
@@ -7792,7 +8022,7 @@ mod tests {
                 &mut engine.delivery,
             );
             let projections_delta = engine.cycle.hop_projection_count - projections_before;
-            let (results, _block) = engine.latest_results();
+            let (results, _block) = latest_results(&engine);
             (
                 results,
                 engine.cycle.paths_same_state_this_cycle,
@@ -7932,10 +8162,14 @@ mod tests {
             .set_force_deferred_for_test(HashSet::from([deferred]));
         let seen: Kjwik5ReRecords = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
         let seen_hook = std::sync::Arc::clone(&seen);
-        engine.set_deferred_re_record(std::sync::Arc::new(move |keys, block| {
-            seen_hook.lock().push((keys.to_vec(), block));
-        }));
-        engine.run_test_cycle(
+        set_deferred_re_record(
+            &mut engine,
+            std::sync::Arc::new(move |keys, block| {
+                seen_hook.lock().push((keys.to_vec(), block));
+            }),
+        );
+        run_test_cycle(
+            &mut engine,
             100,
             &BlockMetadata::default(),
             &kjwik5_affected_keys(&pool_ids),
@@ -7971,7 +8205,8 @@ mod tests {
         engine
             .cycle
             .set_force_deferred_for_test(HashSet::from([deferred]));
-        engine.run_test_cycle(
+        run_test_cycle(
+            &mut engine,
             100,
             &BlockMetadata::default(),
             &kjwik5_affected_keys(&pool_ids),
@@ -7990,7 +8225,7 @@ mod tests {
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let affected = kjwik5_affected_keys(&pool_ids);
         let baseline = kjwik5_capture_deferred_counter(|| {
-            engine.run_test_cycle(100, &BlockMetadata::default(), &affected);
+            run_test_cycle(&mut engine, 100, &BlockMetadata::default(), &affected);
         });
         assert!(
             !baseline.is_empty(),
@@ -8004,7 +8239,7 @@ mod tests {
             .cycle
             .set_force_deferred_for_test(HashSet::from([path_ids[0], path_ids[2]]));
         let forced = kjwik5_capture_deferred_counter(|| {
-            engine.run_test_cycle(101, &BlockMetadata::default(), &affected);
+            run_test_cycle(&mut engine, 101, &BlockMetadata::default(), &affected);
         });
         assert!(
             forced.iter().all(|&count| count == 2),
@@ -8319,6 +8554,7 @@ pub(crate) mod test_keys {
 mod clamp_merge_worker_tests {
     #![expect(clippy::expect_used)] // tests assert clamp/merge invariants
     use crate::arb_engine::lane_walk::clamp_result_in_worker;
+    use crate::arb_engine::lifecycle::register_path;
     use crate::arb_engine::solve_cycle::{PathTimesHeap, SolveCycleShared};
     use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
     use crate::bot_core::{TickInfo, V4PoolKey};
@@ -8392,8 +8628,9 @@ mod clamp_merge_worker_tests {
                 fetcher: None,
             })
             .expect("V4 registration failed");
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 ::degenbot_solvers::mixed::PoolHop {
                     pool_id: v2,
                     zero_for_one: true,
@@ -8402,8 +8639,9 @@ mod clamp_merge_worker_tests {
                     pool_id: v4_id,
                     zero_for_one: false,
                 },
-            ])
-            .expect("two-hop path registers");
+            ],
+        )
+        .expect("two-hop path registers");
         let pool_refs = std::iter::once(engine.registry.get(path_id).expect("registered").clone())
             .collect::<Vec<_>>();
         (engine, path_id, pool_refs)

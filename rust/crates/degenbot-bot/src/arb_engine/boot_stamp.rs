@@ -216,6 +216,8 @@ fn panic_mixed_boot_ride_illegal_in_tests(winner_cfg: u64, stamp: &BootStamp) {
 #[expect(clippy::expect_used)]
 mod tests {
     use super::{fnv1a_boot, BootRole, BootStamp, LEDGER};
+    use crate::arb_engine::lifecycle::register_and_solve_path;
+    use crate::arb_engine::test_harness::fleet_boot_stamp;
     use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
     use alloy::primitives::Address;
     use degenbot_config::BotConfigLoader;
@@ -369,7 +371,7 @@ mod tests {
             "the divergent-cfg ride must be recorded in the ledger before the panic"
         );
         assert_eq!(
-            engine_a.fleet_boot_stamp().boot(),
+            fleet_boot_stamp(&engine_a, ).boot(),
             degenbot_workers::dispatcher::FleetBoot::from_config(
                 &<::degenbot_config::BotConfig as Default>::default()
             ),
@@ -403,14 +405,12 @@ mod tests {
         // White-box: the twins' stamps hash EQUAL (a legal ride by
         // construction) while the engine identities stay distinct.
         assert!(
-            engine_a
-                .fleet_boot_stamp()
-                .same_cfg(engine_b.fleet_boot_stamp()),
+            fleet_boot_stamp(&engine_a,).same_cfg(fleet_boot_stamp(&engine_b,)),
             "byte-identical twin constructions must produce identical cfg hashes"
         );
         assert_ne!(
-            engine_a.fleet_boot_stamp().engine_id,
-            engine_b.fleet_boot_stamp().engine_id,
+            fleet_boot_stamp(&engine_a,).engine_id,
+            fleet_boot_stamp(&engine_b,).engine_id,
             "two distinct construction identities over one shared boot value"
         );
         let hub_a = engine_a.register_v2_pool(
@@ -429,8 +429,9 @@ mod tests {
         );
         // Two hops: the registration gate refuses structurally unroutable
         // single-hop paths (the A/B fixture's shape).
-        let path_a = engine_a
-            .register_and_solve_path(vec![
+        let path_a = register_and_solve_path(
+            &mut engine_a,
+            vec![
                 PoolHop {
                     pool_id: hub_a,
                     zero_for_one: true,
@@ -439,8 +440,9 @@ mod tests {
                     pool_id: hub_b,
                     zero_for_one: false,
                 },
-            ])
-            .expect("two-hop path registers over the default-cfg core");
+            ],
+        )
+        .expect("two-hop path registers over the default-cfg core");
         let b_hub_a = engine_b.register_v2_pool(
             Address::from([0xAA_u8; 20]),
             usdc_test(1_000_000),
@@ -455,8 +457,9 @@ mod tests {
             GAMMA_03_TEST,
             FEE_DENOM_03_TEST,
         );
-        let path_b = engine_b
-            .register_and_solve_path(vec![
+        let path_b = register_and_solve_path(
+            &mut engine_b,
+            vec![
                 PoolHop {
                     pool_id: b_hub_a,
                     zero_for_one: true,
@@ -465,8 +468,9 @@ mod tests {
                     pool_id: b_hub_b,
                     zero_for_one: false,
                 },
-            ])
-            .expect("two-hop path registers over the twin core");
+            ],
+        )
+        .expect("two-hop path registers over the twin core");
         // Both engines drive a solve: A's first solve MATERIALIZES the
         // fleet; B's rides it. The `&'static` handle identity across the
         // two submits PROVES the single shared fleet.
@@ -507,7 +511,7 @@ mod tests {
         // parallel F-suite stranger may co-record, so the row-level purity
         // claim is made for THIS test's engine B only — its (engine_id,
         // cfg_hash) pair is unique to F3's construction).
-        let my_stamp = engine_b.fleet_boot_stamp();
+        let my_stamp = fleet_boot_stamp(&engine_b);
         let rows = LEDGER.lock();
         let solve_row = rows
             .iter()

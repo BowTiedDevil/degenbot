@@ -288,84 +288,91 @@ impl DeliveryPolicy {
         self.lifecycle.send_batch(batch);
     }
 }
-impl ArbitrageEngine {
-    /// Set the sender for the result batch channel. Delegates to the
-    /// [`DeliveryPolicy`]. The solve itself is channel-free — this only
-    /// attaches the optional delivery sink.
-    pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
-        self.delivery.set_result_channel(tx);
-    }
-    /// Set the profit thresholds for the result batch channel. Delegates to
-    /// the [`DeliveryPolicy`].
-    pub const fn set_profit_thresholds(&mut self, min_profit: U256, max_profit: U256) {
-        self.delivery.set_profit_thresholds(min_profit, max_profit);
-    }
-    /// Compute the incremental diff and send a batch to Python. Delegates to
-    /// the [`DeliveryPolicy`], which consumes the solve output
-    /// (`latest_results`) as its input.
-    ///
-    /// The cold-start `results_block` anchor is established by the pump's
-    /// `set_solve_anchor(current_block)` seed at resume (the settled resume
-    /// boundary — a completed, fully-applied block within the backfill
-    /// window). The [`DeliveryPolicy`] refuses to publish at block 0 (safety
-    /// net) if no anchor has been seeded yet.
-    pub fn compute_diff_and_send(&mut self, metadata: &BlockMetadata) {
-        let results_block = self.cycle.cursor.results_block();
-        // f701ccd3 bridge: capture the settle-entered block span as the
-        // propagation parent for `results_block` — the Python simulate seam
-        // re-attaches it (telemetry::simulate_dispatch_span) so the whole
-        // block chain renders as one Jaeger trace.
-        crate::telemetry::publish_block_context(results_block);
-        let results_snapshot: HashMap<u64, SolvePathResult> = self
-            .cycle
-            .results
-            .iter()
-            .map(|r| (*r.key(), r.value().clone()))
-            .collect();
-        // SIMPIPE2 T3: drain the worker-resolved inline payloads for this
-        // publish; the delivery ships the entries for the delivered paths and
-        // drops the rest.
-        let inline_payloads: HashMap<u64, crate::arb_engine::inline_sim::SimulatedPathResult> =
-            self.cycle
-                .inline_payloads
-                .iter()
-                .map(|e| (*e.key(), e.value().clone()))
-                .collect();
-        self.cycle.inline_payloads.clear();
-        // 6XB6NJ: the anchored gate comes from the block cursor.
-        let anchored = self.cycle.cursor.is_anchored();
-        self.delivery.diff_and_send(
-            &results_snapshot,
-            results_block,
-            anchored,
-            metadata,
-            &inline_payloads,
-        );
-    }
-    /// De-register a path from the engine.
-    ///
-    /// Removes the path from the solve state (`path_pools`, `pool_to_paths`
-    /// reverse index, `path_resolved`, `results`, `pending_new_paths`) and
-    /// hands the delivery bookkeeping (`delivered` / `deregistered`) to the
-    /// [`DeliveryPolicy`]. The path's pools are **not** removed from the
-    /// sub-engines — other paths may still reference them.
-    ///
-    /// The de-registered path ID is recorded and included in the next
-    /// batch's `removed` field.
-    ///
-    /// Returns `true` if the path existed and was removed.
-    pub fn deregister_path(&mut self, path_id: u64) -> bool {
-        // Remove from the registry: drops the path, prunes the reverse index,
-        // and clears the dedup signature.
-        let removed = self.registry.remove(path_id);
-        let existed = removed.is_some();
-        // ADR-045 T4: the path-deregistration coupling (resolve companions,
-        // results, pending-new carry) is the cycle's `forget`.
-        self.cycle.forget(path_id);
-        // Record for the next batch (delivery-policy half)
-        self.delivery.on_path_deregistered(path_id, existed);
-        existed
-    }
+/// Set the sender for the result batch channel (machine-direct free-function
+/// route). The solve itself is channel-free — this only attaches the optional
+/// delivery sink.
+pub(crate) fn set_result_channel(
+    engine: &mut ArbitrageEngine,
+    tx: mpsc::UnboundedSender<ResultBatch>,
+) {
+    engine.delivery.set_result_channel(tx);
+}
+/// Set the profit thresholds for the result batch channel (machine-direct
+/// free-function route).
+pub(crate) fn set_profit_thresholds(
+    engine: &mut ArbitrageEngine,
+    min_profit: U256,
+    max_profit: U256,
+) {
+    engine
+        .delivery
+        .set_profit_thresholds(min_profit, max_profit);
+}
+/// Compute the incremental diff and send a batch to Python (machine-direct
+/// free-function route). The [`DeliveryPolicy`] consumes the solve output
+/// (`latest_results`) as its input.
+///
+/// The cold-start `results_block` anchor is established by the pump's
+/// `set_solve_anchor(current_block)` seed at resume (the settled resume
+/// boundary — a completed, fully-applied block within the backfill window).
+/// The [`DeliveryPolicy`] refuses to publish at block 0 (safety net) if no
+/// anchor has been seeded yet.
+pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &BlockMetadata) {
+    let results_block = engine.cycle.cursor.results_block();
+    // f701ccd3 bridge: capture the settle-entered block span as the
+    // propagation parent for `results_block` — the Python simulate seam
+    // re-attaches it (telemetry::simulate_dispatch_span) so the whole block
+    // chain renders as one Jaeger trace.
+    crate::telemetry::publish_block_context(results_block);
+    let results_snapshot: HashMap<u64, SolvePathResult> = engine
+        .cycle
+        .results
+        .iter()
+        .map(|r| (*r.key(), r.value().clone()))
+        .collect();
+    // SIMPIPE2 T3: drain the worker-resolved inline payloads for this publish;
+    // the delivery ships the entries for the delivered paths and drops the
+    // rest.
+    let inline_payloads: HashMap<u64, crate::arb_engine::inline_sim::SimulatedPathResult> = engine
+        .cycle
+        .inline_payloads
+        .iter()
+        .map(|e| (*e.key(), e.value().clone()))
+        .collect();
+    engine.cycle.inline_payloads.clear();
+    // 6XB6NJ: the anchored gate comes from the block cursor.
+    let anchored = engine.cycle.cursor.is_anchored();
+    engine.delivery.diff_and_send(
+        &results_snapshot,
+        results_block,
+        anchored,
+        metadata,
+        &inline_payloads,
+    );
+}
+/// De-register a path from the engine (machine-direct free-function route).
+///
+/// Removes the path from the solve state (`path_pools`, `pool_to_paths`
+/// reverse index, `path_resolved`, `results`, `pending_new_paths`) and hands
+/// the delivery bookkeeping (`delivered` / `deregistered`) to the
+/// [`DeliveryPolicy`]. The path's pools are **not** removed from the
+/// sub-engines — other paths may still reference them.
+///
+/// The de-registered path ID is recorded and included in the next batch's
+/// `removed` field.
+///
+/// Returns `true` if the path existed and was removed.
+pub(crate) fn deregister_path(engine: &mut ArbitrageEngine, path_id: u64) -> bool {
+    // Remove from the registry: drops the path, prunes the reverse index,
+    // and clears the dedup signature.
+    let removed = engine.registry.remove(path_id);
+    let existed = removed.is_some();
+    // ADR-045 T4: the path-deregistration coupling (resolve companions,
+    // results, pending-new carry) is the cycle's `forget`.
+    engine.cycle.forget(path_id);
+    // Record for the next batch (delivery-policy half)
+    engine.delivery.on_path_deregistered(path_id, existed);
+    existed
 }
 #[expect(clippy::expect_used)]
 #[cfg(test)]

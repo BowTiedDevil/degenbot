@@ -115,7 +115,7 @@ lint-rust:
 # Lint Rust (check-only; non-mutating). Mirrors the clippy gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
 # CI's `lint-rust`: fails on any warning `--fix` would have auto-applied.
-lint-rust-check: check-no-inner-allow
+lint-rust-check: check-no-inner-allow check-engine-impl-blocks
     cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
@@ -150,12 +150,16 @@ check-no-pyo3-in-cores:
 # Structural gate for epic 5TBT7L (arch review #11, candidate 2): the engine
 # seam deepens until `EngineStages` is the ONE external driver surface and
 # every `impl ArbitrageEngine` block outside `arb_engine/mod.rs` is dissolved.
-# This is the standing RED: today the census is 12 blocks across 8 files
-# (lifecycle.rs, mod.rs x5, inline_sim.rs, block_cursor.rs, path_info.rs,
-# diagnostic.rs, event_routing.rs, delivery_policy.rs). NOT wired into
-# lint-rust-check/CI yet - epic slice T6 flips it into the Rust hygiene set.
+# T6 flipped it GREEN and wired it into the Rust hygiene set
+# (`lint-rust-check` + the `rust-engine-impl-blocks` pre-commit hook + CI).
 # The `{` anchor keeps the prose mention of `impl ArbitrageEngine` in
 # mod.rs's module-tree comment from being counted as a block.
+#
+# Two assertions:
+#   1. exactly ONE `impl ArbitrageEngine` block, in arb_engine/mod.rs.
+#   2. `ArbitrageEngine` appears in degenbot-python/src exactly ONCE - the
+#      pyclass `name = "ArbitrageEngine",` compat string (the deliberate
+#      Python-API name exemption). Any other hit is a seam regression.
 check-engine-impl-blocks:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -170,7 +174,22 @@ check-engine-impl-blocks:
         printf '%s\n' "$matches" >&2
         exit 1
     fi
-    echo "ok: exactly one impl ArbitrageEngine block, in arb_engine/mod.rs"
+    py_matches=$(rg -n 'ArbitrageEngine' rust/crates/degenbot-python/src || true)
+    if [ -z "$py_matches" ]; then
+        py_count=0
+    else
+        py_count=$(printf '%s\n' "$py_matches" | grep -c 'ArbitrageEngine' || true)
+    fi
+    if [ "$py_count" -ne 1 ] || ! printf '%s\n' "$py_matches" | grep -q 'name = "ArbitrageEngine",'; then
+        echo "ERROR: 'ArbitrageEngine' must name the pyclass compat string exactly once in degenbot-python (epic 5TBT7L)." >&2
+        echo "  expected exactly 1 hit, 'name = \"ArbitrageEngine\",'; found $py_count" >&2
+        echo "  census (file: hits):" >&2
+        printf '%s\n' "$py_matches" | cut -d: -f1 | sort | uniq -c | awk '{printf "    %s: %s\n", $2, $1}' >&2
+        echo "  matches:" >&2
+        printf '%s\n' "$py_matches" >&2
+        exit 1
+    fi
+    echo "ok: exactly one impl ArbitrageEngine block, in arb_engine/mod.rs; degenbot-python names ArbitrageEngine only as the pyclass compat string"
 
 # Build Rust extension module (correct for Python extension)
 build-rust-extension:

@@ -54,7 +54,16 @@ use degenbot_core::op_error;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+use super::delivery_policy::{
+    compute_diff_and_send, deregister_path, set_profit_thresholds, set_result_channel,
+};
 use super::inline_sim::InlineSimulator;
+use super::lifecycle::{
+    flush_event_buffer, last_processed_block, latest_results, path_count, path_dedups,
+    register_and_solve_path, register_path, set_deferred_re_record, set_event_buffer_max_age,
+    set_last_processed_block, set_path_cap, solve_all_paths, v2_pool_count, v3_pool_count,
+    v4_pool_count,
+};
 use super::path_info::PathInfoBuildError;
 use super::path_registry::PathRegistrationError;
 use super::{DiagnosticPathState, ResultBatch};
@@ -140,13 +149,14 @@ impl EngineStages {
     pub(crate) fn new(engine: Arc<Mutex<ArbitrageEngine>>, delta: Arc<EpochDelta>) -> Self {
         {
             let ledger = Arc::clone(&delta);
-            engine
-                .lock()
-                .set_deferred_re_record(Arc::new(move |keys, block| {
+            set_deferred_re_record(
+                &mut engine.lock(),
+                Arc::new(move |keys, block| {
                     for &key in keys {
                         ledger.record(key, block);
                     }
-                }));
+                }),
+            );
         }
         Self {
             engine,
@@ -196,19 +206,19 @@ impl EngineStages {
     /// The packed streaming-delivery construction stance (smoke-boot probe).
     #[must_use]
     pub fn streaming_delivery_probe(&self) -> bool {
-        self.engine.lock().streaming_delivery_probe()
+        self.engine.lock().cycle.streaming_delivery
     }
 
     /// Number of registered paths.
     #[must_use]
     pub fn path_count(&self) -> usize {
-        self.engine.lock().path_count()
+        path_count(&self.engine.lock())
     }
 
     /// Dedup hits counted registry-side (PRG-4).
     #[must_use]
     pub fn path_dedups(&self) -> u64 {
-        self.engine.lock().path_dedups()
+        path_dedups(&self.engine.lock())
     }
 
     /// The immutable per-hop pool refs of one registered path (the diagnostic
@@ -225,12 +235,12 @@ impl EngineStages {
     /// Read the last solved results + block (RAYPAR snapshot).
     #[must_use]
     pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
-        self.engine.lock().latest_results()
+        latest_results(&self.engine.lock())
     }
 
     /// Set the registered-path cap (PRG-4 / IRUMXD). `None` = unlimited.
     pub fn set_path_cap(&self, cap: Option<usize>) {
-        self.engine.lock().set_path_cap(cap);
+        set_path_cap(&mut self.engine.lock(), cap);
     }
 
     /// Register a mixed path, returning `(path_id, created)` — `created` is
@@ -240,9 +250,9 @@ impl EngineStages {
     /// Propagates the typed registration refusal (invalid hop / full registry).
     pub fn register_path(&self, hops: Vec<PoolHop>) -> Result<(u64, bool), PathRegistrationError> {
         let mut engine = self.engine.lock();
-        let before = engine.path_count();
-        let path_id = engine.register_path(hops)?;
-        Ok((path_id, engine.path_count() != before))
+        let before = path_count(&engine);
+        let path_id = register_path(&mut engine, hops)?;
+        Ok((path_id, path_count(&engine) != before))
     }
 
     /// Register a path and eagerly solve it (same `(path_id, created)` shape).
@@ -254,52 +264,52 @@ impl EngineStages {
         hops: Vec<PoolHop>,
     ) -> Result<(u64, bool), PathRegistrationError> {
         let mut engine = self.engine.lock();
-        let before = engine.path_count();
-        let path_id = engine.register_and_solve_path(hops)?;
-        Ok((path_id, engine.path_count() != before))
+        let before = path_count(&engine);
+        let path_id = register_and_solve_path(&mut engine, hops)?;
+        Ok((path_id, path_count(&engine) != before))
     }
 
     /// De-register a path. Returns `true` if it existed.
     pub fn deregister_path(&self, path_id: u64) -> bool {
-        self.engine.lock().deregister_path(path_id)
+        deregister_path(&mut self.engine.lock(), path_id)
     }
 
     /// Resolve and solve all registered paths (cold-start / test sync entry).
     pub fn solve_all_paths(&self, block_number: u64) {
-        self.engine.lock().solve_all_paths(block_number);
+        solve_all_paths(&mut self.engine.lock(), block_number);
     }
 
     /// Set the last processed block manually (post-backfill).
     pub fn set_last_processed_block(&self, block: u64) {
-        self.engine.lock().set_last_processed_block(block);
+        set_last_processed_block(&mut self.engine.lock(), block);
     }
 
     /// Set the V3/V4 buffered-event max age (`None` = no expiry).
     pub fn set_event_buffer_max_age(&self, max_age: Option<u64>) {
-        self.engine.lock().set_event_buffer_max_age(max_age);
+        set_event_buffer_max_age(&mut self.engine.lock(), max_age);
     }
 
     /// Flush all buffered V3/V4 liquidity events.
     pub fn flush_event_buffer(&self) {
-        self.engine.lock().flush_event_buffer();
+        flush_event_buffer(&mut self.engine.lock());
     }
 
     /// Number of registered V2 pools.
     #[must_use]
     pub fn v2_pool_count(&self) -> usize {
-        self.engine.lock().v2_pool_count()
+        v2_pool_count(&self.engine.lock())
     }
 
     /// Number of registered V3 pools.
     #[must_use]
     pub fn v3_pool_count(&self) -> usize {
-        self.engine.lock().v3_pool_count()
+        v3_pool_count(&self.engine.lock())
     }
 
     /// Number of registered V4 pools.
     #[must_use]
     pub fn v4_pool_count(&self) -> usize {
-        self.engine.lock().v4_pool_count()
+        v4_pool_count(&self.engine.lock())
     }
 
     /// Snapshot the engine-owned state for every hop in `path_id` (diagnostic).
@@ -316,7 +326,7 @@ impl EngineStages {
 
     /// Attach the result-batch channel (the optional delivery sink).
     pub fn set_result_channel(&self, tx: tokio::sync::mpsc::UnboundedSender<ResultBatch>) {
-        self.engine.lock().set_result_channel(tx);
+        set_result_channel(&mut self.engine.lock(), tx);
     }
 
     /// Set the delivery profit thresholds.
@@ -325,9 +335,7 @@ impl EngineStages {
         min_profit: alloy::primitives::U256,
         max_profit: alloy::primitives::U256,
     ) {
-        self.engine
-            .lock()
-            .set_profit_thresholds(min_profit, max_profit);
+        set_profit_thresholds(&mut self.engine.lock(), min_profit, max_profit);
     }
 
     /// Install the inline-sim hook (construction-time wiring).
@@ -396,10 +404,10 @@ impl EngineStages {
         let cycle_outcome;
         {
             if let Some(p) = crate::instruments::pipeline() {
-                p.set_registered_paths(u64::try_from(engine.path_count()).unwrap_or(u64::MAX));
+                p.set_registered_paths(u64::try_from(path_count(&engine)).unwrap_or(u64::MAX));
             }
             hotpath::gauge!("engine_registered_paths").set(f64::from(
-                u32::try_from(engine.path_count()).unwrap_or(u32::MAX),
+                u32::try_from(path_count(&engine)).unwrap_or(u32::MAX),
             ));
             // T3 (epic BXZBWY): the solve cycle must not pin a shared
             // pump-runtime worker while it runs. 2UVG3E seam #4: under the
@@ -654,9 +662,7 @@ impl StageHandlers for EngineStages {
     fn on_publish(&self, work: &Publish) -> Result<PublishOutcome, StageError> {
         // The debounced batch flush (the former send_result_batch one-line
         // delegation, inlined at its ONE stage caller — epic 5TBT7L T4).
-        self.engine
-            .lock()
-            .compute_diff_and_send(work.ctx.metadata());
+        compute_diff_and_send(&mut self.engine.lock(), work.ctx.metadata());
         Ok(PublishOutcome::default())
     }
     /// Finalized row: the boundary catch — advance + terminal publish, no
@@ -669,7 +675,7 @@ impl StageHandlers for EngineStages {
         // guard. Bookkeeping-only: this method NEVER runs a solve cycle.
         let mut engine = self.engine.lock();
         if engine.cycle.cursor.finalize(work.ctx.block()) {
-            engine.compute_diff_and_send(work.ctx.metadata());
+            compute_diff_and_send(&mut engine, work.ctx.metadata());
         }
         // Authoritative per-family apply split (2SDIQW): hotpath labels do
         // not aggregate reliably in impl_type mode, so the atomics summarize
@@ -736,7 +742,7 @@ impl PumpControl for EngineStages {
         self.engine.lock().cycle.cursor.record_logs();
     }
     fn last_processed_block(&self) -> Option<Epoch> {
-        self.engine.lock().last_processed_block().map(Epoch::at)
+        last_processed_block(&self.engine.lock()).map(Epoch::at)
     }
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
         // Direct, non-FIFO dispatch: one send per accepted header, never
@@ -753,7 +759,7 @@ impl PumpControl for EngineStages {
         op_error!(domain = solver, "EngineStages: pump ended - closing the block-clock pipe + engine delivery channels; the Python block/result streams now end so the bot fails loudly"
         );
         self.block_clock.lock().close();
-        self.engine.lock().on_pump_ended();
+        self.engine.lock().delivery.lifecycle.close();
     }
 }
 #[cfg(test)]

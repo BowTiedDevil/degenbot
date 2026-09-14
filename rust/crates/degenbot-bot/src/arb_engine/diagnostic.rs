@@ -523,6 +523,8 @@ fn build_engine_pool_state(
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
+    use crate::arb_engine::lifecycle::{last_processed_block, register_path};
+    use crate::arb_engine::test_harness::run_test_cycle;
     use crate::arb_engine::{ArbitrageEngine, DiagnosticPathState, PoolTickCoverage};
     use crate::bot_core::RegisterV3PoolParams as V3Params;
     use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
@@ -607,8 +609,9 @@ mod tests {
             })
             .expect("V4 registration failed");
         // Mixed V2 -> V3 -> V4 path
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -621,8 +624,9 @@ mod tests {
                     pool_id: v4_fwd,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         let snapshot = super::diagnostic_path_state(&engine, path_id).expect("path should exist");
         assert_eq!(snapshot.path_id, path_id);
         assert_eq!(snapshot.path_type, "V2-V3-V4");
@@ -679,8 +683,9 @@ mod tests {
             997,
             1000,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2_fwd,
                     zero_for_one: true,
@@ -689,24 +694,25 @@ mod tests {
                     pool_id: v2_sec,
                     zero_for_one: true,
                 },
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         // No solve_dirty yet → both `solve_block` and
         // `engine_processed_block` are `None`.
         let snap = super::diagnostic_path_state(&engine, path_id).expect("path exists");
-        assert_eq!(snap.engine_processed_block, engine.last_processed_block());
+        assert_eq!(snap.engine_processed_block, last_processed_block(&engine,));
         assert_eq!(snap.engine_processed_block, None);
         // Drive a cycle at 123 → last_processed_block = Some(123).
-        engine.run_test_cycle(123, &BlockMetadata::default(), &[]);
+        run_test_cycle(&mut engine, 123, &BlockMetadata::default(), &[]);
         let snap = super::diagnostic_path_state(&engine, path_id).expect("path exists");
         assert_eq!(
             snap.engine_processed_block,
-            engine.last_processed_block(),
+            last_processed_block(&engine,),
             "engine_processed_block must mirror last_processed_block"
         );
         assert_eq!(snap.engine_processed_block, Some(123));
         // Advance: a cycle at 124 → last_processed_block = Some(124).
-        engine.run_test_cycle(124, &BlockMetadata::default(), &[]);
+        run_test_cycle(&mut engine, 124, &BlockMetadata::default(), &[]);
         let snap = super::diagnostic_path_state(&engine, path_id).expect("path exists");
         assert_eq!(snap.engine_processed_block, Some(124));
         // JSON round-trip preserves the field.

@@ -239,6 +239,7 @@ fn v2_fee_bips(gamma: u64, denom: u64) -> u16 {
 #[expect(clippy::expect_used, clippy::panic, clippy::similar_names)]
 #[cfg(test)]
 mod tests {
+    use crate::arb_engine::lifecycle::register_path;
     use crate::arb_engine::ArbitrageEngine;
     use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams};
     use ::degenbot_decoders::v4_swap_decoder::V4PoolId;
@@ -277,8 +278,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id,
                     zero_for_one: true,
@@ -287,8 +289,9 @@ mod tests {
                     pool_id: pool2_id,
                     zero_for_one: true,
                 },
-            ])
-            .expect("register_path");
+            ],
+        )
+        .expect("register_path");
         let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("v2 supported");
@@ -323,8 +326,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: pid,
                     zero_for_one: true,
@@ -333,8 +337,9 @@ mod tests {
                     pool_id: pid2,
                     zero_for_one: true,
                 },
-            ])
-            .expect("register_path");
+            ],
+        )
+        .expect("register_path");
         let desc = engine.cycle.describe_path(path_id, &engine.registry);
         assert!(
             desc.contains("V2:0x4444"),
@@ -365,8 +370,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id,
                     zero_for_one: false,
@@ -375,8 +381,9 @@ mod tests {
                     pool_id: pool2_id,
                     zero_for_one: true,
                 },
-            ])
-            .expect("register_path");
+            ],
+        )
+        .expect("register_path");
         let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("v2 supported");
@@ -414,8 +421,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id,
                     zero_for_one: true,
@@ -424,8 +432,9 @@ mod tests {
                     pool_id: pool2_id,
                     zero_for_one: true,
                 },
-            ])
-            .expect("register_path");
+            ],
+        )
+        .expect("register_path");
         let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("v3 supported");
@@ -472,8 +481,9 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id,
                     zero_for_one: true,
@@ -482,8 +492,9 @@ mod tests {
                     pool_id: pool2_id,
                     zero_for_one: true,
                 },
-            ])
-            .expect("register_path");
+            ],
+        )
+        .expect("register_path");
         let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("v4 supported");
@@ -534,8 +545,9 @@ mod tests {
             init_hash: alloy::primitives::B256::ZERO,
             ..Default::default()
         });
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2,
                     zero_for_one: true,
@@ -544,8 +556,9 @@ mod tests {
                     pool_id: v3,
                     zero_for_one: false,
                 },
-            ])
-            .expect("register_path");
+            ],
+        )
+        .expect("register_path");
         let path = super::path_info_for(&engine, path_id)
             .expect("path exists")
             .expect("supported");

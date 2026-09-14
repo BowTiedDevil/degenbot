@@ -51,6 +51,7 @@ hooks = [
   { id = "rust-fmt-check",   name = "Rust fmt check",      language = "system", entry = "just fmt-check",                stages = ["pre-commit"], always_run = true, pass_filenames = false },
   { id = "python-fmt-check", name = "Python fmt check",   language = "system", entry = "just fmt-check-python",         stages = ["pre-commit"], always_run = true, pass_filenames = false },
   { id = "rust-no-pyo3",     name = "Rust no-pyo3 cores", language = "system", entry = "just check-no-pyo3-in-cores",   stages = ["pre-commit"], always_run = true, pass_filenames = false },
+  { id = "rust-engine-impl-blocks", name = "Rust engine impl-block gate", language = "system", entry = "just check-engine-impl-blocks", stages = ["pre-commit"], always_run = true, pass_filenames = false },
 
   # --- commit-msg -----------------------------------------------------------
   # Validate the commit message against the relaxed .commitlintrc.yml. Runs at

@@ -387,6 +387,7 @@ impl PipelinedSims {
 #[cfg(test)]
 mod inline_sim_tests {
     use super::*;
+    use crate::arb_engine::lifecycle::register_path;
     use crate::bot_core::RegisterV4PoolParams;
     use alloy::primitives::U256;
     use degenbot_solvers::mixed::{HopType, PoolHop};
@@ -488,8 +489,9 @@ mod inline_sim_tests {
                 fetcher: None,
             })
             .expect("V4 registration failed");
-        let path_id = engine
-            .register_path(vec![
+        let path_id = register_path(
+            &mut engine,
+            vec![
                 PoolHop {
                     pool_id: v2,
                     zero_for_one: true,
@@ -498,8 +500,9 @@ mod inline_sim_tests {
                     pool_id: v4_id,
                     zero_for_one: false,
                 },
-            ])
-            .expect("path registers");
+            ],
+        )
+        .expect("path registers");
         (engine, path_id)
     }
     fn admitted() -> SolvePathResult {

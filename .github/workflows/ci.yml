@@ -151,6 +151,9 @@ jobs:
       - name: Check formatting
         run: just fmt-check
 
+      - name: Check engine impl-block gate
+        run: just check-engine-impl-blocks
+
       - name: Run Clippy
         run: just lint-rust
 

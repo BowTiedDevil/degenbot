@@ -45,16 +45,13 @@ use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
 use self::solve_cycle::SolveCycle;
-#[cfg(test)]
-use crate::arb_engine::tests::test_keys::affected_keys;
 use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
-#[cfg(test)]
-use crate::bot_core::V3SwapUpdate;
 use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
+#[cfg(test)]
 use alloy::primitives::Address;
 use dashmap::DashMap;
 use hashbrown::{HashMap, HashSet};
@@ -127,6 +124,8 @@ mod solve_cycle;
 // consumers; `#[cfg(test)]` so the fixtures never compile into production.
 #[cfg(test)]
 mod executor_ab_probe;
+#[cfg(test)]
+mod test_harness;
 #[cfg(test)]
 mod tests;
 pub use diagnostic::{
@@ -431,13 +430,6 @@ impl Default for ArbitrageEngine {
     }
 }
 impl ArbitrageEngine {
-    /// The pump ended: close the delivery channels so Python's block/result
-    /// streams end loudly (incident 2026-08-20 #2). The `StageHandlers`
-    /// liveness hook's answer — see [`DeliveryLifecycle::close`] for the
-    /// end-of-stream contract.
-    pub fn on_pump_ended(&mut self) {
-        self.delivery.lifecycle.close();
-    }
     /// Create a new engine with its **own** standalone `BotState` (standard
     /// allocation). ADR-006 D1: prefer [`ArbitrageEngine::with_core`] on the live
     /// path so the engine shares one `Arc<RwLock<BotState>>` with `PyBot`/handles;
@@ -453,13 +445,6 @@ impl ArbitrageEngine {
     /// remains engine-then-core; the engine's `Mutex<ArbitrageEngine>` engine
     /// state is still engine-local (ADR-006 D2 — engine keeps its own lock
     /// for path/solver state; only the core lock type/flavor changes).
-    /// Probe the packed delivery stance (smoke-boot observability; reads no
-    /// environment — the field was packed from the typed config at
-    /// construction).
-    #[must_use]
-    pub fn streaming_delivery_probe(&self) -> bool {
-        self.cycle.streaming_delivery
-    }
     #[must_use]
     pub fn with_core(core: Arc<StateLock<BotState>>) -> Self {
         // KAHU5W/P6YXA6 production-boot fix: pack from the INSTALLED loader
@@ -594,8 +579,6 @@ impl ArbitrageEngine {
         // The KJWIK5 diagnostic force-deferred override.
         self.cycle.force_deferred.clone_from(&retune.force_deferred);
     }
-}
-impl ArbitrageEngine {
     /// Immutable access to the shared `BotState` `Arc` (ADR-003 / ADR-006
     /// D1+D2).
     ///
@@ -617,8 +600,6 @@ impl ArbitrageEngine {
     pub fn path_pools(&self) -> &HashMap<u64, std::sync::Arc<MixedPath>> {
         self.registry.path_pools()
     }
-}
-impl ArbitrageEngine {
     /// Read the current engine lifecycle phase (core-owned source of truth,
     /// ZU7RAF).
     /// Atomic + lock-free (the engine is behind `Arc<Mutex<..>>` across the
@@ -662,18 +643,14 @@ impl ArbitrageEngine {
     ) -> Result<(), String> {
         self.current_phase().require_before(phase, method_name)
     }
-}
-/// Test-only registration helpers (ADR-006 D3).
-///
-/// Production code never registers pools via the engine — pool construction
-/// is a `BotState` concern, and the engine discovers pools at `register_path`
-/// time by resolving `pool_id`s against the associated `BotState`. These helpers
-/// exist so no-pyo3 tests can seed the engine's `BotState` (its `core`) with the
-/// same ergonomics the old production `register_v*_pool` methods had; they
-/// delegate straight to `BotState::register_*`.
-#[cfg(test)]
-#[expect(clippy::expect_used)] // test convenience: assert registration succeeds
-impl ArbitrageEngine {
+    // Test-only registration helpers (ADR-006 D3).
+    //
+    // Production code never registers pools via the engine — pool construction
+    // is a `BotState` concern, and the engine discovers pools at `register_path`
+    // time by resolving `pool_id`s against the associated `BotState`. These
+    // helpers exist so no-pyo3 tests can seed the engine's `BotState` (its
+    // `core`) with the same ergonomics the old production `register_v*_pool`
+    // methods had; they delegate straight to `BotState::register_*`.
     /// Register a V2 pool into the engine's `BotState` and return its `pool_id`.
     ///
     /// # Panics
@@ -682,6 +659,8 @@ impl ArbitrageEngine {
     /// params (duplicate address, or spec-violating reserve). This is a test
     /// convenience — production code goes through `PyBot::register_v2_pool`,
     /// which surfaces the rejection as a typed Python exception.
+    #[cfg(test)]
+    #[expect(clippy::expect_used)] // test convenience: assert registration succeeds
     #[must_use]
     pub fn register_v2_pool(
         &self,
@@ -720,6 +699,8 @@ impl ArbitrageEngine {
     /// / `fee` / `tick_spacing`). This is a test convenience — production
     /// code goes through `PyBot::register_v3_pool`, which surfaces the
     /// rejection as a typed Python exception.
+    #[cfg(test)]
+    #[expect(clippy::expect_used)] // test convenience: assert registration succeeds
     #[must_use]
     pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
         self.core
@@ -733,6 +714,7 @@ impl ArbitrageEngine {
     ///
     /// Returns `Err` if `BotState::register_v4_pool` rejects the pool
     /// (amount-modifying hooks, dynamic fee, or duplicate registration).
+    #[cfg(test)]
     pub fn register_v4_pool(
         &self,
         params: &crate::bot_core::RegisterV4PoolParams,
@@ -740,112 +722,5 @@ impl ArbitrageEngine {
         self.core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v4_pool(params)
-    }
-}
-// ---------------------------------------------------------------------------
-// Epic BXUSGL T1: test-only knobs. Never compiled outside `cargo test` — the
-// streaming-orchestration test needs a deterministic per-path delay and an
-// observation point on the drain.
-// ---------------------------------------------------------------------------
-// The `#[cfg(test)]` engine knob setters moved to their OWNING machine
-// (`SolveCycle`) as `#[cfg(test)]` methods (ergo 3WI4EO T2): the engine keeps
-// only the white-box boot probe, so no test knob is homed on the seam twin.
-#[cfg(test)]
-impl ArbitrageEngine {
-    /// YI5NGB (test-only F-suite probe): the engine's construction-stamped
-    /// boot — lets the white-box tests verify twin constructions share a
-    /// byte-identical boot value WITHOUT reaching into the fleet statics.
-    #[cfg(test)]
-    pub(crate) fn fleet_boot_stamp(&self) -> &BootStamp {
-        &self.fleet_boot_stamp
-    }
-    /// 5TBT7L T4 test harness: the direct-engine cycle drive the unit tests
-    /// used to reach via the retired `ArbitrageEngine::solve_dirty`. Runs the
-    /// machine's `run_epoch` + the processed-cursor stamp. The PRODUCTION
-    /// pre-cycle expiry + sidecar spawn live on
-    /// `EngineStages::run_solve_cycle`, which the stage tests drive directly.
-    #[cfg(test)]
-    pub(crate) fn run_test_cycle(
-        &mut self,
-        block_number: u64,
-        metadata: &BlockMetadata,
-        affected: &[degenbot_solvers::affected_keys::AffectedKey],
-    ) -> solve_cycle::CycleOutcome {
-        let outcome = self.cycle.run_epoch(
-            affected,
-            block_number,
-            metadata,
-            &self.registry,
-            &mut self.delivery,
-        );
-        // 6XB6NJ: monotone advance on the block cursor.
-        self.cycle.cursor.advance_processed(block_number);
-        outcome
-    }
-    /// 5TBT7L T4 test harness: terminal disposition of one detached straggler
-    /// (the retired `ArbitrageEngine::merge_detached_item`). The production
-    /// caller is the detached-merge sidecar, which chains machine-direct.
-    #[cfg(test)]
-    pub(crate) fn merge_detached_for_test(
-        &mut self,
-        item: crate::arb_engine::executor::LaneOutcome,
-    ) {
-        self.cycle
-            .merge_detached_item(item, &self.registry, &mut self.delivery);
-    }
-    /// 5TBT7L T4 test harness: the guarded boundary advance + terminal
-    /// publish (the retired `ArbitrageEngine::finalize_block`, minus the
-    /// apply-telemetry diag which now rides `EngineStages::on_finalize`).
-    #[cfg(test)]
-    pub(crate) fn finalize_for_test(&mut self, block: u64, metadata: &BlockMetadata) {
-        if self.cycle.cursor.finalize(block) {
-            self.compute_diff_and_send(metadata);
-        }
-    }
-    /// Process pre-decoded updates for testing (moved here with epic 5TBT7L
-    /// T4; the `event_routing.rs` module was deleted).
-    #[cfg(test)]
-    pub(crate) fn process_updates(
-        &mut self,
-        v2_updates: &[(Address, U112, U112)],
-        v3_updates: &[V3SwapUpdate],
-        block_number: u64,
-        metadata: &BlockMetadata,
-    ) {
-        // Apply V2+V3 updates to BotState and collect affected pool ids (ADR-003)
-        let mut v2_affected = HashSet::new();
-        let mut v3_affected = HashSet::new();
-        {
-            let mut core = self
-                .core
-                .write_at(crate::bot_core::state_lock::LockSite::Solver);
-            for &(addr, r0, r1) in v2_updates {
-                if let Some(pool_id) = core.apply_v2_sync(addr, r0, r1, block_number) {
-                    v2_affected.insert(pool_id);
-                }
-            }
-            for update in v3_updates {
-                if let Some(pool_id) = core.apply_v3_swap(
-                    update.pool_address,
-                    update.sqrt_price_x96,
-                    update.liquidity,
-                    update.tick,
-                    block_number,
-                    &update.tick_priors,
-                ) {
-                    v3_affected.insert(pool_id);
-                }
-            }
-        }
-        // Re-solve only paths containing updated pools (test-only intake)
-        self.cycle.run_epoch(
-            &affected_keys(&v2_affected, &v3_affected, &HashSet::new()),
-            block_number,
-            metadata,
-            &self.registry,
-            &mut self.delivery,
-        );
-        // 6XB6NJ: monotone advance on the block cursor.
-        self.cycle.cursor.advance_processed(block_number);
     }
 }
