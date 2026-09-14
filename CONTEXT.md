@@ -1042,6 +1042,21 @@ _Avoid_: "quote", "oracle", "gate" (admission-control connotations),
 ### Solve cycle (2026-09 architecture review — decided in grilling; solver_dispatch
 dissolution filed as ergo epic `5WCRWZ` — see the "Lane walk" entry below)
 
+**SHIPPED (2026-09-14, epic `5WCRWZ`).** The `arb_engine/solver_dispatch.rs`
+grab file is DELETED. Its former residents: heavy-path capture →
+`arb_engine::solver_capture`; workload partitioning → `arb_engine::workload_partition`;
+`SolveCycleShared` + the profit floor/resolve chunking → `solve_cycle.rs`;
+`solve_one_path` + the lane walk + walk helpers → `arb_engine::lane_walk`;
+`PipelinedSims` → `inline_sim.rs`; stance/config plumbing → `lifecycle.rs`
+(+ `record_cycle_arm_telemetry` → `engine_stages.rs`); the merge sidecar →
+`detached_cycle.rs`; the executor A/B fixtures → a crate-local cfg(test)
+`arb_engine::executor_ab_probe`. The inherent engine twins collapsed: the
+solve entrances chain directly to the `SolveCycle` surface
+(`event_routing::solve_dirty` → `engine.cycle.run_epoch`). One follow-up
+candidate noted during the review: `STREAMING_DELIVERY_ENABLED` (lifecycle)
+has a config-driven writer but no production reader — a dead-stance cleanup
+for a future task, deliberately not deleted here.
+
 - **Solve cycle** — the per-block dirty-solve unit: affected-path fan-out from
   the EpochDelta keys, admission (draw/shed), (re)resolve, solve, witness,
   drain, merge, cursor advance. One module owns all four solve entrances
