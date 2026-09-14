@@ -1,0 +1,28 @@
+# cargo-crap configuration (https://github.com/minikin/cargo-crap).
+# Read by every `cargo crap` invocation from the repo root or rust/, and by the
+# `just crap*` recipes. CLI flags always win over these keys.
+
+# Score above which a function is "crappy". NB: cargo-crap's CC counts every
+# `?` as a decision point, and the score is CC^2 x (1 - cov/100)^3 + CC, so
+# above CC 30 no amount of coverage gets under this threshold.
+threshold = 30.0
+
+# An unmapped function (complexity but no coverage data) is a red flag, not a
+# rounding error: treat it as 0% covered. Do NOT flip this to "skip" to make a
+# report look better - fix the coverage scope instead.
+missing = "pessimistic"
+
+# Appends to cargo-crap's built-in default exclusions (tests/**, benches/**,
+# examples/**), matched relative to each analyzed crate root. Both patterns
+# below cover code that is test-only in THIS repo but that cargo-crap would
+# otherwise score as production code:
+#   - `src/**/tests.rs` + `src/**/tests/*`: split-out unit-test modules whose
+#     parent declares `#[cfg(test)] mod tests;`. cargo-crap parses each file
+#     standalone, so it cannot see the parent's attribute and scores ~190 test
+#     functions as 0%-covered production code.
+#   - `build.rs`: build scripts are not exercised by the test run.
+exclude = [
+    "**/tests.rs",
+    "**/tests/**",
+    "**/build.rs",
+]

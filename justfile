@@ -437,6 +437,173 @@ rebuild-tier3-artifacts:
     tier3-oracle/build-tier3-pancake-v3-swap-harness.sh
     tier3-oracle/build-tier3-pancake-v2-swap-harness.sh
 
+# ========== CRAP Metric (cyclomatic complexity x coverage) ==========
+#
+# `cargo-crap` scores every function as CRAP = CC^2 x (1 - cov/100)^3 + CC —
+# high where a function is both hard to understand and barely tested. Two
+# tools, two steps, two recipes: `cargo-llvm-cov` produces the LCOV, `cargo
+# crap` scores it.
+#
+#   just crap-coverage          # slow: instrumented rebuild + Rust tests + LCOV
+#   just crap --summary         # fast: reuse the LCOV, print the per-crate roll-up
+#   CRAP_LCOV=target/scoped.info CRAP_PACKAGES="-p degenbot-config" just crap-coverage
+#
+# Env overrides (all paths relative to rust/): CRAP_LCOV, CRAP_PACKAGES,
+# CRAP_FEATURES, CRAP_THRESHOLD (default 30), CRAP_BASELINE. Tooling:
+# cargo-llvm-cov + cargo-crap (cargo install --locked <name>); CI on a rustup
+# toolchain also needs `rustup component add llvm-tools-preview` and must leave
+# LLVM_COV/LLVM_PROFDATA unset - cargo-llvm-cov finds the component itself.
+#
+# Deliberately NOT wired into `pre-push` or the CI matrix yet: the coverage
+# build is a full instrumented rebuild of the workspace (10-20 min cold) and the
+# first run surfaced 340 functions over threshold — this is a repair backlog to
+# work through by hand, not a gate to switch on. Use these recipes to iterate;
+# promote `crap-gate` / `crap-ci` to a real CI job once the bulk of the
+# fixes land, and `crap-baseline` / `crap-regression` to track the movement
+# while it happens. .cargo-crap.toml holds the threshold + exclusions.
+#
+# Read the output knowing three things (all measured, see ergo DRBR7Z):
+#   1. It measures the RUST suite only. pytest drives the same core through the
+#      PyO3 seam and contributes no coverage here, so the binding layer
+#      (`degenbot_rs`, ~60% of the findings) and the Python-driven updaters
+#      score as untested even though pytest exercises them. Merging pytest
+#      coverage (instrumented cdylib + LLVM_PROFILE_FILE) is not built yet.
+#   2. `?` counts as a decision point, so `?`-chained plumbing — module
+#      registration, Py-dict conversion — scores far above its real branching.
+#      The CC-141 outlier of the first run was such a function.
+#   3. A function cargo-crap walks but the coverage build never compiled has no
+#      coverage data and scores pessimistically (CC^2 + CC). `crap-coverage`
+#      therefore enables degenbot-bot/otel — instruments.rs / metrics.rs /
+#      otel.rs are `#[cfg(feature = "otel")]` and were 98 phantom 0% functions
+#      without it. The mirror case is unavoidable and harmless: with otel ON the
+#      `#[cfg(not(feature = "otel"))]` no-op stub twin in degenbot-bot/src/lib.rs
+#      is not compiled, so its ~68 one-line stubs also report no coverage data
+#      (CC 1 each, CRAP 2 — they never surface in the report).
+#
+# All paths below are relative to the `rust/` cargo workspace root (the recipes
+# cd there, because cargo-crap discovers members via `cargo metadata`).
+
+# LCOV artifact: written by `crap-coverage`, read by `crap`/`crap-gate`.
+# `rust/target/` is gitignored. CRAP_LCOV=target/scoped.info just crap
+crap_lcov := env_var_or_default("CRAP_LCOV", "target/lcov.info")
+
+# Packages to analyze. Empty = the whole workspace; set it to cargo-style
+# selectors for a fast scoped loop (this also drops the feature flag, which
+# only makes sense workspace-wide). CRAP_PACKAGES="-p degenbot-config -p degenbot-core"
+crap_packages := env_var_or_default("CRAP_PACKAGES", "")
+
+# Features for the coverage build. Only degenbot-bot/otel: it compiles the
+# telemetry modules the walker would otherwise see as never-built. Deliberately
+# NOT pyproject's [tool.maturin] dev list — `pyo3/extension-module` must never
+# be set on a test build, and hotpath/allocator-ctrl gate no walked source file.
+crap_features := env_var_or_default("CRAP_FEATURES", "degenbot-bot/otel")
+
+# CRAP score at or above which `crap-gate` fails. CRAP_THRESHOLD=50 just crap-gate
+crap_threshold := env_var_or_default("CRAP_THRESHOLD", "30")
+
+# JSON baseline for `crap-baseline` (written) / `crap-regression` (read).
+crap_baseline := env_var_or_default("CRAP_BASELINE", "target/crap-baseline.json")
+
+# Generate the LCOV coverage report that cargo-crap scores (slow: instrumented test run).
+crap-coverage *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+        echo "ERROR: cargo-llvm-cov not found. Install: cargo install --locked cargo-llvm-cov" >&2
+        exit 1
+    fi
+    # degenbot-python's test harnesses link libpython, same reason `test-rust`
+    # exports this (resolve before cd'ing: uv wants the Python project root).
+    python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # LLVM tool discovery. With a rustup toolchain cargo-llvm-cov locates
+    # llvm-tools-preview by itself and these must stay UNSET. On a system-rustc
+    # host (Fedora: sysroot /usr, no llvm-tools component) point it at the
+    # distro LLVM, whose major version must match the rustc-bundled one:
+    # compare `llvm-profdata --version` with `rustc -vV` (both say LLVM 22.1.8
+    # here) — a mismatch fails the merge, not the build.
+    if [[ -z "${LLVM_COV:-}" && -z "${LLVM_PROFDATA:-}" ]] \
+        && command -v llvm-cov >/dev/null 2>&1 && command -v llvm-profdata >/dev/null 2>&1; then
+        export LLVM_COV="$(command -v llvm-cov)"
+        export LLVM_PROFDATA="$(command -v llvm-profdata)"
+    fi
+    cd rust
+    read -r -a pkg_args <<< "{{ crap_packages }}"
+    scope=(--workspace)
+    if [ "${#pkg_args[@]}" -gt 0 ]; then
+        scope=()
+    fi
+    # The feature list names workspace members, so it is only addressable when
+    # the whole workspace is selected - keep it for a scoped run only if the
+    # caller set CRAP_FEATURES explicitly (CRAP_FEATURES= disables it).
+    features=()
+    if [ -n "{{ crap_features }}" ] && { [ "${#pkg_args[@]}" -eq 0 ] || [ -n "${CRAP_FEATURES:-}" ]; }; then
+        features=(--features "{{ crap_features }}")
+    fi
+    mkdir -p "$(dirname "{{ crap_lcov }}")"
+    # --no-fail-fast: one red test must not cost us the whole coverage report;
+    # the run still exits non-zero, so a red suite never scores as green.
+    cargo llvm-cov "${scope[@]}" "${features[@]}" "${pkg_args[@]}" --no-fail-fast \
+        --lcov --output-path "{{ crap_lcov }}" {{ args }}
+
+# Score the existing LCOV with cargo-crap (fast; run crap-coverage first).
+crap *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-crap >/dev/null 2>&1 || { echo "ERROR: cargo-crap not found. Install: cargo install --locked cargo-crap" >&2; exit 1; }
+    cd rust
+    [ -f "{{ crap_lcov }}" ] || {
+        echo "ERROR: no LCOV at rust/{{ crap_lcov }} — run 'just crap-coverage' first." >&2
+        echo "       (a coverage-free cargo-crap run scores every function as 0% covered)" >&2
+        exit 1
+    }
+    read -r -a pkg_args <<< "{{ crap_packages }}"
+    scope=(--workspace)
+    [ "${#pkg_args[@]}" -gt 0 ] && scope=()
+    cargo crap "${scope[@]}" "${pkg_args[@]}" --lcov "{{ crap_lcov }}" {{ args }}
+
+# CI gate: exit 1 when any function exceeds CRAP_THRESHOLD (--format github/sarif pass through).
+crap-gate *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-crap >/dev/null 2>&1 || { echo "ERROR: cargo-crap not found. Install: cargo install --locked cargo-crap" >&2; exit 1; }
+    cd rust
+    [ -f "{{ crap_lcov }}" ] || { echo "ERROR: no LCOV at rust/{{ crap_lcov }} — run 'just crap-coverage' first." >&2; exit 1; }
+    read -r -a pkg_args <<< "{{ crap_packages }}"
+    scope=(--workspace)
+    [ "${#pkg_args[@]}" -gt 0 ] && scope=()
+    cargo crap "${scope[@]}" "${pkg_args[@]}" --lcov "{{ crap_lcov }}" \
+        --threshold {{ crap_threshold }} --fail-above {{ args }}
+
+# Write the JSON baseline that crap-regression compares against (run on the default branch).
+crap-baseline *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-crap >/dev/null 2>&1 || { echo "ERROR: cargo-crap not found. Install: cargo install --locked cargo-crap" >&2; exit 1; }
+    cd rust
+    [ -f "{{ crap_lcov }}" ] || { echo "ERROR: no LCOV at rust/{{ crap_lcov }} — run 'just crap-coverage' first." >&2; exit 1; }
+    mkdir -p "$(dirname "{{ crap_baseline }}")"
+    cargo crap --workspace --lcov "{{ crap_lcov }}" \
+        --format json --sort file --output "{{ crap_baseline }}" {{ args }}
+    echo "✓ baseline written: rust/{{ crap_baseline }} ($(wc -c < "{{ crap_baseline }}") bytes)"
+
+# CI gate: exit 1 when any function's CRAP score rose since the baseline.
+crap-regression *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-crap >/dev/null 2>&1 || { echo "ERROR: cargo-crap not found. Install: cargo install --locked cargo-crap" >&2; exit 1; }
+    cd rust
+    [ -f "{{ crap_lcov }}" ] || { echo "ERROR: no LCOV at rust/{{ crap_lcov }} — run 'just crap-coverage' first." >&2; exit 1; }
+    [ -f "{{ crap_baseline }}" ] || { echo "ERROR: no baseline at rust/{{ crap_baseline }} — run 'just crap-baseline' first." >&2; exit 1; }
+    read -r -a pkg_args <<< "{{ crap_packages }}"
+    scope=(--workspace)
+    [ "${#pkg_args[@]}" -gt 0 ] && scope=()
+    cargo crap "${scope[@]}" "${pkg_args[@]}" --lcov "{{ crap_lcov }}" \
+        --baseline "{{ crap_baseline }}" --fail-regression {{ args }}
+
+# CI entrypoint: fresh coverage + the threshold gate in one command.
+crap-ci: crap-coverage crap-gate
+
 # ========== Code Quality ==========
 
 # Lint Markdown files
