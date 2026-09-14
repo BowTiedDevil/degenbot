@@ -454,9 +454,9 @@ mod tests {
     fn pathfinding_discovery_batch_size_is_declared_with_default_1000() {
         let key = SCHEMA
             .iter()
-            .find(|k| k.toml_path == "pathfinding.discovery_batch_size")
-            .expect("4IOEVT key must be declared exactly once");
-        assert_eq!(key.env, "DEGENBOT_DISCOVERY_BATCH_SIZE");
+            .find(|k| k.toml_path == "pathfinding.discovery_batch_size");
+        assert!(key.is_some(), "4IOEVT key must be declared exactly once");
+        assert_eq!(key.map(|k| k.env), Some("DEGENBOT_DISCOVERY_BATCH_SIZE"));
         assert_eq!(BotConfig::default().pathfinding.discovery_batch_size, 1000);
     }
 

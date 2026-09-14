@@ -91,7 +91,10 @@ pub fn v2_swap_exact_out(
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+// The 50 transcribed oracle vectors below are ground-truth literal data, not
+// hand-written code: digit-group underscores buy nothing and would only invite
+// transcription drift, so `unreadable_literal` is expected off for this module.
+#[expect(clippy::unwrap_used, clippy::unreadable_literal)]
 mod tests {
     use super::*;
     use alloy::primitives::U256;
@@ -101,10 +104,10 @@ mod tests {
     }
 
     /// Ground-truth exact-in vectors, transcribed from the retired Python
-    /// reference constant_product_calc_exact_in (deleted in this change).
+    /// reference `constant_product_calc_exact_in` (deleted in this change).
     ///
     /// Provenance: random.Random(seed) for seed in 0..25, reserves in
-    /// [10^6, 2*10^16), amount_in in [1, 10^14), fee rate drawn from
+    /// [10^6, 2*10^16), `amount_in` in [1, 10^14), fee rate drawn from
     /// [(3,1000),(5,10000),(25,10000),(30,10000),(0,1000)] - the exact seed
     /// space the former Python-vs-Rust parity test exercised. The outputs were
     /// emitted by the Python oracle before its deletion and are now literal
@@ -139,9 +142,9 @@ mod tests {
         (13794012086099560u128, 7863939875314132u128, 23553593275229u128, 5, 10000, 13398278063440u128),
     ];
 
-    /// Ground-truth exact-out vectors - same provenance as EXACT_IN_VECTORS,
-    /// seeded with random.Random(1000 + seed) and amount_out in
-    /// [1, max(2, reserve_out / 2)).
+    /// Ground-truth exact-out vectors - same provenance as `EXACT_IN_VECTORS`,
+    /// seeded with random.Random(1000 + seed) and `amount_out` in
+    /// [1, max(2, `reserve_out` / 2)).
     #[rustfmt::skip]
     const EXACT_OUT_VECTORS: &[(u128, u128, u128, u64, u64, u128)] = &[
         (15455541938625164u128, 14181252293753048u128, 566911429265034u128, 30, 10000, 645516982619471u128),
@@ -200,7 +203,7 @@ mod tests {
     }
 
     /// Hand-computed canonical vector: 100 * 997 * 2000 / (1000 * 1000 + 100 * 997)
-    /// = 199_400_000 / 1_099_700 = 181 (floor).
+    /// = `199_400_000` / `1_099_700` = 181 (floor).
     #[test]
     fn v2_swap_exact_in_hand_checked_canonical() {
         assert_eq!(
@@ -210,7 +213,7 @@ mod tests {
     }
 
     /// Hand-computed canonical vector: 1 + 1000 * 50 * 1000 / ((2000 - 50) * 997)
-    /// = 1 + 50_000_000 / 1_944_150 = 26.
+    /// = 1 + `50_000_000` / `1_944_150` = 26.
     #[test]
     fn v2_swap_exact_out_hand_checked_canonical() {
         assert_eq!(
@@ -219,7 +222,7 @@ mod tests {
         );
     }
 
-    /// amount_out >= reserve_out is undefined - the pool cannot hand out
+    /// `amount_out` >= `reserve_out` is undefined - the pool cannot hand out
     /// more than it holds.
     #[test]
     fn v2_swap_exact_out_rejects_overdraw() {
@@ -245,7 +248,7 @@ mod tests {
         );
     }
 
-    /// fee_numer > fee_denom (>100% fee) is invalid.
+    /// `fee_numer` > `fee_denom` (>100% fee) is invalid.
     #[test]
     fn v2_swap_invalid_fee_raises() {
         assert_eq!(
