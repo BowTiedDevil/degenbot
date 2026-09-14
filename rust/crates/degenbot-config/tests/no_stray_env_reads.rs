@@ -209,8 +209,16 @@ fn no_stray_env_reads_outside_the_config_loader() {
         if rel.starts_with("crates/degenbot-config/") {
             continue;
         }
-        // Test-only stances: every tests/ and examples/ directory file.
-        if rel.contains("/tests/") || rel.contains("/examples/") {
+        // Test-only stances: every tests/ and examples/ directory file,
+        // wherever it sits in the tree - a crate-nested `crates/*/tests/`
+        // path OR a workspace-level `examples/`/`tests/` leading component
+        // (e.g. `examples/settlement_bot/`). Matching on path components
+        // rather than a `/tests/` substring keeps the leading-component
+        // case from slipping through.
+        let is_test_or_example = Path::new(rel.as_str())
+            .components()
+            .any(|c| matches!(c.as_os_str().to_str(), Some("tests" | "examples")));
+        if is_test_or_example {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(path) else {
