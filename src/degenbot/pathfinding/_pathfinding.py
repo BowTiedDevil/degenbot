@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import enum
 import itertools
+import queue
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -22,7 +24,7 @@ from degenbot.logging import logger
 from degenbot.pathfinding import build_path_graph, find_paths_rust
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
+    from collections.abc import AsyncGenerator, Generator, Iterable, Iterator, Sequence
 
     from sqlalchemy.orm import Session
 
@@ -73,6 +75,28 @@ _POOL_KIND_TO_BASE: dict[int, type] = {
 # the bounded-time target. The Rust DFS emits a separate GIL-free stderr
 # heartbeat for the zero-yield grind that blocks this coroutine.
 _DISCOVERY_HEARTBEAT_INTERVAL_S: float = 15.0
+
+# 4IOEVT discovery delivery batching. The worker thread drives the sync
+# find_paths generator and pushes completed BATCHES onto a bounded std queue;
+# the async consumer needs one asyncio.to_thread(q.get) hop per batch instead
+# of one event-loop round trip per path. The queue depth is a small multiple
+# of ONE batch, so producer memory stays O(batch_size), never O(candidates).
+_DISCOVERY_QUEUE_BATCH_DEPTH: int = 4
+# Worker/queue poll interval; bounds how long a stopped worker can sit in a
+# blocking put before it notices cancellation.
+_DISCOVERY_POLL_INTERVAL_S: float = 0.1
+# Normal-completion join bound while the worker closes the sync generator.
+_DISCOVERY_WORKER_JOIN_TIMEOUT_S: float = 5.0
+
+# Queue sentinel: the worker emits this once it is done (or has failed).
+_DISCOVERY_DONE: object = object()
+
+
+@dataclass(slots=True)
+class _DiscoveryProducerError:
+    """Carrier for a producer-thread exception re-raised at the consumer."""
+
+    exc: BaseException
 
 
 @dataclass(slots=True, frozen=True)
@@ -530,13 +554,28 @@ async def find_paths_async(
     db: DatabaseSessionManager,
     pool_type_per_depth: Sequence[set[type] | None] | None = None,
     allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None,
-) -> AsyncIterator[Sequence[PathStep]]:
-    """Async version of ``find_paths``.
+    batch_size: int = 1000,
+) -> AsyncGenerator[Sequence[PathStep], None]:
+    """Async version of find_paths.
 
-    The Rust DFS runs in a single GIL-released call and returns all results at
-    once. This async wrapper yields them individually so consumers can iterate
-    asynchronously. Periodic ``asyncio.sleep(0)`` calls give other tasks a
-    chance to run during long searches.
+    4IOEVT: the sync find_paths generator is driven by a WORKER THREAD that
+    collects paths into batch_size-sized batches and pushes them onto a
+    bounded std queue; the async consumer drains ONE batch per
+    asyncio.to_thread(q.get) hop and then gives the event loop ONE
+    asyncio.sleep(0) turn per batch (instead of per path). Loop liveness is
+    preserved at ~batch_size path cadence while the per-path event-loop
+    overhead (3.3x measured) disappears.
+
+    batch_size <= 1 degrades to the legacy per-path delivery (one hop per
+    path, no worker thread) — the documented escape hatch and parity/reference
+    mode.
+
+    Cancelling the async generator (GeneratorExit / aclose / a consumer break
+    on a bound) sets a stop flag the worker checks on every put/get with
+    timeout, then closes the sync generator (dropping the lazy Rust iterator).
+    Producer-side exceptions are carried across the thread boundary and
+    re-raised at the consumer after the pending batch/sentinel drains, so the
+    pipeline's failure path is unchanged.
 
     Args:
         chain_id: The chain ID to restrict pool and token queries.
@@ -545,10 +584,10 @@ async def find_paths_async(
         min_depth: The minimum number of hops in yielded paths.
         max_depth: The optional maximum number of hops in yielded paths.
         pool_types: Database model classes for the pool types to include in the
-            graph (default: ``LiquidityPoolTable`` and ``UniswapV4PoolTable``).
+            graph (default: LiquidityPoolTable and UniswapV4PoolTable).
         db: The database session manager used to open a read session.
         pool_type_per_depth: If set, a sequence of allowed pool type sets at each
-            depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
+            depth. Depth 0 = first hop, depth 1 = second hop, etc. A None entry
             allows all pool types at that depth. When provided, edges whose
             pool_type is not in the allowed set are pruned before recursion.
         allowed_intermediate_tokens: If set, restrict the graph to only these token
@@ -556,53 +595,202 @@ async def find_paths_async(
             intermediate token are excluded from the graph. Use this to filter out
             tax tokens, fee-on-transfer tokens, and low-quality pairs that would
             waste simulation gas.
+        batch_size: Paths per delivery batch (default 1000). <= 1 selects the
+            legacy per-path delivery.
 
     Yields:
         Sequences of PathStep objects representing arbitrage paths.
 
+    Raises:
+        The producer's exception, re-raised at the consumer.
+
     """
-    # The sync `find_paths` generator is driven by the async event loop: we
-    # iterate it synchronously and yield each result. The Rust DFS call inside
-    # `find_paths` releases the GIL via `py.detach()`, so other Python tasks
-    # can run during the search.
-    #
-    # Discovery-phase progress log (NY4EFN): emit a `[pathfinding]` heartbeat
-    # every `_DISCOVERY_HEARTBEAT_INTERVAL_S` of yielded paths so a future hang
+    # Discovery-phase progress log (NY4EFN): emit a [pathfinding] heartbeat
+    # every _DISCOVERY_HEARTBEAT_INTERVAL_S of yielded paths so a future hang
     # is visible at a glance, not just "78% CPU, no logs". This fires while
     # paths are streaming (the common prior-run shape: ~317k yields). A
     # zero-yield grind blocks the asyncio event loop on the same thread, so
-    # this Python-side log cannot fire there — the Rust `OwnedPathFinder`
-    # emits a GIL-free stderr heartbeat (`[pathfinding] discovery heartbeat:`)
+    # this Python-side log cannot fire there — the Rust OwnedPathFinder
+    # emits a GIL-free stderr heartbeat ([pathfinding] discovery heartbeat:)
     # for that case; together they cover both shapes.
+    #
+    # The log lines and format are UNCHANGED by 4IOEVT (byte-identical); only
+    # the cadence they ride changed (per batch instead of per path).
     discovery_start = time.perf_counter()
     discovery_yielded = 0
     discovery_last_log = discovery_start
 
-    for path in find_paths(
-        chain_id=chain_id,
-        start_tokens=start_tokens,
-        end_tokens=end_tokens,
-        min_depth=min_depth,
-        max_depth=max_depth,
-        pool_types=pool_types,
-        db=db,
-        pool_type_per_depth=pool_type_per_depth,
-        allowed_intermediate_tokens=allowed_intermediate_tokens,
-    ):
-        await asyncio.sleep(0)
-        yield path
-        discovery_yielded += 1
-        now = time.perf_counter()
-        if now - discovery_last_log >= _DISCOVERY_HEARTBEAT_INTERVAL_S:
-            logger.info(
-                "[pathfinding] discovery progress: paths_yielded=%d elapsed=%.1fs",
-                discovery_yielded,
-                now - discovery_start,
-            )
-            discovery_last_log = now
+    def _sync_find_paths() -> Iterator[Sequence[PathStep]]:
+        """Build the sync producer with this call's exact parameters.
+
+        Returns:
+            The lazy sync path iterator.
+
+        """
+        return find_paths(
+            chain_id=chain_id,
+            start_tokens=start_tokens,
+            end_tokens=end_tokens,
+            min_depth=min_depth,
+            max_depth=max_depth,
+            pool_types=pool_types,
+            db=db,
+            pool_type_per_depth=pool_type_per_depth,
+            allowed_intermediate_tokens=allowed_intermediate_tokens,
+        )
+
+    # Legacy escape hatch (parity/reference mode): one event-loop hop per path,
+    # no worker thread — the pre-4IOEVT behavior exactly.
+    if batch_size <= 1:
+        for path in _sync_find_paths():
+            await asyncio.sleep(0)
+            yield path
+            discovery_yielded += 1
+            now = time.perf_counter()
+            if now - discovery_last_log >= _DISCOVERY_HEARTBEAT_INTERVAL_S:
+                logger.info(
+                    "[pathfinding] discovery progress: paths_yielded=%d elapsed=%.1fs",
+                    discovery_yielded,
+                    now - discovery_start,
+                )
+                discovery_last_log = now
+        logger.info(
+            "[pathfinding] discovery complete: paths_yielded=%d elapsed=%.1fs",
+            discovery_yielded,
+            time.perf_counter() - discovery_start,
+        )
+        return
+
+    effective_batch = int(batch_size)
+    batch_queue: queue.Queue[object] = queue.Queue(
+        maxsize=max(2, min(_DISCOVERY_QUEUE_BATCH_DEPTH, effective_batch * 2)),
+    )
+    stop = threading.Event()
+    producer_error: BaseException | None = None
+    worker = threading.Thread(
+        target=_discovery_worker,
+        args=(_sync_find_paths(), batch_queue, stop, effective_batch),
+        name="degenbot-discovery",
+        daemon=True,
+    )
+    worker.start()
+
+    completed = False
+    try:
+        while True:
+            item = await asyncio.to_thread(_discovery_get, batch_queue, stop)
+            if item is _DISCOVERY_DONE:
+                completed = True
+                break
+            if isinstance(item, _DiscoveryProducerError):
+                producer_error = item.exc
+                continue
+            for path in cast("list[Sequence[PathStep]]", item):
+                yield path
+                discovery_yielded += 1
+                now = time.perf_counter()
+                if now - discovery_last_log >= _DISCOVERY_HEARTBEAT_INTERVAL_S:
+                    logger.info(
+                        "[pathfinding] discovery progress: paths_yielded=%d elapsed=%.1fs",
+                        discovery_yielded,
+                        now - discovery_start,
+                    )
+                    discovery_last_log = now
+            # ONE event-loop hop per BATCH (not per path) — the whole point of
+            # 4IOEVT.
+            await asyncio.sleep(0)
+    finally:
+        # Cancellation (GeneratorExit / aclose / consumer break) stops the
+        # worker: the stop flag is checked on every put/get with timeout, and
+        # the sync generator closes so the lazy Rust iterator drops.
+        stop.set()
+        if completed:
+            # Normal completion: let the worker finish closing the sync
+            # generator (DB session + Rust iterator). Bounded so a pathological
+            # producer cannot pin the event loop.
+            worker.join(timeout=_DISCOVERY_WORKER_JOIN_TIMEOUT_S)
+
+    if producer_error is not None:
+        raise producer_error
 
     logger.info(
         "[pathfinding] discovery complete: paths_yielded=%d elapsed=%.1fs",
         discovery_yielded,
         time.perf_counter() - discovery_start,
     )
+
+
+def _discovery_put(
+    q: queue.Queue[object],
+    item: object,
+    stop: threading.Event,
+) -> bool:
+    """Put one item with a bounded poll so a stopped consumer cannot pin the worker.
+
+    Returns:
+        True when the item was queued, False when a stop was observed first.
+
+    """
+    while not stop.is_set():
+        try:
+            q.put(item, timeout=_DISCOVERY_POLL_INTERVAL_S)
+        except queue.Full:
+            continue
+        else:
+            return True
+    return False
+
+
+def _discovery_get(
+    q: queue.Queue[object],
+    stop: threading.Event,
+) -> object:
+    """Get one item, returning the done sentinel once a stop is observed.
+
+    Returns:
+        The next queued item, or the done sentinel after a stop.
+
+    """
+    while True:
+        try:
+            return q.get(timeout=_DISCOVERY_POLL_INTERVAL_S)
+        except queue.Empty:
+            if stop.is_set():
+                return _DISCOVERY_DONE
+
+
+def _discovery_batch_stream(
+    gen: Iterator[Sequence[PathStep]],
+    q: queue.Queue[object],
+    stop: threading.Event,
+    batch_size: int,
+) -> None:
+    """Stream the sync generator onto the queue in batches until done/stopped."""
+    batch: list[Sequence[PathStep]] = []
+    for path in gen:
+        if stop.is_set():
+            break
+        batch.append(path)
+        if len(batch) >= batch_size:
+            if not _discovery_put(q, batch, stop):
+                break
+            batch = []
+    else:
+        if batch and not stop.is_set():
+            _discovery_put(q, batch, stop)
+
+
+def _discovery_worker(
+    gen: Iterator[Sequence[PathStep]],
+    q: queue.Queue[object],
+    stop: threading.Event,
+    batch_size: int,
+) -> None:
+    """Drive the sync generator, batching paths onto the bounded queue."""
+    try:
+        _discovery_batch_stream(gen, q, stop, batch_size)
+    except BaseException as exc:  # ruff: ignore[blind-except] — re-raised at the consumer
+        _discovery_put(q, _DiscoveryProducerError(exc), stop)
+    finally:
+        _discovery_put(q, _DISCOVERY_DONE, stop)
+        cast("Generator[Sequence[PathStep], None, None]", gen).close()

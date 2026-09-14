@@ -66,6 +66,11 @@ pub mod c_api;
 pub mod cancel;
 #[cfg(feature = "concentrated-liquidity-math")]
 pub mod concentrated_liquidity_math;
+/// Typed `BotConfig` accessors for the Python driver shell (4IOEVT). The
+/// loader (the ONLY env reader) installs the process-wide config; these
+/// getters expose its typed fields to Python without a second declaration
+/// site. Unconditional — degenbot-config is always a dependency.
+pub mod config;
 pub mod conversion;
 pub mod crypto;
 #[cfg(feature = "curve-math")]

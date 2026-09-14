@@ -134,6 +134,15 @@ def call_on_ambient_runtime(fn: object) -> object:
 
 def build_fingerprint() -> str: ...
 def build_number() -> int: ...
+def discovery_batch_size() -> int:
+    """Return the typed `pathfinding.discovery_batch_size` (4IOEVT).
+
+    Env name `DEGENBOT_DISCOVERY_BATCH_SIZE`, default 1000, positive-clamped
+    to `>= 1`. Read from the process-wide installed `BotConfig` (the loader
+    is the only env reader). The Python discovery pipeline forwards this to
+    `find_paths_async`.
+    """
+
 def runtime_status() -> dict[str, Any]:
     """FF-T5 (NT7HJC): the runtime fleet status.
 
@@ -1548,6 +1557,7 @@ __all__ = [
     "deployments",
     "dex_identity",
     "diagnostics",
+    "discovery_batch_size",
     "execution",
     "executor",
     "find_paths_rust",

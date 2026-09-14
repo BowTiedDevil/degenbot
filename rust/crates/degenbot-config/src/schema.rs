@@ -321,6 +321,15 @@ crate::config_schema! {
             doc = "Passes per arm for the offline executor A/B probe.";
     }
 
+    // 4IOEVT: discovery delivery batching. The startup discovery sweep's
+    // async wrapper delivers paths in batches (one event-loop hop per batch)
+    // instead of one hop per path; this typed key makes the batch size
+    // operator-settable without a code change.
+    pathfinding PathfindingConfig {
+        discovery_batch_size [usize] = 1000, env = "DEGENBOT_DISCOVERY_BATCH_SIZE", def = "1000",
+            doc = "Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery.";
+    }
+
     aave AaveConfig {
         bridge_probe [bool] = false, env = "DEGENBOT_BRIDGE_PROBE", def = "false",
             doc = "In-tree bridge-probe observation surface in the arbitrage simulator (presence gates).";
@@ -439,6 +448,16 @@ mod tests {
             !SCHEMA.iter().any(|k| k.env == "DEGENBOT_FLEET"),
             "DEGENBOT_FLEET must be retired from the schema"
         );
+    }
+
+    #[test]
+    fn pathfinding_discovery_batch_size_is_declared_with_default_1000() {
+        let key = SCHEMA
+            .iter()
+            .find(|k| k.toml_path == "pathfinding.discovery_batch_size")
+            .expect("4IOEVT key must be declared exactly once");
+        assert_eq!(key.env, "DEGENBOT_DISCOVERY_BATCH_SIZE");
+        assert_eq!(BotConfig::default().pathfinding.discovery_batch_size, 1000);
     }
 
     #[test]

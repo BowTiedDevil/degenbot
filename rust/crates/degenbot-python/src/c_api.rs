@@ -46,6 +46,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // census ("degenbot.runtime_status()").
     m.add_function(wrap_pyfunction!(crate::runtime_status::runtime_status, m)?)?;
 
+    // 4IOEVT: the typed discovery-delivery batch size
+    // (`pathfinding.discovery_batch_size` / `DEGENBOT_DISCOVERY_BATCH_SIZE`).
+    // The Python discovery pipeline reads it and forwards it to
+    // `find_paths_async`.
+    m.add_function(wrap_pyfunction!(crate::config::discovery_batch_size, m)?)?;
+
     // Ambient-runtime driver seam (VJGZJ2): lets a Python driver satisfy the
     // ambient-runtime-only policy on the verify seams. Unconditional —
     // degenbot-core (the runtime singleton) is.

@@ -17,7 +17,7 @@ import asyncio
 import os
 import time
 from collections import Counter, deque
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -45,6 +45,7 @@ from degenbot.exceptions import (
     VerificationRpcError,
 )
 from degenbot.logging import logger as bot_logger
+from degenbot.pathfinding import discovery_batch_size as _rust_discovery_batch_size
 from degenbot.pathfinding import find_paths_async
 from degenbot.runner._driver_constants import (
     ALLOWED_INTERMEDIATE_TOKENS,
@@ -66,6 +67,21 @@ from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     import threading
+
+
+def _discovery_batch_size() -> int:
+    """Read the typed pathfinding.discovery_batch_size (4IOEVT).
+
+    The Rust config loader is the only env reader; the value is
+    positive-clamped there. find_paths_async treats <= 1 as the legacy
+    per-path delivery.
+
+    Returns:
+        The effective discovery delivery batch size.
+
+    """
+    return max(1, int(_rust_discovery_batch_size()))
+
 
 # ──────────────────────────────────────────────────────────────────
 # Permutation filter helpers
@@ -985,18 +1001,26 @@ class PathRegistrationPipeline:
 
         count = 0
         truncated = False
-        async for item in self.discovery_sweep():
-            if bound is not None and count >= bound:
-                truncated = True
-                break
-            await self._consume(item)
-            count += 1
+        # 4IOEVT: close the sweep deterministically on the bound-truncation
+        # break so the delivery worker thread stops (no zombie threads).
+        sweep = self.discovery_sweep()
+        try:
+            async for item in sweep:
+                if bound is not None and count >= bound:
+                    truncated = True
+                    break
+                await self._consume(item)
+                count += 1
+        finally:
+            aclose = getattr(sweep, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
         if not truncated and not self.capped and edition is not None:
             self._sweep_completed_edition = edition
         return count
 
-    def discovery_sweep(self) -> AsyncIterator[object]:
+    def discovery_sweep(self) -> AsyncGenerator[object, None]:
         """A single discovery sweep over the DB subgraph (V2/V3/V4 DFS)."""
         return find_paths_async(
             chain_id=self.constr_chain_id,
@@ -1013,6 +1037,7 @@ class PathRegistrationPipeline:
             db=self.constr_db,
             pool_type_per_depth=self.pool_type_per_depth,
             allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
+            batch_size=_discovery_batch_size(),
         )
 
     def _resolve_path_directions(
@@ -1163,13 +1188,21 @@ async def build_paths(
         f"intake, window {REG_INTAKE_WINDOW}"
     )
 
-    discovery_producer: AsyncIterable[object] = pipeline.discovery_sweep()
+    discovery_producer: AsyncGenerator[object, None] = pipeline.discovery_sweep()
     bot_logger.info("[build_paths] Discovery: single pass over the DB subgraph")
 
     # PRG-5: the cap is no longer an unwind exception (the queue that carried
     # `DiscoveryCrawlComplete` retired) — run_registration returns normally
     # and the pipeline's `capped` flag carries the benign-stop witness.
-    await pipeline.run_registration(producer=discovery_producer)
+    # 4IOEVT: close the async discovery generator deterministically when the
+    # crawl breaks on the path cap (or aborts on a fatal receipt) so the
+    # delivery worker thread stops instead of blocking on the bounded queue.
+    try:
+        await pipeline.run_registration(producer=discovery_producer)
+    finally:
+        aclose = getattr(discovery_producer, "aclose", None)
+        if aclose is not None:
+            await aclose()
     if pipeline.capped:
         bot_logger.info(
             f"[build_paths] Registration stopped at the path cap "
