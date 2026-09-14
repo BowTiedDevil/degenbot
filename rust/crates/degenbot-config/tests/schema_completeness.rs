@@ -45,6 +45,13 @@ const BUILD_ARTIFACT_KEYS: &[&str] = &[
 /// schema key.
 const BOOTSTRAP_KEYS: &[&str] = &["DEGENBOT_CONFIG"];
 
+/// Driver-domain keys resolved by `resolvers.rs` (ADR-051 D8): the database
+/// path, the session chain id, and the per-chain RPC URIs are console inputs
+/// that never lived in the typed file layer, so they are deliberately NOT
+/// schema keys. The resolvers read them through the loader's `EnvVars` seam
+/// and tag each with its own `Source`.
+const DRIVER_DOMAIN_KEYS: &[&str] = &["DEGENBOT_DB_PATH", "DEGENBOT_DEFAULT_CHAIN_ID"];
+
 /// RETIRED keys the loader guards for one release (P6YXA6 hard cutover):
 /// they fail the load loudly and point at the replacement rather than
 /// silently falling back — the deprecation-style hard error. They are not
@@ -136,6 +143,7 @@ fn schema_covers_the_full_key_inventory() {
             !SWEEP_ARTIFACTS.contains(&k.as_str())
                 && !BOOTSTRAP_KEYS.contains(&k.as_str())
                 && !BUILD_ARTIFACT_KEYS.contains(&k.as_str())
+                && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
                 && !RETIRED_KEYS.contains(&k.as_str())
         })
         .cloned()
@@ -173,6 +181,7 @@ fn snapshot_fallback_agrees_with_schema() {
             !SWEEP_ARTIFACTS.contains(&k.as_str())
                 && !BOOTSTRAP_KEYS.contains(&k.as_str())
                 && !BUILD_ARTIFACT_KEYS.contains(&k.as_str())
+                && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
                 && !RETIRED_KEYS.contains(&k.as_str())
         })
         .cloned()

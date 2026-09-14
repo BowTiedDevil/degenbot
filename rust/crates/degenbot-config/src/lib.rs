@@ -43,10 +43,15 @@
 //! "Migrate env reads onto `BotConfig`" task and re-validate their fallback
 //! semantics there.
 //!
-//! # Dynamic (non-schema) env names
+//! # Dynamic (non-schema) env names and driver-domain resolvers
 //!
 //! `DEGENBOT_RPC_WS_CHAINID_<chain_id>` carries a numeric suffix at runtime
 //! and is intentionally NOT a static key (documented next to `SCHEMA`).
+//!
+//! A second family is not typed at all: the console's driver-domain values
+//! (database path, session chain id, node URIs, ADR-051 D8) never lived in
+//! the file layer, so [`resolvers`] reads them through the same [`EnvVars`]
+//! seam and `Source` provenance without re-adding file vocabulary.
 
 pub mod doc;
 pub mod error;
@@ -56,6 +61,7 @@ pub mod error;
 /// [`holder::config`] instead. A plain VALUE holder — zero env access.
 pub mod holder;
 pub mod loader;
+pub mod resolvers;
 pub mod schema;
 #[doc(hidden)]
 pub mod schema_macro;
@@ -63,6 +69,11 @@ pub mod schema_macro;
 pub use error::ConfigError;
 pub use loader::{
     standard_file_path, BotConfigLoader, EnvVars, LoadedConfig, MapEnv, ProcessEnv, Source,
+};
+pub use resolvers::{
+    node_http_env_name, node_ws_env_name, resolve_chain_id, resolve_database_path,
+    resolve_node_http_uri, resolve_node_uris, resolve_node_ws_uri, Resolved, ResolvedNodeUris,
+    DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX, RPC_WS_ENV_PREFIX,
 };
 pub use schema::{AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode};
 pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA};
