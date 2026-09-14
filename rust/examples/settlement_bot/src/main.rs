@@ -20,14 +20,17 @@
 //! every surface the Python driver reaches but a Rust consumer cannot is a
 //! compile wall here — recorded as a numbered gap in the ledger.
 //!
-//! Slice 1 (this file) covers ledger rows 1–5 (CLI, driver config,
-//! RPC-URI cascade, DB path, snapshot-load boot slice). Rows 6–8 (the engine
-//! handshake, the result-batch stream, and path registration) are now driven
-//! through the public `degenbot::EngineDriver` (ADR-050 / Gap G1, ergo
-//! 5XOGRK): `EngineDriver::start` → `take_result_receiver` → `resume` (the
-//! driver owns the `S+1..W` auto-backfill) → `stop`. The live handshake is
-//! gated behind `SMOKE_RPC_URL` so the example stays CI-runnable; without it
-//! (or with `--smoke-offline`) it stops after the parity-ledger print.
+//! Slice 1 covers ledger rows 1–5 (CLI, driver config, RPC-URI cascade, DB
+//! path, snapshot-load boot slice). Rows 6–8 (the engine handshake, the
+//! result-batch stream, and path registration) are driven through the public
+//! `degenbot::EngineDriver` (ADR-050 / Gap G1, ergo 5XOGRK):
+//! `EngineDriver::start` → `take_result_receiver` → `resume` (the driver owns
+//! the `S+1..W` auto-backfill) → `stop`. The G3 registration pipeline lands
+//! driver-side (ergo XFEJUG). Gap G4 (ergo L4E7RI) adds the driver-side
+//! `consume`/`dispatch`/`sim_submit`/`submission` modules mirroring rows
+//! 15–18. The live handshake is gated behind `SMOKE_RPC_URL` so the example
+//! stays CI-runnable; without it (or with `--smoke-offline`) it stops after the
+//! parity-ledger print.
 //!
 //! Parity sources (constants + error semantics mirrored byte-for-byte):
 //!   - `src/degenbot/runner/cli.py`       — CLI flags
@@ -41,12 +44,16 @@ use std::process::ExitCode;
 use degenbot::core::address_utils::to_checksum_address_str;
 
 mod claims;
+mod consume;
 mod discovery;
+mod dispatch;
 mod ledger;
 mod live;
 mod pipeline;
 mod policy;
 mod retry;
+mod sim_submit;
+mod submission;
 
 use crate::discovery::{build_graph, DiscoveryParams, NATIVE_CURRENCY};
 use crate::pipeline::{run_offline, RegistrationPipeline};
@@ -495,10 +502,10 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("12-path-discovery-batching", "REACHABLE", "discovery.rs: graph build over G2 rows + batched lazy OwnedPathFinder (batch_size<=1 per-path; one cooperative async hop per batch)"),
         ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation) + discovery allowlist graph filter; config.py 11-token + _driver_constants 15-token sets"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
-        ("15-dispatch-selection", "REACHABLE", "degenbot::arbitrage::dispatch_profitable_results"),
-        ("16-sim-fanout-submitter", "DRIVER-POLICY(ergo=L4E7RI)", "tokio pipeline; consumes the now-reachable EngineDriver result stream (row 7)"),
-        ("17-fee-determination", "PARTIAL(ergo=L4E7RI)", "eip_1559 reachable; eth_feeHistory reachability unverified"),
-        ("18-live-submission", "PARTIAL(ergo=L4E7RI)", "degenbot-submission reachable; TxSigner reachability unverified"),
+        ("15-dispatch-selection", "REACHABLE", "degenbot::arbitrage::{dispatch_profitable_results,filter_thin_margin_results} + driver dispatch.rs plan_batch typed decisions (skip/suppressed/thin-margin/sim)"),
+        ("16-sim-fanout-submitter", "DRIVER-POLICY", "sim_submit.rs: tokio Semaphore(max_simulate_concurrent) + single ordered FIFO submitter; consume.rs consumes the EngineDriver result stream (row 7); no core lift"),
+        ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
+        ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
         ("19-session-watch", "DRIVER-POLICY(ergo=KPLWUM)", "tokio watchdog, not yet wired"),
         ("20-operator-channel", "DRIVER-POLICY(ergo=KPLWUM)", "Unix socket accepted by CLI; server not yet wired"),
     ];
@@ -544,7 +551,7 @@ fn run() -> Result<(), String> {
         println!("[startup] Permutation filter from CLI: {p}");
     }
     if cli.live {
-        println!("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS (once G4 lands) ***\n");
+        println!("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS ***\n");
     }
 
     let cfg = SettlementBotConfig::from_env(&dotenv, &cli)?;
@@ -773,11 +780,16 @@ fn run() -> Result<(), String> {
     );
     // Attach the result consumer BEFORE resume — the BotRunner ordering
     // invariant (`BotRunner.run`: create the consumer, THEN resume). The
-    // receiver is held so the channel stays open across the handshake.
-    let _result_rx = driver
+    // receiver is handed to the G4 consumer task (row 7 + row 16).
+    let result_rx = driver
         .take_result_receiver()
         .ok_or_else(|| "EngineDriver result receiver already taken".to_string())?;
-    let outcome = degenbot::runtime::get_runtime().block_on(async {
+    let runtime = degenbot::runtime::get_runtime();
+    let outcome = runtime.block_on(async {
+        // G4 (ergo L4E7RI): the result-batch consumer runs concurrently with
+        // the live registration arm; `driver.stop()` below closes the channel
+        // so its pending `recv()` sees end-of-stream exactly once (ADR-050 D6).
+        let consumer = tokio::spawn(consume::run_result_consumer(result_rx));
         let w = driver
             .start(&http, &ws, None)
             .await
@@ -836,11 +848,24 @@ fn run() -> Result<(), String> {
             live_report.dup_count,
             live_report.capped,
         );
-        Ok::<_, String>((w, phase_after_start, phase_after_resume))
+        Ok::<_, String>((consumer, (w, phase_after_start, phase_after_resume)))
     })?;
-    // stop outside the block_on (its join parks on the shared runtime).
+    let (consumer, (w, phase_after_start, phase_after_resume)) = outcome;
+    // stop outside the block_on (its join parks on the shared runtime); the
+    // result-channel close then lets the consumer observe the single
+    // end-of-stream (stop the pump first, then join the consumer — ADR-050 D6).
     driver.stop().map_err(|e| e.to_string())?;
-    let (w, phase_after_start, phase_after_resume) = outcome;
+    let (consumer_report, consumer_clock) = runtime
+        .block_on(consumer)
+        .map_err(|e| format!("result consumer join: {e}"))?
+        .map_err(|e| format!("result consumer: {e:?}"))?;
+    println!(
+        "[g4] result consumer: batches={} end_of_stream={} end={:?} clock={}",
+        consumer_report.batches,
+        consumer_report.end_of_stream,
+        consumer_report.end,
+        consumer_clock.current_block,
+    );
     println!(
         "[engine] EngineDriver handshake OK: W={w} phase_after_start={phase_after_start:?} \
          phase_after_resume={phase_after_resume:?}"

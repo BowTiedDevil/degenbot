@@ -17,6 +17,11 @@ workspace = true
 # needed, it must become reachable through `degenbot` — the compile error IS
 # the gap-discovery mechanism (see the parity ledger).
 degenbot = { path = "../../crates/degenbot" }
+# `alloy` is required for the U256/Address/Bytes value types the public
+# `degenbot::arbitrage` fee seam and `degenbot::submission` seams name in
+# their signatures (a `cargo add degenbot` consumer naming those seams needs
+# it too). Nothing here bypasses a degenbot surface.
+alloy = { version = "^2.4", features = ["full"] }
 toml = "^1"
 # The driver async runtime (the asyncio analogue). The umbrella already
 # depends on tokio; this is the pure-Rust consumer owning its own task/claim
