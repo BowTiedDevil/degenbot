@@ -1095,6 +1095,8 @@ per-arm closures).
 
 ### Engine seam deepening — EngineStages is the one driver seam (2026-09 arch review #11, candidate 2 — decided in grilling; shipped as ergo epic `5TBT7L`)
 
+> **Supersedure (ADR-050, 2026-09-14):** the `pub(crate)` one-door decision stands; ADR-050 adds a *driver* seam above `EngineStages` (`degenbot_bot::arb_engine::EngineDriver`) and re-parents `PyArbEngine` onto it — the "ritual stays Python" reading is retired. See [ADR-050](docs/adr/ADR-050-rust-native-engine-driver.md).
+
 **SHIPPED (2026-09-14, epic `5TBT7L`).** The engine's interface is one seam.
 Slice chain: T1 `2NLZE3` red (`c43941f34`) — the one-impl-block census gate +
 the full driver-surface twin probes (today's census: 12 blocks across 8 files);
