@@ -16,6 +16,8 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use degenbot::bot::arb_engine::ResultBatch;
 
@@ -57,6 +59,42 @@ impl BlockClock {
             degenbot::eip_1559::DEFAULT_ELASTICITY_MULTIPLIER,
         );
         true
+    }
+}
+
+/// A lock-free progress view of the consume loop, read by the run-loop
+/// heartbeat (RSP-10, ergo `SGCAJ5`). The consumer records each batch's
+/// block; the heartbeat task reads without blocking or locking.
+#[derive(Clone, Debug, Default)]
+pub struct SessionProgress {
+    batches: Arc<AtomicU64>,
+    current_block: Arc<AtomicU64>,
+}
+
+impl SessionProgress {
+    /// A fresh, zeroed progress view.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one consumed batch at the consumer's current clock value.
+    pub fn note(&self, clock: &BlockClock) {
+        self.batches.fetch_add(1, Ordering::Relaxed);
+        self.current_block
+            .store(clock.current_block, Ordering::Relaxed);
+    }
+
+    /// Batches consumed so far.
+    #[must_use]
+    pub fn batches(&self) -> u64 {
+        self.batches.load(Ordering::Relaxed)
+    }
+
+    /// The consumer's current block (0 before the first batch).
+    #[must_use]
+    pub fn current_block(&self) -> u64 {
+        self.current_block.load(Ordering::Relaxed)
     }
 }
 
@@ -150,13 +188,17 @@ pub async fn consume_result_batches(
 /// (G5 session watch, ergo `KPLWUM`) while counting nothing else.
 struct HeartbeatSink {
     heartbeat: Option<crate::session_watch::Heartbeat>,
+    progress: Option<SessionProgress>,
 }
 
 impl BatchSink for HeartbeatSink {
-    fn on_batch<'a>(&'a self, _batch: &'a ResultBatch, _clock: &'a BlockClock) -> SinkFuture<'a> {
+    fn on_batch<'a>(&'a self, _batch: &'a ResultBatch, clock: &'a BlockClock) -> SinkFuture<'a> {
         Box::pin(async move {
             if let Some(heartbeat) = &self.heartbeat {
                 heartbeat.beat();
+            }
+            if let Some(progress) = &self.progress {
+                progress.note(clock);
             }
             Ok(())
         })
@@ -177,8 +219,12 @@ impl BatchSink for HeartbeatSink {
 pub async fn run_result_consumer_watched(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<ResultBatch>,
     heartbeat: Option<crate::session_watch::Heartbeat>,
+    progress: Option<SessionProgress>,
 ) -> Result<(ConsumerReport, BlockClock), ConsumerError> {
-    let sink = HeartbeatSink { heartbeat };
+    let sink = HeartbeatSink {
+        heartbeat,
+        progress,
+    };
     let mut clock = BlockClock::default();
     let report = consume_result_batches(&mut rx, &mut clock, &sink, true).await?;
     Ok((report, clock))
@@ -192,7 +238,7 @@ pub async fn run_result_consumer_watched(
 pub async fn run_result_consumer(
     rx: tokio::sync::mpsc::UnboundedReceiver<ResultBatch>,
 ) -> Result<(ConsumerReport, BlockClock), ConsumerError> {
-    run_result_consumer_watched(rx, None).await
+    run_result_consumer_watched(rx, None, None).await
 }
 
 #[cfg(test)]

@@ -33,7 +33,11 @@
 //! `operator_channel` (the `--operator-socket` JSON-lines channel; row 19/20).
 //! The live handshake is gated behind `SMOKE_RPC_URL` so the example
 //! stays CI-runnable; without it (or with `--smoke-offline`) it stops after the
-//! parity-ledger print. `--operator-inert` (with `--operator-socket`) is the
+//! parity-ledger print. Once live registration completes the arm enters the
+//! RSP-10 run-until-shutdown phase (`run_loop`, ergo SGCAJ5) — the
+//! `BotRunner.run` main-loop shape: consumer + watch + operator channel stay
+//! alive until SIGINT or the bounded `DEGENBOT_SMOKE_MAX_SECS` window, with
+//! per-block heartbeats for observation runs. `--operator-inert` (with `--operator-socket`) is the
 //! documented RPC-free operator-serve mode for the wire integration check.
 //!
 //! Parity sources (constants + error semantics mirrored byte-for-byte):
@@ -56,7 +60,9 @@ mod live;
 mod operator_channel;
 mod pipeline;
 mod policy;
+mod progress;
 mod retry;
+mod run_loop;
 mod session_watch;
 mod sim_submit;
 mod submission;
@@ -825,6 +831,12 @@ fn run() -> Result<(), String> {
         std::sync::Arc::clone(&bot),
         degenbot::config::holder::config_arc(),
     );
+    // RSP-11 (KETJNN): bind the registered-path budget from DEGENBOT_MAX_PATHS
+    // (default 100000; 0 = uncapped) onto the engine registry BEFORE the crawl,
+    // mirroring build_paths.py's `engine.set_path_cap(MAX_REGISTERED_PATHS or None)`.
+    let max_paths = progress::parse_max_paths(std::env::var("DEGENBOT_MAX_PATHS").ok().as_deref())?;
+    driver.set_path_cap(max_paths);
+    println!("[registration] path cap = {max_paths:?} (DEGENBOT_MAX_PATHS)");
     // Attach the result consumer BEFORE resume — the BotRunner ordering
     // invariant (`BotRunner.run`: create the consumer, THEN resume). The
     // receiver is handed to the G4 consumer task (row 7 + row 16).
@@ -839,9 +851,12 @@ fn run() -> Result<(), String> {
         // G5 (ergo KPLWUM): the consumer beats a session-watch heartbeat per
         // batch and the watch aborts it (`WatchdogTripped`) if the loop stalls.
         let heartbeat = session_watch::Heartbeat::new();
+        // RSP-10: the shared progress view the run-loop heartbeat reads.
+        let progress = consume::SessionProgress::new();
         let consumer = tokio::spawn(consume::run_result_consumer_watched(
             result_rx,
             Some(heartbeat.clone()),
+            Some(progress.clone()),
         ));
         let stall_after = std::time::Duration::from_millis(
             std::env::var("SETTLEMENT_STALL_WATCHDOG_MS")
@@ -851,7 +866,7 @@ fn run() -> Result<(), String> {
         );
         let watch_task = tokio::spawn(session_watch::supervise_consumer(
             consumer,
-            heartbeat,
+            heartbeat.clone(),
             stall_after,
         ));
         // G5 row 20: the operator Unix-socket channel (`--operator-socket`).
@@ -910,6 +925,13 @@ fn run() -> Result<(), String> {
             io: &io,
             db: Some(&snap),
         };
+        // RSP-11 (KETJNN): the time-throttled registration-progress summary
+        // (DEGENBOT_REG_PROGRESS_SECS, default 30s) keeps the crawl visible
+        // even when path_count never crosses a 1000-boundary.
+        let progress_secs = progress::parse_progress_secs(
+            std::env::var("DEGENBOT_REG_PROGRESS_SECS").ok().as_deref(),
+        )?;
+        let mut reg_progress = progress::ProgressCadence::new(progress_secs);
         let live_report = live::run_live(
             &driver,
             &built,
@@ -919,6 +941,7 @@ fn run() -> Result<(), String> {
             &weth_lower,
             &weth_lower,
             &live_ctx,
+            &mut reg_progress,
         )
         .await;
         println!(
@@ -932,6 +955,40 @@ fn run() -> Result<(), String> {
             live_report.dup_count,
             live_report.capped,
         );
+
+        // ── RSP-10 run-until-shutdown phase (ergo SGCAJ5) ──
+        // Registration is done; mirror `BotRunner.run`'s main loop and hold
+        // the session (consumer + watch + operator channel) open until SIGINT
+        // or the env-gated bounded observation window. `run_live` ran first,
+        // exactly as before — this phase starts after it and is anchored to
+        // its own window, independent of how long registration took.
+        let max_secs = std::env::var("DEGENBOT_SMOKE_MAX_SECS")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(|v| {
+                v.parse::<u64>()
+                    .map_err(|_| format!("DEGENBOT_SMOKE_MAX_SECS must be an integer, got {v:?}"))
+            })
+            .transpose()?;
+        let run_end = run_loop::run_session_loop(
+            &run_loop::RunLoopConfig::new(max_secs),
+            &heartbeat,
+            &progress,
+            async {
+                // SIGINT is the BotRunner Ctrl-C path; a handler-install
+                // failure (no signal driver) must not abort the session, so
+                // the result is deliberately discarded.
+                let _ = tokio::signal::ctrl_c().await;
+            },
+            |hb| {
+                println!(
+                    "[session] heartbeat ticks={} blocks_seen={} current_block={}",
+                    hb.ticks, hb.blocks_seen, hb.current_block
+                );
+            },
+        )
+        .await;
+        println!("[session] run loop ended: {run_end:?} (max_secs={max_secs:?})");
         Ok::<_, String>((
             watch_task,
             (w, phase_after_start, phase_after_resume),
@@ -939,19 +996,28 @@ fn run() -> Result<(), String> {
         ))
     })?;
     let (watch_task, (w, phase_after_start, phase_after_resume), operator) = outcome;
-    // stop outside the block_on (its join parks on the shared runtime); the
-    // result-channel close then lets the consumer observe the single
-    // end-of-stream (stop the pump first, then join the consumer — ADR-050 D6).
-    driver.stop().map_err(|e| e.to_string())?;
-    if let Some(operator) = operator {
-        runtime.block_on(operator.close());
-        println!("[operator] operator channel closed; socket removed");
-    }
+    // ADR-050 D6 teardown, centralized + unit-tested in `run_loop`: stop the
+    // pump first (outside the block_on — its join parks on the shared
+    // runtime; the result-channel close then lets the consumer observe the
+    // single end-of-stream), then close the operator channel, then join the
+    // session watch/consumer. The order is never reordered.
+    let watch_outcome = run_loop::teardown_session(
+        || driver.stop().map_err(|e| e.to_string()),
+        || {
+            if let Some(operator) = operator {
+                runtime.block_on(operator.close());
+                println!("[operator] operator channel closed; socket removed");
+            }
+            Ok(())
+        },
+        || {
+            runtime
+                .block_on(watch_task)
+                .map_err(|e| format!("session watch join: {e}"))
+        },
+    )?;
     // G5 row 19: the session-watch verdict. `PumpEnded` is the graceful stop
     // path; the other two verdicts are loud failures.
-    let watch_outcome = runtime
-        .block_on(watch_task)
-        .map_err(|e| format!("session watch join: {e}"))?;
     match watch_outcome.verdict {
         session_watch::SessionEndVerdict::PumpEnded => {}
         session_watch::SessionEndVerdict::WatchdogTripped => {
