@@ -64,9 +64,11 @@ use super::path_lifecycle::PathSolveStatus;
 use super::path_registry::{PathRegistration, PathRegistrationError, PathRegistry};
 use super::solver_capture::{gate_capture_from_cfg, CaptureVariant, HeavyPathCapture};
 use super::solver_dispatch::{
-    lpt_partition, min_profit_floor, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
-    LaneArmPolicy, LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut, SolveCycleShared,
-    WalkSubmitCtx, INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
+    min_profit_floor, LaneArmPolicy, LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut,
+    SolveCycleShared, WalkSubmitCtx, INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
+};
+use super::workload_partition::{
+    lpt_partition, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
 };
 use super::ArbitrageEngine;
 use super::DeferredReRecordHook;

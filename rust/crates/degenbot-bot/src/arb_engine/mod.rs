@@ -108,6 +108,11 @@ mod solver_dispatch;
 // 5WCRWZ T1: heavy-path capture diagnostics, extracted from the solver_dispatch
 // grab file (import-only move; the module owns its honesty probe + test island).
 mod solver_capture;
+// 5WCRWZ T2: the pure workload-analysis cluster (solve-bin sizing, LPT
+// partition, named cordon-fallback seat plan, resolve-time cost proxies),
+// extracted from the solver_dispatch grab file (import-only move; the module
+// owns its honesty probe + test islands).
+mod workload_partition;
 // ADR-045 T1 (`E7V2S6`): the solve-cycle data-type seam (`CycleOutcome` /
 // `CycleArm` / `ResolveCensus` / `Registration`) — T3/T4 assemble
 // `SolveCycle` on top of it; nothing consumes the types yet.
