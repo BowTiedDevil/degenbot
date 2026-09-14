@@ -146,24 +146,26 @@ pub async fn consume_result_batches(
     Ok(report)
 }
 
-/// A counting sink used by the driver's convenience runner.
-#[derive(Default)]
-struct CountingSink {
-    batches: std::sync::atomic::AtomicU64,
+/// A sink that beats the session-watch heartbeat for each consumed batch
+/// (G5 session watch, ergo `KPLWUM`) while counting nothing else.
+struct HeartbeatSink {
+    heartbeat: Option<crate::session_watch::Heartbeat>,
 }
 
-impl BatchSink for CountingSink {
+impl BatchSink for HeartbeatSink {
     fn on_batch<'a>(&'a self, _batch: &'a ResultBatch, _clock: &'a BlockClock) -> SinkFuture<'a> {
         Box::pin(async move {
-            self.batches
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(heartbeat) = &self.heartbeat {
+                heartbeat.beat();
+            }
             Ok(())
         })
     }
 }
 
 /// Convenience runner for the live arm: consume the driver's result stream
-/// with a counting sink, returning the report + the final block clock.
+/// with an optional heartbeat sink, returning the report + the final block
+/// clock.
 ///
 /// `allow_quiet_end` is `true` because the driver's `stop()` is the intended
 /// teardown (ADR-050 D6); the loud pump-death branch belongs to a supervised
@@ -172,13 +174,25 @@ impl BatchSink for CountingSink {
 /// # Errors
 ///
 /// Returns [`ConsumerError`] if the sink fails.
-pub async fn run_result_consumer(
+pub async fn run_result_consumer_watched(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<ResultBatch>,
+    heartbeat: Option<crate::session_watch::Heartbeat>,
 ) -> Result<(ConsumerReport, BlockClock), ConsumerError> {
-    let sink = CountingSink::default();
+    let sink = HeartbeatSink { heartbeat };
     let mut clock = BlockClock::default();
     let report = consume_result_batches(&mut rx, &mut clock, &sink, true).await?;
     Ok((report, clock))
+}
+
+/// Convenience runner without a heartbeat (kept for the offline tests).
+///
+/// # Errors
+///
+/// Returns [`ConsumerError`] if the sink fails.
+pub async fn run_result_consumer(
+    rx: tokio::sync::mpsc::UnboundedReceiver<ResultBatch>,
+) -> Result<(ConsumerReport, BlockClock), ConsumerError> {
+    run_result_consumer_watched(rx, None).await
 }
 
 #[cfg(test)]

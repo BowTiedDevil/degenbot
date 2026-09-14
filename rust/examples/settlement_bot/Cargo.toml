@@ -23,7 +23,19 @@ degenbot = { path = "../../crates/degenbot" }
 # it too). Nothing here bypasses a degenbot surface.
 alloy = { version = "^2.4", features = ["full"] }
 toml = "^1"
-# The driver async runtime (the asyncio analogue). The umbrella already
-# depends on tokio; this is the pure-Rust consumer owning its own task/claim
-# primitives — NOT a core capability lifted into the example.
-tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
+# serde_json is the driver-local JSON codec for the operator Unix-socket
+# channel (the Rust twin of Python's stdlib json). Like toml it is a
+# driver-local format codec, not a core capability: the wire framing/op
+# semantics live in the example, and the output serializer is hand-written to
+# match json.dumps byte-for-byte (see operator_channel).
+serde_json = "^1"
+# The driver async runtime (the asyncio analogue). "net" backs the operator
+# Unix socket, "signal" the inert operator mode's Ctrl-C exit. The umbrella
+# already depends on tokio; this is the pure-Rust consumer owning its own
+# task/claim primitives — NOT a core capability lifted into the example.
+tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync", "net", "signal"] }
+
+[dev-dependencies]
+# start_paused + tokio::time::advance give the session-watch tests a
+# controlled clock instead of real sleeps ("test-util" enables paused time).
+tokio = { version = "^1.53", features = ["test-util"] }

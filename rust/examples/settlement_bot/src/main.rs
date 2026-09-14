@@ -28,9 +28,13 @@
 //! the `S+1..W` auto-backfill) → `stop`. The G3 registration pipeline lands
 //! driver-side (ergo XFEJUG). Gap G4 (ergo L4E7RI) adds the driver-side
 //! `consume`/`dispatch`/`sim_submit`/`submission` modules mirroring rows
-//! 15–18. The live handshake is gated behind `SMOKE_RPC_URL` so the example
+//! 15–18. Gap G5 (ergo KPLWUM) adds `session_watch` (the typed end-state
+//! verdict + heartbeat/stall watchdog over the consume loop) and
+//! `operator_channel` (the `--operator-socket` JSON-lines channel; row 19/20).
+//! The live handshake is gated behind `SMOKE_RPC_URL` so the example
 //! stays CI-runnable; without it (or with `--smoke-offline`) it stops after the
-//! parity-ledger print.
+//! parity-ledger print. `--operator-inert` (with `--operator-socket`) is the
+//! documented RPC-free operator-serve mode for the wire integration check.
 //!
 //! Parity sources (constants + error semantics mirrored byte-for-byte):
 //!   - `src/degenbot/runner/cli.py`       — CLI flags
@@ -49,9 +53,11 @@ mod discovery;
 mod dispatch;
 mod ledger;
 mod live;
+mod operator_channel;
 mod pipeline;
 mod policy;
 mod retry;
+mod session_watch;
 mod sim_submit;
 mod submission;
 
@@ -153,11 +159,13 @@ struct Cli {
     node_http: Option<String>,
     node_ws: Option<String>,
     operator_socket: Option<String>,
+    operator_inert: bool,
     smoke_offline: bool,
 }
 
 const USAGE: &str = "usage: settlement-bot [--live] [--permutation V2-V3-V4] \
-[--node-http URL] [--node-ws URL] [--operator-socket PATH] [--smoke-offline]";
+[--node-http URL] [--node-ws URL] [--operator-socket PATH] [--operator-inert] \
+[--smoke-offline]";
 
 fn parse_cli(args: &[String]) -> Result<Cli, String> {
     let mut cli = Cli {
@@ -166,6 +174,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
         node_http: None,
         node_ws: None,
         operator_socket: None,
+        operator_inert: false,
         smoke_offline: false,
     };
     let mut i = 0;
@@ -189,6 +198,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
             "--node-http" => cli.node_http = Some(take_value(&mut i)?),
             "--node-ws" => cli.node_ws = Some(take_value(&mut i)?),
             "--operator-socket" => cli.operator_socket = Some(take_value(&mut i)?),
+            "--operator-inert" => cli.operator_inert = true,
             "--smoke-offline" => cli.smoke_offline = true,
             "--help" | "-h" => {
                 println!("{USAGE}");
@@ -506,8 +516,8 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("16-sim-fanout-submitter", "DRIVER-POLICY", "sim_submit.rs: tokio Semaphore(max_simulate_concurrent) + single ordered FIFO submitter; consume.rs consumes the EngineDriver result stream (row 7); no core lift"),
         ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
         ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
-        ("19-session-watch", "DRIVER-POLICY(ergo=KPLWUM)", "tokio watchdog, not yet wired"),
-        ("20-operator-channel", "DRIVER-POLICY(ergo=KPLWUM)", "Unix socket accepted by CLI; server not yet wired"),
+        ("19-session-watch", "DRIVER-POLICY", "session_watch.rs: typed SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} + Heartbeat/stall_watchdog observing the live consume loop (watch-as-observer, no core lift) — ergo KPLWUM"),
+        ("20-operator-channel", "DRIVER-POLICY", "operator_channel.rs: tokio UnixListener JSON-lines add_path/discover/set+get_fleet_posture; fleet posture through degenbot::workers::posture::process (reachable via the umbrella) — ergo KPLWUM"),
     ];
     for (row, status, note) in rows {
         println!("parity-ledger row={row} status={status} note={note}");
@@ -751,8 +761,45 @@ fn run() -> Result<(), String> {
 
     print_parity_ledger(seed_block);
 
+    // ── G5 operator channel (ledger row 20, ergo KPLWUM) ──
+    // A documented inert mode: serve the operator Unix socket WITHOUT RPC so
+    // the wire contract is exercisable offline (the live arm needs
+    // `SMOKE_RPC_URL`; this is the CI/integration test surface). The default
+    // offline boot below is untouched unless `--operator-inert` is passed.
+    if cli.operator_inert {
+        let Some(socket_path) = cli.operator_socket.clone() else {
+            return Err("--operator-inert requires --operator-socket PATH".to_string());
+        };
+        let ops: std::sync::Arc<dyn operator_channel::PathOps> =
+            std::sync::Arc::new(operator_channel::PipelinePathOps::new(
+                &discovered,
+                &requested_kinds,
+                &allowed,
+                &params,
+                pipeline.policy.clone(),
+                pipeline.retry_policy.clone(),
+                weth_lower.clone(),
+                weth_lower.clone(),
+            ));
+        let runtime = degenbot::runtime::get_runtime();
+        return runtime.block_on(async {
+            let running = operator_channel::start_operator_server(Path::new(&socket_path), ops)?;
+            println!(
+                "[operator] inert channel listening on {socket_path} (no RPC; Ctrl-C to stop)"
+            );
+            tokio::signal::ctrl_c()
+                .await
+                .map_err(|e| format!("ctrl_c wait: {e}"))?;
+            running.close().await;
+            println!("[operator] operator channel closed; socket removed");
+            Ok(())
+        });
+    }
+
     if cli.operator_socket.is_some() {
-        println!("[operator] --operator-socket accepted; channel not yet wired (G5, ergo KPLWUM)");
+        println!(
+            "[operator] --operator-socket accepted; served only in the live arm or with --operator-inert (offline boot exits as before)"
+        );
     }
 
     // ── Engine handshake (ledger rows 6–8): the public Rust-native driver ──
@@ -789,7 +836,44 @@ fn run() -> Result<(), String> {
         // G4 (ergo L4E7RI): the result-batch consumer runs concurrently with
         // the live registration arm; `driver.stop()` below closes the channel
         // so its pending `recv()` sees end-of-stream exactly once (ADR-050 D6).
-        let consumer = tokio::spawn(consume::run_result_consumer(result_rx));
+        // G5 (ergo KPLWUM): the consumer beats a session-watch heartbeat per
+        // batch and the watch aborts it (`WatchdogTripped`) if the loop stalls.
+        let heartbeat = session_watch::Heartbeat::new();
+        let consumer = tokio::spawn(consume::run_result_consumer_watched(
+            result_rx,
+            Some(heartbeat.clone()),
+        ));
+        let stall_after = std::time::Duration::from_millis(
+            std::env::var("SETTLEMENT_STALL_WATCHDOG_MS")
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(120_000),
+        );
+        let watch_task = tokio::spawn(session_watch::supervise_consumer(
+            consumer,
+            heartbeat,
+            stall_after,
+        ));
+        // G5 row 20: the operator Unix-socket channel (`--operator-socket`).
+        let operator = match cli.operator_socket.as_deref() {
+            Some(path) => {
+                let ops: std::sync::Arc<dyn operator_channel::PathOps> =
+                    std::sync::Arc::new(operator_channel::PipelinePathOps::new(
+                        &discovered,
+                        &requested_kinds,
+                        &allowed,
+                        &params,
+                        pipeline.policy.clone(),
+                        pipeline.retry_policy.clone(),
+                        weth_lower.clone(),
+                        weth_lower.clone(),
+                    ));
+                let running = operator_channel::start_operator_server(Path::new(path), ops)?;
+                println!("[operator] listening on {path} (G5, ergo KPLWUM)");
+                Some(running)
+            }
+            None => None,
+        };
         let w = driver
             .start(&http, &ws, None)
             .await
@@ -848,15 +932,48 @@ fn run() -> Result<(), String> {
             live_report.dup_count,
             live_report.capped,
         );
-        Ok::<_, String>((consumer, (w, phase_after_start, phase_after_resume)))
+        Ok::<_, String>((
+            watch_task,
+            (w, phase_after_start, phase_after_resume),
+            operator,
+        ))
     })?;
-    let (consumer, (w, phase_after_start, phase_after_resume)) = outcome;
+    let (watch_task, (w, phase_after_start, phase_after_resume), operator) = outcome;
     // stop outside the block_on (its join parks on the shared runtime); the
     // result-channel close then lets the consumer observe the single
     // end-of-stream (stop the pump first, then join the consumer — ADR-050 D6).
     driver.stop().map_err(|e| e.to_string())?;
-    let (consumer_report, consumer_clock) = runtime
-        .block_on(consumer)
+    if let Some(operator) = operator {
+        runtime.block_on(operator.close());
+        println!("[operator] operator channel closed; socket removed");
+    }
+    // G5 row 19: the session-watch verdict. `PumpEnded` is the graceful stop
+    // path; the other two verdicts are loud failures.
+    let watch_outcome = runtime
+        .block_on(watch_task)
+        .map_err(|e| format!("session watch join: {e}"))?;
+    match watch_outcome.verdict {
+        session_watch::SessionEndVerdict::PumpEnded => {}
+        session_watch::SessionEndVerdict::WatchdogTripped => {
+            return Err(
+                "session watch: consume loop stalled and the watchdog aborted it (set \
+                 SETTLEMENT_STALL_WATCHDOG_MS to tune)"
+                    .to_string(),
+            );
+        }
+        session_watch::SessionEndVerdict::RegistrationFailed => {
+            return Err(format!(
+                "session watch: registration failed: {}",
+                watch_outcome
+                    .registration_error
+                    .as_deref()
+                    .unwrap_or("unknown registration error")
+            ));
+        }
+    }
+    let (consumer_report, consumer_clock) = watch_outcome
+        .consumer
+        .ok_or_else(|| "session watch lost the consumer output".to_string())?
         .map_err(|e| format!("result consumer join: {e}"))?
         .map_err(|e| format!("result consumer: {e:?}"))?;
     println!(
