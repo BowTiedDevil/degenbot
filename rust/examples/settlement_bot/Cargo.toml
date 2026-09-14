@@ -18,3 +18,7 @@ workspace = true
 # the gap-discovery mechanism (see the parity ledger).
 degenbot = { path = "../../crates/degenbot" }
 toml = "^1"
+# The driver async runtime (the asyncio analogue). The umbrella already
+# depends on tokio; this is the pure-Rust consumer owning its own task/claim
+# primitives — NOT a core capability lifted into the example.
+tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }

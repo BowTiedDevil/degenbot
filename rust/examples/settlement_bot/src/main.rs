@@ -5,6 +5,10 @@
     clippy::print_stdout,
     reason = "standalone-driver binary whose boot/config/ledger diagnostics are read by the operator"
 )]
+#![expect(
+    dead_code,
+    reason = "the Gap-G3 pipeline modules ship the full driver stage surface (claims/retry/ledger               classification + the smoke-gated live registration arms); the default offline boot and               the #[cfg(test)] suite exercise different subsets of it"
+)]
 
 //! Rust-owned settlement-arbitrage bot — the pure-Rust parity twin of the
 //! Python driver (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py` +
@@ -36,6 +40,19 @@ use std::process::ExitCode;
 
 use degenbot::core::address_utils::to_checksum_address_str;
 
+mod claims;
+mod discovery;
+mod ledger;
+mod live;
+mod pipeline;
+mod policy;
+mod retry;
+
+use crate::discovery::{build_graph, DiscoveryParams, NATIVE_CURRENCY};
+use crate::pipeline::{run_offline, RegistrationPipeline};
+use crate::policy::{parse_permutation_filter, PathPolicy};
+use degenbot::pathfinding::PoolKind;
+
 /// The settled arbitration chain for this driver (Ethereum mainnet),
 /// mirroring `ArbitrageConfig.from_env(chain_id=1)`.
 const CHAIN_ID: u64 = 1;
@@ -59,10 +76,41 @@ const VERIFICATION_RETRY_MAX_DELAY: f64 = 4.0;
 const VERIFICATION_RETRY_JITTER: f64 = 0.5;
 
 /// `ETH_MAINNET_ALLOWED_TOKENS` (runner/config.py) — checksummed, lowercase-
-/// compared by the path predicate (row 13; full predicate lands with G3,
-/// ergo task XFEJUG). Kept here so slice 1 reports the same value the
+/// compared by the path predicate (row 13; implemented by the `policy` module,
+/// ergo task XFEJUG). Kept here so the config dump reports the same value the
 /// Python config would.
 const ALLOWED_INTERMEDIATE_TOKENS: [&str; 11] = [
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
+    "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
+    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", // WBTC
+    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", // UNI
+    "0x514910771AF9Ca656af840dff83E8264EcF986CA", // LINK
+    "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2", // SUSHI
+    "0xD533a949740bb3306d119CC777fa900bA034cd52", // CRV
+    "0xc00e94Cb662C3520282E6f5717214004A7f26888", // COMP
+    "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e", // YFI
+    "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", // MATIC/POL
+];
+
+/// `_driver_constants.WETH_ADDRESS` (Ethereum mainnet wrapped native).
+const WETH_ADDRESS: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+/// `_driver_constants.ETH_MAINNET_ALLOWED_TOKENS` — the DISCOVERY allowlist
+/// `build_paths.py::discovery_sweep` passes to `find_paths_async`.
+///
+/// NOTE: Python has two distinct sets. `config.py::_ALLOWED_INTERMEDIATE_TOKENS`
+/// (11 tokens, mirrored by `ALLOWED_INTERMEDIATE_TOKENS` above) is the config
+/// FIELD; the discovery path actually passes the 15-token
+/// `_driver_constants.ETH_MAINNET_ALLOWED_TOKENS` (which includes WETH —
+/// required, because `build_path_graph` intersects the candidate-token set
+/// with it). The example mirrors the DISCOVERY set here so the graph filter is
+/// faithful; the config field stays the 11-token list for row-2 parity.
+const ETH_MAINNET_DISCOVERY_ALLOWED_TOKENS: [&str; 15] = [
+    "0x163f8C2467924be0ae7B5347228CABF260318753", // WLD
+    "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8", // PyUSD
+    "0xB8c77482e45F1F44dE1745F52C74426C631bDD52", // BNB
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
     "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
     "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
@@ -441,11 +489,11 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("06-engine-subscribe-resume", "REACHED-via-EngineDriver", "EngineDriver::start → subscribe → verify-config (stops pre-resume); resume owns the S+1..W auto-backfill via BlockPump::backfill_with_drain"),
         ("07-result-batch-stream", "REACHED-via-EngineDriver", "EngineDriver::take_result_receiver (attach pre-resume); ResultBatch over the existing unbounded channel"),
         ("08-register-and-solve-path", "REACHED-via-EngineDriver", "EngineDriver::register_and_solve_path delegates to EngineStages"),
-        ("09-verify-lifecycles", "PARTIAL(ergo=XFEJUG)", "EngineDriver::run_v3/v4_registration_lifecycle(+_sync) reach engine-stages; VerifyClaims claim/TOCTOU discipline remains XFEJUG"),
+        ("09-verify-lifecycles", "REACHABLE", "EngineDriver::run_v3/v4_registration_lifecycle(+_sync) expose the core lifecycles; claims.rs VerifyClaims (tokio at-most-once) + retry.rs + ledger.rs shipped by XFEJUG"),
         ("10-pool-construction", "REACHABLE", "probe_pool_type + build_v2/v3/v4/... (umbrella)"),
         ("11-discovery-db-enumeration", "REACHABLE", "degenbot::db::SnapshotDb::fetch_discovery_rows (degenbot-db::discovery_read) + tests/discovery_read_parity.rs"),
-        ("12-path-discovery-batching", "PARTIAL(ergo=XFEJUG)", "PathGraph reachable; async batched find_paths wrapper Python-side"),
-        ("13-path-policy", "DRIVER-POLICY", "allowlist mirrored in SettlementBotConfig"),
+        ("12-path-discovery-batching", "REACHABLE", "discovery.rs: graph build over G2 rows + batched lazy OwnedPathFinder (batch_size<=1 per-path; one cooperative async hop per batch)"),
+        ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation) + discovery allowlist graph filter; config.py 11-token + _driver_constants 15-token sets"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
         ("15-dispatch-selection", "REACHABLE", "degenbot::arbitrage::dispatch_profitable_results"),
         ("16-sim-fanout-submitter", "DRIVER-POLICY(ergo=L4E7RI)", "tokio pipeline; consumes the now-reachable EngineDriver result stream (row 7)"),
@@ -573,14 +621,126 @@ fn run() -> Result<(), String> {
     // The call is the compile-time proof that a `cargo add degenbot` consumer
     // reaches `degenbot::db::SnapshotDb::fetch_discovery_rows`; the count is
     // the runtime witness.
-    let discovery_chain = i64::try_from(CHAIN_ID).map_err(|e| format!("chain id: {e}"))?;
+    // `DEGENBOT_DISCOVERY_CHAIN_ID` is a test seam (the `DEGENBOT_FIXTURE_DB`
+    // precedent): the parity fixture is chain 8453 while the driver's settled
+    // chain is 1. Defaults to CHAIN_ID (the Python driver reads the chain from
+    // the DB/bot, not an env var).
+    let discovery_chain: i64 = match std::env::var("DEGENBOT_DISCOVERY_CHAIN_ID") {
+        Ok(raw) if !raw.is_empty() => raw
+            .parse::<i64>()
+            .map_err(|e| format!("DEGENBOT_DISCOVERY_CHAIN_ID: {e}"))?,
+        _ => i64::try_from(CHAIN_ID).map_err(|e| format!("chain id: {e}"))?,
+    };
     let discovered = snap
         .fetch_discovery_rows(discovery_chain)
         .map_err(|e| format!("discovery enumeration from {}: {e}", db_path.display()))?;
     println!(
-        "[boot] discovery enumerated {} candidate pools (read-only, held-tx)",
+        "[boot] discovery enumerated {} candidate pools (chain {discovery_chain}, read-only, held-tx)",
         discovered.len()
     );
+
+    // ── G3 pipeline (ledger rows 9 + 12 + 13, ergo XFEJUG) ──
+    // 1. Permutation filter → per-depth pool-kind filter + requested kinds.
+    let perms: BTreeSet<String> = cfg
+        .permutation_filter
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<String>>();
+    let permutation = parse_permutation_filter(&perms)?;
+    let (pool_type_per_depth, requested_kinds) = permutation.as_ref().map_or_else(
+        || (None, vec![PoolKind::V2, PoolKind::V3, PoolKind::V4]),
+        |filter| (Some(filter.per_depth.clone()), filter.pool_kinds.clone()),
+    );
+
+    // 2. Graph build from the SAME held discovery rows (snapshot discipline).
+    let allowed: BTreeSet<String> = ETH_MAINNET_DISCOVERY_ALLOWED_TOKENS
+        .iter()
+        .map(|t| t.to_lowercase())
+        .collect();
+    let built = build_graph(&discovered, &requested_kinds, Some(&allowed));
+    println!(
+        "[g3] graph built: {} nodes, {} candidate tokens, {} requested kinds {:?}",
+        built.nodes.len(),
+        built.candidate_tokens.len(),
+        requested_kinds.len(),
+        requested_kinds
+    );
+
+    // 3. Start/end tokens (WETH + V4 native currency), resolved from the
+    //    discovered token ids (mirrors `discovery_sweep`'s start/end lists).
+    let weth_lower = WETH_ADDRESS.to_lowercase();
+    let native_lower = NATIVE_CURRENCY.to_string();
+    let mut boundary_tokens: Vec<u64> = Vec::new();
+    for addr in [&weth_lower, &native_lower] {
+        if let Some(id) = built.token_id_by_lower.get(addr) {
+            if !boundary_tokens.contains(id) {
+                boundary_tokens.push(*id);
+            }
+        }
+    }
+
+    // 4. Discovery params: min_depth 2 (find_paths default), max_depth 3
+    //    (`discovery_sweep`), batch size from the typed config
+    //    (`pathfinding.discovery_batch_size`, env DEGENBOT_DISCOVERY_BATCH_SIZE).
+    let batch_size = degenbot::config::holder::config()
+        .pathfinding
+        .discovery_batch_size
+        .max(1);
+    let params = DiscoveryParams {
+        start_tokens: boundary_tokens.clone(),
+        end_tokens: boundary_tokens.clone(),
+        min_depth: 2,
+        max_depth: Some(3),
+        pool_type_per_depth: pool_type_per_depth.clone(),
+        batch_size,
+    };
+
+    // 5. Driver policy (row 13): hop bounds pinned to the discovery floor/cap,
+    //    duplicate-pool guard on; the token allowlist is applied at the graph
+    //    filter above (mirroring `find_paths_async`'s `allowed_intermediate_tokens`).
+    let policy = PathPolicy {
+        min_hops: 2,
+        max_hops: 3,
+        ..PathPolicy::default()
+    };
+    let retry_policy = retry::VerificationRetryPolicy {
+        max_attempts: u32::try_from(cfg.verification_retry_policy.max_attempts).unwrap_or(u32::MAX),
+        base_delay: cfg.verification_retry_policy.base_delay,
+        max_delay: cfg.verification_retry_policy.max_delay,
+        jitter: cfg.verification_retry_policy.jitter,
+    };
+    retry_policy.validate()?;
+    let mut pipeline = RegistrationPipeline::new(policy, retry_policy);
+
+    // 6. Offline-dry run: enumeration → directions → policy → candidate counts.
+    let report = degenbot::runtime::get_runtime().block_on(run_offline(
+        &mut pipeline,
+        &built,
+        &params,
+        &weth_lower,
+        &weth_lower,
+    ));
+    println!(
+        "[g3] offline-dry pipeline: candidates={} path_count={} skips={} policy_rejected={} \
+         direction_errors={} v4_hops={} dup={} cap={} batch_size={}",
+        report.candidates,
+        report.path_count,
+        report.skip_count,
+        report.policy_rejected,
+        report.direction_errors,
+        report.v4_pool_count,
+        report.dup_count,
+        report.capped,
+        batch_size,
+    );
+    if !report.skip_reasons.is_empty() {
+        let breakdown: Vec<String> = report
+            .skip_reasons
+            .iter()
+            .map(|(reason, count)| format!("{reason}={count}"))
+            .collect();
+        println!("[g3] skip reasons: {}", breakdown.join(", "));
+    }
 
     print_parity_ledger(seed_block);
 
@@ -627,6 +787,55 @@ fn run() -> Result<(), String> {
         // the S+1..W auto-backfill before it spawns the live loop.
         driver.resume().await.map_err(|e| e.to_string())?;
         let phase_after_resume = driver.current_phase();
+
+        // ── G3 live registration arm (gated by SMOKE_RPC_URL) ──
+        // Per-candidate pool build through the core `ConstructionIo`, BotState
+        // registration, the ADR-022 verify lifecycle under the tokio claim
+        // table + retry dance, then `register_and_solve_path`.
+        let provider = degenbot::rpc::provider::AlloyProvider::new(
+            &http,
+            degenbot::rpc::provider::DEFAULT_MAX_RETRIES,
+        )
+        .await
+        .map_err(|e| format!("live construction provider from {http}: {e}"))?;
+        let (live_db, _live_schema) = degenbot::db::DegenbotDb::open(&db_path)
+            .map_err(|e| format!("open live construction DB {}: {e}", db_path.display()))?;
+        let io = degenbot::bot_core::construction_io::ConstructionIo::new(
+            std::sync::Arc::new(
+                degenbot::bot_core::construction_io::DegenbotDbConstruction::new(live_db),
+            ),
+            std::sync::Arc::new(
+                degenbot::bot_core::construction_io::AlloyRpcConstruction::new(provider),
+            ),
+        );
+        let live_ctx = live::LiveContext {
+            chain_id: CHAIN_ID,
+            block: None,
+            io: &io,
+            db: Some(&snap),
+        };
+        let live_report = live::run_live(
+            &driver,
+            &built,
+            &discovered,
+            &mut pipeline,
+            &params,
+            &weth_lower,
+            &weth_lower,
+            &live_ctx,
+        )
+        .await;
+        println!(
+            "[g3-live] build+verify+register: path_count={} skips={} engine_rejects={} \
+             register_fails={} v4_hops={} dup={} cap={}",
+            live_report.path_count,
+            live_report.skip_count,
+            live_report.engine_reject_count,
+            live_report.register_fail_count,
+            live_report.v4_pool_count,
+            live_report.dup_count,
+            live_report.capped,
+        );
         Ok::<_, String>((w, phase_after_start, phase_after_resume))
     })?;
     // stop outside the block_on (its join parks on the shared runtime).
