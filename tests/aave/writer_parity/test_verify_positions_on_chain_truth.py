@@ -181,7 +181,6 @@ def _drive_rust(rust_path: str, rpc_url: str) -> dict[str, object]:
         to_block=FIXTURE_BLOCK,
         chunk_size=100,
         rpc_url=rpc_url,
-        progress_callback=lambda _progress=None, **_kw: None,
         cancel_handle=cancel,
     )
 

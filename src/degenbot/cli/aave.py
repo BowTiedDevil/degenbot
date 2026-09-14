@@ -1,14 +1,11 @@
 """CLI commands for Aave V3 market management + position analysis."""
 
 import signal
-from collections.abc import Callable
 from typing import Any, Literal, cast
 
 import click
-import tqdm
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
-from tqdm.contrib.logging import logging_redirect_tqdm
 
 from degenbot.aave import (
     activate_aave_market,
@@ -280,15 +277,6 @@ def deactivate_mainnet_aave_v3(
     show_envvar=True,
 )
 @click.option(
-    "--progress-bar/--no-progress-bar",
-    "show_progress",
-    default=True,
-    show_default=True,
-    help="Show progress bars.",
-    envvar="DEGENBOT_PROGRESS_BAR",
-    show_envvar=True,
-)
-@click.option(
     "--dry-run",
     "dry_run",
     is_flag=True,
@@ -320,7 +308,6 @@ def aave_update(
     verify_all: bool,
     verify_all_interval: int,
     stop_after_one_chunk: bool,
-    show_progress: bool,
     dry_run: bool,
     enable_backup: bool,
 ) -> None:
@@ -339,7 +326,6 @@ def aave_update(
             --verify-all-interval block boundaries + at run completion.
         verify_all_interval: Block interval for the --verify-all full gate.
         stop_after_one_chunk: If True, stop after processing the first chunk.
-        show_progress: Toggle display of progress bars.
         dry_run: If True, preview changes without committing to the database.
         enable_backup: If True, create a database backup after the completion
             verification runs.
@@ -361,9 +347,10 @@ def aave_update(
     # AVS4DR (epic AZGJUN): the per-market chunk loop is delegated to the Rust
     # core (`degenbot._ffi.run_aave_update`). Python is a driver shell —
     # market selection (READ), `--to-block` resolution, SIGINT -> cancel flag,
-    # tqdm-on-callback, a per-market report echo, + post-run cleanup/backup
-    # hygiene. The chunk loop, the RPC fetches, the decode, the DB writes, +
-    # the per-chunk transaction all live in the Rust core.
+    # a per-market report echo, + post-run cleanup/backup hygiene. The chunk
+    # loop, the RPC fetches, the decode, the DB writes, the per-chunk
+    # transaction, + the throttled operator progress lines all live in the
+    # Rust core.
     #
     # §4.2 retirement (CZM7TI): the Python writer pipeline (`update_aave_market`,
     # `db_*.py`, `event_handlers._process_*`, `transaction_processor`/
@@ -411,176 +398,141 @@ def aave_update(
         # (migration-guide §3.3 interrupt contract).
         handle.cancel()
 
-    def _make_progress(
-        pbar: tqdm.tqdm,
-        chunk_counter: list[int],
-    ) -> Callable[[dict[str, Any]], None]:
-        def _on_progress(progress: dict[str, Any]) -> None:
-            chunk_counter[0] += 1
-            if not progress["committed"]:
-                pbar.set_postfix_str(
-                    f"chunk {progress['chunk_start']}-{progress['chunk_end']} rolled back",
-                    refresh=True,
-                )
-                return
-            delta = progress["chunk_end"] - progress["chunk_start"] + 1
-            pbar.update(delta)
-            pbar.set_postfix_str(
-                f"+{progress['events_applied']} events (chunk {chunk_counter[0]})",
-                refresh=True,
-            )
-
-        return _on_progress
-
     cancelled = False
     signal.signal(signal.SIGINT, _on_sigint)
-    try:  # ruff:ignore[too-many-nested-blocks] — market loop nests under try/with/for/with/for/try/with
-        with logging_redirect_tqdm(loggers=[logger]):
-            # Active chains (READ — orchestration only; the Rust core owns the
-            # per-market write transaction).
+    try:
+        # Active chains (READ — orchestration only; the Rust core owns the
+        # per-market write transaction).
+        with bot.db() as session:
+            active_chains = set(
+                session.scalars(
+                    select(AaveV3Market.chain_id).where(
+                        AaveV3Market.active,
+                        AaveV3Market.name.contains("aave"),
+                    ),
+                ).all(),
+            )
+
+        if not active_chains:
+            msg = "No active Aave markets found."
+            raise DegenbotValueError(message=msg)
+
+        database_path = str(bot.config.database.path)
+
+        for chain_id in active_chains:
+            if handle.is_cancelled():
+                break
+            rpc_url = resolve_http_rpc_uri(chain_id, config=bot.config)
+            resolved_to_block = _resolve_to_block(
+                to_block,
+                chain_id=chain_id,
+                bot=bot,
+            )
+
+            # Active markets for this chain (READ).
             with bot.db() as session:
-                active_chains = set(
-                    session.scalars(
-                        select(AaveV3Market.chain_id).where(
-                            AaveV3Market.active,
-                            AaveV3Market.name.contains("aave"),
-                        ),
-                    ).all(),
-                )
+                active_markets = session.scalars(
+                    select(AaveV3Market).where(
+                        AaveV3Market.active,
+                        AaveV3Market.chain_id == chain_id,
+                        AaveV3Market.name.contains("aave"),
+                    ),
+                ).all()
 
-            if not active_chains:
-                msg = "No active Aave markets found."
-                raise DegenbotValueError(message=msg)
+            if not active_markets:
+                click.echo(f"No active Aave markets on chain {chain_id}.")
+                continue
 
-            database_path = str(bot.config.database.path)
-
-            for chain_id in active_chains:
+            for market in active_markets:
                 if handle.is_cancelled():
+                    cancelled = True
                     break
-                rpc_url = resolve_http_rpc_uri(chain_id, config=bot.config)
-                resolved_to_block = _resolve_to_block(
-                    to_block,
-                    chain_id=chain_id,
-                    bot=bot,
-                )
-
-                # Active markets for this chain (READ).
-                with bot.db() as session:
-                    active_markets = session.scalars(
-                        select(AaveV3Market).where(
-                            AaveV3Market.active,
-                            AaveV3Market.chain_id == chain_id,
-                            AaveV3Market.name.contains("aave"),
-                        ),
-                    ).all()
-
-                if not active_markets:
-                    click.echo(f"No active Aave markets on chain {chain_id}.")
-                    continue
-
-                for market in active_markets:
-                    if handle.is_cancelled():
-                        cancelled = True
-                        break
-                    if market.last_update_block is None:
-                        click.echo(
-                            f"Chain {chain_id} market {market.id} ({market.name}): "
-                            "needs bootstrapping (last_update_block is None); "
-                            "skipping. Bootstrap the stamp before running.",
-                        )
-                        continue
-
-                    if dry_run:
-                        # Shell-level dry-run: skip the Rust call entirely (the
-                        # core has no dry-run flag — tracked for RQXEKH). This
-                        # is a shell-level preview, NOT a full write-preview.
-                        click.echo(
-                            f"Dry run: would advance chain {chain_id} market "
-                            f"{market.id} ({market.name}) from block "
-                            f"{market.last_update_block} to "
-                            f"{resolved_to_block!r} (no changes committed).",
-                        )
-                        continue
-
-                    pbar = tqdm.tqdm(
-                        desc=f"Market {market.id} ({market.name})",
-                        total=None,
-                        bar_format="{desc}: {n_fmt} blocks |{bar}| {postfix}",
-                        leave=False,
-                        disable=not show_progress,
-                    )
-                    chunk_counter = [0]
-                    try:
-                        report = run_aave_update(
-                            database_path=database_path,
-                            chain_id=chain_id,
-                            market_id=market.id,
-                            to_block=resolved_to_block,
-                            chunk_size=chunk_size,
-                            rpc_url=rpc_url,
-                            progress_callback=_make_progress(
-                                pbar,
-                                chunk_counter,
-                            ),
-                            cancel_handle=handle,
-                            verify_chunk=verify_chunk,
-                            max_chunks=1 if stop_after_one_chunk else None,
-                            verify_all_interval=(verify_all_interval if verify_all else None),
-                            verify_all_at_completion=verify_all,
-                        )
-                    except RuntimeError as exc:
-                        # Cooperative cancel (RuntimeError per the .pyi):
-                        # a user SIGINT. The in-flight chunk completed
-                        # atomically first; committed chunks stay durable.
-                        # NOTE: a `--verify-chunk` divergence is raised as an
-                        # AssertionError (by the Rust core), NOT a
-                        # RuntimeError — the chunk is rolled back, so
-                        # `last_update_block` did NOT advance.
-                        if "cancel" in str(exc).lower():
-                            cancelled = True
-                            click.echo(
-                                f"Chain {chain_id} market {market.id}: "
-                                "cancelled (committed chunks stay durable).",
-                            )
-                            break
-                        raise
-                    finally:
-                        pbar.close()
-
+                if market.last_update_block is None:
                     click.echo(
                         f"Chain {chain_id} market {market.id} ({market.name}): "
-                        f"advanced {report['from_block']}->{report['to_block']} "
-                        f"in {report['chunks_committed']} chunks "
-                        f"({report['total_events_applied']} events applied).",
+                        "needs bootstrapping (last_update_block is None); "
+                        "skipping. Bootstrap the stamp before running.",
                     )
+                    continue
 
-                    # Post-run hygiene. The market-wide on-chain verify is owned by
-                    # the Rust core's pre-commit gate (`--verify-all` drives
-                    # `verify_all_at_completion`): it runs BEFORE the chunk
-                    # commits + rolls back on divergence — strictly stronger
-                    # than a post-commit re-read. With `--verify-all` off (the
-                    # default), `aave update` performs only the per-chunk
-                    # touched-user verify (matching `pool update`'s default —
-                    # no market-wide verify, fast). Cleanup + backup run
-                    # unconditionally / opt-in regardless.
-                    rs_cleanup_zero_balance_positions(
+                if dry_run:
+                    # Shell-level dry-run: skip the Rust call entirely (the
+                    # core has no dry-run flag — tracked for RQXEKH). This
+                    # is a shell-level preview, NOT a full write-preview.
+                    click.echo(
+                        f"Dry run: would advance chain {chain_id} market "
+                        f"{market.id} ({market.name}) from block "
+                        f"{market.last_update_block} to "
+                        f"{resolved_to_block!r} (no changes committed).",
+                    )
+                    continue
+
+                try:
+                    # The core emits its own throttled progress lines (Q5IKHX).
+                    report = run_aave_update(
                         database_path=database_path,
+                        chain_id=chain_id,
                         market_id=market.id,
+                        to_block=resolved_to_block,
+                        chunk_size=chunk_size,
+                        rpc_url=rpc_url,
+                        cancel_handle=handle,
+                        verify_chunk=verify_chunk,
+                        max_chunks=1 if stop_after_one_chunk else None,
+                        verify_all_interval=(verify_all_interval if verify_all else None),
+                        verify_all_at_completion=verify_all,
+                    )
+                except RuntimeError as exc:
+                    # Cooperative cancel (RuntimeError per the .pyi):
+                    # a user SIGINT. The in-flight chunk completed
+                    # atomically first; committed chunks stay durable.
+                    # NOTE: a `--verify-chunk` divergence is raised as an
+                    # AssertionError (by the Rust core), NOT a
+                    # RuntimeError — the chunk is rolled back, so
+                    # `last_update_block` did NOT advance.
+                    if "cancel" in str(exc).lower():
+                        cancelled = True
+                        click.echo(
+                            f"Chain {chain_id} market {market.id}: "
+                            "cancelled (committed chunks stay durable).",
+                        )
+                        break
+                    raise
+
+                click.echo(
+                    f"Chain {chain_id} market {market.id} ({market.name}): "
+                    f"advanced {report['from_block']}->{report['to_block']} "
+                    f"in {report['chunks_committed']} chunks "
+                    f"({report['total_events_applied']} events applied).",
+                )
+
+                # Post-run hygiene. The market-wide on-chain verify is owned by
+                # the Rust core's pre-commit gate (`--verify-all` drives
+                # `verify_all_at_completion`): it runs BEFORE the chunk
+                # commits + rolls back on divergence — strictly stronger
+                # than a post-commit re-read. With `--verify-all` off (the
+                # default), `aave update` performs only the per-chunk
+                # touched-user verify (matching `pool update`'s default —
+                # no market-wide verify, fast). Cleanup + backup run
+                # unconditionally / opt-in regardless.
+                rs_cleanup_zero_balance_positions(
+                    database_path=database_path,
+                    market_id=market.id,
+                )
+
+                if enable_backup:
+                    with bot.db() as session:
+                        backup_sqlite_database(
+                            session=session,
+                            suffix=f"{report['to_block']}",
+                            skip_confirmation=True,
+                        )
+                    logger.info(
+                        f"Created database backup at block {report['to_block']:,}.",
                     )
 
-                    if enable_backup:
-                        with bot.db() as session:
-                            backup_sqlite_database(
-                                session=session,
-                                suffix=f"{report['to_block']}",
-                                skip_confirmation=True,
-                            )
-                        logger.info(
-                            f"Created database backup at block {report['to_block']:,}.",
-                        )
-
-                if cancelled:
-                    break
+            if cancelled:
+                break
     finally:
         signal.signal(signal.SIGINT, prior_int_handler)
 

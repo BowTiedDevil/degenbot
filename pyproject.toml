@@ -24,7 +24,6 @@ dependencies = [
     "sqlalchemy ~= 2.0",
     "tenacity ~= 9.1",
     "tomlkit ~= 0.15",
-    "tqdm ~= 4.70",
 ]
 license = {text = "MIT"}
 license-files = ["LICENSE"]

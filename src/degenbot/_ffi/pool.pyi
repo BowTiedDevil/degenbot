@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from typing import Any
 
 from degenbot._ffi.cancel import CancelHandle
@@ -9,7 +8,6 @@ def run_pool_update(
     to_block: int | None,
     chunk_size: int,
     rpc_url: str,
-    progress_callback: Callable[..., None],
     cancel_handle: CancelHandle,
     verify_chunk: bool = False,
     *,
@@ -22,8 +20,8 @@ def run_pool_update(
     the chain tip if ``None``). Each chunk: RPC-fetch pool creations +
     V3/V4 liquidity, decode, write under ONE ``Transaction`` (atomicity),
     stamp ``last_update_block`` LAST (restart-invariance). The GIL is released
-    across the whole run; only ``progress_callback`` re-acquires it briefly,
-    once per chunk.
+    across the whole run; the core emits its own throttled operator progress
+    lines.
 
     Args:
         database_path: The writeable ``DegenbotDb`` path (already migrated
@@ -33,9 +31,6 @@ def run_pool_update(
             advance to the chain tip (``eth_blockNumber``).
         chunk_size: Blocks per chunk.
         rpc_url: The HTTP RPC endpoint.
-        progress_callback: A callable invoked with a per-chunk ``dict``
-            ``{chain_id, chunk_start, chunk_end, pools_written,
-            liquidity_apply_count, committed, is_final}`` once per chunk boundary.
         cancel_handle: A ``CancelHandle`` constructed up front; a SIGINT
             handler calls ``cancel_handle.cancel()`` to stop at the next
             chunk boundary.

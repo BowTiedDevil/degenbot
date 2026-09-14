@@ -407,7 +407,7 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 - **Database**: SQLAlchemy ORM (see `src/degenbot/database/models/aave.py`)
 - **Blockchain**: Web3.py for RPC calls
 - **Math**: Rust `degenbot-aave::wad_ray_math` for scaled balance calculations with rounding mode support (the former Python `aave/libraries/` package was retired)
-- **Logging**: Click for CLI output, tqdm for progress bars
+- **Logging**: Click for CLI output; the Rust core emits throttled `log`-level operator progress lines
 - **Writer**: Rust `degenbot-aave-updater` core crate (the Python enrichment/processing pipeline was retired)
 
 ## Solidity Reference

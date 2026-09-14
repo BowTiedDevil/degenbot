@@ -247,7 +247,6 @@ def test_standalone_transfer_credit_then_withdraw(tmp_path: Path) -> None:
             to_block=FIXTURE_BLOCK,
             chunk_size=100,
             rpc_url=rpc_url,
-            progress_callback=lambda _progress: None,
             cancel_handle=CancelHandle(),
         )
         positions = dump_collateral_position_rows(rust_session)

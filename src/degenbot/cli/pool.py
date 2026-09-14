@@ -2,12 +2,12 @@
 
 `pool_update` is a thin boot + hand-off to the Rust-owned chunk loop
 (`degenbot._ffi.run_pool_update`). Python is a driver shell -- config
-bootstrap, SIGINT -> cancel flag, tqdm-on-callback, + a user-facing summary.
-The chunk loop, the RPC fetches, the decode, the DB writes, + the per-chunk
-transaction all live in the Rust core (`degenbot-pool-updater`). The
-SQLAlchemy session-for-writes, the per-call `db_*` dispatch, the
-`fresh_last_update_block` re-read workaround, + the per-event Python tqdm
-iteration are all retired (migration-guide
+bootstrap, SIGINT -> cancel flag, + a user-facing summary. The chunk loop, the
+RPC fetches, the decode, the DB writes, the per-chunk transaction, and the
+throttled operator progress lines all live in the Rust core
+(`degenbot-pool-updater`). The SQLAlchemy session-for-writes, the per-call
+`db_*` dispatch, the `fresh_last_update_block` re-read workaround, + the
+per-event Python progress iteration are all retired (migration-guide
 `pool-updater-chunk-atomicity` section 3.1 + section 4 Task 5).
 
 The standalone PyO3 seams (`db_apply_v*_liquidity_updates`,
@@ -23,12 +23,9 @@ import signal
 from typing import TYPE_CHECKING, Any, Literal
 
 import click
-import tqdm
-from tqdm.contrib.logging import logging_redirect_tqdm
 
 from degenbot.cli import cli
 from degenbot.config import resolve_http_rpc_uri
-from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.factory import get_provider_from_config
 from degenbot.updater import (
@@ -129,12 +126,11 @@ def pool_update(  # ruff:ignore[too-many-positional-arguments]
     """Update liquidity pool information for activated exchanges.
 
     Boot + hand-off: read the bot config, install a SIGINT -> cancel-flag
-    handler, build a tqdm-ticking progress callback, + delegate the whole
-    chunk loop to the Rust core (`degenbot._ffi.run_pool_update`). The core
-    owns the RPC fetches, the decode, the per-chunk transaction (atomicity),
-    + the `last_update_block` stamp (restart-invariance). The GIL is
-    released across the whole run; only the progress callback re-acquires
-    it briefly, once per chunk.
+    handler, + delegate the whole chunk loop to the Rust core
+    (`degenbot._ffi.run_pool_update`). The core owns the RPC fetches, the
+    decode, the per-chunk transaction (atomicity), the `last_update_block`
+    stamp (restart-invariance), + the throttled operator progress lines. The
+    GIL is released across the whole run.
 
     Raises:
         ValueError: For a malformed `--to-block` or an RPC/DB failure (the
@@ -160,7 +156,6 @@ def pool_update(  # ruff:ignore[too-many-positional-arguments]
 
     handle = CancelHandle()
     prior_int_handler = signal.getsignal(signal.SIGINT)
-    n_chunks = 0
 
     def _on_sigint(*_args: Any) -> None:
         # Cooperative cancel: the Rust loop polls the flag between chunks (NOT
@@ -169,52 +164,20 @@ def pool_update(  # ruff:ignore[too-many-positional-arguments]
         # (migration-guide section 3.3 interrupt contract).
         handle.cancel()
 
-    def _on_progress(progress: dict[str, Any]) -> None:
-        # tqdm ticks once per chunk (not per event) -- the Rust core reports the
-        # chunk boundary; this closure updates the bar's position + postfix.
-        nonlocal n_chunks
-        n_chunks += 1
-        if not progress["committed"]:
-            # A rolled-back chunk: don't advance the bar (the next run
-            # re-processes it); show the skip in the postfix so the user sees it.
-            pbar.set_postfix_str(
-                f"chunk {progress['chunk_start']}-{progress['chunk_end']} rolled back",
-                refresh=True,
-            )
-            return
-        delta = progress["chunk_end"] - progress["chunk_start"] + 1
-        pbar.update(delta)
-        pbar.set_postfix_str(
-            f"+{progress['pools_written']} pools, "
-            f"{progress['liquidity_apply_count']} liq applies "
-            f"(chunk {n_chunks})",
-            refresh=True,
-        )
-
-    total = None  # indeterminate: the core resolves the tip; shows a per-chunk
-    # postfix (pools, liquidity applies, chunk number), not a %.
-    pbar = tqdm.tqdm(
-        desc="Processing new blocks",
-        total=total,
-        bar_format="{desc}: {n_fmt} blocks |{bar}| {postfix}",
-        leave=False,
-    )
-
     signal.signal(signal.SIGINT, _on_sigint)
     try:
-        with logging_redirect_tqdm(loggers=[logger]):
-            report = run_pool_update(
-                database_path=database_path,
-                chain_id=chain_id,
-                to_block=resolved_to_block,
-                chunk_size=chunk_size,
-                rpc_url=rpc_url,
-                progress_callback=_on_progress,
-                cancel_handle=handle,
-                verify_chunk=verify_chunk,
-                verify_all_interval=verify_all_interval if verify_all else None,
-                verify_all_at_completion=verify_all,
-            )
+        # The core emits its own throttled progress lines (Q5IKHX).
+        report = run_pool_update(
+            database_path=database_path,
+            chain_id=chain_id,
+            to_block=resolved_to_block,
+            chunk_size=chunk_size,
+            rpc_url=rpc_url,
+            cancel_handle=handle,
+            verify_chunk=verify_chunk,
+            verify_all_interval=verify_all_interval if verify_all else None,
+            verify_all_at_completion=verify_all,
+        )
     except RuntimeError as exc:
         # Cooperative cancel (RuntimeError per the .pyi): a user SIGINT. The
         # in-flight chunk completed atomically first (commit OR rollback);
@@ -233,7 +196,6 @@ def pool_update(  # ruff:ignore[too-many-positional-arguments]
         # Restore the prior SIGINT handler (or a default- disposition if there
         # wasn't one) so a subsequent Ctrl+C in the same shell behaves normally.
         signal.signal(signal.SIGINT, prior_int_handler)
-        pbar.close()
 
     click.echo(
         f"Chain {report['chain_id']}: advanced {report['from_block']}->"

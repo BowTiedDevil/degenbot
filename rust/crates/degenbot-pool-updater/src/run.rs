@@ -56,9 +56,11 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use alloy::primitives::{Address, B256};
 use degenbot_core::errors::ProviderError;
+use degenbot_core::op_info;
 use degenbot_db::{
     DegenbotDb, LiquidityUpdateEvent, V2PoolRowInput, V3PoolRowInput, V4PoolRowInput,
 };
@@ -78,6 +80,12 @@ use crate::spec::{load_active_exchange_specs, ExchangeSpec};
 /// The max-RPC-retries constant (mirrors the Python `get_v3_liquidity_events`
 /// retry budget — a sane conservative default; not yet configurable).
 const RPC_MAX_RETRIES: u32 = 5;
+
+/// The cadence for the chunk loop's operator-facing progress line. A short
+/// time-throttle keeps a long backfill's console output readable while still
+/// proving forward progress; the final chunk always logs regardless of the
+/// throttle (see the loop's log site).
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(2);
 
 // ── progress reporting ─────────────────────────────────────────────────
 
@@ -107,7 +115,8 @@ pub struct ChunkProgress {
 }
 
 /// The sink the chunk loop reports per-chunk progress to. Implementations:
-/// `NoProgress` (silent), a logging sink, or a `PyO3` callback sink (Task 4).
+/// `NoProgress` (silent) or a programmatic consumer's sink (a test harness
+/// collecting per-chunk state).
 ///
 /// `report_chunk` is synchronous (called between chunks, off the async path).
 pub trait ProgressSink: Send + Sync {
@@ -122,6 +131,25 @@ pub struct NoProgress;
 
 impl ProgressSink for NoProgress {
     fn report_chunk(&self, _progress: &ChunkProgress) {}
+}
+
+/// The percentage (0–100) of the run's block span covered through
+/// `working_end_block`. The denominator is the run's actual range
+/// (`initial_start_block..=last_block`), so the estimate is meaningful even
+/// when the run starts well below the chain tip. Saturating integer math keeps
+/// a single-block (or already-complete) run at 100.
+fn progress_percent(initial_start_block: u64, working_end_block: u64, last_block: u64) -> u64 {
+    let total = last_block
+        .saturating_sub(initial_start_block)
+        .saturating_add(1);
+    if total == 0 {
+        return 100;
+    }
+    let processed = working_end_block
+        .saturating_sub(initial_start_block)
+        .saturating_add(1)
+        .min(total);
+    processed.saturating_mul(100) / total
 }
 
 // ── the pre-mapped, pre-fee-resolved chunk inputs ───────────────────────
@@ -783,6 +811,7 @@ pub fn run_pool_update(
     };
 
     let mut working_start_block = initial_start_block;
+    let mut last_progress_log = Instant::now();
     while working_start_block <= last_block {
         // Cooperative cancel at the chunk boundary (the most recent committed
         // chunk is durable; we haven't started the next chunk's writes yet).
@@ -993,6 +1022,25 @@ pub fn run_pool_update(
         report.total_pools_written += chunk_report.pools_written;
         report.total_liquidity_applies += chunk_report.liquidity_apply_count;
 
+        // Operator-facing progress (Q5IKHX: the Rust core owns CLI progress —
+        // no per-chunk FFI hop). Time-throttled so a long backfill's console
+        // stays readable; the run's final chunk always logs so completion is
+        // observable even when the last chunks land inside one throttle window.
+        if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL || working_end_block >= last_block {
+            op_info!(
+                domain = ingest,
+                chain_id,
+                chunk_start = working_start_block,
+                chunk_end = working_end_block,
+                chunks_committed = report.chunks_committed,
+                pools_written = chunk_report.pools_written,
+                liquidity_apply_count = chunk_report.liquidity_apply_count,
+                progress_pct = progress_percent(initial_start_block, working_end_block, last_block),
+                "pool update: chunk committed"
+            );
+            last_progress_log = Instant::now();
+        }
+
         working_start_block = working_end_block + 1;
     }
 
@@ -1053,6 +1101,20 @@ mod tests {
     fn write_db() -> DegenbotDb {
         let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
         db
+    }
+
+    /// The progress estimate spans the run's actual range (not the chain
+    /// tip) and saturates at 100 on the final chunk.
+    #[test]
+    fn progress_percent_spans_the_run_range() {
+        assert_eq!(progress_percent(1, 1, 100), 1);
+        assert_eq!(progress_percent(1, 50, 100), 50);
+        assert_eq!(progress_percent(1, 100, 100), 100);
+        // A non-1 start block: the denominator is the run span (50 blocks),
+        // so halfway through the run reads 50%, not 75%.
+        assert_eq!(progress_percent(51, 75, 100), 50);
+        // A single-block run reports 100 on its only chunk.
+        assert_eq!(progress_percent(100, 100, 100), 100);
     }
 
     #[test]

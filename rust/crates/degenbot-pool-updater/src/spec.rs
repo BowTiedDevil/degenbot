@@ -270,8 +270,8 @@ fn build_spec(row: ExchangeRow) -> Option<ExchangeSpec> {
 /// lookup — Rust reads the table itself (the DB is the source of truth per
 /// ADR-003/ADR-005 + AGENTS.md "Rust owns the state") + resolves the
 /// per-family config in-process, so the `PyO3` seam (a later task) needs only
-/// `(database_path, chain_id, to_block, chunk_size, rpc_url,
-/// progress_callback)` — no per-exchange Python list is threaded through FFI.
+/// `(database_path, chain_id, to_block, chunk_size, rpc_url)` — no per-exchange
+/// Python list is threaded through FFI.
 ///
 /// Unknown exchange `name`s (a row whose config hasn't been ported to
 /// [`resolve_static_config`]) are silently skipped (forward-compat — the chunk

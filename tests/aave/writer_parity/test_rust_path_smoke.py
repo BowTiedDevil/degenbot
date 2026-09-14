@@ -48,7 +48,6 @@ def test_run_aave_update_offline_drives_user_e_mode_set(tmp_path: Path) -> None:
             to_block=FIXTURE_BLOCK,
             chunk_size=100,
             rpc_url=rpc_url,
-            progress_callback=lambda _progress: None,
             cancel_handle=handle,
         )
         users = dump_user_rows(session)

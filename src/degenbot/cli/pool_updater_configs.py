@@ -3,8 +3,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-import tqdm
-
 from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.base import ExchangeTable
@@ -124,12 +122,7 @@ def update_v2_pools(
         return
 
     rows: list[V2PoolRowInput] = []
-    for new_pool_event in tqdm.tqdm(
-        new_pool_events,
-        desc="Adding new pools",
-        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-        leave=False,
-    ):
+    for new_pool_event in new_pool_events:
         (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
         (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
         token0 = get_checksum_address(token0)
@@ -207,12 +200,7 @@ def update_v3_pools(
         return
 
     rows: list[V3PoolRowInput] = []
-    for new_pool_event in tqdm.tqdm(
-        new_pool_events,
-        desc="Adding new pools",
-        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-        leave=False,
-    ):
+    for new_pool_event in new_pool_events:
         (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
         (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
         token0 = get_checksum_address(token0)
@@ -281,12 +269,7 @@ def update_v4_pools(
         return
 
     rows: list[V4PoolRowInput] = []
-    for new_pool_event in tqdm.tqdm(
-        new_pool_events,
-        desc="Adding new pools",
-        bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-        leave=False,
-    ):
+    for new_pool_event in new_pool_events:
         (pool_hash,) = abi_decode(["bytes32"], new_pool_event["topics"][1])
         (currency0,) = abi_decode(["address"], new_pool_event["topics"][2])
         (currency1,) = abi_decode(["address"], new_pool_event["topics"][3])

@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from typing import Any
 
 from degenbot._ffi.cancel import CancelHandle
@@ -10,7 +9,6 @@ def run_aave_update(
     to_block: int | None,
     chunk_size: int,
     rpc_url: str,
-    progress_callback: Callable[..., None],
     cancel_handle: CancelHandle,
     verify_chunk: bool = False,
     max_chunks: int | None = None,
@@ -25,8 +23,8 @@ def run_aave_update(
     Aave event passes, group by transaction, run the per-tx discount
     pre-pass + config dispatch + operations parser, write under ONE
     ``Transaction`` (§3.4 atomicity), stamp ``last_update_block`` LAST
-    (restart-invariance). The GIL is released across the whole run; only
-    ``progress_callback`` re-acquires it briefly, once per chunk.
+    (restart-invariance). The GIL is released across the whole run; the core
+    emits its own throttled operator progress lines.
 
     Args:
         database_path: The writeable ``DegenbotDb`` path.
@@ -36,9 +34,6 @@ def run_aave_update(
             chain tip (``eth_blockNumber``).
         chunk_size: Blocks per chunk.
         rpc_url: The HTTP RPC endpoint.
-        progress_callback: A callable invoked with a per-chunk ``dict``
-            ``{chain_id, market_id, chunk_start, chunk_end, events_applied,
-            committed, is_final}`` once per chunk boundary.
         cancel_handle: A ``CancelHandle`` (shared with ``run_pool_update``);
             a SIGINT handler calls ``cancel_handle.cancel()``.
         verify_chunk: If ``True``, run pre-commit verification on each chunk

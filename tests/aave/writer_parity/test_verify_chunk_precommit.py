@@ -130,7 +130,6 @@ def test_verify_chunk_divergence_rolls_back_and_does_not_advance_stamp(
                 to_block=FIXTURE_BLOCK,
                 chunk_size=100,
                 rpc_url=rpc_url,
-                progress_callback=lambda _progress: None,
                 cancel_handle=handle,
                 verify_chunk=True,
             )
@@ -190,7 +189,6 @@ def test_verify_chunk_pass_commits_and_advances_stamp(tmp_path: Path) -> None:
             to_block=FIXTURE_BLOCK,
             chunk_size=100,
             rpc_url=rpc_url,
-            progress_callback=lambda _progress: None,
             cancel_handle=handle,
             verify_chunk=True,
         )

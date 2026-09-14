@@ -809,9 +809,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use alloy::rpc::types::Log;
 use degenbot_core::errors::ProviderError;
+use degenbot_core::op_info;
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
@@ -829,6 +831,12 @@ use crate::transaction_processor::{process_transaction, ProcessTxError};
 /// The max RPC retries for the owned runtime's `AlloyProvider` (mirrors
 /// `degenbot-pool-updater`'s `RPC_MAX_RETRIES`).
 const RPC_MAX_RETRIES: u32 = 5;
+
+/// The cadence for the chunk loop's operator-facing progress line. A short
+/// time-throttle keeps a long backfill's console output readable while still
+/// proving forward progress; the final chunk always logs regardless of the
+/// throttle (see the loop's log site).
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The cold-boot bootstrap window (O4BOST). When `aave_v3_contracts` lacks the
 /// `POOL`/`POOL_CONFIGURATOR` rows that `build_fetch_spec` requires, the
@@ -862,18 +870,17 @@ pub struct AaveChunkProgress {
     /// (YWEUIR) computes finality inline.
     pub is_final: bool,
     /// The user addresses touched by ANY log in this chunk (topics[1]/[2]
-    /// extracted as addresses). Drives the JGQHBX drive harness's per-chunk
-    /// value-correctness gate via
-    /// [`crate::verify::verify_touched_positions_on_conn`]: the harness's
-    /// `progress_callback` receives this list + calls the verify fn against
-    /// cand.db after the commit (small-set per-position RPC verification —
-    /// multicall3 batching for the market-wide verify is BE474R-full).
+    /// extracted as addresses). A programmatic [`ProgressSink`] consumer can
+    /// drive the per-chunk value-correctness gate from this list via
+    /// [`crate::verify::verify_touched_positions_on_conn`] against cand.db
+    /// after the commit (small-set per-position RPC verification — multicall3
+    /// batching for the market-wide verify is BE474R-full).
     pub touched_user_addresses: Vec<Address>,
 }
 
 /// The sink the chunk loop reports per-chunk progress to. Implementations:
-/// [`NoProgress`] (silent), a logging sink, or a `PyO3` callback sink (the
-/// 6SWY4R-B seam). `report_chunk` is synchronous (called between chunks, off
+/// [`NoProgress`] (silent) or a programmatic consumer's sink (a test harness
+/// collecting per-chunk state). `report_chunk` is synchronous (called between chunks, off
 /// the async path). Mirrors `degenbot-pool-updater::ProgressSink`.
 pub trait ProgressSink: Send + Sync {
     fn report_chunk(&self, progress: &AaveChunkProgress);
@@ -886,6 +893,23 @@ pub struct NoProgress;
 
 impl ProgressSink for NoProgress {
     fn report_chunk(&self, _progress: &AaveChunkProgress) {}
+}
+
+/// The percentage (0–100) of the run's block span covered through `chunk_end`.
+/// The denominator is the run's actual range (`from_block..=last_block`), so
+/// the estimate is meaningful even when the run starts well below the chain
+/// tip. Saturating integer math keeps a single-block (or already-complete) run
+/// at 100.
+fn progress_percent(from_block: u64, chunk_end: u64, last_block: u64) -> u64 {
+    let total = last_block.saturating_sub(from_block).saturating_add(1);
+    if total == 0 {
+        return 100;
+    }
+    let processed = chunk_end
+        .saturating_sub(from_block)
+        .saturating_add(1)
+        .min(total);
+    processed.saturating_mul(100) / total
 }
 
 /// The final report from a [`run_aave_update`] run. Mirrors
@@ -1313,6 +1337,7 @@ pub fn run_aave_update(
     };
 
     let mut working_start = from_block;
+    let mut last_progress_log = Instant::now();
     while working_start <= last_block {
         // Cooperative cancel at the chunk boundary (the most recent committed
         // chunk is durable; the next chunk's writes haven't started).
@@ -1607,6 +1632,25 @@ pub fn run_aave_update(
         });
         report.chunks_committed += 1;
         report.total_events_applied += chunk_report.events_applied;
+
+        // Operator-facing progress (Q5IKHX: the Rust core owns CLI progress —
+        // no per-chunk FFI hop). Time-throttled so a long backfill's console
+        // stays readable; the run's final chunk always logs so completion is
+        // observable even when the last chunks land inside one throttle window.
+        if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL || chunk_end >= last_block {
+            op_info!(
+                domain = aave,
+                chain_id,
+                market_id,
+                chunk_start = working_start,
+                chunk_end,
+                chunks_committed = report.chunks_committed,
+                events_applied = chunk_report.events_applied,
+                progress_pct = progress_percent(from_block, chunk_end, last_block),
+                "aave update: chunk committed"
+            );
+            last_progress_log = Instant::now();
+        }
 
         working_start = chunk_end + 1;
 
@@ -2238,6 +2282,20 @@ pub fn deactivate_aave_market(database_path: &Path, market_id: i64) -> Result<()
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// The progress estimate spans the run's actual range (not the chain
+    /// tip) and saturates at 100 on the final chunk.
+    #[test]
+    fn progress_percent_spans_the_run_range() {
+        assert_eq!(progress_percent(1, 1, 100), 1);
+        assert_eq!(progress_percent(1, 50, 100), 50);
+        assert_eq!(progress_percent(1, 100, 100), 100);
+        // A non-1 start block: the denominator is the run span (50 blocks),
+        // so halfway through the run reads 50%, not 75%.
+        assert_eq!(progress_percent(51, 75, 100), 50);
+        // A single-block run reports 100 on its only chunk.
+        assert_eq!(progress_percent(100, 100, 100), 100);
+    }
 
     /// A fresh in-memory **write-capable** DB seeded with a single market
     /// (id 1, `last_update_block = NULL`) — the FK parent every Aave row

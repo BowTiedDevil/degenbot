@@ -178,7 +178,6 @@ def test_cold_boot_creates_pool_and_configurator_rows() -> None:
             to_block=1002,
             chunk_size=10000,
             rpc_url=rpc_url,
-            progress_callback=lambda **_kw: None,
             cancel_handle=CancelHandle(),
         )
     assert report["chunks_committed"] >= 1, report
@@ -259,7 +258,6 @@ def test_max_chunks_caps_loop_at_n_committed_chunks() -> None:
             to_block=1009,
             chunk_size=2,
             rpc_url=rpc_url,
-            progress_callback=lambda **_kw: None,
             cancel_handle=CancelHandle(),
             max_chunks=1,
         )

@@ -7,9 +7,9 @@ Task ``QZHNZQ``). The previous test pinned the multi-chunk control flow
 Rust, the regression test moves to the Rust core's
 ``apply_chunk_writes_on_conn_*`` tests (Task ``CKXCOB`` 3c). This file now
 asserts the *hand-off*: the CLI builds a ``CancelHandle``, installs a
-SIGINT handler, threads a progress callback + the resolved ``to_block`` +
-``rpc_url``, calls ``degenbot._ffi.run_pool_update`` exactly once per
-chain, + echoes the returned report ``dict``.
+SIGINT handler, threads the resolved ``to_block`` + ``rpc_url``, calls
+``degenbot._ffi.run_pool_update`` exactly once per chain, + echoes the returned
+report ``dict``.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
     report dict; no live RPC is touched. Asserts: (a) called exactly once,
     (b) the database path / chain id / chunk size / rpc_url are threaded,
     (c) a fresh ``CancelHandle`` is passed (the SIGINT bridge), (d) the
-    progress callback is a callable, (e) the returned report is echoed.
+    returned report is echoed.
     """
     stub_bot  # ruff: ignore[useless-expression] -- fixture seeds the DB + bot
 
@@ -105,7 +105,6 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
         to_block: int | None,
         chunk_size: int,
         rpc_url: str,
-        progress_callback: object,
         cancel_handle: object,
         verify_chunk: bool = False,
         verify_all_interval: int | None = None,
@@ -117,22 +116,11 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
             to_block=to_block,
             chunk_size=chunk_size,
             rpc_url=rpc_url,
-            progress_callback=progress_callback,
             cancel_handle=cancel_handle,
             verify_chunk=verify_chunk,
             verify_all_interval=verify_all_interval,
             verify_all_at_completion=verify_all_at_completion,
         )
-        # Fire the progress callback once (proves tqdm-on-callback wiring).
-        assert callable(progress_callback)
-        progress_callback({
-            "chain_id": chain_id,
-            "chunk_start": 1,
-            "chunk_end": 10_000,
-            "pools_written": 0,
-            "liquidity_apply_count": 0,
-            "committed": True,
-        })
         return {
             "chain_id": chain_id,
             "from_block": 1,
@@ -168,8 +156,7 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
     cancel_handle = captured["cancel_handle"]
     assert hasattr(cancel_handle, "cancel"), "cancel_handle has no .cancel()"
     assert hasattr(cancel_handle, "is_cancelled"), "cancel_handle has no .is_cancelled()"
-    # (d) the progress callback is callable (checked inside the stub above).
-    # (e) the report is echoed.
+    # (d) the report is echoed.
     assert "10000" in result.output
     assert "1 chunks" in result.output
     # (f) the --verify-chunk flag (absent) defaults to True (the pre-commit
@@ -216,7 +203,6 @@ def test_pool_update_cancel_shows_friendly_message(
         to_block: int | None,
         chunk_size: int,
         rpc_url: str,
-        progress_callback: object,
         cancel_handle: object,
         verify_chunk: bool = False,
         verify_all_interval: int | None = None,
