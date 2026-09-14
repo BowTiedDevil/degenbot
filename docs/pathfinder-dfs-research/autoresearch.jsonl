@@ -1,0 +1,2 @@
+{"type":"config","name":"pathfinder-dfs-speedup","metric_name":"search_ms","metric_unit":"ms","direction":"lower","target_value":0,"max_experiments":200,"segment":0}
+{"type":"config","name":"pathfinder-dfs-speedup","metric_name":"search_ms","metric_unit":"ms","direction":"lower","target_value":0,"max_experiments":200,"segment":1}
