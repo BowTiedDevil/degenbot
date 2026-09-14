@@ -327,9 +327,11 @@ pub(crate) struct SolveCycle {
     /// 43E3H3 red-first: test-only per-path PANIC hook.
     #[cfg(test)]
     pub(crate) test_solve_panic: Option<Arc<dyn Fn(u64) + Send + Sync>>,
-    /// KJWIK5 test seam: force the future-price deferral for these path ids.
-    #[cfg(test)]
-    pub(crate) test_force_deferred: Option<HashSet<u64>>,
+    /// KJWIK5 diagnostic override: force the future-price deferral for these
+    /// path ids (the `EngineRetune::force_deferred` field). Production always
+    /// leaves it `None`; the real tripwire is otherwise unreachable after the
+    /// solve-anchor head floor.
+    pub(crate) force_deferred: Option<HashSet<u64>>,
     /// Test-only: the drain appends each merged path id here.
     #[cfg(test)]
     pub(crate) merge_probe: Option<Arc<parking_lot::Mutex<Vec<u64>>>>,
@@ -1392,17 +1394,13 @@ impl SolveCycle {
                     // same-state comparison AND the future-price check -
                     // the per-path future probe re-walked all pools.
                     let mut update_snapshot: Vec<u64> = Vec::with_capacity(path.pools.len());
-                    // KJWIK5 test seam: the real future-price tripwire is
-                    // unreachable after the solve-anchor head floor, so test
-                    // builds seed the flag from the forced-deferral set to
-                    // exercise the carry.
-                    #[cfg(test)]
+                    // KJWIK5 diagnostic override (the real future-price
+                    // tripwire is unreachable after the solve-anchor head
+                    // floor, so a forced set exercises the carry).
                     let mut future = self
-                        .test_force_deferred
+                        .force_deferred
                         .as_ref()
                         .is_some_and(|forced| forced.contains(&path_id));
-                    #[cfg(not(test))]
-                    let mut future = false;
                     for pool_ref in &path.pools {
                         let ub = core.pool_update_block(pool_ref.pool_key);
                         if anchor.is_future(ub) {
@@ -2508,6 +2506,70 @@ impl SolveCycle {
             self.merge_detached_item(item, registry, delivery);
         }
         self.test_merge_rx = Some(rx);
+    }
+
+    // --- 3WI4EO T2: the engine's `#[cfg(test)]` knob setters, homed on their
+    // owning machine (moved off the `ArbitrageEngine` seam twin). ---
+
+    pub(crate) fn set_solve_delay_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
+        self.test_solve_delay = Some(hook);
+    }
+
+    pub(crate) fn set_solve_panic_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
+        self.test_solve_panic = Some(hook);
+    }
+
+    /// KJWIK5 test seam: force the future-price deferral for `pids` (empty
+    /// clears it). The real tripwire is unreachable after the solve-anchor
+    /// head floor, so the carry is exercised through this seam.
+    pub(crate) fn set_force_deferred_for_test(&mut self, pids: HashSet<u64>) {
+        self.force_deferred = if pids.is_empty() { None } else { Some(pids) };
+    }
+
+    pub(crate) fn set_merge_probe(&mut self, probe: Arc<parking_lot::Mutex<Vec<u64>>>) {
+        self.merge_probe = Some(probe);
+    }
+
+    pub(crate) fn set_merge_panic_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
+        self.test_merge_panic = Some(hook);
+    }
+
+    /// WFF6MM test harness: toggle the inline merge drain. `EngineStages`
+    /// turns it OFF before driving the engine (the sidecar owns the pipe
+    /// there — see the field doc).
+    pub(crate) fn set_sync_merge_for_test(&mut self, on: bool) {
+        self.test_sync_merge = on;
+    }
+
+    pub(crate) fn set_streaming_delivery(&mut self, on: bool) {
+        self.streaming_delivery = on;
+    }
+
+    /// QTZGFL: test seam for the admission stance. Production packs it from
+    /// `cfg.solve.admission_shed` at construction through `EngineRetune`.
+    pub(crate) fn set_solve_admission(&mut self, on: bool) {
+        self.solve_admission = on;
+    }
+
+    /// QTZGFL: test seam for the target depth — the clamp mirrors the
+    /// construction clamp exactly.
+    pub(crate) fn set_admission_target_depth(&mut self, depth: usize) {
+        self.admission_target_depth = u64::try_from(depth)
+            .unwrap_or(detached_cycle::DETACHED_INFLIGHT_CAP)
+            .clamp(1, detached_cycle::DETACHED_INFLIGHT_CAP);
+    }
+
+    /// QTZGFL: test seam for the retention window (blocks).
+    pub(crate) fn set_admission_retention_blocks(&mut self, window: u64) {
+        self.admission_retention_blocks = window;
+    }
+
+    /// YI5NGB: A/B seam (TEST ONLY). The production stance is
+    /// construction-frozen from `cfg.solve.solve_resolve_par` (KAHU5W);
+    /// the parity test drives both arms through this mutator instead of
+    /// flipping a process-global.
+    pub(crate) fn set_resolve_parallel_for_test(&mut self, on: bool) {
+        self.resolve_par_stance = on;
     }
 }
 

@@ -6355,20 +6355,22 @@ mod tests {
             .insert(*fast_pids.get(1).unwrap_or(&0), u64::MAX / 8);
         let hook_probe = probe.clone();
         let hook_fast = fast_pids.clone();
-        engine.set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid == slow_pid {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-                while std::time::Instant::now() < deadline {
-                    if hook_probe.lock().iter().any(|p| hook_fast.contains(p)) {
-                        hook_probe.lock().push(u64::MAX); // merge-before-release marker
-                        return;
+        engine
+            .cycle
+            .set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
+                if pid == slow_pid {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                    while std::time::Instant::now() < deadline {
+                        if hook_probe.lock().iter().any(|p| hook_fast.contains(p)) {
+                            hook_probe.lock().push(u64::MAX); // merge-before-release marker
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    hook_probe.lock().push(u64::MAX); // released WITHOUT a fast merge
                 }
-                hook_probe.lock().push(u64::MAX); // released WITHOUT a fast merge
-            }
-        }));
-        engine.set_merge_probe(probe.clone());
+            }));
+        engine.cycle.set_merge_probe(probe.clone());
 
         let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
         let joiner = std::thread::spawn(move || {
@@ -6425,7 +6427,7 @@ mod tests {
         let probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>> =
             std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
         let mut engine = ArbitrageEngine::new();
-        engine.set_streaming_delivery(true);
+        engine.cycle.set_streaming_delivery(true);
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
         engine.set_result_channel(result_tx);
 
@@ -6471,18 +6473,21 @@ mod tests {
         let fast_pids: Vec<u64> = path_ids[1..].to_vec();
         let observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let hook_observed = observed.clone();
-        engine.set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid == slow_pid {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2500);
-                while std::time::Instant::now() < deadline {
-                    if hook_observed.load(std::sync::atomic::Ordering::Relaxed) {
-                        return;
+        engine
+            .cycle
+            .set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
+                if pid == slow_pid {
+                    let deadline =
+                        std::time::Instant::now() + std::time::Duration::from_millis(2500);
+                    while std::time::Instant::now() < deadline {
+                        if hook_observed.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-            }
-        }));
-        engine.set_merge_probe(probe.clone());
+            }));
+        engine.cycle.set_merge_probe(probe.clone());
 
         let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
         let joiner = std::thread::spawn(move || {
@@ -6582,11 +6587,13 @@ mod tests {
         }
         // The first registered path's id owns the injected delay.
         let target = path_ids[0];
-        engine.set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid == target {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            }
-        }));
+        engine
+            .cycle
+            .set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
+                if pid == target {
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                }
+            }));
         (engine, pool_ids, path_ids)
     }
 
@@ -7003,6 +7010,7 @@ mod tests {
         let engine = std::sync::Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         engine
             .lock()
+            .cycle
             .set_merge_panic_hook(std::sync::Arc::new(|pid| {
                 assert_ne!(pid, 0x5151_5151, "merge boom");
             }));
@@ -7269,12 +7277,14 @@ mod tests {
         // arrive at all: SILENT UNDERCOUNT).
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let kill = path_ids[1];
-        engine.set_solve_panic_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid != kill {
-                return;
-            }
-            panic!("path killed mid-bin (43E3H3 red harness)");
-        }));
+        engine
+            .cycle
+            .set_solve_panic_hook(std::sync::Arc::new(move |pid: u64| {
+                if pid != kill {
+                    return;
+                }
+                panic!("path killed mid-bin (43E3H3 red harness)");
+            }));
         let affected_keys_v2: Vec<degenbot_solvers::affected_keys::AffectedKey> = pool_ids
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
@@ -7343,12 +7353,14 @@ mod tests {
         }
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let kill = path_ids[2];
-        engine.set_solve_panic_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid != kill {
-                return;
-            }
-            panic!("path killed mid-bin (43E3H3 red harness)");
-        }));
+        engine
+            .cycle
+            .set_solve_panic_hook(std::sync::Arc::new(move |pid: u64| {
+                if pid != kill {
+                    return;
+                }
+                panic!("path killed mid-bin (43E3H3 red harness)");
+            }));
         let g0 = engine
             .cycle
             .detached_cycle
@@ -7508,7 +7520,7 @@ mod tests {
         // WFF6MM: direct-call engines merge inline (synchronous harness); turn
         // that OFF so this pins the PRODUCTION return semantics — enqueue end,
         // results ABSENT until the sidecar (or a later drain) lands them.
-        engine.set_sync_merge_for_test(false);
+        engine.cycle.set_sync_merge_for_test(false);
         let affected_keys_v2: Vec<degenbot_solvers::affected_keys::AffectedKey> = pool_ids
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
@@ -7540,8 +7552,8 @@ mod tests {
             None,
             "flag OFF must yield no budget (the take_keys path)"
         );
-        engine.set_solve_admission(true);
-        engine.set_admission_target_depth(3);
+        engine.cycle.set_solve_admission(true);
+        engine.cycle.set_admission_target_depth(3);
         assert_eq!(
             engine.cycle.admission_budget_keys(),
             Some(3),
@@ -7583,7 +7595,7 @@ mod tests {
             .detached_cycle
             .outstanding
             .store(0, std::sync::atomic::Ordering::Relaxed);
-        engine.set_admission_target_depth(usize::MAX);
+        engine.cycle.set_admission_target_depth(usize::MAX);
         assert_eq!(
             engine.cycle.admission_budget_keys(),
             Some(
@@ -7592,7 +7604,7 @@ mod tests {
             ),
             "an over-cap target clamps to DETACHED_INFLIGHT_CAP"
         );
-        engine.set_admission_target_depth(0);
+        engine.cycle.set_admission_target_depth(0);
         assert_eq!(
             engine.cycle.admission_budget_keys(),
             Some(1),
@@ -7617,8 +7629,8 @@ mod tests {
         use std::sync::Arc;
 
         let (mut engine, pool_ids, path_ids) = detached_fixture(400);
-        engine.set_solve_admission(true);
-        engine.set_admission_target_depth(8);
+        engine.cycle.set_solve_admission(true);
+        engine.cycle.set_admission_target_depth(8);
         engine
             .cycle
             .detached_cycle
@@ -7731,8 +7743,8 @@ mod tests {
             engine.cycle.pending_new_paths.contains(&pid),
             "the eager path starts in the merge pipe"
         );
-        engine.set_solve_admission(true);
-        engine.set_admission_target_depth(8);
+        engine.cycle.set_solve_admission(true);
+        engine.cycle.set_admission_target_depth(8);
         engine
             .cycle
             .detached_cycle
@@ -7842,8 +7854,8 @@ mod tests {
         use std::sync::Arc;
 
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
-        engine.set_solve_admission(true);
-        engine.set_admission_target_depth(8);
+        engine.cycle.set_solve_admission(true);
+        engine.cycle.set_admission_target_depth(8);
         // An eager-registration path in the merge pipe: a post-merge race
         // shed would be the F2 data-loss class.
         engine.cycle.pending_new_paths.insert(path_ids[1]);
@@ -7950,8 +7962,8 @@ mod tests {
 
         let engine = ArbitrageEngine::new();
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-        engine.lock().set_solve_admission(true);
-        engine.lock().set_admission_target_depth(2);
+        engine.lock().cycle.set_solve_admission(true);
+        engine.lock().cycle.set_admission_target_depth(2);
         let delta = Arc::new(EpochDelta::new(0u64));
         let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
 
@@ -8040,9 +8052,9 @@ mod tests {
 
         let engine = ArbitrageEngine::new();
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-        engine.lock().set_solve_admission(true);
-        engine.lock().set_admission_target_depth(4);
-        engine.lock().set_admission_retention_blocks(5);
+        engine.lock().cycle.set_solve_admission(true);
+        engine.lock().cycle.set_admission_target_depth(4);
+        engine.lock().cycle.set_admission_retention_blocks(5);
         let delta = Arc::new(EpochDelta::new(0u64));
         let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
 
@@ -8270,7 +8282,7 @@ mod tests {
             let (mut engine, path_ids, hub_a, hub_b) = build();
             // YI5NGB: the A/B arm drives the INSTANCE stance now (no
             // process-global flip; no parallel-order dependence).
-            engine.set_resolve_parallel_for_test(parallel);
+            engine.cycle.set_resolve_parallel_for_test(parallel);
 
             // Cycle 1: dirty BOTH hubs -> all N paths re-resolve in one cycle.
             engine.process_updates(
@@ -8364,7 +8376,7 @@ mod tests {
     // KJWIK5: the deferred-path carry — the ledger re-record at the deferral
     // site. The future-price tripwire is unreachable after the solve-anchor
     // head floor (only a mid-solve state advance can trip it), so these tests
-    // install the `test_force_deferred` seam to exercise the carry
+    // install the `force_deferred` seam to exercise the carry
     // deterministically. The re-record hook itself is the production seam
     // the `EngineStages` constructor installs (`set_deferred_re_record`);
     // with the hook unset (direct engine drives) the deferral keeps today's
@@ -8463,7 +8475,9 @@ mod tests {
         let deferred = path_ids[0];
         let expected = kjwik5_path_keys(&engine, deferred);
         assert_eq!(expected.len(), 2, "fixture path has two hops");
-        engine.set_force_deferred_for_test(HashSet::from([deferred]));
+        engine
+            .cycle
+            .set_force_deferred_for_test(HashSet::from([deferred]));
         let seen: Kjwik5ReRecords = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
         let seen_hook = std::sync::Arc::clone(&seen);
         engine.set_deferred_re_record(std::sync::Arc::new(move |keys, block| {
@@ -8505,7 +8519,9 @@ mod tests {
     fn deferred_path_without_hook_keeps_today_drop_behavior() {
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let deferred = path_ids[1];
-        engine.set_force_deferred_for_test(HashSet::from([deferred]));
+        engine
+            .cycle
+            .set_force_deferred_for_test(HashSet::from([deferred]));
         engine.solve_dirty(
             100,
             &BlockMetadata::default(),
@@ -8536,7 +8552,9 @@ mod tests {
             baseline.iter().all(|&count| count == 0),
             "no future-priced hop → the counter reads 0; got {baseline:?}"
         );
-        engine.set_force_deferred_for_test(HashSet::from([path_ids[0], path_ids[2]]));
+        engine
+            .cycle
+            .set_force_deferred_for_test(HashSet::from([path_ids[0], path_ids[2]]));
         let forced = kjwik5_capture_deferred_counter(|| {
             engine.solve_dirty(101, &BlockMetadata::default(), &affected);
         });
@@ -8561,7 +8579,9 @@ mod tests {
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let deferred = path_ids[0];
         let deferred_keys = kjwik5_path_keys(&engine, deferred);
-        engine.set_force_deferred_for_test(HashSet::from([deferred]));
+        engine
+            .cycle
+            .set_force_deferred_for_test(HashSet::from([deferred]));
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         let delta = Arc::new(EpochDelta::new(0u64));
         let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
@@ -8603,7 +8623,10 @@ mod tests {
 
         // The anchor catches up: the path is no longer future-priced. Cycle 2
         // draws it back from the ledger.
-        engine.lock().set_force_deferred_for_test(HashSet::new());
+        engine
+            .lock()
+            .cycle
+            .set_force_deferred_for_test(HashSet::new());
         let ctx = BlockContext::new(Epoch::at(101), BlockMetadata::default());
         let drawn = stages
             .on_resolve(&Resolve {
@@ -8655,12 +8678,14 @@ mod tests {
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let deferred = path_ids[0];
         let deferred_keys = kjwik5_path_keys(&engine, deferred);
-        engine.set_solve_admission(true);
-        engine.set_admission_target_depth(8);
+        engine.cycle.set_solve_admission(true);
+        engine.cycle.set_admission_target_depth(8);
         // Cycle 1's window is wide (nothing seeded may expire before the
         // deferral); it is narrowed before cycle 2 to bound the retry.
-        engine.set_admission_retention_blocks(200);
-        engine.set_force_deferred_for_test(HashSet::from([deferred]));
+        engine.cycle.set_admission_retention_blocks(200);
+        engine
+            .cycle
+            .set_force_deferred_for_test(HashSet::from([deferred]));
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         let delta = Arc::new(EpochDelta::new(0u64));
         let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
@@ -8695,8 +8720,11 @@ mod tests {
         // Cycle 2: narrow the window to zero and advance one block — the
         // cutoff prunes the deferred lead's bucket before the draw, so it is
         // never redrawn.
-        engine.lock().set_force_deferred_for_test(HashSet::new());
-        engine.lock().set_admission_retention_blocks(0);
+        engine
+            .lock()
+            .cycle
+            .set_force_deferred_for_test(HashSet::new());
+        engine.lock().cycle.set_admission_retention_blocks(0);
         let ctx = BlockContext::new(Epoch::at(defer_block + 1), BlockMetadata::default());
         let drawn = stages
             .on_resolve(&Resolve {

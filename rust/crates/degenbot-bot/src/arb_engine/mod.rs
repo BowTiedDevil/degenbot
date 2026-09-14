@@ -98,6 +98,10 @@ mod path_lifecycle;
 // ADR-045 (`C4UAFP`): the path-identity registry (`PathRegistry`) —
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;
+// 3WI4EO (epic 5TBT7L): the typed operator re-parameterization value crossing
+// the driver seam — `EngineRetune`, applied at construction and at runtime via
+// `EngineStages::apply_retune`.
+mod retune;
 // RZEWTX: the ONE pooled-seat host for the WorkQueue fleet roles (sim +
 // registration) — the executors are thin role descriptors over it; the
 // solve executor's exclusion (per-seat channel model + posture-invariant
@@ -130,6 +134,7 @@ mod executor_ab_probe;
 mod tests;
 
 pub use engine_stages::EngineStages;
+pub use retune::EngineRetune;
 
 pub use diagnostic::{
     compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
@@ -514,19 +519,11 @@ impl ArbitrageEngine {
         // behavior.
         let streaming_delivery = cfg.pump.streaming_delivery;
         let resolve_par_stance = cfg.solve.solve_resolve_par;
-        // QTZGFL: the admission stance + its two typed knobs (KAHU5W
-        // construction-stance pattern — packed ONCE here, never re-read).
-        // `DEGENBOT_SOLVE_ADMISSION` parse matrix (supervisor-confirmed
-        // conservative default): unset/0/false ⇒ OFF (current degrade,
-        // byte-identical); 1/true/on ⇒ the capacity-modulated draw; any other
-        // word fails config load loudly (the loader owns the words). The
-        // target is clamped to the design-locked safety valve: it is the SAME
-        // number as the in-flight cap, just made explicit/tunable.
-        let solve_admission = !cfg!(test) && cfg.solve.admission_shed;
-        let admission_target_depth = u64::try_from(cfg.solve.admission_target_depth)
-            .unwrap_or(detached_cycle::DETACHED_INFLIGHT_CAP)
-            .clamp(1, detached_cycle::DETACHED_INFLIGHT_CAP);
-        let admission_retention_blocks = cfg.solve.admission_retention_blocks;
+        // KAHU5W/J4HN66: the engine's construction knobs are packed ONCE by
+        // the typed retune value (retune.rs) from the CALLER's own cfg — never
+        // an install-then-read process static. The local value is applied
+        // below, after the engine literal is assembled.
+        let retune = EngineRetune::from_config(cfg);
         // YI5NGB: the engine OWNS its fleet boot (KAHU5W) — the stamp is
         // constructed from THIS cfg BEFORE the installer runs, so the
         // construction hand-off carries the caller's value, identified.
@@ -534,7 +531,7 @@ impl ArbitrageEngine {
             BootStamp::of(degenbot_workers::dispatcher::FleetBoot::from_config(cfg));
         lifecycle::install_engine_stances(cfg, &fleet_boot_stamp);
         let cycle_core = Arc::clone(&core);
-        Self {
+        let mut engine = Self {
             cfg: std::sync::Arc::clone(cfg),
             runtime_cfg: lifecycle::solve_runtime_config_from_cfg(cfg),
             core,
@@ -554,9 +551,9 @@ impl ArbitrageEngine {
                 paths_same_state_this_cycle: 0,
                 results: DashMap::new(),
                 inline_payloads: DashMap::new(),
-                solve_admission,
-                admission_target_depth,
-                admission_retention_blocks,
+                solve_admission: retune.solve_admission,
+                admission_target_depth: retune.admission_target_depth,
+                admission_retention_blocks: retune.admission_retention_blocks,
                 // P37YJG: the machine's pre-cycle init lives on the machine
                 // (dormant Unopened, pipe closed, counters at 0).
                 detached_cycle: detached_cycle::DetachedCycle::new(),
@@ -577,8 +574,7 @@ impl ArbitrageEngine {
                 test_solve_delay: None,
                 #[cfg(test)]
                 test_solve_panic: None,
-                #[cfg(test)]
-                test_force_deferred: None,
+                force_deferred: retune.force_deferred.clone(),
                 #[cfg(test)]
                 merge_probe: None,
                 #[cfg(test)]
@@ -593,7 +589,41 @@ impl ArbitrageEngine {
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
             event_buffer_expiry_enabled: false,
             inline_sim: None,
+        };
+        // KAHU5W/J4HN66: apply the config-derived retune ONCE at construction
+        // — the engine's per-instance knob values come from the caller's cfg.
+        engine.apply_retune(&retune);
+        engine
+    }
+
+    /// Apply one [`EngineRetune`] to the live engine — the ONE knob-write
+    /// body, shared by construction ([`Self::with_core_cfg`]) and the runtime
+    /// operator retune entry ([`super::EngineStages::apply_retune`]).
+    ///
+    /// The event-buffer core write is skipped unless a max age is configured
+    /// or one was enabled before (clearing `Some` → `None` must still reach the
+    /// core); every other knob is an in-memory instance value.
+    pub(crate) fn apply_retune(&mut self, retune: &EngineRetune) {
+        if retune.event_buffer_max_age.is_some() || self.event_buffer_expiry_enabled {
+            self.event_buffer_expiry_enabled = retune.event_buffer_max_age.is_some();
+            self.core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver)
+                .set_v3_buffer_max_age(retune.event_buffer_max_age);
+            self.core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver)
+                .set_v4_buffer_max_age(retune.event_buffer_max_age);
         }
+        // The admission trio (QTZGFL).
+        self.cycle.solve_admission = retune.solve_admission;
+        self.cycle.admission_target_depth = retune.admission_target_depth;
+        self.cycle.admission_retention_blocks = retune.admission_retention_blocks;
+        // The registered-path cap (PRG-4).
+        self.registry.set_cap(retune.path_cap);
+        // The delivery profit window.
+        self.delivery
+            .set_profit_thresholds(retune.min_profit, retune.max_profit);
+        // The KJWIK5 diagnostic force-deferred override.
+        self.cycle.force_deferred.clone_from(&retune.force_deferred);
     }
 }
 
@@ -756,80 +786,16 @@ impl ArbitrageEngine {
 // streaming-orchestration test needs a deterministic per-path delay and an
 // observation point on the drain.
 // ---------------------------------------------------------------------------
+// The `#[cfg(test)]` engine knob setters moved to their OWNING machine
+// (`SolveCycle`) as `#[cfg(test)]` methods (ergo 3WI4EO T2): the engine keeps
+// only the white-box boot probe, so no test knob is homed on the seam twin.
 #[cfg(test)]
 impl ArbitrageEngine {
-    pub(crate) fn set_solve_delay_hook(&mut self, hook: std::sync::Arc<dyn Fn(u64) + Send + Sync>) {
-        self.cycle.test_solve_delay = Some(hook);
-    }
-
-    pub(crate) fn set_solve_panic_hook(&mut self, hook: std::sync::Arc<dyn Fn(u64) + Send + Sync>) {
-        self.cycle.test_solve_panic = Some(hook);
-    }
-
-    /// KJWIK5 test seam: force the future-price deferral for `pids` (empty
-    /// clears it). The real tripwire is unreachable after the solve-anchor
-    /// head floor, so the carry is exercised through this seam.
-    pub(crate) fn set_force_deferred_for_test(&mut self, pids: HashSet<u64>) {
-        self.cycle.test_force_deferred = if pids.is_empty() { None } else { Some(pids) };
-    }
-
-    pub(crate) fn set_merge_probe(&mut self, probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>>) {
-        self.cycle.merge_probe = Some(probe);
-    }
-
-    pub(crate) fn set_merge_panic_hook(&mut self, hook: std::sync::Arc<dyn Fn(u64) + Send + Sync>) {
-        self.cycle.test_merge_panic = Some(hook);
-    }
-
-    /// WFF6MM test harness: toggle the inline merge drain. `EngineStages`
-    /// turns it OFF before driving the engine (the sidecar owns the pipe
-    /// there — see the field doc).
-    pub(crate) fn set_sync_merge_for_test(&mut self, on: bool) {
-        self.cycle.test_sync_merge = on;
-    }
-
-    // ADR-045 T4: the inline merge drain moved to `SolveCycle::drain_merge_inline`.
-
-    pub(crate) fn set_streaming_delivery(&mut self, on: bool) {
-        self.cycle.streaming_delivery = on;
-    }
-
     /// YI5NGB (test-only F-suite probe): the engine's construction-stamped
     /// boot — lets the white-box tests verify twin constructions share a
     /// byte-identical boot value WITHOUT reaching into the fleet statics.
     #[cfg(test)]
     pub(crate) fn fleet_boot_stamp(&self) -> &BootStamp {
         &self.fleet_boot_stamp
-    }
-
-    /// QTZGFL: test seam for the admission stance. Production packs it from
-    /// `cfg.solve.admission_shed` at construction (never re-read).
-    #[cfg(test)]
-    pub(crate) fn set_solve_admission(&mut self, on: bool) {
-        self.cycle.solve_admission = on;
-    }
-
-    /// QTZGFL: test seam for the target depth — the clamp mirrors the
-    /// construction clamp exactly.
-    #[cfg(test)]
-    pub(crate) fn set_admission_target_depth(&mut self, depth: usize) {
-        self.cycle.admission_target_depth = u64::try_from(depth)
-            .unwrap_or(detached_cycle::DETACHED_INFLIGHT_CAP)
-            .clamp(1, detached_cycle::DETACHED_INFLIGHT_CAP);
-    }
-
-    /// QTZGFL: test seam for the retention window (blocks).
-    #[cfg(test)]
-    pub(crate) fn set_admission_retention_blocks(&mut self, window: u64) {
-        self.cycle.admission_retention_blocks = window;
-    }
-
-    /// YI5NGB: A/B seam (TEST ONLY). The production stance is
-    /// construction-frozen from `cfg.solve.solve_resolve_par` (KAHU5W);
-    /// the parity test drives both arms through this mutator instead of
-    /// flipping a process-global.
-    #[cfg(test)]
-    pub(crate) fn set_resolve_parallel_for_test(&mut self, on: bool) {
-        self.cycle.resolve_par_stance = on;
     }
 }

@@ -236,4 +236,12 @@ impl PathRegistry {
     pub(crate) fn set_cap(&mut self, cap: Option<usize>) {
         self.path_cap = cap;
     }
+
+    /// Read the registered-path cap (`None` = unlimited) — the `EngineRetune`
+    /// white-box observability surface.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn cap(&self) -> Option<usize> {
+        self.path_cap
+    }
 }

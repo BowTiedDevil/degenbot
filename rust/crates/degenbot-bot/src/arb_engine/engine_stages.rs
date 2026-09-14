@@ -52,6 +52,7 @@ use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
 
 use super::solve_cycle::CycleOutcome;
 use super::ArbitrageEngine;
+use super::EngineRetune;
 
 /// THE one arm-attribution wiring site (cold-start trace): the cycle span is
 /// tagged with `cycle.arm` (`detached` | `skipped_empty` | `shed`; `unset`
@@ -134,6 +135,16 @@ impl EngineStages {
         self.block_clock.lock().set_channel(tx);
     }
 
+    /// Apply an operator [`EngineRetune`] to the live engine — the engine's
+    /// twin of the fleet's centralized posture feeder + wake (43121b9). This
+    /// is the ONE runtime re-parameterization entry: the stage surface owns
+    /// the lock, the engine applies every knob under it, and every reader
+    /// consults the live values on the next cycle (the engine parks no host,
+    /// so there is no separate wake edge to fire).
+    pub fn apply_retune(&self, retune: &EngineRetune) {
+        self.engine.lock().apply_retune(retune);
+    }
+
     /// The engine's solve cycle — the behavior port of the dissolved
     /// `EngineHandle::solve_dirty` hold/spans/sidecar logic, verbatim.
     ///
@@ -160,7 +171,7 @@ impl EngineStages {
         // would steal it. Disable the inline drain for every EngineStages-
         // driven engine; the sidecar owns the pipe here.
         #[cfg(test)]
-        engine.set_sync_merge_for_test(false);
+        engine.cycle.set_sync_merge_for_test(false);
         if affected.is_empty() {
             // Kept for inner bookkeeping parity (last_processed_block et al);
             // provably cannot consume dirt under this continuous hold.
