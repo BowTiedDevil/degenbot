@@ -1360,7 +1360,7 @@ impl BlockPump {
                         if let Some(p) = crate::instruments::pipeline() {
                             p.count_reorg_recovery_dropped();
                         }
-                        crate::bot_core::trace_ws_log_dispatch(
+                        crate::bot_core::apply_telemetry::trace_ws_log_dispatch(
                             log.address(),
                             log.topics(),
                             log_block,
@@ -1404,7 +1404,7 @@ impl BlockPump {
                     // decision — so the delivery order of same-block Mint/Burn
                     // logs is visible against the registration drain+pin that
                     // follows. Always-on DEBUG on `ingest`.
-                    crate::bot_core::trace_ws_log_dispatch(
+                    crate::bot_core::apply_telemetry::trace_ws_log_dispatch(
                         log.address(),
                         log.topics(),
                         log_block,
@@ -1684,7 +1684,7 @@ impl BlockPump {
                                     "late forward log for tombstoned block {b}; dropped un-applied via the benign late-admit path (delivery jitter past the D1 tombstone edge); not a structural fault"
                                 ),
                             );
-                            crate::bot_core::trace_ws_log_dispatch(
+                            crate::bot_core::apply_telemetry::trace_ws_log_dispatch(
                                 log.address(),
                                 log.topics(),
                                 log_block,

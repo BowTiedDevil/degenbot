@@ -28,12 +28,15 @@ use degenbot_pools::v4_state::{
     BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4PoolKey, V4StateSync, V4_DYNAMIC_FEE_FLAG,
 };
 
-use super::{
+use super::apply_telemetry::{
     drain_dbg_log_buf, trace_apply_route_v3, trace_apply_route_v4, trace_apply_swap_v3,
-    trace_apply_swap_v4, BotState, BufferedV3PoolEvent, BufferedV4PoolEvent,
-    ConcentratedLiquidityPoolMut, PoolEntry, PoolTickCoverage, RegisterV3PoolError,
-    RegisterV3PoolParams, RegisterV4PoolError, RegisterV4PoolParams, RegistrationLifecycle,
-    TickInfo, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState, V4SwapUpdate,
+    trace_apply_swap_v4,
+};
+use super::{
+    BotState, BufferedV3PoolEvent, BufferedV4PoolEvent, ConcentratedLiquidityPoolMut, PoolEntry,
+    PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError,
+    RegisterV4PoolParams, RegistrationLifecycle, TickInfo, V3PoolIdentity, V3PoolState,
+    V4PoolIdentity, V4PoolState, V4SwapUpdate,
 };
 
 /// RATR5A: the staged fetch plan captured under a SHORT write — pool, word,
