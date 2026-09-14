@@ -48,7 +48,7 @@ class TestPyBotV2Pool:
             factory=self.FACTORY_ADDR,
         )
 
-        # Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
+        # Python reference: V2 exact-in(100, 1000, 2000, 3/1000) = 181
         result = core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=100)
         assert result == 181
 
@@ -69,7 +69,7 @@ class TestPyBotV2Pool:
         )
 
         # Swap token1→token0 (reverse): reserves_in=1000, reserves_out=2000
-        # Python: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
+        # Python: V2 exact-in(100, 1000, 2000, 3/1000) = 181
         result = core.calculate_tokens_out(pool_id, zero_for_one=False, amount_in=100)
         assert result == 181
 
@@ -101,7 +101,7 @@ class TestPyBotV2Pool:
             block_number=42,
         )
 
-        # After update: Python: constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
+        # After update: Python: V2 exact-in(100, 2000, 1000, 3/1000) = 47
         after = core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=100)
         assert after == 47
 
@@ -121,12 +121,12 @@ class TestPyBotV2Pool:
             factory=self.FACTORY_ADDR,
         )
 
-        # Python: constant_product_calc_exact_out(50, 1000, 2000, 3/1000) = 26
+        # Python: V2 exact-out(50, 1000, 2000, 3/1000) = 26
         result = core.calculate_tokens_in(pool_id, zero_for_one=True, amount_out=50)
         assert result == 26
 
         # Reverse: reserves_in=2000, reserves_out=1000, amount_out=10
-        # Python: constant_product_calc_exact_out(10, 2000, 1000, 3/1000) = 21
+        # Python: V2 exact-out(10, 2000, 1000, 3/1000) = 21
         result_rev = core.calculate_tokens_in(pool_id, zero_for_one=False, amount_out=10)
         assert result_rev == 21
 
@@ -147,7 +147,7 @@ class TestPyBotV2Pool:
         )
 
         # Swap 1000 USDC for WETH
-        # Python: constant_product_calc_exact_in(1e9, 1.5e12, 8e20, 3/1000) = 531380142665175213
+        # Python: V2 exact-in(1e9, 1.5e12, 8e20, 3/1000) = 531380142665175213
         result = core.calculate_tokens_out(
             pool_id,
             zero_for_one=True,
@@ -223,7 +223,7 @@ class TestPoolHandle:
         pool = core.get_pool(pool_id)
         assert pool is not None
 
-        # Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
+        # Python reference: V2 exact-in(100, 1000, 2000, 3/1000) = 181
         result = pool.calculate_tokens_out(zero_for_one=True, amount_in=100)
         assert result == 181
 
@@ -233,7 +233,7 @@ class TestPoolHandle:
         pool = core.get_pool(pool_id)
         assert pool is not None
 
-        # Python reference: constant_product_calc_exact_out(50, 1000, 2000, 3/1000) = 26
+        # Python reference: V2 exact-out(50, 1000, 2000, 3/1000) = 26
         result = pool.calculate_tokens_in(zero_for_one=True, amount_out=50)
         assert result == 26
 
@@ -254,7 +254,7 @@ class TestPoolHandle:
             block_number=42,
         )
 
-        # After update: Python: constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
+        # After update: Python: V2 exact-in(100, 2000, 1000, 3/1000) = 47
         result_after = pool.calculate_tokens_out(zero_for_one=True, amount_in=100)
         assert result_after == 47
 
@@ -668,7 +668,7 @@ class TestV2ReorgJournal:
         # Restore before block 20 → lands at block 10 → reserves (2000, 1000).
         core.v2_restore_before_block(pool_id, 20)
 
-        # constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
+        # V2 exact-in(100, 2000, 1000, 3/1000) = 47
         result = core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=100)
         assert result == 47
 

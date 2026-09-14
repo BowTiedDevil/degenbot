@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from degenbot._ffi import Bot as _Engine
+from degenbot._ffi.v2_math import calc_exact_in_v2, calc_exact_out_v2
 from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
@@ -16,10 +17,6 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import InvalidSwapInputAmount, LiquidityPoolError
 from degenbot.provider import OfflineProvider
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
-from degenbot.uniswap.v2_functions import (
-    constant_product_calc_exact_in,
-    constant_product_calc_exact_out,
-)
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
@@ -353,8 +350,8 @@ class TestV2CalcDelegation:
     The constant-product calc math delegates to Rust's
     ``LiquidityPool.calculate_tokens_out/in`` when no ``override_state`` is
     given (single read guard — no separate Python state read before the calc,
-    so no pump-interleave risk). The override path stays Python
-    (``constant_product_calc_exact_in/out`` against the override reserves) so
+    so no pump-interleave risk). The override path calls the
+    ``calc_exact_in/out_v2`` FFI seam against the override reserves so
     ``simulate_*`` can hold one snapshot Python-side for delta + final_state
     consistency (slice 4's fix).
     """
@@ -403,8 +400,8 @@ class TestV2CalcDelegation:
         assert result > 0
 
     def test_calculate_tokens_out_uses_python_path_with_override(self) -> None:
-        """override_state: calc stays Python (constant_product_calc_exact_in
-        against the override reserves). simulate_* relies on this."""
+        """override_state: calc uses the FFI seam (calc_exact_in_v2 against the
+        override reserves). simulate_* relies on this."""
         pool = self._make_pool()
         weth = pool.token0
         spy = _DelegateSpy(pool._py_pool)
@@ -424,11 +421,12 @@ class TestV2CalcDelegation:
         # Rust untouched — pure Python path
         assert spy.calc_out_calls == []
         assert spy.calc_in_calls == []
-        assert result == constant_product_calc_exact_in(
-            amount_in=10**18,
-            reserves_in=override.reserves_token0,
-            reserves_out=override.reserves_token1,
-            fee=Fraction(3, 1000),
+        assert result == calc_exact_in_v2(
+            override.reserves_token0,
+            override.reserves_token1,
+            10**18,
+            3,
+            1000,
         )
 
     def test_calculate_tokens_in_delegates_to_rust_no_override(self) -> None:
@@ -458,7 +456,7 @@ class TestV2CalcDelegation:
         assert result > 0
 
     def test_calculate_tokens_in_uses_python_path_with_override(self) -> None:
-        """override_state: calc-in stays Python (constant_product_calc_exact_out)."""
+        """override_state: calc-in uses the FFI seam (calc_exact_out_v2)."""
         pool = self._make_pool()
         usdc = pool.token1
         spy = _DelegateSpy(pool._py_pool)
@@ -477,11 +475,12 @@ class TestV2CalcDelegation:
 
         assert spy.calc_in_calls == []
         assert spy.calc_out_calls == []
-        assert result == constant_product_calc_exact_out(
-            amount_out=10**6,
-            reserves_in=override.reserves_token0,
-            reserves_out=override.reserves_token1,
-            fee=Fraction(3, 1000),
+        assert result == calc_exact_out_v2(
+            override.reserves_token0,
+            override.reserves_token1,
+            10**6,
+            3,
+            1000,
         )
 
     def test_calculate_tokens_in_raises_on_overdraw_via_rust(self) -> None:

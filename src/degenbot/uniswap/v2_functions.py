@@ -15,7 +15,6 @@ from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from fractions import Fraction
 
     from degenbot.types.chain import ChecksummedAddress
 
@@ -49,38 +48,4 @@ def generate_v2_pool_address(
         deployer=deployer_address,
         salt=salt,
         init_code_hash=init_hash,
-    )
-
-
-def constant_product_calc_exact_in(
-    amount_in: int,
-    reserves_in: int,
-    reserves_out: int,
-    fee: Fraction,
-) -> int:
-    """Calculate the amount out for an exact input from a constant product (x*y=k) pool.
-
-    Returns:
-        The output token amount.
-
-    """
-    return (amount_in * (fee.denominator - fee.numerator) * reserves_out) // (
-        reserves_in * fee.denominator + amount_in * (fee.denominator - fee.numerator)
-    )
-
-
-def constant_product_calc_exact_out(
-    amount_out: int,
-    reserves_in: int,
-    reserves_out: int,
-    fee: Fraction,
-) -> int:
-    """Calculate the amount in for an exact output swap through a constant product (x*y=k) pool.
-
-    Returns:
-        The input token amount required.
-
-    """
-    return 1 + (reserves_in * amount_out * fee.denominator) // (
-        (reserves_out - amount_out) * (fee.denominator - fee.numerator)
     )
