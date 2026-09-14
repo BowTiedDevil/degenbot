@@ -1641,8 +1641,8 @@ mod candidate2_seam_pins {
     /// driver-facing pokes OFF `StageHandlers` onto a new required
     /// `PumpControl` trait beside this module, with exactly these seven
     /// methods and Epoch-typed cursor coordinates. `StageHandlers` keeps
-    /// ONLY the eight stage hooks (on_streaming_complete, on_resolve,
-    /// on_solve, on_simulate, on_gate, on_publish, on_finalize, on_rewind).
+    /// ONLY the eight stage hooks (`on_streaming_complete`, `on_resolve`,
+    /// `on_solve`, `on_simulate`, `on_gate`, `on_publish`, `on_finalize`, `on_rewind`).
     /// This test names the trait + all seven poke signatures, so it cannot
     /// compile until `PumpControl` exists.
     #[test]
@@ -1665,7 +1665,7 @@ mod candidate2_seam_pins {
     /// Pin 6 (RED: compile-fails until T2; the `NoopStubEngine` half of the
     /// ADR-041 completeness proof). At the target the stub implements BOTH
     /// `StageHandlers` (eight hooks) AND `PumpControl` (seven pokes). The
-    /// `FakeStageEngine` sibling pin lives in block_pump.rs.
+    /// `FakeStageEngine` sibling pin lives in `block_pump.rs`.
     #[test]
     fn candidate2_noopstubengine_implements_both_traits() {
         fn assert_both<T: StageHandlers + crate::bot_core::PumpControl>() {}

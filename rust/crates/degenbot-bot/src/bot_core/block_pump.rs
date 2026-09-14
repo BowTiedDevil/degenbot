@@ -2774,7 +2774,7 @@ mod tests {
     /// At HEAD this cannot compile (`PumpControl` lands in T2); that is the
     /// intended red. The fake records the close here so the pin proves the
     /// pump actually drove the loud close through the control seam rather than
-    /// returning silently. The StageHandlers impl above is what HEAD uses; T2
+    /// returning silently. The `StageHandlers` impl above is what HEAD uses; T2
     /// deletes that poke and this impl becomes the only close path.
     impl crate::bot_core::PumpControl for FakeStageEngine {
         fn has_dirty_paths(&self) -> bool {
@@ -7147,7 +7147,7 @@ mod tests {
         use super::*;
 
         /// Pin 3 (RED: compile-fails until T2). The BEHAVIORAL half: drive
-        /// the WS-streams-ended branch (block_pump.rs:1772) and prove the
+        /// the WS-streams-ended branch (`block_pump.rs:1772`) and prove the
         /// loud close actually fires. At the target the pump drives the close
         /// through `PumpControl::on_pump_ended`; at HEAD it still called the
         /// old direct stage-seam close, so the
@@ -7189,7 +7189,7 @@ mod tests {
         /// Pin 4 (RED: runs and fails until T2). The Solved outcome carries
         /// the epoch it solved (`solved: Epoch`); `drive_solve` derives the
         /// engine cursor from that outcome instead of poking the seam at the
-        /// solve edge (block_pump.rs:1987 today).
+        /// solve edge (`block_pump.rs:1987` today).
         #[test]
         fn candidate2_drive_solve_derives_cursor_from_solve_outcome() {
             let dbg = format!("{:?}", crate::bot_core::SolveOutcome::default());
@@ -7200,8 +7200,8 @@ mod tests {
         }
 
         /// Pin 5 (RED: runs and fails until T2). Finalize takes no
-        /// PublishOutcome and the pump never fabricates a default
-        /// PublishOutcome as a carrier at the tombstones (block_pump.rs:1633
+        /// `PublishOutcome` and the pump never fabricates a default
+        /// `PublishOutcome` as a carrier at the tombstones (`block_pump.rs:1633`
         /// / 2122 today).
         #[test]
         fn candidate2_finalize_and_pump_carry_no_publish_outcome() {
@@ -7221,7 +7221,7 @@ mod tests {
         /// of the ADR-041 completeness proof). At the target the fake
         /// implements BOTH `StageHandlers` (eight hooks) AND `PumpControl`
         /// (seven pokes). The `NoopStubEngine` sibling pin lives in
-        /// stage_handlers.rs.
+        /// `stage_handlers.rs`.
         #[test]
         fn candidate2_fakestageengine_implements_both_traits() {
             fn assert_both<T: crate::bot_core::StageHandlers + crate::bot_core::PumpControl>() {}
