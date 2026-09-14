@@ -443,7 +443,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("08-register-and-solve-path", "REACHED-via-EngineDriver", "EngineDriver::register_and_solve_path delegates to EngineStages"),
         ("09-verify-lifecycles", "PARTIAL(ergo=XFEJUG)", "EngineDriver::run_v3/v4_registration_lifecycle(+_sync) reach engine-stages; VerifyClaims claim/TOCTOU discipline remains XFEJUG"),
         ("10-pool-construction", "REACHABLE", "probe_pool_type + build_v2/v3/v4/... (umbrella)"),
-        ("11-discovery-db-enumeration", "PARTIAL(ergo=YFIOSF)", "SQLAlchemy enumeration has no verified degenbot-db twin"),
+        ("11-discovery-db-enumeration", "REACHABLE", "degenbot::db::SnapshotDb::fetch_discovery_rows (degenbot-db::discovery_read) + tests/discovery_read_parity.rs"),
         ("12-path-discovery-batching", "PARTIAL(ergo=XFEJUG)", "PathGraph reachable; async batched find_paths wrapper Python-side"),
         ("13-path-policy", "DRIVER-POLICY", "allowlist mirrored in SettlementBotConfig"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
@@ -565,6 +565,21 @@ fn run() -> Result<(), String> {
         "[boot] snapshot loaded from {} (chain {CHAIN_ID}) → S={:?}",
         db_path.display(),
         seed_block
+    );
+
+    // ── Candidate-pool discovery (ledger row 11): the read-only enumeration
+    // `build_paths.py` performs over its SQLAlchemy ORM, now reachable through
+    // the umbrella on the SAME held-tx snapshot handle (Gap G2, ergo YFIOSF).
+    // The call is the compile-time proof that a `cargo add degenbot` consumer
+    // reaches `degenbot::db::SnapshotDb::fetch_discovery_rows`; the count is
+    // the runtime witness.
+    let discovery_chain = i64::try_from(CHAIN_ID).map_err(|e| format!("chain id: {e}"))?;
+    let discovered = snap
+        .fetch_discovery_rows(discovery_chain)
+        .map_err(|e| format!("discovery enumeration from {}: {e}", db_path.display()))?;
+    println!(
+        "[boot] discovery enumerated {} candidate pools (read-only, held-tx)",
+        discovered.len()
     );
 
     print_parity_ledger(seed_block);

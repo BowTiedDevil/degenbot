@@ -29,6 +29,7 @@ use std::path::Path;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
+use crate::discovery_read::{fetch_discovery_rows_on_conn, DiscoveryPoolRow};
 use crate::error::DbError;
 use crate::migrate::{ensure_schema, SchemaState};
 use crate::read::{fetch_newest_update_block_on_conn, ExchangeFamily};
@@ -207,6 +208,17 @@ impl SnapshotDb {
             s_live,
             advanced,
         })
+    }
+
+    /// Read every candidate pool for `chain_id` inside the held deferred read
+    /// transaction — the `build_paths.py` discovery enumeration over ONE
+    /// frozen DB cut (see [`crate::discovery_read`]).
+    ///
+    /// # Errors
+    /// Same error conditions as [`crate::discovery_read::fetch_discovery_rows_on_conn`].
+    pub fn fetch_discovery_rows(&self, chain_id: i64) -> Result<Vec<DiscoveryPoolRow>, DbError> {
+        let conn = self.lock();
+        fetch_discovery_rows_on_conn(&conn, chain_id)
     }
 
     /// Lock the underlying connection (for the `_on_conn` free functions).

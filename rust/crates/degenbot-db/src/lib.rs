@@ -33,6 +33,7 @@
 pub mod aave;
 pub mod connection;
 pub mod discovery;
+pub mod discovery_read;
 pub mod error;
 pub mod heal;
 pub mod liquidity_updater;
@@ -59,6 +60,9 @@ pub use degenbot_math::cl::liquidity_mapping::{
     BitmapAtWord as ApplyBitmapAtWord, LiquidityAtTick as ApplyLiquidityAtTick,
 };
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
+pub use discovery_read::{
+    fetch_discovery_rows_on_conn, DiscoveryPoolRow, DiscoveryV2Row, DiscoveryV3Row, DiscoveryV4Row,
+};
 pub use error::DbError;
 pub use heal::{heal_database, HealReport};
 pub use liquidity_updater::{
