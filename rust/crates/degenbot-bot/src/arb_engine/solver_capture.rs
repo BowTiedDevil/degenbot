@@ -6,9 +6,7 @@
 //! Extracted from the retired grab file so the diagnostic corpus stops riding the hot solve-path file:
 //! its ~500 lines (writer + variants + tests) churn independently of the
 //! lane walk.
-
 use ::degenbot_solvers::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-
 /// Degenerate-path capture config parse (M6776W) — the owner side of the
 /// `capture` config section (the gate itself reads no env). KAHU5W:
 /// `gate_capture` is a typed bool (the presence-gated
@@ -24,7 +22,6 @@ pub(crate) fn gate_capture_from_cfg(
             max_paths: u64::try_from(cfg.capture.gate_capture_cap).unwrap_or(u64::MAX),
         })
 }
-
 /// One-shot capture of heavy solver inputs, so the offline replay harnesses
 /// (`int_solve_cl_path` for all-CL, `examples/mixed_solve_replay.rs` for mixed
 /// V2+CL) can be optimized against real captured pool state without a full bot
@@ -53,7 +50,6 @@ pub(crate) struct HeavyPathCapture {
     seen: std::sync::Mutex<std::collections::HashSet<u64>>,
     count: std::sync::atomic::AtomicU64,
 }
-
 /// Per-variant capture facts — the ONLY thing that differs between the all-CL
 /// and mixed V2+CL writers (shape filter, default/override OUT path, JSON body
 /// serializer). The shared writer in [`HeavyPathCapture`] owns everything else.
@@ -64,7 +60,6 @@ pub(crate) enum CaptureVariant {
     /// Mixed paths (>=1 V2 hop AND >=1 CL hop).
     HeavyMixed,
 }
-
 impl CaptureVariant {
     /// The production default OUT path (loop-18: working rows, never the
     /// exact-wei fixtures dir).
@@ -77,7 +72,6 @@ impl CaptureVariant {
             .join("../../../logs/solver_capture")
             .join(file)
     }
-
     /// Disambiguate a caller-supplied OUT path: the mixed corpus is written as
     /// a `_mixed` sibling rather than overwriting the all-CL fixture.
     fn transform_override(self, p: std::path::PathBuf) -> std::path::PathBuf {
@@ -94,7 +88,6 @@ impl CaptureVariant {
             }
         }
     }
-
     /// The path-shape filter: at least 2 hops, then the variant's hop mix.
     fn shape_matches(self, resolved: &ResolvedMixedPath) -> bool {
         if resolved.hops.len() < 2 {
@@ -114,7 +107,6 @@ impl CaptureVariant {
             }
         }
     }
-
     /// Serialize the per-hop body as `(hop_order, hops)`. `hop_order` is only
     /// emitted by the mixed variant (it drives the replay's reconstruction of
     /// the V2/CL interleave).
@@ -170,7 +162,6 @@ impl CaptureVariant {
         }
     }
 }
-
 /// The 8 primitive fields of one CL tick range (big ints as decimal strings, so
 /// no alloy serde) — shared by both capture variants and matching the all-CL
 /// JSONL schema.
@@ -196,7 +187,6 @@ fn cl_ranges_json(seq: &::degenbot_pools::int_v3_hop::IntV3TickRangeSequence) ->
             .collect(),
     )
 }
-
 impl HeavyPathCapture {
     pub(crate) fn from_capture(
         capture: &::degenbot_config::schema::CaptureConfig,
@@ -215,7 +205,6 @@ impl HeavyPathCapture {
             count: std::sync::atomic::AtomicU64::new(0),
         })
     }
-
     /// Append the captured solver input for a resolved heavy path, if it is a
     /// heavy, correctly-shaped, not-yet-captured path. The preamble — cap check,
     /// heavy gate, shape filter, dedup by path id, count, parent-dir creation,
@@ -251,7 +240,6 @@ impl HeavyPathCapture {
         }
         self.count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
         let (hop_order, hops) = self.variant.serialize_hops(resolved);
         let golden_json = golden.map_or(serde_json::Value::Null, |g| {
             serde_json::json!({
@@ -277,7 +265,6 @@ impl HeavyPathCapture {
         );
         doc.insert("golden".into(), golden_json);
         let doc = serde_json::Value::Object(doc);
-
         if let Some(parent) = self.out_path.parent() {
             // The default OUT path lives under logs/solver_capture/ — a
             // directory that only exists if someone created it. A missing
@@ -297,7 +284,6 @@ impl HeavyPathCapture {
         }
     }
 }
-
 #[cfg(test)]
 mod heavy_path_capture_tests {
     #![expect(clippy::expect_used)] // tests assert capture gate/dedup/cap invariants
@@ -309,9 +295,7 @@ mod heavy_path_capture_tests {
     use ::degenbot_solvers::mixed::{ResolvedHop, ResolvedMixedPath};
     use alloy::primitives::U256;
     use std::sync::atomic::{AtomicU64, Ordering};
-
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-
     fn unique_stem() -> String {
         format!(
             "degenbot_capture_pin_{}_{}",
@@ -319,11 +303,9 @@ mod heavy_path_capture_tests {
             TMP_SEQ.fetch_add(1, Ordering::Relaxed)
         )
     }
-
     fn temp_out() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("{}.jsonl", unique_stem()))
     }
-
     fn cl_hop() -> ResolvedHop {
         let seq = IntV3TickRangeSequence::new(vec![IntV3TickRangeHop {
             liquidity: 1_000_000,
@@ -342,7 +324,6 @@ mod heavy_path_capture_tests {
             crossing_table: std::sync::Arc::new(Vec::new()),
         }
     }
-
     fn v2_hop() -> ResolvedHop {
         ResolvedHop::V2 {
             state: IntHopState::new(
@@ -353,7 +334,6 @@ mod heavy_path_capture_tests {
             ),
         }
     }
-
     fn path(hops: Vec<ResolvedHop>) -> ResolvedMixedPath {
         ResolvedMixedPath {
             hops,
@@ -361,14 +341,12 @@ mod heavy_path_capture_tests {
             ..Default::default()
         }
     }
-
     fn shapes() -> [(CaptureVariant, Vec<ResolvedHop>); 2] {
         [
             (CaptureVariant::HeavyCl, vec![cl_hop(), cl_hop()]),
             (CaptureVariant::HeavyMixed, vec![v2_hop(), cl_hop()]),
         ]
     }
-
     fn cfg(out: std::path::PathBuf) -> CaptureConfig {
         CaptureConfig {
             solver_capture: true,
@@ -379,7 +357,6 @@ mod heavy_path_capture_tests {
             ..Default::default()
         }
     }
-
     fn lines(out: &std::path::Path) -> Vec<serde_json::Value> {
         std::fs::read_to_string(out)
             .unwrap_or_default()
@@ -387,7 +364,6 @@ mod heavy_path_capture_tests {
             .map(|l| serde_json::from_str(l).expect("valid JSONL row"))
             .collect()
     }
-
     /// The heavy gate (`time_us >= MIN_US` OR `sims >= MIN_SIMS`) is ONE code
     /// path for both variants: below BOTH thresholds nothing is written; at or
     /// above EITHER threshold the record lands.
@@ -413,7 +389,6 @@ mod heavy_path_capture_tests {
             let _ = std::fs::remove_file(&out);
         }
     }
-
     /// The shape filter is variant DATA fed to the shared writer: each variant
     /// refuses the other's shape and keeps its own, and the mixed body carries
     /// `hop_order` while the all-CL body does not.
@@ -421,7 +396,6 @@ mod heavy_path_capture_tests {
     fn shape_filter_is_variant_data() {
         let all_cl = path(vec![cl_hop(), cl_hop()]);
         let mixed = path(vec![v2_hop(), cl_hop()]);
-
         let out = temp_out();
         let cap =
             HeavyPathCapture::from_capture(&cfg(out.clone()), CaptureVariant::HeavyCl).unwrap();
@@ -434,7 +408,6 @@ mod heavy_path_capture_tests {
             l[0].get("hop_order").is_none(),
             "all-CL body has no hop_order"
         );
-
         let out2 = temp_out();
         let cap2 =
             HeavyPathCapture::from_capture(&cfg(out2.clone()), CaptureVariant::HeavyMixed).unwrap();
@@ -444,11 +417,9 @@ mod heavy_path_capture_tests {
         assert_eq!(l2.len(), 1, "mixed writer must keep only the mixed shape");
         assert_eq!(l2[0]["path_id"], serde_json::json!(2));
         assert_eq!(l2[0]["hop_order"], serde_json::json!([true, false]));
-
         let _ = std::fs::remove_file(&cap.out_path);
         let _ = std::fs::remove_file(&cap2.out_path);
     }
-
     /// Dedup-by-path-id and the `MAX_CAPTURES` cap are the shared writer's
     /// preamble: identical semantics for both variants.
     #[test]
@@ -471,7 +442,6 @@ mod heavy_path_capture_tests {
             let _ = std::fs::remove_file(&out);
         }
     }
-
     /// OUT-path handling is variant data: all-CL honors the override verbatim,
     /// mixed writes a _mixed sibling so it cannot clobber the all-CL fixture.
     #[test]
@@ -480,7 +450,6 @@ mod heavy_path_capture_tests {
         let cl = HeavyPathCapture::from_capture(&cfg(base.clone()), CaptureVariant::HeavyCl)
             .expect("gated on");
         assert_eq!(cl.out_path, base);
-
         let mixed = HeavyPathCapture::from_capture(&cfg(base.clone()), CaptureVariant::HeavyMixed)
             .expect("gated on");
         let mut expected = base.clone();
@@ -490,7 +459,6 @@ mod heavy_path_capture_tests {
         ));
         assert_eq!(mixed.out_path, expected);
     }
-
     /// The shared append preamble creates a missing parent dir for BOTH
     /// variants (the mixed writer previously lacked this and dropped rows
     /// silently on a missing parent).

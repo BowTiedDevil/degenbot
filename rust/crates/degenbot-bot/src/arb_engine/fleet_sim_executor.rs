@@ -44,11 +44,8 @@
 //! and never attaches the GIL on its hot path, so hosting the closure on
 //! fleet seats crosses the FFI only at the existing install/delivery
 //! seams (design doc §8: simulation never round-trips Python).
-
-use degenbot_workers::dispatcher::{BootError, FleetBoot};
-
 use crate::arb_engine::seat_host::{self, SeatHost};
-
+use degenbot_workers::dispatcher::{BootError, FleetBoot};
 /// The fleet-hosted inline-sim executor. Shared by all engine cycles (the
 /// registry's global slot hands out `&'static`, mirroring the fleet solve
 /// executor's construction-once contract: warm pooled seats across cycles).
@@ -60,7 +57,6 @@ pub(crate) struct FleetSimExecutor {
     #[cfg(test)]
     sim_seats: usize,
 }
-
 impl FleetSimExecutor {
     /// Boot from a `FleetBoot` (quota + overrides + posture): boot the
     /// [`FleetHost`], spawn the pooled `SimDriver` seat threads (the
@@ -86,14 +82,12 @@ impl FleetSimExecutor {
             host,
         })
     }
-
     /// The budget's `SimDriver` slot cap (the pooled seat count). Test-facing
     /// (the scheduling sites submit without asking the cap).
     #[cfg(test)]
     pub(crate) fn sim_slot_cap(&self) -> usize {
         self.sim_seats
     }
-
     /// Test-facing: the resolved plan binding (FF-T4 — the tier the boot
     /// instantiated for this host).
     #[cfg(test)]
@@ -101,9 +95,7 @@ impl FleetSimExecutor {
         self.host.plan_binding()
     }
 }
-
 seat_host::impl_seat_hosted!(FleetSimExecutor, host);
-
 #[cfg(test)]
 // The panic-survival fixture panics deliberately (loud-assert test style;
 // the module-level expect is the documented-permitted form).
@@ -140,17 +132,13 @@ mod tests {
             "the expect must name the task: {msg}"
         );
     }
-
-    use std::sync::mpsc;
-    use std::sync::Arc;
-    use std::time::{Duration, Instant};
-
+    use super::FleetSimExecutor;
     use degenbot_workers::budget::BudgetOverrides;
     use degenbot_workers::dispatcher::FleetBoot;
     use degenbot_workers::posture::{FleetPosture, PostureOwner, PosturePolicy, ThrottleSample};
-
-    use super::FleetSimExecutor;
-
+    use std::sync::mpsc;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
     /// A FRESH hermetic posture owner (leaked to `'static`): every test
     /// boot gets its own owner, never the process global (7KAPBB isolation).
     fn hermetic_owner() -> &'static PostureOwner {
@@ -158,11 +146,9 @@ mod tests {
             PosturePolicy::doc_defaults(),
         )))
     }
-
     fn hermetic_boot() -> FleetBoot {
         hermetic_boot_with_owner(hermetic_owner())
     }
-
     fn hermetic_boot_with_owner(owner: &'static PostureOwner) -> FleetBoot {
         FleetBoot {
             profile: degenbot_config::FleetProfile::Auto,
@@ -172,7 +158,6 @@ mod tests {
             owner: Some(owner),
         }
     }
-
     /// Wait for a minimum receipt count without unbounded blocking
     /// (deadline-poll, the solve-parity fixture style).
     fn await_receipts<T: Send + 'static>(
@@ -195,7 +180,6 @@ mod tests {
         }
         got
     }
-
     /// The fleet's `SimDriver` seats must run each submitted sim to
     /// completion, every receipt delivered exactly once.
     #[test]
@@ -214,7 +198,6 @@ mod tests {
         let want: Vec<u64> = (0..32).collect();
         assert_eq!(got, want, "every sim unit completes exactly once");
     }
-
     /// Seats are the fleet `SimDriver` role: census thread-name pattern
     /// work-fleet-sim-{n} (GOQWCL rule — greppable, never the shared
     /// tokio-runtime-worker default).
@@ -242,7 +225,6 @@ mod tests {
             );
         }
     }
-
     /// A panicking sim must not kill the seat pool: the seat survives, the
     /// failure is logged loudly, and later sims drain normally.
     #[test]
@@ -266,7 +248,6 @@ mod tests {
         assert_eq!(got.iter().filter(|s| **s == "boom").count(), 1);
         assert_eq!(got.iter().filter(|s| **s == "ok").count(), 4);
     }
-
     /// The seat pool is the budget's `SimDriver` slot cap (design doc §5
     /// `SimDriver` slots = today's `SimSlots` cap; `fleet.sim_slot_cap` is the
     /// terminal override).
@@ -278,7 +259,6 @@ mod tests {
             degenbot_workers::budget::DEFAULT_SIM_SLOT_CAP
         );
     }
-
     /// The pacing contract the incumbent `SimSlots` semaphore provided: no
     /// more sims execute CONCURRENTLY than the budget's sim slot cap —
     /// the fleet's pooled seats now provide that bound by construction.
@@ -313,7 +293,6 @@ mod tests {
             "concurrent sims {seen} exceeded the budget slot cap {cap}"
         );
     }
-
     /// Census (PE4FPM/FPNT36): the booted host self-registers the fleet
     /// `SimDriver` resource row with the fleet seat naming.
     #[test]
@@ -326,7 +305,6 @@ mod tests {
         assert_eq!(row.thread_name, "work-fleet-sim-{n}");
         assert_eq!(row.count, degenbot_workers::budget::DEFAULT_SIM_SLOT_CAP);
     }
-
     /// A quota below the pinned-role floor fails loudly at boot (the §5
     /// fail-fast — never a runtime throttle storm).
     #[test]
@@ -363,7 +341,6 @@ mod tests {
             "a sub-serial-floor quota must refuse to boot loudly"
         );
     }
-
     /// The design-gate admission policy, BEHAVIORAL under the shared
     /// posture owner (RZEWTX; JCI2FW Part A dissolved the
     /// `CordonAdmission::Admit` descriptor arm — the role's `SimPool`
@@ -403,7 +380,6 @@ mod tests {
         );
     }
 }
-
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod fleet_sim_stance_tests {
@@ -414,12 +390,6 @@ mod fleet_sim_stance_tests {
     //! heavy-CL capture corpus honestly (success AND failure payloads).
     //! Identity — the hosting family is the fleet `work-fleet-sim-{n}`
     //! `SimDriver` seats (census row included).
-
-    use alloy::primitives::{I256, U256};
-    use degenbot_solvers::mixed::{HopType, MixedPath, MixedPoolRef, SolvePathResult};
-    use hashbrown::HashMap;
-    use std::sync::Arc;
-
     use crate::arb_engine::executor_ab_probe::load_corpus_fixture;
     use crate::arb_engine::inline_sim::PipelinedSims;
     use crate::arb_engine::inline_sim::{
@@ -429,9 +399,11 @@ mod fleet_sim_stance_tests {
     use crate::arb_engine::solve_cycle::PathTimesHeap;
     use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::arb_engine::BlockMetadata;
-
+    use alloy::primitives::{I256, U256};
+    use degenbot_solvers::mixed::{HopType, MixedPath, MixedPoolRef, SolvePathResult};
+    use hashbrown::HashMap;
+    use std::sync::Arc;
     // ---- deterministic sim stub ------------------------------------------------
-
     /// Deterministic primitive-payload sim: the payload is a pure function
     /// of the request (so both stances assert on identical request streams),
     /// and the executing thread's family is recorded for the identity
@@ -439,7 +411,6 @@ mod fleet_sim_stance_tests {
     struct CorpusSim {
         thread_names: parking_lot::Mutex<Vec<String>>,
     }
-
     impl CorpusSim {
         fn new() -> Arc<Self> {
             Arc::new(Self {
@@ -447,7 +418,6 @@ mod fleet_sim_stance_tests {
             })
         }
     }
-
     impl InlineSimulator for CorpusSim {
         fn simulate_path(&self, request: InlineSimRequest) -> Option<SimulatedPathResult> {
             self.thread_names.lock().push(
@@ -516,11 +486,8 @@ mod fleet_sim_stance_tests {
             })
         }
     }
-
     // ---- corpus-derived request fan-out ------------------------------------------
-
     const PARITY_REQUESTS: usize = 24;
-
     /// Stride the committed capture corpus down to `want` items (the corpus
     /// is the request-shape oracle — hop counts and magnitude spreads ride
     /// the real capture, not synthesized round numbers).
@@ -530,7 +497,6 @@ mod fleet_sim_stance_tests {
         let stride = items.len().saturating_sub(1) / want + 1;
         items.into_iter().step_by(stride).take(want).collect()
     }
-
     fn pool_refs_for(
         items: &[Arc<degenbot_solvers::mixed::ResolvedMixedPath>],
     ) -> Vec<Arc<MixedPath>> {
@@ -548,7 +514,6 @@ mod fleet_sim_stance_tests {
             })
             .collect()
     }
-
     fn make_ctx(sim: Arc<CorpusSim>, pool_refs: Vec<Arc<MixedPath>>) -> Arc<SolveCycleShared> {
         Arc::new(SolveCycleShared {
             solve_block: 42,
@@ -589,7 +554,6 @@ mod fleet_sim_stance_tests {
             test_solve_panic: None,
         })
     }
-
     fn admitted_for(idx: usize, hops: usize) -> SolvePathResult {
         SolvePathResult {
             optimal_input: U256::from(1_000_000_000u64 + u64::try_from(idx).unwrap_or(0) * 7),
@@ -616,7 +580,6 @@ mod fleet_sim_stance_tests {
             solver_pool_states: Vec::new(),
         }
     }
-
     /// Schedule ONE sim through the production scheduler (`PipelinedSims::
     /// schedule_one`, stance-routed) and join its receipt.
     fn schedule_and_join(
@@ -640,7 +603,6 @@ mod fleet_sim_stance_tests {
                 (true, payload)
             })
     }
-
     /// FLEET FIXTURE (LTUE7I, LW-T9 single-arm): fleet `SimDriver` inline sims
     /// honor the full request contract over the committed capture corpus —
     /// every request schedules, successes carry field-equal payloads, and
@@ -650,7 +612,6 @@ mod fleet_sim_stance_tests {
         let items = strided_corpus(PARITY_REQUESTS);
         let pool_refs = pool_refs_for(&items);
         let sim = CorpusSim::new();
-
         let run_arm = || {
             let ctx = make_ctx(Arc::clone(&sim), pool_refs.clone());
             // Deterministic reverse order so receipts interleave like a
@@ -667,7 +628,6 @@ mod fleet_sim_stance_tests {
             joined.sort_unstable_by_key(|(pid, _)| *pid);
             joined
         };
-
         let joined: Vec<(u64, Option<SimulatedPathResult>)> = run_arm();
         assert!(!joined.is_empty(), "fixture must schedule sims");
         assert!(
@@ -675,7 +635,6 @@ mod fleet_sim_stance_tests {
             "the fixture must exercise the failure-payload contract too"
         );
     }
-
     /// IDENTITY FIXTURE (LTUE7I, LW-T9 single-arm): the ONLY sim hosting
     /// family is the fleet `SimDriver` seats (`work-fleet-sim-{n}`) and the
     /// executor's census row is registered (the `fleet_merge_slots` pattern
@@ -722,7 +681,6 @@ mod fleet_sim_stance_tests {
         let items = strided_corpus(4);
         let pool_refs = pool_refs_for(&items);
         let sim = CorpusSim::new();
-
         let run_arm = || {
             sim.thread_names.lock().clear();
             let ctx = make_ctx(Arc::clone(&sim), pool_refs.clone());
@@ -734,7 +692,6 @@ mod fleet_sim_stance_tests {
             }
             sim.thread_names.lock().clone()
         };
-
         let fleet_names = run_arm();
         assert!(
             !fleet_names.is_empty() && fleet_names.iter().all(|n| n.starts_with("work-fleet-sim-")),

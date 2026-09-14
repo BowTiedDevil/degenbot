@@ -26,18 +26,13 @@
 //! that can never self-heal. `register_path` REJECTS those loudly at
 //! construction — they never enter this machine as a state that could
 //! silently evade detection.
-
-use hashbrown::HashSet;
-
-use degenbot_solvers::mixed::HopType;
-
 use crate::bot_core::resolve::HopDeficit;
-
+use degenbot_solvers::mixed::HopType;
+use hashbrown::HashSet;
 /// The set of pools a path is invalid because of (family, key). A
 /// `pool_dirty((ht, key))` clears its entry; the path un-blocks when the set
 /// empties.
 pub(crate) type ResponsibleSet = HashSet<(HopType, u64)>;
-
 /// A registered path's solve-eligibility.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) enum PathSolveStatus {
@@ -53,7 +48,6 @@ pub(crate) enum PathSolveStatus {
         responsible: ResponsibleSet,
     },
 }
-
 impl PathSolveStatus {
     /// Record a resolve result (the FULL deficit set from `resolve_hops`).
     pub(crate) fn set_resolved(&mut self, deficits: &[HopDeficit]) {
@@ -65,7 +59,6 @@ impl PathSolveStatus {
             };
         }
     }
-
     /// The `pool_dirty(pool)` transition. Returns `true` iff the path must be
     /// (re)resolved NOW.
     ///
@@ -87,13 +80,11 @@ impl PathSolveStatus {
         }
     }
 }
-
 #[cfg(test)]
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
     use crate::bot_core::resolve::MissingHopReason;
-
     fn deficit(hop_type: HopType, pool_key: u64) -> HopDeficit {
         HopDeficit {
             hop_type,
@@ -101,7 +92,6 @@ mod tests {
             reason: MissingHopReason::NotViable,
         }
     }
-
     #[test]
     fn two_faulty_pools_clear_independently_any_order() {
         let mut s = PathSolveStatus::default();
@@ -114,7 +104,6 @@ mod tests {
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
-
         // Clear B first: still Invalid (A remains), and NOT re-resolved.
         assert!(!s.on_pool_dirty((HopType::V3, 2)));
         match &s {
@@ -124,13 +113,11 @@ mod tests {
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
-
         // Clear A last: container empties -> re-resolve, then a clean resolve.
         assert!(s.on_pool_dirty((HopType::V3, 1)));
         s.set_resolved(&[]);
         assert_eq!(s, PathSolveStatus::Solvable);
     }
-
     #[test]
     fn clear_order_is_independent() {
         let mut s = PathSolveStatus::default();
@@ -140,7 +127,6 @@ mod tests {
         s.set_resolved(&[]);
         assert_eq!(s, PathSolveStatus::Solvable);
     }
-
     #[test]
     fn unrelated_dirty_pool_does_not_clear_nor_resolve() {
         let mut s = PathSolveStatus::default();
@@ -153,7 +139,6 @@ mod tests {
             other => panic!("expected Invalid, got {other:?}"),
         }
     }
-
     #[test]
     fn pool_oscillating_in_and_out_of_validity_grows_and_shrinks_container() {
         fn responsible(s: &PathSolveStatus) -> Vec<(HopType, u64)> {
@@ -166,38 +151,31 @@ mod tests {
                 other => panic!("expected Invalid, got {other:?}"),
             }
         }
-
         let mut s = PathSolveStatus::default();
         // A(1) bad, B(2) good at first.
         s.set_resolved(&[deficit(HopType::V3, 1)]);
         assert_eq!(responsible(&s), vec![(HopType::V3, 1)]);
-
         // B goes bad too, A still bad: container grows.
         s.set_resolved(&[deficit(HopType::V3, 1), deficit(HopType::V3, 2)]);
         assert_eq!(responsible(&s), vec![(HopType::V3, 1), (HopType::V3, 2)]);
-
         // A recovers while B still bad: container shrinks to {B}, no re-resolve.
         assert!(!s.on_pool_dirty((HopType::V3, 1)));
         assert_eq!(responsible(&s), vec![(HopType::V3, 2)]);
-
         // A goes bad AGAIN while B still bad: container regrows to {A, B}.
         let deficits = [deficit(HopType::V3, 1), deficit(HopType::V3, 2)];
         s.set_resolved(&deficits);
         assert_eq!(responsible(&s), vec![(HopType::V3, 1), (HopType::V3, 2)]);
-
         // Clear B then A: A last empties -> re-resolve -> Solvable.
         assert!(!s.on_pool_dirty((HopType::V3, 2)));
         assert!(s.on_pool_dirty((HopType::V3, 1)));
         s.set_resolved(&[]);
         assert_eq!(s, PathSolveStatus::Solvable);
     }
-
     #[test]
     fn solvable_and_unresolved_recheck_on_any_hop_dirty() {
         let mut s = PathSolveStatus::Solvable;
         assert!(s.on_pool_dirty((HopType::V2, 7)));
         assert!(s.on_pool_dirty((HopType::V4, 9)));
-
         let mut u = PathSolveStatus::Unresolved;
         assert!(u.on_pool_dirty((HopType::V2, 1)));
     }

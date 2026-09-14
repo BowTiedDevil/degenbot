@@ -8,16 +8,12 @@
 //! `registration_intake`) — and re-exports the shared
 //! seam types (mirroring the degenbot-workers placement of shared types —
 //! no pyo3 in any signature).
-
 use degenbot_core::op_error;
+pub(crate) use degenbot_workers::dispatcher::SubmitReceipt;
 use degenbot_workers::dispatcher::{BootError, SubmitError};
 use degenbot_workers::lane::LaneCtx;
-
-pub(crate) use degenbot_workers::dispatcher::SubmitReceipt;
-
 /// One escalated work item handed through a seat's `LaneCtx` port.
 pub(crate) type SubmitWork = Box<dyn FnOnce(&LaneCtx) + Send + 'static>;
-
 /// The ONE executor seam (LW-T8): `boot/bin_count/submit` + the
 /// `LaneCtx`/`EscalationPort` contracts. (JCI2FW Part A: the retired
 /// `observe_throttle` absorb-by-contract default is dissolved — the ONE
@@ -27,7 +23,6 @@ pub(crate) type SubmitWork = Box<dyn FnOnce(&LaneCtx) + Send + 'static>;
 pub(crate) trait Executor: Send + Sync {
     /// The structural seat count bins bind at (P6YXA6).
     fn bin_count(&self) -> usize;
-
     /// Submit one LPT bin job; the unit body receives the seat's `LaneCtx`.
     /// Admission is posture-invariant (7OGY5V/024ef513d): a posture refusal
     /// at the gate aborts LOUDLY (process exit) with the 'bin submission,
@@ -36,7 +31,6 @@ pub(crate) trait Executor: Send + Sync {
     /// lane).
     fn submit(&self, bin: usize, work: SubmitWork) -> Result<SubmitReceipt, SubmitError>;
 }
-
 /// The solve-arm global token (LW-T8): every SOLVE call site submits
 /// through here. LNQDOA: it is the solve arm of a token FAMILY — the
 /// pooled intake arms submit through `global_sim_executor` here (which
@@ -53,7 +47,6 @@ pub(crate) trait Executor: Send + Sync {
 pub(crate) fn global_executor() -> &'static dyn Executor {
     crate::arb_engine::fleet_solve_executor::global_fleet_solve_executor()
 }
-
 /// The pooled SIM intake delegate (LNQDOA): hands out `fleet_intake`'s
 /// `FleetIntake` port over the fleet sim executor, so the sim dispatch
 /// route reads through ONE module (the trait object flows in-crate only).
@@ -69,16 +62,12 @@ pub(crate) fn global_sim_executor(
 // pids it owes, the carrier carries what the merge consumes, and the ledger
 // asserts the one-outcome-per-path-per-cycle law across BOTH arms.
 // ---------------------------------------------------------------------------
-
+use crate::arb_engine::inline_sim::SimulatedPathResult;
+use crate::arb_engine::{BlockMetadata, SolvePathResult};
+use degenbot_workers::dispatcher::{PanicAction, PanicVerdict};
 use std::collections::BTreeSet;
 use std::panic::AssertUnwindSafe;
 use std::sync::mpsc;
-
-use degenbot_workers::dispatcher::{PanicAction, PanicVerdict};
-
-use crate::arb_engine::inline_sim::SimulatedPathResult;
-use crate::arb_engine::{BlockMetadata, SolvePathResult};
-
 /// Why one or more of a unit's paths never delivered an outcome to the
 /// result pipe.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +96,6 @@ pub(crate) enum LaneFailure {
         seat: u64,
     },
 }
-
 /// The unified solved payload: the solved arm's
 /// `(pid, result, worker_clamp_twins, payload)` data PLUS the
 /// issuing-cycle identity (the exactness-ledger key material + the Q1a
@@ -137,7 +125,6 @@ pub(crate) struct SolveOutcome {
     /// (MQUKB6-T2). `Span::none()` on the in-cycle arm and in tests.
     pub solve_span: tracing::Span,
 }
-
 /// One drained per-path outcome: EXACTLY one per submitted path.
 #[expect(clippy::large_enum_variant)]
 // Deliberate: the Solved arm carries the full merge payload inline
@@ -155,7 +142,6 @@ pub(crate) enum LaneOutcome {
     /// A path whose outcome never landed because its unit panicked.
     Failed { pid: u64, failure: LaneFailure },
 }
-
 impl LaneOutcome {
     /// The path id this outcome witnesses (every variant carries one).
     pub(crate) fn pid(&self) -> u64 {
@@ -165,7 +151,6 @@ impl LaneOutcome {
         }
     }
 }
-
 /// One typed terminal record for a DEAD MERGE DRAIN (AQV6EF): the merge
 /// pipe's only consumer is gone, so no later outcome can ever be delivered.
 /// Deliberately NOT a [`LaneFailure`]: a `LaneFailure` rides the (live)
@@ -197,12 +182,10 @@ pub(crate) enum DrainFailure {
         pid: u64,
     },
 }
-
 /// The detached arm's drain-death hook (AQV6EF): `Arc`-shared so every
 /// bin thread clones it; fired with the typed failure so the hook stays a
 /// plain policy function (`drain_death_response`, or a test recorder).
 pub(crate) type DrainDeathHook = std::sync::Arc<dyn Fn(&DrainFailure) + Send + Sync>;
-
 /// The drain-death loud-log cadence (AQV6EF): EVERY loss is counted (the
 /// metric and the posture cause), but the error line is emitted on the
 /// first occurrence and then every `DRAIN_DEATH_LOG_EVERY`th, so a dead
@@ -210,7 +193,6 @@ pub(crate) type DrainDeathHook = std::sync::Arc<dyn Fn(&DrainFailure) + Send + S
 /// VISIBLE — a once-only line an operator can miss is not acceptable.
 const DRAIN_DEATH_LOG_EVERY: u64 = 256;
 static DRAIN_DEATH_LOGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// The ONE drain-death response (AQV6EF). The merge pipe's only consumer is
 /// the sidecar thread, and `spawn_merge_sidecar` spawns exactly one per
 /// engine lifetime — a dead merge seat can NEVER recover in-process.
@@ -248,7 +230,6 @@ pub(crate) fn drain_death_response(
         );
     }
 }
-
 /// The lane WITNESS for one bin: it owes the pipe exactly one outcome per
 /// submitted pid — delivered ones as they happen, undelivered ones patched
 /// as typed `Failed` records after a panic (the seat survives).
@@ -271,7 +252,6 @@ pub(crate) struct SolveLane {
     /// fabricating a pipe delivery. `None` on the in-cycle arm.
     on_send_failed: Option<DrainDeathHook>,
 }
-
 impl SolveLane {
     /// Build a lane for one bin: `unit`/`seat` name the accounting identity
     /// the panic records will carry; `pids` are the paths the bin's work
@@ -287,7 +267,6 @@ impl SolveLane {
             on_send_failed: None,
         }
     }
-
     /// Install the detached arm's gauge hook (fired on `Solved` send
     /// success). MUST be called before `run_solve_lane` drives the bin.
     pub(crate) fn set_on_solved_send(
@@ -296,13 +275,11 @@ impl SolveLane {
     ) {
         self.on_solved_send = Some(on_solved_send);
     }
-
     /// Install the detached arm's drain-death hook (fired when a terminal
     /// send fails). MUST be called before `run_solve_lane` drives the bin.
     pub(crate) fn set_on_send_failed(&mut self, on_send_failed: DrainDeathHook) {
         self.on_send_failed = Some(on_send_failed);
     }
-
     /// Deliver one real arm outcome (the worker's `Some` arm). The lane's
     /// `emitted` set is the DOUBLE-DELIVERY guard: every pid released this
     /// way is excluded from the post-panic patch, so a flushed
@@ -319,7 +296,6 @@ impl SolveLane {
             self.note_send_failed(pid);
         }
     }
-
     /// Deliver the worker's `None` arm — still an outcome (counted).
     pub(crate) fn suppressed(&mut self, pid: u64) {
         self.emitted.insert(pid);
@@ -327,7 +303,6 @@ impl SolveLane {
             self.note_send_failed(pid);
         }
     }
-
     /// Patch one typed per-path failure onto the pipe (decision A):
     /// exactly one outcome for `pid`, carrying unit + seat.
     pub(crate) fn failed(&mut self, pid: u64, failure: LaneFailure) {
@@ -336,7 +311,6 @@ impl SolveLane {
             self.note_send_failed(pid);
         }
     }
-
     /// AQV6EF: surface a terminal send failure that would otherwise be
     /// swallowed. Strictly additive — no pipe delivery is fabricated (the
     /// pid is already in `emitted`, the double-delivery guard) and no
@@ -350,7 +324,6 @@ impl SolveLane {
             });
         }
     }
-
     /// The pids this bin still owed the pipe.
     pub(crate) fn unemitted(&self) -> Vec<u64> {
         self.pids
@@ -360,7 +333,6 @@ impl SolveLane {
             .collect()
     }
 }
-
 /// The lane-death response (FF-T4, Z6XTDX — AC 3): a lane that died
 /// mid-flight (its seat thread abandoned the bin before draining its
 /// paths) gets TERMINAL RECEIPTS — every still-owed path patched onto
@@ -392,7 +364,6 @@ pub(crate) fn lane_death_response(
     );
     patched
 }
-
 /// Drive one bin body under the lane witness: a panic is caught (the seat
 /// backstop also survives), the `PanicVerdict` is consulted, and every
 /// still-unemitted path is patched onto the pipe as exactly one typed
@@ -449,7 +420,6 @@ pub(crate) fn run_solve_lane(
         }
     }
 }
-
 /// THE outcome ledger (QR3NUS 43E3H3): ONE implementation asserting one
 /// typed outcome per path per cycle exactly once, across BOTH solve arms
 /// (the in-cycle drain and the detached merge sidecar). Keyed
@@ -463,7 +433,6 @@ pub(crate) mod outcome_ledger {
     /// duplicate permanently longer than any straggler can live — the
     /// LW-T9 note (a) invariant, now uniform across both arms).
     pub(crate) const LEDGER_AGE: u64 = 64;
-
     /// The seen-outcome ledger. One key spelling for BOTH arms:
     /// `(solve_seq, pid)`. The seq comes from the engine's monotone
     /// `solve_seq_ctr` (both arms tick it). Pruning anchors on the CURRENT
@@ -472,7 +441,6 @@ pub(crate) mod outcome_ledger {
     pub(crate) struct OutcomeLedger {
         seen: std::collections::HashSet<(u64, u64)>,
     }
-
     impl OutcomeLedger {
         /// ONE check-and-claim: prune older cycles, then claim `(seq, pid)`.
         /// `Ok(())` = first sighting; `Err(k)` = duplicate — the fuse.
@@ -486,31 +454,26 @@ pub(crate) mod outcome_ledger {
             self.seen.insert(k);
             Ok(())
         }
-
         /// Direct row membership — the tests' ledger-inspect surface
         /// (production code paths use [`claim`] only).
         #[cfg(test)]
         pub(crate) fn contains(&self, k: (u64, u64)) -> bool {
             self.seen.contains(&k)
         }
-
         fn prune(&mut self, cycle_seq: u64) {
             self.seen
                 .retain(|(seq, _)| *seq >= cycle_seq.saturating_sub(LEDGER_AGE));
         }
     }
 }
-
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex as StdMutex};
-
     use degenbot_solvers::mixed::SolvePathResult;
     use degenbot_workers::posture::{FleetPosture, PostureOwner, PosturePolicy, ThrottleSample};
-
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex};
     fn solved(pid: u64) -> SolveOutcome {
         SolveOutcome {
             pid,
@@ -524,13 +487,11 @@ mod tests {
             solve_span: tracing::Span::none(),
         }
     }
-
     fn hermetic_owner() -> &'static PostureOwner {
         std::boxed::Box::leak(std::boxed::Box::new(PostureOwner::new(
             PosturePolicy::doc_defaults(),
         )))
     }
-
     /// AQV6EF AC1 (red-first): an outcome send against a DROPPED merge
     /// Receiver must fire the drain-death hook with the typed failure —
     /// and must NOT bump the in-flight gauge (the failed send was never a
@@ -567,7 +528,6 @@ mod tests {
             "a FAILED send is not a delivery: the in-flight gauge must not bump"
         );
     }
-
     /// AQV6EF AC1/AC2: the drain-death response trips the FF-T4 STICKY
     /// cordon (only a fresh process lifts it) and stays loud.
     #[test]

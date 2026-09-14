@@ -12,13 +12,10 @@
 //! `BootRefused` exception). No new fn, no new type: the SAME two
 //! hand-outs, one honest `Result` arm (the library never aborts on the
 //! boot-refusal arm).
-
-use std::sync::Arc;
-use std::time::Duration;
-
 use degenbot_workers::dispatcher::BootError;
 use parking_lot::{Condvar, Mutex};
-
+use std::sync::Arc;
+use std::time::Duration;
 /// The typed terminal record for a Faulted intake (TB4QGX T6, spike S2):
 /// the host drained held work because the lane-death latch is sticky, so no
 /// later admit can ever respect it. `held` is the number of queued/backlogged
@@ -31,7 +28,6 @@ pub struct IntakeFault {
     /// The held units resolved by the fault (never executed).
     pub held: usize,
 }
-
 /// The S2 fault watch: the bot-side seam the pyo3 receipt observes. The host
 /// `set`s it on entering Faulted (first-wins — a second lane death for the
 /// same latch is idempotent); every waiting receipt resolves terminally
@@ -42,19 +38,16 @@ pub struct IntakeFaultWatch {
     state: Mutex<Option<IntakeFault>>,
     cv: Condvar,
 }
-
 impl IntakeFaultWatch {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
-
     /// The current fault, if any (read-through).
     #[must_use]
     pub fn snapshot(&self) -> Option<IntakeFault> {
         *self.state.lock()
     }
-
     /// First-wins: only the first fault is stored; later calls are no-ops
     /// (idempotent under double lane-death delivery).
     pub fn set(&self, fault: IntakeFault) {
@@ -64,7 +57,6 @@ impl IntakeFaultWatch {
             self.cv.notify_all();
         }
     }
-
     /// Block until a fault lands (or `timeout` elapses); returns it.
     #[must_use]
     pub fn wait_for(&self, timeout: Duration) -> Option<IntakeFault> {
@@ -75,7 +67,6 @@ impl IntakeFaultWatch {
         *state
     }
 }
-
 /// The installed registration executor's S2 fault watch — what the pyo3
 /// receipt observes. `None` before any engine construction (a submit would
 /// already have refused with the typed `BootError`). Deliberately NOT a
@@ -91,11 +82,9 @@ pub fn registration_fault_watch() -> Option<Arc<IntakeFaultWatch>> {
         .ok()
         .map(crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor::fault_watch)
 }
-
 /// The pooled work unit: the seat threads' existing box shape, pinned as
 /// an alias (concrete, object-safe — never a generic on the port).
 pub type InnerWork = Box<dyn FnOnce() + Send + 'static>;
-
 /// The port: fire-and-dispatch a pooled unit; no response from the
 /// executor (the unit self-reports through its own closure channel).
 pub trait FleetIntake: Send + Sync {
@@ -106,7 +95,6 @@ pub trait FleetIntake: Send + Sync {
     /// the unit up as soon as a slot frees.
     fn spawn(&self, work: InnerWork);
 }
-
 /// The sim-side sibling (one line: the fleet sim executor upcast); consumed
 /// by `executor.rs::global_sim_executor()` so the §3.1 re-route reads
 /// through ONE module; crate-internal because only the sim dispatch route
@@ -125,7 +113,6 @@ pub(crate) fn sim_intake() -> Result<&'static dyn FleetIntake, BootError> {
         .global_executor(crate::arb_engine::fleet_sim_executor::FleetSimExecutor::boot)
         .map(|exec| exec as &'static dyn FleetIntake)
 }
-
 /// The ONLY surface `degenbot-python` names: the pooled registration intake.
 /// The PRG-3 station ratchet + the `DivergenceTable` note from sim (one seam,
 /// two shapes) + the `ADR-013`/pyo3-free boundary: units carry `InnerWork`;
@@ -148,7 +135,6 @@ pub fn registration_intake() -> Result<&'static dyn FleetIntake, BootError> {
         )
         .map(|exec| exec as &'static dyn FleetIntake)
 }
-
 /// Whether an engine installed the fleet registration boot descriptor (the
 /// PRG-5 gate read). A `bool` is fully public - the wrap stays legal across
 /// the commit-2 module-private flip.
@@ -159,20 +145,16 @@ pub fn registration_boot_installed() -> bool {
     // `fleet_status::fleet_runtime_status().fleet_booted`.
     crate::arb_engine::seat_host::FleetBootRegistry::process().boot_installed()
 }
-
 #[cfg(test)]
 // The loud-expect fixture style mirrors the executor fixture modules; the
 // module-level expect is the documented-permitted form.
 #[expect(clippy::expect_used)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
+    use super::{FleetIntake, InnerWork};
     use degenbot_workers::budget::BudgetOverrides;
     use degenbot_workers::dispatcher::FleetBoot;
     use degenbot_workers::posture::{PostureOwner, PosturePolicy};
-
-    use super::{FleetIntake, InnerWork};
-
+    use std::sync::{Arc, Mutex};
     // Copied from fleet_registration_executor.rs — the module's existing
     // fixture kit, module-local (no new helpers; the design's fixture note).
     // JCI2FW Part A: a fresh hermetic posture owner per boot — never the
@@ -188,7 +170,6 @@ mod tests {
             ))),
         }
     }
-
     /// T3 `pooled_spawn_failure_modes_stay_pinned`: two compile-level pins.
     /// (i) An exhaustive `match` over the private `try_send`'s
     /// `Result<(), ()>` — re-widening the in-crate close modeling breaks
@@ -221,7 +202,6 @@ mod tests {
             Err(()) => unreachable!("a live executor's host channel is open"),
         }
     }
-
     /// Copied from `fleet_registration_executor.rs` - the module's existing
     /// fixture kit, module-local (no new helpers; the design's fixture note).
     fn await_receipts<T: Send + 'static>(
@@ -244,7 +224,6 @@ mod tests {
         }
         got
     }
-
     /// T1 `fleet_intake_facade_is_just_the_delegate`: boot a PRIVATE
     /// hermetic reg executor, take the exact upcast shape the facade fn body
     /// uses, submit 8 units through the port, assert exactly 8 receipts AND
@@ -254,7 +233,6 @@ mod tests {
     #[test]
     fn fleet_intake_facade_is_just_the_delegate() {
         use std::sync::mpsc;
-
         let executor =
             crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor::boot(
                 hermetic_boot(),
@@ -290,7 +268,6 @@ mod tests {
             "every unit's body ran - the facade must not wrap, copy, or eat state"
         );
     }
-
     /// The never-drop flood, through the FACADE ADAPTER the pyo3 leaf holds
     /// (`&dyn FleetIntake`). Boots a PRIVATE hermetic executor - never the
     /// process global: the global lazy materialization is CONSTRUCTION-keyed

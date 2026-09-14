@@ -7,14 +7,11 @@
 //!
 //! Extracted from the retired grab file so the pure binning/costing seams and their invariants live at their
 //! own interface, independently of the lane walk.
-
 use ::degenbot_solvers::mixed::ResolvedMixedPath;
 use degenbot_core::op_info;
-
 // ---------------------------------------------------------------------------
 // RAYPAR T3: LPT-pre-balanced scoped-thread partition
 // ---------------------------------------------------------------------------
-
 /// The ONE solve-bin sizing seam (P6YXA6): fleet-hosted cycles bin at the
 /// fleet's structural Solver seat count (pins == bins, so every bin owns a
 /// warm keyed seat); every other arm bins at the machine-derived solve
@@ -24,7 +21,6 @@ use degenbot_core::op_info;
 pub(crate) fn solve_bin_count() -> usize {
     crate::arb_engine::executor::global_executor().bin_count()
 }
-
 #[expect(clippy::doc_markdown)]
 /// RAYPAR T3: LPT (longest-processing-time) bin-packing. Sorts items by
 /// descending cost and greedily assigns each to the least-loaded bin. Returns
@@ -66,7 +62,6 @@ pub(crate) fn lpt_partition(
     }
     bins
 }
-
 /// The RUNTIME lane-capability decision (LW-T7, Seam F): the cycle either
 /// runs at full structural width or takes the NAMED narrower fallback
 /// (reth `state_root_task_timeout => sequential` lesson: the fallback is a
@@ -85,7 +80,6 @@ pub(crate) enum CordonFallbackDecision {
         running: usize,
     },
 }
-
 /// One cycle's planned bin fan-out (LW-T7, Seam F).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SeatPlan {
@@ -94,7 +88,6 @@ pub(crate) struct SeatPlan {
     /// The typed fallback decision this plan took.
     pub decision: CordonFallbackDecision,
 }
-
 /// Plan this cycle's bin fan-out: a capability narrower than the intended
 /// fan-out takes the NAMED narrower fallback (typed + logged at INFO).
 #[must_use]
@@ -121,7 +114,6 @@ pub(crate) fn plan_bins(intended_bins: usize, structural_seats: usize) -> SeatPl
         }
     }
 }
-
 #[expect(clippy::doc_markdown)]
 /// Resolve-time cost proxy for LPT binning: the total number of word-boundary
 /// prices across all CL hops. Correlates with walk combinatorics without
@@ -135,7 +127,6 @@ pub(crate) fn path_cost_proxy(resolved: &ResolvedMixedPath) -> usize {
         .map(|r| r.word_boundary_prices.len())
         .sum()
 }
-
 /// LPT cost used at binning: max(structural word-boundary proxy, previous
 /// block's measured walk sims + measured gate µs). The measured counts
 /// predict the current block's combinatorics better for stable pool shapes;
@@ -158,13 +149,10 @@ pub(crate) fn sims_aware_cost(
     };
     proxy.max(measured.saturating_add(measured_gate))
 }
-
 #[cfg(test)]
 mod lpt_partition_tests {
     use super::*;
-
     // ---- LW-T7 (Seam F): determinism, runtime fallback, promotion gate ----
-
     /// LW-T7 (Seam F): LPT is bit-stable — the same input & cost fn yields
     /// IDENTICAL bins across 50 invocations at widely varying shape, and
     /// equal-cost ties resolve by the FIXED rule (original index order) —
@@ -204,7 +192,6 @@ mod lpt_partition_tests {
             );
         }
     }
-
     /// LW-T7 (Seam F): a seat-capacity drop under a cordon drives a NAMED
     /// typed runtime fallback decision (typed enum, logged at INFO) —
     /// never silent narrower bins mid-drain (the runtime twin of LW-T4's
@@ -227,7 +214,6 @@ mod lpt_partition_tests {
         assert_eq!(full.decision, CordonFallbackDecision::FullCapacity);
         assert_eq!(full.bins, 6);
     }
-
     #[test]
     fn lpt_distributes_heavy_items_across_bins() {
         // Costs: [100, 100, 100, 1, 1, 1, 1, 1, 1, 1] — three heavy items
@@ -247,14 +233,12 @@ mod lpt_partition_tests {
         let total: usize = bins.iter().map(Vec::len).sum();
         assert_eq!(total, costs.len());
     }
-
     #[test]
     fn lpt_empty_items_produces_empty_bins() {
         let bins = lpt_partition(0, 4, |_| 0);
         assert_eq!(bins.len(), 4);
         assert!(bins.iter().all(Vec::is_empty));
     }
-
     #[test]
     fn lpt_fewer_items_than_bins() {
         // 2 items, 8 bins — each item gets its own bin.
@@ -264,7 +248,6 @@ mod lpt_partition_tests {
         let non_empty: usize = bins.iter().filter(|b| !b.is_empty()).count();
         assert_eq!(non_empty, 2);
     }
-
     #[test]
     #[expect(clippy::unwrap_used)]
     fn lpt_balances_load() {
@@ -287,7 +270,6 @@ mod lpt_partition_tests {
             spread = max_load - min_load
         );
     }
-
     #[test]
     fn sims_aware_cost_prefers_measured_last_block_walk() {
         // No measured value → structural proxy governs.
@@ -305,14 +287,12 @@ mod lpt_partition_tests {
         // Sims + gate terms ADD (both µs-scale) before the proxy comparison.
         assert_eq!(sims_aware_cost(500, Some(300), Some(14_000)), 14_300);
     }
-
     #[test]
     fn lpt_zero_bins_returns_empty_vec() {
         let bins = lpt_partition(5, 0, |_| 1);
         assert!(bins.is_empty());
     }
 }
-
 #[cfg(test)]
 mod dispatch_binning_properties {
     //! JXCAR4 (epic 64ZQLA): solver dispatch binning properties over
@@ -326,7 +306,6 @@ mod dispatch_binning_properties {
     use degenbot_solvers::mixed::ResolvedMixedPath;
     use proptest::prelude::*;
     use std::sync::Arc;
-
     /// Synthesized fixture paths (empty hops = zero structural cost; the
     /// properties exercise the BINDER, not the solver).
     fn synth_items(n: usize) -> Vec<Arc<ResolvedMixedPath>> {
@@ -341,7 +320,6 @@ mod dispatch_binning_properties {
             })
             .collect()
     }
-
     proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(256))]
         #[test]
@@ -367,7 +345,6 @@ mod dispatch_binning_properties {
                 prop_assert_eq!(*got, want);
             }
         }
-
         #[test]
         #[expect(
             clippy::cast_precision_loss,
@@ -409,7 +386,6 @@ mod dispatch_binning_properties {
         }
     }
 }
-
 // ---------------------------------------------------------------------------
 // 5WCRWZ T2 test-upgrade: direct coverage for the moved items the relocated
 // islands did not pin at their own interface (`solve_bin_count` was pinned
@@ -426,7 +402,6 @@ mod direct_seam_tests {
     use ::degenbot_solvers::mixed::{ResolvedHop, ResolvedMixedPath};
     use alloy::primitives::U256;
     use std::sync::Arc;
-
     /// `solve_bin_count` is the ONE solve-bin sizing seam (P6YXA6): it answers
     /// the executor's structural seat count (>= 1) rather than a re-derived
     /// number. Constructing an engine first satisfies `global_executor`'s
@@ -442,7 +417,6 @@ mod direct_seam_tests {
             "the sizing seam must not re-derive the bin count"
         );
     }
-
     fn cl_hop(word_boundaries: usize) -> ResolvedHop {
         let seq = IntV3TickRangeSequence::new(vec![IntV3TickRangeHop {
             liquidity: 1_000_000,
@@ -461,7 +435,6 @@ mod direct_seam_tests {
             crossing_table: Arc::new(Vec::new()),
         }
     }
-
     /// `path_cost_proxy` is the structural LPT cost: the total count of
     /// interior word-boundary prices across the CL hops (0 for an empty path).
     #[test]

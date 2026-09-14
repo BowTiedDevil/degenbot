@@ -13,26 +13,18 @@
 //! receiving host re-reads the live owner in the pump that follows. A
 //! spurious, lost, or coalesced hint is therefore benign, and the backstop
 //! tick (T2) keeps the hint from ever being a precondition of progress.
-
+use crate::arb_engine::seat_host::HostMsg;
+use degenbot_workers::posture::{PostureCause, PostureChange, PostureOwner, ThrottleSample};
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, OnceLock};
-
-use parking_lot::Mutex;
-
-use degenbot_workers::posture::{PostureCause, PostureChange, PostureOwner, ThrottleSample};
-
-use crate::arb_engine::seat_host::HostMsg;
-
 /// The registered host wake senders, keyed by token.
 type WakerTable = Mutex<Vec<(u64, mpsc::Sender<HostMsg>)>>;
-
 static WAKERS: OnceLock<WakerTable> = OnceLock::new();
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
-
 fn wakers() -> &'static WakerTable {
     WAKERS.get_or_init(|| Mutex::new(Vec::new()))
 }
-
 /// Register a host's wake sender; returns the token [`deregister`] needs.
 /// The sender is CLONED — the host keeps owning its original.
 pub(crate) fn register(tx: &mpsc::Sender<HostMsg>) -> u64 {
@@ -40,12 +32,10 @@ pub(crate) fn register(tx: &mpsc::Sender<HostMsg>) -> u64 {
     wakers().lock().push((token, tx.clone()));
     token
 }
-
 /// Deregister a retired host (its channel is about to close).
 pub(crate) fn deregister(token: u64) {
     wakers().lock().retain(|(t, _)| *t != token);
 }
-
 /// Wake every live host with an untrusted `PostureEdge` hint. Called by
 /// every bot-side owner feeder on a non-`Held` transition. A disconnected
 /// receiver is pruned (host retired).
@@ -53,7 +43,6 @@ pub fn wake_hosts() {
     let mut wakers = wakers().lock();
     wakers.retain(|(_, tx)| tx.send(HostMsg::PostureEdge).is_ok());
 }
-
 /// Feed ONE throttle-poll delta to the ONE process-level posture owner and
 /// wake the fleet hosts on a real (non-`Held`) transition. This is the ONLY
 /// bot-side throttle feeder (TB4QGX T9): the pairing is mechanical, asserted
@@ -64,7 +53,6 @@ pub fn feed_throttle(now_ms: u64, sample: ThrottleSample) {
         wake_hosts();
     }
 }
-
 /// [`feed_throttle`]'s typed-cause twin against a caller-supplied owner
 /// (`None` selects the process owner). Pairs the feed with the wake so a new
 /// cause site cannot forget the `PostureEdge`.
@@ -77,13 +65,11 @@ pub fn feed_cause(owner: Option<&PostureOwner>, cause: PostureCause) {
         wake_hosts();
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::{deregister, register, wake_hosts, wakers};
     use crate::arb_engine::seat_host::HostMsg;
     use std::sync::mpsc;
-
     /// TB4QGX T9: every bot-side production feeder MUST go through
     /// [`super::feed_throttle`]/[`super::feed_cause`], which pair `observe_*`
     /// with `wake_hosts`. FALSIFICATION: a raw
@@ -122,7 +108,6 @@ mod tests {
             "raw posture feeds bypass the wake pairing (use feed_throttle/feed_cause): {offenders:?}"
         );
     }
-
     #[test]
     fn wake_fans_out_to_registered_hosts_and_prunes_retired_ones() {
         let (tx_a, rx_a) = mpsc::channel();
@@ -132,7 +117,6 @@ mod tests {
         wake_hosts();
         assert!(matches!(rx_a.try_recv(), Ok(HostMsg::PostureEdge)));
         assert!(matches!(rx_b.try_recv(), Ok(HostMsg::PostureEdge)));
-
         deregister(ta);
         wake_hosts();
         assert!(
@@ -140,7 +124,6 @@ mod tests {
             "a deregistered host must not be woken"
         );
         assert!(matches!(rx_b.try_recv(), Ok(HostMsg::PostureEdge)));
-
         // A dropped receiver is pruned by the next wake (no panic), and the
         // dead token disappears from the table.
         drop(rx_b);

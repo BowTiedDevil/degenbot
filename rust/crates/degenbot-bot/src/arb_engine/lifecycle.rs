@@ -1,11 +1,8 @@
 //! Path registration, buffer management, and engine accessors.
-
+use super::solve_cycle::{INLINE_SIM_ENABLED, MIN_PROFIT_FLOOR_WEI};
 use super::{Address, ArbitrageEngine, HashMap};
 use ::degenbot_solvers::mixed::{PoolHop, SolvePathResult};
-
-use super::solve_cycle::{INLINE_SIM_ENABLED, MIN_PROFIT_FLOOR_WEI};
 use alloy::primitives::U256;
-
 /// KAHU5W: the solver crate's runtime stance is INSTANCE-SCOPED — built
 /// fresh per engine from the typed config and passed down; no `OnceLock`.
 #[must_use]
@@ -28,7 +25,6 @@ pub(crate) fn solve_runtime_config_from_cfg(
         memo_stats: cfg.solve.solver_walk_memo_stats,
     }
 }
-
 /// T4 (KAHU5W): the ONE config parse point for the engine's runtime stances —
 /// called at engine construction with the typed `BotConfig`; hot paths read
 /// the parsed statics. The crate performs ZERO environment reads: every stance
@@ -83,16 +79,13 @@ pub(crate) fn install_engine_stances(
     // cfg.solve.solve_resolve_par (the KAHU5W construction-stance
     // trajectory); no installer store remains here.
 }
-
 /// PRG-4 / IRUMXD: `PathRegistrationError` moved to
 /// [`super::path_registry`] (ADR-045 `C4UAFP`); re-exported here at its old
 /// path so the `PyO3` mapper (`degenbot-python`) and white-box tests compile
 /// unchanged.
 pub use super::path_registry::PathRegistrationError;
-
 impl ArbitrageEngine {
     // `derive_hop_type` moved to `SolveCycle` (ADR-045 T4).
-
     /// Register a mixed path and return its ID.
     ///
     /// Each hop's family is derived from the associated `BotState`'s `PoolEntry`
@@ -106,12 +99,12 @@ impl ArbitrageEngine {
     ///
     /// Returns `Err` if any `pool_id` is not registered in the associated
     /// `BotState`.
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn register_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, PathRegistrationError> {
         self.cycle
             .register_path(hops, &mut self.registry)
             .map(|r| r.path_id)
     }
-
     /// Register a path and eagerly solve it.
     ///
     /// Like `register_path`, but also solves the path immediately and
@@ -123,6 +116,7 @@ impl ArbitrageEngine {
     ///
     /// Returns `Err` if any `pool_id` is not registered in the associated
     /// `BotState` (see [`register_path`](Self::register_path)).
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn register_and_solve_path(
         &mut self,
         hops: Vec<PoolHop>,
@@ -131,13 +125,13 @@ impl ArbitrageEngine {
             .register_and_solve_path(hops, &mut self.registry)
             .map(|r| r.path_id)
     }
-
     /// Set the maximum age for buffered events in the V3/V4 buffers
     /// (ADR-003: both live on `BotState`).
     ///
     /// LPEOBI: caches the stance ON the engine - with `None` the expiry is
     /// a provable no-op and `solve_dirty` skips the core write entirely (each
     /// write bought a ~2.9s writer-queue slot under the block-apply stream).
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.event_buffer_expiry_enabled = max_age.is_some();
         self.core
@@ -147,7 +141,6 @@ impl ArbitrageEngine {
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .set_v4_buffer_max_age(max_age);
     }
-
     /// Flush all buffered events in the V3/V4 buffers on `BotState` (ADR-003).
     pub fn flush_event_buffer(&mut self) {
         self.core
@@ -157,13 +150,13 @@ impl ArbitrageEngine {
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .flush_v4_buffer();
     }
-
     /// Read the last solved results and block number.
     ///
     /// RAYPAR engine-shard T1 (C42WKO): snaps a snapshot of the `DashMap`
     /// shards into an owned `HashMap` so the caller never holds a lock
     /// into the engine. `O(n_results)` — typically <50 entries (profitable
     /// solves only) per drain.
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
         (
@@ -175,14 +168,12 @@ impl ArbitrageEngine {
             self.cycle.cursor.results_block(),
         )
     }
-
     /// Return the last block number processed by `process_block`.
     /// Returns `None` if no block has been processed yet.
     #[must_use]
     pub const fn last_processed_block(&self) -> Option<u64> {
         self.cycle.cursor.last_processed_block()
     }
-
     /// Set the last processed block manually.
     ///
     /// Called by Python after backfill completes, so the Rust pump
@@ -193,10 +184,10 @@ impl ArbitrageEngine {
     ///
     /// 6XB6NJ: a monotone advance on the block cursor — a lower value
     /// cannot pull the processed boundary backwards.
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_last_processed_block(&mut self, block: u64) {
         self.cycle.cursor.advance_processed(block);
     }
-
     /// The last block this engine's `finalize_block` guard advanced past.
     /// Owned by the engine since ergo task LEZJAS (the pump's `&mut` out-
     /// params retired); enables a mid-flight engine to pick up the pump's last
@@ -206,7 +197,6 @@ impl ArbitrageEngine {
     pub const fn last_solved_block(&self) -> u64 {
         self.cycle.cursor.last_solved_block()
     }
-
     /// Seed the engine's `last_solved_block` (e.g. on mid-flight join: a late
     /// engine inherits the pump's current solved block). Test helper too — the
     /// `finalize_block_threads_metadata_into_send` test pre-seeds 0 to fire the
@@ -219,7 +209,6 @@ impl ArbitrageEngine {
     pub fn set_last_solved_block(&mut self, block: u64) {
         self.cycle.cursor.advance_solved_boundary(block);
     }
-
     /// Seed the cold-start `results_block` anchor to a **settled** block (the
     /// pump calls this at resume with the backfill/resume boundary). Backfill
     /// deliberately does not solve and `register_and_solve_path` eager-solves
@@ -238,7 +227,6 @@ impl ArbitrageEngine {
     pub fn set_solve_anchor(&mut self, block: u64) {
         self.cycle.cursor.advance_solved(block);
     }
-
     /// KJWIK5: install the deferred-path re-record hook (the ledger carry).
     /// The `EngineStages` constructor is the production installer — it
     /// captures
@@ -249,7 +237,6 @@ impl ArbitrageEngine {
     pub(crate) fn set_deferred_re_record(&mut self, hook: super::DeferredReRecordHook) {
         self.cycle.deferred_re_record = Some(hook);
     }
-
     /// Whether any forward log applied since the last `finalize_block` (the
     /// pump's forward-log path calls this before the next `finalize_block` so
     /// the empty-block branch sends the advance diff). Owned by the engine
@@ -258,14 +245,12 @@ impl ArbitrageEngine {
     pub const fn has_logs_this_block(&self) -> bool {
         self.cycle.cursor.has_logs_this_block()
     }
-
     /// Record that at least one forward log applied this block (clears on the
     /// next `finalize_block`). Replaces the pump's `has_logs_this_block = true;`
     /// out-param write (ergo task LEZJAS).
     pub fn record_logs_this_block(&mut self) {
         self.cycle.cursor.record_logs();
     }
-
     /// Resolve and solve all registered paths. **Solve-only — does NOT dispatch
     /// a batch** (matches `solve_dirty`'s contract; dispatch is the pump's job
     /// via `send_result_batch`, driven by the debounce timer).
@@ -281,11 +266,11 @@ impl ArbitrageEngine {
     /// Callers read results via `latest_results()`; none reads a dispatched
     /// `ResultBatch` from this entry (grep-verified across `tests/`, `examples/`,
     /// and `src/degenbot/`).
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[tracing::instrument(name = "degenbot.arb.solve_all", skip(self), fields(block_number, path_count = self.registry.len()))]
     pub fn solve_all_paths(&mut self, block_number: u64) {
         self.cycle.solve_all_paths(block_number, &self.registry);
     }
-
     /// Number of registered V2 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v2_pool_count(&self) -> usize {
@@ -293,7 +278,6 @@ impl ArbitrageEngine {
             .read_at(crate::bot_core::state_lock::LockSite::Solver)
             .v2_pool_count()
     }
-
     /// Number of registered V3 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v3_pool_count(&self) -> usize {
@@ -301,7 +285,6 @@ impl ArbitrageEngine {
             .read_at(crate::bot_core::state_lock::LockSite::Solver)
             .v3_pool_count()
     }
-
     /// Number of registered V4 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v4_pool_count(&self) -> usize {
@@ -309,35 +292,33 @@ impl ArbitrageEngine {
             .read_at(crate::bot_core::state_lock::LockSite::Solver)
             .v4_pool_count()
     }
-
     /// Number of registered mixed paths.
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn path_count(&self) -> usize {
         self.registry.len()
     }
-
     /// PRG-4 / IRUMXD: the engine path registry owns the registered-path cap
     /// (was the Python `MAX_REGISTERED_PATHS` counter). `None` = unlimited.
     /// The `PyO3` driver sets it once at boot from the typed config value.
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_path_cap(&mut self, cap: Option<usize>) {
         self.registry.set_cap(cap);
     }
-
     /// PRG-4: dedup hits counted engine-side — a duplicate registration
     /// returns the existing id and never surfaces to the driver as a skip,
     /// so the `dup` telemetry needs this witness.
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn path_dedups(&self) -> u64 {
         self.registry.dedups()
     }
-
     /// Total actual hop projections performed (cache misses) since engine
     /// construction. Test + telemetry observable for the projection memo.
     #[must_use]
     pub fn hop_projection_count(&self) -> u64 {
         self.cycle.hop_projection_count
     }
-
     /// Return the list of registered V4 `PoolManager` addresses.
     #[must_use]
     pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
@@ -346,7 +327,6 @@ impl ArbitrageEngine {
             .v4_registered_pool_managers()
     }
 }
-
 /// The detached solve cycle (enqueue-and-return with sidecar merge) is THE
 /// ONLY solve arm since the WFF6MM hard cutover: the DRIVEN solve path takes
 /// NO engine-level Mutex — the stage-surface (`EngineStages`) solve hold

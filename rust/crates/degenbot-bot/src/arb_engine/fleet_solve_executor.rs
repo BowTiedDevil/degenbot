@@ -17,29 +17,25 @@
 //! the merge pin key `0` stays unique: first sight claims a pin from an
 //! idle Solver seat (T1→T2→T3); every later unit for that bin continues
 //! on the SAME seat (T6).
-
-use degenbot_core::op_error;
-use std::collections::VecDeque;
-use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, OnceLock};
-
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
 use crate::arb_engine::seat_host::{
     intake_backstop, GrantContract, HostDiscipline, HostMsg, HostPump, SeatSink,
 };
+use degenbot_core::op_error;
 use degenbot_workers::dispatcher::{
     BootError, FleetBoot, FleetHost, Grant, GrantKind, SubmitError, SubmitReceipt, Unit,
 };
 use degenbot_workers::lane::{LaneCtx, QuitSig};
 use degenbot_workers::role::WorkerRole;
 use degenbot_workers::slot::PinKey;
-
+use std::collections::VecDeque;
+use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, OnceLock};
 /// Bin keys are the LPT bin index offset by one: the merge pin owns key 0
 /// (`degenbot_workers::slot::MERGE_PIN_KEY`) and a Solver key must never
 /// collide with it.
 pub(crate) const SOLVE_BIN_KEY_BASE: PinKey = 1;
-
 /// Loud, unrecoverable executor failure (mirror of `solve_executor.rs`'s
 /// abort discipline): a dead host would strand in-flight per-path result
 /// sends in pipes nobody drains, so swallowing the error is never an
@@ -61,7 +57,6 @@ pub(crate) fn abort_executor(context: &str, err: &str) -> ! {
 pub(crate) fn abort_loud(context: &str, err: &str) -> ! {
     abort_executor(context, err);
 }
-
 /// The pins == bins invariant check (P6YXA6): a Solver bin index must land
 /// within the structural seat count. Pure (no `&self`) so the tests hold
 /// the contract without booting a fleet.
@@ -76,7 +71,6 @@ fn validate_bin_index(bin: usize, solver_seats: usize) -> Result<(), String> {
         ))
     }
 }
-
 /// One bin job as the host hands it to a Solver seat.
 struct SeatJob {
     /// The host-tracked unit id (dispatch bookkeeping).
@@ -89,7 +83,6 @@ struct SeatJob {
     /// slot's warm arena identity (warm across cycles, fresh after T9).
     ctx: LaneCtx,
 }
-
 /// The fleet-hosted solve executor. Shared by all engine cycles (the
 /// global static hands out `&'static`, mirroring the incumbent executor's
 /// construction-once contract: persistent seats keep warm L1/L2 +
@@ -115,12 +108,10 @@ pub(crate) struct FleetSolveExecutor {
     #[cfg(test)]
     binding: degenbot_workers::plan::Binding,
 }
-
 impl crate::arb_engine::executor::Executor for FleetSolveExecutor {
     fn bin_count(&self) -> usize {
         self.bin_count()
     }
-
     fn submit(
         &self,
         bin: usize,
@@ -132,13 +123,11 @@ impl crate::arb_engine::executor::Executor for FleetSolveExecutor {
         self.submit_solve_bin(bin, work)
     }
 }
-
 impl Drop for FleetSolveExecutor {
     fn drop(&mut self) {
         crate::arb_engine::fleet_wake::deregister(self.waker);
     }
 }
-
 impl FleetSolveExecutor {
     /// Boot the executor from a `FleetBoot` (quota + overrides + posture):
     /// boot the [`FleetHost`], spawn one persistent named seat thread per
@@ -167,20 +156,17 @@ impl FleetSolveExecutor {
             degenbot_workers::plan::Binding::Serial => Ok(Self::boot_serial(host)),
         }
     }
-
     /// The PINNED binding's instantiation (today's topology, verbatim: one
     /// persistent keyed mailbox per Solver pin over the ONE `HostPump`).
     fn boot_pinned(host: FleetHost) -> Self {
         Self::boot_seats(host, WorkerRole::Solver.thread_name())
     }
-
     /// The SERIAL binding's instantiation (FF-T4): the projection's
     /// ONE solver seat is the named `serial-0` cycle thread — the same
     /// keyed-mailbox construction, one seat, the §10 shape unchanged.
     fn boot_serial(host: FleetHost) -> Self {
         Self::boot_seats(host, crate::arb_engine::seat_host::SERIAL_SEAT_NAME)
     }
-
     /// The shared seat construction: `seat_name_pattern` is the
     /// `{n}`-templated thread name (pinned: the solver seats; serial:
     /// the ONE serial-0 cycle seat).
@@ -188,7 +174,6 @@ impl FleetSolveExecutor {
         #[cfg(test)]
         let binding = host.plan().binding;
         let solver_seats = host.budget().solver_pin_count;
-
         let (tx, rx) = mpsc::channel::<HostMsg>();
         // Per-seat mailboxes: a seat is a persistent keyed pin — one unit
         // at a time, warm arenas across cycles (RAYPAR T3, design doc §3.4).
@@ -261,14 +246,12 @@ impl FleetSolveExecutor {
             binding,
         }
     }
-
     /// Test-facing: the resolved plan binding (FF-T4 — the parity
     /// tests assert the tier each boot instantiated).
     #[cfg(test)]
     fn plan_binding_for_test(&self) -> degenbot_workers::plan::Binding {
         self.binding
     }
-
     /// Solver seats = the budget's structural LPT bin count. The dispatch
     /// arms bin at THIS count (P6YXA6 reconciliation): pins and bins are
     /// the same number, so every bin owns a warm keyed seat across cycles.
@@ -276,7 +259,6 @@ impl FleetSolveExecutor {
     pub(crate) fn bin_count(&self) -> usize {
         self.solver_seats
     }
-
     /// Submit one LPT bin job keyed to its bin; the seat hands the unit body
     /// a [`LaneCtx`] carrying the bin's pin key and warm arena identity
     /// (LW-T2 Seam B). The typed submit receipt never drops a unit (the
@@ -333,7 +315,6 @@ impl FleetSolveExecutor {
         })
     }
 }
-
 /// One Solver seat (a persistent keyed pin): execute units one at a time —
 /// no yield mid-unit — and report completion so the host applies T3 (the
 /// seat re-pins warm; arenas are never live across a role switch).
@@ -360,7 +341,6 @@ fn seat_loop(seat: u64, rx: mpsc::Receiver<SeatJob>, done: &mpsc::Sender<HostMsg
         }
     }
 }
-
 /// The solve host's dispatch loop: build the unified [`HostPump`] for the
 /// Solver pin role (the FOLD MAP — everything per-host is a field) and run
 /// the ONE recv → apply → pump loop (6HE6RF). The seat model (per-seat
@@ -403,7 +383,6 @@ fn host_loop(
     }
     .run(rx);
 }
-
 /// The solve host's seat model (P-RZEWTX, unchanged by 6HE6RF): per-seat
 /// keyed mailboxes — a seat is a persistent pin (T3/T6 warm arenas), so a
 /// granted unit routes POSITIONALLY to the grant slot's mailbox (2SIOHJ:
@@ -411,7 +390,6 @@ fn host_loop(
 struct SolveSink<'a> {
     seats: &'a [mpsc::Sender<SeatJob>],
 }
-
 impl SeatSink for SolveSink<'_> {
     fn deliver(&self, host: &mut FleetHost, grant: Grant, unit: Unit) {
         // Positional seat map (2SIOHJ): seat i <-> FleetHost slot
@@ -470,26 +448,21 @@ impl SeatSink for SolveSink<'_> {
         }
     }
 }
-
 /// The solve host's abort discipline: the same free [`abort_executor`]
 /// the module has always owned — the unified triple's SHARED contexts
 /// route through here, and the solve-specific contexts keep their
 /// pre-fold strings byte-identical.
 struct SolveDiscipline;
-
 impl HostDiscipline for SolveDiscipline {
     fn fail(&self, context: &str, err: &str) -> ! {
         abort_executor(context, err)
     }
-
     fn enqueue_refused(&self, err: &str) -> ! {
         abort_executor("solver enqueue", err)
     }
-
     fn completion_refused(&self, err: &str) -> ! {
         abort_executor("seat completion (T3)", err)
     }
-
     fn foreign_grant(&self, kind: GrantKind) -> ! {
         abort_executor(
             "dispatch grant",
@@ -500,10 +473,8 @@ impl HostDiscipline for SolveDiscipline {
         )
     }
 }
-
 static FLEET_SOLVE_BOOT: OnceLock<BootStamp> = OnceLock::new();
 static FLEET_EXECUTOR: OnceLock<FleetSolveExecutor> = OnceLock::new();
-
 /// Install the CONSTRUCTION-STAMPED boot (YI5NGB): the engine's own typed
 /// boot descriptor (fleet quota + overrides + posture) parsed at ITS
 /// construction from the CALLER cfg, stamped with the engine id + a
@@ -515,7 +486,6 @@ pub(crate) fn install_boot(stamp: BootStamp) {
     crate::arb_engine::boot_stamp::record_ride(BootRole::Solve, &stamp);
     let _ = FLEET_SOLVE_BOOT.set(stamp);
 }
-
 /// The process-wide fleet solve executor, built lazily on the first
 /// fleet-stance solve and persisting for the process lifetime.
 pub(crate) fn global_fleet_solve_executor() -> &'static FleetSolveExecutor {
@@ -541,20 +511,21 @@ pub(crate) fn global_fleet_solve_executor() -> &'static FleetSolveExecutor {
         }
     })
 }
-
 // The solve-lane adapter (witness + carrier + ledger) now lives in
 // `crate::arb_engine::executor` (QR3NUS 43E3H3): the former provisional
 // lane module folded there per the JI275C placement. The fleet executor
 // retains SOLVE_BIN_KEY_BASE and its host machinery here.
-
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
+    use super::super::executor_ab_probe::{load_corpus_fixture, probe_ctx, prod_lpt_bins};
+    use super::super::lane_walk::solve_one_path;
+    use super::WorkerRole;
+    use super::{validate_bin_index, FleetSolveExecutor, SOLVE_BIN_KEY_BASE};
+    use crate::arb_engine::executor::{
+        lane_death_response, run_solve_lane, LaneFailure, LaneOutcome, SolveLane, SolveOutcome,
+    };
     use crate::arb_engine::executor::{Executor as _, SubmitWork};
-    use std::collections::BTreeSet;
-    use std::sync::atomic::Ordering;
-    use std::sync::Arc;
-
     use degenbot_solvers::mixed::SolvePathResult;
     use degenbot_workers::budget::BudgetOverrides;
     use degenbot_workers::dispatcher::{
@@ -564,15 +535,9 @@ mod tests {
         install_default_escalation_port, EscalationError, EscalationPort, EscalationWork, LaneCtx,
     };
     use degenbot_workers::posture::{FleetPosture, PostureOwner, PosturePolicy, ThrottleSample};
-
-    use super::super::executor_ab_probe::{load_corpus_fixture, probe_ctx, prod_lpt_bins};
-    use super::super::lane_walk::solve_one_path;
-    use super::WorkerRole;
-    use super::{validate_bin_index, FleetSolveExecutor, SOLVE_BIN_KEY_BASE};
-    use crate::arb_engine::executor::{
-        lane_death_response, run_solve_lane, LaneFailure, LaneOutcome, SolveLane, SolveOutcome,
-    };
-
+    use std::collections::BTreeSet;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     /// A FRESH hermetic posture owner (leaked to `'static`): every test
     /// boot gets its own owner, never the process global (7KAPBB isolation).
     fn hermetic_owner() -> &'static PostureOwner {
@@ -580,11 +545,9 @@ mod tests {
             PosturePolicy::doc_defaults(),
         )))
     }
-
     fn hermetic_boot() -> FleetBoot {
         hermetic_boot_with_owner(hermetic_owner())
     }
-
     fn hermetic_boot_with_owner(owner: &'static PostureOwner) -> FleetBoot {
         FleetBoot {
             profile: degenbot_config::FleetProfile::Auto,
@@ -594,7 +557,6 @@ mod tests {
             owner: Some(owner),
         }
     }
-
     /// The pins == bins contract (P6YXA6) as a pure validator: a
     /// seat-bounded bin index passes; anything over it is shouted down with
     /// BOTH numbers so the loud abort decodes at a glance.
@@ -611,7 +573,6 @@ mod tests {
             "message names the seat count: {err}"
         );
     }
-
     fn submit_bins(
         executor: &FleetSolveExecutor,
         bins: &[Vec<usize>],
@@ -649,7 +610,6 @@ mod tests {
         results.sort_unstable_by_key(|(pid, _)| *pid);
         results
     }
-
     /// FLEET FIXTURE (BCA77G, LW-T9 single-arm): the fleet-hosted solve
     /// executor produces exact, honest outcomes on the committed heavy-CL
     /// capture fixture — outcomes can never exceed submissions, every
@@ -673,10 +633,8 @@ mod tests {
             executor.bin_count(),
             "solver bins must equal the structural Solver seat count (pins == bins, P6YXA6)"
         );
-
         let fleet = submit_bins(&executor, &bins, &items, &ctx);
         assert!(!fleet.is_empty(), "fixture must produce results");
-
         // Outcome honesty: the outcomes land exactly once per submitted
         // path (in-bin solvers merge; failures arrive typed — never twice).
         let mut pids: Vec<u64> = fleet.iter().map(|(pid, _)| *pid).collect();
@@ -690,14 +648,12 @@ mod tests {
         );
         assert!(n <= items.len(), "outcomes can never exceed submissions");
     }
-
     /// Solver bin keys never collide with the merge pin key (the FSM's
     /// keyed-pin invariant, ADR-042 §3.4).
     #[test]
     fn solve_bin_keys_never_collide_with_the_merge_pin_key() {
         assert_ne!(SOLVE_BIN_KEY_BASE, degenbot_workers::slot::MERGE_PIN_KEY);
     }
-
     /// Pinning fixture (BCA77G): per-bin worker pinning — every bin's
     /// units ride the same seat across cycles (T3/T6), matching the
     /// RAYPAR T3 one-persistent-worker-per-bin contract.
@@ -743,13 +699,11 @@ mod tests {
             "the expect must name the task: {msg}"
         );
     }
-
     #[test]
     fn solver_seats_equal_the_structural_lpt_bin_count() {
         let executor = FleetSolveExecutor::boot(hermetic_boot()).expect("fleet boot");
         assert_eq!(executor.bin_count(), 6);
     }
-
     #[test]
     fn bins_stay_pinned_to_one_seat_across_cycles() {
         let executor = FleetSolveExecutor::boot(hermetic_boot()).expect("fleet boot");
@@ -792,9 +746,7 @@ mod tests {
             );
         }
     }
-
     // ---- LW-T2 (Seam B): seat context — no ambient runtime, LaneCtx identity
-
     /// The runtime wedge (LW-T2): fleet seats are OS threads with NO ambient
     /// tokio runtime. The executor boots and submits from inside a LIVE
     /// multi-thread runtime here, and every seated unit still observes
@@ -842,7 +794,6 @@ mod tests {
             "fleet seats must run units OUTSIDE any ambient tokio runtime"
         );
     }
-
     /// The `LaneCtx` submit seam (LW-T2): `submit_solve_bin` hands the unit a
     /// ctx carrying the bin's pin key AND the warm arena identity — the
     /// SAME `ArenaToken` across cycles (warm), never the detached stub.
@@ -895,9 +846,7 @@ mod tests {
             "the SAME ArenaToken across cycles (warm)"
         );
     }
-
     // ---- LW-T6 (Seam G2): seat naming + census atoms -------------------------
-
     /// LW-T6: the boot census carries the seat fleet's rows — per-index
     /// `{n}` patterns matching the roles, the Solver budget matching the
     /// STRUCTURAL seat count, and no two rows sharing a thread-name pattern
@@ -928,7 +877,6 @@ mod tests {
             "census thread-name patterns must be unique"
         );
     }
-
     /// LW-T6: the runtime registration is not a lie — the OS thread names of
     /// RUNNING seats match the census rows (per-index under the pattern).
     #[test]
@@ -973,9 +921,7 @@ mod tests {
             "every structural seat has its own distinct census-NAMED thread"
         );
     }
-
     // ---- LW-T5 (Seam E): posture & precedence at the submit seam ------------
-
     /// 7OGY5V (soak adjudication, 2026-09-10): Solver admission is
     /// posture-INVARIANT — design doc §6's cordon effects hold only the
     /// Deferrable classes + the sim intake floor, and `workers::role`
@@ -1040,7 +986,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
-
     /// LW-T5 (Seam E): overflow past a role queue cap lands in the
     /// unbounded host backlog (S10 ledger) and NEVER drops - the receipts
     /// report accepted-with-backlog, and every submitted unit completes.
@@ -1107,9 +1052,7 @@ mod tests {
             "every submitted unit must complete - never dropped"
         );
     }
-
     // ---- LW-T3 (Seam C): escalation port — self-contained I/O lane ----------
-
     /// A TEST escalation port: a dedicated single-thread tokio runtime owned
     /// by its own pump thread (a self-contained capability lane, never the
     /// caller's CPU seat) — the shape of the default impl (the inline-sim
@@ -1119,7 +1062,6 @@ mod tests {
         tx: std::sync::mpsc::Sender<(EscalationWork, degenbot_workers::lane::FinishOnDrop)>,
         gate: Arc<degenbot_workers::lane::EscalationGate>,
     }
-
     impl ThreadLanePort {
         fn spawn(budget: usize) -> Self {
             let (tx, rx) =
@@ -1142,7 +1084,6 @@ mod tests {
             Self { tx, gate }
         }
     }
-
     impl EscalationPort for ThreadLanePort {
         fn escalate(&self, work: EscalationWork) -> Result<(), EscalationError> {
             let permit = self.gate.begin()?;
@@ -1151,12 +1092,10 @@ mod tests {
             }
             Ok(())
         }
-
         fn counters(&self) -> degenbot_workers::lane::EscalationCountersSnapshot {
             self.gate.counters()
         }
     }
-
     /// LW-T3 (Seam C, reth research §7): escalation is a SELF-CONTAINED I/O
     /// lane — a bin escalates its cold-miss work through its `LaneCtx`
     /// while EVERY solver seat is mid-unit, and the escalations complete on
@@ -1242,27 +1181,23 @@ mod tests {
             );
         }
     }
-
     /// Test verdict double (decision A): records every (unit, seat)
     /// consultation and prescribes `RecordAndContinue` — never a real abort.
     struct VerdictRecorder {
         consulted: parking_lot::Mutex<Vec<(u64, u64)>>,
     }
-
     impl PanicVerdict for VerdictRecorder {
         fn on_unit_panic(&self, unit: u64, seat: u64) -> PanicAction {
             self.consulted.lock().push((unit, seat));
             PanicAction::RecordAndContinue
         }
     }
-
     /// Deliberate panic inside a harness bin body: the adapter's
     /// `catch_unwind` (with the seat's backstop) must convert it to data.
     #[expect(clippy::panic)]
     fn red_panic(message: &str) -> ! {
         panic!("{message}")
     }
-
     /// The exactness fuse (QR3NUS): a bin whose 3rd of N paths panics
     /// still drains exactly one outcome per submitted path — survivors as
     /// real outcomes (a worker `None` IS an outcome), every undelivered
@@ -1296,7 +1231,6 @@ mod tests {
         });
         drop(lane); // close the pipe so the drain completes
         let outcomes: Vec<LaneOutcome> = rx.into_iter().collect();
-
         let mut solved_count = 0usize;
         let mut suppressed_count = 0usize;
         let mut failed_count = 0usize;
@@ -1350,7 +1284,6 @@ mod tests {
             "the 3rd path and everything after it must land as typed failures"
         );
     }
-
     /// FF-T4 (Z6XTDX) — AC 3: a lane death mid-flight yields TERMINAL
     /// RECEIPTS for in-flight paths (typed `LaneFailure::LaneDeath`,
     /// exactly one outcome per submitted path — the ledger stays
@@ -1436,7 +1369,6 @@ mod tests {
         // A LIVE process: this line running is the proof — the response
         // returned instead of the abort.
     }
-
     /// FF-T4 — the production auto-arm: a bin body that RETURNS with
     /// still-owed paths (the seat abandoned its bin mid-flight) gets
     /// the lane-death response through `run_solve_lane` — terminal
@@ -1473,7 +1405,6 @@ mod tests {
             "every still-owed path lands as a typed terminal record"
         );
     }
-
     /// FF-T4 — AC 4: the outcome corpus is IDENTICAL across the pinned
     /// and serial bindings (parity: the binding changes which threads
     /// run the lanes, never the outcomes — the promotion-gate
@@ -1574,7 +1505,6 @@ mod tests {
             "parity: the outcome corpus must be identical across bindings"
         );
     }
-
     /// Decision A drive: after a panicking cycle the SAME seat takes the
     /// next cycle's pinned bin (keyed pins never move), and the panic was
     /// expressed as data — the verdict consulted, typed failure records
@@ -1656,7 +1586,6 @@ mod tests {
             "the panicking cycle's undelivered path must land as a typed failure record"
         );
     }
-
     /// The unit-panic-with-pipe tripwire at policy-object level (decision
     /// A; no real `std::process::abort` ever runs under test): a panicking
     /// unit consults the verdict with its (unit, seat) identity, and the
@@ -1673,7 +1602,6 @@ mod tests {
         });
         drop(lane); // close the pipe so the drain completes
         let outcomes: Vec<LaneOutcome> = rx.into_iter().collect();
-
         assert_eq!(
             verdict.consulted.lock().as_slice(),
             [(7, 3)],
@@ -1727,9 +1655,8 @@ mod tests {
     /// `seat_host`'s loud check.
     #[test]
     fn solver_host_aborts_on_a_foreign_grant() {
-        use degenbot_workers::dispatcher::GrantKind;
-
         use crate::arb_engine::seat_host::GrantContract as Contract;
+        use degenbot_workers::dispatcher::GrantKind;
         let solver = Contract::SolverPins;
         for kind in [GrantKind::NewPinClaim, GrantKind::PinContinuation] {
             assert!(

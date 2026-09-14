@@ -13,15 +13,12 @@
 //! the default profile (the pre-construction projection - the pure plan
 //! function re-derives what the host WOULD run; `fleet_booted` names
 //! which view it is).
-
-use degenbot_core::op_warn;
-use std::sync::OnceLock;
-
 use degenbot_config::FleetProfile;
+use degenbot_core::op_warn;
 use degenbot_workers::budget::FleetBudget;
 use degenbot_workers::dispatcher::FleetBoot;
 use degenbot_workers::plan::{Binding, FleetPlan};
-
+use std::sync::OnceLock;
 /// The resolved runtime status: the plan + the projected budget + the
 /// census, from the stamped boot or the live default projection.
 #[derive(Debug, Clone, PartialEq)]
@@ -58,7 +55,6 @@ pub struct FleetRuntimeStatus {
     /// resource).
     pub census: Vec<degenbot_core::worker_census::WorkerCensusEntry>,
 }
-
 /// Compute the runtime status (FF-T5): budget, plan, census - from the
 /// stamped boot when an engine constructed, else the live
 /// default-profile projection (`fleet_booted` names the view).
@@ -109,7 +105,6 @@ pub fn fleet_runtime_status() -> FleetRuntimeStatus {
         census: degenbot_core::worker_census::snapshot(),
     }
 }
-
 /// The `tier_refused` string (FF-T5 addendum, 452GZC): the typed refusal's
 /// closed family NAME plus its Display sentence — an operator (and the
 /// test gates) greps the family; the sentence keeps the detected quota,
@@ -119,7 +114,6 @@ fn tier_refused_string(plan: &FleetPlan) -> Option<String> {
         .as_ref()
         .map(|refusal| format!("{}: {refusal}", refusal.name()))
 }
-
 /// The pre-construction view: the LIVE-detected quota with the default
 /// profile (the pure plan function projects what the host WOULD run).
 fn live_default_boot() -> FleetBoot {
@@ -131,7 +125,6 @@ fn live_default_boot() -> FleetBoot {
         owner: None,
     }
 }
-
 /// The process's resolved fleet profile summary (FF-T5, NT7HJC): the
 /// one-line answer to "what did the fleet boot as", recorded ONCE at the
 /// construction-stamp install (first engine wins, like every stance
@@ -145,10 +138,8 @@ pub struct FleetProfileSummary {
     /// Whether the projection runs marked-oversubscribed.
     pub oversubscribed: bool,
 }
-
 /// The process-global profile summary (set once, at the stamp install).
 static FLEET_PROFILE_SUMMARY: OnceLock<FleetProfileSummary> = OnceLock::new();
-
 /// Record the profile summary at the construction-stamp install (FF-T5):
 /// resolve the plan for the stamped boot (pure), set the process-global
 /// summary (first writer wins - `install_boot` never overrides), export it
@@ -183,14 +174,12 @@ pub fn record_fleet_profile_at_install(boot: &FleetBoot) {
         );
     }
 }
-
 /// The process's resolved profile summary (None before the first engine
 /// construction stamped a boot).
 #[must_use]
 pub fn fleet_profile_summary() -> Option<FleetProfileSummary> {
     FLEET_PROFILE_SUMMARY.get().copied()
 }
-
 fn profile_label(profile: FleetProfile) -> &'static str {
     match profile {
         FleetProfile::Auto => "auto",
@@ -198,13 +187,11 @@ fn profile_label(profile: FleetProfile) -> &'static str {
         FleetProfile::Serial => "serial",
     }
 }
-
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
     use degenbot_workers::budget::BudgetError;
-
     /// The `tier_refused` string composes the family NAME with the floor
     /// sentence: greppable (`QuotaTooSmallForPinnedRoles ...`) AND
     /// explanatory (the detected quota and the floor ride). No refusal, no
@@ -236,7 +223,6 @@ mod tests {
         };
         assert!(tier_refused_string(&clean).is_none());
     }
-
     /// candidate4 pin 2 - RED at HEAD (the registry does not exist yet;
     /// `fleet_runtime_status` reads `fleet_registration_executor`'s module
     /// statics). TARGET (post-T2): `fleet_status` reads the ONE
@@ -275,7 +261,6 @@ mod tests {
             assert_eq!(status.profile, canonical.profile);
         }
     }
-
     /// candidate4 pin 4 - ADAPTER: GREEN at HEAD and GREEN after T2. It pins
     /// the `runtime_status` PRG-5 gate semantics source-independently (both sides
     /// must read the same owner after the T2 reroute): the status

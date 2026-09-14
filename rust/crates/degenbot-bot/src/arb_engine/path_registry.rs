@@ -16,13 +16,9 @@
 //! signature in one call, so `path_pools` and `pool_to_paths` cannot be
 //! desynced by a partial registration. `remove` is the inverse: it drops the
 //! path, prunes the reverse index, and clears the signature.
-
-use std::sync::Arc;
-
-use hashbrown::HashMap;
-
 use ::degenbot_solvers::mixed::{HopType, MixedPath, MixedPoolRef};
-
+use hashbrown::HashMap;
+use std::sync::Arc;
 /// Typed refusal from `ArbitrageEngine::register_path` (PRG-4 / IRUMXD — was a
 /// bare `String`).
 ///
@@ -47,7 +43,6 @@ pub enum PathRegistrationError {
         registered: usize,
     },
 }
-
 impl std::fmt::Display for PathRegistrationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -59,7 +54,6 @@ impl std::fmt::Display for PathRegistrationError {
         }
     }
 }
-
 /// The identity payload a fresh registration commits to the registry.
 ///
 /// Built by `register_path` after the hops have been validated and resolved;
@@ -72,7 +66,6 @@ pub(crate) struct PathRegistration {
     /// The immutable per-hop pool refs stored in `path_pools`.
     pub(crate) pool_refs: Vec<MixedPoolRef>,
 }
-
 /// Path identity (ADR-045): registered paths + reverse index + signatures +
 /// id allocator + cap + dedup counter. Deliberately SHALLOW — no resolve, no
 /// solve, no deps beyond the solver value types.
@@ -95,13 +88,11 @@ pub(crate) struct PathRegistry {
     /// Dedup hits counted engine-side (PRG-4).
     path_dedups: u64,
 }
-
 impl Default for PathRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl PathRegistry {
     /// A fresh, empty registry. Path ids start at 1.
     #[must_use]
@@ -115,56 +106,47 @@ impl PathRegistry {
             path_dedups: 0,
         }
     }
-
     /// The existing path id for `signature`, or `None` when it is new.
     #[must_use]
     pub(crate) fn lookup(&self, signature: &[(u64, bool)]) -> Option<u64> {
         self.path_signatures.get(signature).copied()
     }
-
     /// Registered path refs for `path_id`.
     #[must_use]
     pub(crate) fn get(&self, path_id: u64) -> Option<&Arc<MixedPath>> {
         self.path_pools.get(&path_id)
     }
-
     /// The path ids that reference `key` (the hot fan-out read; shared).
     #[must_use]
     pub(crate) fn paths_for(&self, key: &(HopType, u64)) -> Option<&[u64]> {
         self.pool_to_paths.get(key).map(Vec::as_slice)
     }
-
     /// The full `path_id -> Arc<MixedPath>` map (the worker-snapshot clone
     /// source).
     #[must_use]
     pub(crate) fn path_pools(&self) -> &HashMap<u64, Arc<MixedPath>> {
         &self.path_pools
     }
-
     /// The number of registered paths.
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.path_pools.len()
     }
-
     /// Whether the registry holds no paths.
     #[must_use]
     #[expect(dead_code)] // part of the ADR-045 registry surface; no caller yet
     pub(crate) fn is_empty(&self) -> bool {
         self.path_pools.is_empty()
     }
-
     /// Iterate the registered `(path_id, path)` pairs.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&u64, &Arc<MixedPath>)> {
         self.path_pools.iter()
     }
-
     /// Dedup hits counted engine-side.
     #[must_use]
     pub(crate) fn dedups(&self) -> u64 {
         self.path_dedups
     }
-
     /// Refuse a NEW registration once the cap is reached. A dedup hit never
     /// reaches this gate — an existing path is not growth.
     ///
@@ -181,7 +163,6 @@ impl PathRegistry {
         }
         Ok(())
     }
-
     /// Commit a validated, freshly-resolved registration (all-or-nothing):
     /// allocate the id, insert the pool refs, extend the reverse index, and
     /// record the dedup signature. Returns the allocated path id.
@@ -203,12 +184,10 @@ impl PathRegistry {
         self.path_signatures.insert(reg.signature, path_id);
         path_id
     }
-
     /// Record a dedup hit (`register_path` returned an existing id).
     pub(crate) fn note_dedup(&mut self) {
         self.path_dedups += 1;
     }
-
     /// Deregister a path: drop it, prune the reverse index, and clear its
     /// dedup signature (so a later re-registration is a fresh register).
     pub(crate) fn remove(&mut self, path_id: u64) -> Option<Arc<MixedPath>> {
@@ -231,12 +210,10 @@ impl PathRegistry {
         }
         removed
     }
-
     /// Set the registered-path cap (`None` = unlimited).
     pub(crate) fn set_cap(&mut self, cap: Option<usize>) {
         self.path_cap = cap;
     }
-
     /// Read the registered-path cap (`None` = unlimited) — the `EngineRetune`
     /// white-box observability surface.
     #[cfg(test)]

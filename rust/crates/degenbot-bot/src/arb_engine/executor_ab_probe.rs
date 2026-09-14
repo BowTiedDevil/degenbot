@@ -11,21 +11,17 @@
 // capture-corpus loader, the production cost proxy's bin packer and the
 // shared-cycle fixture used by the fleet parity/identity fixtures.
 // Fixture parse replicates rust/crates/degenbot-solvers/examples/rayon_scale_probe.rs.
-
-use std::sync::Arc;
-
-use crate::arb_engine::BlockMetadata;
-use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles};
-use serde_json::Value;
-
 use super::BotState;
 use crate::arb_engine::solve_cycle::PathTimesHeap;
 use crate::arb_engine::solve_cycle::SolveCycleShared;
 use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
+use crate::arb_engine::BlockMetadata;
+use alloy::primitives::U256;
+use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles};
 use hashbrown::HashMap;
-
+use serde_json::Value;
+use std::sync::Arc;
 fn fixture_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("DEGENBOT_PROBE_FIXTURE") {
         return std::path::PathBuf::from(p);
@@ -33,7 +29,6 @@ fn fixture_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl")
 }
-
 /// Zst-aware corpus load for the BCA77G parity fixtures: the packaged
 /// `heavy_cl_solve_captures.jsonl.zst` decodes transparently via
 /// `capture_fixture::read_fixture` (same corpus the probe measures).
@@ -41,11 +36,9 @@ pub(in crate::arb_engine) fn load_corpus_fixture(
 ) -> Vec<Arc<::degenbot_solvers::mixed::ResolvedMixedPath>> {
     load_corpus()
 }
-
 fn u256(s: &str) -> Result<U256, String> {
     s.trim().parse::<U256>().map_err(|e| e.to_string())
 }
-
 fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
     let wbp = v
         .get("word_boundary_prices")
@@ -88,7 +81,6 @@ fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
         word_boundary_prices: wbp,
     })
 }
-
 pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_solvers::mixed::ResolvedMixedPath>>
 {
     let path = fixture_path();
@@ -131,7 +123,6 @@ pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_solvers::mixed:
     assert!(!items.is_empty(), "fixture must load at least one path");
     items
 }
-
 pub(in crate::arb_engine) fn probe_ctx() -> Arc<SolveCycleShared> {
     Arc::new(SolveCycleShared {
         solve_block: 0,
@@ -167,7 +158,6 @@ pub(in crate::arb_engine) fn probe_ctx() -> Arc<SolveCycleShared> {
         test_solve_panic: None,
     })
 }
-
 /// LPT bins per the production cost fn (empty measured-history = first-cycle
 /// structural cost, exactly like an engine cold bucket).
 pub(in crate::arb_engine) fn prod_lpt_bins(

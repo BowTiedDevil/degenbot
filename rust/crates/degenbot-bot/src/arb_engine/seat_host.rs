@@ -66,7 +66,6 @@
 //! backlog, §10): its queue-len mirror + typed submit receipt stay at its
 //! submit seam — the mirror stamps ride the unified triple through
 //! [`HostPump`]'s `mirror` field.
-
 //!
 //! # Invariants preserved (behavior byte-stable)
 //!
@@ -120,27 +119,23 @@
 //! the ownership. The census `binding` field prints the mapping per
 //! entry (`pinned` = dedicated seat threads, `shared` = pooled runtimes,
 //! `logical` = a lane riding other threads' time).
-
-use degenbot_core::op_error;
-use std::collections::VecDeque;
-use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, OnceLock};
-use std::time::Duration;
-
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
+use crate::arb_engine::fleet_intake::InnerWork;
 use crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor;
 use crate::arb_engine::fleet_sim_executor::FleetSimExecutor;
 use crate::arb_engine::fleet_wake;
+use degenbot_core::op_error;
 use degenbot_workers::budget::FleetBudget;
 use degenbot_workers::dispatcher::{
     BootError, EnqueueError, FleetBoot, FleetHost, Grant, GrantKind, Unit,
 };
 use degenbot_workers::lane::LaneCtx;
 use degenbot_workers::role::WorkerRole;
-
-use crate::arb_engine::fleet_intake::InnerWork;
-
+use std::collections::VecDeque;
+use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, OnceLock};
+use std::time::Duration;
 /// The role descriptor: everything that differs between the two pooled
 /// `WorkQueue` executors, and nothing else. The executors are THIN over
 /// this — the machinery (queue, seat loop, host loop, admission, boot
@@ -178,7 +173,6 @@ pub(crate) struct SeatRoleDesc {
     /// from (`sim_slot_cap` / `pool_state_updater_slots`).
     pub seats: fn(&FleetBudget) -> usize,
 }
-
 /// Host-bound message — ONE shape for all three fleet hosts (6HE6RF): a
 /// submitted unit, or a seat reporting its unit done. Completion applies
 /// the slot's own T-row ([`FleetHost::complete`] keys off the slot FSM
@@ -194,7 +188,6 @@ pub(crate) enum HostMsg {
     /// coalesced edge is benign. It can only cause an earlier wake.
     PostureEdge,
 }
-
 /// The complete, constructible input tuple of the admission predicate
 /// (adversarial-review requirement 5): [`admission`] reads NOTHING else —
 /// no shared map, no channel depth, no host borrow. Property tests
@@ -208,7 +201,6 @@ pub(crate) struct AdmissionInputs {
     /// The live posture consult (`FleetHost::posture_admits_role`).
     pub(crate) posture_admits: bool,
 }
-
 /// The admission predicate's total output. Saturated and posture-held are
 /// NOT progress states — they are the two independent WAIT reasons here,
 /// and they can co-occur.
@@ -223,14 +215,12 @@ pub(crate) enum Admission {
     /// Blocked by both (the terms co-occur).
     WaitBoth,
 }
-
 impl Admission {
     /// Whether the unit may leave the backlog for the role queue.
     pub(crate) fn admits(self) -> bool {
         matches!(self, Admission::Admit)
     }
 }
-
 /// THE pure admission predicate (JCI2FW unified consult, 6HE6RF fold): a
 /// total function of [`AdmissionInputs`] ALONE. It is the ONLY gate on the
 /// backlog → role-queue move; `try_enqueue`'s `PostureHeld` hand-back
@@ -245,7 +235,6 @@ pub(crate) fn admission(inputs: AdmissionInputs) -> Admission {
         (true, true) => Admission::WaitBoth,
     }
 }
-
 /// The host intake backstop interval (T2): the recv-timeout armed iff a
 /// backlog exists. Read from the installed typed config (schema defaults
 /// when none installed); clamped to >= 1 ms so a garbage value can never
@@ -258,7 +247,6 @@ pub(crate) fn intake_backstop() -> Duration {
             .max(1),
     )
 }
-
 /// The no-progress trip threshold K (T4): read from the installed typed
 /// config, clamped to >= 1 so a garbage value cannot trip on the first
 /// pass.
@@ -268,7 +256,6 @@ pub(crate) fn intake_no_progress_ticks() -> usize {
         .intake_no_progress_ticks
         .max(1)
 }
-
 /// The T4 no-progress guard: K CONSECUTIVE admitted-but-no-progress pump
 /// passes trip the loud fail. A pass is "admitted" iff the backlog is
 /// non-empty AND the pure admission predicate admits (so a legitimate
@@ -281,7 +268,6 @@ pub(crate) struct NoProgressGuard {
     consecutive: usize,
     limit: usize,
 }
-
 /// One guard step's outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NoProgressStep {
@@ -292,7 +278,6 @@ pub(crate) enum NoProgressStep {
     /// K consecutive no-progress passes — the caller fails loudly.
     Tipping { consecutive: usize },
 }
-
 impl NoProgressGuard {
     pub(crate) fn new(limit: usize) -> Self {
         Self {
@@ -300,16 +285,13 @@ impl NoProgressGuard {
             limit: limit.max(1),
         }
     }
-
     pub(crate) fn limit(&self) -> usize {
         self.limit
     }
-
     #[cfg(test)]
     pub(crate) fn consecutive(&self) -> usize {
         self.consecutive
     }
-
     /// Fold one pump pass into the guard.
     pub(crate) fn step(&mut self, admitted: bool, progressed: bool) -> NoProgressStep {
         if !admitted || progressed {
@@ -328,7 +310,6 @@ impl NoProgressGuard {
         }
     }
 }
-
 /// The host intake's progress vocabulary. `Idle`/`Backed` are live in this
 /// refactor (the backlog drain loop keys on `Backed`); `Faulted`/`Closed`
 /// are introduced by the tasks whose transitions make them reachable (the
@@ -346,11 +327,9 @@ pub(crate) enum ProgressState {
     /// once the latch is set there is no edge out (a fresh process only).
     Faulted,
 }
-
 /// The serial binding's named cycle seat (FF-T4): the ONE thread that
 /// runs the role's granted units in grant order on a 2-5 core host.
 pub(crate) const SERIAL_SEAT_NAME: &str = "work-fleet-serial-0";
-
 /// One granted unit handed to whichever pooled seat takes it next (both
 /// roles are pooled — seats contend, no pin affinity).
 struct SeatJob {
@@ -363,7 +342,6 @@ struct SeatJob {
     /// `Python::attach` stays at the pyo3 leaf.
     work: Box<dyn FnOnce(&LaneCtx) + Send>,
 }
-
 /// The shared pooled-seat work queue (std `mpsc` receivers are not
 /// `Clone`, so the contended seat pool rides a condvar deque). Folded once
 /// from the byte-identical pair (RZEWTX).
@@ -373,12 +351,10 @@ struct WorkQueue {
     shutdown: parking_lot::Mutex<bool>,
     work_available: parking_lot::Condvar,
 }
-
 impl WorkQueue {
     fn new() -> Self {
         Self::default()
     }
-
     /// Take one granted unit, parking the seat until one arrives or the
     /// queue shuts down (host retired — process teardown).
     fn take(&self) -> Option<SeatJob> {
@@ -402,19 +378,16 @@ impl WorkQueue {
                 .wait_for(&mut shutdown, std::time::Duration::from_millis(50));
         }
     }
-
     fn push(&self, job: SeatJob) {
         self.queue.lock().push_back(job);
         self.work_available.notify_one();
     }
-
     /// Retire the pool (host thread done): every parked seat drains out.
     fn close(&self) {
         *self.shutdown.lock() = true;
         self.work_available.notify_all();
     }
 }
-
 /// Which dispatch grant kinds a host's [`HostPump`] is contracted to serve
 /// (the row-#6 contract check, loud on ALL THREE hosts since 6HE6RF): a
 /// grant outside this set is a broken host contract, never a seat.
@@ -428,7 +401,6 @@ pub(crate) enum GrantContract {
     /// grant slot's keyed seat.
     SolverPins,
 }
-
 impl GrantContract {
     /// The pure contract predicate (the test-declared tripwire's seam —
     /// the abort itself is a process abort, untestable in-process).
@@ -442,7 +414,6 @@ impl GrantContract {
         }
     }
 }
-
 /// P-RZEWTX: the seat-model split of the unified host-message triple. The
 /// triple (admission, backlog drain, grant loop) is ONE shape; routing a
 /// GRANTED unit to its seat stays per host kind — the pooled `WorkQueue`
@@ -455,7 +426,6 @@ pub(crate) trait SeatSink {
     /// (`ensure_arena`) at the same seam the pre-fold loop did.
     fn deliver(&self, host: &mut FleetHost, grant: Grant, unit: Unit);
 }
-
 /// The pooled seat model (sim + registration, RZEWTX byte-identical): the
 /// granted unit joins the shared `WorkQueue` — any idle pooled seat takes
 /// it (seats contend, no pin affinity); completion carries the granted
@@ -463,7 +433,6 @@ pub(crate) trait SeatSink {
 pub(crate) struct PooledSink {
     queue: Arc<WorkQueue>,
 }
-
 impl SeatSink for PooledSink {
     fn deliver(&self, _host: &mut FleetHost, grant: Grant, unit: Unit) {
         self.queue.push(SeatJob {
@@ -472,7 +441,6 @@ impl SeatSink for PooledSink {
         });
     }
 }
-
 /// The per-host loud-abort + wording seam of the unified triple: every
 /// context/message string stays owned by its host module so the pre-fold
 /// abort wording stays byte-identical (the pooled pair's strings ride the
@@ -491,26 +459,21 @@ pub(crate) trait HostDiscipline {
     /// The row-#6 grant-kind contract denial (context `"dispatch grant"`).
     fn foreign_grant(&self, kind: GrantKind) -> !;
 }
-
 /// The pooled hosts' discipline: the descriptor owns the tag + noun, so
 /// every abort string is the pre-fold byte-identical one.
 pub(crate) struct PooledDiscipline {
     desc: &'static SeatRoleDesc,
 }
-
 impl HostDiscipline for PooledDiscipline {
     fn fail(&self, context: &str, err: &str) -> ! {
         abort_executor(self.desc, context, err)
     }
-
     fn enqueue_refused(&self, err: &str) -> ! {
         abort_executor(self.desc, &format!("{} enqueue", self.desc.noun), err)
     }
-
     fn completion_refused(&self, err: &str) -> ! {
         abort_executor(self.desc, "seat completion (T5)", err)
     }
-
     fn foreign_grant(&self, _kind: GrantKind) -> ! {
         abort_executor(
             self.desc,
@@ -522,7 +485,6 @@ impl HostDiscipline for PooledDiscipline {
         )
     }
 }
-
 /// THE one host-message/waiting shape (6HE6RF): `apply_host_msg` + the
 /// backlog-draining grant pump + the recv loop, folded ONCE behind all
 /// three fleet hosts. The pooled pair (sim + registration) and the solve
@@ -614,7 +576,6 @@ pub(crate) struct HostPump<'a> {
     #[cfg(test)]
     pub(crate) ticks: Option<&'a AtomicU64>,
 }
-
 impl HostPump<'_> {
     /// Build the complete admission input tuple from the live host — the
     /// ONLY host read that feeds [`admission`].
@@ -625,7 +586,6 @@ impl HostPump<'_> {
             posture_admits: self.host.posture_admits_role(self.role),
         }
     }
-
     /// The intake progress state (backlog emptiness today; the fault and
     /// closed arms land with the transitions that make them reachable).
     fn progress(&self) -> ProgressState {
@@ -643,7 +603,6 @@ impl HostPump<'_> {
             ProgressState::Backed
         }
     }
-
     /// Publish the live backlog depth to the `degenbot_fleet_intake_backlog`
     /// gauge (TB4QGX T7). Called at every pump exit and after a fault drain,
     /// so a stalled held backlog is observable.
@@ -652,7 +611,6 @@ impl HostPump<'_> {
             pipeline.set_intake_backlog(self.role.label(), self.backlog.len() as u64);
         }
     }
-
     /// The Faulted arm (TB4QGX T6): drain the backlog AND the role queue and
     /// report the held count to the S2 fault watch. Granted in-flight units
     /// are untouched (they complete naturally). A held unit runs ZERO times
@@ -677,7 +635,6 @@ impl HostPump<'_> {
             }
         }
     }
-
     /// The ONE dispatch loop (design doc §4): recv → apply → pump. Exits
     /// when the submission channel closes (all executor handles dropped —
     /// process teardown).
@@ -723,7 +680,6 @@ impl HostPump<'_> {
             self.pump();
         }
     }
-
     /// Apply one submission or completion (both arrive on the single host
     /// channel — completions can never starve behind a blocking recv).
     pub(crate) fn apply_host_msg(&mut self, msg: HostMsg) {
@@ -788,7 +744,6 @@ impl HostPump<'_> {
             HostMsg::PostureEdge => {}
         }
     }
-
     /// The one precedence grant loop pass (design doc §4): backlog first,
     /// then dispatch grants onto the seats. Grants apply T2 (start) at
     /// grant time — the seat-model delivery IS the claim — and completion
@@ -880,7 +835,6 @@ impl HostPump<'_> {
         }
     }
 }
-
 /// The executor-facing half of the shared seat host: the host channel's
 /// submit end + the unit sequence, stamped with the role descriptor.
 pub(crate) struct SeatHost {
@@ -897,13 +851,11 @@ pub(crate) struct SeatHost {
     #[cfg(test)]
     seats: usize,
 }
-
 impl Drop for SeatHost {
     fn drop(&mut self) {
         fleet_wake::deregister(self.waker);
     }
 }
-
 impl SeatHost {
     /// Boot the shared pooled-seat host for `desc`: boot the [`FleetHost`],
     /// spawn the pooled seat threads (the budget's per-role slot cap — the
@@ -940,7 +892,6 @@ impl SeatHost {
             degenbot_workers::plan::Binding::Serial => Ok(Self::boot_serial(desc, host, fault)),
         }
     }
-
     /// The PINNED binding's instantiation (today's topology, verbatim:
     /// the pooled seat threads over the shared `WorkQueue`, the host thread
     /// running the ONE `HostPump` triple). Behavior-identical by
@@ -1003,7 +954,6 @@ impl SeatHost {
             seats,
         }
     }
-
     /// The SERIAL binding's instantiation (FF-T4): the SAME pooled
     /// queue, host loop, and FSM slots — but ONE named cycle thread
     /// (`work-fleet-serial-0`, the serial seat) runs every granted unit
@@ -1063,20 +1013,17 @@ impl SeatHost {
             seats,
         }
     }
-
     /// Test-facing seat count (the role's budget slot cap).
     #[cfg(test)]
     pub(crate) fn seat_count(&self) -> usize {
         self.seats
     }
-
     /// Test-facing: the resolved plan binding (FF-T4 — the executors'
     /// tests assert the tier the boot instantiated).
     #[cfg(test)]
     pub(crate) fn plan_binding(&self) -> degenbot_workers::plan::Binding {
         self.binding
     }
-
     /// The port's unit body (folded from the two executors' pre-existing
     /// submit bodies): wraps into `Unit::new(.., Box::new(move |_ctx|
     /// work()))` and enqueues over `tx.send(HostMsg::Enqueue(unit))`, typed
@@ -1101,7 +1048,6 @@ impl SeatHost {
         }
     }
 }
-
 /// The [`crate::arb_engine::fleet_intake::FleetIntake`] port's close arm,
 /// shared by both executors' trait impls: a closed host channel (the host
 /// thread died) is a LOUD abort — a lost unit strands its receipt pipe
@@ -1114,7 +1060,6 @@ pub(crate) fn intake_close_abort(host: &SeatHost) -> ! {
         &format!("fleet {} host channel closed", host.desc.noun),
     );
 }
-
 /// One pooled seat: take granted units from the shared work queue, run
 /// them one at a time, and report the granted slot's completion so the
 /// host applies T5 (run → idle).
@@ -1139,7 +1084,6 @@ fn seat_loop(desc: &'static SeatRoleDesc, work: &WorkQueue, done: &mpsc::Sender<
         }
     }
 }
-
 /// The pooled hosts' dispatch loop: build the unified [`HostPump`] for the
 /// descriptor's role (the FOLD MAP — everything per-host is a field) and
 /// run the ONE recv → apply → pump loop (6HE6RF).
@@ -1178,7 +1122,6 @@ fn host_loop(
     }
     .run(rx);
 }
-
 /// Loud, unrecoverable executor failure (mirror of the fleet solve
 /// executor's abort discipline): a dead host would strand in-flight
 /// receipts — an awaiting caller parks forever (stranded pipe, design doc
@@ -1202,7 +1145,6 @@ fn abort_executor(desc: &SeatRoleDesc, context: &str, err: &str) -> ! {
     );
     std::process::abort();
 }
-
 /// Install the CONSTRUCTION-STAMPED boot (YI5NGB): the engine's own typed
 /// boot descriptor (fleet quota + overrides + posture) parsed at ITS
 /// construction from the CALLER cfg, stamped with the engine id + a
@@ -1220,7 +1162,6 @@ pub(crate) fn install_boot(courier: &OnceLock<BootStamp>, desc: &SeatRoleDesc, s
     crate::arb_engine::fleet_status::record_fleet_profile_at_install(&stamp.boot());
     let _ = courier.set(stamp);
 }
-
 /// The process-wide materializer (the global_* boilerplate, folded from
 /// the two executors): lazily boot the executor from the
 /// construction-stamped boot and persist it for the process lifetime.
@@ -1277,7 +1218,6 @@ pub(crate) fn global_executor<T>(
     .as_ref()
     .map_err(Clone::clone)
 }
-
 // ======================================================================
 // candidate 4 (DQA7YL / YUMQU3): the FleetBootRegistry.
 //
@@ -1286,7 +1226,6 @@ pub(crate) fn global_executor<T>(
 // mailboxes, typed receipts) and installs its own boot; candidate 4 is two
 // rows, not three.
 // ======================================================================
-
 /// The sim role's seat descriptor. candidate 4 MOVED this here from
 /// `fleet_sim_executor`: the registry owns the pooled-role descriptor rows
 /// now; the role module owns only its executor + thin boot fn.
@@ -1301,12 +1240,10 @@ static SIM_ROLE: SeatRoleDesc = SeatRoleDesc {
         "fleet sim boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
     seats: sim_seats_of,
 };
-
 /// The queue-cap source: the budget's `SimDriver` slot cap.
 fn sim_seats_of(budget: &FleetBudget) -> usize {
     budget.sim_slot_cap
 }
-
 /// The registration role's seat descriptor (moved here from
 /// `fleet_registration_executor`, same rationale).
 static REG_ROLE: SeatRoleDesc = SeatRoleDesc {
@@ -1320,12 +1257,10 @@ static REG_ROLE: SeatRoleDesc = SeatRoleDesc {
         "fleet registration boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
     seats: reg_seats_of,
 };
-
 /// The queue-cap source: the budget's `pool_state_updater_slots`.
 fn reg_seats_of(budget: &FleetBudget) -> usize {
     budget.pool_state_updater_slots
 }
-
 /// The sim boot courier (the registry slot's `&'static` storage).
 static SIM_BOOT: OnceLock<BootStamp> = OnceLock::new();
 /// The sim executor courier (first-wins, sticky boot outcome).
@@ -1334,7 +1269,6 @@ static SIM_EXECUTOR: OnceLock<Result<FleetSimExecutor, BootError>> = OnceLock::n
 static REG_BOOT: OnceLock<BootStamp> = OnceLock::new();
 /// The registration executor courier.
 static REG_EXECUTOR: OnceLock<Result<FleetRegistrationExecutor, BootError>> = OnceLock::new();
-
 /// One typed executor slot in the [`FleetBootRegistry`]: the role
 /// descriptor, the construction-stamped boot courier, and the process-wide
 /// executor courier. The couriers are `&'static` references into the
@@ -1346,7 +1280,6 @@ pub(crate) struct BootSlot<T: 'static> {
     boot: &'static OnceLock<BootStamp>,
     executor: &'static OnceLock<Result<T, BootError>>,
 }
-
 impl<T: 'static> BootSlot<T> {
     const fn new(
         desc: &'static SeatRoleDesc,
@@ -1359,13 +1292,11 @@ impl<T: 'static> BootSlot<T> {
             executor,
         }
     }
-
     /// The role's seat descriptor (the `BootRole`-keyed row).
     #[must_use]
     pub(crate) fn descriptor(&self) -> &'static SeatRoleDesc {
         self.desc
     }
-
     /// Whether an engine installed this role's construction-stamped boot.
     /// Test-facing (the pinned registry contract); production reads the
     /// registry's canonical first-wins latch.
@@ -1374,7 +1305,6 @@ impl<T: 'static> BootSlot<T> {
     pub(crate) fn boot_installed(&self) -> bool {
         self.boot.get().is_some()
     }
-
     /// The process-wide executor, if it already materialized (the sticky
     /// boot-outcome slot: a refused boot is `Ok(None)` here, not a panic).
     /// Test-facing (the pinned registry contract).
@@ -1385,21 +1315,18 @@ impl<T: 'static> BootSlot<T> {
             .get()
             .and_then(|outcome| outcome.as_ref().ok())
     }
-
     /// Install the CONSTRUCTION-STAMPED boot through the ONE shared
     /// installer ([`install_boot`]): ledger the identified ride, record the
     /// first-wins fleet profile, courier the stamp. Never overrides.
     pub(crate) fn install(&self, stamp: BootStamp) {
         install_boot(self.boot, self.desc, stamp);
     }
-
     /// Test-only: park a boot stamp WITHOUT the shared install side effects
     /// (the FF-T1 unhostable-boot refusal fixture).
     #[cfg(test)]
     pub(crate) fn set_boot_for_test(&self, stamp: BootStamp) {
         let _ = self.boot.set(stamp);
     }
-
     /// The process-wide materializer (the shared [`global_executor`]
     /// boilerplate), keyed to this slot's couriers.
     ///
@@ -1412,7 +1339,6 @@ impl<T: 'static> BootSlot<T> {
         global_executor(self.desc, self.boot, self.executor, boot)
     }
 }
-
 /// The uniform, [`BootRole`]-keyed view of a registry slot.
 pub(crate) trait BootSlotView {
     /// The role's seat descriptor.
@@ -1420,17 +1346,14 @@ pub(crate) trait BootSlotView {
     /// Install the role's construction boot (first-wins).
     fn install(&self, stamp: BootStamp);
 }
-
 impl<T: 'static> BootSlotView for BootSlot<T> {
     fn descriptor(&self) -> &'static SeatRoleDesc {
         BootSlot::descriptor(self)
     }
-
     fn install(&self, stamp: BootStamp) {
         BootSlot::install(self, stamp);
     }
 }
-
 /// The candidate-4 pooled-role boot registry: the ONE keyed owner of the
 /// two pooled roles' boot facts. Each typed slot carries the role
 /// descriptor + boot/executor couriers; the registry carries the first-wins
@@ -1444,7 +1367,6 @@ pub(crate) struct FleetBootRegistry {
     /// it, stamped exactly once.
     process_boot: OnceLock<FleetBoot>,
 }
-
 impl FleetBootRegistry {
     /// The process registry singleton.
     #[must_use]
@@ -1456,19 +1378,16 @@ impl FleetBootRegistry {
             process_boot: OnceLock::new(),
         })
     }
-
     /// The sim role's typed slot.
     #[must_use]
     pub(crate) fn sim(&self) -> &BootSlot<FleetSimExecutor> {
         &self.sim
     }
-
     /// The registration role's typed slot.
     #[must_use]
     pub(crate) fn registration(&self) -> &BootSlot<FleetRegistrationExecutor> {
         &self.registration
     }
-
     /// The `BootRole`-keyed uniform view.
     ///
     /// # Panics
@@ -1485,21 +1404,18 @@ impl FleetBootRegistry {
             ),
         }
     }
-
     /// Whether ANY registry role installed its construction boot (the
     /// first-wins process latch).
     #[must_use]
     pub(crate) fn boot_installed(&self) -> bool {
         self.process_boot.get().is_some()
     }
-
     /// The canonical process boot — whichever registry role installed FIRST.
     /// `None` pre-construction.
     #[must_use]
     pub(crate) fn process_boot(&self) -> Option<FleetBoot> {
         self.process_boot.get().copied()
     }
-
     /// Install the construction-stamped boot for `role` through the ONE
     /// shared installer: the canonical process boot is first-wins, then the
     /// role slot ledgers the ride + records the first-wins profile.
@@ -1515,7 +1431,6 @@ impl FleetBootRegistry {
         slot.install(stamp);
     }
 }
-
 /// The shared per-role submit / port / test-shim surface, defined ONCE and
 /// instantiated per pooled executor. `self.$host` names the executor's
 /// seat-host field at the invocation site; the `FleetIntake` port impl, the
@@ -1532,14 +1447,12 @@ macro_rules! impl_seat_hosted {
             ) -> Result<(), ()> {
                 self.$host.try_send(work)
             }
-
             /// Test-venue shim: the OLD name `spawn`, `#[cfg(test)]`-only.
             #[cfg(test)]
             fn spawn(&self, work: impl FnOnce() + Send + 'static) {
                 let _ = self.try_send(Box::new(work));
             }
         }
-
         impl $crate::arb_engine::fleet_intake::FleetIntake for $executor {
             fn spawn(&self, work: $crate::arb_engine::fleet_intake::InnerWork) {
                 if self.try_send(work).is_err() {
@@ -1550,7 +1463,6 @@ macro_rules! impl_seat_hosted {
     };
 }
 pub(crate) use impl_seat_hosted;
-
 // ---------------------------------------------------------------------------
 // 6HE6RF: the cross-host property suite. The unified HostPump is driven
 // DIRECTLY in both parameterizations (the dispatcher::harness precedent —
@@ -1558,32 +1470,27 @@ pub(crate) use impl_seat_hosted;
 // callers), with the seat-model artifacts (seat counts, keyed-pin chain,
 // mailbox routing, arena ids) normalized away by a recording sink.
 // ---------------------------------------------------------------------------
-
 #[cfg(test)]
 #[expect(clippy::expect_used, clippy::panic)]
 mod tests {
-    use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use degenbot_workers::budget::BudgetOverrides;
-    use degenbot_workers::dispatcher::{FleetBoot, FleetHost, Grant, GrantKind, Unit};
-    use degenbot_workers::posture::{
-        FleetPosture, PostureCause, PostureOwner, PosturePolicy, ThrottleSample,
-    };
-
-    use crate::arb_engine::fleet_intake::IntakeFault;
-    use degenbot_workers::role::WorkerRole;
-
     use super::{
         admission, intake_no_progress_ticks, Admission, AdmissionInputs, GrantContract,
         HostDiscipline, HostMsg, HostPump, NoProgressGuard, NoProgressStep, ProgressState,
         SeatSink,
     };
+    use crate::arb_engine::fleet_intake::IntakeFault;
     use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
+    use degenbot_workers::budget::BudgetOverrides;
+    use degenbot_workers::dispatcher::{FleetBoot, FleetHost, Grant, GrantKind, Unit};
+    use degenbot_workers::posture::{
+        FleetPosture, PostureCause, PostureOwner, PosturePolicy, ThrottleSample,
+    };
+    use degenbot_workers::role::WorkerRole;
     use proptest::prelude::*;
-
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
     /// A FRESH hermetic posture owner (leaked to 'static): every test boot
     /// gets its own owner, never the process global (7KAPBB isolation).
     /// Per-file hermeticity stays per-file (the 6HE6RF KILL list): this
@@ -1593,7 +1500,6 @@ mod tests {
             PosturePolicy::doc_defaults(),
         )))
     }
-
     /// Force the shared owner Cordoned (the event-burst trigger the
     /// dispatcher fixtures use).
     fn force_cordoned(owner: &'static PostureOwner) {
@@ -1607,7 +1513,6 @@ mod tests {
         );
         assert_eq!(owner.current(), FleetPosture::Cordoned);
     }
-
     /// Feed the full clean hysteresis (10 s of virtual clean ticks since
     /// the dirty sample at now = 0) — the JCI2FW lift.
     fn lift_cordon(owner: &'static PostureOwner) {
@@ -1628,7 +1533,6 @@ mod tests {
             assert!(now <= 60_000, "the cordon never lifted");
         }
     }
-
     /// The hermetic fleet boot shared by the driven host and the real-thread
     /// backstop test (T2).
     fn hermetic_fleet_boot(owner: &'static PostureOwner) -> FleetBoot {
@@ -1640,7 +1544,6 @@ mod tests {
             owner: Some(owner),
         }
     }
-
     /// The recorded outcome of a driven pass — seat-model artifacts
     /// (`SeatJob` shapes, mailbox routing, arena ids, seat-thread identity)
     /// normalized away to what the cross-host property asserts: WHICH unit
@@ -1655,35 +1558,29 @@ mod tests {
         /// the drive can catch it — production aborts the process).
         NoProgressAbort,
     }
-
     /// One shared recorder behind the sink + the discipline.
     struct Recorder {
         outcomes: parking_lot::Mutex<Vec<Outcome>>,
     }
-
     impl Recorder {
         fn new() -> Arc<Self> {
             Arc::new(Self {
                 outcomes: parking_lot::Mutex::new(Vec::new()),
             })
         }
-
         fn record(&self, outcome: Outcome) {
             self.outcomes.lock().push(outcome);
         }
-
         fn snapshot(&self) -> Vec<Outcome> {
             self.outcomes.lock().clone()
         }
     }
-
     /// Recording sink: grants land here instead of real seats (the seat
     /// models themselves are pinned by the executors' own suites — the
     /// property normalizes them away).
     struct RecordingSink {
         recorder: Arc<Recorder>,
     }
-
     impl SeatSink for RecordingSink {
         fn deliver(&self, _host: &mut FleetHost, grant: Grant, _unit: Unit) {
             self.recorder.record(Outcome::Seated {
@@ -1692,34 +1589,28 @@ mod tests {
             });
         }
     }
-
     /// Recording discipline: the row-#6 denial becomes DATA (the
     /// `VerdictRecorder` idiom — never a real process abort under test);
     /// any other failure is an unexpected shape and panics loudly.
     struct RecordingDiscipline {
         recorder: Arc<Recorder>,
     }
-
     impl HostDiscipline for RecordingDiscipline {
         fn fail(&self, context: &str, err: &str) -> ! {
             self.recorder.record(Outcome::NoProgressAbort);
             panic!("host failure recorded at {context}: {err}")
         }
-
         fn enqueue_refused(&self, err: &str) -> ! {
             panic!("unexpected enqueue refusal: {err}")
         }
-
         fn completion_refused(&self, err: &str) -> ! {
             panic!("unexpected completion refusal: {err}")
         }
-
         fn foreign_grant(&self, kind: GrantKind) -> ! {
             self.recorder.record(Outcome::ForeignGrant(kind));
             panic!("6HE6RF row-#6 denial recorded: {kind:?}");
         }
     }
-
     /// The two host kinds the property drives (the parameterization IS the
     /// fold map).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1732,7 +1623,6 @@ mod tests {
         /// grant contract, the receipt mirror present.
         Solve,
     }
-
     /// One driven host: a REAL hermetic `FleetHost` behind the unified
     /// `HostPump`, driven by direct `HostMsg` sequences — no seat threads,
     /// fully deterministic; the sink records the grants.
@@ -1756,12 +1646,10 @@ mod tests {
         /// T2: the recv-timeout backstop used by a real-thread drive.
         backstop: Duration,
     }
-
     impl DrivenHost {
         fn boot(kind: HostKind) -> Self {
             Self::boot_with(kind, hermetic_owner())
         }
-
         fn boot_with(kind: HostKind, owner: &'static PostureOwner) -> Self {
             let host = FleetHost::boot(hermetic_fleet_boot(owner)).expect("hermetic fleet boot");
             let recorder = Recorder::new();
@@ -1791,14 +1679,12 @@ mod tests {
                 backstop: Duration::from_millis(50),
             }
         }
-
         fn role(&self) -> WorkerRole {
             match self.kind {
                 HostKind::Pooled => WorkerRole::PoolStateUpdater,
                 HostKind::Solve => WorkerRole::Solver,
             }
         }
-
         /// The role's next unit (pooled: no key; solve: the ONE bin key —
         /// the single-key chain keeps the drive deterministic: a hot key
         /// waits for its own seat's T6 continuation, so grants are
@@ -1806,7 +1692,6 @@ mod tests {
         fn next_unit(&mut self) -> Unit {
             self.next_unit_keyed(Some(SOLVE_BIN_KEY_BASE))
         }
-
         /// The role's next unit with an EXPLICIT solve pin key (the Q3.4
         /// drive pins TWO seats so the role queue dips below cap while the
         /// backlog is still non-empty — the honest-mirror window).
@@ -1818,7 +1703,6 @@ mod tests {
             };
             Unit::new(self.unit_seq, self.role(), key, false, Box::new(|_ctx| {}))
         }
-
         fn pump_handle(&mut self) -> HostPump<'_> {
             // Read the copy fields BEFORE the mutable borrows (disjoint
             // field borrows read fine, but the role() method call would
@@ -1843,7 +1727,6 @@ mod tests {
                 ticks: None,
             }
         }
-
         /// Apply one host message + run one grant pass (the `run()` loop's
         /// per-message shape, driven directly).
         fn apply_and_pump(&mut self, msg: HostMsg) {
@@ -1851,7 +1734,6 @@ mod tests {
             pump.apply_host_msg(msg);
             pump.pump();
         }
-
         /// Like `Self::apply_and_pump`, but the row-#6 denial (a recorded,
         /// deliberate panic under the recording discipline) is caught —
         /// the discipline makes the loud abort DATA for the property;
@@ -1862,7 +1744,6 @@ mod tests {
             }));
             let _ = result;
         }
-
         /// Absorb newly recorded grants into the in-flight queue (the
         /// slots awaiting their `SeatDone` message).
         fn absorb_new_grants(&mut self) {
@@ -1874,7 +1755,6 @@ mod tests {
                 self.cursor += 1;
             }
         }
-
         /// Complete the oldest in-flight grant (one `SeatDone` message +
         /// pass — what a real seat thread does).
         fn complete_oldest_in_flight(&mut self) {
@@ -1885,7 +1765,6 @@ mod tests {
                 .expect("an in-flight grant to complete");
             self.apply_and_pump(HostMsg::SeatDone { seat: slot });
         }
-
         /// `SeatDone` choreography: complete outstanding grants, one message
         /// + pass at a time, until want units are seated.
         fn drain_until_seated(&mut self, want: usize) {
@@ -1902,7 +1781,6 @@ mod tests {
             }
             self.absorb_new_grants();
         }
-
         /// Complete EVERY outstanding grant (the drive runs the host to
         /// quiescence: no unit left running, the final stamp reads the
         /// empty role queue).
@@ -1916,7 +1794,6 @@ mod tests {
             }
             self.absorb_new_grants();
         }
-
         fn seated_units(&self) -> Vec<u64> {
             self.recorder
                 .snapshot()
@@ -1928,7 +1805,6 @@ mod tests {
                 .collect()
         }
     }
-
     /// THE cross-host property (6HE6RF): drive IDENTICAL unit sequences
     /// into both host kinds and assert IDENTICAL backlog ORDER outcomes —
     /// every unit seated exactly once, in SUBMISSION order (the §10
@@ -1970,7 +1846,6 @@ mod tests {
             }
         }
     }
-
     /// Q3.3 (the `push_front` head-preservation pin): hold three pooled
     /// units under a forced cordon (forced BEFORE any unit is in flight —
     /// a cordon onset SHEDS running Deferrable units to Draining (T7),
@@ -2015,7 +1890,6 @@ mod tests {
             "the backlog drained empty (never dropped, §10)"
         );
     }
-
     /// THE posture-consult unification, behavior-pinned (catalog row #1
     /// dissolved): the SAME input — one unit submitted under a FORCED
     /// CORDON — into both host kinds. The unified shape consults posture
@@ -2042,7 +1916,6 @@ mod tests {
             1,
             "held = the unbounded backlog, never a drop"
         );
-
         // Solve: admitted + granted under the SAME cordon.
         let owner = hermetic_owner();
         let mut solve = DrivenHost::boot_with(HostKind::Solve, owner);
@@ -2059,7 +1932,6 @@ mod tests {
             "the consult never holds a Solver unit"
         );
     }
-
     /// THE rows-#2 + #6 dissolution, made observable cross-host: a
     /// foreign-role unit reaching each host's pump under a forced cordon.
     /// Pre-fold, the solve host ABORTED THE PROCESS on this exact input
@@ -2112,7 +1984,6 @@ mod tests {
                 .any(|o| matches!(o, Outcome::Seated { unit: 9_001, .. })),
             "the foreign unit is NEVER seated — no silent misroute, no seat-map accident"
         );
-
         // The pooled mirror: a foreign SOLVER unit, cordoned — held by the
         // host-role consult, denied at grant by the Single(PoolStateUpdate)
         // contract. IDENTICAL visible outcome: held, never dropped, never
@@ -2153,7 +2024,6 @@ mod tests {
             "the foreign unit is NEVER seated on the pooled host either"
         );
     }
-
     /// Q3.4 (the honest mirror, 6HE6RF): the receipt bit tracks the
     /// BOUNDED role-queue stamp — NOT the backlog depth. After the spill
     /// the mirror equals the cap (bit TRUE: the queue WAS at cap); after
@@ -2221,7 +2091,6 @@ mod tests {
             "at rest the role queue is empty and the stamp says so"
         );
     }
-
     /// T1: the admission predicate's total truth table — every reachable
     /// (occupancy × cap × posture) combination maps to exactly one
     /// [`Admission`] value. The predicate reads the tuple alone, so the
@@ -2254,7 +2123,6 @@ mod tests {
             assert_eq!(admission(inputs), admission(inputs));
         }
     }
-
     /// T1: `admits()` is the `Admit` arm and nothing else — the single gate.
     #[test]
     fn admission_admits_only_on_the_admit_arm() {
@@ -2267,7 +2135,6 @@ mod tests {
             assert!(!denied.admits(), "{denied:?} must not admit");
         }
     }
-
     /// T1: the progress vocabulary is `Backed` iff the backlog is
     /// non-empty; the drain loop keys on it.
     #[test]
@@ -2297,7 +2164,6 @@ mod tests {
             "a drained backlog is Idle"
         );
     }
-
     /// T1: the predicate is the ONLY gate on the backlog → role-queue move.
     /// `WaitPosture` holds with room available; `WaitCap` holds when the
     /// bounded queue is full; `Admit` seats.
@@ -2320,7 +2186,6 @@ mod tests {
         seated.sort_unstable();
         assert_eq!(seated, vec![1, 2], "Admit seats every unit exactly once");
         assert!(pooled.backlog.is_empty());
-
         // WaitCap: all role-queue seats running, then fill the bounded
         // queue to its cap; the next submission spills to the backlog.
         let owner = hermetic_owner();
@@ -2352,7 +2217,6 @@ mod tests {
             "WaitCap spills the overflow to the backlog (never dropped)"
         );
     }
-
     /// T1 transition coverage: an admitted `Enqueue` in `Idle` leaves the host
     /// `Idle` (the unit is granted to a running slot, the backlog stays
     /// empty), and the matching `SeatDone` is likewise an `Idle` self-loop —
@@ -2376,7 +2240,6 @@ mod tests {
             "a SeatDone on an empty backlog is an Idle self-loop"
         );
     }
-
     /// T1 transition coverage, closed (adversarial-review finding): the two
     /// remaining live pairs are Backed self-loops.
     /// (Backed, held Enqueue): a second hold accumulates in FIFO order and
@@ -2408,7 +2271,6 @@ mod tests {
         assert_eq!(held.backlog.len(), 2, "the second hold accumulates");
         let held_ids: Vec<u64> = held.backlog.iter().map(|u| u.id).collect();
         assert_eq!(held_ids, vec![1, 2], "FIFO order preserved across holds");
-
         // (Backed, SeatDone) -> Backed, with conservation. Saturate the
         // bounded role queue (WaitCap) so no SeatDone can empty it, then
         // spill two units to the backlog.
@@ -2451,7 +2313,6 @@ mod tests {
             "the freed queue slot took the queued head, not a backlog unit"
         );
     }
-
     /// T2 RED-FIRST: the mandatory liveness input. A pooled host with a held
     /// (Backed) backlog under a cordon, driven through the REAL
     /// `HostPump::run` on a thread, must drain within the backstop after the
@@ -2464,7 +2325,6 @@ mod tests {
         force_cordoned(owner);
         let recorder = Recorder::new();
         let backstop = Duration::from_millis(50);
-
         std::thread::scope(|scope| {
             // The channel + backlog live INSIDE the scope body so the
             // sender drops when this body exits (or unwinds). Holding the
@@ -2495,7 +2355,6 @@ mod tests {
                 }
                 .run(rx);
             });
-
             // Seed one unit under the cordon: it is HELD in the backlog.
             tx.send(HostMsg::Enqueue(Unit::new(
                 1,
@@ -2515,7 +2374,6 @@ mod tests {
                     .any(|o| matches!(o, Outcome::Seated { .. })),
                 "the cordon must HOLD the unit (no seat before the lift)"
             );
-
             // Lift the cordon WITHOUT any further message.
             lift_cordon(owner);
             let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -2535,7 +2393,6 @@ mod tests {
             }
         });
     }
-
     /// T2: the backstop tick rate is bounded by TIME, not by message volume.
     /// A cordoned backlog stays Backed while a flood of submissions arrives;
     /// the timeout pumps over a window must be ~window/backstop (independent
@@ -2552,7 +2409,6 @@ mod tests {
         let recorder = Recorder::new();
         let ticks = Arc::new(AtomicU64::new(0));
         let backstop = Duration::from_millis(40);
-
         std::thread::scope(|scope| {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut backlog = VecDeque::new();
@@ -2580,7 +2436,6 @@ mod tests {
                 }
                 .run(rx);
             });
-
             // Flood while cordoned: every submission is a MESSAGE, not a
             // tick, and every unit must be held (none seated).
             let n: u64 = 40;
@@ -2617,7 +2472,6 @@ mod tests {
                     .any(|o| matches!(o, Outcome::Seated { .. })),
                 "all units are held under the cordon (never dropped, never seated)"
             );
-
             // Lift: the backlog drains — every unit exactly once. The
             // recording sink is not a real seat, so simulate its SeatDone
             // completions to free slot capacity (the ticks also retry).
@@ -2661,7 +2515,6 @@ mod tests {
             );
         });
     }
-
     /// T2 transition coverage: the backstop is armed ONLY in Backed. An Idle
     /// host (empty backlog, open channel) must never tick — the
     /// no-busy-spin-parked-empty contract; `(Idle, BackstopTick)` is a
@@ -2709,7 +2562,6 @@ mod tests {
             );
         });
     }
-
     /// T3: an untrusted `PostureEdge` hint wakes a parked backlog far sooner
     /// than a deliberately huge backstop — the hint can only cause an
     /// EARLIER wake, and the pump re-reads the live owner.
@@ -2781,7 +2633,6 @@ mod tests {
             }
         });
     }
-
     /// T3: a `PostureEdge` on an Idle host changes nothing (no backlog, no
     /// seat, still Idle) — the hint is inert without held work.
     #[test]
@@ -2792,7 +2643,6 @@ mod tests {
         assert!(driven.backlog.is_empty());
         assert_eq!(driven.pump_handle().progress(), ProgressState::Idle);
     }
-
     /// T3: hint spam never duplicates or drops held units. Several hints
     /// while held leave the backlog untouched; after the lift each unit is
     /// granted exactly once.
@@ -2820,7 +2670,6 @@ mod tests {
         assert_eq!(seated, vec![1, 2], "each unit granted exactly once");
         assert!(driven.backlog.is_empty());
     }
-
     /// T3: the hint is untrusted and never a posture value — a `PostureEdge`
     /// on the solve host is a no-op (posture-invariant admission).
     #[test]
@@ -2838,7 +2687,6 @@ mod tests {
         assert_eq!(solve.seated_units(), vec![1]);
         assert!(solve.backlog.is_empty());
     }
-
     /// T4 (pure): the guard tips on exactly the K-th consecutive admitted
     /// no-progress pass, and stays tipped afterwards.
     #[test]
@@ -2861,7 +2709,6 @@ mod tests {
             NoProgressStep::Tipping { .. }
         ));
     }
-
     /// T4 (pure): real progress resets, and a legitimately UN-admitted pass
     /// (WaitCap/WaitPosture) never accrues — no matter how many passes run.
     #[test]
@@ -2883,7 +2730,6 @@ mod tests {
         guard.step(false, true);
         assert_eq!(guard.consecutive(), 0);
     }
-
     /// T4 (pure): K is clamped to >= 1 (a garbage config cannot trip on the
     /// first pass).
     #[test]
@@ -2895,7 +2741,6 @@ mod tests {
             NoProgressStep::Tipping { consecutive: 1 }
         );
     }
-
     /// T4: the loud fail fires on the K-th admitted-but-progressless pass.
     /// The drive parks a Deferrable pooled unit in a Solver host's backlog:
     /// the Solver admission admits (Never-cordoned) while `try_enqueue`
@@ -2937,7 +2782,6 @@ mod tests {
             "the test seam records the no-progress abort"
         );
     }
-
     /// T4: an untrusted `PostureEdge` hint runs the SAME no-progress path —
     /// it can never reset K and mask a livelock.
     #[test]
@@ -2965,7 +2809,6 @@ mod tests {
         }));
         assert!(result.is_err(), "the K-th pass still fails after hints");
     }
-
     /// T4: a legitimate `WaitPosture` hold parked across far more than K
     /// passes never aborts and never accrues.
     #[test]
@@ -2987,7 +2830,6 @@ mod tests {
             );
         }
     }
-
     /// T4: a legitimate `WaitCap` hold (all seats busy, role queue at cap)
     /// parked across far more than K passes never aborts and never accrues.
     #[test]
@@ -3014,7 +2856,6 @@ mod tests {
             );
         }
     }
-
     /// T4 (unreachability): a HEALTHY host — the production geometry, where
     /// every admitted unit can reach a seat — never accrues a single
     /// no-progress tick, even under a tiny K. Only a broken
@@ -3037,14 +2878,12 @@ mod tests {
         assert!(driven.backlog.is_empty(), "the healthy host drained");
         assert_eq!(driven.guard.consecutive(), 0);
     }
-
     /// T6: force the STICKY lane-death latch (not a throttle cordon).
     fn force_lane_death(owner: &'static PostureOwner) {
         owner.observe_cause(PostureCause::LaneDeath);
         assert_eq!(owner.current(), FleetPosture::Cordoned);
         assert!(owner.lane_death_held(), "the lane-death latch is sticky");
     }
-
     /// T6: forced lane death with a non-empty backlog -> Faulted resolves ALL
     /// held units with the typed terminal record; no infinite ticking.
     #[test]
@@ -3085,7 +2924,6 @@ mod tests {
         );
         assert!(driven.seated_units().is_empty(), "held units never ran");
     }
-
     /// T6: Faulted is keyed on the TYPED latch, never elapsed time — a long
     /// recoverable EventBurst/Duty cordon must NOT fault.
     #[test]
@@ -3112,7 +2950,6 @@ mod tests {
             "held work is never resolved by a recoverable cordon"
         );
     }
-
     /// T6: entering Faulted for the SAME lane death is idempotent under
     /// double delivery — the first fault record wins and drains are no-ops.
     #[test]
@@ -3141,7 +2978,6 @@ mod tests {
         assert_eq!(driven.fault.snapshot(), Some(first), "first-wins");
         assert!(driven.backlog.is_empty());
     }
-
     /// T6: in-flight granted units are NOT cancelled — they complete naturally
     /// after Faulted (and are never double-resolved).
     #[test]
@@ -3164,7 +3000,6 @@ mod tests {
         driven.complete_oldest_in_flight();
         assert_eq!(driven.seated_units(), vec![1], "completed exactly once");
     }
-
     /// T6: a unit enqueued AFTER Faulted is resolved terminally, never run.
     #[test]
     fn enqueue_after_faulted_is_resolved_not_run() {
@@ -3192,7 +3027,6 @@ mod tests {
             "the record is first-wins"
         );
     }
-
     // ── T7 (TB4QGX): mechanized safety, liveness, reachability ────────────
     //
     // Falsification contract (adversarial-review requirement): every property
@@ -3208,7 +3042,6 @@ mod tests {
     //   * Reachability — the falsifying trace is a reachable non-Faulted
     //     Backed state with NO enabled transition (the predicate does not
     //     admit and the backstop is not armed).
-
     /// The property alphabet: abstract host inputs a real drive can deliver.
     /// `Backstop` is the recv-timeout tick; `Cordon`/`Lift` are the
     /// recoverable posture edges; `Edge` is the no-op posture notification.
@@ -3221,7 +3054,6 @@ mod tests {
         Cordon,
         Lift,
     }
-
     fn sym_strategy() -> impl Strategy<Value = Sym> {
         prop_oneof![
             Just(Sym::Enqueue),
@@ -3233,7 +3065,6 @@ mod tests {
             Just(Sym::Lift),
         ]
     }
-
     /// Apply one symbol to a driven host; returns the (enqueued, completed)
     /// deltas for the ledger. A `SeatDone` with nothing in flight is a legal
     /// no-op: a stray completion names a slot that does not exist and the
@@ -3278,7 +3109,6 @@ mod tests {
             }
         }
     }
-
     proptest! {
         /// T7 — S: `submitted == in-flight + completed + queued + backlog`
         /// after every transition, over arbitrary symbol sequences.
@@ -3315,7 +3145,6 @@ mod tests {
                 );
             }
         }
-
         /// T7 — L: every reachable state whose backlog the pure predicate
         /// ADMITS shrinks under ONE BackstopTick pump, with no
         /// enqueue/completion hint. FALSIFICATION: the printed admission
@@ -3346,7 +3175,6 @@ mod tests {
             }
         }
     }
-
     /// T7 — "`BackstopTick` ALONE is sufficient to drain any reachable
     /// admissible backlog": enumerate backlog depths, park under a
     /// recoverable cordon, LIFT with no message, then run ONE bare pump.
@@ -3377,7 +3205,6 @@ mod tests {
             assert_eq!(units.len(), backlog, "every held unit seated exactly once");
         }
     }
-
     /// T7 — exhaustive small-bound reachability: over (backlog 0..=2) ×
     /// (posture Nominal/Cordoned), a non-empty non-Faulted backlog ALWAYS
     /// has an enabled transition — the pure predicate admits a drain, or
@@ -3419,19 +3246,16 @@ mod tests {
         }
     }
 }
-
 // ======================================================================
 // ergo G5YDRH - RED pins for the candidate-4 FleetBootRegistry contract.
 // Written against the TARGET contract; production code is NOT changed.
 // ======================================================================
 #[cfg(test)]
 mod candidate4_seam_pins {
+    use super::{BootSlot, BootSlotView, FleetBootRegistry, SeatRoleDesc};
     use crate::arb_engine::boot_stamp::BootRole;
     use crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor;
     use crate::arb_engine::fleet_sim_executor::FleetSimExecutor;
-
-    use super::{BootSlot, BootSlotView, FleetBootRegistry, SeatRoleDesc};
-
     /// candidate4 pin 1 - RED at HEAD (compile: `seat_host` owns no
     /// `FleetBootRegistry`). TARGET (post-T2): ONE keyed boot owner carrying
     /// a per-`BootRole` accessor (`sim()` / `registration()`) that exposes
@@ -3456,7 +3280,6 @@ mod candidate4_seam_pins {
         let _: fn(&BootSlot<FleetSimExecutor>) -> Option<&'static FleetSimExecutor> =
             BootSlot::executor;
     }
-
     /// candidate4 pin 3 - RED at HEAD (compile: the registry path is absent)
     /// and GREEN after T2. TARGET: the role modules shrink to descriptor rows
     /// + thin boot fns; the process boot/global wiring lives on the registry.
@@ -3483,7 +3306,6 @@ mod candidate4_seam_pins {
         fn registration_slot() -> &'static BootSlot<FleetRegistrationExecutor> {
             FleetBootRegistry::process().registration()
         }
-
         // GREEN half (forward absence probe, candidate2's `NoInherentTwinProbe`
         // pattern): if any retired per-role wiring reappears as an INHERENT
         // `FleetSimExecutor`/`FleetRegistrationExecutor` method, the probe
@@ -3521,7 +3343,6 @@ mod candidate4_seam_pins {
             registration.boot_installed(WiringProbeToken);
             registration.stamped_boot(WiringProbeToken);
         }
-
         let _ = sim_slot as fn() -> &'static BootSlot<FleetSimExecutor>;
         let _ = registration_slot as fn() -> &'static BootSlot<FleetRegistrationExecutor>;
     }

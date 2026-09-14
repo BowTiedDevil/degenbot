@@ -27,13 +27,10 @@
 //! populates them) so the JSON shape + a future lightweight drift detector can
 //! repopulate them via `compute_field_diffs` without re-introducing the heavy
 //! Multicall3 recompute.
-
-use alloy::primitives::{Address, U256};
-use serde::{Deserialize, Serialize};
-
 use super::ArbitrageEngine;
 use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
-
+use alloy::primitives::{Address, U256};
+use serde::{Deserialize, Serialize};
 /// A single typed field-level divergence between the engine's view of a pool
 /// and the on-chain snapshot (PCG2M3). The string rendering is the single
 /// source of truth for the legacy human-readable `DiagnosticHop::diff` entry:
@@ -48,7 +45,6 @@ pub struct FieldDiff {
     /// On-chain-side value, rendered exactly as it appeared in the diff string.
     pub onchain: String,
 }
-
 impl FieldDiff {
     /// Render the legacy `"<field>: engine=<engine>, onchain=<onchain>"` line.
     #[must_use]
@@ -59,7 +55,6 @@ impl FieldDiff {
         )
     }
 }
-
 /// `skip_serializing_if` helper: skip `drift` when it is `false` (the common
 /// no-drift case) so the default JSON stays compact.
 ///
@@ -69,7 +64,6 @@ impl FieldDiff {
 fn is_false(b: &bool) -> bool {
     !*b
 }
-
 /// Compute typed field-level differences between engine and on-chain pool
 /// state (PCG2M3). Pure — no RPC. Single source of truth for `diff`: a future
 /// lightweight drift detector calls this and derives `DiagnosticHop::diff`
@@ -157,7 +151,6 @@ pub fn compute_field_diffs(
     }
     diffs
 }
-
 /// A snapshot of a single pool's state, formatted for diagnostics.
 ///
 /// Numeric values are stored as hex strings so the output is
@@ -204,7 +197,6 @@ pub enum DiagnosticPoolState {
         liquidity: String,
     },
 }
-
 impl DiagnosticPoolState {
     /// Short family tag used by `compute_field_diffs` for the cross-family
     /// mismatch case (e.g. engine V2 vs onchain V3).
@@ -217,7 +209,6 @@ impl DiagnosticPoolState {
         }
     }
 }
-
 /// A single hop inside a diagnostic path snapshot.
 ///
 /// The onchain-comparison fields (`onchain_state`, `diff`, `drift`,
@@ -254,7 +245,6 @@ pub struct DiagnosticHop {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub field_drift: Vec<FieldDiff>,
 }
-
 impl Default for DiagnosticHop {
     fn default() -> Self {
         Self {
@@ -275,7 +265,6 @@ impl Default for DiagnosticHop {
         }
     }
 }
-
 /// Diagnostic snapshot for a single registered mixed path.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DiagnosticPathState {
@@ -321,7 +310,6 @@ pub struct DiagnosticPathState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revert_info: Option<String>,
 }
-
 impl DiagnosticPathState {
     /// Create a new diagnostic snapshot for a path.
     #[must_use]
@@ -340,23 +328,18 @@ impl DiagnosticPathState {
         }
     }
 }
-
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
-
 fn fmt_addr(addr: Address) -> String {
     addr.to_checksum(None)
 }
-
 fn fmt_u256(value: U256) -> String {
     format!("0x{value:x}")
 }
-
 fn u256_to_hex(value: U256) -> String {
     format!("0x{value:x}")
 }
-
 impl ArbitrageEngine {
     /// Snapshot the engine-owned state for every hop in `path_id`.
     ///
@@ -365,6 +348,7 @@ impl ArbitrageEngine {
     /// No RPC calls are made here.
     ///
     /// Returns `None` if the path is not registered.
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn diagnostic_path_state(&self, path_id: u64) -> Option<DiagnosticPathState> {
         let path = self.registry.get(path_id)?;
@@ -373,7 +357,6 @@ impl ArbitrageEngine {
         } else {
             self.cycle.cursor.last_processed_block()
         };
-
         let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
         // O5SKZ6: capture the engine's last-applied block alongside the
         // published `solve_block`. When `engine_processed_block >
@@ -383,14 +366,12 @@ impl ArbitrageEngine {
         // (post-publish swap included in live engine_state but excluded by the
         // pinned RPC), not real publish-time lag.
         snapshot.engine_processed_block = self.cycle.cursor.last_processed_block();
-
         // ADR-003: V2 state lives in BotState. One core-lock window covers all
         // V2 lookups in this loop; V3/V4 state still reads the per-family
         // block engines (disjoint fields, immutable borrows coexist).
         let core = self
             .core
             .read_at(crate::bot_core::state_lock::LockSite::Solver);
-
         let type_tags: Vec<&str> = path
             .pools
             .iter()
@@ -405,7 +386,6 @@ impl ArbitrageEngine {
             })
             .collect();
         snapshot.path_type = type_tags.join("-");
-
         for (position, pool_ref) in path.pools.iter().enumerate() {
             let engine_state = build_engine_pool_state(&core, pool_ref);
             let Some(engine_state) = engine_state else {
@@ -430,7 +410,6 @@ impl ArbitrageEngine {
                 });
                 continue;
             };
-
             snapshot.hops.push(DiagnosticHop {
                 position,
                 hop_type: type_tags[position].to_string(),
@@ -442,13 +421,13 @@ impl ArbitrageEngine {
                 field_drift: Vec::new(),
             });
         }
-
-        thread_solver_result_onto_snapshot(&mut snapshot, self.latest_results().0.get(&path_id));
-
+        thread_solver_result_onto_snapshot(
+            &mut snapshot,
+            self.cycle.results.get(&path_id).as_deref(),
+        );
         Some(snapshot)
     }
 }
-
 /// Thread the solver's `optimal_input` + `hop_outputs` (the solver's REPORTED
 /// per-hop amounts — the EXPECTED basis the classifier compares captured
 /// swaps against) onto the snapshot. The recompute-population half that used
@@ -463,7 +442,6 @@ fn thread_solver_result_onto_snapshot(
     snapshot.optimal_input = Some(u256_to_hex(result.optimal_input));
     snapshot.hop_outputs = result.hop_outputs.iter().map(|v| u256_to_hex(*v)).collect();
 }
-
 /// Build the per-hop [`DiagnosticPoolState`] from a locked [`BotState`] snapshot.
 ///
 /// Returns `None` when the pool referenced by `pool_ref` is absent from the
@@ -541,32 +519,25 @@ fn build_engine_pool_state(
         | HopType::CurveStableswap => None,
     }
 }
-
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use hashbrown::HashMap;
-
-    use alloy::primitives::{aliases::U112, Address, U256};
-
     use crate::arb_engine::{ArbitrageEngine, DiagnosticPathState, PoolTickCoverage};
     use crate::bot_core::RegisterV3PoolParams as V3Params;
     use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
     use ::degenbot_solvers::mixed::PoolHop;
-
+    use alloy::primitives::{aliases::U112, Address, U256};
+    use hashbrown::HashMap;
     fn usdc(amount: u64) -> U112 {
         (U256::from(amount) * U256::from(10u64).pow(U256::from(6))).to::<U112>()
     }
-
     fn weth(amount: u64) -> U112 {
         (U256::from(amount) * U256::from(10u64).pow(U256::from(18))).to::<U112>()
     }
-
     #[test]
     #[expect(clippy::too_many_lines)]
     fn diagnostic_path_state_captures_mixed_hops() {
         let mut engine = ArbitrageEngine::new();
-
         // V2 pool
         let v2_fwd = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
@@ -575,7 +546,6 @@ mod tests {
             997,
             1000,
         );
-
         // V3 pool
         let mut tick_data = HashMap::new();
         tick_data.insert(
@@ -602,7 +572,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // V4 pool
         let mut v4_tick_data = HashMap::new();
         v4_tick_data.insert(
@@ -636,7 +605,6 @@ mod tests {
                 fetcher: None,
             })
             .expect("V4 registration failed");
-
         // Mixed V2 -> V3 -> V4 path
         let path_id = engine
             .register_path(vec![
@@ -654,47 +622,39 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let snapshot = engine
             .diagnostic_path_state(path_id)
             .expect("path should exist");
-
         assert_eq!(snapshot.path_id, path_id);
         assert_eq!(snapshot.path_type, "V2-V3-V4");
         assert_eq!(snapshot.hops.len(), 3);
-
         // V2 hop
         assert!(matches!(
             snapshot.hops[0].engine_state,
             super::DiagnosticPoolState::V2 { .. }
         ));
-
         // V3 hop
         if let super::DiagnosticPoolState::V3 { fee, .. } = snapshot.hops[1].engine_state {
             assert_eq!(fee, 3000);
         } else {
             panic!("expected V3 state");
         }
-
         // V4 hop
         if let super::DiagnosticPoolState::V4 { fee, .. } = snapshot.hops[2].engine_state {
             assert_eq!(fee, 500);
         } else {
             panic!("expected V4 state");
         }
-
         // Round-trip through JSON should succeed.
         let json = serde_json::to_string(&snapshot).expect("snapshot should serialize");
         let _parsed: DiagnosticPathState =
             serde_json::from_str(&json).expect("snapshot should deserialize");
     }
-
     #[test]
     fn diagnostic_path_state_returns_none_for_unknown_path() {
         let engine = ArbitrageEngine::new();
         assert!(engine.diagnostic_path_state(1234).is_none());
     }
-
     /// O5SKZ6: the snapshot's `engine_processed_block` (the engine's
     /// last-applied block at snapshot time) MUST be present so the analyzer
     /// can distinguish post-publish snapshot timing artifacts (engine advanced
@@ -705,7 +665,6 @@ mod tests {
     #[test]
     fn diagnostic_path_state_includes_engine_processed_block() {
         use crate::bot_core::BlockMetadata;
-
         let mut engine = ArbitrageEngine::new();
         let v2_fwd = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
@@ -733,13 +692,11 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // No solve_dirty yet → both `solve_block` and
         // `engine_processed_block` are `None`.
         let snap = engine.diagnostic_path_state(path_id).expect("path exists");
         assert_eq!(snap.engine_processed_block, engine.last_processed_block());
         assert_eq!(snap.engine_processed_block, None);
-
         // Drive solve_dirty(123) → last_processed_block = Some(123).
         engine.solve_dirty(123, &BlockMetadata::default(), &[]);
         let snap = engine.diagnostic_path_state(path_id).expect("path exists");
@@ -749,22 +706,18 @@ mod tests {
             "engine_processed_block must mirror last_processed_block"
         );
         assert_eq!(snap.engine_processed_block, Some(123));
-
         // Advance: solve_dirty(124) → last_processed_block = Some(124).
         engine.solve_dirty(124, &BlockMetadata::default(), &[]);
         let snap = engine.diagnostic_path_state(path_id).expect("path exists");
         assert_eq!(snap.engine_processed_block, Some(124));
-
         // JSON round-trip preserves the field.
         let json = serde_json::to_string(&snap).expect("serializes");
         let parsed: DiagnosticPathState = serde_json::from_str(&json).expect("deserializes");
         assert_eq!(parsed.engine_processed_block, Some(124));
     }
-
     // -----------------------------------------------------------------
     // Structured typed drift fields (PCG2M3) — pure field-diff utilities
     // -----------------------------------------------------------------
-
     /// A V2 hop whose engine `reserve_in` / `reserve_out` both diverge from the
     /// on-chain snapshot yields TWO `FieldDiff` entries (`reserve_in`,
     /// `reserve_out`), `drift == true`, and the derived `diff` strings preserve
@@ -785,7 +738,6 @@ mod tests {
             fee_denom: "0x03e8".to_string(),
             gamma_numer: "0x03e5".to_string(),
         };
-
         let diffs = super::compute_field_diffs(&engine_state, &onchain_state);
         assert_eq!(diffs.len(), 2, "both reserves diverge → two field diffs");
         assert_eq!(diffs[0].field, "reserve_in");
@@ -794,11 +746,9 @@ mod tests {
         assert_eq!(diffs[1].field, "reserve_out");
         assert_eq!(diffs[1].engine, "0x02");
         assert_eq!(diffs[1].onchain, "0xee");
-
         // drift is exactly "field_drift is non-empty".
         let drift = !diffs.is_empty();
         assert!(drift);
-
         // Derived diff strings match the legacy format byte-for-byte.
         assert_eq!(
             diffs[0].to_diff_string(),
@@ -809,7 +759,6 @@ mod tests {
             "reserve_out: engine=0x02, onchain=0xee"
         );
     }
-
     /// A V2 hop whose reserves match the on-chain snapshot yields NO field
     /// diffs and `drift == false` (the matching-hop case).
     #[test]
@@ -828,11 +777,9 @@ mod tests {
             fee_denom: "0x03e8".to_string(),
             gamma_numer: "0x03e5".to_string(),
         };
-
         let diffs = super::compute_field_diffs(&engine_state, &onchain_state);
         assert!(diffs.is_empty(), "matching state → no field diffs");
     }
-
     /// `diagnostic_path_state` threads the solver's `optimal_input` +
     /// `hop_outputs` onto the snapshot when the path has recorded solve
     /// results. Drives `thread_solver_result_onto_snapshot` directly with a
@@ -841,7 +788,6 @@ mod tests {
     fn thread_solver_result_populates_snapshot_fields() {
         let reserve_in = U256::from(1_000_000_000_000_u64);
         let amount_in = U256::from(1_000_000_000_u64);
-
         let mut snapshot = super::DiagnosticPathState::new(7, Some(42));
         snapshot.hops.push(super::DiagnosticHop {
             position: 0,
@@ -859,7 +805,6 @@ mod tests {
             drift: false,
             field_drift: Vec::new(),
         });
-
         let hop_outputs = vec![U256::from(123_u64)];
         let solve_result = ::degenbot_solvers::mixed::SolvePathResult {
             optimal_input: amount_in,
@@ -869,9 +814,7 @@ mod tests {
             state_nonces: vec![],
             solver_pool_states: vec![],
         };
-
         super::thread_solver_result_onto_snapshot(&mut snapshot, Some(&solve_result));
-
         assert_eq!(
             snapshot.optimal_input.as_deref(),
             Some(format!("0x{amount_in:x}").as_str())

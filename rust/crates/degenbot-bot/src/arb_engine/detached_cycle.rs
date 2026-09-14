@@ -35,19 +35,15 @@
 //! `executor::outcome_ledger::OutcomeLedger::claim`.
 //!
 //! _Avoid_: "detached arm plumbing", "sidecar state" (CONTEXT.md).
-
 use degenbot_core::op_error;
 // ---------------------------------------------------------------------------
 // The machine surface — states, verbs, the total transition table
 // ---------------------------------------------------------------------------
-
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-
 use super::executor::outcome_ledger::OutcomeLedger;
 use super::executor::LaneOutcome;
 use super::ArbitrageEngine;
-
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 /// Design-locked in-flight depth safety valve (~8). WFF6MM: this is NO
 /// longer a runtime cap verdict (the in-cycle degrade it gated is retired);
 /// it survives only as the default + construction clamp for
@@ -58,7 +54,6 @@ use super::ArbitrageEngine;
 /// (P37YJG: the cap consult moved into the machine; WFF6MM: the consult
 /// retired with the arm.)
 pub(crate) const DETACHED_INFLIGHT_CAP: u64 = 8;
-
 /// THE persistent machine state (P37YJG). WFF6MM: the in-flight-cap
 /// `Saturated` state retired with the in-cycle arm — a begin ALWAYS opens,
 /// so the machine is `Unopened → Open`; no row ever returns to
@@ -70,7 +65,6 @@ pub(crate) enum CycleArm {
     /// A detached cycle has issued; the pipe is open (one parked `Receiver`).
     Open,
 }
-
 /// Every machine state, in cycle order — the sized ALL-states const the
 /// conformance walk drives (house pattern: `stage_handlers::ALL_STAGES` /
 /// `slot.rs` `ALL_ROLES`). Adding a [`CycleArm`] variant without extending
@@ -83,7 +77,6 @@ pub(crate) enum CycleArm {
     )
 )]
 pub(crate) const ALL_CYCLE_ARMS: [CycleArm; 2] = [CycleArm::Unopened, CycleArm::Open];
-
 /// One terminal disposition of ONE detached outcome (the machine's
 /// disposition counters + the pipeline meters they feed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +92,6 @@ pub(crate) enum Disposition {
     /// was refused): `duplicate_outcomes`.
     Duplicate,
 }
-
 /// A machine verb — the drivers' complete surface, one row family each in
 /// [`transition`]. WFF6MM: the in-cycle `TickInCycle` verb retired with the
 /// arm; a begin carries no verdict (the admission draw owns backpressure).
@@ -129,7 +121,6 @@ pub(crate) enum Transition {
     )]
     Disposition(Disposition),
 }
-
 /// THE legal-transition table (P37YJG; house pattern:
 /// `degenbot-workers` `slot.rs::transition`). WFF6MM: with the in-cycle arm
 /// retired every row is TOTAL, so the table is infallible (no typed
@@ -155,7 +146,6 @@ pub(crate) fn transition(from: CycleArm, t: Transition) -> CycleArm {
         Transition::OutcomeSent | Transition::Disposition(_) => from,
     }
 }
-
 /// The per-cycle begin decision: the machine-issued seq (THE ledger key half
 /// for this cycle's detached claims — the ONE `(solve_seq, pid)` key zone)
 /// and the merge-pipe `Sender` clone for the 'static bin threads. WFF6MM:
@@ -170,7 +160,6 @@ pub(crate) struct DetachedArm {
     /// detached cycle).
     pub(crate) merge_tx: std::sync::mpsc::Sender<LaneOutcome>,
 }
-
 /// The drain's counter aggregate (the sidecar's per-item consumption).
 /// P37YJG: the machine owns the disposition bookkeeping, so the aggregate
 /// lives here.
@@ -180,11 +169,9 @@ pub(crate) struct LaneDrainCounts {
     pub(crate) suppressed: usize,
     pub(crate) failed: usize,
 }
-
 // ---------------------------------------------------------------------------
 // THE machine
 // ---------------------------------------------------------------------------
-
 /// THE one detached solve-arm machine (P37YJG): the single owner of the
 /// scattered per-cycle fields this module's doc header names. The engine
 /// holds ONE of these. WFF6MM: the in-cycle stance is gone — every begin
@@ -245,13 +232,11 @@ pub(crate) struct DetachedCycle {
     /// `degenbot.detached.leads_expired`.
     pub(crate) leads_expired: std::sync::atomic::AtomicU64,
 }
-
 impl Default for DetachedCycle {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl DetachedCycle {
     /// The pre-cycle init: dormant (`Unopened`), pipe closed, counters at 0.
     #[must_use]
@@ -272,7 +257,6 @@ impl DetachedCycle {
             leads_expired: std::sync::atomic::AtomicU64::new(0),
         }
     }
-
     /// The persistent machine state (diagnostics + the conformance walk).
     #[must_use]
     #[cfg_attr(
@@ -285,14 +269,12 @@ impl DetachedCycle {
     pub(crate) fn state(&self) -> CycleArm {
         self.state
     }
-
     /// The most recently issued detached cycle's seq — the sidecar's
     /// straggler-age telemetry anchor (`detached_issued_seq`).
     #[must_use]
     pub(crate) fn issued_seq(&self) -> u64 {
         self.detached_issued_seq
     }
-
     /// THE arm decision (one machine verb): tick the ONE seq counter, open
     /// the merge pipe once (if not already open), and hand back the `Sender`
     /// clone for the 'static bin threads. WFF6MM: this ALWAYS issues the
@@ -334,7 +316,6 @@ impl DetachedCycle {
             merge_tx,
         }
     }
-
     /// The ISSUE half of the gauge pair (contract 1, REV 2 Defect 1): ONE
     /// `Arc` hook per bin, fired on a `Solved` item's SEND SUCCESS only —
     /// never for `Suppressed`/`Failed` (those never bump, so they may never
@@ -347,7 +328,6 @@ impl DetachedCycle {
             outstanding.fetch_add(1, Ordering::Relaxed);
         })
     }
-
     /// The RECEIPT half of the gauge pair: ONE Solved item arrived at the
     /// merge — decrement the in-flight gauge exactly once and publish both
     /// meters. ONLY the Solved arm calls this (only it was ever bumped).
@@ -365,7 +345,6 @@ impl DetachedCycle {
         ));
         outstanding_now
     }
-
     /// Publish the in-flight gauge to both meters (the enqueue half's
     /// post-submit read).
     pub(crate) fn publish_gauge(&self) {
@@ -377,7 +356,6 @@ impl DetachedCycle {
             u32::try_from(outstanding_now).unwrap_or(u32::MAX),
         ));
     }
-
     /// QTZGFL: one admission SHED cycle (zero draw budget) — the machine
     /// owns the disposition counter + its pipeline meter, mirroring
     /// [`Self::disposition`]. A shed cycle takes NO transition beyond the
@@ -389,7 +367,6 @@ impl DetachedCycle {
             p.count_detached_shed();
         }
     }
-
     /// QTZGFL: `n` retained admission keys expired by the retention window
     /// (`head − W`) on a block advance — the machine counter + its pipeline
     /// meter. A zero count is a no-op (no spurious series touch).
@@ -403,7 +380,6 @@ impl DetachedCycle {
             p.count_detached_leads_expired(expired);
         }
     }
-
     /// ONE terminal disposition: land it on the machine's counter (+ the
     /// pipeline meter it feeds). The per-item LOG LINES stay at the call
     /// sites (they carry item fields — path id, seq, age — and their span
@@ -433,7 +409,6 @@ impl DetachedCycle {
             }
         }
     }
-
     /// THE one ledger door (P37YJG): the machine drives the ledger — every
     /// arm's claim runs through here with the machine-issued seq half.
     /// Callers hold the engine mutex across `claim` (the ledger mutex is
@@ -442,7 +417,6 @@ impl DetachedCycle {
     pub(crate) fn claim(&self, k: (u64, u64)) -> Result<(), (u64, u64)> {
         self.outcome_ledger.lock().claim(k)
     }
-
     /// Hand the parked merge-pipe Receiver to the spawner (epic SRQEK5
     /// WV62TX): `EngineStages::solve_dirty` takes it ONCE, at the FIRST
     /// detached enqueue, and owns it inside the sidecar thread. `None` = the
@@ -451,12 +425,10 @@ impl DetachedCycle {
         self.merge_rx.lock().take()
     }
 }
-
 // ---------------------------------------------------------------------------
 // THE ONE sidecar spawn (P37YJG): both former engine_stages spawn sites
 // delegate here.
 // ---------------------------------------------------------------------------
-
 /// The detached merge sidecar's thread name (the sidecar IS the fleet
 /// `Merge` role — the pinned T4 seat's named thread pattern; the historical
 /// legacy name retired at the LW-T9 cutover).
@@ -466,7 +438,6 @@ pub(crate) fn merge_sidecar_thread_name() -> String {
         .thread_name()
         .replace("{n}", "1")
 }
-
 /// The sidecar's worker-census row: the fleet `Merge` role's row (census
 /// resource `fleet_merge_slots`, exactly one pinned seat) — the only
 /// posture since the LW-T9 cutover.
@@ -482,7 +453,6 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
         binding: "pinned",
     }
 }
-
 // ---------------------------------------------------------------------------
 // DETACHED SOLVE CYCLE (epic SRQEK5, task WV62TX)
 // ---------------------------------------------------------------------------
@@ -501,10 +471,8 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
 // This gate is now the SOLE staleness guard on the solve path (the ADR-021
 // in-process solver-state tripwire retired with task 2UVG3E; only the
 // upstream RPC-disagreement check survives at the Published edge).
-
 // P37YJG: the in-flight cap constant moved with the cap consult into the
 // one detached-cycle machine — `detached_cycle::DETACHED_INFLIGHT_CAP`.
-
 // The detached-merge CARRIER is `executor::LaneOutcome` (QR3NUS 43E3H3):
 // the former single-variant enum folded into the unified
 // `LaneOutcome::Solved(SolveOutcome)` — the typed `Solved`/`Suppressed`/
@@ -512,7 +480,6 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
 // pipe now also carries the lane witness's `Failed` panic records). The
 // exactness ledger age moved with it (`executor::outcome_ledger::LEDGER_AGE`,
 // carried unchanged).
-
 /// The detached-merge SIDECAR thread body (epic SRQEK5 WV62TX): owns the
 /// unbounded mpsc `Receiver` of the merge pipe and applies each item under
 /// the engine Mutex — Q1a stale gate + the SAME merge/emit path as the
@@ -569,7 +536,6 @@ pub(crate) fn detached_merge_sidecar(
         }
     });
 }
-
 /// Spawn the detached merge sidecar for the parked receiver (epic SRQEK5
 /// WV62TX; P37YJG: THE ONE spawn — both former `engine_stages` sites call
 /// this). The take-once is [`DetachedCycle::take_merge_rx`], done by the
@@ -600,13 +566,11 @@ pub(crate) fn spawn_merge_sidecar(
         std::process::abort();
     }
 }
-
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::arb_engine::executor;
-
     /// The sized ALL-states const is exhaustive and duplicate-free; adding
     /// a `CycleArm` variant without extending the table + this walk fails
     /// the exhaustive match below at compile time (house pattern:
@@ -628,7 +592,6 @@ mod tests {
         }
         assert_eq!(ALL_CYCLE_ARMS, [CycleArm::Unopened, CycleArm::Open]);
     }
-
     /// THE CONFORMANCE WALK (P37YJG): every legal (state × transition) cell
     /// lands on its table successor. WFF6MM: with the in-cycle arm retired
     /// every row is total — there is no illegal cell and therefore no typed
@@ -666,9 +629,7 @@ mod tests {
             }
         }
     }
-
     // ---- machine-level conformance (a real machine drives the script) ----
-
     #[test]
     fn machine_opens_the_pipe_once_and_takes_it_once() {
         let mut m = DetachedCycle::new();
@@ -696,7 +657,6 @@ mod tests {
         );
         drop(merge_tx);
     }
-
     /// WFF6MM: the begin ALWAYS issues the detached arm — a cycle whose
     /// in-flight gauge sits at/over the design depth safety valve still
     /// detaches (the admission draw, not a cap verdict, owns backpressure).
@@ -709,7 +669,6 @@ mod tests {
             assert_eq!(m.state(), CycleArm::Open);
         }
     }
-
     #[test]
     fn machine_gauge_pair_and_disposition_counters() {
         let m = DetachedCycle::new();
@@ -733,7 +692,6 @@ mod tests {
         assert_eq!(m.dropped_deregistered.load(Ordering::Relaxed), 1);
         assert_eq!(m.duplicate_outcomes.load(Ordering::Relaxed), 2);
     }
-
     #[test]
     fn machine_ledger_door_claims_once_and_prunes_past_age() {
         let m = DetachedCycle::new();

@@ -36,24 +36,21 @@
 //! | `captured_swaps` (`Vec<CapturedSwap>`) | `captured_swaps: Vec<CapturedSwapRow>` |
 //! | `hop_count` | `hop_count` |
 //! | — (dispatch failures only) | `failure: Option<InlineSimFailure>` |
-
 use crate::arb_engine::ArbitrageEngine;
+#[cfg(test)]
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::{Address, I256, U256};
 use degenbot_solvers::mixed::{MixedPoolRef, SolvePathResult};
-
 // 5WCRWZ T3: the pipelined sim scheduler moved here beside `PendingSim` /
 // `SimulatedPathResult`; it takes the cycle context from `solve_cycle` and
 // owns the once-per-process boot-refusal latch (5WCRWZ T5).
 use super::solve_cycle::SolveCycleShared;
 use degenbot_core::op_error;
-
 // FF-T1 (BPHR6F): one loud line for the sticky sim-fleet boot refusal — the
 // materializer surfaces the typed Err on EVERY dispatch; the log rides a
 // once-flag so a refused boot cannot spam the per-block cadence.
 static SIM_BOOT_REFUSAL_LOGGED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
-
 /// The engine → simulator request for ONE clamp-admitted path.
 ///
 /// Primitive by design: `hops` are the to_solve-aligned
@@ -92,7 +89,6 @@ pub struct InlineSimRequest {
     pub parent_gas_used: u64,
     pub parent_gas_limit: u64,
 }
-
 /// One EIP-2930 access-list row (primitive mirror of `AccessListItem`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccessListRow {
@@ -101,7 +97,6 @@ pub struct AccessListRow {
     /// The touched storage keys, in access order.
     pub storage_keys: Vec<U256>,
 }
-
 /// The swap-family tag of a captured swap, as a local primitive enum (the
 /// `CapturedSwap` original lives in `degenbot-simulation` and is forbidden
 /// here by ADR-019 D7).
@@ -111,7 +106,6 @@ pub enum InlineSwapFamily {
     V3,
     V4,
 }
-
 /// Primitive mirror of `degenbot_simulation::CapturedSwap` — the swap events
 /// the sim inspector decoded. See the original doc for field semantics.
 #[derive(Clone, Debug, PartialEq)]
@@ -131,7 +125,6 @@ pub struct CapturedSwapRow {
     /// Post-swap tick (V3/V4) or `0` (V2 `Sync`).
     pub tick: i32,
 }
-
 /// A failed inline simulation, rendered for the `[sim-fail]` rows (T3's
 /// render contract). `fail_index` is `Some(call idx)` when one specific
 /// simulated call reverted; `revert_data` is the raw revert payload.
@@ -146,7 +139,6 @@ pub struct InlineSimFailure {
     /// `[sim-fail]` render (the `fail_buckets` key parity).
     pub bucket: String,
 }
-
 /// The inline simulation result — THE primitive payload (module doc has the
 /// field-parity table against `SimResult`/`SubmitCandidate`). `None` from
 /// [`InlineSimulator::simulate_path`] = the path failed simulation without a
@@ -178,7 +170,6 @@ pub struct SimulatedPathResult {
     /// payload; T3). A failed payload carries no useful profit/gas values.
     pub failure: Option<InlineSimFailure>,
 }
-
 /// A scheduled-but-maybe-unfinished inline sim (7LV6VN T5). The solve
 /// worker schedules the eager EVM simulation and keeps walking paths; the
 /// receipt is polled non-blockingly (delivery as soon as each sim lands)
@@ -188,7 +179,6 @@ pub struct SimulatedPathResult {
 pub struct PendingSim {
     rx: std::sync::mpsc::Receiver<Option<SimulatedPathResult>>,
 }
-
 /// Poll verdict for a scheduled sim (the `Box` keeps variants balanced;
 /// the inner `Option` is the payload contract — `None` = sim-failed).
 #[derive(Debug)]
@@ -198,12 +188,10 @@ pub(crate) enum SimPoll {
     /// Still in flight.
     InFlight,
 }
-
 impl PendingSim {
     pub(crate) fn new(rx: std::sync::mpsc::Receiver<Option<SimulatedPathResult>>) -> Self {
         Self { rx }
     }
-
     /// Non-blocking poll (the `Box` flattens back to the payload on join).
     pub(crate) fn try_result(&self) -> SimPoll {
         match self.rx.try_recv() {
@@ -211,13 +199,11 @@ impl PendingSim {
             Err(_) => SimPoll::InFlight,
         }
     }
-
     /// Blocking join (bin-tail collection).
     pub(crate) fn result(self) -> Option<SimulatedPathResult> {
         self.rx.recv().ok().flatten()
     }
 }
-
 /// The hook the outer driver installs (ADR-019 D7 dependency inversion).
 /// `Send + Sync + 'static` so the engine can hold it as
 /// `Arc<dyn InlineSimulator>` and call it from any solve/merge context.
@@ -226,7 +212,6 @@ pub trait InlineSimulator: Send + Sync + 'static {
     /// (the entry's batch payload slot stays empty — T3's map decides the
     /// legacy FFI sim path per entry).
     fn simulate_path(&self, request: InlineSimRequest) -> Option<SimulatedPathResult>;
-
     /// Eagerly START the sim for ONE clamp-admitted path and return a
     /// receipt the worker polls/joins later (7LV6VN T5 pipelining). The
     /// default runs the synchronous [`InlineSimulator::simulate_path`]
@@ -243,52 +228,22 @@ pub trait InlineSimulator: Send + Sync + 'static {
         rx
     }
 }
-
 impl ArbitrageEngine {
     /// Install the inline-sim hook (engine construction/wiring, from the
     /// outer driver; mirrors `set_result_channel`).
+    ///
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     pub fn set_inline_simulator(&mut self, sim: std::sync::Arc<dyn InlineSimulator>) {
-        self.inline_sim = Some(std::sync::Arc::clone(&sim));
-        // ADR-045 T4: the cycle owns its own handle for the solve dispatch.
+        // ADR-045 T4 / T3: the cycle owns the handle for the solve dispatch;
+        // the former engine-side copy died with the `inline_simulate` seam.
         self.cycle.inline_sim = Some(sim);
     }
-
-    /// Simulate one clamp-admitted path through the installed hook. `None` =
-    /// no hook installed, the path is unknown, or the hook reported failure-
-    /// without-payload. `metadata` supplies the sim's block env (the same
-    /// fields the worker path fills from its cycle snapshot).
-    #[must_use]
-    pub fn inline_simulate(
-        &self,
-        path_id: u64,
-        clamp_admitted: &SolvePathResult,
-        metadata: &BlockMetadata,
-    ) -> Option<SimulatedPathResult> {
-        let sim = self.inline_sim.as_ref()?;
-        let hops = self.registry.get(path_id)?.pools.clone();
-        let request = InlineSimRequest {
-            path_id,
-            hops,
-            optimal_input: clamp_admitted.optimal_input,
-            consumed_inputs: clamp_admitted.consumed_inputs.clone(),
-            hop_outputs: clamp_admitted.hop_outputs.clone(),
-            state_nonces: clamp_admitted.state_nonces.clone(),
-            sim_block: self.cycle.cursor.results_block(),
-            block_timestamp: metadata.timestamp,
-            parent_base_fee: metadata.base_fee_per_gas.unwrap_or(0),
-            parent_gas_used: metadata.gas_used,
-            parent_gas_limit: metadata.gas_limit,
-        };
-        sim.simulate_path(request)
-    }
 }
-
 /// One scheduled sim: pid + the receipt the worker polls/joins.
 #[derive(Default)]
 pub(crate) struct PipelinedSims {
     pending: Vec<(u64, PendingSim)>,
 }
-
 impl PipelinedSims {
     pub(crate) fn schedule_one(
         &mut self,
@@ -405,7 +360,6 @@ impl PipelinedSims {
         self.pending.push((pid, PendingSim::new(rx)));
         true
     }
-
     /// Non-blocking sweep: hand back every sim that finished while the bin
     /// kept walking. Each pid surfaces exactly once.
     pub(crate) fn drain_ready(
@@ -425,7 +379,6 @@ impl PipelinedSims {
         self.pending = still;
         ready
     }
-
     /// Bin-tail join: block for every outstanding sim. Order preserved.
     pub(crate) fn join_all(
         self,
@@ -437,12 +390,10 @@ impl PipelinedSims {
     > {
         self.pending.into_iter().map(|(pid, p)| (pid, p.result()))
     }
-
     pub(crate) fn is_empty(&self) -> bool {
         self.pending.is_empty()
     }
 }
-
 #[cfg(test)]
 mod inline_sim_tests {
     use super::*;
@@ -452,12 +403,10 @@ mod inline_sim_tests {
     use hashbrown::HashMap;
     use parking_lot::Mutex;
     use std::sync::Arc;
-
     struct RecordingSim {
         requests: Mutex<Vec<InlineSimRequest>>,
         payload: SimulatedPathResult,
     }
-
     impl InlineSimulator for RecordingSim {
         fn simulate_path(&self, request: InlineSimRequest) -> Option<SimulatedPathResult> {
             self.requests.lock().push(request);
@@ -466,7 +415,6 @@ mod inline_sim_tests {
             Some(payload)
         }
     }
-
     #[expect(clippy::unwrap_used)]
     fn stub_payload() -> SimulatedPathResult {
         SimulatedPathResult {
@@ -494,7 +442,6 @@ mod inline_sim_tests {
             failure: None,
         }
     }
-
     #[expect(clippy::expect_used)]
     fn two_hop_engine() -> (ArbitrageEngine, u64) {
         use crate::arb_engine::PoolTickCoverage;
@@ -565,7 +512,6 @@ mod inline_sim_tests {
             .expect("path registers");
         (engine, path_id)
     }
-
     fn admitted() -> SolvePathResult {
         SolvePathResult {
             optimal_input: U256::from(1_000_000_000u64),
@@ -576,7 +522,6 @@ mod inline_sim_tests {
             solver_pool_states: Vec::new(),
         }
     }
-
     #[test]
     #[expect(clippy::expect_used)]
     fn engine_calls_hook_with_aligned_primitive_request() {
@@ -587,9 +532,14 @@ mod inline_sim_tests {
         });
         engine.set_inline_simulator(sim.clone());
         let got = engine
-            .inline_simulate(path_id, &admitted(), &BlockMetadata::default())
+            .cycle
+            .inline_simulate(
+                path_id,
+                &engine.registry,
+                &admitted(),
+                &BlockMetadata::default(),
+            )
             .expect("hook returns the payload");
-
         // The request the engine built: hops in path order, engine-native
         // primitives only.
         let reqs = sim.requests.lock();
@@ -607,7 +557,6 @@ mod inline_sim_tests {
             "clamp-committed optimal input passed through"
         );
         assert_eq!(req.consumed_inputs.len(), 2, "per-hop consumed inputs");
-
         // The payload round-trips untouched (field parity — module doc table).
         assert_eq!(got.execute_calldata, stub_payload().execute_calldata);
         assert_eq!(got.gross_profit, U256::from(1_000u64));
@@ -618,13 +567,18 @@ mod inline_sim_tests {
         assert_eq!(got.hop_count, 2);
         assert!(got.failure.is_none());
     }
-
     #[test]
     fn no_hook_or_unknown_path_is_none() {
         let (engine, path_id) = two_hop_engine();
         assert!(
             engine
-                .inline_simulate(path_id, &admitted(), &BlockMetadata::default())
+                .cycle
+                .inline_simulate(
+                    path_id,
+                    &engine.registry,
+                    &admitted(),
+                    &BlockMetadata::default(),
+                )
                 .is_none(),
             "no hook installed → None"
         );
@@ -635,7 +589,13 @@ mod inline_sim_tests {
         }));
         assert!(
             engine2
-                .inline_simulate(99_999, &admitted(), &BlockMetadata::default())
+                .cycle
+                .inline_simulate(
+                    99_999,
+                    &engine2.registry,
+                    &admitted(),
+                    &BlockMetadata::default(),
+                )
                 .is_none(),
             "unknown path → None (no request built)"
         );

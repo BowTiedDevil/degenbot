@@ -7,10 +7,6 @@
 #[cfg(test)]
 #[expect(clippy::module_inception)]
 mod tests {
-    use hashbrown::{HashMap, HashSet};
-
-    use alloy::primitives::{aliases::U112, Address, U256};
-
     use crate::arb_engine::{ArbitrageEngine, BlockMetadata, EnginePhase};
     use crate::bot_core::RegisterV3PoolParams;
     use crate::bot_core::RegisterV4PoolParams;
@@ -18,23 +14,20 @@ mod tests {
         HopType, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult,
         INT128_MAX,
     };
+    use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_uniswap::dex_identity::DexVariant;
-
+    use hashbrown::{HashMap, HashSet};
     fn usdc(amount: u64) -> U112 {
         (U256::from(amount) * U256::from(10u64).pow(U256::from(6))).to::<U112>()
     }
-
     fn weth(amount: u64) -> U112 {
         (U256::from(amount) * U256::from(10u64).pow(U256::from(18))).to::<U112>()
     }
-
     const GAMMA_03: u64 = 997;
     const FEE_DENOM_03: u64 = 1000;
-
     #[test]
     fn register_v2_and_v3_pools() {
         let mut engine = ArbitrageEngine::new();
-
         // Register a V2 pool
         let v2_fwd = engine.register_v2_pool(
             Address::ZERO,
@@ -43,7 +36,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // Register a V3 pool
         let mut tick_data = HashMap::new();
         tick_data.insert(
@@ -62,7 +54,6 @@ mod tests {
                 block: 0,
             },
         );
-
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
             token0: Address::from([0u8; 20]),
@@ -80,10 +71,8 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         assert_eq!(engine.v2_pool_count(), 1);
         assert_eq!(engine.v3_pool_count(), 1);
-
         // Register a mixed V2→V3 path
         let path_id = engine
             .register_path(vec![
@@ -97,30 +86,24 @@ mod tests {
                 },
             ])
             .unwrap();
-
         assert_eq!(path_id, 1);
         assert_eq!(engine.path_count(), 1);
-
         // Path should be resolved
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert_eq!(resolved.hops.len(), 2);
         assert_eq!(resolved.hops[0].hop_type(), HopType::V2);
         assert_eq!(resolved.hops[1].hop_type(), HopType::V3);
     }
-
     #[test]
     fn process_block_routes_logs_to_sub_engines() {
         let mut engine = ArbitrageEngine::new();
-
         // Register V2 pools
         let v2_addr = Address::ZERO;
         let v2_fwd =
             engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
-
         let v2_addr1 = Address::from([1u8; 20]);
         let v2_fwd1 =
             engine.register_v2_pool(v2_addr1, weth(800), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
-
         // Register a pure V2 path
         engine
             .register_path(vec![
@@ -134,21 +117,17 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Process with no logs — should not panic. X35QKN: process_block was
         // retired (the parallel log-routing API); an empty-log process is just
         // solve_dirty over empty dirty sets + the last_processed_block stamp.
         engine.solve_dirty(1, &BlockMetadata::default(), &[]);
-
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
         let _ = results; // May or may not have profitable results
     }
-
     #[test]
     fn mixed_path_v2_to_v3_resolves() {
         let mut engine = ArbitrageEngine::new();
-
         // V2 pool
         let v2_fwd = engine.register_v2_pool(
             Address::ZERO,
@@ -157,7 +136,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // V3 pool
         let mut tick_data = HashMap::new();
         tick_data.insert(
@@ -176,7 +154,6 @@ mod tests {
                 block: 0,
             },
         );
-
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
             token0: Address::from([0u8; 20]),
@@ -194,7 +171,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // Mixed V2→V3 path
         let path_id = engine
             .register_path(vec![
@@ -208,16 +184,13 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.hops[0].as_v2_state().is_some());
         assert!(matches!(resolved.hops[1], ResolvedHop::V3 { .. }));
     }
-
     #[test]
     fn missing_v2_pool_makes_path_invalid() {
         let mut engine = ArbitrageEngine::new();
-
         // Only register V3 pool
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
@@ -236,7 +209,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // Reference a non-existent V2 pool — ADR-006 D3: register_path
         // rejects a pool_id not present in the BotState rather than silently
         // producing an unresolved/invalid path.
@@ -255,20 +227,16 @@ mod tests {
             "register_path must reject a pool_id not registered in the BotState"
         );
     }
-
     #[test]
     fn process_updates_applies_both_types() {
         let mut engine = ArbitrageEngine::new();
-
         // Register V2 pools
         let v2_addr = Address::from([0x11u8; 20]);
         let v2_fwd =
             engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
-
         let v2_addr1 = Address::from([0x12u8; 20]);
         let v2_fwd1 =
             engine.register_v2_pool(v2_addr1, weth(800), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
-
         // Register V2-only path
         engine
             .register_path(vec![
@@ -282,7 +250,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Process updates
         engine.process_updates(
             &[(v2_addr, usdc(1_400_000), weth(750))],
@@ -290,11 +257,9 @@ mod tests {
             42,
             &BlockMetadata::default(),
         );
-
         let (_, block) = engine.latest_results();
         assert_eq!(block, 42);
     }
-
     #[test]
     fn quiet_pool_that_swapped_11_blocks_ago_is_still_solved() {
         // QNFYR5 / YXHHKR RED. A pool that swapped once (update_block = 100) then
@@ -308,7 +273,6 @@ mod tests {
         // deleted with the fix; the ADR-021 verifier is the sole chain/solver-
         // mismatch guard.
         let mut engine = ArbitrageEngine::new();
-
         let v2_addr_a = Address::from([0x21u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
@@ -325,7 +289,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         let path_id = engine
             .register_and_solve_path(vec![
                 PoolHop {
@@ -338,7 +301,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Pool A swaps at block 100 (advancing update_block to 100), then goes quiet.
         engine.process_updates(
             &[(v2_addr_a, usdc(1_400_000), weth(750))],
@@ -346,7 +308,6 @@ mod tests {
             100,
             &BlockMetadata::default(),
         );
-
         // Re-solve at block 111: pool A trails by 11 blocks — quiet, not stale.
         engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
@@ -359,7 +320,6 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-
         let (results, _block) = engine.latest_results();
         let solve_result = results.get(&path_id).expect(
             "quiet-but-current path (hop 11 blocks quiet) must be solved, not deferred \
@@ -368,7 +328,6 @@ mod tests {
         assert!(!solve_result.optimal_input.is_zero());
         assert!(!solve_result.profit.is_zero());
     }
-
     /// The invalid-path container recheck: an invalid path re-checks ONLY when
     /// a responsible pool goes dirty (and leaves Invalid as long as the pool
     /// stays empty); unrelated co-hop dirt does not re-derive it. Observable
@@ -377,9 +336,7 @@ mod tests {
     #[test]
     fn invalid_path_skips_unrelated_dirty_but_rechecks_own_pool() {
         use crate::arb_engine::path_lifecycle::PathSolveStatus;
-
         let mut engine = ArbitrageEngine::new();
-
         // Empty V3 (Tracked coverage, no initialized ticks → NotViable).
         let empty_v3 = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0x55u8; 20]),
@@ -404,7 +361,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // 2-hop V3(empty) → V2. Registering succeeds (NotViable is recoverable,
         // not structural), but the path is Invalid with responsible={empty_v3}.
         let path_id = engine
@@ -426,7 +382,6 @@ mod tests {
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
-
         // Unrelated dirty (the V2 co-hop) must NOT re-resolve the invalid path:
         // clear the resolve stamp and prove the cycle does not re-derive the
         // path (no snapshot re-insertion).
@@ -453,7 +408,6 @@ mod tests {
             }
             other => panic!("expected still Invalid, got {other:?}"),
         }
-
         // Dirtying the path's OWN responsible empty pool clears the container
         // and re-checks it (still empty → Invalid again, but it WAS re-checked).
         engine.cycle.run_epoch(
@@ -472,7 +426,6 @@ mod tests {
             "dirtying the path's own responsible pool must re-derive (re-check) it"
         );
     }
-
     #[test]
     fn register_path_after_start_succeeds() {
         let mut engine = ArbitrageEngine::new();
@@ -513,9 +466,7 @@ mod tests {
             ])
             .unwrap();
     }
-
     use crate::arb_engine::lifecycle::PathRegistrationError;
-
     /// PRG-4 / IRUMXD: the engine path registry owns the registered-path
     /// cap. At the cap, a NEW path registration is refused with the typed
     /// benign-stop refusal (`RegistryFull`) — no Python counters involve —
@@ -543,9 +494,7 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         engine.set_path_cap(Some(1));
-
         // Two-hop path (usdc→weth then weth→usdc), per the dedicated
         // reversed-direction registration test above.
         let hops = vec![
@@ -561,13 +510,11 @@ mod tests {
         let id1 = engine
             .register_path(hops.clone())
             .expect("first registration fits the cap");
-
         // A duplicate at-cap still answers (dedup precedes the cap check).
         let dup = engine
             .register_path(hops.clone())
             .expect("dedup is not capped");
         assert_eq!(dup, id1, "duplicate registration returns the existing id");
-
         // A NEW path at the cap (same pools, reversed direction): the typed
         // benign-stop refusal.
         let hops2 = vec![
@@ -591,7 +538,6 @@ mod tests {
             },
             "the refusal carries cap + registered counts"
         );
-
         // Raising the cap admits the queued registration.
         engine.set_path_cap(Some(2));
         let id2 = engine
@@ -599,7 +545,6 @@ mod tests {
             .expect("registry grown by the operator");
         assert_ne!(id1, id2);
     }
-
     /// PRG-4: dedup hits are counted engine-side (the `dup` skip telemetry
     /// no longer has a Python witness — the duplicate never crosses the FFI
     /// as a skip).
@@ -632,7 +577,6 @@ mod tests {
         let _ = engine.register_path(hops).expect("dedup hit");
         assert_eq!(engine.path_dedups(), 1, "the duplicate was counted");
     }
-
     /// FPGOYX: registering the same path (same pools + directions) twice
     /// must be idempotent — return the SAME `path_id`, not a new one.
     /// Unbounded registration growth (8.7k -> 107k in 25 min) caused OOM kills
@@ -652,7 +596,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         let hops = vec![
             PoolHop {
                 pool_id: v2_fwd,
@@ -663,10 +606,8 @@ mod tests {
                 zero_for_one: true,
             },
         ];
-
         let id1 = engine.register_path(hops.clone()).expect("first register");
         let id2 = engine.register_path(hops).expect("second register (dedup)");
-
         assert_eq!(
             id1, id2,
             "duplicate path registration must return the same path_id"
@@ -677,7 +618,6 @@ mod tests {
             "engine must not grow on duplicate registration"
         );
     }
-
     /// FPGOYX: a path with the same pools but reversed directions is a
     /// different path and must get its own id.
     #[test]
@@ -694,7 +634,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         let id_fwd = engine
             .register_path(vec![
                 PoolHop {
@@ -707,7 +646,6 @@ mod tests {
                 },
             ])
             .expect("fwd register");
-
         let id_rev = engine
             .register_path(vec![
                 PoolHop {
@@ -720,7 +658,6 @@ mod tests {
                 },
             ])
             .expect("rev register");
-
         assert_ne!(id_fwd, id_rev, "reversed-direction path must be distinct");
         assert_eq!(
             engine.path_count(),
@@ -728,11 +665,9 @@ mod tests {
             "two distinct paths should be registered"
         );
     }
-
     #[test]
     fn register_and_solve_path_eagerly_solves() {
         let mut engine = ArbitrageEngine::new();
-
         // Two V2 pools with price divergence
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
@@ -750,7 +685,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // register_and_solve_path should eagerly solve and append to results
         let path_id = engine
             .register_and_solve_path(vec![
@@ -764,10 +698,8 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Should be tracked as pending so run_epoch can merge
         assert!(engine.cycle.pending_new_paths.contains(&path_id));
-
         // Results should already contain the eagerly-solved path
         let (results, _block) = engine.latest_results();
         let solve_result = results.get(&path_id);
@@ -775,16 +707,13 @@ mod tests {
             solve_result.is_some(),
             "register_and_solve_path should eagerly solve and add to results"
         );
-
         let solve_result = solve_result.unwrap();
         assert!(!solve_result.optimal_input.is_zero());
         assert!(!solve_result.profit.is_zero());
     }
-
     #[test]
     fn pending_new_paths_survive_rebuild() {
         let mut engine = ArbitrageEngine::new();
-
         // Two V2 pools with price divergence
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
@@ -802,7 +731,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // Register path eagerly
         let path_id = engine
             .register_and_solve_path(vec![
@@ -816,7 +744,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Process an empty block (no affected pools) — run_epoch
         // should still include the pending path and not drop it
         engine.cycle.run_epoch(
@@ -830,10 +757,8 @@ mod tests {
             &engine.registry,
             &mut engine.delivery,
         );
-
         // Pending set should be cleared
         assert!(engine.cycle.pending_new_paths.is_empty());
-
         // The path's result should survive the rebuild
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
@@ -842,7 +767,6 @@ mod tests {
             "pending new path result should survive run_epoch"
         );
     }
-
     #[test]
     fn solve_all_paths_does_not_advance_delivered_without_channel() {
         // Contract: `solve_all_paths` is solve-only. It populates `results`
@@ -856,7 +780,6 @@ mod tests {
         // No set_result_channel call — mirrors `solve_all_paths`'s real
         // callers (every one in tests/ builds an engine and reads
         // `latest_results()`, none sets a channel).
-
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
@@ -885,9 +808,7 @@ mod tests {
                 },
             ])
             .unwrap();
-
         engine.solve_all_paths(1);
-
         // Solve actually ran: results populated with a profitable path.
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
@@ -896,14 +817,12 @@ mod tests {
             .expect("solve_all_paths should populate results");
         assert!(!solve_result.optimal_input.is_zero());
         assert!(!solve_result.profit.is_zero());
-
         // Delivered untouched — Python has not received anything.
         assert!(
             engine.delivery.delivered.is_empty(),
             "solve_all_paths must not advance `delivered` without a channel"
         );
     }
-
     #[test]
     fn solve_does_not_send_result_batch_only_send_does() {
         // Contract (lock granularity, 3HYYGQ): solving
@@ -927,7 +846,6 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
-
         // Two mispriced V2 pools → a profitable V2→V2 arb at solve time.
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
@@ -957,7 +875,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Solve with a live channel — must NOT send.
         engine.solve_all_paths(1);
         assert!(
@@ -968,7 +885,6 @@ mod tests {
             "solve must not push a result batch onto the channel; \
              only send_result_batch sends"
         );
-
         // Solving did run: a profitable result is present but undelivered.
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
@@ -980,7 +896,6 @@ mod tests {
             engine.delivery.delivered.is_empty(),
             "solve must not advance `delivered` (Python has received nothing)"
         );
-
         // Only the explicit send drives the channel.
         engine.send_result_batch(&BlockMetadata::default());
         let batch = rx
@@ -991,7 +906,6 @@ mod tests {
             "the solved path should arrive in the `fresh` list"
         );
     }
-
     #[test]
     fn send_result_batch_advances_delivered_to_above_threshold() {
         // Contract: after a real `send_result_batch` (channel live + send
@@ -1008,7 +922,6 @@ mod tests {
         let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
         // Defaults already min_profit=0, max_profit=MAX (window fully open).
-
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
@@ -1037,23 +950,19 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Eagerly solved → path is in `results` and above-threshold.
         let (results_before, _) = engine.latest_results();
         let solve_result = results_before
             .get(&path_id)
             .expect("eagerly solved path present");
         assert!(!solve_result.profit.is_zero());
-
         // A real solve has anchored `results_block` (the delivery-policy
         // solve-anchor guard defers candidates while it is still 0 — see
         // `diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit`).
-        engine.set_results_block_for_test(100);
-
+        engine.cycle.cursor.set_results_block_for_test(100);
         // send_result_batch computes the diff, sends it, and advances
         // `delivered` to the above-threshold subset.
         engine.send_result_batch(&BlockMetadata::default());
-
         // Batch was actually delivered to the channel.
         let batch = rx
             .try_recv()
@@ -1062,7 +971,6 @@ mod tests {
             batch.fresh.iter().any(|(id, _)| *id == path_id),
             "profitable path should appear in fresh"
         );
-
         // `delivered` now equals the above-threshold subset of `results`.
         assert_eq!(
             engine.delivery.delivered.len(),
@@ -1074,7 +982,6 @@ mod tests {
             "delivered should include the just-sent profitable path"
         );
     }
-
     /// Cold-start solved-state anchor (closes the deferral gap SAFELY):
     /// backfill brings pool state to the chain tip (persisting, so capturable
     /// in the next block), registration eager-solves over that live state, but
@@ -1090,7 +997,6 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
-
         // Pump seeds the settled resume boundary (block 500) at resume.
         engine.set_solve_anchor(500);
         assert_eq!(
@@ -1098,7 +1004,6 @@ mod tests {
             500,
             "cold-start anchor seeded to settled resume block"
         );
-
         // Register two V2 pools + an eager-solved (profitable) path.
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
@@ -1130,7 +1035,6 @@ mod tests {
             .unwrap();
         let (results_before, _) = engine.latest_results();
         assert!(!results_before.get(&path_id).unwrap().profit.is_zero());
-
         // Delivery uses the seeded settled anchor — immediate, no deferral.
         engine.compute_diff_and_send(&BlockMetadata::default());
         let batch = rx
@@ -1145,9 +1049,8 @@ mod tests {
             "capturable cold-start candidate must be delivered at the settled anchor"
         );
         assert!(engine.delivery.delivered.contains_key(&path_id));
-
         // Never regress a real solve anchor: a later seed must not lower it.
-        engine.set_results_block_for_test(900);
+        engine.cycle.cursor.set_results_block_for_test(900);
         engine.set_solve_anchor(600);
         assert_eq!(
             engine.results_block(),
@@ -1155,7 +1058,6 @@ mod tests {
             "set_solve_anchor never clobbers a real anchor"
         );
     }
-
     /// 6XB6NJ pin (the review's Q6 strengthening): the solve-stamp path is
     /// MONOTONE - a late/stale stamp can no longer regress the results
     /// anchor. Both stamps below go through the REAL solve-stamp path
@@ -1168,7 +1070,6 @@ mod tests {
     #[test]
     fn late_solve_stamp_cannot_regress_results_anchor() {
         let mut engine = ArbitrageEngine::new();
-
         // First solve cycle anchors at block 10.
         engine.solve_dirty(10, &BlockMetadata::default(), &[]);
         assert_eq!(
@@ -1176,7 +1077,6 @@ mod tests {
             10,
             "the solve-stamp path anchors results_block at the cycle's solve block"
         );
-
         // A late/stale stamp through the same path must not regress it.
         engine.solve_dirty(5, &BlockMetadata::default(), &[]);
         assert_eq!(
@@ -1185,7 +1085,6 @@ mod tests {
             "a stale solve stamp must never regress the results anchor"
         );
     }
-
     #[test]
     fn profit_threshold_includes_results_above_u64_max_when_unbounded() {
         // Contract: profits above `u64::MAX` (~1.84e19) are reachable for
@@ -1202,7 +1101,6 @@ mod tests {
         let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
         // Defaults: min_profit = 0, max_profit = U256::MAX (cap fully open).
-
         let huge_profit = U256::from(u64::MAX) + U256::from(1u64);
         let path_id = 7u64;
         engine.cycle.results.insert(
@@ -1216,13 +1114,11 @@ mod tests {
                 solver_pool_states: vec![],
             },
         );
-
         // Anchor the solve at a real block: candidates are only deliverable
         // once `results_block` is non-zero (solve-anchor delivery guard — a 0
         // anchor would sim at block 0, the 0x841820 code-less panic).
-        engine.set_results_block_for_test(100);
+        engine.cycle.cursor.set_results_block_for_test(100);
         engine.compute_diff_and_send(&BlockMetadata::default());
-
         let batch = rx
             .try_recv()
             .expect("compute_diff_and_send should deliver a batch");
@@ -1235,7 +1131,6 @@ mod tests {
             "a result with profit > u64::MAX must be delivered"
         );
     }
-
     #[test]
     fn profit_threshold_max_bound_is_inclusive() {
         // Contract: the max bound is inclusive (`profit <= max_profit`), so a
@@ -1247,10 +1142,8 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
-
         let profit = U256::from(1_000_000u64);
         engine.set_profit_thresholds(U256::ZERO, profit);
-
         let path_id = 7u64;
         engine.cycle.results.insert(
             path_id,
@@ -1263,12 +1156,10 @@ mod tests {
                 solver_pool_states: vec![],
             },
         );
-
         // Anchor the solve at a real block (solve-anchor delivery guard — see
         // `diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit`).
-        engine.set_results_block_for_test(100);
+        engine.cycle.cursor.set_results_block_for_test(100);
         engine.compute_diff_and_send(&BlockMetadata::default());
-
         let batch = rx
             .try_recv()
             .expect("compute_diff_and_send should deliver a batch");
@@ -1277,7 +1168,6 @@ mod tests {
             "a result with profit == max_profit must be included under the inclusive (`<=`) max bound"
         );
     }
-
     #[test]
     fn profit_threshold_min_bound_is_exclusive() {
         // Contract guard: the min bound stays strict (`profit > min_profit`),
@@ -1286,10 +1176,8 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
-
         let profit = U256::from(1_000_000u64);
         engine.set_profit_thresholds(profit, U256::MAX);
-
         let path_id = 7u64;
         engine.cycle.results.insert(
             path_id,
@@ -1302,9 +1190,7 @@ mod tests {
                 solver_pool_states: vec![],
             },
         );
-
         engine.compute_diff_and_send(&BlockMetadata::default());
-
         let batch = rx
             .try_recv()
             .expect("compute_diff_and_send should deliver a batch");
@@ -1317,11 +1203,9 @@ mod tests {
             "a result with profit == min_profit must not be delivered"
         );
     }
-
     #[test]
     fn finalize_block_threads_metadata_into_send() {
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
-
         // Contract guard for the metadata-threading fix: when the pump's
         // `finalize_if_dirty` guard fires on a dirty profitable path, the
         // emitted `ResultBatch` must carry the caller's real `BlockMetadata` —
@@ -1331,7 +1215,6 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
-
         // Two V2 pools with price divergence → a profitable pure-V2 path
         // (same setup as `register_and_solve_path_eagerly_solves`).
         let v2_addr_a = Address::from([0x11u8; 20]);
@@ -1362,11 +1245,9 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Mark a pool dirty so `has_dirty_paths()` is true (mirrors a WS log
         // having arrived). The eagerly-solved result is already in `results`.
         oracle.insert(v2_fwd_a, HopType::V2);
-
         // Non-default metadata — every field non-zero and distinct from default.
         let metadata = BlockMetadata {
             timestamp: 1_700_000_000,
@@ -1374,16 +1255,13 @@ mod tests {
             gas_used: 5_000_000,
             gas_limit: 30_000_000,
         };
-
         // `last_solved_block < block(=10)` so the guard fires. The engine
         // now OWNS this bookkeeping (the pump out-params retired in ergo task
         // LEZJAS) — drive it through the engine's own accessor so the test
         // exercises the same path the pump uses.
         engine.set_last_solved_block(0);
         engine.record_logs_this_block();
-
         engine.finalize_block(10, &metadata);
-
         // The emitted batch must carry the passed metadata, not default.
         let batch = rx
             .try_recv()
@@ -1396,7 +1274,6 @@ mod tests {
         assert_eq!(batch.base_fee_per_gas, Some(1_000_000_000));
         assert_eq!(batch.gas_used, 5_000_000);
         assert_eq!(batch.gas_limit, 30_000_000);
-
         // The profitable path should surface in fresh/updated.
         assert!(
             batch.fresh.iter().any(|(id, _)| *id == path_id)
@@ -1408,11 +1285,9 @@ mod tests {
         assert_eq!(engine.last_solved_block(), 10);
         assert!(!engine.has_logs_this_block());
     }
-
     #[test]
     fn pure_v2_path_finds_profitable_arb() {
         let mut engine = ArbitrageEngine::new();
-
         // V2 pool A: USDC/WETH with price ~1875 USDC/WETH
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
@@ -1422,7 +1297,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // V2 pool B: WETH/USDC with price ~2000 USDC/WETH (mispriced — arb opportunity)
         let v2_addr_b = Address::from([0x12u8; 20]);
         let v2_fwd_b = engine.register_v2_pool(
@@ -1432,7 +1306,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // V2→V2 path: USDC → WETH (pool A) → USDC (pool B)
         engine
             .register_path(vec![
@@ -1446,7 +1319,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Solve
         let results = engine.cycle.solve_all(&engine.registry);
         // Should find a profitable arbitrage
@@ -1455,11 +1327,9 @@ mod tests {
         assert!(!solve_result.optimal_input.is_zero());
         assert!(!solve_result.profit.is_zero());
     }
-
     #[test]
     fn pure_v3_path_finds_profitable_arb() {
         let mut engine = ArbitrageEngine::new();
-
         // V3 pool A at tick 0 (1:1), high liquidity, with tick boundaries
         let mut tick_data_a = HashMap::new();
         tick_data_a.insert(
@@ -1478,7 +1348,6 @@ mod tests {
                 block: 0,
             },
         );
-
         let v3_key_a = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
             address: Address::from([0x21u8; 20]),
             token0: Address::ZERO,
@@ -1496,13 +1365,11 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // V3 pool B at tick -60 (slightly cheaper token1), high liquidity
         let sqrt_price_lower_u160 =
             degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(-60)
                 .unwrap_or(alloy::primitives::U160::ZERO);
         let sqrt_price_lower = U256::from(sqrt_price_lower_u160);
-
         let mut tick_data_b = HashMap::new();
         tick_data_b.insert(
             0,
@@ -1520,7 +1387,6 @@ mod tests {
                 block: 0,
             },
         );
-
         let v3_key_b = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
             token0: Address::ZERO,
@@ -1538,7 +1404,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // V3→V3 path: pool A (zfo) → pool B (ofz)
         engine
             .register_path(vec![
@@ -1552,7 +1417,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         // V3-V3 arb depends on the exact price divergence — the important thing
         // is that the path resolves and the solver runs without panicking.
@@ -1560,16 +1424,13 @@ mod tests {
         // not be profitable at these liquidity levels.
         let _ = results;
     }
-
     #[test]
     fn mixed_v2_to_v3_path_finds_arb() {
         let mut engine = ArbitrageEngine::new();
-
         // V2 pool: USDC/WETH
         let v2_addr = Address::from([0x11u8; 20]);
         let v2_fwd =
             engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
-
         // V3 pool: same pair but different price
         let mut tick_data = HashMap::new();
         tick_data.insert(
@@ -1588,7 +1449,6 @@ mod tests {
                 block: 0,
             },
         );
-
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
             token0: Address::ZERO,
@@ -1606,7 +1466,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // Mixed V2→V3 path
         engine
             .register_path(vec![
@@ -1620,25 +1479,21 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Even if no profit found (depends on exact numbers),
         // solve_all should run without panicking
         let results = engine.cycle.solve_all(&engine.registry);
         // Just verify it doesn't crash
         let _ = results;
     }
-
     #[test]
     fn future_state_path_is_reanchored_to_pool_state_head() {
         let mut engine = ArbitrageEngine::new();
-
         // B2 (per-path re-anchor): a path whose price-clock `update_block` is
         // AHEAD of the drain block is LIVE head state (the pools were advanced
         // by backfill), NOT poison to be skipped. The correct action is to
         // re-anchor the solve block at the pool-state head so solve/verify/sim
         // all match the state the solver used. Skipping would DROP a
         // capturable live opportunity.
-
         // Profitable V2→V2 control — proves the dispatch pipeline builds a
         // result at the solve block when NO hop's price clock is ahead.
         let v2_a = engine.register_v2_pool(
@@ -1667,7 +1522,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // V3 pool whose price clock (`update_block`) is 100 — 50 blocks AHEAD
         // of the solve block 50 below (the two-stamp backfill/dispatch race).
         let mut tick_data = HashMap::new();
@@ -1716,7 +1570,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Rebuild + solve at drain block 50, but the V3 pool's price clock is
         // at 100 (head). The solve block must re-anchor to head = 100, and the
         // path is solved (never skipped): a future-vs-drain-clock block is live
@@ -1751,11 +1604,9 @@ mod tests {
             "future-state path must remain resolved for solving (never dropped)"
         );
     }
-
     #[test]
     fn mixed_v3_to_v2_path_resolves() {
         let mut engine = ArbitrageEngine::new();
-
         // V3 pool with tick data
         let mut tick_data = HashMap::new();
         tick_data.insert(
@@ -1774,7 +1625,6 @@ mod tests {
                 block: 0,
             },
         );
-
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
             token0: Address::ZERO,
@@ -1792,12 +1642,10 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // V2 pool
         let v2_addr = Address::from([0x11u8; 20]);
         let v2_fwd =
             engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
-
         // V3→V2 path
         let path_id = engine
             .register_path(vec![
@@ -1811,18 +1659,15 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert_eq!(resolved.hops[0].hop_type(), HopType::V3);
         assert_eq!(resolved.hops[1].hop_type(), HopType::V2);
         assert!(matches!(resolved.hops[0], ResolvedHop::V3 { .. }));
         assert!(resolved.hops[1].as_v2_state().is_some());
     }
-
     #[test]
     fn rebuild_on_v2_update_changes_results() {
         let mut engine = ArbitrageEngine::new();
-
         // V2 pool A: USDC/WETH
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_fwd_a = engine.register_v2_pool(
@@ -1832,7 +1677,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // V2 pool B: WETH/USDC
         let v2_addr_b = Address::from([0x12u8; 20]);
         let v2_fwd_b = engine.register_v2_pool(
@@ -1842,7 +1686,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // V2→V2 path
         engine
             .register_path(vec![
@@ -1856,10 +1699,8 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Initial solve
         let results_before = engine.cycle.solve_all(&engine.registry);
-
         // Apply V2 update to make pool A even more mispriced
         engine.process_updates(
             &[(v2_addr_a, usdc(1_400_000), weth(750))],
@@ -1867,14 +1708,12 @@ mod tests {
             1,
             &BlockMetadata::default(),
         );
-
         let (results_after, block) = engine.latest_results();
         assert_eq!(block, 1);
         // Results should differ after the update
         let _ = results_before; // Just ensure initial solve didn't panic
         let _ = results_after;
     }
-
     /// YXHHKR (resolves QNFYR5) — supersedes the removed TQ43TU gate test. A
     /// path whose price clock runs far behind the solve block is a QUIET pool
     /// (stored state byte-identical to on-chain), so it is SOLVED, not deferred.
@@ -1886,7 +1725,6 @@ mod tests {
     #[test]
     fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
         let mut engine = ArbitrageEngine::new();
-
         // Profitable V2→V2 pair (from pure_v2_path_finds_profitable_arb).
         let v2_addr_a = Address::from([0x11u8; 20]);
         let v2_a = engine.register_v2_pool(
@@ -1916,7 +1754,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Prove the path IS profitable when fresh: advance both clocks to a block
         // within the window of the solve block, rebuild, and confirm a result.
         {
@@ -1942,7 +1779,6 @@ mod tests {
             fresh.contains_key(&path_id),
             "a within-window (2-block) lag must NOT defer a profitable path"
         );
-
         // Now FREEZE both clocks far behind the solve block (the stale seed-anchor
         // / missed-event class, e.g. the 166k-block-behind live SushiSwap-V3 pool)
         // and rebuild at 500 again. Quiet-but-current → MUST be solved, not deferred.
@@ -1972,7 +1808,6 @@ mod tests {
              must be solved, not deferred (YXHHKR)"
         );
     }
-
     /// YXHHKR (resolves QNFYR5): with the TQ43TU window gate removed, no
     /// `update_block` age defers a path. Never-updated pools and pools far past
     /// the old 10-block window are all SOLVED — they are quiet-but-current, not
@@ -1980,7 +1815,6 @@ mod tests {
     #[test]
     fn no_update_block_age_defers_a_quiet_path() {
         let mut engine = ArbitrageEngine::new();
-
         let v2_a = engine.register_v2_pool(
             Address::from([0x13u8; 20]),
             usdc(1_500_000),
@@ -2007,7 +1841,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Never-advanced pools (`update_block == 0`) at a far solve block are
         // NOT deferred — the ADR-021 verifier diffs them at the solve block.
         engine.cycle.run_epoch(
@@ -2026,7 +1859,6 @@ mod tests {
             r0.contains_key(&path_id),
             "update_block == 0 pools must never be assumed stale"
         );
-
         // Exactly at the old 10-block window edge is tolerated — still solved.
         {
             let mut core = engine
@@ -2051,7 +1883,6 @@ mod tests {
             r1.contains_key(&path_id),
             "staleness exactly at the window must not defer"
         );
-
         // 11 blocks past the old window edge — still solved (quiet, not stale).
         {
             let mut core = engine
@@ -2078,7 +1909,6 @@ mod tests {
              deferred (YXHHKR)"
         );
     }
-
     /// V4 int128 guard: paths where V4 hop amounts exceed `int128_max` are rejected.
     ///
     /// V4's `toBalanceDelta()` calls `toInt128()` on swap amounts. If either component
@@ -2091,12 +1921,10 @@ mod tests {
     )]
     fn v4_int128_overflow_path_rejected() {
         let mut engine = ArbitrageEngine::new();
-
         // V3 pool: normal pool at 1:1 price
         let v3_addr = Address::from([0x20u8; 20]);
         let v3_factory = Address::from([0x21u8; 20]);
         let sp_0 = U256::from(1u128) << 96;
-
         let v3_id = engine.register_v3_pool(&RegisterV3PoolParams {
             address: v3_addr,
             token0: Address::from([0x30u8; 20]),
@@ -2114,7 +1942,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // V4 pool: pool at extreme price (tick -886_983) with massive liquidity
         // This produces virtual reserves >> int128_max
         let v4_pool_manager = Address::from([0x40u8; 20]);
@@ -2122,7 +1949,6 @@ mod tests {
         let sp_extreme = degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(-886_983)
             .unwrap_or_default();
         let extreme_liquidity: u128 = 76_688_550_121_478_947_320_312_764_923_207_804;
-
         let v4_id = engine
             .register_v4_pool(&RegisterV4PoolParams {
                 pool_manager: v4_pool_manager,
@@ -2159,7 +1985,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Resolve and solve all paths (replaces start() + initial_solve())
         {
             let core = engine
@@ -2186,9 +2011,7 @@ mod tests {
         for (pid, r) in results_map {
             engine.cycle.results.insert(pid, r);
         }
-
         let (results, _block) = engine.latest_results();
-
         // The V4 hop's output (token0 at extreme price) would overflow int128.
         // The solver should reject this path — no result should be returned.
         if let Some(solve_result) = results.get(&path_id) {
@@ -2210,7 +2033,6 @@ mod tests {
         }
         // Ideally the path should not appear in results at all
     }
-
     /// Register a small V4 pool that can only convert a bounded amount per
     /// swap (single narrow position, low liquidity), plus a 2-hop V2→V4 path
     /// whose V4 hop is fed an absurdly large committed input. Then drive
@@ -2229,11 +2051,8 @@ mod tests {
     fn clamp_cl_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
         use crate::arb_engine::PoolTickCoverage;
         use crate::bot_core::TickInfo;
-
         use degenbot_math::v2::IntHopState;
-
         let mut engine = ArbitrageEngine::new();
-
         // Terminal V2 pool: token0=USDC, token1=WETH; hop zfo=false → WETH
         // in, USDC out.
         let v2 = engine.register_v2_pool(
@@ -2243,7 +2062,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // Leading V4 hop: single narrow position (±60 ticks), 1e6 liquidity —
         // its twin output at a 1e6-scale input is bounded (≪ 5e6), so a 5e6
         // committed forward into the V2 hop must forward-clamp.
@@ -2287,7 +2105,6 @@ mod tests {
                 fetcher: None,
             })
             .expect("V4 registration failed");
-
         let path_id = engine
             .register_path(vec![
                 PoolHop {
@@ -2300,7 +2117,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Committed values: the V2-input forward is deliberately above the
         // V4 twin's actual output; the V2 output is the STALE value the walk
         // reported for the un-clamped forward.
@@ -2314,18 +2130,15 @@ mod tests {
             state_nonces: vec![0, 0],
             solver_pool_states: Vec::new(),
         };
-
         engine
             .cycle
             .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
-
         // Test premise: the forward into the V2 hop was actually clamped.
         let clamped = result.consumed_inputs[1];
         assert!(
             clamped < committed_forward,
             "premise: upstream forward clamp must fire (clamped={clamped} vs committed={committed_forward})"
         );
-
         // The terminal V2 hop's REPORTED output must equal its byte-exact
         // twin at the CLAMPED input (zfo=false → reserve_in=token1, fee_token1).
         let core = engine
@@ -2359,7 +2172,6 @@ mod tests {
             "post-clamp profit must be recomputed from the corrected outputs"
         );
     }
-
     /// VAASFM margin) — the UO3JM4 empty-march clamp, now enforced in
     /// production at the solve→result merge seam.
     #[expect(clippy::too_many_lines)]
@@ -2370,9 +2182,7 @@ mod tests {
         use alloy::primitives::I256;
         use degenbot_pools::v3_state::V3PoolState;
         use degenbot_pools::v4_state::v4_simulate_swap;
-
         let mut engine = ArbitrageEngine::new();
-
         // V2 pool: reserves sized so its output (fed to V4) is enormous
         // relative to the V4 pool's capacity (token1 ≫ the V4 twin's
         // input_consumed, so the V2 hop's forward-clamp cannot fire before the
@@ -2384,7 +2194,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // V4 pool: single narrow position (±60 ticks) with low liquidity so
         // the exact-in loop converts only a bounded amount.
         let mut tick_data = HashMap::new();
@@ -2427,7 +2236,6 @@ mod tests {
                 fetcher: None,
             })
             .expect("V4 registration failed");
-
         // Register a V2→V4 path (V4 is hop 1, over-fed).
         let path_id = engine
             .register_path(vec![
@@ -2441,7 +2249,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Over-feed the V4 hop with an absurdly large committed input far
         // beyond the pool's capacity.
         let huge = U256::from(1u128) << 120;
@@ -2453,11 +2260,9 @@ mod tests {
             state_nonces: vec![0, 0],
             solver_pool_states: Vec::new(),
         };
-
         engine
             .cycle
             .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
-
         // Compute the pools twin's input_consumed at the requested input to
         // assert the clamped value equals `input_consumed - 1` exactly.
         let input_consumed = {
@@ -2501,7 +2306,6 @@ mod tests {
             .expect("twin simulates")
             .amount0
         };
-
         // The clamp engages: consumed_inputs[1] is capped below the request.
         assert!(
             result.consumed_inputs[1] < huge,
@@ -2522,7 +2326,6 @@ mod tests {
             "hop_outputs[1] must be aligned to the twin output"
         );
     }
-
     /// The solver alignment covers a V4-FIRST path (hop0): `hop_outputs[0]`
     /// is aligned to the V4 twin output and the forward to hop1
     /// (`consumed_inputs[1]`) is clamped to it — the V4-first families
@@ -2540,7 +2343,6 @@ mod tests {
         use alloy::primitives::I256;
         use degenbot_pools::v3_state::V3PoolState;
         use degenbot_pools::v4_state::v4_simulate_swap;
-
         let mut engine = ArbitrageEngine::new();
         // V4 pool (hop0), narrow ±60 band, low liquidity — over-fed later.
         let mut tick_data = HashMap::new();
@@ -2602,7 +2404,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let huge = U256::from(1u128) << 120;
         let mut result = SolvePathResult {
             optimal_input: huge,
@@ -2615,7 +2416,6 @@ mod tests {
         engine
             .cycle
             .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
-
         // Compute the V4 twin's amount1 (zfo=true → output = amount1) at the
         // requested input — the byte-exact value hop_outputs[0] must align to.
         let twin_out = {
@@ -2647,7 +2447,6 @@ mod tests {
             "hop1 forward must be clamped"
         );
     }
-
     /// The clamp is a strict no-op when a CL hop's committed input is within
     /// the pool's max-convertible capacity — the exact-in loop already
     /// terminates on `amountRemaining==0`. Prevents the clamp from corrupting
@@ -2656,9 +2455,7 @@ mod tests {
     fn clamp_cl_hop_capacity_noop_within_capacity() {
         use crate::arb_engine::PoolTickCoverage;
         use crate::bot_core::TickInfo;
-
         let mut engine = ArbitrageEngine::new();
-
         let mut tick_data = HashMap::new();
         tick_data.insert(
             60,
@@ -2699,7 +2496,6 @@ mod tests {
                 fetcher: None,
             })
             .expect("V4 registration failed");
-
         let v2_id = engine.register_v2_pool(
             Address::from([0x77u8; 20]),
             usdc(1_600_000),
@@ -2719,7 +2515,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // A tiny in-capacity input — the pool fully converts it, no clamp.
         let small = U256::from(1u128);
         let mut result = SolvePathResult {
@@ -2730,17 +2525,14 @@ mod tests {
             state_nonces: vec![0, 0],
             solver_pool_states: Vec::new(),
         };
-
         engine
             .cycle
             .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
-
         assert_eq!(
             result.consumed_inputs[0], small,
             "in-capacity input must be left untouched by the clamp"
         );
     }
-
     /// Build the minimal V3 tick-data (initialized +60/-60 ticks) used by
     /// `inspect_path_returns_hop_details`.
     fn inspect_test_v3_tick_data() -> HashMap<i32, crate::bot_core::TickInfo> {
@@ -2763,11 +2555,9 @@ mod tests {
         );
         tick_data
     }
-
     #[test]
     fn inspect_path_returns_hop_details() {
         let mut engine = ArbitrageEngine::new();
-
         // Register a V2 pool
         let v2_fwd = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
@@ -2776,7 +2566,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // Register a V3 pool
         let tick_data = inspect_test_v3_tick_data();
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
@@ -2796,7 +2585,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // Register a V4 pool
         let v4_key = engine
             .register_v4_pool(&crate::bot_core::RegisterV4PoolParams {
@@ -2821,7 +2609,6 @@ mod tests {
                 fetcher: None,
             })
             .expect("V4 registration should succeed");
-
         // Register a 3-hop path: V2 → V3 → V4
         let path_id = engine
             .register_path(vec![
@@ -2839,7 +2626,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Inspect the path
         let path = engine
             .registry
@@ -2847,12 +2633,10 @@ mod tests {
             .get(&path_id)
             .expect("path should exist");
         assert_eq!(path.pools.len(), 3);
-
         // Verify hop types
         assert!(matches!(path.pools[0].hop_type, HopType::V2));
         assert!(matches!(path.pools[1].hop_type, HopType::V3));
         assert!(matches!(path.pools[2].hop_type, HopType::V4));
-
         // Verify we can resolve pool addresses via BotState (V2) / sub-engines (V3/V4)
         let v2_addr = engine
             .core
@@ -2860,7 +2644,6 @@ mod tests {
             .get_v2_identity(v2_fwd)
             .map(|p| p.address);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
-
         let core = engine
             .core
             .read_at(crate::bot_core::state_lock::LockSite::Solver);
@@ -2876,19 +2659,15 @@ mod tests {
         );
         assert_eq!(v4_pool.map(|p| p.pool_id), Some([0xabu8; 32]));
         drop(core);
-
         // Inspect non-existent path
         assert!(!engine.registry.path_pools.contains_key(&99999));
     }
-
     #[test]
     #[expect(clippy::too_many_lines)]
     fn solve_3hop_v3_v3_v3_path() {
         let mut engine = ArbitrageEngine::new();
-
         let sp_0 = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // 1:1 price (tick 0)
-
-        // Helper to create minimal tick data with initialized ticks at -60 and +60
+                                                                            // Helper to create minimal tick data with initialized ticks at -60 and +60
         let make_tick_data = || -> HashMap<i32, crate::bot_core::TickInfo> {
             let mut td = HashMap::new();
             td.insert(
@@ -2909,7 +2688,6 @@ mod tests {
             );
             td
         };
-
         // Pool 1 at tick 0 with high liquidity
         let v3_key_a = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xa1u8; 20]),
@@ -2928,7 +2706,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // Pool 2 at tick 0 with different liquidity (price disagreement)
         let v3_key_b = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xa2u8; 20]),
@@ -2947,7 +2724,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // Pool 3 at tick 0 with third liquidity level
         let v3_key_c = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xa3u8; 20]),
@@ -2966,9 +2742,7 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         assert_eq!(engine.v3_pool_count(), 3);
-
         // Register 3-hop V3-V3-V3 path
         let path_id = engine
             .register_path(vec![
@@ -2986,10 +2760,8 @@ mod tests {
                 },
             ])
             .unwrap();
-
         assert_eq!(path_id, 1);
         assert_eq!(engine.path_count(), 1);
-
         // Verify the path is valid and resolved
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V3-V3-V3 path should be valid");
@@ -3000,7 +2772,6 @@ mod tests {
         assert!(resolved.hops[0].as_int_sequence().is_some());
         assert!(resolved.hops[1].as_int_sequence().is_some());
         assert!(resolved.hops[2].as_int_sequence().is_some());
-
         // Solve the path — previously returned None for 3+ hop CL paths.
         // Now the N-hop CL solver runs. With 3 pools at the same price but
         // different liquidity, the path is unlikely to be profitable after fees,
@@ -3012,14 +2783,11 @@ mod tests {
         .result;
         let _ = result; // No panic = test passes
     }
-
     #[test]
     fn solve_3hop_mixed_v2_v3_v2_path() {
         let mut engine = ArbitrageEngine::new();
-
         let sp_0 = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // 1:1 price
-
-        // V2 pool 1: cheap WETH (1.5M USDC / 800 WETH)
+                                                                            // V2 pool 1: cheap WETH (1.5M USDC / 800 WETH)
         let v2_fwd_a = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
             usdc(1_500_000),
@@ -3027,7 +2795,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // V3 pool (middle hop): at 1:1 price with tick boundaries
         let mut tick_data = HashMap::new();
         tick_data.insert(
@@ -3063,7 +2830,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // V2 pool 2: expensive WETH (1000 WETH / 2M USDC)
         let v2_fwd_b = engine.register_v2_pool(
             Address::from([0x12u8; 20]),
@@ -3072,7 +2838,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // Register 3-hop mixed path: V2 → V3 → V2
         let path_id = engine
             .register_path(vec![
@@ -3090,14 +2855,12 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V2-V3-V2 path should be valid");
         assert_eq!(resolved.hops.len(), 3);
         assert_eq!(resolved.hops[0].hop_type(), HopType::V2);
         assert_eq!(resolved.hops[1].hop_type(), HopType::V3);
         assert_eq!(resolved.hops[2].hop_type(), HopType::V2);
-
         // Key: previously this returned None due to hop_types.len() != 2
         let result = ::degenbot_solvers::mixed::solve_path(
             resolved,
@@ -3106,7 +2869,6 @@ mod tests {
         .result;
         let _ = result;
     }
-
     // Hop-projection cache (shared-pool dedup): a dirty pool shared by N
     // paths must be projected ONCE per solve cycle, not once per path; a
     // quiet co-hop must not re-project at all while its state_nonce holds.
@@ -3115,7 +2877,6 @@ mod tests {
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
         oracle.insert(0x00C0_FFEE, HopType::V2); // legacy intake probe (LXDY4C)
         let mut engine = ArbitrageEngine::new();
-
         // Three V2 pools: A-B and A-C cycles share pool A.
         let pool_a = Address::from([0x11u8; 20]);
         let pool_b = Address::from([0x12u8; 20]);
@@ -3126,7 +2887,6 @@ mod tests {
             engine.register_v2_pool(pool_b, weth(800), usdc(1_500_000), GAMMA_03, FEE_DENOM_03);
         let id_c =
             engine.register_v2_pool(pool_c, weth(900), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
-
         engine
             .register_path(vec![
                 PoolHop {
@@ -3151,13 +2911,11 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Cycle 1: both paths resolve; every UNIQUE (pool,direction) is a
         // miss. Pool A appears in both paths with the same direction, so its
         // single projection serves both paths: A+B+C = 3, not 4 hops.
         engine.solve_dirty(4, &BlockMetadata::default(), &[]);
         assert_eq!(engine.hop_projection_count(), 3);
-
         // Cycle 2: only pool B is dirty. Shared pool A must NOT re-project;
         // only B's hop in path 1 pays the walk (C's hops are untouched).
         engine.process_updates(
@@ -3169,7 +2927,6 @@ mod tests {
         engine.solve_dirty(5, &BlockMetadata::default(), &[]);
         // Only B's projection is fresh; A and C replay from the cache.
         assert_eq!(engine.hop_projection_count(), 4);
-
         // Cycle 3: A goes dirty. Its cached projection invalidates (nonce
         // advanced) and re-projects ONCE — both paths then share the fresh
         // entry; B and C's quiet hops still do not re-project.
@@ -3182,7 +2939,6 @@ mod tests {
         engine.solve_dirty(6, &BlockMetadata::default(), &oracle.to_affected_keys());
         assert_eq!(engine.hop_projection_count(), 5);
     }
-
     #[test]
     fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
         // What: a V2→V2 cycle is balanced (no profit), then a Sync at block 5
@@ -3196,9 +2952,7 @@ mod tests {
         // engine-level outcome (re-solve expires the delivered result) by
         // inlining the restore + re-dirty the bulk path used to do in one call.
         use tokio::sync::mpsc;
-
         let mut engine = ArbitrageEngine::new();
-
         // Two balanced V2 pools forming a cycle (price ≈ 1:1875).
         let pool_a = Address::from([0x11u8; 20]);
         let pool_b = Address::from([0x12u8; 20]);
@@ -3206,7 +2960,6 @@ mod tests {
             engine.register_v2_pool(pool_a, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
         let id_b =
             engine.register_v2_pool(pool_b, weth(800), usdc(1_500_000), GAMMA_03, FEE_DENOM_03);
-
         // Path: A (USDC→WETH) → B (WETH→USDC). Initially balanced → no profit.
         let path_id = engine
             .register_path(vec![
@@ -3220,11 +2973,9 @@ mod tests {
                 },
             ])
             .unwrap();
-
         // Install a result channel to capture the diff batches.
         let (tx, mut rx) = mpsc::unbounded_channel();
         engine.set_result_channel(tx);
-
         // Sanity: the balanced cycle is not profitable (an empty affected set
         // — the reorg keys below are explicit).
         engine.solve_dirty(4, &BlockMetadata::default(), &[]);
@@ -3234,7 +2985,6 @@ mod tests {
             !results_before.contains_key(&path_id),
             "balanced cycle should not be profitable before the Sync"
         );
-
         // Sync pool A at block 5 to misprice it hard (A's WETH drops to 1250
         // USDC/WETH vs B's 1875 — clears the ~0.6% round-trip fee).
         engine.process_updates(
@@ -3244,7 +2994,6 @@ mod tests {
             &BlockMetadata::default(),
         );
         engine.send_result_batch(&BlockMetadata::default());
-
         let (results_after, _) = engine.latest_results();
         assert!(
             results_after.contains_key(&path_id),
@@ -3254,11 +3003,9 @@ mod tests {
             engine.delivery.delivered.contains_key(&path_id),
             "profitable result should be delivered"
         );
-
         // Drain all batches queued so far (sanity + post-Sync) so the next
         // receive is the reorg batch.
         while rx.try_recv().is_ok() {}
-
         // Reorg: roll back block 5 (the Sync that created the arb). Inline the
         // restore+re-dirty — `engine.handle_reorg` is deleted in slice 7
         // (replaced by per-event `ReorgCoordinator::dispatch_reorg_log`);
@@ -3278,7 +3025,6 @@ mod tests {
             .collect();
         engine.solve_dirty(5, &BlockMetadata::default(), &reorg_keys);
         engine.send_result_batch(&BlockMetadata::default());
-
         // The arb is gone.
         let (results_reorg, _) = engine.latest_results();
         assert!(
@@ -3289,7 +3035,6 @@ mod tests {
             !engine.delivery.delivered.contains_key(&path_id),
             "previously-delivered result should expire out of `delivered`"
         );
-
         // The reorg batch must carry an `expired` entry for this path.
         let batch = rx
             .try_recv()
@@ -3300,7 +3045,6 @@ mod tests {
             batch.expired
         );
     }
-
     #[test]
     fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
         // What: a V3 pool gets a Swap (scalar state change at block 5) and an
@@ -3316,10 +3060,8 @@ mod tests {
         use crate::arb_engine::PoolTickCoverage;
         use crate::bot_core::TickInfo;
         use alloy::primitives::U128;
-
         let engine = ArbitrageEngine::new();
         let pool_addr = Address::from([0x55u8; 20]);
-
         // Register a V3 pool at tick 0, 1:1 price, one initialized tick at +60
         // (so the post-Mint state at block 6 can show a *second* tick).
         let mut tick_data = HashMap::new();
@@ -3348,7 +3090,6 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
-
         // DFQYM5: Tracked pools register `Quarantined`; the driver's post-verify
         // `set_live` is what makes it apply directly. Transition to `Live` so
         // this test's swap/Mint direct-apply (its model).
@@ -3356,13 +3097,11 @@ mod tests {
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .set_v3_pool_live(pool_addr);
-
         // Capture the registration scalar state.
         let reg_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
         let reg_liq = 1_000_000u128;
         let reg_tick = 0i32;
         let reg_tick_count = 1usize;
-
         // Swap at block 5: changes scalars only (tick_data untouched on the
         // live path — swaps don't mutate tick_data per V3 spec).
         let swapped_sp = (reg_sp + U256::from(1u128)) << 90;
@@ -3372,7 +3111,6 @@ mod tests {
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .apply_v3_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
-
         // Mint at block 6: adds liquidity at [+60, +120] — in-range because the
         // swap moved the tick to 60, so the active `liquidity` scalar also gets
         // +500 (parity with on-chain + the concentrated-liquidity-math pure reference).
@@ -3380,7 +3118,6 @@ mod tests {
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .apply_v3_liquidity_update(pool_addr, 60, 120, 500_i128, 6);
-
         {
             let core = engine
                 .core
@@ -3400,7 +3137,6 @@ mod tests {
             );
             assert!(s.tick_data.contains_key(&60) && s.tick_data.contains_key(&120));
         }
-
         // Reorg back to block 5: rolls the block-6 Mint (removes ticks 60/120)
         // AND the block-5 Swap (restores registration scalars). Restore is
         // idempotent for pools untouched by the fork.
@@ -3409,7 +3145,6 @@ mod tests {
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .restore_all_pools_before_block(5);
         assert_eq!(restored, 1, "the single registered V3 pool was rolled back");
-
         {
             let core = engine
                 .core
@@ -3429,7 +3164,6 @@ mod tests {
             assert!(!s.tick_data.contains_key(&60) && !s.tick_data.contains_key(&120));
         }
     }
-
     /// ADR-006 Slice 1 (D1): `ArbitrageEngine::with_core` adopts an externally
     /// allocated `Arc<RwLock<BotState>>` so one shared `BotState` is read by both the
     /// engine and the `PyBot`/handle tree — dissolving the dual-`BotState` split
@@ -3440,7 +3174,6 @@ mod tests {
     fn with_core_adopts_shared_bot_state() {
         use crate::bot_core::{BotState, RegisterV2PoolParams};
         use std::sync::Arc;
-
         // Build a shared core with one V2 pool registered directly into `BotState`.
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         let params = RegisterV2PoolParams {
@@ -3462,10 +3195,8 @@ mod tests {
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v2_pool(&params)
             .expect("test setup: V2 registration");
-
         // Engine adopts the SAME `Arc<RwLock<BotState>>` — NOT its own `BotState`.
         let engine = ArbitrageEngine::with_core(Arc::clone(&core));
-
         // If the engine held a separate `BotState`, this would be 0; shared => 1.
         assert_eq!(
             engine.v2_pool_count(),
@@ -3473,7 +3204,6 @@ mod tests {
             "engine must read the shared BotState's pools via with_core"
         );
     }
-
     /// ADR-006 slice 2 (D3): the engine no longer constructs pools — it
     /// resolves `pool_id`s against the shared `BotState` at `register_path`
     /// time. A path hop referencing a `pool_id` that isn't registered in
@@ -3483,7 +3213,6 @@ mod tests {
     fn register_path_rejects_pool_id_not_in_bot() {
         use crate::bot_core::{BotState, RegisterV2PoolParams};
         use std::sync::Arc;
-
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         // Register one real V2 pool so the engine has *some* valid id.
         let real_pool_id = core
@@ -3504,9 +3233,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V2 registration");
-
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-
         // Bogus pool_id (never registered) — must Err.
         let bogus_id = real_pool_id + 1_000;
         let result = engine.register_path(vec![
@@ -3529,7 +3256,6 @@ mod tests {
             "error must name the missing pool_id={bogus_id}, got: {msg}"
         );
     }
-
     /// Regression (3ECKWX): `process_backfill_logs` must stamp each applied log
     /// with the log's OWN `block_number`, not the chunk-level `chunk_end`. Two
     /// V3 Swap logs at distinct blocks B1=10, B2=20 inside one backfill chunk
@@ -3548,7 +3274,6 @@ mod tests {
         use alloy::primitives::{Bytes, B256};
         use alloy::rpc::types::Log;
         use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
-
         /// Build a V3 Swap log carrying post-swap scalars, at `block_number`.
         /// data = abi.encode(int256 amount0, int256 amount1, uint160 sqrtPriceX96,
         /// uint128 liquidity, int24 tick) = 5 × 32 bytes.
@@ -3575,7 +3300,6 @@ mod tests {
             let mut tick_word = [0u8; 32];
             tick_word[28..32].copy_from_slice(&tick.to_be_bytes());
             data.extend_from_slice(&tick_word);
-
             let inner = alloy::primitives::Log::new_unchecked(
                 pool_address,
                 vec![
@@ -3596,11 +3320,9 @@ mod tests {
                 removed: false,
             }
         }
-
         let engine = ArbitrageEngine::new();
         let pool_addr = Address::from([0x77u8; 20]);
         let base_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // ~1.0 price
-
         let pool_id = engine.register_v3_pool(&RegisterV3PoolParams {
             address: pool_addr,
             token0: Address::ZERO,
@@ -3624,7 +3346,6 @@ mod tests {
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .set_v3_pool_live(pool_addr);
-
         // Two swaps at distinct blocks inside one backfill chunk.
         let b1 = 10u64;
         let b2 = 20u64;
@@ -3635,7 +3356,6 @@ mod tests {
             v3_swap_log(pool_addr, sp_b1, 1_100_000, 1, b1),
             v3_swap_log(pool_addr, sp_b2, 1_200_000, 2, b2),
         ];
-
         // X35QKN: the engine's `process_backfill_logs` delegator was retired
         // (the pump calls `BotState::process_backfill_logs` directly). The test
         // only asserts on journal/state, so call the BotState method directly
@@ -3644,7 +3364,6 @@ mod tests {
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .process_backfill_logs(&logs, chunk_end);
-
         let core = engine
             .core
             .read_at(crate::bot_core::state_lock::LockSite::Solver);
@@ -3671,7 +3390,6 @@ mod tests {
         assert_eq!(s.liquidity, 1_200_000);
         assert_eq!(s.tick, 2);
         assert_eq!(s.update_block, b2);
-
         // Restorability: restore before B2 must land at the post-B1 state,
         // proving B1 was journaled at its real block (under the bug it would
         // land on pre-B1, since the single collapsed delta at chunk_end >= B2
@@ -3699,7 +3417,6 @@ mod tests {
         // for 3ECKWX (per-log stamping); the scalar assertions above are the
         // restorability proof.
     }
-
     /// ADR-006 slice 10 acceptance: `ArbitrageEngine::with_core` shares the
     /// SAME `Arc<RwLock<BotState>>` as the peer `Bot`/`PyBot` — the structural
     /// unification that dissolves the dual-`BotState` split (the
@@ -3708,7 +3425,6 @@ mod tests {
     #[test]
     fn with_core_shares_the_same_core_arc_as_a_peer_bot() {
         use std::sync::Arc;
-
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
             crate::bot_core::BotState::new(),
         ));
@@ -3722,7 +3438,6 @@ mod tests {
              (ADR-006 D1+D4 shared-core topology)"
         );
     }
-
     /// ADR-006 slice 10 acceptance: characterize the engine-then-core lock
     /// ordering under concurrent access. Engine paths hold the engine
     /// `Mutex<ArbitrageEngine>` and nest `core.write()`/`core.read()` inside;
@@ -3736,11 +3451,9 @@ mod tests {
     /// would surface as a panic.
     #[test]
     fn engine_then_core_lock_order_survives_concurrent_readers_and_writer() {
+        use crate::bot_core::BlockMetadata;
         use std::sync::Arc;
         use std::thread;
-
-        use crate::bot_core::BlockMetadata;
-
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
             crate::bot_core::BotState::new(),
         ));
@@ -3753,9 +3466,7 @@ mod tests {
             FEE_DENOM_03,
         );
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
         // Writer: pump drain path — engine lock then core.write() inside
         // `solve_dirty` (expires buffered events + solves dirty paths).
         let writer_engine = Arc::clone(&engine);
@@ -3770,7 +3481,6 @@ mod tests {
                 writer_engine.lock().solve_dirty(block, &metadata, &[]);
             }
         });
-
         // Readers: companion-getter path — core.read() alone, never the engine.
         let mut readers = Vec::new();
         for _ in 0..4 {
@@ -3784,7 +3494,6 @@ mod tests {
                 }
             }));
         }
-
         // The writer must finish within a sane bound. A real deadlock
         // (core-then-engine nesting, or a re-entrant core guard) would hit
         // this timeout.
@@ -3795,7 +3504,6 @@ mod tests {
         }
         writer_result.expect("writer deadlocked (engine-then-core ordering broken)");
     }
-
     // --- ADR-005 slice 15b-1: Rust parallel solve fan-out -----------------
     //
     // `solve_dirty`'s affected-path solve loop is parallelized via executor bins
@@ -3806,7 +3514,6 @@ mod tests {
     // correctness drift. The companion stress test below it characterizes the
     // engine-then-core lock ordering under the new parallel solve path with
     // many paths (drives the par_iter loop across non-trivial batch sizes).
-
     /// Pin the parallel-fan-out equivalence invariant: the batch re-solver
     /// (`solve_all_paths` → `solve_all` → executor bins of `solve_path`)
     /// must produce results identical to the per-path eager baseline captured
@@ -3816,7 +3523,6 @@ mod tests {
     #[test]
     fn solve_all_parallel_fanout_matches_per_path_eager_baseline() {
         let mut engine = ArbitrageEngine::new();
-
         // Register 8 V2-V2 paths on distinct pool pairs with stable price
         // divergence. Each eagerly solves at registration; we capture the
         // eager SolvePathResult as the per-path baseline.
@@ -3856,7 +3562,6 @@ mod tests {
                 .expect("register_and_solve_path must eagerly solve a profitable path");
             baseline.insert(path_id, eager.clone());
         }
-
         // Full batch re-solve via solve_all_paths — this is the call path
         // whose solve loop gets parallelized. Equivalent eager results must
         // survive the batch re-solve (today in the resolve fan-out; a batch
@@ -3879,7 +3584,6 @@ mod tests {
             );
         }
     }
-
     /// ADR-006 slice 10 acceptance for the parallel solve fan-out
     /// (ADR-005 slice 15b-1): characterize the engine-then-core lock ordering
     /// when the engine's `solve_dirty` solve loop runs under executor bins.
@@ -3895,16 +3599,13 @@ mod tests {
     /// a re-entrant core guard) surfaces as a panic on the writer thread.
     #[test]
     fn solve_dirty_parallel_fanout_survives_concurrent_readers_and_writer() {
+        use crate::bot_core::BlockMetadata;
         use std::sync::Arc;
         use std::thread;
-
-        use crate::bot_core::BlockMetadata;
-
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
             crate::bot_core::BotState::new(),
         ));
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-
         // Register N paths so `solve_dirty` exercises a real par_iter batch.
         for i in 0u8..8 {
             let addr_a = Address::from([0x10_u8 + i; 20]);
@@ -3936,10 +3637,8 @@ mod tests {
                 ])
                 .expect("path registration should succeed");
         }
-
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
         // Writer: `solve_dirty` invokes `solve_all_paths` semantically via
         // `run_epoch` → `par_iter` of `Self::solve_path`. The
         // writer holds the engine `Mutex` then (inside) `core.read()` (path
@@ -3956,7 +3655,6 @@ mod tests {
                 writer_engine.lock().solve_dirty(block, &metadata, &[]);
             }
         });
-
         // Readers: core.read alone — the companion-getter path. Mirrors slice
         // 10's reader pattern (never the engine lock).
         let mut readers = Vec::new();
@@ -3971,7 +3669,6 @@ mod tests {
                 }
             }));
         }
-
         let writer_result = writer.join();
         done.store(true, std::sync::atomic::Ordering::Relaxed);
         for handle in readers {
@@ -3982,7 +3679,6 @@ mod tests {
              core/engine lock nesting or re-entrant guard (ADR-006 D2 violated)",
         );
     }
-
     // ── Block stream (epic 6W35AI) ────────────────────────────────────────
     //
     // The settlement-arbitrage bot's block clock must come from a forwarded `newHeads`
@@ -3991,7 +3687,6 @@ mod tests {
     // the dedicated channel, plumbed parallel to `result_tx`.
     // See docs/architecture/rust-owned-bot.md §6.1 (`block_tx.send — Python
     // reads this`); the block-stream-clock plan file has since been removed.
-
     #[test]
     fn block_notification_carries_block_and_metadata() {
         // Contract: `BlockNotification` is built from a block number + a
@@ -4018,12 +3713,10 @@ mod tests {
         assert_eq!(notif.gas_used, metadata.gas_used);
         assert_eq!(notif.gas_limit, metadata.gas_limit);
     }
-
     // The block-channel engine tests (set_block_channel plumbing, notify_block
     // push) relocated with the pipe itself: the block clock is now relayed by
     // the engine's stage surface (`EngineStages` over `BlockClockPipe`) — see
     // bot_core/block_clock_pipe.rs + the EngineStages tests.
-
     #[test]
     fn on_pump_ended_closes_the_result_stream() {
         // Incident 2026-08-20 (WS-silent class): pump death routes the sink's
@@ -4044,7 +3737,6 @@ mod tests {
             other => panic!("result stream must be Disconnected after drop, got {other:?}"),
         }
     }
-
     // -----------------------------------------------------------------
     // HopType::SolidlyStable + ResolvedHop::SolidlyStable variant (Plan: Port
     // Solidly solve into the Rust engine — task BFIWUG).
@@ -4055,7 +3747,6 @@ mod tests {
         // all-CL dispatch branches — otherwise solve_path would mis-dispatch.
         assert!(!HopType::SolidlyStable.is_concentrated_liquidity());
     }
-
     #[test]
     fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
         let state = SolidlyHopState {
@@ -4072,7 +3763,6 @@ mod tests {
         let hop = ResolvedHop::SolidlyStable {
             state: state.clone(),
         };
-
         // The new accessor returns the state.
         let got = hop
             .as_solidly_state()
@@ -4080,22 +3770,18 @@ mod tests {
         assert_eq!(got.reserves_0, state.reserves_0);
         assert_eq!(got.variant, DexVariant::AerodromeV2Stable);
         assert!(got.stable);
-
         // hop_type() maps to the new variant.
         assert_eq!(hop.hop_type(), HopType::SolidlyStable);
-
         // The Solidly hop is excluded from the V2 + CL accessors — the
         // existing dispatch arms must not pick it up.
         assert!(hop.as_v2_state().is_none());
         assert!(hop.as_int_sequence().is_none());
     }
-
     // The per-family Solidly projection tests live in
     // `crate::bot_core::resolve::solidly::tests` (moved in T3 of epic
     // MKRKNB; they assert the `MissingHopReason` variants directly
     // against `project_solidly`). This module keeps only the
     // engine-level classifier test (`solidly_hop_variant_is_not_v2_and_not_cl`).
-
     // -----------------------------------------------------------------
     // solve_solidly_path_int (task DMPSNG) — the two-stage Möbius precheck +
     // golden-section search. Tests cover all four AC cases: (1) all-Solidly
@@ -4111,11 +3797,9 @@ mod tests {
         // divide-by-zero in get_y_solidly).
         use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams};
         use std::sync::Arc;
-
         fn tokens(n: u64) -> U112 {
             (U256::from(n) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>()
         }
-
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         core.write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_token(
@@ -4172,7 +3856,6 @@ mod tests {
         let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         (engine, aero_a, aero_b)
     }
-
     #[test]
     fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
         let (mut engine, aero_a, aero_b) = solidly_arb_engine();
@@ -4206,7 +3889,6 @@ mod tests {
             result.profit,
             result.hop_outputs[1].saturating_sub(result.optimal_input)
         );
-
         // Golden-section must not miss the global optimum: scan a fine grid
         // (1-token steps) and assert the solver's profit is within one grid
         // step of the grid max (±3 verification radius tolerance).
@@ -4235,16 +3917,13 @@ mod tests {
             grid_best_profit
         );
     }
-
     #[test]
     fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
         use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
         use std::sync::Arc;
-
         fn tokens(n: u64) -> U112 {
             (U256::from(n) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>()
         }
-
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         core.write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_token(
@@ -4321,7 +4000,6 @@ mod tests {
         .result
         .expect("profitable mixed path solves");
         assert!(!result.profit.is_zero());
-
         // Grid scan parity check (Solidly hop uses the integer leaf, V2 hop
         // uses IntHopState::swap).
         let max_reserve = tokens(1000).to::<U256>();
@@ -4343,7 +4021,6 @@ mod tests {
             grid_best
         );
     }
-
     #[test]
     fn solve_solidly_unprofitable_path_returns_none() {
         let (mut engine, aero_a, _aero_b) = solidly_arb_engine();
@@ -4372,12 +4049,10 @@ mod tests {
             "round-trip through one pool is unprofitable"
         );
     }
-
     #[test]
     fn solve_solidly_plus_cl_path_rejected_by_scope() {
         use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV3PoolParams};
         use std::sync::Arc;
-
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         core.write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_token(
@@ -4457,7 +4132,6 @@ mod tests {
     // -----------------------------------------------------------------------
     // Balancer weighted solve branch (AT2TGZ)
     // -----------------------------------------------------------------------
-
     /// Two-token Balancer weighted pool params, 50/50 weights, 0.1% fee.
     fn balancer_weighted_5050_params(
         addr: Address,
@@ -4485,7 +4159,6 @@ mod tests {
             update_block: 0,
         }
     }
-
     /// 80/20 weighted pool params.
     fn balancer_weighted_8020_params(
         addr: Address,
@@ -4511,14 +4184,12 @@ mod tests {
             update_block: 0,
         }
     }
-
     #[test]
     fn balancer_weighted_5050_finds_profitable_arb() {
         let mut engine = ArbitrageEngine::new();
         let one = U256::from(10u64).pow(U256::from(18u64));
         let _ = one; // reserved for future reserve-scale assertions
-
-        // Pool A: 1000 token0 / 2000 token1 (50/50 — reduces to constant product)
+                     // Pool A: 1000 token0 / 2000 token1 (50/50 — reduces to constant product)
         let pool_a = engine
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
@@ -4536,7 +4207,6 @@ mod tests {
                 1000,
                 1950,
             ));
-
         // Path: token0 → token1 (pool A) → token0 (pool B)
         engine
             .register_path(vec![
@@ -4550,7 +4220,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
@@ -4563,11 +4232,9 @@ mod tests {
         );
         assert!(!r.profit.is_zero(), "profit should be non-zero");
     }
-
     #[test]
     fn balancer_weighted_8020_finds_profitable_arb() {
         let mut engine = ArbitrageEngine::new();
-
         // 80/20 pools with a mispricing to create an arb cycle.
         let pool_a = engine
             .core
@@ -4585,7 +4252,6 @@ mod tests {
                 800_000,
                 195_000,
             ));
-
         engine
             .register_path(vec![
                 PoolHop {
@@ -4598,7 +4264,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
@@ -4608,14 +4273,12 @@ mod tests {
         assert!(!r.optimal_input.is_zero());
         assert!(!r.profit.is_zero());
     }
-
     #[test]
     fn balancer_weighted_5050_matches_v2_mobius_on_same_reserves() {
         // A 50/50 weighted pool IS constant product. The engine's Balancer
         // weighted solve must agree with the V2 Möbius solve on identical
         // reserves + fee.
         let mut engine = ArbitrageEngine::new();
-
         // V2 pools: 0.3% fee, 1000/2000 reserves in 18-decimal (matching BW scale).
         let v2_a = engine.register_v2_pool(
             Address::from([0xf1u8; 20]),
@@ -4631,7 +4294,6 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-
         // Balancer 50/50 weighted pools with 0.3% fee, same reserves.
         let bw_params = |addr: Address, b0: u128, b1: u128| {
             crate::bot_core::RegisterBalancerWeightedPoolParams {
@@ -4661,7 +4323,6 @@ mod tests {
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_weighted_pool(&bw_params(Address::from([0xf4u8; 20]), 1000, 1950));
-
         // Solve V2-V2 path
         engine
             .register_path(vec![
@@ -4677,7 +4338,6 @@ mod tests {
             .unwrap();
         let v2_results = engine.cycle.solve_all(&engine.registry);
         let v2_profit = v2_results.values().next().unwrap().profit;
-
         // Solve Balancer-V2-V2 path (clear and re-solve)
         drop(
             engine
@@ -4704,7 +4364,6 @@ mod tests {
         )
         .result
         .expect("bw path should solve");
-
         // The two profits should be in the same ballpark (within 1% of each
         // other — the Balancer weighted solve uses golden-section search, not
         // the exact Möbius closed form, so there's small search imprecision).
@@ -4721,12 +4380,10 @@ mod tests {
             v2_profit,
         );
     }
-
     #[test]
     fn balancer_weighted_mixed_with_v2_finds_arb() {
         let mut engine = ArbitrageEngine::new();
         let one_e18 = U256::from(10u64).pow(U256::from(18u64));
-
         // V2 pool: token0/token1, 1000/2000 in 18dp, 0.3% fee
         let v2 = engine.register_v2_pool(
             Address::from([0xa1u8; 20]),
@@ -4758,7 +4415,6 @@ mod tests {
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_weighted_pool(&bw_params);
-
         // V2 → Balancer weighted path
         engine
             .register_path(vec![
@@ -4776,14 +4432,12 @@ mod tests {
         // V2+Balancer-weighted is all-V2-or-weighted with no CL — should solve
         assert!(!results.is_empty(), "should find V2+Balancer-weighted arb");
     }
-
     #[test]
     fn balancer_weighted_rejects_mixed_with_cl() {
         use std::sync::Arc;
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
             crate::bot_core::BotState::new(),
         ));
-
         // Register a Balancer weighted pool
         let bw = core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
@@ -4810,7 +4464,6 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
-
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
@@ -4836,7 +4489,6 @@ mod tests {
             "Balancer weighted + CL must not solve"
         );
     }
-
     /// ZU7RAF: the core `ArbitrageEngine` OWNS the lifecycle phase — a
     /// standalone Rust consumer can observe + guard the state machine directly
     /// (`current_phase` / `set_phase` / `require_phase` / `require_phase_before`)
@@ -4846,10 +4498,8 @@ mod tests {
     #[test]
     fn core_engine_owns_and_guards_the_lifecycle_phase() {
         let engine = ArbitrageEngine::new();
-
         // Fresh engine → Created.
         assert_eq!(engine.current_phase(), EnginePhase::Created);
-
         // Gate: require_phase(SnapshotLoaded) fails from Created.
         assert!(engine
             .require_phase(EnginePhase::SnapshotLoaded, "resume")
@@ -4862,13 +4512,11 @@ mod tests {
         assert!(engine.current_phase().allow_subscribe("subscribe").is_ok());
         engine.set_phase(EnginePhase::Subscribed);
         assert_eq!(engine.current_phase(), EnginePhase::Subscribed);
-
         // Advance through the full ordering.
         engine.set_phase(EnginePhase::SnapshotLoaded);
         engine.set_phase(EnginePhase::Backfilled);
         engine.set_phase(EnginePhase::Resumed);
         assert_eq!(engine.current_phase(), EnginePhase::Resumed);
-
         // Once Resumed, require_phase_before(Resumed) fails (already past),
         // and require_phase(Resumed) is satisfied.
         assert!(engine
@@ -4876,7 +4524,6 @@ mod tests {
             .is_err());
         assert!(engine.require_phase(EnginePhase::Resumed, "solve").is_ok());
     }
-
     /// TJT63P: `allow_subscribe` accepts `Created` (legacy subscribe-first path)
     /// AND `SnapshotLoaded` (construction-time-load path: load snapshot, then
     /// subscribe). Rejects `Subscribed`/`Backfilled`/`Resumed`.
@@ -4894,7 +4541,6 @@ mod tests {
             .is_err());
         assert!(EnginePhase::Resumed.allow_subscribe("subscribe").is_err());
     }
-
     /// J3FMDO regression: `subscribe()` must not regress the phase below
     /// `SnapshotLoaded` when the core already has a snapshot loaded (the
     /// construction-time-load path: `load_snapshot_from_db` at `Bot`
@@ -4942,11 +4588,9 @@ mod tests {
             "SnapshotLoaded + core snapshot → SnapshotLoaded (no regression)"
         );
     }
-
     // -----------------------------------------------------------------------
     // Balancer stable solve branch (IVLQRB)
     // -----------------------------------------------------------------------
-
     /// Two-token Balancer stable pool params (`MetaStable` — no BPT), amp=200,
     /// 0.01% fee, invariant V2.
     fn balancer_stable_params(
@@ -4975,11 +4619,9 @@ mod tests {
             rate_provider: None,
         }
     }
-
     #[test]
     fn balancer_stable_finds_profitable_arb() {
         let mut engine = ArbitrageEngine::new();
-
         // Pool A: 1000 token0 / 2000 token1 (amp=200 — stable curve)
         let pool_a = engine
             .core
@@ -4998,7 +4640,6 @@ mod tests {
                 1000,
                 1950,
             ));
-
         // Path: token0 → token1 (pool A) → token0 (pool B)
         engine
             .register_path(vec![
@@ -5012,7 +4653,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
@@ -5025,11 +4665,9 @@ mod tests {
         );
         assert!(!r.profit.is_zero(), "profit should be non-zero");
     }
-
     #[test]
     fn balancer_stable_unprofitable_path_returns_none() {
         let mut engine = ArbitrageEngine::new();
-
         // Two identical pools — no arb possible.
         let pool_a = engine
             .core
@@ -5047,7 +4685,6 @@ mod tests {
                 1000,
                 2000,
             ));
-
         engine
             .register_path(vec![
                 PoolHop {
@@ -5060,19 +4697,16 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             results.is_empty(),
             "identical stable pools should not produce an arb"
         );
     }
-
     #[test]
     fn balancer_stable_mixed_with_v2_finds_arb() {
         let mut engine = ArbitrageEngine::new();
         let one_e18 = U256::from(10u64).pow(U256::from(18u64));
-
         // V2 pool: 1000/2000, 0.3% fee
         let v2 = engine.register_v2_pool(
             Address::from([0xa3u8; 20]),
@@ -5090,7 +4724,6 @@ mod tests {
                 1000,
                 1950,
             ));
-
         // V2 → Balancer stable path
         engine
             .register_path(vec![
@@ -5104,21 +4737,18 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
             "should find V2+Balancer-stable mixed arb"
         );
     }
-
     #[test]
     fn balancer_stable_rejects_mixed_with_cl() {
         use std::sync::Arc;
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
             crate::bot_core::BotState::new(),
         ));
-
         let bs = core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_stable_pool(&balancer_stable_params(
@@ -5143,7 +4773,6 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
-
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
@@ -5168,11 +4797,9 @@ mod tests {
             "Balancer stable + CL must not solve"
         );
     }
-
     // -----------------------------------------------------------------------
     // Curve stableswap solve branch (RPDDWH)
     // -----------------------------------------------------------------------
-
     /// Two-token Curve stableswap pool params (standard, raw balances, no
     /// rates, no lending). amp=100 (raw), fee=4e6 (0.04% of 1e10).
     fn curve_stable_params(
@@ -5220,11 +4847,9 @@ mod tests {
             data_provider: None,
         }
     }
-
     #[test]
     fn curve_stable_finds_profitable_arb() {
         let mut engine = ArbitrageEngine::new();
-
         let pool_a = engine
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
@@ -5241,7 +4866,6 @@ mod tests {
                 1000,
                 1950,
             ));
-
         engine
             .register_path(vec![
                 PoolHop {
@@ -5254,7 +4878,6 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         eprintln!("results: {}", results.len());
         assert!(
@@ -5268,11 +4891,9 @@ mod tests {
         );
         assert!(!r.profit.is_zero(), "profit should be non-zero");
     }
-
     #[test]
     fn curve_stable_unprofitable_path_returns_none() {
         let mut engine = ArbitrageEngine::new();
-
         let pool_a = engine
             .core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
@@ -5289,7 +4910,6 @@ mod tests {
                 1000,
                 2000,
             ));
-
         engine
             .register_path(vec![
                 PoolHop {
@@ -5302,19 +4922,16 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             results.is_empty(),
             "identical Curve pools should not produce an arb"
         );
     }
-
     #[test]
     fn curve_stable_mixed_with_v2_finds_arb() {
         let mut engine = ArbitrageEngine::new();
         let one_e18 = U256::from(10u64).pow(U256::from(18u64));
-
         let v2 = engine.register_v2_pool(
             Address::from([0xa5u8; 20]),
             (U256::from(1000u64) * one_e18).to::<U112>(),
@@ -5330,7 +4947,6 @@ mod tests {
                 1000,
                 1500,
             ));
-
         engine
             .register_path(vec![
                 PoolHop {
@@ -5343,18 +4959,15 @@ mod tests {
                 },
             ])
             .unwrap();
-
         let results = engine.cycle.solve_all(&engine.registry);
         assert!(!results.is_empty(), "should find V2+Curve mixed arb");
     }
-
     #[test]
     fn curve_stable_rejects_mixed_with_cl() {
         use std::sync::Arc;
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
             crate::bot_core::BotState::new(),
         ));
-
         let cs = core
             .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_curve_pool(&curve_stable_params(
@@ -5379,7 +4992,6 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
-
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
@@ -5413,17 +5025,14 @@ mod tests {
     struct SpanParentCapture {
         spans: std::sync::Arc<std::sync::Mutex<Vec<SpanRecord>>>,
     }
-
     /// One captured span: (name, span id, parent id).
     type SpanRecord = (String, u64, Option<u64>);
-
     thread_local! {
         /// Current-span stack mirror: on_enter/on_exit maintain it so
         /// contextually-created children resolve their parent the way
         /// tracing's dispatcher does.
         static SPAN_STACK: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
     }
-
     impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for SpanParentCapture {
         fn on_new_span(
             &self,
@@ -5439,7 +5048,6 @@ mod tests {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push((name, id.into_u64(), parent));
         }
-
         fn on_enter(
             &self,
             id: &tracing::span::Id,
@@ -5447,7 +5055,6 @@ mod tests {
         ) {
             SPAN_STACK.with(|st| st.borrow_mut().push(id.into_u64()));
         }
-
         fn on_exit(
             &self,
             _id: &tracing::span::Id,
@@ -5458,7 +5065,6 @@ mod tests {
             });
         }
     }
-
     /// K4ETHF follow-up (trace f06ea422 / block 25900244): the old
     /// two-acquisition gate let a concurrent dirty marker land BETWEEN the
     /// probe and the take - the solve then did real work (1518 affected
@@ -5479,16 +5085,13 @@ mod tests {
     #[expect(clippy::expect_used)]
     #[expect(clippy::too_many_lines)]
     fn solve_dirty_race_marks_dirty_work_with_solve_span() {
+        use crate::arb_engine::EngineStages;
         use std::collections::HashSet;
         use std::sync::Arc;
-
-        use crate::arb_engine::EngineStages;
         use tracing_subscriber::layer::SubscriberExt;
-
         let capture = SpanParentCapture::default();
         let log = std::sync::Arc::clone(&capture.spans);
         let subscriber = tracing_subscriber::registry().with(capture);
-
         // Real registered paths (mirrors the 3780 concurrency fixture) so a
         // dirty marker produces genuine fan-out phase work.
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
@@ -5528,7 +5131,6 @@ mod tests {
             pool_ids.push(a);
         }
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-
         // Seed every path dirty up front: the fanout assertions below need
         // at least one solve cycle, and the marker thread's 50us cadence is
         // best-effort — a slow CI runner can starve it for the whole 200
@@ -5545,7 +5147,6 @@ mod tests {
                 marker_delta.record_affected(HopType::V2, *pid, 0u64);
             }
         }
-
         // Marker thread: continuously re-marks a tracked V2 pool dirty -
         // under the old gate these landings are exactly the probe<->take
         // window; under the single-acquisition gate they can only be seen by
@@ -5570,7 +5171,6 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_micros(50));
             }
         });
-
         let handle = EngineStages::new(
             std::sync::Arc::clone(&engine),
             std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
@@ -5589,7 +5189,6 @@ mod tests {
         });
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         marker.join().expect("marker thread");
-
         let spans = log
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -5618,7 +5217,6 @@ mod tests {
             fanouts.len()
         );
     }
-
     /// PWPPAZ T1 (flips the trace-91a4a776 pin): the tombstone finalize must
     /// NOT run a solve cycle. Trace 91a4a776's inner `solve_dirty` — and the
     /// span gate later added around it — retired with this task: the finalize
@@ -5634,18 +5232,14 @@ mod tests {
     #[test]
     #[expect(clippy::expect_used)]
     fn finalize_block_consumes_no_dirt_and_emits_no_solve() {
+        use crate::arb_engine::EngineStages;
         use std::collections::HashSet;
         use std::sync::Arc;
-
-        use crate::arb_engine::EngineStages;
         use tracing_subscriber::layer::SubscriberExt;
-
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
-
         let capture = SpanParentCapture::default();
         let log = Arc::clone(&capture.spans);
         let subscriber = tracing_subscriber::registry().with(capture);
-
         // Real pools + path so the finalize solve does genuine fan-out work
         // (mirrors the tombstone-adjacent dirt crossing the burst boundary).
         let mut engine = ArbitrageEngine::new();
@@ -5683,13 +5277,11 @@ mod tests {
             Arc::clone(&engine_state),
             Arc::new(crate::bot_core::EpochDelta::new(0u64)),
         );
-
         tracing::subscriber::with_default(subscriber, || {
             engine_state
                 .lock()
                 .finalize_block(5, &BlockMetadata::default());
         });
-
         let spans = log
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -5737,7 +5329,6 @@ mod tests {
             .expect("finalize must emit the terminal boundary batch");
         assert_eq!(batch.solve_block, 5);
     }
-
     /// PWPPAZ T1: both guard branches — a block whose logs dirtied nothing
     /// (or never arrived) still gets its one-shot boundary advance + terminal
     /// publish (`solve_block` = the finalized block), and a re-fire of the
@@ -5765,7 +5356,6 @@ mod tests {
             "guard must not double-publish a settled boundary"
         );
     }
-
     /// ZZS6CG (trace hygiene): a solve span must parent to its OWN block's
     /// published epoch root span (`degenbot.epoch`) - exact-match only. The stale
     /// `DrainWork::Finalize` (retired in MROOY7) crossing a block boundary parked
@@ -5787,11 +5377,9 @@ mod tests {
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use std::sync::Arc;
         use tracing_subscriber::layer::SubscriberExt;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
         let handles: Vec<_> = (0..2)
             .map(|_| {
@@ -5803,7 +5391,6 @@ mod tests {
                 ))
             })
             .collect();
-
         tracing::subscriber::with_default(subscriber, || {
             // Published context for block 100 (a completed earlier settle).
             {
@@ -5811,23 +5398,19 @@ mod tests {
                 let _guard = block100.enter();
                 crate::telemetry::publish_block_context(100);
             }
-
             // The newer block's loop context is ambient during both solves
             // (the stale-crossing shape: block 101's context is current).
             let ambient = tracing::info_span!("degenbot.epoch.run", block.number = 101u64);
             let _ambient_guard = ambient.enter();
-
             // (1) Exact hit: solve of the PUBLISHED block 100 re-attaches to
             // the published epoch(100) span, not the ambient 101 span.
             let h100 = Arc::clone(&handles[0]);
             h100.run_solve_cycle(&oracle.to_affected_keys(), 100, &BlockMetadata::default());
-
             // (2) Exact miss: solve of block 101 (never published) keeps the
             // ambient parent - no fallback re-parenting, no orphan.
             let h101 = Arc::clone(&handles[1]);
             h101.run_solve_cycle(&oracle.to_affected_keys(), 101, &BlockMetadata::default());
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
         let span_for_block = |blk: u64, name: &str| {
@@ -5842,12 +5425,10 @@ mod tests {
                         })
                 }).map_or_else(|| panic!("{name} for block {blk} must be exported"), |sp| sp.span_context.span_id())
         };
-
         let published_100 = span_for_block(100, "degenbot.epoch.run");
         let ambient_101 = span_for_block(101, "degenbot.epoch.run");
         let solve_100 = span_for_block(100, "degenbot.arb.solve");
         let solve_101 = span_for_block(101, "degenbot.arb.solve");
-
         // Look up both solve spans' parents via the exported spans.
         let parent_of = |id| {
             spans
@@ -5867,7 +5448,6 @@ mod tests {
             "solve(unpublished block) must keep the ambient parent - no fallback mis-dating"
         );
     }
-
     /// KNEUQX: the arb.solve span records `cycle.solve_block` (the cycle's
     /// anchored work block = `engine.results_block()`) alongside the entry
     /// block.number tag. At a settle boundary the anchor is the pool-state
@@ -5884,13 +5464,10 @@ mod tests {
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use std::sync::Arc;
         use tracing_subscriber::layer::SubscriberExt;
-
         const MY_SOLVE_BLOCK: u64 = 0x5EED_B10C;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         oracle.insert(0x0BAD_F00D, HopType::V2);
@@ -5906,7 +5483,6 @@ mod tests {
                 &BlockMetadata::default(),
             );
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
         let solve = spans
@@ -5925,7 +5501,6 @@ mod tests {
             "arb.solve must record the cycle's anchored block"
         );
     }
-
     // P5FEOI (epic 2LXPPV): original span test, otel-gated like its harness.
     #[cfg(feature = "otel")]
     #[test]
@@ -5936,14 +5511,11 @@ mod tests {
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use std::sync::Arc;
         use tracing_subscriber::layer::SubscriberExt;
-
         const MY_SOLVE_BLOCK: u64 = 0x0BAD_F00D;
         const MY_SOLVE_BLOCK_I64: i64 = 0x0BAD_F00D;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         // T0 no-op gating: the span fires only when the engine holds dirty
         // paths — mark one so this test still exercises the emitted-span path.
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
@@ -5960,10 +5532,8 @@ mod tests {
                 &BlockMetadata::default(),
             );
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
-
         // Same dual-representation attribute check as the MQUKB6 pump test (tracing-
         // opentelemetry 0.33 maps u64 fields to strings; an OTel bump may switch to
         // I64 - accept both).
@@ -5987,7 +5557,6 @@ mod tests {
             spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
         );
     }
-
     /// XC7SWD + LPEOBI: the pre-cycle expiry window (core write
     /// `expire_v3/v4`) owns a ~2.8-3.1s lock-queue slot per cycle. When
     /// `max_age` is unset (production cockpit default) the expiry is
@@ -6001,11 +5570,9 @@ mod tests {
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use std::sync::Arc;
         use tracing_subscriber::layer::SubscriberExt;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         oracle.insert(0x0BAD_F00D, HopType::V2);
@@ -6020,7 +5587,6 @@ mod tests {
                 &BlockMetadata::default(),
             );
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
         let expire_spans: Vec<_> = spans
@@ -6032,7 +5598,6 @@ mod tests {
             "max_age=None expiry is a no-op - must not take the core write; got {expire_spans:?}"
         );
     }
-
     /// Resolve->LPT staging trace (f701ccd36f4ecf80d671e798df218fa4, block
     /// 25906841): between the close of `arb.resolve` and the open of
     /// `arb.lpt` sat 647 ms of uninstrumented wall time — the results sweep
@@ -6049,13 +5614,10 @@ mod tests {
         use hashbrown::HashSet;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use tracing_subscriber::layer::SubscriberExt;
-
         const PATH_COUNT: u64 = 1;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let mut engine = ArbitrageEngine::new();
         let a = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
@@ -6083,7 +5645,6 @@ mod tests {
                 },
             ])
             .expect("path registers");
-
         tracing::subscriber::with_default(subscriber, || {
             engine.cycle.run_epoch(
                 &crate::arb_engine::tests::test_keys::affected_keys(
@@ -6097,7 +5658,6 @@ mod tests {
                 &mut engine.delivery,
             );
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
         let stage_spans: Vec<_> = spans
@@ -6122,7 +5682,6 @@ mod tests {
             stage_spans[0].attributes
         );
     }
-
     /// With `max_age` SET the expiry write returns and each buffer kind gets
     /// one `degenbot.arb.expire` span with `lock_wait_us`/`expire_work_us`.
     #[cfg(feature = "otel")]
@@ -6133,11 +5692,9 @@ mod tests {
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use std::sync::Arc;
         use tracing_subscriber::layer::SubscriberExt;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         oracle.insert(0x0BAD_F00D, HopType::V2);
@@ -6154,10 +5711,8 @@ mod tests {
                 &BlockMetadata::default(),
             );
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
-
         let expire_spans: Vec<_> = spans
             .iter()
             .filter(|sp| sp.name.as_ref() == "degenbot.arb.expire")
@@ -6198,7 +5753,6 @@ mod tests {
             );
         }
     }
-
     /// T0 no-op gating: a clean engine (no dirty paths) must NOT emit an
     /// `degenbot.arb.solve` span — the 2µs no-op solves were flooding Jaeger's
     /// recent-traces list and drowning the real solves.
@@ -6210,11 +5764,9 @@ mod tests {
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use std::sync::Arc;
         use tracing_subscriber::layer::SubscriberExt;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let handle = EngineStages::new(
             Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new())),
             std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
@@ -6222,7 +5774,6 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             handle.run_solve_cycle(&[], 1, &BlockMetadata::default());
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
         let solve_spans = spans
@@ -6234,7 +5785,6 @@ mod tests {
             "no-op solve must not emit a degenbot.arb.solve span"
         );
     }
-
     /// Epic BXUSGL T1 acceptance: with the tokio solve executor each path's
     /// result reaches `self.results` as soon as ITS OWN solve completes —
     /// the slowest path in the batch may not delay the fast ones' merge.
@@ -6283,9 +5833,7 @@ mod tests {
         }
         let probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>> =
             std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
-
         let mut engine = ArbitrageEngine::new();
-
         // Seven independent mispriced V2->V2 pairs -> seven profitable paths
         // (>=2 cores: LPT puts the slow path FIRST in its bin, so at least
         // one fast path always lands in a different bin - the streaming
@@ -6324,7 +5872,6 @@ mod tests {
                     .unwrap(),
             );
         }
-
         // Slowen path 0; STRUCTURAL interleaving (load-immune): the slow
         // path's hook parks until at least one fast path is MERGED (observed
         // via the probe), then stamps a release marker. Under the batched
@@ -6371,7 +5918,6 @@ mod tests {
                 }
             }));
         engine.cycle.set_merge_probe(probe.clone());
-
         let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
         let joiner = std::thread::spawn(move || {
             engine.cycle.run_epoch(
@@ -6387,10 +5933,8 @@ mod tests {
             );
             engine
         });
-
         let engine = joiner.join().unwrap();
         let (results, _block) = engine.latest_results();
-
         // Structural streaming proof: the first probe entry must be a fast
         // path MERGE (a fast path merged before the slow solve released its
         // hook). Under the batched barrier the marker would land first: only
@@ -6430,7 +5974,6 @@ mod tests {
         engine.cycle.set_streaming_delivery(true);
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
         engine.set_result_channel(result_tx);
-
         let mut pool_ids = Vec::new();
         let mut path_ids = Vec::new();
         for i in 0u8..3 {
@@ -6465,7 +6008,6 @@ mod tests {
                     .unwrap(),
             );
         }
-
         // Structural interleave (mirror of the solve-orchestration test): the
         // slow path's hook parks until the delivery side stamped a flag (set
         // by the payer loop below when it sees any batch), then releases.
@@ -6488,7 +6030,6 @@ mod tests {
                 }
             }));
         engine.cycle.set_merge_probe(probe.clone());
-
         let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
         let joiner = std::thread::spawn(move || {
             engine.cycle.run_epoch(
@@ -6504,7 +6045,6 @@ mod tests {
             );
             engine
         });
-
         // Payer: drain the channel from THIS thread while the solve_THREAD
         // holds the engine Mutex; declare success as soon as any batch carries
         // a fast path.
@@ -6531,9 +6071,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         observed.store(true, std::sync::atomic::Ordering::Relaxed);
-
         let engine = joiner.join().unwrap();
-
         // drained bookkeeping: every path above threshold is in `delivered`.
         assert_eq!(engine.delivery.delivered.len(), 3, "all paths in delivered");
         assert!(
@@ -6541,11 +6079,9 @@ mod tests {
             "a fast path's batch must arrive on the channel while the slow path \\\n             is still solving (flag on); saw_fast_batch = {saw_fast_batch}"
         );
     }
-
     // -------------------------------------------------------------------
     // Epic SRQEK5 (WV62TX): detached enqueue + sidecar merge
     // -------------------------------------------------------------------
-
     /// Common scaffolding: a 3-path V2→V2 engine (same live-corpus-shaped
     /// fixtures as the streaming test), with the slow path's hook injectable
     /// per test.
@@ -6596,7 +6132,6 @@ mod tests {
             }));
         (engine, pool_ids, path_ids)
     }
-
     /// Structural acceptance (red/green): with the one (detached) arm and an
     /// injected 400ms slow path, `run_epoch` — driven via
     /// the production `EngineStages` solve seam, which also spawns the
@@ -6619,11 +6154,9 @@ mod tests {
             std::sync::Arc::clone(&engine),
             std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
         );
-
         let t0 = std::time::Instant::now();
         handle.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
         let returned = t0.elapsed();
-
         // RETURNS before the merge lands: strictly inside the injected 400ms
         // slow-solve window, and the slow path's result is NOT in the map yet.
         assert!(
@@ -6638,7 +6171,6 @@ mod tests {
                 "the slow path must NOT be merged at enqueue-end return"
             );
         }
-
         // The sidecar populates the results within ~500ms of enqueue.
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
         while !engine.lock().cycle.results.contains_key(&slow_pid) {
@@ -6664,7 +6196,6 @@ mod tests {
             3
         );
     }
-
     /// Q1a stale policy (red/green): a straggler whose resolved-update stamp
     /// is stale (a pool ticked during the solve → its `update_block` moved)
     /// is DROPPED, not applied. A fresh-stamp straggler applies
@@ -6707,7 +6238,6 @@ mod tests {
         let stale_result = engine.cycle.results.get(&stale_pid).unwrap().clone();
         let fresh_stamp = engine.cycle.resolved_update_snapshot[&fresh_pid].clone();
         let fresh_result = engine.cycle.results.get(&fresh_pid).unwrap().clone();
-
         let item = |result: SolvePathResult, stamp: Vec<u64>, pid: u64| {
             crate::arb_engine::executor::LaneOutcome::Solved(
                 crate::arb_engine::executor::SolveOutcome {
@@ -6723,7 +6253,6 @@ mod tests {
                 },
             )
         };
-
         // A straggler whose pools ALL ticked during the solve.
         engine.merge_detached_item(item(stale_result, stale_stamp, stale_pid));
         assert_eq!(
@@ -6743,7 +6272,6 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             applied_before
         );
-
         // The unchanged-intake twin APPLIES (apply-if-unchanged).
         engine.merge_detached_item(item(fresh_result, fresh_stamp, fresh_pid));
         assert_eq!(
@@ -6764,7 +6292,6 @@ mod tests {
             1
         );
     }
-
     /// LW-T9 note-(a) carry (red): the DETACHED sidecar merge must carry the
     /// SAME exactness assert as the in-cycle drain (QR3NUS): one path outcome
     /// exactly once — a duplicate (`cycle_seq`, `pid`) delivery trips the loud
@@ -6793,7 +6320,6 @@ mod tests {
             .load(std::sync::atomic::Ordering::Relaxed);
         let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
         let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
-
         let item = |result: SolvePathResult| {
             crate::arb_engine::executor::LaneOutcome::Solved(
                 crate::arb_engine::executor::SolveOutcome {
@@ -6811,7 +6337,6 @@ mod tests {
         };
         engine.merge_detached_item(item(fresh_result.clone()));
         engine.merge_detached_item(item(fresh_result));
-
         assert_eq!(
             engine
                 .cycle
@@ -6831,7 +6356,6 @@ mod tests {
             "the duplicate delivery must trip the loud exactness fuse once"
         );
     }
-
     /// RLVDUP T3 (red/green): de-registration removes the resolve
     /// bookkeeping - `path_status` and `resolved_update_snapshot` entries
     /// must follow the path out, or per-pool churn grows the maps
@@ -6847,12 +6371,10 @@ mod tests {
         let pid = path_ids[0];
         assert!(engine.cycle.resolved_update_snapshot.contains_key(&pid));
         assert!(engine.cycle.path_status.contains_key(&pid));
-
         assert!(engine.deregister_path(pid));
         assert!(!engine.cycle.resolved_update_snapshot.contains_key(&pid));
         assert!(!engine.cycle.path_status.contains_key(&pid));
     }
-
     /// Q1a deregister (red/green): a straggler landing after its path was
     /// de-registered is DROPPED, never applied (and never re-creates a
     /// result entry).
@@ -6867,10 +6389,8 @@ mod tests {
         let pid = path_ids[0];
         let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
         let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
-
         assert!(engine.deregister_path(pid), "path must deregister");
         assert!(!engine.cycle.results.contains_key(&pid));
-
         engine.merge_detached_item(crate::arb_engine::executor::LaneOutcome::Solved(
             crate::arb_engine::executor::SolveOutcome {
                 payload: None,
@@ -6922,14 +6442,11 @@ mod tests {
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use std::sync::Arc;
         use tracing_subscriber::layer::SubscriberExt;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
-
         // tracing::Span binds to the thread-local subscriber at CREATION, so
         // the whole span lifecycle (create → capture → sidecar merge → drop)
         // runs inside one `with_default` scope.
@@ -6969,7 +6486,6 @@ mod tests {
         });
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
-
         let solve_spans: Vec<_> = spans
             .iter()
             .filter(|sp| sp.name.as_ref() == "degenbot.arb.solve")
@@ -6991,7 +6507,6 @@ mod tests {
             solve_spans[0].events.events
         );
     }
-
     /// AQV6EF AC2 (red-first): a panic inside `merge_detached_item` must be
     /// CAUGHT — it becomes a typed drain-death record that trips the SAME
     /// sticky cordon as a failed send, and the sidecar must return (not
@@ -7001,7 +6516,6 @@ mod tests {
     fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
         use crate::arb_engine::detached_cycle::detached_merge_sidecar;
         use crate::arb_engine::executor::LaneOutcome;
-
         let owner: &'static degenbot_workers::posture::PostureOwner = std::boxed::Box::leak(
             std::boxed::Box::new(degenbot_workers::posture::PostureOwner::new(
                 degenbot_workers::posture::PosturePolicy::doc_defaults(),
@@ -7032,7 +6546,6 @@ mod tests {
             "the panicked sidecar has exited: later sends hit the dead pipe (the send-failure signal)"
         );
     }
-
     /// T2 (epic SRQEK5 4QKZE3) cadence acceptance, SZJUKL-port: with detached
     /// cycles ON through the PRODUCTION stage surface (`EngineStages` — the
     /// shipped `solve_dirty` cadence the driver executes INLINE at the machine's
@@ -7053,14 +6566,12 @@ mod tests {
         }
         let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine), delta);
         let meta = BlockMetadata::default();
-
         // The affected keys the dissolved coordinator would have taken from
         // the epoch ledger before driving the engine's solve.
         let affected_keys_v2: Vec<degenbot_solvers::affected_keys::AffectedKey> = pool_ids
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-
         let t0 = std::time::Instant::now();
         // The detached cycle: the solve call RETURNS (enqueue-end) while the
         // 400ms slow solve still runs — no in-cycle multi-second hold.
@@ -7070,12 +6581,10 @@ mod tests {
         engine.lock().send_result_batch(&meta);
         stages.run_solve_cycle(&[], 101, &meta);
         stages.run_solve_cycle(&[], 102, &meta);
-
         assert!(
             t0.elapsed() < std::time::Duration::from_millis(390),
             "the whole cadence must complete inside the 400ms slow-solve window (enqueue-end, not apply-end)"
         );
-
         // The stragglers DID land via the sidecar (cross-cycle merge),
         // without ever blocking the inline stage work along the way.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -7089,14 +6598,12 @@ mod tests {
         let guard = engine.lock();
         assert!(path_ids.iter().all(|p| guard.cycle.results.contains_key(p)));
     }
-
     // =================================================================
     // 43E3H3 red-first breaker suite (design logs/lane-unify-design.md §5).
     // Status at HEAD (commit 1): each test below is RED against current
     // code — they pin the POST-merge contracts (one carrier, one ledger,
     // the detached arm's lane witness). They GREEN in commit 2.
     // =================================================================
-
     /// N2 (same-seq replay, WFF6MM single-arm): a merged result and a later
     /// carrier naming the SAME (`cycle_seq`, pid) must collide on the ONE
     /// ledger — the fuse refuses the second arrival instead of merging
@@ -7125,7 +6632,6 @@ mod tests {
             .detached_cycle
             .applied
             .load(std::sync::atomic::Ordering::Relaxed);
-
         // The replay claims the cycle_seq the merged cycle consumed: under
         // the one ledger this is the SAME (solve_seq, pid) key and the fuse
         // must refuse it.
@@ -7143,7 +6649,6 @@ mod tests {
             },
         );
         engine.merge_detached_item(item);
-
         assert_eq!(
             engine
                 .cycle
@@ -7168,7 +6673,6 @@ mod tests {
             "merged ledger: the refused duplicate must not count as applied"
         );
     }
-
     /// N3 (prune correctness): the merged ledger prunes keyed rows only
     /// past `LEDGER_AGE`, driven by the DETACHED arm's cycle issuance —
     /// and an in-cycle-only advance must NOT prune (the anchor is
@@ -7187,7 +6691,6 @@ mod tests {
             .collect();
         engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
         let results_before = engine.cycle.results.len();
-
         // Seed directly into the sidecar ledger (pub(crate) state) with
         // pids not otherwise involved, at seq boundaries chosen to straddle
         // the LEDGER_AGE edge driven through the DETACHED key space.
@@ -7209,20 +6712,18 @@ mod tests {
             );
             engine.merge_detached_item(item);
         };
-
         // Drive the anchor forward by ONE detached merge at a high seq; the
         // seeds at (current-65) and (current-63) straddle the age edge.
         let current = 100u64;
         seed(current - 65, 1111); // beyond LEDGER_AGE: must be PRUNED
         seed(current - 63, 2222); // within LEDGER_AGE: must be RETAINED
         seed(current, 3333); // the advancing merge itself
-
-        // 43E3H3: the seq-100 merge's PRUNE swept BOTH seeds' rows as a
-        // side effect (the engine-side ledger now prunes on every claim,
-        // not just the sidecar's). Restore the retained-row marker its
-        // (36, 2222) key placed there — the prune must prove (36, 2222)
-        // SURVIVES a later claim, not that it survived the sweep that
-        // built the (100, 3333) row.
+                             // 43E3H3: the seq-100 merge's PRUNE swept BOTH seeds' rows as a
+                             // side effect (the engine-side ledger now prunes on every claim,
+                             // not just the sidecar's). Restore the retained-row marker its
+                             // (36, 2222) key placed there — the prune must prove (36, 2222)
+                             // SURVIVES a later claim, not that it survived the sweep that
+                             // built the (100, 3333) row.
         engine
             .cycle
             .detached_cycle
@@ -7230,7 +6731,6 @@ mod tests {
             .lock()
             .claim((current - 63, 2222))
             .ok();
-
         let ledger_rows = engine.cycle.detached_cycle.outcome_ledger.lock();
         assert!(
             !ledger_rows.contains((current - 65, 1111)),
@@ -7241,7 +6741,6 @@ mod tests {
             "LEDGER_AGE=64: row (seq-63) must be retained after the seq-{current} claim"
         );
         drop(ledger_rows);
-
         // NEGATIVE half (design §3.3.1 REV 2): in-cycle-only advances of
         // the shared counter must NOT prune detached-keyed rows. Run two
         // in-cycle solves (the shared counter ticks), then re-assert the
@@ -7256,7 +6755,6 @@ mod tests {
         let _ = results_before;
         let _ = Ordering::Relaxed;
     }
-
     /// N4 (detached undercount): a detached bin that panics mid-walk must
     /// deliver a typed disposition for EVERY owed pid — no silent
     /// undercount. Red at HEAD: the detached arm has NO lane witness
@@ -7297,7 +6795,6 @@ mod tests {
         }
         let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine), delta);
         stages.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
-
         // Wait for the dispositions to land (the sidecar merges async).
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2_000);
         loop {
@@ -7337,7 +6834,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
     }
-
     /// N5 (gauge pairing through a panic): the in-flight gauge must return
     /// to its EXACT pre-cycle value after a panicking detached cycle AND
     /// keep the cap gate engaging on true load. Red at HEAD: the panicked
@@ -7366,7 +6862,6 @@ mod tests {
             .detached_cycle
             .outstanding
             .load(std::sync::atomic::Ordering::Relaxed);
-
         let affected_keys_v2: Vec<degenbot_solvers::affected_keys::AffectedKey> = pool_ids
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
@@ -7378,7 +6873,6 @@ mod tests {
         }
         let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine), delta);
         stages.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
-
         // After all dispositions land, the gauge must be back at g0 EXACTLY
         // (a leaked count OR a sagged count both move it off g0 — only the
         // exact value pins BOTH directions of a broken pairing).
@@ -7421,7 +6915,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
     }
-
     /// WFF6MM cutover: the in-flight cap gate is RETIRED — a cycle whose
     /// un-dispositioned count sits AT the old cap STILL detaches (the
     /// admission draw, not the cap, owns backpressure now; there is no
@@ -7446,7 +6939,6 @@ mod tests {
             "the retired cap must no longer degrade a cycle to an in-cycle arm"
         );
     }
-
     /// Cold-start trace (degraded-state measurement): the dispatch LATCHES the
     /// cycle's arm on the engine (the `solve_entry` precedent) — a span field
     /// alone is unreadable to the caller, and the caller (`EngineStages`) is
@@ -7513,7 +7005,6 @@ mod tests {
             "a dirty key with no registered paths must latch the bookkeeping-only arm"
         );
     }
-
     #[test]
     fn detached_solve_returns_at_enqueue_end_when_sync_drain_is_off() {
         let (mut engine, pool_ids, path_ids) = detached_fixture(400);
@@ -7534,12 +7025,10 @@ mod tests {
             "the detached arm must return at enqueue end: the slow pid is absent AT return"
         );
     }
-
     // -------------------------------------------------------------------
     // QTZGFL: capacity-modulated admission draw (experiment; flag OFF by
     // default so the current degrade stays byte-identical).
     // -------------------------------------------------------------------
-
     /// Budget arithmetic: `budget = max(0, target − outstanding)` in KEYS,
     /// `None` while the stance is OFF, and the target is clamped to the
     /// design-locked safety valve. `Some(0)` is the shed predicate.
@@ -7611,7 +7100,6 @@ mod tests {
             "a zero target clamps up to 1 (a target of 0 would never submit)"
         );
     }
-
     /// Full-path shed: the gauge preloaded AT the target makes the DRAW
     /// (the single consumption decision, `on_resolve`) return a zero budget,
     /// so the cycle submits NOTHING, advances the solved-block cursor exactly
@@ -7627,7 +7115,6 @@ mod tests {
         };
         use crate::bot_core::{BlockContext, Epoch, EpochDelta};
         use std::sync::Arc;
-
         let (mut engine, pool_ids, path_ids) = detached_fixture(400);
         engine.cycle.set_solve_admission(true);
         engine.cycle.set_admission_target_depth(8);
@@ -7696,7 +7183,6 @@ mod tests {
             "a shed cycle advances the solved-block cursor like skipped_empty"
         );
     }
-
     /// F2: a draw-zero shed responds BEFORE the `pending_new_paths` merge, so
     /// it never consumes the eager-registration protection — the eagerly
     /// solved path is still merged on the NEXT normal cycle (a post-merge
@@ -7711,7 +7197,6 @@ mod tests {
         };
         use crate::bot_core::{BlockContext, Epoch, EpochDelta};
         use std::sync::Arc;
-
         let mut engine = ArbitrageEngine::new();
         let a = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
@@ -7829,7 +7314,6 @@ mod tests {
             "the eager result survives the merge cycle"
         );
     }
-
     /// RACE REGRESSION (F1/F3, red-first): the admission budget is decided
     /// ONCE, at the DRAW. A cycle that drew a POSITIVE budget owns those keys
     /// (they are already removed from the ledger); an earlier cycle's bin
@@ -7852,7 +7336,6 @@ mod tests {
         };
         use crate::bot_core::{BlockContext, Epoch, EpochDelta};
         use std::sync::Arc;
-
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         engine.cycle.set_solve_admission(true);
         engine.cycle.set_admission_target_depth(8);
@@ -7947,7 +7430,6 @@ mod tests {
             "the race cycle must still merge + clear the eager-registration pipe (F2)"
         );
     }
-
     /// Carry: a shed cycle RETAINS its keys in the ledger; a later cycle with
     /// headroom draws them again (a fresh solve against current state, not a
     /// replay). This is the acceptance the whole design turns on.
@@ -7959,14 +7441,12 @@ mod tests {
         };
         use crate::bot_core::{BlockContext, Epoch, EpochDelta};
         use std::sync::Arc;
-
         let engine = ArbitrageEngine::new();
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         engine.lock().cycle.set_solve_admission(true);
         engine.lock().cycle.set_admission_target_depth(2);
         let delta = Arc::new(EpochDelta::new(0u64));
         let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
-
         let keys: Vec<_> = (1..=3u64)
             .map(|id| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, id))
             .collect();
@@ -8037,7 +7517,6 @@ mod tests {
         assert_eq!(drawn.0, vec![keys[2]], "the last carried key drains");
         assert!(delta.is_empty());
     }
-
     /// Retention: on a block advance the ledger prunes carried keys older than
     /// `head − W` and counts the expiry, so a lead that stays starved
     /// eventually expires VISIBLY instead of pinning the ledger forever.
@@ -8049,7 +7528,6 @@ mod tests {
         };
         use crate::bot_core::{BlockContext, Epoch, EpochDelta};
         use std::sync::Arc;
-
         let engine = ArbitrageEngine::new();
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         engine.lock().cycle.set_solve_admission(true);
@@ -8057,7 +7535,6 @@ mod tests {
         engine.lock().cycle.set_admission_retention_blocks(5);
         let delta = Arc::new(EpochDelta::new(0u64));
         let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
-
         let stale = degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, 1);
         let fresh = degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, 2);
         delta.record(stale, 10);
@@ -8088,7 +7565,6 @@ mod tests {
         );
         assert!(delta.is_empty());
     }
-
     /// Flag OFF: `on_resolve` take-alls (even with the gauge saturated) and
     /// the engine DETACHES every cycle — never a shed, and (WFF6MM) never any
     /// in-cycle degrade either.
@@ -8100,7 +7576,6 @@ mod tests {
         };
         use crate::bot_core::{BlockContext, Epoch, EpochDelta};
         use std::sync::Arc;
-
         let (mut engine, pool_ids, _path_ids) = detached_fixture(0);
         // Stance left OFF; the gauge at the cap must NOT shed.
         engine
@@ -8155,7 +7630,6 @@ mod tests {
         );
         assert!(delta.is_empty());
     }
-
     /// N1 (in-cycle duplicate policy, tightened): a duplicate
     /// (`solve_seq`, pid) arrival at the in-cycle drain must be REFUSED —
     /// counted and logged, never merged twice. Red at HEAD against the
@@ -8181,7 +7655,6 @@ mod tests {
         // WFF6MM: the machine issues the seq (no in-cycle counter) — read
         // back the tick the cycle actually claimed so the replay collides.
         let cycle_seq = engine.cycle.detached_cycle.issued_seq();
-
         // A second Solved arrival for the SAME (seq, pid) through the merge
         // disposition must be refused: no second results write, no applied
         // count for the duplicate.
@@ -8201,7 +7674,6 @@ mod tests {
             },
         );
         engine.merge_detached_item(item);
-
         assert_eq!(
             engine
                 .cycle
@@ -8218,12 +7690,10 @@ mod tests {
         );
         let _ = applied_before;
     }
-
     #[test]
     #[expect(clippy::too_many_lines)] // A/B harness: two full engines, worth the length
     fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
         const N: usize = 600; // >= RESOLVE_PAR_MIN (512) so the parallel arm engages
-
         let build = || {
             let mut engine = ArbitrageEngine::new();
             // Two HUB pools shared by every path; one unique pool per path.
@@ -8277,13 +7747,11 @@ mod tests {
             }
             (engine, path_ids, hub_a, hub_b)
         };
-
         let run = |parallel: bool| {
             let (mut engine, path_ids, hub_a, hub_b) = build();
             // YI5NGB: the A/B arm drives the INSTANCE stance now (no
             // process-global flip; no parallel-order dependence).
             engine.cycle.set_resolve_parallel_for_test(parallel);
-
             // Cycle 1: dirty BOTH hubs -> all N paths re-resolve in one cycle.
             engine.process_updates(
                 &[
@@ -8305,7 +7773,6 @@ mod tests {
                 &engine.registry,
                 &mut engine.delivery,
             );
-
             // Cycle 2: dirty hub_b only -> 600 affected paths again; hub_a must
             // be walked ONCE by the shared sharded cache (serial: also once).
             let projections_before = engine.cycle.hop_projection_count;
@@ -8327,7 +7794,6 @@ mod tests {
                 &mut engine.delivery,
             );
             let projections_delta = engine.cycle.hop_projection_count - projections_before;
-
             let (results, _block) = engine.latest_results();
             (
                 results,
@@ -8336,12 +7802,9 @@ mod tests {
                 path_ids,
             )
         };
-
         let (serial_results, serial_same_state, serial_proj_delta, path_ids) = run(false);
         let (par_results, par_same_state, par_proj_delta, _path_ids) = run(true);
-
         // YI5NGB: the instance-stance cutover -> nothing process-global remains to restore.
-
         assert_eq!(path_ids.len(), N);
         for (path_id, _unique, _a, _b) in &path_ids {
             let sres = serial_results.get(path_id).expect("serial result");
@@ -8382,15 +7845,12 @@ mod tests {
     // with the hook unset (direct engine drives) the deferral keeps today's
     // drop.
     // -------------------------------------------------------------------
-
     fn kjwik5_key(pool_id: u64) -> degenbot_solvers::affected_keys::AffectedKey {
         degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, pool_id)
     }
-
     fn kjwik5_affected_keys(pool_ids: &[u64]) -> Vec<degenbot_solvers::affected_keys::AffectedKey> {
         pool_ids.iter().copied().map(kjwik5_key).collect()
     }
-
     fn kjwik5_path_keys(
         engine: &ArbitrageEngine,
         path_id: u64,
@@ -8404,19 +7864,15 @@ mod tests {
             .map(|r| degenbot_solvers::affected_keys::AffectedKey::new(r.hop_type, r.pool_key))
             .collect()
     }
-
     /// Guard 1: capture the `[solve-phase]` events' `paths.deferred_future_price`
     /// field. Both reporting sites (the resolve funnel and the detached
     /// enqueue) carry the same value; the test asserts every captured value.
     type Kjwik5EventFields = std::sync::Arc<parking_lot::Mutex<Vec<Vec<(String, String)>>>>;
-
     type Kjwik5ReRecords = std::sync::Arc<
         parking_lot::Mutex<Vec<(Vec<degenbot_solvers::affected_keys::AffectedKey>, u64)>>,
     >;
-
     fn kjwik5_capture_deferred_counter(run: impl FnOnce()) -> Vec<u64> {
         use tracing_subscriber::layer::SubscriberExt;
-
         struct EventCapture(Kjwik5EventFields);
         impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for EventCapture {
             fn on_event(
@@ -8441,7 +7897,6 @@ mod tests {
                 self.0.lock().push(saver.0);
             }
         }
-
         let capture = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
         let subscriber =
             tracing_subscriber::registry().with(EventCapture(std::sync::Arc::clone(&capture)));
@@ -8464,7 +7919,6 @@ mod tests {
             })
             .collect()
     }
-
     /// Red-first (a): a deferred path re-records ALL its hop pools through the
     /// engine's installed hook, with the cycle's solve block — the ledger
     /// carry that lets the next draw re-include the path through the same
@@ -8483,13 +7937,11 @@ mod tests {
         engine.set_deferred_re_record(std::sync::Arc::new(move |keys, block| {
             seen_hook.lock().push((keys.to_vec(), block));
         }));
-
         engine.solve_dirty(
             100,
             &BlockMetadata::default(),
             &kjwik5_affected_keys(&pool_ids),
         );
-
         let calls = seen.lock().clone();
         assert_eq!(calls.len(), 1, "one re-record call per deferred cycle");
         assert_eq!(
@@ -8512,7 +7964,6 @@ mod tests {
             );
         }
     }
-
     /// Red-first (d): with the hook unset (direct engine drive, no driver),
     /// the deferral keeps today's dropped behavior and counts unchanged.
     #[test]
@@ -8534,7 +7985,6 @@ mod tests {
         assert!(engine.cycle.results.contains_key(&path_ids[0]));
         assert!(engine.cycle.results.contains_key(&path_ids[2]));
     }
-
     /// Red-first (c): `paths.deferred_future_price` semantics are unchanged —
     /// same site, same triggers, same counts (0 with no future hop, N with N).
     #[test]
@@ -8563,7 +8013,6 @@ mod tests {
             "two deferred paths count at the same site; got {forced:?}"
         );
     }
-
     /// Red-first (b): the staged carry. Cycle 1 defers the future-priced path
     /// and re-records its pools into the ledger; cycle 2 (the anchor caught
     /// up) draws it back and solves it against the retry cycle's block.
@@ -8575,7 +8024,6 @@ mod tests {
         };
         use crate::bot_core::{BlockContext, Epoch, EpochDelta};
         use std::sync::Arc;
-
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let deferred = path_ids[0];
         let deferred_keys = kjwik5_path_keys(&engine, deferred);
@@ -8591,7 +8039,6 @@ mod tests {
         let quiesced = QuiesceOutcome {
             verdict: QuiesceVerdict::Settled,
         };
-
         // Cycle 1: draw, defer, re-record into the ledger at block 100.
         let ctx = BlockContext::new(Epoch::at(100), BlockMetadata::default());
         let drawn = stages
@@ -8620,7 +8067,6 @@ mod tests {
                 "the deferred path's key {key:?} is re-recorded for the next draw"
             );
         }
-
         // The anchor catches up: the path is no longer future-priced. Cycle 2
         // draws it back from the ledger.
         engine
@@ -8645,7 +8091,6 @@ mod tests {
         stages
             .on_solve(&Solve { ctx, paths: drawn })
             .expect("solve hook is infallible");
-
         // Q1a: the retried path's solve block is the RETRY cycle's block.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while !engine.lock().cycle.results.contains_key(&deferred) {
@@ -8661,7 +8106,6 @@ mod tests {
             "the retried path solves at the retry cycle's block"
         );
     }
-
     /// Guard 4: the retention window now bounds the deferred-retry lifetime —
     /// a deferred lead never redrawn within `admission_retention_blocks` is
     /// pruned and counted in `degenbot.detached.leads_expired`.
@@ -8674,7 +8118,6 @@ mod tests {
         use crate::bot_core::{BlockContext, Epoch, EpochDelta};
         use std::sync::atomic::Ordering;
         use std::sync::Arc;
-
         let (mut engine, pool_ids, path_ids) = detached_fixture(0);
         let deferred = path_ids[0];
         let deferred_keys = kjwik5_path_keys(&engine, deferred);
@@ -8695,7 +8138,6 @@ mod tests {
         let quiesced = QuiesceOutcome {
             verdict: QuiesceVerdict::Settled,
         };
-
         // Cycle 1 defers + re-records the deferred path at block 100.
         let ctx = BlockContext::new(Epoch::at(100), BlockMetadata::default());
         let drawn = stages
@@ -8716,7 +8158,6 @@ mod tests {
             .load(Ordering::Relaxed);
         // The re-record targeted cycle 1's solve block.
         let defer_block = engine.lock().results_block();
-
         // Cycle 2: narrow the window to zero and advance one block — the
         // cutoff prunes the deferred lead's bucket before the draw, so it is
         // never redrawn.
@@ -8753,7 +8194,6 @@ mod tests {
         );
     }
 }
-
 pub(crate) mod test_keys {
     use ::degenbot_solvers::affected_keys::AffectedKey;
     use ::degenbot_solvers::mixed::HopType;
@@ -8763,7 +8203,6 @@ pub(crate) mod test_keys {
     /// call `run_epoch` / `solve_dirty`. No production
     /// caller, no parity claim.
     use hashbrown::HashSet;
-
     /// Convert per-family key sets into delta-shaped affected keys
     /// (sorted, retired `take_all` order).
     #[must_use]
@@ -8781,7 +8220,6 @@ pub(crate) mod test_keys {
         keys.sort_unstable();
         keys
     }
-
     /// The per-family dirty-set builder the solve tests use (the old
     /// `DirtySets` insert + `to_affected_keys` take, single-threaded).
     pub(crate) struct DirtyKeys {
@@ -8789,7 +8227,6 @@ pub(crate) mod test_keys {
         v3: HashSet<u64>,
         v4: HashSet<u64>,
     }
-
     impl DirtyKeys {
         #[must_use]
         pub(crate) fn new() -> Self {
@@ -8799,7 +8236,6 @@ pub(crate) mod test_keys {
                 v4: HashSet::new(),
             }
         }
-
         /// Insert `pool_id` into the set for `hop_type`.
         pub(crate) fn insert(&mut self, pool_id: u64, hop_type: HopType) {
             match hop_type {
@@ -8809,20 +8245,17 @@ pub(crate) mod test_keys {
                 _ => false, // non-pool hop types are never dirtied
             };
         }
-
         /// Delta-shaped sorted take view (no consume — tests re-use).
         #[must_use]
         pub(crate) fn to_affected_keys(&self) -> Vec<AffectedKey> {
             affected_keys(&self.v2, &self.v3, &self.v4)
         }
     }
-
     impl Default for DirtyKeys {
         fn default() -> Self {
             Self::new()
         }
     }
-
     // Cold-start trace (detached-cycle arm attribution): the cycle span must
     // carry `cycle.arm`, derivable WITHOUT log archaeology. The helper below
     // is the ONE wiring site (the solve cycle, at the machine's begin_cycle
@@ -8834,11 +8267,9 @@ pub(crate) mod test_keys {
         use crate::arb_engine::engine_stages::record_cycle_arm_telemetry;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use tracing_subscriber::layer::SubscriberExt;
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = crate::otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(crate::otel::layer(tracer));
-
         tracing::subscriber::with_default(subscriber, || {
             let detached =
                 tracing::info_span!("degenbot.arb.solve", cycle.arm = tracing::field::Empty,);
@@ -8850,7 +8281,6 @@ pub(crate) mod test_keys {
             );
             drop(guard);
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
         let solve_spans: Vec<_> = spans
@@ -8879,10 +8309,8 @@ pub(crate) mod test_keys {
             "the one dispatch arm must stamp cycle.arm exactly once; got {arm_values:?}"
         );
     }
-
     // -------------------------------------------------------------------
 }
-
 // =======================================================================
 // 5WCRWZ T7: the fixture-driven clamp/merge/worker tests, moved here from
 // the deleted grab file's test island. They exercise the `SolveCycle`
@@ -8900,7 +8328,6 @@ mod clamp_merge_worker_tests {
     use alloy::primitives::U256;
     use hashbrown::HashMap;
     use std::sync::Arc;
-
     /// Narrow single-position V4 pool (±60 ticks, 1e6 liquidity) + a one-hop
     /// path: the over-fed committed input is the empty-march class. Returns
     /// (engine, `path_id`, the to_solve-aligned pool-ref snapshot).
@@ -8983,7 +8410,6 @@ mod clamp_merge_worker_tests {
             .collect::<Vec<_>>();
         (engine, path_id, pool_refs)
     }
-
     fn worker_probe_ctx(
         core: Arc<crate::bot_core::state_lock::StateLock<crate::bot_core::BotState>>,
         pool_refs: Vec<std::sync::Arc<MixedPath>>,
@@ -9021,7 +8447,6 @@ mod clamp_merge_worker_tests {
             test_solve_panic: None,
         })
     }
-
     /// The engine clamp and the WORKER clamp are the same computation from
     /// two call sites: byte-identical result + twin count on identical input.
     #[test]
@@ -9056,11 +8481,9 @@ mod clamp_merge_worker_tests {
         // The pool-ref SNAPSHOT path (worker side) is exercised; the MixedPoolRef _ unused is intentional.
         let _: Vec<Vec<MixedPoolRef>> = Vec::new();
     }
-
     // The merge honors the worker's twin report: twins > 0 = the result is
     // already clamp-committed (no second clip); twins = 0 = the merge clips
     // the over-fed input itself (the legacy path — bit-identical).
-
     /// SIMPIPE2 T3: a payload riding `merge_one_result` is stored at the
     /// engine (`inline_payloads`) and a re-merge WITHOUT the payload drops the
     /// stale entry — per-entry presence decides Python-side. (The delivery
@@ -9070,7 +8493,6 @@ mod clamp_merge_worker_tests {
     fn merge_stores_payload_and_drops_it_without_one() {
         use crate::arb_engine::inline_sim::{InlineSwapFamily, SimulatedPathResult};
         use alloy::primitives::{Address, I256, U256};
-
         let (mut engine, path_id, _pool_refs) = overfed_v4_engine();
         let metadata = BlockMetadata::default();
         let mk = || SolvePathResult {
@@ -9102,7 +8524,6 @@ mod clamp_merge_worker_tests {
             hop_count: 1,
             failure: None,
         };
-
         engine.cycle.merge_one_result(
             42,
             &metadata,
@@ -9117,7 +8538,6 @@ mod clamp_merge_worker_tests {
             engine.cycle.inline_payloads.contains_key(&path_id),
             "the payload must be stored at merge"
         );
-
         // The path re-solves WITHOUT a payload (stance off or hook silence):
         // the stale entry must drop — presence decides per entry.
         engine.cycle.merge_one_result(
@@ -9135,7 +8555,6 @@ mod clamp_merge_worker_tests {
             "a payload-less re-merge must drop the stale payload"
         );
     }
-
     #[test]
     fn merge_reports_worker_twins_and_never_reclips() {
         let (mut engine, path_id, pool_refs) = overfed_v4_engine();
@@ -9151,7 +8570,6 @@ mod clamp_merge_worker_tests {
                 solver_pool_states: Vec::new(),
             }
         };
-
         // Worker arm: clamp once (the worker report = committed truth), then
         // merge with twins > 0 — the stored result stays byte-identical.
         let mut worker_result = overfed();
@@ -9177,7 +8595,6 @@ mod clamp_merge_worker_tests {
             );
             assert_eq!(stored.profit, committed.profit, "profit untouched on skip");
         }
-
         // Legacy arm (twins=0): the merge clips the over-fed V4 hop input
         // itself (index 1 — the V2 hop has no input clamp by design).
         let legacy = overfed();
@@ -9198,9 +8615,7 @@ mod clamp_merge_worker_tests {
             "twins=0 must run the merge-site clamp"
         );
     }
-
     // ----------------- RKXN5Z / IJUBV3: bundle.simulate span hygiene -----------------
-
     /// RED-gate (IJUBV3): the merge-site microsecond `degenbot.bundle.simulate`
     /// "verdict bookmark" spans collided with the REAL per-path EVM sim spans
     /// of the same name (traces 98f7cf52 / ab13f75fad50: 90-300 markers per
@@ -9214,7 +8629,6 @@ mod clamp_merge_worker_tests {
     #[test]
     fn merge_payload_store_emits_no_bundle_simulate_span() {
         use std::sync::Mutex;
-
         struct SpanNameCapture {
             names: std::sync::Arc<Mutex<Vec<String>>>,
         }
@@ -9234,14 +8648,12 @@ mod clamp_merge_worker_tests {
                     .push(attrs.metadata().name().to_string());
             }
         }
-
         use tracing_subscriber::layer::SubscriberExt as _;
         let names = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
         let capture = SpanNameCapture {
             names: std::sync::Arc::clone(&names),
         };
         let subscriber = tracing_subscriber::registry().with(capture);
-
         let (mut engine, path_id, _pool_refs) = overfed_v4_engine();
         let metadata = BlockMetadata::default();
         let mk = || SolvePathResult {
@@ -9265,7 +8677,6 @@ mod clamp_merge_worker_tests {
             hop_count: 1,
             failure: None,
         };
-
         tracing::subscriber::with_default(subscriber, || {
             // Enclosing merge span, as in both production arms.
             let merge = tracing::info_span!("degenbot.arb.merge", merge.paths = 1u64);
@@ -9281,7 +8692,6 @@ mod clamp_merge_worker_tests {
                 &mut engine.delivery,
             );
         });
-
         let created = names
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -9296,7 +8706,6 @@ mod clamp_merge_worker_tests {
              spans created: {created:?}"
         );
     }
-
     /// GREEN-gate (IJUBV3): the WORKER-side inline sim gets the honest
     /// `degenbot.bundle.simulate` span - a real ms-class EVM sim on the solve
     /// path, parented under the cycle span, with the terminal verdict.
@@ -9311,7 +8720,6 @@ mod clamp_merge_worker_tests {
         use crate::otel;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use tracing_subscriber::layer::SubscriberExt;
-
         struct StubSim {
             fail: bool,
             path_id: u64,
@@ -9346,11 +8754,9 @@ mod clamp_merge_worker_tests {
                 })
             }
         }
-
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let (engine, path_id, pool_refs) = overfed_v4_engine();
         let mut ctx = worker_probe_ctx(Arc::clone(engine.core()), pool_refs);
         // Fresh Arc (refcount 1): install the stub via get_mut.
@@ -9360,7 +8766,6 @@ mod clamp_merge_worker_tests {
             fail: false,
             path_id,
         }));
-
         let result = SolvePathResult {
             optimal_input: U256::from(1_000_000_000u64),
             profit: U256::from(1_000u64),
@@ -9369,7 +8774,6 @@ mod clamp_merge_worker_tests {
             state_nonces: vec![0],
             solver_pool_states: Vec::new(),
         };
-
         tracing::subscriber::with_default(subscriber, || {
             let solve = tracing::info_span!("degenbot.arb.solve", block.number = 7u64);
             let _guard = solve.enter();
@@ -9379,7 +8783,6 @@ mod clamp_merge_worker_tests {
                 "stub hook returns a payload; None only when the seam is off"
             );
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
         let solve_id = spans

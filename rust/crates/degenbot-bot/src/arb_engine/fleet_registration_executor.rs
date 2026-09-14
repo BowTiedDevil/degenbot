@@ -39,14 +39,10 @@
 //! pin/merge lanes never fire here. The `WrapDatabaseAsync` runtime-capture
 //! caveat (ADR-042 §8) is unchanged: build callables already enter the
 //! installed hooks via the existing seams.
-
-use std::sync::Arc;
-
-use degenbot_workers::dispatcher::{BootError, FleetBoot};
-
 use crate::arb_engine::fleet_intake::IntakeFaultWatch;
 use crate::arb_engine::seat_host::{self, SeatHost};
-
+use degenbot_workers::dispatcher::{BootError, FleetBoot};
+use std::sync::Arc;
 /// The fleet-hosted registration intake executor. Shared by the whole
 /// process (the registry's global slot hands out `&'static`, mirroring the
 /// fleet sim/solve executors' construction-once contract: warm pooled seats
@@ -62,7 +58,6 @@ pub(crate) struct FleetRegistrationExecutor {
     #[cfg(test)]
     seats: usize,
 }
-
 impl FleetRegistrationExecutor {
     /// Boot from a `FleetBoot` (quota + overrides + posture): boot the
     /// [`FleetHost`], spawn the pooled `PoolStateUpdater` seat threads (the
@@ -79,7 +74,6 @@ impl FleetRegistrationExecutor {
     pub(crate) fn boot(boot: FleetBoot) -> Result<Self, BootError> {
         Self::boot_with_watch(boot, None)
     }
-
     fn boot_with_watch(
         boot: FleetBoot,
         fault_watch: Option<Arc<IntakeFaultWatch>>,
@@ -96,13 +90,11 @@ impl FleetRegistrationExecutor {
             fault_watch,
         })
     }
-
     /// This executor's S2 fault watch (the pyo3 receipt observes it).
     #[must_use]
     pub(crate) fn fault_watch(&self) -> Arc<IntakeFaultWatch> {
         Arc::clone(&self.fault_watch)
     }
-
     /// The budget's `PoolStateUpdater` slot cap (the pooled seat count).
     /// Test-facing (the intake submits without asking the cap).
     #[cfg(test)]
@@ -111,9 +103,7 @@ impl FleetRegistrationExecutor {
         self.seats
     }
 }
-
 seat_host::impl_seat_hosted!(FleetRegistrationExecutor, host);
-
 #[cfg(test)]
 // The panic-survival fixture panics deliberately (loud-assert test style;
 // the module-level expect is the documented-permitted form). Mirror of the
@@ -151,16 +141,12 @@ mod tests {
             "the expect must name the task: {msg}"
         );
     }
-
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
-
+    use super::FleetRegistrationExecutor;
     use degenbot_workers::budget::{BudgetError, BudgetOverrides};
     use degenbot_workers::dispatcher::{BootError, FleetBoot};
     use degenbot_workers::posture::{FleetPosture, PostureOwner, PosturePolicy, ThrottleSample};
-
-    use super::FleetRegistrationExecutor;
-
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
     /// A FRESH hermetic posture owner (leaked to `'static`): every test
     /// boot gets its own owner, never the process global (7KAPBB isolation).
     fn hermetic_owner() -> &'static PostureOwner {
@@ -168,7 +154,6 @@ mod tests {
             PosturePolicy::doc_defaults(),
         )))
     }
-
     /// FF-T1 (BPHR6F): a refused fleet boot is a TYPED, STICKY error at
     /// the process materializer — never a process abort. A sub-floor
     /// stamp (quota 2.0, the CI 4-vCPU shape shrunk one step further) is
@@ -223,7 +208,6 @@ mod tests {
     fn hermetic_boot() -> FleetBoot {
         hermetic_boot_with_owner(hermetic_owner())
     }
-
     /// FF-T3 (Z2YW52): no new binding is reachable from `auto` yet — the
     /// serial arm lands with FF-T4. A sub-floor auto host refuses with
     /// FF-T4 (Z6XTDX) — AC 1: serial boot on a simulated 2-core quota
@@ -258,7 +242,6 @@ mod tests {
             "every serial-lane unit completes its receipt exactly once"
         );
     }
-
     /// FF-T4 — the named seat: serial-lane units execute ON the
     /// `work-fleet-serial-0` cycle thread (the callable itself reports
     /// its thread).
@@ -291,7 +274,6 @@ mod tests {
             );
         }
     }
-
     /// FF-T4 — the forced serial profile on a PINNED-floor host also
     /// boots serial (the operator override is honored, never a silent
     /// narrow).
@@ -315,7 +297,6 @@ mod tests {
         got.sort_unstable();
         assert_eq!(got, vec![0, 1, 2, 3]);
     }
-
     /// FF-T4 — AC 5: a FORCED pinned binding on a 4-core quota runs
     /// marked-oversubscribed (the projection's marks, never a refusal).
     #[test]
@@ -340,7 +321,6 @@ mod tests {
         got.sort_unstable();
         assert_eq!(got, vec![0, 1, 2, 3, 4, 5, 6, 7]);
     }
-
     /// FF-T3 (Z2YW52): the census prints the lane-to-thread binding per
     /// entry — the fleet rows stamp `pinned` (dedicated seat threads)
     /// under the pinned binding.
@@ -371,7 +351,6 @@ mod tests {
             );
         }
     }
-
     fn hermetic_boot_with_owner(owner: &'static PostureOwner) -> FleetBoot {
         FleetBoot {
             profile: degenbot_config::FleetProfile::Auto,
@@ -381,7 +360,6 @@ mod tests {
             owner: Some(owner),
         }
     }
-
     fn await_receipts<T: Send + 'static>(
         rx: &mpsc::Receiver<T>,
         want: usize,
@@ -402,7 +380,6 @@ mod tests {
         }
         got
     }
-
     /// The intake seats must run each submitted build unit to completion,
     /// every receipt delivered exactly once — the never-drop contract the
     /// legacy crawl worker threads provided.
@@ -422,7 +399,6 @@ mod tests {
         let want: Vec<u64> = (0..32).collect();
         assert_eq!(got, want, "every intake unit completes exactly once");
     }
-
     /// Seats are the fleet `PoolStateUpdater` role: census thread-name
     /// pattern work-fleet-poolupd-{n} (GOQWCL rule).
     #[test]
@@ -449,7 +425,6 @@ mod tests {
             );
         }
     }
-
     /// A panicking build closure must not kill its seat (the pool would
     /// strand the awaiting crawl workers' receipts): the surviving seat
     /// still drains later units.
@@ -469,7 +444,6 @@ mod tests {
         let got = await_receipts(&rx, 8, Instant::now() + Duration::from_secs(10));
         assert_eq!(got.len(), 8, "the seat pool survived the panic and drained");
     }
-
     /// The cordon HOLDS Deferrable intake, but submitted units are never
     /// dropped: they wait and drain when the seat pool next gets capacity.
     /// (In-process cordon orchestration is the posture crate's fixture
@@ -501,7 +475,6 @@ mod tests {
             "no unit dropped across the backlog spill"
         );
     }
-
     /// The design-gate admission policy, BEHAVIORAL and REACHED (RZEWTX;
     /// JCI2FW Part A dissolved the `CordonAdmission::Hold` descriptor arm
     /// and made the Cordoned arm reachable): `PoolStateUpdater` is

@@ -13,7 +13,6 @@
 //! the lane/pipelined-sim seams from `executor`/`inline_sim`. The
 //! walk-adjacent helpers (`clamp_result_in_worker`, `flush_solved_item`,
 //! `inline_sim_payload`) are defined HERE (5WCRWZ T7).
-
 use super::solve_cycle::clamp_result_with_state;
 use super::solve_cycle::min_profit_floor;
 use super::solve_cycle::SolveCycleShared;
@@ -22,17 +21,14 @@ use crate::arb_engine::executor::{SolveLane, SolveOutcome};
 use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
 use ::degenbot_solvers::mixed::{ResolvedMixedPath, SolvePathResult};
 use degenbot_core::{diag, op_warn};
-
 /// How many slowest-path entries the solve-cycle completion event names
 /// (D63GSE intra-solve visibility). Walk-side only after the T4 move.
 const SLOWEST_PATHS_K: usize = 5;
-
 /// Q3 dense one-shot alert flag — the CONSUMER side of the moved alert: the
 /// walk reports `WalkStats::max_dense_words`; this logs once per process.
 /// Walk-side only after the T4 move.
 static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
-
 /// K-slowest-path attribution record: (`time_us`, `pieces_visited`,
 /// `path_sims`, `word_steps`, `refine_sims`, `gate_us`, `gate_derive_us`,
 /// `gate_compose_us`, `gate_search_us`, `path_id`) — lets the completion
@@ -41,7 +37,6 @@ static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
 /// proper, not just wall time. `pub(crate)` because `solve_cycle::PathTimesHeap`
 /// aliases it (5WCRWZ T5 relocated the heap; NO re-export shim remains).
 pub(crate) type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
-
 // ===========================================================================
 // 5WCRWZ T7: the walk-adjacent helpers, moved here with the walk they
 // serve (the retired grab file is deleted outright).
@@ -71,7 +66,6 @@ pub(crate) fn clamp_result_in_worker(
         .read_at(crate::bot_core::state_lock::LockSite::Solver);
     clamp_result_with_state(&core, pid, &ctx.pool_refs[idx].pools, result)
 }
-
 /// SIMPIPE2 T3: the WORKER-side inline sim — resolve the per-path payload
 /// from the clamp-committed result on the SAME worker context the T2 clamp
 /// opened (shared core + to_solve-aligned pool refs; stance + hook gated).
@@ -141,7 +135,6 @@ pub(crate) fn inline_sim_payload(
     );
     Some(payload)
 }
-
 /// Stamp the sim payload onto the held Solved outcome and submit it —
 /// ONE flush shape for BOTH solve arms (7LV6VN T5 carry; unified by
 /// QR3NUS 43E3H3). The arms differ only in the `submit` closure:
@@ -174,7 +167,6 @@ pub(crate) fn flush_solved_item(
         submit(outcome);
     }
 }
-
 /// Per-path solve + diagnostics (epic BXUSGL T1): the former `solve_fn`
 /// closure moved out verbatim so every dispatch arm (the legacy
 /// the dedicated tokio executor - dispatch a path identically. Takes the
@@ -418,7 +410,6 @@ pub(crate) fn solve_one_path(
 //   Suppressed/Failed claim divergence (`claim_all_lanes`) retired with the
 //   in-cycle arm.
 // --------------------------------------------------------------------------
-
 /// The arm policy (WNH5OL; WFF6MM trimmed to the ONE detached arm): the
 /// lane walk body is ONE function; every per-arm behavior rides this value
 /// (the carrier stamps and the drain's ledger seq). The detached gauge hook
@@ -439,7 +430,6 @@ pub(crate) struct LaneArmPolicy {
     /// so the walk copies it and the drain reads it through the policy).
     pub(crate) metadata: BlockMetadata,
 }
-
 /// THE ONE LANE WALK (WNH5OL): the shared body of the two former `run_bin`
 /// closures (the ~64-common-line fold). Arm differences are the two
 /// parameters: the bin's items (`Arc<Vec>` indexed by the bin plan)
@@ -543,7 +533,6 @@ pub(crate) fn drive_lane_walk(
         held_unflushed: held.len(),
     }
 }
-
 /// The walk's per-bin plan: the items eligible for solving (aligned to
 /// cycle order) and the bin's index window into them (the LPT bin's owned
 /// indices). Same byte shape both arms compute today.
@@ -551,7 +540,6 @@ pub(crate) struct LaneWalkBinPlan {
     pub(crate) items: std::sync::Arc<Vec<(u64, std::sync::Arc<ResolvedMixedPath>)>>,
     pub(crate) indices: Vec<usize>,
 }
-
 /// The walk's stamp context (contract 2's 'static carry): the detached
 /// arm hands the enqueue-time stamping halves — the issuing `cycle_seq`,
 /// the Q1a per-hop resolve snapshot, and the cycle span — so `stamp_outcome`
@@ -569,7 +557,6 @@ pub(crate) struct WalkSubmitCtx {
     /// The enqueue cycle span; `None` on the in-cycle arm.
     pub(crate) solve_span: Option<tracing::Span>,
 }
-
 /// What the walk reports to the arm that drove it:
 /// - `suppressed_unsent`: the post-solve None arms (the CONVERGENT
 ///   ancestral shape — the DETACHED arm delivered its profitless skips ON
@@ -586,7 +573,6 @@ pub(crate) struct LaneWalkReads {
     pub(crate) suppressed_unsent: Vec<u64>,
     pub(crate) held_unflushed: usize,
 }
-
 /// Stamp ONE outcome from the policy (the carrier-stamp half of the arm
 /// difference). The detached arm fills `cycle_seq`/`update_stamp`/
 /// `solve_span` from the enqueue; the in-cycle arm fills the inert
@@ -627,7 +613,6 @@ mod solve_path_span_tests {
     use degenbot_solvers::mixed::ResolvedMixedPath;
     use opentelemetry_sdk::trace::InMemorySpanExporter;
     use tracing_subscriber::layer::SubscriberExt;
-
     /// ADR-043 §8 behavioral volume gate (ergo ZJUEXH): one fixture solve
     /// cycle over the committed heavy-CL corpus must stay within the INFO
     /// volume budget, and every INFO+ record must land on a closed
@@ -643,7 +628,6 @@ mod solve_path_span_tests {
         use tracing::Level;
         use tracing_subscriber::layer::{Context, Layer};
         use tracing_subscriber::Registry;
-
         #[derive(Clone, Default)]
         struct Capture(StdArc<StdMutex<Vec<(String, Level)>>>);
         impl<S: tracing::Subscriber> Layer<S> for Capture {
@@ -654,7 +638,6 @@ mod solve_path_span_tests {
                 ));
             }
         }
-
         let capture = Capture::default();
         let subscriber = Registry::default().with(capture.clone());
         let items = crate::arb_engine::executor_ab_probe::load_corpus_fixture();
@@ -667,14 +650,12 @@ mod solve_path_span_tests {
                 let _ = solve_one_path(&ctx, &tracing::Span::current(), pid as u64, item);
             }
         });
-
         let records = capture.0.lock().expect("capture lock").clone();
         let loud: Vec<(String, Level)> = records
             .iter()
             .filter(|(_, level)| *level <= Level::INFO)
             .cloned()
             .collect();
-
         let mut histogram: std::collections::BTreeMap<(String, String), usize> =
             std::collections::BTreeMap::new();
         for (target, level) in &loud {
@@ -686,7 +667,6 @@ mod solve_path_span_tests {
         for ((target, level), count) in &histogram {
             println!("  {count:>6}  {level:<5} {target}");
         }
-
         // (a) Volume: steady-state INFO+ must be a small constant per solve.
         let budget = 4 + solved / 20;
         assert!(
@@ -694,7 +674,6 @@ mod solve_path_span_tests {
         "ADR-043 §8 volume gate: {} INFO+ records over {solved} paths (budget {budget}); the histogram above names the offenders",
         loud.len()
     );
-
         // (b) Every INFO+ record rides a closed `degenbot::<domain>` target.
         let stray: Vec<&(String, Level)> = loud
             .iter()
@@ -705,7 +684,6 @@ mod solve_path_span_tests {
             "ADR-043 §8 target gate: INFO+ on non-domain targets: {stray:?}"
         );
     }
-
     /// `solve_one_path` emits one `degenbot.arb.path` child span parented
     /// under the (re-entered) cycle span, carrying `path.id`. Scoped LOCAL
     /// subscriber (`with_default`): no global-slot mutation, no leakage
@@ -715,7 +693,6 @@ mod solve_path_span_tests {
         let exporter = InMemorySpanExporter::default();
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
         let ctx = crate::arb_engine::executor_ab_probe::probe_ctx();
         let resolved = ResolvedMixedPath {
             hops: Vec::new(),
@@ -728,10 +705,8 @@ mod solve_path_span_tests {
             let _guard = solve.enter();
             let _ = solve_one_path(&ctx, &tracing::Span::current(), 77, &resolved);
         });
-
         provider.force_flush().expect("flush");
         let spans = exporter.get_finished_spans().expect("spans");
-
         let solve_id = spans
             .iter()
             .find(|sp| sp.name.as_ref() == "degenbot.arb.solve")
@@ -751,7 +726,6 @@ mod solve_path_span_tests {
             paths[0].parent_span_id, solve_id,
             "degenbot.arb.path must parent under the re-entered cycle span"
         );
-
         assert!(
             paths[0]
                 .attributes

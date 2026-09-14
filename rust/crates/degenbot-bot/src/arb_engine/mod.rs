@@ -41,16 +41,6 @@
 //! | [`lifecycle`] | Path registration, buffer management, engine accessors |
 //! | [`py_binding`] | PyO3 wrapper (`PyArbitrageEngine`) |
 //! | [`tests`] | Unit tests |
-
-use dashmap::DashMap;
-use hashbrown::{HashMap, HashSet};
-use std::sync::Arc;
-
-use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
-#[cfg(test)]
-use alloy::primitives::aliases::U112;
-use alloy::primitives::Address;
-
 use self::block_cursor::BlockCursor;
 use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
@@ -59,7 +49,13 @@ use self::solve_cycle::SolveCycle;
 use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
-
+use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
+#[cfg(test)]
+use alloy::primitives::aliases::U112;
+use alloy::primitives::Address;
+use dashmap::DashMap;
+use hashbrown::{HashMap, HashSet};
+use std::sync::Arc;
 // THE construction-stamped fleet boot carrier (YI5NGB): the engine's own
 // FleetBoot value + the ride ledger the per-role fleet statics consult.
 mod boot_stamp;
@@ -75,7 +71,6 @@ mod delivery_policy;
 // door, the disposition counters, the fan-in tripwire, and the ONE
 // sidecar spawn — see the module's own doc header.
 pub(crate) mod detached_cycle;
-
 mod diagnostic;
 // SZJUKL seam retirement: the arb engine's StageHandlers implementation —
 // the ONE surface left between the machine driver and the engine. The
@@ -132,25 +127,21 @@ mod solve_cycle;
 mod executor_ab_probe;
 #[cfg(test)]
 mod tests;
-
-pub use engine_stages::EngineStages;
-pub use retune::EngineRetune;
-
 pub use diagnostic::{
     compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
 };
+pub use engine_stages::EngineStages;
 pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
     InlineSwapFamily, SimulatedPathResult,
 };
 pub use path_info::build_path_info;
-
+pub use retune::EngineRetune;
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 // Engine phase state machine (Plan 098)
 // ---------------------------------------------------------------------------
-
 /// Lifecycle phase of the engine, enforcing correct ordering of
 /// `subscribe()`, `load_snapshot()`, `backfill()`, and `resume()`.
 ///
@@ -183,7 +174,6 @@ pub enum EnginePhase {
     /// Pump processing live blocks.
     Resumed = 4,
 }
-
 impl EnginePhase {
     /// Reconstruct a phase from its `u8` discriminant (the inverse of the
     /// `#[repr(u8)]` representation). Used by `PumpState` (ADR-006 D4) to read
@@ -200,7 +190,6 @@ impl EnginePhase {
             _ => Self::Created,
         }
     }
-
     /// Check that the current phase allows the given required phase.
     /// Returns `Err` with a descriptive message if the transition is invalid.
     ///
@@ -217,7 +206,6 @@ impl EnginePhase {
             ))
         }
     }
-
     /// Require that the engine has not yet reached the given phase.
     ///
     /// # Errors
@@ -233,7 +221,6 @@ impl EnginePhase {
             ))
         }
     }
-
     /// Phase gate for `subscribe()`. Accepts `Created` (the legacy path:
     /// subscribe first, then load snapshot) OR `SnapshotLoaded` (the
     /// construction-time-load path: snapshot loaded at `Bot` construction,
@@ -254,7 +241,6 @@ impl EnginePhase {
             )),
         }
     }
-
     /// Compute the phase AFTER `subscribe()` completes (J3FMDO regression
     /// fix for the construction-time-load path).
     ///
@@ -298,18 +284,15 @@ impl EnginePhase {
         }
     }
 }
-
 // ---------------------------------------------------------------------------
 // Coverage & snapshot types
 // ---------------------------------------------------------------------------
-
 /// Describes the completeness of tick data for a registered pool.
 ///
 /// Re-exported from [`crate::bot_core`] where it now lives alongside V3 state
 /// (ADR-003). `Tracked` = complete (may have empty `tick_data` = genuinely
 /// illiquid); `Sparse` = no snapshot data — solver results may be inaccurate.
 pub use crate::bot_core::PoolTickCoverage;
-
 // ADR-015: the path/snapshot/hop-state value types + INT128_MAX constant
 // now live in `degenbot-solvers::mixed` (the solver's intake contract). The
 // re-export shim that lived here during the staged relocation has been
@@ -317,7 +300,6 @@ pub use crate::bot_core::PoolTickCoverage;
 // `::degenbot_solvers::mixed::{...}`. `BlockMetadata`, `PoolTickCoverage`,
 // `V3SnapshotData`/`V4SnapshotData` (if needed) resolve to their original
 // homes (`bot_core`, `degenbot_solvers::mixed`).
-
 // `BlockMetadata` lives in `bot_core` (general block data); re-exported here so
 // engine code + external references (`crate::arb_engine::BlockMetadata`)
 // keep working (ADR-006 D4).
@@ -326,7 +308,6 @@ pub use crate::bot_core::BlockMetadata;
 // coordinator-owned; the type moved to bot_core. Re-exported so external
 // references keep working (same pattern as BlockMetadata above).
 pub use degenbot_core::block_clock_pipe::BlockNotification;
-
 /// Incremental result batch pushed to Python via the result channel.
 ///
 /// Each batch contains only paths that changed since the last batch
@@ -356,7 +337,6 @@ pub struct ResultBatch {
     /// legacy FFI-sim path for every entry — per-entry presence decides.
     pub payloads: HashMap<u64, inline_sim::SimulatedPathResult>,
 }
-
 /// KJWIK5: the deferred-path re-record hook (the ledger carry). The
 /// dispatch calls it with the deferred paths' hop-pool keys and the cycle's
 /// solve block; the `EngineStages` constructor installs the
@@ -367,7 +347,6 @@ pub struct ResultBatch {
 /// behavior.
 pub(crate) type DeferredReRecordHook =
     std::sync::Arc<dyn Fn(&[degenbot_solvers::affected_keys::AffectedKey], u64) + Send + Sync>;
-
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 ///
@@ -443,19 +422,12 @@ pub struct ArbitrageEngine {
     /// write for it — each one bought a ~2.9s writer-queue slot under the
     /// block-apply stream. Flipped by [`Self::set_event_buffer_max_age`].
     event_buffer_expiry_enabled: bool,
-    /// The inline-sim hook (SIMPIPE2 T1): `degenbot-python` installs the
-    /// implementation at engine construction via
-    /// [`ArbitrageEngine::set_inline_simulator`]; `None` = stance-relevant
-    /// callers fall back to the batch FFI sim (module `inline_sim` doc).
-    inline_sim: Option<std::sync::Arc<dyn inline_sim::InlineSimulator>>,
 }
-
 impl Default for ArbitrageEngine {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl ArbitrageEngine {
     /// The pump ended: close the delivery channels so Python's block/result
     /// streams end loudly (incident 2026-08-20 #2). The `StageHandlers`
@@ -472,7 +444,6 @@ impl ArbitrageEngine {
     pub fn new() -> Self {
         Self::with_core(Arc::new(StateLock::new(BotState::new())))
     }
-
     /// Adopt an existing shared `Arc<RwLock<BotState>>` (ADR-006 D1+D2). The
     /// engine reads/writes pool state through the *same* core that
     /// `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — dissolving the
@@ -487,7 +458,6 @@ impl ArbitrageEngine {
     pub fn streaming_delivery_probe(&self) -> bool {
         self.cycle.streaming_delivery
     }
-
     #[must_use]
     pub fn with_core(core: Arc<StateLock<BotState>>) -> Self {
         // KAHU5W/P6YXA6 production-boot fix: pack from the INSTALLED loader
@@ -499,7 +469,6 @@ impl ArbitrageEngine {
         // constructions, byte-compatible per the holder docs).
         Self::with_core_cfg(core, ::degenbot_config::holder::config_arc())
     }
-
     /// KAHU5W: config-threaded construction. `cfg` is the typed `BotConfig`
     /// (loaded ONCE by the owner from the `--config` file / env via the
     /// degenbot-config loader) — the engine packs its construction stances
@@ -588,14 +557,12 @@ impl ArbitrageEngine {
             fleet_boot_stamp,
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
             event_buffer_expiry_enabled: false,
-            inline_sim: None,
         };
         // KAHU5W/J4HN66: apply the config-derived retune ONCE at construction
         // — the engine's per-instance knob values come from the caller's cfg.
         engine.apply_retune(&retune);
         engine
     }
-
     /// Apply one [`EngineRetune`] to the live engine — the ONE knob-write
     /// body, shared by construction ([`Self::with_core_cfg`]) and the runtime
     /// operator retune entry ([`super::EngineStages::apply_retune`]).
@@ -626,7 +593,6 @@ impl ArbitrageEngine {
         self.cycle.force_deferred.clone_from(&retune.force_deferred);
     }
 }
-
 impl ArbitrageEngine {
     /// Immutable access to the shared `BotState` `Arc` (ADR-003 / ADR-006
     /// D1+D2).
@@ -640,18 +606,17 @@ impl ArbitrageEngine {
     pub fn core(&self) -> &Arc<StateLock<BotState>> {
         &self.core
     }
-
     /// Immutable read of the registered path→pool map.
     ///
     /// Read-only: `path_pools` must stay consistent with the `pool_to_paths`
     /// reverse index, which only the engine's internal register/deregister
     /// paths maintain — so no mutable accessor is exposed.
+    /// T5 rehome target: thin engine casing for the `PyO3` driver until T5 re-sources it onto `EngineStages`.
     #[must_use]
     pub fn path_pools(&self) -> &HashMap<u64, std::sync::Arc<MixedPath>> {
         self.registry.path_pools()
     }
 }
-
 impl ArbitrageEngine {
     /// Read the current engine lifecycle phase (core-owned source of truth,
     /// ZU7RAF).
@@ -663,7 +628,6 @@ impl ArbitrageEngine {
     pub fn current_phase(&self) -> EnginePhase {
         EnginePhase::from_u8(self.phase.load(std::sync::atomic::Ordering::Relaxed))
     }
-
     /// Advance to `phase` with NO ordering check — the caller validates against
     /// the gated helpers [`Self::require_phase`] / [`Self::require_phase_before`]
     /// (or `EnginePhase::allow_subscribe` / `after_subscribe`). Core-owned
@@ -672,7 +636,6 @@ impl ArbitrageEngine {
         self.phase
             .store(phase as u8, std::sync::atomic::Ordering::Relaxed);
     }
-
     /// Gate a lifecycle-ordered method: succeed only when the current phase is
     /// at or past `required`.
     ///
@@ -683,7 +646,6 @@ impl ArbitrageEngine {
     pub fn require_phase(&self, required: EnginePhase, method_name: &str) -> Result<(), String> {
         self.current_phase().require(required, method_name)
     }
-
     /// Gate a lifecycle-ordered method: succeed only when the current phase is
     /// strictly BEFORE `phase`.
     ///
@@ -698,7 +660,6 @@ impl ArbitrageEngine {
         self.current_phase().require_before(phase, method_name)
     }
 }
-
 /// Test-only registration helpers (ADR-006 D3).
 ///
 /// Production code never registers pools via the engine — pool construction
@@ -747,7 +708,6 @@ impl ArbitrageEngine {
             .register_v2_pool(&params)
             .expect("test setup: V2 registration")
     }
-
     /// Register a V3 pool into the engine's `BotState` and return its `pool_id`.
     ///
     /// # Panics
@@ -764,7 +724,6 @@ impl ArbitrageEngine {
             .register_v3_pool(params)
             .expect("test setup: V3 registration")
     }
-
     /// Register a V4 pool into the engine's `BotState` and return its `pool_id`.
     ///
     /// # Errors
@@ -780,7 +739,6 @@ impl ArbitrageEngine {
             .register_v4_pool(params)
     }
 }
-
 // ---------------------------------------------------------------------------
 // Epic BXUSGL T1: test-only knobs. Never compiled outside `cargo test` — the
 // streaming-orchestration test needs a deterministic per-path delay and an

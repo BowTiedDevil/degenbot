@@ -1,27 +1,21 @@
 //! Log event routing: apply live and backfill events to sub-engines.
-
+use super::executor::LaneOutcome;
+#[cfg(test)]
+use super::HashSet;
+use super::{ArbitrageEngine, BlockMetadata};
+#[cfg(test)]
+use crate::arb_engine::tests::test_keys::affected_keys;
+#[cfg(test)]
+use crate::bot_core::{V3SwapUpdate, V4SwapUpdate};
 #[cfg(test)]
 use alloy::primitives::{aliases::U112, Address};
 use degenbot_core::diag;
-
-#[cfg(test)]
-use crate::bot_core::{V3SwapUpdate, V4SwapUpdate};
-
-#[cfg(test)]
-use super::HashSet;
-#[cfg(test)]
-use crate::arb_engine::tests::test_keys::affected_keys;
-
-use super::executor::LaneOutcome;
-use super::{ArbitrageEngine, BlockMetadata};
-
 impl ArbitrageEngine {
     // (NOTE, LXDY4C): the former `insert_dirty` (BotState-bucket
     // classification into the shared dirty sets) is retired — touched pools
     // are recorded into the block's `EpochDelta` by log application
     // (`LogDispatcher::dispatch` / `Bot::record_pool_state_changed`), and
     // the affected-path derivation consumes the delta's taken keys.
-
     /// The CURRENT cycle's dispatch arm (ADR-045 T5): the latency
     /// histograms' `arm` label, read by the caller that observes the cycle.
     /// Backed by the typed `last_arm` latch, not a string stash; the stage
@@ -30,7 +24,6 @@ impl ArbitrageEngine {
     pub fn cycle_arm(&self) -> &'static str {
         self.cycle.last_arm.map_or("unset", |arm| arm.label())
     }
-
     /// KNEUQX: the block the MOST RECENT solve cycle ran anchored on - the
     /// solve-anchor resolution (request block floored by the pool-state head,
     /// see `crate::bot_core::solve_anchor`), stamped into the cycle's
@@ -42,7 +35,6 @@ impl ArbitrageEngine {
     pub fn results_block(&self) -> u64 {
         self.cycle.cursor.results_block()
     }
-
     pub(crate) fn solve_dirty(
         &mut self,
         block_number: u64,
@@ -85,7 +77,6 @@ impl ArbitrageEngine {
                 "buffered-event expiry skipped (max_age unset)"
             );
         }
-
         // LXDY4C: the affected keys arrive from the block's EpochDelta
         // (consumed by the stage surface's on_resolve hook); no engine-local
         // dirty-set intake remains.
@@ -107,12 +98,10 @@ impl ArbitrageEngine {
             &self.registry,
             &mut self.delivery,
         );
-
         // 6XB6NJ: monotone advance on the block cursor.
         self.cycle.cursor.advance_processed(block_number);
         outcome
     }
-
     /// One buffered-event expiry round under its own `degenbot.arb.expire`
     /// span, split into lock-WAIT (time to acquire the core write lock -
     /// contention with the pump apply loop / Python bridge) vs expiry WORK
@@ -146,7 +135,6 @@ impl ArbitrageEngine {
         span.record("expire_work_us", expire_work_us);
         (lock_wait_us, expire_work_us)
     }
-
     /// Compute the incremental diff and send a result batch to Python.
     ///
     /// Called by the pump when the debounce timer fires (mid-block) or
@@ -155,7 +143,6 @@ impl ArbitrageEngine {
     pub fn send_result_batch(&mut self, metadata: &BlockMetadata) {
         self.compute_diff_and_send(metadata);
     }
-
     /// Finalize the current block: advance the solved boundary and emit the
     /// terminal block-boundary batch carrying `metadata` so Python observes
     /// the advance with genuine fees/gas/timestamp. Bookkeeping-only — this
@@ -218,7 +205,6 @@ impl ArbitrageEngine {
             );
         }
     }
-
     /// Process pre-decoded updates for testing.
     #[cfg(test)]
     pub fn process_updates(
@@ -253,7 +239,6 @@ impl ArbitrageEngine {
                 }
             }
         }
-
         // Re-solve only paths containing updated pools (test-only intake)
         self.cycle.run_epoch(
             &affected_keys(&v2_affected, &v3_affected, &HashSet::new()),
@@ -265,7 +250,6 @@ impl ArbitrageEngine {
         // 6XB6NJ: monotone advance on the block cursor.
         self.cycle.cursor.advance_processed(block_number);
     }
-
     /// Process pre-decoded V4 updates.
     #[cfg(test)]
     pub fn process_v4_updates(
@@ -293,7 +277,6 @@ impl ArbitrageEngine {
             &mut self.delivery,
         );
     }
-
     /// Terminal disposition of ONE detached straggler, under the single
     /// engine-Mutex acquisition the sidecar makes per item (epic SRQEK5
     /// WV62TX). Q1a policy: apply-if-unchanged, drop-on-touched — ANY live

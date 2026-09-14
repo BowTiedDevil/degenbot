@@ -34,12 +34,9 @@
 //!
 //! `latest_results` / `register_path` / the FFI surface keep their
 //! StateLock-mediated core locking — this type adds NO lock layer.
-
-use degenbot_core::op_error;
-use std::sync::Arc;
-
-use parking_lot::Mutex;
-
+use super::solve_cycle::CycleOutcome;
+use super::ArbitrageEngine;
+use super::EngineRetune;
 use crate::bot_core::stage_handlers::StageHandlers;
 use crate::bot_core::{
     stage_handlers::{
@@ -49,11 +46,9 @@ use crate::bot_core::{
     BlockMetadata, Epoch, EpochDelta, PumpControl, Rewind, RewindOutcome,
 };
 use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
-
-use super::solve_cycle::CycleOutcome;
-use super::ArbitrageEngine;
-use super::EngineRetune;
-
+use degenbot_core::op_error;
+use parking_lot::Mutex;
+use std::sync::Arc;
 /// THE one arm-attribution wiring site (cold-start trace): the cycle span is
 /// tagged with `cycle.arm` (`detached` | `skipped_empty` | `shed`; `unset`
 /// before any cycle). Pipeline-free by design: a consumer without the meter
@@ -69,7 +64,6 @@ pub(crate) fn record_cycle_arm_telemetry(span: &tracing::Span, arm: &'static str
     // Handed back for the caller's per-cycle latch (see the doc above).
     arm
 }
-
 /// The arb engine's stage surface: the shared engine + the touched-pool
 /// ledger it solves from + the delivered-to-Python block clock.
 pub struct EngineStages {
@@ -89,7 +83,6 @@ pub struct EngineStages {
     /// dissolved coordinator).
     block_clock: Mutex<BlockClockPipe>,
 }
-
 impl EngineStages {
     /// Construct over a strong clone of the shared engine handle and the
     /// ONE Bot-owned epoch ledger (the wiring layer passes
@@ -123,7 +116,6 @@ impl EngineStages {
             block_clock: Mutex::new(BlockClockPipe::default()),
         }
     }
-
     /// Attach the block-clock channel sender (the wiring layer creates the
     /// channel pair; the Python-facing receiver lives on `PumpState`).
     /// The pipe mutex is a non-poisoning `parking_lot` — a nanosecond send,
@@ -134,7 +126,6 @@ impl EngineStages {
     ) {
         self.block_clock.lock().set_channel(tx);
     }
-
     /// Apply an operator [`EngineRetune`] to the live engine — the engine's
     /// twin of the fleet's centralized posture feeder + wake (43121b9). This
     /// is the ONE runtime re-parameterization entry: the stage surface owns
@@ -144,7 +135,6 @@ impl EngineStages {
     pub fn apply_retune(&self, retune: &EngineRetune) {
         self.engine.lock().apply_retune(retune);
     }
-
     /// The engine's solve cycle — the behavior port of the dissolved
     /// `EngineHandle::solve_dirty` hold/spans/sidecar logic, verbatim.
     ///
@@ -250,7 +240,6 @@ impl EngineStages {
         }
         cycle_outcome
     }
-
     /// SRQEK5 (WV62TX): if the empty-affected solve path took the parked
     /// Receiver tradeoff, the sidecar spawn happens here instead.
     /// P37YJG: THE ONE spawn — the machine owns it (the take-once rides the
@@ -262,19 +251,16 @@ impl EngineStages {
         super::detached_cycle::spawn_merge_sidecar(&self.engine, merge_rx);
     }
 }
-
 // P37YJG: the sidecar's thread name + census row + the ONE spawn moved
 // into the machine — `detached_cycle::{merge_sidecar_thread_name,
 // merge_sidecar_census_entry, spawn_merge_sidecar}` (byte-identical
 // naming and census row).
-
 /// Is the caller inside an ambient multi-thread tokio runtime? `block_in_place`
 /// is only valid there; a current-thread runtime or no runtime runs inline.
 fn is_multi_thread_runtime() -> bool {
     tokio::runtime::Handle::try_current()
         .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
 }
-
 impl StageHandlers for EngineStages {
     /// Quiesced row: the machine classifies completeness (tombstone vs
     /// settle) — the engine takes no action; the solve cycle the quiesce
@@ -287,7 +273,6 @@ impl StageHandlers for EngineStages {
             verdict: crate::bot_core::stage_handlers::QuiesceVerdict::Settled,
         })
     }
-
     /// Resolved row: consume the epoch ledger's touched keys ONCE (the
     /// LXDY4C take preserves the retired `DirtySets::take_all` semantics;
     /// keys recorded while this drain runs land in the NEXT cycle).
@@ -315,7 +300,6 @@ impl StageHandlers for EngineStages {
         drop(engine);
         Ok(AffectedPaths(affected))
     }
-
     /// Solved row: the engine's solve cycle over the affected keys. The
     /// in-process simulation (ADR-019) and the gate (ADR-040) run INSIDE
     /// this engine cycle (`solve_dirty` → solver dispatch + inline sim);
@@ -331,20 +315,17 @@ impl StageHandlers for EngineStages {
             solved: Epoch::at(outcome.solved_block()),
         })
     }
-
     /// Simulated row: in-process revm simulation ran inside the Solved
     /// cycle (the engine's sole-executor posture is a property of the
     /// cycle, not a separate pass). No engine action.
     fn on_simulate(&self, _work: &Simulate) -> Result<SimulateOutcome, StageError> {
         Ok(SimulateOutcome::default())
     }
-
     /// Gated row: the deliver/reject verdicts are produced inside the
     /// Solved cycle's gate (ADR-040). No engine action.
     fn on_gate(&self, _work: &Gate) -> Result<GateOutcome, StageError> {
         Ok(GateOutcome::default())
     }
-
     /// Published row: the delivery-to-Python edge — flush the debounced
     /// result batch (delivery/submission/Python are sinks at THIS edge,
     /// not seams in front of the engine).
@@ -352,7 +333,6 @@ impl StageHandlers for EngineStages {
         self.engine.lock().send_result_batch(work.ctx.metadata());
         Ok(PublishOutcome::default())
     }
-
     /// Finalized row: the boundary catch — advance + terminal publish, no
     /// solve cycle (PWPPAZ T1).
     fn on_finalize(&self, work: &Finalize) -> Result<FinalizeOutcome, StageError> {
@@ -363,7 +343,6 @@ impl StageHandlers for EngineStages {
             cutoff: work.ctx.epoch(),
         })
     }
-
     /// `Rewind` row: the machine owns the unwind (epoch seq bump, stale
     /// contexts fail fast); pool restoration is the event-driven
     /// `ReorgCoordinator` per-log path, not a stage hook. Echoes the target.
@@ -373,7 +352,6 @@ impl StageHandlers for EngineStages {
         })
     }
 }
-
 /// ADR-046: the driver-facing control seam, split OFF `StageHandlers` so the
 /// stage trait carries only the eight pure hooks. `EngineStages` implements
 /// both; the pump injects both Arcs at construction.
@@ -381,23 +359,18 @@ impl PumpControl for EngineStages {
     fn has_dirty_paths(&self) -> bool {
         !self.delta.is_empty()
     }
-
     fn set_last_solved_block(&self, solved: Epoch) {
         self.engine.lock().set_last_solved_block(solved.block());
     }
-
     fn set_solve_anchor(&self, anchor: Epoch) {
         self.engine.lock().set_solve_anchor(anchor.block());
     }
-
     fn record_logs_this_block(&self) {
         self.engine.lock().record_logs_this_block();
     }
-
     fn last_processed_block(&self) -> Option<Epoch> {
         self.engine.lock().last_processed_block().map(Epoch::at)
     }
-
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
         // Direct, non-FIFO dispatch: one send per accepted header, never
         // queued behind solver work (B2). NOT taking the engine lock.
@@ -409,7 +382,6 @@ impl PumpControl for EngineStages {
             gas_limit: metadata.gas_limit,
         });
     }
-
     fn on_pump_ended(&self) {
         op_error!(domain = solver, "EngineStages: pump ended - closing the block-clock pipe + engine delivery channels; the Python block/result streams now end so the bot fails loudly"
         );
@@ -417,18 +389,15 @@ impl PumpControl for EngineStages {
         self.engine.lock().on_pump_ended();
     }
 }
-
 #[cfg(test)]
 mod fleet_stance_tests {
     //! BCA77G: the merge sidecar hosted as the fleet `Merge` role. LW-T9:
     //! the fleet.stance flip matrix is retired — ONE posture survives.
-
     // P37YJG: the naming/census fns moved into the machine; the pins
     // (byte-identical naming + census row) stay right here.
     use crate::arb_engine::detached_cycle::{
         merge_sidecar_census_entry, merge_sidecar_thread_name,
     };
-
     /// Under `fleet.stance=fleet` the sidecar runs as the pinned `Merge`
     /// role: the role's greppable thread-name pattern and the fleet merge
     /// census row (exactly one seat).
@@ -444,7 +413,6 @@ mod fleet_stance_tests {
         assert_eq!(row.thread_name, "work-fleet-merge-{n}");
         assert_eq!(row.count, 1);
     }
-
     /// LW-T9: there IS no legacy posture — every construction hosts the
     /// sidecar as the fleet `Merge` role, byte-identical to the fleet arm
     /// (RED before the cutover: the false-stance branch kept the
@@ -463,7 +431,6 @@ mod fleet_stance_tests {
         assert_eq!(row.count, 1);
     }
 }
-
 // ======================================================================
 // ergo 2KQZSC — RED pin for the candidate-2 stage-seam contract.
 // Written against the TARGET contract; production code is NOT changed.
@@ -471,7 +438,6 @@ mod fleet_stance_tests {
 #[cfg(test)]
 mod candidate2_seam_pins {
     use std::sync::Arc;
-
     /// Pin 2 (GREEN after T2; extended at ZE67AE so it cannot quietly rot).
     ///
     /// The eight `EngineStages` inherent twins are killed HARD:
@@ -541,7 +507,6 @@ mod candidate2_seam_pins {
         }
         fn is_pump_control<T: crate::bot_core::PumpControl>() {}
         is_pump_control::<super::EngineStages>();
-
         let stages = super::EngineStages::new(
             Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
             Arc::new(crate::bot_core::EpochDelta::new(0u64)),
@@ -565,7 +530,6 @@ mod candidate2_seam_pins {
         stages.has_dirty_paths(TwinProbeToken);
         stages.notify_block(TwinProbeToken);
     }
-
     /// Driver-surface twin probe (ergo 2NLZE3 T1, epic 5TBT7L).
     ///
     /// The candidate-2 end state makes the `EngineStages` stage surface the
@@ -628,7 +592,6 @@ mod candidate2_seam_pins {
         engine.has_dirty_paths(DriverTwinProbeToken);
         engine.notify_block(DriverTwinProbeToken);
     }
-
     /// Minimal `tracing_subscriber::Layer` that records ERROR events
     /// (target + message). Same pattern as the `ReorgSpanCapture` layer in
     /// `block_pump.rs` tests: a real subscriber through
@@ -638,7 +601,6 @@ mod candidate2_seam_pins {
     struct LoudCloseCapture {
         events: Arc<std::sync::Mutex<Vec<(String, String)>>>,
     }
-
     impl LoudCloseCapture {
         fn saw_loud_close(&self) -> bool {
             self.events
@@ -650,7 +612,6 @@ mod candidate2_seam_pins {
                 })
         }
     }
-
     impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LoudCloseCapture {
         fn on_event(
             &self,
@@ -680,7 +641,6 @@ mod candidate2_seam_pins {
                 .push((event.metadata().target().to_string(), message.0));
         }
     }
-
     /// Pin 3 loudness half (GREEN at HEAD). The `EngineStages` pump-ended
     /// close emits the `op_error!` loud-close log. Today the log is on the
     /// `StageHandlers::on_pump_ended` hook; T2 moves it (with the poke) to
@@ -705,7 +665,6 @@ mod candidate2_seam_pins {
         );
     }
 }
-
 // ======================================================================
 // ergo 3FA7CN — RED pin for the construction-injected epoch ledger.
 // Written against the TARGET contract; production code is NOT changed.
@@ -713,7 +672,6 @@ mod candidate2_seam_pins {
 #[cfg(test)]
 mod construction_ledger_pins {
     use std::sync::Arc;
-
     /// Pin A (behavioral): `EngineStages` takes the ONE Bot-owned ledger at
     /// construction. The injected Arc IS the handle the stage surface reads
     /// (`PumpControl::has_dirty_paths`) — recording into it is visible
@@ -735,7 +693,6 @@ mod construction_ledger_pins {
             "the injected ledger must be the one the stage surface reads"
         );
     }
-
     /// Pin B (compile-time absence, candidate2's `NoInherentTwinProbe`
     /// pattern): `set_delta` / `delta_for_test` are the swap surface this
     /// task retires. An inherent re-introduction would shadow the probe and
@@ -759,7 +716,6 @@ mod construction_ledger_pins {
         stages.delta_for_test(SwapProbeToken);
     }
 }
-
 // ======================================================================
 // ergo 5WCRWZ T7 — THE final structural gate for the solver_dispatch
 // dissolution (epic 5WCRWZ, slices T1–T7).
@@ -785,7 +741,6 @@ mod dissolution_complete {
     const EVENT_ROUTING: &str = include_str!("event_routing.rs");
     const LANE_WALK: &str = include_str!("lane_walk.rs");
     const SOLVE_CYCLE: &str = include_str!("solve_cycle.rs");
-
     /// The module tree no longer declares (or even names) `solver_dispatch`.
     #[test]
     fn solver_dispatch_is_gone_from_the_module_tree() {
@@ -798,7 +753,6 @@ mod dissolution_complete {
             "arb_engine/mod.rs still names solver_dispatch — T7 owns the final cleanup"
         );
     }
-
     /// Every reallocated item is owned by its surviving home.
     #[test]
     fn survivors_own_their_reallocated_items() {
@@ -839,7 +793,6 @@ mod dissolution_complete {
             "arb_engine/mod.rs must own the ArbitrageEngine Default impl (5WCRWZ T7)"
         );
     }
-
     /// Compile-time inherent-absence probe (the candidate2 `NoInherentTwinProbe`
     /// pattern): the collapsed engine twins must not reappear as inherent
     /// `ArbitrageEngine` methods. An inherent re-introduction would shadow

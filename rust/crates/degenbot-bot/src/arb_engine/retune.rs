@@ -9,12 +9,9 @@
 //! NOT named "stance" (the fleet-migration stance, ADR-042, and the KAHU5W
 //! per-construction construction-stance values) and NOT "posture" (the
 //! fleet's cordon concept) — see CONTEXT.md's "Engine retune" glossary entry.
-
+use super::detached_cycle::DETACHED_INFLIGHT_CAP;
 use alloy::primitives::U256;
 use hashbrown::HashSet;
-
-use super::detached_cycle::DETACHED_INFLIGHT_CAP;
-
 /// The typed operator re-parameterization value crossing the driver seam.
 ///
 /// Construction packs the config-derived knobs ONCE ([`Self::from_config`] —
@@ -50,7 +47,6 @@ pub struct EngineRetune {
     /// path ids. Production leaves it empty.
     pub force_deferred: Option<HashSet<u64>>,
 }
-
 impl EngineRetune {
     /// Pack the config-derived retune from the caller's typed [`BotConfig`]
     /// (the ONE parse point for the engine's construction knobs).
@@ -85,7 +81,6 @@ impl EngineRetune {
         }
     }
 }
-
 impl Default for EngineRetune {
     fn default() -> Self {
         Self {
@@ -100,7 +95,6 @@ impl Default for EngineRetune {
         }
     }
 }
-
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
@@ -110,7 +104,6 @@ mod tests {
     use crate::bot_core::{BotState, EpochDelta};
     use degenbot_config::BotConfigLoader;
     use std::sync::Arc;
-
     /// Build an engine from an EXPLICIT local config (no env/file/process
     /// layer), wrapped for the stage surface. Only `solve.admission_*` is
     /// overridden — the fleet-boot hash stays byte-identical to the schema
@@ -132,7 +125,6 @@ mod tests {
         let stages = EngineStages::new(Arc::clone(&engine), Arc::new(EpochDelta::new(0u64)));
         (engine, stages)
     }
-
     /// Construction applies the value from the `BotConfig` fields (the
     /// KAHU5W/J4HN66 packing): the admission trio reflects the config, the
     /// profit window takes `min_profit_wei`, and the operator-only knobs keep
@@ -152,7 +144,6 @@ mod tests {
         assert_eq!(e.delivery.min_profit, U256::ZERO);
         assert_eq!(e.delivery.max_profit, U256::MAX);
     }
-
     /// `EngineStages::apply_retune` overwrites every live value — the runtime
     /// operator entry (the engine's twin of the fleet's posture feeder).
     #[test]
@@ -169,7 +160,6 @@ mod tests {
             force_deferred: Some(HashSet::from([42u64])),
         };
         stages.apply_retune(&retune);
-
         let e = engine.lock();
         assert!(e.event_buffer_expiry_enabled);
         assert!(e.cycle.solve_admission);
