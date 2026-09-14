@@ -68,13 +68,9 @@ investigate before trusting the build.
 ## Python Environment
 Use `uv`.
 
-### Schema ownership & Alembic retention (see [ADR-010](docs/adr/ADR-010-alembic-retention-and-rust-schema-cutover.md))
-The database schema is **Alembic-owned during the 0.6.x point releases** and becomes **Rust-owned** in a 0.7 release. The cutover mechanism (`degenbot database cutover` + the `ensure_schema` `RustOwned` branch) is built and opt-in during 0.6.x so `pip` users can upgrade a stale database through the final Alembic revision and then cutover at a time of their choosing. Dropping the Alembic dependency and deleting the migration scripts is gated to 0.7 (ergo task `JFFQV2`).
+### Schema ownership — Alembic retires in-tree (see [ADR-052](docs/adr/ADR-052-db-auto-upgrade-alembic-retirement.md); [ADR-010](docs/adr/ADR-010-alembic-retention-and-rust-schema-cutover.md) is superseded)
+Maintainer decision (2026-09-14): the 0.7 gate is pulled forward. The schema becomes Rust-owned through two epics — the console cutover (ADR-051) and the DB-robustness/auto-upgrade work (ADR-052). The database upgrades itself at open: `ensure_schema` auto-heals any Alembic-stamped DB and applies pending Rust-side steps under a forward version-lock. The previously-gating ergo ids (`JFFQV2`, `TGIP5N`, `OXKANZ`) no longer resolve in the backlog; these epics supersede them.
 
-**Forbidden-until-0.7 kill list.** No change before the 0.7 retirement task may delete or stub any of:
-- `src/degenbot/migrations/` (the Alembic migration scripts) — deletion is gated on the `heal` operation shipping and being proven (epic `TGIP5N`, tasks T2-T5; see ADR-011) **and** the 0.7.0 release decision (T6 / `OXKANZ`), not just on the 0.7.0 version bump;
-- the `alembic` and `sqlalchemy` entries in `pyproject.toml`;
-- `DatabaseSessionManager` and the SQLAlchemy `src/degenbot/database/models/` package;
-- the `ALEMBIC_HEAD` constant in `rust/crates/degenbot-db/src/schema.rs`;
-- the `alembic_version`-reading branch of `rust/crates/degenbot-db/src/migrate.rs::ensure_schema`;
-- the `PRAGMA query_only=on` setting on the `AlembicCurrent` path in `DegenbotDb::open`.
+**What the retired gate used to forbid is now in scope for those epics alone** (tracking in the epic task bodies): deleting `src/degenbot/migrations/`, the `alembic` pyproject entry, `ALEMBIC_HEAD`, the `alembic_version`-reading branch of `ensure_schema`, the Alembic `query_only=on` carve-out, and the `database upgrade` command path.
+
+**Still forbidden until its own epic:** deleting or stubbing the `sqlalchemy` entry in `pyproject.toml`, `DatabaseSessionManager`, and the SQLAlchemy `src/degenbot/database/models/` package (ADR-052 D7). The remaining SQLAlchemy surface is nominal types + trivial probes, and it retires separately.

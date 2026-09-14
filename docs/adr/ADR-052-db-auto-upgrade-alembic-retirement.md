@@ -1,0 +1,30 @@
+# ADR-052: The database upgrades itself at open — Alembic retires in-tree ahead of 0.7
+
+**Status: accepted** (2026-09-14; **partially supersedes ADR-010** — its 0.6.x retention posture; ADR-011 stands as the heal design. Settled in the same grilling session as ADR-051.)
+
+## Context
+
+ADR-010 kept the schema Alembic-owned through 0.6.x so `pip` users could run a stale DB forward through the migration-script chain and then opt into Rust ownership via `degenbot database cutover`. Two events retire that posture:
+
+1. ADR-011 shipped `heal` — a schema-agnostic, out-of-place rebuild copying rows via an auto-derived column mapping — and it shipped *proven* (the fixture-backed boundary tests). ADR-010's stated precondition for deletion exists.
+2. The console moves to Rust (ADR-051), which makes the retention cost concrete: either the Rust binary pretends `database upgrade` works — it cannot run Alembic scripts — or Python keeps a permanent carve-out contradicting "Rust is the engine". Simultaneously the maintainer ruling: users cannot be relied upon to apply migrations themselves; a 0.5-era production DB must reach current unaided. The old gating ergo ids cited in AGENTS.md (`JFFQV2`, `TGIP5N`, `OXKANZ`) no longer resolve in the backlog; this ADR supersedes them by decision.
+
+## Decision
+
+**D1 — Heal-at-open.** `ensure_schema` treats any `alembic_version` table (head-stamped OR stale revision) as legacy: at open it runs the ADR-011 heal (read-only handle on the source, out-of-place rebuild at `SCHEMA_HEAD`, copy via the auto-derived column mapping, per-table row-count verification, atomic swap preserving the old file as `*.bak`), reports via `op_info!` (healed-from revision, rows copied, warnings), re-opens, and proceeds as Rust-owned. `DEGENBOT_DB_AUTO_HEAL=0` preserves today's explicit-only posture for pinned environments. The heal runs at BOTH read and write opens — one rule for all opens, deliberate (a stale read that didn't heal would be a lie about the schema).
+
+**D2 — Forward version-lock over the Rust stamp.** DB stamp < `RUST_SCHEMA_VERSION` → apply the pending embedded `ALTER` steps strictly in order at open (each step its own transaction; a failed step rolls back to the last-good stamp and refuses loudly); stamp > the running binary's constant → refuse with "the binary is older than the database (schema N > binary M)". Fresh files create at current. No silent write-ahead, ever.
+
+**D3 — Mechanism by spike-with-verdict (house pattern, cf. the RetryBackoffLayer rejection comment, 0b044cf62).** Default choice: `rusqlite_migration` (sync API, `PRAGMA user_version` stamping, pending-only/forward-only application — policy-as-code for D2). Reconciliation burden recorded in the verdict: map the existing `_degenbot_db_schema_version` stamp into `user_version` once (heal/cutover stamping call-sites retarget), or fall back to a ~100-line hand-rolled loop over the existing table if the bridging turns out awkward. Verdict lives as a code comment next to the chosen call-site.
+
+**D4 — Verbs.** `database heal` and `database cutover` stay (heal = explicit repair entry point; cutover = the cheap in-place flip for a head-stamped DB). `database upgrade` becomes a dead subcommand in the Rust console: renders a pointed error ("retired — the database upgrades itself at open; for an explicit repair, run `degenbot database heal`"), non-zero exit. The Python-side `get_alembic_config` / `upgrade_existing_sqlite_database` fallback dies with the click tree (ADR-051).
+
+**D5 — Fixture matrix, 0.5 → current.** One fixture DB per released Alembic revision — the initial revision (`9347bbfcd47a`), every intermediate migration head, and the published 0.6.0aX head (`e0aaad8ad486`). Where no recorded snapshot exists, synthesize the DB (apply DDL through that revision, seed synthetic rows per that revision's shape, stamp it). The test chain proves open → auto-heal → current on every fixture, with killswitch-off refusal asserted separately. This is the checkable form of the load-bearing promise: no user of any released schema ever applies a migration.
+
+**D6 — Retirement sweep, order-enforced.** After Epic-A cutover (ADR-051) and D1/D2/D5 land: delete `src/degenbot/migrations/`, the `alembic` pyproject entry (and uv.lock entries), `ALEMBIC_HEAD`, the `alembic_version` compare logic in `ensure_schema` (presence-of-table = legacy; the version parse disappears), the `PRAGMA query_only=on` Alembic-carve-out, and every "run the Python Alembic upgrade" string (the `DbError::AlembicStale` render moves to the CLI layer per ADR-051 D1's renderer policy — the enum arm goes stale-focused: the DB opens healed before any caller ever sees it). A `just check-no-alembic` recipe asserts the sweep permanently (mirroring `check-no-pyo3-in-cores`: no `alembic` import in `src/`).
+
+**D7 — Explicit non-goal (recorded against future edits).** The SQLAlchemy inventory — `DatabaseSessionManager`, the `src/degenbot/database/models/` package, the `sqlalchemy` pyproject entry — is NOT deleted by these epics. Its remaining role is Python-driver plumbing: the session helpers, the nominal pool-table classification the operator channel and type resolution reference, and three trivial query sites (the runner's graph-edition probes, `resolve_token_ids`). Every *load-bearing* read already delegates to the Rust core; what is left migrates under its own epic, and AGENTS.md's kill list is re-authorized to say exactly that.
+
+## Consequences
+
+No degenbot user on any released Alembic schema applies a migration. A 0.5-era DB heals itself on first open of any current binary — Python wheel or cargo-installed console, same `ensure_schema`. The old "0.7 will fix it" clock is cancelled: the schema is Rust-owned as soon as the epics land; `RUST_SCHEMA_VERSION` bumps become the forward mechanism, with refuse-newer semantics protecting readers on old binaries. The two-largest retention mechanisms AGENTS.md once enumerated are re-authorized here; the one remaining inventory line item (SQLAlchemy) keeps its protection until its own epic.
