@@ -57,6 +57,13 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // `find_paths_async`.
     m.add_function(wrap_pyfunction!(crate::config::discovery_batch_size, m)?)?;
 
+    // 6LC4JB: the shared core verification-retry policy defaults, so the
+    // Python driver shell reads them from the one Rust-owned declaration site.
+    m.add_function(wrap_pyfunction!(
+        crate::config::verification_retry_policy_defaults,
+        m
+    )?)?;
+
     // Ambient-runtime driver seam (VJGZJ2): lets a Python driver satisfy the
     // ambient-runtime-only policy on the verify seams. Unconditional —
     // degenbot-core (the runtime singleton) is.

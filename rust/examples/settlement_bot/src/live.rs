@@ -428,25 +428,22 @@ async fn verify_one(
             }
             let address = r.pool.address;
             let block = ctx.block;
-            let policy = pipeline.retry_policy.clone();
+            let policy = pipeline.retry_policy;
             let result = pipeline
                 .verify_claims
-                .run_exclusive(&key, move || {
-                    let policy = policy.clone();
-                    async move {
-                        crate::retry::retry_verification_call(&policy, |_attempt| {
-                            let driver = driver;
-                            let address = address;
-                            let block = block;
-                            async move {
-                                driver
-                                    .run_v3_registration_lifecycle(address, block)
-                                    .await
-                                    .map_err(|e| map_driver_error(&e))
-                            }
-                        })
-                        .await
-                    }
+                .run_exclusive(&key, move || async move {
+                    crate::retry::retry_verification_call(&policy, |_attempt| {
+                        let driver = driver;
+                        let address = address;
+                        let block = block;
+                        async move {
+                            driver
+                                .run_v3_registration_lifecycle(address, block)
+                                .await
+                                .map_err(|e| map_driver_error(&e))
+                        }
+                    })
+                    .await
                 })
                 .await;
             match result {
@@ -468,26 +465,23 @@ async fn verify_one(
             let mut pool_id = [0_u8; 32];
             pool_id.copy_from_slice(r.pool_hash.as_slice());
             let block = ctx.block;
-            let policy = pipeline.retry_policy.clone();
+            let policy = pipeline.retry_policy;
             let result = pipeline
                 .verify_claims
-                .run_exclusive(&key, move || {
-                    let policy = policy.clone();
-                    async move {
-                        crate::retry::retry_verification_call(&policy, |_attempt| {
-                            let driver = driver;
-                            let manager = manager;
-                            let pool_id = pool_id;
-                            let block = block;
-                            async move {
-                                driver
-                                    .run_v4_registration_lifecycle(manager, pool_id, block)
-                                    .await
-                                    .map_err(|e| map_driver_error(&e))
-                            }
-                        })
-                        .await
-                    }
+                .run_exclusive(&key, move || async move {
+                    crate::retry::retry_verification_call(&policy, |_attempt| {
+                        let driver = driver;
+                        let manager = manager;
+                        let pool_id = pool_id;
+                        let block = block;
+                        async move {
+                            driver
+                                .run_v4_registration_lifecycle(manager, pool_id, block)
+                                .await
+                                .map_err(|e| map_driver_error(&e))
+                        }
+                    })
+                    .await
                 })
                 .await;
             match result {

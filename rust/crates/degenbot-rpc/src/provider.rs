@@ -25,6 +25,7 @@ use alloy::transports::ws::{WebSocketConfig, WsConnect};
 use alloy::transports::{RpcError, TransportErrorKind};
 use degenbot_core::diag;
 use degenbot_core::errors::{ProviderError, ProviderResult};
+use degenbot_core::retry::RetryPolicy;
 use degenbot_core::{op_error, op_warn};
 use rand::RngExt;
 use std::num::NonZeroU32;
@@ -38,8 +39,21 @@ use std::time::Duration;
 /// duplicate per-module tuning.
 pub(crate) const INITIAL_RETRY_DELAY_MS: u64 = 100;
 pub(crate) const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
-pub(crate) const BACKOFF_MULTIPLIER: u64 = 2;
 const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
+
+/// The provider's retry policy for `max_attempts` total attempts, built on
+/// the workspace-canonical [`RetryPolicy`] (ergo 6LC4JB). The exponential
+/// growth (x2, saturating at the cap) lives in the shared type — not a
+/// hand-rolled multiplier at each loop.
+#[must_use]
+pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
+    RetryPolicy::from_millis(
+        max_attempts,
+        INITIAL_RETRY_DELAY_MS,
+        MAX_RETRY_DELAY_MS,
+        MAX_JITTER_MS,
+    )
+}
 
 /// Retry an async operation with exponential backoff, emitting `log` records on
 /// every retry attempt so operators can see backoff in logs (E2B542).
@@ -63,6 +77,14 @@ const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 /// alloy API changes (per-attempt observer hooks, policy flexibility,
 /// error-preserving exhaustion).
 ///
+/// Adoption verdict (`backoff` crate, ergo 6LC4JB): NOT adopted. It is not a
+/// workspace dependency today, its error wrapper would collapse typed
+/// `ProviderError`s, its jitter is a multiplicative `randomization_factor`
+/// rather than the additive tenacity-style jitter the verification policy
+/// uses (adopting it would CHANGE the curves), and it cannot wrap the
+/// per-call `tokio::time::timeout` (EO75JH). The loop stays centralized here
+/// and consumes the shared [`RetryPolicy`] curve.
+///
 /// Emission policy (the E2B542 decision):
 /// - First retry (attempt 1): `log::debug!` — transient, often benign.
 /// - Subsequent retries (attempt >= 2): `log::warn!` — sustained backoff.
@@ -83,8 +105,8 @@ where
     Fut: std::future::Future<Output = ProviderResult<T>> + Send,
     T: Send,
 {
+    let policy = rpc_retry_policy(max_attempts);
     let mut attempt = 0;
-    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
     loop {
         // EO75JH: bound every attempt so a stuck transport (especially
@@ -116,10 +138,12 @@ where
             return Err(outcome);
         }
 
-        // Calculate delay with exponential backoff and jitter
-        // Use random_range for uniform distribution (avoids modulo bias)
+        // Capped exponential backoff + site-owned uniform jitter; the curve
+        // lives in the shared RetryPolicy (uses random_range for a uniform
+        // distribution, avoiding modulo bias).
         let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-        let sleep_ms = delay_ms + jitter;
+        let sleep = policy.capped_backoff(attempt) + Duration::from_millis(jitter);
+        let sleep_ms = sleep.as_millis();
 
         if attempt <= 1 {
             diag!(domain = rpc, attempt,
@@ -137,13 +161,7 @@ where
             );
         }
 
-        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-
-        // Exponential backoff with cap (saturating to prevent overflow)
-        delay_ms = std::cmp::min(
-            delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-            MAX_RETRY_DELAY_MS,
-        );
+        tokio::time::sleep(sleep).await;
     }
 }
 
@@ -207,8 +225,8 @@ where
     G: Fn() -> FutR + Send + Sync,
     FutR: std::future::Future<Output = ProviderResult<bool>> + Send,
 {
+    let policy = rpc_retry_policy(max_attempts);
     let mut attempt = 0;
-    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
     loop {
         match broadcast().await {
@@ -245,12 +263,9 @@ where
                                 return Err(e);
                             }
                             let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-                            let sleep_ms = delay_ms + jitter;
-                            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-                            delay_ms = std::cmp::min(
-                                delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-                                MAX_RETRY_DELAY_MS,
-                            );
+                            let sleep =
+                                policy.capped_backoff(attempt) + Duration::from_millis(jitter);
+                            tokio::time::sleep(sleep).await;
                         }
                         Err(reconcile_err) => {
                             // Reconciliation itself failed (e.g. a transient
@@ -271,12 +286,9 @@ where
                                 return Err(e);
                             }
                             let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-                            let sleep_ms = delay_ms + jitter;
-                            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-                            delay_ms = std::cmp::min(
-                                delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-                                MAX_RETRY_DELAY_MS,
-                            );
+                            let sleep =
+                                policy.capped_backoff(attempt) + Duration::from_millis(jitter);
+                            tokio::time::sleep(sleep).await;
                         }
                     }
                 }
@@ -299,12 +311,8 @@ where
                         "eth_sendRawTransaction: rate-limited — rebroadcasting"
                     );
                     let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-                    let sleep_ms = delay_ms + jitter;
-                    tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-                    delay_ms = std::cmp::min(
-                        delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-                        MAX_RETRY_DELAY_MS,
-                    );
+                    let sleep = policy.capped_backoff(attempt) + Duration::from_millis(jitter);
+                    tokio::time::sleep(sleep).await;
                 }
                 // RpcError / ExecutionReverted / InvalidParams / etc.: the tx
                 // was seen and rejected by the node's validation. Retrying the
@@ -367,8 +375,8 @@ async fn connect_ws_with_retries(
     ws_connect: WsConnect,
     max_retries: u32,
 ) -> ProviderResult<Arc<dyn Provider<Ethereum>>> {
+    let policy = rpc_retry_policy(max_retries);
     let mut attempt = 0;
-    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
     loop {
         match ProviderBuilder::default()
             .with_default_caching()
@@ -385,17 +393,15 @@ async fn connect_ws_with_retries(
                         ),
                     });
                 }
+                let delay = policy.capped_backoff(attempt);
+                let delay_ms = delay.as_millis();
                 op_warn!(domain = rpc, attempt,
                     max_retries,
                     delay_ms,
                     %e,
                     "WS connect retry"
                 );
-                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                delay_ms = std::cmp::min(
-                    delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-                    MAX_RETRY_DELAY_MS,
-                );
+                tokio::time::sleep(delay).await;
             }
         }
     }
@@ -408,8 +414,8 @@ async fn connect_ipc_with_retries(
     ipc_connect: IpcConnect<String>,
     max_retries: u32,
 ) -> ProviderResult<Arc<dyn Provider<Ethereum>>> {
+    let policy = rpc_retry_policy(max_retries);
     let mut attempt = 0;
-    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
     loop {
         match ProviderBuilder::default()
             .with_default_caching()
@@ -426,17 +432,15 @@ async fn connect_ipc_with_retries(
                         ),
                     });
                 }
+                let delay = policy.capped_backoff(attempt);
+                let delay_ms = delay.as_millis();
                 op_warn!(domain = rpc, attempt,
                     max_retries,
                     delay_ms,
                     %e,
                     "IPC connect retry"
                 );
-                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                delay_ms = std::cmp::min(
-                    delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-                    MAX_RETRY_DELAY_MS,
-                );
+                tokio::time::sleep(delay).await;
             }
         }
     }
@@ -1989,39 +1993,34 @@ mod tests {
     // ── Retry backoff logic ─────────────────────────────────────────────
 
     #[test]
-    fn test_saturating_retry_delay() {
-        // Verify that retry delay uses saturating arithmetic
-        let max_delay = u64::MAX / 2;
-        let result = std::cmp::min(
-            max_delay.saturating_mul(BACKOFF_MULTIPLIER),
-            MAX_RETRY_DELAY_MS,
+    fn test_backoff_is_capped() {
+        // The shared policy caps at MAX_RETRY_DELAY_MS without overflow even
+        // at a saturating attempt ordinal.
+        let policy = rpc_retry_policy(100);
+        assert_eq!(
+            policy.capped_backoff(u32::MAX),
+            Duration::from_millis(MAX_RETRY_DELAY_MS)
         );
-        // Should cap at MAX_RETRY_DELAY_MS, not overflow
-        assert_eq!(result, MAX_RETRY_DELAY_MS);
+        assert_eq!(
+            policy.capped_backoff(100),
+            Duration::from_millis(MAX_RETRY_DELAY_MS)
+        );
     }
 
     #[test]
     fn test_backoff_progression() {
-        // Verify the exponential backoff sequence up to the cap
-        let mut delay = INITIAL_RETRY_DELAY_MS;
-        let mut delays = vec![delay];
-        for _ in 0..20 {
-            delay = std::cmp::min(delay.saturating_mul(BACKOFF_MULTIPLIER), MAX_RETRY_DELAY_MS);
-            delays.push(delay);
-        }
+        // Verify the exponential backoff sequence up to the cap via the shared
+        // RetryPolicy curve.
+        let policy = rpc_retry_policy(20);
+        let delays: Vec<u128> = (1..=11)
+            .map(|attempt| policy.capped_backoff(attempt).as_millis())
+            .collect();
 
         // Should double each step until hitting the 30s cap
-        assert_eq!(delays[0], 100);
-        assert_eq!(delays[1], 200);
-        assert_eq!(delays[2], 400);
-        assert_eq!(delays[3], 800);
-        assert_eq!(delays[4], 1600);
-        assert_eq!(delays[5], 3200);
-        assert_eq!(delays[6], 6400);
-        assert_eq!(delays[7], 12800);
-        assert_eq!(delays[8], 25600);
-        assert_eq!(delays[9], 30000); // capped
-        assert_eq!(delays[10], 30000); // stays capped
+        assert_eq!(
+            delays,
+            vec![100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600, 30000, 30000,]
+        );
     }
 
     #[tokio::test]

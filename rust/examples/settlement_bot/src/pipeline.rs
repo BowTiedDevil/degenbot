@@ -25,7 +25,7 @@ use crate::claims::{VerificationError, VerifyClaims, VerifyErrorKind};
 use crate::discovery::{BuiltGraph, DiscoveryParams, PoolNode, NATIVE_CURRENCY};
 use crate::ledger::{HopSignature, RegistrationLedger, RegistrationOutcome};
 use crate::policy::{HopView, PathPolicy};
-use crate::retry::VerificationRetryPolicy;
+use crate::retry::RetryPolicy;
 
 /// The registration unit outcome (mirrors `RegistrationUnitOutcome`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,13 +136,13 @@ pub struct RegistrationPipeline {
     /// The driver path-composition policy (row 13).
     pub policy: PathPolicy,
     /// The transient-verify retry policy.
-    pub retry_policy: VerificationRetryPolicy,
+    pub retry_policy: RetryPolicy,
 }
 
 impl RegistrationPipeline {
     /// Build a pipeline with the driver defaults.
     #[must_use]
-    pub fn new(policy: PathPolicy, retry_policy: VerificationRetryPolicy) -> Self {
+    pub fn new(policy: PathPolicy, retry_policy: RetryPolicy) -> Self {
         Self {
             ledger: RegistrationLedger::default(),
             verify_claims: VerifyClaims::new(),
@@ -451,8 +451,8 @@ pub async fn run_offline(
 }
 
 /// Run a verification lifecycle under the at-most-once claim table with the
-/// retry dance (the Rust twin of `_SeatVerifyClaims.run_exclusive` +
-/// `retry_verification_call`).
+/// bounded retry dance (mirrors `_SeatVerifyClaims.run_exclusive`): only
+/// [`VerifyErrorKind::Rpc`] failures are retried.
 ///
 /// `lifecycle` is invoked with the 1-indexed attempt number; only
 /// [`VerifyErrorKind::Rpc`] failures are retried.
@@ -497,7 +497,7 @@ mod tests {
     use super::*;
     use crate::discovery::{build_graph, DiscoveryParams, V4_POOL_ID_OFFSET};
     use crate::policy::PathPolicy;
-    use crate::retry::VerificationRetryPolicy;
+    use crate::retry::RetryPolicy;
     use degenbot::pathfinding::PoolKind;
     use std::path::Path;
 
@@ -602,7 +602,7 @@ mod tests {
                 max_hops: 3,
                 ..PathPolicy::default()
             },
-            VerificationRetryPolicy::default(),
+            RetryPolicy::verification_default(),
         );
         let report = run_offline(
             &mut pipeline,

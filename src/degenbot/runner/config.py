@@ -42,13 +42,10 @@ _MIN_PRIORITY_FEE_PERCENTILE = 10
 _MAX_PRIORITY_FEE_PERCENTILE = 50
 _PATH_SUPPRESS_THRESHOLD = 10
 _PATH_SUPPRESS_RETRY_INTERVAL = 100
-# VP42BP AC item 4: default verification retry policy knobs — mirror
-# ``VerificationRetryPolicy()`` so an unset env reproduces the sane defaults.
-# Sane for a local/edge node recovering from a transient transport blip.
-_VERIFICATION_RETRY_MAX_ATTEMPTS = 4
-_VERIFICATION_RETRY_BASE_DELAY = 0.5
-_VERIFICATION_RETRY_MAX_DELAY = 4.0
-_VERIFICATION_RETRY_JITTER = 0.5
+# VP42BP AC item 4: the default verification retry policy. ``VerificationRetryPolicy()``
+# is seeded from the Rust ``degenbot_core::retry::RetryPolicy`` over ``degenbot._ffi``
+# (ergo 6LC4JB), so an unset env reproduces the one core-owned default set.
+_DEFAULT_VERIFICATION_RETRY_POLICY = VerificationRetryPolicy()
 # Ethereum mainnet default allowed intermediate tokens — mirrors the example's
 # ETH_MAINNET_ALLOWED_TOKENS set.
 _ALLOWED_INTERMEDIATE_TOKENS = frozenset({
@@ -97,10 +94,14 @@ def _verification_retry_policy_from_env(env: Mapping[str, str | None]) -> Verifi
     raw_max = env.get("VERIFICATION_RETRY_MAX_DELAY")
     raw_jitter = env.get("VERIFICATION_RETRY_JITTER")
 
-    max_attempts = _parse_int_env(raw_attempts, _VERIFICATION_RETRY_MAX_ATTEMPTS, "MAX_ATTEMPTS")
-    base_delay = _parse_float_env(raw_base, _VERIFICATION_RETRY_BASE_DELAY, "BASE_DELAY")
-    max_delay = _parse_float_env(raw_max, _VERIFICATION_RETRY_MAX_DELAY, "MAX_DELAY")
-    jitter = _parse_float_env(raw_jitter, _VERIFICATION_RETRY_JITTER, "JITTER")
+    max_attempts = _parse_int_env(
+        raw_attempts, _DEFAULT_VERIFICATION_RETRY_POLICY.max_attempts, "MAX_ATTEMPTS"
+    )
+    base_delay = _parse_float_env(
+        raw_base, _DEFAULT_VERIFICATION_RETRY_POLICY.base_delay, "BASE_DELAY"
+    )
+    max_delay = _parse_float_env(raw_max, _DEFAULT_VERIFICATION_RETRY_POLICY.max_delay, "MAX_DELAY")
+    jitter = _parse_float_env(raw_jitter, _DEFAULT_VERIFICATION_RETRY_POLICY.jitter, "JITTER")
 
     return VerificationRetryPolicy(
         max_attempts=max_attempts,

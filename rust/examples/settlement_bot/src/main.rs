@@ -50,6 +50,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use degenbot::core::address_utils::to_checksum_address_str;
+use degenbot::core::retry::RetryPolicy;
 
 mod claims;
 mod consume;
@@ -90,10 +91,6 @@ const MIN_PRIORITY_FEE_PERCENTILE: u64 = 10;
 const MAX_PRIORITY_FEE_PERCENTILE: u64 = 50;
 const PATH_SUPPRESS_THRESHOLD: u64 = 10;
 const PATH_SUPPRESS_RETRY_INTERVAL: u64 = 100;
-const VERIFICATION_RETRY_MAX_ATTEMPTS: u64 = 4;
-const VERIFICATION_RETRY_BASE_DELAY: f64 = 0.5;
-const VERIFICATION_RETRY_MAX_DELAY: f64 = 4.0;
-const VERIFICATION_RETRY_JITTER: f64 = 0.5;
 
 /// `ETH_MAINNET_ALLOWED_TOKENS` (runner/config.py) — checksummed, lowercase-
 /// compared by the path predicate (row 13; implemented by the `policy` module,
@@ -240,16 +237,6 @@ fn read_dotenv(path: &Path) -> BTreeMap<String, String> {
     map
 }
 
-// ── Verification retry policy (mirrors arbitrage/verification_retry.py) ───
-
-#[derive(Clone, Debug)]
-struct VerificationRetryPolicy {
-    max_attempts: u64,
-    base_delay: f64,
-    max_delay: f64,
-    jitter: f64,
-}
-
 // ── Driver config (mirrors runner/config.py::ArbitrageConfig) ─────────────
 
 struct SettlementBotConfig {
@@ -274,7 +261,7 @@ struct SettlementBotConfig {
     path_suppress_retry_interval: u64,
     allowed_intermediate_tokens: BTreeSet<String>,
     permutation_filter: Option<String>,
-    verification_retry_policy: VerificationRetryPolicy,
+    verification_retry_policy: RetryPolicy,
     dry_run: bool,
     executor_runtime: Option<String>,
 }
@@ -441,25 +428,29 @@ impl SettlementBotConfig {
             .filter(|v| !v.is_empty())
             .cloned();
 
-        let verification_retry_policy = VerificationRetryPolicy {
-            max_attempts: parse_u64_env(
+        // Defaults come from the workspace-canonical policy type; the env
+        // knobs override them field-by-field.
+        let retry_defaults = RetryPolicy::verification_default();
+        let verification_retry_policy = RetryPolicy {
+            max_attempts: u32::try_from(parse_u64_env(
                 env.get("VERIFICATION_RETRY_MAX_ATTEMPTS"),
-                VERIFICATION_RETRY_MAX_ATTEMPTS,
+                u64::from(retry_defaults.max_attempts),
                 "MAX_ATTEMPTS",
-            )?,
+            )?)
+            .unwrap_or(u32::MAX),
             base_delay: parse_f64_env(
                 env.get("VERIFICATION_RETRY_BASE_DELAY"),
-                VERIFICATION_RETRY_BASE_DELAY,
+                retry_defaults.base_delay,
                 "BASE_DELAY",
             )?,
             max_delay: parse_f64_env(
                 env.get("VERIFICATION_RETRY_MAX_DELAY"),
-                VERIFICATION_RETRY_MAX_DELAY,
+                retry_defaults.max_delay,
                 "MAX_DELAY",
             )?,
             jitter: parse_f64_env(
                 env.get("VERIFICATION_RETRY_JITTER"),
-                VERIFICATION_RETRY_JITTER,
+                retry_defaults.jitter,
                 "JITTER",
             )?,
         };
@@ -750,12 +741,7 @@ fn run() -> Result<(), String> {
         max_hops: 3,
         ..PathPolicy::default()
     };
-    let retry_policy = retry::VerificationRetryPolicy {
-        max_attempts: u32::try_from(cfg.verification_retry_policy.max_attempts).unwrap_or(u32::MAX),
-        base_delay: cfg.verification_retry_policy.base_delay,
-        max_delay: cfg.verification_retry_policy.max_delay,
-        jitter: cfg.verification_retry_policy.jitter,
-    };
+    let retry_policy = cfg.verification_retry_policy;
     retry_policy.validate()?;
     let mut pipeline = RegistrationPipeline::new(policy, retry_policy);
 
@@ -813,7 +799,7 @@ fn run() -> Result<(), String> {
                 &allowed,
                 &params,
                 pipeline.policy.clone(),
-                pipeline.retry_policy.clone(),
+                pipeline.retry_policy,
                 weth_lower.clone(),
                 weth_lower.clone(),
             ));
@@ -910,7 +896,7 @@ fn run() -> Result<(), String> {
                         &allowed,
                         &params,
                         pipeline.policy.clone(),
-                        pipeline.retry_policy.clone(),
+                        pipeline.retry_policy,
                         weth_lower.clone(),
                         weth_lower.clone(),
                     ));

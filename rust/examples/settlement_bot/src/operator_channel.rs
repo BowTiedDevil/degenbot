@@ -47,7 +47,7 @@ use tokio::task::JoinHandle;
 use crate::discovery::{build_graph, BatchedPathFinder, BuiltGraph, DiscoveryParams, PoolNode};
 use crate::pipeline::RegistrationPipeline;
 use crate::policy::PathPolicy;
-use crate::retry::VerificationRetryPolicy;
+use crate::retry::RetryPolicy;
 
 /// Default per-request read timeout (mirrors `OperatorServer`'s
 /// `request_timeout` default).
@@ -177,7 +177,7 @@ impl PipelinePathOps {
         allowed: &std::collections::BTreeSet<String>,
         params: &DiscoveryParams,
         policy: PathPolicy,
-        retry_policy: VerificationRetryPolicy,
+        retry_policy: RetryPolicy,
         input_token: String,
         weth: String,
     ) -> Self {

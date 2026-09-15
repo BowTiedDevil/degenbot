@@ -35,6 +35,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
+from degenbot._ffi import verification_retry_policy_defaults
 from degenbot.exceptions import VerificationRpcError
 
 if TYPE_CHECKING:
@@ -42,15 +43,19 @@ if TYPE_CHECKING:
 
 __all__ = ["VerificationRetryPolicy", "retry_verification_call", "retry_verification_call_async"]
 
-# Default policy — sane for a local/edge node recovering from a transient
-# transport blip: up to 4 attempts, ~0.5s → ~1s → ~2s base delays (before
-# jitter), capped at 4s. Total worst-case wait ≈ 7.5s before giving up loudly.
-# Chosen to comfortably cover a single dropped/retried ``eth_call`` round-trip
-# or a brief node GC pause without stalling ``build_paths`` startup.
-_DEFAULT_MAX_ATTEMPTS = 4
-_DEFAULT_BASE_DELAY = 0.5
-_DEFAULT_MAX_DELAY = 4.0
-_DEFAULT_JITTER = 0.5
+# The Rust core owns the retry policy (``degenbot_core::retry::RetryPolicy``,
+# ergo 6LC4JB); the driver shell reads the defaults over ``degenbot._ffi``
+# instead of maintaining a second literal set. Sane for a local/edge node
+# recovering from a transient transport blip: up to 4 attempts, ~0.5s → ~1s →
+# ~2s base delays (before jitter), capped at 4s. Total worst-case wait ≈ 7.5s
+# before giving up loudly — enough for a dropped/retried ``eth_call``
+# round-trip or a brief node GC pause without stalling ``build_paths`` startup.
+(
+    _DEFAULT_MAX_ATTEMPTS,
+    _DEFAULT_BASE_DELAY,
+    _DEFAULT_MAX_DELAY,
+    _DEFAULT_JITTER,
+) = verification_retry_policy_defaults()
 _UNREACHABLE = "unreachable"  # tenacity always re-raises or returns
 
 

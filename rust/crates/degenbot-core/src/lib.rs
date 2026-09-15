@@ -33,6 +33,7 @@ pub mod eip_1559;
 pub mod errors;
 pub mod hex_utils;
 pub mod libzip;
+pub mod retry;
 pub mod runtime;
 pub mod telemetry;
 pub mod worker_census;

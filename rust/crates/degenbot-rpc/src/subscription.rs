@@ -210,12 +210,18 @@ pub async fn pump_blocks(provider: Arc<dyn Provider<Ethereum>>, handle: Arc<Subs
 /// Each subscribe attempt is bounded by [`HEADER_WATCHDOG_SECS`] so a hung dead
 /// socket (one that accepts the `eth_subscribe` write but never responds)
 /// cannot re-stall the pump. Retries indefinitely with the shared backoff curve
-/// ([`crate::provider::INITIAL_RETRY_DELAY_MS`] etc.) so a transiently-downed
-/// provider recovers without an operator restart — the bot process stays alive.
+/// ([`crate::provider::rpc_retry_policy`]) so a transiently-downed provider
+/// recovers without an operator restart — the bot process stays alive.
 async fn reconnect_new_heads_stream(provider: Arc<dyn Provider<Ethereum>>) -> Option<HeaderStream> {
-    use crate::provider::{BACKOFF_MULTIPLIER, INITIAL_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS};
-    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+    use crate::provider::rpc_retry_policy;
+    // This loop retries indefinitely, so the policy's attempt bound is unused;
+    // only its shared curve (base/cap) is consumed.
+    let policy = rpc_retry_policy(u32::MAX);
+    let mut attempt: u32 = 0;
     loop {
+        attempt += 1;
+        let delay = policy.capped_backoff(attempt);
+        let delay_ms = delay.as_millis();
         match timeout(
             Duration::from_secs(HEADER_WATCHDOG_SECS),
             provider.subscribe_blocks(),
@@ -237,11 +243,7 @@ async fn reconnect_new_heads_stream(provider: Arc<dyn Provider<Ethereum>>) -> Op
                 );
             }
         }
-        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-        delay_ms = std::cmp::min(
-            delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-            MAX_RETRY_DELAY_MS,
-        );
+        tokio::time::sleep(delay).await;
     }
 }
 
