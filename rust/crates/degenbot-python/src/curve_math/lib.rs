@@ -4,7 +4,8 @@
 //! (`degenbot_math::curve`), and converts results back to Python `int`s. Wraps
 //! the five iterative solvers the `DyCalculator` strategy seam invokes; the
 //! step functions (`calc_d`/`calc_dp*`) are internal to the solvers and not
-//! re-exported. The variant enums (`DVariant`/`YVariant`/`YDVariant`) cross
+//! re-exported. Also exposes `derive_rate_and_precision_multipliers`, the
+//! Rust-owned Curve scaling derivation (ergo `JLAPAC`). The variant enums (`DVariant`/`YVariant`/`YDVariant`) cross
 //! the seam as `u8` (1-based, matching the Python `auto()` enum `.value` +
 //! the Rust `try_from_u8`).
 
@@ -241,6 +242,50 @@ pub fn stableswap_reduction_coefficient(
     u256_to_py_obj(py, result)
 }
 
+/// `derive_rate_and_precision_multipliers` — Rust-owned Curve
+/// `rate_multipliers` / `precision_multipliers` derivation (ergo `JLAPAC`,
+/// ADR-005 slice 11c follow-up).
+///
+/// The single Rust source of truth for the scaling a Curve pool's `xp`
+/// (rate-adjusted balances) and `get_dy` consume. `token_decimals` are the
+/// per-coin ERC20 `decimals()`. When `precision_multipliers` is supplied (the
+/// lending-token override path) it is returned verbatim as the precision
+/// multipliers and `rate = pm * 10**precision_decimals`; otherwise both derive
+/// from `token_decimals`. Replaces the deleted Python
+/// `curve_stableswap_liquidity_pool._compute_rate_and_precision_multipliers`.
+///
+/// # Errors
+///
+/// Returns `ValueError` if `precision_multipliers` is not a `list[int]`.
+#[pyfunction]
+#[pyo3(signature = (token_decimals, precision_multipliers=None, precision_decimals=18))]
+pub fn derive_rate_and_precision_multipliers(
+    py: Python<'_>,
+    token_decimals: &Bound<'_, PyAny>,
+    precision_multipliers: Option<&Bound<'_, PyAny>>,
+    precision_decimals: u32,
+) -> PyResult<(pyo3::Py<PyList>, pyo3::Py<PyList>)> {
+    let decimals: Vec<u8> = token_decimals.extract()?;
+    let pms = match precision_multipliers {
+        Some(obj) => Some(extract_u256_vec(obj)?),
+        None => None,
+    };
+    let (rate, precision) = degenbot_math::curve::derive_rate_and_precision_multipliers(
+        &decimals,
+        pms.as_deref(),
+        precision_decimals,
+    );
+    let rate_list = PyList::empty(py);
+    for v in &rate {
+        rate_list.append(alloy_py::u256_to_py(py, v)?)?;
+    }
+    let precision_list = PyList::empty(py);
+    for v in &precision {
+        precision_list.append(alloy_py::u256_to_py(py, v)?)?;
+    }
+    Ok((rate_list.unbind(), precision_list.unbind()))
+}
+
 /// Register all Curve-math functions on a real Python submodule.
 ///
 /// Creates `degenbot._ffi.curve_math` (a `PyModule`, not a flat
@@ -265,6 +310,10 @@ pub fn add_curve_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_function(wrap_pyfunction!(stableswap_get_y_d, &submod)?)?;
     submod.add_function(wrap_pyfunction!(stableswap_newton_y, &submod)?)?;
     submod.add_function(wrap_pyfunction!(stableswap_reduction_coefficient, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(
+        derive_rate_and_precision_multipliers,
+        &submod
+    )?)?;
 
     // Register as parent attribute AND in `sys.modules` so
     // `from degenbot._ffi.curve_math import X` resolves (see

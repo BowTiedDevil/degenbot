@@ -17,10 +17,8 @@ from typing import TYPE_CHECKING
 
 from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve.curve_stableswap_liquidity_pool import (
-    CurveStableswapPool,
-    _compute_rate_and_precision_multipliers,
-)
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.curve.math import derive_rate_and_precision_multipliers
 from degenbot.curve.strategies import PoolStrategies
 
 if TYPE_CHECKING:
@@ -92,18 +90,21 @@ def make_curve_pool(
 
     The immutable config (tokens, A, fee, strategies, rate_multipliers) stays
     Python-side on the companion; the mutable ``balances`` + ``update_block`` +
-    the reorg journal live in Rust. The factory derives ``rate_multipliers``
-    via the shared ``_compute_rate_and_precision_multipliers`` helper and
-    forwards them to ``register_curve_pool`` so the Rust core stores the
-    same values the companion keeps (consumed by the future Rust ``get_dy``).
+    the reorg journal live in Rust. The factory sources ``rate_multipliers`` /
+    ``precision_multipliers`` from the Rust core
+    (``degenbot.curve.math.derive_rate_and_precision_multipliers``) and forwards
+    them to ``register_curve_pool`` so the Rust core stores the same values the
+    companion keeps (consumed by the Rust ``get_dy``).
     """
     address_checksum = get_checksum_address(address)
     state_block_int = state_block if state_block is not None else 0
 
     bot = py_bot if py_bot is not None else Bot()
 
-    rate_multipliers, precision_mults = _compute_rate_and_precision_multipliers(
-        tokens, precision_multipliers, CurveStableswapPool.PRECISION_DECIMALS
+    rate_multipliers, precision_mults = derive_rate_and_precision_multipliers(
+        [token.decimals for token in tokens],
+        list(precision_multipliers) if precision_multipliers is not None else None,
+        CurveStableswapPool.PRECISION_DECIMALS,
     )
 
     resolved_strategies = strategies if strategies is not None else PoolStrategies()

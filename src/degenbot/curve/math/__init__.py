@@ -14,6 +14,7 @@ The functions are thin PyO3 wrappers over the pure-Rust
 """
 
 from degenbot._ffi.curve_math import (
+    derive_rate_and_precision_multipliers,
     stableswap_get_d,
     stableswap_get_y,
     stableswap_get_y_d,
@@ -22,6 +23,7 @@ from degenbot._ffi.curve_math import (
 )
 
 __all__ = [
+    "derive_rate_and_precision_multipliers",
     "stableswap_get_d",
     "stableswap_get_y",
     "stableswap_get_y_d",

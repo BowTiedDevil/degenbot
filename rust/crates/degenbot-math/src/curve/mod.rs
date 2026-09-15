@@ -49,12 +49,14 @@ pub const X_PRECISION: u128 = 1_000_000_000_000_000_000;
 pub const FEE_DENOMINATOR: u128 = 10_000_000_000;
 
 pub mod curve_dy_calculator;
+pub mod multipliers;
 pub mod stableswap;
 
 pub use curve_dy_calculator::{
     calculate_dy, calculate_dy_underlying, resolve_amp, resolve_ramping_a, ARampingParams,
     CurveBasePoolPort, CurveSwapError, DyCalculationInputs, SwapStyle,
 };
+pub use multipliers::{derive_rate_and_precision_multipliers, PRECISION_DECIMALS};
 pub use stableswap::{
     calc_d, calc_d_variant_alpha, calc_dp, calc_dp_variant_alpha, calc_dp_variant_beta,
     calc_dp_variant_gamma, stableswap_get_d, stableswap_get_y, stableswap_get_y_d,

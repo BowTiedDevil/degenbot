@@ -908,7 +908,6 @@ async fn bootstrap_v3_tick_map(
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
 /// [`PoolBuilderError::Spec`] when the pool exposes fewer than 2 coins
 /// (mirrors the `BrokenPool` minimum-tokens guard).
-#[expect(clippy::too_many_lines)] // data-dense assembly (mirrors the Python builder)
 pub async fn build_curve_pool(
     address: Address,
     registry_addresses: &[Address],
@@ -959,21 +958,15 @@ pub async fn build_curve_pool(
         .unwrap_or(0);
 
     let one_e18 = U256::from(10u64).pow(U256::from(18u64));
-    // Mirror `_compute_rate_and_precision_multipliers`: lending overrides →
+    // Rust-owned derivation (ergo `JLAPAC`): the single source of truth shared
+    // with the `degenbot._ffi.curve_math` surface. Lending overrides →
     // `pm * 10**PRECISION_DECIMALS`; else from token decimals.
-    let (rate_multipliers, precision_multipliers) = match &lending.precision_multipliers {
-        Some(pms) => (pms.iter().map(|pm| *pm * one_e18).collect(), pms.clone()),
-        None => (
-            token_decimals
-                .iter()
-                .map(|d| U256::from(10u64).pow(U256::from(36u32 - u32::from(*d))))
-                .collect(),
-            token_decimals
-                .iter()
-                .map(|d| U256::from(10u64).pow(U256::from(18u32 - u32::from(*d))))
-                .collect(),
-        ),
-    };
+    let (rate_multipliers, precision_multipliers) =
+        degenbot_math::curve::derive_rate_and_precision_multipliers(
+            &token_decimals,
+            lending.precision_multipliers.as_deref(),
+            degenbot_math::curve::PRECISION_DECIMALS,
+        );
 
     // The provider's own rate/precision config (from the lending overrides, or
     // `[1]*n` / `[1e18]*n` defaults) — consumed by the oracle/yToken/cToken

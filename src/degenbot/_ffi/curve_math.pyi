@@ -35,8 +35,14 @@ def stableswap_newton_y(
     a_multiplier: int,
 ) -> int: ...
 def stableswap_reduction_coefficient(x: list[int], fee_gamma: int, n_coins: int) -> int: ...
+def derive_rate_and_precision_multipliers(
+    token_decimals: list[int],
+    precision_multipliers: list[int] | None = ...,
+    precision_decimals: int = ...,
+) -> tuple[list[int], list[int]]: ...
 
 __all__ = [
+    "derive_rate_and_precision_multipliers",
     "stableswap_get_d",
     "stableswap_get_y",
     "stableswap_get_y_d",

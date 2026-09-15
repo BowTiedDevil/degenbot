@@ -42,32 +42,6 @@ if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockIdentifier
 
 
-def _compute_rate_and_precision_multipliers(
-    tokens: Sequence[Erc20Token],
-    precision_multipliers: Sequence[int] | None,
-    precision_decimals: int,
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    """Derive Curve rate + precision multipliers from token decimals.
-
-    Single source of truth — shared by ``CurveStableswapPool.__init__`` and
-    ``make_curve_pool`` (the factory passes the derived ``rate_multipliers`` to
-    ``Bot.register_curve_pool`` so the Rust core stores the same values the
-    companion keeps; they're consumed by the future Rust ``get_dy``, ADR-005
-    slice 11c). Mirrors the pre-companion derivation exactly.
-
-    Returns:
-        ``(rate_multipliers, precision_multipliers)``.
-
-    """
-    rate_multipliers = tuple(10 ** (2 * precision_decimals - token.decimals) for token in tokens)
-    if precision_multipliers is not None:
-        pms = tuple(precision_multipliers)
-        rate_multipliers = tuple(pm * 10**precision_decimals for pm in pms)
-    else:
-        pms = tuple(10 ** (precision_decimals - token.decimals) for token in tokens)
-    return rate_multipliers, pms
-
-
 class _HandleCurveDataProviderAdapter:
     """Adapts a ``LiquidityPool`` handle as a stored ``CurveDataProvider``.
 
@@ -302,9 +276,9 @@ class CurveStableswapPool(
         self._fee = py_pool.curve_fee
         self._admin_fee = py_pool.curve_admin_fee
 
-        # Rate/precision multipliers — the Rust core stores exactly what the
-        # builder registered (computed via _compute_rate_and_precision_multipliers);
-        # the handle is the single source of truth.
+        # Rate/precision multipliers — the Rust core owns the derivation
+        # (degenbot_math::curve::derive_rate_and_precision_multipliers); the
+        # handle is the single source of truth.
         self._rate_multipliers = tuple(py_pool.curve_rate_multipliers)
         self._precision_multipliers = tuple(py_pool.curve_precision_multipliers)
 
