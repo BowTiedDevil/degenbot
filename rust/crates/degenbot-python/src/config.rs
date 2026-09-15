@@ -26,7 +26,7 @@ pub fn discovery_batch_size() -> usize {
 /// in seconds for the float fields.
 ///
 /// The Python `VerificationRetryPolicy` dataclass reads these instead of
-/// carrying its own literal set, so the Rust `RetryPolicy` (ergo 6LC4JB) is
+/// carrying its own literal set, so the Rust `RetryPolicy`  is
 /// the one declaration site for both the driver shell and the pure-Rust
 /// example.
 #[pyclass(frozen, get_all, module = "degenbot._ffi")]

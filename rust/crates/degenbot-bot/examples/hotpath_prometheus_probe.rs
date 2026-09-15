@@ -1,4 +1,4 @@
-//! hotpath Prometheus exporter probe (epic 5GXLG5, task MNRC6L): the smallest
+//! hotpath Prometheus exporter probe : the smallest
 //! end-to-end proof that a guard-enabled build serves profiler metrics on
 //! :6772.
 //!

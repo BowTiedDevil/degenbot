@@ -350,7 +350,7 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     python_log_layer::PythonLogLayer::register_pyfunction(m)?;
 
     // Register every `#[pyfunction]`/`#[pyclass]` surface on the module.
-    // See `c_api.rs` (ergo UG6FKN task KFVI5F) — mirrors polars-python's
+    // See `c_api.rs`  — mirrors polars-python's
     // `c_api/mod.rs` registration site.
     c_api::register(m)
 }

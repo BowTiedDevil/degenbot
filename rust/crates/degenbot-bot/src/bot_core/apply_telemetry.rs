@@ -1,4 +1,4 @@
-//! Per-family apply-cost telemetry (loop-5 / task 2SDIQW): the hotpath
+//! Per-family apply-cost telemetry : the hotpath
 //! `measure_block!` labels do not aggregate reliably under `impl_type`
 //! measurement, so the apply arms record into global atomics instead and
 //! the block-end event surfaces the family split.

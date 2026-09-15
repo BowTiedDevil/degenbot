@@ -9,7 +9,7 @@
 //! invariant, enforced by `just check-no-pyo3-in-cores`).
 //!
 //! Decision D-C scopes the first move to the **V2/V3/V4 + ERC-20 + tick**
-//! choreography — exactly what the MEV `PoolBuilder` (task `3FVZF4`) needs.
+//! choreography — exactly what the MEV `PoolBuilder`  needs.
 //! Curve / Aerodrome wrappers (and the camelot/balancer re-points) were
 //! absorbed as follow-ups (tasks `SSSXG6`, `LWKLMP`); the Curve + Aerodrome
 //! wrappers are the last families still on the temporary `PyBotIo` inline path.

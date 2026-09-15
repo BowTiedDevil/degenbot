@@ -1,5 +1,5 @@
 //! Keccak256 + event-topic pyfunctions — the pure-crypto slice of `eth_utils`
-//! owned in Rust (ergo 5JKNQH).
+//! owned in Rust .
 //!
 //! `degenbot.crypto.keccak256` / `event_topic` (Python) delegate here; the
 //! golden vectors in `tests/test_crypto_parity.py` pin parity with the old

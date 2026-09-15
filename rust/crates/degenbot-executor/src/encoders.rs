@@ -53,7 +53,7 @@ pub const MAX_INDEXED_ADDRESSES: usize = 32;
 /// `address(0)` — the native-ETH / "no address" sentinel address.
 pub const NATIVE_ADDRESS: Address = Address::ZERO;
 
-/// The largest V4 static `fee` the cmd_executor can encode (ergo DPODAZ).
+/// The largest V4 static `fee` the cmd_executor can encode .
 ///
 /// Both `V4_SWAP_COMPACT` and `V4_SWAP_DYNAMIC` encode `fee` as a **2-byte**
 /// field (`push_u16`); the contract decodes `fee = (pkh >> 32) & 65535`,

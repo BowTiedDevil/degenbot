@@ -1,4 +1,4 @@
-//! ADR-031 D6 — the sole facts-driven Plan producer (epic `6SU5LM`).
+//! ADR-031 D6 — the sole facts-driven Plan producer .
 //!
 //! The pipeline has three stages:
 //!
@@ -171,7 +171,7 @@ mod mechanics {
     /// pool_addr, pool_repays))` sets it explicitly — the 3-hop nested-flash
     /// families (T5) route a flash's repayment to a downstream recipient pool
     /// (`pool_repays`), which the out-derivation cannot express.
-    /// Single primitive since T2 (5AZSLE, epic 6SWFBS) folded the old
+    /// Single primitive since T2  folded the old
     /// `v3_flash`/`v3_flash_to` pair; byte-identity pinned by the glopcn
     /// goldens.
     pub fn v3_flash(

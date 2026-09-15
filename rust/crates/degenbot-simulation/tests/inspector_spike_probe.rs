@@ -1,5 +1,5 @@
 #![expect(clippy::expect_used, clippy::panic, clippy::print_stdout)]
-//! Spike probe for ergo epic 63I7WJ (task KCKGP4): revm `Inspector` hooks on
+//! Spike probe for ergo epic 63I7WJ : revm `Inspector` hooks on
 //! the simulation stack.
 //!
 //! Throwaway, `#[ignore]` — run with `cargo test -p degenbot-simulation
@@ -19,7 +19,7 @@
 //!    just the top-level bubble?
 //! 4. **V4 swap-event correctness.** DEFERRED — requires the real V4
 //!    PoolManager bytecode + the production DB stack + the transient seeder
-//!    (task 5RI47E). Recorded in the spike doc, not tested here.
+//!    . Recorded in the spike doc, not tested here.
 
 // revm/Solidity identifiers (LOG, SLOAD, CALL, REVERT, Inspector, etc.) are
 // ubiquitous here — match the degenbot-simulation convention.

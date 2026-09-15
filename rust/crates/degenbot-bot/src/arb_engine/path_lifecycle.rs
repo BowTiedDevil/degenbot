@@ -1,4 +1,4 @@
-//! Path solve-eligibility state machine (ergo R522XA).
+//! Path solve-eligibility state machine .
 //!
 //! Owns the ONE question the arb engine's solve fan-out needs answered per
 //! registered path: "given that a pool just went dirty, should this path be

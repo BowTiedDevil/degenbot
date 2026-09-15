@@ -1,5 +1,5 @@
 #![expect(clippy::expect_used, clippy::print_stderr)]
-//! Swap-event capture correctness probe (ergo epic 63I7WJ).
+//! Swap-event capture correctness probe .
 //!
 //! Proves the `SwapEventCaptureInspector` captures real V2/V3/V4 `Swap`
 //! events with amounts that **byte-match the onchain receipt**, by replaying

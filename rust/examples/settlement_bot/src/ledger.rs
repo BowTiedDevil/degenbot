@@ -1,6 +1,5 @@
 //! The registration-outcome ledger — the Rust twin of
 //! `src/degenbot/runner/_registration_ledger.py` (parity-ledger row 9,
-//! ergo `XFEJUG`).
 //!
 //! Owns the four memos the Python pipeline carries:
 //!

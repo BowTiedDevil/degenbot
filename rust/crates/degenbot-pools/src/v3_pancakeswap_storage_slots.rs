@@ -4,7 +4,7 @@
 //!
 //! Parallel to [`super::v3_storage_slots`] but for the **PancakeSwap V3 fork**,
 //! which has a DIFFERENT storage layout than canonical Uniswap V3 (surfaced by
-//! the Tier-3 pancake oracle, ergo task `W32CAU`):
+//! the Tier-3 pancake oracle,):
 //!
 //! ```text
 //!                    Uniswap V3   PancakeSwap V3

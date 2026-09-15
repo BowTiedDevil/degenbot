@@ -52,7 +52,7 @@
 //! tick_spacing=10, a configuration the V4 sweep (fee=3000 / spacing=60)
 //! does not exercise, so this adds a configuration-matching corner.
 //!
-//! ## RESOLUTION (fix landed — ergo E7ALWT)
+//! ## RESOLUTION (fix landed)
 //!
 //! Suspect (2) was CONFIRMED and FIXED. Root cause: `compute_tick_ranges`
 //! collapsed interior word-boundary ticks in constant-liquidity runs (to

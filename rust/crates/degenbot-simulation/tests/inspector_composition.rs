@@ -1,5 +1,4 @@
 //! Composition-parity integration test for the prototype inspector pair
-//! (ergo task `2LMT7A`, epic `63I7WJ`).
 //!
 //! Proves the three prototype claims over `CacheDB<EmptyDB>` with hand-rolled
 //! bytecode fixtures (the same fixtures as the spike probe `KCKGP4`):

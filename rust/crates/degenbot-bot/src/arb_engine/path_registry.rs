@@ -1,4 +1,4 @@
-//! The engine's path-identity registry (ADR-045, ergo task `C4UAFP`).
+//! The engine's path-identity registry .
 //!
 //! `PathRegistry` owns *identity only*: the registered paths (`path_pools`),
 //! the `pool_to_paths` reverse index, the signature dedup map, the monotonic

@@ -375,7 +375,7 @@ fn fetch_graph_data(
         .collect();
 
     // Pre-compute EIP-55 checksum strings for every V2/V3 pool address +
-    // every V4 manager address inside this GIL-released span (ergo 66H3KJ).
+    // every V4 manager address inside this GIL-released span .
     // `Address::to_checksum(None)` is pure Rust (a keccak256 over the
     // lowercase-hex address) and does NOT need the GIL; doing it here keeps
     // `build_graph_dict`'s dict-build loop GIL-light (only `set_item` calls).

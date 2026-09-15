@@ -58,7 +58,7 @@ pub fn solve_path_with_min_profit(
     min_profit: U256,
     gate: &GateDeps<'_>,
 ) -> SolveOutcome {
-    // Hard cutover (SU7MAE task 7SI5G2): the gate is unconditional.
+    // Hard cutover : the gate is unconditional.
     let views: Vec<Option<crate::profit_envelope::HopMath<'_>>> = resolved
         .hops
         .iter()

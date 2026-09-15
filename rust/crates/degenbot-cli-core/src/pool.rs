@@ -1,4 +1,4 @@
-//! The `pool` command arms (ADR-051 D1; ergo FTVJ6L).
+//! The `pool` command arms (ADR-051 D1;).
 //!
 //! Ports `cli/pool.py` arm for arm:
 //!

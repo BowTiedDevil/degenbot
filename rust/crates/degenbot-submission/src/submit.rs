@@ -259,7 +259,7 @@ pub async fn dispatch_and_submit(
     dry_run: bool,
     inject_code: bool,
 ) -> Result<SubmitOutcome, crate::SubmissionError> {
-    // RMHQAR (epic 2LXPPV) + ZHVXW2: one Jaeger node per dispatch batch
+    // RMHQAR  + ZHVXW2: one Jaeger node per dispatch batch
     // (degenbot.bundle.dispatch).
     // - NO span for an EMPTY batch: the observed failure shape was 20
     //   consecutive single-span root traces, candidates=0, pure noise.
@@ -1127,7 +1127,7 @@ mod tests {
             Box::pin(async { Ok(false) })
         }
     }
-    /// RMHQAR (epic 2LXPPV): the `dispatch_and_submit` span records the
+    /// RMHQAR : the `dispatch_and_submit` span records the
     /// candidate count and outcome counts (`dry_run` marker path: 1 candidate
     /// -> 0 submitted, 1 skipped).
     /// The unique `block.number` creation field filters this test's span from the

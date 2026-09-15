@@ -1,5 +1,4 @@
 //! The discovery→registration pipeline — parity-ledger rows 9 + 12 + 13
-//! (ergo `XFEJUG`).
 //!
 //! Mirrors `src/degenbot/runner/build_paths.py`:
 //! `PathRegistrationPipeline._registration_unit` (the per-path build/verify/

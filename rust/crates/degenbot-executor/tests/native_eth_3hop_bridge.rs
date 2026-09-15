@@ -1,6 +1,6 @@
 #![expect(clippy::unwrap_used)]
 // Structural + byte-exact tests for the native-ETH↔WETH wrap/unwrap bridge
-// in 3-hop V4 composers (ergo epic GVK2RY).
+// in 3-hop V4 composers .
 //
 // EYQ6UF: built from the individual `enc_*` primitives — if the composer
 // emits the right opcodes in the right order, the bytes match. The native

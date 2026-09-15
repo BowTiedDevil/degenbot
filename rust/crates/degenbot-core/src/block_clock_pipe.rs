@@ -22,7 +22,6 @@ use tokio::sync::mpsc;
 /// the batch's solve block. The solve block lags by the send debounce + only
 /// advances when a batch is actually sent, so using it as the clock makes
 /// the bot's `[block: N]` freeze behind the driver's `current_block`
-/// (epic 6W35AI).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockNotification {
     /// The block number (the clock field).

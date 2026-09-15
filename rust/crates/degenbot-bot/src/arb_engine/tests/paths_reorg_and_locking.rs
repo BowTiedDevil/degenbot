@@ -1147,7 +1147,7 @@ fn solve_cycle_parallel_fanout_survives_concurrent_readers_and_writer() {
              core/engine lock nesting or re-entrant guard (ADR-006 D2 violated)",
     );
 }
-// ── Block stream (epic 6W35AI) ────────────────────────────────────────
+// ── Block stream  ────────────────────────────────────────
 //
 // The settlement-arbitrage bot's block clock must come from a forwarded `newHeads`
 // stream, NOT from `ResultBatch::solve_block` (which lags by debounce

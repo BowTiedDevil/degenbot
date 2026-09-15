@@ -107,7 +107,7 @@ pub type ProductionBlockDb<'a> = CacheDB<
 /// [`revm::MainnetEvm`] over the production [`ProductionBlockDb`] stack. The
 /// inspector type parameter is [`super::inspectors::SimInspector`] (a nested
 /// tuple `(AccessListCollector, (CallTraceInspector,
-/// SwapEventCaptureInspector))` — ADR-019 D3 + ergo epic 63I7WJ) — baked in so
+/// SwapEventCaptureInspector))` — ADR-019 D3 +) — baked in so
 /// the strategy's `simulate_path_on_evm` can attach it to `execute()`'s
 /// `inspect_one` run and drain the access list + call trace + swap events.
 /// revm's blanket `Inspector` impl covers 2-tuples only, so the three-way

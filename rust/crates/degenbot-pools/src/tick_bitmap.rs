@@ -437,7 +437,7 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     // exists in the current bitmap word). Dropping them made the solver do a
     // single-shot `compute_swap_step` per initialized-tick range, over-
     // predicting output by the missing per-boundary rounding — the root cause
-    // of the residual V4 `CurrencyNotSettled` (ergo ON5QMD). See
+    // of the residual V4 `CurrencyNotSettled` . See
     // `v4_word_boundary_solver_divergence.rs`.
     //
     // No max_ticks cap: gen_ticks terminates naturally at MIN_TICK / MAX_TICK,
@@ -581,7 +581,7 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     // zfo=true), then continue downward. The range-collapse makes current_tick
     // range 0's UPPER edge, so that per-step floor was skipped and the int-solve
     // crossing path over-predicted output by a few wei (the fee-1 `+3` class /
-    // ergo UO3JM4/W2UWZO). Re-insert sqrt(current_tick) as the first interior
+    //). Re-insert sqrt(current_tick) as the first interior
     // boundary of range 0 (swap order) so `int_simulate_v3_swap` /
     // `compute_crossing` floor there too, matching the on-chain. Only applies
     // to zfo=true (the zfo=true step-0 drain; ofz uses `gt` exclusive and never

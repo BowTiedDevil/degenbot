@@ -675,7 +675,7 @@ pub trait TickMapDb: Send + Sync {
     /// The V3 pool's `liquidity_update_block` (the block its DB liquidity map
     /// is exact at). Used as the authoritative liquidity clock of a DB-seeded
     /// `Tracked` pool so seed verification anchors at the pool's OWN block
-    /// rather than the aggregate `S` (task 4TWM7C).
+    /// rather than the aggregate `S` .
     ///
     /// # Errors
     /// [`DbError::Sqlite`] on a query failure.

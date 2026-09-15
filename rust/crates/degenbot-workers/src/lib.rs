@@ -1,4 +1,4 @@
-//! The role-switching worker fleet core (ADR-042, ergo task `O4CCVX`).
+//! The role-switching worker fleet core .
 //!
 //! One generalized, bounded worker fleet whose workers **switch roles** —
 //! hosting every execution resource the bot needs — replacing the per-era

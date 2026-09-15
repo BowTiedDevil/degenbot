@@ -1,4 +1,4 @@
-//! Integration tests for the `aave` command arms (ergo FTVJ6L).
+//! Integration tests for the `aave` command arms .
 //!
 //! Covers the active-market walk (`aave update`), the market row flips
 //! (`activate`/`deactivate`), and the market/user scalar reads behind

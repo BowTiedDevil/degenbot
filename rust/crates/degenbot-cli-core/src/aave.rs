@@ -1,4 +1,4 @@
-//! The `aave` command arms (ADR-051 D1; ergo FTVJ6L).
+//! The `aave` command arms (ADR-051 D1;).
 //!
 //! Ports `cli/aave.py`:
 //!

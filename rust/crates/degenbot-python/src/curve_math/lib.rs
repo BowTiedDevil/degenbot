@@ -5,7 +5,7 @@
 //! the five iterative solvers the `DyCalculator` strategy seam invokes; the
 //! step functions (`calc_d`/`calc_dp*`) are internal to the solvers and not
 //! re-exported. Also exposes `derive_rate_and_precision_multipliers`, the
-//! Rust-owned Curve scaling derivation (ergo `JLAPAC`). The variant enums (`DVariant`/`YVariant`/`YDVariant`) cross
+//! Rust-owned Curve scaling derivation . The variant enums (`DVariant`/`YVariant`/`YDVariant`) cross
 //! the seam as `u8` (1-based, matching the Python `auto()` enum `.value` +
 //! the Rust `try_from_u8`).
 

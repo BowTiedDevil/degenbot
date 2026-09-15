@@ -1,4 +1,4 @@
-//! Profit-envelope soundness tests (epic SU7MAE task 5N65UE).
+//! Profit-envelope soundness tests .
 //!
 //! The bound is load-bearing for skips: every test here exists to catch an
 //! envelope that ever dips BELOW a true output curve. The oracle is an

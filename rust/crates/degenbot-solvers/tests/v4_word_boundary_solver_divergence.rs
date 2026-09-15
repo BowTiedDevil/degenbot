@@ -1,6 +1,6 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 //! Word-boundary flooring divergence — the root cause of the residual V4
-//! `CurrencyNotSettled` (ergo ON5QMD).
+//! `CurrencyNotSettled` .
 //!
 //! ## Hypothesis (RED)
 //!

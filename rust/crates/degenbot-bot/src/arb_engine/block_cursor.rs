@@ -1,4 +1,4 @@
-//! The engine block cursor (ergo task 6XB6NJ) — the ONE owner of the
+//! The engine block cursor — the ONE owner of the
 //! engine-side block-coordinate residue of the arb engine.
 //!
 //! Completes ADR-041 §3.5's anchor-soup fold on the engine side (no ADR

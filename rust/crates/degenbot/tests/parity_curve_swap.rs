@@ -166,7 +166,7 @@ fn standalone_rust_consumer_curve_dy_matches_recorded_constant() {
 }
 
 /// Tier-2 gateway for the **Rust-owned orchestrated** `curve_get_dy` entry
-/// (task `45QBUG`). This is the ADR-005 claim at the orchestration layer: a
+/// . This is the ADR-005 claim at the orchestration layer: a
 /// `cargo add degenbot` consumer registering a Curve pool into a `BotState`
 /// and calling `BotState::curve_get_dy` (identity + balances + optional
 /// provider → `resolve_dy_inputs` → `calculate_dy`) MUST reproduce the same

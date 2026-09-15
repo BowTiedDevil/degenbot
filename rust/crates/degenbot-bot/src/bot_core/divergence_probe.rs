@@ -82,7 +82,7 @@ pub enum TrackedSlotKind {
     /// V3 `slot0` — `uint160 sqrtPriceX96 | int24 tick` (low 184 bits).
     /// `observationIndex`/`feeProtocol`/`unlocked` NOT tracked → zeroed.
     ///
-    /// NOTE (ergo task `W32CAU`): these V3 tracked slots assume the canonical
+    /// NOTE : these V3 tracked slots assume the canonical
     /// Uniswap V3 layout (one-word slot0, liquidity@4, ticks base@5). A
     /// **`PancakeSwap` V3** pool has a divergent layout (two-word slot0,
     /// liquidity@5, ticks base@6); probing/serving one with these Uniswap

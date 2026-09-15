@@ -480,12 +480,12 @@ mod handshake_tests {
         }
     }
 
-    /// MJXP5Z (GREEN): the single-stream handshake does NOT drop block-W
+    /// MJXP5Z : the single-stream handshake does NOT drop block-W
     /// logs. The handshake polls headers ONLY (two consecutive headers W,
     /// W+1 confirm the boundary), collecting any `IngestEvent::Pool` the
     /// fused stream interleaves and re-injecting it. With the OLD
     /// drop+resubscribe, the Mint/Burn queued after the confirming log were
-    /// lost (XBQNJ5 RED). Under Alternative B they survive in `pending` and
+    /// lost . Under Alternative B they survive in `pending` and
     /// reach the resume stream.
     #[tokio::test]
     async fn handshake_preserves_w_logs() {

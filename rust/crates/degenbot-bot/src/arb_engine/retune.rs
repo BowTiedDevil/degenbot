@@ -1,5 +1,5 @@
 //! The engine retune value — the typed operator re-parameterization crossing
-//! the driver seam (epic 5TBT7L, task 3WI4EO).
+//! the driver seam .
 //!
 //! The engine's twin of the fleet's centralized posture feeders + wake
 //! (43121b9): one typed value carries every config-derived knob the engine

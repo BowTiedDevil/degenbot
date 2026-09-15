@@ -113,7 +113,7 @@ pub use ::degenbot_pools::v4_state::{
 // typed-narrowed.
 pub use ::degenbot_pools::tick_map::{TickMap, TickMapMut};
 
-// Re-export the unified block stage machine (ergo 7NFYQW, ADR-041): the
+// Re-export the unified block stage machine : the
 // per-block state map + decision producer + watchdogs + gates in ONE pure
 // machine; the pump drives it (see `bot_core/stage_machine.rs`). The
 // retired `BlockClock`/`PumpFSM` types are gone (hard cutover, Q6) —

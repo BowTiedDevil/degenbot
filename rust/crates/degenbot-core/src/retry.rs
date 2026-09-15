@@ -1,4 +1,4 @@
-//! Canonical retry-with-backoff policy for the workspace (ergo 6LC4JB).
+//! Canonical retry-with-backoff policy for the workspace .
 //!
 //! One Rust-owned policy shape — `max_attempts`, `base_delay`, `max_delay`,
 //! `jitter` — consumed by every exponential-backoff wait loop in the tree:

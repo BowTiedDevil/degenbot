@@ -1,4 +1,4 @@
-//! THE construction-stamped fleet boot carrier (YI5NGB, epic 64ZQLA).
+//! THE construction-stamped fleet boot carrier .
 //!
 //! `ArbitrageEngine::with_core_cfg` derives its `FleetBoot` from the
 //! CALLER's own config (the KAHU5W trajectory completed for the boot path)

@@ -1,7 +1,6 @@
 //! At-most-once verify-claim table — the Rust/tokio twin of
 //! `src/degenbot/arbitrage/_claims.py` as consumed by
 //! `runner/build_paths.py::_SeatVerifyClaims` (parity-ledger row 9,
-//! ergo `XFEJUG`).
 //!
 //! POLICY (stated once, mirroring `VerifyClaims`):
 //!

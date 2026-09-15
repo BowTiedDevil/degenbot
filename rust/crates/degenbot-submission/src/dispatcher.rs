@@ -138,7 +138,7 @@ impl CommittedTx {
 /// Port of `examples/eth_backrun_v2_v3_v4_rust.py` `PathSuppression`
 /// (L509–L578).
 ///
-/// # Ownership (ADR-003 / ergo `LITQFF`)
+/// # Ownership
 ///
 /// Standalone — **not** composed into [`Dispatcher`]. It is owned behind its
 /// own `Arc<Mutex<PathSuppression>>` (held by `PyDispatcher` alongside the

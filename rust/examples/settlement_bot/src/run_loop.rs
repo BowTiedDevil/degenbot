@@ -1,5 +1,5 @@
 //! The live arm's run-until-shutdown phase — parity-ledger rows 16/19
-//! wiring (RSP-10, ergo `SGCAJ5`).
+//! wiring .
 //!
 //! Mirrors `src/degenbot/runner/bot_runner.py::BotRunner.run`'s final step:
 //! once registration (the Python `build_paths` step) has attached, the session

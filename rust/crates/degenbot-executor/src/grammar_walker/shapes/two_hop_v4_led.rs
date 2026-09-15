@@ -356,7 +356,7 @@ mod walk_probe {
         &src[..i]
     }
 
-    /// RED by design (T1 RKNRJO, epic 6SWFBS): 49 literal `PlanStep::` sites
+    /// RED by design : 49 literal `PlanStep::` sites
     /// today. Goes GREEN when T4 (4FKIPB) walks the v4v2/v4v3/v4v4 arms onto
     /// `mechanics` + the shared capture/bridge helpers; then it stays put as
     /// the honesty invariant (D6 precedent: RED probe at f3b06397, honesty

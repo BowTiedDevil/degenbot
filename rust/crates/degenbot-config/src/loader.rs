@@ -68,7 +68,7 @@ impl EnvVars for MapEnv {
     }
 }
 
-/// Migration doc named by every retired-layout refusal (ergo JLFE2F).
+/// Migration doc named by every retired-layout refusal .
 const MIGRATION_DOC: &str = "docs/config-migration.md";
 
 /// Retired operator-file layout items (ergo JLFE2F, Option B hard cutover):
@@ -166,7 +166,7 @@ impl std::fmt::Debug for BotConfigLoader {
     }
 }
 
-/// The canonical STANDARD config file path (ergo JLFE2F): the
+/// The canonical STANDARD config file path : the
 /// `DEGENBOT_CONFIG` env override when set — even when missing, the
 /// operator asked for it — else `$HOME/.config/degenbot/config.toml` when
 /// it exists, else `None` (an absent user file is contractually defaults).

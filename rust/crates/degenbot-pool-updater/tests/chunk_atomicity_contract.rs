@@ -1,4 +1,4 @@
-//! Contract artifact: chunk interrupt -> full rollback -> restart clean (epic `2SFL6I`, task `BHF5BC`).
+//! Contract artifact: chunk interrupt -> full rollback -> restart clean .
 //!
 //! THE regression test gating the §1 atomicity + restart invariants
 //! (`docs/migration-guides/pool-updater-chunk-atomicity.md` §1; prose;

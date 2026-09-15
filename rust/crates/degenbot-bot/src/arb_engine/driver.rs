@@ -1,5 +1,5 @@
 //! `EngineDriver` — the public Rust driver seam over the crate-private
-//! engine (ADR-050, Gap G1 / ergo `5XOGRK`).
+//! engine (ADR-050, Gap G1 /).
 //!
 //! # Why this type exists
 //!

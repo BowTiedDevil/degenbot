@@ -1,6 +1,6 @@
 //! PancakeSwap V3 Swap event decoder.
 //!
-//! **Storage-layout divergence (ergo task `W32CAU`):** this event decoder
+//! **Storage-layout divergence :** this event decoder
 //! decodes Swap events (which carry the state transition in their data). It
 //! does NOT read raw storage slots. But be aware the fork's on-chain **storage
 //! layout** also diverges from Uniswap V3 — `slot0.feeProtocol` is a `uint32`

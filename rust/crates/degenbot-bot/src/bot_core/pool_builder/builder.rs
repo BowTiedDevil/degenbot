@@ -1,4 +1,4 @@
-//! Pool construction orchestration (task `3FVZF4`, epic `Z5CNPB`).
+//! Pool construction orchestration .
 //!
 //! Part 2 of the builder port: the probe-dispatch-assemble turn a bare
 //! on-chain `(chain_id, address)` into a core structural pool
@@ -958,7 +958,7 @@ pub async fn build_curve_pool(
         .unwrap_or(0);
 
     let one_e18 = U256::from(10u64).pow(U256::from(18u64));
-    // Rust-owned derivation (ergo `JLAPAC`): the single source of truth shared
+    // Rust-owned derivation : the single source of truth shared
     // with the `degenbot._ffi.curve_math` surface. Lending overrides →
     // `pm * 10**PRECISION_DECIMALS`; else from token decimals.
     let (rate_multipliers, precision_multipliers) =

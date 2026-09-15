@@ -1,5 +1,5 @@
 //! Discovery graph construction + batched path finding — parity-ledger
-//! row 12 (ergo `XFEJUG`).
+//! row 12 .
 //!
 //! Mirrors the graph half of `src/degenbot/pathfinding/_pathfinding.py`
 //! (`_prepare_graph` / `build_path_graph`: candidate-token degree filter,

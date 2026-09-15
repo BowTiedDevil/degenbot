@@ -1,4 +1,4 @@
-//! Integration tests for the `exchange` command arms (ergo FTVJ6L).
+//! Integration tests for the `exchange` command arms .
 //!
 //! Covers the data-driven collapse of the 34 Python click verbs: the coverage
 //! test pins every retired `(chain, dex)` pair to a shipped registry record (the

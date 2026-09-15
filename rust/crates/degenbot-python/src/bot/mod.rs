@@ -523,9 +523,9 @@ impl PyBot {
     }
 
     /// Return a fresh async iterator over `newHeads` block notifications —
-    /// the settlement bot's authoritative block clock (epic 6W35AI).
+    /// the settlement bot's authoritative block clock .
     ///
-    /// ADR-027 completion (ergo 6VGMLY): the block-clock pipe is
+    /// ADR-027 completion : the block-clock pipe is
     /// coordinator-owned, so this method lives on `PyBot` (the pump-lifecycle
     /// handle) — NOT on the engine wrapper, which is out of the block path
     /// entirely. The receiver is born on the shared `PumpState` beside the

@@ -1,5 +1,5 @@
 //! Frame-level + wire-hygiene tests for the operator command-channel client
-//! (ADR-051 D6; ergo 6RNZDT).
+//! (ADR-051 D6;).
 //!
 //! The client is exercised two ways:
 //!

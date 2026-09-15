@@ -374,7 +374,7 @@ fn build_fee1_tiny_state(
     state
 }
 
-/// GREEN regression guard (ergo UO3JM4/W2UWZO) — the solver int-solve crossing
+/// GREEN regression guard  — the solver int-solve crossing
 /// path must be byte-exact to `v4_simulate_swap` (== the on-chain PoolManager)
 /// on the real fee-1 pool, in BOTH swap directions.
 ///
@@ -1748,7 +1748,7 @@ fn fee1_zfo_true_two_step_floored_equivalence() {
     assert_eq!(onchain, U256::from(4724u64));
 }
 
-/// Margin-policy measurement for the CL-hop clamp (ergo 7E5D7W): quantify the
+/// Margin-policy measurement for the CL-hop clamp : quantify the
 /// worst solver-vs-`v4_simulate_swap` OVER-prediction magnitude across the
 /// covered corpus (fee-1/ts=1 in both directions, plus the fee-3000/ts=60
 /// multi-tick topology) — the quantity the VAASFM clamp margin (1 wei) must

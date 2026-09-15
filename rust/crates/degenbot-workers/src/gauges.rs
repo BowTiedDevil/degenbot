@@ -1,4 +1,4 @@
-//! Per-role busy/idle gauge surface (ADR-042, ergo O4CCVX): the activation
+//! Per-role busy/idle gauge surface : the activation
 //! dashboard's fleet source, plus the `instruments.rs`-mirror seam.
 //!
 //! Same hook pattern as `degenbot_core::worker_census`: a plain function

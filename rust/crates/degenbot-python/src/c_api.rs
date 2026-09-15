@@ -18,7 +18,7 @@ use pyo3::wrap_pyfunction;
 /// Register every Rust-wrapped symbol on the Python module `m`.
 ///
 /// Order and set of registered symbols must stay byte-equivalent to the
-/// pre-extraction `#[pymodule]` body (ergo UG6FKN task KFVI5F). The tracing
+/// pre-extraction `#[pymodule]` body . The tracing
 /// subscriber init (`python_log_layer::init_logging_subscriber()`) stays in
 /// `lib.rs`'s `#[pymodule]` because it is module-lifecycle setup, not symbol
 /// registration.
@@ -81,7 +81,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
 
-    // Keccak256 + event topic (always a dependency; ergo 5JKNQH)
+    // Keccak256 + event topic (always a dependency;)
     m.add_function(wrap_pyfunction!(crate::crypto::keccak256, m)?)?;
     m.add_function(wrap_pyfunction!(crate::crypto::event_topic, m)?)?;
 
@@ -219,7 +219,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Uniswap mixed V2/V3/V4 engine (feature = "bot")
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::engine::PyArbEngine>()?;
-    // Block-stream async iterator (epic 6W35AI) — the authoritative
+    // Block-stream async iterator  — the authoritative
     // `newHeads`-derived block clock, consumed by Python in parallel with
     // the result-batch iterator. See `engine::result_channel::BlockStream`.
     #[cfg(feature = "bot")]
@@ -355,7 +355,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "submission")]
     crate::submission::add_submission_module(m)?;
 
-    // Diagnostics instrumentation (ergo 66H3KJ): GIL-acquire-latency probe
+    // Diagnostics instrumentation : GIL-acquire-latency probe
     // + main-loop stuck-watchdog. Unconditional (no feature gate) so the
     // probe is available in every build; the example opts in at startup.
     crate::diagnostics::add_diagnostics_module(m)?;

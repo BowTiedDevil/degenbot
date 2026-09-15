@@ -237,7 +237,7 @@ const fn tick_bitmap_position(compressed_tick: i32) -> (i16, u8) {
 /// The `phase` labels WHICH registration verify step produced the comparison
 /// (`"seed"` = step-1 seed verify, `"post-drain"` = step-2 post-drain verify)
 /// so a `VerificationMismatchError` can be attributed without re-inspection. A
-/// wrong-block recurred across both steps (both task 4TWM7C/A1): step-1 anchors
+/// wrong-block recurred across both steps : step-1 anchors
 /// at the caller-supplied snapshot block (global `S`, reactivated wrong-block
 /// class) while step-2 anchors at the pin's own liquidity clock.
 ///
@@ -1570,7 +1570,7 @@ mod tests {
         assert!(asserter.read_q().is_empty());
     }
 
-    // --- Phase discriminator (task 4TWM7C/A1) ---
+    // --- Phase discriminator  ---
     //
     // Both registration verify steps (step-1 seed, step-2 post-drain) call this
     // same snapshot-liquidity-map verifier. Without a phase label the two

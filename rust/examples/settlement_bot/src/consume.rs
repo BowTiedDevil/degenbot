@@ -27,7 +27,7 @@ use degenbot::bot::arb_engine::ResultBatch;
 /// driver example advances it from each `ResultBatch`'s `solve_block` so the
 /// batch stream is the single clock source (ADR-050 D3 exposes both receivers;
 /// this example consumes the result stream — the block receiver is a G5
-/// follow-up, ergo `KPLWUM`).
+/// follow-up,).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockClock {
     /// The latest accepted block number.
@@ -63,7 +63,7 @@ impl BlockClock {
 }
 
 /// A lock-free progress view of the consume loop, read by the run-loop
-/// heartbeat (RSP-10, ergo `SGCAJ5`). The consumer records each batch's
+/// heartbeat . The consumer records each batch's
 /// block; the heartbeat task reads without blocking or locking.
 #[derive(Clone, Debug, Default)]
 pub struct SessionProgress {
@@ -201,7 +201,7 @@ pub async fn consume_result_batches(
 }
 
 /// A sink that beats the session-watch heartbeat for each consumed batch
-/// (G5 session watch, ergo `KPLWUM`) while counting nothing else.
+/// (G5 session watch,) while counting nothing else.
 struct HeartbeatSink {
     heartbeat: Option<crate::session_watch::Heartbeat>,
     progress: Option<SessionProgress>,
@@ -227,7 +227,7 @@ impl BatchSink for HeartbeatSink {
 ///
 /// `allow_quiet_end` is `true` because the driver's `stop()` is the intended
 /// teardown (ADR-050 D6); the loud pump-death branch belongs to a supervised
-/// consumer (G5 session watch, ergo `KPLWUM`).
+/// consumer (G5 session watch,).
 ///
 /// # Errors
 ///

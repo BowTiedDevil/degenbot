@@ -290,7 +290,7 @@ pub struct V3SwapUpdate {
 /// since the last failed walk — the dominant cost in live solve cycles
 /// (1300-9600 `SequenceUnavailable` rejections per cycle, each re-walking
 /// O(tick-walk) from scratch). `invalidate_tick_range_cache` resets both
-/// slots to `StillEmpty` on every Swap/Mint/Burn (ergo 2SGSE3).
+/// slots to `StillEmpty` on every Swap/Mint/Burn .
 #[derive(Clone, Debug, Default)]
 pub enum CachedTickRanges {
     /// Not computed since the last invalidation — the next call must walk.
@@ -913,7 +913,7 @@ impl V3PoolState {
                 // collapsed out of this range into sqrt prices (swap order) so
                 // the solver's `compute_crossing` / `int_simulate_v3_swap` can
                 // re-walk them per boundary, restoring the per-step
-                // `computeSwapStep` flooring (ergo E7ALWT).
+                // `computeSwapStep` flooring .
                 word_boundary_prices: r
                     .interior_boundaries
                     .iter()

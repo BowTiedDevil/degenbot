@@ -148,7 +148,7 @@ struct FakeStageEngine {
     logs_recorded: std::sync::atomic::AtomicUsize,
     /// `pump_ended` recorded (incident 2026-08-20 stream-death test).
     pump_ended: std::sync::atomic::AtomicBool,
-    /// Candidate-2 seam pin (ergo 2KQZSC): the loud close must arrive
+    /// Candidate-2 seam pin : the loud close must arrive
     /// exactly once through the `PumpControl` surface, never through the
     /// stage seam. These split counters let the pin tell the two apart.
     pump_control_ends: std::sync::atomic::AtomicUsize,
@@ -193,7 +193,7 @@ impl FakeStageEngine {
         self.pump_ended.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Candidate-2 pin (ergo 2KQZSC): closes driven through the target
+    /// Candidate-2 pin : closes driven through the target
     /// `PumpControl` surface. Must be exactly 1 after the WS-streams-ended
     /// branch fires — this is the behavior the pin exists to prove.
     fn pump_control_ends(&self) -> usize {
@@ -201,7 +201,7 @@ impl FakeStageEngine {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Candidate-2 pin (ergo 2KQZSC): closes driven through the stage
+    /// Candidate-2 pin : closes driven through the stage
     /// seam's pump-ended poke (removed at T2). Must stay 0.
     fn stage_seam_ends(&self) -> usize {
         self.stage_seam_ends
@@ -307,7 +307,7 @@ impl StageHandlers for FakeStageEngine {
     }
 }
 
-/// Candidate-2 seam pin (ergo 2KQZSC): the TARGET `PumpControl` surface.
+/// Candidate-2 seam pin : the TARGET `PumpControl` surface.
 /// At HEAD this cannot compile (`PumpControl` lands in T2); that is the
 /// intended red. The fake records the close here so the pin proves the
 /// pump actually drove the loud close through the control seam rather than

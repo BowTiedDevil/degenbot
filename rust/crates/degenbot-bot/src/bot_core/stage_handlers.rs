@@ -8,7 +8,7 @@
 //! gate (Gated), publish (Published), finalize (Finalized), and rewind
 //! (`Rewind{to_epoch}`). This module encodes that table as a single trait.
 //! The arb engine's existing logic becomes a `StageHandlers` implementation
-//! in the stage-machine task (7NFYQW); the `NoopStubEngine` conformance stub
+//! in the stage-machine task ; the `NoopStubEngine` conformance stub
 //! in this file's test support is the *other* implementer that keeps the
 //! trait honest from day one (ADR-041 non-goals: no multi-engine machinery,
 //! no registry, no runtime selection — the stub is a test-declared
@@ -377,7 +377,7 @@ pub enum StageError {
         /// The fresh epoch to rewind to.
         to_epoch: Epoch,
     },
-    /// A hard hook failure. The stage-machine task (7NFYQW) decides the
+    /// A hard hook failure. The stage-machine task  decides the
     /// runtime posture (fail-loud per ADR-021) — never a silent skip.
     Failed {
         /// The hook that failed.
@@ -743,7 +743,7 @@ mod conformance {
     }
 
     /// The conformance driving order — the thin stand-in for the future
-    /// stage machine (task 7NFYQW). It drives one `E: StageHandlers`
+    /// stage machine . It drives one `E: StageHandlers`
     /// implementer over a scripted synthetic block stream and asserts the
     /// executable-spec properties end to end.
     struct Harness<'a, E: ?Sized> {

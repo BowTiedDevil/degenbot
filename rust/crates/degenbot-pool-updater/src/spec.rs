@@ -1,6 +1,5 @@
 //! `ExchangeSpec` + `load_active_exchange_specs` — the typed per-exchange
 //! dispatch descriptor the Rust-owned pool-updater chunk loop consumes
-//! (epic `2SFL6I`, task SHFIGX).
 //!
 //! Per ADR-005 + AGENTS.md "Rust owns the state": Rust reads the `exchanges`
 //! table itself at run start (the DB is the source of truth) rather than

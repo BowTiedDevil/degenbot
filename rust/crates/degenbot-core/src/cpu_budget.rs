@@ -183,7 +183,7 @@ pub(crate) fn effective_budget_from_with_roots(
 /// (`override_headroom`, default [`DEFAULT_SOLVE_HEADROOM`]), floored at 1.
 ///
 /// Public so the fleet budget authority can property-test the
-/// cross-authority sizing contract `TTANQJ` (epic 64ZQLA), and so a
+/// cross-authority sizing contract `TTANQJ` , and so a
 /// standalone (ADR-005) consumer can size solve bins from a budget it
 /// derived itself.
 #[must_use]
@@ -752,7 +752,7 @@ mod tests {
     }
 
     mod derivation {
-        //! CVURM7 (epic 64ZQLA): host-shape derivation properties. Any
+        //! CVURM7 : host-shape derivation properties. Any
         //! combination of cgroup quota text and affinity must produce the
         //! documented `min(ceil(cgroup quota), affinity)` floored at 1 —
         //! never zero, never a panic, fail-closed on malformed text.

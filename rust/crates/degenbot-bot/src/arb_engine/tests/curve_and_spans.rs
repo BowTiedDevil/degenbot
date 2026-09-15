@@ -705,7 +705,7 @@ fn solve_span_records_cycle_solve_block() {
         "arb.solve must record the cycle's anchored block"
     );
 }
-// P5FEOI (epic 2LXPPV): original span test, otel-gated like its harness.
+// P5FEOI : original span test, otel-gated like its harness.
 #[cfg(feature = "otel")]
 #[test]
 #[expect(clippy::expect_used)]

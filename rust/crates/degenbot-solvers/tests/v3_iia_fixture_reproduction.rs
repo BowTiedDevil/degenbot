@@ -4,7 +4,7 @@
     clippy::panic,
     clippy::print_stderr
 )]
-//! Network-gated mainnet-fixture reproduction (ergo task `E7ALWT`).
+//! Network-gated mainnet-fixture reproduction .
 //!
 //! The live `DEGENBOT_SIM_EXIT_ON_FAIL=1` trap captured a +13 wei V3-hop
 //! over-prediction on pool `0x57D7…dF80` (UNI/DAI fee=500) at block 25647669.

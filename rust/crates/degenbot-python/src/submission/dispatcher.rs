@@ -11,7 +11,7 @@
 //! block-clock reader all see one state. The Python wrapper holds the SAME
 //! `Arc` the Rust leaves lock — no Python-side mirror.
 //!
-//! `PathSuppression` is **not** composed into [`Dispatcher`] (ergo `LITQFF`):
+//! `PathSuppression` is **not** composed into [`Dispatcher`] :
 //! it lives behind its own `Arc<Mutex<PathSuppression>>`, held here alongside
 //! the `Dispatcher` arc, so the simulation seam (`dispatch_profitable_py`)
 //! can lock suppression WITHOUT locking the `Dispatcher` (which the
@@ -105,7 +105,7 @@ impl PyDivergentPool {
 /// `dispatch_profitable_results` / `monitor_pending_transaction` previously
 /// held as a Python mirror: pending nonces/pools, in-flight task count, the
 /// current-block reference, the block-time ring, per-block priority fees.
-/// `PathSuppression` is **not** composed (ergo `LITQFF`); it lives behind its
+/// `PathSuppression` is **not** composed ; it lives behind its
 /// own `Arc<Mutex<PathSuppression>>` on `PyDispatcher` so the simulation seam
 /// locks it directly, never the `Dispatcher`.
 ///
@@ -127,13 +127,13 @@ pub struct PyDispatcher {
     /// touched only at the sim fan-out bookends, dormant across the RPC
     /// `.await`s, and uncontended during the fan-out).
     pub(crate) suppression: Arc<Mutex<PathSuppression>>,
-    /// The standalone per-pool solver-divergence memo (ergo `GMWYIU`) — same
+    /// The standalone per-pool solver-divergence memo  — same
     /// standalone-arc rationale as `suppression`: the simulation seam locks
     /// it directly at the dispatch skip (step 1.5) + feedback (step 5.5)
     /// bookends, NEVER across the fan-out `.await`s, so the `Dispatcher`
     /// lock stays uncontended by divergence bookkeeping.
     pub(crate) pool_divergence: Arc<Mutex<PoolDivergence>>,
-    /// The standalone per-token fee-on-transfer registry (ergo `3O535Q`) —
+    /// The standalone per-token fee-on-transfer registry  —
     /// same standalone-arc rationale as `pool_divergence`: the simulation
     /// seam locks it at the dispatch skip (step 2.5) + feedback (step 7.5) +
     /// success recording (step 8.5) bookends, NEVER across the `.await`s.
@@ -464,7 +464,7 @@ impl PyDispatcher {
             .collect()
     }
 
-    // ── fee-on-transfer registry (ergo `3O535Q`) ────────────────────
+    // ── fee-on-transfer registry  ────────────────────
     /// The lifetime-total paths dropped via the `FoT` skip.
     #[getter]
     fn total_fot_dropped(&self) -> u64 {

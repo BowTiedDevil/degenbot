@@ -16,7 +16,7 @@
     clippy::unwrap_used
 )]
 
-//! Offline solver-parallelism scaling probe (ergo RAYPAR T1).
+//! Offline solver-parallelism scaling probe .
 //!
 //! Reconstructs production ResolvedMixedPath inputs (V3 CL hops carrying the
 //! production build_cl_word_profiles + build_cl_crossing_table precomputes)

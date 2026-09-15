@@ -206,7 +206,7 @@ impl BotState {
             .map(|(identity, _)| identity)
     }
 
-    /// Rust-owned Curve stableswap `get_dy(i, j, dx)` (task `45QBUG`, epic
+    /// Rust-owned Curve stableswap `get_dy` (task `45QBUG`, epic
     /// `TV72EG`). The counterpart of the companion's `get_dy` — resolves the
     /// dy-calculation snapshot from the pool's identity + balances + stored
     /// provider via [`degenbot_pools::resolve_dy_inputs`], then runs the pure

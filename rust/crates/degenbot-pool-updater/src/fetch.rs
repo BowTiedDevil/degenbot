@@ -1,5 +1,5 @@
 //! Typed async fetcher wrappers + decode-to-row-input mapping for the
-//! Rust-owned pool-updater chunk loop (epic `2SFL6I`, task SBICJJ).
+//! Rust-owned pool-updater chunk loop .
 //!
 //! These wrap [`degenbot_rpc::provider::LogFetcher::fetch_logs_chunked`]
 //! and the `degenbot-decoders` leaves (the `PoolCreated` decoders from

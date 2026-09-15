@@ -343,7 +343,7 @@ fn merge_is_never_queued_and_declared_roles_are_gated() {
     }
 }
 
-/// RED→GREEN (BCA77G port): a keyed Solver unit whose pin is claimed
+/// RED→GREEN : a keyed Solver unit whose pin is claimed
 /// (in-flight or running on its pinned seat) must WAIT for its own seat —
 /// the dispatch lanes must never grant a hot key as a new pin claim onto a
 /// second idle seat (the pin IS the key; a double grant breaks the

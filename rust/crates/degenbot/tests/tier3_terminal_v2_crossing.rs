@@ -1,5 +1,5 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Tier-3 terminal-V2 crossing regression gate (ergo ASLM5N) — the
+//! Tier-3 terminal-V2 crossing regression gate  — the
 //! path182449 (block 25731019, v4v4v2) and path110302 (block 25711761,
 //! v3v4v2) solver-parity samples that failed on-chain with `UniswapV2: K`.
 //!

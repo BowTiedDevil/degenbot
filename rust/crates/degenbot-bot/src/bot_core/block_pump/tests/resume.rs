@@ -2,7 +2,7 @@ use super::*;
 
 /// Solve-anchor regression (ADR-008 D2 solver-release gate): the SOLVE anchor
 /// follows the LOG-DRIVEN settled block (`open`), not a header that raced a
-/// RED→GREEN tracer (epic 6W35AI, 22Y7AB): the pump forwards a
+/// RED→GREEN tracer : the pump forwards a
 /// `BlockNotification` for every `newHeads` header it accepts (one per
 /// header, carrying the header's number + metadata), via
 /// `StageHandlers::notify_block` — independent of solve/debounce state. This

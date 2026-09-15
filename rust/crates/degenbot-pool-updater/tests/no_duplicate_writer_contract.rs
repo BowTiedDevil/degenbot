@@ -1,6 +1,6 @@
 //! No-duplicate-writer contract: a held chunk write transaction serializes a
 //! second writer via the `SQLite` file-level `BUSY`/`busy_timeout` lock -- NOT the
-//! in-process `Mutex<Connection>` (epic `2SFL6I`, task `JZLTES`).
+//! in-process `Mutex<Connection>` .
 //!
 //! Asserts the section 1.3 no-duplicate-writer invariant
 //! (`docs/migration-guides/pool-updater-chunk-atomicity.md` section 1, removed in the stale-docs cleanup `71ec78b2`):

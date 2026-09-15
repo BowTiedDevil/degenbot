@@ -6,7 +6,7 @@
 //! repair.
 //!
 //! These arms never call heal on another command's behalf; the auto-heal epic
-//! (ergo `6ATMVN`) owns schema self-healing inside `ensure_schema`.
+//!  owns schema self-healing inside `ensure_schema`.
 
 use std::path::{Path, PathBuf};
 

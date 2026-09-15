@@ -1,4 +1,4 @@
-//! The solve cycle as a deep module (ADR-045, ergo task `E7V2S6`).
+//! The solve cycle as a deep module .
 //!
 //! ## Scope (this file)
 //!
@@ -168,7 +168,7 @@ pub(crate) struct SolveCycleShared {
     pub(crate) inline_sim:
         Option<std::sync::Arc<dyn crate::arb_engine::inline_sim::InlineSimulator>>,
 }
-/// The solve cycle's owned state (ADR-045, ergo task `ANVHXW`).
+/// The solve cycle's owned state .
 ///
 /// The resolve companions, the cycle-transient stash, the solve output,
 /// the admissions stance, the detached-arm collaborator, the
@@ -450,7 +450,7 @@ pub(crate) struct Registration {
 /// swaps recur. Override via the `CLAMP_MARGIN` env var for sensitivity
 /// sweeps (twin of the `path5000_v2v4v3_solver_fixture` fixture).
 ///
-/// ## Measured basis (ergo 7E5D7W)
+/// ## Measured basis
 ///
 /// The margin must be strictly larger than the worst solver-vs-engine
 /// (solver `hop_outputs[i]` vs the tier-3-proven `v4_simulate_swap`/
@@ -983,7 +983,7 @@ impl SolveCycle {
                 "straggler merged (unchanged intake)"
             );
         }
-        // ADR-021 publish-verifier scoping retired (task 2UVG3E): the
+        // ADR-021 publish-verifier scoping retired : the
         // solver-state verifier (and its publish change set) is gone
         // — merges apply the Q1a stale policy only.
     }

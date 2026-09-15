@@ -1,5 +1,4 @@
 //! Driver-side path-composition policy — parity-ledger row 13
-//! (DRIVER-POLICY, ergo `XFEJUG`).
 //!
 //! Mirrors `src/degenbot/arbitrage/policy.py` (`touched_tokens`, the
 //! `PathPolicy` rule order, the checksum-normalized token allow/deny sets,

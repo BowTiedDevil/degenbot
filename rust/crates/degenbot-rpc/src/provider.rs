@@ -42,7 +42,7 @@ pub(crate) const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
 const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 
 /// The provider's retry policy for `max_attempts` total attempts, built on
-/// the workspace-canonical [`RetryPolicy`] (ergo 6LC4JB). The exponential
+/// the workspace-canonical [`RetryPolicy`] . The exponential
 /// growth (x2, saturating at the cap) lives in the shared type — not a
 /// hand-rolled multiplier at each loop.
 #[must_use]
@@ -65,7 +65,7 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
 /// which formats `{context}: {self}`), so the emitted `{error}` carries the
 /// context verbatim.
 ///
-/// Adoption verdict (spike, 2026-09, ergo YHVOJS): alloy 2.4.2's
+/// Adoption verdict (spike, 2026-09,): alloy 2.4.2's
 /// `transports::layers::RetryBackoffLayer` was evaluated as the
 /// transport-idiomatic replacement for this loop and rejected: it only
 /// `trace!`s retries (no E2B542 leveled records, no provider `{context}`
@@ -77,7 +77,7 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
 /// alloy API changes (per-attempt observer hooks, policy flexibility,
 /// error-preserving exhaustion).
 ///
-/// Adoption verdict (`backoff` crate, ergo 6LC4JB): NOT adopted. It is not a
+/// Adoption verdict (`backoff` crate,): NOT adopted. It is not a
 /// workspace dependency today, its error wrapper would collapse typed
 /// `ProviderError`s, its jitter is a multiplicative `randomization_factor`
 /// rather than the additive tenacity-style jitter the verification policy

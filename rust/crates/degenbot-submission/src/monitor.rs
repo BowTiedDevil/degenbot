@@ -235,7 +235,7 @@ pub async fn monitor_pending_transaction(
     // acquiring the outer dispatcher mutex (the handle is the inner
     // `Arc<Mutex<u64>>`, M756BN) and the receiver is registered before the
     // first probe (no head event can slip between subscription and the loop).
-    // RMHQAR (epic 2LXPPV): OTel tier-1 - one Jaeger node per awaited receipt
+    // RMHQAR : OTel tier-1 - one Jaeger node per awaited receipt
     // (degenbot.bundle.monitor); parents under the block/solve spans when
     // pump-driven. Inert without a subscriber.
     let span = tracing::info_span!(
@@ -723,7 +723,7 @@ mod tests {
         ))
     }
 
-    /// RMHQAR (epic 2LXPPV): the monitor span records "monitor.result" on every
+    /// RMHQAR : the monitor span records "monitor.result" on every
     /// terminal path. Unique nonces filter this test's spans from the shared global
     /// capture (MQUKB6 unique-identifier rule).
     #[tokio::test]

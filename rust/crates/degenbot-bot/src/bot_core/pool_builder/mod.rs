@@ -11,7 +11,7 @@
 //! This module:
 //! - [`choreography`] — the moved encode→call→decode primitives (V2/V3/V4 +
 //!   ERC-20 + tick), per decision D-C.
-//! - [`builder`] — the `PoolBuilder` orchestration (task `3FVZF4`) that composes
+//! - [`builder`] — the `PoolBuilder` orchestration  that composes
 //!   these primitives into core structural pool identity+state (`build_v2/v3/v4`,
 //!   `build_curve_pool`, `build_balancer_*`).
 //! - [`curve_choreography`] — the Curve-specific primitives.

@@ -398,7 +398,7 @@ fn v4_db_none_cold_start_returns_miss() {
     assert!(result.is_none(), "cold-start (db=None, chain=None) → miss");
 }
 
-// ── Chain arm tests (epic 5NT2OC / task U4KLPV) ────────────────────────────
+// ── Chain arm tests  ────────────────────────────
 //
 //  (a) Chain hit after Store+Db miss → Some((ticks, Sparse)).
 //  (b) Chain returns zero-bitmap → None.

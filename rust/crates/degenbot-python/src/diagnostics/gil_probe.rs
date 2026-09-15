@@ -1,7 +1,7 @@
 //! GIL-acquire-latency probe + main-loop stuck-watchdog.
 //!
 //! Purpose: measure and observe the rolling-start GIL-contention deadlock
-//! (ergo 66H3KJ). The probe runs on a dedicated **`std::thread`** (NOT a `tokio`
+//! . The probe runs on a dedicated **`std::thread`** (NOT a `tokio`
 //! worker, NOT needing the GIL to make progress), so it can keep sampling
 //! even when the main `asyncio` thread is parked holding the GIL and every
 //! `tokio` worker is blocked on `PyGILState_Ensure`.

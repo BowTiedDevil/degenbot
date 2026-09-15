@@ -1,5 +1,5 @@
 //! Pure workload-analysis cluster (from the retired grab-file dissolution,
-//! ergo epic `5WCRWZ` task 2): the solve-bin sizing seam (`solve_bin_count`,
+//!): the solve-bin sizing seam (`solve_bin_count`,
 //! P6YXA6), the LPT pre-balanced partition (`lpt_partition`, RAYPAR T3), the
 //! named cordon-fallback seat plan (`plan_bins` + `SeatPlan` +
 //! `CordonFallbackDecision`, LW-T7), and the resolve-time cost proxies
@@ -295,7 +295,7 @@ mod lpt_partition_tests {
 }
 #[cfg(test)]
 mod dispatch_binning_properties {
-    //! JXCAR4 (epic 64ZQLA): solver dispatch binning properties over
+    //! JXCAR4 : solver dispatch binning properties over
     //! ARBITRARY item counts, cost shapes and seat shapes. The spawn-seam
     //! invariant (`FleetSolveExecutor::spawn` aborts on a bin >= the
     //! structural seat count, commit `ccc148275`) must never be the

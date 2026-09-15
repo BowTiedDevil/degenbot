@@ -1,4 +1,4 @@
-//! Exact affine-shifted Möbius closed form for a single path piece (ergo EHSWSX).
+//! Exact affine-shifted Möbius closed form for a single path piece .
 //!
 //! Within one ending-range tuple piece, an N-hop V2/CL path's output is
 //! EXACTLY Möbius in the path input `x`: per-hop constant-product maps

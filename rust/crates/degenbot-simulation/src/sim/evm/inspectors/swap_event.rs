@@ -228,7 +228,7 @@ pub(super) struct SwapEventBuffer {
     /// V4/V3 swap events from `swaps`, but they land here so a driver can
     /// compare the ACTUAL swap output (`out_a'`) to the solver's predicted
     /// `hop_outputs[0]` — the decisive state-divergence-vs-composer-bug test
-    /// (ergo `TR6GWT`). Drained via [`SwapEventCaptureHandle::take_reverted_swaps`].
+    /// . Drained via [`SwapEventCaptureHandle::take_reverted_swaps`].
     pub reverted_swaps: Vec<CapturedSwap>,
     /// Per-frame tentative buffers (top = innermost frame). A swap decoded by
     /// `log_full` lands in the top buffer; on `frame_end` it's either merged
@@ -358,7 +358,6 @@ impl SwapEventCaptureHandle {
     /// lets a driver compare the actual swap output to the solver's predicted
     /// `hop_outputs` for a reverting path — the decisive
     /// state-divergence-vs-composer-bug test for V4 `CurrencyNotSettled`
-    /// (ergo `TR6GWT`).
     #[must_use]
     pub fn take_reverted_swaps(&self) -> Vec<CapturedSwap> {
         let mut buf = self.buf.borrow_mut();

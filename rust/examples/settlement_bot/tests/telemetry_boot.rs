@@ -4,7 +4,6 @@
     reason = "integration test asserts on the known-valid example boot output"
 )]
 //! G6 telemetry acceptance for the standalone settlement-bot example
-//! (ergo ZOBXVC, epic RGZG4S).
 //!
 //! Shells the built example against the frozen parity.db fixture and asserts
 //! the pure-Rust driver now boots the same observability stack the Python

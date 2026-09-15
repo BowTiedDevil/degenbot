@@ -550,7 +550,7 @@ fn register_v4_pool_rejects_fee_exceeding_encoder_limit() {
     // V4_SWAP_COMPACT and V4_SWAP_DYNAMIC (the contract masks `& 65535`).
     // A static fee > 65535 is protocol-valid (`< 1 << 24`, not the
     // dynamic-fee flag) but un-encodable — and unprofitable (32%+ per
-    // swap). Reject at admission (ergo DPODAZ), mirroring the dynamic-fee
+    // swap). Reject at admission , mirroring the dynamic-fee
     // refusal, so these pools never enter the path graph.
     use crate::bot_core::RegisterV4PoolError;
     let mut core = BotState::new();
@@ -819,7 +819,7 @@ fn register_v2_pool_rejects_duplicate_address_as_already_registered() {
 // (the type system enforces the `uint112` bound), so there is nothing to
 // test here.
 // -----------------------------------------------------------------------
-// Spec-bound admission (epic WOYYS2 / task 24KNGF).
+// Spec-bound admission .
 // `register_v3_pool` is a typed `Result` that rejects (a) duplicate
 // address and (b) out-of-spec `sqrtPriceX96` / `tick` / `fee` /
 // `tickSpacing`, rather than `assert!`-panicking on (a) and silently

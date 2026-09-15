@@ -1,7 +1,7 @@
 //! Tier-3a byte-exact oracle for `compute_swap_step` (V3 + V4) against the
 //! canonical Uniswap core libraries run as real EVM bytecode in revm.
 //!
-//! Ergo task `OZRQS6` (epic `UP5NH6`). Closes the "Rust == Rust" blind spot
+//! Ergo task `OZRQS6` . Closes the "Rust == Rust" blind spot
 //! of Tier 2: the existing `swap_math.rs` proptest checks V3/V4 INVARIANTS
 //! (amountIn+fee ≤ amountRemaining; sqrtPriceNext in range) — NOT byte-exact
 //! equality with the canonical library. This test runs the REAL v3-core
@@ -396,8 +396,7 @@ fn v4_compute_swap_step_pinned_fee1_tiny_liquidity_first_step() {
 
 #[test]
 fn v4_compute_swap_step_pinned_fee1_final_partial_step() {
-    // The FINAL (partial/"can't reach target") step of ergo UO3JM4's fee-1
-    // ofz-repro 20000-token swap: after crossing ticks 1,2,3 the swap lands
+    // The FINAL (partial/"can't reach target") step of    // ofz-repro 20000-token swap: after crossing ticks 1,2,3 the swap lands
     // partway into tick 4's range. Sim yields amt_out=5544; on-chain 5547.
     let sqrt_current = U256::from(79_240_047_035_742_135_098_198_828_268u128);
     let sqrt_target = U256::from(79_242_376_975_757_412_558_469_338_999u128);

@@ -23,18 +23,18 @@
 //! Slice 1 covers ledger rows 1–5 (CLI, driver config, RPC-URI cascade, DB
 //! path, snapshot-load boot slice). Rows 6–8 (the engine handshake, the
 //! result-batch stream, and path registration) are driven through the public
-//! `degenbot::EngineDriver` (ADR-050 / Gap G1, ergo 5XOGRK):
+//! `degenbot::EngineDriver` (ADR-050 / Gap G1,):
 //! `EngineDriver::start` → `take_result_receiver` → `resume` (the driver owns
 //! the `S+1..W` auto-backfill) → `stop`. The G3 registration pipeline lands
-//! driver-side (ergo XFEJUG). Gap G4 (ergo L4E7RI) adds the driver-side
+//! driver-side . Gap G4  adds the driver-side
 //! `consume`/`dispatch`/`sim_submit`/`submission` modules mirroring rows
-//! 15–18. Gap G5 (ergo KPLWUM) adds `session_watch` (the typed end-state
+//! 15–18. Gap G5  adds `session_watch` (the typed end-state
 //! verdict + heartbeat/stall watchdog over the consume loop) and
 //! `operator_channel` (the `--operator-socket` JSON-lines channel; row 19/20).
 //! The live handshake is gated behind `SMOKE_RPC_URL` so the example
 //! stays CI-runnable; without it (or with `--smoke-offline`) it stops after the
 //! parity-ledger print. Once live registration completes the arm enters the
-//! RSP-10 run-until-shutdown phase (`run_loop`, ergo SGCAJ5) — the
+//! RSP-10 run-until-shutdown phase (`run_loop`,) — the
 //! `BotRunner.run` main-loop shape: consumer + watch + operator channel stay
 //! alive until SIGINT or the bounded `DEGENBOT_SMOKE_MAX_SECS` window, with
 //! per-block heartbeats for observation runs. `--operator-inert` (with `--operator-socket`) is the
@@ -94,7 +94,7 @@ const PATH_SUPPRESS_RETRY_INTERVAL: u64 = 100;
 
 /// `ETH_MAINNET_ALLOWED_TOKENS` (runner/config.py) — checksummed, lowercase-
 /// compared by the path predicate (row 13; implemented by the `policy` module,
-/// ergo task XFEJUG). Kept here so the config dump reports the same value the
+///). Kept here so the config dump reports the same value the
 /// Python config would.
 const ALLOWED_INTERMEDIATE_TOKENS: [&str; 11] = [
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
@@ -147,7 +147,7 @@ const DEFAULT_EXECUTOR_OWNER: &str = "0x9C56a29c7231974c269E24F9FB3c29203039089E
 
 /// Dry-run operator placeholders (runner/config.py): Anvil account-0 — a
 /// valid secp256k1 key that never signs; the not-yet-wired submit leaf (G4,
-/// ergo L4E7RI) must keep the same never-sign guarantee.
+///) must keep the same never-sign guarantee.
 const DRY_RUN_OPERATOR_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const DRY_RUN_OPERATOR_ADDRESS: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
@@ -490,7 +490,7 @@ impl SettlementBotConfig {
 // ── Parity ledger boot report ─────────────────────────────────────────────
 
 /// Machine-checkable parity ledger rows for the boot report. The RSP-8
-/// running gate (ergo 23DLCY) diffs these lines between the Python and Rust
+/// running gate  diffs these lines between the Python and Rust
 /// drivers; `grep "^parity-ledger"` is the extraction contract.
 fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
     let s = snapshot_seed_block.map_or("None".to_string(), |s| s.to_string());
@@ -550,7 +550,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = parse_cli(&args)?;
 
-    // ── Telemetry boot prelude (Gap G6, ergo ZOBXVC) ──
+    // ── Telemetry boot prelude (Gap G6,) ──
     // The Python driver boots its subscriber / OTLP / metrics stack at `_ffi`
     // import; the standalone parity twin boots the same stack here, before any
     // driver diagnostic. Telemetry failure degrades loudly but never aborts the
@@ -643,7 +643,7 @@ fn run() -> Result<(), String> {
 
     // ── Candidate-pool discovery (ledger row 11): the read-only enumeration
     // `build_paths.py` performs over its SQLAlchemy ORM, now reachable through
-    // the umbrella on the SAME held-tx snapshot handle (Gap G2, ergo YFIOSF).
+    // the umbrella on the SAME held-tx snapshot handle (Gap G2,).
     // The call is the compile-time proof that a `cargo add degenbot` consumer
     // reaches `degenbot::db::SnapshotDb::fetch_discovery_rows`; the count is
     // the runtime witness.
@@ -671,7 +671,7 @@ fn run() -> Result<(), String> {
         "boot: discovery enumerated"
     );
 
-    // ── G3 pipeline (ledger rows 9 + 12 + 13, ergo XFEJUG) ──
+    // ── G3 pipeline (ledger rows 9 + 12 + 13,) ──
     // 1. Permutation filter → per-depth pool-kind filter + requested kinds.
     let perms: BTreeSet<String> = cfg
         .permutation_filter
@@ -783,7 +783,7 @@ fn run() -> Result<(), String> {
 
     print_parity_ledger(seed_block);
 
-    // ── G5 operator channel (ledger row 20, ergo KPLWUM) ──
+    // ── G5 operator channel (ledger row 20,) ──
     // A documented inert mode: serve the operator Unix socket WITHOUT RPC so
     // the wire contract is exercisable offline (the live arm needs
     // `SMOKE_RPC_URL`; this is the CI/integration test surface). The default
@@ -862,10 +862,10 @@ fn run() -> Result<(), String> {
         .ok_or_else(|| "EngineDriver result receiver already taken".to_string())?;
     let runtime = degenbot::runtime::get_runtime();
     let outcome = runtime.block_on(async {
-        // G4 (ergo L4E7RI): the result-batch consumer runs concurrently with
+        // G4 : the result-batch consumer runs concurrently with
         // the live registration arm; `driver.stop()` below closes the channel
         // so its pending `recv()` sees end-of-stream exactly once (ADR-050 D6).
-        // G5 (ergo KPLWUM): the consumer beats a session-watch heartbeat per
+        // G5 : the consumer beats a session-watch heartbeat per
         // batch and the watch aborts it (`WatchdogTripped`) if the loop stalls.
         let heartbeat = session_watch::Heartbeat::new();
         // RSP-10: the shared progress view the run-loop heartbeat reads.
@@ -1004,7 +1004,7 @@ fn run() -> Result<(), String> {
             "g3: live registration arm complete"
         );
 
-        // ── RSP-10 run-until-shutdown phase (ergo SGCAJ5) ──
+        // ── RSP-10 run-until-shutdown phase  ──
         // Registration is done; mirror `BotRunner.run`'s main loop and hold
         // the session (consumer + watch + operator channel) open until SIGINT
         // or the env-gated bounded observation window. `run_live` ran first,

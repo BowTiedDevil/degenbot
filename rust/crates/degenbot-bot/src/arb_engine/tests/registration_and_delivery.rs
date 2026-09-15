@@ -1290,7 +1290,7 @@ fn finalize_block_threads_metadata_into_send() {
         "expected the profitable path in fresh/updated"
     );
     // Guard advanced + logs flag cleared — now read from the engine
-    // itself (the pump out-params were retired in ergo task LEZJAS).
+    // itself (the pump out-params were retired in).
     assert_eq!(last_solved_block(&engine,), 10);
     assert!(!has_logs_this_block(&engine,));
 }

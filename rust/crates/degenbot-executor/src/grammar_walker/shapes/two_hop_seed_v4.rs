@@ -196,7 +196,7 @@ mod walk_probe {
         &src[..i]
     }
 
-    /// RED by design (T1 RKNRJO, epic 6SWFBS): 60 literal `PlanStep::` sites
+    /// RED by design : 60 literal `PlanStep::` sites
     /// today. Goes GREEN when T3 (CP6BNJ) walks the v2v4/v3v4 arms onto
     /// `mechanics` + the shared capture/bridge helpers; then it stays put as
     /// the honesty invariant that no per-family Plan bodies reappear (D6

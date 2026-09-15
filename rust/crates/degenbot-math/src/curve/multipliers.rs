@@ -2,7 +2,7 @@
 //!
 //! The single Rust source of truth for the Curve scaling multipliers a pool's
 //! `xp` (rate-adjusted balances) and swap outputs are computed from
-//! (ADR-005 slice 11c, ergo `JLAPAC`). Both the Rust construction path
+//! . Both the Rust construction path
 //! (`degenbot-bot` `build_curve_pool`) and the `degenbot._ffi.curve_math`
 //! Python surface call this, so the derivation lives in exactly one place.
 //!

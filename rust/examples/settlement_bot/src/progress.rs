@@ -1,4 +1,4 @@
-//! Registration-bound parity (RSP-11, ergo `KETJNN`): the
+//! Registration-bound parity : the
 //! `DEGENBOT_MAX_PATHS` cap and the time-throttled registration-progress
 //! summary, mirroring `src/degenbot/runner/build_paths.py`.
 //!

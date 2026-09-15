@@ -48,12 +48,12 @@ pub struct PyDispatchOutcome {
     pub(crate) candidate_count: usize,
     pub(crate) suppressed_count: usize,
     pub(crate) thin_dropped: usize,
-    /// The per-call pool-divergence skip count (ergo `GMWYIU`) — candidates
+    /// The per-call pool-divergence skip count  — candidates
     /// dropped pre-sim because they routed through a pool flagged `SolverCalc`
     /// within the decay window. Mirrors `thin_dropped` / `suppressed_count`;
     /// the lifetime tally lives on `PyDispatcher.total_divergent_dropped`.
     pub(crate) divergent_dropped: usize,
-    /// The per-call `FoT` skip count (ergo `3O535Q`) — candidates dropped
+    /// The per-call `FoT` skip count  — candidates dropped
     /// pre-sim because a hop's input token was FoT-confirmed. Mirrors
     /// `divergent_dropped`; the lifetime tally lives on
     /// `PyDispatcher.total_fot_dropped`.
@@ -67,7 +67,7 @@ pub struct PyDispatchOutcome {
     /// `fail_buckets`; this preserves per-candidate attribution.
     pub(crate) failures: Vec<SimFailure>,
     /// The SUCCESS-path captured swaps, one entry per profitable survivor,
-    /// keyed by `path_id` (ergo epic 63I7WJ). The revert-path swaps already
+    /// keyed by `path_id` . The revert-path swaps already
     /// ride on each `SimFailure` (surfaced via `failures()`); this is the
     /// matching success-path surface so the step-5 classifier re-point can
     /// consume the decoded swap amounts instead of the `diagnostic.rs`
@@ -161,7 +161,7 @@ impl PyDispatchOutcome {
         self.thin_dropped
     }
 
-    /// The per-call pool-divergence skip count (ergo `GMWYIU`) — candidates
+    /// The per-call pool-divergence skip count  — candidates
     /// dropped pre-sim because they routed through a pool flagged `SolverCalc`
     /// within the decay window. Mirrors `thin_dropped` / `suppressed_count`.
     #[getter]
@@ -170,7 +170,7 @@ impl PyDispatchOutcome {
     }
 
     /// The per-call candidate count dropped because a hop's input token was
-    /// FoT-confirmed (ergo `3O535Q`).
+    /// FoT-confirmed .
     #[getter]
     fn fot_dropped(&self) -> usize {
         self.fot_dropped
@@ -235,11 +235,11 @@ impl PyDispatchOutcome {
     ///     attribution for `execute()` reverts: `depth` (`int`), `target`
     ///     (`str` address), `selector` (`str` 4-byte hex), `revert_data`
     ///     (`str` hex), `label` (`str`). `None` for orchestration-only buckets
-    ///     + the balance-decode branch (ergo epic 63I7WJ task 3AJ4I4).
+    ///     + the balance-decode branch .
     ///   - `captured_swaps` (`list[dict]`) — the V2/V3/V4 swap events captured
     ///     before the revert (per-swap `family`/`emitter`/`amount0`/`amount1`/"+ "
     ///     `sqrt_price_x96`/`liquidity`/`tick`). Empty for orchestration-only
-    ///     buckets + the balance-decode branch (ergo epic 63I7WJ task SUD5UT).
+    ///     buckets + the balance-decode branch .
     ///
     /// Consumed by the Python companion's `[sim-fail]` renderer so the
     /// operator can identify WHICH path reverted against WHICH pools.
@@ -424,7 +424,7 @@ fn hop_to_py_dict<'py>(
 /// `sqrt_price_x96/liquidity/tick`) — the shared shape the revert-path
 /// `failures()` + the success-path `profitable_captured_swaps()` getters both
 /// emit, so the Python consumer sees one captured-swap dict shape regardless of
-/// whether the swap came from a reverted or a profitable run (ergo epic 63I7WJ).
+/// whether the swap came from a reverted or a profitable run .
 pub(crate) fn captured_swap_to_dict<'py>(
     py: Python<'py>,
     s: &CapturedSwap,

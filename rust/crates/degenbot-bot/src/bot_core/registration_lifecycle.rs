@@ -48,7 +48,7 @@ use super::{BotState, PoolTickCoverage, TickInfo};
 ///   must block `Live` (never auto-repair); an [`LiquidityVerifyError::Rpc`] is
 ///   a transient transport failure.
 /// - [`RegistrationLifecycleError::MissingStateView`] is the D-C no-config
-///   fail-fast: a **tracked** V4 pool requires a `state_view` contract address
+/// fail-fast: a **tracked** V4 pool requires a `state_view` contract address
 ///   (the `eth_call` target for V4 verification) and none was supplied. An
 ///   unverifiable tracked pool must never reach `Live`.
 #[derive(Debug)]
@@ -296,7 +296,7 @@ where
         .set_v4_pool_quarantined(pool_manager, pool_id);
 
     // Step-1: verify the pinned snapshot seed @ snapshot block (CBCH6H).
-    // Anchored at the pool's OWN liquidity clock (task 4TWM7C/B1), falling back
+    // Anchored at the pool's OWN liquidity clock , falling back
     // to the aggregate `S` only when the pool clock is unset — see the V3
     // commentary above.
     if let Some(snapshot_block) = snapshot_block {

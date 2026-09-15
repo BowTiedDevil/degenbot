@@ -1,4 +1,4 @@
-//! Integration tests for the `database` command arms (ergo 4DIBGR).
+//! Integration tests for the `database` command arms .
 //!
 //! Fixture conventions mirror `degenbot-db`'s own tests: temp dirs, never committed
 //! fixtures. States exercised: Rust-owned (fresh create), legacy-marker,

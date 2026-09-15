@@ -471,7 +471,7 @@ impl IntV3TickRangeSequence {
 
             // Walk the full crossing entry → [interior word boundaries] →
             // exit, flooring `computeSwapStep` per word boundary like
-            // `v3_simulate_swap` (ergo E7ALWT). For a collapsed multi-word
+            // `v3_simulate_swap` . For a collapsed multi-word
             // span this restores the per-step rounding the prior single-step
             // model dropped (the on-chain V3 `+13` class).
             let (gross_input, output) = full_crossing_of_range(sp_start, exit_price, r);

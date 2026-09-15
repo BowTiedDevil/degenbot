@@ -1,4 +1,4 @@
-//! LW-T9 hard cutover (ergo CQLMM2): the fleet stance is GONE — the worker
+//! LW-T9 hard cutover : the fleet stance is GONE — the worker
 //! fleet is the only behavior. Standalone integration-test binary: the
 //! process-global holder is safe here (nobody else installs first).
 //!
@@ -33,7 +33,7 @@ fn with_core_boots_from_the_installed_config_without_a_stance() {
     ));
     // Construction packs its stances from the INSTALLED loader config and
     // unconditionally installs the fleet boots (no stance gate survives).
-    // The ONE external construction seam (epic 5TBT7L Q2b): the engine type
+    // The ONE external construction seam : the engine type
     // is `pub(crate)`; consumers cross `EngineStages`.
     let _stages = degenbot_bot::arb_engine::EngineStages::with_core(
         core,

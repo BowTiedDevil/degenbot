@@ -1,7 +1,7 @@
 //! `PyO3` wrapper for the arbitrage engine stage surface.
 //!
 //! [`PyArbEngine`] holds the shared [`EngineStages`] handle — the ONE
-//! external seam (epic 5TBT7L Q2b). The core engine type is crate-private
+//! external seam . The core engine type is crate-private
 //! machinery behind that seam; every Python-facing method crosses the stage
 //! surface and never names the engine.
 
@@ -63,7 +63,7 @@ pub(crate) use degenbot_solvers::mixed::{HopType, PoolHop, SolvePathResult};
     module = "degenbot._ffi"
 )]
 pub struct PyArbEngine {
-    /// The ONE external engine seam (epic 5TBT7L Q2b).
+    /// The ONE external engine seam .
     stages: Arc<EngineStages>,
 
     /// ADR-006 D4 (T3) / ADR-050 D7: the pump session (coordinator,

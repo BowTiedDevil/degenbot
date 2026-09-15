@@ -1240,7 +1240,7 @@ const FEE1_REPRO_SQ_X96: u128 = 79_231_869_042_278_935_382_727_675_145;
 const FEE1_REPRO_LIQ: u128 = 94_294_142;
 const FEE1_REPRO_FEE: u32 = 1;
 
-/// Clean fee-1 byte-exact discriminator (ergo UO3JM4): a PHYSICALLY VALID
+/// Clean fee-1 byte-exact discriminator : a PHYSICALLY VALID
 /// single-position state (lower tick +liq, upper tick -liq; constant active
 /// liquidity L across the whole walk), seeded at the exact reproduction
 /// scalars (`sq=79_231_869_042_278_935_382_727_675_145`, `liq=94294142`, fee=1).
@@ -1451,7 +1451,7 @@ fn v4_pool_fee1_protocol_fee_override_matches_sim() {
     }
 }
 
-/// Clean multi-tick fee-1 byte-exact oracle (ergo UO3JM4): mirrors the proven
+/// Clean multi-tick fee-1 byte-exact oracle : mirrors the proven
 /// fee-3000 dense test (`v4_pool_dense_swap_matches_sim_byte_exact`) but with
 /// fee=1 and a smaller per-position liquidity, crossing 4 of 8 tick boundaries
 /// (liquidity stays healthy — never drains to the degenerate tail-0 regime).

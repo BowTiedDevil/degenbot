@@ -1,6 +1,6 @@
 //! Telemetry boot prelude for the standalone settlement-bot driver.
 //!
-//! Gap G6 (ergo ZOBXVC, epic RGZG4S): the pure-Rust parity twin of the Python
+//! Gap G6 : the pure-Rust parity twin of the Python
 //! driver must boot the SAME observability stack the Python driver boots, in
 //! the same order, so the boot census / telemetry announcements are observable
 //! from the standalone binary. Before this module the example exposed no

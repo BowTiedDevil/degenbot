@@ -33,7 +33,7 @@
 //! (`BlockMetadata`). It carries the coordinate only — no `BotState`
 //! representation attaches here; the `StateView` mechanism is a separate
 //! data-plane decision (epic spike). `StageMachine::context_for` mints contexts
-//! at the pump's decision points; the stage-machine task (7NFYQW) makes the
+//! at the pump's decision points; the stage-machine task  makes the
 //! stages consume them.
 
 use crate::bot_core::BlockMetadata;

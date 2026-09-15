@@ -813,7 +813,7 @@ fn int_simulate_v3_v3_path(
 }
 
 // ---------------------------------------------------------------------------
-// Active-set piecewise Möbius walk (ergo 7J22EQ)
+// Active-set piecewise Möbius walk
 // ---------------------------------------------------------------------------
 //
 // The path profit function `P(x) = O(x) − x` over any mix of constant-product
@@ -1063,7 +1063,7 @@ fn build_shifted_piece_hops(
         .collect()
 }
 
-/// Per-piece entry anchor (ergo EHSWSX): the exact affine-shifted Möbius
+/// Per-piece entry anchor : the exact affine-shifted Möbius
 /// argmax of the piece's ending-range composition. Within one ending-range
 /// piece the N-hop output is exactly Möbius (SL(2) closure of the per-hop CP
 /// maps composed with the tick-crossing translations), so the argmax of
@@ -4900,7 +4900,7 @@ mod tests {
         }
     }
 
-    /// RED→GREEN (7J22EQ): a 2-hop CL cycle whose argmax piece is at
+    /// RED→GREEN : a 2-hop CL cycle whose argmax piece is at
     /// hop-2 range index 10 — strictly beyond the legacy
     /// `max_candidates = 10` enumeration prefix (indices 0..=9).
     ///
@@ -4912,7 +4912,7 @@ mod tests {
     /// *inside* range index 10. The capped enumeration only proposes ending
     /// ranges 0..=9 (tick-thin liquidity; near-zero capacity) and misses the
     /// profit concentrated in range 10.
-    /// RED→GREEN (7J22EQ): a 2-hop CL cycle whose argmax piece is at
+    /// RED→GREEN : a 2-hop CL cycle whose argmax piece is at
     /// hop-2 range index 10 — strictly beyond the legacy
     /// `max_candidates = 10` enumeration prefix (indices 0..=9).
     ///
@@ -4976,7 +4976,7 @@ mod tests {
         assert!(profit >= reference_profit);
     }
 
-    /// RED→GREEN (7J22EQ): mixed V2→CL 3-hop path with the same
+    /// RED→GREEN : mixed V2→CL 3-hop path with the same
     /// deep-late-liquidity CL construction; the CL hop's argmax piece sits
     /// beyond the legacy 10-tuple prefix.
     #[test]

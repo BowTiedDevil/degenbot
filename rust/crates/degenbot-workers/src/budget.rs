@@ -1064,7 +1064,7 @@ mod tests {
     }
 
     mod cross_authority {
-        //! TTANQJ (epic 64ZQLA): the settled contract between the two CPU
+        //! TTANQJ : the settled contract between the two CPU
         //! sizing authorities over ARBITRARY quota shapes. Fleet allocation
         //! floors: `seats = max(1, floor(Q) - headroom)`. `cpu_budget`
         //! worker-existence ceils: `solve = max(1, min(ceil(cgroup Q),
@@ -1153,7 +1153,7 @@ mod tests {
     }
 
     mod derivation {
-        //! CVURM7 (epic 64ZQLA): `derive` over ARBITRARY quotas AND
+        //! CVURM7 : `derive` over ARBITRARY quotas AND
         //! overrides. Total over the input space: a typed `Ok` holding the
         //! invariants (integer shares sum to at most the floor; the
         //! fractional remainder banks exactly `Q - declared_sum`; seats

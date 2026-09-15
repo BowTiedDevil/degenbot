@@ -1,4 +1,4 @@
-//! Pure-Rust pool-updater chunk-loop RPC + decode bridge (epic `2SFL6I`).
+//! Pure-Rust pool-updater chunk-loop RPC + decode bridge .
 //!
 //! This crate is the typed async glue between three existing core crates:
 //! - [`degenbot_rpc`] (`AlloyProvider` + `LogFilter` + `fetch_logs_chunked`)

@@ -5,7 +5,7 @@
 //! Pure functions (no revm, no pyo3) that pack the engine's `V3PoolState`
 //! typed fields into the EXACT `bytes32` storage layout the canonical
 //! UniswapV3Pool bytecode reads during a real `swap()` callback. Used by the
-//! Tier-3 on-chain accuracy oracle (ergo epic `UP5NH6`, task `NH6NLJ`) to
+//! Tier-3 on-chain accuracy oracle  to
 //! seed an offline revm `CacheDB` from a `V3PoolState` so a `Pool.swap` call
 //! against real V3-core bytecode reproduces the engine's swap math — closing
 //! the "Rust == Rust" blind spot of Tier 2 (ADR-005 dual-path coverage).

@@ -60,7 +60,7 @@ pub use crate::grammar_plan::{
 
 // The pure V2/V3 3-hop scaffolding (seed_address_table, guard_no_zeroed_output,
 // checked_swap_input, finish_plan) was decommissioned by the facts-driven T5
-// migration (epic 6SU5LM): every pure V2/V3 2-hop + 3-hop builder now delegates
+// migration : every pure V2/V3 2-hop + 3-hop builder now delegates
 // to `derive_plan`, which inlines the equivalent guards.
 
 // ═══════════════════════════════════════════════════════════════════════════// ═══════════════════════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 //! Uniswap V2/V3/V4 `PoolCreated` event decoders.
 //!
-//! The chunk-loop fetcher (epic `2SFL6I`) decodes `PoolCreated` events from
+//! The chunk-loop fetcher  decodes `PoolCreated` events from
 //! a block range to discover pools for the DB write seams. This module is
 //! the pure-Rust decode leaf — alloy-only, no `pyo3`/`tokio`/`degenbot-core`/
 //! `degenbot-abi` (the same constraint as [`crate::v3_mint_burn_decoder`] +
@@ -78,7 +78,7 @@
 //! ```text
 //! event Initialize(
 //!     V4PoolId indexed id,
-//!     address indexed currency0,
+//! address indexed currency0,
 //!     address indexed currency1,
 //!     uint24 fee,
 //!     int24 tickSpacing,

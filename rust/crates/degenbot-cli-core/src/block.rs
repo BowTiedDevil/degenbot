@@ -1,4 +1,4 @@
-//! The `--to-block` block-identifier port (ergo FTVJ6L).
+//! The `--to-block` block-identifier port .
 //!
 //! Mirrors `cli/pool.py::_resolve_to_block` and its `cli/aave.py` twin exactly:
 //!

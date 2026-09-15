@@ -16,7 +16,6 @@
 //! revision) via `stableOutGivenIn*V2` harness entry points that embed the
 //! deployed `_calculateInvariant(amp, balances, roundUp)` VERBATIM — a
 //! non-circular on-chain reference for the engine's `calculate_invariant_deployed`
-//! (ergo task `SZHM2Y`).
 //!
 //! ## Harness bytecode (committed)
 //!

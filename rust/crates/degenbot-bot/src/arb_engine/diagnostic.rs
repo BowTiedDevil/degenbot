@@ -511,7 +511,7 @@ fn build_engine_pool_state(
             })
         }
         // Solidly-stable diagnostics land with the resolve+solve wiring
-        // (task 2OWLDL/DMPSNG). Until then, a Solidly hop records a
+        // . Until then, a Solidly hop records a
         // "not yet wired" placeholder; same for Balancer stable and weighted
         // — the path is still solvable via the other hops' diagnostic data.
         HopType::SolidlyStable

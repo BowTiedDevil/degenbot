@@ -1,4 +1,4 @@
-//! Shared fixtures for the per-shape walk probes (T1 RKNRJO, epic 6SWFBS).
+//! Shared fixtures for the per-shape walk probes .
 //!
 //! Mirrors `tests/glopcn_bytepin.rs` (addresses, hop builders, amount sets,
 //! option matrix, FNV-1a hash) so each shape file pins the same stream space

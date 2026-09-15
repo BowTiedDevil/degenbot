@@ -119,7 +119,7 @@ impl EngineStages {
     /// deferral concept). This is the ONE engine access to the ledger
     /// (engine-side ownership was deliberately avoided — LXDY4C); lock order
     /// stays engine mutex outer, ledger mutex inner, matching `on_resolve`.
-    /// THE external construction seam (epic 5TBT7L Q2b): builds the engine
+    /// THE external construction seam : builds the engine
     /// itself from the shared core + the caller's typed config, so no consumer
     /// outside `degenbot-bot` ever names the engine type. The deferred-path
     /// re-record hook installs exactly as in [`Self::new`].
@@ -684,7 +684,7 @@ impl StageHandlers for EngineStages {
     /// solve cycle (PWPPAZ T1).
     fn on_finalize(&self, work: &Finalize) -> Result<FinalizeOutcome, StageError> {
         // The guarded boundary advance + terminal publish, inlined from the
-        // retired ArbitrageEngine::finalize_block (epic 5TBT7L T4). The
+        // retired ArbitrageEngine::finalize_block . The
         // block > last_solved_block guard lives on the cursor
         // (BlockCursor::finalize); the terminal publish rides the same
         // guard. Bookkeeping-only: this method NEVER runs a solve cycle.
@@ -857,7 +857,7 @@ mod candidate2_seam_pins {
             fn set_solve_anchor(&self, _t: TwinProbeToken);
             fn record_logs_this_block(&self, _t: TwinProbeToken);
             fn on_pump_ended(&self, _t: TwinProbeToken);
-            // Full driver surface (ergo 2NLZE3): the eight `StageHandlers`
+            // Full driver surface : the eight `StageHandlers`
             // hooks + the remaining `PumpControl` methods are TRAIT methods
             // on the stage surface — an inherent `EngineStages` twin would
             // shadow them in the method calls below and fail to compile.
@@ -917,7 +917,7 @@ mod candidate2_seam_pins {
         stages.has_dirty_paths(TwinProbeToken);
         stages.notify_block(TwinProbeToken);
     }
-    /// Driver-surface twin probe (ergo 2NLZE3 T1, epic 5TBT7L).
+    /// Driver-surface twin probe .
     ///
     /// The candidate-2 end state makes the `EngineStages` stage surface the
     /// ONE driver interface: the pump drives `run_solve_cycle`,
@@ -1110,7 +1110,7 @@ mod construction_ledger_pins {
 }
 // ======================================================================
 // ergo 5WCRWZ T7 — THE final structural gate for the solver_dispatch
-// dissolution (epic 5WCRWZ, slices T1–T7).
+// dissolution .
 //
 // Provenance: T1 moved the heavy-path capture diagnostics to
 // `arb_engine::solver_capture`; T2 the workload partition to
@@ -1170,7 +1170,7 @@ mod dissolution_complete {
         }
         // The detached-merge chain `self.cycle.merge_detached_item(` moved
         // to its sidecar caller, and the pre-cycle expiry was relocated onto
-        // the stage surface — event_routing.rs is GONE (epic 5TBT7L T4).
+        // the stage surface — event_routing.rs is GONE .
         for marker in ["fn run_engine_cycle(", "fn expire_buffered_events("] {
             assert!(
                 ENGINE_STAGES.contains(marker),

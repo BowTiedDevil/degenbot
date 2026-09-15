@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn pool_update_block_tracks_forward_sync_and_returns_zero_for_unknown() {
     // AV42C7 accessor: `pool_update_block` is the per-pool freshness
-    // signal the block-boundary FSM (ergo 3M5PO5/ZU7RAF) will use to
+    // signal the block-boundary FSM  will use to
     // re-solve at block completion. Registers a V2 pool at `update_block=0`,
     // applies a forward Sync, and asserts the accessor advances + returns 0
     // for an unregistered id (the FSM treats 0 as stale: a missing pool

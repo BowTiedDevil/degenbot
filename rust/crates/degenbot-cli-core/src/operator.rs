@@ -1,5 +1,5 @@
 //! The operator command-channel client: JSON-lines over a Unix domain socket
-//! (ADR-051 D6; ergo 6RNZDT).
+//! (ADR-051 D6;).
 //!
 //! `degenbot fleet posture [show|set]` and `degenbot path [add|discover]` are
 //! clients of a LIVE bot's `OperatorServer`. The versioned wire protocol is

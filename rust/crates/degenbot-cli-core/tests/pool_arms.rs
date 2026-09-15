@@ -1,4 +1,4 @@
-//! Integration tests for the `pool` command arms (ergo FTVJ6L).
+//! Integration tests for the `pool` command arms .
 //!
 //! The `--to-block` semantics are unit-tested purely (no RPC); the arm tests
 //! cover the flag parse, the pre-RPC refusals, and the prompt/exit-code

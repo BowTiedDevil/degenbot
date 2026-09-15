@@ -4,7 +4,7 @@
     clippy::doc_markdown,
     reason = "boot-gate integration test asserts on known-valid fixture output; the ledger identifiers in the parse contract are deliberately unbackticked in prose"
 )]
-//! RSP-8 fixture boot gate — the executable parity ledger (ergo 23DLCY).
+//! RSP-8 fixture boot gate — the executable parity ledger .
 //!
 //! Shells the built settlement-bot binary against the frozen parity.db
 //! fixture with no RPC (--smoke-offline) and diffs its machine-checkable
@@ -253,7 +253,7 @@ fn run_binary(discovery_chain_id: Option<&str>) -> String {
     command.env("DEGENBOT_DB_AUTO_HEAL", "0");
     command.env("DEGENBOT_RPC_HTTP_CHAINID_1", "http://127.0.0.1:1");
     command.env("DEGENBOT_RPC_WS_CHAINID_1", "ws://127.0.0.1:1");
-    // Hermetic telemetry (Gap G6 / ergo ZOBXVC): the example now boots the
+    // Hermetic telemetry (Gap G6 /): the example now boots the
     // Prometheus scrape endpoint, so bind an ephemeral port per test binary
     // instead of racing the default 127.0.0.1:9464 across parallel tests.
     command.env("DEGENBOT_METRICS_ADDR", "127.0.0.1:0");

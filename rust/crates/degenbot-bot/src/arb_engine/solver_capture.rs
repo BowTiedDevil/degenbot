@@ -1,5 +1,5 @@
 //! Heavy-path capture diagnostics (from the retired grab-file dissolution,
-//! ergo epic `5WCRWZ` task 1): the one-shot capture of heavy solver inputs
+//!): the one-shot capture of heavy solver inputs
 //! so the offline replay harnesses can be optimized against real captured
 //! pool state without a full bot run.
 //!

@@ -218,7 +218,7 @@ pub enum RegisterV4PoolError {
     /// `V4_SWAP_COMPACT` and `V4_SWAP_DYNAMIC`; any 3-hop composer hits
     /// `u16::try_from(fee).ok()?` and returns `None` → `encode-failed`. Such
     /// pools are also unprofitable (32%+ per swap). Rejected at admission
-    /// (ergo DPODAZ), mirroring [`DynamicFee`], so they never enter the path
+    /// , mirroring [`DynamicFee`], so they never enter the path
     /// graph.
     FeeExceedsEncoderLimit { fee: u32 },
     /// A pool with the same `(pool_manager, pool_id)` is already registered —

@@ -1,4 +1,4 @@
-//! The `fleet` command arms (ADR-051 D6; ergo 6RNZDT).
+//! The `fleet` command arms (ADR-051 D6;).
 //!
 //! Ports `cli/fleet.py`: both verbs are thin clients of a LIVE bot's
 //! `OperatorServer` over the JSON-lines wire protocol in

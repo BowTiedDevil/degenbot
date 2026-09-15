@@ -540,7 +540,7 @@ async fn fetch_v4_tick_data_decodes() {
     assert_eq!(net, 3i128);
 }
 
-// ── PoolBuilder: probe → variant-resolution → build_v2 (task 3FVZF4) ──
+// ── PoolBuilder: probe → variant-resolution → build_v2  ──
 
 #[tokio::test]
 async fn probe_pool_type_dispatches() {
@@ -1219,7 +1219,7 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
 }
 
 // ---------------------------------------------------------------------------
-// Curve detection choreography (task 4EBHRC / epic TV72EG)
+// Curve detection choreography
 // ---------------------------------------------------------------------------
 
 /// ABI-encode a fixed `address[8]` return value.
@@ -1604,7 +1604,7 @@ async fn detect_curve_metapool_3crv_base_fallback() {
 }
 
 // ---------------------------------------------------------------------------
-// Curve build assembly (task 4TPB35 / epic TV72EG)
+// Curve build assembly
 // ---------------------------------------------------------------------------
 
 #[tokio::test]

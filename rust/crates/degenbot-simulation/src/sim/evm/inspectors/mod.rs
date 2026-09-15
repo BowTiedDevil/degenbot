@@ -31,7 +31,7 @@
 //!
 //! # Status
 //!
-//! Prototype (ergo task `2LMT7A`): the inspectors + captured structs land here
+//! Prototype : the inspectors + captured structs land here
 //! as additive, test-only modules. Production wiring into `BlockEvm` +
 //! `SimFailure` deepening + `diagnostic.rs` retirement is gated on the
 //! JHPW5W follow-on implementation-definition task.

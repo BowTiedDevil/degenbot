@@ -1,5 +1,5 @@
 //! Delivery policy — deciding what is worth publishing and pushing it over
-//! an async channel, decoupled from the engine's solve output (ergo BI7UZV).
+//! an async channel, decoupled from the engine's solve output .
 //!
 //! The engine's solve produces a canonical, channel-independent result map
 //! ([`ArbitrageEngine::latest_results`]). This module is the **optional
@@ -87,7 +87,7 @@ impl DeliveryPolicy {
         self.lifecycle.set_result_channel(tx);
     }
     /// Forward a `newHeads` block tick onto the block-notification channel
-    /// (epic 6W35AI). A no-op when no block channel is attached (no-pyo3
+    /// . A no-op when no block channel is attached (no-pyo3
     /// tests / standalone).
     /// Set the profit thresholds for the result batch channel.
     ///

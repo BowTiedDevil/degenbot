@@ -3,7 +3,7 @@
 //! One module owns the block pump's **diagnostic/instrumentation** concern — the
 //! `[DIAG]` header-stall counters, the periodic freeze-probe stats, and the
 //! live-stream liveness signals that a long-running freeze/de-sync investigation
-//! (`ergo 3YA7ZJ`) left woven into the hot loop. The decision maker
+//!  left woven into the hot loop. The decision maker
 //! (`BlockPump::run_with_stream`) calls a tiny API (`on_header` / `on_log` /
 //! `maybe_stats`); all counters, intervals, and stats emission live here.
 //!
@@ -110,7 +110,7 @@ impl PumpTelemetry {
     /// Emit the periodic `[DIAG] stats`/freeze-probe log at most once per
     /// `stats_interval`. `current_block` is the pump's engine clock, and
     /// `pool_state_head` the max pool `update_block` — the two fields whose
-    /// divergence is the post-backfill drain-freeze signature (`ergo 3YA7ZJ`).
+    /// divergence is the post-backfill drain-freeze signature .
     pub fn maybe_stats(&mut self, current_block: u64, pool_state_head: u64) {
         if self.last_stats_at.elapsed() < self.stats_interval {
             return;

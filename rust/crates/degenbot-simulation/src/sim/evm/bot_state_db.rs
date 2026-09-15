@@ -30,7 +30,7 @@
 //! The wrapper persists because the live `BlockSimHandle` chain
 //! (`simulator.rs`) references it as the `CacheDB` backing; collapsing it to
 //! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope
-//! (ergo task `V5HCR5`), not this module's cleanup.
+//! , not this module's cleanup.
 //!
 //! ## Historical note — the retired slot encoders
 //!
@@ -64,7 +64,7 @@ use revm::state::AccountInfo;
 /// diagnostics layered onto tracked pool slots (see the module docs). The
 /// `bot_state` borrow backs both diagnostics. Whether this wrapper persists
 /// or collapses to bare `WrapDatabaseAsync<AlloyDB>` is decided by the
-/// Tier 1 refactor (ergo task `V5HCR5`).
+/// Tier 1 refactor .
 pub struct BotStateDb<'bot, ExtDb>
 where
     ExtDb: DatabaseRef,

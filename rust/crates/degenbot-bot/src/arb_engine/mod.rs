@@ -11,9 +11,9 @@
 //! - A [`BotState`] for V2 pool state and constant-product solving (ADR-003:
 //!   `BotState` is the single state owner; the engine is a consumer)
 //! - A [`BotState`](crate::bot_core::BotState) for V2+V3 pool state (ADR-003:
-//!   `BotState` is the single state owner, peer to this engine)
+//! `BotState` is the single state owner, peer to this engine)
 //! - A [`BotState`](crate::bot_core::BotState) for all pool state (V2+V3+V4 —
-//!   ADR-003), the single Rust state owner peer to this engine
+//! ADR-003), the single Rust state owner peer to this engine
 //!
 //! V4 pools share identical concentrated-liquidity math with V3. The solver
 //! treats V3 and V4 hops identically — both produce `IntV3TickRangeSequence`.
@@ -97,7 +97,7 @@ mod path_lifecycle;
 // ADR-045 (`C4UAFP`): the path-identity registry (`PathRegistry`) —
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;
-// 3WI4EO (epic 5TBT7L): the typed operator re-parameterization value crossing
+// 3WI4EO : the typed operator re-parameterization value crossing
 // the driver seam — `EngineRetune`, applied at construction and at runtime via
 // `EngineStages::apply_retune`.
 mod retune;
@@ -398,7 +398,7 @@ pub(crate) struct ArbitrageEngine {
     pub(crate) cycle: SolveCycle,
     /// Delivery policy — the optional publish sink that consumes the solve
     /// output (`latest_results`) and pushes diffs over the result/block
-    /// channels (ergo BI7UZV). Owns `delivered`/`deregistered`, the profit
+    /// channels . Owns `delivered`/`deregistered`, the profit
     /// thresholds, and `result_tx`/`block_tx`; decoupled from solve state so a
     /// standalone consumer gets raw results without it.
     pub(crate) delivery: DeliveryPolicy,
@@ -471,7 +471,7 @@ impl ArbitrageEngine {
         core: Arc<StateLock<BotState>>,
         cfg: &std::sync::Arc<::degenbot_config::BotConfig>,
     ) -> Self {
-        // J4HN66 (epic 64ZQLA): construction stances come from the CALLER's
+        // J4HN66 : construction stances come from the CALLER's
         // own cfg — never from an install-then-read process static. A
         // parallel construction flips such a static between our install and
         // a global read (TOCTOU). The install call remains for its process

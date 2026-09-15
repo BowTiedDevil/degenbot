@@ -7,7 +7,7 @@
 //! singleton bytecode reads during a real `Pool.swap()` (via `unlock()`).
 //! V4 twin of [`crate::v3_storage_slots`]; see that module's docs for the
 //! "test oracle can seed the swap-math slots the production seam could not
-//! serve" rationale (ergo epic `UP5NH6`, task `NH6NLJ`).
+//! serve" rationale .
 //!
 //! ## V4 storage layout (PoolManager singleton, v4-core `Pool.State`)
 //!
@@ -36,7 +36,7 @@
 //!
 //! NOTE: V4 has no `unlocked` flag in `Slot0` — the PoolManager's `locked`
 //! state is in TRANSIENT storage (EIP-1153 `TSTORE`/`TLOAD`); the Tier-3b
-//! end-to-end oracle (task `2LTKVO`) handles the `unlock()` entry + transient
+//! end-to-end oracle  handles the `unlock` entry + transient
 //! seed, NOT these encoders. V4 `swap()` also reads `CurrencyDelta` (transient)
 //! during settle — written by the swap itself, no pre-seed needed.
 

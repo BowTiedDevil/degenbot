@@ -1,6 +1,6 @@
 //! `PyO3` wrapper for the engine stage surface — `result_channel` `#[pymethods]` slice.
 //!
-//! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
+//! Split out of the former monolithic `py_binding.rs` ,
 //! mirroring `crates/degenbot-bot/src/arb_engine/`'s per-concern
 //! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
@@ -297,8 +297,7 @@ impl PyArbEngine {
     }
 
     // block_stream() lived here while the block-clock pipe was engine-side; it
-    // moved to PyBot with the pipe itself (ADR-027 completion, ergo 6VGMLY) —
-    // a header tick is solve-state business, never queued behind solver work.
+    // moved to PyBot with the pipe itself (ADR-027 completion,    // a header tick is solve-state business, never queued behind solver work.
 
     /// Await the next result batch from the engine.
     ///
@@ -530,7 +529,7 @@ fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py
     Ok(hop_dict)
 }
 
-// ── Block stream (epic 6W35AI) ─────────────────────────────────────────────
+// ── Block stream  ─────────────────────────────────────────────
 //
 // The authoritative `newHeads`-derived block clock for Python. The pump
 // forwards one `BlockNotification` per accepted header via

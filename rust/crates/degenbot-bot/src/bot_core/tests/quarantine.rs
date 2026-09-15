@@ -53,7 +53,7 @@ fn quarantine_pool_seam_is_idempotent_and_dirties_nonce() {
 //
 // These tests cover the CORE lifecycle + deferral invariants; the
 // positional 25647112 reproduction + concurrent-registration stress live
-// in the wiring/seam task (6XG2NC) and the robust-suite task (BWUHVX).
+// in the wiring/seam task  and the robust-suite task .
 /// Register a V4 pool on `core` with a single tick at 60 (gross/net 100)
 /// and `update_block`, returning its `pool_id`. Test helper. `pool_id`
 /// distinguishes concurrent registrations (default `[0xee;32]`).
