@@ -43,8 +43,8 @@ if TYPE_CHECKING:
 
 __all__ = ["VerificationRetryPolicy", "retry_verification_call", "retry_verification_call_async"]
 
-# The Rust core owns the retry policy (``degenbot_core::retry::RetryPolicy``,
-# ergo 6LC4JB); the driver shell reads the defaults over ``degenbot._ffi``
+# The Rust core owns the retry policy (``degenbot_core::retry::RetryPolicy``);
+# the driver shell reads the defaults over ``degenbot._ffi``
 # instead of maintaining a second literal set. Sane for a local/edge node
 # recovering from a transient transport blip: up to 4 attempts, ~0.5s → ~1s →
 # ~2s base delays (before jitter), capped at 4s. Total worst-case wait ≈ 7.5s
