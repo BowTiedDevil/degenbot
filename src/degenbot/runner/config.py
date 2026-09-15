@@ -23,6 +23,7 @@ from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_rpc_uris
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
+from degenbot.runner.diag import DiagConfig
 
 # Arbitrage configuration
 # ──────────────────────────────────────────────────────────────────
@@ -130,6 +131,22 @@ def _parse_int_env(raw: str | None, default: int, name_suffix: str) -> int:
         raise ValueError(msg) from None
 
 
+def _parse_diag_secs(raw: str | None, name: str) -> float:
+    """Parse a diag toggle as float seconds (0/unset = off), fail-loud on typos.
+
+    Raises:
+        ValueError: ``raw`` is set but not numeric.
+
+    """
+    if raw is None or not raw:
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        msg = f"{name} must be numeric seconds, got {raw!r}"
+        raise ValueError(msg) from None
+
+
 def _parse_float_env(raw: str | None, default: float, name_suffix: str) -> float:
     """Parse a ``VERIFICATION_RETRY_*`` float env var, falling back to ``default``.
 
@@ -210,6 +227,9 @@ class ArbitrageConfig:
     # None -> DEGENBOT_CONTRACTS_DIR -> one computed source-layout candidate
     # (NO filesystem walk). Wheel installs: pass this explicitly.
     executor_runtime: str | Path | None = None
+    # Diagnostics harnesses (C6): the cockpit arms these probes at start().
+    # Zero-config arms nothing (production default).
+    diag: DiagConfig = dataclasses.field(default_factory=DiagConfig)
 
     @classmethod
     def from_env(
@@ -297,6 +317,20 @@ class ArbitrageConfig:
 
         verification_retry_policy = _verification_retry_policy_from_env(env)
         executor_runtime = env.get("EXECUTOR_RUNTIME") or None
+        # C6: the diagnostics harnesses' knobs, parsed here (the only
+        # env-reading site) instead of the example's raw os.environ.get.
+        diag = DiagConfig(
+            tracemalloc_secs=_parse_diag_secs(
+                env.get("DEGENBOT_TRACEMALLOC_SECS"), "DEGENBOT_TRACEMALLOC_SECS"
+            ),
+            procmem_secs=_parse_diag_secs(
+                env.get("DEGENBOT_PROCMEM_SECS"), "DEGENBOT_PROCMEM_SECS"
+            ),
+            procmem_csv=env.get("DEGENBOT_PROCMEM_CSV") or "logs/procmem.csv",
+            faulthandler_timeout_secs=_parse_diag_secs(
+                env.get("DEGENBOT_FAULTHANDLER_TIMEOUT_SECS"), "DEGENBOT_FAULTHANDLER_TIMEOUT_SECS"
+            ),
+        )
 
         return cls(
             operator_address=operator_address,
@@ -323,6 +357,7 @@ class ArbitrageConfig:
             dry_run=not live,
             verification_retry_policy=verification_retry_policy,
             executor_runtime=executor_runtime,
+            diag=diag,
         )
 
 

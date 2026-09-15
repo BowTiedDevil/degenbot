@@ -64,6 +64,7 @@ from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
 from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
 from degenbot.runner.build_paths import ConstructionContext, PathRegistrationPipeline, build_paths
 from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.diag import arm_diagnostics
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -370,6 +371,12 @@ class BotRunner:
             raise PhaseError(msg)
 
         cfg = self.cfg
+
+        # C6: arm the incident-diagnostic harnesses (tracemalloc diff thread,
+        # /proc RSS CSV sampler, faulthandler repeat dump) from the typed
+        # config — every cockpit-driven entrypoint gets them uniformly, and
+        # env reads stay the loader's (KAHU5W). Zero-config arms nothing.
+        arm_diagnostics(cfg.diag)
 
         # ── Build the three actors (injected or from cfg) ──
         bot = self._injected_bot or self._build_bot(cfg)
