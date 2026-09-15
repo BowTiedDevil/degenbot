@@ -1014,139 +1014,49 @@ impl BotState {
         }
     }
 
-    /// solving (B3 move, FD7NFG). Decodes V3 swap/mint/burn + V4 swap/modify-
-    /// liquidity logs and applies each via the same `apply_v3_swap` /
-    /// `buffer_backfill_*_liquidity_update` / `apply_v4_swap` path the live
-    /// loop uses; after the chunk, `expire_v3/v4_buffered(chunk_end)` advances
-    /// the liquidity buffers. No `dispatch` / no solve cycle — the `Backfilled`
-    /// phase invariant is "state advanced, no batches emitted".
+    /// solving (B3 move, FD7NFG). Applies each decoded event via the same
+    /// `apply_v3_swap` / `buffer_backfill_*_liquidity_update` / `apply_v4_swap`
+    /// path the live loop uses; decode selection lives in the dispatcher
+    /// registry (C1), never here. After the chunk,
+    /// `expire_v3/v4_buffered(chunk_end)` advances the liquidity buffers. No
+    /// `dispatch` / no solve cycle — the `Backfilled` phase invariant is
+    /// "state advanced, no batches emitted".
     ///
     /// This is the BotState-level relocation of what was
     /// `ArbitrageEngine::process_backfill_logs` (the retired
     /// `arb_engine/event_routing.rs`); the engine method is now a thin
     /// delegator + `last_processed_block` stamp. `BotState` owns the state (ADR-003);
     /// `BlockPump::backfill_from_snapshot` (core) reaches it via `self.bot`.
-    #[expect(clippy::too_many_lines)]
-    pub fn process_backfill_logs(&mut self, logs: &[alloy::rpc::types::Log], chunk_end: u64) {
-        use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
-        use degenbot_decoders::v3_pancakeswap_swap_decoder::decode_v3_pancakeswap_swap_log;
-        use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
-        use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
-        use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
+    ///
+    /// C1 (one decode home): decode selection is the dispatcher's registry
+    /// (`log_dispatcher`, the same decoders the forward path routes through);
+    /// `BotState` no longer imports decoders — it keeps apply/route only.
+    pub fn process_backfill_logs(
+        &mut self,
+        dispatcher: &log_dispatcher::LogDispatcher,
+        logs: &[alloy::rpc::types::Log],
+        chunk_end: u64,
+    ) {
         let mut v3_touched = false;
         let mut v4_touched = false;
         for log in logs {
-            // Stamp this log with its own block number. A backfill log should
-            // always carry `block_number`; fall back to `chunk_end` only for a
-            // malformed log so apply never sees block 0.
-            let log_block = log.block_number.unwrap_or(chunk_end);
-            let Some(topic0) = log.topic0() else { continue };
-            // V3 events route through the SINGLE routing table (cl_route)
-            // at Phase::Backfill — no per-site policy copies. The table's rows
-            // reproduce the historical behavior exactly (unregistered scalar
-            // refresh drops rely on the row re-seed; liquidity always stages).
-            if *topic0 == degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC {
-                if let Some(event) = decode_v3_swap_log(log) {
-                    self.route_v3_event(
-                        crate::bot_core::cl_route::Phase::Backfill,
-                        event.pool_address,
-                        BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
-                            sqrt_price_x96: event.sqrt_price_x96,
-                            liquidity: event.liquidity.to::<u128>(),
-                            tick: event.tick,
-                            block_number: log_block,
-                        }),
-                        &[],
-                    );
-                    v3_touched = true;
-                }
-            } else if *topic0
-                == degenbot_decoders::v3_pancakeswap_swap_decoder::V3_PANCAKESWAP_SWAP_TOPIC
-            {
-                // PancakeSwap V3 swaps carry a non-canonical topic0 (the fork
-                // added two trailing data fields to the Swap event) — decode
-                // them via the dedicated decoder so these pools stay live. See the
-                // exploration-no-profit-crash writeup (stale-state root cause;
-                // removed in the stale-docs cleanup `71ec78b2`).
-                if let Some(event) = decode_v3_pancakeswap_swap_log(log) {
-                    self.route_v3_event(
-                        crate::bot_core::cl_route::Phase::Backfill,
-                        event.pool_address,
-                        BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
-                            sqrt_price_x96: event.sqrt_price_x96,
-                            liquidity: event.liquidity.to::<u128>(),
-                            tick: event.tick,
-                            block_number: log_block,
-                        }),
-                        &[],
-                    );
-                    v3_touched = true;
-                }
-            } else if *topic0 == degenbot_decoders::v3_mint_burn_decoder::V3_MINT_TOPIC {
-                if let Some(event) = decode_v3_mint_log(log) {
-                    self.route_v3_event(
-                        crate::bot_core::cl_route::Phase::Backfill,
-                        event.pool_address,
-                        BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
-                            tick_lower: event.tick_lower,
-                            tick_upper: event.tick_upper,
-                            liquidity_delta: event.amount.cast_signed(),
-                            block_number: log_block,
-                        }),
-                        &[],
-                    );
-                    v3_touched = true;
-                }
-            } else if *topic0 == degenbot_decoders::v3_mint_burn_decoder::V3_BURN_TOPIC {
-                if let Some(event) = decode_v3_burn_log(log) {
-                    self.route_v3_event(
-                        crate::bot_core::cl_route::Phase::Backfill,
-                        event.pool_address,
-                        BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
-                            tick_lower: event.tick_lower,
-                            tick_upper: event.tick_upper,
-                            liquidity_delta: -(event.amount.cast_signed()),
-                            block_number: log_block,
-                        }),
-                        &[],
-                    );
-                    v3_touched = true;
-                }
-            } else if *topic0 == degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC {
-                if let Some(event) = decode_v4_swap_log(log) {
-                    self.route_v4_event(
-                        crate::bot_core::cl_route::Phase::Backfill,
-                        log.address(),
-                        event.pool_id,
-                        BufferedV4PoolEvent::Swap(BufferedV4SwapEvent {
-                            sqrt_price_x96: event.sqrt_price_x96,
-                            liquidity: event.liquidity.to::<u128>(),
-                            tick: event.tick,
-                            block_number: log_block,
-                        }),
-                        &[],
-                    );
-                    v4_touched = true;
-                }
-            } else if *topic0
-                == degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
-            {
-                if let Some(event) = decode_v4_modify_liquidity_log(log) {
-                    self.route_v4_event(
-                        crate::bot_core::cl_route::Phase::Backfill,
-                        log.address(),
-                        event.pool_id,
-                        BufferedV4PoolEvent::Liquidity(BufferedV4LiquidityUpdate {
-                            tick_lower: event.tick_lower,
-                            tick_upper: event.tick_upper,
-                            liquidity_delta: event.liquidity_delta,
-                            block_number: log_block,
-                        }),
-                        &[],
-                    );
-                    v4_touched = true;
-                }
-            }
+            // The chunk-end fallback stamps a malformed log (no `block_number`)
+            // at `chunk_end`, never block 0 (3ECKWX family). V2 Sync stays out
+            // of backfill scope (CL-only: scalar state arrives via snapshot).
+            let Some(event) = dispatcher.try_decode_log_with_block(log, chunk_end) else {
+                continue;
+            };
+            v3_touched |= matches!(
+                event,
+                log_dispatcher::DecodedPoolEvent::V3Swap { .. }
+                    | log_dispatcher::DecodedPoolEvent::V3Liquidity { .. }
+            );
+            v4_touched |= matches!(
+                event,
+                log_dispatcher::DecodedPoolEvent::V4Swap { .. }
+                    | log_dispatcher::DecodedPoolEvent::V4Liquidity { .. }
+            );
+            let _ = event.apply_backfill(self);
         }
         if v3_touched {
             self.expire_v3_buffered(chunk_end);

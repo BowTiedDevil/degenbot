@@ -331,7 +331,7 @@ impl BlockPump {
             self.bot
                 .state_arc()
                 .write_at(crate::bot_core::state_lock::LockSite::Pump)
-                .process_backfill_logs(&logs, chunk_end);
+                .process_backfill_logs(self.bot.dispatcher(), &logs, chunk_end);
             op_info!(
                 domain = pump,
                 chunk_start,

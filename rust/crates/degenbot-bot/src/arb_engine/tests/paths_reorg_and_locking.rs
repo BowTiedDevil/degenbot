@@ -823,10 +823,11 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     // (the pump calls `BotState::process_backfill_logs` directly). The test
     // only asserts on journal/state, so call the BotState method directly
     // — the same path the production backfill uses.
+    let dispatcher = crate::bot_core::log_dispatcher::LogDispatcher::with_uniswap_decoders();
     engine
         .core
         .write_at(crate::bot_core::state_lock::LockSite::Solver)
-        .process_backfill_logs(&logs, chunk_end);
+        .process_backfill_logs(&dispatcher, &logs, chunk_end);
     let core = engine
         .core
         .read_at(crate::bot_core::state_lock::LockSite::Solver);

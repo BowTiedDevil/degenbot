@@ -162,10 +162,6 @@ impl DecodedPoolEvent {
 
     /// Apply this event to `bot_state`, returning the affected `pool_id` (or
     /// `None` if the pool isn't registered / the event is a no-op).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "five family arms plus the atomic-telemetry prelude"
-    )]
     fn apply(self, bot_state: &mut BotState) -> ApplyOutcome {
         // Family-cost telemetry (2SDIQW): self tropical atomic split of the
         // apply wall per family, surfaced on the block-end event.
@@ -177,7 +173,23 @@ impl DecodedPoolEvent {
             Self::V4Liquidity { .. } => crate::bot_core::apply_telemetry::ApplyFamily::V4Liquidity,
         };
         let at0 = std::time::Instant::now();
-        let out = match self {
+        let out = self.apply_at(bot_state, crate::bot_core::cl_route::Phase::Live);
+        crate::bot_core::apply_telemetry::record(
+            family,
+            u64::try_from(at0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+        out
+    }
+
+    /// Route one decoded event to `bot_state` at the given pipeline `phase`.
+    /// The phase is part of the routing-table question (Live vs Backfill), so
+    /// the forward path and the backfill chunk loop share these arms.
+    fn apply_at(
+        self,
+        bot_state: &mut BotState,
+        phase: crate::bot_core::cl_route::Phase,
+    ) -> ApplyOutcome {
+        match self {
             Self::V2Sync {
                 pool_address,
                 reserve0,
@@ -196,7 +208,7 @@ impl DecodedPoolEvent {
                 tick,
                 block_number,
             } => bot_state.route_v3_event(
-                crate::bot_core::cl_route::Phase::Live,
+                phase,
                 pool_address,
                 crate::bot_core::BufferedV3PoolEvent::Swap(
                     degenbot_pools::v3_state::BufferedV3SwapEvent {
@@ -215,7 +227,7 @@ impl DecodedPoolEvent {
                 liquidity_delta,
                 block_number,
             } => bot_state.route_v3_event(
-                crate::bot_core::cl_route::Phase::Live,
+                phase,
                 pool_address,
                 crate::bot_core::BufferedV3PoolEvent::Liquidity(
                     degenbot_pools::v3_state::BufferedV3LiquidityUpdate {
@@ -235,7 +247,7 @@ impl DecodedPoolEvent {
                 tick,
                 block_number,
             } => bot_state.route_v4_event(
-                crate::bot_core::cl_route::Phase::Live,
+                phase,
                 pool_manager,
                 pool_id,
                 crate::bot_core::BufferedV4PoolEvent::Swap(
@@ -256,7 +268,7 @@ impl DecodedPoolEvent {
                 liquidity_delta,
                 block_number,
             } => bot_state.route_v4_event(
-                crate::bot_core::cl_route::Phase::Live,
+                phase,
                 pool_manager,
                 pool_id,
                 crate::bot_core::BufferedV4PoolEvent::Liquidity(
@@ -269,12 +281,20 @@ impl DecodedPoolEvent {
                 ),
                 &[],
             ),
-        };
-        crate::bot_core::apply_telemetry::record(
-            family,
-            u64::try_from(at0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-        );
-        out
+        }
+    }
+
+    /// Backfill-phase apply (C1): the backfill chunk loop's ONE apply entry —
+    /// the `Backfilled` phase invariant is "state advanced, no solve cycle, no
+    /// batches emitted", so no telemetry prelude and no `EpochDelta` record.
+    /// Returns `None` for a V2 Sync: backfill is CL-only (scalar state
+    /// arrives via the snapshot; the historical inline chain never routed V2
+    /// backfill logs).
+    pub fn apply_backfill(self, bot_state: &mut BotState) -> Option<ApplyOutcome> {
+        if matches!(self, Self::V2Sync { .. }) {
+            return None;
+        }
+        Some(self.apply_at(bot_state, crate::bot_core::cl_route::Phase::Backfill))
     }
 }
 
@@ -284,19 +304,21 @@ impl DecodedPoolEvent {
 /// without `Bot` knowing its event shapes.
 pub trait LogDecoder: Send + Sync {
     /// Decode `log` into a [`DecodedPoolEvent`], or `None` if unrecognized.
-    fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent>;
+    /// `default_block` stamps the event's block number when the log carries
+    /// none: 0 on the forward path, the chunk end on the backfill path.
+    fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent>;
 }
 
 /// Decode V2 `Sync` events. (No state — the topic check lives in the free fn.)
 struct V2SyncDecoder;
 impl LogDecoder for V2SyncDecoder {
-    fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent> {
+    fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent> {
         let ev = decode_sync_log(log)?;
         Some(DecodedPoolEvent::V2Sync {
             pool_address: ev.pool_address,
             reserve0: ev.reserve0,
             reserve1: ev.reserve1,
-            block_number: log.block_number.unwrap_or_default(),
+            block_number: log.block_number.unwrap_or(default_block),
         })
     }
 }
@@ -304,14 +326,14 @@ impl LogDecoder for V2SyncDecoder {
 /// Decode V3 `Swap` events.
 struct V3SwapDecoder;
 impl LogDecoder for V3SwapDecoder {
-    fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent> {
+    fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent> {
         let ev = decode_v3_swap_log(log)?;
         Some(DecodedPoolEvent::V3Swap {
             pool_address: ev.pool_address,
             sqrt_price_x96: ev.sqrt_price_x96,
             liquidity: alloy::primitives::U256::from(ev.liquidity.to::<u128>()),
             tick: ev.tick,
-            block_number: log.block_number.unwrap_or_default(),
+            block_number: log.block_number.unwrap_or(default_block),
         })
     }
 }
@@ -322,14 +344,14 @@ impl LogDecoder for V3SwapDecoder {
 /// differ, so the decoded state feeds `apply_v3_swap` unchanged.
 struct V3PancakeSwapDecoder;
 impl LogDecoder for V3PancakeSwapDecoder {
-    fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent> {
+    fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent> {
         let ev = decode_v3_pancakeswap_swap_log(log)?;
         Some(DecodedPoolEvent::V3Swap {
             pool_address: ev.pool_address,
             sqrt_price_x96: ev.sqrt_price_x96,
             liquidity: alloy::primitives::U256::from(ev.liquidity.to::<u128>()),
             tick: ev.tick,
-            block_number: log.block_number.unwrap_or_default(),
+            block_number: log.block_number.unwrap_or(default_block),
         })
     }
 }
@@ -337,14 +359,14 @@ impl LogDecoder for V3PancakeSwapDecoder {
 /// Decode V3 `Mint`/`Burn` events (both produce a liquidity delta on a tick range).
 struct V3MintBurnDecoder;
 impl LogDecoder for V3MintBurnDecoder {
-    fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent> {
+    fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent> {
         if let Some(mint) = decode_v3_mint_log(log) {
             return Some(DecodedPoolEvent::V3Liquidity {
                 pool_address: mint.pool_address,
                 tick_lower: mint.tick_lower,
                 tick_upper: mint.tick_upper,
                 liquidity_delta: i128::try_from(mint.amount).ok()?,
-                block_number: log.block_number.unwrap_or_default(),
+                block_number: log.block_number.unwrap_or(default_block),
             });
         }
         if let Some(burn) = decode_v3_burn_log(log) {
@@ -354,7 +376,7 @@ impl LogDecoder for V3MintBurnDecoder {
                 tick_upper: burn.tick_upper,
                 // Burn removes liquidity → negative delta.
                 liquidity_delta: -i128::try_from(burn.amount).ok()?,
-                block_number: log.block_number.unwrap_or_default(),
+                block_number: log.block_number.unwrap_or(default_block),
             });
         }
         None
@@ -364,7 +386,7 @@ impl LogDecoder for V3MintBurnDecoder {
 /// Decode V4 `Swap` events.
 struct V4SwapDecoder;
 impl LogDecoder for V4SwapDecoder {
-    fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent> {
+    fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent> {
         let ev = decode_v4_swap_log(log)?;
         Some(DecodedPoolEvent::V4Swap {
             pool_manager: log.address(),
@@ -372,7 +394,7 @@ impl LogDecoder for V4SwapDecoder {
             sqrt_price_x96: ev.sqrt_price_x96,
             liquidity: alloy::primitives::U256::from(ev.liquidity.to::<u128>()),
             tick: ev.tick,
-            block_number: log.block_number.unwrap_or_default(),
+            block_number: log.block_number.unwrap_or(default_block),
         })
     }
 }
@@ -380,7 +402,7 @@ impl LogDecoder for V4SwapDecoder {
 /// Decode V4 `ModifyLiquidity` events.
 struct V4ModifyLiquidityDecoder;
 impl LogDecoder for V4ModifyLiquidityDecoder {
-    fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent> {
+    fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent> {
         let ev = decode_v4_modify_liquidity_log(log)?;
         Some(DecodedPoolEvent::V4Liquidity {
             pool_manager: log.address(),
@@ -388,7 +410,7 @@ impl LogDecoder for V4ModifyLiquidityDecoder {
             tick_lower: ev.tick_lower,
             tick_upper: ev.tick_upper,
             liquidity_delta: ev.liquidity_delta,
-            block_number: log.block_number.unwrap_or_default(),
+            block_number: log.block_number.unwrap_or(default_block),
         })
     }
 }
@@ -556,7 +578,7 @@ impl LogDispatcher {
         );
         let decode_start = std::time::Instant::now();
         let decoded = hotpath::measure_block!("dispatch.decode", {
-            self.decoders.iter().find_map(|d| d.try_decode(log))
+            self.decoders.iter().find_map(|d| d.try_decode(log, 0))
         });
         if let Some(p) = crate::instruments::pipeline() {
             p.observe_log_decode(decode_start.elapsed().as_secs_f64());
@@ -717,7 +739,22 @@ impl LogDispatcher {
     /// `ReorgCoordinator::dispatch_reorg_log` (removed) — both decode the pool
     /// identity; only the forward path `apply`s.
     pub fn try_decode_log(&self, log: &Log) -> Option<DecodedPoolEvent> {
-        self.decoders.iter().find_map(|d| d.try_decode(log))
+        self.try_decode_log_with_block(log, 0)
+    }
+
+    /// The ONE decode home (C1): decode `log` via the registry, stamping the
+    /// event's block number with `default_block` when the log carries none.
+    /// The backfill chunk loop passes its chunk end so a malformed
+    /// eth_getLogs row (missing `block_number`) never stamps block 0 into a
+    /// journal (3ECKWX family); the forward and reorg paths pass 0.
+    pub fn try_decode_log_with_block(
+        &self,
+        log: &Log,
+        default_block: u64,
+    ) -> Option<DecodedPoolEvent> {
+        self.decoders
+            .iter()
+            .find_map(|d| d.try_decode(log, default_block))
     }
 }
 
@@ -742,7 +779,7 @@ mod tests {
     }
 
     impl LogDecoder for FakeDecoder {
-        fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent> {
+        fn try_decode(&self, log: &Log, _default_block: u64) -> Option<DecodedPoolEvent> {
             // Match a synthetic single-topic log whose topic0 is the sentinel.
             if log.topics().first().map(|t| t.0) == Some(SENTRY_TOPIC) {
                 Some(DecodedPoolEvent::V2Sync {
@@ -1151,6 +1188,136 @@ mod tests {
             t203350.liquidity_gross.to::<u128>(),
             SEED_203350 + MINT_AMOUNT,
             "tick 203350 (Mint tickUpper 0x031a56) must also reflect the Mint amount"
+        );
+    }
+
+    /// C1 (one decode home: the backfill path consumes this entry). A backfill
+    /// log whose `block_number` is absent (malformed) must be stamped with the
+    /// chunk fallback the caller supplies, never block 0 — a block-0 journal
+    /// stamp silently corrupts reorg restores (3ECKWX family).
+    #[test]
+    fn try_decode_log_with_block_stamps_chunk_fallback() {
+        use alloy::primitives::{Bytes, B256, U256};
+        use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
+
+        let pool = alloy::primitives::Address::from([0x77u8; 20]);
+        // V3 Swap: data = abi.encode(int256 amount0, int256 amount1,
+        // uint160 sqrtPriceX96, uint128 liquidity, int24 tick).
+        let sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
+        let mut data = Vec::with_capacity(160);
+        data.extend_from_slice(&[0u8; 32]); // amount0
+        data.extend_from_slice(&[0u8; 32]); // amount1
+        data.extend_from_slice(&sp.to_be_bytes::<32>()); // sqrtPriceX96
+        let mut liq_word = [0u8; 32];
+        liq_word[16..32].copy_from_slice(&1_100_000u128.to_be_bytes());
+        data.extend_from_slice(&liq_word);
+        let mut tick_word = [0u8; 32];
+        tick_word[28..32].copy_from_slice(&1i32.to_be_bytes());
+        data.extend_from_slice(&tick_word);
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool,
+            vec![
+                V3_SWAP_TOPIC,
+                B256::left_padding_from(&[0xaau8; 20]),
+                B256::left_padding_from(&[0xbbu8; 20]),
+            ],
+            Bytes::from(data),
+        );
+        let log = alloy::rpc::types::Log {
+            inner,
+            block_hash: None,
+            block_number: None, // malformed: no block number
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        let dispatcher = LogDispatcher::with_uniswap_decoders();
+        let ev = dispatcher
+            .try_decode_log_with_block(&log, 777)
+            .expect("a V3 swap log must decode");
+        assert_eq!(
+            ev.block_number(),
+            777,
+            "a log with no block_number must stamp the supplied chunk fallback"
+        );
+        // The twin entry keeps the live default (block 0) for malformed logs.
+        let ev0 = dispatcher
+            .try_decode_log(&log)
+            .expect("a V3 swap log must decode");
+        assert_eq!(ev0.block_number(), 0);
+    }
+
+    /// C1 (one decode home): the burn sign flip must live in the ONE decoder,
+    /// not be re-authored at the backfill call site — the backfill decode of a
+    /// V3 Burn log yields a negative liquidity delta.
+    #[test]
+    fn backfill_decode_keeps_burn_delta_negative() {
+        use alloy::primitives::{Bytes, B256, U256};
+        use degenbot_decoders::v3_mint_burn_decoder::V3_BURN_TOPIC;
+
+        const AMOUNT: u128 = 999_999;
+        let pool = alloy::primitives::Address::from([0x33u8; 20]);
+        // V3 Burn: data = abi.encode(uint128 amount, int128 amount0, int128 amount1).
+        let mut data = Vec::with_capacity(96);
+        let mut amt_word = [0u8; 32];
+        amt_word[16..32].copy_from_slice(&AMOUNT.to_be_bytes());
+        data.extend_from_slice(&amt_word);
+        data.extend_from_slice(&[0u8; 32]); // amount0
+        data.extend_from_slice(&[0u8; 32]); // amount1
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool,
+            vec![
+                V3_BURN_TOPIC,
+                B256::left_padding_from(&[0x11u8; 20]),
+                B256::from(U256::from(100u64)),
+                B256::from(U256::from(200u64)),
+            ],
+            Bytes::from(data),
+        );
+        let log = alloy::rpc::types::Log {
+            inner,
+            block_hash: None,
+            block_number: Some(42),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        let dispatcher = LogDispatcher::with_uniswap_decoders();
+        let ev = dispatcher
+            .try_decode_log_with_block(&log, 9999)
+            .expect("a V3 burn log must decode");
+        assert!(
+            matches!(
+                ev,
+                DecodedPoolEvent::V3Liquidity {
+                    liquidity_delta: -999_999i128,
+                    ..
+                }
+            ),
+            "burn must decode to V3Liquidity with negative delta (decoder owns the flip): {ev:?}"
+        );
+    }
+
+    /// C1: `apply_backfill` skips V2 Sync (backfill is CL-only: historical
+    /// behavior).
+    #[test]
+    fn apply_backfill_ignores_v2_sync() {
+        let ev = DecodedPoolEvent::V2Sync {
+            pool_address: alloy::primitives::Address::ZERO,
+            reserve0: alloy::primitives::aliases::U112::from(1u64),
+            reserve1: alloy::primitives::aliases::U112::from(2u64),
+            block_number: 5,
+        };
+        let mut state = BotState::new();
+        assert!(
+            ev.apply_backfill(&mut state).is_none(),
+            "V2 Sync must remain out of backfill scope (CL-only)"
         );
     }
 }
