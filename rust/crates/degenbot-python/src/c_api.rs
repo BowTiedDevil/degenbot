@@ -94,12 +94,20 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Pathfinding graph + DFS (feature = "pathfinding")
     #[cfg(feature = "pathfinding")]
     m.add_function(wrap_pyfunction!(crate::pathfinding::find_paths_rust, m)?)?;
+    // 4IOEVT: the batched async DFS iterator Python's find_paths_async drives.
+    #[cfg(feature = "pathfinding")]
+    m.add_function(wrap_pyfunction!(
+        crate::pathfinding::find_paths_async_rust,
+        m
+    )?)?;
     // The build_path_graph seam choreographs a degenbot-db read + a
     // degenbot-pathfinding graph build, so it needs BOTH features.
     #[cfg(all(feature = "pathfinding", feature = "db"))]
     m.add_function(wrap_pyfunction!(crate::pathfinding::build_path_graph, m)?)?;
     #[cfg(feature = "pathfinding")]
     m.add_class::<crate::pathfinding::PathIterator>()?;
+    #[cfg(feature = "pathfinding")]
+    m.add_class::<crate::pathfinding::PathBatchIterator>()?;
 
     // Balancer V2 math library functions (feature = "balancer-math")
     #[cfg(feature = "balancer-math")]

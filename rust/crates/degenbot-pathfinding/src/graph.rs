@@ -17,6 +17,8 @@
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Discriminant for the three pool-table families.
@@ -611,13 +613,20 @@ pub struct OwnedPathFinder {
     /// path can be read directly from `working_path` on demand.
     pending_reverse: bool,
     done: bool,
+    /// Cooperative cancellation flag (4IOEVT). When set, [`Self::advance`]
+    /// stops the search at its next loop iteration and reports exhaustion.
+    /// The async batch iterator's `Drop` impl sets it so a consumer that
+    /// abandons a sweep (aclose / GC) releases a mid-grind DFS promptly
+    /// instead of pinning a tokio worker until the search finishes.
+    cancel: Option<Arc<AtomicBool>>,
     // --- discovery-phase heartbeat diagnostics (NY4EFN) ---
-    // A silently-stalled DFS grinds here with the GIL released — the asyncio
-    // event loop on the same thread is blocked, so a Python-side progress log
-    // cannot fire. This heartbeat emits to stderr (GIL-free, zero deps) every
-    // so a future zero-yield hang is visible at a
-    // glance, not just "78% CPU, no logs". Purely diagnostic — never alters
-    // `advance()`'s return values or enumeration order.
+    // A silently-stalled DFS grinds here with the GIL released. On the async
+    // path (4IOEVT) that grind runs on a tokio worker, so the Python event
+    // loop keeps turning and a Python-side progress log cannot reflect the
+    // DFS's internal progress. This heartbeat emits to stderr (GIL-free, zero
+    // deps) so a future zero-yield hang is visible at a glance, not just
+    // "78% CPU, no logs". Purely diagnostic — never alters `advance()`'s
+    // return values or enumeration order.
     search_started: Instant,
     paths_yielded: u64,
     advances_since_yield: u64,
@@ -737,12 +746,32 @@ impl OwnedPathFinder {
             visited: vec![false; n_pools],
             pending_reverse: false,
             done,
+            cancel: None,
             search_started: now,
             paths_yielded: 0,
             advances_since_yield: 0,
             last_heartbeat: now,
             max_stack_depth: 0,
         }
+    }
+
+    /// Attach a cooperative cancellation flag checked on every DFS advance.
+    ///
+    /// The flag is owned by the caller (the async batch iterator's `Drop`
+    /// sets it), so a consumer that drops the iterator mid-search stops the
+    /// DFS at its next loop iteration instead of running to completion.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
+    /// Whether the attached cancellation flag has been set.
+    #[must_use]
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed))
     }
 
     /// Advance the DFS by one yield without materializing the path.
@@ -756,7 +785,8 @@ impl OwnedPathFinder {
     /// appends pool indices, avoiding allocation) dispatch through it.
     #[expect(clippy::too_many_lines)]
     fn advance(&mut self) -> AdvanceOutcome {
-        if self.done {
+        if self.done || self.cancelled() {
+            self.done = true;
             return AdvanceOutcome::Exhausted;
         }
 
@@ -772,6 +802,10 @@ impl OwnedPathFinder {
         let nvd_ref = self.node_valid_depths.as_deref();
 
         loop {
+            if self.cancelled() {
+                self.done = true;
+                break;
+            }
             let stack_len = self.stack.len();
             if stack_len == 0 {
                 break;
@@ -1187,6 +1221,8 @@ impl PathGraph {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     // Token IDs for the synthetic 4-pool V2 fixture (mirrors the in-memory
     // DB fixture from test_permutation_filter_min_depth.py).
@@ -1522,6 +1558,21 @@ mod tests {
             assert_eq!(path[1].1, PoolKind::V4);
             assert_eq!(path[2].1, PoolKind::V2);
         }
+    }
+
+    #[test]
+    fn test_cancel_flag_exhausts_search() {
+        let graph = build_fixture_graph();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut finder = OwnedPathFinder::new(graph, WETH, WETH, 2, Some(3), true, None)
+            .with_cancel(Arc::clone(&cancel));
+        assert!(finder.next_path().is_some(), "fixture must yield a path");
+        cancel.store(true, Ordering::Release);
+        assert!(
+            finder.next_path().is_none(),
+            "a set cancel flag must exhaust the search immediately"
+        );
+        assert!(finder.next_path().is_none());
     }
 
     /// The discovery-heartbeat diagnostics (NY4EFN) + the `while let` → `loop`

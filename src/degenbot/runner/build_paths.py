@@ -73,8 +73,8 @@ def _discovery_batch_size() -> int:
     """Read the typed pathfinding.discovery_batch_size (4IOEVT).
 
     The Rust config loader is the only env reader; the value is
-    positive-clamped there. find_paths_async treats <= 1 as the legacy
-    per-path delivery.
+    positive-clamped there and find_paths_async clamps to >= 1, so every
+    batch_size forwards straight to the Rust batched async iterator.
 
     Returns:
         The effective discovery delivery batch size.
@@ -1002,7 +1002,8 @@ class PathRegistrationPipeline:
         count = 0
         truncated = False
         # 4IOEVT: close the sweep deterministically on the bound-truncation
-        # break so the delivery worker thread stops (no zombie threads).
+        # break so the Rust batch iterator is dropped (releasing a mid-DFS
+        # search via its cooperative cancel flag) with no zombie threads.
         sweep = self.discovery_sweep()
         try:
             async for item in sweep:
@@ -1195,8 +1196,9 @@ async def build_paths(
     # `DiscoveryCrawlComplete` retired) — run_registration returns normally
     # and the pipeline's `capped` flag carries the benign-stop witness.
     # 4IOEVT: close the async discovery generator deterministically when the
-    # crawl breaks on the path cap (or aborts on a fatal receipt) so the
-    # delivery worker thread stops instead of blocking on the bounded queue.
+    # crawl breaks on the path cap (or aborts on a fatal receipt) so the Rust
+    # batch iterator is dropped (releasing a mid-DFS search) instead of
+    # leaving the search running.
     try:
         await pipeline.run_registration(producer=discovery_producer)
     finally:

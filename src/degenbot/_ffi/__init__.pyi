@@ -7,7 +7,7 @@ This module provides high-performance implementations of common operations used 
 Python package.
 """
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, overload
 
 from degenbot.types.chain import HexAddress
@@ -195,6 +195,29 @@ def find_paths_rust(
 class PathIterator:
     def __iter__(self) -> PathIterator: ...
     def __next__(self) -> list[tuple[int, int]]: ...
+
+def find_paths_async_rust(
+    edges: list[tuple[int, int, int, int]],
+    start_token_id: int,
+    end_token_id: int,
+    min_depth: int,
+    max_depth: int | None,
+    include_reverse: bool,
+    pool_type_per_depth: list[set[int] | None] | None = ...,
+    batch_size: int = ...,
+) -> PathBatchIterator: ...
+
+class PathBatchIterator:
+    """A batched async iterator over the lazy arbitrage DFS (4IOEVT).
+
+    Each `__anext__` returns up to `batch_size` paths as
+    `list[list[tuple[int, int]]]` and raises `StopAsyncIteration` at
+    exhaustion. Dropping the iterator sets its cooperative cancel flag, so an
+    abandoned sweep releases a mid-search Rust DFS promptly.
+    """
+
+    def __aiter__(self) -> PathBatchIterator: ...
+    def __anext__(self) -> Awaitable[list[list[tuple[int, int]]]]: ...
 
 # A plain ``str`` holding an EIP-55 checksummed 20-byte hex address
 # (``0x`` + 40 chars with the correct checksum casing). Rust FFI entry
@@ -1550,6 +1573,7 @@ __all__ = [
     "HighFeePoolRejectedError",
     "HookedPoolRejectedError",
     "LiquidityPool",
+    "PathBatchIterator",
     "PathIterator",
     "Pool",
     "PoolAlreadyRegisteredError",
@@ -1580,6 +1604,7 @@ __all__ = [
     "discovery_batch_size",
     "execution",
     "executor",
+    "find_paths_async_rust",
     "find_paths_rust",
     "fleet",
     "flush_telemetry",

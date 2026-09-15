@@ -22,7 +22,7 @@ use crate::prelude::*;
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use degenbot_db::DegenbotDb;
 use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind};
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyStopAsyncIteration, PyValueError};
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use pyo3::types::PyDict;
 use pyo3::types::PyList;
@@ -30,6 +30,8 @@ use pyo3::types::PyList;
 use std::collections::HashSet;
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Find arbitrage paths (cycles) through a liquidity-pool graph.
 ///
@@ -78,6 +80,100 @@ pub fn find_paths_rust(
     include_reverse: bool,
     pool_type_per_depth: Option<Vec<Option<std::collections::HashSet<u8>>>>,
 ) -> PyResult<PathIterator> {
+    Ok(PathIterator {
+        finder: build_owned_finder(
+            edges,
+            start_token_id,
+            end_token_id,
+            min_depth,
+            max_depth,
+            include_reverse,
+            pool_type_per_depth,
+        )?,
+        buffer: Vec::new(),
+        batch_lens: Vec::new(),
+    })
+}
+
+/// Create a batched **async** iterator over the lazy arbitrage DFS (4IOEVT).
+///
+/// The async twin of [`find_paths_rust`]: it builds the same owning lazy DFS
+/// but returns a [`PathBatchIterator`] whose `__anext__` yields up to
+/// `batch_size` paths per call on the shared tokio runtime. Python's
+/// `find_paths_async` drives it with `async for`, so the event loop is
+/// suspended on a Rust future — no Python worker thread, queue, or stop flag.
+///
+/// Args:
+///     edges: Same flat `(token0_id, token1_id, pool_id, pool_kind)` list as
+///         [`find_paths_rust`].
+///     start_token_id: The token ID where the search begins.
+///     end_token_id: The token ID the path must return to.
+///     min_depth: Minimum number of hops in a completed path.
+///     max_depth: Maximum number of hops, or `None` for no limit.
+///     include_reverse: If `True`, yield each found path again reversed.
+///     pool_type_per_depth: Optional per-depth allowed pool kinds.
+///     batch_size: Maximum number of paths per `__anext__` batch
+///         (positive-clamped to `>= 1`).
+///
+/// Returns:
+///     A `PathBatchIterator` — `async for batch in iter:` yields
+///     `list[list[tuple[int, int]]]`; exhaustion raises
+///     `StopAsyncIteration`. Dropping the iterator cancels a mid-search DFS.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if any pool-kind discriminant is not 0, 1, or 2.
+#[expect(clippy::implicit_hasher)]
+#[pyfunction]
+#[pyo3(signature = (
+    edges,
+    start_token_id,
+    end_token_id,
+    min_depth,
+    max_depth,
+    include_reverse,
+    pool_type_per_depth=None,
+    batch_size=1000,
+))]
+pub fn find_paths_async_rust(
+    edges: Vec<(u64, u64, u64, u8)>,
+    start_token_id: u64,
+    end_token_id: u64,
+    min_depth: usize,
+    max_depth: Option<usize>,
+    include_reverse: bool,
+    pool_type_per_depth: Option<Vec<Option<std::collections::HashSet<u8>>>>,
+    batch_size: usize,
+) -> PyResult<PathBatchIterator> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let finder = build_owned_finder(
+        edges,
+        start_token_id,
+        end_token_id,
+        min_depth,
+        max_depth,
+        include_reverse,
+        pool_type_per_depth,
+    )?
+    .with_cancel(Arc::clone(&cancel));
+    Ok(PathBatchIterator::new(finder, cancel, batch_size))
+}
+
+/// Parse the flat int tuples + optional per-depth kind filter, build the
+/// pruned `PathGraph`, and return the owning lazy DFS.
+///
+/// Shared by the sync [`find_paths_rust`] and async [`find_paths_async_rust`]
+/// seams so both validate their arguments identically.
+#[expect(clippy::implicit_hasher)]
+fn build_owned_finder(
+    edges: Vec<(u64, u64, u64, u8)>,
+    start_token_id: u64,
+    end_token_id: u64,
+    min_depth: usize,
+    max_depth: Option<usize>,
+    include_reverse: bool,
+    pool_type_per_depth: Option<Vec<Option<std::collections::HashSet<u8>>>>,
+) -> PyResult<OwnedPathFinder> {
     let rust_edges: Vec<(u64, u64, u64, PoolKind)> = edges
         .into_iter()
         .map(|(t0, t1, pid, kind_u8)| {
@@ -118,7 +214,7 @@ pub fn find_paths_rust(
     let mut graph = degenbot_pathfinding::graph::PathGraph::from_edges(rust_edges);
     graph.prune_dead_ends();
 
-    let finder = OwnedPathFinder::new(
+    Ok(OwnedPathFinder::new(
         graph,
         start_token_id,
         end_token_id,
@@ -126,13 +222,7 @@ pub fn find_paths_rust(
         max_depth,
         include_reverse,
         rust_filter,
-    );
-
-    Ok(PathIterator {
-        finder,
-        buffer: Vec::new(),
-        batch_lens: Vec::new(),
-    })
+    ))
 }
 
 /// Build the pathfinding edge list + address lookups via the Rust DB core
@@ -435,5 +525,166 @@ impl PathIterator {
         }
         self.buffer.truncate(start);
         Ok(Some(list))
+    }
+}
+
+/// Mutable state carried across `__anext__` calls.
+struct AsyncPathState {
+    finder: OwnedPathFinder,
+    /// Flat pool-index buffer for the current batch. Consume from the back:
+    /// the last `len` indices form one path (length in `batch_lens`), then the
+    /// buffer is truncated by `len` (mirrors `PathIterator`).
+    buffer: Vec<u32>,
+    /// Path lengths within `buffer`, in insert order.
+    batch_lens: Vec<usize>,
+}
+
+/// A batched **async** iterator over the lazy DFS (4IOEVT).
+///
+/// `__anext__` returns `list[list[tuple[int, int]]]`: up to `batch_size`
+/// paths per call, computed on the shared tokio runtime with the GIL released
+/// (the DFS refill runs in the pyo3-async future body, which is polled without
+/// the GIL; only the Python list construction re-acquires it). Exhaustion
+/// raises `StopAsyncIteration`.
+///
+/// The mutable search state lives behind an `Arc<Mutex<Option<..>>>` and is
+/// taken for the duration of one `__anext__` (mirroring `BlockStream`'s
+/// receiver take/put-back), so a single shared iterator survives across awaits.
+/// Dropping the Python object sets the cooperative `cancel` flag: a consumer
+/// that abandons the sweep (`aclose()` / GC) stops a mid-grind DFS at its next
+/// loop iteration instead of pinning a tokio worker until the search ends.
+#[pyclass(name = "PathBatchIterator", module = "degenbot._ffi")]
+pub struct PathBatchIterator {
+    state: Arc<parking_lot::Mutex<Option<AsyncPathState>>>,
+    cancel: Arc<AtomicBool>,
+    batch_size: usize,
+}
+
+impl PathBatchIterator {
+    fn new(finder: OwnedPathFinder, cancel: Arc<AtomicBool>, batch_size: usize) -> Self {
+        Self {
+            state: Arc::new(parking_lot::Mutex::new(Some(AsyncPathState {
+                finder,
+                buffer: Vec::new(),
+                batch_lens: Vec::new(),
+            }))),
+            cancel,
+            batch_size: batch_size.max(1),
+        }
+    }
+}
+
+impl Drop for PathBatchIterator {
+    fn drop(&mut self) {
+        // Cooperative cancel: the in-flight `__anext__` future checks this
+        // between DFS advances, so a mid-search abandonment releases the Rust
+        // iterator promptly instead of grinding out the remaining batches.
+        self.cancel.store(true, Ordering::Release);
+    }
+}
+
+#[pymethods]
+impl PathBatchIterator {
+    /// Return self as the async iterator.
+    #[expect(clippy::missing_const_for_fn)]
+    fn __aiter__(slf: PyClassGuard<'_, Self>) -> PyClassGuard<'_, Self> {
+        slf
+    }
+
+    /// Await the next batch of paths (`list[list[tuple[int, int]]]`).
+    ///
+    /// Raises `StopAsyncIteration` when the DFS is exhausted (or after the
+    /// owning iterator was dropped/cancelled). A producer failure raises here
+    /// at the consumer.
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let state = Arc::clone(&self.state);
+        let batch_size = self.batch_size;
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut taken = state
+                .lock()
+                .take()
+                .ok_or_else(|| PyStopAsyncIteration::new_err("pathfinding iterator exhausted"))?;
+
+            // Refill the shared flat buffer only when it is drained, using the
+            // SAME chunk size as the sync `PathIterator`. Both serve paths from
+            // the back of the buffer, so the async stream reproduces the sync
+            // stream's order exactly; a delivery batch is just the next
+            // `batch_size` pops.
+            if taken.batch_lens.is_empty() {
+                let finder = &mut taken.finder;
+                let buffer = &mut taken.buffer;
+                let batch_lens = &mut taken.batch_lens;
+                buffer.clear();
+                batch_lens.clear();
+                while batch_lens.len() < BATCH_SIZE {
+                    match finder.next_path_indices_into(buffer) {
+                        Some(len) => batch_lens.push(len),
+                        None => break,
+                    }
+                }
+            }
+
+            if taken.batch_lens.is_empty() {
+                // Exhausted (or cancelled): drop the finder, never put it back.
+                return Err(PyStopAsyncIteration::new_err(
+                    "pathfinding iterator exhausted",
+                ));
+            }
+
+            // Build the batch under the GIL (indices -> (pool_id, kind_u8)).
+            let finder = &taken.finder;
+            let buffer = &mut taken.buffer;
+            let batch_lens = &mut taken.batch_lens;
+            let take = batch_size.min(batch_lens.len());
+            let batch = Python::attach(|py| -> PyResult<Py<PyList>> {
+                let out = PyList::empty(py);
+                for _ in 0..take {
+                    let Some(len) = batch_lens.pop() else {
+                        break;
+                    };
+                    let start = buffer.len() - len;
+                    let path = PyList::empty(py);
+                    for &idx in &buffer[start..] {
+                        let (pool_id, pool_kind) = finder.pool_edge_key(idx);
+                        path.append((pool_id, pool_kind.as_u8()))?;
+                    }
+                    buffer.truncate(start);
+                    out.append(path)?;
+                }
+                Ok(out.unbind())
+            })?;
+
+            *state.lock() = Some(taken);
+            Ok(batch)
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use degenbot_pathfinding::graph::PathGraph;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// Dropping the async iterator must set its cooperative cancel flag so an
+    /// in-flight `__anext__` DFS can stop at its next advance.
+    #[test]
+    fn drop_sets_cancel_flag() {
+        let graph = PathGraph::from_edges(vec![
+            (1u64, 2u64, 100u64, PoolKind::V2),
+            (2u64, 1u64, 200u64, PoolKind::V2),
+        ]);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let finder = OwnedPathFinder::new(graph, 1, 1, 2, Some(2), false, None)
+            .with_cancel(Arc::clone(&cancel));
+        let iterator = PathBatchIterator::new(finder, Arc::clone(&cancel), 4);
+        assert!(!cancel.load(Ordering::Acquire));
+        drop(iterator);
+        assert!(
+            cancel.load(Ordering::Acquire),
+            "dropping the iterator must set the cancel flag"
+        );
     }
 }

@@ -9,7 +9,12 @@ the deep pathfinding logic from :mod:`._pathfinding`. Importers should use::
 rather than reaching into ``degenbot._ffi`` directly.
 """
 
-from degenbot._ffi import build_path_graph, discovery_batch_size, find_paths_rust
+from degenbot._ffi import (
+    build_path_graph,
+    discovery_batch_size,
+    find_paths_async_rust,
+    find_paths_rust,
+)
 
 from ._pathfinding import PathStep, find_paths, find_paths_async
 
@@ -19,5 +24,6 @@ __all__ = [
     "discovery_batch_size",
     "find_paths",
     "find_paths_async",
+    "find_paths_async_rust",
     "find_paths_rust",
 ]

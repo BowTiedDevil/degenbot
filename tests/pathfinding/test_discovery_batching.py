@@ -1,27 +1,29 @@
 """Discovery delivery batching (4IOEVT): red/green behavioral tests.
 
-find_paths_async must deliver paths in batches (ONE event-loop hop per
-batch) while preserving the sync find_paths stream byte-for-byte. The
-worker-thread + bounded std-queue delivery shape is exercised here:
+find_paths_async is a thin async adapter over the Rust batched async iterator
+(`degenbot._ffi.find_paths_async_rust` -> `PathBatchIterator`): the DFS runs
+on the shared tokio runtime and is driven from Rust, one `__anext__` per
+batch. These tests pin:
 
-- parity vs the sync stream (batch_size 1 / default / larger-than-count),
-- batch_size <= 1 legacy per-path cadence and the default batch cadence,
-- cancellation (aclose) stops the worker (no zombie threads across
-  repeated sweeps in one process),
-- producer exceptions re-raise at the consumer,
-- the typed pathfinding.discovery_batch_size config key plumbs through
-  PathRegistrationPipeline.discovery_sweep and changes the observable
-  batching cadence.
+- path-output parity vs the sync find_paths stream (batch_size 1 / small /
+  default / oversized),
+- the Rust iterator's batch cadence (each `__anext__` yields <= batch_size
+  paths; one batch == one event-loop hop),
+- cancellation (aclose) releasing the Rust batch iterator with no stray
+  worker threads,
+- producer (Rust `__anext__`) exceptions re-raising at the consumer after
+  the pending batch drains,
+- the typed pathfinding.discovery_batch_size config key plumbing.
 """
 
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
-import subprocess
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import threading
-import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -35,12 +37,19 @@ from degenbot.database.operations import (
     get_scoped_sqlite_session,
 )
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.pathfinding import _pathfinding, find_paths, find_paths_async
+from degenbot.pathfinding import (
+    _pathfinding,
+    find_paths,
+    find_paths_async,
+    find_paths_async_rust,
+    find_paths_rust,
+)
 from degenbot.runner.build_paths import PathRegistrationPipeline
 from degenbot.types.chain import ChainId
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import AsyncGenerator
 
 CHAIN = ChainId.ETH
 WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -118,6 +127,22 @@ async def _collect(**kwargs: object) -> list[object]:
     return [path async for path in find_paths_async(**kwargs)]  # type: ignore[arg-type]
 
 
+async def _drain_into(producer: AsyncGenerator[object, None], sink: list[object]) -> None:
+    """Stream ``producer`` into ``sink`` one item at a time.
+
+    A list comprehension would be eager: an exception would discard the items
+    already yielded. The test asserts pending items are delivered before the
+    producer's raise, so the sink must be mutated incrementally.
+    """
+    async for path in producer:
+        sink.append(path)  # ruff: ignore[manual-list-comprehension]
+
+
+# ---------------------------------------------------------------------------
+# Parity: the async batch stream must be byte-identical to the sync stream.
+# ---------------------------------------------------------------------------
+
+
 def test_batched_async_matches_sync_stream(db: DatabaseSessionManager) -> None:
     """Content + order parity: 1, small, default, and oversized batches."""
     expected = list(find_paths(db=db, **_BASE_KWARGS))  # type: ignore[arg-type]
@@ -130,88 +155,214 @@ def test_batched_async_matches_sync_stream(db: DatabaseSessionManager) -> None:
         )
 
 
-def _install_fake_producer(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    n: int | None = None,
-    items: list[object] | None = None,
-    boom_after: int | None = None,
-    boom: type[BaseException] | None = None,
-) -> None:
-    """Patch the sync producer find_paths with a deterministic stream."""
-
-    def fake(**kwargs: object) -> object:
-        seq = items if items is not None else [f"p{i}" for i in range(n or 0)]
-        for i, item in enumerate(seq):
-            if boom_after is not None and i >= boom_after:
-                raise boom("producer died")  # type: ignore[misc]
-            yield [item]
-        if boom_after is not None and boom_after >= len(seq):
-            raise boom("producer died")  # type: ignore[misc]
-
-    monkeypatch.setattr(_pathfinding, "find_paths", fake)
+# ---------------------------------------------------------------------------
+# The Rust batched async iterator (direct seam).
+# ---------------------------------------------------------------------------
 
 
-async def _drain_with_sleep_count(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    n: int,
-    batch_size: int,
-) -> tuple[list[object], list[float]]:
-    """Drain the async stream, counting asyncio.sleep (one per batch hop)."""
-    _install_fake_producer(monkeypatch, n=n)
-    sleeps: list[float] = []
-    real_sleep = asyncio.sleep
-
-    async def counting_sleep(delay: float = 0) -> None:
-        sleeps.append(delay)
-        await real_sleep(0)
-
-    monkeypatch.setattr(_pathfinding.asyncio, "sleep", counting_sleep)
-
-    got = [
-        path
-        async for path in find_paths_async(
-            chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=batch_size
-        )
-    ]
-    return got, sleeps
+def _star_edges() -> list[tuple[int, int, int, int]]:
+    """Three parallel WETH(1)<->A(2) pools each way -> 3 * 3 == 9 cycles."""
+    forward = [(1, 2, 100 + i, 0) for i in range(3)]
+    reverse = [(2, 1, 200 + i, 0) for i in range(3)]
+    return [*forward, *reverse]
 
 
-async def test_batch_size_one_is_legacy_per_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """batch_size=1 -> one event-loop hop per path (legacy cadence)."""
-    got, sleeps = await _drain_with_sleep_count(monkeypatch, n=10, batch_size=1)
-    assert got == [[f"p{i}"] for i in range(10)]
-    assert len(sleeps) == 10
-
-
-async def test_default_batch_size_batches_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A large batch -> ONE event-loop hop for the whole stream."""
-    got, sleeps = await _drain_with_sleep_count(monkeypatch, n=10, batch_size=1000)
-    assert got == [[f"p{i}"] for i in range(10)]
-    assert len(sleeps) == 1
-
-
-async def test_batch_size_bounds_hop_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    """batch_size=3 over 10 paths -> ceil(10/3) == 4 hops."""
-    got, sleeps = await _drain_with_sleep_count(monkeypatch, n=10, batch_size=3)
-    assert got == [[f"p{i}"] for i in range(10)]
-    assert len(sleeps) == 4
-
-
-def _wait_for(predicate: object, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():  # type: ignore[operator]
-            return True
-        time.sleep(0.05)
-    return predicate()  # type: ignore[operator]
-
-
-async def _partial_sweep(take: int, batch_size: int = 100) -> int:
-    agen = find_paths_async(
-        chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=batch_size
+async def _collect_batches(
+    edges: list[tuple[int, int, int, int]], batch_size: int
+) -> tuple[list[object], list[int]]:
+    iterator = find_paths_async_rust(
+        edges,
+        1,
+        1,
+        2,
+        2,
+        include_reverse=False,
+        pool_type_per_depth=None,
+        batch_size=batch_size,
     )
+    batches = [batch async for batch in iterator]
+    paths = [path for batch in batches for path in batch]
+    return paths, [len(batch) for batch in batches]
+
+
+def test_rust_async_iterator_yields_batches_of_at_most_batch_size() -> None:
+    """One `__anext__` returns <= batch_size paths; the union is the DFS."""
+    edges = _star_edges()
+    expected = list(
+        find_paths_rust(edges, 1, 1, 2, 2, include_reverse=False, pool_type_per_depth=None)
+    )
+    # Each undirected tuple becomes both directions, so 3x3 forward x reverse
+    # pool pairs minus the 6 same-pool repeats == 30 two-hop cycles.
+    assert len(expected) == 30, "fixture must yield 30 two-hop cycles"
+
+    for batch_size in (1, 2, 4, 1000):
+        got, sizes = asyncio.run(_collect_batches(edges, batch_size))
+        assert got == expected, f"batch stream diverged at batch_size={batch_size}"
+        assert all(size <= batch_size for size in sizes), sizes
+        assert sum(sizes) == 30
+
+
+def test_rust_async_iterator_batches_cadence() -> None:
+    """batch_size=4 over 30 paths -> 7 batches of 4 + one of 2."""
+    _got, sizes = asyncio.run(_collect_batches(_star_edges(), 4))
+    assert sizes == [4, 4, 4, 4, 4, 4, 4, 2]
+
+
+def test_rust_async_iterator_rejects_bad_pool_kind() -> None:
+    """Constructor-time validation still raises for an unknown pool kind."""
+    with pytest.raises(ValueError, match="pool_kind"):
+        find_paths_async_rust(
+            [(1, 2, 1, 3)],
+            1,
+            1,
+            2,
+            2,
+            include_reverse=False,
+            pool_type_per_depth=None,
+            batch_size=10,
+        )
+
+
+# ---------------------------------------------------------------------------
+# The thin Python adapter (fake Rust seam, no DB needed).
+# ---------------------------------------------------------------------------
+
+
+class _FakeBatchIterator:
+    """A deterministic async iterator standing in for the Rust batch seam."""
+
+    def __init__(
+        self,
+        batches: list[list[object]],
+        *,
+        error: BaseException | None = None,
+        dropped: list[bool] | None = None,
+    ) -> None:
+        self._batches = list(batches)
+        self._error = error
+        self._dropped = dropped
+        self._index = 0
+        self.calls = 0
+
+    def __aiter__(self) -> _FakeBatchIterator:
+        return self
+
+    async def __anext__(self) -> list[object]:
+        self.calls += 1
+        await asyncio.sleep(0)
+        if self._index >= len(self._batches):
+            if self._error is not None:
+                exc, self._error = self._error, None
+                raise exc
+            raise StopAsyncIteration
+        batch = self._batches[self._index]
+        self._index += 1
+        return batch
+
+    def __del__(self) -> None:
+        if self._dropped is not None:
+            self._dropped.append(True)
+
+
+class _BoomError(RuntimeError):
+    pass
+
+
+def _fake_traversal() -> object:
+    prepared = _pathfinding._PreparedGraph(
+        edges=[], v2v3_addresses={}, v4_lookups={}, pool_id_to_type={}
+    )
+    return _pathfinding._Traversal(
+        prepared=prepared,
+        start_token_id=1,
+        end_token_id=1,
+        include_reverse=False,
+        min_depth=2,
+        pool_kind_filter=None,
+    )
+
+
+def _install_fake_rust_seam(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    batches: list[list[object]],
+    error: BaseException | None = None,
+    dropped: list[bool] | None = None,
+    captured: dict[str, object] | None = None,
+) -> None:
+    """Patch the prep + Rust batch seam so no DB is required."""
+
+    def factory(*args: object, **kwargs: object) -> _FakeBatchIterator:
+        if captured is not None:
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+        return _FakeBatchIterator(batches, error=error, dropped=dropped)
+
+    monkeypatch.setattr(_pathfinding, "find_paths_async_rust", factory)
+    monkeypatch.setattr(_pathfinding, "_prepare_traversals", lambda **_: [_fake_traversal()])
+
+
+def test_adapter_forwards_batch_size_to_rust_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The adapter hands the requested batch_size straight to the Rust seam."""
+    captured: dict[str, object] = {}
+    _install_fake_rust_seam(monkeypatch, batches=[[[], []]], captured=captured)
+
+    got = asyncio.run(
+        _collect(chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=7)
+    )
+    assert got == [[], []]
+
+    args = captured["args"]
+    assert isinstance(args, tuple)
+    assert args[0] == []  # edges from the (fake) prepared graph
+    assert args[7] == 7  # batch_size
+
+
+async def test_producer_exception_reraises_at_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Rust `__anext__` failure surfaces at the consumer, pending batch first."""
+    _install_fake_rust_seam(
+        monkeypatch,
+        batches=[[[], []]],
+        error=_BoomError("producer died"),
+    )
+
+    got: list[object] = []
+    with pytest.raises(_BoomError, match="producer died"):
+        await _drain_into(
+            find_paths_async(
+                chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=2
+            ),
+            got,
+        )
+
+    assert got == [[], []], "the pending batch must be delivered before the raise"
+
+
+async def test_aclose_releases_the_rust_iterator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """aclose clears the adapter's reference so the Rust iterator can drop."""
+    dropped: list[bool] = []
+    _install_fake_rust_seam(
+        monkeypatch,
+        batches=[[[], [], []], [[], [], []]],
+        dropped=dropped,
+    )
+
+    agen = find_paths_async(
+        chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=2
+    )
+    seen = 0
+    async for _path in agen:
+        seen += 1
+        break
+    await agen.aclose()
+    gc.collect()
+
+    assert seen == 1
+    assert dropped, "the adapter must release the Rust batch iterator on aclose"
+
+
+async def _partial_sweep(db: DatabaseSessionManager | None, *, take: int) -> int:
+    agen = find_paths_async(db=db, **_BASE_KWARGS)  # type: ignore[arg-type]
     seen = 0
     async for _path in agen:
         seen += 1
@@ -221,40 +372,20 @@ async def _partial_sweep(take: int, batch_size: int = 100) -> int:
     return seen
 
 
-async def test_aclose_stops_worker_no_zombies(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Repeated mid-sweep closes leave no worker threads behind."""
-    _install_fake_producer(monkeypatch, n=1_000_000)
-
-    # Warm the shared asyncio.to_thread executor so its cached threads are
-    # part of the baseline; then let every transient thread settle.
-    assert await _partial_sweep(5)
-    time.sleep(0.3)
+async def test_aclose_leaves_no_worker_threads(db: DatabaseSessionManager) -> None:
+    """Repeated mid-sweep closes leave no stray discovery worker threads."""
+    # Warm any lazily-created runtime/executor threads first.
+    await _partial_sweep(db, take=1)
+    await asyncio.sleep(0.2)
     baseline = threading.active_count()
 
     for _ in range(6):
-        assert await _partial_sweep(5) == 5
+        await _partial_sweep(db, take=1)
 
-    assert _wait_for(
-        lambda: threading.active_count() <= baseline, timeout=5.0
-    ), f"zombie worker threads: {threading.active_count()} > {baseline}"
-
-
-class _BoomError(RuntimeError):
-    pass
-
-
-async def test_producer_exception_reraises_at_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A producer failure surfaces at the async consumer, not silently."""
-    _install_fake_producer(monkeypatch, items=["a", "b"], boom_after=2, boom=_BoomError)
-
-    got: list[object] = []
-    with pytest.raises(_BoomError, match="producer died"):
-        async for path in find_paths_async(
-            chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=2
-        ):
-            got.append(path)
-
-    assert got == [["a"], ["b"]], "the completed batch must be delivered before the raise"
+    assert not any(t.name == "degenbot-discovery" for t in threading.enumerate())
+    assert threading.active_count() <= baseline, (
+        f"stray threads: {threading.active_count()} > {baseline}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -315,26 +446,3 @@ def test_discovery_sweep_passes_typed_batch_size(monkeypatch: pytest.MonkeyPatch
 
     _make_pipeline().discovery_sweep()
     assert captured["batch_size"] == 42
-
-
-async def test_config_batch_size_changes_discovery_cadence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The typed value changes observable batching granularity end-to-end."""
-    build_paths_module = sys.modules["degenbot.runner.build_paths"]
-
-    _install_fake_producer(monkeypatch, n=9)
-    monkeypatch.setattr(build_paths_module, "_discovery_batch_size", lambda: 3)
-
-    sleeps: list[float] = []
-    real_sleep = asyncio.sleep
-
-    async def counting_sleep(delay: float = 0) -> None:
-        sleeps.append(delay)
-        await real_sleep(0)
-
-    monkeypatch.setattr(_pathfinding.asyncio, "sleep", counting_sleep)
-
-    got = [path async for path in _make_pipeline().discovery_sweep()]
-    assert got == [[f"p{i}"] for i in range(9)]
-    assert len(sleeps) == 3, "9 paths / batch_size 3 == 3 event-loop hops"

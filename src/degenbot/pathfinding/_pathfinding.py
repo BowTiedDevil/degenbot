@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import enum
 import itertools
-import queue
-import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -21,10 +18,10 @@ from degenbot.database.models.pools import (
 from degenbot.database.operations import resolve_token_ids
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
-from degenbot.pathfinding import build_path_graph, find_paths_rust
+from degenbot.pathfinding import build_path_graph, find_paths_async_rust, find_paths_rust
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Generator, Iterable, Iterator, Sequence
+    from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
 
     from sqlalchemy.orm import Session
 
@@ -72,31 +69,10 @@ _POOL_KIND_TO_BASE: dict[int, type] = {
 
 # Minimum elapsed wall-clock between `find_paths_async` progress heartbeats
 # (NY4EFN). Picked so a long search stays quiet but a hang surfaces within
-# the bounded-time target. The Rust DFS emits a separate GIL-free stderr
-# heartbeat for the zero-yield grind that blocks this coroutine.
+# the bounded-time target. The Rust `OwnedPathFinder` emits a separate
+# GIL-free stderr heartbeat for the zero-yield grind (which no longer blocks
+# the event loop — the DFS runs on the tokio runtime).
 _DISCOVERY_HEARTBEAT_INTERVAL_S: float = 15.0
-
-# 4IOEVT discovery delivery batching. The worker thread drives the sync
-# find_paths generator and pushes completed BATCHES onto a bounded std queue;
-# the async consumer needs one asyncio.to_thread(q.get) hop per batch instead
-# of one event-loop round trip per path. The queue depth is a small multiple
-# of ONE batch, so producer memory stays O(batch_size), never O(candidates).
-_DISCOVERY_QUEUE_BATCH_DEPTH: int = 4
-# Worker/queue poll interval; bounds how long a stopped worker can sit in a
-# blocking put before it notices cancellation.
-_DISCOVERY_POLL_INTERVAL_S: float = 0.1
-# Normal-completion join bound while the worker closes the sync generator.
-_DISCOVERY_WORKER_JOIN_TIMEOUT_S: float = 5.0
-
-# Queue sentinel: the worker emits this once it is done (or has failed).
-_DISCOVERY_DONE: object = object()
-
-
-@dataclass(slots=True)
-class _DiscoveryProducerError:
-    """Carrier for a producer-thread exception re-raised at the consumer."""
-
-    exc: BaseException
 
 
 @dataclass(slots=True, frozen=True)
@@ -413,6 +389,129 @@ def _convert_pool_type_filter(
     return result
 
 
+@dataclass(slots=True, frozen=True)
+class _Traversal:
+    """One `(start, end, direction)` DFS traversal over a prepared graph.
+
+    `_prepare_traversals` resolves every traversal-plan entry (token IDs,
+    direction, effective min depth, per-depth filter) before any DFS runs, so
+    the sync `find_paths` and async `find_paths_async` streams share one
+    graph build + one traversal plan (parity by construction).
+
+    Attributes:
+        prepared: The shared flat edge list + address lookups.
+        start_token_id: The DFS start token ID.
+        end_token_id: The DFS end token ID.
+        include_reverse: Whether each found cycle is also yielded reversed.
+        min_depth: The effective minimum hop depth for this traversal.
+        pool_kind_filter: The per-depth allowed pool-kind u8 sets (or `None`).
+
+    """
+
+    prepared: _PreparedGraph
+    start_token_id: TokenId
+    end_token_id: TokenId
+    include_reverse: bool
+    min_depth: int
+    pool_kind_filter: list[set[int] | None] | None
+
+
+def _prepare_traversals(
+    *,
+    chain_id: int,
+    start_tokens: Iterable[ChecksummedAddress | str],
+    end_tokens: Iterable[ChecksummedAddress | str],
+    min_depth: int,
+    max_depth: int | None,
+    pool_types: Sequence[type],
+    db: DatabaseSessionManager,
+    pool_type_per_depth: Sequence[set[type] | None] | None,
+    allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None,
+) -> list[_Traversal]:
+    """Build the graph + resolve every traversal-plan entry (shared prep).
+
+    The single graph-build path for BOTH `find_paths` (sync) and
+    `find_paths_async` (async): `_prepare_graph` runs once, the
+    traversal plan is expanded once, and each entry's boundary token IDs +
+    effective min depth are resolved before any DFS starts.
+
+    Returns:
+        One `_Traversal` per `(start, end, direction)` plan entry.
+
+    Raises:
+        DegenbotValueError: If the session is not file-backed or a boundary
+            token is absent from the database.
+
+    """
+    # @dev Liquidity pool lookups using a token ID are implicitly filtered for the chain ID, since
+    # token addresses are unique to the chain. WHERE clauses can therefore be omitted from SELECTs.
+    with db() as session:
+        allowed_token_ids: set[TokenId] | None = None
+        if allowed_intermediate_tokens is not None:
+            allowed_token_ids = set(
+                resolve_token_ids(
+                    chain_id,
+                    (get_checksum_address(tok) for tok in allowed_intermediate_tokens),
+                    session,
+                ).values(),
+            )
+
+        prepared = _prepare_graph(
+            chain_id=chain_id,
+            pool_types=pool_types,
+            session=session,
+            allowed_intermediate_tokens=allowed_token_ids,
+        )
+
+        rust_filter = _convert_pool_type_filter(pool_type_per_depth)
+
+        traversal_plan = _prepare_traversal_plan(
+            start_tokens={get_checksum_address(token) for token in start_tokens},
+            end_tokens={get_checksum_address(token) for token in end_tokens},
+        )
+
+        traversals: list[_Traversal] = []
+        for (start_token, end_token), direction in traversal_plan.items():
+            start_token_id = resolve_token_ids(chain_id, [start_token], session).get(start_token)
+            if start_token_id is None:
+                msg = f"Start token {start_token} was not found in the database."
+                raise DegenbotValueError(message=msg)
+
+            end_token_id = resolve_token_ids(chain_id, [end_token], session).get(end_token)
+            if end_token_id is None:
+                msg = f"End token {end_token} was not found in the database."
+                raise DegenbotValueError(message=msg)
+
+            logger.debug(
+                f"Finding paths from {start_token} "
+                f"(id {start_token_id}) -> {end_token} (id {end_token_id})",
+            )
+
+            # A permutation filter implies an exact hop depth: don't yield
+            # shorter cycles that merely prefix-match the first N depths
+            # (e.g. a 3-depth V3-V3-V2 filter must not leak 2-hop V3-V3).
+            effective_min_depth = (
+                min_depth
+                if pool_type_per_depth is None
+                else max(min_depth, len(pool_type_per_depth))
+            )
+
+            logger.debug(f"Performing generic {max_depth}-pool path search")
+
+            traversals.append(
+                _Traversal(
+                    prepared=prepared,
+                    start_token_id=start_token_id,
+                    end_token_id=end_token_id,
+                    include_reverse=direction == Direction.FORWARD_AND_REVERSE,
+                    min_depth=effective_min_depth,
+                    pool_kind_filter=rust_filter,
+                )
+            )
+
+    return traversals
+
+
 def find_paths(
     *,
     chain_id: int,
@@ -455,92 +554,49 @@ def find_paths(
     Yields:
         Sequence[PathStep]: A valid arbitrage path from a start token to an end token.
 
-    Raises:
-        DegenbotValueError: If no pools are found for the given chain ID or tokens.
-
     """
-    # @dev Liquidity pool lookups using a token ID are implicitly filtered for the chain ID, since
-    # token addresses are unique to the chain. WHERE clauses can therefore be omitted from SELECTs.
-
+    # One-time graph build + token resolution (shared with find_paths_async),
+    # then the lazy Rust DFS per traversal-plan entry.
     start = time.perf_counter()
 
-    with db() as session:
-        allowed_token_ids: set[TokenId] | None = None
-        if allowed_intermediate_tokens is not None:
-            allowed_token_ids = set(
-                resolve_token_ids(
-                    chain_id,
-                    (get_checksum_address(tok) for tok in allowed_intermediate_tokens),
-                    session,
-                ).values(),
-            )
+    traversals = _prepare_traversals(
+        chain_id=chain_id,
+        start_tokens=start_tokens,
+        end_tokens=end_tokens,
+        min_depth=min_depth,
+        max_depth=max_depth,
+        pool_types=pool_types,
+        db=db,
+        pool_type_per_depth=pool_type_per_depth,
+        allowed_intermediate_tokens=allowed_intermediate_tokens,
+    )
 
-        prepared = _prepare_graph(
-            chain_id=chain_id,
-            pool_types=pool_types,
-            session=session,
-            allowed_intermediate_tokens=allowed_token_ids,
+    for traversal in traversals:
+        # The Rust DFS returns a lazy iterator — paths are yielded one at
+        # a time, so memory is bounded even for graphs that produce
+        # millions of paths.
+        path_iter = find_paths_rust(
+            traversal.prepared.edges,
+            traversal.start_token_id,
+            traversal.end_token_id,
+            traversal.min_depth,
+            max_depth,
+            traversal.include_reverse,
+            traversal.pool_kind_filter,
         )
 
-        rust_filter = _convert_pool_type_filter(pool_type_per_depth)
+        for raw_path in path_iter:
+            yield _build_path_steps(
+                raw_path,
+                traversal.prepared.v2v3_addresses,
+                traversal.prepared.v4_lookups,
+                traversal.prepared.pool_id_to_type,
+            )
 
-        traversal_plan = _prepare_traversal_plan(
-            start_tokens={get_checksum_address(token) for token in start_tokens},
-            end_tokens={get_checksum_address(token) for token in end_tokens},
+        logger.debug(
+            f"Completed structured generic search (max depth {max_depth}) "
+            f"at +{time.perf_counter() - start:.1f}s",
         )
-
-        for (start_token, end_token), direction in traversal_plan.items():
-            start_token_id = resolve_token_ids(chain_id, [start_token], session).get(start_token)
-            if start_token_id is None:
-                msg = f"Start token {start_token} was not found in the database."
-                raise DegenbotValueError(message=msg)
-
-            end_token_id = resolve_token_ids(chain_id, [end_token], session).get(end_token)
-            if end_token_id is None:
-                msg = f"End token {end_token} was not found in the database."
-                raise DegenbotValueError(message=msg)
-
-            logger.debug(
-                f"Finding paths from {start_token} "
-                f"(id {start_token_id}) -> {end_token} (id {end_token_id})",
-            )
-
-            # A permutation filter implies an exact hop depth: don't yield
-            # shorter cycles that merely prefix-match the first N depths
-            # (e.g. a 3-depth V3-V3-V2 filter must not leak 2-hop V3-V3).
-            effective_min_depth = (
-                min_depth
-                if pool_type_per_depth is None
-                else max(min_depth, len(pool_type_per_depth))
-            )
-
-            logger.debug(f"Performing generic {max_depth}-pool path search")
-
-            # The Rust DFS returns a lazy iterator — paths are yielded one at
-            # a time, so memory is bounded even for graphs that produce
-            # millions of paths.
-            path_iter = find_paths_rust(
-                prepared.edges,
-                start_token_id,
-                end_token_id,
-                effective_min_depth,
-                max_depth,
-                direction == Direction.FORWARD_AND_REVERSE,
-                rust_filter,
-            )
-
-            for raw_path in path_iter:
-                yield _build_path_steps(
-                    raw_path,
-                    prepared.v2v3_addresses,
-                    prepared.v4_lookups,
-                    prepared.pool_id_to_type,
-                )
-
-            logger.debug(
-                f"Completed structured generic search (max depth {max_depth}) "
-                f"at +{time.perf_counter() - start:.1f}s",
-            )
 
 
 async def find_paths_async(
@@ -558,24 +614,23 @@ async def find_paths_async(
 ) -> AsyncGenerator[Sequence[PathStep], None]:
     """Async version of find_paths.
 
-    4IOEVT: the sync find_paths generator is driven by a WORKER THREAD that
-    collects paths into batch_size-sized batches and pushes them onto a
-    bounded std queue; the async consumer drains ONE batch per
-    asyncio.to_thread(q.get) hop and then gives the event loop ONE
-    asyncio.sleep(0) turn per batch (instead of per path). Loop liveness is
-    preserved at ~batch_size path cadence while the per-path event-loop
-    overhead (3.3x measured) disappears.
+    4IOEVT: a thin adapter over the Rust batched async iterator
+    (`find_paths_async_rust` -> `PathBatchIterator`). The lazy DFS runs
+    on the shared tokio runtime and is driven from Rust — each `async for`
+    iteration is ONE `__anext__` future yielding up to `batch_size` paths,
+    so there is no Python worker thread, bounded std queue, stop flag, sentinel
+    ferrying, exception ferrying, or `asyncio.to_thread` hop per batch.
 
-    batch_size <= 1 degrades to the legacy per-path delivery (one hop per
-    path, no worker thread) — the documented escape hatch and parity/reference
-    mode.
+    The one-time graph build + token resolution runs inline (no worker thread
+    or executor): its expensive part is the Rust `build_path_graph` bulk read,
+    which releases the GIL. The DFS itself never blocks the event loop — each
+    await is a Rust future.
 
-    Cancelling the async generator (GeneratorExit / aclose / a consumer break
-    on a bound) sets a stop flag the worker checks on every put/get with
-    timeout, then closes the sync generator (dropping the lazy Rust iterator).
-    Producer-side exceptions are carried across the thread boundary and
-    re-raised at the consumer after the pending batch/sentinel drains, so the
-    pipeline's failure path is unchanged.
+    Cancelling the async generator (GeneratorExit / aclose / a consumer break)
+    drops the adapter's reference to the Rust iterator; its Rust `Drop` sets a
+    cooperative cancel flag, so a mid-DFS abandonment stops the search at its
+    next advance and releases the iterator. Producer errors raised by
+    `__anext__` surface at the consumer after the pending batch drains.
 
     Args:
         chain_id: The chain ID to restrict pool and token queries.
@@ -584,7 +639,7 @@ async def find_paths_async(
         min_depth: The minimum number of hops in yielded paths.
         max_depth: The optional maximum number of hops in yielded paths.
         pool_types: Database model classes for the pool types to include in the
-            graph (default: LiquidityPoolTable and UniswapV4PoolTable).
+            graph (default: `LiquidityPoolTable` and `UniswapV4PoolTable`).
         db: The database session manager used to open a read session.
         pool_type_per_depth: If set, a sequence of allowed pool type sets at each
             depth. Depth 0 = first hop, depth 1 = second hop, etc. A None entry
@@ -595,8 +650,8 @@ async def find_paths_async(
             intermediate token are excluded from the graph. Use this to filter out
             tax tokens, fee-on-transfer tokens, and low-quality pairs that would
             waste simulation gas.
-        batch_size: Paths per delivery batch (default 1000). <= 1 selects the
-            legacy per-path delivery.
+        batch_size: Paths per Rust delivery batch (default 1000), clamped to
+            `>= 1`.
 
     Yields:
         Sequences of PathStep objects representing arbitrage paths.
@@ -609,84 +664,53 @@ async def find_paths_async(
     # every _DISCOVERY_HEARTBEAT_INTERVAL_S of yielded paths so a future hang
     # is visible at a glance, not just "78% CPU, no logs". This fires while
     # paths are streaming (the common prior-run shape: ~317k yields). A
-    # zero-yield grind blocks the asyncio event loop on the same thread, so
-    # this Python-side log cannot fire there — the Rust OwnedPathFinder
-    # emits a GIL-free stderr heartbeat ([pathfinding] discovery heartbeat:)
-    # for that case; together they cover both shapes.
-    #
-    # The log lines and format are UNCHANGED by 4IOEVT (byte-identical); only
-    # the cadence they ride changed (per batch instead of per path).
+    # zero-yield grind no longer blocks the event loop: the DFS runs on the
+    # tokio runtime (each __anext__ is a Rust future) and the Rust
+    # OwnedPathFinder emits a GIL-free stderr heartbeat for that case; together
+    # they cover both shapes. The log lines + format are unchanged by 4IOEVT.
     discovery_start = time.perf_counter()
     discovery_yielded = 0
     discovery_last_log = discovery_start
 
-    def _sync_find_paths() -> Iterator[Sequence[PathStep]]:
-        """Build the sync producer with this call's exact parameters.
+    # One-time graph build + token resolution, inline. No worker thread and
+    # no executor hop: the expensive part is the Rust build_path_graph bulk
+    # read, which releases the GIL. The DFS below never blocks the loop.
+    traversals = _prepare_traversals(
+        chain_id=chain_id,
+        start_tokens=start_tokens,
+        end_tokens=end_tokens,
+        min_depth=min_depth,
+        max_depth=max_depth,
+        pool_types=pool_types,
+        db=db,
+        pool_type_per_depth=pool_type_per_depth,
+        allowed_intermediate_tokens=allowed_intermediate_tokens,
+    )
 
-        Returns:
-            The lazy sync path iterator.
+    effective_batch = max(1, int(batch_size))
 
-        """
-        return find_paths(
-            chain_id=chain_id,
-            start_tokens=start_tokens,
-            end_tokens=end_tokens,
-            min_depth=min_depth,
-            max_depth=max_depth,
-            pool_types=pool_types,
-            db=db,
-            pool_type_per_depth=pool_type_per_depth,
-            allowed_intermediate_tokens=allowed_intermediate_tokens,
+    for traversal in traversals:
+        # One __anext__ == ONE batch == ONE event-loop hop (the whole point of
+        # 4IOEVT); the adapter just fans the batch out into per-path yields.
+        path_batches = find_paths_async_rust(
+            traversal.prepared.edges,
+            traversal.start_token_id,
+            traversal.end_token_id,
+            traversal.min_depth,
+            max_depth,
+            traversal.include_reverse,
+            traversal.pool_kind_filter,
+            effective_batch,
         )
 
-    # Legacy escape hatch (parity/reference mode): one event-loop hop per path,
-    # no worker thread — the pre-4IOEVT behavior exactly.
-    if batch_size <= 1:
-        for path in _sync_find_paths():
-            await asyncio.sleep(0)
-            yield path
-            discovery_yielded += 1
-            now = time.perf_counter()
-            if now - discovery_last_log >= _DISCOVERY_HEARTBEAT_INTERVAL_S:
-                logger.info(
-                    "[pathfinding] discovery progress: paths_yielded=%d elapsed=%.1fs",
-                    discovery_yielded,
-                    now - discovery_start,
+        async for batch in path_batches:
+            for raw_path in batch:
+                yield _build_path_steps(
+                    raw_path,
+                    traversal.prepared.v2v3_addresses,
+                    traversal.prepared.v4_lookups,
+                    traversal.prepared.pool_id_to_type,
                 )
-                discovery_last_log = now
-        logger.info(
-            "[pathfinding] discovery complete: paths_yielded=%d elapsed=%.1fs",
-            discovery_yielded,
-            time.perf_counter() - discovery_start,
-        )
-        return
-
-    effective_batch = int(batch_size)
-    batch_queue: queue.Queue[object] = queue.Queue(
-        maxsize=max(2, min(_DISCOVERY_QUEUE_BATCH_DEPTH, effective_batch * 2)),
-    )
-    stop = threading.Event()
-    producer_error: BaseException | None = None
-    worker = threading.Thread(
-        target=_discovery_worker,
-        args=(_sync_find_paths(), batch_queue, stop, effective_batch),
-        name="degenbot-discovery",
-        daemon=True,
-    )
-    worker.start()
-
-    completed = False
-    try:
-        while True:
-            item = await asyncio.to_thread(_discovery_get, batch_queue, stop)
-            if item is _DISCOVERY_DONE:
-                completed = True
-                break
-            if isinstance(item, _DiscoveryProducerError):
-                producer_error = item.exc
-                continue
-            for path in cast("list[Sequence[PathStep]]", item):
-                yield path
                 discovery_yielded += 1
                 now = time.perf_counter()
                 if now - discovery_last_log >= _DISCOVERY_HEARTBEAT_INTERVAL_S:
@@ -696,101 +720,9 @@ async def find_paths_async(
                         now - discovery_start,
                     )
                     discovery_last_log = now
-            # ONE event-loop hop per BATCH (not per path) — the whole point of
-            # 4IOEVT.
-            await asyncio.sleep(0)
-    finally:
-        # Cancellation (GeneratorExit / aclose / consumer break) stops the
-        # worker: the stop flag is checked on every put/get with timeout, and
-        # the sync generator closes so the lazy Rust iterator drops.
-        stop.set()
-        if completed:
-            # Normal completion: let the worker finish closing the sync
-            # generator (DB session + Rust iterator). Bounded so a pathological
-            # producer cannot pin the event loop.
-            worker.join(timeout=_DISCOVERY_WORKER_JOIN_TIMEOUT_S)
-
-    if producer_error is not None:
-        raise producer_error
 
     logger.info(
         "[pathfinding] discovery complete: paths_yielded=%d elapsed=%.1fs",
         discovery_yielded,
         time.perf_counter() - discovery_start,
     )
-
-
-def _discovery_put(
-    q: queue.Queue[object],
-    item: object,
-    stop: threading.Event,
-) -> bool:
-    """Put one item with a bounded poll so a stopped consumer cannot pin the worker.
-
-    Returns:
-        True when the item was queued, False when a stop was observed first.
-
-    """
-    while not stop.is_set():
-        try:
-            q.put(item, timeout=_DISCOVERY_POLL_INTERVAL_S)
-        except queue.Full:
-            continue
-        else:
-            return True
-    return False
-
-
-def _discovery_get(
-    q: queue.Queue[object],
-    stop: threading.Event,
-) -> object:
-    """Get one item, returning the done sentinel once a stop is observed.
-
-    Returns:
-        The next queued item, or the done sentinel after a stop.
-
-    """
-    while True:
-        try:
-            return q.get(timeout=_DISCOVERY_POLL_INTERVAL_S)
-        except queue.Empty:
-            if stop.is_set():
-                return _DISCOVERY_DONE
-
-
-def _discovery_batch_stream(
-    gen: Iterator[Sequence[PathStep]],
-    q: queue.Queue[object],
-    stop: threading.Event,
-    batch_size: int,
-) -> None:
-    """Stream the sync generator onto the queue in batches until done/stopped."""
-    batch: list[Sequence[PathStep]] = []
-    for path in gen:
-        if stop.is_set():
-            break
-        batch.append(path)
-        if len(batch) >= batch_size:
-            if not _discovery_put(q, batch, stop):
-                break
-            batch = []
-    else:
-        if batch and not stop.is_set():
-            _discovery_put(q, batch, stop)
-
-
-def _discovery_worker(
-    gen: Iterator[Sequence[PathStep]],
-    q: queue.Queue[object],
-    stop: threading.Event,
-    batch_size: int,
-) -> None:
-    """Drive the sync generator, batching paths onto the bounded queue."""
-    try:
-        _discovery_batch_stream(gen, q, stop, batch_size)
-    except BaseException as exc:  # ruff: ignore[blind-except] — re-raised at the consumer
-        _discovery_put(q, _DiscoveryProducerError(exc), stop)
-    finally:
-        _discovery_put(q, _DISCOVERY_DONE, stop)
-        cast("Generator[Sequence[PathStep], None, None]", gen).close()
