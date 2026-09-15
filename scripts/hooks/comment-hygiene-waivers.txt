@@ -1,16 +1,12 @@
 # Comment-hygiene gate waivers — scripts/hooks/comment-hygiene.sh
 # Live-detector output over the pre-rule citation census (docs/findings/
-# 2026-09-15-ergo-comment-references.md). Shrink in the strip waves
-# (ergo NIZCNR); regenerate via:
-#   WAF=/dev/null scripts/hooks/comment-hygiene.sh | cut -d: -f1 | sort -u
-# 2026-09-15: wave A (30 files) + degenbot-aave + degenbot-arbitrage hand
-# strips + the mechanical assist pass across the remaining crates landed;
-# this list = files still carrying citations: rust/crates remainder is
-# hand-remainder (manualremain3/4), runner/** + the 8 ARCH-REVIEW
-# in-flight files belong to their session.
-(AGENTS.md'CommentHygiene',docs/comments.md).Stripthecitation,
+# 2026-09-15-ergo-comment-references.md). Shrink in the strip waves;
+# regenerate via:
+#   WAF=/dev/null scripts/hooks/comment-hygiene.sh 2>&1 |
+#     grep -E '^[^ :]+:[0-9]+:' | cut -d: -f1 | sort -u
+# A waiver means "this file still carries pre-rule citations" — remove the
+# entry in the same commit that strips the file's citations.
 examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-restatetheinvariantinprose,oranchorthepinningtestinstead
 rust/crates/degenbot-bot/examples/config_smoke_boot.rs
 rust/crates/degenbot-bot/src/arb_engine/block_cursor.rs
 rust/crates/degenbot-bot/src/arb_engine/detached_cycle.rs
@@ -79,14 +75,6 @@ rust/crates/degenbot-simulation/tests/spike_derivation.rs
 rust/crates/degenbot-simulation/tests/tier3_executor_artifacts.rs
 rust/crates/degenbot-simulation/tests/tier3_v3_pool_swap_vs_revm.rs
 rust/crates/degenbot-simulation/tests/tier3_v4_pool_swap_vs_revm.rs
-rust/crates/degenbot-solvers/benches/digest.rs
-rust/crates/degenbot-solvers/examples/cl_cache_lab.rs
-rust/crates/degenbot-solvers/examples/stateview_feasibility_probe.rs
-rust/crates/degenbot-solvers/src/mobius_v3_int.rs
-rust/crates/degenbot-solvers/tests/v3_crossing_solver_vs_sim_parity.rs
-rust/crates/degenbot-solvers/tests/v3_iia_fixture_reproduction.rs
-rust/crates/degenbot-solvers/tests/v4_crossing_solver_vs_sim_parity.rs
-rust/crates/degenbot-solvers/tests/v4_stale_state_confirmation.rs
 rust/crates/degenbot-workers/src/dispatcher/tests.rs
 rust/crates/degenbot/examples/standalone_consumer.rs
 rust/crates/degenbot/tests/tier3_path5000_v4_clamp.rs
@@ -96,7 +84,6 @@ rust/examples/settlement_bot/src/main.rs
 rust/examples/settlement_bot/src/operator_channel.rs
 rust/examples/settlement_bot/src/session_watch.rs
 rust/examples/settlement_bot/src/submission.rs
-src/degenbot/arbitrage/verification_retry.py
 src/degenbot/runner/__init__.py
 src/degenbot/runner/_consume.py
 src/degenbot/runner/_dispatch.py
