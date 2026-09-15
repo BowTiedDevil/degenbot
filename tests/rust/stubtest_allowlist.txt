@@ -1,0 +1,145 @@
+# stubtest allowlist for the hand-maintained degenbot._ffi stubs (ADR-053).
+#
+# stubtest owns the existence-direction checks the bespoke drift gate used to
+# hand-roll (R1 "runtime surface is stubbed", R3 "stub definitions exist at
+# runtime", R4 generalized class-member checking). Entries are EXACT matches
+# (fullmatch) against the errored object path, so a class-level entry never
+# suppresses member-level findings of another kind... except where noted the
+# generator emitted the narrowest object that carries the PyO3-introspection
+# limitation.
+#
+# Structure: groups below each name the drift rule they serve. When PyO3
+# changes these runtime behaviors, entries can be re-triaged by running:
+#   uv run --no-sync stubtest --ignore-disjoint-bases --generate-allowlist degenbot._ffi
+
+# ==== R4 / @final ====
+# Every #[pyclass] raises the cannot-be subclassed at runtime trait (PyO3 makes all
+# pyclasses un-subclassable unless #[pyclass(subclass)] is set); the stubs would
+# need a per-class @final boilerplate that adds no checking power. R4's
+# existence direction (members both ways) is unaffected by these entries.
+degenbot._ffi.ArbitrageEngine
+degenbot._ffi.BalanceVectorView
+degenbot._ffi.BlockStream
+degenbot._ffi.Bot
+degenbot._ffi.BotIo
+degenbot._ffi.ConcentratedLiquidityView
+degenbot._ffi.Erc20Token
+degenbot._ffi.Erc20TokenRow
+degenbot._ffi.IntakeReceipt
+degenbot._ffi.LiquidityPool
+degenbot._ffi.PathBatchIterator
+degenbot._ffi.PathIterator
+degenbot._ffi.Pool
+degenbot._ffi.ReservePairView
+degenbot._ffi.cancel.CancelHandle
+degenbot._ffi.contract.AsyncContract
+degenbot._ffi.contract.Contract
+degenbot._ffi.curve_dy.DyCalculationInputs
+degenbot._ffi.db.CollateralPositionData
+degenbot._ffi.db.DatabasePositionQuery
+degenbot._ffi.db.DatabaseSnapshot
+degenbot._ffi.db.DebtPositionData
+degenbot._ffi.db.ExchangeRow
+degenbot._ffi.db.LiquidityPoolRow
+degenbot._ffi.db.LiquidityUpdateEvent
+degenbot._ffi.db.PoolManagerRow
+degenbot._ffi.db.UserPositionSummary
+degenbot._ffi.db.V2PoolRowInput
+degenbot._ffi.db.V3PoolRowInput
+degenbot._ffi.db.V4PoolRowInput
+degenbot._ffi.dex_identity.DexIdentity
+degenbot._ffi.execution.SolveResult
+degenbot._ffi.fork.AnvilFork
+degenbot._ffi.price.AavePriceOracle
+degenbot._ffi.price.ChainlinkPriceFeed
+degenbot._ffi.provider.AlloyProvider
+degenbot._ffi.provider.AlloySubscription
+degenbot._ffi.provider.AsyncAlloyProvider
+degenbot._ffi.provider.LogFilter
+degenbot._ffi.simulation.DispatchCandidate
+degenbot._ffi.simulation.DispatchOutcome
+degenbot._ffi.simulation.PayloadOutcome
+degenbot._ffi.simulation.PayloadVerdict
+degenbot._ffi.simulation.SimulateContext
+degenbot._ffi.submission.Dispatcher
+degenbot._ffi.submission.DivergentPool
+degenbot._ffi.submission.SubmitCandidate
+degenbot._ffi.submission.TxParams
+degenbot._ffi.submission.TxSigner
+
+# ==== R4 / PyO3 constructor introspection ====
+# PyO3 exposes the #[new] constructor's signature on __new__ and leaves __init__
+# introspecting as a plain (self); the hand stubs document the true constructor
+# signature on __init__ (IDE surface). stubtest compares both sides and flags
+# __init__ (runtime has no params) and __new__ (stub has params) for the same class.
+degenbot._ffi.ArbitrageEngine.__init__
+degenbot._ffi.ArbitrageEngine.__new__
+degenbot._ffi.Bot.__init__
+degenbot._ffi.Bot.__new__
+degenbot._ffi.BotIo.__init__
+degenbot._ffi.BotIo.__new__
+degenbot._ffi.contract.Contract.__init__
+degenbot._ffi.contract.Contract.__new__
+degenbot._ffi.db.DatabasePositionQuery.__init__
+degenbot._ffi.db.DatabasePositionQuery.__new__
+degenbot._ffi.db.DatabaseSnapshot.__init__
+degenbot._ffi.db.DatabaseSnapshot.__new__
+degenbot._ffi.db.LiquidityUpdateEvent.__init__
+degenbot._ffi.db.LiquidityUpdateEvent.__new__
+degenbot._ffi.db.V2PoolRowInput.__init__
+degenbot._ffi.db.V2PoolRowInput.__new__
+degenbot._ffi.db.V3PoolRowInput.__init__
+degenbot._ffi.db.V3PoolRowInput.__new__
+degenbot._ffi.db.V4PoolRowInput.__init__
+degenbot._ffi.db.V4PoolRowInput.__new__
+degenbot._ffi.dex_identity.DexIdentity.__init__
+degenbot._ffi.dex_identity.DexIdentity.__new__
+degenbot._ffi.fork.AnvilFork.__init__
+degenbot._ffi.fork.AnvilFork.__new__
+degenbot._ffi.price.AavePriceOracle.__init__
+degenbot._ffi.price.AavePriceOracle.__new__
+degenbot._ffi.price.ChainlinkPriceFeed.__init__
+degenbot._ffi.price.ChainlinkPriceFeed.__new__
+degenbot._ffi.provider.AlloyProvider.__init__
+degenbot._ffi.provider.AlloyProvider.__new__
+degenbot._ffi.provider.AsyncAlloyProvider.__init__
+degenbot._ffi.provider.AsyncAlloyProvider.__new__
+degenbot._ffi.provider.LogFilter.__init__
+degenbot._ffi.provider.LogFilter.__new__
+degenbot._ffi.simulation.DispatchCandidate.__init__
+degenbot._ffi.simulation.DispatchCandidate.__new__
+degenbot._ffi.simulation.SimulateContext.__init__
+degenbot._ffi.simulation.SimulateContext.__new__
+degenbot._ffi.submission.SubmitCandidate.__init__
+degenbot._ffi.submission.SubmitCandidate.__new__
+degenbot._ffi.submission.TxParams.__init__
+degenbot._ffi.submission.TxParams.__new__
+degenbot._ffi.submission.TxSigner.__init__
+degenbot._ffi.submission.TxSigner.__new__
+
+# ==== R4 / PyO3 signature introspection ====
+# The hand stubs encode keyword-only markers, default values, and parameter names
+# that the compiled module hides (PyO3 introspection lost them). stubtest checks
+# existence, not encoding; these are introspection limitations, not stub drift.
+degenbot._ffi.Bot.assemble_v3_tick_map
+degenbot._ffi.Bot.assemble_v4_tick_map
+degenbot._ffi.Bot.build_aerodrome_v2_pool
+degenbot._ffi.Bot.build_balancer_weighted_pool
+degenbot._ffi.Bot.register_aerodrome_pool
+degenbot._ffi.Bot.register_v4_pool
+degenbot._ffi.Bot.submit_registration_unit
+degenbot._ffi.call_blocking_on_ambient_runtime
+degenbot._ffi.call_on_ambient_runtime
+degenbot._ffi.db.DatabasePositionQuery.get_users_with_debt
+degenbot._ffi.diagnostics.failure_action
+degenbot._ffi.diagnostics.start_gil_probe
+degenbot._ffi.executor.pack_config
+degenbot._ffi.provider.AsyncAlloyProvider.get_logs
+degenbot._ffi.solady.flz_compress
+degenbot._ffi.solady.flz_decompress
+
+# ==== R3 / annotation-only stub types ====
+# Stub-defined types that exist only for typing (annotation-only imports/aliases);
+# the bespoke R3 test exempted these explicitly.
+degenbot._ffi.ChecksummedAddress
+degenbot._ffi.executor.WarmupDict

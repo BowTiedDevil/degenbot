@@ -1,3 +1,5 @@
+__all__ = ["next_base_fee"]
+
 def next_base_fee(
     parent_base_fee: int,
     parent_gas_used: int,

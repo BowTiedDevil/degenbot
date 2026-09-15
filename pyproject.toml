@@ -243,6 +243,9 @@ markers = [
 dev = [
     "hypothesis",
     "maturin",
+    # stubtest's vehicle ONLY (ADR-053): mypy runs as the stub<->runtime
+    # consistency checker; the repo's type checker remains `ty`.
+    "mypy",
     "numpy",
     "prek",
     "pytest-asyncio",

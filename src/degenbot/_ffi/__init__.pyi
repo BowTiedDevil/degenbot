@@ -986,6 +986,7 @@ class Bot:
         override_balances: list[int] | None = None,
     ) -> int: ...
     def pool_count(self) -> int: ...
+    @property
     def chain_id(self) -> int: ...
     def dispatch_log(
         self,
@@ -1616,11 +1617,14 @@ __all__ = [
     "DynamicFeePoolRejectedError",
     "Erc20Token",
     "Erc20TokenRow",
+    "FleetIntakeFaultedError",
     "HighFeePoolRejectedError",
     "HookedPoolRejectedError",
+    "IntakeReceipt",
     "LiquidityPool",
     "PathBatchIterator",
     "PathIterator",
+    "PathRegistryFullError",
     "Pool",
     "PoolAlreadyRegisteredError",
     "PoolRegistrationError",
@@ -1635,6 +1639,8 @@ __all__ = [
     "build_fingerprint",
     "build_number",
     "build_path_graph",
+    "call_blocking_on_ambient_runtime",
+    "call_on_ambient_runtime",
     "cancel",
     "cli_main",
     "compute_aerodrome_v2_pool_address",
@@ -1648,6 +1654,8 @@ __all__ = [
     "dex_identity",
     "diagnostics",
     "discovery_batch_size",
+    "eip_1559",
+    "event_topic",
     "execution",
     "executor",
     "find_paths_async_rust",
@@ -1655,6 +1663,7 @@ __all__ = [
     "fleet",
     "flush_telemetry",
     "fork",
+    "keccak256",
     "pool",
     "price",
     "provider",
@@ -1666,5 +1675,6 @@ __all__ = [
     "solve_balancer_weighted_basket",
     "submission",
     "to_checksum_address",
+    "v2_math",
     "verification_retry_policy_defaults",
 ]

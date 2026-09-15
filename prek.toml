@@ -102,6 +102,10 @@ hooks = [
 
   { id = "rust-clippy", name = "Rust clippy", language = "system", entry = "just lint-rust-check",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "python-lint", name = "Python lint", language = "system", entry = "just lint-python-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  # ADR-053: stubtest owns the stub<->runtime existence checks (R1/R2/R3/R4)
+  # for the degenbot._ffi seam; the slimmed bespoke gate (R0 + driver-module
+  # tombstones) runs in the pytest suites below.
+  { id = "stubtest", name = "Stubtest drift gate", language = "system", entry = "just lint-stubtest", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # Rust track (mirrors ci.yml: rust-build, rust-test).
   { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },

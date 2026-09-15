@@ -875,3 +875,23 @@ check-no-alembic:
         exit 1
     fi
     echo "OK: no Alembic references remain in src/**/*.py"
+
+# ========== Stub-to-Runtime Drift Gate (ADR-053, ergo XNEJRD) ==========
+#
+# mypy.stubtest replaces the bespoke drift gate's R1/R3/R4 mechanics (and R2,
+# verified below): it introspects the INSTALLED degenbot._ffi extension and
+# compares it against the hand-maintained src/degenbot/_ffi/*.pyi stubs in
+# BOTH directions, across every class member, with no curated table. The
+# allowlist (tests/rust/stubtest_allowlist.txt) carries only PyO3-
+# introspection noise and stub-only type exemptions, each group annotated with
+# the drift rule it serves. What stubtest cannot see (Python-side surface in
+# driver modules) stays in tests/rust/test_ffi_stub_drift.py.
+lint-stubtest:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # --ignore-disjoint-bases: PEP 800 disjoint-base flags on every #[pyclass]
+    # are PyO3-synthetic runtime semantics, not stub drift. Staleness of the
+    # introspected .so is owned by the receipt gates (verify-build-fresh,
+    # AGENTS.md) — stubtest simply checks whatever is installed.
+    uv run --no-sync stubtest --ignore-disjoint-bases \
+        --allowlist tests/rust/stubtest_allowlist.txt degenbot._ffi
