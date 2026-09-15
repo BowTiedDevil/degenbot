@@ -1,7 +1,12 @@
 """High-performance Ethereum RPC provider using Alloy.
 
 This module provides a Rust-based provider for fast log fetching and RPC calls.
-It replaces web3.py's provider functionality with optimized Rust implementations.
+
+RPC methods return the ``LogData`` / ``BlockData`` mappings defined in
+:mod:`degenbot.types.rpc_types`: plain ``bytes`` for hash and data fields,
+EIP-55 checksummed strings for addresses, and Python ``int`` for numeric
+fields. Log dicts use camelCase keys; block/transaction dicts use
+snake_case.
 
 Example:
     >>> from degenbot.provider import AlloyProvider, LogFilter
@@ -92,8 +97,8 @@ class LogFilter:
 class AlloyProvider:
     """High-performance Ethereum RPC provider using Alloy.
 
-    Replaces web3.py provider for log fetching and basic RPC calls.
-    Uses Rust-based HTTP client with connection pooling for optimal performance.
+    Backs log fetching and basic RPC calls with a Rust HTTP client using
+    connection pooling for optimal performance.
 
     Args:
         rpc_url: HTTP/HTTPS endpoint URL
@@ -122,10 +127,6 @@ class AlloyProvider:
         max_blocks_per_request: int = 5000,
     ) -> None:
         """Initialize the instance."""
-        self._rpc_url = rpc_url
-        self._max_retries = max_retries
-        self._max_blocks_per_request = max_blocks_per_request
-
         # Initialize Rust provider
         self._provider = RustAlloyProvider(
             rpc_url=rpc_url,
@@ -140,7 +141,7 @@ class AlloyProvider:
     @property
     def rpc_url(self) -> str:
         """The RPC URL."""
-        return self._rpc_url
+        return self._provider.rpc_url
 
     @property
     def chain_id(self) -> int:
@@ -260,8 +261,8 @@ class AlloyProvider:
         """Fetch event logs with automatic retry and dynamic block sizing.
 
         Flexible API that accepts either a LogFilter object or individual
-        filter parameters as keyword arguments. Returns logs in web3.py
-        compatible format.
+        filter parameters as keyword arguments. Each log is returned as a
+        ``LogData`` mapping.
 
         Args:
             filter_param: LogFilter object with filter criteria (optional)
@@ -271,8 +272,8 @@ class AlloyProvider:
             topics: Event topic signatures (optional)
 
         Returns:
-            List of log dictionaries with web3.py-compatible format:
-            - address: Contract address
+            List of ``LogData`` mappings with camelCase keys (Rust log converter):
+            - address: EIP-55 checksummed contract address
             - topics: List of topic hashes
             - data: Raw log data bytes
             - blockNumber: Block number
@@ -521,15 +522,14 @@ class AlloyProvider:
             raise ValueError(msg)
         return block_data["timestamp"]
 
-    # --- Introspection / adapter-compat shims ---
+    # --- Introspection ---
 
     def to_alloy_provider(self) -> RustAlloyProvider:
         """Return the inner Rust ``AlloyProvider`` pyclass over this provider's transport.
 
         Rust pyclasses (e.g. ``ChainlinkPriceFeed``, ``AavePriceOracle``)
-        expect the Rust ``AlloyProvider`` pyclass, not this Python wrapper.
-        This shim unwraps to the inner provider so those call sites work
-        unchanged.
+        expect the Rust ``AlloyProvider`` pyclass, not this Python wrapper;
+        this method unwraps to the inner provider.
 
         Returns:
             The inner Rust ``AlloyProvider`` pyclass.
@@ -542,33 +542,6 @@ class AlloyProvider:
         """The provider type (always 'alloy')."""
         return "alloy"
 
-    @property
-    def provider(self) -> RustAlloyProvider:
-        """The underlying Rust ``AlloyProvider`` pyclass."""
-        return self._provider
-
-    @staticmethod
-    def as_web3() -> None:
-        """Return ``None`` — this provider has no Web3 backend."""
-        return
-
-    def as_alloy(self) -> RustAlloyProvider:
-        """Return the inner Rust ``AlloyProvider`` pyclass.
-
-        Rust pyclasses (e.g. ``ChainlinkPriceFeed``, ``AavePriceOracle``)
-        expect the Rust ``AlloyProvider`` pyclass, not this Python wrapper.
-
-        Returns:
-            The inner Rust ``AlloyProvider`` pyclass.
-
-        """
-        return self._provider
-
-    @staticmethod
-    def as_offline() -> None:
-        """Return ``None`` — this provider is not an ``OfflineProvider``."""
-        return
-
     def __repr__(self) -> str:
         """Return a string representation.
 
@@ -576,7 +549,7 @@ class AlloyProvider:
             A string representation of the provider.
 
         """
-        return f"AlloyProvider(rpc_url={self._rpc_url!r})"
+        return f"AlloyProvider(rpc_url={self.rpc_url!r})"
 
     def __enter__(self) -> Self:
         """Context manager entry.
@@ -601,8 +574,9 @@ class AsyncAlloyProvider:
     """High-performance async Ethereum RPC provider using Alloy.
 
     A thin Python wrapper around the Rust ``AsyncAlloyProvider`` pyclass.
-    Adds string block-identifier resolution and adapter-compat introspection
-    shims so it is a direct drop-in for the retired ``AsyncProviderAdapter``.
+    Adds string block-identifier resolution (``'latest'``, ``'earliest'``,
+    ``'pending'``) and exposes the inner Rust pyclass via
+    :meth:`as_async_alloy` for Rust-side call seams.
 
     Args:
         rust_provider: The underlying Rust ``AsyncAlloyProvider`` pyclass.
@@ -656,16 +630,6 @@ class AsyncAlloyProvider:
     def provider_type(self) -> str:
         """The provider type (always 'alloy')."""
         return "alloy"
-
-    @property
-    def provider(self) -> "AsyncAlloyProvider":
-        """The underlying provider (identity — returns ``self``).
-
-        Returns:
-            This provider instance.
-
-        """
-        return self
 
     # ----- Async methods -----
 
@@ -902,18 +866,7 @@ class AsyncAlloyProvider:
         """Close the provider and release resources."""
         self._provider.close()
 
-    # ----- Introspection shims -----
-
-    @staticmethod
-    def to_alloy_provider() -> AlloyProvider:
-        """Return an AlloyProvider. Raises (no sync transport on async provider).
-
-        Raises:
-            ValueError: Always — an AsyncAlloyProvider has no sync transport.
-
-        """
-        msg = "Cannot build a sync AlloyProvider from an AsyncAlloyProvider."
-        raise ValueError(msg)
+    # ----- Introspection -----
 
     def as_async_alloy(self) -> RustAsyncAlloyProvider:
         """Return the inner Rust ``AsyncAlloyProvider`` pyclass.
@@ -926,21 +879,6 @@ class AsyncAlloyProvider:
 
         """
         return self._provider
-
-    @staticmethod
-    def as_web3() -> None:
-        """Return ``None`` — this provider has no Web3 backend."""
-        return
-
-    @staticmethod
-    def as_alloy() -> None:
-        """Return ``None`` — use ``as_async_alloy`` for the async handle."""
-        return
-
-    @staticmethod
-    def as_offline() -> None:
-        """Return ``None`` — this provider is not an ``OfflineProvider``."""
-        return
 
     def __repr__(self) -> str:
         """Return a string representation.

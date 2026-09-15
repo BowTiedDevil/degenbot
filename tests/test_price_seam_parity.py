@@ -158,14 +158,14 @@ def _free_port_plausible() -> bool:
 
 
 def test_py_chainlink_feed_decimals_byte_exact(mock_provider: AlloyProvider) -> None:
-    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
+    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.to_alloy_provider())
     assert feed.decimals() == CHAINLINK_DECIMALS
 
 
 def test_py_chainlink_feed_latest_round_data_byte_exact(
     mock_provider: AlloyProvider,
 ) -> None:
-    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
+    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.to_alloy_provider())
     round_id, answer, started_at, updated_at, answered_in_round = feed.latest_round_data()
     assert round_id == 1
     assert answer == CHAINLINK_ANSWER
@@ -197,7 +197,7 @@ def test_chainlink_shell_decimals_cached(fake_bot: SimpleNamespace) -> None:
 
 def test_chainlink_py_price_truncates_whole_units(mock_provider: AlloyProvider) -> None:
     """The Rust ``price()`` convenience truncates to whole units (integer div)."""
-    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
+    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.to_alloy_provider())
     truncated = feed.price()
     assert truncated == 1845  # int(answer // 10**decimals)
 
@@ -210,7 +210,7 @@ def test_chainlink_py_price_truncates_whole_units(mock_provider: AlloyProvider) 
 def test_py_aave_oracle_get_asset_price_byte_exact(
     mock_provider: AlloyProvider,
 ) -> None:
-    oracle = AavePriceOracle(AAVE_ORACLE, mock_provider.as_alloy())
+    oracle = AavePriceOracle(AAVE_ORACLE, mock_provider.to_alloy_provider())
     assert oracle.get_asset_price(ASSET_ADDRESS) == AAVE_ASSET_PRICE
 
 
