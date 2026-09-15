@@ -631,12 +631,10 @@ impl WalkEventCensus {
 ///
 /// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
-// VALIDATION-ONLY ORACLE (ergo 7J22EQ → PXSY47, done): assumed-tuple
-// piecewise simulator, superseded in production by the self-determining
-// `simulate_walk_path` (PXSY47 shipped the step-faithful walker).
-// Retained as the test-only validation oracle for the ON5QMD
-// rounding-parity nets and the uncapped enumeration references in the
-// test module.
+// Validation-only oracle: assumed-tuple piecewise simulator, superseded
+// in production by the self-determining step-faithful `simulate_walk_path`.
+// Retained as the test-only validation oracle for the rounding-parity
+// nets and the uncapped enumeration references in the test module.
 #[cfg_attr(not(test), expect(dead_code))]
 fn int_simulate_cl_path_n(
     amount_in: U256,
@@ -726,12 +724,10 @@ fn int_simulate_cl_path_n(
 ///
 /// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
-// VALIDATION-ONLY ORACLE (ergo 7J22EQ → PXSY47, done): assumed-tuple
-// piecewise simulator, superseded in production by the self-determining
-// `simulate_walk_path` (PXSY47 shipped the step-faithful walker).
-// Retained as the test-only validation oracle for the ON5QMD
-// rounding-parity nets and the uncapped enumeration references in the
-// test module.
+// Validation-only oracle: assumed-tuple piecewise simulator, superseded
+// in production by the self-determining step-faithful `simulate_walk_path`.
+// Retained as the test-only validation oracle for the rounding-parity
+// nets and the uncapped enumeration references in the test module.
 #[cfg_attr(not(test), expect(dead_code))]
 fn int_simulate_v3_v3_path(
     amount_in: U256,
@@ -2114,7 +2110,7 @@ fn solve_active_set_path_inner(
 // (the None/Err branches have side effects so let-else doesn't apply)
 
 /// Solve a 2-hop V3-V3 arbitrage path with the active-set piecewise Möbius
-/// walk (ergo 7J22EQ; replaces the capped ending-range enumeration).
+/// walk (replaces the capped ending-range enumeration).
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// `hop_outputs[0]` = intermediate output from hop 1, `hop_outputs[1]` = final output.
@@ -2235,7 +2231,7 @@ fn cl_walk_hop<'a>(
 }
 
 /// Solve an N-hop concentrated-liquidity arbitrage path with the active-set
-/// piecewise Möbius walk (ergo 7J22EQ; replaces the capped mixed-radix
+/// piecewise Möbius walk (replaces the capped mixed-radix
 /// ending-range enumeration — there is no tuple budget any more).
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
@@ -2584,7 +2580,7 @@ impl V3WordProfile {
 // ---------------------------------------------------------------------------
 
 /// Solve a mixed V2-V3 arbitrage path with the active-set piecewise Möbius
-/// walk (ergo 7J22EQ; replaces the capped ending-range enumeration over the
+/// walk (replaces the capped ending-range enumeration over the
 /// V3 side — there is no tuple budget any more).
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
@@ -2623,8 +2619,8 @@ pub fn exact_solve_mixed_v2_v3_sequence(
 ///
 /// Returns a [`SimulationResult`] with per-hop output and consumed-input amounts.
 #[must_use]
-// VALIDATION-ONLY ORACLE (ergo 7J22EQ → PXSY47, done): assumed-tuple
-// piecewise simulator, superseded in production by `simulate_walk_path`.
+// Validation-only oracle: assumed-tuple piecewise simulator, superseded
+// in production by `simulate_walk_path`.
 // Retained for the test module's uncapped-enumeration reference and
 // N-hop parity nets.
 #[cfg_attr(not(test), expect(dead_code))]
@@ -2758,7 +2754,7 @@ fn int_simulate_mixed_path_n(
 }
 
 /// Solve an N-hop mixed V2 + CL (V3/V4) arbitrage path with the active-set
-/// piecewise Möbius walk (ergo 7J22EQ; replaces the capped mixed-radix
+/// piecewise Möbius walk (replaces the capped mixed-radix
 /// enumeration over CL ending ranges — there is no tuple budget any more).
 ///
 /// - `v2_hops[i]`: V2 hop state at position `i` (`None` for CL positions)
@@ -4461,7 +4457,7 @@ mod tests {
         IntV3TickRangeSequence::new(ranges).unwrap()
     }
 
-    /// Loop-15 5CC2ZP RED: the nested ceil-inversion must predict the exact
+    /// The nested ceil-inversion must predict the exact
     /// first-above input on a mixed 3-hop path. `sim(pa)` must exceed `ks`
     /// and `sim(pa−1)` must not — which, by monotonicity of `landed`, proves
     /// `pa` is THE smallest x whose landing exits the tuple.
@@ -4604,7 +4600,7 @@ mod tests {
         (tuples.len(), checked)
     }
 
-    /// Loop-15 5CC2ZP RED: the profile-level demand inversion against
+    /// The profile-level demand inversion against
     /// brute-force `swap()` minimality — pins the step-jump derivation, the
     /// exact-out step inversion (fee compensation), and the saturation clamp.
     #[test]

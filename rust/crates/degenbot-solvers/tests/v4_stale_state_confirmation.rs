@@ -1,8 +1,8 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
 #![expect(clippy::doc_markdown)]
-//! Decisive root-cause confirmation + fix guard for ergo `BZBOLL` — the V4
-//! `CurrencyNotSettled` divergence is the V4 protocol fee. `RZKFKR` pinned
-//! it (offline replay of the path=97 fixture); this test guards the FIX
+//! Decisive root-cause confirmation + fix guard — the V4
+//! `CurrencyNotSettled` divergence is the V4 protocol fee, pinned by an
+//! offline replay of the path=97 fixture; this test guards the FIX
 //! (`calculate_swap_fee` threaded into `v4_simulate_swap` +
 //! `build_int_v4_sequence` via `V4PoolState.protocol_fee`).
 //!
@@ -199,6 +199,6 @@ fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
         "amount_in={amount_in} \
          swapFee_out={sim_out} (== on-chain actual {ONCHAIN_ACTUAL_OUT}) \
          lpFee_out={sim_out_no_proto} (== pre-fix prediction {PRE_FIX_LP_FEE_PREDICTION}) \
-         => BZBOLL fix threads calculateSwapFee into both v4_simulate_swap + solver"
+         => protocol-fee fix threads calculateSwapFee into both v4_simulate_swap + solver"
     );
 }

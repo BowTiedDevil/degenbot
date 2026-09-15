@@ -1,5 +1,5 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
-//! Decisive offline experiment for ergo task `W2UWZO` — resolves the
+//! Decisive offline experiment — resolves the
 //! "stale active state vs. compute_crossing residual" fork for the V4
 //! CurrencyNotSettled `+1` divergence WITHOUT a live mainnet run.
 //!
@@ -1856,7 +1856,7 @@ fn cl_hop_clamp_margin_exceeds_worst_solver_over_prediction() {
         MARGIN > worst_over_predict,
         "VAASFM clamp margin ({MARGIN} wei) must strictly exceed the worst observed \
          solver-vs-`v4_simulate_swap` over-prediction ({worst_over_predict} wei); otherwise the \
-         clamp can land exactly on an over-predicted tight value and re-trigger the EMPTY march \
-         (ergo 7E5D7W). Parity suites pin this to 0; a non-zero value is a regression guard trip."
+         clamp can land exactly on an over-predicted tight value and re-trigger the EMPTY march. \
+         Parity suites pin this to 0; a non-zero value is a regression guard trip."
     );
 }

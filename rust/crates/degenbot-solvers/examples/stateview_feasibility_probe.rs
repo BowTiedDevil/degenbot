@@ -1,4 +1,4 @@
-// THROWAWAY spike harness for ergo KWKEVV (StateView mechanism feasibility).
+// Throwaway spike harness (StateView mechanism feasibility).
 // Lives only for this spike; deleted after supervisor sign-off per
 // docs/architecture/stateview-feasibility.md §7. Lint-exempt wholesale: it is
 // diagnostic-only and never ships.

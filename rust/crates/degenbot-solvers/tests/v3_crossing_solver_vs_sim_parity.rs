@@ -1,5 +1,5 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
-//! Decisive offline experiment for ergo task `E7ALWT` — resolves the
+//! Decisive offline experiment — resolves the
 //! "V3 solver-math vs. stale engine state" fork for the post-block-25647669
 //! IIA `+13` V3-hop over-prediction WITHOUT a live mainnet run.
 //!
@@ -11,11 +11,10 @@
 //! (`three_hop_v3_v3_v3`) chains the predicted (higher) amount as hop[2]'s
 //! exact-in → the UNI token's `transfer` reverts `"IIA"`.
 //!
-//! The sim_v4_swap_step_rounding diagnosis (removed in the stale-docs cleanup `71ec78b2`)
-//! concludes V4-hop
-//! over-prediction is the V4 protocol fee (RZKFKR — DONE) and routinely
+//! The sim_v4_swap_step_rounding diagnosis concludes V4-hop over-prediction
+//! is the V4 protocol fee and routinely
 //! claims "V3 hops match exactly." This fixture appears to refute that claim.
-//! Two residual suspects (mirroring the W2UWZO V4 experiment):
+//! Two residual suspects (mirroring the sibling V4 experiment):
 //!
 //! 1. **Stale engine state** — the engine `V3PoolState` the solver read lags
 //!    the solve-block state the in-process revm sim reads.
@@ -513,7 +512,7 @@ fn run_sparse_range0_sweep(
 }
 
 #[test]
-// GREEN regression guard for ergo E7ALWT — the solver's `compute_tick_ranges`
+// Regression guard — the solver's `compute_tick_ranges`
 // collapses interior word-boundary ticks in constant-liquidity runs; the solver
 // now RE-WALKS the collapsed interior boundaries per word boundary in
 // `compute_crossing` / `int_simulate_v3_swap` (via `word_boundary_prices`),
@@ -521,7 +520,7 @@ fn run_sparse_range0_sweep(
 // performs at every word boundary. The on-chain `+13` IIA trap (block
 // 25647669, pool 0x57D7…dF80) is reproduced here on a synthetic sparse
 // topology and now matches byte-for-byte. Re-introducing the collapse-without-
-// re-walk regression makes this RED.
+// re-walk regression re-trips this test.
 fn v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class() {
     // The decisive reproduction. Sparse initialized ticks (every 3 words)
     // with low liquidity in the failing pool's fee/spacing bucket — the
