@@ -220,6 +220,68 @@ pub(crate) fn make_trace_root(span: &tracing::Span) {
 #[cfg(not(feature = "otel"))]
 pub(crate) fn make_trace_root(_span: &tracing::Span) {}
 
+/// `Some(span)` when a real subscriber backs `span`, `None` when the ambient
+/// dispatch is `tracing`'s no-op [`NoSubscriber`](tracing::subscriber::NoSubscriber).
+///
+/// `NoSubscriber::new_span` mints the sentinel id `0xDEAD` — neither
+/// `Span::make_with` nor the span macro's `always`-interest short-circuit
+/// consults the current dispatch's `enabled()` — so a span created while the
+/// no-op subscriber is ambient is an UNBACKED handle. Reusing it as an
+/// explicit `parent:` after a real subscriber arrives panics inside
+/// `Registry::clone_span` ("tried to clone Id(57005), but no span exists with
+/// that ID"): the sentinel exists in no real registry. Loop-carried spans (the
+/// pump's per-epoch block root and the reorg-window root outlive many blocks)
+/// must pass through here at CREATION time — the check is only meaningful
+/// against the dispatch that minted the span — so a subscriber installed
+/// mid-run degrades the parent to a root span instead of aborting the pump.
+#[must_use]
+pub(crate) fn subscriber_backed_span(span: &tracing::Span) -> Option<tracing::Span> {
+    if tracing::dispatcher::get_default(|dispatch| {
+        dispatch.is::<tracing::subscriber::NoSubscriber>()
+    }) {
+        return None;
+    }
+    Some(span.clone())
+}
+
+/// A long-lived process hits the same callsite before and after any subscriber
+/// exists; the guard is keyed on the dispatch, not on the span's id.
+#[cfg(test)]
+fn unbacked_span() -> tracing::Span {
+    tracing::info_span!("test.unbacked")
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used)] // the pins assert loudly
+mod span_backing_tests {
+    //! Pins the sentinel-id hazard behind [`super::subscriber_backed_span`].
+
+    #[test]
+    fn no_subscriber_spans_are_unbacked_and_real_registry_spans_survive() {
+        // With the no-op subscriber ambient, a span is backed by no real
+        // registry: `NoSubscriber::new_span` returns the 0xDEAD sentinel (it is
+        // reached without an `enabled()` check — see `Span::make_with`), and a
+        // later `Registry::clone_span` of that id panics. The guard is the
+        // dispatch, so it drops the handle whatever the span's id looks like.
+        tracing::dispatcher::with_default(&tracing::Dispatch::none(), || {
+            assert!(
+                super::subscriber_backed_span(&super::unbacked_span()).is_none(),
+                "a NoSubscriber handle must never be kept as a parent"
+            );
+        });
+
+        // A real registry-backed handle survives, and parenting to it in its
+        // own registry is safe — the exact call shape that panicked while a
+        // sentinel handle survived to the publish stage.
+        let subscriber = tracing_subscriber::registry();
+        tracing::subscriber::with_default(subscriber, || {
+            let backed = tracing::info_span!("test.backed");
+            let kept = super::subscriber_backed_span(&backed).expect("registry-backed span");
+            drop(tracing::info_span!(parent: kept, "test.child"));
+        });
+    }
+}
+
 /// No-op without the `otel` feature (nothing to flush).
 #[cfg(not(feature = "otel"))]
 pub fn flush_before_exit() {}

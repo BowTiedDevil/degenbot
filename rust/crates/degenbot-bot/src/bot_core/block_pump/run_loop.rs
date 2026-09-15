@@ -674,7 +674,11 @@ impl BlockPump {
                     // MQUKB6-T0: this span becomes the loop's per-block context —
                     // subsequent iterations (logs, settle decisions) nest under it
                     // until the next header replaces it.
-                    block_span = Some(new_block_span.clone());
+                    // A span minted while no subscriber is installed carries
+                    // NoSubscriber's 0xDEAD sentinel id; keep it out of the loop
+                    // context so a subscriber installed mid-run cannot turn the
+                    // next `parent:` clone into a Registry::clone_span panic.
+                    block_span = crate::telemetry::subscriber_backed_span(&new_block_span);
                     // Pre-solve gap marks: this header is the clock anchor
                     // for the new block's gap decomposition.
                     pregap = PreSolveGapTrack {
@@ -1022,7 +1026,7 @@ impl BlockPump {
                             if let Some(bs) = block_span.as_ref() {
                                 bs.record("reorg.entry_block", reorg_block);
                             }
-                            reorg_span = Some(window);
+                            reorg_span = crate::telemetry::subscriber_backed_span(&window);
                             reorg_pools_restored = 0;
                             reorg_idempotent_noops = 0;
                             let outcome = {
