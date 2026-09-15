@@ -50,12 +50,11 @@ __all__ = ["VerificationRetryPolicy", "retry_verification_call", "retry_verifica
 # ~2s base delays (before jitter), capped at 4s. Total worst-case wait ≈ 7.5s
 # before giving up loudly — enough for a dropped/retried ``eth_call``
 # round-trip or a brief node GC pause without stalling ``build_paths`` startup.
-(
-    _DEFAULT_MAX_ATTEMPTS,
-    _DEFAULT_BASE_DELAY,
-    _DEFAULT_MAX_DELAY,
-    _DEFAULT_JITTER,
-) = verification_retry_policy_defaults()
+_DEFAULTS = verification_retry_policy_defaults()
+_DEFAULT_MAX_ATTEMPTS = _DEFAULTS.max_attempts
+_DEFAULT_BASE_DELAY = _DEFAULTS.base_delay
+_DEFAULT_MAX_DELAY = _DEFAULTS.max_delay
+_DEFAULT_JITTER = _DEFAULTS.jitter
 _UNREACHABLE = "unreachable"  # tenacity always re-raises or returns
 
 

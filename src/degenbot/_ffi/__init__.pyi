@@ -181,13 +181,27 @@ def discovery_batch_size() -> int:
     `find_paths_async`.
     """
 
-def verification_retry_policy_defaults() -> tuple[int, float, float, float]:
-    """Return the shared core verification-retry policy defaults (6LC4JB).
+class RetryPolicyDefaults:
+    """The shared core verification-retry policy defaults as a self-describing
+    value (6LC4JB / TD5: replaced the anonymous positional 4-tuple, which
+    would silently mis-assign on a Rust-side field reorder).
 
-    Returns ``(max_attempts, base_delay, max_delay, jitter)``, in seconds for
-    the float fields, read from ``degenbot_core::retry::RetryPolicy`` — the one
-    declaration site the Python ``VerificationRetryPolicy`` dataclass uses.
+    Seconds for the float fields; read from
+    ``degenbot_core::retry::RetryPolicy`` — the one declaration site the
+    Python ``VerificationRetryPolicy`` dataclass uses.
     """
+
+    @property
+    def max_attempts(self) -> int: ...
+    @property
+    def base_delay(self) -> float: ...
+    @property
+    def max_delay(self) -> float: ...
+    @property
+    def jitter(self) -> float: ...
+
+def verification_retry_policy_defaults() -> RetryPolicyDefaults:
+    """Return the shared core verification-retry policy defaults (6LC4JB)."""
 
 def runtime_status() -> dict[str, Any]:
     """FF-T5 (NT7HJC): the runtime fleet status.

@@ -59,6 +59,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // 6LC4JB: the shared core verification-retry policy defaults, so the
     // Python driver shell reads them from the one Rust-owned declaration site.
+    // TD5: the return is a pyclass (`RetryPolicyDefaults`), self-describing
+    // instead of the positional tuple.
+    m.add_class::<crate::config::RetryPolicyDefaults>()?;
     m.add_function(wrap_pyfunction!(
         crate::config::verification_retry_policy_defaults,
         m

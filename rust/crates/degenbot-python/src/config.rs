@@ -20,21 +20,32 @@ pub fn discovery_batch_size() -> usize {
         .max(1)
 }
 
-/// The shared core verification-retry policy defaults `(max_attempts,
-/// base_delay, max_delay, jitter)`, in seconds for the float fields.
+/// The shared core verification-retry policy defaults as a SELF-DESCRIBING
+/// value (TD5/P2 — the former anonymous 4-tuple would silently mis-assign on
+/// a Rust-side field reorder):
+/// in seconds for the float fields.
 ///
 /// The Python `VerificationRetryPolicy` dataclass reads these instead of
 /// carrying its own literal set, so the Rust `RetryPolicy` (ergo 6LC4JB) is
 /// the one declaration site for both the driver shell and the pure-Rust
 /// example.
+#[pyclass(frozen, get_all, module = "degenbot._ffi")]
+pub struct RetryPolicyDefaults {
+    pub max_attempts: u32,
+    pub base_delay: f64,
+    pub max_delay: f64,
+    pub jitter: f64,
+}
+
+/// Read the shared core verification-retry policy defaults (6LC4JB).
 #[pyfunction]
 #[must_use]
-pub fn verification_retry_policy_defaults() -> (u32, f64, f64, f64) {
+pub fn verification_retry_policy_defaults() -> RetryPolicyDefaults {
     let policy = ::degenbot_core::retry::RetryPolicy::verification_default();
-    (
-        policy.max_attempts,
-        policy.base_delay,
-        policy.max_delay,
-        policy.jitter,
-    )
+    RetryPolicyDefaults {
+        max_attempts: policy.max_attempts,
+        base_delay: policy.base_delay,
+        max_delay: policy.max_delay,
+        jitter: policy.jitter,
+    }
 }
