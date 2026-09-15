@@ -46,8 +46,9 @@ clap = { version = "4.6", features = ["derive"] }
 # Progress rendering lives at the facade only (ADR-051 D9).
 indicatif = "0.18"
 # The SIGINT policy owner (ADR-051 D7): first Ctrl+C -> `CancelHandle`, second
-# Ctrl+C -> abort.
-tokio = { version = "^1.53", features = ["rt-multi-thread", "signal"] }
+# Ctrl+C -> abort. The listener task rides the shared process runtime
+# (degenbot_core::runtime); no runtime is built here.
+tokio = { version = "^1.53", features = ["signal"] }
 # The console sink + the progress layer.
 tracing = "^0.1"
 tracing-subscriber = { version = "^0.3", features = ["env-filter", "fmt", "registry"] }

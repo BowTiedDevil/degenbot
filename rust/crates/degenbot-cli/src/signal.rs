@@ -10,9 +10,11 @@
 //!   `cancelled` report, and committed chunks stay durable.
 //! - **second Ctrl+C** -> [`Action::Abort`]: abort the process.
 //!
-//! The listener runs on its own one-worker `tokio` runtime so the command
-//! itself stays synchronous (cli-core's arms own their runtimes and must not be
-//! nested inside one).
+//! The listener is one spawned task on the process-wide shared runtime
+//! (`degenbot_core::runtime::get_runtime()`) — no ad-hoc runtime. The command
+//! itself stays synchronous: the listener parks on the shared runtime's IO
+//! driver and never blocks the calling thread, and cli-core's arms `block_on`
+//! that same runtime from a clean (non-nested) context.
 
 use degenbot_cli_core::CancelHandle;
 
@@ -35,40 +37,49 @@ pub const fn action(already_cancelled: bool) -> Action {
     }
 }
 
-/// Keeps the SIGINT listener alive for the lifetime of the run; dropping it
-/// stops the runtime and the listener task.
+/// Keeps the SIGINT listener alive for the lifetime of the run; dropping the
+/// guard aborts the listener task, which drops its signal stream and restores
+/// the default SIGINT disposition (the policy is run-scoped).
 #[derive(Debug)]
 #[must_use = "the guard must outlive the command run"]
 pub struct Guard {
-    _runtime: tokio::runtime::Runtime,
+    listener: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        // Aborting the task drops its signal `Stream` -> the SIGINT handler
+        // de-registers. The abort is synchronous + non-blocking (safe from any
+        // thread, inside a runtime context included): the task cancels at its
+        // next `.await` — it parks on `interrupts.recv().await`.
+        if let Some(listener) = self.listener.take() {
+            listener.abort();
+        }
+    }
 }
 
 /// Install the SIGINT policy for `cancel`.
 ///
-/// Returns `None` (and logs a warning) when the listener runtime or the signal
-/// stream cannot be built: cooperative cancel is then unavailable, but the run
+/// Spawns the listener on the process-wide shared runtime
+/// (`degenbot_core::runtime::get_runtime()`); no per-listener runtime is
+/// built. A signal-stream build failure is handled inside [`listen`] (a
+/// warning is logged): cooperative cancel is then unavailable, but the run
 /// still proceeds.
 #[cfg(unix)]
-#[must_use]
-pub fn install(cancel: CancelHandle) -> Option<Guard> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
-        .ok()?;
-    runtime.spawn(listen(cancel));
-    Some(Guard { _runtime: runtime })
+pub fn install(cancel: CancelHandle) -> Guard {
+    Guard {
+        listener: Some(degenbot_core::runtime::get_runtime().spawn(listen(cancel))),
+    }
 }
 
 /// Non-Unix builds have no SIGINT policy to install.
 #[cfg(not(unix))]
-#[must_use]
-pub fn install(_cancel: CancelHandle) -> Option<Guard> {
+pub fn install(_cancel: CancelHandle) -> Guard {
     degenbot_core::op_warn!(
         domain = pump,
         "SIGINT handling is Unix-only; cooperative cancel is unavailable"
     );
-    None
+    Guard { listener: None }
 }
 
 #[cfg(unix)]

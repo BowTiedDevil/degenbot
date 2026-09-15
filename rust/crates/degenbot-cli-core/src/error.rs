@@ -93,9 +93,10 @@ pub enum CliError {
     PoolUpdate(PoolRunError),
     /// An `aave` core failure (DB/RPC/verification/market-not-found).
     AaveUpdate(AaveRunError),
-    /// A command arm that needs a self-built runtime was invoked from inside an
-    /// existing `tokio` runtime. `run_pool_update`/`run_aave_update` own their
-    /// runtime and must not nest; the arms hold the same constraint.
+    /// A command arm that `block_on`s the process-wide shared runtime was invoked
+    /// from inside an existing `tokio` runtime. `run_pool_update`/`run_aave_update`
+    /// ride `get_runtime()` (TD3/A1) and must not nest; the arms hold the same
+    /// constraint.
     RuntimeNested,
     /// The operator host refused a command: the `{"ok": false, "error": ...}`
     /// frame, rendered as one line (ADR-051 D6).
