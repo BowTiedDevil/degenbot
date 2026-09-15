@@ -73,6 +73,7 @@ degenbot-aave = { version = "0.6.0-alpha.11", path = "crates/degenbot-aave" }
 degenbot-abi = { version = "0.6.0-alpha.11", path = "crates/degenbot-abi" }
 degenbot-arbitrage = { version = "0.6.0-alpha.11", path = "crates/degenbot-arbitrage" }
 degenbot-bot = { version = "0.6.0-alpha.11", path = "crates/degenbot-bot" }
+degenbot-cli = { version = "0.6.0-alpha.11", path = "crates/degenbot-cli" }
 degenbot-cli-core = { version = "0.6.0-alpha.11", path = "crates/degenbot-cli-core" }
 degenbot-core = { version = "0.6.0-alpha.11", path = "crates/degenbot-core" }
 degenbot-config = { version = "0.6.0-alpha.11", path = "crates/degenbot-config" }
@@ -118,6 +119,7 @@ members = [
     "crates/degenbot-aave",
     "crates/degenbot-abi",
     "crates/degenbot-bot",
+    "crates/degenbot-cli",
     "crates/degenbot-cli-core",
     "crates/degenbot-config",
     "crates/degenbot-core",

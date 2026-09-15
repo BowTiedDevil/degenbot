@@ -1,0 +1,53 @@
+[package]
+name = "degenbot-cli"
+description = "The degenbot console: the clap argv facade over degenbot-cli-core (ADR-051 D2)."
+keywords = ["cli", "console", "degenbot", "mev"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+# ADR-051 D2 / ADR-009: the facade is the publishable `degenbot` binary and
+# rides the same lockstep version as every core (version.workspace above).
+publish = true
+
+[[bin]]
+name = "degenbot"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+# ADR-051 D2 dependency charter, asserted by `just check-cli-shell-purity`:
+# every non-workspace dependency below is argv/interaction/sink plumbing. The
+# facade maps argv into `degenbot-cli-core` and renders the typed result; it
+# never re-encodes command semantics (D1) and never reaches a domain-engine
+# crate directly.
+[dependencies]
+# The clap-free semantics home: `Command` + the per-group enums, `CliError`,
+# `CommandReport`, `PromptPlan`, `Prompter`, `CancelHandle`.
+degenbot-cli-core.workspace = true
+# The driver-domain resolvers + the process-wide typed config holder and its
+# `EnvVars` seam (ADR-051 D8): `--database` / `--chain-id` / `--node-*`.
+degenbot-config.workspace = true
+# The observability facade (ADR-043): `install_panic_hook`,
+# `warn_retired_env_names`, the worker-census boot line, and the `op_*` macros
+# the boot announcements ride.
+degenbot-core.workspace = true
+# The sink crate: `telemetry::resolve_filters` is the SAME console/record
+# filter resolution `degenbot-python` boots (ADR-043 section 4), and
+# `bot_core::stance` is the typed-config install site. Depending on the sink
+# crate - never on a domain-engine crate - is what keeps the console's log
+# surface identical to the Python driver's.
+degenbot-bot.workspace = true
+# argv declaration: the ONE clap tree (ADR-051 D2).
+clap = { version = "4.6", features = ["derive"] }
+# Progress rendering lives at the facade only (ADR-051 D9).
+indicatif = "0.18"
+# The SIGINT policy owner (ADR-051 D7): first Ctrl+C -> `CancelHandle`, second
+# Ctrl+C -> abort.
+tokio = { version = "^1.53", features = ["rt-multi-thread", "signal"] }
+# The console sink + the progress layer.
+tracing = "^0.1"
+tracing-subscriber = { version = "^0.3", features = ["env-filter", "fmt", "registry"] }

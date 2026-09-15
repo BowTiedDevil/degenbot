@@ -115,7 +115,7 @@ lint-rust:
 # Lint Rust (check-only; non-mutating). Mirrors the clippy gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
 # CI's `lint-rust`: fails on any warning `--fix` would have auto-applied.
-lint-rust-check: check-no-inner-allow check-engine-impl-blocks
+lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity
     cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
@@ -140,7 +140,7 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-math degenbot-abi degenbot-rpc degenbot-ingestion degenbot-bot degenbot-cli-core degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index degenbot-arbitrage degenbot-fork degenbot-execution-sample; do
+    for crate in degenbot-core degenbot-math degenbot-abi degenbot-rpc degenbot-ingestion degenbot-bot degenbot-cli degenbot-cli-core degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index degenbot-arbitrage degenbot-fork degenbot-execution-sample; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1
@@ -163,6 +163,42 @@ check-cli-core-purity:
         exit 1
     fi
     echo "OK: degenbot-cli-core is clap-free and indicatif-free"
+
+# Enforce the ADR-051 D2 dependency charter for the argv facade: `degenbot-cli`
+# may name workspace members (the clap-free semantics crate + the sink crates)
+# plus a small, explicit external allowlist - argv spelling (clap), progress
+# rendering (indicatif), the SIGINT runtime (tokio) and the sink stack (tracing
+# / tracing-subscriber). Anything else is a layering regression: the facade
+# maps argv into `degenbot-cli-core` and must never reach a domain-engine crate
+# on its own. Mirrors check-cli-core-purity / check-no-pyo3-in-cores.
+check-cli-shell-purity:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    manifest=rust/crates/degenbot-cli/Cargo.toml
+    [ -f "$manifest" ] || { echo "ERROR: $manifest not found" >&2; exit 1; }
+    # The declared allowlist: the facade's argv/interaction/sink plumbing.
+    allow='^(clap|indicatif|tokio|tracing|tracing-subscriber)$'
+    # Walk the dependency tables the crate may name. A workspace member
+    # (`.workspace = true`) is always allowed; every other entry must be on the
+    # allowlist. dev-dependencies are covered too - the charter is about what
+    # the crate may name, not only what the binary links.
+    offenders=$(awk '
+        /^\[(dependencies|build-dependencies|dev-dependencies)\]/ { in_deps = 1; next }
+        /^\[/ { in_deps = 0; next }
+        in_deps && /^[A-Za-z0-9_-]+[[:space:]]*=/ {
+            if ($0 ~ /workspace[[:space:]]*=[[:space:]]*true/) next
+            name = $1
+            sub(/[[:space:]]*=.*/, "", name)
+            print name
+        }
+    ' "$manifest" | grep -Ev "$allow" || true)
+    if [ -n "$offenders" ]; then
+        echo "ERROR: degenbot-cli may depend only on workspace members + the argv/sink allowlist (ADR-051 D2)." >&2
+        echo "  allowlist: clap, indicatif, tokio, tracing, tracing-subscriber" >&2
+        printf '  offender: %s\n' $offenders >&2
+        exit 1
+    fi
+    echo "OK: degenbot-cli lists only workspace members + argv/sink plumbing"
 
 
 # Structural gate for epic 5TBT7L (arch review #11, candidate 2): the engine
