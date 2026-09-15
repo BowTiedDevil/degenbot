@@ -21,9 +21,25 @@ pub const ALEMBIC_HEAD: &str = "2606a6c7f5ee";
 pub const SCHEMA_HEAD: &str = include_str!("schema_head.sql");
 
 /// The private Rust-owned schema-version stamp, written to
-/// `_degenbot_db_schema_version` only on the fresh-standalone path so future
-/// Rust-owned schema bumps (post-Alembic-retirement) can be tracked independently
-/// of Alembic. Bumped when a Rust-owned `ALTER` script ships; out of scope here.
+/// `_degenbot_db_schema_version` on the fresh-standalone, cutover, and heal
+/// paths so Rust-owned schema bumps (post-Alembic-retirement) are tracked
+/// independently of Alembic.
+///
+/// # Bump ritual (mechanical — three steps, in this order)
+///
+/// 1. **Bump this constant** (`RUST_SCHEMA_VERSION = N + 1`).
+/// 2. **Append the step** to [`crate::migrations::RUST_MIGRATIONS`]: a
+///    [`crate::migrations::MigrationStep`] with `version = N + 1` and the
+///    `ALTER`/DDL SQL that upgrades schema `N` to `N + 1`. The
+///    registry must stay contiguous from `1` — `apply_forward_migrations`
+///    refuses a gap with [`crate::error::DbError::MissingMigrationStep`].
+/// 3. **Extend the release matrix** (ADR-052 D5): add the `N`-stamped fixture
+///    so the open → version-lock → current chain is proven for the prior
+///    release.
+///
+/// The open path applies pending steps automatically (ADR-052 D2), so no
+/// consumer calls a migration verb; a binary older than the DB refuses with
+/// [`crate::error::DbError::SchemaAhead`] and never writes ahead.
 pub const RUST_SCHEMA_VERSION: u32 = 1;
 
 /// Name of the private Rust-owned schema stamp table.

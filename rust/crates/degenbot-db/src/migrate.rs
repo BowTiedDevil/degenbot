@@ -23,6 +23,17 @@
 //!    ([`SCHEMA_HEAD`]) + stamp the private [`SCHEMA_VERSION_TABLE`], return
 //!    [`SchemaState::FreshStandalone`].
 
+//! # Forward version-lock (ADR-052 D2)
+//!
+//! The D2 lock ([`crate::migrations::apply_forward_migrations`]) runs once,
+//! AFTER the heal decision, for a genuine [`SchemaState::RustOwned`] DB: a
+//! stamp behind the binary applies the pending embedded steps in order (each
+//! its own transaction; a failure rolls back to the last-good stamp and
+//! refuses), a stamp ahead refuses with [`DbError::SchemaAhead`], and a
+//! stamp at current is a no-op. A freshly-healed DB is stamped at
+//! [`RUST_SCHEMA_VERSION`], so it is
+//! [`MigrationOutcome::AlreadyCurrent`] on the same code path.
+
 use std::path::Path;
 
 use degenbot_core::{op_info, op_warn};
@@ -30,6 +41,9 @@ use rusqlite::Connection;
 
 use crate::error::DbError;
 use crate::heal::{heal_database, HealReport};
+use crate::migrations::{
+    apply_forward_migrations, MigrationOutcome, MigrationStep, RUST_MIGRATIONS,
+};
 use crate::schema::{ALEMBIC_HEAD, RUST_SCHEMA_VERSION, SCHEMA_HEAD, SCHEMA_VERSION_TABLE};
 
 /// The schema disposition [`ensure_schema`] reports for an opened DB.
@@ -132,11 +146,14 @@ pub fn auto_heal_enabled() -> bool {
     auto_heal_enabled_from(std::env::var(AUTO_HEAL_ENV).ok().as_deref())
 }
 
-/// The path-aware open entry point (ADR-052 D1): classify `path` via
+/// The path-aware open entry point (ADR-052 D1 + D2): classify `path` via
 /// [`ensure_schema`], and when it is Alembic-owned and `auto_heal` is set,
 /// run the ADR-011 out-of-place heal ([`crate::heal::heal_database`]), log
-/// the report, reopen, and re-classify. Returns the live [`Connection`] and
-/// its post-open [`SchemaState`].
+/// the report, reopen, and re-classify. A Rust-owned DB (steadily
+/// [`SchemaState::RustOwned`], or a freshly-healed one) is then brought forward
+/// under the ADR-052 D2 forward version-lock ([`ensure_schema_at_open_with`] with
+/// the production [`RUST_MIGRATIONS`] registry). Returns the live
+/// [`Connection`] and its post-open [`SchemaState`].
 ///
 /// `open` is the caller's connection factory — it must return a connection to
 /// `path` with the concurrency PRAGMAs already applied, because this function
@@ -149,20 +166,54 @@ pub fn auto_heal_enabled() -> bool {
 /// open path shares — read AND write, one rule (a stale read that did not heal
 /// would be a lie about the schema).
 ///
-/// Non-Alembic states (`FreshStandalone`, `RustOwned`, `Unrecognized`) pass
-/// through untouched; the caller applies its own refusal for `Unrecognized`
-/// (and for a stale Alembic DB when the killswitch pinned `auto_heal` to
-/// `false`).
+/// Non-Rust-owned states (`FreshStandalone`, `Unrecognized`, and the
+/// killswitch-pinned Alembic dispositions) pass through the lock untouched; the
+/// caller applies its own refusal for `Unrecognized` (and for a stale Alembic
+/// DB when the killswitch pinned `auto_heal` to `false`).
 ///
 /// # Errors
 ///
 /// [`DbError::Sqlite`] / [`DbError::Io`] / [`DbError::HealVerificationFailed`]
 /// if the heal fails — the live DB is left untouched (ADR-011) and the
-/// caller's dropped handle is not replaced.
+/// caller's dropped handle is not replaced. The D2 lock errors
+/// ([`DbError::SchemaAhead`], [`DbError::MissingMigrationStep`],
+/// [`DbError::MigrationStepFailed`]) propagate from the Rust-owned open.
 pub(crate) fn ensure_schema_at_open<F>(
     path: &Path,
     auto_heal: bool,
+    open: F,
+) -> Result<(Connection, SchemaState), DbError>
+where
+    F: FnMut(&Path) -> Result<Connection, DbError>,
+{
+    ensure_schema_at_open_with(path, auto_heal, open, RUST_MIGRATIONS, RUST_SCHEMA_VERSION)
+}
+
+/// [`ensure_schema_at_open`] with an injectable forward-migration registry +
+/// target — the seam the IOGST2 tests use to exercise the D2 version-lock
+/// (pending apply / ordering / step failure / gap / ahead) without waiting for
+/// a real [`RUST_SCHEMA_VERSION`] bump. Production always passes
+/// [`RUST_MIGRATIONS`] / [`RUST_SCHEMA_VERSION`].
+///
+/// The lock runs in exactly one place, AFTER the heal decision, and only for a
+/// genuine [`SchemaState::RustOwned`] DB:
+/// 1. the healed DB (reopened + re-classified `RustOwned` at
+///    [`RUST_SCHEMA_VERSION`]) — the same code path, so a heal never leaves
+///    pending work;
+/// 2. a Rust-owned open that did not heal (the steady-state reopen), including
+///    under the `DEGENBOT_DB_AUTO_HEAL=0` killswitch (ownership is orthogonal
+///    to heal policy).
+///
+/// `FreshStandalone` is skipped: [`ensure_schema`] already applied
+/// [`SCHEMA_HEAD`] and stamped [`RUST_SCHEMA_VERSION`], so it is at current
+/// by construction. `AlembicCurrent` / `AlembicStale` / `Unrecognized`
+/// are never Rust-owned and are never written here.
+pub(crate) fn ensure_schema_at_open_with<F>(
+    path: &Path,
+    auto_heal: bool,
     mut open: F,
+    steps: &[MigrationStep],
+    target: u32,
 ) -> Result<(Connection, SchemaState), DbError>
 where
     F: FnMut(&Path) -> Result<Connection, DbError>,
@@ -178,6 +229,9 @@ where
             SchemaState::AlembicCurrent | SchemaState::AlembicStale { .. }
         )
     {
+        // Non-heal path: a genuine Rust-owned DB is brought forward under the D2
+        // lock; every other disposition passes through untouched.
+        let state = apply_forward_lock(&conn, state, steps, target)?;
         return Ok((conn, state));
     }
 
@@ -191,7 +245,44 @@ where
 
     let reopened = open(path)?;
     let healed_state = ensure_schema(&reopened)?;
+    // A freshly-healed DB is stamped at RUST_SCHEMA_VERSION by the heal's
+    // cutover step, so the lock is AlreadyCurrent here — running it anyway is
+    // the "same code path" guarantee that a heal never strands pending work.
+    let healed_state = apply_forward_lock(&reopened, healed_state, steps, target)?;
     Ok((reopened, healed_state))
+}
+
+/// Run the ADR-052 D2 forward version-lock on `conn` when `state` is a genuine
+/// [`SchemaState::RustOwned`] DB, returning the post-apply disposition
+/// (re-classified from the stamp, since an apply advances it). Non-Rust-owned
+/// states are returned unchanged and `conn` is never written.
+///
+/// # Errors
+///
+/// As [`apply_forward_migrations`]: [`DbError::SchemaAhead`] (stamp newer
+/// than the binary — hard halt, nothing written),
+/// [`DbError::MissingMigrationStep`] (registry gap),
+/// [`DbError::MigrationStepFailed`] (a step rolled back, DB left usable at
+/// the last-good stamp).
+fn apply_forward_lock(
+    conn: &Connection,
+    state: SchemaState,
+    steps: &[MigrationStep],
+    target: u32,
+) -> Result<SchemaState, DbError> {
+    if !matches!(state, SchemaState::RustOwned { .. }) {
+        return Ok(state);
+    }
+    if let MigrationOutcome::Applied { from, to } = apply_forward_migrations(conn, steps, target)? {
+        op_info!(
+            domain = state,
+            from,
+            to,
+            "database schema migrated forward at open"
+        );
+    }
+    // Re-read the stamp so the reported disposition reflects the applied steps.
+    classify_schema(conn)
 }
 
 /// Emit the ADR-052 D1 heal report: one `op_info!` headline (detected

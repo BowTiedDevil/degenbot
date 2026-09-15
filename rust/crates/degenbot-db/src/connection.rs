@@ -13,10 +13,13 @@
 //!    time any Rust read touches them.
 //! 2. `PRAGMA busy_timeout=5000;` — per-connection.
 //! 3. `PRAGMA synchronous=NORMAL;` — per-connection.
-//! 4. the schema gate + ADR-052 D1 heal-at-open (`migrate::ensure_schema_at_open`)
-//!    — an Alembic-stamped DB (head-stamped OR stale) is healed out-of-place to
-//!    `RustOwned` unless `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture; a
-//!    fresh standalone file gets the embedded DDL; an unrecognized file refuses.
+//! 4. the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
+//!    version-lock (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB
+//!    (head-stamped OR stale) is healed out-of-place to `RustOwned` unless
+//!    `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture; a fresh standalone file
+//!    gets the embedded DDL; an unrecognized file refuses. A Rust-owned DB
+//!    behind the binary applies its pending steps at open; a DB ahead of the
+//!    binary refuses with `DbError::SchemaAhead`; a DB at current is a no-op.
 //! 5. `PRAGMA query_only=on;` — **HARD AC** (binding #2): once `open()`
 //!    returns, every **read** connection is physically incapable of mutating
 //!    the DB.

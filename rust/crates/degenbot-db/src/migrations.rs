@@ -8,6 +8,11 @@
 //! NEWER than the binary refuses with the exact text below, and nothing is
 //! ever written ahead of the running binary.
 //!
+//! The mechanical bump ritual (bump [`crate::schema::RUST_SCHEMA_VERSION`],
+//! append a [`MigrationStep`] to [`RUST_MIGRATIONS`], extend the
+//! release fixture matrix) is documented on
+//! [`crate::schema::RUST_SCHEMA_VERSION`].
+//!
 //! # Verdict (spike, 2026-09, ergo 6AV4YT; ADR-052 D3)
 //!
 //! The default candidate was `rusqlite_migration` 2.6.0 (Apache-2.0, MSRV 1.95
@@ -84,7 +89,8 @@ pub struct MigrationStep {
 /// Step 1 is the consolidated baseline ([`SCHEMA_HEAD`], the same DDL the
 /// fresh-standalone path applies); a future [`RUST_SCHEMA_VERSION`] bump appends
 /// the next step here. `RUST_MIGRATIONS.last().version == RUST_SCHEMA_VERSION`
-/// is asserted in this module's tests.
+/// is asserted in this module's tests. The mechanical bump ritual lives on
+/// [`crate::schema::RUST_SCHEMA_VERSION`].
 pub const RUST_MIGRATIONS: &[MigrationStep] = &[MigrationStep {
     version: 1,
     name: "baseline",
@@ -171,8 +177,9 @@ pub fn apply_forward_migrations(
 }
 
 /// Apply the production [`RUST_MIGRATIONS`] registry up to
-/// [`RUST_SCHEMA_VERSION`]. The convenience entry point the open path
-/// (`ensure_schema`, task IOGST2) will call once the version-lock is wired.
+/// [`RUST_SCHEMA_VERSION`]. The entry point the open path
+/// ([`crate::migrate::ensure_schema_at_open`]) calls: a genuine Rust-owned
+/// open and a post-heal reopen both run it (task IOGST2).
 ///
 /// # Errors
 ///
@@ -229,7 +236,9 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, DbError> {
 #[expect(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::migrate::{ensure_schema_at_open_with, SchemaState};
     use crate::schema::table;
+    use std::path::Path;
 
     /// Synthetic three-step registry. Step 3 inserts into the table step 2
     /// creates, so a correct run proves ordering (step 3 would fail if applied
@@ -426,5 +435,255 @@ mod tests {
                 schema_version: RUST_SCHEMA_VERSION
             }
         );
+    }
+
+    // ── IOGST2: the D2 forward version-lock wired into the open entry ──────
+
+    /// The connection factory the open paths pass — mirrors
+    /// `connection::PRE_SCHEMA_PRAGMAS`.
+    fn primed(path: &Path) -> Result<Connection, DbError> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;",
+        )?;
+        Ok(conn)
+    }
+
+    /// A Rust-owned file stamped at `stamp`: a fresh-standalone `ensure_schema`
+    /// applies the full DDL + the private stamp, then the stamp is overwritten
+    /// to simulate a DB produced by an older (or newer) binary.
+    fn rust_owned_file_at(path: &Path, stamp: u32) {
+        let conn = Connection::open(path).unwrap();
+        crate::migrate::ensure_schema(&conn).unwrap();
+        conn.execute_batch(&format!(
+            "DELETE FROM {SCHEMA_VERSION_TABLE}; \
+             INSERT INTO {SCHEMA_VERSION_TABLE} (schema_version) VALUES ({stamp});"
+        ))
+        .unwrap();
+    }
+
+    fn stamp_in(path: &Path) -> u32 {
+        let conn = Connection::open(path).unwrap();
+        read_schema_version(&conn).unwrap()
+    }
+
+    /// A synthetic one-step bump: step 2 creates `bump_marker` WITHOUT
+    /// `IF NOT EXISTS`, so a second application would fail — the exactly-once
+    /// proof.
+    const BUMP: &[MigrationStep] = &[
+        MigrationStep {
+            version: 1,
+            name: "base",
+            sql: "CREATE TABLE IF NOT EXISTS base (x INTEGER);",
+        },
+        MigrationStep {
+            version: 2,
+            name: "bump",
+            sql: "CREATE TABLE bump_marker (x INTEGER);",
+        },
+    ];
+
+    #[test]
+    fn open_applies_pending_bump_exactly_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bump.db");
+        rust_owned_file_at(&path, 1);
+
+        let (conn, state) = ensure_schema_at_open_with(&path, true, primed, BUMP, 2).unwrap();
+        assert_eq!(state, SchemaState::RustOwned { schema_version: 2 });
+        assert!(table_exists(&conn, "bump_marker").unwrap());
+        drop(conn);
+        assert_eq!(stamp_in(&path), 2);
+
+        // Second open: AlreadyCurrent — step 2's non-idempotent CREATE TABLE
+        // must NOT run again (it would error).
+        let (conn2, state2) = ensure_schema_at_open_with(&path, true, primed, BUMP, 2).unwrap();
+        assert_eq!(state2, SchemaState::RustOwned { schema_version: 2 });
+        assert!(table_exists(&conn2, "bump_marker").unwrap());
+    }
+
+    /// Multi-step ordering: step 3 inserts into the table step 2 creates, so a
+    /// correct run proves step 2 preceded step 3.
+    const ORDER: &[MigrationStep] = &[
+        MigrationStep {
+            version: 1,
+            name: "base",
+            sql: "CREATE TABLE IF NOT EXISTS base (x INTEGER);",
+        },
+        MigrationStep {
+            version: 2,
+            name: "add_b",
+            sql: "CREATE TABLE b (x INTEGER);",
+        },
+        MigrationStep {
+            version: 3,
+            name: "seed_b",
+            sql: "INSERT INTO b (x) VALUES (42);",
+        },
+    ];
+
+    #[test]
+    fn open_applies_multi_step_registry_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("order.db");
+        rust_owned_file_at(&path, 1);
+
+        let (conn, state) = ensure_schema_at_open_with(&path, true, primed, ORDER, 3).unwrap();
+        assert_eq!(state, SchemaState::RustOwned { schema_version: 3 });
+        let seeded: i64 = conn
+            .query_row("SELECT COUNT(*) FROM b", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(seeded, 1, "step 3 ran after step 2 created b");
+    }
+
+    #[test]
+    fn open_failed_step_refuses_and_leaves_last_good_stamp() {
+        const POISON: &[MigrationStep] = &[
+            MigrationStep {
+                version: 1,
+                name: "base",
+                sql: "CREATE TABLE IF NOT EXISTS base (x INTEGER);",
+            },
+            MigrationStep {
+                version: 2,
+                name: "add_b",
+                sql: "CREATE TABLE b (x INTEGER);",
+            },
+            MigrationStep {
+                version: 3,
+                name: "poison",
+                sql: "SYNTAX ERROR;",
+            },
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("poison.db");
+        rust_owned_file_at(&path, 1);
+
+        let err = ensure_schema_at_open_with(&path, true, primed, POISON, 3).unwrap_err();
+        match err {
+            DbError::MigrationStepFailed {
+                version, name, at, ..
+            } => {
+                assert_eq!(version, 3);
+                assert_eq!(name, "poison");
+                assert_eq!(at, 2, "error names the last-good stamp");
+            }
+            other => panic!("expected MigrationStepFailed, got {other:?}"),
+        }
+
+        // The file is usable at the last-good stamp: step 2 committed, step 3
+        // rolled back. A reopen re-attempts step 3 and refuses again.
+        assert_eq!(stamp_in(&path), 2);
+        let probe = Connection::open(&path).unwrap();
+        assert!(table_exists(&probe, "b").unwrap());
+        assert!(matches!(
+            ensure_schema_at_open_with(&path, true, primed, POISON, 3),
+            Err(DbError::MigrationStepFailed { version: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn open_ahead_stamp_refuses_with_exact_text_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ahead.db");
+        rust_owned_file_at(&path, 5);
+
+        let err = ensure_schema_at_open_with(&path, true, primed, BUMP, 2).unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "the binary is older than the database (schema 5 > binary 2)"
+        );
+        assert_eq!(stamp_in(&path), 5, "no silent write-ahead");
+        let probe = Connection::open(&path).unwrap();
+        assert!(!table_exists(&probe, "bump_marker").unwrap());
+    }
+
+    #[test]
+    fn open_registry_gap_refuses() {
+        const GAPPY: &[MigrationStep] = &[
+            MigrationStep {
+                version: 1,
+                name: "base",
+                sql: "CREATE TABLE IF NOT EXISTS base (x INTEGER);",
+            },
+            MigrationStep {
+                version: 3,
+                name: "c",
+                sql: "CREATE TABLE c (x INTEGER);",
+            },
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gap.db");
+        rust_owned_file_at(&path, 1);
+
+        let err = ensure_schema_at_open_with(&path, true, primed, GAPPY, 3).unwrap_err();
+        assert!(matches!(err, DbError::MissingMigrationStep { version: 2 }));
+        assert_eq!(stamp_in(&path), 1);
+    }
+
+    #[test]
+    fn healed_db_open_runs_lock_as_already_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("heal.db");
+        crate::ops::create_new_database(&path).unwrap();
+
+        // Production target: the open entry heals, then the lock runs on the
+        // healed DB. The heal stamps RUST_SCHEMA_VERSION, so it is
+        // AlreadyCurrent and writes nothing.
+        let (conn, state) = crate::migrate::ensure_schema_at_open(&path, true, primed).unwrap();
+        assert_eq!(
+            state,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+        assert_eq!(read_schema_version(&conn).unwrap(), RUST_SCHEMA_VERSION);
+        drop(conn);
+
+        // A fresh probe confirms no pending work on the healed file.
+        let probe = Connection::open(&path).unwrap();
+        assert_eq!(
+            apply_rust_migrations(&probe).unwrap(),
+            MigrationOutcome::AlreadyCurrent {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+    }
+
+    #[test]
+    fn public_open_paths_run_the_lock_and_refuse_ahead() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // current → both public open paths return RustOwned at current.
+        let current = dir.path().join("current.db");
+        rust_owned_file_at(&current, RUST_SCHEMA_VERSION);
+        let (_db, state) = crate::connection::DegenbotDb::open(&current).unwrap();
+        assert_eq!(
+            state,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+        let (_snap, state) = crate::snapshot_db::SnapshotDb::open(&current).unwrap();
+        assert_eq!(
+            state,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+
+        // ahead → both public open paths refuse with SchemaAhead, never writing.
+        let ahead = dir.path().join("ahead.db");
+        rust_owned_file_at(&ahead, RUST_SCHEMA_VERSION + 1);
+        assert!(matches!(
+            crate::connection::DegenbotDb::open(&ahead),
+            Err(DbError::SchemaAhead { db, binary })
+                if db == RUST_SCHEMA_VERSION + 1 && binary == RUST_SCHEMA_VERSION
+        ));
+        assert!(matches!(
+            crate::snapshot_db::SnapshotDb::open(&ahead),
+            Err(DbError::SchemaAhead { .. })
+        ));
+        assert_eq!(stamp_in(&ahead), RUST_SCHEMA_VERSION + 1);
     }
 }

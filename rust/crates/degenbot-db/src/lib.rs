@@ -10,11 +10,13 @@
 //!
 //! [`DegenbotDb::open`] sets `PRAGMA journal_mode=WAL; busy_timeout=5000;
 //! synchronous=NORMAL;` (matching the Python open path — Phase 0, `2KUI3M`),
-//! runs the schema gate + ADR-052 D1 heal-at-open
-//! (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB (head-stamped OR
-//! stale) is healed out-of-place to `RustOwned` unless `DEGENBOT_DB_AUTO_HEAL=0`
-//! pins the pre-D1 posture, a fresh standalone file gets the embedded DDL, and
-//! an unrecognized file refuses — then sets `PRAGMA query_only=on;`: the
+//! runs the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
+//! version-lock (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB
+//! (head-stamped OR stale) is healed out-of-place to `RustOwned` unless
+//! `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture, a fresh standalone file
+//! gets the embedded DDL, an unrecognized file refuses, a Rust-owned DB behind
+//! the binary applies its pending steps, and a DB ahead of the binary refuses
+//! with `DbError::SchemaAhead` — then sets `PRAGMA query_only=on;`: the
 //! load-bearing guarantee that the returned Rust **reader** cannot mutate the
 //! DB (binding #2). The heal runs at BOTH read and write opens (one rule for
 //! all opens).
