@@ -21,7 +21,6 @@ pub mod snapshot;
 
 use std::path::PathBuf;
 
-use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -33,28 +32,10 @@ pub use liquidity_updater::PyLiquidityUpdateEvent;
 pub use pool_read::{PyExchangeRow, PyLiquidityPoolRow, PyPoolManagerRow};
 pub use snapshot::PyDatabaseSnapshot;
 
-// A dedicated exception for the "DB is stamped at a prior Alembic revision"
-// rejection (`DbError::AlembicStale`). It subclasses `ValueError` so existing
-// broad `except ValueError` handlers keep catching it (and the upgrade shell's
-// fall-back below), but gives the CLI a precise type to catch and translate
-// into a friendly one-line message — no Python traceback.
-//
-// The message tells end users to run `degenbot database upgrade` (the
-// user-facing migration command), not the developer-oriented
-// `alembic upgrade head`. Same pattern as the engine's
-// `VerificationMismatchError` / `HookedPoolRejectedError` (typed subclasses of
-// a builtin so callers classify by type, not fragile string matching).
-create_exception!(
-    degenbot._ffi.db,
-    DatabaseSchemaStale,
-    PyValueError,
-    "The database is stamped at a prior Alembic revision; run `degenbot database upgrade`."
-);
-
 /// `degenbot._ffi.db.db_create_new_database(path: str) -> None`
 ///
-/// Create a fresh degenbot `SQLite` DB: WAL + head DDL + VACUUM + Alembic stamp.
-/// Raises `ValueError` on any failure.
+/// Create a fresh degenbot `SQLite` DB: WAL + head DDL + VACUUM + the Rust
+/// schema stamp. Raises `ValueError` on any failure.
 #[pyfunction]
 fn db_create_new_database(py: Python<'_>, path: &str) -> PyResult<()> {
     let path = PathBuf::from(path);
@@ -86,10 +67,10 @@ fn db_compact_database(py: Python<'_>, path: &str) -> PyResult<()> {
 
 /// `degenbot._ffi.db.db_upgrade_database(path: str) -> str`
 ///
-/// Ensure the DB is at the Alembic head. Returns `"already_at_head"` if it was
-/// current, or `"created_fresh"` if an empty file was brought up to head.
-/// Raises `ValueError` for a stale Alembic DB (run `alembic upgrade head` from
-/// Python) or an unrecognized schema.
+/// Ensure the DB is at the current Rust schema. Returns `"already_current"` if
+/// it was already there, `"created_fresh"` if an empty file was brought up, or
+/// `"healed_legacy"` if a legacy `alembic_version`-marked DB was healed
+/// out-of-place. Raises `ValueError` for an unrecognized schema.
 #[pyfunction]
 fn db_upgrade_database(py: Python<'_>, path: &str) -> PyResult<String> {
     let path = PathBuf::from(path);
@@ -97,8 +78,9 @@ fn db_upgrade_database(py: Python<'_>, path: &str) -> PyResult<String> {
         .detach(|| ops::upgrade_database(&path))
         .map_err(|e| db_err_to_py(&e))?;
     Ok(match outcome {
-        UpgradeOutcome::AlreadyAtHead => "already_at_head",
+        UpgradeOutcome::AlreadyCurrent => "already_current",
         UpgradeOutcome::CreatedFresh => "created_fresh",
+        UpgradeOutcome::HealedLegacy => "healed_legacy",
     }
     .to_string())
 }
@@ -107,8 +89,8 @@ fn db_upgrade_database(py: Python<'_>, path: &str) -> PyResult<String> {
 ///
 /// The read-only dry-run companion to `db_convert_alembic_to_rust_owned`:
 /// reports the schema state WITHOUT writing. Never refuses (reports even
-/// stale / unrecognized states). Returns one of `"alembic_current"`,
-/// `"alembic_stale"`, `"fresh_standalone"`, `"rust_owned"`, `"unrecognized"`.
+/// legacy / unrecognized states). Returns one of `"legacy_alembic"`,
+/// `"fresh_standalone"`, `"rust_owned"`, `"unrecognized"`.
 /// Raises `ValueError` only on a genuine `SQLite` open/query failure.
 #[pyfunction]
 fn db_inspect_schema_state(py: Python<'_>, database_path: &str) -> PyResult<String> {
@@ -121,12 +103,11 @@ fn db_inspect_schema_state(py: Python<'_>, database_path: &str) -> PyResult<Stri
 
 /// `degenbot._ffi.db.db_convert_alembic_to_rust_owned(database_path: str) -> str`
 ///
-/// The opt-in one-way cutover (ADR-010): flip an Alembic-stamped DB into Rust
-/// ownership — `DROP`s `alembic_version`, stamps `_degenbot_db_schema_version`.
-/// Returns `"converted"` (was `AlembicCurrent`) or `"already_rust_owned"` (was
-/// already Rust-owned → idempotent no-op). Raises `DatabaseSchemaStale` for a
-/// stale Alembic DB (run `degenbot database upgrade` first) or `ValueError`
-/// for an unrecognized (foreign) file.
+/// The opt-in one-way cutover (ADR-010): flip a legacy
+/// `alembic_version`-marked DB into Rust ownership — `DROP`s the marker table,
+/// stamps `_degenbot_db_schema_version`. Returns `"converted"` (was
+/// `LegacyAlembic`) or `"already_rust_owned"` (was already Rust-owned →
+/// idempotent no-op). Raises `ValueError` for an unrecognized (foreign) file.
 #[pyfunction]
 fn db_convert_alembic_to_rust_owned(py: Python<'_>, database_path: &str) -> PyResult<String> {
     let path = PathBuf::from(database_path);
@@ -136,13 +117,13 @@ fn db_convert_alembic_to_rust_owned(py: Python<'_>, database_path: &str) -> PyRe
     let pre = py
         .detach(|| ops::inspect_schema_state(&path))
         .map_err(|e| db_err_to_py(&e))?;
-    // Run the cutover. Refuses AlembicStale / Unrecognized via DbError.
+    // Run the cutover. Refuses Unrecognized via DbError.
     py.detach(|| ops::convert_alembic_to_rust_owned(&path))
         .map_err(|e| db_err_to_py(&e))?;
     Ok(match pre {
         degenbot_db::SchemaState::RustOwned { .. } => "already_rust_owned",
         // FreshStandalone would also re-stamp, but the cutover op is meant for
-        // AlembicCurrent DBs; treat any non-RustOwned pre-state as a real
+        // LegacyAlembic DBs; treat any non-RustOwned pre-state as a real
         // cutover (the substrate stamps regardless).
         _ => "converted",
     }
@@ -202,8 +183,7 @@ fn db_heal_database(py: Python<'_>, database_path: &str) -> PyResult<Py<PyDict>>
 fn schema_state_label(state: &degenbot_db::SchemaState) -> &'static str {
     use degenbot_db::SchemaState;
     match state {
-        SchemaState::AlembicCurrent => "alembic_current",
-        SchemaState::AlembicStale { .. } => "alembic_stale",
+        SchemaState::LegacyAlembic => "legacy_alembic",
         SchemaState::FreshStandalone { .. } => "fresh_standalone",
         SchemaState::RustOwned { .. } => "rust_owned",
         SchemaState::Unrecognized => "unrecognized",
@@ -213,8 +193,7 @@ fn schema_state_label(state: &degenbot_db::SchemaState) -> &'static str {
 /// Map a [`degenbot_bot::bot_core::tick_assembly::TickMapAssemblyError`] to a
 /// Python exception.
 ///
-/// - `Db` variant → delegates to [`db_err_to_py`] (same `ValueError` /
-///   `DatabaseSchemaStale` mapping).
+/// - `Db` variant → delegates to [`db_err_to_py`] (a `ValueError`).
 /// - `Chain` variant → `RuntimeError` (Decision 8 (A) loud-failure posture —
 ///   RPC failures surface as a typed exception, not swallowed into a silent
 ///   degrade-to-sparse path).
@@ -233,29 +212,18 @@ pub(crate) fn assembly_err_to_py(
 
 /// Map a [`degenbot_db::DbError`] to a Python exception.
 ///
-/// `AlembicStale` becomes a [`DatabaseSchemaStale`] (subclass of `ValueError`)
-/// carrying the user-facing "run `degenbot database upgrade`" message — the
-/// CLI catches it to print a friendly one-liner instead of a traceback. Every
-/// other variant maps to a generic `ValueError` (the degenbot Python layer's
+/// Every variant maps to a generic `ValueError` (the degenbot Python layer's
 /// convention for database operation failures).
 pub(crate) fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
-    use degenbot_db::DbError;
-    match err {
-        DbError::AlembicStale { head, expected } => DatabaseSchemaStale::new_err(format!(
-            "The database schema is stale (revision {head}; expected {expected}). \
-             Run `degenbot database upgrade`."
-        )),
-        other => PyValueError::new_err(other.to_string()),
-    }
+    PyValueError::new_err(err.to_string())
 }
 
 /// Register the `db` file-op functions on `m` (feature = "db").
 ///
 /// # Errors
 ///
-/// Register the `#[pyclass]` types + the `DatabaseSchemaStale` exception on
-/// the `db` submodule (extracted from [`add_db_module`] to keep it under
-/// clippy's line budget).
+/// Register the `#[pyclass]` types on the `db` submodule (extracted from
+/// [`add_db_module`] to keep it under clippy's line budget).
 ///
 /// # Errors
 ///
@@ -268,22 +236,14 @@ fn register_db_classes(submod: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_class::<pool_read::PyExchangeRow>()?;
     submod.add_class::<pool_read::PyPoolManagerRow>()?;
 
-    // Typed database-schema-stale exception (`DbError::AlembicStale` →
-    // `DatabaseSchemaStale`, a `ValueError` subclass). Previously registered
-    // flat on root via `c_api.rs`; moved onto the db submodule so the whole
-    // db surface lives under `degenbot._ffi.db`.
-    submod.add(
-        "DatabaseSchemaStale",
-        submod.py().get_type::<crate::db::DatabaseSchemaStale>(),
-    )?;
     Ok(())
 }
 
 /// Register the DB functions + classes on a real Python submodule.
 ///
 /// Creates `degenbot._ffi.db` (a `PyModule`, not flat root-level functions)
-/// and registers all ~45 `db_*` pyfunctions + ~11 pyclasses + the
-/// `DatabaseSchemaStale` exception on it. The `db_` prefix is retained on
+/// and registers all ~45 `db_*` pyfunctions + ~11 pyclasses on it. The
+/// `db_` prefix is retained on
 /// the submodule names (unlike the math submodules which dropped their
 /// prefix) because (a) the blast radius is much larger (5 Rust files, ~45
 /// fns) and (b) `db_` functions as a functional namespace marker is clearer

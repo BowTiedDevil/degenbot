@@ -52,18 +52,10 @@ pub enum CliError {
     /// The `database upgrade` subcommand is retired: the database upgrades itself
     /// at open (ADR-052), and `database heal` is the explicit repair.
     DatabaseUpgradeRetired,
-    /// The schema is stamped at a prior Alembic revision — the pointed refusal
-    /// (run `degenbot database upgrade` first).
-    DatabaseStale {
-        /// The revision actually stamped in the database.
-        head: String,
-        /// The revision this binary expects.
-        expected: String,
-    },
     /// The file is a foreign `SQLite` database — the arm refuses to adopt it.
     DatabaseForeign,
-    /// The schema state offers nothing for this arm (e.g. `cutover` on a DB with
-    /// no Alembic history).
+    /// The schema state offers nothing for this arm (e.g. `cutover` on an empty
+    /// file with no legacy history).
     DatabaseNothingToDo,
     /// Any other database failure (I/O, integrity, heal verification).
     Database(DbError),
@@ -135,15 +127,11 @@ impl CliError {
                  `degenbot database heal`"
                     .to_string()
             }
-            Self::DatabaseStale { head, expected } => format!(
-                "The database schema is stale (revision {head}; expected {expected}). Run \
-                 `degenbot database upgrade`."
-            ),
             Self::DatabaseForeign => {
                 "The database is unrecognized (a foreign SQLite file); refused.".to_string()
             }
             Self::DatabaseNothingToDo => {
-                "The database has no Alembic history; there is nothing to cut over.".to_string()
+                "The database has no legacy history; there is nothing to cut over.".to_string()
             }
             Self::Database(err) => err.to_string(),
             Self::Config(err) => err.to_string(),
@@ -186,12 +174,11 @@ impl std::error::Error for CliError {
 
 /// Map a database error onto its typed console failure.
 ///
-/// Alembic-stale and foreign-file failures stay typed here — the facade must be
-/// able to point the operator at the right remedy without string matching.
+/// A foreign-file failure stays typed here — the facade must be able to point
+/// the operator at the right remedy without string matching.
 impl From<DbError> for CliError {
     fn from(err: DbError) -> Self {
         match err {
-            DbError::AlembicStale { head, expected } => Self::DatabaseStale { head, expected },
             DbError::UnrecognizedSchema => Self::DatabaseForeign,
             other => Self::Database(other),
         }
@@ -213,7 +200,6 @@ impl From<&CliError> for ExitCode {
             CliError::BootRefused(_) => Self::Config,
             CliError::Aborted
             | CliError::DatabaseUpgradeRetired
-            | CliError::DatabaseStale { .. }
             | CliError::DatabaseForeign
             | CliError::DatabaseNothingToDo
             | CliError::Database(_)

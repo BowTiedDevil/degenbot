@@ -1039,6 +1039,32 @@ uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py --live
 
 Endpoints and operator keys come from `examples/mainnet.env` + the OS env: `DEGENBOT_RPC_HTTP_CHAINID_1` / `DEGENBOT_RPC_WS_CHAINID_1` (CLI `--node-http` / `--node-ws` take precedence), `OPERATOR_ADDRESS` / `OPERATOR_PRIVATE_KEY` in live mode, and optional `EXECUTOR_CONTRACT_ADDRESS` overrides. `BotRunner` performs the driver-side startup handshake, after which the **Rust core owns the hot loop** — event decode, per-block re-solve, in-process simulation, encoding, submission — and the Python driver owns config, result rendering, and dispatch policy. With `--operator-socket PATH`, the bot also hosts an `OperatorServer` that the `degenbot path add` / `degenbot path discover` CLI commands target to steer the live path set without a restart (protocol + design in [`docs/architecture/operator-add-path-surface.md`](docs/architecture/operator-add-path-surface.md)).
 
+Both drivers launch through the repo's `./run_bot.sh` wrapper, which owns the
+shared env exports, the RPC-cascade print, build-on-demand for the Rust
+driver, and the `start`/`stop`/`status` lifecycle:
+
+```bash
+./run_bot.sh                      # Python driver, foreground (legacy default)
+./run_bot.sh --python start       # Python driver, detached (same command/env as above)
+./run_bot.sh --rust start         # pure-Rust driver (rust/examples/settlement_bot)
+./run_bot.sh --rust start -- --live --permutation V2-V3-V4   # args after `--` pass through verbatim
+./run_bot.sh --rust print-cmd     # resolved driver + command + exports; no build, no launch
+./run_bot.sh status               # covers both drivers
+./run_bot.sh stop                 # stops whichever driver is running
+```
+
+`--python` is the default and is byte-identical to the direct `uv run`
+invocation above. `--rust` builds
+`rust/target/$RUST_PROFILE/degenbot-settlement-bot-example` when the binary or
+workspace is stale (`RUST_PROFILE=release` by default — the profile the Python
+driver's `.so` is built with; `RUST_PROFILE=dev` opts into the debug profile
+for iteration) and arms the Rust example's live handshake by exporting
+`SMOKE_RPC_URL` from the same RPC cascade the Python driver resolves. `--live`
+is never implied — pass it explicitly after `--`. `stop`/`status` cover both
+driver process names plus the pidfile. The launcher-consolidation record, with
+the two deliberate divergences between the drivers, lives in
+[`docs/architecture/rust-settlement-bot-parity.md`](docs/architecture/rust-settlement-bot-parity.md).
+
 ## Bot API Reference
 
 The `Bot` class is the primary entry point for degenbot usage. Access factories, registries, and utilities through Bot.

@@ -37,14 +37,14 @@ pub fn error(error: &CliError) -> i32 {
 
 /// The operator-facing stderr line for `error`.
 ///
-/// The fleet boot refusal keeps the Python binary's named fail-fast prefix
-/// (FF-T1 / `DegenbotCLI.invoke`); every other arm renders
-/// [`CliError::message`] verbatim.
+/// The fleet boot refusal renders its named fail-fast line; every other arm
+/// renders [`CliError::message`] verbatim. No in-message `[tag]` prefix — the
+/// console area is derived from the closed domain target (ADR-043 §7).
 fn write_error(error: &CliError) {
     let mut stderr = std::io::stderr().lock();
     match error {
         CliError::BootRefused(message) => {
-            let _ = writeln!(stderr, "[fleet-boot] REFUSED — {message}");
+            let _ = writeln!(stderr, "REFUSED — {message}");
         }
         other => {
             let _ = writeln!(stderr, "{}", other.message());

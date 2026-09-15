@@ -42,7 +42,7 @@
 //! `query_only` is applied to the FINAL connection (the one the heal reopened
 //! on the Rust-owned file), so binding #2's hard AC holds in the form that
 //! matters: **after `open()` returns, every read connection is read-only.**
-//! The pinned (`DEGENBOT_DB_AUTO_HEAL=0`) `AlembicCurrent` branch writes nothing,
+//! The pinned (`DEGENBOT_DB_AUTO_HEAL=0`) `LegacyAlembic` branch writes nothing,
 //! so its practical effect is identical to setting `query_only` first.
 
 use std::path::Path;
@@ -75,23 +75,22 @@ impl DegenbotDb {
     /// ADR-052 D1 heal-at-open, and return the handle and the schema
     /// disposition.
     ///
-    /// An Alembic-stamped DB (head-stamped OR stale) is healed out-of-place at
-    /// open ([`crate::heal::heal_database`] under the ADR-011 atomic swap,
+    /// A legacy `alembic_version`-marked DB is healed out-of-place at open
+    /// ([`crate::heal::heal_database`] under the ADR-011 atomic swap,
     /// preserving the original as `*.bak`) and the disposition is
     /// [`SchemaState::RustOwned`]. With `DEGENBOT_DB_AUTO_HEAL=0` the pre-D1
-    /// posture is restored: head → [`SchemaState::AlembicCurrent`] (nothing
-    /// written), stale → [`DbError::AlembicStale`]. An unrecognized file still
-    /// refuses ([`DbError::UnrecognizedSchema`]), and a fresh standalone file
-    /// gets the embedded DDL + the private `_degenbot_db_schema_version` stamp
-    /// before `query_only=on` is set.
+    /// posture is restored: the legacy DB opens as
+    /// [`SchemaState::LegacyAlembic`] (nothing written). An unrecognized file
+    /// still refuses ([`DbError::UnrecognizedSchema`]), and a fresh standalone
+    /// file gets the embedded DDL + the private `_degenbot_db_schema_version`
+    /// stamp before `query_only=on` is set.
     ///
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] if the connection/PRAGMA setup or the heal
-    /// fails (a heal failure leaves the original DB untouched — ADR-011),
-    /// [`DbError::AlembicStale`] for a stale DB under the killswitch, or
-    /// [`DbError::UnrecognizedSchema`] if the file is neither an Alembic DB nor
-    /// a fresh standalone file.
+    /// fails (a heal failure leaves the original DB untouched — ADR-011), or
+    /// [`DbError::UnrecognizedSchema`] if the file is neither a legacy-marker
+    /// DB nor a fresh standalone file.
     pub fn open(path: &Path) -> Result<(Self, SchemaState), DbError> {
         Self::open_with(path, auto_heal_enabled(), true)
     }
@@ -124,9 +123,8 @@ impl DegenbotDb {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::Sqlite`] if the connection/PRAGMA/DDL setup fails,
-    /// [`DbError::AlembicStale`] / [`DbError::UnrecognizedSchema`] for
-    /// unrecognized files.
+    /// Returns [`DbError::Sqlite`] if the connection/PRAGMA/DDL setup fails, or
+    /// [`DbError::UnrecognizedSchema`] for unrecognized files.
     pub fn open_for_writes(path: &Path) -> Result<(Self, SchemaState), DbError> {
         Self::open_with(path, auto_heal_enabled(), false)
     }
@@ -192,9 +190,6 @@ impl DegenbotDb {
         }
 
         match state {
-            SchemaState::AlembicStale { head, expected } => {
-                Err(DbError::AlembicStale { head, expected })
-            }
             SchemaState::Unrecognized => Err(DbError::UnrecognizedSchema),
             other => Ok((conn, other)),
         }
@@ -210,6 +205,17 @@ impl DegenbotDb {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// Flip a Rust-owned DB to the legacy `alembic_version`-marked shape.
+    fn mark_legacy(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(
+            "DROP TABLE _degenbot_db_schema_version;\n\
+             CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
+             INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');",
+        )
+        .unwrap();
+    }
 
     #[test]
     fn open_in_memory_sets_pragmas_and_query_only() {
@@ -244,9 +250,9 @@ mod tests {
     }
 
     #[test]
-    fn pinned_open_on_alembic_stamped_db_writes_nothing_and_is_read_only() {
+    fn pinned_open_on_legacy_marker_db_writes_nothing_and_is_read_only() {
         // The `DEGENBOT_DB_AUTO_HEAL=0` posture (`auto_heal=false`): the
-        // head-stamped DB opens as AlembicCurrent, read-only, no heal.
+        // legacy-marker DB opens as LegacyAlembic, read-only, no heal.
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("stamped.db");
         {
@@ -258,7 +264,7 @@ mod tests {
             .unwrap();
         }
         let (conn, state) = DegenbotDb::open_initialized(&db_path, false, true).unwrap();
-        assert_eq!(state, SchemaState::AlembicCurrent);
+        assert_eq!(state, SchemaState::LegacyAlembic);
         // no degenbot tables were created
         let n: i64 = conn
             .query_row(
@@ -270,25 +276,6 @@ mod tests {
         assert_eq!(n, 0);
         // query_only still on
         assert!(conn.execute("CREATE TABLE y (a INT)", []).is_err());
-    }
-
-    #[test]
-    fn pinned_open_on_stale_alembic_db_refuses() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("stale.db");
-        {
-            let conn = Connection::open(&db_path).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
-                 INSERT INTO alembic_version (version_num) VALUES ('000000000000');",
-            )
-            .unwrap();
-        }
-        let result = DegenbotDb::open_initialized(&db_path, false, true);
-        assert!(
-            matches!(result, Err(DbError::AlembicStale { .. })),
-            "expected AlembicStale refusal under the killswitch"
-        );
     }
 
     #[test]
@@ -308,10 +295,11 @@ mod tests {
     }
 
     #[test]
-    fn auto_heal_on_open_migrates_head_stamped_db_to_rust_owned() {
+    fn auto_heal_on_open_migrates_legacy_marker_db_to_rust_owned() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("heal_head.db");
+        let db_path = dir.path().join("heal_legacy.db");
         crate::ops::create_new_database(&db_path).unwrap();
+        mark_legacy(&db_path);
 
         let (db, state) = DegenbotDb::open(&db_path).unwrap();
         assert!(
@@ -335,22 +323,20 @@ mod tests {
     }
 
     #[test]
-    fn auto_heal_on_open_migrates_stale_db_to_rust_owned() {
+    fn auto_heal_on_open_migrates_a_divergent_legacy_db_to_rust_owned() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("heal_stale.db");
         crate::ops::create_new_database(&db_path).unwrap();
+        mark_legacy(&db_path);
         {
             let conn = Connection::open(&db_path).unwrap();
-            conn.execute_batch(
-                "DROP INDEX ix_erc20_tokens_chain;\n\
-                 UPDATE alembic_version SET version_num='e0aaad8ad486';",
-            )
-            .unwrap();
+            conn.execute_batch("DROP INDEX ix_erc20_tokens_chain;")
+                .unwrap();
         }
         let (_db, state) = DegenbotDb::open(&db_path).unwrap();
         assert!(
             matches!(state, SchemaState::RustOwned { .. }),
-            "stale-rev auto-heal must land RustOwned, got {state:?}"
+            "divergent-legacy auto-heal must land RustOwned, got {state:?}"
         );
     }
 

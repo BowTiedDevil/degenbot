@@ -11,7 +11,7 @@
 //! | `9c411aeeb15e` | 0.5.1b1 |
 //! | `b0b9e84d5527` | 0.6.0a1 |
 //! | `e0aaad8ad486` | 0.6.0a2 |
-//! | `2606a6c7f5ee` | 0.6.0a3+ / current head (`ALEMBIC_HEAD`) |
+//! | `2606a6c7f5ee` | 0.6.0a3+ (the last released Alembic head) |
 //!
 //! For every fixture this test runs the two halves of the ADR-052 D5 promise:
 //!
@@ -22,9 +22,8 @@
 //!    stamp table is written, and the pre-heal file survives as `*.bak`
 //!    (still stamped at the released revision).
 //! 2. **Killswitch** (`DEGENBOT_DB_AUTO_HEAL=0`): the pre-D1 posture persists —
-//!    the head-stamped fixture opens `AlembicCurrent` read-only with no heal
-//!    and no `*.bak`, and every stale fixture refuses with
-//!    `DbError::AlembicStale` naming the released revision.
+//!    every fixture opens `LegacyAlembic` read-only with no heal and no
+//!    `*.bak` (the revision is never inspected; ADR-052 D6 presence detection).
 //!
 //! The fixture is always copied to a fresh temp dir first: a committed `.db`
 //! is never mutated by this suite.
@@ -40,8 +39,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use rusqlite::{Connection, OpenFlags};
 use tempfile::TempDir;
 
-use degenbot_db::schema::{ALEMBIC_HEAD, RUST_SCHEMA_VERSION};
-use degenbot_db::{DbError, DegenbotDb, SchemaState, AUTO_HEAL_ENV};
+use degenbot_db::schema::RUST_SCHEMA_VERSION;
+use degenbot_db::{DegenbotDb, SchemaState, AUTO_HEAL_ENV};
 
 /// Committed fixture directory (never mutated — every case copies out first).
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/alembic_revs");
@@ -68,7 +67,7 @@ impl EnvGuard {
     }
 
     /// The pinned posture: `DEGENBOT_DB_AUTO_HEAL=0` restores the pre-D1
-    /// semantics (head opens `AlembicCurrent`, stale refuses).
+    /// semantics (a legacy-marker DB opens `LegacyAlembic`, unhealed).
     fn killswitch() -> Self {
         let lock = ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         std::env::set_var(AUTO_HEAL_ENV, "0");
@@ -179,8 +178,6 @@ fn stamped_rev(conn: &Connection) -> String {
 
 /// One fixture, both halves of the D5 promise.
 fn run_fixture(rev: &str) {
-    let is_head = rev == ALEMBIC_HEAD;
-
     // ── 1. Auto-heal at open (default; killswitch unset). ────────────────
     {
         let _env = EnvGuard::heal_on();
@@ -244,29 +241,19 @@ fn run_fixture(rev: &str) {
         let _env = EnvGuard::killswitch();
         let (_dir, path) = copy_fixture(rev);
 
-        if is_head {
-            // Head-stamped: opens AlembicCurrent read-only, writes nothing.
-            let (db, state) = DegenbotDb::open(&path)
-                .unwrap_or_else(|e| panic!("{rev}: killswitch head open failed: {e}"));
-            assert_eq!(
-                state,
-                SchemaState::AlembicCurrent,
-                "{rev}: head must open AlembicCurrent under the killswitch",
-            );
-            let conn = db.lock();
-            assert!(has_table(&conn, "alembic_version"));
-            assert!(!has_table(&conn, RUST_STAMP_TABLE));
-        } else {
-            // Stale: refuses with the released revision named.
-            match DegenbotDb::open(&path) {
-                Err(DbError::AlembicStale { head, expected }) => {
-                    assert_eq!(head, rev, "{rev}: refusal must name the stamped revision");
-                    assert_eq!(expected, ALEMBIC_HEAD, "{rev}: refusal must name the head");
-                }
-                Ok(_) => panic!("{rev}: expected AlembicStale refusal, got a successful open"),
-                Err(e) => panic!("{rev}: expected AlembicStale refusal, got {e}"),
-            }
-        }
+        // Legacy marker present → opens LegacyAlembic read-only, writes
+        // nothing. The revision is never inspected (ADR-052 D6).
+        let (db, state) = DegenbotDb::open(&path)
+            .unwrap_or_else(|e| panic!("{rev}: killswitch open failed: {e}"));
+        assert_eq!(
+            state,
+            SchemaState::LegacyAlembic,
+            "{rev}: must open LegacyAlembic under the killswitch",
+        );
+        let conn = db.lock();
+        assert!(has_table(&conn, "alembic_version"));
+        assert!(!has_table(&conn, RUST_STAMP_TABLE));
+        drop(conn);
 
         assert!(
             !bak_path(&path).exists(),

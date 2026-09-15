@@ -24,19 +24,6 @@ pub enum DbError {
     #[error("required row not found: {0}")]
     MissingRow(String),
 
-    /// The `alembic_version` row does not match [`crate::schema::ALEMBIC_HEAD`].
-    ///
-    /// The Rust core is a **reader** of Alembic-headed DBs, never a migrator;
-    /// the operator must run the Python Alembic upgrade (`alembic upgrade head`)
-    /// — the writer/orchestration migration in Epic AZGJUN owns Alembic stamps.
-    #[error("alembic schema is stale: head={head:?} expected={expected:?}; run the Python Alembic upgrade (`alembic upgrade head`)")]
-    AlembicStale {
-        /// The `version_num` actually stamped in the DB.
-        head: String,
-        /// The constant the Rust core expects ([`crate::schema::ALEMBIC_HEAD`]).
-        expected: String,
-    },
-
     /// The opened file is neither an Alembic-stamped degenbot DB nor an empty
     /// fresh-standalone file — likely a foreign `SQLite` file passed by mistake.
     #[error(

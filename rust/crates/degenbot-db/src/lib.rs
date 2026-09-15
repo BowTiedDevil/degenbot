@@ -1,18 +1,18 @@
 //! # `degenbot-db` — `SQLite` persistence substrate for the degenbot Rust core
 //!
-//! A pyo3-free read handle over a degenbot `SQLite` DB, with an Alembic-aware
-//! schema gate. Owns connection/pool management, the schema DDL (mirroring the
-//! current Alembic head), typed row structs for every table, low-level read
-//! row functions, and the migration runner that opens an existing
-//! Alembic-stamped `SQLite` DB without clobbering its revision.
+//! A pyo3-free read handle over a degenbot `SQLite` DB, with a Rust-owned
+//! schema gate. Owns connection/pool management, the schema DDL (the Rust
+//! schema head), typed row structs for every table, low-level read row
+//! functions, and the migration runner that opens an existing legacy
+//! `alembic_version`-marked `SQLite` DB by auto-healing it to Rust ownership.
 //!
 //! # Open path
 //!
 //! [`DegenbotDb::open`] sets `PRAGMA journal_mode=WAL; busy_timeout=5000;
 //! synchronous=NORMAL;` (matching the Python open path — Phase 0, `2KUI3M`),
 //! runs the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
-//! version-lock (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB
-//! (head-stamped OR stale) is healed out-of-place to `RustOwned` unless
+//! version-lock (`migrate::ensure_schema_at_open`) — a legacy DB carrying the
+//! `alembic_version` marker table is healed out-of-place to `RustOwned` unless
 //! `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture, a fresh standalone file
 //! gets the embedded DDL, an unrecognized file refuses, a Rust-owned DB behind
 //! the binary applies its pending steps, and a DB ahead of the binary refuses
@@ -88,7 +88,6 @@ pub use rows::{
     ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow,
     V2PoolRow, V3PoolRow, V4PoolRow,
 };
-pub use schema::ALEMBIC_HEAD;
 pub use snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap, PoolKey};
 pub use write::DebtPositionRefreshContext;
 pub use write::{

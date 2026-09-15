@@ -91,7 +91,6 @@ def test_db_classes_on_db_submodule() -> None:
         "V4PoolRowInput",
         "DatabaseSnapshot",
         "DatabasePositionQuery",
-        "DatabaseSchemaStale",
     }
     missing = [n for n in expected if not hasattr(db, n)]
     assert not missing, f"db submodule missing expected classes: {missing}"

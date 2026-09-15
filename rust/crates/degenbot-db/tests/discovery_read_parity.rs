@@ -23,7 +23,7 @@ const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")
 const CHAIN_ID: i64 = 8453;
 
 /// Pin the ADR-052 D1 heal-at-open killswitch (`DEGENBOT_DB_AUTO_HEAL=0`) so
-/// these fixture-backed parity tests keep the historical `AlembicCurrent`
+/// these fixture-backed parity tests keep the historical `LegacyAlembic`
 /// read-only open and never rewrite the committed fixtures.
 fn pin_auto_heal_off() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -38,7 +38,7 @@ fn fixture_db_path() -> PathBuf {
 fn open_db() -> DegenbotDb {
     let (db, state) = DegenbotDb::open(&fixture_db_path())
         .unwrap_or_else(|e| panic!("open {}: {e}", fixture_db_path().display()));
-    assert_eq!(state, SchemaState::AlembicCurrent);
+    assert_eq!(state, SchemaState::LegacyAlembic);
     db
 }
 
@@ -160,7 +160,7 @@ fn discovery_rows_for_unknown_chain_are_empty() {
 fn snapshot_db_discovery_uses_held_tx_and_matches_direct_read() {
     let direct = open_db().fetch_discovery_rows(CHAIN_ID).unwrap();
     let (snap, state) = SnapshotDb::open(&fixture_db_path()).expect("open SnapshotDb");
-    assert_eq!(state, SchemaState::AlembicCurrent);
+    assert_eq!(state, SchemaState::LegacyAlembic);
     let from_snapshot = snap
         .fetch_discovery_rows(CHAIN_ID)
         .expect("held-tx discovery read");

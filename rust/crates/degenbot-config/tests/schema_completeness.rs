@@ -25,6 +25,12 @@ const SWEEP_ARTIFACTS: &[&str] = &[
     // DEGENBOT_RPC_HTTP_CHAINID_<chain_id>).
     "DEGENBOT_RPC_HTTP_CHAINID_",
     "DEGENBOT_V",
+    // ADR-051 D8: the family wildcard in the cli-core operator doc comment
+    // (the loader owns the four concrete DEGENBOT_FLEET_CORDON_* keys).
+    "DEGENBOT_FLEET_CORDON_",
+    // The retired click per-flag envvar fallback named in the argv doc
+    // comment; the console models these inputs as argv only.
+    "DEGENBOT_CHUNK_SIZE",
 ];
 
 /// Build-receipt keys (commit 1e1c0ddf7): compile-time build-artifact
@@ -36,6 +42,10 @@ const BUILD_ARTIFACT_KEYS: &[&str] = &[
     "DEGENBOT_BUILD_FINGERPRINT",
     "DEGENBOT_BUILD_NUMBER",
     "DEGENBOT_BUILD_NUMBER_FILE",
+    // ADR-051 D2: the console cargo:rustc-env build-identity outputs
+    // (degenbot-cli/build.rs), the same class as the Python build receipt.
+    "DEGENBOT_CLI_BUILD_FINGERPRINT",
+    "DEGENBOT_CLI_BUILD_NUMBER",
 ];
 
 /// Real static env keys the config crate reads BEFORE/OUTSIDE the schema:
@@ -50,7 +60,13 @@ const BOOTSTRAP_KEYS: &[&str] = &["DEGENBOT_CONFIG"];
 /// that never lived in the typed file layer, so they are deliberately NOT
 /// schema keys. The resolvers read them through the loader's `EnvVars` seam
 /// and tag each with its own `Source`.
-const DRIVER_DOMAIN_KEYS: &[&str] = &["DEGENBOT_DB_PATH", "DEGENBOT_DEFAULT_CHAIN_ID"];
+const DRIVER_DOMAIN_KEYS: &[&str] = &[
+    "DEGENBOT_DB_PATH",
+    "DEGENBOT_DEFAULT_CHAIN_ID",
+    // ADR-051 D8: the operator-socket override, a console shell-environment
+    // input resolved by cli-core's resolve_socket cascade.
+    "DEGENBOT_OPERATOR_SOCKET",
+];
 
 /// DB-open toggles read by the persistence layer itself (`degenbot-db`), not
 /// the typed config schema: the ADR-052 D1 heal-at-open killswitch is a

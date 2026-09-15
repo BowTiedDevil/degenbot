@@ -823,3 +823,45 @@ test-settlement-parity:
     cargo test --manifest-path rust/Cargo.toml -p degenbot-settlement-bot-example --test boot_gate
     uv run pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
     uv run python tests/standalone_parity/dual_driver_gate.py --recorded
+
+# ========== No-Python Console Gate (ADR-051 D10 / ergo EA6DY7) ==========
+#
+# The Rust-owned console (`degenbot`) must build and run with NO Python in the
+# path. This recipe builds the `degenbot-cli` binary, then runs the fixed argv
+# smoke set (--help / --version / `database inspect` over committed
+# Alembic-stamped fixtures copied to a temp dir / `exchange activate`+`deactivate`
+# idempotence on a fresh DB copy) and diffs the machine-checkable stdout against
+# the checked-in oracle
+# (.github/workflows/cli-no-python-expected.txt). Bash + sed + diff only — no
+# Python, no uv. Mirrors the `cli-no-python` CI job.
+#
+# Seeded-divergence proof (the comparator must be able to fail), selectable by
+# DEGENBOT_CLI_GATE_SEED (both must exit 0, i.e. the injected divergence WAS
+# caught):
+#   DEGENBOT_CLI_GATE_SEED=expected just ci-no-python-cli-gate
+#       mutate one expected line in a temp oracle copy; the diff must trip.
+#   DEGENBOT_CLI_GATE_SEED=live just ci-no-python-cli-gate
+#       point `database inspect` at the stale fixture (real binary, real
+#       different output); the diff must trip.
+# Authoring aid only: DEGENBOT_CLI_GATE_DUMP_ACTUAL=1 prints the normalized
+# capture so the oracle can be regenerated deliberately.
+ci-no-python-cli-gate:
+    cargo build -p degenbot-cli --manifest-path rust/Cargo.toml
+    bash .github/workflows/cli-no-python-gate.sh
+
+# ADR-052 D6: Alembic is retired in-tree. No `alembic` reference may survive in any
+# Python source under src/, and the migration-scripts package must be gone.
+# Mirrors check-no-pyo3-in-cores: a permanent, mechanical sweep gate.
+check-no-alembic:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v rg >/dev/null 2>&1 || { echo "ERROR: ripgrep (rg) is required for check-no-alembic" >&2; exit 1; }
+    if [ -d src/degenbot/migrations ]; then
+        echo "ERROR: src/degenbot/migrations still exists (retired per ADR-052 D6)." >&2
+        exit 1
+    fi
+    if rg -n -i --glob '*.py' 'alembic' src/; then
+        echo "ERROR: Alembic references remain in src/**/*.py (retired per ADR-052 D6)." >&2
+        exit 1
+    fi
+    echo "OK: no Alembic references remain in src/**/*.py"

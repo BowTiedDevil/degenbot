@@ -7,17 +7,10 @@
 //! value; mirrors Python's `IntMappedToString` `TypeDecorator`), addresses are
 //! `VARCHAR(42)` checksum strings, V4 `pool_hash` is `VARCHAR(66)` 0x-hex.
 
-/// The Alembic `version_num` the Rust core treats as current.
-///
-/// This is the tip of `src/degenbot/migrations/versions/` — verified as the head
-/// because no migration declares it as a `down_revision`. Bumped in lockstep
-/// with a new Alembic migration landing in Epic AZGJUN (the writer path stays
-/// Alembic-owned; the Rust core only reads).
-pub const ALEMBIC_HEAD: &str = "2606a6c7f5ee";
-
 /// The embedded full-schema DDL, applied ONLY on the fresh-standalone open path
-/// (a `cargo add degenbot-db` consumer's own empty file). An Alembic-stamped
-/// production DB is NEVER touched by this — see [`crate::migrate::ensure_schema`].
+/// (a `cargo add degenbot-db` consumer's own empty file). A legacy DB carrying
+/// the `alembic_version` marker table is never touched by this — see
+/// [`crate::migrate::ensure_schema`].
 pub const SCHEMA_HEAD: &str = include_str!("schema_head.sql");
 
 /// The private Rust-owned schema-version stamp, written to

@@ -19,7 +19,7 @@ head was computed per tag as the `revision` in
 | 0.5.1b1 (`test-0.5.1b1.post2`) | `9c411aeeb15e` | `9c411aeeb15e.db` |
 | v0.6.0a1, v0.6.0a1.post1 | `b0b9e84d5527` | `b0b9e84d5527.db` |
 | v0.6.0a2 | `e0aaad8ad486` | `e0aaad8ad486.db` |
-| v0.6.0a3 … v0.6.0a10 | `2606a6c7f5ee` (= `ALEMBIC_HEAD`) | `2606a6c7f5ee.db` |
+| v0.6.0a3 … v0.6.0a10 | `2606a6c7f5ee` (the last released Alembic head) | `2606a6c7f5ee.db` |
 
 Six distinct heads cover all fourteen migration-era releases. `9347bbfcd47a`
 is included per ADR-052 D5 even though 0.5.0a1 predates the `versions/`
@@ -27,7 +27,7 @@ directory.
 
 ## Synthesis
 
-Fixtures were synthesized from the in-tree `src/degenbot/migrations/` scripts
+Fixtures were synthesized from the (now-retired) `src/degenbot/migrations/` scripts
 and the Rust head DDL (`SCHEMA_HEAD`, applied by `create_new_database`); the
 generator was a throwaway and is not committed. Every fixture is stamped by
 writing its revision into `alembic_version.version_num`, and every fixture

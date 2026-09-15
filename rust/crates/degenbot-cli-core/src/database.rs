@@ -24,9 +24,8 @@ use crate::report::{CutoverOutcome, DatabaseReport, DryRunKind};
 /// # Errors
 ///
 /// [`CliError`] for a declined prompt, a schema refusal
-/// ([`CliError::DatabaseStale`] / [`CliError::DatabaseForeign`] /
-/// [`CliError::DatabaseNothingToDo`]), the retired `upgrade` command, or a
-/// degenbot-db op failure.
+/// ([`CliError::DatabaseForeign`] / [`CliError::DatabaseNothingToDo`]), the
+/// retired `upgrade` command, or a degenbot-db op failure.
 pub(crate) fn execute(
     command: &DatabaseCommand,
     ctx: &CliContext<'_>,
@@ -100,8 +99,8 @@ fn compact(path: &Path) -> Result<DatabaseReport, CliError> {
     })
 }
 
-/// `cutover`: the opt-in one-way ownership flip (ADR-010). Refuses stale /
-/// foreign / no-history DBs BEFORE any prompt; confirms unless `--force`.
+/// `cutover`: the opt-in one-way ownership flip (ADR-010). Refuses foreign /
+/// empty file DBs BEFORE any prompt; confirms unless `--force`.
 fn cutover(
     path: &Path,
     plan: PromptPlan,
@@ -118,15 +117,9 @@ fn cutover(
         });
     }
     match &state {
-        SchemaState::AlembicStale { head, expected } => {
-            return Err(CliError::DatabaseStale {
-                head: head.clone(),
-                expected: expected.clone(),
-            });
-        }
         SchemaState::Unrecognized => return Err(CliError::DatabaseForeign),
         SchemaState::FreshStandalone { .. } => return Err(CliError::DatabaseNothingToDo),
-        SchemaState::AlembicCurrent | SchemaState::RustOwned { .. } => {}
+        SchemaState::LegacyAlembic | SchemaState::RustOwned { .. } => {}
     }
     if plan.asks(force) && !prompter.confirm(&cutover_prompt(path), false) {
         return Err(CliError::Aborted);
@@ -145,9 +138,9 @@ fn cutover(
     })
 }
 
-/// `heal`: the out-of-place dump-and-restore rebuild (ADR-011). ACCEPTS a stale
-/// Alembic DB (unlike `cutover`); refuses a foreign file; confirms unless
-/// `--force`.
+/// `heal`: the out-of-place dump-and-restore rebuild (ADR-011). ACCEPTS a
+/// legacy `alembic_version`-marked DB (unlike `cutover`); refuses a foreign
+/// file; confirms unless `--force`.
 fn heal(
     path: &Path,
     plan: PromptPlan,

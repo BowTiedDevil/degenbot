@@ -18,7 +18,6 @@ from degenbot._ffi.db import (
     V3PoolRowInput,
     V4PoolRowInput,
 )
-from degenbot.exceptions import DatabaseSchemaStale
 
 
 def test_cancel_handle_alias() -> None:
@@ -49,14 +48,3 @@ def test_v4_pool_row_input_alias() -> None:
     from degenbot.updater import V4PoolRowInput as CompanionV4PoolRowInput
 
     assert CompanionV4PoolRowInput is V4PoolRowInput
-
-
-def test_database_schema_stale_alias() -> None:
-    """DatabaseSchemaStale is the exact Rust-raised type under degenbot.exceptions.
-
-    ``degenbot.db`` no longer re-exports it (4JASRW) — identity is asserted
-    against the physical ``degenbot._ffi.db`` home.
-    """
-    from degenbot._ffi.db import DatabaseSchemaStale as FfiDatabaseSchemaStale
-
-    assert DatabaseSchemaStale is FfiDatabaseSchemaStale

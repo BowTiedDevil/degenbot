@@ -19,6 +19,13 @@ from tests.helpers.bot_factory import make_bot_with_provider
 from tests.offline import is_offline
 from tests.standalone_anvil import seed as seed_catalog
 
+# ADR-052 D1: a legacy `alembic_version`-marked DB heals itself at open. The
+# committed `rust/crates/**/fixtures/*.db` parity fixtures are read-only
+# references shared by many tests, so pin the killswitch for the Python suite:
+# the Rust `auto_heal_matrix` tests own the heal-at-open behavior. (A test that
+# needs the heal can still override the var explicitly.)
+os.environ.setdefault("DEGENBOT_DB_AUTO_HEAL", "0")
+
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
 

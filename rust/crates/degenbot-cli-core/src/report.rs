@@ -714,18 +714,15 @@ fn healed_lines(path: &std::path::Path, report: &HealReport) -> Vec<String> {
 pub fn cutover_dry_run_line(state: &SchemaState) -> String {
     let label = schema_state_label(state);
     match state {
-        SchemaState::AlembicCurrent => format!(
+        SchemaState::LegacyAlembic => format!(
             "Schema state: {label}. Would cutover from Alembic to Rust ownership (drop \
              `alembic_version`, stamp `_degenbot_db_schema_version`)."
         ),
         SchemaState::RustOwned { .. } => {
             format!("Schema state: {label}. Already Rust-owned — cutover is a no-op.")
         }
-        SchemaState::AlembicStale { .. } => format!(
-            "Schema state: {label}. Schema is stale — run `degenbot database upgrade` first."
-        ),
         SchemaState::FreshStandalone { .. } => {
-            format!("Schema state: {label}. No Alembic history — nothing to cutover.")
+            format!("Schema state: {label}. No legacy history — nothing to cutover.")
         }
         SchemaState::Unrecognized => {
             format!("Schema state: {label}. Unrecognized database (foreign file).")
@@ -738,7 +735,7 @@ pub fn cutover_dry_run_line(state: &SchemaState) -> String {
 pub fn heal_dry_run_line(state: &SchemaState) -> String {
     let label = schema_state_label(state);
     match state {
-        SchemaState::AlembicCurrent => format!(
+        SchemaState::LegacyAlembic => format!(
             "Schema state: {label}. Would heal: rebuild at the Rust head schema, copy all \
              rows, drop alembic_version, stamp _degenbot_db_schema_version, atomic-swap with \
              a *.bak backup."
@@ -746,11 +743,6 @@ pub fn heal_dry_run_line(state: &SchemaState) -> String {
         SchemaState::RustOwned { .. } => {
             format!("Schema state: {label}. Already Rust-owned — heal is a no-op.")
         }
-        SchemaState::AlembicStale { .. } => format!(
-            "Schema state: {label}. Schema is stale — heal can proceed (out-of-place rebuild \
-             handles stale schemas) but consider `degenbot database upgrade` first for a \
-             strictly in-place path."
-        ),
         SchemaState::FreshStandalone { .. } => format!(
             "Schema state: {label}. Empty file — heal produces a fresh RustOwned DB (0 rows \
              copied)."
@@ -769,8 +761,7 @@ pub fn heal_dry_run_line(state: &SchemaState) -> String {
 #[must_use]
 pub fn schema_state_label(state: &SchemaState) -> &'static str {
     match state {
-        SchemaState::AlembicCurrent => "alembic_current",
-        SchemaState::AlembicStale { .. } => "alembic_stale",
+        SchemaState::LegacyAlembic => "legacy_alembic",
         SchemaState::FreshStandalone { .. } => "fresh_standalone",
         SchemaState::RustOwned { .. } => "rust_owned",
         SchemaState::Unrecognized => "unrecognized",

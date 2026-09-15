@@ -90,8 +90,7 @@ impl SnapshotDb {
     ///
     /// # Errors
     /// [`DbError::Sqlite`] on a connection/PRAGMA/DDL failure,
-    /// [`DbError::AlembicStale`] / [`DbError::UnrecognizedSchema`] for stale
-    /// or unrecognized files.
+    /// [`DbError::UnrecognizedSchema`] for unrecognized files.
     pub fn open(path: &Path) -> Result<(Self, SchemaState), DbError> {
         Self::open_with(path)
     }
@@ -140,9 +139,6 @@ impl SnapshotDb {
         // established at the first SELECT inside (deferred behavior).
         conn.execute_batch("BEGIN;")?;
         match state {
-            SchemaState::AlembicStale { head, expected } => {
-                Err(DbError::AlembicStale { head, expected })
-            }
             SchemaState::Unrecognized => Err(DbError::UnrecognizedSchema),
             other => Ok((conn, other)),
         }

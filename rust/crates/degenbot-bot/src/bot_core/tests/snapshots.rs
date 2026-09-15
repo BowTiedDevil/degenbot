@@ -758,6 +758,9 @@ fn load_snapshot_from_db_populates_store_and_seed_block() {
         eprintln!("skipping: parity fixture not at {}", fixture.display());
         return;
     }
+    // Pin the ADR-052 D1 heal-at-open killswitch so this read never rewrites
+    // the committed fixture.
+    std::env::set_var(degenbot_db::AUTO_HEAL_ENV, "0");
     let (snap, _state) = degenbot_db::snapshot_db::SnapshotDb::open(&fixture).unwrap();
     let bot = Bot::new(8453);
     bot.load_snapshot_from_db(&snap, 8453).unwrap();

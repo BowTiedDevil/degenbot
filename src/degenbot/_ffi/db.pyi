@@ -1,7 +1,7 @@
 from typing import Any
 
 def db_create_new_database(path: str) -> None:
-    """Create a fresh degenbot SQLite DB: WAL + head DDL + VACUUM + Alembic stamp.
+    """Create a fresh degenbot SQLite DB: WAL + head DDL + VACUUM + Rust stamp.
 
     Args:
         path: Filesystem path for the new database (created if absent)
@@ -38,20 +38,21 @@ def db_compact_database(path: str) -> None:
     """
 
 def db_upgrade_database(path: str) -> str:
-    """Ensure the database is at the Alembic schema head.
+    """Ensure the database is at the current Rust schema.
 
-    Returns ``"already_at_head"`` if the DB was current (no-op), or
-    ``"created_fresh"`` if an empty file was brought up to head. A stale
-    Alembic DB raises ``ValueError`` (run ``alembic upgrade head`` from Python).
+    Returns ``"already_current"`` if the DB was already current (no-op),
+    ``"created_fresh"`` if an empty file was brought up to head, or
+    ``"healed_legacy"`` if a legacy ``alembic_version``-marked DB was healed
+    out-of-place to Rust ownership.
 
     Args:
         path: Database path
 
     Returns:
-        ``"already_at_head"`` or ``"created_fresh"``
+        ``"already_current"`` / ``"created_fresh"`` / ``"healed_legacy"``
 
     Raises:
-        ValueError: On a stale / unrecognized schema, or an I/O failure
+        ValueError: On an unrecognized schema, or an I/O failure
 
     """
 
@@ -60,9 +61,8 @@ def db_inspect_schema_state(database_path: str) -> str:
 
     The read-only dry-run companion to
     :func:`db_convert_alembic_to_rust_owned`. Never refuses (reports even
-    stale / unrecognized states). Returns one of ``"alembic_current"``,
-    ``"alembic_stale"``, ``"fresh_standalone"``, ``"rust_owned"``,
-    ``"unrecognized"``.
+    legacy / unrecognized states). Returns one of ``"legacy_alembic"``,
+    ``"fresh_standalone"``, ``"rust_owned"``, ``"unrecognized"``.
 
     Args:
         database_path: Database path
@@ -78,19 +78,17 @@ def db_inspect_schema_state(database_path: str) -> str:
 def db_convert_alembic_to_rust_owned(database_path: str) -> str:
     """Perform the opt-in one-way cutover (ADR-010).
 
-    Flip an Alembic-stamped DB into Rust ownership — drops
-    ``alembic_version``, stamps ``_degenbot_db_schema_version``.
+    Flip a legacy ``alembic_version``-marked DB into Rust ownership — drops
+    the marker table, stamps ``_degenbot_db_schema_version``.
 
     Args:
         database_path: Database path
 
     Returns:
-        ``"converted"`` (was AlembicCurrent) or ``"already_rust_owned"``
+        ``"converted"`` (was legacy-marked) or ``"already_rust_owned"``
         (was already Rust-owned → idempotent no-op).
 
     Raises:
-        DatabaseSchemaStale: For a stale Alembic DB (run
-            ``degenbot database upgrade`` first).
         ValueError: For an unrecognized (foreign) file or I/O failure.
 
     """
@@ -100,7 +98,7 @@ def db_heal_database(database_path: str) -> dict[str, Any]:
 
     Rebuild the DB at the Rust head schema, copy user rows preserving PKs +
     FK integrity (in FK-dependency order), stamp RustOwned directly (never
-    runs Alembic code), then atomically swap with a ``*.bak`` backup. Never
+    runs legacy migration code), then atomically swap with a ``*.bak`` backup. Never
     mutates the old DB in place — a read-only open feeds the copy, so the
     old file is left byte-identical until the final ``rename``.
 
@@ -523,24 +521,9 @@ class LiquidityUpdateEvent:
         liquidity_delta: int,
     ) -> None: ...
 
-class DatabaseSchemaStale(ValueError):
-    """The DB is stamped at a prior Alembic revision.
-
-    Raised by the degenbot-db PyO3 seam (``DbError::AlembicStale``) when a
-    connexion is opened against a DB whose ``alembic_version`` predates the
-    compiled head — e.g. a user upgrading from the published 0.6.0a2 schema
-    (``e0aaad8ad486``) to the dev head (``2606a6c7f5ee``). The Rust core is
-    a reader of Alembic-headed DBs, never a migrator, so it refuses with
-    this typed exception instead. Subclasses ``ValueError`` so the
-    ``database upgrade`` shell's broad catch keeps working; the CLI root
-    group catches it to print a friendly one-line "run ``degenbot database
-    upgrade``" hint instead of a Python traceback.
-    """
-
 __all__ = [
     "CollateralPositionData",
     "DatabasePositionQuery",
-    "DatabaseSchemaStale",
     "DatabaseSnapshot",
     "DebtPositionData",
     "ExchangeRow",

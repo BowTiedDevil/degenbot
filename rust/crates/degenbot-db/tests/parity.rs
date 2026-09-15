@@ -9,12 +9,12 @@
 //! boundary: the seed data carries values exceeding `i64::MAX` (2^70) and
 //! `u128::MAX` (for the gross column), proving the decimal-string round-trip.
 //!
-//! The fixture DB stamps `alembic_version` at `ALEMBIC_HEAD`, so [`open`]
-//! returns [`SchemaState::AlembicCurrent`] and writes NOTHING — exactly the
-//! hybrid-period guarantee that the Rust reader cannot mutate an
-//! Alembic-stamped production DB. `PRAGMA query_only=on` is asserted by the
-//! `connection.rs` unit tests; here we additionally confirm the open surface
-//! detected `AlembicCurrent`.
+//! The fixture DB carries the legacy `alembic_version` marker table, so
+//! [`open`] returns [`SchemaState::LegacyAlembic`] and writes NOTHING (the
+//! ADR-052 killswitch is pinned) — exactly the guarantee that the Rust reader
+//! cannot mutate a legacy production DB. `PRAGMA query_only=on` is asserted by
+//! the `connection.rs` unit tests; here we additionally confirm the open
+//! surface detected `LegacyAlembic`.
 //!
 //! To regenerate the fixture (after changing seed data):
 //!   `uv run python rust/crates/degenbot-db/tests/fixtures/generate_parity.py`
@@ -35,7 +35,7 @@ type StreamedMap = HashMap<i32, (U256, i128)>;
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 /// Pin the ADR-052 D1 heal-at-open killswitch (`DEGENBOT_DB_AUTO_HEAL=0`) so
-/// these fixture-backed parity tests keep the historical `AlembicCurrent`
+/// these fixture-backed parity tests keep the historical `LegacyAlembic`
 /// read-only open and never rewrite the committed fixtures.
 fn pin_auto_heal_off() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -124,8 +124,8 @@ fn parse_tick(s: &str) -> i32 {
 #[test]
 fn opens_alembic_stamped_db_as_current_and_writes_nothing() {
     let (db, state) =
-        DegenbotDb::open(&fixture_db_path()).expect("parity.db should open as AlembicCurrent");
-    assert_eq!(state, SchemaState::AlembicCurrent);
+        DegenbotDb::open(&fixture_db_path()).expect("parity.db should open as LegacyAlembic");
+    assert_eq!(state, SchemaState::LegacyAlembic);
     // No degenbot tables were created by the open (the Alembic DB already has
     // them; ensure_schema wrote nothing). Spot-check the private stamp table is
     // ABSENT (it is only written on the fresh-standalone path).

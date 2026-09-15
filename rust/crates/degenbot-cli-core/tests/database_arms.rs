@@ -1,8 +1,8 @@
 //! Integration tests for the `database` command arms (ergo 4DIBGR).
 //!
 //! Fixture conventions mirror `degenbot-db`'s own tests: temp dirs, never committed
-//! fixtures. States exercised: fresh (created at head), Alembic-stamped current,
-//! Alembic-stamped stale, Rust-owned, empty/fresh-standalone, and foreign.
+//! fixtures. States exercised: Rust-owned (fresh create), legacy-marker,
+//! empty/fresh-standalone, and foreign.
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::cell::RefCell;
@@ -17,8 +17,6 @@ use degenbot_config::MapEnv;
 use degenbot_db::ops;
 use degenbot_db::SchemaState;
 use tempfile::TempDir;
-
-const STALE_REVISION: &str = "e0aaad8ad486";
 
 /// A recording `Prompter`: returns `answer` and captures every ask.
 struct RecordingPrompter {
@@ -50,34 +48,28 @@ fn env() -> MapEnv {
     MapEnv::new(BTreeMap::new())
 }
 
-/// A DB created at the Alembic head (`alembic_current`).
-fn alembic_current(dir: &Path) -> PathBuf {
+/// A Rust-owned DB (fresh create stamps the Rust schema).
+fn rust_owned(dir: &Path) -> PathBuf {
     let path = dir.join("degenbot.db");
     ops::create_new_database(&path).unwrap();
     path
 }
 
-/// A stale Alembic DB: the head schema stamped one revision below head.
-fn alembic_stale(dir: &Path) -> PathBuf {
-    let path = alembic_current(dir);
+/// A legacy `alembic_version`-marked DB (the convertible/healable state).
+fn legacy(dir: &Path) -> PathBuf {
+    let path = rust_owned(dir);
     let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute(
-        &format!("UPDATE alembic_version SET version_num='{STALE_REVISION}'"),
-        [],
+    conn.execute_batch(
+        "DROP TABLE _degenbot_db_schema_version;\n\
+         CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
+         INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');",
     )
     .unwrap();
     drop(conn);
     path
 }
 
-/// A Rust-owned DB (post-cutover).
-fn rust_owned(dir: &Path) -> PathBuf {
-    let path = alembic_current(dir);
-    ops::convert_alembic_to_rust_owned(&path).unwrap();
-    path
-}
-
-/// A foreign `SQLite` file (tables, no Alembic history).
+/// A foreign `SQLite` file (tables, no legacy history).
 fn foreign(dir: &Path) -> PathBuf {
     let path = dir.join("foreign.db");
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -87,7 +79,7 @@ fn foreign(dir: &Path) -> PathBuf {
     path
 }
 
-/// An empty file (no tables, no Alembic history).
+/// An empty file (no tables, no legacy history).
 fn empty(dir: &Path) -> PathBuf {
     let path = dir.join("empty.db");
     std::fs::write(&path, b"").unwrap();
@@ -113,7 +105,7 @@ fn inspect(path: &Path) -> SchemaState {
 #[test]
 fn backup_writes_bak_without_prompting_when_absent() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = rust_owned(dir.path());
     let prompter = RecordingPrompter::new(false);
 
     let outcome = run_db(DatabaseCommand::Backup, &db, &prompter, &env());
@@ -127,13 +119,13 @@ fn backup_writes_bak_without_prompting_when_absent() {
     assert_eq!(source, &db);
     assert_eq!(backup, &database_backup_path(&db));
     assert!(backup.exists());
-    assert_eq!(inspect(backup), SchemaState::AlembicCurrent);
+    assert!(matches!(inspect(backup), SchemaState::RustOwned { .. }));
 }
 
 #[test]
 fn backup_prompts_and_replaces_when_target_exists() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = rust_owned(dir.path());
     let backup = database_backup_path(&db);
     // A stale/garbage pre-existing target the operator must confirm replacing.
     std::fs::write(&backup, b"not a database").unwrap();
@@ -151,13 +143,13 @@ fn backup_prompts_and_replaces_when_target_exists() {
     );
     assert!(!calls[0].1, "default is false");
     // The garbage was replaced by a real backup.
-    assert_eq!(inspect(&backup), SchemaState::AlembicCurrent);
+    assert!(matches!(inspect(&backup), SchemaState::RustOwned { .. }));
 }
 
 #[test]
 fn backup_declined_aborts_and_leaves_target_untouched() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = rust_owned(dir.path());
     let backup = database_backup_path(&db);
     std::fs::write(&backup, b"keep me").unwrap();
 
@@ -174,7 +166,7 @@ fn backup_declined_aborts_and_leaves_target_untouched() {
 #[test]
 fn reset_prompts_unless_force() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = rust_owned(dir.path());
 
     let declined = RecordingPrompter::new(false);
     let outcome = run_db(
@@ -196,7 +188,7 @@ fn reset_prompts_unless_force() {
         outcome.report(),
         Some(CommandReport::Database(DatabaseReport::Reset { .. }))
     ));
-    assert_eq!(inspect(&db), SchemaState::AlembicCurrent);
+    assert!(matches!(inspect(&db), SchemaState::RustOwned { .. }));
 }
 
 // ── compact ───────────────────────────────────────────────────────────────
@@ -204,7 +196,7 @@ fn reset_prompts_unless_force() {
 #[test]
 fn compact_succeeds_without_prompting() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = rust_owned(dir.path());
     let prompter = RecordingPrompter::new(false);
 
     let outcome = run_db(DatabaseCommand::Compact, &db, &prompter, &env());
@@ -222,7 +214,7 @@ fn compact_succeeds_without_prompting() {
 #[test]
 fn inspect_reports_state_without_writing() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_stale(dir.path());
+    let db = legacy(dir.path());
     let before = std::fs::read(&db).unwrap();
     let prompter = RecordingPrompter::new(false);
 
@@ -234,7 +226,7 @@ fn inspect_reports_state_without_writing() {
     let CommandReport::Database(DatabaseReport::Inspected { state, .. }) = report else {
         panic!("expected Inspected, got {report:?}");
     };
-    assert!(matches!(state, SchemaState::AlembicStale { .. }));
+    assert_eq!(*state, SchemaState::LegacyAlembic);
     assert_eq!(
         std::fs::read(&db).unwrap(),
         before,
@@ -242,16 +234,16 @@ fn inspect_reports_state_without_writing() {
     );
     assert_eq!(
         report.render_lines(),
-        vec!["Schema state: alembic_stale.".to_string()]
+        vec!["Schema state: legacy_alembic.".to_string()]
     );
 }
 
 // ── cutover ───────────────────────────────────────────────────────────────
 
 #[test]
-fn cutover_converts_alembic_current() {
+fn cutover_converts_legacy_marker() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = legacy(dir.path());
     let prompter = RecordingPrompter::new(false);
 
     let outcome = run_db(
@@ -299,7 +291,7 @@ fn cutover_converts_alembic_current() {
 #[test]
 fn cutover_prompts_unless_force_and_declining_aborts() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = legacy(dir.path());
     let prompter = RecordingPrompter::new(false);
 
     let outcome = run_db(
@@ -317,13 +309,13 @@ fn cutover_prompts_unless_force_and_declining_aborts() {
     let calls = prompter.calls();
     assert_eq!(calls.len(), 1);
     assert!(calls[0].0.contains("ONE-WAY"), "ported prompt text");
-    assert_eq!(inspect(&db), SchemaState::AlembicCurrent);
+    assert_eq!(inspect(&db), SchemaState::LegacyAlembic);
 }
 
 #[test]
 fn cutover_dry_run_reports_and_writes_nothing() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = legacy(dir.path());
     let before = std::fs::read(&db).unwrap();
     let prompter = RecordingPrompter::new(false);
 
@@ -344,48 +336,9 @@ fn cutover_dry_run_reports_and_writes_nothing() {
         panic!("expected DryRun, got {report:?}");
     };
     assert_eq!(*kind, DryRunKind::Cutover);
-    assert_eq!(*state, SchemaState::AlembicCurrent);
+    assert_eq!(*state, SchemaState::LegacyAlembic);
     assert_eq!(std::fs::read(&db).unwrap(), before);
     assert!(report.render_lines()[0].contains("Would cutover from Alembic to Rust ownership"));
-}
-
-#[test]
-fn cutover_on_stale_renders_pointed_refusal() {
-    let dir = TempDir::new().unwrap();
-    let db = alembic_stale(dir.path());
-    let prompter = RecordingPrompter::new(true);
-
-    let outcome = run_db(
-        DatabaseCommand::Cutover {
-            dry_run: false,
-            force: true,
-        },
-        &db,
-        &prompter,
-        &env(),
-    );
-
-    assert_eq!(outcome.exit_code, ExitCode::Failure);
-    assert!(prompter.calls().is_empty(), "refusal precedes any prompt");
-    let Some(CliError::DatabaseStale { head, .. }) = outcome.error() else {
-        panic!("expected DatabaseStale, got {:?}", outcome.error());
-    };
-    assert_eq!(head.as_str(), STALE_REVISION);
-    assert!(
-        outcome
-            .error()
-            .unwrap()
-            .message()
-            .contains("degenbot database upgrade"),
-        "pointed refusal names the remedy"
-    );
-    assert_eq!(
-        inspect(&db),
-        SchemaState::AlembicStale {
-            head: STALE_REVISION.to_string(),
-            expected: degenbot_db::ALEMBIC_HEAD.to_string()
-        }
-    );
 }
 
 #[test]
@@ -437,9 +390,9 @@ fn cutover_on_empty_refuses_nothing_to_do() {
 // ── heal ──────────────────────────────────────────────────────────────────
 
 #[test]
-fn heal_rebuilds_stamped_db_to_rust_owned() {
+fn heal_rebuilds_legacy_marker_to_rust_owned() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = legacy(dir.path());
     let prompter = RecordingPrompter::new(false);
 
     let outcome = run_db(
@@ -458,16 +411,16 @@ fn heal_rebuilds_stamped_db_to_rust_owned() {
     let CommandReport::Database(DatabaseReport::Healed { report, .. }) = report else {
         panic!("expected Healed, got {report:?}");
     };
-    assert_eq!(report.old_state, SchemaState::AlembicCurrent);
+    assert_eq!(report.old_state, SchemaState::LegacyAlembic);
     assert!(matches!(report.new_state, SchemaState::RustOwned { .. }));
     assert!(report.bak_path.exists(), "the old DB is preserved as .bak");
     assert!(matches!(inspect(&db), SchemaState::RustOwned { .. }));
 }
 
 #[test]
-fn heal_accepts_stale_but_refuses_foreign() {
+fn heal_accepts_legacy_but_refuses_foreign() {
     let dir = TempDir::new().unwrap();
-    let stale = alembic_stale(dir.path());
+    let legacy_db = legacy(dir.path());
     let prompter = RecordingPrompter::new(false);
 
     let outcome = run_db(
@@ -475,17 +428,17 @@ fn heal_accepts_stale_but_refuses_foreign() {
             dry_run: false,
             force: true,
         },
-        &stale,
+        &legacy_db,
         &prompter,
         &env(),
     );
 
-    assert_eq!(outcome.exit_code, ExitCode::Success, "heal accepts stale");
+    assert_eq!(outcome.exit_code, ExitCode::Success, "heal accepts legacy");
     let report = outcome.report().unwrap();
     let CommandReport::Database(DatabaseReport::Healed { report, .. }) = report else {
         panic!("expected Healed, got {report:?}");
     };
-    assert!(matches!(report.old_state, SchemaState::AlembicStale { .. }));
+    assert_eq!(report.old_state, SchemaState::LegacyAlembic);
     assert!(matches!(report.new_state, SchemaState::RustOwned { .. }));
 
     let foreign_db = foreign(dir.path());
@@ -505,7 +458,7 @@ fn heal_accepts_stale_but_refuses_foreign() {
 #[test]
 fn heal_dry_run_reports_and_writes_nothing() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_stale(dir.path());
+    let db = legacy(dir.path());
     let before = std::fs::read(&db).unwrap();
     let prompter = RecordingPrompter::new(false);
 
@@ -527,13 +480,13 @@ fn heal_dry_run_reports_and_writes_nothing() {
     };
     assert_eq!(*kind, DryRunKind::Heal);
     assert_eq!(std::fs::read(&db).unwrap(), before);
-    assert!(report.render_lines()[0].contains("heal can proceed"));
+    assert!(report.render_lines()[0].contains("Would heal"));
 }
 
 #[test]
 fn heal_prompts_unless_force() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = legacy(dir.path());
     let prompter = RecordingPrompter::new(false);
 
     let outcome = run_db(
@@ -551,7 +504,7 @@ fn heal_prompts_unless_force() {
     let calls = prompter.calls();
     assert_eq!(calls.len(), 1);
     assert!(calls[0].0.contains("out-of-place"));
-    assert_eq!(inspect(&db), SchemaState::AlembicCurrent);
+    assert_eq!(inspect(&db), SchemaState::LegacyAlembic);
 }
 
 // ── upgrade (retired) ─────────────────────────────────────────────────────
@@ -559,7 +512,7 @@ fn heal_prompts_unless_force() {
 #[test]
 fn upgrade_is_retired_and_points_at_heal() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = rust_owned(dir.path());
     let prompter = RecordingPrompter::new(true);
 
     let outcome = run_db(
@@ -578,7 +531,7 @@ fn upgrade_is_retired_and_points_at_heal() {
     let message = outcome.error().unwrap().message();
     assert!(message.contains("upgrades itself at open"));
     assert!(message.contains("degenbot database heal"));
-    assert_eq!(inspect(&db), SchemaState::AlembicCurrent);
+    assert!(matches!(inspect(&db), SchemaState::RustOwned { .. }));
 }
 
 // ── exit-code + prompt-plan surfaces ──────────────────────────────────────
@@ -595,7 +548,7 @@ fn boot_refused_maps_to_ex_config_78() {
 #[test]
 fn prompt_plan_matches_ported_policy() {
     let dir = TempDir::new().unwrap();
-    let db = alembic_current(dir.path());
+    let db = rust_owned(dir.path());
     let e = env();
     let ctx = CliContext::new(&e).with_database(db.display().to_string());
 

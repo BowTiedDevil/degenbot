@@ -1,8 +1,8 @@
 """Exception classes for degenbot.
 
 ``degenbot.exceptions`` is the single documented import home for every
-FFI-raised exception. The FFI-raised types (``DatabaseSchemaStale``, the
-``PoolRegistrationError`` family, the verifier errors) are **direct aliases**
+FFI-raised exception. The FFI-raised types (the ``PoolRegistrationError``
+fairly, the verifier errors) are **direct aliases**
 of the ``degenbot._ffi`` pyclasses — never Python subclasses: Rust raises
 the pyclass instances, so ``except`` / ``isinstance`` matching requires the
 exact same class object. The identity contract is pinned by
@@ -23,7 +23,6 @@ from degenbot._ffi import (
     PoolRegistrationError,
     SpecViolationError,
 )
-from degenbot._ffi.db import DatabaseSchemaStale
 from degenbot.exceptions.arbitrage import (
     ArbCalculationError,
     ArbitrageError,
@@ -104,7 +103,6 @@ __all__ = (
     "ConnectionTimeout",
     "ContractLogicError",
     "CurveError",
-    "DatabaseSchemaStale",
     "DegenbotConnectionError",
     "DegenbotError",
     "DegenbotTypeError",

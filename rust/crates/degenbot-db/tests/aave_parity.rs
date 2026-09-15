@@ -22,7 +22,7 @@ use degenbot_db::{DegenbotDb, SchemaState};
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 /// Pin the ADR-052 D1 heal-at-open killswitch (`DEGENBOT_DB_AUTO_HEAL=0`) so
-/// these fixture-backed parity tests keep the historical `AlembicCurrent`
+/// these fixture-backed parity tests keep the historical `LegacyAlembic`
 /// read-only open and never rewrite the committed fixtures.
 fn pin_auto_heal_off() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -60,8 +60,8 @@ fn open_db() -> DegenbotDb {
     );
     let (db, state) = DegenbotDb::open(&path).expect("open aave_parity.db fixture");
     assert!(
-        matches!(state, SchemaState::AlembicCurrent),
-        "fixture DB should be AlembicCurrent, got {state:?}"
+        matches!(state, SchemaState::LegacyAlembic),
+        "fixture DB should be LegacyAlembic, got {state:?}"
     );
     db
 }

@@ -4,10 +4,24 @@
 # A self-contained launcher so the bot can be started/stopped deterministically
 # without rediscovering the launch mechanics each time.
 #
+# One launcher, two drivers (RSP-16 / ergo V6SUQO):
+#
+#   ./run_bot.sh [--python|--rust] [start|stop|status|foreground|print-cmd] [-- args...]
+#
+#   --python (default)    the Python driver over the PyO3-bound Rust core —
+#                         legacy command/env, byte-identical
+#   --rust                the pure-Rust parity driver
+#                         (rust/examples/settlement_bot), built on demand
+#
 #   ./run_bot.sh            # foreground (output -> console + log)
 #   ./run_bot.sh start      # detached (setsid), pid -> logs/bot_run.pid
-#   ./run_bot.sh stop       # kill the running bot (by pidfile + pkill)
-#   ./run_bot.sh status     # is it running?
+#   ./run_bot.sh stop       # kill the running bot (by pidfile + pkill; both drivers)
+#   ./run_bot.sh status     # is it running? (both drivers)
+#   ./run_bot.sh print-cmd  # resolved driver/command/exports; no build, no launch
+#
+# `--` ends launcher parsing: every following token is appended verbatim to the
+# driver argv (e.g. `./run_bot.sh --rust start -- --live --permutation V2-V3-V4`).
+# The launcher NEVER implies --live.
 set -u
 cd /workspaces/degenbot
 LOGDIR=/workspaces/degenbot/logs
@@ -129,9 +143,102 @@ export DEGENBOT_PUMP_DEBOUNCE_MS="${DEGENBOT_PUMP_DEBOUNCE_MS:-15}"
 # still wins when set explicitly - none are pre-set here.
 # (DEGENBOT_SOLVE_SIM_INFLIGHT is retired — fails the load loudly, LW-T9.)
 
-# The actual bot invocation (uv rebuilds the Rust extension if any rust
-# source / Cargo.toml is newer than the installed build).
-BOT_CMD=(uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py)
+# --------------------------------------------------------------------------
+# Driver selection (RSP-16 / ergo V6SUQO): one launcher, two drivers.
+#
+#   --python  runs examples/eth_settlement_arbitrage_v2_v3_v4_rust.py over the
+#             PyO3-bound Rust core — the legacy command/env, byte-identical,
+#             and the default when no driver flag is given.
+#   --rust    runs the standalone `cargo add degenbot` consumer
+#             (rust/examples/settlement_bot, package
+#             `degenbot-settlement-bot-example`), built on demand.
+#
+# RUST_PROFILE selects the cargo profile for --rust: `release` (default — the
+# same profile the Python driver's installed .so is built with; a COLD release
+# build takes minutes) or `dev` (the debug profile, for fast iteration).
+# --------------------------------------------------------------------------
+RUST_PROFILE="${RUST_PROFILE:-release}"
+case "$RUST_PROFILE" in
+    release) RUST_PROFILE_DIR=release; RUST_BUILD_FLAGS=(--release) ;;
+    dev)     RUST_PROFILE_DIR=debug;   RUST_BUILD_FLAGS=() ;;
+    *)
+        echo "error: unknown RUST_PROFILE '$RUST_PROFILE' (expected release|dev)" >&2
+        exit 2
+        ;;
+esac
+RUST_PKG=degenbot-settlement-bot-example
+RUST_BIN="rust/target/$RUST_PROFILE_DIR/$RUST_PKG"
+
+# The Python driver's byte-identical legacy invocation (uv rebuilds the Rust
+# extension if any rust source / Cargo.toml is newer than the installed build).
+PY_BOT_CMD=(uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py)
+
+# Process-name patterns `stop`/`status` match in addition to the pidfile — one
+# per driver (see stop/status).
+DRIVER_NAME_PATTERNS=(eth_settlement_arbitrage_v2_v3_v4 degenbot-settlement-bot-example)
+
+DRIVER=python
+DRIVER_SET=0
+ACTION=""
+PASSTHROUGH=()
+
+usage() {
+    echo "usage: $0 [--python|--rust] {start|stop|status|foreground|print-cmd} [-- extra bot args]" >&2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --python|--rust)
+            if [ "$DRIVER_SET" = 1 ]; then
+                echo "error: driver flags are mutually exclusive (got '$1' after '--$DRIVER')" >&2
+                usage
+                exit 2
+            fi
+            DRIVER="${1#--}"
+            DRIVER_SET=1
+            ;;
+        --)
+            # Everything after `--` is the driver's own argv, verbatim. The
+            # launcher NEVER implies --live; pass it here explicitly.
+            shift
+            PASSTHROUGH=("$@")
+            break
+            ;;
+        start|stop|status|foreground|print-cmd)
+            ACTION="$1"
+            ;;
+        -*)
+            echo "error: unknown driver flag '$1'" >&2
+            usage
+            exit 2
+            ;;
+        *)
+            usage
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+if [ "$DRIVER" = rust ]; then
+    BOT_CMD=("$RUST_BIN" "${PASSTHROUGH[@]}")
+else
+    BOT_CMD=("${PY_BOT_CMD[@]}" "${PASSTHROUGH[@]}")
+fi
+
+# A thin bash supervisor becomes the detached session leader so the driver's
+# REAL pid is what lands in the pidfile (stop is a direct TERM to the driver)
+# and its exit status is recorded in the log — `setsid <driver>` alone would
+# leave no parent to report rc. $1 = log path, $2 = pidfile, rest = driver argv.
+DETACH_WRAPPER='
+log="$1"; pidfile="$2"; shift 2
+"$@" >>"$log" 2>&1 </dev/null &
+child=$!
+printf "%s\n" "$child" > "$pidfile"
+wait "$child"
+rc=$?
+printf "[runner] bot exited rc=%s %s\n" "$rc" "$(date -Is)" >>"$log"
+'
 
 # Print the EFFECTIVE chain-1 RPC URIs — exactly what the bot's cascade
 # (degenbot.config.resolve_rpc_uris: CLI > OS env > config.toml) will resolve —
@@ -139,8 +246,53 @@ BOT_CMD=(uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py)
 # export can shadow the devcontainer containerEnv (the resolver reads
 # os.environ), and this surfaces such a stomp immediately instead of as a
 # connection-refused chain-ID failure (2026-09-10 incident).
+resolve_rpc_line() {
+    uv run python -c 'from degenbot.config import resolve_rpc_uris as _r; _h, _w = _r(1); print(f"[runner] resolved rpc http={_h} ws={_w}")' 2>/dev/null || true
+}
+
+# Log the resolved cascade line (console + log), remembering the ws URI.
+RESOLVED_WS=""
 log_resolved_rpcs() {
-    uv run python -c 'from degenbot.config import resolve_rpc_uris as _r; _h, _w = _r(1); print(f"[runner] resolved rpc http={_h} ws={_w}")' 2>/dev/null | tee -a "$LOG" >&2 || true
+    local line
+    line="$(resolve_rpc_line)"
+    [ -n "$line" ] || return 0
+    printf '%s\n' "$line" | tee -a "$LOG" >&2
+    RESOLVED_WS="${line##*ws=}"
+}
+
+# The pure-Rust driver's live arm is gated on SMOKE_RPC_URL (the analogue of
+# the Python driver's own cascade read); bind the ws URI the SAME Python cascade
+# resolves so both drivers arm the same endpoint. An empty/absent ws leaves
+# SMOKE_RPC_URL unset — the example then stops after the offline parity-ledger
+# print (its CI-safe posture). Never implies --live.
+arm_smoke_rpc() {
+    [ "$DRIVER" = rust ] || return 0
+    if [ -z "$RESOLVED_WS" ]; then
+        echo "[runner] warning: no resolved ws URI — SMOKE_RPC_URL unset, rust driver stays offline" | tee -a "$LOG" >&2
+        return 0
+    fi
+    export SMOKE_RPC_URL="$RESOLVED_WS"
+}
+
+# Build-on-demand for --rust: a deliberately cheap mtime probe (binary missing,
+# or any rust source/manifest newer). Cargo owns the real dependency graph and
+# is incremental, so over-triggering costs only a fast no-op cargo run.
+rust_binary_stale() {
+    if [ -x "$RUST_BIN" ] \
+        && [ -z "$(find rust/Cargo.toml rust/Cargo.lock rust/crates rust/examples -type f -newer "$RUST_BIN" -print -quit 2>/dev/null)" ]; then
+        return 1
+    fi
+    return 0
+}
+
+ensure_rust_binary() {
+    [ "$DRIVER" = rust ] || return 0
+    rust_binary_stale || return 0
+    echo "[runner] building $RUST_PKG ($RUST_PROFILE profile — a cold release build takes minutes)" | tee -a "$LOG" >&2
+    if ! ( cd rust && cargo build -p "$RUST_PKG" "${RUST_BUILD_FLAGS[@]}" ) >>"$LOG" 2>&1; then
+        echo "[runner] cargo build failed — see $LOG" >&2
+        return 1
+    fi
 }
 
 start() {
@@ -150,15 +302,25 @@ start() {
     fi
     : > "$LOG"
     : > "$PIDFILE"
+    ensure_rust_binary || return 1
     log_resolved_rpcs
-    # setsid: new session + no controlling terminal, so the launching shell
-    # can exit without the pump dying (SIGHUP) and the tool shell's return
-    # isn't entangled with the bot's life. exec is NOT used so `$!` is the
-    # (setsid'd) uv pid we record. Output is captured by direct fd redirection
-    # (never a tee pipeline), so the log is authoritative and survives the
-    # launching shell going away.
-    setsid "${BOT_CMD[@]}" >>"$LOG" 2>&1 < /dev/null &
-    echo $! > "$PIDFILE"
+    arm_smoke_rpc
+    # setsid: new session + no controlling terminal, so the launching shell can
+    # exit without the pump dying (SIGHUP) and the tool shell's return isn't
+    # entangled with the bot's life. The supervisor records the driver's own pid
+    # and its exit status (see DETACH_WRAPPER). Output is captured by direct fd
+    # redirection (never a tee pipeline), so the log is authoritative and
+    # survives the launching shell going away.
+    local wrapper_pid _i
+    setsid bash -c "$DETACH_WRAPPER" runner "$LOG" "$PIDFILE" "${BOT_CMD[@]}" < /dev/null &
+    wrapper_pid=$!
+    # The supervisor writes the driver pid as soon as it forks it; fall back to
+    # the supervisor pid if that never happened (driver failed to fork).
+    for _i in 1 2 3 4 5 6 7 8 9 10; do
+        [ -s "$PIDFILE" ] && break
+        sleep 0.1
+    done
+    [ -s "$PIDFILE" ] || echo "$wrapper_pid" > "$PIDFILE"
     # Runner diagnostics go to the log too, so the whole launch is in one place.
     echo "[runner] started bot pid $(cat "$PIDFILE") $(date -Is)" | tee -a "$LOG" >&2
 }
@@ -170,8 +332,10 @@ stop() {
         kill -9 "$(cat "$PIDFILE")" 2>/dev/null
         rm -f "$PIDFILE"
     fi
-    # The uv wrapper may exit while its python child lingers; kill by name too.
+    # The supervisor (or the uv wrapper) may exit while its child lingers; kill
+    # by name too, covering BOTH drivers.
     pkill -9 -f eth_settlement_arbitrage_v2_v3_v4 2>/dev/null
+    pkill -9 -f degenbot-settlement-bot-example 2>/dev/null
     echo "[runner] stopped $(date -Is)"
 }
 
@@ -179,9 +343,21 @@ status() {
     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
         echo "[runner] running pid $(cat "$PIDFILE")"
         ps -o pid,etime,cmd -p "$(cat "$PIDFILE")" 2>/dev/null | tail -1
-    else
-        echo "[runner] not running"
+        return 0
     fi
+    # A stale/empty pidfile doesn't mean no driver is live — match BOTH driver
+    # process names (the Python example script and the Rust binary).
+    local name pids
+    pids=""
+    for name in "${DRIVER_NAME_PATTERNS[@]}"; do
+        pids="$pids $(pgrep -f "$name" 2>/dev/null | tr '\n' ' ')"
+    done
+    pids="${pids// /}"
+    if [ -n "$pids" ]; then
+        echo "[runner] running pid $pids"
+        return 0
+    fi
+    echo "[runner] not running"
 }
 
 foreground() {
@@ -193,8 +369,10 @@ foreground() {
     # (the append-only `tee -a` behaviour is gone for determinism).
     : > "$LOG"
     : > "$PIDFILE"
+    ensure_rust_binary || return 1
     echo "[runner] starting bot $(date -Is)" | tee -a "$LOG" >&2
     log_resolved_rpcs
+    arm_smoke_rpc
     # Bot output goes to the log by direct fd redirection — authoritative and
     # immune to a closing console (no `tee` pipeline to SIGPIPE and drop the
     # tail). The console is only a live mirror fed by `tail -f`.
@@ -216,13 +394,41 @@ foreground() {
     return "$BOTRC"
 }
 
-case "${1:-foreground}" in
+# CI-verifiable surface: print the resolved driver, the full command array
+# (passthrough included), the effective profile, and every export — then exit 0
+# without building or launching.
+print_cmd() {
+    local line ws
+    echo "[runner] driver=$DRIVER"
+    if [ "$DRIVER" = rust ]; then
+        echo "[runner] rust-profile=$RUST_PROFILE"
+        echo "[runner] rust-binary=$RUST_BIN"
+    fi
+    echo "[runner] bot-cmd: $(printf '%q ' "${BOT_CMD[@]}")"
+    echo "[runner] export DEGENBOT_DEBUG=$DEGENBOT_DEBUG"
+    echo "[runner] export DEGENBOT_OTEL=$DEGENBOT_OTEL"
+    echo "[runner] export DEGENBOT_SOLVE_INLINE_SIM=$DEGENBOT_SOLVE_INLINE_SIM"
+    echo "[runner] export DEGENBOT_SIM_EXIT_ON_FAIL=$DEGENBOT_SIM_EXIT_ON_FAIL"
+    echo "[runner] export DEGENBOT_PUMP_DEBOUNCE_MS=$DEGENBOT_PUMP_DEBOUNCE_MS"
+    if [ "$DRIVER" = rust ]; then
+        line="$(resolve_rpc_line)"
+        ws="${line##*ws=}"
+        if [ -n "$ws" ]; then
+            echo "[runner] export SMOKE_RPC_URL=$ws"
+        else
+            echo "[runner] export SMOKE_RPC_URL=<unset: no resolved ws URI — rust driver stays offline>"
+        fi
+    fi
+}
+
+case "${ACTION:-foreground}" in
     start) start ;;
     stop) stop ;;
     status) status ;;
     foreground) foreground ;;
+    print-cmd) print_cmd ;;
     *)
-        echo "usage: $0 {start|stop|status|foreground}" >&2
-        exit 1
+        usage
+        exit 2
         ;;
 esac

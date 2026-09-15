@@ -17,7 +17,6 @@ description = "Python + Rust building blocks for Uniswap (V2, V3, V4), Curve V1,
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "alembic ~= 1.19",
     "pydantic ~= 2.13",
     "pydantic-settings ~= 2.15",
     "sqlalchemy ~= 2.0",
@@ -272,7 +271,6 @@ extra-paths = ["examples"]
 # models, enum members referenced dynamically).
 min_confidence = 80
 paths = ["src/degenbot"]
-exclude = ["src/degenbot/migrations"]  # Alembic, retention-gated per ADR-010
 
 [tool.uv]
 exclude-newer = "14 days"
@@ -310,9 +308,3 @@ profile = "dev"
 features = ["pyo3/extension-module", "degenbot-bot/hotpath", "degenbot-bot/hotpath-prometheus", "degenbot-solvers/hotpath", "degenbot-bot/allocator-ctrl", "otel", "mimalloc"]
 python-packages = ["degenbot"]
 
-[tool.alembic]
-# path to migration scripts.
-# this is typically a path given in POSIX (e.g. forward slashes)
-# format, relative to the token %(here)s which refers to the location of this
-# ini file
-script_location = "%(here)s/src/degenbot/migrations"

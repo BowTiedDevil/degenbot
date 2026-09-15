@@ -1,4 +1,4 @@
-//! The Alembic-aware migration runner.
+//! The schema-gate migration runner.
 //!
 //! The HARD REQUIREMENT (from the SLHSM4 binding): open an existing
 //! Alembic-stamped degenbot `SQLite` DB, read the `alembic_version` table head,
@@ -8,18 +8,15 @@
 //! not recognize. This module is the small custom alternative (Decision 2).
 //!
 //! Algorithm ([`ensure_schema`]):
-//! 1. If the `alembic_version` table exists:
-//!    - read its single `version_num` row, compare against [`ALEMBIC_HEAD`];
-//!    - match → [`SchemaState::AlembicCurrent`];
-//!    - older rev → [`SchemaState::AlembicStale`];
-//!    - both classifications are then HEALED at open by
-//!      `ensure_schema_at_open` (ADR-052 D1): the out-of-place rebuild lands
-//!      `RustOwned`, unless `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture
-//!      (current opens read-only; stale refuses);
+//! 1. If the `alembic_version` table exists the DB is LEGACY (ADR-052 D6: a
+//!    pure presence detector — the revision is never inspected). It is HEALED
+//!    at open by `ensure_schema_at_open` (ADR-052 D1): the out-of-place
+//!    rebuild lands `RustOwned`, unless `DEGENBOT_DB_AUTO_HEAL=0` pins the
+//!    pre-D1 posture (the legacy DB opens read-only, unhealed);
 //! 2. If `alembic_version` is absent but the file already has tables (a foreign
 //!    `SQLite` file passed by mistake) → [`SchemaState::Unrecognized`], refuse;
 //! 3. If `alembic_version` is absent AND the file is empty (a fresh standalone
-//!    DB with no Alembic history) → apply the embedded DDL
+//!    DB with no legacy history) → apply the embedded DDL
 //!    ([`SCHEMA_HEAD`]) + stamp the private [`SCHEMA_VERSION_TABLE`], return
 //!    [`SchemaState::FreshStandalone`].
 
@@ -44,23 +41,16 @@ use crate::heal::{heal_database, HealReport};
 use crate::migrations::{
     apply_forward_migrations, MigrationOutcome, MigrationStep, RUST_MIGRATIONS,
 };
-use crate::schema::{ALEMBIC_HEAD, RUST_SCHEMA_VERSION, SCHEMA_HEAD, SCHEMA_VERSION_TABLE};
+use crate::schema::{RUST_SCHEMA_VERSION, SCHEMA_HEAD, SCHEMA_VERSION_TABLE};
 
 /// The schema disposition [`ensure_schema`] reports for an opened DB.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaState {
-    /// An Alembic-stamped DB at the expected head — the common hybrid-period
-    /// case. The Rust core wrote nothing; every subsequent read honors
-    /// `PRAGMA query_only=on`.
-    AlembicCurrent,
-    /// An Alembic-stamped DB at an OLDER revision — refuse to open. Run the
-    /// Python Alembic upgrade (`alembic upgrade head`) to advance the stamp.
-    AlembicStale {
-        /// The `version_num` actually stamped in the DB.
-        head: String,
-        /// The constant the Rust core expects ([`ALEMBIC_HEAD`]).
-        expected: String,
-    },
+    /// A LEGACY DB: the `alembic_version` marker table is present. The
+    /// revision is never inspected (ADR-052 D6 — presence detection only). The
+    /// Rust core wrote nothing; the D1 open path heals this unless the
+    /// `DEGENBOT_DB_AUTO_HEAL=0` killswitch pins it read-only.
+    LegacyAlembic,
     /// A fresh standalone DB (no Alembic history) — the embedded DDL was applied
     /// and [`SCHEMA_VERSION_TABLE`] was stamped with [`RUST_SCHEMA_VERSION`].
     FreshStandalone {
@@ -117,10 +107,10 @@ pub fn ensure_schema(conn: &Connection) -> Result<SchemaState, DbError> {
 }
 
 /// The ADR-052 D1 heal-at-open killswitch: `DEGENBOT_DB_AUTO_HEAL=0`
-/// restores the pre-D1 posture (a head-stamped Alembic DB opens
-/// [`SchemaState::AlembicCurrent`] read-only and a stale one refuses with
-/// [`DbError::AlembicStale`]) so pinned-test environments — e.g. the
-/// checked-in `tests/fixtures/*.db` parity databases — are never rewritten.
+/// restores the pre-D1 posture (a legacy `alembic_version`-marked DB opens
+/// [`SchemaState::LegacyAlembic`] read-only, unhealed) so pinned-test
+/// environments — e.g. the checked-in `tests/fixtures/*.db` parity databases —
+/// are never rewritten.
 pub const AUTO_HEAL_ENV: &str = "DEGENBOT_DB_AUTO_HEAL";
 
 /// Decide the heal-at-open policy from the raw [`AUTO_HEAL_ENV`] value,
@@ -206,8 +196,8 @@ where
 ///
 /// `FreshStandalone` is skipped: [`ensure_schema`] already applied
 /// [`SCHEMA_HEAD`] and stamped [`RUST_SCHEMA_VERSION`], so it is at current
-/// by construction. `AlembicCurrent` / `AlembicStale` / `Unrecognized`
-/// are never Rust-owned and are never written here.
+/// by construction. `LegacyAlembic` / `Unrecognized` are never Rust-owned and
+/// are never written here.
 pub(crate) fn ensure_schema_at_open_with<F>(
     path: &Path,
     auto_heal: bool,
@@ -221,14 +211,9 @@ where
     let conn = open(path)?;
     let state = ensure_schema(&conn)?;
 
-    // Heal only the two Alembic-owned dispositions, and only when enabled (the
+    // Heal only the legacy-marker disposition, and only when enabled (the
     // `DEGENBOT_DB_AUTO_HEAL=0` killswitch pins the pre-D1 behavior).
-    if !auto_heal
-        || !matches!(
-            state,
-            SchemaState::AlembicCurrent | SchemaState::AlembicStale { .. }
-        )
-    {
+    if !auto_heal || !matches!(state, SchemaState::LegacyAlembic) {
         // Non-heal path: a genuine Rust-owned DB is brought forward under the D2
         // lock; every other disposition passes through untouched.
         let state = apply_forward_lock(&conn, state, steps, target)?;
@@ -294,8 +279,7 @@ fn apply_forward_lock(
 /// event (the same domain the driver uses for its boot snapshot load).
 fn log_heal_report(report: &HealReport) {
     let revision = match &report.old_state {
-        SchemaState::AlembicStale { head, .. } => head.clone(),
-        SchemaState::AlembicCurrent => ALEMBIC_HEAD.to_string(),
+        SchemaState::LegacyAlembic => "legacy".to_string(),
         other => format!("{other:?}"),
     };
     let tables = report.rows_copied.len();
@@ -327,24 +311,11 @@ fn log_heal_report(report: &HealReport) {
 /// # Errors
 ///
 /// Returns [`DbError::Sqlite`] on a query failure (never refuses — returns the
-/// state for ALL cases including `AlembicStale` / `Unrecognized`).
+/// state for ALL cases including `LegacyAlembic` / `Unrecognized`).
 pub fn classify_schema(conn: &Connection) -> Result<SchemaState, DbError> {
-    let has_alembic = table_exists(conn, "alembic_version")?;
-
-    if has_alembic {
-        let head: String = conn.query_row(
-            &format!("SELECT version_num FROM {}", "alembic_version"),
-            [],
-            |row| row.get(0),
-        )?;
-        if head == ALEMBIC_HEAD {
-            Ok(SchemaState::AlembicCurrent)
-        } else {
-            Ok(SchemaState::AlembicStale {
-                head,
-                expected: ALEMBIC_HEAD.to_string(),
-            })
-        }
+    if table_exists(conn, "alembic_version")? {
+        // ADR-052 D6: presence of the legacy marker table is the whole test.
+        Ok(SchemaState::LegacyAlembic)
     } else {
         // No Alembic history. Is the file empty (fresh standalone), a Rust-owned
         // DB (tables present + the private stamp table), or a foreign SQLite file?
@@ -395,37 +366,31 @@ pub fn classify_schema(conn: &Connection) -> Result<SchemaState, DbError> {
     }
 }
 
-/// The opt-in cutover operation (ADR-010 §2): flip an `AlembicCurrent` DB
-/// into Rust ownership. Verifies `alembic_version.version_num ==
-/// ALEMBIC_HEAD`, drops the `alembic_version` table, and stamps
-/// [`SCHEMA_VERSION_TABLE`] with [`RUST_SCHEMA_VERSION`]. Refuses
-/// [`SchemaState::AlembicStale`] (upgrade via Alembic first) and
+/// The opt-in cutover operation (ADR-010 §2): flip a legacy
+/// `alembic_version`-marked DB into Rust ownership. Drops the marker table and
+/// stamps [`SCHEMA_VERSION_TABLE`] with [`RUST_SCHEMA_VERSION`]. Refuses
 /// [`SchemaState::Unrecognized`] (foreign file).
 ///
-/// This is the ONE operation that writes schema to an otherwise-Alembic DB,
-/// and only because the DB is LEAVING Alembic ownership. Already-Rust-owned
-/// (and a fresh standalone) DB is an idempotent re-stamp — `ensure_schema`
-/// returns [`SchemaState::RustOwned`] / [`SchemaState::FreshStandalone`], and
-/// we just re-stamp the version table (a `DELETE + INSERT` no-op).
+/// This is the ONE operation that writes schema to an otherwise-legacy DB, and
+/// only because the DB is LEAVING legacy ownership. Already-Rust-owned (and a
+/// fresh standalone) DB is an idempotent re-stamp — `ensure_schema` returns
+/// [`SchemaState::RustOwned`] / [`SchemaState::FreshStandalone`], and we just
+/// re-stamp the version table (a `DELETE + INSERT` no-op).
 ///
 /// # Errors
 ///
-/// Returns [`DbError::AlembicStale`] for a stale Alembic DB,
-/// [`DbError::UnrecognizedSchema`] for a foreign file, or [`DbError::Sqlite`]
-/// on a query/DDL failure.
+/// Returns [`DbError::UnrecognizedSchema`] for a foreign file, or
+/// [`DbError::Sqlite`] on a query/DDL failure.
 pub fn convert_alembic_to_rust_owned(conn: &Connection) -> Result<RustOwnedInfo, DbError> {
     let state = ensure_schema(conn)?;
     match state {
-        SchemaState::AlembicCurrent => {
+        SchemaState::LegacyAlembic => {
             // Drop the Alembic stamp table + stamp the Rust-owned version table.
             conn.execute_batch("DROP TABLE IF EXISTS alembic_version;")?;
             stamp_rust_schema_version(conn)?;
             Ok(RustOwnedInfo {
                 schema_version: RUST_SCHEMA_VERSION,
             })
-        }
-        SchemaState::AlembicStale { head, expected } => {
-            Err(DbError::AlembicStale { head, expected })
         }
         SchemaState::Unrecognized => Err(DbError::UnrecognizedSchema),
         // Idempotent re-stamp: the DB is already Rust-owned (or freshly
@@ -462,7 +427,7 @@ fn apply_fresh_standalone(conn: &Connection) -> Result<(), DbError> {
 /// `INSERT`). Idempotent — safe to re-assert on an already-stamped DB. Shared
 /// by [`apply_fresh_standalone`] (fresh-standalone first open) and
 /// [`convert_alembic_to_rust_owned`] (the cutover op).
-fn stamp_rust_schema_version(conn: &Connection) -> Result<(), DbError> {
+pub(crate) fn stamp_rust_schema_version(conn: &Connection) -> Result<(), DbError> {
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS {SCHEMA_VERSION_TABLE} (schema_version INTEGER NOT NULL);\n\
          DELETE FROM {SCHEMA_VERSION_TABLE};"
@@ -520,37 +485,20 @@ mod tests {
     }
 
     #[test]
-    fn alembic_current_writes_nothing() {
+    fn legacy_marker_writes_nothing() {
         let conn = Connection::open_in_memory().unwrap();
-        // stamp an alembic_version row at the head
+        // Any `alembic_version` row marks the DB legacy; the revision is never
+        // inspected (ADR-052 D6).
         conn.execute_batch(
             "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
-             INSERT INTO alembic_version (version_num) VALUES ('2606a6c7f5ee');",
+             INSERT INTO alembic_version (version_num) VALUES ('whatever');",
         )
         .unwrap();
         let state = ensure_schema(&conn).unwrap();
-        assert_eq!(state, SchemaState::AlembicCurrent);
+        assert_eq!(state, SchemaState::LegacyAlembic);
         // no degenbot tables should have been created
         assert!(!table_exists(&conn, table::POOLS).unwrap());
         assert!(!table_exists(&conn, SCHEMA_VERSION_TABLE).unwrap());
-    }
-
-    #[test]
-    fn alembic_stale_refuses() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
-             INSERT INTO alembic_version (version_num) VALUES ('deadbeefdead');",
-        )
-        .unwrap();
-        let state = ensure_schema(&conn).unwrap();
-        match state {
-            SchemaState::AlembicStale { head, expected } => {
-                assert_eq!(head, "deadbeefdead");
-                assert_eq!(expected, ALEMBIC_HEAD);
-            }
-            other => panic!("expected AlembicStale, got {other:?}"),
-        }
     }
 
     #[test]
@@ -588,19 +536,19 @@ mod tests {
     }
 
     #[test]
-    fn convert_alembic_current_to_rust_owned() {
+    fn convert_legacy_marker_to_rust_owned() {
         // Start from a Rust-owned DB (apply DDL + stamp), then flip it back to
-        // an AlembicCurrent-shaped DB: drop the Rust stamp table, create +
-        // stamp alembic_version at the head.
+        // the legacy-marker shape: drop the Rust stamp table, create +
+        // populate alembic_version.
         let conn = Connection::open_in_memory().unwrap();
         ensure_schema(&conn).unwrap(); // FreshStandalone applies the full schema
         conn.execute_batch(&format!(
             "DROP TABLE {SCHEMA_VERSION_TABLE};\n\
              CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
-             INSERT INTO alembic_version (version_num) VALUES ('{ALEMBIC_HEAD}');"
+             INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');"
         ))
         .unwrap();
-        assert_eq!(ensure_schema(&conn).unwrap(), SchemaState::AlembicCurrent);
+        assert_eq!(ensure_schema(&conn).unwrap(), SchemaState::LegacyAlembic);
 
         // Cutover.
         let info = convert_alembic_to_rust_owned(&conn).unwrap();
@@ -630,23 +578,6 @@ mod tests {
                 schema_version: RUST_SCHEMA_VERSION,
             }
         );
-    }
-
-    #[test]
-    fn convert_refuses_alembic_stale() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
-             INSERT INTO alembic_version (version_num) VALUES ('deadbeefdead');",
-        )
-        .unwrap();
-        match convert_alembic_to_rust_owned(&conn) {
-            Err(DbError::AlembicStale { head, expected }) => {
-                assert_eq!(head, "deadbeefdead");
-                assert_eq!(expected, ALEMBIC_HEAD);
-            }
-            other => panic!("expected AlembicStale, got {other:?}"),
-        }
     }
 
     #[test]
@@ -748,14 +679,18 @@ mod open_tests {
         path.with_file_name(s)
     }
 
-    /// A head-schema DB stamped one revision below `ALEMBIC_HEAD`.
-    fn build_stale_fixture(path: &Path) {
+    /// A head-schema DB carrying the legacy `alembic_version` marker (the
+    /// ADR-052 D1 heal input): build the Rust schema, then flip it to the
+    /// legacy shape by dropping the Rust stamp and creating the marker table.
+    fn build_legacy_fixture(path: &Path) {
         create_new_database(path).unwrap();
         let conn = Connection::open(path).unwrap();
-        conn.execute("DROP INDEX ix_erc20_tokens_chain", [])
-            .unwrap();
-        conn.execute("UPDATE alembic_version SET version_num='e0aaad8ad486'", [])
-            .unwrap();
+        conn.execute_batch(&format!(
+            "DROP TABLE {SCHEMA_VERSION_TABLE};\n\
+             CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
+             INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');"
+        ))
+        .unwrap();
     }
 
     #[test]
@@ -774,7 +709,7 @@ mod open_tests {
     fn head_stamped_db_auto_heals_at_open() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("head.db");
-        create_new_database(&db_path).unwrap();
+        build_legacy_fixture(&db_path);
 
         let (conn, state) = ensure_schema_at_open(&db_path, true, primed).unwrap();
         assert!(
@@ -784,20 +719,20 @@ mod open_tests {
         assert!(!has_table(&conn, "alembic_version"));
         assert!(has_table(&conn, SCHEMA_VERSION_TABLE));
         drop(conn);
-        // `.bak` preserves the original Alembic-stamped file.
+        // `.bak` preserves the original legacy-marked file.
         let bak = Connection::open(bak_path(&db_path)).unwrap();
         assert!(has_table(&bak, "alembic_version"));
     }
 
     #[test]
-    fn stale_rev_db_auto_heals_at_open() {
+    fn legacy_marker_db_auto_heals_at_open() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("stale.db");
-        build_stale_fixture(&db_path);
-        assert!(matches!(
+        let db_path = dir.path().join("legacy.db");
+        build_legacy_fixture(&db_path);
+        assert_eq!(
             classify_schema(&Connection::open(&db_path).unwrap()).unwrap(),
-            SchemaState::AlembicStale { .. }
-        ));
+            SchemaState::LegacyAlembic
+        );
 
         let (_conn, state) = ensure_schema_at_open(&db_path, true, primed).unwrap();
         assert!(
@@ -807,29 +742,36 @@ mod open_tests {
     }
 
     #[test]
-    fn killswitch_disabled_leaves_alembic_db_untouched() {
+    fn killswitch_disabled_leaves_legacy_db_untouched() {
         // `auto_heal=false` is the `DEGENBOT_DB_AUTO_HEAL=0` path.
         let dir = tempfile::tempdir().unwrap();
-        let stale = dir.path().join("stale.db");
-        build_stale_fixture(&stale);
-        let (conn, disposition) = ensure_schema_at_open(&stale, false, primed).unwrap();
-        assert!(matches!(disposition, SchemaState::AlembicStale { .. }));
+        let legacy = dir.path().join("legacy.db");
+        build_legacy_fixture(&legacy);
+        let (conn, disposition) = ensure_schema_at_open(&legacy, false, primed).unwrap();
+        assert_eq!(disposition, SchemaState::LegacyAlembic);
         assert!(has_table(&conn, "alembic_version"));
         drop(conn);
-        assert!(!bak_path(&stale).exists());
+        assert!(!bak_path(&legacy).exists());
 
-        let head = dir.path().join("head.db");
-        create_new_database(&head).unwrap();
-        let (_conn, disposition) = ensure_schema_at_open(&head, false, primed).unwrap();
-        assert_eq!(disposition, SchemaState::AlembicCurrent);
-        assert!(!bak_path(&head).exists());
+        // A Rust-owned DB still opens RustOwned under the killswitch (ownership
+        // is orthogonal to heal policy).
+        let owned = dir.path().join("owned.db");
+        create_new_database(&owned).unwrap();
+        let (_conn, disposition) = ensure_schema_at_open(&owned, false, primed).unwrap();
+        assert_eq!(
+            disposition,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+        assert!(!bak_path(&owned).exists());
     }
 
     #[test]
     fn subsequent_open_lands_rust_owned_without_re_healing() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("idem.db");
-        create_new_database(&db_path).unwrap();
+        build_legacy_fixture(&db_path);
 
         let (_c1, first) = ensure_schema_at_open(&db_path, true, primed).unwrap();
         assert!(matches!(first, SchemaState::RustOwned { .. }));
@@ -884,6 +826,13 @@ mod open_tests {
                 "INSERT INTO erc20_tokens (id, chain, address) VALUES (2, 1, '0xabc')",
                 [],
             )
+            .unwrap();
+            // Flip to the legacy-marker shape so the open path attempts a heal.
+            c.execute_batch(&format!(
+                "DROP TABLE {SCHEMA_VERSION_TABLE};\n\
+                 CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
+                 INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');"
+            ))
             .unwrap();
         }
         let before = std::fs::read(&db_path).unwrap();

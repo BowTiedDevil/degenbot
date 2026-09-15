@@ -6,9 +6,8 @@ Bridges two Rust crates:
   (``run_aave_update``, ``activate_aave_market``, etc.)
 
 The updater functions are thin PyO3 wrappers over the pure-Rust
-``degenbot-aave-updater`` core crate. ``DatabaseSchemaStale`` and
-``CancelHandle`` are re-exported via ``degenbot.db`` and
-``degenbot.updater`` respectively.
+``degenbot-aave-updater`` core crate. ``CancelHandle`` is re-exported via
+``degenbot.updater``.
 
 The former Python in-memory enrichment/processing pipeline
 (``extraction``/``operations``/``events``/``models``/``calculator``/

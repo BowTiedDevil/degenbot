@@ -23,7 +23,7 @@
 //! # The 7-step operation (ADR-011 §"The heal operation")
 //!
 //! 1. Inspect old (read-only). `RustOwned` → no-op; `Unrecognized` →
-//!    refuse; `AlembicCurrent` / `AlembicStale` / `FreshStandalone` → proceed.
+//!    refuse; `LegacyAlembic` / `FreshStandalone` → proceed.
 //!    The old read-only handle is then dropped — step 3 re-attaches the old DB
 //!    inside the new connection.
 //! 2. Build a fresh DB at a sibling temp path via
@@ -76,7 +76,7 @@ use crate::schema::RUST_SCHEMA_VERSION;
 /// treated as drop+add with data loss for that column) so callers can log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HealReport {
-    /// The schema state of the OLD DB (`alembic_current` / `alembic_stale` /
+    /// The schema state of the OLD DB (`legacy_alembic` /
     /// `fresh_standalone` / `rust_owned`).
     pub old_state: SchemaState,
     /// Per-table row counts copied old → new. Empty iff no copy ran
@@ -151,7 +151,7 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
             drop(old_conn);
             return Err(DbError::UnrecognizedSchema);
         }
-        // AlembicCurrent / AlembicStale / FreshStandalone → proceed to heal.
+        // LegacyAlembic / FreshStandalone → proceed to heal.
         _ => {}
     }
 

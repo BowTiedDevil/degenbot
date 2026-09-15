@@ -4,8 +4,8 @@ use rusqlite::Connection;
 
 use super::*;
 use crate::migrate::SchemaState;
-use crate::ops::{convert_alembic_to_rust_owned, create_new_database};
-use crate::schema::{ALEMBIC_HEAD, RUST_SCHEMA_VERSION};
+use crate::ops::create_new_database;
+use crate::schema::RUST_SCHEMA_VERSION;
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -28,9 +28,21 @@ fn has_table(conn: &Connection, name: &str) -> bool {
         == 1
 }
 
+/// Flip a Rust-owned DB to the legacy `alembic_version`-marked shape so
+/// `heal_database` has a legacy source to rebuild.
+fn mark_legacy(path: &std::path::Path) {
+    let conn = Connection::open(path).unwrap();
+    conn.execute_batch(
+        "DROP TABLE _degenbot_db_schema_version;\n\
+         CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
+         INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');",
+    )
+    .unwrap();
+}
+
 /// Populate a head-schema DB with a small, FK-consistent dataset spanning the
 /// core parent→child graph: `erc20_tokens` → `exchanges` → `pools` → `v2` subclass +
-/// `liquidity_positions`. Returns the inserted counts per table.
+/// `liquidity_positions`.
 fn populate_head_dataset(conn: &Connection) {
     // erc20_tokens (parent of pools). The UNIQUE index is (address, chain).
     for (id, addr) in [
@@ -75,8 +87,7 @@ fn populate_head_dataset(conn: &Connection) {
 }
 
 /// Walk every `FOREIGN KEY` declaration on every content table and confirm each
-/// referenced row exists in the parent table. This is the FK-integrity invariant
-/// heal must preserve (PK `id` values are copied as-is so FK references survive).
+/// referenced row exists in the parent table.
 fn assert_fk_intact(conn: &Connection) {
     let tables: Vec<String> = conn
         .prepare(
@@ -89,7 +100,6 @@ fn assert_fk_intact(conn: &Connection) {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     for table in &tables {
-        // PRAGMA foreign_key_list: cols (id, seq, table, from, to, on_update, on_delete, match).
         let fks: Vec<(String, String)> = conn
             .prepare(&format!("PRAGMA foreign_key_list(\"{table}\")"))
             .unwrap()
@@ -101,7 +111,6 @@ fn assert_fk_intact(conn: &Connection) {
             if !has_table(conn, &parent) {
                 continue;
             }
-            // Every non-NULL value in `from_col` must resolve to a parent row.
             let missing: i64 = conn
                 .query_row(
                     &format!(
@@ -117,36 +126,25 @@ fn assert_fk_intact(conn: &Connection) {
     }
 }
 
-/// Every content table's row count must equal `expected` (best-effort: only the
-/// tables we populated; others are 0).
+/// Every content table's row count must equal `expected`.
 fn assert_row_counts(conn: &Connection, expected: &[(&str, i64)]) {
     for (table, n) in expected {
         assert_eq!(count(conn, table), *n, "row count for {table}");
     }
 }
 
-/// Build the YWN7Z6 stale fixture in Rust: a head-schema DB stamped one revision
-/// below `ALEMBIC_HEAD` (head minus the `ix_erc20_tokens_chain` index).
-fn build_stale_fixture(path: &std::path::Path) {
-    create_new_database(path).unwrap();
-    let conn = Connection::open(path).unwrap();
-    conn.execute("DROP INDEX ix_erc20_tokens_chain", [])
-        .unwrap();
-    conn.execute("UPDATE alembic_version SET version_num='e0aaad8ad486'", [])
-        .unwrap();
-}
-
-// ── 1. head → heal ───────────────────────────────────────────────────────
+// ── 1. legacy → heal ─────────────────────────────────────────────────────
 
 #[test]
-fn head_to_heal() {
+fn legacy_to_heal() {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("head.db");
+    let db_path = dir.path().join("legacy.db");
     create_new_database(&db_path).unwrap();
     {
         let conn = Connection::open(&db_path).unwrap();
         populate_head_dataset(&conn);
     }
+    mark_legacy(&db_path);
     let expected_counts = [
         ("erc20_tokens", 2),
         ("exchanges", 1),
@@ -164,7 +162,7 @@ fn head_to_heal() {
             schema_version: RUST_SCHEMA_VERSION,
         }
     );
-    assert!(matches!(report.old_state, SchemaState::AlembicCurrent));
+    assert!(matches!(report.old_state, SchemaState::LegacyAlembic));
     let probe = Connection::open(&db_path).unwrap();
     assert!(!has_table(&probe, "alembic_version"));
     assert!(has_table(&probe, "_degenbot_db_schema_version"));
@@ -186,29 +184,30 @@ fn head_to_heal() {
     assert!(report.bak_path.exists());
     let bak = Connection::open(&report.bak_path).unwrap();
     assert_row_counts(&bak, &expected_counts);
-    // The old DB was at head (alembic_version present in the backup).
+    // The old DB carried the legacy marker.
     assert!(has_table(&bak, "alembic_version"));
 }
 
-// ── 2. stale → heal ─────────────────────────────────────────────────────
+// ── 2. divergent legacy schema → heal (index restored) ────────────────────
 
 #[test]
-fn stale_to_heal() {
+fn divergent_legacy_to_heal() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("stale.db");
-    build_stale_fixture(&db_path);
+    create_new_database(&db_path).unwrap();
     {
         let conn = Connection::open(&db_path).unwrap();
+        // Drop a head index to make the old schema divergent from head.
+        conn.execute("DROP INDEX ix_erc20_tokens_chain", [])
+            .unwrap();
         populate_head_dataset(&conn);
     }
+    mark_legacy(&db_path);
 
-    // Pre-condition: the fixture is genuinely stale, index is absent.
+    // Pre-condition: the fixture is legacy and the index is absent.
     assert_eq!(
         crate::ops::inspect_schema_state(&db_path).unwrap(),
-        SchemaState::AlembicStale {
-            head: "e0aaad8ad486".to_string(),
-            expected: ALEMBIC_HEAD.to_string(),
-        }
+        SchemaState::LegacyAlembic
     );
     let stale_probe = Connection::open(&db_path).unwrap();
     let ix_before: i64 = stale_probe
@@ -221,7 +220,7 @@ fn stale_to_heal() {
     assert_eq!(ix_before, 0);
 
     let report = heal_database(&db_path).unwrap();
-    assert!(matches!(report.old_state, SchemaState::AlembicStale { .. }));
+    assert!(matches!(report.old_state, SchemaState::LegacyAlembic));
     assert_eq!(
         report.new_state,
         SchemaState::RustOwned {
@@ -241,7 +240,6 @@ fn stale_to_heal() {
     assert_eq!(ix_after, 1);
     assert!(!has_table(&probe, "alembic_version"));
 
-    // Rows preserved + FK intact.
     assert_row_counts(
         &probe,
         &[
@@ -275,7 +273,6 @@ fn unrecognized_refusal() {
     let probe = Connection::open(&db_path).unwrap();
     assert!(has_table(&probe, "other"));
     assert!(!report_bak_exists(&db_path));
-    // No temp file left behind.
     assert!(!dir.path().join("foreign.db.heal-tmp").exists());
 }
 
@@ -286,7 +283,6 @@ fn already_rustowned_noop() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("rustowned.db");
     create_new_database(&db_path).unwrap();
-    convert_alembic_to_rust_owned(&db_path).unwrap(); // flip to RustOwned
     assert_eq!(
         crate::ops::inspect_schema_state(&db_path).unwrap(),
         SchemaState::RustOwned {
@@ -308,23 +304,6 @@ fn already_rustowned_noop() {
 }
 
 // ── 5. verification failure + cleanup ─────────────────────────────────────
-//
-// The full `heal_database` flow copies rows exactly (SELECT all → INSERT all).
-// A genuine count mismatch where the copy *succeeds* but produces fewer rows
-// than the old is therefore not honestly reachable through the normal flow: if
-// an insert fails (e.g. a UNIQUE-constraint violation the new head-schema DB
-// enforces but the old DB, with a dropped index, allows) `copy_table`
-// propagates the `rusqlite` error immediately — `verify_row_counts` never runs.
-//
-// So we exercise both independently:
-//
-// (a) `verify_row_counts` directly with a mismatched pair →
-//     `HealVerificationFailed` (the variant's contract). This is the brief's
-//     sanctioned "test-only seam": test the private verify fn directly, since
-//     the full flow can't honestly produce a non-failing-copy mismatch.
-// (b) The full `heal_database` cleanup path on a real copy failure (UNIQUE
-//     violation mid-copy → `Err(Sqlite)`). The key assertions are the cleanup
-//     guarantees: live DB untouched, `.bak` absent, temp file gone.
 
 #[test]
 fn verify_row_counts_detects_mismatch() {
@@ -376,6 +355,8 @@ fn heal_failure_leaves_live_db_untouched_and_cleans_temp() {
         )
         .unwrap();
     }
+    // Mark legacy so the heal has a legacy source.
+    mark_legacy(&db_path);
     // Pre-heal: old has 2 rows.
     assert_eq!(
         count(&Connection::open(&db_path).unwrap(), "erc20_tokens"),
@@ -384,9 +365,7 @@ fn heal_failure_leaves_live_db_untouched_and_cleans_temp() {
 
     let err = heal_database(&db_path).unwrap_err();
     // The copy fails mid-table (UNIQUE violation) → `copy_table` propagates the
-    // `rusqlite` error immediately as `DbError::Sqlite` (the post-copy verify
-    // step never runs, since the copy itself errored). The `HealVerificationFailed`
-    // variant is exercised directly in `verify_row_counts_detects_mismatch`.
+    // `rusqlite` error immediately as `DbError::Sqlite`.
     assert!(
         matches!(err, DbError::Sqlite(_)),
         "expected Sqlite (copy failure), got {err:?}"
@@ -395,7 +374,7 @@ fn heal_failure_leaves_live_db_untouched_and_cleans_temp() {
     // Live DB untouched: both rows still present, no .bak, no temp.
     let probe = Connection::open(&db_path).unwrap();
     assert_eq!(count(&probe, "erc20_tokens"), 2);
-    assert!(has_table(&probe, "alembic_version")); // still Alembic-owned
+    assert!(has_table(&probe, "alembic_version")); // still legacy-owned
     assert!(!report_bak_exists(&db_path));
     assert!(!dir.path().join("dup.db.heal-tmp").exists());
 }
@@ -411,6 +390,7 @@ fn atomic_swap_keeps_bak() {
         let conn = Connection::open(&db_path).unwrap();
         populate_head_dataset(&conn);
     }
+    mark_legacy(&db_path);
 
     let report = heal_database(&db_path).unwrap();
     assert_eq!(
@@ -434,7 +414,7 @@ fn atomic_swap_keeps_bak() {
             ("liquidity_positions", 1),
         ],
     );
-    // The backup retains the OLD Alembic ownership shape.
+    // The backup retains the OLD legacy ownership shape.
     assert!(has_table(&bak, "alembic_version"));
     assert!(!has_table(&bak, "_degenbot_db_schema_version"));
 
@@ -445,13 +425,7 @@ fn atomic_swap_keeps_bak() {
 }
 
 // ── 7. old DB left byte-identical during copy (no -wal/-shm sidecars) ────
-//
-// The rugpull-protection guarantee: heal reads the old DB read-only throughout
-// the copy (VFS-level `file:…?mode=ro` ATTACH) so it never creates
-// `-wal`/`-shm` sidecars or extends the old file. The old bytes survive
-// verbatim — relocated to `.bak` by the atomic swap. This pins the guarantee
-// that distinguishes the read-only-ATTACH transport from a naive read-write
-// attach (which would sidecar a WAL onto the old DB).
+
 #[test]
 fn heal_leaves_old_db_byte_identical_no_sidecars() {
     let dir = tempfile::tempdir().unwrap();
@@ -461,6 +435,7 @@ fn heal_leaves_old_db_byte_identical_no_sidecars() {
         let conn = Connection::open(&db_path).unwrap();
         populate_head_dataset(&conn);
     }
+    mark_legacy(&db_path);
     // Snapshot the old file's bytes BEFORE heal — the .bak must equal this
     // exactly (proving the copy phase never wrote to or sidecar'd the old DB).
     let old_bytes = std::fs::read(&db_path).unwrap();
@@ -477,8 +452,7 @@ fn heal_leaves_old_db_byte_identical_no_sidecars() {
         "old -shm sidecar"
     );
 
-    // The .bak is byte-for-byte the pre-heal old DB (the rename preserved it;
-    // the copy never touched it).
+    // The .bak is byte-for-byte the pre-heal old DB.
     let bak_path = db_path.with_file_name("old.db.bak");
     assert_eq!(std::fs::read(&bak_path).unwrap(), old_bytes);
 }

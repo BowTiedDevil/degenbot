@@ -18,15 +18,11 @@ the math submodules which dropped their prefix) because ``db_`` is a clear
 functional namespace marker for the ~45 database operations.
 
 The classes are ADR-005 ``Py*`` aliases / ``*Row``/``*RowInput`` types.
-The ``DatabaseSchemaStale`` exception is raised by these seams; its
-single public import home is ``degenbot.exceptions`` (4JASRW) — import
-it from there, not from this module.
 
 Split from ``degenbot.database`` (ADR-013): ``degenbot.db`` owns the
 Rust-backed row types + operations; ``degenbot.database`` keeps the
-SQLAlchemy ORM (``DatabaseSessionManager``, ``models/``). The split
-respects ADR-010's Alembic-retention constraint — the ORM layer is
-untouched until the 0.7 cutover.
+SQLAlchemy ORM (``DatabaseSessionManager``, ``models/``). The schema is
+Rust-owned and upgrades itself at open (ADR-052).
 """
 
 from degenbot._ffi.db import (
@@ -41,7 +37,6 @@ from degenbot._ffi.db import (
     db_apply_v4_liquidity_updates,
     db_backup_database,
     db_compact_database,
-    db_convert_alembic_to_rust_owned,
     db_create_new_database,
     db_fetch_exchange,
     db_fetch_exchange_by_name,
@@ -70,7 +65,6 @@ __all__ = [
     "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
-    "db_convert_alembic_to_rust_owned",
     "db_create_new_database",
     "db_fetch_exchange",
     "db_fetch_exchange_by_name",

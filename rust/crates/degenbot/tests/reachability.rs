@@ -73,7 +73,20 @@ fn umbrella_lib() -> PathBuf {
 // migration-track item that earns its place here permanently until its port
 // lands. Removing an entry without adding the corresponding `pub use` makes
 // this test fail — that is the debt-shrinking forcing function.
-const INTENTIONALLY_NOT_STANDALONE: &[(&str, &str)] = &[];
+const INTENTIONALLY_NOT_STANDALONE: &[(&str, &str)] = &[
+    // ADR-051 console cutover: the PyO3 binding exposes `cli_main`, but the
+    // console facade is a binary-shell concern. A standalone consumer depends
+    // on `degenbot-cli` directly; re-exporting it from the umbrella would pull
+    // clap/indicatif into `cargo add degenbot` (see check-cli-shell-purity).
+    (
+        "cli",
+        "ADR-051 console facade; standalone consumers depend on degenbot-cli directly.",
+    ),
+    (
+        "cli_core",
+        "ADR-051 console-semantics crate; the degenbot-cli facade depends on it directly.",
+    ),
+];
 
 /// Walk `dir` recursively for `.rs` files.
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {

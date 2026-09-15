@@ -37,6 +37,13 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
         // `telemetry.log_level`/`telemetry.diag` knobs apply otherwise).
         // Output plumbing, not config (same class as the Python layer's).
         m.insert("crates/degenbot-bot/src/telemetry.rs", &["RUST_LOG"][..]);
+        // Build scripts: cargo-provided manifest dir + the build-receipt
+        // override (ADR-051 D2 build identity). Compile-time plumbing, not
+        // runtime config.
+        m.insert(
+            "crates/degenbot-cli/build.rs",
+            &["CARGO_MANIFEST_DIR", "DEGENBOT_BUILD_NUMBER_FILE"][..],
+        );
         // (2) Dev-test knobs in library code (offline tooling only).
         m.insert(
             "crates/degenbot-bot/src/profiling.rs",
