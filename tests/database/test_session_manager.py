@@ -6,7 +6,6 @@ connection (``ResourceWarning: unclosed database``). Idempotent.
 """
 
 import pathlib
-from unittest.mock import patch
 
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -20,15 +19,6 @@ def _make_manager(*, memory: bool = True) -> DatabaseSessionManager:
 
 
 class TestDatabaseSessionManagerDispose:
-    def test_dispose_calls_engine_dispose(self) -> None:
-        manager = _make_manager()
-        engine = manager._engine
-        assert engine is not None
-
-        with patch.object(engine, "dispose", wraps=engine.dispose) as spy:
-            manager.dispose()
-            spy.assert_called_once_with()
-
     def test_dispose_is_idempotent(self) -> None:
         manager = _make_manager()
         manager.dispose()

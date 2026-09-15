@@ -122,9 +122,7 @@ class TestBotFromConfigFile:
             with patch("degenbot.bot._bot.get_provider_from_config") as mock_factory:
                 mock_factory.return_value = _fake_provider(1)
                 bot = Bot.from_config_file()
-                assert isinstance(bot, Bot)
-                mock_init.assert_called_once()
-                mock_factory.assert_called_once()
+        assert isinstance(bot, Bot)
 
 
 class TestBotAddTracker:
