@@ -2369,7 +2369,7 @@ mod tests {
         }
     }
 
-    /// WCRWL3 RED→GREEN: `dispatch_interest_accrual` must route a `GhoDebtMint`
+    /// `dispatch_interest_accrual` must route a `GhoDebtMint`
     /// through the GHO discount processor (`build_gho_chunk_event` →
     /// `process_gho_debt_mint`) instead of returning `Err(Deferred)`.
     ///

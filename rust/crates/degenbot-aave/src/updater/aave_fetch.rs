@@ -1,5 +1,5 @@
 //! Typed async fetcher wrappers for the Rust-owned Aave V3 chunk loop
-//! (`run_aave_update`, epic `AZGJUN`, task `6SWY4R`-1).
+//! (`run_aave_update`).
 //!
 //! These wrap [`degenbot_rpc::provider::LogFetcher::fetch_logs_chunked`] with
 //! the Aave V3 topic groups the Python `cli/aave/event_fetchers.py` fetchers

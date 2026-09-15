@@ -1,5 +1,5 @@
 //! The config-event direct-decode dispatch for the Rust-owned Aave V3 chunk
-//! loop (`run_aave_update`, epic `AZGJUN`, task `6SWY4R`-2a).
+//! loop (`run_aave_update`).
 //!
 //! This module owns the orchestrator's per-transaction config-event handling:
 //! loop over a tx's logs, decode each via

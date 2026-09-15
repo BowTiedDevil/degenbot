@@ -1,18 +1,10 @@
 # Comment-hygiene gate waivers — scripts/hooks/comment-hygiene.sh
-# Each line is a repo-relative path that still carries pre-rule tracker-ID /
-# gate-narration citations (census: docs/findings/2026-09-15-ergo-comment-
-# references.md). Shrink this list in the strip waves; remove every entry
-# for a file in the same commit that strips its citations. Regenerate via:
+# Live-detector output over the pre-rule citation census. Shrink in the
+# strip waves (ergo NIZCNR); regenerate via:
 #   WAF=/dev/null scripts/hooks/comment-hygiene.sh | cut -d: -f1 | sort -u
-# Lines starting with '#' are comments. Exact-path match only.
-# 2026-09-15: wave A (30 files, src non-runner + tests, ergo ZXIQQ7)
-# stripped 51 lines to 0 residual and left this list; runner/**, the
-# ARCH-REVIEW in-flight files, and rust/crates/** (wave B, ergo NIZCNR)
-# remain until their owners land.
+# 2026-09-15: wave A (30 files) + degenbot-aave (3 updater files, post-TD7)
+# stripped; rust/crates/** remainder and runner/**/skip-list files remain.
 examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-rust/crates/degenbot-aave/src/updater/aave_fetch.rs
-rust/crates/degenbot-aave/src/updater/config_dispatch.rs
-rust/crates/degenbot-aave/src/updater/transaction_processor.rs
 rust/crates/degenbot-arbitrage/src/dispatch.rs
 rust/crates/degenbot-arbitrage/src/fot_registry.rs
 rust/crates/degenbot-arbitrage/src/pool_divergence.rs
