@@ -375,20 +375,38 @@ async def _partial_sweep(db: DatabaseSessionManager | None, *, take: int) -> int
     return seen
 
 
+def _persistent_threads() -> dict[int, str]:
+    """Snapshot the persistent, named threads by ident.
+
+    `threading.enumerate()` / `active_count()` also report CPython *dummy*
+    threads: native threads that merely held the GIL at the instant of the
+    snapshot. The `rust-log-drainer` bridge (`Python::attach` -> Python
+    logging, which reads `threading.current_thread()`) and the ambient
+    runtime's blocking pool both register a transient `Dummy-N` this way.
+    They are bookkeeping for a foreign thread, never a leaked Python worker,
+    so a raw count is racy; a real leak is a persistent thread with its own
+    name (`degenbot-discovery`, executor `asyncio_*`, ...).
+    """
+    return {
+        t.ident: t.name
+        for t in threading.enumerate()
+        if t.ident is not None and not t.name.startswith("Dummy-")
+    }
+
+
 async def test_aclose_leaves_no_worker_threads(db: DatabaseSessionManager) -> None:
     """Repeated mid-sweep closes leave no stray discovery worker threads."""
     # Warm any lazily-created runtime/executor threads first.
     await _partial_sweep(db, take=1)
     await asyncio.sleep(0.2)
-    baseline = threading.active_count()
+    baseline = _persistent_threads()
 
     for _ in range(6):
         await _partial_sweep(db, take=1)
 
     assert not any(t.name == "degenbot-discovery" for t in threading.enumerate())
-    assert threading.active_count() <= baseline, (
-        f"stray threads: {threading.active_count()} > {baseline}"
-    )
+    leaked = {ident: name for ident, name in _persistent_threads().items() if ident not in baseline}
+    assert not leaked, f"stray threads: {leaked} (baseline {baseline})"
 
 
 # ---------------------------------------------------------------------------
