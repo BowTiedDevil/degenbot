@@ -182,9 +182,10 @@ def discovery_batch_size() -> int:
     """
 
 class RetryPolicyDefaults:
-    """The shared core verification-retry policy defaults as a self-describing
-    value (6LC4JB / TD5: replaced the anonymous positional 4-tuple, which
-    would silently mis-assign on a Rust-side field reorder).
+    """Self-describing verification-retry policy defaults (6LC4JB / TD5).
+
+    Replaced the anonymous positional 4-tuple, which would silently
+    mis-assign on a Rust-side field reorder.
 
     Seconds for the float fields; read from
     ``degenbot_core::retry::RetryPolicy`` — the one declaration site the
@@ -276,7 +277,7 @@ def to_checksum_address(address: str) -> ChecksummedAddress: ...
 @overload
 def to_checksum_address(address: bytes) -> str: ...
 def create2_address(deployer_address: str, salt: str, init_code_hash: str) -> str:
-    """The generic EIP-1014 CREATE2 address derivation (TD1).
+    """Derive the EIP-1014 CREATE2 address from a raw (deployer, salt, init-code hash) chain (TD1).
 
     Inputs are hex strings (``0x``-prefixed or bare); `salt` + `init_code_hash`
     decode to 32 bytes. Returns the EIP-55 checksummed address. Owned by
