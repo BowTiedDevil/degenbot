@@ -141,6 +141,10 @@ pub(crate) struct SolveCycleShared {
     pub(crate) epoch: u64,
     pub(crate) gate_capture: Option<::degenbot_solvers::profit_envelope::GateCaptureCfg>,
     pub(crate) walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
+    /// C4: the engine-owned prefix-composition cache (replaces the retired
+    /// solvers-crate `PREFIX_CACHE` process static); epoch-generationed, so
+    /// entries never survive a block boundary.
+    pub(crate) prefix_cache: std::sync::Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
     /// KAHU5W: the instance-scoped solver runtime stance, threaded down —
     /// the solver crate has no process-global config anymore.
     pub(crate) runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig,
@@ -278,6 +282,8 @@ pub(crate) struct SolveCycle {
     /// passed into the solve entries by handle; epoch advances at the
     /// block-lifecycle start.
     pub(crate) walk_memo: Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
+    /// C4: the engine-owned prefix-composition cache (was a solvers static).
+    pub(crate) prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
     /// Per-path previous-block MEASURED walk sims (recorded by `solve_fn`
     /// after each solve; lock-free-read at bin construction). Refines the
     /// LPT makespan predictor for stable pool shapes (loop-12 KUKHMX).
@@ -1721,6 +1727,7 @@ impl SolveCycle {
             metadata: *metadata,
             gate_capture,
             walk_memo: std::sync::Arc::clone(&self.walk_memo),
+            prefix_cache: std::sync::Arc::clone(&self.prefix_cache),
             runtime: self.runtime_cfg,
             capture: capture.map(std::sync::Arc::new),
             capture_mixed: capture_mixed.map(std::sync::Arc::new),
@@ -2035,6 +2042,7 @@ impl SolveCycle {
         // the pool-ref map for the UO3JM4 clamp. No engine state is touched
         // (engine-then-core invariant intact; the mixer only reads core).
         let memo = std::sync::Arc::clone(&self.walk_memo);
+        let prefix_store_out = std::sync::Arc::clone(&self.prefix_cache);
         let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> = registry.path_pools().clone();
         let core = std::sync::Arc::clone(&self.core);
         let results_block = self.cursor.results_block();
@@ -2044,6 +2052,7 @@ impl SolveCycle {
             let bin = bin.clone();
             let to_solve_bin = to_solve.clone();
             let memo = std::sync::Arc::clone(&memo);
+            let prefix_store = std::sync::Arc::clone(&prefix_store_out);
             let path_pools = path_pools.clone();
             let core = std::sync::Arc::clone(&core);
             let tx = tx.clone();
@@ -2055,6 +2064,7 @@ impl SolveCycle {
                     results_block,
                     None,
                     runtime_cfg,
+                    &prefix_store,
                 );
                 gate_deps.walk_memo = Some(&memo);
                 for &i in &bin {

@@ -523,6 +523,9 @@ impl ArbitrageEngine {
                     cfg.solve.solver_walk_memo,
                     cfg.solve.solver_walk_memo_stats,
                 )),
+                prefix_cache: std::sync::Arc::new(
+                    ::degenbot_solvers::profit_envelope::PrefixCache::new(),
+                ),
                 last_walk_sims: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
                 last_gate_us: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
                 streaming_delivery,

@@ -1364,7 +1364,7 @@ pub(crate) fn gate_tls<R>(f: impl FnOnce(&mut GateStats) -> R) -> R {
 /// touch of a new epoch clears older entries, so no entry survives a block
 /// boundary and no public reset exists.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-enum HopCacheKey {
+pub(crate) enum HopCacheKey {
     ClTable(u128),
     MobiusHop(u128),
 }
@@ -1406,13 +1406,65 @@ struct PrefixCacheState {
     map: std::collections::HashMap<Vec<HopCacheKey>, Vec<Line>>,
 }
 
-static PREFIX_CACHE: std::sync::LazyLock<std::sync::Mutex<PrefixCacheState>> =
-    std::sync::LazyLock::new(|| {
-        std::sync::Mutex::new(PrefixCacheState {
-            epoch: 0,
-            map: std::collections::HashMap::new(),
-        })
-    });
+/// Engine-owned prefix-composition cache (C4; loop-8 origin — the former
+/// process static `PREFIX_CACHE`). Entries are epoch-generationed: first
+/// touch of a new epoch clears older entries, so no entry survives a block
+/// boundary and no public reset exists. One instance per solve owner — two
+/// engines in one process no longer share cache state.
+pub struct PrefixCache {
+    inner: std::sync::Mutex<PrefixCacheState>,
+}
+
+impl PrefixCache {
+    /// An empty store (epoch 0, no entries).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(PrefixCacheState {
+                epoch: 0,
+                map: std::collections::HashMap::new(),
+            }),
+        }
+    }
+
+    /// Cache read against `epoch`; an epoch rollover first clears the older
+    /// generation. Poisoned lock → miss (never a wrong hit).
+    pub(crate) fn get(&self, epoch: u64, chain: &[HopCacheKey]) -> Option<Vec<Line>> {
+        match self.inner.lock() {
+            Ok(mut cache) => {
+                if cache.epoch != epoch {
+                    cache.epoch = epoch;
+                    cache.map.clear();
+                }
+                cache.map.get(chain).cloned()
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Cache write against `epoch` (the same rollover-on-first-touch rule).
+    pub(crate) fn insert(&self, epoch: u64, chain: Vec<HopCacheKey>, lines: Vec<Line>) {
+        if let Ok(mut cache) = self.inner.lock() {
+            if cache.epoch != epoch {
+                cache.epoch = epoch;
+                cache.map.clear();
+            }
+            cache.map.insert(chain, lines);
+        }
+    }
+}
+
+impl Default for PrefixCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for PrefixCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrefixCache").finish_non_exhaustive()
+    }
+}
 
 /// Reset all gate counters on the calling thread (call at solve-cycle start,
 /// mirroring [`crate::mobius_v3_int::reset_walk_stats`]).
@@ -1459,6 +1511,9 @@ pub enum GateSkipCause {
 pub struct GateDeps<'a> {
     pub epoch: u64,
     pub prefix_cache: bool,
+    /// The owner-scoped prefix store (C4); `None` disables reuse for this
+    /// solve (offline deps, tests). Replaces the retired process static.
+    pub prefix_store: Option<&'a PrefixCache>,
     pub capture: Option<&'a GateCaptureCfg>,
     /// The engine-owned cross-block walk-memo handle (SU7MAE T3); `None`
     /// disables the memo for this solve.
@@ -1475,12 +1530,19 @@ impl GateDeps<'_> {
         Self::default()
     }
 
-    /// Production solve cycle: the prefix cache against this block's epoch.
+    /// Production solve cycle: the prefix cache against this block's epoch,
+    /// served from the owner's `PrefixCache` (C4 — the constructor takes the
+    /// store so a caller cannot arm the bool and silently get None).
     #[must_use]
-    pub fn per_block(epoch: u64, capture: Option<&GateCaptureCfg>) -> GateDeps<'_> {
+    pub fn per_block<'a>(
+        epoch: u64,
+        capture: Option<&'a GateCaptureCfg>,
+        prefix_store: &'a PrefixCache,
+    ) -> GateDeps<'a> {
         GateDeps {
             epoch,
             prefix_cache: true,
+            prefix_store: Some(prefix_store),
             capture,
             walk_memo: None,
             runtime: SolveRuntimeConfig::default(),
@@ -1489,14 +1551,16 @@ impl GateDeps<'_> {
 
     /// Production solve cycle with the owner's instance runtime config.
     #[must_use]
-    pub fn per_block_with(
+    pub fn per_block_with<'a>(
         epoch: u64,
-        capture: Option<&GateCaptureCfg>,
+        capture: Option<&'a GateCaptureCfg>,
         runtime: SolveRuntimeConfig,
-    ) -> GateDeps<'_> {
+        prefix_store: &'a PrefixCache,
+    ) -> GateDeps<'a> {
         GateDeps {
             epoch,
             prefix_cache: true,
+            prefix_store: Some(prefix_store),
             capture,
             walk_memo: None,
             runtime,
@@ -1685,16 +1749,7 @@ fn path_profit_bound_inner(
             // per-hop content, so a hit is a content match; entries from an
             // older epoch are dropped on first touch of the new one (no
             // public reset — the epoch rides [GateDeps]).
-            let hit = match PREFIX_CACHE.lock() {
-                Ok(mut cache) => {
-                    if cache.epoch != deps.epoch {
-                        cache.epoch = deps.epoch;
-                        cache.map.clear();
-                    }
-                    cache.map.get(&chain).cloned()
-                }
-                Err(_) => None,
-            };
+            let hit = deps.prefix_store.and_then(|s| s.get(deps.epoch, &chain));
             if let Some(hit_lines) = hit {
                 lines2 = hit_lines;
                 gate_tls(|t| t.prefix_hits += 1);
@@ -1770,12 +1825,8 @@ fn path_profit_bound_inner(
         // Cache the composed prefix set under the content-key chain. Only
         // miss paths reach here; a hit path returns early above.
         if chainable {
-            if let Ok(mut cache) = PREFIX_CACHE.lock() {
-                if cache.epoch != deps.epoch {
-                    cache.epoch = deps.epoch;
-                    cache.map.clear();
-                }
-                cache.map.insert(chain.clone(), next.clone());
+            if let Some(store) = deps.prefix_store {
+                store.insert(deps.epoch, chain.clone(), next.clone());
             }
         }
         trace_boundary(hop_idx, hop_ls_len_dbg, next.len(), &next);
@@ -3382,5 +3433,31 @@ mod tests {
         // Ordinary values stay exact-ceiling.
         let n = I512::try_from(10i64).expect("10 fits");
         assert_eq!(ceil_div(n, d), I512::try_from(4i64).expect("4 fits"));
+    }
+
+    /// C4: the prefix cache is an owner-scoped value, not a process static.
+    /// Two engines in one process keep separate stores: what engine A cached
+    /// is invisible to engine B; the epoch rollover still clears per store.
+    #[test]
+    fn prefix_cache_is_engine_owned_and_epoch_generationed() {
+        let a = PrefixCache::new();
+        let b = PrefixCache::new();
+        let chain = vec![HopCacheKey::MobiusHop(0x1234)];
+        a.insert(1, chain.clone(), vec![Line::IDENTITY]);
+        // Isolation: B holds nothing.
+        assert!(
+            b.get(1, &chain).is_none(),
+            "engine B must not see engine A's cache"
+        );
+        assert!(a.get(1, &chain).is_some());
+        // Epoch rollover clears inside the OWNING store only.
+        a.insert(2, chain.clone(), vec![Line::IDENTITY, Line::IDENTITY]);
+        assert!(
+            a.get(1, &chain).is_none(),
+            "stale-epoch entries drop on first touch"
+        );
+        // Epoch 7 never touched: no carry.
+        let c = PrefixCache::new();
+        assert!(c.get(7, &chain).is_none());
     }
 }

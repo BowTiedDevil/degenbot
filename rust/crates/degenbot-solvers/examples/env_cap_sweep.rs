@@ -176,6 +176,8 @@ fn run_cycle_sim(path: &str) {
         })
         .collect();
 
+    // C4: owner-scoped prefix store across the sweep's cycles.
+    let prefix_store = degenbot_solvers::profit_envelope::PrefixCache::new();
     let run_gate = |cycle: u64, p: usize| -> (u128, u128, u128) {
         let (_, seqs, _) = &paths[p];
         // Carried tables (production shape): the Arcs the sim built up front.
@@ -190,7 +192,7 @@ fn run_cycle_sim(path: &str) {
             })
             .collect();
         let t0 = std::time::Instant::now();
-        let _ = path_profit_bound(&views, &GateDeps::per_block(cycle, None));
+        let _ = path_profit_bound(&views, &GateDeps::per_block(cycle, None, &prefix_store));
         let us = t0.elapsed().as_micros();
         let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
         (us, 0u128, gs.product_ns / 1_000)

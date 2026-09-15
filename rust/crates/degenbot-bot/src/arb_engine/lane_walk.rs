@@ -202,6 +202,7 @@ pub(crate) fn solve_one_path(
     let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps {
         epoch: ctx.epoch,
         prefix_cache: true,
+        prefix_store: Some(&ctx.prefix_cache),
         capture: ctx.gate_capture.as_ref(),
         walk_memo: Some(&*ctx.walk_memo),
         runtime: ctx.runtime,
