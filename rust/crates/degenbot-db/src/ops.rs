@@ -278,7 +278,7 @@ mod tests {
     use crate::migrate::SchemaState;
 
     #[test]
-    fn create_new_database_stamps_alembic_head_and_reopens_current() {
+    fn create_new_database_stamps_alembic_head_and_classifies_current() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("fresh.db");
         create_new_database(&db_path).unwrap();
@@ -301,9 +301,12 @@ mod tests {
             assert!(table_exists(&probe, t).unwrap(), "{t} missing");
         }
 
-        // reopen via the read handle recognizes AlembicCurrent, writes nothing
-        let (_db, state) = DegenbotDb::open(&db_path).unwrap();
-        assert_eq!(state, SchemaState::AlembicCurrent);
+        // classify (no heal) still recognizes AlembicCurrent; the read/open
+        // path itself now auto-heals (covered by the connection + migrate tests).
+        assert_eq!(
+            inspect_schema_state(&db_path).unwrap(),
+            SchemaState::AlembicCurrent
+        );
     }
 
     #[test]
@@ -325,9 +328,11 @@ mod tests {
         backup_database(&src, &dst2).unwrap();
         assert_eq!(std::fs::read(&dst2).unwrap(), bytes_dst);
 
-        // the backup reopens as AlembicCurrent too
-        let (_db, state) = DegenbotDb::open(&dst).unwrap();
-        assert_eq!(state, SchemaState::AlembicCurrent);
+        // the backup is an AlembicCurrent DB too (classify, no heal)
+        assert_eq!(
+            inspect_schema_state(&dst).unwrap(),
+            SchemaState::AlembicCurrent
+        );
     }
 
     #[test]
@@ -337,9 +342,11 @@ mod tests {
         create_new_database(&db_path).unwrap();
         // compact is idempotent and must not error on a freshly-created DB
         compact_database(&db_path).unwrap();
-        // still opens as current
-        let (_db, state) = DegenbotDb::open(&db_path).unwrap();
-        assert_eq!(state, SchemaState::AlembicCurrent);
+        // still classifies as current
+        assert_eq!(
+            inspect_schema_state(&db_path).unwrap(),
+            SchemaState::AlembicCurrent
+        );
     }
 
     #[test]

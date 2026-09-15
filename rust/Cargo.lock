@@ -2247,6 +2247,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-cli-core"
+version = "0.6.0-alpha.11"
+dependencies = [
+ "degenbot-config",
+ "degenbot-db",
+ "rusqlite",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "degenbot-config"
 version = "0.6.0-alpha.11"
 dependencies = [
@@ -2274,6 +2285,7 @@ name = "degenbot-db"
 version = "0.6.0-alpha.11"
 dependencies = [
  "alloy",
+ "degenbot-core",
  "degenbot-math",
  "degenbot-pathfinding",
  "hashbrown 0.17.1",
@@ -2283,6 +2295,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

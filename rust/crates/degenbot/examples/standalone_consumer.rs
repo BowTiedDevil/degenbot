@@ -121,6 +121,12 @@ fn fixture_db_path() -> PathBuf {
     if let Ok(p) = std::env::var("DEGENBOT_FIXTURE_DB") {
         return PathBuf::from(p);
     }
+    // The default is the checked-in `parity.db` fixture shared with
+    // `degenbot-db`'s parity tests; that it is read-only is load-bearing.
+    // Pin the ADR-052 D1 heal-at-open so this smoke never rewrites it (the
+    // read fns in `degenbot-bot`/`degenbot-db` open it through the same
+    // `SnapshotDb::open` path every consumer uses).
+    std::env::set_var(degenbot::db::AUTO_HEAL_ENV, "0");
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("degenbot-db")

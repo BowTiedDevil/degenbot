@@ -13,27 +13,34 @@
 //!    time any Rust read touches them.
 //! 2. `PRAGMA busy_timeout=5000;` — per-connection.
 //! 3. `PRAGMA synchronous=NORMAL;` — per-connection.
-//! 4. [`ensure_schema`][crate::migrate::ensure_schema] — reads the
-//!    `alembic_version` head; writes NOTHING on an Alembic-stamped DB.
-//! 5. `PRAGMA query_only=on;` — **HARD AC** (binding #2): the Rust reader is
-//!    physically incapable of mutating an Alembic-stamped production DB during
-//!    the hybrid period.
+//! 4. the schema gate + ADR-052 D1 heal-at-open (`migrate::ensure_schema_at_open`)
+//!    — an Alembic-stamped DB (head-stamped OR stale) is healed out-of-place to
+//!    `RustOwned` unless `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture; a
+//!    fresh standalone file gets the embedded DDL; an unrecognized file refuses.
+//! 5. `PRAGMA query_only=on;` — **HARD AC** (binding #2): once `open()`
+//!    returns, every **read** connection is physically incapable of mutating
+//!    the DB.
 //!
-//! # Why `query_only` follows `ensure_schema` (not precedes it)
+//! Heal-at-open runs at BOTH read and write opens — one rule for all opens: a
+//! stale read that did not heal would be a lie about the schema. The heal's
+//! atomic swap renames the source file, so a reader already holding the file
+//! mid-heal keeps seeing the OLD inode until its next open (deliberate; the
+//! swap is crash-safe by ADR-011).
+//!
+//! # Why `query_only` follows the schema step (not precedes it)
 //!
 //! Binding #3 explicitly scopes "before `ensure_schema`" to the three
 //! concurrency PRAGMAs (`WAL/busy_timeout/synchronous`); those run first. The
-//! `query_only=on` step is set AFTER [`ensure_schema`] returns, because the
-//! fresh-standalone branch of [`ensure_schema`] applies the embedded DDL
-//! (`CREATE TABLE IF NOT EXISTS ...`) — a write that `query_only=on` blocks.
-//! Setting `query_only` after [`ensure_schema`] satisfies the binding #2 hard
-//! AC ("every read connection opened by degenbot-db MUST set
-//! `query_only=on`") in the form that actually matters: **after `open()`
-//! returns, every connection is read-only.** On the `AlembicCurrent` / stale /
-//! unrecognized branches `ensure_schema` writes nothing, so the practical
-//! effect is identical to setting `query_only` before it; only the
-//! fresh-standalone branch differs (it writes DDL with `query_only` still off,
-//! then locks down).
+//! `query_only=on` step is set AFTER `ensure_schema_at_open` returns, because
+//! the fresh-standalone branch applies the embedded DDL
+//! (`CREATE TABLE IF NOT EXISTS ...`) and the heal branch reopens a rebuilt
+//! file — writes that `query_only=on` would block.
+//!
+//! `query_only` is applied to the FINAL connection (the one the heal reopened
+//! on the Rust-owned file), so binding #2's hard AC holds in the form that
+//! matters: **after `open()` returns, every read connection is read-only.**
+//! The pinned (`DEGENBOT_DB_AUTO_HEAL=0`) `AlembicCurrent` branch writes nothing,
+//! so its practical effect is identical to setting `query_only` first.
 
 use std::path::Path;
 
@@ -41,7 +48,7 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 
 use crate::error::DbError;
-use crate::migrate::{ensure_schema, SchemaState};
+use crate::migrate::{auto_heal_enabled, ensure_schema_at_open, SchemaState};
 
 /// The owned read handle wrapping a single pooled [`Connection`].
 ///
@@ -61,36 +68,29 @@ const PRE_SCHEMA_PRAGMAS: &str = "PRAGMA journal_mode=WAL;\n\
                                   PRAGMA synchronous=NORMAL;";
 
 impl DegenbotDb {
-    /// Open a file-backed read handle, run the open PRAGMA sequence +
-    /// [`ensure_schema`], and return the handle and the schema disposition.
+    /// Open a file-backed read handle, run the open PRAGMA sequence + the
+    /// ADR-052 D1 heal-at-open, and return the handle and the schema
+    /// disposition.
     ///
-    /// On an Alembic-stamped DB the disposition is
-    /// [`SchemaState::AlembicCurrent`] and nothing was written. On a stale or
-    /// unrecognized DB this returns [`DbError::AlembicStale`] /
-    /// [`DbError::UnrecognizedSchema`] (the handle is dropped). On a fresh
-    /// standalone file the embedded DDL is applied + the private
-    /// `_degenbot_db_schema_version` stamp is written before `query_only=on`
-    /// is set.
+    /// An Alembic-stamped DB (head-stamped OR stale) is healed out-of-place at
+    /// open ([`crate::heal::heal_database`] under the ADR-011 atomic swap,
+    /// preserving the original as `*.bak`) and the disposition is
+    /// [`SchemaState::RustOwned`]. With `DEGENBOT_DB_AUTO_HEAL=0` the pre-D1
+    /// posture is restored: head → [`SchemaState::AlembicCurrent`] (nothing
+    /// written), stale → [`DbError::AlembicStale`]. An unrecognized file still
+    /// refuses ([`DbError::UnrecognizedSchema`]), and a fresh standalone file
+    /// gets the embedded DDL + the private `_degenbot_db_schema_version` stamp
+    /// before `query_only=on` is set.
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::Sqlite`] if the connection/PRAGMA setup fails,
-    /// [`DbError::AlembicStale`] if the DB is stamped at an older Alembic
-    /// revision, or [`DbError::UnrecognizedSchema`] if the file is neither an
-    /// Alembic DB nor a fresh standalone file.
+    /// Returns [`DbError::Sqlite`] if the connection/PRAGMA setup or the heal
+    /// fails (a heal failure leaves the original DB untouched — ADR-011),
+    /// [`DbError::AlembicStale`] for a stale DB under the killswitch, or
+    /// [`DbError::UnrecognizedSchema`] if the file is neither an Alembic DB nor
+    /// a fresh standalone file.
     pub fn open(path: &Path) -> Result<(Self, SchemaState), DbError> {
-        let conn = if path == Path::new(":memory:") {
-            Connection::open_in_memory()?
-        } else {
-            Connection::open(path)?
-        };
-        let state = Self::finish_open(&conn)?;
-        Ok((
-            Self {
-                conn: Mutex::new(conn),
-            },
-            state,
-        ))
+        Self::open_with(path, auto_heal_enabled(), true)
     }
 
     /// Open an in-memory read handle (for tests). Runs the full open sequence
@@ -101,19 +101,14 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on a connection/PRAGMA/DDL failure.
     pub fn open_in_memory() -> Result<(Self, SchemaState), DbError> {
-        let conn = Connection::open_in_memory()?;
-        let state = Self::finish_open(&conn)?;
-        Ok((
-            Self {
-                conn: Mutex::new(conn),
-            },
-            state,
-        ))
+        Self::open_with(Path::new(":memory:"), auto_heal_enabled(), true)
     }
 
     /// Open a file-backed **write-capable** handle (RQXEKH writer substrate).
-    /// Same `PRE_SCHEMA_PRAGMAS` + [`ensure_schema`] sequence as [`Self::open`],
-    /// but `query_only` is **NEVER** set — the connection can `INSERT`/`UPDATE`.
+    /// Same `PRE_SCHEMA_PRAGMAS` + ADR-052 D1 heal-at-open as [`Self::open`]
+    /// (an Alembic-stamped DB heals to [`SchemaState::RustOwned`]; the
+    /// `DEGENBOT_DB_AUTO_HEAL=0` killswitch restores the pre-D1 posture), but
+    /// `query_only` is **NEVER** set — the connection can `INSERT`/`UPDATE`.
     ///
     /// This does NOT violate SLHSM4 binding #2 ("every **read** connection
     /// opened by degenbot-db MUST set `query_only=on`"): the *read* constructors
@@ -130,18 +125,7 @@ impl DegenbotDb {
     /// [`DbError::AlembicStale`] / [`DbError::UnrecognizedSchema`] for
     /// unrecognized files.
     pub fn open_for_writes(path: &Path) -> Result<(Self, SchemaState), DbError> {
-        let conn = if path == Path::new(":memory:") {
-            Connection::open_in_memory()?
-        } else {
-            Connection::open(path)?
-        };
-        let state = Self::finish_open_for_writes(&conn)?;
-        Ok((
-            Self {
-                conn: Mutex::new(conn),
-            },
-            state,
-        ))
+        Self::open_with(path, auto_heal_enabled(), false)
     }
 
     /// Open an in-memory **write-capable** handle (for writer-substrate tests).
@@ -151,8 +135,16 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on a connection/PRAGMA/DDL failure.
     pub fn open_in_memory_for_writes() -> Result<(Self, SchemaState), DbError> {
-        let conn = Connection::open_in_memory()?;
-        let state = Self::finish_open_for_writes(&conn)?;
+        Self::open_with(Path::new(":memory:"), auto_heal_enabled(), false)
+    }
+
+    /// Build the handle from [`Self::open_initialized`] and wrap it.
+    fn open_with(
+        path: &Path,
+        auto_heal: bool,
+        set_query_only: bool,
+    ) -> Result<(Self, SchemaState), DbError> {
+        let (conn, state) = Self::open_initialized(path, auto_heal, set_query_only)?;
         Ok((
             Self {
                 conn: Mutex::new(conn),
@@ -161,33 +153,37 @@ impl DegenbotDb {
         ))
     }
 
-    /// The shared tail of [`Self::open`] / [`Self::open_in_memory`]: the
-    /// PRAGMA sequence + [`ensure_schema`] + the post-schema `query_only=on`.
-    /// Refuses (returns [`DbError`]) on stale/unrecognized schemas.
-    fn finish_open(conn: &Connection) -> Result<SchemaState, DbError> {
-        Self::finish_open_inner(conn, /* set_query_only */ true)
-    }
-
-    /// The shared tail of [`Self::open_for_writes`] /
-    /// [`Self::open_in_memory_for_writes`]: the PRAGMA sequence +
-    /// [`ensure_schema`] but `query_only` is NOT set (write-capable).
-    fn finish_open_for_writes(conn: &Connection) -> Result<SchemaState, DbError> {
-        Self::finish_open_inner(conn, /* set_query_only */ false)
-    }
-
-    /// The full shared open tail: PRAGMAs + [`ensure_schema`] + optional
-    /// `query_only=on` + the stale/unrecognized refuse check.
-    fn finish_open_inner(conn: &Connection, set_query_only: bool) -> Result<SchemaState, DbError> {
+    /// A raw connection to `path` (`:memory:` supported) with the three
+    /// concurrency PRAGMAs already applied — the factory
+    /// [`ensure_schema_at_open`] calls for the initial open AND the post-heal
+    /// reopen.
+    fn open_primed(path: &Path) -> Result<Connection, DbError> {
+        let conn = if path == Path::new(":memory:") {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(path)?
+        };
         // Concurrency PRAGMAs first (binding #3: before ensure_schema).
         conn.execute_batch(PRE_SCHEMA_PRAGMAS)?;
+        Ok(conn)
+    }
 
-        // ensure_schema next. On the FreshStandalone branch it applies the
-        // embedded DDL (a write) — so query_only must NOT be set yet. On the
-        // Alembic branches it writes nothing.
-        let state = ensure_schema(conn)?;
+    /// The full shared open tail: PRAGMAs + the ADR-052 D1 heal-at-open
+    /// ([`ensure_schema_at_open`]) + optional `query_only=on` + the
+    /// stale/unrecognized refuse check.
+    ///
+    /// `query_only` is applied AFTER the schema step because the
+    /// `FreshStandalone` branch applies the embedded DDL (a write) and the
+    /// healed branch reopens a fresh file. Read handles lock down here
+    /// (binding #2); writer handles skip it so the upsert substrate can
+    /// INSERT/UPDATE.
+    fn open_initialized(
+        path: &Path,
+        auto_heal: bool,
+        set_query_only: bool,
+    ) -> Result<(Connection, SchemaState), DbError> {
+        let (conn, state) = ensure_schema_at_open(path, auto_heal, Self::open_primed)?;
 
-        // Read handles lock down here (binding #2). Writer handles skip this so
-        // the upsert substrate can INSERT/UPDATE.
         if set_query_only {
             conn.pragma_update(None, "query_only", "on")?;
         }
@@ -197,7 +193,7 @@ impl DegenbotDb {
                 Err(DbError::AlembicStale { head, expected })
             }
             SchemaState::Unrecognized => Err(DbError::UnrecognizedSchema),
-            other => Ok(other),
+            other => Ok((conn, other)),
         }
     }
 
@@ -245,7 +241,9 @@ mod tests {
     }
 
     #[test]
-    fn open_on_alembic_stamped_db_writes_nothing_and_is_read_only() {
+    fn pinned_open_on_alembic_stamped_db_writes_nothing_and_is_read_only() {
+        // The `DEGENBOT_DB_AUTO_HEAL=0` posture (`auto_heal=false`): the
+        // head-stamped DB opens as AlembicCurrent, read-only, no heal.
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("stamped.db");
         {
@@ -256,9 +254,8 @@ mod tests {
             )
             .unwrap();
         }
-        let (db, state) = DegenbotDb::open(&db_path).unwrap();
+        let (conn, state) = DegenbotDb::open_initialized(&db_path, false, true).unwrap();
         assert_eq!(state, SchemaState::AlembicCurrent);
-        let conn = db.lock();
         // no degenbot tables were created
         let n: i64 = conn
             .query_row(
@@ -273,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn open_on_stale_alembic_db_refuses() {
+    fn pinned_open_on_stale_alembic_db_refuses() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("stale.db");
         {
@@ -284,10 +281,10 @@ mod tests {
             )
             .unwrap();
         }
-        let result = DegenbotDb::open(&db_path);
+        let result = DegenbotDb::open_initialized(&db_path, false, true);
         assert!(
             matches!(result, Err(DbError::AlembicStale { .. })),
-            "expected AlembicStale refusal"
+            "expected AlembicStale refusal under the killswitch"
         );
     }
 
@@ -305,5 +302,64 @@ mod tests {
             matches!(result, Err(DbError::UnrecognizedSchema)),
             "expected UnrecognizedSchema refusal"
         );
+    }
+
+    #[test]
+    fn auto_heal_on_open_migrates_head_stamped_db_to_rust_owned() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("heal_head.db");
+        crate::ops::create_new_database(&db_path).unwrap();
+
+        let (db, state) = DegenbotDb::open(&db_path).unwrap();
+        assert!(
+            matches!(state, SchemaState::RustOwned { .. }),
+            "auto-heal must land RustOwned, got {state:?}"
+        );
+        let conn = db.lock();
+        // The healed file is still read-locked down.
+        assert!(
+            conn.execute("CREATE TABLE y (a INT)", []).is_err(),
+            "query_only must be on after a healed open"
+        );
+        drop(conn);
+
+        let mut name = db_path.file_name().unwrap().to_owned();
+        name.push(".bak");
+        assert!(
+            db_path.with_file_name(name).exists(),
+            "the pre-heal DB must persist as `.bak`"
+        );
+    }
+
+    #[test]
+    fn auto_heal_on_open_migrates_stale_db_to_rust_owned() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("heal_stale.db");
+        crate::ops::create_new_database(&db_path).unwrap();
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "DROP INDEX ix_erc20_tokens_chain;\n\
+                 UPDATE alembic_version SET version_num='e0aaad8ad486';",
+            )
+            .unwrap();
+        }
+        let (_db, state) = DegenbotDb::open(&db_path).unwrap();
+        assert!(
+            matches!(state, SchemaState::RustOwned { .. }),
+            "stale-rev auto-heal must land RustOwned, got {state:?}"
+        );
+    }
+
+    #[test]
+    fn fresh_standalone_open_is_not_healed() {
+        // A non-Alembic fresh file passes through with no heal and no `.bak`.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("fresh.db");
+        let (_db, state) = DegenbotDb::open(&db_path).unwrap();
+        assert!(matches!(state, SchemaState::FreshStandalone { .. }));
+        let mut name = db_path.file_name().unwrap().to_owned();
+        name.push(".bak");
+        assert!(!db_path.with_file_name(name).exists());
     }
 }

@@ -10,10 +10,14 @@
 //!
 //! [`DegenbotDb::open`] sets `PRAGMA journal_mode=WAL; busy_timeout=5000;
 //! synchronous=NORMAL;` (matching the Python open path — Phase 0, `2KUI3M`),
-//! runs [`migrate::ensure_schema`] (reads the `alembic_version` head; writes
-//! nothing on an Alembic DB), then sets `PRAGMA query_only=on;` — the
-//! load-bearing guarantee that the Rust reader cannot mutate an
-//! Alembic-stamped production DB during the hybrid period (binding #2).
+//! runs the schema gate + ADR-052 D1 heal-at-open
+//! (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB (head-stamped OR
+//! stale) is healed out-of-place to `RustOwned` unless `DEGENBOT_DB_AUTO_HEAL=0`
+//! pins the pre-D1 posture, a fresh standalone file gets the embedded DDL, and
+//! an unrecognized file refuses — then sets `PRAGMA query_only=on;`: the
+//! load-bearing guarantee that the returned Rust **reader** cannot mutate the
+//! DB (binding #2). The heal runs at BOTH read and write opens (one rule for
+//! all opens).
 //!
 //! # The `VARCHAR(78)` ↔ `U256` boundary
 //!
@@ -69,7 +73,7 @@ pub use heal::{heal_database, HealReport};
 pub use liquidity_updater::{
     BlockLog, ComputedLiquidityUpdate, LiquidityUpdateEvent, PoolUpdateState,
 };
-pub use migrate::SchemaState;
+pub use migrate::{SchemaState, AUTO_HEAL_ENV};
 pub use migrations::{apply_rust_migrations, MigrationOutcome, MigrationStep, RUST_MIGRATIONS};
 pub use ops::{
     backup_database, compact_database, convert_alembic_to_rust_owned, create_new_database,

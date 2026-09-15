@@ -18,6 +18,12 @@ workspace = true
 # `just check-no-pyo3-in-cores`.
 [dependencies]
 alloy = { version = "^2.4" }
+# `op_info!` / `op_warn!` telemetry — the ADR-052 D1 heal-at-open report.
+# Pyo3-free and already in this crate's graph via `degenbot-math` (which
+# depends on `degenbot-core`), so this direct edge only names the macros the
+# open path invokes. `tracing` must ALSO be a direct dep: the `#[macro_export]`
+# macros expand `::tracing::info!` at THIS crate's call site.
+degenbot-core.workspace = true
 # CL liquidity-mapping math — `apply_liquidity_mapping_update` drives the V3/V4
 # DB-aware liquidity updater's per-event tick/bitmap mutation (task QJSCA5).
 # Pyo3-free core; verified by `just check-no-pyo3-in-cores`.
@@ -32,6 +38,7 @@ parking_lot = { version = "^0.12" }
 # this ships is the one creating/reading the Alembic-era .db files.
 rusqlite = { version = "^0.40", features = ["bundled", "backup"] }
 thiserror = { version = "^2.0" }
+tracing = { version = "^0.1" }
 
 [dev-dependencies]
 serde = { version = "^1.0", features = ["derive"] }

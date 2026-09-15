@@ -89,6 +89,13 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
         // iterating a closed list (`RETIRED_ENV_NAMES`), so the name is
         // computed at the call site. Detection only — no alias is honored.
         m.insert("crates/degenbot-core/src/telemetry.rs", &["name"][..]);
+        // (5) The ADR-052 D1 heal-at-open killswitch. A DB-open toggle read at
+        // the open path itself (NOT bot config): a `cargo add degenbot-db`
+        // consumer must be able to pin the pre-D1 posture without a BotConfig,
+        // and the name is a DB-open contract, not a tunable. Unset => heal on;
+        // only an explicit falsey word disables. (The scanner reports the
+        // computed-name const identifier, hence "AUTO_HEAL_ENV".)
+        m.insert("crates/degenbot-db/src/migrate.rs", &["AUTO_HEAL_ENV"][..]);
         m.insert(
             "crates/degenbot-python/build.rs",
             // The build-receipt work (1e1c0ddf7): the build script locates

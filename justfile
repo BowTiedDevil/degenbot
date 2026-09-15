@@ -140,13 +140,30 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-math degenbot-abi degenbot-rpc degenbot-ingestion degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index degenbot-arbitrage degenbot-fork degenbot-execution-sample; do
+    for crate in degenbot-core degenbot-math degenbot-abi degenbot-rpc degenbot-ingestion degenbot-bot degenbot-cli-core degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index degenbot-arbitrage degenbot-fork degenbot-execution-sample; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1
         fi
     done
     echo "OK: core crates + umbrella are pyo3-free under default features"
+
+check-cli-core-purity:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # ADR-051 D1/D2: degenbot-cli-core is the semantics home both front ends map
+    # into. It must stay clap-free (argv spelling is the facade's job) and
+    # indicatif-free (progress rendering is the facade's job). Mirrors
+    # check-no-pyo3-in-cores: walk the resolved dep graph, not just the manifest.
+    tree=$(cargo tree --manifest-path rust/Cargo.toml -p degenbot-cli-core --prefix none 2>/dev/null)
+    offenders=$(printf '%s\n' "$tree" | sed 's/ (.*//' | awk '{print $1}' | grep -E '^(clap|clap_derive|clap_builder|indicatif)$' || true)
+    if [ -n "$offenders" ]; then
+        echo "ERROR: degenbot-cli-core must not depend on clap or indicatif (ADR-051 D1/D2)." >&2
+        printf '%s\n' "$offenders" >&2
+        exit 1
+    fi
+    echo "OK: degenbot-cli-core is clap-free and indicatif-free"
+
 
 # Structural gate for epic 5TBT7L (arch review #11, candidate 2): the engine
 # seam deepens until `EngineStages` is the ONE external driver surface and

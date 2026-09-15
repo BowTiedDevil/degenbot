@@ -34,7 +34,16 @@ type StreamedMap = HashMap<i32, (U256, i128)>;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
+/// Pin the ADR-052 D1 heal-at-open killswitch (`DEGENBOT_DB_AUTO_HEAL=0`) so
+/// these fixture-backed parity tests keep the historical `AlembicCurrent`
+/// read-only open and never rewrite the committed fixtures.
+fn pin_auto_heal_off() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| std::env::set_var(degenbot_db::AUTO_HEAL_ENV, "0"));
+}
+
 fn fixture_db_path() -> PathBuf {
+    pin_auto_heal_off();
     PathBuf::from(FIXTURE_DIR).join("parity.db")
 }
 

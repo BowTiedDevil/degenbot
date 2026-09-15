@@ -52,6 +52,13 @@ const BOOTSTRAP_KEYS: &[&str] = &["DEGENBOT_CONFIG"];
 /// and tag each with its own `Source`.
 const DRIVER_DOMAIN_KEYS: &[&str] = &["DEGENBOT_DB_PATH", "DEGENBOT_DEFAULT_CHAIN_ID"];
 
+/// DB-open toggles read by the persistence layer itself (`degenbot-db`), not
+/// the typed config schema: the ADR-052 D1 heal-at-open killswitch is a
+/// `cargo add degenbot-db` contract (a consumer must be able to pin the pre-D1
+/// posture without a `BotConfig`), so it is deliberately NOT a schema key.
+/// Unset => heal on; only an explicit falsey word disables.
+const DB_OPEN_KEYS: &[&str] = &["DEGENBOT_DB_AUTO_HEAL"];
+
 /// RETIRED keys the loader guards for one release (P6YXA6 hard cutover):
 /// they fail the load loudly and point at the replacement rather than
 /// silently falling back — the deprecation-style hard error. They are not
@@ -144,6 +151,7 @@ fn schema_covers_the_full_key_inventory() {
                 && !BOOTSTRAP_KEYS.contains(&k.as_str())
                 && !BUILD_ARTIFACT_KEYS.contains(&k.as_str())
                 && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
+                && !DB_OPEN_KEYS.contains(&k.as_str())
                 && !RETIRED_KEYS.contains(&k.as_str())
         })
         .cloned()
@@ -182,6 +190,7 @@ fn snapshot_fallback_agrees_with_schema() {
                 && !BOOTSTRAP_KEYS.contains(&k.as_str())
                 && !BUILD_ARTIFACT_KEYS.contains(&k.as_str())
                 && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
+                && !DB_OPEN_KEYS.contains(&k.as_str())
                 && !RETIRED_KEYS.contains(&k.as_str())
         })
         .cloned()

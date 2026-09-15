@@ -10,11 +10,12 @@
 //! Algorithm ([`ensure_schema`]):
 //! 1. If the `alembic_version` table exists:
 //!    - read its single `version_num` row, compare against [`ALEMBIC_HEAD`];
-//!    - match → [`SchemaState::AlembicCurrent`], write **nothing** (the
-//!      Alembic-stamped production DBs stay Alembic-owned);
-//!    - older rev → [`SchemaState::AlembicStale`], refuse (the writer path in
-//!      Epic AZGJUN owns Alembic stamps; the Rust core never downgrades or
-//!      forwards an Alembic DB);
+//!    - match → [`SchemaState::AlembicCurrent`];
+//!    - older rev → [`SchemaState::AlembicStale`];
+//!    - both classifications are then HEALED at open by
+//!      `ensure_schema_at_open` (ADR-052 D1): the out-of-place rebuild lands
+//!      `RustOwned`, unless `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture
+//!      (current opens read-only; stale refuses);
 //! 2. If `alembic_version` is absent but the file already has tables (a foreign
 //!    `SQLite` file passed by mistake) → [`SchemaState::Unrecognized`], refuse;
 //! 3. If `alembic_version` is absent AND the file is empty (a fresh standalone
@@ -22,9 +23,13 @@
 //!    ([`SCHEMA_HEAD`]) + stamp the private [`SCHEMA_VERSION_TABLE`], return
 //!    [`SchemaState::FreshStandalone`].
 
+use std::path::Path;
+
+use degenbot_core::{op_info, op_warn};
 use rusqlite::Connection;
 
 use crate::error::DbError;
+use crate::heal::{heal_database, HealReport};
 use crate::schema::{ALEMBIC_HEAD, RUST_SCHEMA_VERSION, SCHEMA_HEAD, SCHEMA_VERSION_TABLE};
 
 /// The schema disposition [`ensure_schema`] reports for an opened DB.
@@ -95,6 +100,127 @@ pub fn ensure_schema(conn: &Connection) -> Result<SchemaState, DbError> {
         apply_fresh_standalone(conn)?;
     }
     Ok(state)
+}
+
+/// The ADR-052 D1 heal-at-open killswitch: `DEGENBOT_DB_AUTO_HEAL=0`
+/// restores the pre-D1 posture (a head-stamped Alembic DB opens
+/// [`SchemaState::AlembicCurrent`] read-only and a stale one refuses with
+/// [`DbError::AlembicStale`]) so pinned-test environments — e.g. the
+/// checked-in `tests/fixtures/*.db` parity databases — are never rewritten.
+pub const AUTO_HEAL_ENV: &str = "DEGENBOT_DB_AUTO_HEAL";
+
+/// Decide the heal-at-open policy from the raw [`AUTO_HEAL_ENV`] value,
+/// mirroring `degenbot_config`'s boolean word lists (truthy:
+/// 1/true/yes/on/y; falsey: 0/false/off/no/n, case-insensitive + trimmed):
+/// only an explicit falsey token disables the heal. `None` (unset) and every
+/// other value (including the empty string) leave it enabled. Split from the
+/// env read so the policy is unit-testable without mutating process state.
+#[must_use]
+pub fn auto_heal_enabled_from(raw: Option<&str>) -> bool {
+    !matches!(
+        raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0" | "false" | "off" | "no" | "n")
+    )
+}
+
+/// Read [`AUTO_HEAL_ENV`] and return the heal-at-open policy (`true` when
+/// unset). The ONE env read on the open path; it is enumerated in
+/// `degenbot-config`'s `no_stray_env_reads` gate as a sanctioned DB-open
+/// toggle.
+#[must_use]
+pub fn auto_heal_enabled() -> bool {
+    auto_heal_enabled_from(std::env::var(AUTO_HEAL_ENV).ok().as_deref())
+}
+
+/// The path-aware open entry point (ADR-052 D1): classify `path` via
+/// [`ensure_schema`], and when it is Alembic-owned and `auto_heal` is set,
+/// run the ADR-011 out-of-place heal ([`crate::heal::heal_database`]), log
+/// the report, reopen, and re-classify. Returns the live [`Connection`] and
+/// its post-open [`SchemaState`].
+///
+/// `open` is the caller's connection factory — it must return a connection to
+/// `path` with the concurrency PRAGMAs already applied, because this function
+/// owns the close/heal/reopen cycle. A connection held across the atomic swap
+/// would pin the pre-heal inode: a reader already holding the file mid-heal
+/// keeps seeing the OLD inode until its next open (deliberate — the swap is
+/// crash-safe by ADR-011; the next open lands on the healed inode).
+/// [`ensure_schema`] itself cannot heal: it is handed an already-open
+/// `&Connection` and no path, so this path-aware wrapper is the helper every
+/// open path shares — read AND write, one rule (a stale read that did not heal
+/// would be a lie about the schema).
+///
+/// Non-Alembic states (`FreshStandalone`, `RustOwned`, `Unrecognized`) pass
+/// through untouched; the caller applies its own refusal for `Unrecognized`
+/// (and for a stale Alembic DB when the killswitch pinned `auto_heal` to
+/// `false`).
+///
+/// # Errors
+///
+/// [`DbError::Sqlite`] / [`DbError::Io`] / [`DbError::HealVerificationFailed`]
+/// if the heal fails — the live DB is left untouched (ADR-011) and the
+/// caller's dropped handle is not replaced.
+pub(crate) fn ensure_schema_at_open<F>(
+    path: &Path,
+    auto_heal: bool,
+    mut open: F,
+) -> Result<(Connection, SchemaState), DbError>
+where
+    F: FnMut(&Path) -> Result<Connection, DbError>,
+{
+    let conn = open(path)?;
+    let state = ensure_schema(&conn)?;
+
+    // Heal only the two Alembic-owned dispositions, and only when enabled (the
+    // `DEGENBOT_DB_AUTO_HEAL=0` killswitch pins the pre-D1 behavior).
+    if !auto_heal
+        || !matches!(
+            state,
+            SchemaState::AlembicCurrent | SchemaState::AlembicStale { .. }
+        )
+    {
+        return Ok((conn, state));
+    }
+
+    // The atomic swap below renames the source file: drop this handle first so
+    // the rename has no reader pinning the old inode and the reopened
+    // connection lands on the healed file.
+    drop(conn);
+
+    let report = heal_database(path)?;
+    log_heal_report(&report);
+
+    let reopened = open(path)?;
+    let healed_state = ensure_schema(&reopened)?;
+    Ok((reopened, healed_state))
+}
+
+/// Emit the ADR-052 D1 heal report: one `op_info!` headline (detected
+/// revision, tables/rows copied, warning count, `.bak` path) plus one
+/// `op_warn!` per non-fatal heal warning.
+///
+/// Logged under the closed `state` telemetry domain: the domain set has no
+/// dedicated DB domain, and a schema heal is a persistence-state lifecycle
+/// event (the same domain the driver uses for its boot snapshot load).
+fn log_heal_report(report: &HealReport) {
+    let revision = match &report.old_state {
+        SchemaState::AlembicStale { head, .. } => head.clone(),
+        SchemaState::AlembicCurrent => ALEMBIC_HEAD.to_string(),
+        other => format!("{other:?}"),
+    };
+    let tables = report.rows_copied.len();
+    let rows: u64 = report.rows_copied.values().copied().sum();
+    op_info!(
+        domain = state,
+        revision = %revision,
+        tables,
+        rows,
+        warnings = report.warnings.len(),
+        backup = %report.bak_path.display(),
+        "database auto-healed at open"
+    );
+    for warning in &report.warnings {
+        op_warn!(domain = state, warning = %warning, "database auto-heal warning");
+    }
 }
 
 /// The pure-predicate half of [`ensure_schema`]: inspect `conn`'s schema and
@@ -489,5 +615,200 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 0, "classify_schema must not apply DDL");
+    }
+}
+
+/// ADR-052 D1 heal-at-open tests: the path-aware open cycle (head + stale
+/// auto-heal), the `DEGENBOT_DB_AUTO_HEAL=0` killswitch policy, idempotence,
+/// the D2 forward-lock no-op, and the ADR-011 failure guarantee.
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod open_tests {
+    use super::*;
+    use crate::migrations::{apply_rust_migrations, MigrationOutcome};
+    use crate::ops::create_new_database;
+    use crate::schema::SCHEMA_VERSION_TABLE;
+
+    /// The connection factory the open paths pass: a connection with the three
+    /// concurrency PRAGMAs (mirrors `connection::PRE_SCHEMA_PRAGMAS`).
+    fn primed(path: &Path) -> Result<Connection, DbError> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;\n\
+             PRAGMA busy_timeout=5000;\n\
+             PRAGMA synchronous=NORMAL;",
+        )?;
+        Ok(conn)
+    }
+
+    fn has_table(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            rusqlite::params![name],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+            == 1
+    }
+
+    fn bak_path(path: &Path) -> std::path::PathBuf {
+        let mut s = path.file_name().unwrap().to_owned();
+        s.push(".bak");
+        path.with_file_name(s)
+    }
+
+    /// A head-schema DB stamped one revision below `ALEMBIC_HEAD`.
+    fn build_stale_fixture(path: &Path) {
+        create_new_database(path).unwrap();
+        let conn = Connection::open(path).unwrap();
+        conn.execute("DROP INDEX ix_erc20_tokens_chain", [])
+            .unwrap();
+        conn.execute("UPDATE alembic_version SET version_num='e0aaad8ad486'", [])
+            .unwrap();
+    }
+
+    #[test]
+    fn killswitch_env_policy_matches_falsey_words() {
+        assert!(auto_heal_enabled_from(None), "unset -> heal on");
+        assert!(auto_heal_enabled_from(Some("1")));
+        assert!(auto_heal_enabled_from(Some("")));
+        assert!(auto_heal_enabled_from(Some("  ")));
+        for off in ["0", "false", "off", "no", "n", " FALSE "] {
+            assert!(!auto_heal_enabled_from(Some(off)), "{off:?} must disable");
+        }
+        assert_eq!(AUTO_HEAL_ENV, "DEGENBOT_DB_AUTO_HEAL");
+    }
+
+    #[test]
+    fn head_stamped_db_auto_heals_at_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("head.db");
+        create_new_database(&db_path).unwrap();
+
+        let (conn, state) = ensure_schema_at_open(&db_path, true, primed).unwrap();
+        assert!(
+            matches!(state, SchemaState::RustOwned { .. }),
+            "auto-heal must land RustOwned, got {state:?}"
+        );
+        assert!(!has_table(&conn, "alembic_version"));
+        assert!(has_table(&conn, SCHEMA_VERSION_TABLE));
+        drop(conn);
+        // `.bak` preserves the original Alembic-stamped file.
+        let bak = Connection::open(bak_path(&db_path)).unwrap();
+        assert!(has_table(&bak, "alembic_version"));
+    }
+
+    #[test]
+    fn stale_rev_db_auto_heals_at_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("stale.db");
+        build_stale_fixture(&db_path);
+        assert!(matches!(
+            classify_schema(&Connection::open(&db_path).unwrap()).unwrap(),
+            SchemaState::AlembicStale { .. }
+        ));
+
+        let (_conn, state) = ensure_schema_at_open(&db_path, true, primed).unwrap();
+        assert!(
+            matches!(state, SchemaState::RustOwned { .. }),
+            "got {state:?}"
+        );
+    }
+
+    #[test]
+    fn killswitch_disabled_leaves_alembic_db_untouched() {
+        // `auto_heal=false` is the `DEGENBOT_DB_AUTO_HEAL=0` path.
+        let dir = tempfile::tempdir().unwrap();
+        let stale = dir.path().join("stale.db");
+        build_stale_fixture(&stale);
+        let (conn, disposition) = ensure_schema_at_open(&stale, false, primed).unwrap();
+        assert!(matches!(disposition, SchemaState::AlembicStale { .. }));
+        assert!(has_table(&conn, "alembic_version"));
+        drop(conn);
+        assert!(!bak_path(&stale).exists());
+
+        let head = dir.path().join("head.db");
+        create_new_database(&head).unwrap();
+        let (_conn, disposition) = ensure_schema_at_open(&head, false, primed).unwrap();
+        assert_eq!(disposition, SchemaState::AlembicCurrent);
+        assert!(!bak_path(&head).exists());
+    }
+
+    #[test]
+    fn subsequent_open_lands_rust_owned_without_re_healing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("idem.db");
+        create_new_database(&db_path).unwrap();
+
+        let (_c1, first) = ensure_schema_at_open(&db_path, true, primed).unwrap();
+        assert!(matches!(first, SchemaState::RustOwned { .. }));
+        let bak_before = std::fs::read(bak_path(&db_path)).unwrap();
+
+        let (c2, second) = ensure_schema_at_open(&db_path, true, primed).unwrap();
+        assert_eq!(second, first, "second open is already RustOwned");
+        assert!(!has_table(&c2, "alembic_version"));
+        assert_eq!(
+            std::fs::read(bak_path(&db_path)).unwrap(),
+            bak_before,
+            "no second heal may rewrite the `.bak`"
+        );
+    }
+
+    #[test]
+    fn healed_db_passes_apply_rust_migrations_as_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("lock.db");
+        create_new_database(&db_path).unwrap();
+        let (_conn, state) = ensure_schema_at_open(&db_path, true, primed).unwrap();
+        assert!(matches!(state, SchemaState::RustOwned { .. }));
+
+        let probe = Connection::open(&db_path).unwrap();
+        let outcome = apply_rust_migrations(&probe).unwrap();
+        assert_eq!(
+            outcome,
+            MigrationOutcome::AlreadyCurrent {
+                schema_version: RUST_SCHEMA_VERSION
+            },
+            "heal leaves the file at the forward-lock's current stamp"
+        );
+    }
+
+    #[test]
+    fn heal_failure_leaves_original_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("poison.db");
+        create_new_database(&db_path).unwrap();
+        {
+            let c = Connection::open(&db_path).unwrap();
+            c.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, '0xabc')",
+                [],
+            )
+            .unwrap();
+            // Drop the old DB's UNIQUE index so a duplicate can sneak in; the
+            // fresh head-schema DB still enforces it -> the copy fails mid-table.
+            c.execute("DROP INDEX ix_erc20_tokens_address_chain", [])
+                .unwrap();
+            c.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (2, 1, '0xabc')",
+                [],
+            )
+            .unwrap();
+        }
+        let before = std::fs::read(&db_path).unwrap();
+
+        let err = ensure_schema_at_open(&db_path, true, primed).unwrap_err();
+        assert!(matches!(err, DbError::Sqlite(_)), "got {err:?}");
+
+        // ADR-011: live DB untouched (same bytes), no `.bak`, no temp file.
+        assert_eq!(std::fs::read(&db_path).unwrap(), before);
+        assert!(!bak_path(&db_path).exists());
+        assert!(!db_path.with_file_name("poison.db.heal-tmp").exists());
+        let probe = Connection::open(&db_path).unwrap();
+        assert!(has_table(&probe, "alembic_version"));
+        let n: i64 = probe
+            .query_row("SELECT COUNT(*) FROM erc20_tokens", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2);
     }
 }
