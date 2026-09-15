@@ -68,6 +68,7 @@ impl BlockClock {
 #[derive(Clone, Debug, Default)]
 pub struct SessionProgress {
     batches: Arc<AtomicU64>,
+    blocks: Arc<AtomicU64>,
     current_block: Arc<AtomicU64>,
 }
 
@@ -79,16 +80,31 @@ impl SessionProgress {
     }
 
     /// Record one consumed batch at the consumer's current clock value.
+    ///
+    /// A batch is not a block: under streaming delivery one block fans out
+    /// into many single-entry batches, so the batch count and the distinct
+    /// block count are tracked separately. `blocks` advances only when the
+    /// clock's block number actually changes.
     pub fn note(&self, clock: &BlockClock) {
         self.batches.fetch_add(1, Ordering::Relaxed);
-        self.current_block
-            .store(clock.current_block, Ordering::Relaxed);
+        let previous = self
+            .current_block
+            .swap(clock.current_block, Ordering::Relaxed);
+        if clock.current_block != previous {
+            self.blocks.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Batches consumed so far.
     #[must_use]
     pub fn batches(&self) -> u64 {
         self.batches.load(Ordering::Relaxed)
+    }
+
+    /// Distinct block numbers the consumer's clock has advanced through.
+    #[must_use]
+    pub fn blocks(&self) -> u64 {
+        self.blocks.load(Ordering::Relaxed)
     }
 
     /// The consumer's current block (0 before the first batch).
@@ -345,6 +361,27 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.batch_index, 1);
         assert_eq!(err.detail, "sim leaf failed");
+    }
+
+    #[test]
+    fn session_progress_counts_batches_and_distinct_blocks_separately() {
+        let progress = SessionProgress::new();
+        let at = |current_block| BlockClock {
+            current_block,
+            ..BlockClock::default()
+        };
+        // Streaming delivery fans one block out into many batches.
+        progress.note(&at(100));
+        progress.note(&at(100));
+        progress.note(&at(100));
+        assert_eq!(progress.batches(), 3);
+        assert_eq!(progress.blocks(), 1);
+        assert_eq!(progress.current_block(), 100);
+        // The next block advances each by exactly one.
+        progress.note(&at(101));
+        assert_eq!(progress.batches(), 4);
+        assert_eq!(progress.blocks(), 2);
+        assert_eq!(progress.current_block(), 101);
     }
 
     #[test]

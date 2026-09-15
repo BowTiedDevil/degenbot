@@ -1034,7 +1034,6 @@ fn run() -> Result<(), String> {
             .transpose()?;
         let run_end = run_loop::run_session_loop(
             &run_loop::RunLoopConfig::new(max_secs),
-            &heartbeat,
             &progress,
             async {
                 // SIGINT is the BotRunner Ctrl-C path; a handler-install
@@ -1044,12 +1043,13 @@ fn run() -> Result<(), String> {
             },
             |hb| {
                 println!(
-                    "[session] heartbeat ticks={} blocks_seen={} current_block={}",
-                    hb.ticks, hb.blocks_seen, hb.current_block
+                    "[session] heartbeat ticks={} batches_seen={} blocks_seen={} current_block={}",
+                    hb.ticks, hb.batches_seen, hb.blocks_seen, hb.current_block
                 );
                 degenbot::op_info!(
                     domain = pump,
                     ticks = hb.ticks,
+                    batches_seen = hb.batches_seen,
                     blocks_seen = hb.blocks_seen,
                     current_block = hb.current_block,
                     "session heartbeat"

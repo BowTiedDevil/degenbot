@@ -23,15 +23,18 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crate::consume::SessionProgress;
-use crate::session_watch::Heartbeat;
 
 /// One run-loop heartbeat observation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RunLoopHeartbeat {
     /// Heartbeat ticks emitted so far (bounded by the window / interval).
     pub ticks: u64,
-    /// Result batches consumed so far (the consumer's block clock advances
-    /// once per batch — batches and blocks track 1:1 on the result stream).
+    /// Result batches consumed so far. One block fans out into MANY batches
+    /// under streaming delivery (one single-entry batch per solved path plus
+    /// the debounce sweep), so this races well ahead of `blocks_seen`.
+    pub batches_seen: u64,
+    /// Distinct block numbers the consumer's clock has advanced through.
+    /// Advances once per new block, whatever the batch fan-out.
     pub blocks_seen: u64,
     /// The consumer's current block.
     pub current_block: u64,
@@ -79,7 +82,6 @@ impl RunLoopConfig {
 #[must_use]
 pub async fn run_session_loop<F, G>(
     config: &RunLoopConfig,
-    heartbeat: &Heartbeat,
     progress: &SessionProgress,
     shutdown: F,
     mut on_heartbeat: G,
@@ -117,7 +119,8 @@ where
             ticks += 1;
             on_heartbeat(&RunLoopHeartbeat {
                 ticks,
-                blocks_seen: heartbeat.seq(),
+                batches_seen: progress.batches(),
+                blocks_seen: progress.blocks(),
                 current_block: progress.current_block(),
             });
             continue;
@@ -161,16 +164,11 @@ mod tests {
             max_secs: Some(3),
             heartbeat_interval: Duration::from_millis(400),
         };
-        let heartbeat = Heartbeat::new();
         let progress = SessionProgress::new();
         let lines = RefCell::new(0_u64);
-        let end = run_session_loop(
-            &config,
-            &heartbeat,
-            &progress,
-            std::future::pending(),
-            |_| *lines.borrow_mut() += 1,
-        )
+        let end = run_session_loop(&config, &progress, std::future::pending(), |_| {
+            *lines.borrow_mut() += 1;
+        })
         .await;
         assert_eq!(end, RunLoopEnd::WindowExpired);
         // 3s at 400ms + the immediate first tick → a bounded, finite run.
@@ -187,11 +185,9 @@ mod tests {
             max_secs: Some(60),
             heartbeat_interval: Duration::from_secs(1),
         };
-        let heartbeat = Heartbeat::new();
         let progress = SessionProgress::new();
         let end = run_session_loop(
             &config,
-            &heartbeat,
             &progress,
             async {
                 tokio::time::sleep(Duration::from_millis(1_500)).await;
@@ -208,28 +204,26 @@ mod tests {
             max_secs: Some(1),
             heartbeat_interval: Duration::from_millis(300),
         };
-        let heartbeat = Heartbeat::new();
-        heartbeat.beat();
-        heartbeat.beat();
         let progress = SessionProgress::new();
-        let clock = crate::consume::BlockClock {
-            current_block: 21_000_042,
+        let at = |current_block| crate::consume::BlockClock {
+            current_block,
             ..crate::consume::BlockClock::default()
         };
-        progress.note(&clock);
+        // Two batches on one block (streaming-delivery fan-out), then one on
+        // the next: batches and blocks must be reported as distinct counts.
+        progress.note(&at(21_000_042));
+        progress.note(&at(21_000_042));
+        progress.note(&at(21_000_043));
         let seen = RefCell::new(Vec::new());
-        let end = run_session_loop(
-            &config,
-            &heartbeat,
-            &progress,
-            std::future::pending(),
-            |hb| seen.borrow_mut().push(*hb),
-        )
+        let end = run_session_loop(&config, &progress, std::future::pending(), |hb| {
+            seen.borrow_mut().push(*hb);
+        })
         .await;
         assert_eq!(end, RunLoopEnd::WindowExpired);
         let first = *seen.borrow().first().unwrap();
+        assert_eq!(first.batches_seen, 3);
         assert_eq!(first.blocks_seen, 2);
-        assert_eq!(first.current_block, 21_000_042);
+        assert_eq!(first.current_block, 21_000_043);
     }
 
     #[test]
