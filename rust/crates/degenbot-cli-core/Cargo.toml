@@ -1,0 +1,32 @@
+[package]
+name = "degenbot-cli-core"
+description = "Command semantics + the database command arms for the degenbot console (ADR-051 D1) - pyo3-free and clap-free."
+keywords = ["cli", "console", "database", "mev"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+# The clap-free / indicatif-free semantics home (ADR-051 D1/D2). Two front ends
+# (the Rust argv facade and the Python passthrough) map into this crate; it owns
+# WHAT a command means, never HOW argv is spelled (clap) or painted (indicatif).
+# `just check-cli-core-purity` asserts the absence of both.
+[dependencies]
+degenbot-config.workspace = true
+degenbot-db.workspace = true
+# The ported `logger.info` success lines (the click handlers log through Python's
+# logging; the Rust core keeps the same run receipts on the tracing sink).
+tracing = { version = "^0.1" }
+
+[dev-dependencies]
+# Fixture construction (fresh / Alembic-stamped / stale / foreign SQLite DBs).
+# `bundled` is already unified in via degenbot-db; named explicitly so a cold
+# test build never needs a system SQLite.
+degenbot-db.workspace = true
+rusqlite = { version = "^0.40", features = ["bundled"] }
+tempfile = { version = "^3.27" }
