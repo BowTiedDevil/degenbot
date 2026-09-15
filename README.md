@@ -1299,6 +1299,21 @@ degenbot path discover --socket /path/to/operator.sock [--bound N]
 - Base: `aerodrome_v2`, `aerodrome_v3`, `pancakeswap_v2`, `pancakeswap_v3`, `sushiswap_v2`, `sushiswap_v3`, `swapbased_v2`, `uniswap_v2`, `uniswap_v3`, `uniswap_v4`
 - Ethereum: `pancakeswap_v2`, `pancakeswap_v3`, `sushiswap_v2`, `sushiswap_v3`, `uniswap_v2`, `uniswap_v3`, `uniswap_v4`
 
+#### Fleet Posture Management
+
+The bot's operator channel also hosts the live **cordon posture** of a worker fleet (Nominal/Cordoned state and its thresholds). Socket resolution matches `path`: `--socket` flag, else `DEGENBOT_OPERATOR_SOCKET`, else `~/.config/degenbot/operator.sock`.
+
+```bash
+# Show the LIVE cordon posture: thresholds + Nominal|Cordoned
+degenbot fleet posture show [--socket /path/to/operator.sock]
+
+# Re-tune the LIVE cordon thresholds (a partial patch)
+degenbot fleet posture set [--socket /path/to/operator.sock] \
+  [--cordon-enter-events COUNT] [--cordon-duty-percent PERCENT] \
+  [--cordon-enter-window-ms MS] [--cordon-duty-window-ms MS] \
+  [--cordon-exit-clean-ms MS] [--cordon-sim-intake-floor COUNT|null]
+```
+
 #### Aave State Management
 
 ```bash
@@ -1340,7 +1355,6 @@ Commands accepting `--to-block` support the following formats:
 | Variable | Values | Description |
 |----------|--------|-------------|
 | `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Enable debug-level logging output |
-| `DEGENBOT_DEBUG_FUNCTION_CALLS` | `1`, `true`, `yes` | Enable function call trace logging |
 | `DEGENBOT_DEFAULT_CHAIN_ID` | integer chain id | The chain this `Bot` session targets (the Python cascade's env layer — required by the `degenbot` CLI in the 0.6 modern layout; see [docs/config-migration.md](docs/config-migration.md)) |
 | `DEGENBOT_RPC_HTTP_CHAINID_<ID>` | any HTTP(S) URL | HTTP RPC endpoint for chain `<ID>` (cascade layer; the retired file key `[rpc]` is refused at boot) |
 | `DEGENBOT_RPC_WS_CHAINID_<ID>` | any WS(S) URL | WebSocket endpoint for chain `<ID>` (cascade layer; the retired file key `[ws]` is refused at boot) |
@@ -1386,7 +1400,7 @@ table.
 
 ## The Rust Core (`degenbot_rs` Rust crate, `degenbot._ffi` Python module)
 
-The Rust core is the engine of degenbot — it owns all performance-critical and stateful logic. Python reaches it through the `degenbot._ffi` extension module, a thin PyO3 binding layer (`rust/crates/degenbot-python/`) that translates Python calls into Rust calls with no business logic of its own. The underlying core crates are pyo3-free by default and are consumable directly from pure Rust through the umbrella `degenbot` crate — currently via a git/path dependency (the workspace sets `publish = false`); the in-repo proof is `rust/crates/degenbot/examples/standalone_consumer.rs`, gated by `just test-standalone`.
+The Rust core is the engine of degenbot — it owns all performance-critical and stateful logic. Python reaches it through the `degenbot._ffi` extension module, a thin PyO3 binding layer (`rust/crates/degenbot-python/`) that translates Python calls into Rust calls with no business logic of its own. The underlying core crates are pyo3-free by default and are consumable directly from pure Rust through the umbrella `degenbot` crate — currently via a git/path dependency (the crates are not yet published to crates.io); the in-repo proof is `rust/crates/degenbot/examples/standalone_consumer.rs`, gated by `just test-standalone`.
 
 The extension is built automatically during installation using [maturin](https://www.maturin.rs/) (or `uv sync`, which invokes maturin under the hood).
 
@@ -1582,7 +1596,7 @@ Additional documentation is available in the [`docs/`](docs/) directory:
   - [Rust-Owned Settlement-Arbitrage Bot](docs/architecture/rust-owned-bot.md) — the original `ArbitrageEngine` design (Plans 079–082); marked historical, kept as a design-history reference (the current state layer follows the ADR log)
   - [Operator Add-Path Surface](docs/architecture/operator-add-path-surface.md) — steering a live bot (mid-run add-path + bounded on-demand discovery) over the Unix-socket JSON-lines operator channel
   - [Semantic Matching](docs/architecture/semantic-matching.md) — Event processing patterns for Aave
-- **[Architecture Decision Records](docs/adr/)**: the 34-ADR design log for the Python→Rust migration (three-layer architecture, per-chain Bot, schema retention/cutover, registration-verify lifecycle, executor grammar, …)
+- **[Architecture Decision Records](docs/adr/)**: the ADR design log for the Python→Rust migration (three-layer architecture, per-chain Bot, schema retention/cutover, registration-verify lifecycle, executor grammar, …)
 - **[Execution Strategy](docs/execution-strategy.md)**: the user-owned `ExecutionStrategy` seam (ADR-025)
 - **[Aave V3](docs/aave/)**: Comprehensive control flow diagrams and amount transformations for Aave operations
 - **[CLI](docs/cli/)**: Detailed CLI command reference (`aave.md`, `database.md`, `pool.md`)
