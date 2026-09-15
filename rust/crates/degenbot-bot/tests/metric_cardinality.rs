@@ -8,7 +8,15 @@
 //! Plus the §9 self-metric: `degenbot.metric_series` exposes the live distinct
 //! series count so a blowup is visible before the collector falls over.
 
-#![expect(clippy::expect_used, clippy::panic)]
+// The workspace denies `expect_used`/`panic`; this test file needs both only
+// in `(a)` `crates_root` (scoped at that fn) and (b) the otel-gated §9
+// self-metric test below (scoped at that fn). A former file-level
+// `#![expect(clippy::expect_used, clippy::panic)]` went UNFULFILLED under
+// default-feature `clippy -p degenbot-bot --all-targets`: the only use of
+// both lints outside the fn-scoped one lives in the
+// `#[cfg(feature = "otel")]` test, which default-feature compiles out, and
+// `crates_root`'s fn-level attribute already claims its own emission (the
+// tightest enclosing expectation wins), leaving the file-level pair unused.
 
 use std::path::{Path, PathBuf};
 
@@ -126,6 +134,7 @@ fn metric_labels_are_a_closed_reviewed_set() {
 }
 
 #[cfg(feature = "otel")]
+#[expect(clippy::expect_used, clippy::panic)] // otel-gated: fires only under --features otel
 #[test]
 fn metric_series_self_metric_is_exported() {
     use degenbot_bot::metrics::{build_prometheus_provider, render};
