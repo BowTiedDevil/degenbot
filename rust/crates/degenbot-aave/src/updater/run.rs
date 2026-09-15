@@ -814,6 +814,7 @@ use std::time::{Duration, Instant};
 use alloy::rpc::types::Log;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::op_info;
+use degenbot_core::runtime::get_runtime;
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
@@ -828,7 +829,7 @@ use crate::config_dispatch::{
 };
 use crate::transaction_processor::{process_transaction, ProcessTxError};
 
-/// The max RPC retries for the owned runtime's `AlloyProvider` (mirrors
+/// The max RPC retries for the runtime-bound `AlloyProvider` (mirrors
 /// `degenbot-pool-updater`'s `RPC_MAX_RETRIES`).
 const RPC_MAX_RETRIES: u32 = 5;
 
@@ -1210,14 +1211,21 @@ fn build_fetch_spec(
 /// chunk clean (no skipped blocks, no partial commit). The Transaction is
 /// held open across the per-tx RPC (the discount pre-pass + the config dispatch
 /// do substrate lookups + writes via `get_or_create_*` that MUST be atomic with
-/// the chunk; the apply is the last step). The owned tokio runtime's
-/// `block_on` polls the future on the calling thread, so the `!Send`
-/// `&Transaction` borrow across `.await` is safe (single-thread poll).
+/// the chunk; the apply is the last step). The ONE `get_runtime().block_on`
+/// polls the whole driver future on the calling thread, so the `!Send`
+/// `&Transaction` borrow (and the `db.lock()` guard) across `.await` are
+/// safe (single-thread poll — no other runtime worker can touch this future).
 ///
-/// # Owned runtime (D2)
+/// # Shared runtime (D2)
 ///
-/// MUST NOT be called from within an existing tokio runtime (panic on nested
-/// `block_on`). Mirror `degenbot-pool-updater`'s constraint.
+/// The body runs as ONE future under
+/// `degenbot_core::runtime::get_runtime().block_on` at this entry fn — the
+/// process-wide shared runtime, not an ad-hoc Builder. That `block_on` is legal
+/// on the bare `PyO3` fleet worker threads (they carry NO ambient tokio context
+/// — see `degenbot-python::aave_updater`) and on the CLI's main thread. It
+/// MUST NOT be called from within ANY tokio runtime context: `block_on`
+/// inside a runtime — the shared one included — panics ("Cannot start a
+/// runtime from within a runtime"). Mirror `degenbot-pool-updater`'s constraint.
 ///
 /// # §4.2-parity notes (flagged)
 ///
@@ -1230,12 +1238,7 @@ fn build_fetch_spec(
 ///   txs AFTER it would see the OLD revision → a non-zero discount instead of
 ///   0. In practice a vToken upgrade fires once per market lifetime, so the
 ///   drift is rare; flagged for the orchestrator's §4.2 review.
-#[expect(
-    clippy::missing_errors_doc,
-    clippy::needless_pass_by_value,
-    clippy::too_many_arguments,
-    clippy::too_many_lines
-)]
+#[expect(clippy::missing_errors_doc, clippy::too_many_arguments)]
 pub fn run_aave_update(
     database_path: &Path,
     chain_id: i64,
@@ -1264,6 +1267,63 @@ pub fn run_aave_update(
         }));
     }
 
+    // ONE block_on of the process-wide SHARED runtime at the fleet/CLI entry
+    // seam — see "# Shared runtime (D2)" above. The driver future is polled
+    // on the calling thread only, so the `!Send` `&Transaction` borrow and
+    // the DB ` MutexGuard` held across `.await` stay sound (no `Send` hop,
+    // no concurrent poll).
+    get_runtime().block_on(run_aave_update_driver(
+        database_path,
+        chain_id,
+        market_id,
+        to_block,
+        chunk_size,
+        rpc_url,
+        cancel,
+        progress,
+        verify_chunk,
+        verify_all_interval,
+        verify_all_at_completion,
+        max_chunks,
+    ))
+}
+
+/// The async driver body of [`run_aave_update`] — the ONE future under
+/// `get_runtime().block_on`. Every RPC fetch/verify is an `.await`
+/// inside this future; the doc contract (§3.4 atomicity, shared-runtime
+/// nesting constraint, §4.2-parity notes) lives on the sync entry fn.
+///
+/// # The `await_holding_lock` expectation
+///
+/// The chunk body holds `db.lock()` (the writeable `Connection`) across the
+/// per-tx RPC `.await`s (config dispatch + verify). Sound because the
+/// driver future is never polled concurrently: the entry fn's `block_on`
+/// polls it on the calling thread only, so no other thread can contend the
+/// guard mid-await. This is the pre-existing shape (the guard already spanned
+/// each `rt.block_on` call) — the single future just makes it explicit.
+///
+/// # Errors
+///
+/// See [`run_aave_update`].
+#[expect(
+    clippy::await_holding_lock,
+    clippy::too_many_arguments,
+    clippy::too_many_lines
+)]
+async fn run_aave_update_driver(
+    database_path: &Path,
+    chain_id: i64,
+    market_id: i64,
+    to_block: Option<u64>,
+    chunk_size: u64,
+    rpc_url: &str,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<dyn ProgressSink>,
+    verify_chunk: bool,
+    verify_all_interval: Option<u64>,
+    verify_all_at_completion: bool,
+    max_chunks: Option<usize>,
+) -> Result<AaveUpdateReport, RunError> {
     // Open ONE writeable handle for the whole run.
     let (db, _schema_state) = DegenbotDb::open_for_writes(database_path)?;
 
@@ -1281,19 +1341,17 @@ pub fn run_aave_update(
         .last_update_block
         .ok_or(RunError::NotBootstrapped(market_id))?;
 
-    // Owned tokio runtime (D2). The fetches + the per-tx RPC run on it; the DB
-    // writes are synchronous. MUST NOT be called from within an existing runtime.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let provider = rt.block_on(AlloyProvider::new(rpc_url, RPC_MAX_RETRIES))?;
+    // The RPC fetches + the per-tx verification ride the ONE driver future
+    // (`get_runtime().block_on` at the entry fn); the DB writes stay
+    // synchronous substrate ops on the calling thread.
+    let provider = AlloyProvider::new(rpc_url, RPC_MAX_RETRIES).await?;
     let provider = Arc::new(provider);
     let fetcher = LogFetcher::new(provider.clone(), chunk_size);
 
     // Resolve the chain tip if `to_block` is None.
     let last_block = match to_block {
         Some(n) => n,
-        None => rt.block_on(provider.get_block_number())?,
+        None => provider.get_block_number().await?,
     };
 
     let from_block = u64::try_from(last_update_block).unwrap_or(0) + 1;
@@ -1316,9 +1374,7 @@ pub fn run_aave_update(
     // re-encounter of the same events is a no-op). No-op on a warm boot (both
     // rows already present). Mirrors the Python `update_aave_market` Phase-1
     // bootstrap (commands.py:1010-1062 + `_process_proxy_creation_event`).
-    rt.block_on(bootstrap_pool_contracts(
-        &db, &provider, &fetcher, market_id, from_block,
-    ))?;
+    bootstrap_pool_contracts(&db, &provider, &fetcher, market_id, from_block).await?;
 
     // Build the fetch spec + the GHO asset (chain-unique). The per-chunk
     // loop's GJXURV refresh re-reads `scaled_token_addresses` +
@@ -1382,12 +1438,7 @@ pub fn run_aave_update(
             .as_ref()
             .and_then(|g| g.v_gho_discount_token.as_deref())
             .and_then(|s| s.parse().ok());
-        let mut logs = rt.block_on(fetch_aave_chunk_logs(
-            &spec,
-            &fetcher,
-            working_start,
-            chunk_end,
-        ))?;
+        let mut logs = fetch_aave_chunk_logs(&spec, &fetcher, working_start, chunk_end).await?;
         // (b) W2S3WH same-chunk staleness: an asset created mid-chunk (a
         //     `ReserveInitialized` in tx N + the first `Supply`/`Borrow` on
         //     it in tx N+M, same chunk) has its aToken/vToken NOT in the
@@ -1419,12 +1470,8 @@ pub fn run_aave_update(
         if !new_tokens.is_empty() {
             new_tokens.sort_unstable();
             new_tokens.dedup();
-            let mut extra = rt.block_on(fetch_scaled_token_logs(
-                &fetcher,
-                working_start,
-                chunk_end,
-                &new_tokens,
-            ))?;
+            let mut extra =
+                fetch_scaled_token_logs(&fetcher, working_start, chunk_end, &new_tokens).await?;
             // De-dup by (block_number, log_index) — the re-fetch may overlap
             // the frozen fetch for tokens partially known (rare). Logs
             // missing either field sort last (shouldn't happen for fetched
@@ -1467,12 +1514,8 @@ pub fn run_aave_update(
             }
         }
         if let Some(token) = discount_token_from_event.filter(|_| spec.stk_aave_address.is_none()) {
-            let mut extra = rt.block_on(fetch_stk_aave_logs(
-                &fetcher,
-                working_start,
-                chunk_end,
-                Some(token),
-            ))?;
+            let mut extra =
+                fetch_stk_aave_logs(&fetcher, working_start, chunk_end, Some(token)).await?;
             let existing: HashSet<(u64, u64)> = logs
                 .iter()
                 .filter_map(|l| Some((l.block_number?, l.log_index?)))
@@ -1499,7 +1542,7 @@ pub fn run_aave_update(
         let chunk_report = {
             let mut guard = db.lock();
             let tx = guard.transaction().map_err(DbError::from)?;
-            let result = rt.block_on(process_chunk_on_conn(
+            let result = process_chunk_on_conn(
                 &tx,
                 &provider,
                 market_id,
@@ -1508,7 +1551,8 @@ pub fn run_aave_update(
                 oracle_address,
                 &tx_groups,
                 chunk_end,
-            ));
+            )
+            .await;
             match result {
                 Ok(r) => {
                     // Pre-commit verification: if `verify_chunk` is set, run
@@ -1528,14 +1572,14 @@ pub fn run_aave_update(
                         // chunk has nothing to verify). Passing `None`
                         // would verify ALL positions rather than none.
                         if !touched.is_empty() {
-                            let divergences =
-                                rt.block_on(crate::verify::verify_touched_positions_on_conn(
-                                    &tx,
-                                    &provider,
-                                    market_id,
-                                    chunk_end,
-                                    Some(&touched),
-                                ))?;
+                            let divergences = crate::verify::verify_touched_positions_on_conn(
+                                &tx,
+                                &provider,
+                                market_id,
+                                chunk_end,
+                                Some(&touched),
+                            )
+                            .await?;
                             if !divergences.is_empty() {
                                 // Drop `tx` (rollback) — the chunk's writes +
                                 // the stamp advance are reverted.
@@ -1574,10 +1618,10 @@ pub fn run_aave_update(
                             max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit),
                         ));
                     if run_full {
-                        let divergences =
-                            rt.block_on(crate::verify::verify_all_positions_on_conn(
-                                &tx, &provider, market_id, chain_id, chunk_end, None,
-                            ))?;
+                        let divergences = crate::verify::verify_all_positions_on_conn(
+                            &tx, &provider, market_id, chain_id, chunk_end, None,
+                        )
+                        .await?;
                         if !divergences.is_empty() {
                             drop(tx);
                             progress.report_chunk(&AaveChunkProgress {
@@ -2137,13 +2181,17 @@ pub struct ActivatedMarket {
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Provider`] on an RPC failure, [`RunError::Runtime`] on
-/// a tokio-runtime build failure, or [`RunError::Db`] on a DB failure.
+/// Returns [`RunError::Provider`] on an RPC failure or [`RunError::Db`] on a
+/// DB failure.
 ///
-/// # Runtime nesting
+/// # Shared runtime (D2)
 ///
-/// Must NOT be called from within an existing `tokio` runtime (the core owns
-/// its runtime; nesting panics). Mirrors [`run_aave_update`]'s constraint.
+/// The RPC half runs as ONE future under
+/// `degenbot_core::runtime::get_runtime().block_on` at this entry fn
+/// (mirrors [`run_aave_update`]'s shape). That `block_on` is legal on the bare
+/// `PyO3` fleet threads + the CLI main thread (no ambient tokio context); it
+/// MUST NOT be called from within ANY `tokio` runtime context — nested
+/// `block_on` panics, the shared runtime included.
 pub fn activate_aave_market(
     database_path: &Path,
     chain_id: i64,
@@ -2152,12 +2200,6 @@ pub fn activate_aave_market(
     rpc_url: &str,
 ) -> Result<ActivatedMarket, RunError> {
     let (db, _state) = DegenbotDb::open_for_writes(database_path)?;
-
-    // Owned tokio runtime (mirrors `run_aave_update`'s D2 constraint).
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let provider = Arc::new(rt.block_on(AlloyProvider::new(rpc_url, RPC_MAX_RETRIES))?);
 
     let ap_address: Address = pool_address_provider.parse().map_err(|_| {
         RunError::Db(DbError::Decode(format!(
@@ -2170,19 +2212,48 @@ pub fn activate_aave_market(
         )))
     })?;
 
+    // The ONE `get_runtime().block_on` — the RPC steps are `.await`s inside
+    // the driver future, not sequential ad-hoc `block_on`s.
+    get_runtime().block_on(activate_aave_market_rpc(
+        &db,
+        chain_id,
+        pool_address_provider,
+        gho_token_address,
+        rpc_url,
+        ap_address,
+        gho_address,
+    ))
+}
+
+/// The RPC half of [`activate_aave_market`] — the ONE future under
+/// `get_runtime().block_on`. The DB seed transaction runs synchronously at
+/// the end (no `.await` while the `db.lock()` guard is held — no
+/// `await_holding_lock` exposure).
+///
+/// # Errors
+///
+/// See [`activate_aave_market`].
+async fn activate_aave_market_rpc(
+    db: &DegenbotDb,
+    chain_id: i64,
+    pool_address_provider: &str,
+    gho_token_address: &str,
+    rpc_url: &str,
+    ap_address: Address,
+    gho_address: Address,
+) -> Result<ActivatedMarket, RunError> {
+    let provider = Arc::new(AlloyProvider::new(rpc_url, RPC_MAX_RETRIES).await?);
+
     // 1. RPC: `getMarketId()` on the PoolAddressProvider (a dynamic `string`
     //    return — reuse the same decoder as `fetch_erc20_string_metadata`).
-    let market_name = rt.block_on(fetch_market_id(&provider, &ap_address))?;
+    let market_name = fetch_market_id(&provider, &ap_address).await?;
 
     // 2. RPC: GHO token `name()`/`symbol()`/`decimals()` (string + bytes32 +
     //    uint256 fallbacks). `block_number` is irrelevant (token metadata is
     //    immutable) — pass `None` for latest.
+    let preview_block = provider.get_block_number().await?;
     let (gho_name, gho_symbol, gho_decimals) =
-        rt.block_on(crate::config_dispatch::fetch_erc20_metadata(
-            &provider,
-            &gho_address,
-            rt.block_on(provider.get_block_number())?,
-        ));
+        crate::config_dispatch::fetch_erc20_metadata(&provider, &gho_address, preview_block).await;
 
     // 3. ONE transaction: seed/activate the market + contract + GHO rows.
     let (market_id, created) = {

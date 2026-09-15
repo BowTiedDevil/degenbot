@@ -261,7 +261,9 @@ fn run_err_to_py(err: RunError) -> PyErr {
 /// extension (BE474R-full, post-HLYWI6).
 ///
 /// The GIL is released across the whole call (`py.detach`); the orchestrator
-/// owns its tokio runtime + `AlloyProvider` internally. Zero SQL writes.
+/// drives its RPC fetches/verifies on the process-wide shared runtime
+/// (`degenbot_core::runtime::get_runtime()`, TD3/A1) + owns the
+/// `AlloyProvider` internally. Zero SQL writes.
 ///
 /// # Args
 ///

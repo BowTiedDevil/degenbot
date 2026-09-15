@@ -1825,10 +1825,12 @@ mod tests {
             removed: false,
         };
         // vtoken_revision = 2 (< 4, so discount_supported); but path #1
-        // resolves before the gate is checked. Build the snapshot via tokio.
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let provider = dummy_provider(&rt);
-        let snapshot = rt
+        // resolves before the gate is checked. Build the snapshot via the
+        // SHARED process runtime (degenbot_core::runtime::get_runtime()) —
+        // no ad-hoc test runtime; the shared low-latency budget is exactly
+        // right for a test bench.
+        let provider = dummy_provider();
+        let snapshot = degenbot_core::runtime::get_runtime()
             .block_on(build_discount_snapshot(
                 // no live provider — path #1 doesn't RPC.
                 &provider,
@@ -1848,9 +1850,8 @@ mod tests {
     fn build_discount_snapshot_no_vtoken_returns_empty() {
         let (db, _) = db_seeded();
         let conn = db.lock();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let provider = dummy_provider(&rt);
-        let snapshot = rt
+        let provider = dummy_provider();
+        let snapshot = degenbot_core::runtime::get_runtime()
             .block_on(build_discount_snapshot(
                 &provider,
                 &[],
@@ -1889,9 +1890,8 @@ mod tests {
             log_index: Some(0),
             removed: false,
         };
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let provider = dummy_provider(&rt);
-        let snapshot = rt
+        let provider = dummy_provider();
+        let snapshot = degenbot_core::runtime::get_runtime()
             .block_on(build_discount_snapshot(
                 &provider,
                 &[&log],
@@ -1909,9 +1909,12 @@ mod tests {
     /// A dummy `AlloyProvider` pointing at a dead URL. Used for path #1 / #3
     /// tests (which short-circuit before any `eth_call`). Path #2 tests need
     /// a live node + are `#[ignore]`-gated.
-    fn dummy_provider(rt: &tokio::runtime::Runtime) -> AlloyProvider {
+    fn dummy_provider() -> AlloyProvider {
         // Construct pointing at a dead URL; the path #1 / #3 tests never RPC.
-        rt.block_on(AlloyProvider::new("http://127.0.0.1:1", 1))
+        // Rides the shared process runtime — tests are exactly the callers
+        // its low-latency budget serves.
+        degenbot_core::runtime::get_runtime()
+            .block_on(AlloyProvider::new("http://127.0.0.1:1", 1))
             .expect("a dead-URL provider constructs without contact")
     }
 
