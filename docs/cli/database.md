@@ -6,11 +6,10 @@ tags:
   - database
   - cli
 related_files:
-  - ../../src/degenbot/cli/database.py
+  - ../rust-cli.md
   - ../../src/degenbot/database/operations.py
   - ../../src/degenbot/database/__init__.py
   - ../../src/degenbot/database/models/base.py
-  - ../../src/degenbot/migrations/env.py
 complexity: standard
 ---
 
@@ -18,7 +17,7 @@ complexity: standard
 
 ## Overview
 
-The Database CLI provides commands for managing the SQLite database used by degenbot to store pool metadata, liquidity positions, Aave market data, and other blockchain-derived information. Commands are available for creating, backing up, compacting, upgrading, and resetting the database.
+The Database CLI provides commands for managing the SQLite database used by degenbot to store pool metadata, liquidity positions, Aave market data, and other blockchain-derived information. Commands are available for creating, backing up, compacting, inspecting, healing, and resetting the database. The argv vocabulary is Rust-owned (ADR-051) — see the [Rust CLI page](../rust-cli.md).
 
 ## Background: Database Architecture
 
@@ -45,18 +44,20 @@ The database contains multiple tables organized by domain:
 
 All database models are defined in `src/degenbot/database/models/`.
 
-### Alembic Migrations
+### Schema ownership (Rust-owned)
 
-Database schema changes are managed through **Alembic migrations**:
-
-- **Version tracking**: `alembic_version` table stores current schema revision
-- **Migration scripts**: Located in `src/degenbot/migrations/versions/`
-- **Upgrade path**: Migrations can be applied incrementally to the latest version
-- **Head revision**: Latest migration marked as `head`
+The database schema is **Rust-owned** (ADR-052). The current schema revision is
+stamped in `_degenbot_db_schema_version`; a legacy `alembic_version` table marks
+the file as Alembic-era, and `ensure_schema` **heals it at open** — an
+out-of-place rebuild to the current Rust `SCHEMA_HEAD`, preserving the old file
+as a `*.bak`. There is no in-tree migration-script directory and no step the
+user must apply by hand. See
+[ADR-052](../adr/ADR-052-db-auto-upgrade-alembic-retirement.md) for the
+forward version-lock and the heal-at-open contract.
 
 ## Commands
 
-All CLI commands are implemented in [`src/degenbot/cli/database.py`](../../src/degenbot/cli/database.py).
+The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/degenbot-cli/src/argv.rs) declares it over `degenbot-cli-core`'s [database arms](../../rust/crates/degenbot-cli-core/src/database.rs). The authoritative flag/exit-code reference is the [Rust CLI page](../rust-cli.md); the domain behaviour below is unchanged.
 
 ### `degenbot database backup`
 
@@ -99,7 +100,7 @@ degenbot database reset
 2. **Remove database**: Deletes the existing database file
 3. **Create new database**: Initializes with current schema
 4. **Configure SQLite**: Sets WAL mode, auto vacuum, and creates all tables
-5. **Stamp migrations**: Marks database with latest Alembic revision
+5. **Stamp schema version**: Writes `_degenbot_db_schema_version` at the Rust `SCHEMA_HEAD`
 6. **Initial vacuum**: Performs VACUUM to optimize storage
 
 #### Example Usage
@@ -108,46 +109,18 @@ degenbot database reset
 degenbot database reset
 ```
 
-### `degenbot database upgrade`
+### `degenbot database upgrade` (RETIRED)
 
-Upgrade the database schema to the latest version.
+The subcommand is **retired** (ADR-052 D4): the database upgrades itself at
+open. The Rust console still accepts the argv, but renders a pointed error and
+exits non-zero:
 
-```bash
-degenbot database upgrade [--force]
+```
+the database upgrades itself at open; for an explicit repair, run `degenbot database heal`
 ```
 
-#### Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--force` | `False` | Skip confirmation prompt |
-
-#### Behavior
-
-1. **Check versions**: Compares current database version with latest migration
-2. **Confirmation**: Prompts unless `--force` is specified
-3. **Apply migrations**: Runs all pending Alembic migrations sequentially
-4. **Update version**: Updates `alembic_version` table to head revision
-
-#### Example Usage
-
-```bash
-degenbot database upgrade          # Interactive with confirmation
-degenbot database upgrade --force  # Skip confirmation
-```
-
-#### Migration Versioning
-
-The system tracks two versions:
-
-- **Current version**: Revision stored in `alembic_version` table
-- **Latest version**: Head revision in migration scripts
-
-A warning is logged on startup if versions don't match:
-```
-The current database revision (abc123) does not match the latest (def456) for degenbot version X.Y.Z!
-Database-related features may raise exceptions if you continue. Perform database migrations with 'degenbot database upgrade'.
-```
+Use `degenbot database heal` for an explicit out-of-place repair, or
+`degenbot database inspect` to read the schema state without writing.
 
 ### `degenbot database compact`
 
@@ -175,40 +148,32 @@ Use after large deletions, before backups, or when database has grown significan
 
 ## Database Initialization
 
-When a new database is created (via `reset` or programmatically), the following operations are performed:
+When a new database is created (via `reset` or programmatically), the Rust
+`degenbot-db` core performs the same steps the Python path once did, with no
+Alembic stamp:
 
-```python
-# 1. Create engine and connect
-engine = create_engine("sqlite:///path/to/database.db")
+1. Create/connect the SQLite file.
+2. Enable WAL journal mode for concurrent reads/writes.
+3. Enable `auto_vacuum=FULL` to reclaim space.
+4. Create every table at the current Rust `SCHEMA_HEAD`.
+5. `VACUUM` once for a compact initial file.
+6. Stamp `_degenbot_db_schema_version` with `SCHEMA_HEAD`.
 
-# 2. Enable WAL mode for concurrent reads/writes
-connection.execute(text("PRAGMA journal_mode=WAL;"))
-
-# 3. Enable auto vacuum to reclaim space
-connection.execute(text("PRAGMA auto_vacuum=FULL;"))
-
-# 4. Create all tables from SQLAlchemy models
-Base.metadata.create_all(bind=engine)
-
-# 5. Perform initial vacuum for optimization
-connection.execute(text("VACUUM;"))
-
-# 6. Stamp with latest Alembic revision
-command.stamp(get_alembic_config(), "head")
-```
+The Python wrappers in
+[`src/degenbot/database/operations.py`](../../src/degenbot/database/operations.py)
+delegate to the same Rust ops over the `degenbot._ffi.db_*` seam.
 
 ## Database Schema Changes
 
-### Creating New Migrations
+### Forward version-lock (Rust-owned)
 
-Generate and apply migrations using Alembic:
-
-```bash
-alembic revision --autogenerate -m "description of changes"
-degenbot database upgrade
-```
-
-Migration files are stored in `src/degenbot/migrations/versions/`.
+Schema changes are Rust-owned (ADR-052 D2). A binary whose
+`RUST_SCHEMA_VERSION` is ahead of the file's stamp applies the pending embedded
+`ALTER` steps strictly in order at open (each step in its own transaction; a
+failed step rolls back to the last-good stamp and refuses loudly). A file
+stamped **newer** than the running binary is refused (`schema N > binary M`), so
+an old reader never silently misreads a new database. There is no Alembic
+revision to generate and no user-applied migration step.
 
 ## Configuration
 
@@ -225,20 +190,25 @@ Default database location depends on the platform and configuration.
 
 **BackupExists**: Raised when backup file already exists. User can choose to overwrite or abort.
 
-**Version Mismatch**: Logged on startup if database version doesn't match code version. Run `degenbot database upgrade` to apply pending migrations.
+**Schema newer than the binary**: The open refuses with "the binary is older
+than the database (schema N > binary M)" — upgrade the binary, never the file.
+A stale Alembic-era file is healed at open instead (ADR-052 D1).
 
 ## Related Functions
 
 ### Database Operations
 
-All database operations are defined in [`src/degenbot/database/operations.py`](../../src/degenbot/database/operations.py):
+The Python wrappers in [`src/degenbot/database/operations.py`](../../src/degenbot/database/operations.py) are thin delegations to the Rust `degenbot-db` ops:
 
 - `backup_sqlite_database(db_path)` - Create backup of database
-- `create_new_sqlite_database(db_path)` - Create new database with schema
+- `create_new_sqlite_database(db_path)` - Create new database at the Rust schema head
 - `compact_sqlite_database(db_path)` - Reclaim free space with VACUUM
-- `upgrade_existing_sqlite_database()` - Apply pending Alembic migrations
+- `heal_database(database_path)` - Out-of-place dump-and-restore rebuild (ADR-011)
 - `get_scoped_sqlite_session(database_path)` - Get thread-safe SQLAlchemy session
-- `get_alembic_config()` - Get Alembic configuration object
+
+The Alembic `upgrade_existing_sqlite_database()` / `get_alembic_config()`
+helpers were retired with the migration tree (ADR-052 D6); the schema upgrades
+itself at open.
 
 ### Database Session
 
@@ -282,9 +252,9 @@ with bot.db() as session:
 ## Dependencies
 
 - **Database**: SQLite 3.x
-- **ORM**: SQLAlchemy
-- **Migrations**: Alembic
-- **CLI**: Click
+- **ORM**: SQLAlchemy (nominal models; schema DDL is Rust-owned)
+- **Schema**: Rust `degenbot-db` (`SCHEMA_HEAD`, heal-at-open, forward version-lock)
+- **CLI**: the Rust `degenbot` console (`degenbot-cli`)
 - **Logging**: degenbot logging module
 
 ## Example Workflows
@@ -293,4 +263,4 @@ with bot.db() as session:
 
 **Regular Maintenance**: Backup before updates, then compact if database grew significantly.
 
-**Schema Upgrade**: Run `degenbot database upgrade --force` after pulling code with new migrations.
+**Schema Upgrade**: Nothing to run — the database upgrades itself at open (ADR-052). Use `degenbot database inspect` to read the schema state and `degenbot database heal` for an explicit repair.

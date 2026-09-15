@@ -44,6 +44,10 @@ jobs:
             rust:
               - 'rust/**'
               - 'tier3-oracle/artifacts/**'
+              # The no-Python console gate + its oracle: a gate/oracle edit must
+              # re-run the `cli-no-python` job (ADR-051 D10 / ergo EA6DY7).
+              - '.github/workflows/cli-no-python-gate.sh'
+              - '.github/workflows/cli-no-python-expected.txt'
             python:
               - 'rust/**'
               - 'src/**'
@@ -211,6 +215,68 @@ jobs:
       # release policy forbids --no-verify on publishes).
       - name: Dry-run publish of all publishable members
         run: cargo publish --workspace --dry-run --no-verify --allow-dirty --manifest-path rust/Cargo.toml
+
+  cli-no-python:
+    # ADR-051 D10 / ergo EA6DY7: the console must build and run with NO Python
+    # anywhere. This job deliberately does NOT provision Python (no
+    # actions/setup-python) and never invokes uv; it builds the `degenbot`
+    # binary from the Rust workspace alone, runs the argv smoke set
+    # (--help/--version/database inspect/exchange activate+deactivate
+    # idempotence) against committed Alembic fixtures copied to a temp dir, and
+    # diffs the machine-checkable stdout against the checked-in oracle. The two
+    # seeded-divergence steps prove the comparator can fail.
+    name: CLI (no Python)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: ci-rust
+
+      # No Python toolchain is provisioned. Assert it statically against this
+      # job's own YAML: a future edit that adds actions/setup-python,
+      # astral-sh/setup-uv, or a `uv run` step is caught here.
+      - name: Assert this job provisions no Python
+        run: |
+          job=$(awk '
+            /^  cli-no-python:/ { in_job = 1 }
+            in_job && /^  [a-z][a-z0-9-]*:$/ && !/^  cli-no-python:/ { in_job = 0 }
+            in_job { print }
+          ' .github/workflows/ci.yml)
+          fail=0
+          # No Python-provisioning action may be named by this job.
+          if printf '%s\n' "$job" | grep -Ev '^[[:space:]]*#' | grep -v 'grep -Eq' | grep -Eq 'uses:[[:space:]]*(actions/setup-python|astral-sh/setup-uv)'; then
+            echo "::error::cli-no-python must not provision Python"
+            fail=1
+          fi
+          # No step may shell out to uv. Comment lines and this self-check's
+          # own pattern line are excluded so the guard cannot match itself.
+          if printf '%s\n' "$job" | grep -Ev '^[[:space:]]*#' | grep -v 'grep -Eq' | grep -Eq 'uv[[:space:]]+run([[:space:]]|$)'; then
+            echo "::error::cli-no-python must not invoke uv"
+            fail=1
+          fi
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "ok: no Python setup action or uv invocation in the cli-no-python job"
+
+      - name: Build the console (Python-free)
+        run: cargo build -p degenbot-cli --manifest-path rust/Cargo.toml
+
+      - name: Run the no-Python console gate
+        run: bash .github/workflows/cli-no-python-gate.sh
+
+      - name: Prove the gate has teeth (seeded expected divergence)
+        run: DEGENBOT_CLI_GATE_SEED=expected bash .github/workflows/cli-no-python-gate.sh
+
+      - name: Prove the gate has teeth (seeded live divergence)
+        run: DEGENBOT_CLI_GATE_SEED=live bash .github/workflows/cli-no-python-gate.sh
 
   tier3-oracle:
     name: Tier-3 On-Chain Accuracy Oracle

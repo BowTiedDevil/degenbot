@@ -5,7 +5,7 @@ tags:
   - state-management
   - liquidity
 related_files:
-  - ../../src/degenbot/cli/aave.py
+  - ../rust-cli.md
   - ../../src/degenbot/database/models/aave.py
 complexity: complex
 ---
@@ -14,7 +14,7 @@ complexity: complex
 
 ## Overview
 
-The Aave CLI provides commands for managing Aave V3 markets and updating position data. The main command `aave_update` fetches blockchain events, processes them, and synchronizes the database with current user positions (collateral and debt).
+The Aave CLI provides commands for managing Aave V3 markets and updating position data. The main command `degenbot aave update` fetches blockchain events, processes them, and synchronizes the database with current user positions (collateral and debt). The argv vocabulary is Rust-owned (ADR-051) — see the [Rust CLI page](../rust-cli.md).
 
 ## Background: Aave V3 Architecture
 
@@ -72,11 +72,11 @@ rest of the Python enrichment/processing pipeline.
 
 ## Offline Position Calculation
 
-The `aave_update` command is designed to rebuild a complete database of collateral and debt positions by retrieving chronological events from several Aave contracts and decoding the underlying amounts that are stored in smart contract storage. This event-driven approach allows for fast offline calculation of positions without making any RPC calls to query live contract state. Once the database is synchronized, all position calculations can be performed locally using the stored scaled balances and index values.
+The `degenbot aave update` command is designed to rebuild a complete database of collateral and debt positions by retrieving chronological events from several Aave contracts and decoding the underlying amounts that are stored in smart contract storage. This event-driven approach allows for fast offline calculation of positions without making any RPC calls to query live contract state. Once the database is synchronized, all position calculations can be performed locally using the stored scaled balances and index values.
 
 ## Commands
 
-All CLI commands are implemented in [`src/degenbot/cli/aave.py`](../../src/degenbot/cli/aave.py).
+The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/degenbot-cli/src/argv.rs) declares it over `degenbot-cli-core`'s [aave arms](../../rust/crates/degenbot-cli-core/src/aave.rs). The authoritative flag/exit-code reference is the [Rust CLI page](../rust-cli.md); the domain behaviour below is unchanged.
 
 ### `degenbot aave update`
 
@@ -134,40 +134,30 @@ degenbot aave position show <ADDRESS> [--market MARKET] [--chain-id CHAIN_ID]
 
 Displays collateral and debt positions for the given address.
 
-### `degenbot aave position risk`
+### `degenbot aave position risk` / `degenbot aave market show`
 
-Show risk parameters for a user's position.
-
-```bash
-degenbot aave position risk <ADDRESS> [--market MARKET] [--chain-id CHAIN_ID]
-```
-
-Displays health factor, liquidation threshold, and LTV information.
-
-### `degenbot aave market show`
-
-Show market state and configuration.
-
-```bash
-degenbot aave market show [--chain-id CHAIN_ID] [--name NAME]
-```
+Not part of the Rust console's argv (the authoritative command list is the
+[Rust CLI page](../rust-cli.md)); only `aave position show` ships as a
+position-inspection verb. The risk/health-factor and market-config domain
+computations remain in the Rust `degenbot-aave` core.
 
 ### `degenbot aave activate`
 
-Activate an Aave market for tracking.
+Activate the Aave V3 market for the session chain (Ethereum default 1 when no
+chain layer supplied a value).
 
 ```bash
-degenbot aave activate ethereum_aave_v3
+degenbot aave activate [--chain-id CHAIN_ID]
 ```
 
-Only activated markets are included in `aave_update` runs.
+Only activated markets are included in `degenbot aave update` runs.
 
 ### `degenbot aave deactivate`
 
 Deactivate an Aave market (positions not updated).
 
 ```bash
-degenbot aave deactivate ethereum_aave_v3
+degenbot aave deactivate [--name MARKET]
 ```
 
 ## Event Processing Details
@@ -379,7 +369,7 @@ the mode per token revision + operation.
 
 ## Writer implementation
 
-The Aave V3 writer is **Rust-owned** (`degenbot-aave` core crate). The per-market chunk loop, RPC fetch+decode, DB writes, the per-chunk transaction, and the on-chain-truth verification all live in the Rust core, driven from `degenbot aave update` via the `run_aave_update` PyO3 seam (a thin driver shell). The former Python writer pipeline (`update_aave_market`, `event_handlers._process_*`, `transaction_processor`/`operations_parser`/`token_processor`, `db_*.py`, the `verify_*` Python invariants) was retired by the §4.2 cutover (task `CZM7TI`) after the Rust path was proven GREEN to the live chain tip with full verification. The `Event Processing Details` and `Algorithm Details` sections above describe domain behavior that remains accurate; the implementation now lives in `rust/crates/degenbot-aave/`.
+The Aave V3 writer is **Rust-owned** (`degenbot-aave` core crate). The per-market chunk loop, RPC fetch+decode, DB writes, the per-chunk transaction, and the on-chain-truth verification all live in the Rust core, driven from the `degenbot aave update` arm of the Rust console (`degenbot-cli-core`; the Python driver reaches the same work through the `run_aave_update` PyO3 seam). The former Python writer pipeline (`update_aave_market`, `event_handlers._process_*`, `transaction_processor`/`operations_parser`/`token_processor`, `db_*.py`, the `verify_*` Python invariants) was retired by the §4.2 cutover (task `CZM7TI`) after the Rust path was proven GREEN to the live chain tip with full verification. The `Event Processing Details` and `Algorithm Details` sections above describe domain behavior that remains accurate; the implementation now lives in `rust/crates/degenbot-aave/`.
 
 ## Configuration
 
@@ -407,7 +397,7 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 - **Database**: SQLAlchemy ORM (see `src/degenbot/database/models/aave.py`)
 - **Blockchain**: Web3.py for RPC calls
 - **Math**: Rust `degenbot-aave::wad_ray_math` for scaled balance calculations with rounding mode support (the former Python `aave/libraries/` package was retired)
-- **Logging**: Click for CLI output; the Rust core emits throttled `log`-level operator progress lines
+- **Logging**: the Rust console (`degenbot-cli`) renders operator output; the Rust core emits throttled `log`-level operator progress lines
 - **Writer**: Rust `degenbot-aave-updater` core crate (the Python enrichment/processing pipeline was retired)
 
 ## Solidity Reference

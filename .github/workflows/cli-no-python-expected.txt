@@ -1,0 +1,50 @@
+$ degenbot --help
+Perform cli.
+
+Usage: degenbot [OPTIONS] [COMMAND]
+
+Commands:
+  database  Database commands
+  exchange  Exchange commands
+  pool      Pool commands
+  aave      Aave commands
+  fleet     Steer the live worker fleet over the operator command channel
+  path      Steer a live bot over the operator command channel
+
+Options:
+      --database <PATH>      Path to the SQLite database (`--database` > `DEGENBOT_DB_PATH` > `~/.config/degenbot/degenbot.db`)
+      --chain-id <CHAIN_ID>  Session chain id (`--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`)
+      --node-http <URI>      HTTP RPC endpoint (`--node-http` > `DEGENBOT_RPC_HTTP_CHAINID_<id>`)
+      --node-ws <URI>        WebSocket RPC endpoint (`--node-ws` > `DEGENBOT_RPC_WS_CHAINID_<id>`)
+  -h, --help                 Print help
+  -V, --version              Print version
+exit 0
+
+$ degenbot --version
+degenbot <semver> (build <receipt>)
+exit 0
+
+$ degenbot database inspect --database <head.db>
+Schema state: alembic_current.
+exit 0
+
+$ degenbot database inspect --database <stale.db>
+Schema state: alembic_stale.
+exit 0
+
+$ degenbot exchange activate --chain base --name aerodrome_v2 (1st, fresh DB copy)
+Activated Aerodrome V2 on Base (chain ID 8453).
+exit 0
+
+$ degenbot exchange activate --chain base --name aerodrome_v2 (2nd, idempotent)
+Exchange is already activated.
+exit 0
+
+$ degenbot exchange deactivate --chain base --name aerodrome_v2 (1st)
+Deactivated Aerodrome V2 on Base (chain ID 8453).
+exit 0
+
+$ degenbot exchange deactivate --chain base --name aerodrome_v2 (2nd, idempotent)
+Exchange is already deactivated.
+exit 0
+

@@ -49,6 +49,8 @@ adapter (`degenbot-arbitrage`) — never to describe the mechanism.
 - **PyO3 wrapper** — `rust/crates/degenbot-python/src/<domain>/**`. `#[pyclass]`/`#[pyfunction]` only — arg extract → GIL release → core call → result wrap. No business logic.
 - **Python companion** — `src/degenbot/**`. User-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display.
 
+**argv façade** — the one place the console's command vocabulary is spelled: the `degenbot` binary (`degenbot-cli`), whose clap tree maps argv onto the clap-free `Command` model in `degenbot-cli-core` (ADR-051 D2). It owns argv declaration, rendering, prompting, progress, and SIGINT, while execution semantics stay in `degenbot-cli-core`; both the pure-Rust operator and the Python passthrough run the same façade. _Avoid_: "CLI layer", "Python CLI".
+
 ### Driver cockpit (`degenbot.runner`)
 
 **Driver cockpit** — the Python-companion module (the `degenbot.runner`

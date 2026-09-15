@@ -41,10 +41,10 @@ Status vocabulary for the ledger:
 
 | # | Python-driver surface (source) | Rust status | Evidence / gap |
 |---|---|---|---|
-| 1 | CLI flags `--live/--permutation/--node-http/--node-ws` (`runner/cli.py`) | REACHABLE | reimplemented in `rust/examples/settlement_bot` (driver-owned by design: argparse ∩ std argv) |
+| 1 | CLI flags `--live/--permutation/--node-http/--node-ws` (`runner/cli.py`) | REACHABLE | argv spelling is Rust-owned (ADR-051 D2): `degenbot-cli` declares the ONE clap tree (`rust/crates/degenbot-cli/src/argv.rs`) over the clap-free `degenbot-cli-core` `Command` model (`rust/crates/degenbot-cli-core/src/command.rs`), and the `--database`/`--chain-id`/`--node-http`/`--node-ws` driver flags resolve through `degenbot-config`'s resolvers. `cargo build -p degenbot-cli` produces the `degenbot` binary; `cargo add degenbot` reaches the same values via `degenbot::config`. Proof: the no-Python console gate (`.github/workflows/cli-no-python-gate.sh`, CI job `cli-no-python`) runs the argv set end to end. The parity example's local parser is now a redundant consumer-side mirror; its cutover to the shared crate is a separate slice. |
 | 2 | `ArbitrageConfig.from_env` — operator/executor envs, dispatch tunables, retry knobs, fail-fast parse errors (`runner/config.py`) | DRIVER-POLICY | reimplemented driver-side in the example (mirrors constants byte-for-byte); `degenbot-config`'s `BotConfigLoader` cascade does not cover these env keys by design |
-| 3 | RPC URI cascade `resolve_rpc_uris`: CLI > `DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>` OS env > config.toml `rpc[id]`/`ws[id]` > error, no localhost default (`src/degenbot/config.py`) | DRIVER-POLICY | reimplemented in the example (toml read of `~/.config/degenbot/config.toml`) |
-| 4 | DB path resolution (`_make_arbitrage_config`: config.toml `database.path` or `~/.config/degenbot/degenbot.db`) | DRIVER-POLICY | reimplemented in the example |
+| 3 | RPC URI cascade `resolve_rpc_uris`: CLI > `DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>` OS env > config.toml `rpc[id]`/`ws[id]` > error, no localhost default (`src/degenbot/config.py`) | REACHABLE | `degenbot_config::{resolve_node_http_uri, resolve_node_ws_uri, resolve_node_uris, node_http_env_name, node_ws_env_name}` (`rust/crates/degenbot-config/src/resolvers.rs`; re-exported as `degenbot::config`) own the CLI > `DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>` cascade with the same fail-loud "no localhost default" posture. `degenbot-cli`'s global `--node-http`/`--node-ws` feed it through `CliContext::node_uris` (`rust/crates/degenbot-cli-core/src/context.rs`). The retired `[rpc]`/`[ws]` config.toml tables are deliberately NOT re-added (ADR-051 D8): the file layer is retired, not reimplemented. |
+| 4 | DB path resolution (`_make_arbitrage_config`: config.toml `database.path` or `~/.config/degenbot/degenbot.db`) | REACHABLE | `degenbot_config::resolve_database_path` (`rust/crates/degenbot-config/src/resolvers.rs`; re-exported as `degenbot::config`) owns `--database` > `DEGENBOT_DB_PATH` > `~/.config/degenbot/degenbot.db`, with `~` expanded against `HOME`; `degenbot-cli`'s global `--database` feeds it through `CliContext::database_path` (`rust/crates/degenbot-cli-core/src/context.rs`). No driver resolves the path ad hoc, and the retired `[database]` file key is deliberately not consulted (ADR-051 D8). |
 | 5 | DB snapshot load → seed block S (`Bot.load_snapshot_from_db`, `EngineRegistry.start` snapshot read) | REACHABLE | `Bot::new` + `load_snapshot_from_db` + `snapshot_seed_block` — proven by `standalone_consumer.rs` slice 7 (`fixture_snapshot_seed_block`) and by the example's boot slice |
 | 6 | Engine handshake: `engine.subscribe(ws)` → first WS block W; set S on shared state; `resume()` with **auto-backfill S+1..W-1** inside the pump; stop/phase machine (`engine_registry.py`, `bot_runner.py`) | REACHED-via-EngineDriver | `degenbot::EngineDriver::start` (subscribe → verify-config, stops pre-`resume`) + `resume` (driver-owned `BlockPump::backfill_with_drain` = `S+1..W`, then spawns the live loop) + `stop` (any-phase, idempotent, terminal latch). Shipped by ergo **5XOGRK** (ADR-050) |
 | 7 | Result-batch consumption (engine `__anext__` stream of `ResultBatch` per block) | REACHED-via-EngineDriver | `EngineDriver::take_result_receiver` hands out the unbounded `ResultBatch` receiver once (attach pre-`resume`); `stop` closes it so a pending recv sees end-of-stream. Shipped by ergo **5XOGRK** |
@@ -218,6 +218,50 @@ crate-private-engine note in `CONTEXT.md` ("Engine seam deepening"), which now
 carries a one-line ADR-050 supersedure. The `pub(crate)` one-door invariant
 itself stands — ADR-050 adds the `EngineDriver` *driver* seam above
 `EngineStages`, not a second engine door.
+
+## Launcher consolidation (RSP-16, ergo `V6SUQO`)
+
+`./run_bot.sh` is the single launcher for both drivers:
+
+```
+./run_bot.sh [--python|--rust] [start|stop|status|foreground|print-cmd] [-- args...]
+```
+
+- `--python` (the default, and the no-flag behavior) runs
+  `uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py` with the
+  five documented exports — byte-identical to the pre-consolidation launcher.
+- `--rust` runs `rust/target/<RUST_PROFILE>/degenbot-settlement-bot-example`
+  (package `degenbot-settlement-bot-example`, the `cargo add degenbot`
+  consumer), built on demand from a cheap staleness probe;
+  `cargo build -p degenbot-settlement-bot-example` owns the real incremental
+  work. `RUST_PROFILE` defaults to `release` (the profile the installed Python
+  `.so` is built with) and accepts `dev` for the debug profile.
+- `print-cmd` is the CI-verifiable surface: the resolved driver, the full
+  command array (passthrough included), the effective `RUST_PROFILE`, and every
+  export, printed without building or launching (rc 0).
+- `stop`/`status` cover both driver process names (the Python example script and
+  the Rust binary) in addition to the pidfile, which records the real driver pid
+  whichever driver was started.
+- `--` ends launcher parsing; the remaining tokens are appended verbatim to the
+  driver argv. The launcher never implies `--live`.
+
+Two recorded divergences between the drivers (deliberate, not defects):
+
+1. **Run-length default.** The Python driver's live arm runs until SIGINT. The
+   Rust example's live arm is gated on `SMOKE_RPC_URL` and only bounded by the
+   optional `DEGENBOT_SMOKE_MAX_SECS` window; without `SMOKE_RPC_URL` it prints
+   the offline parity ledger and exits (the CI-safe posture). The launcher binds
+   `SMOKE_RPC_URL` to the resolved ws cascade for `--rust`, so both drivers arm
+   the same node; the bounded window remains a Rust-only knob.
+2. **Telemetry arming.** The Python driver arms OTLP when `DEGENBOT_OTEL=1`
+   (the launcher's default), with endpoint precedence
+   `OTEL_EXPORTER_OTLP_ENDPOINT` env > typed `telemetry` config > exporter
+   default (`http://localhost:4318`). The Rust example's telemetry boot
+   (`rust/examples/settlement_bot/src/telemetry.rs`) requires **both** a truthy
+   `DEGENBOT_OTEL` and an explicitly configured OTLP endpoint — an absent
+   endpoint is a quiet no-op, never the localhost default. A `--rust` run
+   therefore needs the OTLP endpoint exported to emit spans, even though the
+   launcher exports `DEGENBOT_OTEL=1` for both drivers.
 
 ## Guardrails
 
