@@ -429,8 +429,9 @@ pub async fn verify_v4_liquidity_map_on_chain(
 pub struct FullVerifyCtx<'a> {
     /// The HTTP RPC provider for on-chain reads.
     pub provider: &'a AlloyProvider,
-    /// The runtime to `block_on` the async verify calls.
-    pub rt: &'a tokio::runtime::Runtime,
+    /// The shared process runtime (`degenbot_core::runtime::get_runtime()`) —
+    /// the `&'static` singleton — to `block_on` the async verify calls.
+    pub rt: &'static tokio::runtime::Runtime,
     /// The block number to read on-chain truth at (= the chunk's `chunk_end`).
     pub block_number: u64,
     /// The chain id the run targets (selects the in-scope V3+V4 pool set).
@@ -1073,7 +1074,7 @@ mod tests {
 
     fn full_verify_ctx<'a>(
         provider: &'a AlloyProvider,
-        rt: &'a tokio::runtime::Runtime,
+        rt: &'static tokio::runtime::Runtime,
     ) -> FullVerifyCtx<'a> {
         FullVerifyCtx {
             provider,
@@ -1091,11 +1092,11 @@ mod tests {
         use degenbot_db::DegenbotDb;
         use std::path::Path;
         let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = degenbot_core::runtime::get_runtime();
         let provider = rt
             .block_on(AlloyProvider::new("http://127.0.0.1:9/", 5))
             .unwrap();
-        let ctx = full_verify_ctx(&provider, &rt);
+        let ctx = full_verify_ctx(&provider, rt);
         let conn = db.lock();
         assert!(verify_all_pools_committed_on_conn(&conn, &ctx).is_ok());
     }
@@ -1170,14 +1171,14 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = degenbot_core::runtime::get_runtime();
         let provider = rt
             .block_on(AlloyProvider::new("http://127.0.0.1:9/", 5))
             .unwrap();
         // The bug condition: the pool had NO liquidity event in the current
         // chunk, so the chunk-local map would be empty. The verify must resolve
         // the PoolManager address from the DB via the `manager_id` FK instead.
-        let ctx = full_verify_ctx(&provider, &rt);
+        let ctx = full_verify_ctx(&provider, rt);
         let conn = db.lock();
         let result = verify_all_pools_committed_on_conn(&conn, &ctx);
         // GREEN: the address is resolved from the DB → the verify proceeds to

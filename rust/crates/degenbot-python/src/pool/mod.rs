@@ -17,7 +17,7 @@
 //! never re-acquires it. A Python-side `KeyboardInterrupt` won't
 //! pre-empt mid-chunk (the GIL is released); Task 5's signal handler calls
 //! [`CancelHandle::cancel`] (the cooperative flag the loop polls between
-//! chunks — see [`degenbot_pool_updater::run::run_pool_update`]'s owned-
+//! chunks — see [`degenbot_pool_updater::run::run_pool_update`]'s shared-
 //! runtime constraint + §3.3 interrupt contract).
 //!
 //! # Owned-runtime constraint (D2)

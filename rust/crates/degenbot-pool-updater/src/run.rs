@@ -40,16 +40,17 @@
 //! mock RPC, no live node. The fetchers themselves are unit-tested in
 //! [`crate::fetch`] (decode-leaves) + integration-tested (live RPC).
 //!
-//! # D2: owned `tokio` runtime
+//! # D2: the shared `tokio` runtime
 //!
-//! [`run_pool_update`] constructs its own `tokio::runtime::Runtime` (the
-//! `rt-multi-thread` feature). **It MUST NOT be called from within an existing
-//! tokio runtime** — doing so panics ("Cannot start a runtime from within a
-//! runtime"). The Task 4 `PyO3` seam (`db_run_pool_update`) is the entry from
-//! Python: Python calls it from a worker thread (NO ambient tokio runtime),
-//! so the owned-runtime constraint holds. If Python ever needs to drive
-//! `run_pool_update` from inside an async context, wrap it in
-//! `tokio::task::spawn_blocking`.
+//! [`run_pool_update`] blocks on the process-wide shared runtime
+//! (`degenbot_core::runtime::get_runtime()`) — the `&'static` singleton, no
+//! ad-hoc Builder. **It MUST NOT be called from within any tokio runtime
+//! context** — `block_on` (the shared runtime included) panics there
+//! ("Cannot start a runtime from within a runtime"). The Task 4 `PyO3` seam
+//! (`db_run_pool_update`) is the entry from Python: Python calls it from a
+//! worker thread (NO ambient tokio runtime), so the constraint holds. If
+//! Python ever needs to drive `run_pool_update` from inside an async
+//! context, wrap it in `tokio::task::spawn_blocking`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -212,8 +213,9 @@ pub struct ChunkInputs {
 pub struct VerifyCtx<'a> {
     /// The HTTP RPC provider for on-chain `ticks()`/`tickBitmap()`/`extsload` reads.
     pub provider: &'a AlloyProvider,
-    /// The runtime (built by `run_pool_update`) to `block_on` the async verify.
-    pub rt: &'a tokio::runtime::Runtime,
+    /// The shared process runtime (`degenbot_core::runtime::get_runtime()`) —
+    /// the `&'static` singleton — to `block_on` the async verify.
+    pub rt: &'static tokio::runtime::Runtime,
     /// The block number to read on-chain truth at (= the chunk's `chunk_end`).
     pub block_number: u64,
     /// V4 `pool_hash` hex → the `PoolManager` address (for `extsload`).
@@ -687,8 +689,8 @@ pub enum RunError {
 /// exchange's `last_update_block` to `to_block` (or the chain tip if
 /// `to_block` is `None`).
 ///
-/// See the [module docs](self) for the §1 three invariants + the owned-runtime
-/// constraint (D2: do NOT call from within an existing tokio runtime).
+/// See the [module docs](self) for the §1 three invariants + the shared-runtime
+/// constraint (D2: do NOT call from within any tokio runtime context).
 ///
 /// # Arguments
 ///
@@ -758,12 +760,12 @@ pub fn run_pool_update(
         });
     }
 
-    // Owned tokio runtime (D2). The fetches run on it; the DB writes are
-    // synchronous (off the runtime). MUST NOT be called from within an
-    // existing tokio runtime.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
+    // The SHARED process runtime (D2 — degenbot_core::runtime::get_runtime(),
+    // the `&'static` singleton). The fetches ride it; the DB writes are
+    // synchronous. block_on here is legal on the bare `PyO3` fleet workers +
+    // the CLI main thread (no ambient tokio context); it panics when called
+    // from within any tokio runtime context.
+    let rt = degenbot_core::runtime::get_runtime();
     let provider = rt.block_on(AlloyProvider::new(rpc_url, RPC_MAX_RETRIES))?;
     let provider = Arc::new(provider);
     let fetcher = LogFetcher::new(provider.clone(), chunk_size);
@@ -905,7 +907,7 @@ pub fn run_pool_update(
         let verify_ctx = if verify_chunk {
             Some(VerifyCtx {
                 provider: &provider,
-                rt: &rt,
+                rt,
                 block_number: working_end_block,
                 v4_manager_addresses: &inputs.v4_manager_addresses,
             })
@@ -944,7 +946,7 @@ pub fn run_pool_update(
                     if run_full {
                         let full_ctx = crate::verify::FullVerifyCtx {
                             provider: &provider,
-                            rt: &rt,
+                            rt,
                             block_number: working_end_block,
                             chain_id,
                             pool_manager_chain: inputs.pool_manager_chain,
