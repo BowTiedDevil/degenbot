@@ -182,7 +182,7 @@ def discovery_batch_size() -> int:
     """
 
 def verification_retry_policy_defaults() -> tuple[int, float, float, float]:
-    """The shared core verification-retry policy defaults (6LC4JB).
+    """Return the shared core verification-retry policy defaults (6LC4JB).
 
     Returns ``(max_attempts, base_delay, max_delay, jitter)``, in seconds for
     the float fields, read from ``degenbot_core::retry::RetryPolicy`` — the one

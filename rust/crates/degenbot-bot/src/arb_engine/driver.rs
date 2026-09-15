@@ -766,7 +766,7 @@ impl EngineDriver {
     }
 }
 
-#[expect(clippy::expect_used, clippy::unwrap_used)]
+#[expect(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;

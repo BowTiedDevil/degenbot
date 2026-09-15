@@ -124,6 +124,7 @@ pub fn find_paths_rust(
 ///
 /// Returns `PyValueError` if any pool-kind discriminant is not 0, 1, or 2.
 #[expect(clippy::implicit_hasher)]
+#[expect(clippy::too_many_arguments)] // pyfunction surface mirrors the Python call 1:1
 #[pyfunction]
 #[pyo3(signature = (
     edges,
@@ -164,7 +165,6 @@ pub fn find_paths_async_rust(
 ///
 /// Shared by the sync [`find_paths_rust`] and async [`find_paths_async_rust`]
 /// seams so both validate their arguments identically.
-#[expect(clippy::implicit_hasher)]
 fn build_owned_finder(
     edges: Vec<(u64, u64, u64, u8)>,
     start_token_id: u64,
