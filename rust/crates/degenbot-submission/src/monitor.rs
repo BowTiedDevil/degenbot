@@ -4,8 +4,8 @@
 //!
 //! Port of `examples/eth_backrun_v2_v3_v4_rust.py` `SubmittedTx` (L1617–L1622)
 //! and `monitor_pending_transaction` (L1624–L1652). A typed pending-tx
-//! coordination view with an async loop that polls
-//! `get_transaction_receipt` (≈1s sleep between polls). On receipt
+//! coordination view with an async loop that waits on real head events and
+//! probes `get_transaction_receipt` once per event. On receipt
 //! (`confirmed`) the monitor releases nonce and pools via
 //! [`Dispatcher::release_tx`]; on `blocks_before_nonce_expires` blocks
 //! without inclusion it voids the nonce, releases the pools, and returns
@@ -16,10 +16,15 @@
 //! [`Dispatcher`] (N3 `M756BN`) holds its coordination state behind `&mut
 //! self` methods; the monitor shares it across tokio tasks via the standard
 //! `Arc<Mutex<Dispatcher>>`. The monitor:
-//! - reads `current_block` per-poll via the by-reference clock handle
-//!   [`Dispatcher::current_block_handle`] (extracted once before the loop —
-//!   the `Arc<Mutex<u64>>`, N3 M756BN). This avoids acquiring the outer
-//!   mutex on every poll (matches the Python `current_block_ref[0]`
+//! - waits on the head-event broadcast [`Dispatcher::block_events`] (a
+//!   `tokio::sync::watch<u64>` fed by [`Dispatcher::advance_block`]) so the
+//!   loop is event-driven, not a fixed-interval sleep. The `watch` channel
+//!   never loses a head: a height change between the receipt/expiry checks
+//!   and the `changed().await` is already buffered.
+//! - reads `current_block` after each head event via the by-reference clock
+//!   handle [`Dispatcher::current_block_handle`] (extracted once before the
+//!   loop — the `Arc<Mutex<u64>>`, N3 M756BN). This avoids acquiring the
+//!   outer mutex on every event (matches the Python `current_block_ref[0]`
 //!   read-by-reference pattern).
 //! - locks the outer `Mutex<Dispatcher>` only for the rare `release_tx` on
 //!   confirm/expire. No outer mutex guard is held across an `.await` (the
@@ -36,8 +41,8 @@
 //! core pyo3-free AND decoupled from the heavy RPC stack (ADR-005
 //! standalone-core), this module defines a minimal
 //! [`ReceiptProbe`] trait — the monitor depends on the trait; the concrete
-//! `AlloyProvider` impl lives in `degenbot-rpc` (sibling, CONSUMES the I3
-//! leaf; no hard edge, no new RPC leaf in this task).
+//! impl (`PyReceiptProbe`) lives in `degenbot-python` (`submission/submit.rs`)
+//! and consumes the `AlloyProvider` `get_transaction_receipt` leaf.
 //!
 //! # Parity (ADR-005 §4.1 / §4.2)
 //!
@@ -46,31 +51,31 @@
 //! - expire-after-threshold (void nonce + release pools, return
 //!   `Expired(blocks_waited)`),
 //! - release-on-both-paths (no leaked nonce/pool),
-//! - poll-sleep cadence (≥1 poll per expiry window).
+//! - head-event cadence (one receipt probe per head event, plus the initial
+//!   probe — no fixed-interval timer).
 //!
 //! Behavioral parity vs the Python `monitor_pending_transaction` loop
 //! shapes (the `while True` / `sleep(1)` / `except TransactionNotFound` /
-//! `blocks_waited > BLOCKS_BEFORE_NONCE_EXPIRES` control flow).
+//! `blocks_waited > BLOCKS_BEFORE_NONCE_EXPIRES` control flow). The numeric
+//! policy is IDENTICAL (inclusion = first receipt; expiry =
+//! `blocks_waited > blocks_before_nonce_expires` read from the shared clock);
+//! only the wait mechanism changed — from a 1s timer to the real head event
+//! published by [`Dispatcher::advance_block`].
 
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use alloy::primitives::B256;
 
 use crate::dispatcher::{CommittedTx, Dispatcher, PoolKey};
-use crate::SubmissionResult;
+use crate::{SubmissionError, SubmissionResult};
 
 /// Network constant: a pending tx is voided after this many blocks without
 /// inclusion (matches `BLOCKS_BEFORE_NONCE_EXPIRES = 5` in the Python oracle;
 /// submit reveals `5` for mainnet).
 pub const BLOCKS_BEFORE_NONCE_EXPIRES: u64 = 5;
-
-/// Poll cadence: the monitor sleeps ≈1s between receipt checks (matches the
-/// Python `await asyncio.sleep(1)`).
-pub const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The pending-tx coordination view.
 ///
@@ -183,25 +188,30 @@ pub trait ReceiptProbe: Send + Sync {
 /// Monitor a submitted transaction until it confirms or expires.
 ///
 /// Port of `examples/eth_backrun_v2_v3_v4_rust.py` `monitor_pending_transaction`
-/// (L1624–L1652). Polls [`ReceiptProbe::receipt_found`] every
-/// [`MONITOR_POLL_INTERVAL`] (≈1s); on receipt → release nonce + pools via
-/// [`Dispatcher::release_tx`] + return [`MonitorOutcome::Confirmed`]; on
-/// `blocks_waited > blocks_before_nonce_expires` without inclusion → void
-/// the nonce + release pools + return [`MonitorOutcome::Expired`].
+/// (L1624–L1652). Probes [`ReceiptProbe::receipt_found`] once immediately and
+/// then once per real head event — awaited via [`Dispatcher::block_events`]
+/// (a `tokio::sync::watch<u64>` fed by [`Dispatcher::advance_block`]) — so the
+/// monitor reacts at head granularity, not at a fixed timer interval. On
+/// receipt → release nonce + pools via [`Dispatcher::release_tx`] + return
+/// [`MonitorOutcome::Confirmed`]; on `blocks_waited > blocks_before_nonce_expires`
+/// without inclusion → void the nonce + release pools + return
+/// [`MonitorOutcome::Expired`]. The numeric policy is unchanged.
 ///
-/// Reads the current block per-poll via the by-reference clock handle
-/// [`Dispatcher::current_block_handle`] (the `Arc<Mutex<u64>>` from N3
-/// `M756BN`) — extracted once before the loop — so the per-poll clock read
+/// Reads the current block after each head event via the by-reference clock
+/// handle [`Dispatcher::current_block_handle`] (the `Arc<Mutex<u64>>` from N3
+/// `M756BN`) — extracted once before the loop — so the per-event clock read
 /// does NOT acquire the outer dispatcher mutex (matches the Python
 /// `current_block_ref[0]` read-by-reference pattern). The outer
 /// `Mutex<Dispatcher>` is locked only for the rare `release_tx` on
 /// confirm/expire; no guard is held across an `.await`.
 ///
 /// # Errors
-/// Propagates [`crate::SubmissionError`] only if the receipt probe itself
-/// fails with a non-"not-found" RPC error (the Python oracle's
+/// Propagates [`crate::SubmissionError`] if the receipt probe itself fails
+/// with a non-"not-found" RPC error (the Python oracle's
 /// `get_transaction_receipt` is wrapped only in `except TransactionNotFound`;
-/// other RPC errors propagate as the submission error).
+/// other RPC errors propagate as the submission error), or if the dispatcher
+/// head-event source is dropped while the tx is pending (no further head can
+/// arrive, so the tx can never confirm or expire).
 ///
 /// # Panics
 /// Panics if either the dispatcher or the by-reference block-clock mutex
@@ -220,9 +230,11 @@ pub async fn monitor_pending_transaction(
     dispatcher: &Mutex<Dispatcher>,
     blocks_before_nonce_expires: u64,
 ) -> SubmissionResult<MonitorOutcome> {
-    // Extract the by-reference block clock handle ONCE (before the loop) so
-    // the per-poll `current_block` read avoids acquiring the outer dispatcher
-    // mutex (the handle is the inner `Arc<Mutex<u64>>`, M756BN).
+    // Extract the by-reference block clock handle + the head-event receiver
+    // ONCE (before the loop) so the per-event `current_block` read avoids
+    // acquiring the outer dispatcher mutex (the handle is the inner
+    // `Arc<Mutex<u64>>`, M756BN) and the receiver is registered before the
+    // first probe (no head event can slip between subscription and the loop).
     // RMHQAR (epic 2LXPPV): OTel tier-1 - one Jaeger node per awaited receipt
     // (degenbot.bundle.monitor); parents under the block/solve spans when
     // pump-driven. Inert without a subscriber.
@@ -236,15 +248,16 @@ pub async fn monitor_pending_transaction(
     );
     let _guard = span.enter();
     #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
-    let block_ref = dispatcher
-        .lock()
-        .expect("dispatcher mutex poisoned")
-        .current_block_handle();
+    let (block_ref, mut block_events) = {
+        let dispatcher = dispatcher.lock().expect("dispatcher mutex poisoned");
+        (dispatcher.current_block_handle(), dispatcher.block_events())
+    };
     let committed = tx.to_committed();
 
     loop {
-        tokio::time::sleep(MONITOR_POLL_INTERVAL).await;
-
+        // Receipt check: once immediately, then once per head event. The
+        // monitor is woken by `advance_block`, never by a fixed-interval
+        // timer.
         let found = match probe.receipt_found(tx.tx_hash).await {
             Ok(found) => found,
             Err(e) => {
@@ -269,7 +282,7 @@ pub async fn monitor_pending_transaction(
                 confirmed_at_block: confirmed_at,
             });
         }
-        // not yet included → check the expiry window.
+        // not yet included → check the expiry window against the shared clock.
         #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
         let current_block = *block_ref.lock().expect("current_block mutex poisoned");
         let blocks_waited = current_block.saturating_sub(tx.submission_block);
@@ -285,7 +298,25 @@ pub async fn monitor_pending_transaction(
             }
             return Ok(MonitorOutcome::Expired { blocks_waited });
         }
-        // else: keep polling.
+        // Neither included nor expired → park until the next head event. The
+        // `watch` receiver buffers the latest height, so a head that advanced
+        // while the checks above ran already resolves `changed()`.
+        if block_events.changed().await.is_err() {
+            // The head source is gone: no further event can arrive, so the tx
+            // can never confirm or expire. Release the nonce + pools and
+            // surface the broken coordination state rather than park forever.
+            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+            {
+                dispatcher
+                    .lock()
+                    .expect("dispatcher mutex poisoned")
+                    .release_tx(&committed);
+            }
+            span.record("monitor.result", "dispatcher_gone");
+            return Err(SubmissionError::MonitorProbe(
+                "dispatcher dropped while monitoring pending tx".to_string(),
+            ));
+        }
     }
 }
 
@@ -307,7 +338,7 @@ pub async fn monitor_pending_transaction_default(
     monitor_pending_transaction(tx, probe, dispatcher, BLOCKS_BEFORE_NONCE_EXPIRES).await
 }
 
-#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[expect(clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,31 +346,87 @@ mod tests {
     use proptest::prelude::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
-    /// A controllable mock probe: returns `true` (confirmed) once
-    /// `confirm_after_polls` polls have elapsed, then stays confirmed.
-    struct MockProbe {
-        confirm_after_polls: u64,
-        poll_count: AtomicU64,
+    /// A deterministic head-event-driven mock probe.
+    ///
+    /// Each call is one monitor receipt probe. While the tx is pending
+    /// (call # < `confirm_at`) the probe advances the shared block clock by
+    /// one block via [`Dispatcher::advance_block`] — which publishes the head
+    /// event that wakes the monitor — and returns `false`. On the confirming
+    /// call it returns `true` without advancing. `confirm_at == u64::MAX`
+    /// never confirms (and advances on every call).
+    struct StepProbe {
+        dispatcher: Arc<Mutex<Dispatcher>>,
+        confirm_at: u64,
+        calls: AtomicU64,
     }
 
-    impl MockProbe {
-        fn new(confirm_after_polls: u64) -> Self {
+    impl StepProbe {
+        fn new(dispatcher: Arc<Mutex<Dispatcher>>, confirm_at: u64) -> Self {
             Self {
-                confirm_after_polls,
-                poll_count: AtomicU64::new(0),
+                dispatcher,
+                confirm_at,
+                calls: AtomicU64::new(0),
             }
+        }
+
+        fn calls(&self) -> u64 {
+            self.calls.load(Ordering::SeqCst)
         }
     }
 
-    impl ReceiptProbe for MockProbe {
+    impl ReceiptProbe for StepProbe {
         fn receipt_found(
             &self,
             _tx_hash: B256,
         ) -> Pin<Box<dyn Future<Output = SubmissionResult<bool>> + Send + '_>> {
             Box::pin(async move {
-                let n = self.poll_count.fetch_add(1, Ordering::SeqCst);
-                Ok(n + 1 >= self.confirm_after_polls)
+                let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+                if self.confirm_at != u64::MAX && n >= self.confirm_at {
+                    return Ok(true);
+                }
+                // Still pending: emulate the chain reaching the next head.
+                // `advance_block` publishes the event that wakes the monitor.
+                let dispatcher = self.dispatcher.lock().unwrap();
+                let next = dispatcher.current_block() + 1;
+                dispatcher.advance_block(next);
+                Ok(false)
+            })
+        }
+    }
+
+    /// A probe that confirms once the shared clock reaches `confirm_at_block`
+    /// (i.e. after a real head event), with no timer involvement.
+    struct ClockProbe {
+        dispatcher: Arc<Mutex<Dispatcher>>,
+        confirm_at_block: u64,
+        calls: AtomicU64,
+    }
+
+    impl ClockProbe {
+        fn new(dispatcher: Arc<Mutex<Dispatcher>>, confirm_at_block: u64) -> Self {
+            Self {
+                dispatcher,
+                confirm_at_block,
+                calls: AtomicU64::new(0),
+            }
+        }
+
+        fn calls(&self) -> u64 {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl ReceiptProbe for ClockProbe {
+        fn receipt_found(
+            &self,
+            _tx_hash: B256,
+        ) -> Pin<Box<dyn Future<Output = SubmissionResult<bool>> + Send + '_>> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let block = self.dispatcher.lock().unwrap().current_block();
+                Ok(block >= self.confirm_at_block)
             })
         }
     }
@@ -355,6 +442,15 @@ mod tests {
         )
     }
 
+    fn sample_tx_variant(nonce: u64, pool: &str, submission_block: u64) -> SubmittedTx {
+        SubmittedTx::new(
+            B256::ZERO,
+            nonce,
+            [PoolKey::new(pool)].into_iter().collect(),
+            submission_block,
+        )
+    }
+
     /// Pre-reserve the tx's nonce + pools (mirrors what the N6 submit
     /// orchestration does before spawning the monitor).
     fn reserve_tx_state(dispatcher: &mut Dispatcher, tx: &SubmittedTx) {
@@ -363,14 +459,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn confirm_on_first_poll_releases_nonce_and_pools() {
+    async fn confirm_on_first_probe_releases_nonce_and_pools() {
         let mut dispatcher = Dispatcher::for_block(100);
         let tx = sample_tx(100);
         reserve_tx_state(&mut dispatcher, &tx);
         assert!(dispatcher.is_pool_pending(&PoolKey::new("poolA")));
-        let dispatcher = Mutex::new(dispatcher);
+        let dispatcher = Arc::new(Mutex::new(dispatcher));
 
-        let probe = MockProbe::new(1); // confirmed on poll #1
+        let probe = StepProbe::new(Arc::clone(&dispatcher), 1); // confirms on probe #1
         let outcome = monitor(tx, &probe, &dispatcher, BLOCKS_BEFORE_NONCE_EXPIRES)
             .await
             .unwrap();
@@ -381,6 +477,7 @@ mod tests {
                 confirmed_at_block: 100
             }
         );
+        assert_eq!(probe.calls(), 1);
         assert_eq!(dispatcher.lock().unwrap().pending_nonce_count(), 0);
         assert!(!dispatcher
             .lock()
@@ -393,17 +490,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn confirm_on_later_poll_releases() {
+    async fn confirm_on_later_head_event_releases() {
         let mut dispatcher = Dispatcher::for_block(100);
         let tx = sample_tx(100);
         reserve_tx_state(&mut dispatcher, &tx);
-        let dispatcher = Mutex::new(dispatcher);
+        let dispatcher = Arc::new(Mutex::new(dispatcher));
 
-        let probe = MockProbe::new(3); // confirmed on poll #3
+        let probe = StepProbe::new(Arc::clone(&dispatcher), 3); // confirms on probe #3
         let outcome = monitor(tx, &probe, &dispatcher, BLOCKS_BEFORE_NONCE_EXPIRES)
             .await
             .unwrap();
         assert!(matches!(outcome, MonitorOutcome::Confirmed { .. }));
+        assert_eq!(probe.calls(), 3);
         assert_eq!(dispatcher.lock().unwrap().pending_nonce_count(), 0);
         assert!(!dispatcher
             .lock()
@@ -413,22 +511,19 @@ mod tests {
 
     #[tokio::test]
     async fn expire_after_threshold_voids_nonce_and_releases_pools() {
-        // dispatcher clock advances past the expiry window while polling.
-        let dispatcher = Dispatcher::for_block(100);
-        let dispatcher = Arc::new(Mutex::new(dispatcher));
+        // The chain advances one block per head event; the tx never confirms.
+        let mut dispatcher = Dispatcher::for_block(100);
         let tx = sample_tx(100);
-        {
-            let mut g = dispatcher.lock().unwrap();
-            reserve_tx_state(&mut g, &tx);
-        }
-        // never-confirm probe that bumps the shared block clock +1 per poll
-        let probe = NeverConfirmProbe::new(dispatcher.lock().unwrap().current_block_handle(), 100);
+        reserve_tx_state(&mut dispatcher, &tx);
+        let dispatcher = Arc::new(Mutex::new(dispatcher));
+        let probe = StepProbe::new(Arc::clone(&dispatcher), u64::MAX);
+
         let outcome = monitor(tx, &probe, &dispatcher, BLOCKS_BEFORE_NONCE_EXPIRES)
             .await
             .unwrap();
 
-        // expiry: blocks_waited > 5. Clock started at 100; submission_block 100;
-        // each poll bumps +1 → blocks_waited=1..6>5 on poll #6.
+        // expiry: blocks_waited > 5. Clock starts at 100; submission_block 100;
+        // one +1 advance per probe → blocks_waited=1..6>5 on probe #6.
         match outcome {
             MonitorOutcome::Expired { blocks_waited } => {
                 assert!(blocks_waited > BLOCKS_BEFORE_NONCE_EXPIRES);
@@ -447,50 +542,18 @@ mod tests {
             .is_pool_pending(&PoolKey::new("poolB")));
     }
 
-    /// A probe that never confirms and bumps the shared block clock per poll
-    /// (simulates the chain advancing while the tx stays pending).
-    struct NeverConfirmProbe {
-        handle: Arc<Mutex<u64>>,
-        start_block: u64,
-        poll_count: AtomicU64,
-    }
-
-    impl NeverConfirmProbe {
-        fn new(handle: Arc<Mutex<u64>>, start_block: u64) -> Self {
-            Self {
-                handle,
-                start_block,
-                poll_count: AtomicU64::new(0),
-            }
-        }
-    }
-
-    impl ReceiptProbe for NeverConfirmProbe {
-        fn receipt_found(
-            &self,
-            _tx_hash: B256,
-        ) -> Pin<Box<dyn Future<Output = SubmissionResult<bool>> + Send + '_>> {
-            Box::pin(async move {
-                let n = self.poll_count.fetch_add(1, Ordering::SeqCst);
-                *self.handle.lock().unwrap() = self.start_block + n + 1;
-                Ok(false)
-            })
-        }
-    }
-
     #[tokio::test]
     async fn release_on_both_paths_no_leak() {
         // Regression: neither path may leak a nonce or pool. Both Confirmed
         // and Expired must call release_tx exactly once.
-        // (polls_to_confirm, expect_confirm)
+        // (confirm_at, expect_confirm)
         let cases = [(1u64, true), (u64::MAX, false)];
-        for (polls, expect_confirm) in cases {
+        for (confirm_at, expect_confirm) in cases {
             let mut dispatcher = Dispatcher::for_block(100);
             let tx = sample_tx_variant(7, "pX", 100);
             reserve_tx_state(&mut dispatcher, &tx);
-            let handle = dispatcher.current_block_handle();
             let dispatcher = Arc::new(Mutex::new(dispatcher));
-            let probe = LifecycleProbe::new(handle, 100, polls);
+            let probe = StepProbe::new(Arc::clone(&dispatcher), confirm_at);
             let outcome = monitor(tx, &probe, &dispatcher, BLOCKS_BEFORE_NONCE_EXPIRES)
                 .await
                 .unwrap();
@@ -510,102 +573,64 @@ mod tests {
         }
     }
 
+    // ── head-event behaviour (replaces the old poll-sleep cadence test) ──
+
+    /// Inclusion is gated on a real head event, not a timer: with the tx
+    /// pending and no head event emitted, the monitor stays parked no matter
+    /// how much wall-clock time elapses; a single `advance_block` (the head
+    /// event) wakes it and resolves `Confirmed`.
     #[tokio::test]
-    async fn poll_sleep_cadence_at_least_one_poll_per_expiry_window() {
-        let dispatcher = Dispatcher::for_block(100);
-        let handle = dispatcher.current_block_handle();
+    async fn inclusion_resolves_on_head_event_not_timer() {
+        let mut dispatcher = Dispatcher::for_block(100);
+        let tx = sample_tx_variant(0xEE, "eventPool", 100);
+        reserve_tx_state(&mut dispatcher, &tx);
         let dispatcher = Arc::new(Mutex::new(dispatcher));
-        let tx = sample_tx_variant(1, "pZ", 100);
-        {
-            let mut g = dispatcher.lock().unwrap();
-            reserve_tx_state(&mut g, &tx);
-        }
-        let probe = CountingNeverConfirm::new(handle, 100);
-        let _ = monitor(tx, &probe, &dispatcher, 2).await.unwrap();
-        // with threshold 2, expiry at blocks_waited>2 → polls=3 (bumps 1,2,3)
-        assert!(probe.polls() >= 1);
-    }
 
-    struct CountingNeverConfirm {
-        handle: Arc<Mutex<u64>>,
-        start: u64,
-        polls: AtomicU64,
-    }
-    impl CountingNeverConfirm {
-        fn new(handle: Arc<Mutex<u64>>, start: u64) -> Self {
-            Self {
-                handle,
-                start,
-                polls: AtomicU64::new(0),
+        // Confirms only once the shared clock reaches 101 (i.e. after a head
+        // event). The initial probe sees 100 → false, so it parks.
+        let probe = ClockProbe::new(Arc::clone(&dispatcher), 101);
+        let mut fut = Box::pin(monitor_pending_transaction(
+            tx,
+            &probe,
+            &dispatcher,
+            BLOCKS_BEFORE_NONCE_EXPIRES,
+        ));
+
+        // No head event yet: real wall-clock time elapses and the monitor
+        // still parks — there is no sleep-poll driving it.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut fut)
+                .await
+                .is_err(),
+            "monitor resolved without a head event"
+        );
+        assert_eq!(probe.calls(), 1, "only the initial probe ran");
+
+        // Emit exactly one head event.
+        dispatcher.lock().unwrap().advance_block(101);
+
+        let outcome = fut.await.unwrap();
+        assert_eq!(
+            outcome,
+            MonitorOutcome::Confirmed {
+                confirmed_at_block: 101
             }
-        }
-        fn polls(&self) -> u64 {
-            self.polls.load(Ordering::SeqCst)
-        }
-    }
-    impl ReceiptProbe for CountingNeverConfirm {
-        fn receipt_found(
-            &self,
-            _tx_hash: B256,
-        ) -> Pin<Box<dyn Future<Output = SubmissionResult<bool>> + Send + '_>> {
-            Box::pin(async move {
-                let n = self.polls.fetch_add(1, Ordering::SeqCst);
-                *self.handle.lock().unwrap() = self.start + n + 1;
-                Ok(false)
-            })
-        }
-    }
-
-    fn sample_tx_variant(nonce: u64, pool: &str, submission_block: u64) -> SubmittedTx {
-        SubmittedTx::new(
-            B256::ZERO,
-            nonce,
-            [PoolKey::new(pool)].into_iter().collect(),
-            submission_block,
-        )
-    }
-
-    /// Lifecycle probe: bumps the shared block clock +1 per poll; confirms
-    /// (`true`) once `confirm_at` polls have elapsed (never confirms if
-    /// `confirm_at == u64::MAX`).
-    struct LifecycleProbe {
-        handle: Arc<Mutex<u64>>,
-        start: u64,
-        confirm_at: u64,
-        polls: AtomicU64,
-    }
-    impl LifecycleProbe {
-        fn new(handle: Arc<Mutex<u64>>, start: u64, confirm_at: u64) -> Self {
-            Self {
-                handle,
-                start,
-                confirm_at,
-                polls: AtomicU64::new(0),
-            }
-        }
-    }
-    impl ReceiptProbe for LifecycleProbe {
-        fn receipt_found(
-            &self,
-            _tx_hash: B256,
-        ) -> Pin<Box<dyn Future<Output = SubmissionResult<bool>> + Send + '_>> {
-            Box::pin(async move {
-                let n = self.polls.fetch_add(1, Ordering::SeqCst);
-                *self.handle.lock().unwrap() = self.start + n + 1;
-                // confirm once n+1 reaches confirm_at (1-indexed poll count);
-                // never-confirm when confirm_at is u64::MAX
-                Ok(n + 1 >= self.confirm_at && self.confirm_at != u64::MAX)
-            })
-        }
+        );
+        assert_eq!(probe.calls(), 2, "one receipt probe per head event");
+        assert_eq!(dispatcher.lock().unwrap().pending_nonce_count(), 0);
+        assert!(!dispatcher
+            .lock()
+            .unwrap()
+            .is_pool_pending(&PoolKey::new("eventPool")));
     }
 
     // ── proptest: lifecycle state machine ────────────────────────────────
 
     proptest! {
-        /// For any threshold T in 1..30 and a probe that confirms after exactly
-        /// `confirm_at` polls (1..40), the outcome is Confirmed iff the confirm
-        /// poll wins the race against the expiry poll; either way the nonce +
-        /// pool are released exactly once (no leak).
+        /// For any threshold T in 1..30 and a probe that confirms on call
+        /// `confirm_at` (1..40), the outcome is Confirmed iff the confirm call
+        /// wins the race against the expiry call; either way the nonce + pool
+        /// are released exactly once (no leak).
         #[test]
         fn prop_lifecycle_state_machine(
             threshold in 1u64..30,
@@ -616,32 +641,28 @@ mod tests {
                 let mut dispatcher = Dispatcher::for_block(1000);
                 let tx = sample_tx_variant(5, "pP", 1000);
                 reserve_tx_state(&mut dispatcher, &tx);
-                let handle = dispatcher.current_block_handle();
                 let dispatcher = Arc::new(Mutex::new(dispatcher));
-                let probe = LifecycleProbe::new(handle, 1000, confirm_at);
+                let probe = StepProbe::new(Arc::clone(&dispatcher), confirm_at);
                 monitor(tx, &probe, &dispatcher, threshold).await.unwrap()
             });
 
-            // Monitor expires when blocks_waited > threshold. With +1/poll,
-            // poll k advances the clock to start+k, so blocks_waited(k)=k.
-            // Expiry first happens on poll k = threshold+1 (blocks_waited =
-            // threshold+1 > threshold). Confirm happens on poll k =
-            // confirm_at. Whichever is smaller wins; a tie (k equal) goes to
-            // confirm (the confirm branch returns first within the same poll
-            // since receipt_found is checked before the expiry gate).
-            let expiry_poll = threshold + 1;
-            let expected_confirm = confirm_at <= expiry_poll;
+            // StepProbe advances +1/block per pending probe, so on probe #k
+            // either the confirm returns true (before any advance) or the
+            // monitor reads blocks_waited = k. Expiry first happens on probe
+            // #(threshold+1); the receipt gate is evaluated before the expiry
+            // gate, so a tie on that probe goes to confirm.
+            let expiry_call = threshold + 1;
+            let expected_confirm = confirm_at <= expiry_call;
             prop_assert_eq!(
                 outcome.is_confirmed(),
                 expected_confirm,
-                "confirm_at={} threshold={} expiry_poll={} outcome={:?}",
-                confirm_at, threshold, expiry_poll, outcome,
+                "confirm_at={} threshold={} expiry_call={} outcome={:?}",
+                confirm_at, threshold, expiry_call, outcome,
             );
-            // no leak on either path is covered by release_on_both_paths_no_leak
         }
 
         /// A never-confirm probe always expires; `blocks_waited` strictly
-        /// exceeds the threshold and equals `threshold + 1` (the first expiry poll).
+        /// exceeds the threshold and equals `threshold + 1`.
         #[test]
         fn prop_outcome_expired_never_confirm(
             threshold in 1u64..30,
@@ -651,9 +672,8 @@ mod tests {
                 let mut dispatcher = Dispatcher::for_block(0);
                 let tx = sample_tx_variant(9, "pY", 0);
                 reserve_tx_state(&mut dispatcher, &tx);
-                let handle = dispatcher.current_block_handle();
                 let dispatcher = Arc::new(Mutex::new(dispatcher));
-                let probe = LifecycleProbe::new(handle, 0, u64::MAX);
+                let probe = StepProbe::new(Arc::clone(&dispatcher), u64::MAX);
                 monitor(tx, &probe, &dispatcher, threshold).await.unwrap()
             });
             match outcome {
@@ -687,45 +707,22 @@ mod tests {
 
     // ── helpers ───────────────────────────────────────────────────────────
 
-    /// Test-local monitor with a sub-second poll interval (the production
-    /// `MONITOR_POLL_INTERVAL` is 1s; tests use 1ms).
+    /// Test alias for the production monitor (no timer): the loop is driven
+    /// by the head events the probes publish via `Dispatcher::advance_block`.
     fn monitor<'a>(
         tx: SubmittedTx,
         probe: &'a impl ReceiptProbe,
         dispatcher: &'a Mutex<Dispatcher>,
         blocks_before_nonce_expires: u64,
     ) -> Pin<Box<dyn Future<Output = SubmissionResult<MonitorOutcome>> + Send + 'a>> {
-        const TEST_POLL: Duration = Duration::from_millis(1);
-        Box::pin(async move {
-            let block_ref = dispatcher
-                .lock()
-                .expect("dispatcher mutex poisoned")
-                .current_block_handle();
-            let committed = tx.to_committed();
-            loop {
-                tokio::time::sleep(TEST_POLL).await;
-                if probe.receipt_found(tx.tx_hash).await? {
-                    let confirmed_at = *block_ref.lock().expect("current_block mutex poisoned");
-                    dispatcher
-                        .lock()
-                        .expect("dispatcher mutex poisoned")
-                        .release_tx(&committed);
-                    return Ok(MonitorOutcome::Confirmed {
-                        confirmed_at_block: confirmed_at,
-                    });
-                }
-                let current_block = *block_ref.lock().expect("current_block mutex poisoned");
-                let blocks_waited = current_block.saturating_sub(tx.submission_block);
-                if blocks_waited > blocks_before_nonce_expires {
-                    dispatcher
-                        .lock()
-                        .expect("dispatcher mutex poisoned")
-                        .release_tx(&committed);
-                    return Ok(MonitorOutcome::Expired { blocks_waited });
-                }
-            }
-        })
+        Box::pin(monitor_pending_transaction(
+            tx,
+            probe,
+            dispatcher,
+            blocks_before_nonce_expires,
+        ))
     }
+
     /// RMHQAR (epic 2LXPPV): the monitor span records "monitor.result" on every
     /// terminal path. Unique nonces filter this test's spans from the shared global
     /// capture (MQUKB6 unique-identifier rule).
@@ -735,27 +732,26 @@ mod tests {
         const EXPIRE_NONCE: u64 = 0xC0FF_EE02;
         let cap = crate::span_capture::global();
 
-        // Confirmed path: MockProbe confirms on poll #1 (production poll
-        // interval is 1s - one production poll for a single-second test).
+        // Confirmed path: StepProbe confirms on probe #1 (no head event
+        // needed — inclusion is observed by the initial probe).
         let mut dispatcher = Dispatcher::for_block(100);
         let tx = sample_tx_variant(CONFIRM_NONCE, "capPoolA", 100);
         reserve_tx_state(&mut dispatcher, &tx);
         let dispatcher = Arc::new(Mutex::new(dispatcher));
-        let probe = MockProbe::new(1);
+        let probe = StepProbe::new(Arc::clone(&dispatcher), 1);
         let outcome =
             monitor_pending_transaction(tx, &probe, &dispatcher, BLOCKS_BEFORE_NONCE_EXPIRES)
                 .await
                 .unwrap();
         assert!(outcome.is_confirmed());
 
-        // Expired path: NeverConfirmProbe advances the clock past threshold
-        // 1 (two production polls, ~2s).
+        // Expired path: never-confirm; each pending probe publishes a head
+        // event and advances the clock. Threshold 1 → expiry on probe #2.
         let mut dispatcher = Dispatcher::for_block(100);
         let tx = sample_tx_variant(EXPIRE_NONCE, "capPoolB", 100);
         reserve_tx_state(&mut dispatcher, &tx);
-        let handle = dispatcher.current_block_handle();
         let dispatcher = Arc::new(Mutex::new(dispatcher));
-        let probe = NeverConfirmProbe::new(handle, 100);
+        let probe = StepProbe::new(Arc::clone(&dispatcher), u64::MAX);
         let outcome = monitor_pending_transaction(tx, &probe, &dispatcher, 1)
             .await
             .unwrap();

@@ -36,6 +36,7 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 /// Maximum number of per-block priority-fee percentile samples retained in
@@ -260,6 +261,12 @@ pub struct Dispatcher {
     /// list[int]` so monitor tasks read the current block across the
     /// consumer/monitor boundary without a per-access Python lock.
     current_block: Arc<Mutex<u64>>,
+    /// Head-event broadcast: `advance_block` publishes the new height so
+    /// monitor tasks wait for the next real head instead of a fixed-interval
+    /// sleep. `watch` (not `Notify`) so a height change between a monitor's
+    /// check and its `changed().await` is never lost and a late subscriber can
+    /// read the current height.
+    block_events: watch::Sender<u64>,
     /// Ring buffer of per-block `(block, timestamp)` samples (oldest dropped
     /// on overflow — `deque(maxlen=60)` parity).
     block_times: VecDeque<(u64, u64)>,
@@ -276,6 +283,7 @@ impl Default for Dispatcher {
             pending_pools: HashSet::new(),
             active_tasks: JoinSet::new(),
             current_block: Arc::new(Mutex::new(0)),
+            block_events: watch::channel(0).0,
             block_times: VecDeque::with_capacity(BLOCK_TIMES_WINDOW),
             block_priority_fees: BTreeMap::new(),
         }
@@ -290,6 +298,7 @@ impl Dispatcher {
     pub fn for_block(current_block: u64) -> Self {
         Self {
             current_block: Arc::new(Mutex::new(current_block)),
+            block_events: watch::channel(current_block).0,
             ..Self::default()
         }
     }
@@ -426,6 +435,19 @@ impl Dispatcher {
             .lock()
             .expect("current_block mutex poisoned");
         *guard = block;
+        drop(guard);
+        // Publish the head event. Monitor tasks await this instead of a
+        // fixed-interval timer; no-op when nothing is subscribed.
+        self.block_events.send_replace(block);
+    }
+
+    /// Subscribe to block-height events: one notification per
+    /// [`Self::advance_block`]. Monitor tasks await the next event and
+    /// re-evaluate receipt/expiry at head granularity instead of a fixed
+    /// interval. The receiver's value tracks the latest published height.
+    #[must_use]
+    pub fn block_events(&self) -> watch::Receiver<u64> {
+        self.block_events.subscribe()
     }
 
     /// Get a clone of the by-reference block handle (so monitor tasks can
@@ -690,6 +712,19 @@ mod tests {
         // monitor-task simulation: read via the cloned handle
         assert_eq!(*handle.lock().unwrap(), 100);
         assert_eq!(d.current_block(), 100);
+    }
+
+    #[tokio::test]
+    async fn advance_block_broadcasts_head_event() {
+        let d = Dispatcher::for_block(100);
+        let mut rx = d.block_events();
+        // A late subscriber reads the seeded height without an event.
+        assert_eq!(*rx.borrow(), 100);
+        d.advance_block(101);
+        // The published height resolves `changed()` immediately.
+        rx.changed().await.unwrap();
+        assert_eq!(*rx.borrow_and_update(), 101);
+        assert_eq!(d.current_block(), 101);
     }
 
     #[test]
