@@ -1,9 +1,6 @@
 """Infrastructure and token exceptions.
 
 Includes exceptions for:
-- RPC connections (DegenbotConnectionError, ConnectionTimeout, ...)
-- Data fetching (FetchingError, BlockFetchingTimeout)
-- Registry operations (RegistryError, RegistryAlreadyInitialized)
 - Database operations (BackupExists)
 - Anvil fork operations (AnvilError)
 - ERC-20 token operations (Erc20TokenError, NoPriceOracle)
@@ -12,72 +9,6 @@ Includes exceptions for:
 import pathlib
 
 from degenbot.exceptions.base import DegenbotError
-
-# --- Connections ---
-
-
-class DegenbotConnectionError(DegenbotError):
-    """Base exception for connection-related errors."""
-
-
-class ConnectionTimeout(DegenbotConnectionError):
-    """Raised when a connection attempt times out."""
-
-    def __init__(self, resource: str, timeout_seconds: int | None = None) -> None:
-        """Initialize the instance."""
-        self.resource = resource
-        self.timeout_seconds = timeout_seconds
-
-        message = f"Timed out waiting for {resource} connection"
-        if timeout_seconds is not None:
-            message += f" after {timeout_seconds} seconds"
-        message += "."
-
-        super().__init__(message=message)
-
-
-class IPCSocketTimeout(ConnectionTimeout):
-    """Raised when an IPC socket creation times out."""
-
-    def __init__(self, timeout_seconds: int | None = None) -> None:
-        """Initialize the instance."""
-        super().__init__(resource="IPC socket", timeout_seconds=timeout_seconds)
-
-
-class Web3ConnectionTimeout(ConnectionTimeout):
-    """Raised when a Web3 connection times out."""
-
-    def __init__(self, timeout_seconds: int | None = None) -> None:
-        """Initialize the instance."""
-        super().__init__(resource="Web3", timeout_seconds=timeout_seconds)
-
-
-# --- Data Fetching ---
-
-
-class FetchingError(DegenbotError):
-    """Base exception for data fetching errors."""
-
-
-class BlockFetchingTimeout(FetchingError):
-    """Raised when block data fetching operations timeout."""
-
-    def __init__(self, max_retries: int) -> None:
-        """Initialize the instance."""
-        self.max_retries = max_retries
-        super().__init__(message=f"Timed out fetching block data after {max_retries} tries.")
-
-
-# --- Registries ---
-
-
-class RegistryError(DegenbotError):
-    """Exception raised inside registries."""
-
-
-class RegistryAlreadyInitialized(RegistryError):
-    """Raised by a singleton registry if a caller attempts to recreate it."""
-
 
 # --- Database ---
 
