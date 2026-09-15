@@ -1,5 +1,4 @@
-//! Driver-side dispatch policy — parity-ledger row 15 (ergo `L4E7RI`,
-//! Gap G4).
+//! Driver-side dispatch policy — parity-ledger row 15 (Gap G4).
 //!
 //! Mirrors `src/degenbot/runner/_dispatch.py` at the *driver* boundary: shape
 //! a `ResultBatch`'s raw engine rows into `DispatchCandidate`s, apply the

@@ -15,12 +15,12 @@
 //! applies cleanly in the intended direction: removing the whole seam means
 //! deleting this one module — not surgically carving interleaved `[DIAG]`
 //! sites out of the decision loop. The env-gated solver-state diagnostics
-//! retired separately under `ergo VSDZ4X` (closed done 2026-09-10): the
+//! retired separately: the
 //! solve-anchor probe was deleted; the dispatch trace was superseded by
 //! always-on WARN/DEBUG telemetry in `log_dispatcher.rs`.
 //!
 //! Psst — naming: this seals the *block-pump* telemetry. The ADR-021
-//! solver-state tripwire retired with epic MROOY7 task 2UVG3E (its upstream
+//! solver-state tripwire is retired (its upstream
 //! RPC-disagreement check lives in `block_pump::assert_ws_block_complete`,
 //! driven by `CompletenessDecision::Verify`), and is not part of the pump's
 //! hot loop.

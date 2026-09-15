@@ -362,10 +362,10 @@ impl BotState {
     ///
     /// `update_block` is a last-activity clock, NOT a staleness signal: a pool
     /// that last mutated N blocks ago is quiet (its stored state is byte-
-    /// identical to on-chain), not stale. The former TQ43TU solve-time staleness
-    /// gate (ergo YXHHKR, resolved QNFYR5) mis-used it to defer quiet paths and
-    /// was REMOVED. The ADR-021 chain-vs-solver tripwire retiree (task 2UVG3E,
-    /// epic MROOY7): in-process chain-vs-solver-state verification is retired
+    /// identical to on-chain), not stale. The former solve-time staleness
+    /// gate mis-used it to defer quiet paths and
+    /// was REMOVED. The ADR-021 chain-vs-solver tripwire retiree:
+    /// in-process chain-vs-solver-state verification is retired
     /// with the stage-separated data plane — desync the plane excludes is
     /// unrepresentable — so `update_block` stays a pure bookkeeping clock
     /// (used by the Q1a merge staleness oracle and the epoch delta). Upstream

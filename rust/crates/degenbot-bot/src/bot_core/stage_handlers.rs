@@ -142,7 +142,7 @@ pub const fn legal_successors(previous: Option<Stage>) -> &'static [Stage] {
 // Opaque delta handle
 // ----------------------------------------------------------------------
 
-// LXDY4C cutover (task 2UVG3E data-plane pass): the module-local placeholder
+// The module-local placeholder
 // is unified onto the REAL per-epoch dirty ledger (crate::bot_core::epoch_delta,
 // the type Bot mints at dispatch time) — the StageHandlers signatures are
 // unchanged, which is the point: dirty-tracking details cannot fork the
@@ -472,7 +472,7 @@ impl std::error::Error for DoubleRewind {}
 /// `DrainSink`/`Engine` dual seam): the per-stage hook set the runtime
 /// drives, in stage-table order, for every block epoch.
 ///
-/// Implementors: the arb engine (stage-machine task 7NFYQW) and — in this
+/// Implementors: the arb engine and — in this
 /// file's test build — the `NoopStubEngine` conformance stub, which keeps
 /// the trait honest from day one. There is no registry and no runtime
 /// selection: a future second engine implements this trait or there is no
@@ -1630,7 +1630,7 @@ mod conformance {
 }
 
 // ======================================================================
-// ergo 2KQZSC — RED pins for the candidate-2 stage-seam contract.
+// Pins for the candidate-2 stage-seam contract.
 // Written against the TARGET contract; production code is NOT changed.
 // ======================================================================
 #[cfg(test)]

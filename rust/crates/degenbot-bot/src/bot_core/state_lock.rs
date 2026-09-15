@@ -1,5 +1,5 @@
 //! Diagnostic wrapper around the shared `parking_lot::RwLock` that guards
-//! `BotState` (ergo Z4Z6VO, incident 2026-08-21).
+//! `BotState` (incident 2026-08-21).
 //!
 //! ## Why this exists
 //!

@@ -984,7 +984,7 @@ fn pump_for_test_with_asserter(
 }
 
 // ==================================================================
-// ergo 2KQZSC — RED pins for the candidate-2 stage-seam contract.
+// Pins for the candidate-2 stage-seam contract.
 // These tests target the post-cutover contract; production code is
 // NOT changed here. They are intentionally red until the cutover.
 // ==================================================================

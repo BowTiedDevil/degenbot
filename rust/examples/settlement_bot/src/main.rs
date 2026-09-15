@@ -514,8 +514,8 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("16-sim-fanout-submitter", "DRIVER-POLICY", "sim_submit.rs: tokio Semaphore(max_simulate_concurrent) + single ordered FIFO submitter; consume.rs consumes the EngineDriver result stream (row 7); no core lift"),
         ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
         ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
-        ("19-session-watch", "DRIVER-POLICY", "session_watch.rs: typed SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} + Heartbeat/stall_watchdog observing the live consume loop (watch-as-observer, no core lift) — ergo KPLWUM"),
-        ("20-operator-channel", "DRIVER-POLICY", "operator_channel.rs: tokio UnixListener JSON-lines add_path/discover/set+get_fleet_posture; fleet posture through degenbot::workers::posture::process (reachable via the umbrella) — ergo KPLWUM"),
+        ("19-session-watch", "DRIVER-POLICY", "session_watch.rs: typed SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} + Heartbeat/stall_watchdog observing the live consume loop (watch-as-observer, no core lift)"),
+        ("20-operator-channel", "DRIVER-POLICY", "operator_channel.rs: tokio UnixListener JSON-lines add_path/discover/set+get_fleet_posture; fleet posture through degenbot::workers::posture::process (reachable via the umbrella)"),
     ];
     for (row, status, note) in rows {
         println!("parity-ledger row={row} status={status} note={note}");
@@ -901,7 +901,7 @@ fn run() -> Result<(), String> {
                         weth_lower.clone(),
                     ));
                 let running = operator_channel::start_operator_server(Path::new(path), ops)?;
-                println!("[operator] listening on {path} (G5, ergo KPLWUM)");
+                println!("[operator] listening on {path} (G5)");
                 Some(running)
             }
             None => None,

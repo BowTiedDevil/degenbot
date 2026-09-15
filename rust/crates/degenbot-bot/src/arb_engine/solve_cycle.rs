@@ -1863,9 +1863,9 @@ impl SolveCycle {
                 // the machine's ISSUE half:
                 let gauge_bump: std::sync::Arc<dyn Fn() + Send + Sync> =
                     self.detached_cycle.gauge_hook();
-                // ergo INYMDG: bin jobs ride the fleet executor
-                // (fleet.stance=fleet) or the dedicated tokio solve
-                // executor (persistent warm workers, BXUSGL T1). The body
+                // Bin jobs ride the fleet executor (fleet.stance=fleet) or
+                // the dedicated tokio solve executor (persistent warm
+                // workers). The body
                 // is unchanged; same 'static + Send move semantics, and
                 // concurrent detached cycles share the persistent
                 // worker set instead of forking one thread per bin.

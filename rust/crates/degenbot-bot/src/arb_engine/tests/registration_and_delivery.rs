@@ -249,16 +249,15 @@ fn process_updates_applies_both_types() {
 }
 #[test]
 fn quiet_pool_that_swapped_11_blocks_ago_is_still_solved() {
-    // QNFYR5 / YXHHKR RED. A pool that swapped once (update_block = 100) then
+    // A pool that swapped once (update_block = 100) then
     // went quiet has stored reserves byte-identical to on-chain (V2 semantics:
     // unchanged until the next Sync). Solving it at block 111 is therefore
-    // legitimate — it is "quiet-but-current", NOT stale. The TQ43TU
+    // legitimate — it is "quiet-but-current", NOT stale. The
     // `hop_is_too_stale` pre-gate defers the whole path on any co-hop trailing
-    // > MAX_SOLVE_STALENESS(10) blocks, which is the quiet-pool false positive
-    // QNFYR5 proved live (3,550 defers, gap 11-16, 0 genuine). RED: this test
-    // FAILS while the gate exists (path dropped from results). The gate is
-    // deleted with the fix; the ADR-021 verifier is the sole chain/solver-
-    // mismatch guard.
+    // > MAX_SOLVE_STALENESS(10) blocks — the quiet-pool false positive
+    // proved live (3,550 defers, gap 11-16, 0 genuine) while the gate
+    // existed. The gate is deleted with the fix; the ADR-021 verifier is
+    // the sole chain/solver-mismatch guard.
     let mut engine = ArbitrageEngine::new();
     let v2_addr_a = Address::from([0x21u8; 20]);
     let v2_fwd_a = engine.register_v2_pool(

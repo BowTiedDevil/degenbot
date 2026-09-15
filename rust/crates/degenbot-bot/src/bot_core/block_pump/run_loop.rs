@@ -169,8 +169,8 @@ impl BlockPump {
             );
         }
 
-        // Track the last block we've solved for: owned by the engine since
-        // ergo task LEZJAS (the pump's `last_solved_block` local retired).
+        // Track the last block we've solved for: owned by the engine (the
+        // pump's `last_solved_block` local is retired).
         // Seed it to the pump's starting block so the first `finalize_block`
         // guard fires only on a genuine advance (matching the prior local
         // init). A mid-flight-joining engine inherits via `set_last_solved_block`

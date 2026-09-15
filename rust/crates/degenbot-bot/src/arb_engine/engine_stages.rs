@@ -365,7 +365,7 @@ impl EngineStages {
     /// (the solve entry that deliberately bypasses pump semantics). The
     /// driver arrives via `StageHandlers::on_solve`; the stage-span and
     /// detached-sidecar unit-test harnesses drive it directly. The
-    /// engine-level cycle method was RETIRED with epic 5TBT7L T4: the
+    /// engine-level cycle method was retired: the
     /// buffered-event expiry now runs HERE, under this call's held engine
     /// lock, ahead of `SolveCycle::run_epoch` (the whole
     /// `event_routing.rs` module is gone). The eight inherent twins were
@@ -676,7 +676,7 @@ impl StageHandlers for EngineStages {
     /// not seams in front of the engine).
     fn on_publish(&self, work: &Publish) -> Result<PublishOutcome, StageError> {
         // The debounced batch flush (the former send_result_batch one-line
-        // delegation, inlined at its ONE stage caller — epic 5TBT7L T4).
+        // delegation, inlined at its ONE stage caller).
         compute_diff_and_send(&mut self.engine.lock(), work.ctx.metadata());
         Ok(PublishOutcome::default())
     }
@@ -736,8 +736,8 @@ impl PumpControl for EngineStages {
         !self.delta.is_empty()
     }
     fn set_last_solved_block(&self, solved: Epoch) {
-        // 6XB6NJ: machine-direct poke (the lifecycle engine twin was
-        // retired with epic 5TBT7L T4) — monotone solved-boundary advance.
+        // Machine-direct poke (the lifecycle engine twin is retired) —
+        // monotone solved-boundary advance.
         self.engine
             .lock()
             .cycle
@@ -819,7 +819,7 @@ mod fleet_stance_tests {
     }
 }
 // ======================================================================
-// ergo 2KQZSC — RED pin for the candidate-2 stage-seam contract.
+// Stage-seam contract pin for the candidate-2 cutover.
 // Written against the TARGET contract; production code is NOT changed.
 // ======================================================================
 #[cfg(test)]
@@ -1058,7 +1058,7 @@ mod candidate2_seam_pins {
     }
 }
 // ======================================================================
-// ergo 3FA7CN — RED pin for the construction-injected epoch ledger.
+// Pin for the construction-injected epoch ledger.
 // Written against the TARGET contract; production code is NOT changed.
 // ======================================================================
 #[cfg(test)]
@@ -1109,22 +1109,12 @@ mod construction_ledger_pins {
     }
 }
 // ======================================================================
-// ergo 5WCRWZ T7 — THE final structural gate for the solver_dispatch
-// dissolution .
+// THE structural gate for the solver_dispatch dissolution.
 //
-// Provenance: T1 moved the heavy-path capture diagnostics to
-// `arb_engine::solver_capture`; T2 the workload partition to
-// `arb_engine::workload_partition`; T3/T4 the lane walk to
-// `arb_engine::lane_walk`; T5 the statics/ride consumers to their
-// consuming modules; T6 the detached-merge sidecar to
-// `arb_engine::detached_cycle` and the executor A/B fixtures to
-// `arb_engine::executor_ab_probe`; T7 collapses the engine twins and
-// DELETES `arb_engine/solver_dispatch.rs` outright (hard cutover).
-//
-// This replaces the four per-slice `include_str!("solver_dispatch.rs")`
+// Replaces the four per-slice `include_str!("solver_dispatch.rs")`
 // honesty probes: a single `include_str!("mod.rs")` absence check (the
 // module tree owns no such module) plus spot checks that the surviving
-// homes define the items T7 reallocated. Textual include_str! keeps the pin
+// homes define the reallocated items. Textual include_str! keeps the pin
 // compile-error-free (the prior hard-cutover probe form).
 // ======================================================================
 #[cfg(test)]

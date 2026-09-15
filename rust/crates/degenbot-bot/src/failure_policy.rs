@@ -115,7 +115,7 @@ pub const fn default_action(severity: Severity) -> Action {
 )]
 pub fn bucket(kind: &str, reason: Option<&str>) -> (Severity, Scope) {
     match (kind, reason) {
-        // ---- upstream completeness (the ADR-021 remnant, task 2UVG3E) ----
+        // ---- upstream completeness (the ADR-021 remnant) ----
         ("verify_mismatch", _) => (Severity::Tainted, Scope::Pool),
         ("sim_failure", Some("revert_pool_state")) => (Severity::Degraded, Scope::Pool),
 

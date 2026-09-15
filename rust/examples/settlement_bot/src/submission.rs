@@ -1,4 +1,4 @@
-//! Live submission seam — parity-ledger row 18 (ergo `L4E7RI`, Gap G4).
+//! Live submission seam — parity-ledger row 18 (Gap G4).
 //!
 //! Mirrors `src/degenbot/runner/_dispatch.py::_submit_batch_records`: the
 //! driver applies the mutual-exclusivity guard, the `dry_run` guard, and the

@@ -4,8 +4,7 @@
 //! registered path. Intended for debugging simulation failures. All access is
 //! synchronous and does not mutate engine state.
 //!
-//! ## Retired: on-chain recompute + `fetch_onchain` (ergo epic 63I7WJ, task
-//! AM5AJW)
+//! ## Retired: on-chain recompute + `fetch_onchain`
 //!
 //! The on-chain recompute half — `fetch_onchain`, the `recompute_v2/v3/v4_*`
 //! family, the Multicall3 batching + per-family `build_*`/`decode_*` calls,

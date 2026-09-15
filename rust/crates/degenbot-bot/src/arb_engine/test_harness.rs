@@ -73,8 +73,7 @@ pub(crate) fn finalize_for_test(
     }
 }
 
-/// Process pre-decoded updates for testing (moved here with epic 5TBT7L T4; the
-/// `event_routing.rs` module was deleted).
+/// Process pre-decoded updates for testing.
 pub(crate) fn process_updates(
     engine: &mut ArbitrageEngine,
     v2_updates: &[(Address, U112, U112)],

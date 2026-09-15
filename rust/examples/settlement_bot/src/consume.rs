@@ -1,5 +1,5 @@
 //! Result-batch consumption + the session block clock — parity-ledger
-//! rows 7 + 16 (ergo `L4E7RI`, Gap G4).
+//! rows 7 + 16 (Gap G4).
 //!
 //! Mirrors `src/degenbot/runner/_consume.py::consume_result_batches`: the
 //! consumer awaits the `EngineDriver`'s `ResultBatch` stream in per-block

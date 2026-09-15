@@ -741,8 +741,8 @@ pub async fn build_balancer_stable(
     })
 }
 
-/// Assemble a V3 pool's tick map with **DB-first** coverage (the cross-task
-/// capture in task `4GQWZ4`): a `TickMapDb` hit (both `tick_bitmap` AND
+/// Assemble a V3 pool's tick map with **DB-first** coverage: a `TickMapDb`
+/// hit (both `tick_bitmap` AND
 /// `tick_data` populated) yields [`PoolTickCoverage::Tracked`]; a DB miss or
 /// empty map falls back to the Chain-arm single-word bootstrap →
 /// [`PoolTickCoverage::Sparse`]. Mirrors `tick_assembly::assemble_v3_tick_map`'s
@@ -1069,7 +1069,7 @@ pub async fn build_v3(
 
     let (tick_data, coverage) =
         assemble_db_or_chain_v3(db, io, address, tick, imm.tick_spacing, update_block).await?;
-    // Two-stamp OB7UNY (task 4TWM7C / regression 8c50e0cd): the PRICE clock
+    // Two-stamp rule (regression 8c50e0cd): the PRICE clock
     // (`update_block`) stays at the fresh caller-supplied head read, but the
     // LIQUIDITY clock (`tick_data_block`) of a DB-seeded (`Tracked`) pool must
     // be the block its DB liquidity map is EXACT at (`liquidity_update_block`),
@@ -1272,7 +1272,7 @@ pub async fn build_v4(
     .await?;
     // Two-stamp OB7UNY (V4 twin of build_v3): a DB-seeded (`Tracked`) pool's
     // liquidity clock is its DB `liquidity_update_block`, not the head price
-    // clock (task 4TWM7C / regression 8c50e0cd).
+    // clock (regression 8c50e0cd).
     let tick_data_block = if coverage == PoolTickCoverage::Tracked {
         db.and_then(|d| {
             d.fetch_liquidity_update_block_v4(id.pool_manager, B256::from(id.pool_id))
@@ -1344,10 +1344,9 @@ pub struct V4PoolBuildOverrides {
 /// (manager → V4 row → per-FK token rows) first, else the caller-supplied
 /// [`V4PoolBuildOverrides`]. Returns the resolved [`V4PoolBuildIdentity`].
 ///
-/// (The DB `liquidity_update_block` plumbing was removed in task 4TWM7C's
-/// cleanup — the Rust `build_v4` now reads it itself via
-/// `TickMapDb::fetch_liquidity_update_block_v4` to stamp the liquidity clock;
-/// the driver no longer needs it.)
+/// (The Rust `build_v4` reads `liquidity_update_block` itself via
+/// `TickMapDb::fetch_liquidity_update_block_v4` to stamp the liquidity
+/// clock; the driver no longer needs it.)
 ///
 /// DB errors and partial rows are treated as "no DB identity" (matching the
 /// retired Python driver's `contextlib.suppress(Exception)`), falling through

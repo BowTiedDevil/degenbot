@@ -444,14 +444,13 @@ fn rebuild_on_v2_update_changes_results() {
     let _ = results_before; // Just ensure initial solve didn't panic
     let _ = results_after;
 }
-/// YXHHKR (resolves QNFYR5) — supersedes the removed TQ43TU gate test. A
+/// Supersedes the removed solve-time staleness gate test. A
 /// path whose price clock runs far behind the solve block is a QUIET pool
 /// (stored state byte-identical to on-chain), so it is SOLVED, not deferred.
 /// The old gate deferred it because `update_block` age looks like staleness —
-/// the quiet-pool false positive QNFYR5 proved live. Genuine chain/solver
-/// divergence is out of the solve path's scope: the tripwire retired with
-/// epic MROOY7 task 2UVG3E, and stale merge results are DROPPED by the
-/// Q1a window gate, never applied.
+/// the quiet-pool false positive proved live. Genuine chain/solver
+/// divergence is out of the solve path's scope: the tripwire is retired,
+/// and stale merge results are DROPPED by the Q1a window gate, never applied.
 #[test]
 fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
     let mut engine = ArbitrageEngine::new();

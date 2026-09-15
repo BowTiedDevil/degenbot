@@ -261,9 +261,9 @@ mod tests {
             assert_eq!(status.profile, canonical.profile);
         }
     }
-    /// candidate4 pin 4 - ADAPTER: GREEN at HEAD and GREEN after T2. It pins
-    /// the `runtime_status` PRG-5 gate semantics source-independently (both sides
-    /// must read the same owner after the T2 reroute): the status
+    /// ADAPTER pin: pins the `runtime_status` PRG-5 gate semantics
+    /// source-independently (both sides must read the same owner after the
+    /// reroute): the status
     /// `fleet_booted` mirrors the registration-boot latch, the projected
     /// budget co-varies with the resolved binding, and the `tier_refused`
     /// renderer keeps the typed family NAME + floor sentence (the port of the

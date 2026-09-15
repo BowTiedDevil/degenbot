@@ -66,8 +66,8 @@ pub struct SwapRequest {
 ///
 /// An EMPTY set means "this number is exact". The set is deliberately
 /// `#[non_exhaustive]`: new inaccuracy sources become new flags, never a
-/// signature change. (A `HOOKED_POOL` flag is reserved by ADR-037 and wired
-/// up by ergo task X4EU3J; admission currently rejects hooked pools.)
+/// signature change. (A `HOOKED_POOL` flag is reserved by ADR-037;
+/// admission currently rejects hooked pools.)
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Caveats(u8);

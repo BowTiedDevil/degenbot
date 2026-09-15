@@ -1,5 +1,4 @@
-//! Tick-map assembly: `Db → Chain` precedence helper (epic `5NT2OC` /
-//! `XEANMB`).
+//! Tick-map assembly: `Db → Chain` precedence helper.
 //!
 //! One free function per CL family (`assemble_v3_tick_map` /
 //! `assemble_v4_tick_map`) that reads the tick map from a per-pool

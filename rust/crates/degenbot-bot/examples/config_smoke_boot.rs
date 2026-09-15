@@ -55,8 +55,7 @@ fn main() -> Result<(), String> {
         degenbot_bot::bot_core::BotState::new(),
     ));
     // The ONE external construction seam: `EngineStages` builds the engine
-    // internally (epic 5TBT7L Q2b — the engine type never crosses the crate
-    // boundary).
+    // internally (the engine type never crosses the crate boundary).
     let stages = degenbot_bot::arb_engine::EngineStages::with_core_cfg(
         core,
         &cfg,

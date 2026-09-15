@@ -1,4 +1,4 @@
-//! **The unified block stage machine** (ergo `7NFYQW`, epic `MROOY7`; ADR-041).
+//! **The unified block stage machine** (ADR-041).
 //!
 //! ONE pure, I/O-free machine owns every per-block edge condition for one
 //! block epoch. The six cooperating machines fold in here as sub-state; their

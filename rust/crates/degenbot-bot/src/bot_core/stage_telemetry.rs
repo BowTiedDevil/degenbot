@@ -1,6 +1,5 @@
 //! The per-stage stage-table telemetry seam (`StageTelemetry`) — ONE span per
-//! ADR-041 stage transition, parented per block epoch (ergo `BF43PM`, epic
-//! `MROOY7`).
+//! ADR-041 stage transition, parented per block epoch.
 //!
 //! Replaces the legacy `pump.block` / `pump.log_wait`
 //! waterfall shape (which attributed whole stretches of the per-block trace to

@@ -397,8 +397,8 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
     }
 }
 
-/// FUWYUR RED tracer — live-window Mint for a NOT-YET-REGISTERED pool must
-/// survive late registration.
+/// Live-window tracer: a Mint for a NOT-YET-REGISTERED pool must survive
+/// late registration.
 ///
 /// Production shape (the 2026-08-25 20:51 UTC ADR-021 trip): crawl is
 /// mid-flight when a Mint lands in block N for a Tracked pool that

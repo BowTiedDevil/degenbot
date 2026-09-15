@@ -78,8 +78,8 @@ pub(crate) struct BlockCursor {
     last_processed_block: Option<u64>,
     /// The last block this engine's `finalize_block` guard advanced past
     /// (i.e. the last block whose boundary transition completed). Owned by
-    /// the engine since ergo task LEZJAS (the pump's `&mut` out-params
-    /// retired). Initialize to `0` so the first header/tombstone
+    /// the engine (the pump's `&mut` out-params are retired). Initialize
+    /// to `0` so the first header/tombstone
     /// `finalize_block(block > 0)` fires; survives a mid-flight engine
     /// joining the pump (ADR-006 D4). The one-shot finalize guard lives on
     /// this.

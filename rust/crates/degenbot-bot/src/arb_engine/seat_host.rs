@@ -3247,7 +3247,7 @@ mod tests {
     }
 }
 // ======================================================================
-// ergo G5YDRH - RED pins for the candidate-4 FleetBootRegistry contract.
+// Pins for the candidate-4 FleetBootRegistry contract.
 // Written against the TARGET contract; production code is NOT changed.
 // ======================================================================
 #[cfg(test)]

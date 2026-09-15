@@ -1,5 +1,5 @@
 //! Operator command channel: JSON-lines over a Unix domain socket — parity
-//! ledger row 20 (ergo `KPLWUM`, Gap G5).
+//! ledger row 20 (Gap G5).
 //!
 //! Mirrors `src/degenbot/operator/operator_channel.py` (the `OperatorServer`
 //! wire guard + `step_from_wire` + `handle_fleet_posture_op`), driven by the

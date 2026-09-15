@@ -1,5 +1,5 @@
 //! Session watch: the driver-side judgement of how a pump session ended —
-//! parity-ledger row 19 (ergo `KPLWUM`, Gap G5).
+//! parity-ledger row 19 (Gap G5).
 //!
 //! Mirrors `src/degenbot/runner/_session_watch.py`:
 //! [`SessionEndVerdict`] is the typed analogue of the Python verdict set

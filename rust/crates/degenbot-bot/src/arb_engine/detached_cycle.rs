@@ -469,11 +469,11 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
 // clock AND re-solves the path, so any stamp mismatch at merge time means
 // the straggler's intake is stale and the result is DROPPED, never applied.
 // This gate is now the SOLE staleness guard on the solve path (the ADR-021
-// in-process solver-state tripwire retired with task 2UVG3E; only the
-// upstream RPC-disagreement check survives at the Published edge).
-// P37YJG: the in-flight cap constant moved with the cap consult into the
-// one detached-cycle machine — `detached_cycle::DETACHED_INFLIGHT_CAP`.
-// The detached-merge CARRIER is `executor::LaneOutcome` (QR3NUS 43E3H3):
+// in-process solver-state tripwire is retired; only the upstream
+// RPC-disagreement check survives at the Published edge). The in-flight
+// cap constant lives with the cap consult in the one detached-cycle
+// machine — `detached_cycle::DETACHED_INFLIGHT_CAP`.
+// The detached-merge CARRIER is `executor::LaneOutcome`:
 // the former single-variant enum folded into the unified
 // `LaneOutcome::Solved(SolveOutcome)` — the typed `Solved`/`Suppressed`/
 // `Failed` records both solve arms deliver (the sidecar's
