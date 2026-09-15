@@ -5,6 +5,9 @@
 1. **Pure-Rust MEV bot.** Someone should be able to `cargo add degenbot` (the umbrella crate re-exporting the cores) and build a fully functional MEV bot using Rust components ONLY without involving Python. That core must own **everything** a functional MEV bot needs. The Rust core must be capable of performing every action the bot requires. **Rust is the engine; Python is a driver shell, not a co-implementation.**
 2. **Python-driven MEV bot.** Someone in Python should be able to build a functional MEV bot using the Python interface as a **driver** over the same Rust core, via a thin PyO3 layer that translates Python calls into Rust calls.
 
+## Concurrent Work Coordination
+Check for other agents working concurrently before you begin work and any time you notice any edits, files, or changes in the working tree that are unrelated to your work. Use `/skill:pi-intercom` for instructions on using the inter-agent communication system. If another agent sends you a message, use `/skill:pi-intercom` to learn how to respond.
+
 ## Backwards Compatibility
 Design standalone features without a backwards compatibility layer. Implement add a feature flag to allow parallel implementations if necessary, followed by a hard cutover.
 
@@ -67,10 +70,3 @@ investigate before trusting the build.
 
 ## Python Environment
 Use `uv`.
-
-### Schema ownership — Alembic retires in-tree (see [ADR-052](docs/adr/ADR-052-db-auto-upgrade-alembic-retirement.md); [ADR-010](docs/adr/ADR-010-alembic-retention-and-rust-schema-cutover.md) is superseded)
-Maintainer decision (2026-09-14): the 0.7 gate is pulled forward. The schema becomes Rust-owned through two epics — the console cutover (ADR-051) and the DB-robustness/auto-upgrade work (ADR-052). The database upgrades itself at open: `ensure_schema` auto-heals any Alembic-stamped DB and applies pending Rust-side steps under a forward version-lock. The previously-gating ergo ids (`JFFQV2`, `TGIP5N`, `OXKANZ`) no longer resolve in the backlog; these epics supersede them.
-
-**What the retired gate used to forbid is now in scope for those epics alone** (tracking in the epic task bodies): deleting `src/degenbot/migrations/`, the `alembic` pyproject entry, `ALEMBIC_HEAD`, the `alembic_version`-reading branch of `ensure_schema`, the Alembic `query_only=on` carve-out, and the `database upgrade` command path.
-
-**Still forbidden until its own epic:** deleting or stubbing the `sqlalchemy` entry in `pyproject.toml`, `DatabaseSessionManager`, and the SQLAlchemy `src/degenbot/database/models/` package (ADR-052 D7). The remaining SQLAlchemy surface is nominal types + trivial probes, and it retires separately.
