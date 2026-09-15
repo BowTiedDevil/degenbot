@@ -1,1214 +1,485 @@
 # degenbot — Domain Glossary
 
-Ubiquitous language for the degenbot codebase. Terms here are the canonical
-names used in architecture reviews (the `/improve-codebase-architecture`
-skill), ADRs, and the three-layer transition. Keep this current as
-deepening decisions crystallize.
+Canonical names for the degenbot codebase. Definitions say what a term **IS** — one or two
+tight sentences, with the rejected synonyms under `_Avoid_`. Design decisions, rationale,
+ship history, and measurements live in `docs/adr/` and `docs/architecture/`, not here.
 
-## Settlement arbitrage (the bot's strategy)
+## Strategy
 
-**"Backrun" is a legacy label in the codebase, not a description of the
-mechanism** (canonical decision record:
-[ADR-026](docs/adr/ADR-026-backrun-to-settlement-arbitrage-terminology.md)). Do not read the crate name `degenbot-arbitrage`, the
-example `eth_backrun_*.py`, or the ADR-019/025 references as classic
-victim-transaction backrunning. The bot's strategy is **block-settlement
-arbitrage**, and the two must never be conflated:
+**Settlement arbitrage**:
+Arbitrage of the cross-pool price discrepancies a settled block's trades leave behind,
+executed as a single transaction at the head of the next block. The opportunity is the
+settled pool-state discrepancy itself; there is no identified victim transaction
+([ADR-026](docs/adr/ADR-026-backrun-to-settlement-arbitrage-terminology.md)).
+_Avoid_: describing this bot's mechanism as "backrun"; "victim transaction" framing.
 
-- **Backrun (classic MEV — NOT this bot):** position a transaction/bundle
-  immediately *after a specific, identified victim transaction*
-  (mempool-ordered), profiting from that victim's price impact. A *named
-  victim tx* and ordering relative to it are essential; you watch the
-  mempool for a specific flow.
-- **Settlement arbitrage (this bot):** after a block settles and its trades
-  shift pool states, arbitrage the resulting cross-pool price discrepancies
-  with a transaction at the head of the next block. There is **no labeled
-  victim** — the opportunity is the post-settlement *state discrepancy*
-  itself, detected by the solver from settled pool-state changes (no mempool
-  victim watching, no tx-to-tx ordering).
+**Backrun (classic MEV)**:
+A transaction positioned immediately after a specific, identified victim transaction in
+mempool order, profiting from the victim's price impact. This bot is not a backrunner; the
+word survives only as the legacy name of the `degenbot-arbitrage` crate and the
+execution-strategy adapter.
 
-The defining properties are: (1) the opportunity source is a **settled
-pool-state discrepancy** (not a victim's flow), and (2) execution is a single
-transaction at the **next-block head** (not ordered against a specific tx).
-Use **"settlement arbitrage"** (equivalently "block-settlement / next-block /
-state-driven arbitrage") when describing the opportunity. Keep **"backrun"
-only as the legacy name** of the crate, example, and execution-strategy
-adapter (`degenbot-arbitrage`) — never to describe the mechanism.
+**Searcher strategy**:
+The searcher's own transaction encoding, profit detection, and operator policy, assembled
+at runtime over the tools the core exposes and out of scope for the core.
+_Avoid_: wedging a strategy into the simulation/solve engine.
 
-## Architecture (from `/codebase-design` vocabulary)
+## System layers
 
-- **Module** — anything with an interface and an implementation (function, crate, package, tier-spanning slice). Not "component"/"service."
-- **Interface** — everything a caller must know to use a module: types, invariants, ordering, error modes, config, performance. Not "API"/"signature."
-- **Depth** — leverage at the interface: behaviour per unit of interface. **Deep** = much behaviour behind a small interface; **shallow** = interface nearly as complex as the implementation.
-- **Seam** — where a module's interface lives; a place to alter behaviour without editing in that place. Not "boundary."
-- **Adapter** — a concrete thing satisfying an interface at a seam (role, not substance).
-- **Leverage** — what callers get from depth (capability per unit of interface). **Locality** — what maintainers get (change/bugs/knowledge concentrate in one place).
+**Rust core**:
+The pyo3-free crates under `rust/crates/degenbot-*` owning all state, math, I/O
+orchestration, simulation, and submission — everything a standalone pure-Rust MEV bot
+needs.
 
-## Three-layer system (ADR-005)
+**PyO3 wrapper**:
+The thin `#[pyclass]`/`#[pyfunction]` layer that translates Python calls into core calls.
+No business logic.
 
-- **Rust core** — `rust/crates/degenbot-{core,-concentrated-liquidity-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-db,-simulation,-submission,-price,-solvers,-executor,-fork,-pathfinding,-pool-updater,-aave-updater,-solidly-math,-evm-math,-v2-math}`. Zero `pyo3` (enforced by `just check-no-pyo3-in-cores`). `degenbot-solvers` owns the full pure solve layer (V2/CL Möbius + Balancer/Curve/Solidly dispatch + QuantAMM basket + the hop-state intake contract — ADR-015); `degenbot-bot` owns `resolve_path` (the core-bound projection) and the I/O orchestration only.
-- **PyO3 wrapper** — `rust/crates/degenbot-python/src/<domain>/**`. `#[pyclass]`/`#[pyfunction]` only — arg extract → GIL release → core call → result wrap. No business logic.
-- **Python companion** — `src/degenbot/**`. User-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display.
+**Python companion**:
+The user-facing Python layer: public API, docstrings, I/O orchestration, and display — a
+driver over the Rust core, never a co-implementation.
+_Avoid_: "driver shell" for anything smaller than this whole layer.
 
-**argv façade** — the one place the console's command vocabulary is spelled: the `degenbot` binary (`degenbot-cli`), whose clap tree maps argv onto the clap-free `Command` model in `degenbot-cli-core` (ADR-051 D2). It owns argv declaration, rendering, prompting, progress, and SIGINT, while execution semantics stay in `degenbot-cli-core`; both the pure-Rust operator and the Python passthrough run the same façade. _Avoid_: "CLI layer", "Python CLI".
+**argv façade**:
+The one place the `degenbot` binary's console command vocabulary is declared; both the
+pure-Rust operator and the Python passthrough drive the same façade.
+_Avoid_: "CLI layer", "Python CLI".
 
-### Driver cockpit (`degenbot.runner`)
+## Driver cockpit
 
-**Driver cockpit** — the Python-companion module (the `degenbot.runner`
-package) that owns one settlement-arbitrage pump session behind one small
-interface: the `BotRunner` lifecycle (`start` → `run` → `close`,
-`enqueue_path`, `trigger_discovery`), `ArbitrageConfig`, and the
-`build_paths` registration sibling. The block loop, the dispatch/submit
-leaf, the renderers, and the session's coordination state are private
-internals of the cockpit — not a strategy co-implementation (ADR-019 R),
-and not the PyO3 wrapper (ADR-005).
-_Avoid_: "driver shell" (that is the whole Python-companion layer), "backrun
-session" (legacy name, ADR-026).
+**Driver cockpit**:
+The Python-companion module (`degenbot.runner`) that owns one settlement-arbitrage
+session behind the `BotRunner` lifecycle. Its block loop, dispatch, renderers, and session
+coordination are private internals.
+_Avoid_: "driver shell" (that is the whole Python companion), "backrun session".
 
-**Registration outcome ledger** — the cockpit-private owner
-(`degenbot.runner._registration_ledger`) of the registration memo concept:
-the hop-identity key, the typed stable-vs-transient build-refusal
-classification (by exception TYPE, never class name), the four memos
-(registered path, verified pool, unregistrable pool, rejected path), and the
-bounded outcome vocabulary the metric tag path draws from.
+**Registration outcome ledger**:
+The cockpit's owner of the registration memo: the hop-identity key, the typed
+stable-vs-transient build refusal, and the bounded outcome vocabulary behind the metric
+tags.
 _Avoid_: "skip gate", "class-name refusal set".
 
-**Session state** — the cockpit's one owner of a pump session's
-coordination state (dispatcher, sim context, current block, provider,
-operator credentials); the block loop and the dispatch leaf read the same
-owner instead of it travelling as a parameter bag.
+**Session state**:
+The cockpit's one owner of a session's coordination state (dispatcher, sim context,
+current block, provider, credentials).
 _Avoid_: "session dict", "cockpit config".
 
-**Session watch** — the cockpit's one owner (`degenbot.runner._session_watch`)
-of a pump session's end-state: the watch-set assembly ({consumer} + optional
-{registration, watchdog}), the `SessionEndVerdict` ranking (fail-fast outranks
-the watchdog in the same wait batch — written once, not per loop), and teardown.
-The former twin await loops and the run/finally, `__aexit__`, and
-`shutdown()` teardown sites collapse to calls into it.
-_Avoid_: "await loop", "fail-fast wrapper", "pump-ended handler".
-
-### Pool registration lifecycle (D4 / IKGQ6F)
-
-Canonical terms for the CL (V3/V4) pool registration verify-lifecycle — the
-per-pool `Quarantined → drain+verify → Live` sequence owned by the Rust core.
-
-- **Registration lifecycle** — the per-pool `Quarantined`/`Live` state a
-  registered CL pool is in; for a Sparse pool it is always `Live`, for a
-  Tracked pool it is `Quarantined` until its verification passes.
-- **Quarantined** — a registered CL pool whose live `Swap`/`Mint`/`Burn`
-  events are deferred to the pump buffer (during drain+pin+verify) instead of
-  applied directly, so the pin's `update_block` cannot outrun
-  `last_complete_block`. Only ever applied to `Tracked` pools.
-- **Live** — the steady-state direct-apply contract; the **only solvable
-  state**. A pool is not solvable while `Quarantined`.
-- **Tracked** (`PoolTickCoverage`) — the pool's snapshot provided complete tick
-  data; solver results are trustworthy. Registers `Quarantined`; must pass the
-  two-step verify + tripwire before `Live`.
-- **Sparse** (`PoolTickCoverage`) — no complete tick data exists; solver
-  results may be inaccurate. Registers `Live` immediately, is never
-  quarantined, and is **never verified** (no RPC) — DFQYM5.
-- **Known bitmap word** (`known_bitmap_words`, V3/V4 CL state) — a tick-bitmap
-  word the caller has CHECKED: its whole tick set is established (fetched via
-  the sparse fetcher, a full-sync replace, the initial snapshot's tick keys,
-  or the `tick_bitmap` keys passed at the `update_tick_data` FFI seam).
-  **Sparse-only state**: seeded at Sparse registration, grown only by those
-  checked-word sources — an apply event NEVER marks its touched word
-  (partial information never makes a word known). Never written for Tracked
-  pools (their bitmap is complete). The Rust bitmap itself is DERIVED from
-  the `tick_data` rows (bit set ⟺ tick row holds);
-  `tick_bitmap_snapshot()` (the FFI read seam) surfaces a known-but-empty
-  word as a `(0, tick_data_block)` entry.
-- **Checked-empty word** — a checked bitmap word with no initialized ticks
-  (the fetcher probed `tickBitmap(word)` and the on-chain bitmap was zero).
-  It must survive as *present-but-zero*, never re-fetched — hence the absence
-  contract: a word ABSENT from the bitmap snapshot is *indeterminate* on a
-  Sparse pool (fetch before use) and *known-empty* on a Tracked pool (the map
-  is complete). The companion's Python `_bitmap_override` shadow is retired
-  (T1, epic `OU4SYZ`): the invariant lives in the Rust core, so a standalone
-  Rust consumer gets the same contract.
-- **Snapshot seed** — the registration-time (pinned) `tick_data` for a Tracked
-  pool; verified exactly once against on-chain@snapshot-block (step-1), then
-  consumed so memory is bounded. Comparing engine-current instead of the seed
-  would false-mismatch every active pool under a rolling start (CBCH6H).
-- **Last complete block** (delivery cutoff; code name
-  `pump_complete_cutoff` on `BotState`) — the highest block the pump has fully
-  delivered (tombstoned by the first `removed:false` log of N+1). The gate the
-  registration drain uses: a pin's `update_block` cannot outrun it (the inline
-  `last_complete_block` above is this fact). Owned by `BotState` as a monotone
-  value; the pump driver advances it when executing the tombstone verdict —
-  no shared handle crosses the pump's decision-machine capsule (the retired
-  `PumpFSM`; its successor is the `StageMachine`, ADR-041), and a resume never
-  resets it (ADR-028 correction, 2026-08; supersedes the 3M5PO5 shared-atom
-  bridge).
-- **Verify-lifecycle** (the choreography) — the per-pool
-  `set_quarantined → verify seed (RPC) → drain+pin → verify post-drain (RPC) →
-  set_live` sequence plus its block-resolution + config-gating policy. Owned by
-  the Rust core (IKGQ6F); the Python driver only supplies `(coverage, idents,
-  verify config)`.
-- **State tripwire** (this task's D-A) — the verification `MismatchError`
-  raised as the terminal gate so `Live` is unreachable on unverified state;
-  never auto-repair. NOT the **Solver-state tripwire** (ADR-021's
-  solve-time scalar gate, section below), which is out of registration scope.
-- **Orphan sweep** — `release_all_v3_v4_quarantined` as cleanup for pools
-  built but whose path never registered; never a productivity dependency.
-
-**Resolved need-doc: no-config policy (IKGQ6F D-C, 2026-08) = tracked is always
-verified.** There is NO "verify disabled" mode for tracked pools: with D-B the
-verify provider is always present (the bot's one `AlloyProvider`), so "no verify
-config" reduces to a missing V4 `state_view` contract ADDRESS (the `eth_call`
-target for V4 verification; V3 per-pool verify reads `pool.ticks()` directly).
-Core `registration_lifecycle` always requires verify for tracked (sparse skips) and
-raises a typed error if a V4 tracked pool needs `state_view` and it's absent —
-enforced in core (standalone Rust consumers get the same guarantee), with Python
-`start()` surfacing it early as a loud failure. No vacuous-pass, no silent
-permanent quarantine. Sparse is unaffected.
-
-**Resolved need-doc: verify provider (IKGQ6F D-B, 2026-08) = one provider per
-bot.** All operations on a chain share the bot's single `AlloyProvider` (cheap
-`Arc::clone`); the core lifecycle receives a clone **passed-in** from the outer
-owner — never stored on `BotState` (ADR-001 I/O-free pools keep the provider
-off core state). No second RPC side, no separate verify-provider trait; the
-separate `verify_rpc_url`/`verify_provider` plumbing is retired. The
-`StateView` contract address stays as a chain-scoped value.
-
-**Resolved need-doc: lifecycle home (IKGQ6F, 2026-08) = sibling
-`bot_core/registration_lifecycle.rs`.** Registration/verify is a state-hygiene
-concern (ADR-003), separate from construction: `pool_builder` only takes
-`&ConstructionIo` and never touches core state, while the lifecycle mutates
-core AND does RPC — so it needs the engine/core handle + a passed-in
-`&AlloyProvider`. Lives alongside `liquidity_verifier.rs`/`snapshot_verify.rs`.
-
-### Solver-state tripwire (ADR-021 D3)
-
-The publish-point solver-state accuracy gate as one deep module — the
-solve-time scalar tripwire ADR-021 owns. **Not** the registration
-**State tripwire** above (the verify-lifecycle `MismatchError` gate);
-the two share "tripwire" only as family vocabulary — one gates
-*registration*, the other gates *publish*.
-
-- **Solver-state tripwire** — the module the pump's verifier task judges
-  once per published block: for each hop of the block's change set it
-  diffs the solver's stored scalar state against the canonical on-chain
-  state and returns one typed verdict. The module owns the whole
-  pipeline — the dev-only divergence dry-run scanner, the aggregated
-  lagging-hop reporter, the observational solve-anchor / staged-clock
-  probes, and the strict per-hop gate — and reads no environment: the
-  pump packs the env stances into one config value at construction. The
-  pump keeps only the trip and the exit: on a divergent verdict it
-  prints the verdict's breadcrumb and aborts the process (ADR-021 D1:
-  detect, classify, stop loudly, never heal).
-- **Tripwire class** — the ADR-021 D2 defect class a verdict names:
-  `MissedLog`, `StorageMutated`, `DeliveryLag{blocks}`, `UnhandledReorg`,
-  `Unclassified`. A trip names the class, not just the scalar diff;
-  classes the current on-chain evidence cannot distinguish land in
-  `Unclassified` rather than a forced label. A trip set that differs
-  from today's would be a policy change, not a classification change.
-- **D3 convergence (staged)** — this module is the first of the three
-  ADR-021 verifiers converged onto the shared on-chain probe backend
-  (`degenbot-rpc::abi`); the registration **liquidity verifier** and the
-  sim-revert diagnostics converge onto the same seam as follow-up work
-  (same probe, different triggers — the two-adapter signal that makes
-  the seam real).
-
-
-### Pool structural families
-
-The seven `PoolEntry` variants fall into **three structural families**, grouped by state-field shape and delta shape — not by DEX. The family names are load-bearing vocabulary in architecture reviews and the `BotState` deepening.
-
-- **Reserve-pair** — `reserve0/1: U112`, `update_block`, full-state delta (`V2BlockDelta`). Members: V2, AerodromeV2 (Aerodrome's `AerodromeV2PoolState.journal` is literally `ReorgJournal<V2BlockDelta>` — the variant shares the V2 delta). Apply: `apply_*_sync` (overwrites reserves).
-- **Balance-vector** — `balances: Vec<U256>`, `update_block`, full-state delta (`BalancesBlockDelta` — the three nominally-distinct `CurveBlockDelta`/`BalancerWeightedBlockDelta`/`BalancerStableBlockDelta` structs are byte-identical and unify here). Members: Curve, Balancer-weighted, Balancer-stable. Apply: `apply_*_balance_update` (overwrites balances).
-- **Concentrated-liquidity (CL)** — slot0 scalars (`sqrt_price_x96`/`liquidity`/`tick`) + `tick_data: HashMap<i32, TickInfo>`, partial-prior delta (`V3BlockDelta` with `scalar_priors`/`tick_priors`). Members: V3, V4 (structurally near-identical; differ in identity shape and V4's `pool_key` nesting). Apply: `apply_swap` (changes slot0) / `apply_liquidity_update` (tick-only).
-
-**Orchestration module layout (god-file split, epic `IOVNQQ`).** The `impl BotState` method set is no longer one ~8.5k-line monolith in `bot_core/mod.rs`; each structural family's orchestration methods are colocated in a sibling `*_orchestration.rs` module of `bot_core` — `cl_orchestration.rs` (CL: V3 + V4 + the CL-common dual liquidity buffer, snapshot seeds, coverage/quarantine/lifecycle accessors), `reserve_pair_orchestration.rs` (V2 + AerodromeV2 registration/sync/snapshot/identity), and `balance_vector_orchestration.rs` (Curve + Balancer weighted/stable registration/calc/identity, with the sole-user `curve_*` helpers and clamp consts that rode in with the family). `bot_core/mod.rs` remains the assembly + re-export hub and keeps the genuinely cross-family surfaces resident (registry/reorg dispatch, the solver-facing calc/`simulate_*`/`encode_swap` CLI, and the `BotCurveBasePoolPort` delegate). These are inherent-impl splits only — the `BotState` struct and its call sites are unchanged (ADR-003/005 layout note; the split plan doc was removed in the stale-docs cleanup `71ec78b2`). The resident `mod tests` is intentionally left as one unit (its T3 decision doc was removed in the same cleanup); test-module decomposition is a follow-up.
-
-**Trait discipline.** State-struct traits are adopted **only for the CL family** — `ConcentratedLiquidityPool` (read, rename of the legacy `V3FamilyPool`) + `ConcentratedLiquidityPoolMut` (write). V3 and V4 are two adapters behind the same per-pool interface, so by the two-adapter rule the seam is real. For reserve-pair and balance-vector, the duplication sits one layer down — on `ReorgJournal` / `BlockDelta` — and dedups there (unify the balance-vector deltas to `BalancesBlockDelta`; extend `BlockDelta` with `type RestoreState` + `landed()` to collapse five hand-duplicated `restore_*_before_block` impls into one generic `impl<D: BlockDelta> ReorgJournal<D>`). The V3 family keeps its own restore impl — `V3RestoreResult` + the scalar/tick-priors branches are a genuinely different algorithm, not a full-state delta. See ADR-014 for the formal record of the trait-vs-journal-layer split.
-
-**Reorg-pool-state trait (ADR-016, refines ADR-014 D3).** The reorg dispatchers that survived D3's slicing on `BotState` (the per-family `*_restore_before_block` / `*_discard_before_block` / `*_journal_len` methods, 7 families × 3 ops) collapse behind a state-struct trait `ReorgPoolState` (`restore_before_block` / `discard_before_block` / `journal_len`, all returning family-agnostic `Result<(), JournalError>`). The lever D3 didn't have: returning `()` dissolves the cross-family no-op trap that defeated `PoolFamilyReg` — every family satisfies one identical signature, no associated type. The per-family field-write absorbs into each struct's own impl (same category as D1's `apply_swap`). The within-family residue (the three byte-identical balance-vector dispatchers) is the no-op-free seam; the CL family's `V3RestoreResult` absorption is the open harder case (spike `Z76ETG` decides it). Adoption tracked under ergo epic `OCXSHQ`.
-
-### Resolve→solve boundary (ADR-015)
-
-**Current shape — pure solve layer split across two crates by an accidental line.** `degenbot-solvers` holds the V2/CL Möbius solvers (`mobius_int`, `mobius_int_exact`, `mobius_v3_int`, `affected_keys`) — “value-only solver math … no chain/registry/async/tokio … consumable by both the standalone Rust path and the PyO3 driver shell.” But the rest of the pure solve family stayed behind in `degenbot-bot/src/arb_engine/` (the I/O orchestrator: tokio, `core: Arc<RwLock<BotState>>`, path registry, V3/V4 buffers): `solve_path` (the dispatcher) + `solve_*_path_int` (Balancer weighted/stable, Curve, Solidly), the `simulate_*_hop` swap leaves, `balancer_weighted_basket.rs` (QuantAMM), and the hop-state value types. A standalone `cargo add degenbot` consumer got V2/CL but not Balancer/Curve/Solidly/basket.
-
-**Decision (ADR-015, 2026-07-19):** complete the seam. The pure solve layer — `solve_path` + all `solve_*_path_int` arms + `simulate_*_hop` leaves + the QuantAMM basket solver + the hop-state value types (`ResolvedHop`, `ResolvedMixedPath`, `SolvePathResult`, `*HopState`, `HopType`, `MixedPoolRef`, `PoolHop`) — moves to `degenbot-solvers`. `degenbot-bot` keeps `resolve_path` (the only core-bound step). The orchestrator’s solve-side import collapses to `degenbot_solvers::solve_path(&resolved)`. The dep graph stays a DAG (the new deps are leaf math crates `pools` already depends on); no-pyo3 invariant preserved.
-
-**Hop (ubiquitous language).** A hop is **the solver’s snapshot-and-classifier adapter** — not a pool concept, not a math-leaf concept. It does two jobs, both for the solver:
-- *Snapshot role (= selectivity).* It captures pool state at resolve time so the solve can run lock-free under rayon `par_iter` on a `Clone`+`Send` value. For CL specifically it is a *selective projection* — `build_int_v3_sequence` walks `tick_data` once in the swap direction, caps at ≤15 tick ranges, pre-accumulates `liquidity_net`, replaces map lookups with `TickMath` constants — NOT a clone of the pool (which is thousands of `TickInfo`). The balance-vector family pre-computes the invariant `D` (one Newton run, not ~25× during the golden-section) and BPT-skips. Live-read over the pool re-pays the projection ~25× or relocates it as cache-on-state with invalidation spread across every `apply_*`.
-- *Classifier role.* The `ResolvedHop` enum variants let `solve_path` pattern-match on path composition to pick the algorithm (closed-form Möbius for all-V2/all-CL; golden-section for paths involving non-Möbius leaves). A `dyn PathHopSnapshot` trait variant would re-invent this as a capability query (a thinner hop behind a trait).
-
-**Solver intake contract.** The hop-state types are `degenbot-solvers`'s intake protocol — `degenbot-bot`'s `resolve_path` projects `BotState` into them under `core.read()`, then the guard drops, then `degenbot_solvers::solve_path` runs lock-free.
-
-**Per-family projection module (`bot_core/resolve/`, 2026-08, DECIDED).** `ArbitrageEngine::resolve_path`'s internals deepen into a pure `bot_core/resolve/` module — one file per family, free `project_<family>(&BotState, &MixedPoolRef) -> Result<(ResolvedHop, u64), MissingHopReason>` (u64 = state nonce), and the engine method shrinks to a thin dispatcher that accumulates the cross-family `max_update_block` + `state_nonces`, marking the path invalid on any per-family `Err`. The projection needs no engine `&self` (it reads only `&BotState`) and is internal to `degenbot-bot` (never reached by PyO3), so the split is a free restructure. ADR-015's placement (the projection stays in degenbot-bot) is unchanged. Per-family unit tests (missing state/identity, missing token pair, `<2` tokens, unknown variant, out-of-range) live in the new modules (Red→Green), ported from `arb_engine/tests.rs` (e.g. the existing Solidly Aerodrome/Camelot unit tests at `resolve_path_*solidly*`). The dispatcher surfaces the reason via `tracing::debug!` (path_id/hop/reason) at the invalidation point — the existing `tracing` machinery gives a runtime-configurable level, so it is invisible in normal runs but answers "why was this path rejected" on demand. Test split: the per-family projection unit tests are KEPT (ported permanently); the ad-hoc path fixtures (`path142603_*` and similar live-run solver-divergence fixtures) are treated as a WEAK parity cross-check during implementation, then DELETED once the full revm harness covers them (they were one-off debugging harnesses for failing live paths).
-
-**CL-projection guardrail — V3/V4 are related but NOT swappable (2026-08).** `resolve/cl.rs` holds `project_v3` and `project_v4` as two **self-contained** entry functions; they share only the file + the thin `ResolvedHop::V3/V4` wrap + nonce push. There is deliberately **no** shared constructor that reinterprets sequence/sign/fee semantics, because the two `build_int_v*_sequence` families (which stay in `degenbot-pools`, untouched) differ in three load-bearing ways: (1) **fee convention** — V3 `gamma = 1_000_000 − lp_fee` vs V4 combined `swapFee = calculate_swap_fee(protocol_fee_dir, lp_fee)` when `protocolFee > 0`; (2) **current-tick drain framing** — V3 pushes a dedicated leading hop `[current, sqrt(currentTick)]` at stored liquidity, V4 folds the drain into each range's `base_liquidity`; (3) **net sign direction** — V4 applies per-prior-range `if zero_for_one { l -= net } else { l += net }`. Any attempt to "swap" V3/V4 behind one code path clobbers these; they are two adapters behind the shared `ConcentratedLiquidityPool` *interface* (ADR-014 family) with genuinely distinct swap/step internals. The lock-drop discipline (ADR-005 slice 15b-1: "the guard drops before `solve_path` runs") is load-bearing and survives the relocation unchanged.
-
-**Closed — the hop-shape deepening (2026-07-19).** Resolved as a negative: the hop stays as `enum ResolvedHop` + match-based classifier. (1) Digest-cost motivation retired empirically — Balancer `D` / Curve `xp` are 0.04–4% of the per-path budget (spike 77LOQT, `rust/crates/degenbot-solvers/benches/digest.rs`); cross-path digest memoization rejected (CL caches justifiably, the light families don't amortize, stale-digest reorg risk > ~1% wall-time ceiling). (2) Composition-classifier motivation settled negative — `dyn PathHopSnapshot` removes the enum but not the work: the 9-way `solve_path` classifier survives as capability-query chains over trait objects with the same 9 branches (the per-composition search algorithms are path-level strategies, not per-hop plug-ins; a hop-level trait can't replace them). (3) Extensibility motivation negative — adding a DEX family under the enum is three local edits, under the trait it's more touch points (capability surface grows alongside the struct). Net: `dyn PathHopSnapshot` is wash-to-loss on depth and clear loss on runtime (heap-alloc `Box<dyn>` per hop at resolve vs inline enum payload, vtable indirection on the 25-iter simulate loop). The frozen per-solve snapshot survives on constraint #5 alone (lock-free solve: guard drops before `solve_path`). See ADR-015 CLOSURE section.
-
-### Profit envelope gate (2026-08 architecture review, epic `SU7MAE`)
-
-The pre-solve skip test that cuts CL path-solve volume. **Not** the directional swap viability gate (a per-hop direction check at registration) and **not** the Solver-state tripwire above — sibling vocabulary only.
-
-- **Profit envelope** — a piecewise-linear **concave upper bound** on a hop's output curve: slope on ending-range piece `j` never exceeds the marginal price at that piece's entry × (1−fee), so `Ô(x) ≤ min_j [O(w_{j−1}) + s_j·(x − w_{j−1})]` over piece boundaries `w_j`. Derived purely from data projection already builds (`build_crossing_table` + tick-math slopes); no simulation.
-- **Envelope gate** — skip test over the chained path bound. CL swaps are monotone non-decreasing ⇒ bounds chain across hops (`O₂(O₁(x)) ≤ u₂(u₁(x))`); `max_x [Ô_path(x) − x] < min_profit` ⇒ the active-set walk is provably unprofitable and is skipped without a single simulation. `min_profit` is owned by the caller (dispatch derives it from gas accounting; default 0 = skip only provably-zero-or-negative).
-- **Bound warning (load-bearing).** Extending the FIRST piece's Möbius map beyond its validity window is **NOT** an upper bound — deeper later ranges can beat it. Only the per-piece entry-slope envelope form is sound.
-- Evidence base (2026-08): production solve phases median 1.53 s / p95 2.95 s per block; 4,123 paths/block with ~92% unprofitable; 3.5 M sims/block of which 43% are stop-time refinement probes; avg 2.7 word-steps/sim (density is NOT the bottleneck — see the Stage-2 word-profile cache revert, `e226276c2`).
-- **Envelope verdict** — the gate's typed outcome (2026-08 deepening, epic "solver-seam deepening"): `Envelope::Bound(x)` vs `Envelope::Unsupported(cause)`. _Unsupported_ (no sound bound derivable for a hop family) is distinct from _unprofitable_ (Bound ≤ floor): unsupported paths are SOLVED unscreened, never skipped — enforced by the type, never an overloaded `None`.
-- **Gate deps** — the per-path dependency value the gate consumes: the `HopMath` hop descriptors, with the CL variant carrying its **borrowed crossing table** (per-hop facts on the per-hop descriptor — never a parallel index-aligned slice; a `cl_derived` convenience builds tables caller-side, at the caller's cost). The block epoch rides here; the prefix-composition cache is internal to the gate module and **content-fingerprint-keyed** — no allocation-pointer key, no public reset.
-- **Gate stats, one struct** — a single `GateStats` TLS-collected (rayon workers) with one `merge`; no mirrored pub/private pair, no per-field hand-aggregation.
-- **Walk telemetry out the return path** — the CL walk returns `(result, WalkStats)`: Copy counters, always returned (production dispatch names slow paths and prices LPT bins from them). Heavy captures (census pieces, file dumps) ride an optional capture param supplied by dev harnesses — production passes `None`. No `take_`/`reset_` read-back of frozen thread-locals; the max-dense-words one-shot alert is the consumer's decision.
-- **One capture writer** — the heavy solver-capture plumbing is owned by a single `HeavyPathCapture`; the all-CL and mixed V2+CL captures differ only as data (shape filter, OUT-path variant, JSON body serializer).
-- **Walk memo handle** — the engine-owned cross-block composition cache: an `Arc<WalkMemo>` passed into the CL/mixed solve entries, epoch advanced by a `begin_block` call at the block-lifecycle start. No global memo state, no env gate inside the solver.
-- **SolveRuntimeConfig** — the solver crate's injected runtime config (memo on/off, event solver on/off, …), built once by the engine owner via `from_env()`; solver internals read **data, never the environment** (the ADR-021 tripwire pattern). Engine-side dispatch knobs (LPT partition, CL projection cache, min_profit) are ordinary fields on the engine's construction config — the `DeliveryPolicy` precedent.
-- **CL solve entry ladder (retired)** — `int_solve_cl_path` / `_cached` / `_with_profiles` and `exact_solve_mixed_path_n` / `_n_cached` collapse onto one entry each (prepared per-hop tables + optional `&WalkMemo`); golden-reference callers use derived convenience constructors. _Avoid_: growing new `_with_*` rungs at any solve seam.
-
-### Construction-I/O executor
-### Construction-I/O executor
-
-**Current shape — `PyBotIo`** (Rust `#[pyclass]`, `degenbot.bot.PyBotIo`)
-is the sole construction-I/O executor: every builder's `build()`/`update()`
-and the type-resolution + tick-fetcher paths receive `io: PyBotIo` and call
-`io.fetch_X()` / `io.probe_X()` directly (ADR-005 slice 14). The Python
-`PoolIO`/`SyncPoolIO`/`AsyncPoolIO` protocols and the encode→call→decode
-parity-gate fallbacks are deleted; `AsyncBot` and the async builders are
-retired (sync `Bot` + `PyBotIo` is the only construction path). `PyBotIo`
-also implements the 7-method generic RPC surface (`call`/`call_raw`/
-`get_block*`/`get_code`/`get_balance`) used by the Curve detection modules.
-`AsyncAlloyProvider` survives for the pump/subscribe/verify loop only —
-never for construction.
-
-**Shipped (slice A) — `ConstructionIo` core trait (architecture review,
-2025-07-18).** Construction-I/O is deepened behind a core trait owned by
-`Bot` (ADR-003: `Bot` is the single state owner; construction-I/O is part of
-its lifecycle, so the handle belongs on `Bot`, not a side-channel
-`#[pyclass]`). Two-trait split — one seam per concern, matching the
-`TickMapDb` / `TickBootstrapRpc` precedent:
-
-- **`DbConstruction`** — async trait, 12 methods covering the construction-
-  time DB reads/writes (`fetch_erc20_token`, `fetch_pool_row`,
-  `fetch_pool_kind`, `fetch_token_by_id`, `fetch_exchange`,
-  `fetch_liquidity_positions`, `fetch_initialization_maps`,
-  `fetch_pool_manager`, `fetch_v4_pool_by_pool_hash`,
-  `fetch_managed_liquidity_positions`, `fetch_managed_initialization_maps`,
-  `update_erc20_token_metadata`). Returns `degenbot_db::rows::*` core rows
-directly
-  (no `Py*` mirror at the trait). Propagates `DbError` **loudly** (Decision
-  8 (A) — the trait never swallows; the choreography decides whether to
-  degrade). Native adapter `DegenbotDbConstruction` holds a **persistent**
-  `DegenbotDb` (held connection, not per-call `DegenbotDb::open` — matches
-  XEANMB; deletes the 12×-open boilerplate).
-- **`RpcConstruction`** — async trait, 7 generic RPC methods
-  (`get_block_number`, `get_block`, `get_block_timestamp`, `get_code`,
-  `get_balance`, `call`, `call_raw`). Native adapter `AlloyRpcConstruction`
-  wraps `degenbot-rpc`'s `AlloyProvider`. **Alloy-only** — the legacy non-alloy
-  Python-provider fallback is dropped from the trait (the `PyBotIo` choreography
-  fallback retains it temporarily; deleted with the builder-choreography port).
-- **`ConstructionIo`** — composite handle (`Arc<dyn DbConstruction> + Arc<dyn
-  RpcConstruction>`) held by `Bot`. The no-DB path is a **`NoDb` adapter**
-  (every method returns `None`/empty), not an `Option` at the call site —
-  `ConstructionIo.db` is always `Some`. `NoDb` doubles as the first
-  in-memory test fake.
-
-`PyBotIo`'s 12 DB + 7 generic RPC methods now delegate through the trait
-objects (slice A), and the 27 choreographed encode→call→decode wrappers
-(`fetch_v2_reserves` / `fetch_v3_slot0_*` / `fetch_balancer_*` family) have
-moved core-side (the builder-choreography port, F2R2OC / 3FVZF4) into
-`bot_core/pool_builder/`; every `PyBotIo` `fetch_*`/`probe_*` now just
-`block_on`s the core choreography over `&ConstructionIo`. The Python pool
-builders receive `io: PyBotIo` (the `#[pyclass]`), not `&ConstructionIo`
-(the core handle is reached via `PyBot.build_*_pool`). `PyBotIo` does NOT
-retire fully here — see ADR-023/D0: it is trimmed to a strict translator and
-the residual surface is documented `stays-python`; full retirement is owned
-by follow-up epic `VK3YDM` (Rust ERC-20 + Curve port). Held-tx sharing between
-`DbConstruction`'s connection and `tick_assembly`'s `SnapshotDb` held-tx
-is a separate, later slice.
-
-Migration note: the construction-io-trait guide (removed in the stale-docs cleanup `71ec78b2`). The formal
-record of the Construction-I/O trait + adapter pattern lands as a future
-ADR (the ADR-014 slot is taken by the pool-state-deepening decisions —
-see `docs/adr/ADR-014-pool-state-deepening-layer.md`).
-
-**Posture (Decision 8 (A), unified):** DB errors propagate at the trait;
-the choreography decides whether to degrade. This unifies the codebase
-under the posture `tick_assembly` already established as canonical —
-"Do NOT restore the swallow."
-
-**Breaking change (0.6.x):** non-alloy Python providers are no longer
-supported for construction. Migration note: supply a `PyAlloyProvider`.
-An ADR recording the I/O-seam-is-core / alloy-only / loud-error posture
-will land with the slice.
-
-### Synchronization primitive for `construction_io` — CLOSED (2026-07-19)
-
-**Decision: leave it as `parking_lot::RwLock<Option<Arc<ConstructionIo>>>`; no change.**
-
-Investigated whether to swap the RwLock on `Bot.construction_io` for `ArcSwapOption` (the slot is publish-once-at-init, read on RPC/DB delegation paths — a shape ArcSwap is purpose-built for). The evaluation cascaded to a sharper question: if the slot is truly write-once, *no* sync primitive is needed at all — a plain field set in `Bot::new` suffices (the thread-spawn creates the happens-before edge). That's blocked only by the construction seam: `PyBot::new(chain_id)` happens before the provider is known, so `set_construction_io(&self)` runs post-construction through `&self`, which forces interior mutability.
-
-Three options surfaced: (A) merge the seam — make IO a constructor arg of `Bot::new`, drop the primitive entirely (cleanest, but a real refactor of the Python `__init__` ordering + `extract_native_alloy` choreography); (B) `OnceLock<Arc<…>>` (std, no new dep, init-once semantics, exits the D2 lock-ordering discipline — but loses the idempotent-replace path); (C) `ArcSwapOption<…>` (supports runtime re-publication, over-machinery if replace is dead).
-
-**Disposition: stays-as-is.** Effort-to-value is poor in every direction. The slot is uncontended (one publish at `__init__`, reads on I/O-dominated paths where a ~10 ns read-guard is invisible against network/SQLite). No measured contention, no profile pointing at it, no lock-ordering near-miss (the write happens before any reader is active). Retiring the primitive is cosmetic work on a cold path. The forcing function that would make it worth doing — actual runtime mutation (hot-reloading a provider, swapping a DB, a multi-engine bot re-attaching IO) — does not exist today. Recorded here so the candidate isn't re-litigated without that forcing function.
-
-**Broader ArcSwap audit (closed alongside).** Surveyed the other `parking_lot::{Mutex,RwLock}` sites in `degenbot-bot` for ArcSwap fit. The result: three of four candidate sites are **incrementally-mutated state** (`Arc<RwLock<BotState>>` — `apply_swap` mutates one pool's reserves per log; `Arc<Mutex<ArbitrageEngine>>` — `solve_dirty` mutates dirty sets + builds paths + solves; `Mutex<HashMap<…subscribers…>>` in `LogDispatcher` — `subscribe` appends), which is the wrong model for ArcSwap (a publish-snapshot primitive that swaps a whole `Arc<T>` atomically — would require COW-cloning the entire state per mutation). Only `construction_io` fit the shape, and it isn't worth touching. `arc-swap 1.9.2` remains transitive-only in `Cargo.lock` (no `degenbot-*` crate pulls it directly); formalizing it as a direct dep is deferred until a genuinely-fitting, contended publish-snapshot site lands.
-
-## Block-pump dispatch seam (B — unified event seams, 2026-08)
-
-> **Historical (superseded by ADR-041, epic `MROOY7`).** The dispatch-owner
-> module (`DispatchOwner`) and the `DrainWork` FIFO below were retired in
-> `SZJUKL`; stage work now executes inline at the `StageMachine`'s decision
-> points. Kept as design provenance.
-
-The pump's hand-offs to the sink, the solver-state verifier, and Python's block
-clock are owned by ONE module — one **dispatch owner** — but delivered over three
-**application-specific pipes**, each with the delivery semantics its task needs.
-"One seam" means one coordinated home, never one queue forced to fit every task.
-
-- **Dispatch owner** — the module that owns all three pipes and coordinates
-  liveness/ordering in one place. The seam worth having; NOT a single bus.
-- **Drain pipe** — an ordered FIFO (`mpsc`) taking `Drain`/`Finalize`/`Publish`
-  to a background drainer task → sink. Solve/dispatch/finalize must run in
-  enqueue order (FIFO + engine/sink locks are what make the deferred path equal
-  to the old inline one).
-- **Verifier pipe** — a latest-wins `watch` to the solver-state verifier task.
-  Only the most recent published block is ever verified (ADR-021); non-blocking
-  so a slow verify can never stall the pump.
-- **Block-clock pipe** — a DIRECT `notify_block` dispatch to the sink's
-  engine notification channels, deliberately NOT a `DrainWork` item (B2), so
-  a `newHeads` tick is delivered ASAP and never rides the drain FIFO behind
-  solver work. Every accepted header is delivered 1:1 (no coalescing). The
-  sink's `notify_block` no longer takes the `drain_lock` (the `engines` vec is
-  frozen after start), so the clock does not contend with the drain fan-out.
-  Callers hold no ordering guarantee on solver results.
-  *(2026-08-20 review update: the pipe relocates to the `SolveCoordinator` —
-  see "Delivery lifecycle + block-clock relocation" below; engines exit the
-  block path entirely.)*
-- **Stall backstop** — the drain-pipe liveness check (B3), soak-hardened: the
-  pump aborts when the queue holds a backlog (`depth >= BACKLOG_FLOOR=2`) AND
-  the drainer has completed no work for `STALL_WINDOW` (~30s). The wall-clock
-  window (not event-counting) is what correctly distinguishes a *frozen*
-  drainer from one mid-way through a single exceptionally long solve — a live
-  mainnet dry-run proved that pure strike-counting (on depth or on completion)
-  false-positives under heavy multi-path solve load. A drainer that progresses
-  but falls behind is observed via `pending()` (a lag metric), never aborted;
-  a dead (closed-channel) drainer still aborts immediately.
-
-### Pump-driver phasing — DEFERRED with a measured trigger (DECIDED, 2026-09-10; epic `VHCRD2`, task `L3B6AE`)
-
-Defers the original architecture-review card 4 (the `run_with_stream`
-interleaving) **with a policy rather than a preference**: phase the pump driver
-only when a single change must touch MORE THAN TWO of its five interleaved
-concerns in one PR. The concerns: (1) hotpath guards + timed-exit pruning;
-(2) allocator purge control (`allocator_ctrl::on_header_observed` +
-`init_from_env_at_pump_start`); (3) the WS-completeness cross-check
-(`CompletenessDecision` Verify/BackfillOwned arms); (4) posture telemetry on
-the executor seam (`feed_executor_throttle_sample` header-cadence feed);
-(5) backfill/rewind re-anchoring (`fsm.record_backfill` + the header epoch
-anchors). Re-baseline: the production body is ~1400 lines at HEAD
-(`0bd2b8909`) — the review's spuriously-exact "1391+" figure came from a
-drifted revision, the recent churn is additive **test** mass, and the
-trailing-average shrink claim stays qualitative. Preservation constraints under
-any future phasing: the `Arc<dyn StageHandlers>` interface (the test surface),
-the `for_test` knobs, and the FSM mutation points (`fsm.set_quiesce_params`,
-`fsm.record_backfill`) must not change; the phase-state **carrier decision**
-(shared struct vs heavy parameter passing) must be documented with the change.
-**Durable pointer:** the in-code trigger comment sits directly above
-`run_with_stream`'s doc comments in
-`rust/crates/degenbot-bot/src/bot_core/block_pump.rs`.
-
-## GIL-state discipline module (2026-08-20 architecture review)
-
-- **GIL-state discipline** — the invariant "never hold the GIL while parked
-  on the `BotState` lock" (incidents 2026-08-20 #1 / 2026-08-21 run-9) as
-  ONE home: the sanctioned accessors **`PyBot::with_state` /
-  `PyBot::with_state_mut`** (`degenbot-python/src/bot/mod.rs`) acquire the
-  guard INSIDE `py.detach`; pyo3's `Ungil` bound keeps GIL-bound values out
-  of the closure and the `!Send` guard can never escape it. Direct
-  `state_arc().read()/.write()` in pymethod bodies is forbidden. Covers
-  reads AND writes — a GIL-held reader parked behind a long write is the
-  frozen-victim side of the same inversion. (Shipped: ergo epic `UX66EM`
-  — accessors `3MXFTV`, pool.rs migration `J2HPO4`, gap closures
-  `UTFQ4Q`.)
-- **Lock-intent registration** — always-on per-thread record
-  (wants/holds/released, with the access mode) kept beside the thread
-  registry, so a GIL-deadlock dump states holder + wanters outright
-  instead of requiring manual futex correlation; join with the thread's
-  `last_span` (the pymethod name) for the full picture. These are cold
-  paths (the pump's hot dispatch never holds the GIL), so the map-op cost
-  is invisible.
-- **Enforcement** — the source scan
-  `no_gil_held_botstate_locks_in_bot_sources`
-  (`tests/gil_state_write_concurrency.rs`): every `.read()`/`.write()`
-  line under `src/bot/` must have `py.detach` within the 8 preceding lines
-  or carry a `T1-scan-exempt` marker (sanctioned accessors + pure-Rust
-  test seams). Unenforced locality decays. (Shipped: UX66EM `ZFZSEQ`.)
-- **LockSite — typed acquire site (ADR-043 §9 bounded-stable-labels; ergo `YRZY2Y` T1, cutover `e8008fd42`).** The `degenbot.state_lock` wait/hold histogram label is owned by the closed `LockSite` enum (`state_lock.rs`), whose variants carry the entire label set — `python`/`pump`/`reg`/`solver`/`sim`/`core`. Acquires name their site *through the type* (`read_at`/`write_at`/`try_write_at(site)`), never a string, so the `label()` match is exhaustive and a label is structurally incapable of drifting from the enum; this realizes ADR-043 §9's bounded-stable-labels rule (closed `&'static` value sets, `telemetry::error_kind`-style) directly at the acquire seam. **Retired shapes — do not re-suggest:** the `site_class_for(file)` file-substring taxonomy that classified callers by matching path fragments (its `engine_handle.rs → solver` arm outlived the file, dissolved in the `SZJUKL`/`MROOY7` retirement); its `site_class_taxonomy_is_pinned` test, which pinned the substrings by feeding synthetic fake paths; and the raw `#[track_caller]` `Location` as a *metric* label (location strings are unstable and stay in warn/log output only).
-
-## Delivery lifecycle + block-clock relocation (2026-08-20 architecture review)
-
-> **Historical (superseded by ADR-041, epic `MROOY7`).** The
-> coordinator-side relocation below targets the retired `SolveCoordinator`;
-> the block-clock pipe now lives in `degenbot-core::block_clock_pipe` and the
-> delivery lifecycle's close contract survives on the engine's `StageHandlers`
-> implementation (`EngineStages`). `Engine` and `EngineHandle` are retired
-> (`SZJUKL`). Kept as design provenance.
-
-- **Delivery lifecycle** (`DeliveryLifecycle`, `arb_engine`) — the channels'
-  open/deliver/close plus the end-of-stream contract ("receivers observe a
-  natural stream end exactly once, on pump death or engine drop" — incident
-  2026-08-20 #2) as one module. Concrete, not generic (sample-of-one
-  discipline; generalize to `DeliveryLifecycle<T>` only when a second
-  payload type actually exists). Its test suite is the incident's
-  red/green tests, moved to where the invariant lives.
-- **Delivery policy vs lifecycle** — the split is per-engine-vs-invariant:
-  thresholds / diff bookkeeping / filter (`DeliveryPolicy`) are
-  engine-specific and stay per engine; the lifecycle is invariant across
-  engines and is shared. N engines hand-rolling close semantics = N copies
-  of the incident class.
-- **`Engine::on_pump_ended`** — the renamed `drop_delivery_channels`
-  (matching `DrainSink::on_pump_ended`); the default no-op is removed so
-  every engine answers the liveness question explicitly.
-- **Block-clock pipe ownership** — the pipe relocates from the engine
-  (`DeliveryPolicy.block_tx`) to the `SolveCoordinator`, completing
-  ADR-027's one-dispatch-owner design (supersedes the engine-notification-
-  channel wording in the dispatch-seam section above). `BlockNotification`
-  moves to `bot_core` (a chain fact, not solver vocabulary);
-  `Engine::notify_block` and the `EngineHandle` per-header engine-mutex
-  relay retire; Python `block_stream()` moves off `PyArbitrageEngine` onto
-  the coordinator-side handle.
-- **Deferred to the ADR-018 trigger** — whether a second engine family's
-  Python stream is separate or merged into one, and whether delivery
-  leaves the engine entirely (coordinator-owned); the lifecycle module is
-  designed not to care.
-
-
-## Block-pump PumpDecision seam (A — pure producer/FSM, 2026-08)
-
-> **Historical (superseded by ADR-041, epic `MROOY7`).** The `PumpFSM` and
-> its `PumpDecision` vocabulary were folded into the one `StageMachine`
-> (`7NFYQW`) and the executor surfaces named below (`DispatchOwner`,
-> `DrainWork`, the `Engine` fan-out) were retired (`SZJUKL`) — the
-> pure-decision/thin-driver discipline itself continues. Kept as design
-> provenance.
-
-Epic A (ergo `FUE5SP`, tasks A1–A5) — the ADR-008 deepening: the block pump's
-per-event *policy* lives in a **pure decision producer**, executed by a **thin
-dispatcher**. Same family as ADR-008 (BlockClock) and ADR-027 (dispatch seam):
-"deep module — pure producer + thin I/O driver". See ADR-028.
-
-- **pump FSM** (`PumpFSM`) — the pure, I/O-free decision machine for the block
-  pump: owns the cursor, per-block metadata snapshots, quiesce arm, recovery
-  anchor, ws-delivered tracker, and the `BlockClock`. No provider, no timer, no
-  `Instant`, no lock. Time enters as `now_ms` data.
-- **PumpDecision** — the enum that names every effect the FSM can produce:
-  `Drain`, `Publish`, `Finalize`, `Notify`, `SetLastSolved`, `Backfill`,
-  `Recover`, `LogSilence`, `VerifyCompleteness`, `Stop`. The driver maps each
-  onto its executor (the dispatch owner, the sink, the provider, the reorg
-  coordinator, or the process).
-- **thin dispatcher / executor** — `run_with_stream`
-  (essentially unchanged shape, now a thin driver): feeds
-  `(WsEvent + clock state + watchdog tick / now_ms)` into the FSM and executes
-  the returned `PumpDecision`s. Owns all I/O: the ADR-027 `DispatchOwner`, RPC
-  (`eth_getLogs`), the drainer task, the reorg coordinator, the WS-drop abort.
-- **tick/clock input** — the driver reads the wall clock (a monotonic `now_ms`)
-  and feeds it as data, so the FSM's watchdog rules (`on_tick`,
-  `record_header`/`record_log`) are deterministic and horology-free.
-- **Solve anchor** — the block solve / verify / sim run against: the
-  request block at or above the **pool-state head**. A hop whose
-  price clock *runs ahead of* the anchor is **future** and never
-  legitimate; a hop *at* the anchor is a mid-block capture and is
-  fine. The pump's `drain_decision` emits it (ADR-008 D2), the engine
-  re-anchors its solve to it, and the ADR-021 verifier tests future
-  prices against it — never against the raw lagging block (the B2
-  re-anchor). One pure rule, shared by all three.
-- **Pool-state head** — the state clock: the max `update_block`
-  across all registered pools (`BotState::pool_state_head`). During a
-  backfill/drain desync it can run *ahead of* the pump's header clock;
-  the solve anchor takes the maximum of the two.
-
-The FSM owns the rules: quiesce-before-publish + solver-release gate
-(`on_settle`), recovery anchor + single-writer discard (`record_backfill` /
-`should_drop_recovered_forward`), watchdogs as ticks (`on_tick`), the
-ws-completeness verdict (`completeness_decision`), and the drain anchor
-(`drain_decision`). Cursor advancement under `drain_lock` + lock order
-(`drain_lock → engine → BotState`) stay in the coordinator/engine executor,
-not the FSM.
-
-**A6 disposition (superseded, 2026-08).** Task A6's literal "collapse
-`DrainSink` to one `drain(block, metadata)` that owns the quiesce gate" is
-**not built**: the quiesce gate now lives in the FSM's `on_settle` (A2), so
-re-owning it in the drain entry would un-build the pure-producer design. The
-pump's per-block surface is already single: FSM decision → `DispatchOwner` →
-`DrainWork` (ADR-027). The wide `DrainSink`/`Engine` surfaces are executor
-fan-out detail behind that seam. Recorded in ADR-028's "Not decided here";
-not re-litigated without a forcing function.
-
-### Simulation engine vs. searcher strategy (DECIDED, 2026-07-20 — architecture review)
-
-**The seam.** degenbot is a library consumed by many searchers with different on-chain strategies (backrun, sandwich, JIT-L, liquidation, …). The Rust core therefore owns only the **in-process representation of pool/token state** + the **solver methods** (the value-only swap math the operator constrains) + a **thin, general simulation executor**. The **transaction encoding** for a searcher's bot, the **profit-detection strategy** (e.g. the settlement-arbitrage example's 3-pre-balance → `execute()` → 3-post-balance WETH9/ERC6909/Multicall3 bundle, `decode_balance`, gross/net + priority-fee sizing), and the **operator policy** (thin-margin filtering, path suppression, sort order) are **out of scope for the core** — they are the searcher's code, assembled at runtime from the tools the core exposes. The settlement-arbitrage bot (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py` + its Rust strategy leaves) is ONE example strategy, not the simulation surface.
-
-**`ExecutionStrategy` seam (ADR-025).** The
-user-owned execution layer over the thin engine: `PayloadComposer` (Encode) +
-Probe declared reads + Assess gate + Fee default, in the pyo3-free
-`degenbot-execution` crate. Python and Rust consumers meet the SAME seam — see
-the [execution-strategy guide](docs/execution-strategy.md).
-
-**Load-bearing consequence.** Code wedging any one strategy (the 7-call pre/post balance bundle, `compute_priority_fee`, `dispatch_profitable_results`'s categorization + suppression + thin-margin policy) into a crate that claims to be the simulation core is the wedging AGENTS.md forbids. The duplicated `simulate_one` (RPC `eth_simulateV1`) ↔ `simulate_path_on_evm` (revm `transact_one`) 7-call bundle is duplicated *settlement-strategy* code, not duplicated *engine* code — its dedup target is the strategy layer, not the simulation core. The simulation engine itself stays deliberately thin: "execute these calls against the EVM, return per-call outcomes (status, gas, output, revert, optionally touched state)."
-
-**Adapter decision — in-process revm only (DECIDED, 2026-07-20).** RPC `eth_simulateV1` simulation, its `stateOverrides` JSON builder (`build_simulation_state_overrides` → alloy `StateOverride`), **and** `eth_createAccessList` **all retire**. The sole simulation executor is the in-process revm path (`BlockSimHandle` over the `CacheDB<WarmCodeCache<BotStateDb<WrapDatabaseAsync<AlloyDB>>>` stack); the sole override mechanism is `CacheDB::insert_account_storage` / `insert_account_info` (`apply_simulation_overrides`, the explicit-balance-wins merge); the sole access-list creation is an `Inspector`-based collector on the first `transact_one` run (warmed slots collected in-realtime as a byproduct of execute() — retires the post-re-`transact` `emit_access_list_from_state` path as the primary AL source). This realizes the long-term goal (high-performance in-process sims, minimize external RPC I/O): the RPC surface stays only for cold-miss state fetches (`AlloyDB` underneath) + non-sim primitives (`eth_feeHistory` for `compute_priority_fee`'s market percentiles), never for whole-transaction execution or access-list creation. The two-adapter rule does **not** justify an RPC-sim seam — there is one adapter (revm); anything RPC-shaped that survives is a *primitive the revm path calls underneath*, not a peer simulation executor. Strategy params (`SimulationOverrideParams`: owner, executor addresses, runtime bytecode, warmup slots, funding amounts) cross the strategy→engine seam; the engine renders them to `CacheDB` inserts only. AL output crosses the engine→strategy seam: the engine produces the warmed-slot set via the Inspector; the strategy decides whether/how to attach it to the submitted tx.
-
-**Strategy-relocate sequencing — DEFERRED into HZL664 (DECIDED, 2026-07-23; ADR-019 D5 task `JB22F5`).** Where the settlement-strategy code (`SimResult`, `SimulateContext`, `SimulatePath`, `FailBuckets`, `compute_priority_fee`, `fits_int128`, the 7-call bundle, `decode_balance`, `dispatch_profitable_results` + its thin-margin / suppression / categorization policy, `filter_thin_margin_results`) lives once ADR-019 is done. Three options surfaced: (A) a new workspace member `degenbot-arbitrage` crate the PyO3 binding depends on transiently + that a pure-Rust consumer could reach; (B) defer the relocate until the step-6 PyO3 decompose (`HZL664`) — the binding reaches the strategy directly today (`degenbot-python/src/simulation/dispatch.rs` calls `dispatch_profitable_results`, `SimResult`, `SimulateContext`), so no piece can move to `examples/` until the binding stops reaching it; (D) strand the strategy inside the PyO3 crate (violates the standalone-Rust-core framing). **Decision: (B) — defer.** The relocate inseparably couples to the PyO3 decompose: there is no standalone leaf in step 5 that satisfies its AC rg (`compute_priority_fee | dispatch_profitable_results | SimResult` returns nothing in `degenbot-simulation/src/`) without first severing the binding's reach, which is step 6's scope. The signature collapse of `dispatch_profitable_results` (`Option<BotState>` → required) likewise lands in step 6 — the `Option` arm survives only because the PyO3 caller's `engine: Option<...>` keeps it alive. Step 5 therefore folds its AC into `HZL664`: after the decompose rewrites the PyO3 surface onto engine primitives, the strategy becomes unreachable from the binding and moves to a real `examples/` bin (the "no new crate / example bin" shape ADR-019 D5 prefers) — satisfying the step-5 AC rg at that point. `JB22F5` is marked done with this deferral note (no code change); the substantive relocate ships as part of `HZL664`.
-
-**PyO3-decompose gated by the same relocate (DECIDED, 2026-07-23; ADR-019 D7 task `HZL664`).** Surveying `HZL664`'s listed primitive wrappers against the current engine shape under decision (a) (ship additive wrappers alongside the existing monolith; no retire this step) surfaced that **every** primitive is either already exposed or blocked by the deferred strategy relocate: `fetch_priority_fee_percentiles` is already wrapped (`fetch_fee_history_py` in `degenbot-python/src/submission/submit.rs`; step 1's leaf moved to `degenbot-rpc::fees`); `PyBlockSimHandle::build` is blocked because `BlockSimHandle::build` takes `ctx: &SimulateContext<'_>` which mixin engine primitives (`provider`, `base_fee_next`, `current_block`, `block_timestamp`, `block_priority_fees`) with strategy config (`executor_owner`/`executor_address`/`weth_address`/`pool_manager_address`/`multicall3_address`/`inject_code`/`runtime_bytecode`/`warmup`); `apply_simulation_overrides` standalone is blocked because the `CacheDB` is built inside `BlockSimHandle::build` + the override adaptor reads `SimulateContext::override_params()`; the AL-Inspector output is blocked because the AL today is embedded in `SimResult.access_list` (a strategy type). The root cause is one + the same: `SimulateContext` engine-strategy mix is not split, + that split *is* the strategy relocate decision (B) deferred to `233TVH`. So the "additive half" of `HZL664` is near-empty: the fee primitive already exists; the other three are all blocked on the `SimulateContext` coupling. **Decision (a1) — defer `HZL664` into `233TVH`.** This is decision (B)'s logic applied one level deeper (the relocate gates the decompose the same way it gated JB22F5): no fake primitive wrappers re-wrapping the monolithic strategy shape under a new name. `HZL664`'s additive surface + its retire (the deletion of `dispatch_profitable_py`/`PyDispatchCandidate`/`PyDispatchOutcome`/`PySimulateContext`) both fold into `233TVH`, which becomes the combined step-6+7: split `SimulateContext` into engine-primitive args + `SimulationOverrideParams` (the engine-primitive type already at `sim::evm/state_override.rs`) → expose `PyBlockSimHandle::build(provider, base_fee_next, current_block, block_timestamp, override_params, bot_state, warm_cache)` as a genuine engine primitive → rewrite the Python driver's `_dispatch_profitable` onto the decomposed primitives → finally retire the monolith + pyclasses + move the strategy to `examples/` (satisfying JB22F5's AC rg at that point).
-
-**Capstone resolution — Rust-canonical, NOT Python re-derivation (DECIDED, 2026-07-23; ADR-019 D4/D7 task `233TVH`).** The final task's own Context asked: is the canonical example the Rust one (Python a thin driver over it) or the Python one (Rust strategy a reference impl the Python bot re-derives)? Three considerations forced the call: (1) AGENTS.md's "Rust is the engine; Python is a driver shell, **not a co-implementation**" directly forbids Python re-deriving the 7-call bundle + `decode_balance` + `compute_priority_fee` + the categorization — which is what 233TVH's "Python constructs its own 7-call vector" AC would require; (2) the whole ADR-019 epic was the engine-vs-strategy split — un-wedging the strategy from the engine crate, not re-wedging it into Python; (3) ADR-019 D1 retired the RPC sim path *to make the in-process revm path the sole executor* — having Python re-implement the 7-call bundle over `PyBlockSimHandle` primitives would resurrect a second strategy implementation alongside the Rust one, the exact duplication ADR-019 D1 resolved. **Decision (R): Rust-canonical.** The strategy stays in Rust (a `degenbot-arbitrage` crate — the only internally-consistent shape: AGENTS.md forbids wedging the strategy back into the `degenbot-simulation` engine crate, + a Rust `examples/` bin can't be reached by the PyO3 binding, so a crate is the only reachable Rust home). The Python bot stays a thin driver: it calls a thin PyO3 wrapper over `degenbot-arbitrage::dispatch_profitable_results` (the existing `dispatch_profitable_py`, re-sourced), reads the outcome, chains to `dispatch_and_submit_py` — it does NOT construct the 7-call vector, decode balances, size priority fees, or run fan-out policy. **Two ACs dissolve under (R):** "`eth_backrun_v2_v3_v4_rust.py` no longer calls `dispatch_profitable_py`" (it keeps calling it — now understood as a thin wrapper over the Rust strategy, not a monolith to retire) + "composes primitives end-to-end" (that composition stays in Rust). The substantive 233TVH work under (R) is the Rust-side un-wedging: create `degenbot-arbitrage`, split `SimulateContext` (engine primitives stay in `degenbot-simulation`; strategy config moves to the strategy crate, deriving `SimulationOverrideParams` for the engine's `BlockSimHandle::build`), move the strategy code (`SimResult`/`SimulateContext`/`SimulatePath`/`FailBuckets`/`compute_priority_fee`/`fits_int128`/the 7-call bundle `simulate_path_on_evm`/`decode_balance`/`dispatch_profitable_results`/`filter_thin_margin_results`/the categorization + suppression policy/constants) to the strategy crate, collapse `dispatch_profitable_results`'s `Option<BotState>` → required (the PyO3 caller always supplies the engine now). `PyBlockSimHandle::build` is exposed as a new primitive for standalone engine-direct consumers (the settlement-arbitrage strategy uses it internally). This satisfies JB22F5's AC rg at last (`compute_priority_fee | dispatch_profitable_results | SimResult` returns nothing in `degenbot-simulation/src/`).
-
-**SHIPPED (2026-07-23, commit `050e99fd`).** `degenbot-arbitrage` crate created; `SimulateContext` split (engine primitives stay in `degenbot-simulation`; strategy config moved); `BlockSimHandle::build` now takes block-env primitives + a projected `&SimulationOverrideParams` (the engine never names `SimulateContext`); `BlockSimHandle::evm_mut` exposes the borrowed `&mut evm` the strategy drives; `simulate_path` (the strategy-coupled method) removed; strategy code (`SimResult`/`SimulateContext`/`SimulatePath`/`FailBuckets`/`compute_priority_fee`/`fits_int128`/the 7-call `simulate_path_on_evm`/`simulate_in_process_with_db`/`decode_balance`/the calldata builders/`dispatch_profitable_results`/`DispatchCandidate`/`DispatchOutcome`/`filter_thin_margin_results`/constants) relocated to the strategy crate; the PyO3 seam re-sourced to `degenbot-arbitrage` for strategy types + `degenbot-simulation` for the engine handle (the Python driver stays a thin cockpit — no 7-call re-derivation); stranded engine deps (`degenbot-submission`/`degenbot-abi`/`futures`/the `BlockPriorityFees` re-export/tokio `sync`) removed. Gates green: `just test-rust` (engine 17 + strategy 21 + reachability + standalone), `just lint-rust` (clippy clean), `just check-no-pyo3-in-cores`, `just test-python` (360 wrapped `tests/rust` tests passing within the full suite). ADR-019 epic fully done (7/7 ergo tasks).
-
-### ERC6909 vault profit capture (SMOZG3 / ADR-034)
-
-- **ERC6909 capture** — the operator's `erc6909_profit` toggle
-  (`DEGENBOT_ERC6909_PROFIT=1`): captures Uniswap-V4 profit as an ERC6909
-  claim on the PoolManager (a fresh `V4_MINT_COMPACT` — no pre-held position
-  required) instead of custody WETH. The `execute()` config packs
-  `check_mode=2` (the unconditional on-chain floor
-  `PM.erc6909WETH(after) >= before`), and the declarative harness asserts the
-  vault delta to the 0.1% oracle pattern (`assert_erc6909_capture`).
-- **Stream effect is pure-V4 only** — per `family_axis_support`, the capture
-  axis branches the stream only for `v4_v4`/`v4_v4_v4`; other families keep
-  custody capture with only the mode-2 floor armed.
-- **batch×capture combination (shipped — TGUZCT, 2026-08-20)** — the
-  original interim decline (`erc6909_batch_capture_declines`) was premised on
-  a *stale injected artifact*: the bot operates the executor purely via
-  state-override code injection (`INJECT_EXECUTOR_CODE=1`), and the
-  `contracts/cmd_executor*` bake (15,605 B runtime) predated the settle-skip
-  variant — the ADR-034 premise of a "currently undeployed" fixed artifact
-  was wrong. The current executor source has `V4_BATCH_OPEN_WETH` (0x43)
-  (same as `V4_BATCH` minus the final WETH settle, leaving the positive WETH
-  delta open for the follow-up `V4_MINT_COMPACT` mint), the batch×capture
-  stream is EMITTED (`v4_v4`/`v4_v4_v4`), and the declarative harness
-  asserts the vault delta under capture armed. The decline and its
-  encode-fail routing are gone (hard cutover); ADR-034 carries the
-  amendment.
-
-### Execution strategy seam (ADR-025)
-
-**The seam.** The execution side of degenbot is the **developer's own `cmd_executor` adapter**, not a general execution layer. A new pyo3-free `degenbot-execution` crate owns the **`ExecutionStrategy`** trait + its value types (the solve-result view, the gate protocol, `ExecutionResult`) — no default strategy. `degenbot-arbitrage` implements it as the **default adapter** (stays Rust-canonical per ADR-019 R). A foreign user's crate `impl ExecutionStrategy`, or supplies a Python callable lifted into it via **`PyPayloadComposer`/`PyExecutionStrategy`** (the Polars-`map_elements` model) — both meet the same seam. This is the execution-side twin of ADR-015's `degenbot-solvers` relocation; the two-adapter rule (settlement arbitrage + a user's own contract) justifies the seam.
-
-- **PayloadComposer** — the Encode part of an `ExecutionStrategy`: `solve result → payload bytes` for ONE execution contract. Rust users implement it; Python users supply a callable. The canonical `cmd_executor` encoder (`CmdExecutorComposer` wrapping `encode_cmd_stream`) is the default adapter.
-- **Probe / Assess (parts of an `ExecutionStrategy`)** — Probe is declared data (which pre/post read-calls to snapshot: label/addr/selector); the engine runs them. Assess is how deltas → profit + pass/fail (built-in shapes like sum-of-deltas / return-value, or a user's tiny interpreter). **Priority-fee/gas pricing (Fee) is the defaulted pricing half of Assess, not a fifth seam** — `net = gross − gas×(base_fee_next + priority_fee)` is defined in terms of the pricing policy, so pricing can't be independently ordered; a built-in market-percentile (`compute_priority_fee`) is the default, overridable.
-- **Solve-result view** — the seam's input contract: `SolvePathResult` (amounts: `optimal_input`/`hop_outputs`/`consumed_inputs`) + `PathInfo` (hop descriptors) projected to a typed Python `SolveResult` view. Today the per-hop amounts do NOT cross to Python on the clean path (`SimResult` carries pre-built `execute_calldata`, not the amounts) — exposing them is the one genuinely new surface.
-- **Default-stays-Rust-canonical wall.** The canonical `dispatch_profitable_results` / `dispatch_profitable_py` **never reads a Python transform** — it uses the Rust default adapter only and returns `execute_calldata` exactly as today. The seam *adds* a foreign-contract path for a user's own dispatch loop; it never lets Python re-derive the canonical 7-call bundle (ADR-019 R + AGENTS.md "driver shell, not a co-implementation"). A foreign user's success/failure gate is **their own searcher code** over the thin engine, not a `SimGate` hook wedged into the engine.
-
-**The original Candidate-1 deepen (the 27-way `three_hop_*` fan-out + the dead `V4V4ArbitragePayload`/`V4V3ArbitragePayload`/`CmdExecutorComposer` payload builders) becomes internals of the default adapter.** Delete the dead encoders (facet B) and collapse the 27+8 combinatorial fan-out behind `CmdExecutorComposer::compose` (facet A), Red→Green against the golden-master vectors (`composers_parity.rs`/`composers_3hop_parity.rs`/`native_eth_3hop_bridge.rs`) — now pinning the default adapter's output.
-
-### Onchain pool-state probe — `degenbot-rpc::abi` (DECIDED, (A) planned 2026-07-20)
-
-**Decision: `degenbot-rpc::src/abi.rs` is the single deep home for onchain
-pool-state probing.** An architecture review surfaced that one deep module
-already exists — `encode_*` / `decode_*` / `fetch_*` for every probe shape
-(V2 `getReserves`, V3/V4 `slot0`/`liquidity`, V3/V4 `tickBitmap`/`tickLiquidity`,
-`balanceOf`/`allowance`/`totalSupply`) — but three consumers circumvented it and
-reinvented the primitives from scratch. The reference adapter proving the seam is
-real is `PyBotIo` (`degenbot-python/src/bot/py_bot_io.rs`), which delegates every
-fetch through the home.
-
-**The stragglers (the hygiene work — "slice A"):**
-
-- `arb_engine/diagnostic.rs` — `fn_selector`/`encode_call`/`build_v2/3/4_calls`/`decode_v2/3/4_results`/`uint_value`/`int_value_to_i32` (alloy `DynSolValue` directly, bypassing the sol! macro path the home uses).
-- `bot_core/liquidity_verifier.rs` — `encode_calldata`/`decode_uint256/128`/`decode_int128`/`decode_v3/v4_*_result`.
-- `pool-updater/src/verify.rs` — `ticks_calldata`/`tick_bitmap_calldata`/`int_selector_calldata`/`decode_ticks_return`/`decode_tick_bitmap_return` (V3 half only).
-- `aave/src/updater/verify.rs` — `decode_uint256_return`.
-
-Each routes through the home; the reinventions delete. **Error shape:** a
-per-consumer `From<ProviderError>` adapter at the call site maps the home's
-`ProviderError::DecodingError` to the consumer's error enum (`LiquidityVerifyError::Mismatch`,
-`RunError::Provider`, etc.); the home's interface is **not** extended with a
-richer `DecodeOrRevert` (the revert-vs-mismatch distinction lives in
-`require_success` inspecting `MulticallResult.success` *before* decode, so it
-survives delegation unchanged).
-
-**Test discipline (load-bearing).** The home's existing `mod tests` carries the
-independent-oracle discipline ("reference vectors computed independently with
-`eth_abi` + `eth_utils.keccak` in a throwaway Python probe — a DIFFERENT ABI
-encoder than alloy's `sol!`"), but **has no tests for `decode_tick_data` /
-`decode_tick_bitmap` / `decode_v4_tick_*`** — the gap the stragglers' tests
-(`pool-updater/verify.rs::decode_ticks_return_matches_ref_encoder` etc., built
-with `cast keccak` + hand-rolled `DynSolValue`) currently fill. Slice A migrates
-those independent-oracle tests to the home **first** (Red+Green against the
-existing home decode, proving the home correct before any straggler touches it),
-then reroutes the stragglers in four independent per-consumer commits. This is a
-Tier-2-style strengthen: the home's test surface grows, then consumers reroute
-behind it.
-
-**Out of scope for slice A — `extsload` (V4 storage-slot reads).**
-`pool-updater/verify.rs`'s V4 path probes `PoolManager` storage slots via
-`extsload(bytes32[])` (selector `0xdbd035ff`), NOT an ABI method call. The home
-has no extsload surface. This is a genuinely different probe mechanism (direct
-storage reads vs ABI calls) and is **not** force-unified into the home —
-deferred to the batch-probe extraction (slice B), where its shape decides
-whether it joins a `ProbeRequest` enum or stays a peer.
-
-**Slice B (batch-multicall orchestration) — DEFERRED indefinitely (2026-07-20).**
-What each straggler *also* reinvents is the cross-hop / all-ticks multicall3
-batch build + heterogeneous-result decode (a layer the home's single-call
-`fetch_*` does not cover). An architecture review (B-grilling) surfaced that the
-three multicall3-batch shapes (diagnostic's cross-hop heterogeneous, verifier's
-two-phase discover-then-verify, pool-updater's mixed-type index-split) plus the
-V4 `extsload` single-`eth_call` path differ on too many axes (dispatch mechanism,
-phase count, output type) to unify behind one `ProbeRequest` enum without
-re-introducing the ADR-014 trap (a unified trait that no-ops on shapes it doesn't
-fit). Extracting only the narrow plumbing (`ProbeBatch` over a single-call enum,
-extsload excluded) was weighed against the ADR-014 lesson.
-
-**Disposition: deferred indefinitely.** After slice A, the dangerous
-duplication (byte-identical encode/decode copies with divergent bug surfaces) is
-fully eliminated — that's the class that caused silent misclassifications. The
-residual is **structural scaffolding duplication, not logic duplication**: three
-consumers each write ~30 lines of the same `build Vec<(Addr,Bytes)>` →
-`multicall3_batch` → `zip + decode-by-index` loop with their own index
-bookkeeping (`HopFetch { start, n }` in diagnostic, the `tick_count` split in
-pool-updater V3, the two-batch split in verifier) + their own `require_success`
-adapter (~90 lines total across 3 consumers). Not a bug-hiding class today — a
-noise + off-by-one-in-one-consumer risk. `multicall3_batch` dispatch itself was
-never duplicated (it lives in `degenbot-rpc::multicall3`; all consumers already
-call it).
-
-**Revisit only on a forcing function:** (a) a 4th multicall3-batch consumer
-lands (the scaffold copies a 4th time, dedup pays), or (b) an off-by-one bug in
-one consumer's index split that the others don't have (the bug-hiding risk
-becomes real). Neither exists today. Re-litigating without that forcing function
-re-raises the ADR-014 trap.
-
-**ADR alignment:** no conflict — ADR-003 names the onchain probe as
-cross-consumer infrastructure ("diagnostics, verification … all consume it");
-this decision *realizes* that for the single-call layer. No new crate deps
-(all four straggler crates already depend on `degenbot-rpc`), no pyo3-in-cores
-violation, no behaviour change.
-
-## Arb-engine per-cycle machines (2026-09-10 state/transition review)
-
-- **Detached-cycle machine** — the one owner (`arb_engine/detached_cycle.rs`)
-  of the solve-cycle arm lifecycle: per-cycle states `Unopened → Open` — the
-  detached arm is the ONLY solve arm since the WFF6MM hard cutover, so a
-  `begin_cycle` always opens (the retired `Saturated` state was the old
-  inflight-cap degrade to the deleted in-cycle arm). It also owns the merge
-  pipe open/take, the outstanding gauge pairing, the seq counters, the
-  outcome-ledger key policy, the disposition counters, and the sidecar spawn.
-  One total transition table plus a conformance walk, mirroring
-  `degenbot-workers`' `slot.rs`. `begin_cycle` takes no stance argument — the
-  retired `detached_solving` boot flag is gone with the in-cycle fallback.
-  _Avoid_: "detached arm plumbing", "sidecar state".
-- **Engine block cursor** — the one owner (`arb_engine/block_cursor.rs`) of
-  the engine-side block-coordinate residue (`results_block`,
-  `last_processed_block`, `last_solved_block`, `has_logs_this_block`):
-  every advance is monotone-max; the resume-time cold-start anchor seed is a
-  plain advance ("never regress" by construction, including a late detached
-  stamp). Completes ADR-041 §3.5's anchor-soup fold on the engine side; the
-  `DeliveryPolicy` anchored gate consumes `is_anchored()` rather than
-  re-deriving it from a raw integer.
-  _Avoid_: "anchor soup" (the retired shape), "results_block" as a
-  free-floating field.
-
-## Block epoch, StageMachine, cheap-read StateView, degenbot-ingestion (ADR-041, 2026-09 — epic `MROOY7`)
-
-The block-coordinate vocabulary above is **retired as of ergo `SZJUKL`
-(seam retirement) and epic `MROOY7`**: `DrainSink`, `Engine` (the per-block
-fan-out seam), `SolveCoordinator` (+ `drain_lock`), `DispatchOwner` +
-`DrainWork`, `DirtySets` + `EngineSubscriber`, and the six correlated
-per-block machines are folded in as sub-state of the one `StageMachine` (below) and
-no longer exist as independent per-block machines — `BlockClock` and
-`PumpFSM` are deleted outright, the path/delivery/registration lifecycles
-survive only as engine-side subservient drivers, and `EnginePhase` remains
-solely as the process-level runtime-lifecycle axis (`Created` → `Resumed`;
-ADR-041 §6), carrying no per-epoch stage state. Occurrences of the six
-machines' former per-block vocabulary in the tree are historical narration
-only. The current terms:
-
-- **Block epoch** — one confirmed block from first delivery to publish +
-  quiesced settlement; the unit of work the per-block loop was always
-  implicitly managing. Rewind (reorg) reopens an epoch at the reorg block
-  with a fresh `seq`, invalidating pre-rewind solve contexts.
-- **StageMachine** — the ONE pure, I/O-free state machine
-  (`bot_core/stage_machine.rs`, ergo `7NFYQW`) that owns every per-block edge
-  condition: header admission, log routing (forward/tombstone/reorg), the
-  reorg window, cursor + tombstone advance, WS-completeness, watchdogs,
-  quiesce/debounce, and the single publish arm. Its pinned tests are the
-  behavioral contract. Stage handlers are thin I/O drivers per stage.
-- **StateView (cheap-read)** — the read data plane: every pool family
-  (V2/V3/V4 scalars + tickmaps) reads through cheap snapshots/views instead
-  of cloning registry state; solves over the `Resolved`..`Solved` window are
-  structurally uncontended because writes are confined to the Streaming
-  stage. Budget verifier: the soak's `state_lock_wait`/`state_lock_hold`
-  histograms (measurements in
-  [stateview-feasibility](docs/architecture/stateview-feasibility.md)).
-- **degenbot-ingestion** — the standalone crate (`rust/crates/degenbot-ingestion`)
-  owning event ingestion and its watchdog (log-silence / header-staleness
-  force-close), consumed by the bot core; the Python layer never sees raw
-  WS streams.
-
-**Retired-name discipline:** do not reintroduce `DrainSink`, `Engine` (as a
-per-block fan-out type), `SolveCoordinator`, `DispatchOwner`, `DrainWork`,
-`DirtySets`, or `EngineSubscriber` in new code or docs; describe the same
-roles with the stage-machine vocabulary above.
-
-**Retired-name discipline (subscriber bus — ADR-047, 2026-09-12; epic `Y4VMWH`):**
-do not reintroduce `PoolStateSubscriber`, `attach_engine`,
-`subscribe_pool_state_change`, `PySubscriberAdapter`, `PySubscription`,
-`register_subscriber`, the subscriber-drainer thread, or `notify_pool_state_changed`
-in new code or docs. ADR-041 retired the bus's only engine consumer and the
-`EpochDelta` ledger is the sole dirt owner; the bus paid a subscribers `Mutex` plus
-a `NOTIFY-MISS` warn on every applied forward log to zero production
-subscribers. `notify_pool_state_changed` is superseded by
-**`record_pool_state_changed`** (the `EpochDelta` ledger append, not a fan-out).
-Compile is the guard for the deleted module: no resurrection-scan test exists or
-should be added (ADR-047 settled policy — source scans guard LIVE invariants only). The engine **Mutex sharding**
-ADR-037 sections below predate this cutover and remain accurate for the
-sharding mechanics only.
-
-**The stage seam and its control plane (ADR-046, epic `KLLYHS`).** The ONE
-pipeline seam carries two layers and must not mix them: **`StageHandlers`**
-is the *product/facts* seam — exactly the eight required `on_*` stage hooks
-whose outcomes carry the facts the driver used to re-poke for
-(`SolveOutcome.solved: Epoch`, `FinalizeOutcome.cutoff`); **`PumpControl`**
-(`bot_core/pump_control.rs`) is the *driver-facing control* seam — a separate
-required trait injected beside `Arc<dyn StageHandlers>` owning the seven
-pokes (`has_dirty_paths`, `set_last_solved_block`, `set_solve_anchor`,
-`record_logs_this_block`, `last_processed_block`, `notify_block`,
-`on_pump_ended`). Engine cursors on `PumpControl` are `Epoch`-typed;
-`notify_block` stays raw `u64` because a `newHeads` tick is a chain fact
-forwarded to the delivery-to-Python clock, not engine epoch work. Every
-symbol deletion is judged by which layer's vocabulary its callers speak —
-provenance/execution talk lives on the ADR-045 `SolveCycle` surface, never up
-on `on_solve`. **Outcome-carrier discipline:** an outcome field must be read
-by a driver; no field exists only to pass a fabricated value through (the
-`Finalize` `PublishOutcome::default()` pass-through is gone). The eight
-`EngineStages` inherent twins (`solve_dirty`, `last_processed_block`,
-`send_result_batch`, `finalize_block`, `set_last_solved_block(u64)`,
-`set_solve_anchor(u64)`, `record_logs_this_block`, `on_pump_ended`) are
-**retired names** — hard-cut, no shims. The split changed no Python surface:
-the FFI sweep found **no Python-visible `solve_dirty` exposure**, and
-`degenbot-python` gained only parameter plumbing (the `control` Arc clone)
-plus `PumpControl` routing in the solve wrapper.
-
-**Epoch-ledger ownership (ADR-041 §3.2, epic `YMXT4D`, cutover `e277b011e`).** The `Arc<EpochDelta>`
-ledger has exactly ONE owner — the `Bot` (its `active_delta`) — and
-`EngineStages` receives it as a **construction injection at `new()`**; there is
-no post-construction install path. The swappable `RwLock` slot, `set_delta`, and
-`delta_for_test` are **retired names** (retired-name discipline: no shims, no
-re-introduction). The rationale is the wiring-convention trap ADR-041 removed: a
-variant built without the post-construction `set_delta` call silently lost dirt —
-the `EpochDelta` dropped with **no compile signal**, only behavioral drift. With
-the Arc injected, that forget-to-wire bug is structurally unrepresentable, and the
-`KJWIK5` re-record hook now installs at construction too, so the carry can never
-be forgotten.
-
-## The `_ffi` seam (Pydantic barrier — DECIDED)
-
-**Decision:** `degenbot._ffi` is **private** — a raw Rust extension imported by ONE barrier per domain, never by leaf code. Model: pydantic-core (`_pydantic_core` is imported only by `pydantic_core/__init__.py`; the companion `pydantic` never touches it). Replaces degenbot's prior mixed state (ban test + allowlist back-door + direct `_ffi.<sub>` leaf imports).
-
-- **Ban rule (target):** "no file outside its domain's barrier module may contain `degenbot._ffi`." Mechanically enforceable; no allowlist, no submodule-vs-symbol distinction.
-- **Home placement:** 1:1 mirror — every consumed `_ffi.<sub>` maps to a `degenbot.<domain>` home. Cross-cutting concerns are elevated to first-class domains (not a `common` junk-drawer), but homes are created lazily on first Python consumer (no empty pass-throughs for dead submodules).
-- **Survey basis:** Polars (leaf-imports `_plr` freely, no ban), Pydantic (strict one-barrier, `_` truly private), cryptography (`bindings/_rust` namespaced), Ruff (thin CLI, N/A). Pydantic is the match because degenbot's ban test already signals "private" intent.
-
-## Dispositions (per `_ffi.<sub>`)
-
-### `deployments` — STAYS, correctly placed
-
-- **Home:** `degenbot.uniswap::deployments` (Rust) → `degenbot.uniswap.deployments` (Python mirror).
-- **Not eliminated.** The factory→identity lookup (`resolve_deployer`, `resolve_v2/v3_init_hash`, `verify_v2/v3`) is the standalone-Rust-core verification mechanism (ADR-005 / Fork A, JC6OFG): `register_v2/v3_pool` re-resolves `(deployer, init_hash)` from the embedded JSON and verifies the CREATE2 address at registration time. A standalone `Bot` verifies with no Python; if the builder carried identity in, Rust would trust rather than verify. Presets cannot replace it.
-- **Not cross-cutting.** PancakeSwap/SushiSwap/Swapbased/Camelot/Aerodrome are Uniswap-V2/V3 protocol forks; their deployment identity is Uniswap-protocol-family data. One boundary handling all V2-style DEXes via `factory + variant_tag` is slice 7's deliberate collapse. `degenbot-uniswap::deployments` is the Uniswap family's identity module, not a cross-cutting registry.
-- **Python work:** reroute `_ffi.deployments` leaf imports → `degenbot.uniswap.deployments`. No Rust structural change.
-- **Deferred:** 11 Balancer factory rows in the JSON for "exhaustive lookup" — the one cross-family leak. Carve out to `degenbot.balancer.deployments` when Balancer gets an identity crate (today only `degenbot-balancer-math` exists).
-- **Deferred:** whether `resolve_*` / `verify_*` free functions become methods on a typed `DeploymentRegistry` is a deepening question, not a mirror dependency.
-
-### Cross-cutting submodules — 1:1 mirror, UNIFORM
-
-**Decision (uniform):** every consumed `_ffi.<sub>` maps to a `degenbot.<sub>` home at the top level — including cross-cutting concerns, which are elevated to first-class domains (not a `common` junk-drawer). Homes are created lazily on first Python consumer; dead submodules stay un-homed. Top-level grab-bag `.py` files dissolve *into* their mirror home (the file's content moves into the package, not preserved as a floating peer).
-
-- **`abi`** → `degenbot.abi`. The home bridges the Rust `degenbot-abi` core (encode/decode/decode_single) with EIP-55 checksumming. No `eth_abi` fallback — Rust is the only backend. Consumers: `contract/decoding.py`, plus `aerodrome`/`aave`/`builders/*` via `degenbot.abi`.
-- **`contract`** → `degenbot.contract` (already a package). `crypto.py` reaches `_ffi.contract` for `get_function_selector`; reroute to `degenbot.contract.get_function_selector`.
-- **`crypto`** → `degenbot.crypto`. Top-level `crypto.py` (81 lines: `function_selector`, `keccak256`, `event_topic`) becomes `degenbot.crypto`. Note: `function_selector` currently delegates to `_ffi.contract`; under the mirror it re-exports from `degenbot.contract`. `keccak256` and `event_topic` delegate to Rust FFI pyfunctions (parity pinned in `tests/test_crypto_parity.py`, ergo 5JKNQH).
-- **`fork`** → `degenbot.fork`. Top-level `anvil_fork.py` (514 lines) becomes `degenbot.fork`, mirroring `_ffi.fork`.
-- **`db`** → `degenbot.db` (genuine cross-cutting infrastructure — DB row types + ops, consumed by `database/`, `cli/`, `exceptions/`, `updater/`). Existing `database/_ffi.py` is the partial barrier; consolidate to `degenbot.db` as the single mirror home.
-- **`deployments`** → `degenbot.uniswap.deployments` (see above — Uniswap-protocol-family identity, not cross-cutting).
-- **`price`** → **not a single home.** `_ffi.price` exposes two distinct pyclasses consumed by two different domains: `PyChainlinkPriceFeed` → `degenbot.chainlink` (already re-exported from `chainlink/__init__.py`), `PyAavePriceOracle` → `degenbot.aave` (already re-exported from `aave/__init__.py`). The Rust crate `degenbot-price` is implementation; its pyclasses belong to their consuming domains, not a shared `degenbot.price`.
-
-### Dead / test-only submodules (un-homed, lazy)
-
-- **`executor`** — 0 callers anywhere (production or test). Truly dead surface. Stays un-homed; a `degenbot.executor` home appears only if a Python consumer lands. (The `contracts/` Vyper executor + `degenbot-executor` Rust crate exist, but no Python leaf reaches `_ffi.executor`.)
-- **`subscriber`** — **RETIRED** (ADR-047, 2026-09-12; epic `Y4VMWH`). The `_ffi.subscriber` bridge (`PySubscription` / `register_subscriber` / `PySubscriberAdapter` / the subscriber-drainer thread) and its test-only fakes were deleted hard. It was always test-only (0 production callers); no production consumer appeared, and no `degenbot.subscriber` home will be created. Dirt is owned solely by the `EpochDelta` ledger (`record_pool_state_changed`).
-
-### Clean single-home submodules (reroute only)
-
-`balancer_math` → `degenbot.balancer.math` · `cl_math` → `degenbot.uniswap.math` · `curve_math` → `degenbot.curve.math` · `solidly_math` → `degenbot.aerodrome.math` · `solady` → `degenbot.utils.solady` (existing subpackage `utils/solady/libzip.py` is the only consumer; mirrors 1:1) · `dex_identity` → `degenbot.uniswap.dex_identity` · `provider` → `degenbot.provider` (already a package) · `simulation` → `degenbot.dispatch` · `submission` → `degenbot.dispatch` (both under `dispatch/`) · `cancel` → `degenbot.updater` · `pool` → CLI-only consumer (`cli/pool.py`); `degenbot.pool` mirror home created when a non-CLI consumer appears, or `cli/pool.py` is the home itself if the CLI stays the sole consumer (verify during cutover).
-
-## Executor command layer (degenbot-executor)
-
-The layer that turns a solver result into the `bytes` passed to the on-chain
-`cmd_executor.execute(bytes, config)`. Two first-class axes the grammar must
-express — where the stream's entry capital comes from, and where its terminal
-profit goes — are the load-bearing vocabulary for the axes refactor (epic
-`463V2C`).
-
-**Command stream** — the `bytes` payload `execute()` runs; the atomic unit the
-command grammar emits. A stream is a sequence of compact opcodes against an
-address table.
-_Avoid_: "payload" (reserved for the solve-result → strategy seam, ADR-025).
-
-**Encode request** — the per-path intake value the composer funnel consumes: the
-path plus the solver's amounts (optimal input, per-hop outputs, per-hop consumed
-inputs) plus the operator's declared axes, as one unit. One per path, built once
-at the producing site. It is the contract the CL overfeed-clamp invariant
-attaches to: `consumed_inputs[i]` is the executable input to hop i, and for an
-over-fed CL hop it is the clamped value the on-chain exact-in loop terminates on
-(UO3JM4).
-_Avoid_: "command stream" (the `bytes` the request is encoded into). "payload"
-(the ADR-025 solve-result → strategy seam bytes). "EncodeOptions" (the axis
-bundle is a part of the request, not the request).
-
-**Encode context** — the session-scoped bundle of deployment addresses (executor,
-PoolManager, WETH) shared by every encode request in a session. One per session,
-never per-path.
-_Avoid_: folding it into the encode request (session scope re-stated per path).
-
-**Command grammar** — the rules + per-shape-class description (protocol
-sequence × funding source × profit capture × builder bribe) that derive a valid
-command stream, including the ordering the stream must satisfy. Distinct from
-the "command stream" it emits, and from the "composer" (the concrete encoder
-that executes the grammar).
-_Avoid_: "composer" for the model; "encoder" (the byte-layout details live in
-the encoder methods the matrix calls).
-
-**Funding source** — the declared origin of a command stream's **entry (seed)
-capital**: chosen **at runtime per path by the strategy/operator** (an economic
-knob — self-fund is cheaper gas for small opportunities, flash is needed to
-access outside capital for large ones), not a fixed config. Exactly one per
-stream. Values: **self-funded** (asset held by the executor), **pool
-flash-loan** (a **flash source pool** — see below, in-path or off-path), a
-**PoolManager free take** (a positive delta owed to the executor), an
-external-lender flash (**Aave**), or **ERC-6909 burn-to-settle** (burn a held
-claim to fund settlement). Inter-hop inputs and their sizing are an
-implementation detail, not a funding decision.
+**Session watch**:
+The cockpit's one owner of a session's end-state: watch-set assembly, end-verdict
+ranking, and teardown.
+_Avoid_: "await loop", "fail-fast wrapper".
+
+## Pool registration lifecycle
+
+Canonical phases for the CL (V3/V4) registration verify lifecycle:
+`Quarantined → drain + verify → Live`.
+
+**Registration lifecycle**:
+The per-pool state a registered CL pool occupies: a Sparse pool is always `Live`; a
+Tracked pool is `Quarantined` until its verification passes.
+
+**Quarantined**:
+A registered CL pool whose live events are deferred to the pump buffer until registration
+verification completes. A Quarantined pool is not solvable.
+
+**Live**:
+The steady-state direct-apply contract, and the only solvable state.
+
+**Tracked** (a `PoolTickCoverage`):
+A pool whose snapshot provided complete tick data, so solver results are trustworthy.
+Registers `Quarantined`; must pass verification before `Live`.
+
+**Sparse** (a `PoolTickCoverage`):
+A pool for which no complete tick data exists, so solver results may be inaccurate.
+Registers `Live` immediately and is never verified.
+
+**Known bitmap word**:
+A tick-bitmap word whose whole tick set has been established by a checked source (sparse
+fetch, full-sync replace, snapshot tick keys, or explicit update input). Exists only on
+Sparse pools; the on-disk bitmap itself is derived from the pool's tick rows.
+
+**Checked-empty word**:
+A checked bitmap word that holds no initialized ticks, kept present-but-zero. A word
+*absent* from a bitmap snapshot is indeterminate on a Sparse pool (fetch before use) and
+known-empty on a Tracked pool (the map is complete).
+
+**Snapshot seed**:
+The registration-time (pinned) tick data captured for a Tracked pool, verified exactly
+once against on-chain state at the snapshot block.
+
+**Last complete block**:
+The highest block the pump has fully delivered, tombstoned by the first `removed:false`
+log of the next block. A registration's state application may not advance past it.
+
+**Verify lifecycle**:
+The per-pool choreography — quarantine, seed verification, drain, post-drain
+verification, live — plus its block-resolution and config-gating policy, owned by the
+Rust core.
+
+**State tripwire**:
+The verification failure raised as the terminal gate so `Live` is unreachable while
+tracked state is unverified. Never auto-repaired. Distinct from the solver-state
+tripwire.
+
+**Orphan sweep**:
+Cleanup releasing pools that were built but whose paths never registered. Never a
+productivity dependency.
+
+## Solver-state tripwire
+
+**Solver-state tripwire**:
+The solve-time accuracy gate that diffs, per hop of a published block's change set, the
+solver's stored scalar state against canonical on-chain state and returns one typed
+verdict. On divergence the bot stops loudly; it never heals. Distinct from the
+registration **State tripwire** — one gates publish, the other gates registration.
+
+**Tripwire class**:
+The defect class a tripwire verdict names (`MissedLog`, `StorageMutated`,
+`DeliveryLag`, `UnhandledReorg`, `Unclassified`). Evidence that cannot distinguish
+classes lands in `Unclassified` rather than a forced label.
+
+## Pool families and hops
+
+The seven `PoolEntry` variants fall into three structural families, grouped by state and
+delta shape — not by DEX.
+
+**Reserve-pair**:
+A family holding two `U112` reserves plus `update_block`, with full-state block deltas
+(V2, Aerodrome V2).
+
+**Balance-vector**:
+A family holding a balance vector plus `update_block`, with full-state block deltas
+(Curve, Balancer weighted, Balancer stable).
+
+**Concentrated liquidity (CL)**:
+A family holding slot0 scalars plus per-tick data, with partial-prior block deltas
+(V3, V4).
+
+**Hop**:
+The solver's snapshot-and-classifier adapter observed at resolve time: it captures pool
+state (a selective projection for CL) so the solve runs lock-free off a copied value, and
+its variants let the solver pick the algorithm from path composition. Not a pool concept
+and not math-leaf vocabulary.
+
+**Solve anchor**:
+The block at-or-above the pool-state head that a block's solve, verification, and
+simulation run against. A hop whose price clock runs ahead of the anchor is *future* and
+never legitimate.
+
+**Pool-state head**:
+The maximum `update_block` across all registered pools — the state clock. During a
+backfill/drain desync it can run ahead of the pump's header clock; the solve anchor takes
+the max of the two.
+
+## Profit envelope
+
+**Profit envelope**:
+A piecewise-linear concave upper bound on a hop's output curve, derived from projection
+data the solve already builds. Extending a single piece's validity window is not a sound
+bound.
+
+**Envelope gate**:
+The pre-solve skip test over the chained path bound: when the bound's best possible gain
+is below the profit floor, the path is provably unprofitable and is skipped without a
+single simulation. Distinct from the per-hop direction viability gate.
+
+**Envelope verdict**:
+The gate's typed outcome: `Bound` (a sound bound) or `Unsupported` (none derivable).
+Unsupported paths are solved unscreened, never skipped.
+_Avoid_: overloading a bare `None` to mean both unsupported and unprofitable.
+
+**Walk memo**:
+The engine-owned cross-block composition cache passed into solve entries and advanced
+once per block.
+_Avoid_: global memo state; memoization gated by the environment.
+
+**Solve runtime config**:
+The injected config the solver internals read — data, never the environment — built once
+by the engine owner.
+
+**Walk telemetry**:
+The copy counters a solve walk always returns alongside its result; heavy captures ride
+an optional, caller-supplied capture parameter.
+
+## Construction I/O
+
+**Construction I/O**:
+The I/O seam pool construction consumes — database reads and writes plus generic RPC —
+held by `Bot` and passed to every builder.
+
+**DbConstruction / RpcConstruction**:
+The two construction sub-traits, one seam per concern: DB-facing construction
+reads/writes (returning core row types, errors propagated loudly) and RPC-facing generic
+calls.
+
+**NoDb**:
+The construction adapter whose methods always return nothing, used when no database is
+configured; it doubles as the in-memory test fake.
+
+## Execution strategy
+
+**Execution strategy**:
+The searcher-owned layer that turns a solve result into a submitted transaction: payload
+composition, declared probe reads, the assess gate, and fee pricing — implemented as an
+adapter that both Python and Rust consumers meet at the same seam.
+
+**Payload composer**:
+The encode half of an execution strategy: solve result → payload bytes for one execution
+contract. Rust consumers implement it; Python consumers supply a callable.
+
+**Probe and assess**:
+Declared pre/post balance reads (probe) plus the gate converting deltas into profit and
+pass/fail (assess). Fee pricing is the defaulted pricing half of assess, not a separate
+seam.
+
+## Executor command layer
+
+The layer turning a solver result into the bytes passed to the on-chain executor's
+`execute`.
+
+**Command stream**:
+The `bytes` payload `execute()` runs — a sequence of compact opcodes against an address
+table; the atomic unit the command grammar emits.
+_Avoid_: "payload" (reserved for the solve-result → strategy seam).
+
+**Encode request**:
+The per-path intake value the composer consumes: the path, the solver's amounts, and the
+operator's declared axes. It is the contract the CL overfeed-clamp invariant attaches to.
+_Avoid_: "command stream" (the bytes it encodes into), "payload", "EncodeOptions".
+
+**Encode context**:
+The session-scoped bundle of deployment addresses shared by every encode request in a
+session.
+_Avoid_: folding it into the encode request (session scope restated per path).
+
+**Command grammar**:
+The rules that derive a valid command stream for a shape class, including the ordering
+invariants the stream must satisfy. Distinct from the stream it emits and from the
+composer that executes it.
+_Avoid_: "composer" for the model, "encoder" for the model.
+
+**Funding source**:
+The declared origin of a stream's entry (seed) capital, chosen per path by the operator:
+self-funded, pool flash-loan, PoolManager free take, external-lender flash (Aave), or
+ERC-6909 burn-to-settle. Exactly one per stream; inter-hop inputs are not funding
+decisions.
 _Avoid_: "capital source", "flash source".
 
-**Profit capture** — the declared destination of a command stream's **terminal
-profit** (the excess over the entry capital the stream refunds); one value per
-stream. Values: **custody** (retained by the executor), **owner** (sent to the
-immutable `OWNER_ADDR`), **native** (ETH), **ERC-6909 mint**, and (with the
-Balancer integration) **Balancer Vault**. Modeled as a declared value even
-where the current executor cannot yet express it.
+**Profit capture**:
+The declared destination of a stream's terminal profit: custody, owner, native, ERC-6909
+mint, or Balancer Vault.
 _Avoid_: "profit taking", "settlement".
 
-**Builder bribe** — a separately-declared payment (recipient + amount) a
-command stream pays a block builder, **orthogonal to profit capture**: it is a
-distinct output axis, not part of where the profit excess goes. Carried via the
-`execute` `config` parameter / dedicated commands.
+**Builder bribe**:
+A separately-declared payment to a block builder, orthogonal to profit capture.
 _Avoid_: "tip", "fee".
 
-**Ledger** — the accounting target an operation reads from or writes to: the
-executor's ERC-20 balance, the PoolManager delta, an ERC-6909 held balance, a
-direct pool-to-pool handoff, or (with Balancer/Aave) an external Vault/lender.
-The ordering invariant the grammar enforces is **credit-before-debit within a
-ledger**.
+**Ledger**:
+The accounting target an operation reads from or writes to: the executor balance, the
+PoolManager delta, an ERC-6909 balance, a pool-to-pool handoff, or an external
+vault/lender. Credit precedes debit within a ledger.
 _Avoid_: "realm", "book", "track".
 
-**Hop coupling** — how one hop's output passes to the next: directly
-pool-to-pool, via the executor balance, or via a ledger delta. Distinct from
-"funding source" (the seed) — this is the inter-hop handoff, including the
-**repayment pivot** by which a borrowed ledger is settled.
-_Avoid_: "handover".
+**Hop coupling**:
+How one hop's output reaches the next: direct pool-to-pool, via the executor balance, or
+via a ledger delta — including the repayment pivot that settles a borrowed ledger.
+_Avoid_: "handover"; conflating with the funding source (the seed).
 
-**Flash source pool** — the pool whose own swap-callback lends the stream's
-entry capital (the "no-prefund" Uniswap-family flash borrow). Distinct from an
-external lender (Aave) and from a non-flash funding source. A flash source pool
-may be **in-path** (also a hop — the unified borrow-and-swap callback, repaid
-by the path itself, last) or **off-path** (an independent borrowing point whose
-capital is not part of the trade; e.g. a V2 pool that delivers the profit token
-to the executor so we retain the excess).
-_Avoid_: conflating with "funding source" (the axis) or "pool flash-loan" alone.
+**Flash source pool**:
+The pool whose own swap callback lends the stream's entry capital. May be *in-path*
+(also a hop, repaid by the path) or *off-path* (an independent stop whose excess stays
+with the executor).
+_Avoid_: conflating with the funding-source axis or with external-lender flash.
 
-**Repayment pivot** — the derived hop or mechanism that settles a borrowed
-ledger; chosen by token roles + hop coupling, never hand-picked. Part of the
-derived enclosure, not a user axis.
-_Avoid_: "repay hop" (implies a hop; a pivot may be a settle, not a swap).
+**Repayment pivot**:
+The derived hop or mechanism settling a borrowed ledger, chosen by token roles and hop
+coupling — never hand-picked.
+_Avoid_: "repay hop" (a pivot may be a settle, not a swap).
 
-**Derivation outcome** — the tri-state result of turning a shape-class into a
-command stream: `Encoded` / `Decline` / `Reject`. `None` used to collapse
-the last two into one value; they are meaningfully different:
-- **Decline** — the derivation layer declines to encode a path's family (no
-  producer/row for the shape, or a producer guard such as arity/`fits`
-  returns `None`). A routine, expected outcome for an unsupported or
-  unencodable path; the strategy skips it. Maps to `None` at the public
-  `encode_cmd_stream` seam.
-- **Reject** — a Plan *was* built (the producer returned a stream) but the
-  ledger validator rejected it (`ValidationError`). By the D4 contract a
-  successfully-built Plan never violates the ordering invariants, so a Reject
-  is definitionally a latent bug: it is **always fatal** — the revm
-  matrix/honesty suite hard-fails and a live run aborts. Never swallowed,
-  never degraded to a skip.
-_Avoid_: collapsing both under "None"/"unencodable"/"invalid"; treating a Reject
-like a skip.
+**Derivation outcome**:
+The tri-state result of turning a shape class into a command stream:
 
-**Hop facts** — the per-protocol descriptor the Plan walker consumes to derive a
-command stream: which ledgers a hop touches, credit/debit, direction, funding
-and capture role, and repayment obligation. The *data* half of ADR-029 D4
-("coupling/ledger facts as data"); a new protocol adds one hop-facts descriptor
-+ one mechanics module, never per-family Plan bodies (per-shape enclosure
-modules under `grammar_walker/shapes/` are the code half they feed).
-_Avoid_: conflating with "ledger" (a hop-facts entry is per protocol; a ledger
-is a location an operation reads/writes).
+- **Encoded** — a valid stream was derived.
+- **Decline** — the derivation declines the family (no producer, or a producer guard
+  returned nothing); routine and expected, and the strategy skips the path.
+- **Reject** — a stream was built but the ledger validator rejected it; by contract this
+  is a latent bug, so it is always fatal — never swallowed or degraded to a skip.
 
-**Mechanics** (ADR-031 D4) — the shared step-primitive library the walker
-shape modules compose: one builder per `PlanStep` variant (`v2_flash`,
-`v3_flash`, `v2_swap`, `v4_swap`, `v4_unlock`, `v4_take_compact`,
-`v4_settle*` …) plus the per-protocol facts builders (`v2_hop_facts`,
-`v3_hop_facts`, `v4_hop_facts_netzero`). Flash primitives derive their
-recipient routing from `facts.out_dest` by default; a shape passes an
-explicit recipient triple only where the facts tag cannot express it
-(e.g. a downstream pool's flash repayment). Since epic `6SWFBS` no shape
-module builds a `PlanStep` literal — step construction is mechanics-only.
-_Avoid_: "encoders" (the byte side) or "ledger" (the validator side).
+_Avoid_: collapsing decline and reject under "None"; treating a reject like a skip.
 
-**Enclosure** — the callback-nesting structure of a command stream —
-which `FlashSwap`/`V4Unlock` wraps which, and the repayment order. Per ADR-029
-D3 it is the grammar's output, never a user axis; per ADR-031 (as corrected
-2026-08, epic `PZBGP7`) it is computed in six per-shape modules under
-`grammar_walker/shapes/` behind a `(len, repay-sequence)` dispatcher — a
-genuine `Repay`/`OutDest`-tag partition covers the single-V4-middle residual
-only. The take-before-credit / terminal-V2-draw classes are caught by the
-`LedgerValidator` + revm contract matrix (ADR-029 D5), not made
-unrepresentable by construction.
-_Avoid_: "nesting"/"wrapping" as the canonical term.
+**Hop facts**:
+The per-protocol data descriptors the plan walker consumes — ledgers touched,
+credit/debit, funding and capture role, repayment obligation. A new protocol adds one
+hop-facts descriptor and one mechanics module, never per-family plan bodies.
+_Avoid_: conflating with "ledger" (a location, not a descriptor).
 
-**Walker shape family (ADR-031, epics `PZBGP7` + `6SWFBS`)** — no family
-has a hand-authored Plan body. `facts_for` sets per-variant facts plus
-position-scoped axes (below); `derive_plan` routes on
-`(len, repay-sequence)` gates to six per-shape modules under
-`grammar_walker/shapes/` — the 3-hop rule-walkers
-(`rule_walk_v2v3`, `rule_walk_v4_led`, `rule_walk_v2v3_v4_mixed`,
-`tag_residual`) are themselves composed of the shared **mechanics**
-primitives, and the 2-hop shapes (seed→V4, V4-led, all-V2 chain,
-uniswap-only) are pure walks over them. Every shape module carries a
-RED→GREEN honesty probe asserting zero `PlanStep::` literals in its walk
-region, and byte-identity is pinned by per-shape golden stream tables +
-`glopcn_bytepin` across every family × amount set × entry point.
+**Mechanics**:
+The shared step-primitive library the walker's shape modules compose; all step
+construction goes through it, never hand-built literals.
+_Avoid_: "encoders" (the byte side), "ledger" (the validator side).
 
-**Terminal form** (`HopFacts.terminal_form`, epic T5) — how the trailing
-hop of a V4-mid 3-hop shape completes: `DirectHandoff` (swap completes on
-its own pool, output to SELF) vs `UnlockInternal` (trailing swap is an op
-inside the enclosing V4Unlock's inner). Set on the terminal hop only,
-consumed only by the merged `v3v4{v2,v4}` arm.
+**Enclosure**:
+The callback-nesting structure of a command stream — which operations wrap which, and
+the repayment order. The grammar's output, never a user axis.
+_Avoid_: "nesting", "wrapping".
 
-**Repay mechanism** (`HopFacts.repay_mechanism`, epic T6c) — the *physical*
-across-hops repayment transport, distinct from the `repay` category:
-AutoFromExecutor / TransferInCallback / V4TakeInUnlock (unlock-delta) /
-DownstreamFlashDelivery / DownstreamTakeSeeds. Currently only
-`AutoFromExecutor` is set (v3v2v4's leading V3 flash) — the vocabulary
-exists as data so future plans set it, not as prose.
+**Walker shape family**:
+The per-shape modules the plan walker routes between; every shape is a walk over hop
+facts and mechanics, pinned by honesty probes and golden byte streams.
+_Avoid_: hand-authored per-family plan bodies.
 
-**Seed delivery** (`HopFacts.seed_delivery`, epic T6c) — how the WETH seed
-reaches the pool that needs it: `Erc20Transfer` (callback prefund) vs
-`V4TakeCompact` (in-unlock delta claim). Currently set only on v2v3v4's
-hop0 (`V4TakeCompact`).
+**Terminal form**:
+How the trailing hop of a three-hop shape completes: `DirectHandoff` vs `UnlockInternal`.
+Set on the terminal hop only.
 
-## Swap simulation (ADR-037)
+**Repay mechanism**:
+The physical across-hops repayment transport (executor transfer, in-callback transfer,
+in-unlock take, downstream flash delivery, downstream take). Data terrain reserved for
+future plans.
 
-The one owner of "simulate a swap against current pool state" — every read
-that answers *what would this swap do?* goes through a single deep module,
-`bot_core/swap_simulation.rs`, replacing the `*_miss_aware` / `*_with_fetch`
-twins, `calculate_tokens_in`, and the override path's ad-hoc shape.
+**Seed delivery**:
+How the WETH seed reaches the pool that needs it: an ERC-20 callback prefund or an
+in-unlock compact take. Set per hop where it varies.
 
-- **Swap simulation** — the module and its entry point
-  (`BotState::swap_simulation(pool_id, SwapRequest) -> SwapRead`). It owns
-  the fetch→merge→retry miss policy that used to be copy-pasted per method;
-  pure family math stays in `degenbot-pools` (`simulate_swap`,
-  `v3_simulate_swap`, `v4_simulate_swap`).
-- **SwapRequest** — `{ zero_for_one, amount_specified: I256,
-  sqrt_price_limit }`. **User-perspective sign convention**: positive
-  amount = exact-output (the pool delivers that magnitude to the user);
-  negative = exact-input (the user sends it). Chosen deliberately over the
-  engines' internal conventions; the mapping lives only inside the module
-  (V3 engine negates both directions vs canonical; V4 engine is identity).
-- **SwapRead** — typed outcome (`Computed(SwapOutcome)` / `NotComputable` /
-  `FetchFailed` / `FetchExhausted`). No silent `U256::ZERO`: a former
-  silent-zero failure mode is always an observable variant.
-- **Caveats** — additive, non-exhaustive flag set on the outcome whose
-  EMPTY value means "this number is exact". Variants: `SparseCoverage`
-  (derived from registration-time `PoolTickCoverage`) and `HOOKED_POOL`
-  (amount-modifying V4 hook; such pools are admitted since X4EU3J/ADR-037
-  and excluded from solving at hop projection). Dynamic-fee and high-static
-  -fee V4 pools are still refused at admission.
-_Avoid_: "quote", "oracle", "gate" (admission-control connotations),
-"miss-aware/with-fetch" twins (retired names).
+## Swap simulation
 
+**Swap simulation**:
+The one owner of "what would this swap do against current pool state" — every such read
+goes through its single entry point; family math stays in the pools crate.
+_Avoid_: "quote", "oracle", "gate"; the retired miss-aware/with-fetch twins.
 
+**SwapRequest**:
+The simulation request: direction, signed amount (positive = exact output, negative =
+exact input, from the user's perspective), and price limit.
 
+**SwapRead**:
+The typed outcome (`Computed` / `NotComputable` / `FetchFailed` / `FetchExhausted`).
+No silent zero — a former silent-failure mode is always an observable variant.
 
+**Caveats**:
+The additive flag set on an outcome, whose empty value means the number is exact.
+Variants name why a number may be approximate (sparse tick coverage, hooked pool).
 
-### Solve cycle (2026-09 architecture review — decided in grilling; solver_dispatch
-dissolution filed as ergo epic `5WCRWZ` — see the "Lane walk" entry below)
+## ERC6909 capture
 
-**SHIPPED (2026-09-14, epic `5WCRWZ`).** The `arb_engine/solver_dispatch.rs`
-grab file is DELETED. Its former residents: heavy-path capture →
-`arb_engine::solver_capture`; workload partitioning → `arb_engine::workload_partition`;
-`SolveCycleShared` + the profit floor/resolve chunking → `solve_cycle.rs`;
-`solve_one_path` + the lane walk + walk helpers → `arb_engine::lane_walk`;
-`PipelinedSims` → `inline_sim.rs`; stance/config plumbing → `lifecycle.rs`
-(+ `record_cycle_arm_telemetry` → `engine_stages.rs`); the merge sidecar →
-`detached_cycle.rs`; the executor A/B fixtures → a crate-local cfg(test)
-`arb_engine::executor_ab_probe`. The inherent engine twins collapsed: the
-solve entrances chain directly to the `SolveCycle` surface
-(`event_routing::solve_dirty` → `engine.cycle.run_epoch`). One follow-up
-candidate noted during the review: `STREAMING_DELIVERY_ENABLED` (lifecycle)
-has a config-driven writer but no production reader — a dead-stance cleanup
-for a future task, deliberately not deleted here.
+**ERC6909 capture**:
+The operator option to take V4 profit as an ERC-6909 claim on the PoolManager instead of
+custody WETH, armed per stream with the on-chain floor check.
 
-- **Solve cycle** — the per-block dirty-solve unit: affected-path fan-out from
-  the EpochDelta keys, admission (draw/shed), (re)resolve, solve, witness,
-  drain, merge, cursor advance. One module owns all four solve entrances
-  (the dirty-solve cycle, the all-paths drain, the registration-time eager
-  solve, the pending-new-paths carry) behind one narrow interface; the
-  detached-arm machine (`detached_cycle.rs`) stays a collaborator module.
-- **Cycle-transient state** — the stash the cycle borrows between blocks:
-  the admission draw verdict, the cycle arm, pending new paths, the cursor
-  advance. Owned by the solve cycle, not smeared across the engine's
-  long-lived fields.
-- **Cycle outcome** — the typed fact a solve cycle returns: the arm
-  (shed / skipped-empty / solved), the solved-block coordinate, and the
-  submission counts the stage hooks and telemetry read. The stage hooks
-  stop poking the engine; the outcome carries what survives the cycle.
-_Avoid_: "solve loop" (the pump's block loop), "cycle" bare (ambiguous with
-detached-arm cycle states), "engine cycle" (the engine is registry +
-composition root, not the cycle owner).
-- **Lane walk** — the solve cycle's per-bin body walker: the ONE walk
-  function (formerly `ArbitrageEngine::drive_lane_walk`, a static that never
-  touched the engine) that folds each bin's items — resolve, capacity clamp,
-  inline-sim submit, envelope stamp — into the `SolveLane` result pipe, plus
-  its per-item step (the solve-one-path bin body the fleet's Solver seats
-  execute). Pure over the cycle's `SolveCycleShared`; owns the walk recorders
-  and the LPT workload partitioning it consumes. Lives in
-  `arb_engine::lane_walk` after the solver_dispatch dissolution.
-  Distinct from the fleet's **Lane** (ADR-042: a thread-ownership lane) —
-  the walk's "lane" is the result pipe the arms own.
-_Avoid_: "dispatch" (the retired grab-file name), "run_bin" (the pre-fold
-per-arm closures).
-- **Path registry** — the solve engine's identity module: path_pools, the
-  pool_to_paths reverse index, signature dedup, next_id, cap. Deliberately
-  SHALLOW: no resolve, no solve, no deps beyond solver value types. The hot
-  cycle holds a SHARED borrow (cycles never mutate path identity);
-  registration is the only `&mut` caller. See
-  [ADR-045](docs/adr/ADR-045-solve-cycle-extraction.md).
+## Block pump and stage machine
 
-### Engine seam deepening — EngineStages is the one driver seam (2026-09 arch review #11, candidate 2 — decided in grilling; shipped as ergo epic `5TBT7L`)
+**Block epoch**:
+One confirmed block from first delivery to publish plus quiesced settlement — the unit of
+per-block work. Rewind reopens an epoch at the reorg block with a fresh sequence,
+invalidating pre-rewind solve contexts.
+_Avoid_: reintroducing the retired per-block machines' vocabulary (`DrainSink`, `Engine`
+as per-block fan-out, `SolveCoordinator`, `DispatchOwner`, `DirtySets`).
 
-> **Supersedure (ADR-050, 2026-09-14):** the `pub(crate)` one-door decision stands; ADR-050 adds a *driver* seam above `EngineStages` (`degenbot_bot::arb_engine::EngineDriver`) and re-parents `PyArbEngine` onto it — the "ritual stays Python" reading is retired. See [ADR-050](docs/adr/ADR-050-rust-native-engine-driver.md).
+**StageMachine**:
+The single pure, I/O-free state machine owning every per-block edge condition: header
+admission, log routing, reorg window, cursors, WS-completeness, watchdogs, quiesce, and
+the publish arm. Stage handlers are thin I/O drivers per stage.
 
-**SHIPPED (2026-09-14, epic `5TBT7L`).** The engine's interface is one seam.
-Slice chain: T1 `2NLZE3` red (`c43941f34`) — the one-impl-block census gate +
-the full driver-surface twin probes (today's census: 12 blocks across 8 files);
-T2 `3WI4EO` (`5ff50c3f9`) — the typed `EngineRetune` value
-(`arb_engine/retune.rs`) packs the construction knobs and is applied once at
-construction + per runtime operator retune (`EngineStages::apply_retune`),
-collapsing the setter family; T3 `RS64JJ` (`a1de075bc`) — engine-internal
-callers reach the machines directly, the engine-hop twins die (census 11);
-T4 `5AFSXM` (`d9dbe830c`) — `solve_dirty` dissolves into
-`EngineStages::run_solve_cycle`, `event_routing.rs` is deleted wholesale, the
-lifecycle cursor twins and `PumpControl` pokes go machine-direct (census 10);
-T5 `RPEBMX` (`f265ea872`) — the pyo3 driver re-sources onto `Arc<EngineStages>`
-(`PyArbEngine` holds the stage handle) and `ArbitrageEngine` goes `pub(crate)`,
-the `standalone_consumer` example re-sourcing with it (census 7); T6 `MHLURV`
-(`1e35449b8`) — the `lifecycle` / `delivery_policy` inherent blocks dissolve to
-machine-direct free functions, the five `mod.rs` inherent blocks collapse to
-ONE, and the test shims move to the cfg(test) `arb_engine::test_harness`
-(census 1). The census gate (`just check-engine-impl-blocks`, wired into
-`lint-rust-check` / prek pre-commit / CI) is the standing invariant: exactly ONE
-`impl ArbitrageEngine` block, in `arb_engine/mod.rs`. The symmetric
-degenbot-python census allows exactly one `ArbitrageEngine` mention — the pyclass
-compat string `name = "ArbitrageEngine",` (the Python-visible name is a
-deliberate API-compat exemption; the wrapper type's real name is `PyArbEngine`).
+**StageHandlers**:
+The pipeline's product/facts seam — the required stage hooks whose outcomes carry the
+facts the driver consumes.
 
-- **Driver seam** — the arb engine's ONE external interface: the stage
-  surface (`EngineStages`). Both adapters — the block pump (its
-  PumpControl/StageHandlers impls) and the Python driver's pyo3 engine
-  wrapper — cross it; construction, registration, observation, solve
-  control, and the `core()` handoff all cross it. The raw
-  `ArbitrageEngine` is `pub(crate)` machinery: registry + composition
-  root holding exactly ONE inherent impl block of real composition work
-  (constructors, the `apply_retune` body, phase state, the `core()` handoff,
-  and the cfg(test) pool-registration helpers).
-_Avoid_: "engine facade" (a facade fronts ANOTHER still-pub surface — the
-whole point is there is no second door), the inherent-twin shape (the same
-method existing on the engine AND its machine).
-- **Engine retune** — the typed operator re-parameterization value crossing
-  the driver seam: event-buffer max age (expiry enable), the admission trio
-  (target depth / retention blocks / enable), path cap, profit thresholds,
-  force-deferred. Applied once at construction and per operator retune at
-  runtime (`EngineStages::apply_retune`); a channel install
-  (`set_result_channel`) is wiring, not a retune. The engine's twin of the
-  fleet's centralized posture feeders + wake-on-retune.
-_Avoid_: "stance" (the fleet-migration stance, ADR-042; and the KAHU5W
-per-construction construction-stance values), "posture" (the fleet's
-cordon concept), "engine config" (the degenbot-config schema value feeds
-the retune but is not it).
+**PumpControl**:
+The driver-facing control seam — the typed pokes the driver performs on the engine
+(dirty-path checks, cursors, block notification, pump end).
 
-## The worker fleet (FF-T5 glossary - epic OFQ2UW)
+**StateView**:
+The cheap-read data plane: pool state read through snapshots and views rather than
+cloned from the registry.
 
-The fleet's execution vocabulary - one meaning per word, closed set
-(the long form is docs/architecture/worker-fleet.md):
+**degenbot-ingestion**:
+The standalone crate owning event ingestion and its watchdogs (log silence, header
+staleness); the Python layer never sees raw WS streams.
 
-- **Lane** - a logical ownership lane: WHO owns which receipts and
-  ledger writes (H reserve, A ambient, R resolve, M merge, the
-  PoolStateUpdater / SimDriver / Solver seats). A lane names ownership,
-  never a thread.
-- **Seat** - a runtime a unit executes on. Pooled seats contend on one
-  shared work queue (SimDriver, PoolStateUpdater); keyed solver seats
-  are one-per-bin persistent mailboxes (bins == pins). A seat is named
-  for the census (work-fleet-sim-{n}, work-fleet-poolupd-{n},
-  work-fleet-serial-0).
-- **Binding** - the adapter that maps lanes to threads (FF-T3): pinned
-  = one dedicated thread per seat (the 6+-core tier); serial = one
-  named cycle seat per host running every granted unit in grant order
-  (the 2-5-core tier); logical = a lane riding other threads' time
-  (how the census prints serial-tier rows).
-- **Plan** - one pure function of the budget (FF-T2, fleetplan/1):
-  quota + profile + overrides -> binding + the projected budget +
-  oversubscription marks + the tier refusal it fell from. "auto"
-  resolves tiers everywhere through it; no call site decides a tier on
-  its own.
-- **Budget** - the seat/share table (H reserve, A ambient I/O, R
-  resolve, M merge, the solver pins, the SimDriver and PoolStateUpdater
-  slot caps), sum-checked against floor(quota). ONE owner
-  (`FleetBudget::project` in `budget.rs`) derives all three tier
-  projections — the pin tier is mode data (`BudgetMode::Pinned |
-  PinnedMarked | Serial`), never a second derivation; `plan.rs` and
-  every other consumer only SELECT a mode and read the table.
-- **Census** - the worker registry: one row per execution resource
-  (thread-name pattern, sizing rule, count, binding). Boot-dumped as
-  one structured log line; exported as the degenbot.worker.census
-  metric; visible per row through runtime_status().
-- **Boot registry** - the ONE keyed owner of the two pooled roles' boot
-  facts ([ADR-048](docs/adr/ADR-048-fleet-boot-registry.md)):
-  `seat_host::FleetBootRegistry` carries one typed slot per pooled role
-  (sim, registration) holding that role's descriptor, its
-  construction-stamped boot courier, and its process executor courier,
-  plus the FIRST-WINS canonical `process_boot`. Whichever pooled role
-  installs first owns the canonical boot; runtime_status() and the intake
-  read the registry's latch, never a role module's private static. The
-  solve host is out of registry scope (different seat model - keyed
-  mailboxes, typed receipts).
-- **Intake receipt** - the awaiting caller's join on a submitted intake
-  unit (registration builds). Held in the unbounded section-10 backlog
-  under a cordon - never dropped; the submitter is never stranded.
-- **Lane-death terminal receipt** - a lane that dies mid-flight patches
-  every still-owed path onto the pipe as one typed
-  Failed(LaneFailure::LaneDeath) record: the outcome ledger stays
-  exact, the posture cordons (sticky), the process lives.
-- **Posture cause** - WHY the fleet cordoned (FF-T4): the throttle
-  hysteresis (enter on the sample triggers, exit on the clean window)
-  or a lane death (enter immediately, sticky - the clean window never
-  lifts it; only a fresh process does).
-- **runtime_status()** - the live-process view (FF-T5):
-  degenbot.runtime_status() returns the plan, the projected budget, and
-  the census rows. Pre-construction it is the default-profile
-  projection (fleet_booted: false).
+**Epoch delta ledger**:
+The single dirt ledger recording pool-state changes, with exactly one owner.
+_Avoid_: the retired subscriber bus (`PoolStateSubscriber`, `notify_pool_state_changed`).
 
-_Avoid_: "worker pool" for fleet seats (the legacy incumbent pool was
-the ThreadPoolExecutor the fleet replaced), "mode" for binding;
-cross-module static reach for a role's boot (RETIRED - read the boot
-registry, ADR-048).
+**Driver seam**:
+The arb engine's one external interface — the stage surface both the block pump and the
+Python driver cross. Everything else is internal machinery.
+_Avoid_: "engine facade" (a facade fronts another surface; there is no second door).
+
+**Engine retune**:
+The typed operator re-parameterization applied at construction and at runtime.
+_Avoid_: "stance" (the fleet-migration concept), "engine config" (the config-schema value
+that feeds it).
+
+## Solve cycle
+
+**Solve cycle**:
+The per-block unit that fans affected paths out from the dirt ledger and admits,
+resolves, solves, witnesses, drains, and merges them, through one owner over the solve
+entrances.
+_Avoid_: "solve loop" (the pump's block loop), bare "cycle", "engine cycle".
+
+**Cycle-transient state**:
+The state a cycle borrows between blocks — admission verdict, cycle arm, pending new
+paths, cursor advance — owned by the cycle rather than smeared across engine fields.
+
+**Cycle outcome**:
+The typed fact a solve cycle returns: the arm (shed / skipped-empty / solved), the
+solved-block coordinate, and the submission counts the stage hooks read.
+
+**Lane walk**:
+The one walk function folding each admission bin's items — resolve, clamp, simulate,
+envelope stamp — into the solve result pipe. Distinct from the fleet's **Lane** (thread
+ownership).
+_Avoid_: "dispatch" (the retired grab file), "run_bin".
+
+**Path registry**:
+The solve engine's identity module: path/pool relations, the reverse index, signature
+dedup, and the path cap. Deliberately shallow — no resolve, no solve.
+
+## Worker fleet
+
+The fleet's execution vocabulary — one meaning per word, closed set.
+
+**Lane**:
+A logical ownership lane: who owns which receipts and ledger writes. A lane names
+ownership, never a thread.
+_Avoid_: "worker pool" for fleet seats; "mode" for binding.
+
+**Seat**:
+The runtime a unit of work executes on: pooled seats contend on one shared queue; keyed
+solver seats are one-per-bin persistent mailboxes.
+
+**Binding**:
+The adapter mapping lanes to threads: pinned, serial, or logical.
+
+**Plan**:
+The pure function turning a budget into a binding, the projected tier budget, and the
+tier refusal it fell from. No call site decides a tier on its own.
+
+**Budget**:
+The seat/share table sum-checked against the core quota, with one owner deriving all
+tier projections.
+
+**Census**:
+The worker registry: one row per execution resource (thread-name pattern, sizing rule,
+count, binding), boot-dumped and exported as a metric.
+
+**Boot registry**:
+The one keyed owner of the pooled roles' boot facts, with first-wins canonical
+ownership.
+_Avoid_: cross-module static reach for a role's boot.
+
+**Intake receipt**:
+The submitter's join on a submitted intake unit, held in the backlog until fulfilled —
+never dropped.
+
+**Lane-death terminal receipt**:
+The typed failure a lane's still-owed paths receive when the lane dies mid-flight: the
+outcome ledger stays exact, the posture cordons, the process lives.
+
+**Posture cause**:
+Why the fleet cordoned: throttle hysteresis, or a lane death (sticky until a fresh
+process).
+
+**runtime_status()**:
+The live-process view of the plan, projected budget, and census rows.
