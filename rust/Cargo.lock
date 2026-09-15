@@ -2250,10 +2250,16 @@ dependencies = [
 name = "degenbot-cli-core"
 version = "0.6.0-alpha.11"
 dependencies = [
+ "alloy",
+ "degenbot-aave",
  "degenbot-config",
  "degenbot-db",
+ "degenbot-pool-updater",
+ "degenbot-rpc",
+ "degenbot-uniswap",
  "rusqlite",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 

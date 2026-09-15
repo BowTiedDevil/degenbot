@@ -7,13 +7,16 @@
 
 use std::fmt;
 
+use degenbot_aave::RunError as AaveRunError;
 use degenbot_config::ConfigError;
 use degenbot_db::DbError;
+use degenbot_pool_updater::RunError as PoolRunError;
 
 /// The process exit code a command run maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitCode {
-    /// `0`: the command completed (including a `--dry-run`, which writes nothing).
+    /// `0`: the command completed (including a `--dry-run`, which writes nothing,
+    /// and a cooperative `Cancelled` run, whose committed chunks stay durable).
     Success,
     /// `1`: a typed command failure, including a declined confirmation (the click
     /// `Abort` arm).
@@ -66,6 +69,42 @@ pub enum CliError {
     Database(DbError),
     /// Driver-domain config resolution failed (ADR-051 D8).
     Config(ConfigError),
+    /// An unknown chain selector (`--chain foo`): the console names chain slugs
+    /// (`base`, `ethereum`) or numeric chain ids.
+    UnknownChain {
+        /// The rejected selector, verbatim.
+        chain: String,
+    },
+    /// The deployments registry has no record for the resolved
+    /// `(chain_id, name)` pair.
+    UnknownDeployment {
+        /// The resolved chain id.
+        chain_id: u64,
+        /// The DEX name slug (the `--name` value).
+        name: String,
+    },
+    /// A malformed block identifier — the exact `Invalid block tag: {tag}`
+    /// refusal the Python `_resolve_to_block` raises.
+    InvalidBlockTag(String),
+    /// The RPC read that resolves a `tag:offset` block identifier failed.
+    BlockResolution(String),
+    /// The supplied address does not parse (the click `Abort` arm of
+    /// `aave position show`).
+    InvalidAddress(String),
+    /// A required command argument is missing or malformed (`--pool-manager`
+    /// on `--family v4`, an out-of-range chain id).
+    InvalidArgument(String),
+    /// `aave update` found no active Aave markets (the Python
+    /// `DegenbotValueError`).
+    NoActiveAaveMarkets,
+    /// A `pool update` core failure (DB/RPC cancelled/verification).
+    PoolUpdate(PoolRunError),
+    /// An `aave` core failure (DB/RPC/verification/market-not-found).
+    AaveUpdate(AaveRunError),
+    /// A command arm that needs a self-built runtime was invoked from inside an
+    /// existing `tokio` runtime. `run_pool_update`/`run_aave_update` own their
+    /// runtime and must not nest; the arms hold the same constraint.
+    RuntimeNested,
 }
 
 impl CliError {
@@ -73,7 +112,9 @@ impl CliError {
     #[must_use]
     pub fn message(&self) -> String {
         match self {
-            Self::BootRefused(message) => message.clone(),
+            Self::BootRefused(message)
+            | Self::BlockResolution(message)
+            | Self::InvalidArgument(message) => message.clone(),
             Self::Aborted => "Aborted!".to_string(),
             Self::DatabaseUpgradeRetired => {
                 "the database upgrades itself at open; for an explicit repair, run \
@@ -92,6 +133,21 @@ impl CliError {
             }
             Self::Database(err) => err.to_string(),
             Self::Config(err) => err.to_string(),
+            Self::UnknownChain { chain } => format!(
+                "Unknown chain {chain:?}: expected a chain slug (base, ethereum) or a numeric \
+                 chain id."
+            ),
+            Self::UnknownDeployment { chain_id, name } => {
+                format!("The deployments registry has no record for {name:?} on chain {chain_id}.")
+            }
+            Self::InvalidBlockTag(tag) => format!("Invalid block tag: {tag}"),
+            Self::InvalidAddress(address) => format!("Invalid address: {address}"),
+            Self::NoActiveAaveMarkets => "No active Aave markets found.".to_string(),
+            Self::PoolUpdate(err) => err.to_string(),
+            Self::AaveUpdate(err) => err.to_string(),
+            Self::RuntimeNested => "the command arms own their tokio runtime; do not run them \
+                 from inside an existing runtime"
+                .to_string(),
         }
     }
 }
@@ -107,6 +163,8 @@ impl std::error::Error for CliError {
         match self {
             Self::Database(err) => Some(err),
             Self::Config(err) => Some(err),
+            Self::PoolUpdate(err) => Some(err),
+            Self::AaveUpdate(err) => Some(err),
             _ => None,
         }
     }
@@ -126,6 +184,13 @@ impl From<DbError> for CliError {
     }
 }
 
+/// Map a config-resolution error onto its typed console failure.
+impl From<ConfigError> for CliError {
+    fn from(err: ConfigError) -> Self {
+        Self::Config(err)
+    }
+}
+
 /// THE one `CliError → ExitCode` mapping site (ADR-051 D1).
 impl From<&CliError> for ExitCode {
     fn from(err: &CliError) -> Self {
@@ -138,7 +203,17 @@ impl From<&CliError> for ExitCode {
             | CliError::DatabaseForeign
             | CliError::DatabaseNothingToDo
             | CliError::Database(_)
-            | CliError::Config(_) => Self::Failure,
+            | CliError::Config(_)
+            | CliError::UnknownChain { .. }
+            | CliError::UnknownDeployment { .. }
+            | CliError::InvalidBlockTag(_)
+            | CliError::BlockResolution(_)
+            | CliError::InvalidAddress(_)
+            | CliError::InvalidArgument(_)
+            | CliError::NoActiveAaveMarkets
+            | CliError::PoolUpdate(_)
+            | CliError::AaveUpdate(_)
+            | CliError::RuntimeNested => Self::Failure,
         }
     }
 }

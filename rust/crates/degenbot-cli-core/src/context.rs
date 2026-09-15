@@ -8,7 +8,8 @@
 use std::path::PathBuf;
 
 use degenbot_config::{
-    resolve_chain_id, resolve_database_path, resolve_node_uris, EnvVars, Resolved, ResolvedNodeUris,
+    resolve_chain_id, resolve_database_path, resolve_node_http_uri, resolve_node_uris, EnvVars,
+    Resolved, ResolvedNodeUris,
 };
 
 /// The resolved inputs a console command runs against.
@@ -88,6 +89,33 @@ impl<'a> CliContext<'a> {
     /// the winning layer is not an integer.
     pub fn chain_id(&self) -> Result<Resolved<u64>, degenbot_config::ConfigError> {
         resolve_chain_id(self.env, self.chain_id.as_deref())
+    }
+
+    /// Resolve the HTTP node URI for `chain_id`: `--node-http` >
+    /// `DEGENBOT_RPC_HTTP_CHAINID_<id>`.
+    ///
+    /// The updater arms resolve the chain they actually operate on (which may
+    /// differ from the session chain id, e.g. a validated Aave deployment).
+    ///
+    /// # Errors
+    ///
+    /// [`degenbot_config::ConfigError`] when no layer supplied the URI.
+    pub fn node_http_uri_for(
+        &self,
+        chain_id: u64,
+    ) -> Result<Resolved<String>, degenbot_config::ConfigError> {
+        resolve_node_http_uri(self.env, chain_id, self.node_http.as_deref())
+    }
+
+    /// Resolve the HTTP node URI for the session chain id.
+    ///
+    /// # Errors
+    ///
+    /// [`degenbot_config::ConfigError`] when the chain id or endpoint is
+    /// unresolved.
+    pub fn node_http_uri(&self) -> Result<Resolved<String>, degenbot_config::ConfigError> {
+        let chain_id = self.chain_id()?;
+        self.node_http_uri_for(chain_id.value)
     }
 
     /// Resolve both node URIs for the session chain id.

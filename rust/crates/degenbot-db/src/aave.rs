@@ -443,6 +443,107 @@ impl DegenbotDb {
         }
     }
 
+    /// The market row (`aave_v3_markets`) matching `(chain_id, name)`, if
+    /// present. The `cli/aave.py` `deactivate` + `position show` lookups
+    /// (`select(AaveV3Market).where(chain_id, name)`) resolve their row here
+    /// before flipping `active` / reading the market's user rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query failure.
+    pub fn fetch_aave_market_by_name(
+        &self,
+        chain_id: i64,
+        name: &str,
+    ) -> Result<Option<crate::rows::AaveV3MarketRow>, DbError> {
+        Self::fetch_aave_market_by_name_on_conn(&self.lock(), chain_id, name)
+    }
+
+    /// The `&Connection`-bound variant of [`Self::fetch_aave_market_by_name`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query failure.
+    pub fn fetch_aave_market_by_name_on_conn(
+        conn: &Connection,
+        chain_id: i64,
+        name: &str,
+    ) -> Result<Option<crate::rows::AaveV3MarketRow>, DbError> {
+        let mut stmt = conn.prepare(
+            "SELECT id, chain_id, name, active, last_update_block \
+             FROM aave_v3_markets WHERE chain_id = ?1 AND name = ?2",
+        )?;
+        let mut rows = stmt.query(params![chain_id, name])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(crate::rows::AaveV3MarketRow {
+                id: row.get(0)?,
+                chain_id: row.get(1)?,
+                name: row.get(2)?,
+                active: row.get(3)?,
+                last_update_block: row.get(4)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// Every ACTIVE market whose name contains `aave`, ordered by
+    /// `(chain_id, id)`. The `aave update` walk selects its worklist here
+    /// (the Python `select(AaveV3Market).where(active, name.contains("aave"))`
+    /// pair, collapsed into one read — the `chain_id` grouping happens in the
+    /// caller).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query failure.
+    pub fn fetch_active_aave_markets(&self) -> Result<Vec<crate::rows::AaveV3MarketRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, chain_id, name, active, last_update_block \
+             FROM aave_v3_markets WHERE active = 1 AND name LIKE '%aave%' \
+             ORDER BY chain_id, id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(crate::rows::AaveV3MarketRow {
+                id: row.get(0)?,
+                chain_id: row.get(1)?,
+                name: row.get(2)?,
+                active: row.get(3)?,
+                last_update_block: row.get(4)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// The `aave_v3_users` row matching `(market_id, address)`, if present. The
+    /// `aave position show` scalar read (`select(AaveV3User).where(address,
+    /// market_id)`); the address is compared against the stored (checksummed)
+    /// string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query failure.
+    pub fn fetch_aave_user_by_address(
+        &self,
+        market_id: i64,
+        address: &str,
+    ) -> Result<Option<crate::rows::AaveV3UserRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                    isolation_mode_collateral_asset_id, isolation_mode_debt \
+             FROM aave_v3_users WHERE market_id = ?1 AND address = ?2",
+        )?;
+        let mut rows = stmt.query(params![market_id, address])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(crate::rows::AaveV3UserRow::from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
     /// All `aave_v3_contracts` rows for `market_id` (the
     /// `id, market_id, name, address, revision` columns), unfiltered. The
     /// orchestrator indexes these by `name` (the Python `get_contract(market,

@@ -3,16 +3,24 @@
 
 use std::path::PathBuf;
 
+use alloy::primitives::U256;
 use degenbot_db::ops::HealReport;
 use degenbot_db::SchemaState;
 
 use crate::error::{CliError, ExitCode};
+use crate::pool::PoolFamily;
 
 /// The typed result of one command execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandReport {
     /// A `database` command report.
     Database(DatabaseReport),
+    /// An `exchange` command report.
+    Exchange(ExchangeReport),
+    /// A `pool` command report.
+    Pool(PoolReport),
+    /// An `aave` command report.
+    Aave(AaveReport),
 }
 
 impl CommandReport {
@@ -21,6 +29,9 @@ impl CommandReport {
     pub fn render_lines(&self) -> Vec<String> {
         match self {
             Self::Database(report) => report.render_lines(),
+            Self::Exchange(report) => report.render_lines(),
+            Self::Pool(report) => report.render_lines(),
+            Self::Aave(report) => report.render_lines(),
         }
     }
 }
@@ -163,6 +174,463 @@ impl DatabaseReport {
             }],
         }
     }
+}
+
+/// Whether an `exchange activate` flipped the row or found it already active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivateOutcome {
+    /// The row was newly activated (or re-activated from inactive).
+    Activated,
+    /// The row was already active; nothing was written.
+    AlreadyActive,
+}
+
+/// Whither an `exchange deactivate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeactivateOutcome {
+    /// The row was newly deactivated.
+    Deactivated,
+    /// The row was already inactive.
+    AlreadyDeactivated,
+    /// The DB has no row for the pair.
+    NoEntry,
+}
+
+/// The typed result of an `exchange` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExchangeReport {
+    /// `exchange activate`.
+    Activated {
+        /// The resolved chain id.
+        chain_id: u64,
+        /// The human chain label.
+        chain_label: &'static str,
+        /// The human DEX label.
+        display_name: &'static str,
+        /// The DEX name slug.
+        dex_slug: &'static str,
+        /// Whether the row flipped or was already active.
+        outcome: ActivateOutcome,
+    },
+    /// `exchange deactivate`.
+    Deactivated {
+        /// The resolved chain id.
+        chain_id: u64,
+        /// The human chain label.
+        chain_label: &'static str,
+        /// The human DEX label.
+        display_name: &'static str,
+        /// The DEX name slug.
+        dex_slug: &'static str,
+        /// The deactivation outcome.
+        outcome: DeactivateOutcome,
+    },
+}
+
+impl ExchangeReport {
+    /// The operator-facing lines for this report.
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        match self {
+            Self::Activated {
+                chain_id,
+                chain_label,
+                display_name,
+                outcome,
+                ..
+            } => match outcome {
+                ActivateOutcome::Activated => vec![format!(
+                    "Activated {display_name} on {chain_label} (chain ID {chain_id})."
+                )],
+                ActivateOutcome::AlreadyActive => {
+                    vec!["Exchange is already activated.".to_string()]
+                }
+            },
+            Self::Deactivated {
+                chain_id,
+                chain_label,
+                display_name,
+                outcome,
+                ..
+            } => match outcome {
+                DeactivateOutcome::Deactivated => vec![format!(
+                    "Deactivated {display_name} on {chain_label} (chain ID {chain_id})."
+                )],
+                DeactivateOutcome::AlreadyDeactivated => {
+                    vec!["Exchange is already deactivated.".to_string()]
+                }
+                DeactivateOutcome::NoEntry => vec![format!(
+                    "The database has no entry for {display_name} on {chain_label} \
+                     (chain ID {chain_id})."
+                )],
+            },
+        }
+    }
+}
+
+/// The typed result of a `pool` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PoolReport {
+    /// `pool update` advanced the chain.
+    Updated {
+        /// The chain advanced.
+        chain_id: i64,
+        /// The first block processed.
+        from_block: u64,
+        /// The last block advanced to.
+        to_block: u64,
+        /// Chunks committed.
+        chunks_committed: usize,
+        /// Pool rows written.
+        total_pools_written: usize,
+        /// Per-pool liquidity applies.
+        total_liquidity_applies: usize,
+    },
+    /// `pool update` was cooperatively cancelled; committed chunks stay durable.
+    UpdateCancelled {
+        /// The chain.
+        chain_id: i64,
+    },
+    /// `pool verify` compared the committed map against on-chain truth.
+    Verified {
+        /// The pool identifier.
+        pool: String,
+        /// The family.
+        family: PoolFamily,
+        /// The block the truth was read at.
+        block_number: u64,
+        /// The named divergences (empty = GREEN).
+        divergences: Vec<degenbot_pool_updater::LiquidityDivergence>,
+    },
+}
+
+impl PoolReport {
+    /// The operator-facing lines for this report.
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        match self {
+            Self::Updated {
+                chain_id,
+                from_block,
+                to_block,
+                chunks_committed,
+                total_pools_written,
+                total_liquidity_applies,
+            } => vec![format!(
+                "Chain {chain_id}: advanced {from_block}->{to_block} in {chunks_committed} \
+                 chunks ({total_pools_written} pools written, {total_liquidity_applies} \
+                 liquidity applies)."
+            )],
+            Self::UpdateCancelled { chain_id } => vec![format!(
+                "Chain {chain_id}: cancelled (committed chunks stay durable)."
+            )],
+            Self::Verified {
+                pool,
+                family,
+                block_number,
+                divergences,
+            } => verification_lines(pool, *family, *block_number, divergences),
+        }
+    }
+}
+
+/// The green / red `pool verify` text.
+fn verification_lines(
+    pool: &str,
+    family: PoolFamily,
+    block_number: u64,
+    divergences: &[degenbot_pool_updater::LiquidityDivergence],
+) -> Vec<String> {
+    use degenbot_pool_updater::LiquidityDivergence;
+    if divergences.is_empty() {
+        return vec![format!(
+            "GREEN: {} pool {pool} matches on-chain truth at block {block_number}.",
+            family.as_str()
+        )];
+    }
+    let mut lines = vec![format!(
+        "RED: {} divergence(s) for {} pool {pool} at block {block_number}:",
+        divergences.len(),
+        family.as_str()
+    )];
+    for divergence in divergences {
+        lines.push(match divergence {
+            LiquidityDivergence::TickGross {
+                tick,
+                expected,
+                actual,
+            } => format!("  tick {tick}: TickGross expected={expected} actual={actual}"),
+            LiquidityDivergence::TickNet {
+                tick,
+                expected,
+                actual,
+            } => format!("  tick {tick}: TickNet expected={expected} actual={actual}"),
+            LiquidityDivergence::BitmapWord {
+                word,
+                expected,
+                actual,
+            } => format!("  word {word}: BitmapWord expected={expected} actual={actual}"),
+            LiquidityDivergence::TickCallReverted { tick } => {
+                format!("  tick {tick}: TickCallReverted")
+            }
+            LiquidityDivergence::BitmapCallReverted { word } => {
+                format!("  word {word}: BitmapCallReverted")
+            }
+        });
+    }
+    lines
+}
+
+/// One `aave update` market's outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AaveUpdateOutcome {
+    /// The market advanced.
+    Advanced {
+        /// First block processed.
+        from_block: u64,
+        /// Last block advanced to.
+        to_block: u64,
+        /// Chunks committed.
+        chunks_committed: usize,
+        /// Events applied.
+        total_events_applied: usize,
+    },
+    /// The market's run was cooperatively cancelled.
+    Cancelled,
+    /// The market has no `last_update_block`; it is skipped (must be bootstrapped).
+    NeedsBootstrap,
+    /// `--dry-run`: the would-be advance, with nothing committed.
+    DryRun {
+        /// The market's `last_update_block`.
+        last_update_block: i64,
+        /// The resolved target (`None` = chain tip).
+        to_block: Option<u64>,
+    },
+}
+
+/// One `aave update` market row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AaveUpdateEntry {
+    /// The chain.
+    pub chain_id: i64,
+    /// The market id.
+    pub market_id: i64,
+    /// The market name.
+    pub market_name: String,
+    /// The outcome.
+    pub outcome: AaveUpdateOutcome,
+}
+
+/// One position row (scaled balance + token symbol).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AavePositionLine {
+    /// The underlying token symbol (`Unknown` when unresolved).
+    pub symbol: String,
+    /// The scaled balance.
+    pub balance: U256,
+}
+
+/// The typed result of an `aave` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AaveReport {
+    /// `aave activate`.
+    Activated {
+        /// The chain id.
+        chain_id: u64,
+        /// The human chain label.
+        chain_label: &'static str,
+        /// The market id.
+        market_id: i64,
+        /// The on-chain market name.
+        market_name: String,
+        /// Whether the market was newly created.
+        created: bool,
+    },
+    /// `aave deactivate`.
+    Deactivated {
+        /// The chain id.
+        chain_id: u64,
+        /// The market id, when a row was found.
+        market_id: Option<i64>,
+        /// The outcome.
+        outcome: DeactivateOutcome,
+    },
+    /// `aave update`.
+    Updated {
+        /// Per-market outcomes.
+        entries: Vec<AaveUpdateEntry>,
+    },
+    /// `aave position show`.
+    Position {
+        /// The user address (checksummed).
+        user_address: String,
+        /// The market name.
+        market: String,
+        /// The chain id.
+        chain_id: u64,
+        /// Collateral positions.
+        collateral: Vec<AavePositionLine>,
+        /// Debt positions.
+        debt: Vec<AavePositionLine>,
+    },
+    /// `aave position show` found no market.
+    PositionNoMarket {
+        /// The market name.
+        market: String,
+        /// The chain id.
+        chain_id: u64,
+    },
+    /// `aave position show` found no user row.
+    PositionNoUser {
+        /// The user address (checksummed).
+        user_address: String,
+        /// The market name.
+        market: String,
+        /// The chain id.
+        chain_id: u64,
+    },
+}
+
+impl AaveReport {
+    /// The operator-facing lines for this report.
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        match self {
+            Self::Activated {
+                chain_id,
+                chain_label,
+                market_id,
+                market_name,
+                created,
+            } => vec![
+                format!("Activated Aave V3 on {chain_label} (chain ID {chain_id})."),
+                format!("  Market: {market_name} (id={market_id}, created={created})."),
+            ],
+            Self::Deactivated {
+                chain_id, outcome, ..
+            } => match outcome {
+                DeactivateOutcome::Deactivated => vec![format!(
+                    "Deactivated Aave V3 on {} (chain ID {chain_id}).",
+                    chain_label_for(*chain_id)
+                )],
+                DeactivateOutcome::AlreadyDeactivated => Vec::new(),
+                DeactivateOutcome::NoEntry => {
+                    vec![format!(
+                        "The database has no entry for Aave V3 on {} (chain ID {chain_id}).",
+                        chain_label_for(*chain_id)
+                    )]
+                }
+            },
+            Self::Updated { entries } => entries.iter().flat_map(entry_lines).collect(),
+            Self::Position {
+                user_address,
+                market,
+                chain_id,
+                collateral,
+                debt,
+            } => position_lines(user_address, market, *chain_id, collateral, debt),
+            Self::PositionNoMarket { market, chain_id } => {
+                vec![format!(
+                    "No market found with name '{market}' on chain {chain_id}."
+                )]
+            }
+            Self::PositionNoUser {
+                user_address,
+                market,
+                chain_id,
+            } => vec![format!(
+                "No Aave user found for address {user_address} in market '{market}' on chain \
+                 {chain_id}."
+            )],
+        }
+    }
+}
+
+/// The human chain label used in the aave report lines.
+fn chain_label_for(chain_id: u64) -> String {
+    match chain_id {
+        1 => "Ethereum".to_string(),
+        8453 => "Base".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// The lines for one `aave update` market.
+fn entry_lines(entry: &AaveUpdateEntry) -> Vec<String> {
+    let AaveUpdateEntry {
+        chain_id,
+        market_id,
+        market_name,
+        outcome,
+    } = entry;
+    match outcome {
+        AaveUpdateOutcome::Advanced {
+            from_block,
+            to_block,
+            chunks_committed,
+            total_events_applied,
+        } => vec![format!(
+            "Chain {chain_id} market {market_id} ({market_name}): advanced {from_block}-> \
+             {to_block} in {chunks_committed} chunks ({total_events_applied} events applied)."
+        )],
+        AaveUpdateOutcome::Cancelled => vec![format!(
+            "Chain {chain_id} market {market_id}: cancelled (committed chunks stay durable)."
+        )],
+        AaveUpdateOutcome::NeedsBootstrap => vec![format!(
+            "Chain {chain_id} market {market_id} ({market_name}): needs bootstrapping \
+             (last_update_block is None); skipping. Bootstrap the stamp before running."
+        )],
+        AaveUpdateOutcome::DryRun {
+            last_update_block,
+            to_block,
+        } => vec![format!(
+            "Dry run: would advance chain {chain_id} market {market_id} ({market_name}) from \
+             block {last_update_block} to {} (no changes committed).",
+            render_opt_block(*to_block)
+        )],
+    }
+}
+
+/// Render an optional resolved block the way Python's `{value!r}` does.
+fn render_opt_block(block: Option<u64>) -> String {
+    block.map_or_else(|| "None".to_string(), |n| n.to_string())
+}
+
+/// The ported `aave position show` body.
+fn position_lines(
+    user_address: &str,
+    market: &str,
+    chain_id: u64,
+    collateral: &[AavePositionLine],
+    debt: &[AavePositionLine],
+) -> Vec<String> {
+    let mut lines = vec![
+        format!("Aave V3 Positions for {user_address}"),
+        format!("Market: {market} (Chain: {chain_id})"),
+        "=".repeat(60),
+    ];
+    if collateral.is_empty() {
+        lines.push("No collateral positions found.".to_string());
+    } else {
+        lines.push("Collateral Positions:".to_string());
+        lines.push("-".repeat(60));
+        lines.extend(
+            collateral
+                .iter()
+                .map(|p| format!("  {}: {} (scaled)", p.symbol, p.balance)),
+        );
+    }
+    if debt.is_empty() {
+        lines.push("No debt positions found.".to_string());
+    } else {
+        lines.push("Debt Positions:".to_string());
+        lines.push("-".repeat(60));
+        lines.extend(
+            debt.iter()
+                .map(|p| format!("  {}: {} (scaled)", p.symbol, p.balance)),
+        );
+    }
+    lines
 }
 
 /// The ported `heal` success / no-op text.

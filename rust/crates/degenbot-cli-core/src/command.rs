@@ -3,9 +3,13 @@
 //! One `Command` enum, one execution entry. The argv facade maps clap matches
 //! into a `Command` value; it never re-encodes semantics.
 
+use crate::aave::{self, AaveCommand};
+use crate::cancel::CancelHandle;
 use crate::context::CliContext;
 use crate::database;
 use crate::error::CliError;
+use crate::exchange::{self, ExchangeCommand};
+use crate::pool::{self, PoolCommand};
 use crate::prompt::{PromptPlan, Prompter};
 use crate::report::CommandReport;
 
@@ -14,6 +18,12 @@ use crate::report::CommandReport;
 pub enum Command {
     /// The `database` command group.
     Database(DatabaseCommand),
+    /// The `exchange` command group.
+    Exchange(ExchangeCommand),
+    /// The `pool` command group.
+    Pool(PoolCommand),
+    /// The `aave` command group.
+    Aave(AaveCommand),
 }
 
 impl Command {
@@ -22,23 +32,54 @@ impl Command {
     pub fn prompt_plan(&self, ctx: &CliContext<'_>) -> PromptPlan {
         match self {
             Self::Database(command) => command.prompt_plan(ctx),
+            Self::Exchange(command) => command.prompt_plan(ctx),
+            Self::Pool(command) => command.prompt_plan(ctx),
+            Self::Aave(command) => command.prompt_plan(ctx),
         }
     }
 
     /// Execute the command, asking `prompter` per the command's [`PromptPlan`].
     ///
+    /// The updater arms thread a fresh [`CancelHandle`]; use
+    /// [`execute_with_cancel`](Self::execute_with_cancel) to share the facade's
+    /// SIGINT-driven handle.
+    ///
     /// # Errors
     ///
     /// [`CliError`] for a declined prompt, a database failure, a schema refusal,
-    /// or an unresolved driver-domain value.
+    /// an unresolved driver-domain value, or a core arm failure.
     pub fn execute(
         &self,
         ctx: &CliContext<'_>,
         prompter: &dyn Prompter,
     ) -> Result<CommandReport, CliError> {
+        self.execute_with_cancel(ctx, prompter, &CancelHandle::new())
+    }
+
+    /// Execute the command with the caller's [`CancelHandle`] (ADR-051 D7: the
+    /// facade installs the SIGINT policy and hands the handle in).
+    ///
+    /// # Errors
+    ///
+    /// As [`execute`](Self::execute).
+    pub fn execute_with_cancel(
+        &self,
+        ctx: &CliContext<'_>,
+        prompter: &dyn Prompter,
+        cancel: &CancelHandle,
+    ) -> Result<CommandReport, CliError> {
         match self {
             Self::Database(command) => {
                 database::execute(command, ctx, prompter).map(CommandReport::Database)
+            }
+            Self::Exchange(command) => {
+                exchange::execute(command, ctx, prompter).map(CommandReport::Exchange)
+            }
+            Self::Pool(command) => {
+                pool::execute(command, ctx, prompter, cancel).map(CommandReport::Pool)
+            }
+            Self::Aave(command) => {
+                aave::execute(command, ctx, prompter, cancel).map(CommandReport::Aave)
             }
         }
     }

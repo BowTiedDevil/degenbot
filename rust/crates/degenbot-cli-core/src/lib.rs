@@ -11,41 +11,62 @@
 //!
 //! # Shape
 //!
-//! - [`Command`] + [`DatabaseCommand`]: the constructor-parsed command enum.
-//! - [`Command::execute`] / [`run`]: the ONE execution entry, returning a typed
-//!   [`CommandReport`].
+//! - [`Command`] + the per-group enums: the constructor-parsed command model.
+//! - [`Command::execute`] / [`run_with_cancel`]: the execution entries,
+//!   returning a typed [`CommandReport`].
 //! - [`CliError`] → [`ExitCode`]: declared at exactly one `From` site; the
 //!   workspace `exit = "deny"` lint stands, so `run` returns codes and never
 //!   aborts the process. The typed fleet boot refusal (FF-T1) maps to
 //!   `EX_CONFIG` 78 (lifted out of `DegenbotCLI.invoke`).
 //! - [`PromptPlan`] + [`Prompter`]: interactive policy is declared data, ported
 //!   verbatim from the click handlers and audited, never redesigned (D4).
+//! - [`CancelHandle`]: the cooperative cancel carrier the updater arms thread
+//!   into `run_pool_update` / `run_aave_update` (the facade owns the SIGINT
+//!   policy, ADR-051 D7).
 //!
-//! # Database arms are the template
+//! # Groups
 //!
-//! [`DatabaseCommand`] mirrors `src/degenbot/cli/database.py` arm for arm:
-//! `backup` / `reset` / `compact` / `cutover` / `heal` / `inspect`, plus the
-//! retired `upgrade` subcommand. Each arm delegates to the degenbot-db ops
-//! (`backup_database`, `create_new_database`, `compact_database`,
-//! `convert_alembic_to_rust_owned`, `heal_database`) and keeps the exact
-//! dry-run/confirm flow. The auto-heal epic (ergo `6ATMVN`) owns schema
-//! self-healing inside `ensure_schema`; these arms never call `heal` on any
-//! other command's behalf.
+//! - `database` ([`DatabaseCommand`]): the template group; ports
+//!   `src/degenbot/cli/database.py` arm for arm.
+//! - `exchange` ([`ExchangeCommand`]): the 34 Python click verbs collapse to
+//!   one data-driven command resolving `(chain, name)` through the
+//!   `degenbot-uniswap` deployments registry (ADR-051 D5).
+//! - `pool` ([`PoolCommand`]): the `degenbot-pool-updater` chunk loop +
+//!   on-chain-truth verify.
+//! - `aave` ([`AaveCommand`]): the `degenbot-aave` market run + row flips.
 
+pub mod aave;
+pub mod block;
+pub mod cancel;
 pub mod command;
 pub mod context;
 pub mod database;
 pub mod error;
+pub mod exchange;
+pub mod pool;
 pub mod prompt;
 pub mod report;
 
+pub use aave::{resolve_aave_deployment, AaveCommand, AaveDeployment, AAVE_DEPLOYMENTS};
+pub use block::{
+    parse_to_block, resolve_chain_selector, resolve_to_block, BlockTag, ToBlockSpec,
+    DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
+};
+pub use cancel::CancelHandle;
 pub use command::{Command, DatabaseCommand};
 pub use context::CliContext;
 pub use database::database_backup_path;
 pub use error::{CliError, ExitCode};
+pub use exchange::{
+    resolve_deployment, ExchangeCommand, ExchangeDeployment, PoolManagerDeployment,
+    RETIRED_EXCHANGES,
+};
+pub use pool::{PoolCommand, PoolFamily};
 pub use prompt::{PromptPlan, Prompter};
 pub use report::{
-    schema_state_label, CommandOutcome, CommandReport, CutoverOutcome, DatabaseReport, DryRunKind,
+    schema_state_label, AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome,
+    ActivateOutcome, CommandOutcome, CommandReport, CutoverOutcome, DatabaseReport,
+    DeactivateOutcome, DryRunKind, ExchangeReport, PoolReport,
 };
 
 /// The ONE execution entry: run `command` against `ctx`, asking `prompter` when
@@ -53,10 +74,22 @@ pub use report::{
 ///
 /// Returns a [`CommandOutcome`] carrying the typed [`CommandReport`] (on
 /// success) and the [`ExitCode`] derived at the single `From<&CliError>` site.
-/// The argv facade renders the report and never sees a process abort.
+/// A fresh [`CancelHandle`] is created (no SIGINT wiring); use
+/// [`run_with_cancel`] to share the facade's handle.
 #[must_use]
 pub fn run(command: &Command, ctx: &CliContext<'_>, prompter: &dyn Prompter) -> CommandOutcome {
-    let result = command.execute(ctx, prompter);
+    run_with_cancel(command, ctx, prompter, &CancelHandle::new())
+}
+
+/// The cancellable execution entry (ADR-051 D7).
+#[must_use]
+pub fn run_with_cancel(
+    command: &Command,
+    ctx: &CliContext<'_>,
+    prompter: &dyn Prompter,
+    cancel: &CancelHandle,
+) -> CommandOutcome {
+    let result = command.execute_with_cancel(ctx, prompter, cancel);
     let exit_code = match &result {
         Ok(_) => ExitCode::Success,
         Err(err) => ExitCode::from(err),

@@ -16,9 +16,29 @@ workspace = true
 # (the Rust argv facade and the Python passthrough) map into this crate; it owns
 # WHAT a command means, never HOW argv is spelled (clap) or painted (indicatif).
 # `just check-cli-core-purity` asserts the absence of both.
+#
+# The exchange/pool/aave arms (ergo FTVJ6L) delegate to the pure-Rust Tier-2
+# cores directly - the same seams the Python driver reaches through PyO3:
+# degenbot-uniswap (deployments registry), degenbot-pool-updater (chunk loop +
+# on-chain-truth verify), degenbot-aave (market run + row flips via degenbot-db).
 [dependencies]
+degenbot-aave.workspace = true
 degenbot-config.workspace = true
 degenbot-db.workspace = true
+degenbot-pool-updater.workspace = true
+degenbot-rpc.workspace = true
+degenbot-uniswap.workspace = true
+# Address/bytes primitives + the alloy `Provider` trait the block-tag
+# resolution path reads `eth_getBlockByNumber` through.
+alloy = { version = "^2.4", features = ["full"] }
+# The updater cores own their runtime; the arms build a short-lived one only to
+# resolve a tag+offset block identifier (or drive an on-chain verify) before the
+# core's own runtime is built.
+tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "net"] }
+# Plain rusqlite (no `bundled`) - the on-conn read/write seams take a
+# `&rusqlite::Connection` (the chunk's Transaction). The bundled libsqlite3-sys
+# link is owned solely by degenbot-db.
+rusqlite = { version = "^0.40" }
 # The ported `logger.info` success lines (the click handlers log through Python's
 # logging; the Rust core keeps the same run receipts on the tracing sink).
 tracing = { version = "^0.1" }
