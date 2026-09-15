@@ -121,6 +121,16 @@ pub fn divergence_tally_snapshot() -> DivergenceTally {
     tally().lock().map(|acc| acc.to_tally()).unwrap_or_default()
 }
 
+/// Serializes every lib-binary test that can bump the process-global
+/// divergence tally. `observe_storage_read` is reached by ANY
+/// `BotStateDb::storage_ref` read of a tracked slot — this module's probe tests
+/// and the sibling `serving.rs` V2-serving tests alike — so the absolute
+/// `slots_compared` pins can only hold while no other read interleaves. (The
+/// guard used to live inside this module's test module, which could not
+/// exclude the sibling-module readers.)
+#[cfg(test)]
+pub(crate) static TALLY_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The masked RPC comparison: `true` iff the engine's tracked fields
 /// (packed in `probe.engine_word`, untracked bits zeroed) match the RPC word
 /// masked to the engine's tracked-bit range.
@@ -358,6 +368,8 @@ mod tests {
 
     #[test]
     fn storage_ref_returns_rpc_value_unchanged_when_probe_on_or_off() {
+        // Reading a tracked slot below bumps the process-global tally.
+        let _tally = TALLY_TEST_GUARD.lock().unwrap();
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, -5010, 18_000_000);
         let anchor = SimAnchorState::snapshot(&core);
         // rpc serves slot0 = a DIFFERENT tick → would diverge IF the probe
@@ -376,11 +388,6 @@ mod tests {
             "rpc value returned unchanged (probe off path)"
         );
     }
-
-    // The tally-touching tests share a process-global accumulator + a test-only
-    // gate override; serialize them so parallel test threads don't race the
-    // counter / the `AtomicI8` force-setter.
-    static TALLY_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn observe_logs_divergence_when_engine_lags_rpc_and_tally_accumulates() {

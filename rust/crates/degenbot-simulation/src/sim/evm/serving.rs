@@ -236,6 +236,12 @@ mod tests {
     #[test]
     fn serve_returns_engine_v2_reserves_when_gate_on() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
+        // A tracked V2-reserves read below bumps the process-global divergence
+        // tally; hold the crate-wide probe guard so the probe module's absolute
+        // counts cannot be raced from this sibling module.
+        let _tally = crate::sim::evm::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap();
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
         let anchor = SimAnchorState::snapshot(&core);
         // The fallback returns a DIFFERENT reserves value — simulating a
@@ -267,6 +273,12 @@ mod tests {
     #[test]
     fn serve_falls_through_to_rpc_when_gate_off() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
+        // A tracked V2-reserves read below bumps the process-global divergence
+        // tally; hold the crate-wide probe guard so the probe module's absolute
+        // counts cannot be raced from this sibling module.
+        let _tally = crate::sim::evm::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap();
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
         let anchor = SimAnchorState::snapshot(&core);
         // The fallback returns a DIFFERENT value; with serving OFF the sim
@@ -288,6 +300,12 @@ mod tests {
     #[test]
     fn serve_falls_through_for_untracked_slot() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
+        // A tracked V2-reserves read below bumps the process-global divergence
+        // tally; hold the crate-wide probe guard so the probe module's absolute
+        // counts cannot be raced from this sibling module.
+        let _tally = crate::sim::evm::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap();
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
         let anchor = SimAnchorState::snapshot(&core);
         // Slot 6 (price0CumulativeLast) is NOT tracked by the engine → even
@@ -312,6 +330,12 @@ mod tests {
     #[test]
     fn serve_falls_through_for_unregistered_address() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
+        // A tracked V2-reserves read below bumps the process-global divergence
+        // tally; hold the crate-wide probe guard so the probe module's absolute
+        // counts cannot be raced from this sibling module.
+        let _tally = crate::sim::evm::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap();
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
         let anchor = SimAnchorState::snapshot(&core);
         let unknown = address!("1111111111111111111111111111111111111111");
@@ -334,6 +358,12 @@ mod tests {
     #[test]
     fn serve_v2_reserves_zeroes_timestamp_bits() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
+        // A tracked V2-reserves read below bumps the process-global divergence
+        // tally; hold the crate-wide probe guard so the probe module's absolute
+        // counts cannot be raced from this sibling module.
+        let _tally = crate::sim::evm::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap();
         // The engine does NOT track blockTimestampLast (high 32 bits). The
         // served word MUST have those bits zeroed (the sim's swap callback
         // does not read the timestamp; a stale/racy ts served from the engine
