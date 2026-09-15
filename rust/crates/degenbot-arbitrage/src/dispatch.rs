@@ -285,13 +285,13 @@ pub struct DispatchOutcome {
     /// (ports `thin_dropped`, L2499).
     pub thin_dropped: usize,
     /// The number of candidates dropped pre-sim because every surviving
-    /// hop routed through a pool flagged `SolverCalc` within the decay window
-    /// (ergo `GMWYIU`). Mirrors `suppressed_count` / `thin_dropped` — a per-call
+    /// hop routed through a pool flagged `SolverCalc` within the decay window.
+    /// Mirrors `suppressed_count` / `thin_dropped` — a per-call
     /// pre-filter drop count; the lifetime tally lives on
     /// [`PoolDivergence::total_divergent_dropped`].
     pub divergent_dropped: usize,
     /// The number of candidates dropped pre-sim because any hop's input token
-    /// is FoT-confirmed (ergo `3O535Q`). Mirrors `divergent_dropped` — a
+    /// is FoT-confirmed. Mirrors `divergent_dropped` — a
     /// per-call pre-filter drop count; the lifetime tally lives on
     /// [`FeeOnTransferRegistry::total_fot_dropped`].
     pub fot_dropped: usize,
@@ -336,7 +336,7 @@ impl DispatchOutcome {
 /// 1. **Pre-filter — suppression** — drop paths currently suppressed by
 ///    `path_suppression.is_suppressed(pid, current_block)` (the retry-interval
 ///    logic is owned by [`PathSuppression`]).
-/// 2. **Pre-filter — pool divergence** (ergo `GMWYIU`) — drop candidates
+/// 2. **Pre-filter — pool divergence** — drop candidates
 ///    routing through a pool flagged `SolverCalc` within the decay window
 ///    (counted in `divergent_dropped`). The memo is keyed by chain identity
 ///    (V2/V3 address, V4 `poolId`) derivable from each hop's `HopInfo`.
@@ -356,7 +356,7 @@ impl DispatchOutcome {
 /// 6. **Gather** — collect the stream; exceptions are tolerated (counted, not
 ///    propagated — the Python oracle uses `return_exceptions=True`,
 ///    L2504).
-/// 7. **Feedback — pool divergence** (ergo `GMWYIU`) — for each `SolverCalc`
+/// 7. **Feedback — pool divergence** — for each `SolverCalc`
 ///    failure, record divergence for the diverging hop's pool key (derived
 ///    from `path_info.hops[i]`); the NEXT block's skip (step 2) drops paths
 ///    through it pre-sim.
@@ -438,7 +438,7 @@ pub fn dispatch_profitable_results(
     current_block: u64,
     min_profit_net: u128,
     min_profit_margin_bps: u64,
-    // The per-pool solver-divergence memo (ergo `GMWYIU`). Parallels
+    // The per-pool solver-divergence memo. Parallels
     // `path_suppression` — a standalone `Arc<Mutex<PoolDivergence>>` (NOT
     // composed into the `Dispatcher`) so the sim seam locks it directly at
     // the skip bookend (step 2) + the feedback (step 7), never across the
@@ -447,7 +447,7 @@ pub fn dispatch_profitable_results(
     // divergence for `SolverCalc` failures' diverging hops so the NEXT
     // block's skip drops them.
     pool_divergence: &Arc<Mutex<PoolDivergence>>,
-    // The per-token fee-on-transfer registry (ergo `3O535Q`). Parallels
+    // The per-token fee-on-transfer registry. Parallels
     // `pool_divergence` — a standalone `Arc<Mutex<FeeOnTransferRegistry>>`
     // (NOT composed into the `Dispatcher`) so the sim seam locks it directly
     // at the skip bookend (step 2) + the feedback (step 7) + the success
@@ -504,7 +504,7 @@ pub fn dispatch_profitable_results(
     }
     outcome.suppressed_count = pre_filter_count - candidates.len();
 
-    // 2. Pre-filter — pool divergence (ergo `GMWYIU`). Drop candidates
+    // 2. Pre-filter — pool divergence. Drop candidates
     //    routing through a pool flagged `SolverCalc` within the decay window
     //    (counted in `divergent_dropped`). The memo is keyed by chain
     //    identity — V2/V3 pool address, V4 `poolId` bytes32 — derivable from
@@ -541,7 +541,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 2.5. Pre-filter — fee-on-transfer tokens (ergo `3O535Q`). Drop
+    // 2.5. Pre-filter — fee-on-transfer tokens. Drop
     //      candidates whose any hop's input token is FoT-confirmed (counted
     //      in `fot_dropped`). The registry is keyed by token `Address`;
     //      the input token is derived from each hop's `HopInfo` via
@@ -814,7 +814,7 @@ pub fn dispatch_profitable_results(
     outcome.fail_count = outcome.candidate_count - outcome.sim_ok_count() - outcome.exception_count;
 
     // 7. Feedback — record divergence for `SolverCalc` failures' diverging
-    //    hops (ergo `GMWYIU`). A pool flagged this block stays divergent for
+    //    hops. A pool flagged this block stays divergent for
     //    `POOL_DIVERGENCE_DECAY_BLOCKS`; the NEXT block's skip drops paths
     //    routing through it pre-sim. The diverging hop's key is derived from
     //    `path_info_by_id[pid].hops[i]` (index correspondence is the
@@ -846,7 +846,7 @@ pub fn dispatch_profitable_results(
     //      pool_key)` for failures whose `reverting_frame.label` is in
     //      `FOT_REVERT_LABELS` (`IIA`, `CurrencyNotSettled`, `UniswapV2: K`).
     //      The pool_key is the hop's `PoolDivergenceKey` (V2/V3 address, V4
-    //      `poolId` — see ergo `DLSKD7`); the registry tracks the distinct
+    //      `poolId`); the registry tracks the distinct
     //      failing pool identities per token + the 0-success flag; the skip
     //      (step 2.5) drops paths whose any hop's input token is FoT-confirmed.
     //      Same standalone-arc discipline.
@@ -877,7 +877,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 8.5. FoT success recording (ergo `3O535Q`). For every SUCCEEDED path,
+    // 8.5. FoT success recording. For every SUCCEEDED path,
     //      record `record_success(token)` for EVERY token on the path — each
     //      hop's input AND output (via `hop_input_token` + `hop_output_token`)
     //      — the 0-success disambiguator. A true FoT token can never succeed
@@ -914,7 +914,7 @@ pub fn dispatch_profitable_results(
         .sort_by_key(|r| std::cmp::Reverse(r.net_profit));
 
     // Emit the env-gated `[sim-divergence] summary` for this block's dispatch
-    // fan-out (ergo task 4C33DP / epic TR6GWT) — the tally of engine-vs-RPC
+    // fan-out — the tally of engine-vs-RPC
     // tracked-slot comparisons run inside `BotStateDb::storage_ref` during
     // the sim fan-out above. No-op when the probe is off; when on, logs
     // `slots_compared/divergent_slots/divergent_pairs/divergent_pools`
@@ -1432,7 +1432,7 @@ mod tests {
         assert!(!asserter.read_q().is_empty());
     }
 
-    // ── Pool divergence skip + feedback (ergo GMWYIU) ────────────────
+    // ── Pool divergence skip + feedback ────────────────
 
     /// The skip (step 2) drops a candidate routing through a pool flagged
     /// `SolverCalc` within the decay window, while a candidate through a

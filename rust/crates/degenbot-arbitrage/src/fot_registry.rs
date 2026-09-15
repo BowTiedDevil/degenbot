@@ -94,7 +94,7 @@ const FOT_REVERT_LABELS: &[&str] = &["IIA", "CurrencyNotSettled", "UniswapV2: K"
 /// FoT (fails across ≥ K distinct pools, 0 successes) and stale-state (fails
 /// at 1 pool only, token succeeds elsewhere). The pool identity is the hop's
 /// [`PoolDivergenceKey`] via [`hop_pool_key`], NOT the reverting frame's raw
-/// `target` — ergo `DLSKD7`'s V4 gap: every V4 pool shares one PoolManager
+/// `target`: every V4 pool shares one PoolManager
 /// address, so keying on `frame.target` collapsed every V4 pool to a single
 /// `failing_pools` entry and the K=2 threshold could never fire (a V4 FoT
 /// token was structurally un-confirmable). Keying by hop mirrors
@@ -320,8 +320,8 @@ pub struct FotTokenRecord {
     /// The distinct failing pool identities that reverted involving this
     /// token as the input — keyed by [`PoolDivergenceKey`] (V2/V3 pool
     /// address, V4 `poolId` bytes32) so a V4 token's distinct failing pools
-    /// are distinct `poolId`s, NOT one shared PoolManager address (the
-    /// ergo `DLSKD7` fix — without it the V4 K=2 threshold could never fire).
+    /// are distinct `poolId`s, NOT one shared PoolManager address — without
+    /// that keying the V4 K=2 threshold could never fire.
     pub failing_pools: HashSet<PoolDivergenceKey>,
     /// Sticky within the decay window — once `true`, `is_fot` returns
     /// `false` until the record decays.
@@ -390,7 +390,7 @@ impl FeeOnTransferRegistry {
     /// failing-pool set + updates `last_flagged_block`. The key is the hop's
     /// [`PoolDivergenceKey`] (V2/V3 address, V4 `poolId`) — seeing the V4
     /// `poolId` rather than the shared PoolManager is what lets the K=2
-    /// distinct-pool threshold fire for a V4 FoT token (ergo `DLSKD7`).
+    /// distinct-pool threshold fire for a V4 FoT token.
     pub fn record_suspicion(
         &mut self,
         token: Address,
@@ -520,7 +520,7 @@ mod tests {
     const TOKEN_IN: Address = address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
     const TOKEN_OUT: Address = address!("ffffffffffffffffffffffffffffffffffffffff");
     // Two DISTINCT V4 poolIds through the SAME PoolManager (V4_PM) — the
-    // ergo `DLSKD7` acceptance: a V4 token failing across 2 distinct
+    // The acceptance: a V4 token failing across 2 distinct
     // poolIds must reach FoT confirmation (keyed by poolId, not the
     // shared PoolManager address, so the K=2 threshold can fire).
     const V4_POOL_ID_A: &str = "0xabcd000000000000000000000000000000000000000000000000000000000001";
@@ -638,7 +638,7 @@ mod tests {
         let f = failure_no_captures("CurrencyNotSettled", V4_PM);
         // The reverting frame's target is the shared PoolManager (V4_PM), but
         // the failing-pool identity is the hop's V4 `poolId` (`V4_POOL_ID_A`) —
-        // the ergo `DLSKD7` fix that lets a V4 token reach K=2 confirmation.
+        // and that keying is what lets a V4 token reach K=2 confirmation.
         assert_eq!(
             fot_suspected_token(&f, &hops),
             Some((TOKEN_IN, v4_key(V4_POOL_ID_A)))
@@ -881,7 +881,7 @@ mod tests {
     }
 
     // =====================================================================
-    // V4 keying (ergo DLSKD7) — the acceptance: a V4 token CAN be confirmed
+    // V4 keying — the acceptance: a V4 token CAN be confirmed
     // =====================================================================
 
     #[test]

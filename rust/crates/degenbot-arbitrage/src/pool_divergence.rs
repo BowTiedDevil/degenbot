@@ -1,4 +1,4 @@
-//! Per-pool solver-divergence tracking (ergo epic GAXXNJ, task GMWYIU).
+//! Per-pool solver-divergence tracking.
 //!
 //! A pool whose state the solver read wrong will flag `SolverCalc` across
 //! every path routing through it in the same block. Today each such path

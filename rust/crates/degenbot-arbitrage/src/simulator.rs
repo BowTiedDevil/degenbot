@@ -189,8 +189,7 @@ pub struct SimResult {
     /// captured during `execute()` call [3]'s `inspect_one` — the V2/V3/V4
     /// pools' own emitted swap events, decoded. The ground-truth "what each
     /// hop actually produced, as simulated" — replaces the onchain-recompute
-    /// pipeline (ergo epic 63I7WJ). Empty if `execute()` reverted before any
-    /// swap emitted. V4 amount correctness is gated on task `5RI47E`.
+    /// pipeline. Empty if `execute()` reverted before any swap emitted.
     pub captured_swaps: Vec<CapturedSwap>,
     /// The number of hops in the path (for the caller's `path_info` reshape).
     pub hop_count: usize,
@@ -252,12 +251,12 @@ pub struct SimFailure {
     /// The inspector-captured reverting-frame attribution — `Some` only for
     /// `execute()` reverts where call [3]'s `inspect_one` ran the
     /// `CallTraceInspector`. `None` for orchestration-only buckets + the
-    /// balance-decode branch. Ergo epic 63I7WJ task 3AJ4I4.
+    /// balance-decode branch.
     pub reverting_frame: Option<RevertingFrame>,
     /// The swap events captured BEFORE the revert (the swaps `execute()` did
     /// before reverting) — diagnostic for WHY it reverted (e.g. a partial fill
     /// that blew the price limit). Empty for orchestration-only buckets + the
-    /// balance-decode branch (no `inspect_one` ran). Ergo epic 63I7WJ.
+    /// balance-decode branch (no `inspect_one` ran).
     pub captured_swaps: Vec<CapturedSwap>,
     /// Total `log_full` hook firings during `execute()` (ALL logs, incl.
     /// non-swap + reverted-frame). Diagnostic: if it exceeds
@@ -272,7 +271,7 @@ pub struct SimFailure {
     /// the executor's WETH balance showing it committed.
     pub reverted_swaps: Vec<CapturedSwap>,
     /// The solver's optimal input for this path (`path.optimal_input`). Carried
-    /// so the `[sim-diag]` classifier (ergo epic 63I7WJ task AM5AJW) can emit
+    /// so the `[sim-diag]` classifier can emit
     /// the expected-vs-actual comparison without re-deriving it — the
     /// *actual* amount comes from `captured_swaps`.
     pub optimal_input: u128,
@@ -674,7 +673,7 @@ fn v4_output_currency(hop: &V4HopInfo) -> Address {
 /// composers do not (the V2 callback's received-token accounting would need
 /// per-composer sync/settle restructuring to port the 2-hop bridge).
 ///
-/// Empirical status (ergo TGXBCE, resolved): across ~148 mainnet blocks and
+/// Empirical finding: across ~148 mainnet blocks and
 /// ~1325 simulated V4-containing candidates, zero such paths materialized —
 /// the pathfinder's token-graph adjacency never paired a native-currency V4
 /// pool against a WETH-input V2 pool at an interior boundary. This probe
@@ -942,7 +941,7 @@ where
     simulate_path_on_evm(&mut evm, ctx, path, fail_buckets)
 }
 
-/// G6HSIS (epic 2LXPPV): records the `simulate.*` span fields when the
+/// On close, records the `simulate.*` span fields when the
 /// per-candidate sim span closes. Default verdict is `not_profitable`
 /// (every `Ok(None)` branch falls through to it); the success + error sites
 /// override before returning. `span.record` ignores undeclared field names
@@ -1214,7 +1213,7 @@ where
     let mut first_failure: Option<usize> = None;
     // `execute()` (call [3]) runs with the composed [`SimInspector`] tuple
     // `(AccessListCollector, (CallTraceInspector, SwapEventCaptureInspector))`
-    // attached via `inspect_one` (ADR-019 D3 + ergo epic 63I7WJ) so the EIP-2930
+    // attached via `inspect_one` (ADR-019 D3) so the EIP-2930
     // warmed-slot access list + the call trace + the swap events are byproducts
     // of the FIRST execute() run — no post-re-`transact`. The balance reads
     // [0..3] + [4..7] use `transact_one`, which does NOT invoke the inspector,
@@ -1279,7 +1278,7 @@ where
 
     // Classify + tally the first revert if any call failed.
     if let Some(fail_idx) = first_failure {
-        // Revert-tolerant swap diagnostic (ergo `TR6GWT`): the committed
+        // Revert-tolerant swap diagnostic: the committed
         // `captured_swaps` is empty for a reverting `unlock` (revm's journal
         // pops the inner swaps), but `reverted_swaps` preserves them. For a
         // V4-V3-V3 `CurrencyNotSettled`, comparing each reverted swap's ACTUAL
@@ -1298,7 +1297,7 @@ where
             .filter(|b| !b.is_empty())
             .unwrap_or_default();
         let bucket = degenbot_decoders::revert::classify_revert(&revert_data);
-        // Ergo epic 63I7WJ task 3AJ4I4 — attribute the revert to the DEEPEST
+        // Attribute the revert to the DEEPEST
         // failing frame the `CallTraceInspector` captured during execute()
         // call [3]'s `inspect_one`, rather than the top-level bubble. The
         // inspector ran only at call [3], so this is `Some` only when
@@ -1517,14 +1516,14 @@ where
         .saturating_mul(U256::from(ctx.base_fee_next.saturating_add(priority_fee)));
     let net_profit = gross_profit.saturating_sub(gas_fee);
 
-    // ADR-019 D3 + ergo epic 63I7WJ — the EIP-2930 access list execute() warmed
+    // ADR-019 D3 — the EIP-2930 access list execute() warmed
     // was collected as a byproduct of the FIRST execute() `inspect_one` run
     // (call [3] above) by the `AccessListCollector` member of the composed
     // `SimInspector` tuple. Drain it via the paired handle — no post-re-
     // `transact` (execute() ran once). The `CallTraceInspector` +
     // `SwapEventCaptureInspector` members are drained here too (their captured
-    // data is surfaced in the revert-attribution + classifier tasks, steps
-    // 2 + 5 of epic 63I7WJ; drained now to prove the composition end-to-end
+    // data is surfaced in the revert-attribution + classifier paths; drained
+    // now to prove the composition end-to-end
     // + to free the buffers for the next path on the shared per-block EVM).
     // `emit_access_list_from_state` stays as an engine-generic primitive
     // (emitting from a `State` journal); it is just no longer the production
@@ -1610,7 +1609,7 @@ fn decode_balance(data: &alloy::primitives::Bytes) -> U256 {
     }
 }
 
-// ── Revert-tolerant swap diagnostic (ergo `TR6GWT`) ───────────────────
+// ── Revert-tolerant swap diagnostic ───────────────────
 //
 // The committed `captured_swaps` is empty for a reverting V4 `unlock`
 // (revm pops the inner swaps from the journal), but the inspector preserves
@@ -1865,7 +1864,7 @@ fn log_reverted_swaps_vs_hop_outputs(
 #[cfg(test)]
 mod tests {
 
-    // G6HSIS (epic 2LXPPV): test-only span capture (same process-global seam
+    // Test-only span capture (same process-global seam
     // as the degenbot-submission span tests - one global per test binary;
     // the crate has no other global subscriber installs).
     mod span_capture {
@@ -2224,7 +2223,7 @@ mod tests {
             Some(3),
             "the execute() call [3] failed"
         );
-        // Ergo epic 63I7WJ task 3AJ4I4 — the `CallTraceInspector` captured the
+        // The `CallTraceInspector` captured the
         // halting frame's attribution. The 0xfe INVALID is a Halt (not a
         // Revert), so the reverting frame's revert_data is empty + label is
         // `classify_revert` on empty bytes (the "empty" bucket label). The
@@ -2246,8 +2245,8 @@ mod tests {
     /// selector `0xcafebabe` (`PUSH4 0xcafebabe; MSTORE; REVERT(28,4)` roots
     /// the revert data at mem[28..32]). `classify_revert("cafebabe")` → the
     /// `unknown:0xcafebabe` bucket. The `CallTraceInspector` (attached at
-    /// execute() call [3]) captures the reverting frame — ergo epic 63I7WJ
-    /// task 3AJ4I4. Proves the deep attribution surfaces the reverting
+    /// execute() call [3]) captures the reverting frame. Proves the deep
+    /// attribution surfaces the reverting
     /// CONTRACT + the revert DATA + the label, not just the top-level bubble.
     #[test]
     fn simulate_in_process_with_db_revert_with_data_attributes_reverting_frame() {
@@ -2468,7 +2467,7 @@ mod tests {
         );
     }
 
-    // ── captured_swap_output_amount sign conventions (ergo TR6GWT) ───────
+    // ── captured_swap_output_amount sign conventions ───────
     //
     // The decisive divergence localizer: pick the swapper-RECEIVED side of
     // a captured swap's signed amounts so `actual_out` can be compared to
@@ -2779,7 +2778,7 @@ mod tests {
         assert!(::degenbot_config::parse_bool_flag("").is_err());
     }
 
-    /// The end-to-end clamp attestation (epic 6EQWXK / task 6Z6H4U, plan §7):
+    /// The end-to-end clamp attestation:
     /// the CL-hop clamp (`consumed_inputs`) reaches EXECUTABLE BYTES through
     /// `encode_cmd_stream` — the exact fn `simulate_path_on_evm` calls to build
     /// the executor command stream.
@@ -2878,7 +2877,7 @@ mod tests {
         );
     }
 
-    /// G6HSIS (epic 2LXPPV): the `degenbot.bundle.simulate` span is recorded
+    /// The `degenbot.bundle.simulate` span is recorded
     /// per candidate at the shared sim seam, with the terminal verdict.
     /// Reuses the reverting-path smoke fixture (exec() call [3] reverts ->
     /// `Ok(None)` -> `not_profitable`).

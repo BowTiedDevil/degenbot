@@ -2,13 +2,9 @@
 # Live-detector output over the pre-rule citation census. Shrink in the
 # strip waves (ergo NIZCNR); regenerate via:
 #   WAF=/dev/null scripts/hooks/comment-hygiene.sh | cut -d: -f1 | sort -u
-# 2026-09-15: wave A (30 files) + degenbot-aave (3 updater files, post-TD7)
-# stripped; rust/crates/** remainder and runner/**/skip-list files remain.
+# 2026-09-15: wave A (30 files) + degenbot-aave (3) + degenbot-arbitrage
+# (4 files) stripped; rust/crates/** remainder + runner/skip-list remain.
 examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-rust/crates/degenbot-arbitrage/src/dispatch.rs
-rust/crates/degenbot-arbitrage/src/fot_registry.rs
-rust/crates/degenbot-arbitrage/src/pool_divergence.rs
-rust/crates/degenbot-arbitrage/src/simulator.rs
 rust/crates/degenbot-bot/examples/config_smoke_boot.rs
 rust/crates/degenbot-bot/examples/hotpath_prometheus_probe.rs
 rust/crates/degenbot-bot/src/arb_engine/block_cursor.rs
