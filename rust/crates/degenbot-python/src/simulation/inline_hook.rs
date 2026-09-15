@@ -25,10 +25,15 @@
 //! (the LW-T2 wedge test pins this structurally; the old
 //! sync-inside-async BY DESIGN comment was that invariant's only
 //! enforcement before the cutover) — so the sim body spawns onto this
-//! hook's DEDICATED multi-thread runtime (task-spawn, never
-//! `block_in_place`): the spawned task runs on a runtime worker (where
-//! `block_in_place` is legal AND the handle capture succeeds), and the
-//! worker blocks on the join from the plain thread. Out-of-band work
+//! hook's DEDICATED multi-thread runtime (task-spawn) and the SYNC sim
+//! drive runs on that runtime's BLOCKING pool (`tokio::task::spawn_blocking`,
+//! TD4/A2): a blocking-pool thread still carries the runtime handle (the
+//! build-time capture succeeds), and revm's `WrapDatabaseAsync::block_on`
+//! bridging (`block_in_place` under a multi-thread handle) collapses to a
+//! plain call there — a DB wait never converts a runtime worker, and the
+//! runtime never spawns replacement workers mid-block. The worker only
+//! awaits the blocking section; the plain caller thread blocks on the
+//! join. Out-of-band work
 //! (affect-cache misses, escalations) rides the injected `EscalationPort`
 //! — never an ambient `Handle`.
 
@@ -369,8 +374,11 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
         // on the 2-thread runtime while ~50 bins/cycle arrived
         // concurrently (sims p50 12ms). Sizing to the core count
         // lets the bins' sims actually overlap. Env-tunable for
-        // constrained hosts; the sim bodies still block on the
-        // DB wrap's block_on, so workers also cover that wait.
+        // constrained hosts. TD4/A2 re-evaluation: workers exist for SIM
+        // PARALLELISM, NOT block_on compensation — the sync sim drive runs
+        // on this runtime's BLOCKING pool (`spawn_blocking`, see the sim
+        // body), so DB waits never convert a worker and the blocking adds
+        // no sizing pressure on this count.
         .worker_threads(workers)
         .thread_name_fn(inline_sim_thread_name)
         .enable_all()
@@ -571,65 +579,94 @@ impl InlineSimulator for InlineSimHook {
                         hops = req.hops.len(),
                         sim_ok = false,
                     );
-                    let _sim_span = inline_span.clone().entered();
-                    let ctx = SimulateContext {
-                        provider: &provider,
-                        executor_owner,
-                        executor_address,
-                        weth_address,
-                        pool_manager_address,
-                        multicall3_address,
-                        inject_code,
-                        injected_address,
-                        runtime_bytecode,
-                        warmup,
-                        base_fee_next,
-                        current_block: req.sim_block,
-                        block_timestamp: req.block_timestamp,
-                        block_priority_fees: None,
-                    };
-                    if let Some(mut handle) = degenbot_simulation::BlockSimHandle::build(
-                        &provider,
-                        base_fee_next,
-                        req.sim_block,
-                        req.block_timestamp,
-                        &ctx.override_params(),
-                        &anchor,
-                        &warm_cache,
-                        Some(&storage_memo),
-                        verify_divergence,
-                    ) {
-                        let mut buckets = FailBuckets::new();
-                        // SIMSPANDUP: the sim body rides the CALLER-HELD
-                        // `degenbot.bundle.simulate` span (captured before the
-                        // runtime hop below) — the seam must not open a
-                        // same-named duplicate nested under this span.
-                        let result = simulate_path_on_evm_in_span(
-                            handle.evm_mut(),
-                            &ctx,
-                            &sim_path,
-                            &mut buckets,
-                            &seam_span,
-                        )
-                        .map_err(|e| format!("{e}"));
-                        inline_span.record(
-                            "sim_ok",
-                            result.as_ref().ok().and_then(|o| o.as_ref()).is_some(),
-                        );
-                        (result, buckets)
-                    } else {
-                        // No ambient runtime at build / an override error:
-                        // tally `rpc-failed` (mirrors the FFI build-failure arm).
-                        let mut buckets = FailBuckets::new();
-                        buckets.record(
-                            req.path_id,
-                            "rpc-failed",
-                            None,
-                            Bytes::new(),
-                            optimal_input,
-                            outputs_vec(&req),
-                        );
-                        (Ok(None), buckets)
+                    // TD4/A2: the sync sim drive BLOCKS on its cold-miss
+                    // path — revm's `WrapDatabaseAsync` bridges the async
+                    // provider via `block_in_place` + `handle.block_on`
+                    // under this multi-thread runtime. That drive runs on
+                    // the runtime's BLOCKING pool (`spawn_blocking`), NOT
+                    // on the worker: on a blocking-pool thread the internal
+                    // `block_in_place` setup collapses to a plain call
+                    // (blocking is what that pool exists for), so a DB wait
+                    // never converts a worker and the runtime never spawns
+                    // mid-block replacement workers. The blocking-pool
+                    // thread carries the ambient handle (the pool `enter`s
+                    // its runtime), so both the build-time capture and the
+                    // drive succeed there; the worker below only awaits.
+                    let eval = tokio::task::spawn_blocking(move || {
+                        let _sim_span = inline_span.clone().entered();
+                        let ctx = SimulateContext {
+                            provider: &provider,
+                            executor_owner,
+                            executor_address,
+                            weth_address,
+                            pool_manager_address,
+                            multicall3_address,
+                            inject_code,
+                            injected_address,
+                            runtime_bytecode,
+                            warmup,
+                            base_fee_next,
+                            current_block: req.sim_block,
+                            block_timestamp: req.block_timestamp,
+                            block_priority_fees: None,
+                        };
+                        if let Some(mut handle) = degenbot_simulation::BlockSimHandle::build(
+                            &provider,
+                            base_fee_next,
+                            req.sim_block,
+                            req.block_timestamp,
+                            &ctx.override_params(),
+                            &anchor,
+                            &warm_cache,
+                            Some(&storage_memo),
+                            verify_divergence,
+                        ) {
+                            let mut buckets = FailBuckets::new();
+                            // SIMSPANDUP: the sim body rides the CALLER-HELD
+                            // `degenbot.bundle.simulate` span (captured before the
+                            // runtime hop below) — the seam must not open a
+                            // same-named duplicate nested under this span.
+                            let result = simulate_path_on_evm_in_span(
+                                handle.evm_mut(),
+                                &ctx,
+                                &sim_path,
+                                &mut buckets,
+                                &seam_span,
+                            )
+                            .map_err(|e| format!("{e}"));
+                            inline_span.record(
+                                "sim_ok",
+                                result.as_ref().ok().and_then(|o| o.as_ref()).is_some(),
+                            );
+                            (result, buckets)
+                        } else {
+                            // No ambient runtime at build (a blocking-pool thread
+                            // always carries the handle — see TD4/A2 above) / an
+                            // override error:
+                            // tally `rpc-failed` (mirrors the FFI build-failure arm).
+                            let mut buckets = FailBuckets::new();
+                            buckets.record(
+                                req.path_id,
+                                "rpc-failed",
+                                None,
+                                Bytes::new(),
+                                optimal_input,
+                                outputs_vec(&req),
+                            );
+                            (Ok(None), buckets)
+                        }
+                    })
+                    .await;
+                    match eval {
+                        Ok(eval) => eval,
+                        Err(e) => {
+                            // The blocking sim section PANICKED — re-raise the
+                            // payload through the outer task so the join
+                            // conversion below records `exception` exactly as
+                            // the pre-TD4 panic path did (same JoinError →
+                            // same bucket + Err string).
+                            std::panic::resume_unwind(e.into_panic())
+                        }
                     }
                 })
                 .await
