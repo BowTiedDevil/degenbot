@@ -14,7 +14,6 @@
 //!   `#[create_exception]` types.
 //! - Mirrors `polars-python/src/expr/`'s 17-file `PyExpr` split and the
 //!   existing `crates/degenbot-bot/src/arb_engine/` core split.
-//!   (ergo UG6FKN task 74W2Z6.)
 
 mod errors;
 mod path_info;

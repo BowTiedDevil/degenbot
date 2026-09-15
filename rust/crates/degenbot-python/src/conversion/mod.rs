@@ -10,8 +10,6 @@
 //!   (`int.from_bytes`, `HexBytes`, `bytes_to_int`, `to_py_bytes`, …)
 //! - [`json`] — JSON-to-Python converters feeding RPC result wrapping
 //! - [`rpc_types`] — block / transaction / log RPC types → Python dicts
-//!
-//! (ergo UG6FKN task XRF6HV.)
 
 pub mod alloy;
 pub mod cache;

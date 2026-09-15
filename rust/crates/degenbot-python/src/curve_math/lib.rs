@@ -243,8 +243,8 @@ pub fn stableswap_reduction_coefficient(
 }
 
 /// `derive_rate_and_precision_multipliers` — Rust-owned Curve
-/// `rate_multipliers` / `precision_multipliers` derivation (ergo `JLAPAC`,
-/// ADR-005 slice 11c follow-up).
+/// `rate_multipliers` / `precision_multipliers` derivation (ADR-005
+/// slice 11c follow-up).
 ///
 /// The single Rust source of truth for the scaling a Curve pool's `xp`
 /// (rate-adjusted balances) and `get_dy` consume. `token_decimals` are the

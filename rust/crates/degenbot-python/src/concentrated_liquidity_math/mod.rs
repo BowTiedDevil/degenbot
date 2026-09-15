@@ -1,5 +1,5 @@
 //! `PyO3` wrappers over the `degenbot-concentrated-liquidity-math` pure core.
-//! Mirrors `crates/degenbot-concentrated-liquidity-math/`. (ergo UG6FKN task WXHGOH.)
+//! Mirrors `crates/degenbot-concentrated-liquidity-math/`.
 
 pub mod lib;
 pub mod tick_math;

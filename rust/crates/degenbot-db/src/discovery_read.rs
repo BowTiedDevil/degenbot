@@ -1,5 +1,4 @@
-//! Read-only candidate-pool discovery for path enumeration (ergo YFIOSF,
-//! epic RGZG4S Gap G2).
+//! Read-only candidate-pool discovery for path enumeration (Gap G2).
 //!
 //! The Python driver's `build_paths.py` (`src/degenbot/runner/build_paths.py`)
 //! discovers its candidate-pool universe from the `SQLAlchemy` ORM and hands

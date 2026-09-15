@@ -1,4 +1,4 @@
-//! Worker census registry (ergo PE4FPM; observability surface of the
+//! Worker census registry (observability surface of the
 //! ADR-042 role-switching fleet, section 7).
 //!
 //! Every execution resource — a tokio runtime, a worker seat pool, a semaphore

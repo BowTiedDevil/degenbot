@@ -200,7 +200,7 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
 #[expect(clippy::too_many_lines)]
 fn main() {
     // 2b reaches EngineStages — the ONE external seam a standalone consumer
-    // crosses (the engine type is crate-private machinery, epic 5TBT7L Q2b).
+    // crosses (the engine type is crate-private machinery).
     use degenbot::bot::arb_engine::{EnginePhase, EngineStages};
 
     // 1. Construct the Rust-owned per-chain bot state (no Python).
@@ -450,7 +450,7 @@ fn main() {
     }
 
     // 8. Standalone-Rust consumer reaches the in-process revm EVM sim
-    //    (ADR-005 Tier-0, task 62YWCF — `cargo add degenbot` reaches
+    //    (ADR-005 Tier-0 — `cargo add degenbot` reaches
     //    `simulate_in_process_with_db` with no Python in the build graph).
     //    Proven via the SELFDESTRUCT-gift success path: the executor stub
     //    CALLs a gift contract; the gift self-destructs to the executor

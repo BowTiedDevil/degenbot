@@ -1,7 +1,6 @@
 //! Thread-identity registry: maps each thread's std thread-id to its OS TID
 //! (+ the last span it created), so a GIL-deadlock dump can be cross-
-//! referenced against the /proc futex table (ergo TPMFLV / incident
-//! 2026-08-20).
+//! referenced against the /proc futex table (incident 2026-08-20).
 //!
 //! The registry fills passively: `PythonLogLayer::on_new_span` (present in
 //! every registry stack) calls [`note_current_thread`] on the span-CREATING

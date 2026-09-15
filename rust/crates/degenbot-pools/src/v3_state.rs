@@ -2802,7 +2802,7 @@ mod tests {
     /// post-step price lives in. This test locks that equivalence so the V4
     /// crossing-swap divergence under the fetch seam (slice 4) is NOT
     /// mis-attributed to the miss-detection model. See the slice-3 diagnosis
-    /// recorded on ergo task `2ZG6XO`: the models match, so V4 routing's fork
+    /// recorded in the slice-3 diagnosis: the models match, so V4 routing's fork
     /// divergence lives elsewhere (fee accounting / boundary-tick walk / fetch
     /// merge semantics) and must be fork-validated.
     #[test]

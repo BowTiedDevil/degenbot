@@ -1,6 +1,5 @@
 #![expect(clippy::expect_used, clippy::panic, clippy::print_stdout)]
-//! Spike probe for ergo epic 63I7WJ : revm `Inspector` hooks on
-//! the simulation stack.
+//! Spike probe: revm `Inspector` hooks on the simulation stack.
 //!
 //! Throwaway, `#[ignore]` — run with `cargo test -p degenbot-simulation
 //! --test inspector_spike_probe -- --ignored --nocapture`.
@@ -332,7 +331,7 @@ fn tx_to(addr: Address) -> TxEnv {
 /// Q1: `Inspector::log` + `log_full` fire for a LOG1 emitted inside
 /// `inspect_one`, and the captured `Log` round-trips through `decode_sync_log`.
 #[test]
-#[ignore = "spike probe (KCKGP4) — run with --ignored --nocapture"]
+#[ignore = "spike probe — run with --ignored --nocapture"]
 fn spike_q1_log_capture_inside_call() {
     let contract = Address::repeat_byte(0x42);
     let bc = emit_v2_sync_bytecode(1000, 2000);
@@ -432,7 +431,7 @@ fn spike_q1_log_capture_inside_call() {
 /// both handles drain independently; the access list is parity-equal to the
 /// collector-alone case.
 #[test]
-#[ignore = "spike probe (KCKGP4) — run with --ignored --nocapture"]
+#[ignore = "spike probe — run with --ignored --nocapture"]
 fn spike_q2_tuple_composition() {
     let contract = Address::repeat_byte(0x42);
     let bc = Bytecode::new_raw(sload_sstore_bytecode());
@@ -499,7 +498,7 @@ fn spike_q2_tuple_composition() {
 /// Q3: `call_end` receives the `CallOutcome` of the *deepest reverting frame*
 /// (the child), not just the top-level bubble.
 #[test]
-#[ignore = "spike probe (KCKGP4) — run with --ignored --nocapture"]
+#[ignore = "spike probe — run with --ignored --nocapture"]
 fn spike_q3_call_end_revert_at_depth() {
     let parent = Address::repeat_byte(0x10);
     let child = Address::repeat_byte(0x20);
@@ -596,13 +595,13 @@ fn spike_q3_call_end_revert_at_depth() {
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Q4: V4 Swap-event capture — DEFERRED. Requires the real V4 PoolManager
-/// bytecode over the production DB stack with the transient seeder (5RI47E).
+/// bytecode over the production DB stack with the transient seeder.
 #[test]
-#[ignore = "spike probe (KCKGP4) — run with --ignored --nocapture"]
+#[ignore = "spike probe — run with --ignored --nocapture"]
 fn spike_q4_v4_swap_event_deferred() {
     println!("\n[Q4] DEFERRED: V4 Swap-event capture requires the real V4");
     println!("  PoolManager bytecode over the production DB stack with the");
-    println!("  transient seeder (task 5RI47E). This CacheDB<EmptyDB> probe");
+    println!("  transient seeder. This CacheDB<EmptyDB> probe");
     println!("  cannot emit a V4 Swap event. Recorded as blocked on the");
-    println!("  production stack / 5RI47E in the spike doc.");
+    println!("  production stack in the spike doc.");
 }

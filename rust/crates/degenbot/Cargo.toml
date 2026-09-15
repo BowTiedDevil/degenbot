@@ -58,7 +58,7 @@ degenbot-uniswap.workspace = true
 degenbot-workers.workspace = true
 
 [features]
-# OTel observability passthrough (Gap G6 / ergo ZOBXVC): forward
+# OTel observability passthrough (Gap G6): forward
 # `degenbot-bot/otel` so a `cargo add degenbot, features = ["otel"]`
 # consumer reaches `degenbot::bot::{otel, metrics, instruments}`. Those
 # modules are `#[cfg(feature = "otel")]` in degenbot-bot, so without this

@@ -18,8 +18,8 @@ crate-type = ["rlib", "cdylib"]
 # The PyO3 binding layer (cdylib) over the seven pyo3-free core crates. It is a
 # workspace member at `rust/crates/degenbot-python/` (a peer of the cores),
 # mirroring `polars-python`'s position in the `polars` workspace. The workspace
-# root `rust/Cargo.toml` is a pure virtual manifest. (ergo UG6FKN follow-up:
-# ADR-005 deferral — binding layer lifted out of the workspace root.)
+# root `rust/Cargo.toml` is a pure virtual manifest (ADR-005 deferral —
+# the binding layer lifted out of the workspace root).
 
 [dependencies]
 degenbot-config.workspace = true
@@ -83,11 +83,11 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "s
 toml = "1.1.6"
 
 [features]
-# Per-domain binding-layer features (ergo UG6FKN task UKDOUR). Each gates its optional
+# Per-domain binding-layer features. Each gates its optional
 # core-crate path dep + the corresponding binding module/mod registrations, mirroring
 # how polars gates polars-python with features matching polars-core/-plan/etc.
-# Default = all-on (byte-equivalent to the pre-feature surface). Implicit coupling
-# (documented in the task completion body): `bot` implies `rpc`+`decoders`+`uniswap`
+# Default = all-on (byte-equivalent to the pre-feature surface). Implicit coupling:
+# `bot` implies `rpc`+`decoders`+`uniswap`
 # (the engine wrapper references degenbot_rpc::provider::AlloyProvider + degenbot_decoders::PoolId
 # + degenbot_uniswap::dex_identity directly), and `rpc` implies `abi` (rpc/contract wraps
 # crate::abi_types). `async` gates the rpc/ async submodules (no new dep).

@@ -1,7 +1,6 @@
 //! Distinct Python exception types for the engine-wrapper surface.
 //!
-//! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task
-//! 74W2Z6). `create_exception!` registers the Rust type in *this* module
+//! `create_exception!` registers the Rust type in *this* module
 //! (`crate::bot::engine::errors`); `engine::mod` re-exports them so `c_api`
 //! and the sibling concern files reference them as `crate::bot::engine::*`.
 

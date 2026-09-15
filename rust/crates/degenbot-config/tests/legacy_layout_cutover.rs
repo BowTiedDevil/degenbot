@@ -1,5 +1,5 @@
-//! Legacy operator config.toml layout cutover (ergo JLFE2F, Option B —
-//! hard cutover, no shims). Acceptance criteria:
+//! Legacy operator config.toml layout cutover (Option B — hard cutover,
+//! no shims). Acceptance criteria:
 //!
 //! 1. The five retired-layout sections (`[rpc]`, `[ws]`, `[database]`,
 //!    `[otel]`) and the top-level `default_chain_id` key FAIL the load

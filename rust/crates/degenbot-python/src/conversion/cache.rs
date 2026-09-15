@@ -77,7 +77,7 @@ pub fn bytes_to_int_signed<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound
 
 /// Convert raw bytes to a plain Python `bytes` object.
 ///
-/// The `HexBytes` wrapper type was abolished (ergo JWXZ4A, option D): the
+/// The `HexBytes` wrapper type was abolished: the
 /// boundary container crosses FFI as plain `bytes`, and the `py.import`
 /// class-lookup machinery this helper used to need is gone.
 ///

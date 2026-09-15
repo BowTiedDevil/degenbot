@@ -305,7 +305,7 @@ impl PyDispatchOutcome {
             // between `hop_outputs[i]` and the i-th captured swap's amount
             // is the new SolverCalc basis (replaces the deleted recompute).
             // `optimal_input` is the solver's expected input (context for the
-            // expected-vs-actual render). Ergo epic 63I7WJ task AM5AJW.
+            // expected-vs-actual render).
             let optimal_input = alloy_py::u256_to_py(py, &U256::from(f.optimal_input))?;
             dict.set_item("optimal_input", optimal_input)?;
             let hop_outputs_list = PyList::empty(py);

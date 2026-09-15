@@ -2,7 +2,7 @@
 //! simulated `execute()` — the V2 `Swap`, V3 `Swap`, and V4 `Swap` events the
 //! pools' own `swap()` functions emit.
 //!
-//! # The onchain-recompute replacement (spike KCKGP4, findings Q1 + epic 63I7WJ)
+//! # The onchain-recompute replacement (spike findings Q1)
 //!
 //! `execute()` drives real swaps into V2/V3/V4 pools; those pools emit
 //! `Swap` LOG events revm surfaces via `Inspector::log_full`. The existing

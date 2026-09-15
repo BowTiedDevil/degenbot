@@ -28,7 +28,7 @@ hex = "^0.4"
 # revm drives the Tier-3b end-to-end `Pool.swap` oracle: it deploys real
 # v3-core/v4-core bytecode into an offline CacheDB and calls swap, so the Rust
 # `v3_simulate_swap` / `v4_simulate_swap` are compared against the canonical
-# on-chain swap logic byte-for-byte (ergo epic UP5NH6, task 2LTKVO). A
+# on-chain swap logic byte-for-byte. A
 # dev-dep only — does NOT pull revm into the core lib build (cargo tree on
 # default features excludes dev-deps), so the no-pyo3-in-cores invariant is
 # unaffected.

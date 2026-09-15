@@ -1,5 +1,5 @@
-//! Solve-result allocation baseline (epic HTPKLX, task KKNKVS; consumed by
-//! task 4JLQNS). Measures heap bytes + allocs for building/cloning the
+//! Solve-result allocation baseline. Measures heap bytes + allocs for
+//! building/cloning the
 //! per-hop parallel-Vec solve results BEFORE the step-outcome merge.
 //! Same method as degenbot-pools/tests/alloc_tracking.rs.
 

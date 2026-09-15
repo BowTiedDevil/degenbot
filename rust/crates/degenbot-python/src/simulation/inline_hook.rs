@@ -233,7 +233,7 @@ impl InlineSimHook {
 // span context. tokio::spawn clones tokio task context but NOT the tracing
 // span context, so any span created inside the task without this re-entry
 // becomes an independent Jaeger trace ROOT (observed 635 orphan roots/60s -
-// epic 7LV6VN T1/SGDXWU: the in-memory Jaeger ring at ~100k traces shrank
+// the in-memory Jaeger ring at ~100k traces shrank
 // to a 45-min window because ~30 pct of roots were these 2-span orphans).
 /// Spawn `fut` on a runtime, re-entering `parent` so traced work inside the
 /// task joins the caller's trace. Awaitable from any thread (plain thread or

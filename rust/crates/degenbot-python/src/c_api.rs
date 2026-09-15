@@ -179,13 +179,13 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Pool-updater chunk-loop seam (feature = "pool") — `run_pool_update`.
     // Gates `db` + `rpc` (the chunk loop reads the DB + RPCs log fetches).
-    // Task QZHNZQ; epic 2SFL6I. `CancelHandle` is registered above (shared).
+    // `CancelHandle` is registered above (shared).
     #[cfg(feature = "pool")]
     crate::pool::add_pool_module(m)?;
 
     // Aave-updater chunk-loop seam (feature = "aave-updater") —
-    // `run_aave_update`. Gates `db` + `rpc` (mirrors the pool seam). Epic
-    // AZGJUN, task 5XNTC5. `CancelHandle` is registered above (shared).
+    // `run_aave_update`. Gates `db` + `rpc` (mirrors the pool seam).
+    // `CancelHandle` is registered above (shared).
     #[cfg(feature = "aave-updater")]
     crate::aave_updater::add_aave_updater_module(m)?;
 

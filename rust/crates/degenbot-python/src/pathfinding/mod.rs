@@ -15,7 +15,7 @@
 use crate::prelude::*;
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 // Note: `alloy::primitives::Address` is no longer named in this module
-// after the ergo-66H3KJ GIL fix — the address maps are pre-computed to
+// after the GIL fix — the address maps are pre-computed to
 // checksum STRINGS inside the `py.detach` span in `build_path_graph`, so
 // `build_graph_dict` holds no `Address` values. Re-add the import if a
 // downstream helper here regains an `Address`-typed surface.
@@ -329,7 +329,7 @@ pub fn build_path_graph<'py>(
 /// The address maps hold PRE-COMPUTED checksum strings (not `Address`) so
 /// `build_graph_dict` does no keccak/EIP-55 work under the GIL — the
 /// `to_checksum(None)` calls run inside the `py.detach` span in
-/// `build_path_graph` (ergo 66H3KJ: the keccak loop over tens of thousands
+/// `build_path_graph`: the keccak loop over tens of thousands
 /// of V2/V3 addresses previously held the GIL for ~24 s, starving every
 /// tokio worker that needs `PyGILState_Ensure` and triggering the dispatch
 /// circular deadlock during the rolling-start `build_paths` overlap).

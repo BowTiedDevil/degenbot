@@ -20,6 +20,6 @@ thiserror = { version = "^2.0" }
 
 [dev-dependencies]
 # proptest - cross-authority sizing properties over arbitrary quota shapes
-# (TTANQJ, epic 64ZQLA: fleet allocation floors the quota; cpu_budget
-# worker-existence detection ceils it).
+# (fleet allocation floors the quota; cpu_budget worker-existence
+# detection ceils it).
 proptest = "^1.11"

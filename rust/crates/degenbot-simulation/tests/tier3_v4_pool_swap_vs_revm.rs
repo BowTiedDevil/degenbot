@@ -1,7 +1,7 @@
-//! Tier-3b V4 `PoolManager.swap` end-to-end oracle (ergo task `2LTKVO`, epic
-//! UP5NH6) — the V4 twin of `tier3_v3_pool_swap_vs_revm.rs`. Hardened per epic
-//! `CMORFZ` task `5KS2SQ` (H1 rejection-reason airtightness, H3 pinned edge
-//! corpus, H4 widened proptest across fee-1/3000 + protocol-fee on/off).
+//! Tier-3b V4 `PoolManager.swap` end-to-end oracle — the V4 twin of
+//! `tier3_v3_pool_swap_vs_revm.rs`. Hardened for (H1) rejection-reason
+//! airtightness, (H3) pinned edge corpus, (H4) widened proptest across
+//! fee-1/3000 + protocol-fee on/off.
 //!
 //! Deploys the canonical v4-core `PoolManager` (via the `V4SwapOracleHarness`
 //! unlocker wrapper) as real bytecode in an in-process revm `CacheDB<EmptyDB>`,
@@ -1218,7 +1218,7 @@ fn v4_pool_start_in_empty_region_crosses_to_liquidity() {
 }
 
 // ---------------------------------------------------------------------------
-// Fee-1 / tiny-liquidity discriminator (ergo UO3JM4 — the V3→V4→V3 1-wei
+// Fee-1 / tiny-liquidity discriminator — the V3→V4→V3 1-wei
 // take-overdraw observed on a fee-1 V4 pool at ~1:1 price).
 //
 // The live reproduction (paths 10234/10338): V4(fee=1, zfo=false),

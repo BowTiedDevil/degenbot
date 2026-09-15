@@ -1,4 +1,4 @@
-//! Rust-owned forward-only schema migrations — the task 6AV4YT verdict
+//! Rust-owned forward-only schema migrations — the ADR-052 verdict
 //! mechanism.
 //!
 //! The schema is Rust-owned (ADR-052). A [`RUST_SCHEMA_VERSION`] bump is
@@ -13,7 +13,7 @@
 //! release fixture matrix) is documented on
 //! [`crate::schema::RUST_SCHEMA_VERSION`].
 //!
-//! # Verdict (spike, 2026-09, ergo 6AV4YT; ADR-052 D3)
+//! # Verdict (spike, 2026-09; ADR-052 D3)
 //!
 //! The default candidate was `rusqlite_migration` 2.6.0 (Apache-2.0, MSRV 1.95
 //! < workspace 1.97, `PRAGMA user_version` stamping). It compiles against this

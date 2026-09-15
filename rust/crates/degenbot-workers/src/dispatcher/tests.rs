@@ -238,7 +238,7 @@ fn slot_layout_matches_the_production_q8_shape() {
     assert_eq!(layout.poolupd.end, layout.merge);
 }
 
-/// 2SIOHJ RED story, pinned BEFORE the `first_idle_of` replica died: the
+/// The `first_idle_of` replica bug story (the replica since died): the
 /// layout oracle says the merge sidecar is the LAST index (15 at Q=8);
 /// the replica — asked for the Merge home — returned the first
 /// `PoolStateUpdater` seat (11), its else-arm misclassifying every poolupd

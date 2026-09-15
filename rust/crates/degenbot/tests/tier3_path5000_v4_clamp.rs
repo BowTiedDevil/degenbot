@@ -155,8 +155,8 @@ fn clamped_committed_input_fills_byte_exact_under_5m() {
         }
         other => {
             panic!(
-                "GREEN FAILED: clamped committed input did not fill ACCEPTED at 5M (got {other:?}, \
-                 gas_used={}) — the clamp regression guard is RED",
+                "CLAMP FAILED: clamped committed input did not fill ACCEPTED at 5M (got {other:?}, \
+                 gas_used={}) — the clamp regression guard tripped",
                 green.gas_used
             );
         }

@@ -1,8 +1,7 @@
-//! `PyO3` seam for the `degenbot-pool-updater` chunk loop (epic `2SFL6I`,
-//! task `QZHNZQ`).
+//! `PyO3` seam for the `degenbot-pool-updater` chunk loop.
 //!
 //! Thin `#[pyfunction]` wrapper over
-//! [`degenbot_pool_updater::run::run_pool_update`] (the Task `CKXCOB` core).
+//! [`degenbot_pool_updater::run::run_pool_update`].
 //! Arg extraction → GIL release (`py.detach`) → core call → result wrap.
 //! No business logic (three-layer architecture, ADR-005). The "Rust is the
 //! engine; Python is the cockpit" framing: Python threads the args + a

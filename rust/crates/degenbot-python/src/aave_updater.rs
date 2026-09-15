@@ -1,8 +1,7 @@
-//! `PyO3` seam for the `degenbot-aave` chunk loop (epic `AZGJUN`,
-//! task `5XNTC5`).
+//! `PyO3` seam for the `degenbot-aave` chunk loop.
 //!
 //! Thin `#[pyfunction]` wrapper over
-//! [`degenbot_aave::run::run_aave_update`] (the 6SWY4R core). Arg
+//! [`degenbot_aave::run::run_aave_update`]. Arg
 //! extraction → GIL release (`py.detach`) → core call → result wrap. No
 //! business logic (three-layer architecture, ADR-005). The "Rust is the
 //! engine; Python is the cockpit" framing: Python threads the args + a

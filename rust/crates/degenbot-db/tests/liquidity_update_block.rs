@@ -1,5 +1,5 @@
 //! Integration test for the per-pool DB liquidity clock (`fetch_liquidity_update_block`
-//! / `fetch_liquidity_update_block_v4`, task 4TWM7C).
+//! / `fetch_liquidity_update_block_v4`).
 //!
 //! The Rust `PoolBuilder` stamps a DB-seeded (`Tracked`) pool's `tick_data_block`
 //! (liquidity clock) at `liquidity_update_block` rather than the live head, so the

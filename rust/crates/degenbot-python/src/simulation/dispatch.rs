@@ -195,7 +195,7 @@ pub fn dispatch_profitable_py<'py>(
             .map(|eng| eng.borrow(py).warm_code_cache_arc());
 
     // ── GIL release across the per-path simulation fan-out ──
-    // ergo 66H3KJ instrumentation: phase timestamps so the log shows how far
+    // Deadlock diagnostics: phase timestamps so the log shows how far
     // the dispatch future progressed if/when it deadlocks. `log::info!` here
     // goes through pyo3-log (a GIL acquire) — only at phase boundaries, so it
     // cannot itself cause the fan-out's per-candidate GIL contention; it tags
@@ -210,7 +210,7 @@ pub fn dispatch_profitable_py<'py>(
     );
     let dispatch_body = async move {
         let phase_started = std::time::Instant::now();
-        // ergo 66H3KJ phase marker: the dispatch fan-out body is about to run
+        // Phase marker: the dispatch fan-out body is about to run
         // on a tokio worker. The pyo3-log emit here is the FIRST GIL-acquire
         // the future does — if the main thread already holds the GIL
         // (build_paths sync pyo3 call / _asyncio futex park), this line will
@@ -261,7 +261,7 @@ pub fn dispatch_profitable_py<'py>(
         // straight through PyDispatchOutcome.gas_profitable, so the join
         // produces exactly the field set dispatch_and_submit consumes.
         //
-        // Ergo 63I7WJ: collect each survivor's `captured_swaps` in parallel —
+        // Collect each survivor's `captured_swaps` in parallel —
         // the success-path surface the step-5 classifier re-points at (the
         // revert path already surfaces them via `failures()` on each
         // `SimFailure`). `SimResult.captured_swaps` is the swap-event capture
@@ -277,7 +277,7 @@ pub fn dispatch_profitable_py<'py>(
             .map(|r| (r.path_id, r.captured_swaps.clone()))
             .collect();
 
-        // ergo 66H3KJ phase marker: the future body has produced its
+        // Phase marker: the future body has produced its
         // outcome and is about to return. pyo3-async-runtimes then schedules
         // `spawn_blocking(|| Python::attach(set_result))` to hand the result to
         // the awaiting asyncio future — that `Python::attach` is the SECOND

@@ -1,6 +1,5 @@
 //! `degenbot-rpc` `PyO3` wrappers (provider/contract/subscription, sync + async)
-//! over the pure RPC core. Mirrors `crates/degenbot-rpc/`. (ergo UG6FKN task
-//! WXHGOH.)
+//! over the pure RPC core. Mirrors `crates/degenbot-rpc/`.
 
 pub mod contract;
 pub mod provider;

@@ -540,7 +540,7 @@ pub fn fetch_liquidity_map_v4_on_conn(
 
 /// The `uniswap_v3_pools.liquidity_update_block` for a pool, by address — the
 /// block the DB liquidity map is exact at (the authoritative liquidity clock of
-/// a DB-seeded `Tracked` pool; task 4TWM7C). Resolves the pool id by address
+/// a DB-seeded `Tracked` pool). Resolves the pool id by address
 /// then reads the V3 row's `liquidity_update_block`.
 ///
 /// Returns `None` if no such pool exists or it is not registered as a
@@ -551,7 +551,7 @@ pub fn fetch_liquidity_map_v4_on_conn(
 /// Map a V3-family `kind` to its per-dex liquidity table. All four share the
 /// same `(pool_id, tick_spacing, liquidity_update_block, ...)` schema; the
 /// liquidity clock of a `Tracked` pool lives in its OWN table, not a single
-/// one (task 4TWM7C follow-up — pool 0x1ac1 was a `pancakeswap_v3` and a
+/// one — pool 0x1ac1 was a `pancakeswap_v3` and a
 /// uniswap-only lookup returned `None`, so the seed verify fell back to head
 /// and re-tripped the wrong-block bug). Returns `None` for non-V3 kinds.
 fn v3_kind_liquidity_table(kind: &str) -> Option<&'static str> {
@@ -566,7 +566,7 @@ fn v3_kind_liquidity_table(kind: &str) -> Option<&'static str> {
 
 /// The V3 pool's `liquidity_update_block`, by address — the block its DB
 /// liquidity map is exact at (the authoritative liquidity clock of a
-/// DB-seeded `Tracked` pool; task 4TWM7C). Resolves the pool id + kind from
+/// DB-seeded `Tracked` pool). Resolves the pool id + kind from
 /// `pools`, then reads the block from the pool's OWN per-dex V3 table
 /// (`uniswap_v3_pools` / `pancakeswap_v3_pools` / `sushiswap_v3_pools` /
 /// `aerodrome_v3_pools`).

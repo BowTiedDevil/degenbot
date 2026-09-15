@@ -308,7 +308,7 @@ pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolErr
 /// - `DynamicFee` → [`DynamicFeePoolRejectedError`] (V4 dynamic-fee
 ///   admission floor — the solver assumes a fixed fee).
 /// - `FeeExceedsEncoderLimit` → [`HighFeePoolRejectedError`] (V4 static-fee
-///   exceeds the `cmd_executor`'s 2-byte encoding field — ergo DPODAZ; the
+///   exceeds the `cmd_executor`'s 2-byte encoding field; the
 ///   fee is protocol-valid but un-encodable and unprofitable).
 /// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`] (duplicate
 ///   `(pool_manager, pool_id)` registration — a wiring/programming error

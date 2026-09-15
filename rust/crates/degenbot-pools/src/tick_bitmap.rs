@@ -352,9 +352,10 @@ pub fn gen_ticks_iter<S: std::hash::BuildHasher>(
 /// restoring the per-step flooring `v3_simulate_swap` / `v4_simulate_swap`
 /// performs at every word boundary. Dropping them from the range-endpoint list
 /// keeps `max_ranges` bounded (the sparse-tick starvation fix) while recording
-/// them for the solver's per-step walk closes ergo E7ALWT (the on-chain V3 `+13`
-/// IIA class). The earlier claim that interior boundaries' per-step rounding
-/// was a "second-order effect the solver deliberately drops" is REFUTED by
+/// them for the solver's per-step walk closes the on-chain V3 `+13` IIA
+/// class divergence. The earlier claim that interior boundaries'
+/// per-step rounding was a "second-order effect the solver deliberately
+/// drops" is REFUTED by
 /// `v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class`.
 ///
 /// `has_init_after[j]` = an initialized tick exists strictly farther in the
@@ -621,8 +622,8 @@ pub struct V3TickRangeForSolver {
     /// `computeSwapStep` at EVERY word boundary; the solver must re-walk
     /// these per boundary to restore that per-step flooring or the
     /// accumulated fee-rounding diverges from `v3_simulate_swap` /
-    /// `v4_simulate_swap` (ergo E7ALWT — the on-chain V3 `+13` IIA class
-    /// on sparse-tick pools). Empty for ranges that span no interior word
+    /// `v4_simulate_swap` — the on-chain V3 `+13` IIA class on sparse-tick
+    /// pools). Empty for ranges that span no interior word
     /// boundaries (the common dense case). Converted to sqrt prices by
     /// `build_int_v3_sequence` / `build_int_v4_sequence`.
     pub interior_boundaries: Vec<i32>,

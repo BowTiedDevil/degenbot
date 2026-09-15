@@ -1,5 +1,5 @@
 //! §4.2 parity for the READ-ONLY candidate-pool discovery surface
-//! (`degenbot-db::discovery_read`, ergo YFIOSF / Gap G2).
+//! (`degenbot-db::discovery_read`, Gap G2).
 //!
 //! Opens the frozen Alembic-stamped `fixtures/parity.db` (chain 8453: one
 //! `uniswap_v3` pool registered under the `aerodrome_v3` exchange + one

@@ -23,8 +23,6 @@
 //!   local; only the broad `pyo3::prelude` glob is curated here.
 //! - Domain wrapper types (`PyBot`, `PyAlloyProvider`, …) and external `alloy`
 //!   items — file-specific, imported where used.
-//!
-//! (ergo UG6FKN task ZNCAWD.)
 
 pub use crate::conversion::{alloy as alloy_py, cache, json, rpc_types};
 pub use crate::{address_utils, errors, runtime};

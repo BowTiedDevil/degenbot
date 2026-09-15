@@ -1,8 +1,8 @@
 //! Tier-3a byte-exact oracle for `compute_swap_step` (V3 + V4) against the
 //! canonical Uniswap core libraries run as real EVM bytecode in revm.
 //!
-//! Ergo task `OZRQS6` . Closes the "Rust == Rust" blind spot
-//! of Tier 2: the existing `swap_math.rs` proptest checks V3/V4 INVARIANTS
+//! Closes the "Rust == Rust" blind spot of Tier 2: the existing
+//! `swap_math.rs` proptest checks V3/V4 INVARIANTS
 //! (amountIn+fee ≤ amountRemaining; sqrtPriceNext in range) — NOT byte-exact
 //! equality with the canonical library. This test runs the REAL v3-core
 //! `SwapMath.computeSwapStep` (solc 0.7.6) and v4-core `SwapMath.computeSwapStep`
@@ -350,7 +350,7 @@ fn v3_pinned_input_anchors_byte_exact_oracle() {
 
 #[test]
 fn v4_compute_swap_step_pinned_fee1_tiny_liquidity_first_step() {
-    // The exact FIRST step of ergo UO3JM4's fee-1 reproduction (zfo=false, ofz):
+    // The exact FIRST step of the fee-1 reproduction (zfo=false, ofz):
     //   sqrt_current = 79_231_869_042_278_935_382_727_675_145 (the repro active price)
     //   tick_spacing=1, current_tick=0 → first ofz target = tick +1
     //   liquidity = 94294142, amount = -20000 (exact-in), fee = 1 pip.

@@ -1,5 +1,5 @@
-//! Tier-3b end-to-end V3 `Pool.swap` oracle (ergo task `2LTKVO`, epic
-//! `UP5NH6`, hardened per epic `CMORFZ` task `6DLK7I`). Deploys the canonical
+//! Tier-3b end-to-end V3 `Pool.swap` oracle (hardened for rejection-reason
+//! airtightness). Deploys the canonical
 //! v3-core `UniswapV3Pool` as real bytecode via the `V3SwapOracleHarness`
 //! (solc-0.7.6 compiled), seeds its `slot0`/`liquidity`/`ticks`/`tickBitmap`
 //! storage directly from a `V3PoolState` using the `degenbot_pools::v3_storage_slots`

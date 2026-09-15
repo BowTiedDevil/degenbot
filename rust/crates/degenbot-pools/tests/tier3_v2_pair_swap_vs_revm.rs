@@ -1,5 +1,5 @@
-//! Tier-3 V2-pair on-chain accuracy oracle (ergo task `TLBUNW`, epic
-//! `UP5NH6` — the V2 family slice of SH6HAK's Tier-3 cutover). Deploys the
+//! Tier-3 V2-pair on-chain accuracy oracle (the V2 family slice of the
+//! Tier-3 cutover). Deploys the
 //! canonical v2-core `UniswapV2Pair` as real bytecode via the
 //! `V2SwapOracleHarness` (solc-0.5.16 compiled), mints reserves + `sync`s so
 //! the pair's slot-8 reserves equal the live `balanceOf` (K-check consistency

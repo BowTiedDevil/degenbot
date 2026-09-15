@@ -771,7 +771,7 @@ fn v4v3_native_output_plan_byte_parity_validates_and_executes() {
     println!("── v4_v3 native-output (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
 }
 
-/// Native runtime proof (ergo WAYDTL ): a native v4_v4 path (NATIVE→t→
+/// Native runtime proof: a native v4_v4 path (NATIVE→t→
 /// NATIVE — native at both path ends, ERC-20 mid, no wrap/unwrap) derived via
 /// `derive_shape` must execute through the real cmd_executor with the
 /// executor's **native** balance delta ≈ predicted profit. This is the

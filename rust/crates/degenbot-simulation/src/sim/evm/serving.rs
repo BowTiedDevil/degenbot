@@ -5,7 +5,7 @@
 //! # Status (POC — premise refuted)
 //!
 //! This seam was built to test the "stale engine state causes
-//! `CurrencyNotSettled`" hypothesis (ergo `TR6GWT`, originally "path A"). That
+//! `CurrencyNotSettled`" hypothesis (originally "path A"). That
 //! premise was REFUTED by mainnet data: V3 hops matched the actual swap
 //! output exactly (engine state is correct — stale state would diverge V3
 //! too), while only the V4 swap diverged by 1-8 units (a solver calc

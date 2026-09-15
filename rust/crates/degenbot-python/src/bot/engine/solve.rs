@@ -315,8 +315,8 @@ impl PyArbEngine {
     ///
     /// `rpc_url` is accepted for forward compatibility but currently ignored;
     /// the on-chain recompute half (`fetch_onchain`) was retired when
-    /// `[sim-diag]` moved onto the inspector's captured swaps (ergo 63I7WJ /
-    /// task AM5AJW): captured swaps ARE byte-exact ground truth (proven via
+    /// `[sim-diag]` moved onto the inspector's captured swaps: captured
+    /// swaps ARE byte-exact ground truth (proven via
     /// the `swap_capture_correctness` mainnet probe), so no onchain re-fetch
     /// is needed to classify a revert.
     ///

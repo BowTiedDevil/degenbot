@@ -21,7 +21,7 @@
 //! source map with NO per-instruction line attribution, so S2 cannot map a
 //! halt PC to a `cmd_executor.vy` line via the source map. It must attribute
 //! via `cmd_executor.error_map.json` (arithmetic-revert PCs) + method-
-//! delegation + direct source inspection (recorded on task 4O7BPZ).
+//! delegation + direct source inspection.
 
 #![expect(clippy::expect_used, clippy::panic)]
 use std::path::{Path, PathBuf};

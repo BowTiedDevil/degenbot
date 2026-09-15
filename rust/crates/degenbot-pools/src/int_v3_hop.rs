@@ -50,7 +50,7 @@ fn u512_to_u256(v: U512) -> U256 {
 /// [`compute_crossing`](IntV3TickRangeSequence::compute_crossing) walks one
 /// of these per word boundary (`word_boundary_prices`) within a collapsed
 /// range so the accumulated per-step rounding matches `v3_simulate_swap`'s
-/// per-boundary flooring — closing ergo E7ALWT (the V3 `+13` IIA class).
+/// per-boundary flooring (fixes the V3 `+13` IIA class).
 #[must_use]
 fn exact_in_step_to_target(
     sp_start: U256,
@@ -182,7 +182,7 @@ pub struct IntV3TickRangeHop {
     /// re-walks these per boundary in [`IntV3TickRangeSequence::compute_crossing`]
     /// and [`int_simulate_v3_swap`] to restore the per-step `computeSwapStep`
     /// flooring the on-chain V3/V4 PoolManager performs at every word
-    /// boundary (ergo E7ALWT — without this, a collapsed multi-word span
+    /// boundary — without this, a collapsed multi-word span
     /// is modelled as a single big step and the accumulated per-step fee
     /// rounding diverges from `v3_simulate_swap` / `v4_simulate_swap`, the
     /// on-chain V3 `+13` IIA class on sparse-tick pools). Empty for ranges

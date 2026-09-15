@@ -1,8 +1,7 @@
 //! Per-domain binding-crate modules.
 //!
-//! `engine/` is the first inhabitant; step 6 of the binding-layer reorg
-//! relocates the other `bot` / `bot::pool` wrappers alongside.
-//! (ergo UG6FKN task WXHGOH.)
+//! `engine/` is the first inhabitant of the split binding layer; the
+//! other `bot` / `bot::pool` wrappers live alongside it.
 
 use degenbot_core::diag;
 use degenbot_core::op_warn;
@@ -1722,8 +1721,8 @@ impl PyBot {
         Ok(bound.unbind())
     }
 
-    /// Calculate the raw stableswap `get_dy` for a Curve pool (Rust-owned;
-    /// task `45QBUG`, epic `TV72EG`). Backs the companion `CurveStableswapPool
+    /// Calculate the raw stableswap `get_dy` for a Curve pool (Rust-owned).
+    /// Backs the companion `CurveStableswapPool
     /// .get_dy` so no Python provider / cache / calculator is on the path.
     ///
     /// Args:

@@ -71,7 +71,7 @@ impl EnvVars for MapEnv {
 /// Migration doc named by every retired-layout refusal .
 const MIGRATION_DOC: &str = "docs/config-migration.md";
 
-/// Retired operator-file layout items (ergo JLFE2F, Option B hard cutover):
+/// Retired operator-file layout items (Option B hard cutover):
 /// top-level keys/section names from the pre-0.6 config.toml vocabulary the
 /// typed schema never carried. A surviving item fails the load with a
 /// POINTED problem naming the replacement surface and the migration doc —
@@ -344,8 +344,8 @@ impl BotConfigLoader {
             if FREE_FORM_FILE_SECTIONS.contains(&section.as_str()) {
                 continue;
             }
-            // Retired pre-0.6 layout vocabulary (ergo JLFE2F, Option B hard
-            // cutover): fail pointed, naming the replacement surface and the
+            // Retired pre-0.6 layout vocabulary (Option B hard cutover): fail
+            // pointed, naming the replacement surface and the
             // migration doc.
             if let Some((_, replacement)) = RETIRED_LAYOUT_ITEMS
                 .iter()
