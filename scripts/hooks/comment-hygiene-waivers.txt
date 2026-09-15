@@ -7,32 +7,6 @@
 # A waiver means "this file still carries pre-rule citations" — remove the
 # entry in the same commit that strips the file's citations.
 examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-rust/crates/degenbot-bot/examples/config_smoke_boot.rs
-rust/crates/degenbot-bot/src/arb_engine/block_cursor.rs
-rust/crates/degenbot-bot/src/arb_engine/detached_cycle.rs
-rust/crates/degenbot-bot/src/arb_engine/diagnostic.rs
-rust/crates/degenbot-bot/src/arb_engine/engine_stages.rs
-rust/crates/degenbot-bot/src/arb_engine/fleet_status.rs
-rust/crates/degenbot-bot/src/arb_engine/seat_host.rs
-rust/crates/degenbot-bot/src/arb_engine/solve_cycle.rs
-rust/crates/degenbot-bot/src/arb_engine/test_harness.rs
-rust/crates/degenbot-bot/src/arb_engine/tests/arb_solving.rs
-rust/crates/degenbot-bot/src/arb_engine/tests/registration_and_delivery.rs
-rust/crates/degenbot-bot/src/bot_core/balance_vector_orchestration.rs
-rust/crates/degenbot-bot/src/bot_core/block_pump/run_loop.rs
-rust/crates/degenbot-bot/src/bot_core/block_pump/tests/mod.rs
-rust/crates/degenbot-bot/src/bot_core/block_pump/tests/scenarios.rs
-rust/crates/degenbot-bot/src/bot_core/liquidity_verifier.rs
-rust/crates/degenbot-bot/src/bot_core/mod.rs
-rust/crates/degenbot-bot/src/bot_core/pool_builder/builder.rs
-rust/crates/degenbot-bot/src/bot_core/pump_telemetry.rs
-rust/crates/degenbot-bot/src/bot_core/stage_handlers.rs
-rust/crates/degenbot-bot/src/bot_core/stage_machine.rs
-rust/crates/degenbot-bot/src/bot_core/stage_telemetry.rs
-rust/crates/degenbot-bot/src/bot_core/state_lock.rs
-rust/crates/degenbot-bot/src/bot_core/swap_simulation.rs
-rust/crates/degenbot-bot/src/bot_core/tick_assembly.rs
-rust/crates/degenbot-bot/src/failure_policy.rs
 rust/crates/degenbot-config/src/loader.rs
 rust/crates/degenbot-config/tests/legacy_layout_cutover.rs
 rust/crates/degenbot-core/src/worker_census.rs
@@ -78,12 +52,6 @@ rust/crates/degenbot-simulation/tests/tier3_v4_pool_swap_vs_revm.rs
 rust/crates/degenbot-workers/src/dispatcher/tests.rs
 rust/crates/degenbot/examples/standalone_consumer.rs
 rust/crates/degenbot/tests/tier3_path5000_v4_clamp.rs
-rust/examples/settlement_bot/src/consume.rs
-rust/examples/settlement_bot/src/dispatch.rs
-rust/examples/settlement_bot/src/main.rs
-rust/examples/settlement_bot/src/operator_channel.rs
-rust/examples/settlement_bot/src/session_watch.rs
-rust/examples/settlement_bot/src/submission.rs
 src/degenbot/runner/__init__.py
 src/degenbot/runner/_consume.py
 src/degenbot/runner/_dispatch.py
