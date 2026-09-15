@@ -5,10 +5,8 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from degenbot.abi import encode
-from degenbot.contract.addresses import create2_address
-from degenbot.crypto import keccak256
-from degenbot.utils.bytes import to_bytes
+from degenbot._ffi import generate_v3_pool_address as _rs_generate_v3_pool_address
+from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -50,17 +48,11 @@ def generate_v3_pool_address(
     Adapted from https://github.com/Uniswap/v3-periphery/blob/0682387198a24c7cd63566a2c58398533860a5d1/contracts/libraries/PoolAddress.sol#L33
 
     """
-    token_addresses = sorted([to_bytes(address) for address in token_addresses])
-
-    salt = keccak256(
-        encode(
-            ("address", "address", "uint24"),
-            (*token_addresses, fee),
-        ),
-    )
-
-    return create2_address(
-        deployer=deployer_address,
-        salt=salt,
-        init_code_hash=init_hash,
+    t0, t1 = (to_0x_hex(a) for a in token_addresses)
+    return _rs_generate_v3_pool_address(
+        to_0x_hex(deployer_address),
+        t0,
+        t1,
+        int(fee),
+        to_0x_hex(init_hash),
     )

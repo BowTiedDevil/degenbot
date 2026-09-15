@@ -8,10 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot.abi import encode_packed
-from degenbot.contract.addresses import create2_address
-from degenbot.crypto import keccak256
-from degenbot.utils.bytes import to_bytes
+from degenbot._ffi import generate_v2_pool_address as _rs_generate_v2_pool_address
+from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -35,17 +33,10 @@ def generate_v2_pool_address(
     Adapted from https://github.com/Uniswap/universal-router/blob/59f1291d3760d2537a7bd1cbf37317922a49efb0/contracts/modules/uniswap/v2/UniswapV2Library.sol#L50
 
     """
-    sorted_token_addresses = sorted([to_bytes(address) for address in token_addresses])
-
-    salt = keccak256(
-        encode_packed(
-            ["address", "address"],
-            [*sorted_token_addresses],
-        ),
-    )
-
-    return create2_address(
-        deployer=deployer_address,
-        salt=salt,
-        init_code_hash=init_hash,
+    t0, t1 = (to_0x_hex(a) for a in token_addresses)
+    return _rs_generate_v2_pool_address(
+        to_0x_hex(deployer_address),
+        t0,
+        t1,
+        to_0x_hex(init_hash),
     )

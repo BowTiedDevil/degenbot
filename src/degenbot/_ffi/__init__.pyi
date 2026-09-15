@@ -275,6 +275,33 @@ def event_topic(event_abi: Any) -> bytes: ...  # ruff:ignore[any-type] — pyo3 
 def to_checksum_address(address: str) -> ChecksummedAddress: ...
 @overload
 def to_checksum_address(address: bytes) -> str: ...
+def create2_address(deployer_address: str, salt: str, init_code_hash: str) -> str:
+    """The generic EIP-1014 CREATE2 address derivation (TD1).
+
+    Inputs are hex strings (``0x``-prefixed or bare); `salt` + `init_code_hash`
+    decode to 32 bytes. Returns the EIP-55 checksummed address. Owned by
+    ``degenbot_uniswap::create2`` — the one implementation the whole
+    workspace reads.
+    """
+
+def generate_v2_pool_address(
+    deployer_address: str, token0: str, token1: str, init_hash: str
+) -> str:
+    """Compute a Uniswap V2-style CREATE2 pool address (TD1).
+
+    Tokens may be in any order (sorted internally). Byte-exact mirror of the
+    retired pure-Python ``degenbot.uniswap.v2_functions.generate_v2_pool_address``.
+    """
+
+def generate_v3_pool_address(
+    deployer_address: str, token0: str, token1: str, fee: int, init_hash: str
+) -> str:
+    """Compute a Uniswap V3-style CREATE2 pool address (TD1).
+
+    Tokens may be in any order (sorted internally). Byte-exact mirror of the
+    retired pure-Python ``degenbot.uniswap.v3_functions.generate_v3_pool_address``.
+    """
+
 def compute_aerodrome_v2_pool_address(
     deployer_address: str,
     token0: str,

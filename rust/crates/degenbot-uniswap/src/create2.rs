@@ -45,7 +45,8 @@ fn sorted_pair(a: Address, b: Address) -> (Address, Address) {
 /// The EIP-1014 CREATE2 address derivation.
 ///
 /// `address = keccak256(0xFF ++ deployer ++ salt ++ init_hash)[12:]`.
-fn create2_address(deployer: Address, salt: B256, init_hash: B256) -> Address {
+#[must_use]
+pub fn create2_address(deployer: Address, salt: B256, init_hash: B256) -> Address {
     let mut preimage = [0u8; 85]; // 1 + 20 + 32 + 32
     preimage[0] = 0xFF;
     preimage[1..21].copy_from_slice(deployer.as_slice());

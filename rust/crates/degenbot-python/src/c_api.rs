@@ -100,6 +100,23 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
             crate::uniswap::address::compute_aerodrome_v3_pool_address,
             m
         )?)?;
+        // TD1 (P1): the Uniswap V2/V3 pool-address derivations + the generic
+        // EIP-1014 primitive — FFI exposure of `degenbot-uniswap`'s pure-Rust
+        // `create2` mirrors of the retired Python chain in
+        // `src/degenbot/uniswap/v{2,3}_functions.py` /
+        // `src/degenbot/contract/addresses.py`.
+        m.add_function(wrap_pyfunction!(
+            crate::uniswap::address::create2_address,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            crate::uniswap::address::generate_v2_pool_address,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            crate::uniswap::address::generate_v3_pool_address,
+            m
+        )?)?;
     }
 
     // Solady LibZip (FastLZ) compress/decompress — lives in `degenbot-core`
