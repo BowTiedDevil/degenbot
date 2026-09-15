@@ -420,34 +420,6 @@ class OfflineProvider:
         """The provider type (always 'offline')."""
         return "offline"
 
-    @property
-    def provider(self) -> RustAlloyProvider:
-        """The underlying Rust ``AlloyProvider`` (the offline pyclass)."""
-        return self._alloy
-
-    @staticmethod
-    def as_web3() -> None:
-        """Return ``None`` — this provider has no Web3 backend."""
-        return
-
-    def as_alloy(self) -> RustAlloyProvider:
-        """Return the underlying Rust :class:`AlloyProvider`.
-
-        Returns:
-            The wrapped :class:`degenbot._ffi.AlloyProvider`.
-
-        """
-        return self._alloy
-
-    def as_offline(self) -> OfflineProvider:
-        """Return ``self`` as an ``OfflineProvider``.
-
-        Returns:
-            This provider instance.
-
-        """
-        return self
-
     def __repr__(self) -> str:
         """Return a string representation.
 
