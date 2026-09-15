@@ -54,7 +54,6 @@ from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 from degenbot.utils.bytes import to_0x_hex, to_bytes
-from degenbot.version import __version__
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

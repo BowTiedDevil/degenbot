@@ -60,6 +60,32 @@ class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
         self._tracked_pools.pop(pool_address, None)
         self._untracked_pools.discard(pool_address)
 
+    def tracked_pool_count(self) -> int:
+        """Return the number of pools currently tracked.
+
+        Narrow teardown-introspection probe: ``Bot.release_python_state`` /
+        ``Bot.close`` clear the tracker caches; this exposes the tracked
+        cache size without reaching into the private ``_tracked_pools`` dict.
+        Idempotent and side-effect free.
+
+        Returns:
+            The number of pools in ``_tracked_pools``.
+
+        """
+        return len(self._tracked_pools)
+
+    def untracked_pool_count(self) -> int:
+        """Return the number of pools explicitly known to be untracked.
+
+        Counterpart to :meth:`tracked_pool_count` for the
+        ``_untracked_pools`` set; side-effect free.
+
+        Returns:
+            The number of addresses in ``_untracked_pools``.
+
+        """
+        return len(self._untracked_pools)
+
     @property
     def chain_id(self) -> ChainId:
         """Chain id."""
