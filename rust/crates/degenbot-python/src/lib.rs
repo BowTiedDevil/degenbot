@@ -178,7 +178,7 @@ pub use degenbot_bot::bot_core;
 
 // Re-export commonly used items at the crate root
 pub use address_utils::{parse_address, to_checksum_address_bytes, to_checksum_address_str};
-pub use hex_utils::{decode_hex, encode_hex, HexError};
+pub use hex_utils::{decode_hex, HexError};
 #[cfg(feature = "uniswap")]
 pub use uniswap::address::to_checksum_address;
 

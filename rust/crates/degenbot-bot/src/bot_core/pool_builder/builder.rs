@@ -812,7 +812,7 @@ async fn assemble_db_or_chain_v4(
                 // Non-empty snapshot → Tracked + populated.
                 Some(hit) => {
                     crate::bot_core::tick_assembly::dump_tick_map_seed(
-                        &degenbot_core::hex_utils::encode_hex(&pool_id),
+                        &alloy::hex::encode_prefixed(pool_id),
                         &hit,
                     );
                     return Ok(hit); // (ticks, Tracked)

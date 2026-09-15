@@ -1442,7 +1442,7 @@ impl BotState {
                         };
                         trace_apply_route_v4(
                             pool_manager,
-                            &degenbot_core::hex_utils::encode_hex(&v4_pool_id),
+                            &alloy::hex::encode_prefixed(v4_pool_id),
                             u.tick_lower,
                             u.tick_upper,
                             u.liquidity_delta,
@@ -1472,7 +1472,7 @@ impl BotState {
     /// historical `Option<pool_id>` shape. `update.tick_priors` overlay only
     /// on direct application (pump/backfill pass an empty slice).
     pub fn apply_v4_swap(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
-        let pool_id_hex = degenbot_core::hex_utils::encode_hex(&update.pool_id);
+        let pool_id_hex = alloy::hex::encode_prefixed(update.pool_id);
         trace_apply_swap_v4(
             update.pool_manager,
             &pool_id_hex,
@@ -1881,7 +1881,7 @@ impl BotState {
                     .into_iter()
                     .collect();
                 diag!(domain = verify, pool_manager = %format!("{pool_manager:x}"),
-                    pool_id = %degenbot_core::hex_utils::encode_hex(&pool_id),
+                    pool_id = %alloy::hex::encode_prefixed(pool_id),
                     drained_tail = buffered.len(),
                     blocks = ?blocks,
                     distinct_blocks = ?distinct,
@@ -2124,7 +2124,7 @@ impl BotState {
         };
         if let Some((tick_data_block, seed_block, verdict)) = diag {
             diag!(domain = verify, pool_manager = %format!("{pool_manager:x}"),
-                pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
+                pool_id = %alloy::hex::encode_prefixed(pool_id),
                 tick_data_block,
                 pump_count = self.v4_buffer.pump_count_at_or_below(&key, tick_data_block),
                 last_complete_block = self.pump_complete_cutoff(),
@@ -2134,7 +2134,7 @@ impl BotState {
             match verdict {
                 PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {
                     op_warn!(domain = state, pool_manager = %format!("{pool_manager:x}"),
-                        pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
+                        pool_id = %alloy::hex::encode_prefixed(pool_id),
                         seed_block,
                         cutoff,
                         witnessed_horizon,
@@ -2145,7 +2145,7 @@ impl BotState {
                 | PinProvenance::WitnessedBeyondCutoff
                 | PinProvenance::SeedTrustOnly { .. } => {
                     diag!(domain = state, pool_manager = %format!("{pool_manager:x}"),
-                        pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
+                        pool_id = %alloy::hex::encode_prefixed(pool_id),
                         seed_block,
                         cutoff,
                         verdict = ?verdict,

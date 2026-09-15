@@ -348,7 +348,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
     block_number: u64,
     phase: &str,
 ) -> Result<(), LiquidityVerifyError> {
-    let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id);
+    let pool_id_hex = alloy::hex::encode_prefixed(pool_id);
     let block_tag = format!("block={block_number}");
     // Coverage: the WHOLE stored map (registration forensics) — see
     // `verify_v3_liquidity_map` for the OQ1 coverage policy. One shared
@@ -786,7 +786,7 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
         Some(b) => format!("block={b}"),
         None => "block=pending".to_string(),
     };
-    let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id_bytes);
+    let pool_id_hex = alloy::hex::encode_prefixed(pool_id_bytes);
 
     // 1. Discover on-chain populated bitmap words
     let mut words_to_check: HashSet<i16> = HashSet::new();
@@ -1002,7 +1002,7 @@ async fn batched_v4_tick_reads(
     block_number: Option<u64>,
     block_tag: &str,
 ) -> Result<Vec<(i32, (u128, i128))>, LiquidityVerifyError> {
-    let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id);
+    let pool_id_hex = alloy::hex::encode_prefixed(pool_id);
     let calls: Vec<(Address, Bytes)> = ticks
         .iter()
         .map(|&t| (state_view, Bytes::from(encode_v4_tick_data(&pool_id, t))))
@@ -1554,7 +1554,7 @@ mod tests {
         pool.tick_data.get_mut(&0).unwrap().liquidity_gross =
             alloy::primitives::U128::from(999u128); // ≠ on-chain TICK_0.0 (100)
 
-        let expected_pid = degenbot_core::hex_utils::encode_hex(&v4_pool_id());
+        let expected_pid = alloy::hex::encode_prefixed(v4_pool_id());
         let err = verify_v4_pool(&provider, v4_state_view(), v4_pool_id(), &pool, Some(42))
             .await
             .unwrap_err();

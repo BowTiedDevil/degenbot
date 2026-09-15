@@ -85,7 +85,7 @@ pub fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
 
     // bytes -> hex string
     if let Ok(b) = obj.cast::<PyBytes>() {
-        let hex = crate::hex_utils::encode_hex(b.as_bytes());
+        let hex = alloy::hex::encode_prefixed(b.as_bytes());
         return Ok(serde_json::Value::String(hex));
     }
 

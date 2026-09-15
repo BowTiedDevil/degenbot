@@ -633,7 +633,7 @@ impl EngineDriver {
             "degenbot.pool.verify_lifecycle",
             pool.version = "v4",
             pool.manager = %pool_manager,
-            pool.id = %degenbot_core::hex_utils::encode_hex(&pool_id),
+            pool.id = %alloy::hex::encode_prefixed(pool_id),
         );
         let result = crate::bot_core::run_v4_registration_lifecycle(
             &core,
@@ -646,9 +646,9 @@ impl EngineDriver {
         .instrument(lifecycle_span)
         .await;
         if result.is_ok() {
-            diag!(domain = pump, version = "v4", pool_id = %degenbot_core::hex_utils::encode_hex(&pool_id), "registration verify-lifecycle complete");
+            diag!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle complete");
         } else {
-            op_warn!(domain = pump, version = "v4", pool_id = %degenbot_core::hex_utils::encode_hex(&pool_id), "registration verify-lifecycle FAILED");
+            op_warn!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle FAILED");
         }
         result.map_err(DriverError::Verify)
     }

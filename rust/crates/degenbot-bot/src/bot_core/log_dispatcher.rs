@@ -154,7 +154,7 @@ impl DecodedPoolEvent {
                 pool_id,
                 ..
             } => {
-                let id_hex = degenbot_core::hex_utils::encode_hex(pool_id);
+                let id_hex = alloy::hex::encode_prefixed(pool_id);
                 format!("{pool_manager:x}/{id_hex}")
             }
         }

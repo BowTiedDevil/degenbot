@@ -54,39 +54,8 @@ pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, HexError> {
     }
 }
 
-/// Decode a 32-byte hex string (with optional "0x" prefix) into a fixed-size array.
-///
-/// # Errors
-///
-/// Returns `HexError::InvalidHex` if the hex is invalid or not exactly 32 bytes.
-pub fn decode_32byte_hex(hex_str: &str) -> Result<[u8; 32], HexError> {
-    let bytes = decode_hex(hex_str)?;
-    if bytes.len() != 32 {
-        let msg = format!("Expected 32-byte value, got {} bytes", bytes.len());
-        return Err(HexError::InvalidHex(msg));
-    }
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    Ok(arr)
-}
-
-/// Encode bytes as a hex string with "0x" prefix.
-///
-/// # Arguments
-///
-/// * `bytes` - The bytes to encode
-///
-/// # Returns
-///
-/// A hex-encoded string with "0x" prefix.
-#[must_use]
-pub fn encode_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut result = String::with_capacity(2 + bytes.len() * 2);
-    result.push_str("0x");
-    for byte in bytes {
-        result.push(HEX[(byte >> 4) as usize] as char);
-        result.push(HEX[(byte & 0x0F) as usize] as char);
-    }
-    result
-}
+// NOTE (TD2 / B1): encoding was a hand-wheel on alloy::hex::encode_prefixed;
+// call sites now go through alloy directly. decode_32byte_hex (a length check
+// over hex::decode) had no in-workspace callers and is deleted. What remains
+// is the semantics alloy rejects: optional "0x"/"0X" prefix + odd-length
+// leading-zero padding.

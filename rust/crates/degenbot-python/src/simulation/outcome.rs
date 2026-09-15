@@ -22,7 +22,6 @@
 //! `PySubmitCandidate`), it is **not** a pyclass — A4 uses the core `SimResult`
 //! directly. No type is exposed that the cockpit doesn't read.
 
-use crate::hex_utils::encode_hex;
 use crate::prelude::*;
 use crate::submission::submit::PySubmitCandidate;
 use alloy::primitives::U256;
@@ -257,7 +256,7 @@ impl PyDispatchOutcome {
                 Some(idx) => dict.set_item("fail_index", idx)?,
                 None => dict.set_item("fail_index", py.None())?,
             }
-            let hex_str = encode_hex(&f.revert_data);
+            let hex_str = alloy::hex::encode_prefixed(&f.revert_data);
             dict.set_item("revert_data", hex_str)?;
             match &f.reverting_frame {
                 Some(rf) => {
@@ -268,7 +267,7 @@ impl PyDispatchOutcome {
                         "selector",
                         format!("0x{}", alloy::primitives::hex::encode(rf.selector)),
                     )?;
-                    rdict.set_item("revert_data", encode_hex(&rf.revert_data))?;
+                    rdict.set_item("revert_data", alloy::hex::encode_prefixed(&rf.revert_data))?;
                     rdict.set_item("label", &rf.label)?;
                     rdict.set_item("outcome_kind", rf.outcome_kind)?;
                     rdict.set_item("gas_used", rf.gas_used)?;

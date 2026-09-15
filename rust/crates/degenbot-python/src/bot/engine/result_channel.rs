@@ -454,10 +454,7 @@ fn simulated_path_result_to_py_dict<'py>(
             let fd = PyDict::new(py);
             fd.set_item("fail_index", f.fail_index)?;
             // Hex string — the FFI SimFailure getter emits the same shape.
-            fd.set_item(
-                "revert_data",
-                degenbot_core::hex_utils::encode_hex(&f.revert_data),
-            )?;
+            fd.set_item("revert_data", alloy::hex::encode_prefixed(&f.revert_data))?;
             fd.set_item("bucket", &f.bucket)?;
             d.set_item("failure", fd)?;
         }
