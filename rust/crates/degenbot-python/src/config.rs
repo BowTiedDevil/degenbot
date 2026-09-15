@@ -21,8 +21,8 @@ pub fn discovery_batch_size() -> usize {
 }
 
 /// The shared core verification-retry policy defaults as a SELF-DESCRIBING
-/// value (TD5/P2 — the former anonymous 4-tuple would silently mis-assign on
-/// a Rust-side field reorder):
+/// value — a positional 4-tuple would silently mis-assign on a Rust-side
+/// field reorder:
 /// in seconds for the float fields.
 ///
 /// The Python `VerificationRetryPolicy` dataclass reads these instead of
@@ -37,7 +37,7 @@ pub struct RetryPolicyDefaults {
     pub jitter: f64,
 }
 
-/// Read the shared core verification-retry policy defaults (6LC4JB).
+/// Read the shared core verification-retry policy defaults.
 #[pyfunction]
 #[must_use]
 pub fn verification_retry_policy_defaults() -> RetryPolicyDefaults {

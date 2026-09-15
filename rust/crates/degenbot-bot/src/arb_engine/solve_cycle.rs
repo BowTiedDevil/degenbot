@@ -105,7 +105,7 @@ struct ResolveChunkOut {
 pub(crate) type PathTimesHeap =
     std::collections::BinaryHeap<std::cmp::Reverse<super::lane_walk::PathTimeRecord>>;
 /// `DEGENBOT_SOLVE_INLINE_SIM` (SIMPIPE2 T2 → T4, task PIRX3W / AK7VJB) —
-/// stance semantics unchanged; since C2 it is the `SolveCycle` instance
+/// stance semantics unchanged; it is the `SolveCycle` instance
 /// value `inline_sim_enabled`, never a process static.
 /// Per-cycle shared solve context (epic BXUSGL T1): everything the
 /// per-path dispatch touches besides the resolved snapshot. Bundled once
@@ -116,13 +116,11 @@ pub(crate) struct SolveCycleShared {
     pub(crate) epoch: u64,
     pub(crate) gate_capture: Option<::degenbot_solvers::profit_envelope::GateCaptureCfg>,
     pub(crate) walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
-    /// C4: the engine-owned prefix-composition cache (replaces the retired
-    /// solvers-crate `PREFIX_CACHE` process static); epoch-generationed, so
+    /// The engine-owned prefix-composition cache; epoch-generationed, so
     /// entries never survive a block boundary.
     pub(crate) prefix_cache: std::sync::Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
-    /// C2: the pre-solve profitability floor as an instance value (replaces
-    /// the retired `MIN_PROFIT_FLOOR_WEI` process static); construction-time
-    /// from `cfg.solve.min_profit_wei`.
+    /// The pre-solve profitability floor as an instance value, set at
+    /// construction from `cfg.solve.min_profit_wei`.
     pub(crate) min_profit: U256,
     /// KAHU5W: the instance-scoped solver runtime stance, threaded down —
     /// the solver crate has no process-global config anymore.
@@ -261,15 +259,14 @@ pub(crate) struct SolveCycle {
     /// passed into the solve entries by handle; epoch advances at the
     /// block-lifecycle start.
     pub(crate) walk_memo: Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
-    /// C4: the engine-owned prefix-composition cache (was a solvers static).
+    /// The engine-owned prefix-composition cache.
     pub(crate) prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
-    /// C2: the pre-solve profitability floor (epic SU7MAE semantics: a
+    /// The pre-solve profitability floor (epic SU7MAE semantics: a
     /// rigorous-upper-bound gate; `min_profit_wei` default 0 skips only
-    /// provably-zero-or-negative paths). Since C2 it is a packed instance
+    /// provably-zero-or-negative paths). A packed instance
     /// value, never a process static.
     pub(crate) min_profit_floor: U256,
-    /// C2: the inline-sim stance as an engine instance value (replaces the
-    /// retired `INLINE_SIM_ENABLED` process static; documented stance
+    /// The inline-sim stance as an engine instance value (documented stance
     /// semantics unchanged, SIMPIPE2 T2/T4).
     pub(crate) inline_sim_enabled: bool,
     /// Per-path previous-block MEASURED walk sims (recorded by `solve_fn`
@@ -1928,7 +1925,7 @@ impl SolveCycle {
                     // is counted and trips the sticky cordon instead of
                     // being swallowed.
                     //
-                    // Both hooks are fused into the constructor (TD6),
+                    // Both hooks are fused into the constructor,
                     // so a constructed lane can never be driven without
                     // them.
                     let mut lane = SolveLane::new(

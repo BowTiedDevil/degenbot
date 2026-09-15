@@ -66,11 +66,11 @@ pub struct PyArbEngine {
     /// The ONE external engine seam (epic 5TBT7L Q2b).
     stages: Arc<EngineStages>,
 
-    /// ADR-006 D4 (T3) / ADR-050 D7 (C5): the pump session (coordinator,
+    /// ADR-006 D4 (T3) / ADR-050 D7: the pump session (coordinator,
     /// shutdown, pump handle, subscribe state, phase, verify provider,
     /// result/block channel ends) lives in ONE shared `Arc<EngineDriver>`
-    /// co-owned with `PyBot`. The `PumpState` delegation vessel is dissolved;
-    /// the `PyO3` layer crosses the driver seam directly.
+    /// co-owned with `PyBot`; the `PyO3` layer crosses the driver seam
+    /// directly.
     driver: Arc<degenbot_bot::arb_engine::EngineDriver>,
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.

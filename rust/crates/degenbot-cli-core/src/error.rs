@@ -95,7 +95,7 @@ pub enum CliError {
     AaveUpdate(AaveRunError),
     /// A command arm that `block_on`s the process-wide shared runtime was invoked
     /// from inside an existing `tokio` runtime. `run_pool_update`/`run_aave_update`
-    /// ride `get_runtime()` (TD3/A1) and must not nest; the arms hold the same
+    /// ride `get_runtime()` and must not nest; the arms hold the same
     /// constraint.
     RuntimeNested,
     /// The operator host refused a command: the `{"ok": false, "error": ...}`

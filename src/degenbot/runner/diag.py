@@ -1,4 +1,4 @@
-"""Incident-diagnostic harnesses for the driver cockpit (C6 / epic CVYZIA).
+"""Incident-diagnostic harnesses for the driver cockpit.
 
 The three operator-runtime probes — the tracemalloc diff thread, the
 ``/proc/self`` RSS/purge CSV sampler, and the faulthandler repeat dumper —

@@ -1017,20 +1017,19 @@ impl BotState {
     /// solving (B3 move, FD7NFG). Applies each decoded event via the same
     /// `apply_v3_swap` / `buffer_backfill_*_liquidity_update` / `apply_v4_swap`
     /// path the live loop uses; decode selection lives in the dispatcher
-    /// registry (C1), never here. After the chunk,
+    /// registry, never here. After the chunk,
     /// `expire_v3/v4_buffered(chunk_end)` advances the liquidity buffers. No
     /// `dispatch` / no solve cycle — the `Backfilled` phase invariant is
     /// "state advanced, no batches emitted".
     ///
-    /// This is the BotState-level relocation of what was
-    /// `ArbitrageEngine::process_backfill_logs` (the retired
-    /// `arb_engine/event_routing.rs`); the engine method is now a thin
-    /// delegator + `last_processed_block` stamp. `BotState` owns the state (ADR-003);
+    /// The engine-level entry is a thin delegator + `last_processed_block`
+    /// stamp. `BotState` owns the state (ADR-003);
     /// `BlockPump::backfill_from_snapshot` (core) reaches it via `self.bot`.
     ///
-    /// C1 (one decode home): decode selection is the dispatcher's registry
+    /// Decode selection is the dispatcher's registry
     /// (`log_dispatcher`, the same decoders the forward path routes through);
-    /// `BotState` no longer imports decoders — it keeps apply/route only.
+    /// `BotState` keeps apply/route only — the decoders are never imported
+    /// here.
     pub fn process_backfill_logs(
         &mut self,
         dispatcher: &log_dispatcher::LogDispatcher,

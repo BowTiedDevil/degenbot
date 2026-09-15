@@ -284,7 +284,7 @@ impl DecodedPoolEvent {
         }
     }
 
-    /// Backfill-phase apply (C1): the backfill chunk loop's ONE apply entry —
+    /// Backfill-phase apply: the backfill chunk loop's ONE apply entry —
     /// the `Backfilled` phase invariant is "state advanced, no solve cycle, no
     /// batches emitted", so no telemetry prelude and no `EpochDelta` record.
     /// Returns `None` for a V2 Sync: backfill is CL-only (scalar state
@@ -742,7 +742,7 @@ impl LogDispatcher {
         self.try_decode_log_with_block(log, 0)
     }
 
-    /// The ONE decode home (C1): decode `log` via the registry, stamping the
+    /// The ONE decode home: decode `log` via the registry, stamping the
     /// event's block number with `default_block` when the log carries none.
     /// The backfill chunk loop passes its chunk end so a malformed
     /// eth_getLogs row (missing `block_number`) never stamps block 0 into a
@@ -1191,7 +1191,7 @@ mod tests {
         );
     }
 
-    /// C1 (one decode home: the backfill path consumes this entry). A backfill
+    /// The decode home the backfill path consumes. A backfill
     /// log whose `block_number` is absent (malformed) must be stamped with the
     /// chunk fallback the caller supplies, never block 0 — a block-0 journal
     /// stamp silently corrupts reorg restores (3ECKWX family).
@@ -1250,7 +1250,7 @@ mod tests {
         assert_eq!(ev0.block_number(), 0);
     }
 
-    /// C1 (one decode home): the burn sign flip must live in the ONE decoder,
+    /// The burn sign flip must live in the ONE decoder,
     /// not be re-authored at the backfill call site — the backfill decode of a
     /// V3 Burn log yields a negative liquidity delta.
     #[test]
@@ -1304,7 +1304,7 @@ mod tests {
         );
     }
 
-    /// C1: `apply_backfill` skips V2 Sync (backfill is CL-only: historical
+    /// `apply_backfill` skips V2 Sync (backfill is CL-only: historical
     /// behavior).
     #[test]
     fn apply_backfill_ignores_v2_sync() {

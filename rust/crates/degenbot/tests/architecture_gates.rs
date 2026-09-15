@@ -1,11 +1,9 @@
-//! Architecture invariant gates (C7 / architecture review 2026-09-15).
+//! Architecture invariant gates.
 //!
-//! The five `check-*` justfile recipes were inline-bash rg scans — policy
-//! living in orchestration, with the core-crate allowlist hand-copied into
-//! the justfile as a THIRD list beside the workspace manifest and CONTEXT.md.
-//! They are now cargo tests on the umbrella crate: the crate list derives
-//! from `cargo metadata`, the scans run under every `cargo test` track, and
-//! the justfile recipes are thin aliases (ADR-043 §10-style precdent:
+//! The `check-*` invariant scans are cargo tests on the umbrella crate: the
+//! crate list derives from `cargo metadata`, the scans run under every
+//! `cargo test` track, and the justfile recipes are thin aliases
+//! (ADR-043 §10-style precedent:
 //! `degenbot-python/tests/gil_state_write_concurrency.rs`).
 
 #![expect(clippy::expect_used)]
@@ -91,8 +89,7 @@ fn for_each_rust_source(dir: &Path, f: &mut dyn FnMut(&Path, &str)) {
 #[test]
 fn cli_shell_names_only_allowlisted_externals() {
     // ADR-051 D2: the argv facade may name workspace members + the small
-    // argv/sink plumbing allowlist. (Walks the manifest's dep tables,
-    // mirroring the old awk recipe.)
+    // argv/sink plumbing allowlist (reads the manifest's dep tables).
     let manifest = workspace_root().join("crates/degenbot-cli/Cargo.toml");
     let text = std::fs::read_to_string(&manifest).expect("read cli manifest");
     let allow = [
@@ -139,8 +136,8 @@ fn cli_shell_names_only_allowlisted_externals() {
 
 #[test]
 fn core_crates_are_pyo3_free_under_default_features() {
-    // The pyo3-free charter (AGENTS.md, checked pre-fix by hand-copied list in
-    // the justfile). The binding crate `degenbot_rs` is the ONLY member that
+    // The pyo3-free charter (AGENTS.md). The binding crate `degenbot_rs` is the
+    // ONLY member that
     // may touch pyo3 — it is the PyO3 wrapper layer.
     let mut violations = Vec::new();
     let members = core_member_names();

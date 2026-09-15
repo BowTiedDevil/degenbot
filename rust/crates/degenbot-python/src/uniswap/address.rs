@@ -133,12 +133,11 @@ pub fn compute_aerodrome_v3_pool_address(
     ))
 }
 
-// --- TD1 (P1): Uniswap V2/V3 pool-address derivation mirrors ---------------
+// --- Uniswap V2/V3 pool-address derivations ---------------------------------
 //
 // Thin bindings over the pure-Rust `degenbot_uniswap::create2` family —
-// byte-exact with the retired pure-Python twins in
-// `src/degenbot/uniswap/v{2,3}_functions.py` and
-// `src/degenbot/contract/addresses.py`.
+// the Python counterparts in `src/degenbot/uniswap/v{2,3}_functions.py` and
+// `src/degenbot/contract/addresses.py` delegate here.
 
 fn parse_b256_hex(hex_str: &str, field: &str) -> PyResult<alloy::primitives::B256> {
     let bytes = crate::hex_utils::decode_hex(hex_str)
@@ -152,11 +151,11 @@ fn parse_b256_hex(hex_str: &str, field: &str) -> PyResult<alloy::primitives::B25
     Ok(alloy::primitives::B256::from_slice(&bytes))
 }
 
-/// The generic EIP-1014 CREATE2 address derivation (TD1).
+/// The generic EIP-1014 CREATE2 address derivation.
 ///
 /// Thin binding over `degenbot_uniswap::create2::create2_address` — the one
 /// implementation the whole workspace reads (the Python
-/// `contract.addresses.create2_address` chain is now a delegating shell).
+/// `contract.addresses.create2_address` chain delegates to it).
 ///
 /// # Errors
 ///
@@ -177,8 +176,8 @@ pub fn create2_address(
     ))
 }
 
-/// Compute a Uniswap V2-style CREATE2 pool address (TD1) — byte-exact mirror
-/// of the retired Python `degenbot.uniswap.v2_functions.generate_v2_pool_address`.
+/// Compute a Uniswap V2-style CREATE2 pool address — byte-exact counterpart
+/// of the Python `degenbot.uniswap.v2_functions.generate_v2_pool_address`.
 ///
 /// `salt = keccak256(abi.encodePacked(token0_sorted, token1_sorted))`.
 ///
@@ -205,8 +204,8 @@ pub fn generate_v2_pool_address(
     ))
 }
 
-/// Compute a Uniswap V3-style CREATE2 pool address (TD1) — byte-exact mirror
-/// of the retired Python `degenbot.uniswap.v3_functions.generate_v3_pool_address`.
+/// Compute a Uniswap V3-style CREATE2 pool address — byte-exact counterpart
+/// of the Python `degenbot.uniswap.v3_functions.generate_v3_pool_address`.
 ///
 /// `salt = keccak256(abi.encode(token0_sorted, token1_sorted, fee))` — the
 /// token addresses may be passed in any order (sorted internally).

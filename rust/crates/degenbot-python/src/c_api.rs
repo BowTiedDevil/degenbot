@@ -59,8 +59,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // 6LC4JB: the shared core verification-retry policy defaults, so the
     // Python driver shell reads them from the one Rust-owned declaration site.
-    // TD5: the return is a pyclass (`RetryPolicyDefaults`), self-describing
-    // instead of the positional tuple.
+    // The pyclass (`RetryPolicyDefaults`) is self-describing: a Rust-side
+    // field reorder cannot silently mis-assign a positional tuple read.
     m.add_class::<crate::config::RetryPolicyDefaults>()?;
     m.add_function(wrap_pyfunction!(
         crate::config::verification_retry_policy_defaults,
@@ -100,11 +100,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
             crate::uniswap::address::compute_aerodrome_v3_pool_address,
             m
         )?)?;
-        // TD1 (P1): the Uniswap V2/V3 pool-address derivations + the generic
+        // The Uniswap V2/V3 pool-address derivations + the generic
         // EIP-1014 primitive — FFI exposure of `degenbot-uniswap`'s pure-Rust
-        // `create2` mirrors of the retired Python chain in
-        // `src/degenbot/uniswap/v{2,3}_functions.py` /
-        // `src/degenbot/contract/addresses.py`.
+        // `create2` family; the Python counterparts in
+        // `src/degenbot/uniswap/v{2,3}_functions.py` and
+        // `src/degenbot/contract/addresses.py` delegate here.
         m.add_function(wrap_pyfunction!(
             crate::uniswap::address::create2_address,
             m

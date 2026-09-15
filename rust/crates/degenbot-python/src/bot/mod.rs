@@ -142,7 +142,7 @@ pub struct PyBot {
     /// back here during `new()`). Once attached, the three pump methods —
     /// `subscribe`, `backfill_from_snapshot`, `resume` — are drivable from
     /// `PyBot` (the D4 owner) and read/write the SAME `EngineDriver` the
-    /// engine's snapshot/solve slices read (C5).
+    /// engine's snapshot/solve slices read.
     pump: parking_lot::Mutex<Option<Arc<degenbot_bot::arb_engine::EngineDriver>>>,
     /// Cached read-only `SnapshotDb` handle armed at `load_snapshot_from_db`
     /// time (Decisions 5 (B) + 9 (A); epic `XEANMB`). `None` for cold-start
@@ -464,7 +464,7 @@ impl PyBot {
         *self.pump.lock() = Some(driver);
     }
 
-    /// Borrow the attached `EngineDriver` (C5: no `PumpState` vessel), or
+    /// Borrow the attached `EngineDriver`,
     /// error if no engine was constructed against this bot.
     fn pump_state(&self) -> PyResult<Arc<degenbot_bot::arb_engine::EngineDriver>> {
         self.pump.lock().clone().ok_or_else(|| {

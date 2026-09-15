@@ -182,10 +182,10 @@ def discovery_batch_size() -> int:
     """
 
 class RetryPolicyDefaults:
-    """Self-describing verification-retry policy defaults (6LC4JB / TD5).
+    """Self-describing verification-retry policy defaults.
 
-    Replaced the anonymous positional 4-tuple, which would silently
-    mis-assign on a Rust-side field reorder.
+    Named fields cannot silently mis-assign the way a positional 4-tuple
+    would on a Rust-side field reorder.
 
     Seconds for the float fields; read from
     ``degenbot_core::retry::RetryPolicy`` — the one declaration site the
@@ -202,7 +202,7 @@ class RetryPolicyDefaults:
     def jitter(self) -> float: ...
 
 def verification_retry_policy_defaults() -> RetryPolicyDefaults:
-    """Return the shared core verification-retry policy defaults (6LC4JB)."""
+    """Return the shared core verification-retry policy defaults."""
 
 def runtime_status() -> dict[str, Any]:
     """FF-T5 (NT7HJC): the runtime fleet status.
@@ -277,7 +277,7 @@ def to_checksum_address(address: str) -> ChecksummedAddress: ...
 @overload
 def to_checksum_address(address: bytes) -> str: ...
 def create2_address(deployer_address: str, salt: str, init_code_hash: str) -> str:
-    """Derive the EIP-1014 CREATE2 address from a raw (deployer, salt, init-code hash) chain (TD1).
+    """Derive the EIP-1014 CREATE2 address from a raw (deployer, salt, init-code hash) chain.
 
     Inputs are hex strings (``0x``-prefixed or bare); `salt` + `init_code_hash`
     decode to 32 bytes. Returns the EIP-55 checksummed address. Owned by
@@ -288,19 +288,21 @@ def create2_address(deployer_address: str, salt: str, init_code_hash: str) -> st
 def generate_v2_pool_address(
     deployer_address: str, token0: str, token1: str, init_hash: str
 ) -> str:
-    """Compute a Uniswap V2-style CREATE2 pool address (TD1).
+    """Compute a Uniswap V2-style CREATE2 pool address.
 
-    Tokens may be in any order (sorted internally). Byte-exact mirror of the
-    retired pure-Python ``degenbot.uniswap.v2_functions.generate_v2_pool_address``.
+    Tokens may be in any order (sorted internally). Byte-exact counterpart of
+    the Python ``degenbot.uniswap.v2_functions.generate_v2_pool_address``
+    (which delegates here).
     """
 
 def generate_v3_pool_address(
     deployer_address: str, token0: str, token1: str, fee: int, init_hash: str
 ) -> str:
-    """Compute a Uniswap V3-style CREATE2 pool address (TD1).
+    """Compute a Uniswap V3-style CREATE2 pool address.
 
-    Tokens may be in any order (sorted internally). Byte-exact mirror of the
-    retired pure-Python ``degenbot.uniswap.v3_functions.generate_v3_pool_address``.
+    Tokens may be in any order (sorted internally). Byte-exact counterpart of
+    the Python ``degenbot.uniswap.v3_functions.generate_v3_pool_address``
+    (which delegates here).
     """
 
 def compute_aerodrome_v2_pool_address(

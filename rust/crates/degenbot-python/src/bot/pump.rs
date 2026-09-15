@@ -1,13 +1,10 @@
-//! Driver-seam translation (`PyO3` side; ADR-050 D7 follow-up, C5).
+//! Driver-seam translation (`PyO3` side; ADR-050 D7 follow-up).
 //!
 //! The pump lifecycle ritual — `subscribe`, `resume` (which owns the
 //! `S+1..W` auto-backfill), `stop`, the verify config, and the registration
 //! lifecycles — lives ONCE in `degenbot-bot`'s public `EngineDriver`. The
-//! `PyO3` layer holds `Arc<EngineDriver>` directly and crosses the driver seam
-//! itself; the former `PumpState` delegation vessel (every method a one-line
-//! delegate — an extra seam with no behavior per unit of interface) was
-//! dissolved (C5) and its soak Drop forensics moved onto `EngineDriver` in
-//! the core.
+//! `PyO3` layer holds `Arc<EngineDriver>` directly and crosses the driver
+//! seam itself; the soak Drop forensics live on `EngineDriver` in the core.
 //!
 //! What remains here is translation, not state: the `GIL`-detach-
 //! `block_on`/`future_into_py` wrappers plus the `DriverError` → typed Python

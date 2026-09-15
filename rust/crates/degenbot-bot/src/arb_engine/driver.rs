@@ -766,8 +766,8 @@ impl EngineDriver {
     }
 }
 
-/// Soak-2026-08-22 forensics (relocated with the C5 `PumpState` dissolution):
-/// name teardown paths that bypass [`EngineDriver::stop`]. If the pump task
+/// Soak 2026-08-22 forensics: name teardown paths that bypass
+/// [`EngineDriver::stop`]. If the pump task
 /// handle is still armed at drop time, unwinding tore down the driver without
 /// calling `stop()` — the silent-exit shape this exists to catch. Leveling:
 /// only the bypassed-`stop()` shape is WARN; a post-`stop()` drop

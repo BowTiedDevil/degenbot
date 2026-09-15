@@ -372,7 +372,7 @@ class BotRunner:
 
         cfg = self.cfg
 
-        # C6: arm the incident-diagnostic harnesses (tracemalloc diff thread,
+        # Arm the incident-diagnostic harnesses (tracemalloc diff thread,
         # /proc RSS CSV sampler, faulthandler repeat dump) from the typed
         # config — every cockpit-driven entrypoint gets them uniformly, and
         # env reads stay the loader's (KAHU5W). Zero-config arms nothing.

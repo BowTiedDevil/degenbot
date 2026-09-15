@@ -227,7 +227,7 @@ class ArbitrageConfig:
     # None -> DEGENBOT_CONTRACTS_DIR -> one computed source-layout candidate
     # (NO filesystem walk). Wheel installs: pass this explicitly.
     executor_runtime: str | Path | None = None
-    # Diagnostics harnesses (C6): the cockpit arms these probes at start().
+    # Diagnostics harnesses: the cockpit arms these probes at start().
     # Zero-config arms nothing (production default).
     diag: DiagConfig = dataclasses.field(default_factory=DiagConfig)
 
@@ -317,7 +317,7 @@ class ArbitrageConfig:
 
         verification_retry_policy = _verification_retry_policy_from_env(env)
         executor_runtime = env.get("EXECUTOR_RUNTIME") or None
-        # C6: the diagnostics harnesses' knobs, parsed here (the only
+        # The diagnostics harnesses' knobs, parsed here (the only
         # env-reading site) instead of the example's raw os.environ.get.
         diag = DiagConfig(
             tracemalloc_secs=_parse_diag_secs(

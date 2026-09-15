@@ -1216,7 +1216,7 @@ fn build_fetch_spec(
 /// `&Transaction` borrow (and the `db.lock()` guard) across `.await` are
 /// safe (single-thread poll — no other runtime worker can touch this future).
 ///
-/// # Shared runtime (D2)
+/// # Shared runtime
 ///
 /// The body runs as ONE future under
 /// `degenbot_core::runtime::get_runtime().block_on` at this entry fn — the
@@ -1268,7 +1268,7 @@ pub fn run_aave_update(
     }
 
     // ONE block_on of the process-wide SHARED runtime at the fleet/CLI entry
-    // seam — see "# Shared runtime (D2)" above. The driver future is polled
+    // seam — see "# Shared runtime" above. The driver future is polled
     // on the calling thread only, so the `!Send` `&Transaction` borrow and
     // the DB ` MutexGuard` held across `.await` stay sound (no `Send` hop,
     // no concurrent poll).
@@ -2184,7 +2184,7 @@ pub struct ActivatedMarket {
 /// Returns [`RunError::Provider`] on an RPC failure or [`RunError::Db`] on a
 /// DB failure.
 ///
-/// # Shared runtime (D2)
+/// # Shared runtime
 ///
 /// The RPC half runs as ONE future under
 /// `degenbot_core::runtime::get_runtime().block_on` at this entry fn

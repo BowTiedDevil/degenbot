@@ -262,7 +262,7 @@ fn run_err_to_py(err: RunError) -> PyErr {
 ///
 /// The GIL is released across the whole call (`py.detach`); the orchestrator
 /// drives its RPC fetches/verifies on the process-wide shared runtime
-/// (`degenbot_core::runtime::get_runtime()`, TD3/A1) + owns the
+/// (`degenbot_core::runtime::get_runtime()`) + owns the
 /// `AlloyProvider` internally. Zero SQL writes.
 ///
 /// # Args

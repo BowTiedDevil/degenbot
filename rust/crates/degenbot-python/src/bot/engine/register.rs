@@ -56,7 +56,7 @@ impl PyArbEngine {
             Arc::clone(&stages),
         ));
         let result_rx = driver.take_result_receiver();
-        // C5: no `PumpState` vessel — both wrappers share the driver itself.
+        // Both wrappers share the driver itself.
         if let Some(parent) = py_bot_ref {
             parent.borrow(py).attach_pump_state(Arc::clone(&driver));
         }
@@ -211,7 +211,7 @@ impl PyArbEngine {
     #[expect(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
     fn subscribe(&self, py: Python<'_>, rpc_url: String) -> PyResult<u64> {
-        // ADR-050 D7 / C5: the engine-only test-seam twin of
+        // ADR-050 D7: the engine-only test-seam twin of
         // `PyBot::subscribe` — drives the shared `EngineDriver` directly.
         crate::bot::pump::subscribe(py, &self.driver, &rpc_url)
     }
@@ -227,7 +227,6 @@ impl PyArbEngine {
     ///
     /// Raises `RuntimeError` if `subscribe()` has not been called first.
     fn resume(&self, py: Python<'_>) -> PyResult<()> {
-        // C5: drives the shared `EngineDriver` directly.
         crate::bot::pump::resume(py, &self.driver)
     }
 

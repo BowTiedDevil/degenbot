@@ -83,7 +83,7 @@ pub(crate) fn inline_sim_payload(
         return None;
     }
     let sim = ctx.inline_sim.as_ref()?;
-    // C3: the assembly lives in ONE home (`arb_engine::inline_sim`); this
+    // The assembly lives in ONE home (`arb_engine::inline_sim`); this
     // wrapper is only the guards + shape, and otel tests reachable through
     // it pin the production assembly directly (RKXN5Z/IJUBV3 span shape,
     // SIMSPANDUP verdict discipline).
@@ -367,7 +367,7 @@ pub(crate) fn solve_one_path(
 /// The arm policy (WNH5OL; WFF6MM trimmed to the ONE detached arm): the
 /// lane walk body is ONE function; every per-arm behavior rides this value
 /// (the carrier stamps and the drain's ledger seq). The detached gauge hook
-/// stays on the lane itself — fused into `SolveLane::new` (TD6), contract
+/// stays on the lane itself — fused into `SolveLane::new`, contract
 /// 1's send-success-only bump.
 pub(crate) struct LaneArmPolicy {
     /// The ledger key half (the ONE-domain rule of 43E3H3): the exact

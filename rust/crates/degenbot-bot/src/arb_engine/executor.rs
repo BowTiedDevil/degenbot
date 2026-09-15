@@ -257,11 +257,10 @@ impl SolveLane {
     /// the panic records will carry; `pids` are the paths the bin's work
     /// owed the pipe.
     ///
-    /// TD6 (P3): the hooks are fused into the constructor, turning the
-    /// former docstring-only sequencing invariant into structure: the
-    /// lane's hook state is immutable after construction, so there is no
-    /// window in which a driven lane could lack its hooks. `None` on the in-cycle arm (no
-    /// in-flight gauge; no drain-death hook); `Some` on the detached arm.
+    /// The hooks are fused into the constructor — the lane's hook state is
+    /// immutable after construction, so there is no window in which a driven
+    /// lane could lack its hooks. `None` on the in-cycle arm (no in-flight
+    /// gauge; no drain-death hook); `Some` on the detached arm.
     pub(crate) fn new(
         unit: u64,
         seat: u64,

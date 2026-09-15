@@ -26,8 +26,8 @@
 //! sync-inside-async BY DESIGN comment was that invariant's only
 //! enforcement before the cutover) — so the sim body spawns onto this
 //! hook's DEDICATED multi-thread runtime (task-spawn) and the SYNC sim
-//! drive runs on that runtime's BLOCKING pool (`tokio::task::spawn_blocking`,
-//! TD4/A2): a blocking-pool thread still carries the runtime handle (the
+//! drive runs on that runtime's BLOCKING pool (`tokio::task::spawn_blocking`):
+//! a blocking-pool thread still carries the runtime handle (the
 //! build-time capture succeeds), and revm's `WrapDatabaseAsync::block_on`
 //! bridging (`block_in_place` under a multi-thread handle) collapses to a
 //! plain call there — a DB wait never converts a runtime worker, and the
@@ -374,7 +374,7 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
         // on the 2-thread runtime while ~50 bins/cycle arrived
         // concurrently (sims p50 12ms). Sizing to the core count
         // lets the bins' sims actually overlap. Env-tunable for
-        // constrained hosts. TD4/A2 re-evaluation: workers exist for SIM
+        // constrained hosts. Workers exist for SIM
         // PARALLELISM, NOT block_on compensation — the sync sim drive runs
         // on this runtime's BLOCKING pool (`spawn_blocking`, see the sim
         // body), so DB waits never convert a worker and the blocking adds
@@ -579,7 +579,7 @@ impl InlineSimulator for InlineSimHook {
                         hops = req.hops.len(),
                         sim_ok = false,
                     );
-                    // TD4/A2: the sync sim drive BLOCKS on its cold-miss
+                    // The sync sim drive BLOCKS on its cold-miss
                     // path — revm's `WrapDatabaseAsync` bridges the async
                     // provider via `block_in_place` + `handle.block_on`
                     // under this multi-thread runtime. That drive runs on
@@ -641,7 +641,7 @@ impl InlineSimulator for InlineSimHook {
                             (result, buckets)
                         } else {
                             // No ambient runtime at build (a blocking-pool thread
-                            // always carries the handle — see TD4/A2 above) / an
+                            // always carries the handle — see the module docs) / an
                             // override error:
                             // tally `rpc-failed` (mirrors the FFI build-failure arm).
                             let mut buckets = FailBuckets::new();
@@ -663,7 +663,7 @@ impl InlineSimulator for InlineSimHook {
                             // The blocking sim section PANICKED — re-raise the
                             // payload through the outer task so the join
                             // conversion below records `exception` exactly as
-                            // the pre-TD4 panic path did (same JoinError →
+                            // a synchronous sim panic would (same JoinError →
                             // same bucket + Err string).
                             std::panic::resume_unwind(e.into_panic())
                         }

@@ -20,8 +20,8 @@ def create2_address(
 
     Given a deployer, salt, and the keccak hash of the contract creation
     (init) bytecode. Delegating shell over
-    ``degenbot._ffi.create2_address`` (TD1 — the pure-Python keccak/CREATE2
-    chain is retired; the Rust ``degenbot_uniswap::create2`` module owns it).
+    ``degenbot._ffi.create2_address`` — the derivation lives in the Rust
+    ``degenbot_uniswap::create2`` module.
 
     References:
         - https://eips.ethereum.org/EIPS/eip-1014
