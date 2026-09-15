@@ -7,10 +7,10 @@ The umbrella for the standalone Rust core: one `cargo add degenbot` gives a pure
 ## Usage
 
 ```toml
-degenbot = "0.6.0-alpha.5"
+degenbot = "0.6"
 ```
 
-Or: `cargo add degenbot` (the pre-release version must be pinned explicitly, e.g. "0.6.0-alpha.5").
+Or: `cargo add degenbot` (pre-release versions must be pinned explicitly, e.g. "0.6.0-alpha.5").
 
 ## Quickstart
 
