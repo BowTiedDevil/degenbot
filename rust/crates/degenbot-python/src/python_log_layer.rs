@@ -446,8 +446,18 @@ fn drainer_loop(state: Arc<PythonLogLayerState>) {
 }
 
 /// Forward a batch of records to Python logging via ONE `Python::attach`.
+///
+/// `try_attach`, not `attach`: this is a plain OS thread, and nothing joins it
+/// (`shutdown_log_drainer` only raises the shutdown flag), so a flush can be in
+/// flight while `CPython` finalizes — e.g. a driver shell that raises and exits
+/// immediately. `PyGILState_Ensure` during finalization mints an auto
+/// thread-state that shutdown then destroys, and the release aborts the whole
+/// process with "`PyGILState_Release`: auto-releasing thread-state, but no
+/// thread-state for this thread". Dropping the tail batch when the interpreter
+/// is shutting down is the correct trade at process exit (pyo3 documents
+/// `try_attach` for exactly this case).
 fn flush_batch_to_python(records: &[PythonLogRecord]) {
-    Python::attach(|py| {
+    let _ = Python::try_attach(|py| {
         let Ok(logging_mod) = py.import("logging") else {
             return; // Python logging not available — drop batch.
         };
