@@ -132,6 +132,25 @@ def call_on_ambient_runtime(fn: object) -> object:
 
     """
 
+def call_blocking_on_ambient_runtime[T](fn: Callable[[], T]) -> Awaitable[T]:
+    """Run ``fn()`` on the shared runtime's blocking pool and await its result.
+
+    The async sibling of :func:`call_on_ambient_runtime` for a *blocking*
+    prep step (FYZMAF): the callable runs on a ``tokio`` blocking thread
+    (entering the shared runtime there) while the asyncio loop keeps pumping
+    other coroutines, and the result (or exception) is delivered to the
+    awaiting coroutine. Use it to keep a synchronous prep/read off the event
+    loop.
+
+    Args:
+        fn: A zero-argument callable; its return value (or exception) is
+            passed through unchanged.
+
+    Returns:
+        An awaitable resolving with whatever ``fn`` returns.
+
+    """
+
 def build_fingerprint() -> str: ...
 def build_number() -> int: ...
 def cli_main(args: list[str]) -> int:

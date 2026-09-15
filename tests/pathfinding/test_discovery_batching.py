@@ -19,11 +19,13 @@ batch. These tests pin:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gc
 import os
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import threading
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -37,6 +39,7 @@ from degenbot.database.operations import (
     get_scoped_sqlite_session,
 )
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.exceptions.base import DegenbotValueError
 from degenbot.pathfinding import (
     _pathfinding,
     find_paths,
@@ -386,6 +389,71 @@ async def test_aclose_leaves_no_worker_threads(db: DatabaseSessionManager) -> No
     assert threading.active_count() <= baseline, (
         f"stray threads: {threading.active_count()} > {baseline}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Prep is lifted off the event loop (FYZMAF).
+# ---------------------------------------------------------------------------
+
+
+async def test_prep_never_blocks_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slow prep must not stall the asyncio loop (canary keeps ticking).
+
+    Pre-FYZMAF the one-time prep (`_prepare_traversals`: SQLAlchemy token
+    resolution + the `build_path_graph` bulk read) ran INLINE on the event
+    loop at first `__anext__`, so a canary coroutine made no progress for the
+    whole prep. It now runs on the Rust async seam's blocking pool, so the
+    loop keeps turning while the prep is in flight.
+    """
+    ticks = 0
+
+    async def canary() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    def slow_prep(**_: object) -> list[object]:
+        time.sleep(0.3)
+        return [_fake_traversal()]
+
+    monkeypatch.setattr(_pathfinding, "_prepare_traversals", slow_prep)
+    monkeypatch.setattr(
+        _pathfinding, "find_paths_async_rust", lambda *a, **k: _FakeBatchIterator([[]])
+    )
+
+    canary_task = asyncio.ensure_future(canary())
+    agen = find_paths_async(chain_id=1, start_tokens=[], end_tokens=[], db=None)
+    started = time.perf_counter()
+    with pytest.raises(StopAsyncIteration):
+        await anext(agen)
+    elapsed = time.perf_counter() - started
+    canary_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await canary_task
+
+    assert elapsed >= 0.3, "the slow prep did not actually run"
+    assert ticks >= 10, f"event loop stalled during prep: {ticks} canary ticks in {elapsed:.2f}s"
+
+
+async def test_missing_start_token_raises_at_first_next(db: DatabaseSessionManager) -> None:
+    """Token-resolution errors keep today's lazy DegenbotValueError shape.
+
+    The prep (and therefore the DB token lookup) runs at first `__anext__`,
+    not at generator construction, and a missing boundary token raises the
+    same `DegenbotValueError` the sync path raises — now from the Rust
+    blocking seam.
+    """
+    agen = find_paths_async(
+        db=db,
+        chain_id=CHAIN,
+        start_tokens=[ZERO_ADDRESS],
+        end_tokens=[WETH_ADDR],
+        max_depth=2,
+        pool_types=[UniswapV2PoolTable],
+    )
+    with pytest.raises(DegenbotValueError, match="was not found in the database"):
+        await anext(agen)
 
 
 # ---------------------------------------------------------------------------

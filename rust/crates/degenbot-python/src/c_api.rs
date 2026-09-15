@@ -71,6 +71,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         crate::ambient_runtime::call_on_ambient_runtime,
         m
     )?)?;
+    // FYZMAF: the async sibling — offload a blocking Python prep step to the
+    // shared runtime's blocking pool so the asyncio loop keeps turning.
+    m.add_function(wrap_pyfunction!(
+        crate::ambient_runtime::call_blocking_on_ambient_runtime,
+        m
+    )?)?;
 
     // Keccak256 + event topic (always a dependency; ergo 5JKNQH)
     m.add_function(wrap_pyfunction!(crate::crypto::keccak256, m)?)?;

@@ -51,3 +51,55 @@ pub fn call_on_ambient_runtime(
     let _guard = degenbot_core::runtime::get_runtime().enter();
     fn_work.call0().map(Bound::unbind)
 }
+
+/// Async sibling of [`call_on_ambient_runtime`]: run a **blocking**
+/// zero-argument Python callable on the shared runtime's blocking pool and
+/// return the awaitable that resolves with its result.
+///
+/// A synchronous prep/read invoked from inside a coroutine still blocks the
+/// event loop even when its heavy Rust half releases the GIL — `detach` only
+/// lets *other OS threads* run, while the asyncio loop lives on the awaiting
+/// thread. This helper lifts such a call off the loop: the returned awaitable
+/// schedules the callable on a `tokio::task::spawn_blocking` thread (entering
+/// the shared runtime and acquiring the GIL there), so the loop keeps pumping
+/// other coroutines until the prep finishes and the result (or its exception)
+/// is ferried back.
+///
+/// This is the minimal seam for a prep step whose logic must stay
+/// Python-side (e.g. an `SQLAlchemy` token resolution + a bulk graph read
+/// pending the ADR-052 DB cutover): it moves the *scheduling*, not the logic.
+///
+/// ```python
+/// prepared = await call_blocking_on_ambient_runtime(partial(prepare, ...))
+/// ```
+///
+/// # Args
+///
+/// - `fn_work` — a zero-argument Python callable. It runs on a blocking
+///   thread; its return value (or exception) is delivered to the awaiting
+///   coroutine unchanged.
+///
+/// # Errors
+///
+/// Propagates whatever error `fn_work()` raises, unchanged. A panicking
+/// blocking task surfaces as a `RuntimeError`.
+#[pyfunction]
+pub fn call_blocking_on_ambient_runtime(
+    py: Python<'_>,
+    fn_work: Py<PyAny>,
+) -> PyResult<Bound<'_, PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        tokio::task::spawn_blocking(move || {
+            Python::attach(|py| {
+                let _guard = degenbot_core::runtime::get_runtime().enter();
+                fn_work.call0(py)
+            })
+        })
+        .await
+        .map_err(|join_err| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "blocking call failed to join: {join_err}"
+            ))
+        })?
+    })
+}

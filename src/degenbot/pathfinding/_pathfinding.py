@@ -6,6 +6,7 @@ import enum
 import itertools
 import time
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
 from degenbot.checksum_cache import get_checksum_address
@@ -18,7 +19,12 @@ from degenbot.database.models.pools import (
 from degenbot.database.operations import resolve_token_ids
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
-from degenbot.pathfinding import build_path_graph, find_paths_async_rust, find_paths_rust
+from degenbot.pathfinding import (
+    build_path_graph,
+    call_blocking_on_ambient_runtime,
+    find_paths_async_rust,
+    find_paths_rust,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
@@ -621,10 +627,11 @@ async def find_paths_async(
     so there is no Python worker thread, bounded std queue, stop flag, sentinel
     ferrying, exception ferrying, or `asyncio.to_thread` hop per batch.
 
-    The one-time graph build + token resolution runs inline (no worker thread
-    or executor): its expensive part is the Rust `build_path_graph` bulk read,
-    which releases the GIL. The DFS itself never blocks the event loop — each
-    await is a Rust future.
+    The one-time graph build + token resolution is lifted off the event loop
+    onto the shared tokio blocking pool via `call_blocking_on_ambient_runtime`
+    (FYZMAF), so neither the SQLAlchemy token resolution nor the
+    `build_path_graph` bulk read stalls the loop. The DFS itself never blocks
+    the event loop — each await is a Rust future.
 
     Cancelling the async generator (GeneratorExit / aclose / a consumer break)
     drops the adapter's reference to the Rust iterator; its Rust `Drop` sets a
@@ -672,19 +679,28 @@ async def find_paths_async(
     discovery_yielded = 0
     discovery_last_log = discovery_start
 
-    # One-time graph build + token resolution, inline. No worker thread and
-    # no executor hop: the expensive part is the Rust build_path_graph bulk
-    # read, which releases the GIL. The DFS below never blocks the loop.
-    traversals = _prepare_traversals(
-        chain_id=chain_id,
-        start_tokens=start_tokens,
-        end_tokens=end_tokens,
-        min_depth=min_depth,
-        max_depth=max_depth,
-        pool_types=pool_types,
-        db=db,
-        pool_type_per_depth=pool_type_per_depth,
-        allowed_intermediate_tokens=allowed_intermediate_tokens,
+    # One-time graph build + token resolution, lifted off the event loop
+    # (FYZMAF). `call_blocking_on_ambient_runtime` schedules the synchronous
+    # `_prepare_traversals` (SQLAlchemy token resolution + the Rust
+    # `build_path_graph` bulk read) on the shared tokio blocking pool and
+    # returns an awaitable; the GIL release inside the Rust read is NOT enough
+    # on its own (detach lets other OS threads run, but the asyncio loop lives
+    # on the awaiting thread), so running it inline would stall the loop for
+    # the whole prep. `_prepare_traversals` stays synchronous so the sync
+    # `find_paths` shares the identical prep path.
+    traversals = await call_blocking_on_ambient_runtime(
+        partial(
+            _prepare_traversals,
+            chain_id=chain_id,
+            start_tokens=start_tokens,
+            end_tokens=end_tokens,
+            min_depth=min_depth,
+            max_depth=max_depth,
+            pool_types=pool_types,
+            db=db,
+            pool_type_per_depth=pool_type_per_depth,
+            allowed_intermediate_tokens=allowed_intermediate_tokens,
+        )
     )
 
     effective_batch = max(1, int(batch_size))
