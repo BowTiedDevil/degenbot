@@ -1128,10 +1128,14 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(500));
 
         let reader_core = Arc::clone(&core);
+        // read#2 returns (held, acquired_at): both stamps are monotonic, so
+        // comparing them across threads is exact. The assertion below pins the
+        // ORDER rather than a knife-edge duration (the old `blocked >= 500ms`
+        // measured ~498.6ms against a 500ms hold and flaked under load).
         let read2 = std::thread::spawn(move || {
             let t0 = std::time::Instant::now();
             let _g = reader_core.read_at(LockSite::Registration); // read#2
-            t0.elapsed()
+            (t0.elapsed(), std::time::Instant::now())
         });
         std::thread::sleep(std::time::Duration::from_millis(500));
         assert!(
@@ -1139,11 +1143,12 @@ mod tests {
             "read#2 must park behind the queued writer while read#1 is held —              the nested-read cycle the fused accessors remove"
         );
 
+        let dropped_at = std::time::Instant::now();
         drop(read1); // breaks the cycle
-        let blocked = read2.join().expect("read#2 completes once read#1 drops");
+        let (blocked, acquired_at) = read2.join().expect("read#2 completes once read#1 drops");
         writer.join().expect("writer completes");
         assert!(
-            blocked >= std::time::Duration::from_millis(500),
+            acquired_at >= dropped_at,
             "read#2 only advanced after read#1 dropped ({blocked:?}) — that is the cycle"
         );
     }
