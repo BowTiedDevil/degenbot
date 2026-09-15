@@ -134,6 +134,25 @@ def call_on_ambient_runtime(fn: object) -> object:
 
 def build_fingerprint() -> str: ...
 def build_number() -> int: ...
+def cli_main(args: list[str]) -> int:
+    """Run the Rust-owned degenbot console with ``args`` (``sys.argv[1:]``).
+
+    ADR-051 D3: the Python console script is a passthrough. ``args`` is parsed
+    by the SAME clap tree the ``degenbot`` binary uses and executed by the
+    clap-free semantics core, so both entry surfaces share one command model.
+    The GIL is released for the whole run. Returns the process exit code:
+    clap owns ``--help``/``--version``/usage codes, a refused typed config is
+    ``2``, and every command maps through the single typed error site
+    (including the fleet boot refusal, ``EX_CONFIG`` 78).
+
+    Args:
+        args: the console argv, verbatim (without the program name).
+
+    Returns:
+        The process exit code.
+
+    """
+
 def discovery_batch_size() -> int:
     """Return the typed `pathfinding.discovery_batch_size` (4IOEVT).
 
@@ -1547,6 +1566,7 @@ __all__ = [
     "build_number",
     "build_path_graph",
     "cancel",
+    "cli_main",
     "compute_aerodrome_v2_pool_address",
     "compute_aerodrome_v3_pool_address",
     "concentrated_liquidity_math",

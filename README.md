@@ -1225,8 +1225,13 @@ degenbot database backup
 # Reset database (creates fresh schema; hidden command, --force skips the prompt)
 degenbot database reset --force
 
-# Upgrade database schema to the latest Alembic revision
-degenbot database upgrade [--force]
+# RETIRED (ADR-052): the database upgrades itself at open. `database
+# upgrade` now renders a pointed error and exits 1; use `database heal` for an
+# explicit repair.
+degenbot database upgrade
+
+# Inspect the schema state (read-only; never writes)
+degenbot database inspect
 
 # Compact database to reclaim space
 degenbot database compact
@@ -1252,20 +1257,21 @@ degenbot pool update [--chunk SIZE] [--to-block BLOCK] [--verify-chunk/--no-veri
 # Verify one V3/V4 pool's DB state against on-chain truth at a given block
 degenbot pool verify --rpc-url URL --chain 1 --block 18900000 --pool 0x... --family v3|v4 [--pool-manager 0x...]
 
-# Activate an exchange for tracking
-degenbot exchange activate base_uniswap_v3
+# Activate an exchange for tracking (ADR-051 D5: one data-driven command;
+# --chain is a chain slug or numeric id, --name is the DEX name slug)
+degenbot exchange activate --chain base --name uniswap_v3
 
 # Deactivate an exchange
-degenbot exchange deactivate base_uniswap_v3
+degenbot exchange deactivate --chain base --name uniswap_v3
 
 # Steer a running bot (started with --operator-socket) without restarting it
 degenbot path add --socket /path/to/operator.sock --hop V2:0xPoolAddr [--hop V3:0xPoolAddr] [--direction zfo|ozf]
 degenbot path discover --socket /path/to/operator.sock [--bound N]
 ```
 
-**Supported exchanges:**
-- Base: `base_aerodrome_v2`, `base_aerodrome_v3`, `base_pancakeswap_v2`, `base_pancakeswap_v3`, `base_sushiswap_v2`, `base_sushiswap_v3`, `base_swapbased_v2`, `base_uniswap_v2`, `base_uniswap_v3`, `base_uniswap_v4`
-- Ethereum: `ethereum_pancakeswap_v2`, `ethereum_pancakeswap_v3`, `ethereum_sushiswap_v2`, `ethereum_sushiswap_v3`, `ethereum_uniswap_v2`, `ethereum_uniswap_v3`, `ethereum_uniswap_v4`
+**Supported exchanges** (`--chain <chain> --name <dex>`):
+- Base: `aerodrome_v2`, `aerodrome_v3`, `pancakeswap_v2`, `pancakeswap_v3`, `sushiswap_v2`, `sushiswap_v3`, `swapbased_v2`, `uniswap_v2`, `uniswap_v3`, `uniswap_v4`
+- Ethereum: `pancakeswap_v2`, `pancakeswap_v3`, `sushiswap_v2`, `sushiswap_v3`, `uniswap_v2`, `uniswap_v3`, `uniswap_v4`
 
 #### Aave State Management
 
@@ -1273,21 +1279,22 @@ degenbot path discover --socket /path/to/operator.sock [--bound N]
 # Update Aave V3 positions for all active markets
 degenbot aave update [--chunk SIZE] [--to-block BLOCK] [--verify-chunk/--no-verify-chunk] [--dry-run]
 
-# Activate an Aave market
-degenbot aave activate ethereum_aave_v3
+# Activate the Aave market for the session chain (global --chain-id; default 1)
+degenbot aave activate [--chain-id CHAIN_ID]
 
-# Deactivate an Aave market
-degenbot aave deactivate ethereum_aave_v3
+# Deactivate an Aave market (default: "Aave Ethereum Market")
+degenbot aave deactivate [--chain-id CHAIN_ID] [--name MARKET]
 
 # Show a user's position in a market
 degenbot aave position show <ADDRESS> [--market MARKET] [--chain-id CHAIN_ID]
-
-# Scan all users in a market for liquidation risk (market-wide; no single address)
-degenbot aave position risk [--market MARKET] [--chain-id CHAIN_ID] [--threshold 1.1] [--limit N] [--show-positions]
-
-# Show market state
-degenbot aave market show [--chain-id CHAIN_ID] [--name NAME]
 ```
+
+> **Rust-owned console (ADR-051).** The `degenbot` console is the `degenbot-cli`
+> Rust binary; the Python console script (`degenbot._cli:main`) and
+> `python -m degenbot` are thin passthroughs over the same command model, so
+> argv, prompts, and exit codes exist once. Two read-only commands from the
+> former Python click tree have no Rust arm yet and exit with a usage error:
+> `degenbot aave position risk` and `degenbot aave market show`.
 
 ### Block Identifiers
 

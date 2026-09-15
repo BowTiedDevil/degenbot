@@ -146,7 +146,14 @@ def test_upgrade_on_empty_file_brings_up_to_head(tmp_path: pathlib.Path):
     assert _alembic_head(db_path) == _alembic_head_expected()
 
 
-def test_heal_round_trips_through_seam(tmp_path: pathlib.Path):
+def test_heal_round_trips_through_seam(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    # Stages an Alembic-era DB and proves the explicit-heal seam: ADR-052
+    # heal-at-open would otherwise rebuild it at the first write seam open and
+    # change old_state to rust_owned before the seam runs. Pin the killswitch
+    # for THIS test only.
+    monkeypatch.setenv("DEGENBOT_DB_AUTO_HEAL", "0")
     """`db_heal_database` (ADR-011) round-trips through the PyO3 seam.
 
     Build a head-stamped Alembic DB, write an exchange row via the Rust write
@@ -283,35 +290,28 @@ def test_upgrade_on_stale_alembic_db_rust_rejects_first(tmp_path: pathlib.Path):
     assert isinstance(exc_info.value, ValueError)
 
 
-def test_cli_group_catches_stale_db_without_traceback():
-    """A stale-DB error surfacing from any subcommand prints a friendly
-    one-line message and exits 1 — no Python traceback.
+def test_console_renders_stale_db_without_traceback(tmp_path: pathlib.Path, capfd):
+    """A stale-DB refusal from the console renders a friendly one-line message
+    and exits 1 — no Python traceback.
 
-    The CLI group's ``invoke`` catches ``DatabaseSchemaStale`` so end users
-    see the remediation hint instead of a wall of stack frames.
+    ADR-051 D3: the click group's ``invoke`` catch is gone. The Rust-owned
+    console maps the typed stale-schema error (``degenbot-db`` ``AlembicStale``)
+    to ``CliError::DatabaseStale`` and renders it through the one exit-code
+    site. ``database cutover`` refuses BEFORE its prompt on a stale schema, so
+    the mapping is reachable without stdin.
     """
-    import click
-    from click.testing import CliRunner
+    import degenbot._ffi as _ffi
 
-    from degenbot.cli import DegenbotCLI
+    db_path = tmp_path / "stale_cli.db"
+    create_new_sqlite_database(db_path)
+    parent_revision = _parent_revision(db_path, _alembic_head_expected())
+    _stamp_at_old_revision(db_path, parent_revision)
 
-    # Build a throwaway group with the SAME custom class the real CLI uses,
-    # plus a stub subcommand that raises the stale error directly.
-    @click.group(cls=DegenbotCLI)
-    def grp() -> None:
-        """test group."""
-
-    @grp.command()
-    def boom() -> None:
-        """Raise a stale-DB error to exercise the group's catch."""
-        stale_msg = "The database schema is stale. Run 'degenbot database upgrade'."
-        raise DatabaseSchemaStale(stale_msg)
-
-    result = CliRunner().invoke(grp, ["boom"])
-    assert result.exit_code == 1
-    assert "degenbot database upgrade" in result.output
-    # No traceback leaked to the user.
-    assert "Traceback" not in result.output
+    code = _ffi.cli_main(["--database", str(db_path), "database", "cutover"])
+    captured = capfd.readouterr()
+    assert code == 1
+    assert "degenbot database upgrade" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def _parent_revision(db_path: pathlib.Path, head_revision: str) -> str:

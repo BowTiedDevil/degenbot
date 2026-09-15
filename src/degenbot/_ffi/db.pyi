@@ -165,7 +165,7 @@ def db_fetch_exchange(
 ) -> ExchangeRow | None:
     """Fetch an `exchanges` row by its FK id.
 
-    The `cli/pool.py::pool_update` discovery loop reads `last_update_block`
+    The Rust-backed pool-updater discovery loop reads `last_update_block`
     ground-truth here (a fresh connection → fresh WAL snapshot) rather than
     trusting the long-lived SQLAlchemy session's stale ORM cache, since the
     stamp is written by the Rust `db_set_exchange_last_update_block` seam on

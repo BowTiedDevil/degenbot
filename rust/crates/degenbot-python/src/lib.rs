@@ -64,6 +64,9 @@ pub mod c_api;
 /// Gated on `any(pool, aave-updater)` (whichever seam needs it).
 #[cfg(any(feature = "pool", feature = "aave-updater"))]
 pub mod cancel;
+/// The Python-side console seam (ADR-051 D3): argv passthrough into the
+/// Rust-owned console. Unconditional - the console is core.
+pub mod cli;
 #[cfg(feature = "concentrated-liquidity-math")]
 pub mod concentrated_liquidity_math;
 /// Typed `BotConfig` accessors for the Python driver shell (4IOEVT). The

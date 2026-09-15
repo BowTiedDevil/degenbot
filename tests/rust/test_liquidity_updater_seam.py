@@ -2,7 +2,7 @@
 
 Loads the §4.2 fixture DBs (committed by
 `rust/crates/degenbot-db/tests/fixtures/generate_liquidity_updater_parity.py`),
-applies the SAME event sequence through the Python `cli/pool.py` apply shells
+applies the SAME event sequence through the Python `updater/pool_updater_configs.py` apply shells
 (now delegating to the Rust seam), + asserts the resulting
 `liquidity_positions` / `initialization_maps` rows + the
 `liquidity_update_block`/`log_index` marker match the committed
@@ -28,7 +28,7 @@ from sqlalchemy import select
 
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.pool_updater_configs import (
+from degenbot.updater.pool_updater_configs import (
     UNISWAP_V3_BURN_EVENT_HASH,
     UNISWAP_V3_MINT_EVENT_HASH,
     apply_v3_liquidity_updates,

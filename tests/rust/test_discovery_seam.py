@@ -2,7 +2,7 @@
 
 Builds a fresh Alembic-stamped SQLite DB, seeds an exchange + a PoolManager,
 then applies a `PoolCreated` event sequence through the Python
-`cli/pool_updater_configs.py::update_v2/v3/v4_pools` shells (now delegating to
+`updater/pool_updater_configs.py::update_v2/v3/v4_pools` shells (now delegating to
 the Rust `db_upsert_v2/v3/v4_pools` seam) + asserts the resulting
 `pools` / per-subclass / `managed_pools` / `uniswap_v4_pools` / `erc20_tokens`
 rows + the `ExchangeTable.last_update_block` stamp match the expected
@@ -24,7 +24,7 @@ from sqlalchemy import select
 
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.pool_updater_configs import (
+from degenbot.updater.pool_updater_configs import (
     V2PoolUpdateConfig,
     V3PoolUpdateConfig,
     V4PoolUpdateConfig,

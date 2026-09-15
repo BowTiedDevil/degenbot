@@ -42,6 +42,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::build_info::build_number, m)?)?;
     m.add_function(wrap_pyfunction!(crate::build_info::build_fingerprint, m)?)?;
 
+    // ADR-051 D3: the Python console entry (degenbot._cli:main) forwards argv
+    // verbatim into the Rust console. Registered unconditionally - the console
+    // passthrough is core, not a feature.
+    m.add_function(wrap_pyfunction!(crate::cli::cli_main, m)?)?;
+
     // FF-T5 (NT7HJC): the runtime fleet status — budget, plan,
     // census ("degenbot.runtime_status()").
     m.add_function(wrap_pyfunction!(crate::runtime_status::runtime_status, m)?)?;

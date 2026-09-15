@@ -2669,6 +2669,7 @@ name = "degenbot_rs"
 version = "0.6.0-alpha.11"
 dependencies = [
  "alloy",
+ "clap",
  "crossbeam-queue",
  "ctor",
  "dashmap",
@@ -2676,6 +2677,8 @@ dependencies = [
  "degenbot-abi",
  "degenbot-arbitrage",
  "degenbot-bot",
+ "degenbot-cli",
+ "degenbot-cli-core",
  "degenbot-config",
  "degenbot-core",
  "degenbot-db",

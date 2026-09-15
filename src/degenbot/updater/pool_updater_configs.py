@@ -28,8 +28,8 @@ from degenbot.utils.bytes import to_0x_hex
 
 # V3 liquidity event topic0 hashes (Mint/Burn). Used by the V3 decode shell
 # (`apply_v3_liquidity_updates`) to recognize the Burn signature + negate the
-# delta. Kept here (not in `cli/pool.py`) so the chunk loop's removal in
-# task JJ232N leaves these decode shells with their topic constants.
+# delta. Kept here (not in the retired `cli/pool.py`) so the chunk loop's
+# removal in task JJ232N leaves these decode shells with their topic constants.
 UNISWAP_V3_MINT_EVENT_HASH = bytes.fromhex(
     "7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",
 )
