@@ -1,8 +1,8 @@
 """Parity tests for degenbot.utils.bytes (to_bytes / to_0x_hex).
 
 Golden vectors pinned from the old 1.3-era hex-bytes wrapper before its
-removal (ergo JWXZ4A, option D: the wrapper is abolished; these functions
-carry over its conversion matrix). Note the preserved upstream quirks:
+removal; these functions carry over its conversion matrix. Note the
+preserved upstream quirks:
 - odd-length check happens on the ORIGINAL string (prefix included);
 - non-ASCII chars propagate UnicodeEncodeError (upstream's except clause
   catches UnicodeDecodeError, which .encode() never raises);

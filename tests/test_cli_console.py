@@ -1,5 +1,5 @@
 """Smoke tests for the Rust-owned console reached through the Python seam
-(ADR-051 D3, ergo HHNEL2).
+(ADR-051 D3).
 
 The Python console script (``degenbot``, from ``[project.scripts]``) and
 ``python -m degenbot`` are both five-line passthroughs over

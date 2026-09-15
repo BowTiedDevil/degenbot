@@ -1,4 +1,4 @@
-"""FFI smoke tests for the verified-non-FoT hard guard (ergo 3O535Q).
+"""FFI smoke tests for the verified-non-FoT hard guard.
 
 The ``set_fot_verified_non_fot`` setter seeds the Rust
 ``FeeOnTransferRegistry`` with the operator's manually-verified standard-ERC-20

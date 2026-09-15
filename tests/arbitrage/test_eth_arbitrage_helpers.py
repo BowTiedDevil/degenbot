@@ -1,14 +1,12 @@
 """Tests for the non-encoder helpers in ``eth_backrun_helpers``.
 
-The command-stream encoders (``_3hop_*`` / ``_encode_cmd_*``) were retired in
-the YQORTM §4.3 cutover — their byte-exact parity now lives in the Rust
-golden-file tests (``cargo test -p degenbot-executor``). This file keeps the
+The command-stream encoders (``_3hop_*`` / ``_encode_cmd_*``) are retired;
+their byte-exact parity lives in the Rust golden-file tests (``cargo test
+-p degenbot-executor``). This file keeps the
 regression coverage for the **stays-Python** display helper
 ``format_sim_diag_line`` (now in :mod:`degenbot.runner._render`).
 
-The ``filter_thin_margin_results`` tests were deleted with the function
-(epic Y7PA5A, task 34XJ6C — the legacy ``main()`` that used it no longer
-exists). The ``classify_candidate`` round-trip tests were removed along with
+The ``classify_candidate`` round-trip tests were removed along with
 the ``logs.permutation_analyzer`` module (Rust tracing replaced Python-side
 classifier infra).
 """

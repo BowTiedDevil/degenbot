@@ -1,4 +1,4 @@
-"""Red→Green tests for the dual-await consumer (epic 6W35AI).
+"""Tests for the dual-await consumer.
 
 `consume_result_batches` must derive its block clock from the forwarded
 `newHeads` block stream (`engine.block_stream()`), NOT from

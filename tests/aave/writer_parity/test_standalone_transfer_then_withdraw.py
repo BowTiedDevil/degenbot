@@ -265,18 +265,17 @@ def test_standalone_transfer_credit_then_withdraw(tmp_path: Path) -> None:
     # transferred out → settles to 0) + USER (received + withdrew → 0). The
     # a_token == aWETH (the (b) re-fetch + the standalone Transfer op both
     # target the right token). Loads-bearing: the absence of the
-    # `balance would go negative` crash is the YUPSIB regression guard.
+    # Regression guard: the Rust reader crashed with `balance would go negative` on the same corpus.
     assert len(positions) == 2, f"expected 2 positions (SENDER+USER); got {len(positions)}"
     assert a_token_addr is not None, "no a_token resolved for the collateral position"
     assert a_token_addr.lower() == _A_WETH.lower(), (
         f"a_token {a_token_addr!r} ≠ {_A_WETH!r} (the WETH aToken)"
     )
-    # GREEN (NMWPI6): both end-state balances are 0 (SENDER supplied
-    # _AMOUNT then standalone-transferred it out; USER received then
-    # withdrew). Pre-NMWPI6 the SENDER balance was the user's address
-    # interpreted as a U256 (~1.3e57); the value assertion here locks the
-    # correct scaled balance down (the existence-only gap that previously
-    # masked the ~10^69 oddity).
+    # Both end-state balances must be 0 (SENDER supplied _AMOUNT then
+    # standalone-transferred it out; USER received then withdrew). A bare
+    # positional existence check once masked a ~10^69 oddity here (the
+    # SENDER balance was the user's address read as a U256, ~1.3e57), so
+    # the VALUE assertion below is the load-bearing gate.
     for pos in positions:
         assert int(pos["balance"]) == 0, (
             f"expected end-state balance 0 (supply+transfer-out for SENDER; "

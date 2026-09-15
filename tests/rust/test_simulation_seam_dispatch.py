@@ -101,7 +101,7 @@ class TestDispatchEmptyInput:
         assert outcome.thin_dropped == 0
         assert outcome.divergent_dropped == 0
         assert outcome.fail_buckets == {}
-        # Ergo epic 63I7WJ — the success-path captured-swaps surface (the
+        # The success-path captured-swaps surface (the
         # matching success-path getter to each SimFailure.captured_swaps the
         # revert path surfaces via failures()). Empty for the empty-candidate
         # short-circuit (no survivors → no captured swaps). Proves the getter
@@ -297,7 +297,7 @@ class TestDispatchWithCandidateButNoRpc:
 
 
 class TestPoolDivergenceFfiGetters:
-    """The Dispatcher divergence getters (ergo GMWYIU) — the persistent
+    """The Dispatcher divergence getters — the persistent
     cross-block memo's read surface. A fresh dispatcher has no divergent
     pools + a zero lifetime drop tally; the getters return the right types
     (the action layer's skip + feedback behavior is proven at the Rust-core

@@ -1,6 +1,6 @@
 """Solidly / Aerodrome / Camelot stable-math routing — delegation-detection gate.
 
-Ergo 6TLIJ5/QF2PPN: the Solidly-stable swap-calc paths route the core math
+The Solidly-stable swap-calc paths route the core math
 through the ``degenbot-solidly-math`` Rust leaf
 (``degenbot._ffi.solidly_calc_exact_in_stable_solidly`` /
 ``solidly_calc_exact_in_volatile``) instead of the Python
@@ -8,9 +8,7 @@ through the ``degenbot-solidly-math`` Rust leaf
 companion-level swap-strategy methods (in ``aerodrome/v2_pool_calc.py``)
 wrap the Rust seam; the SolidlyStableHop-bound closure (in
 ``aerodrome/pools.py``) wraps the same Rust leaf in-line
-(ergo S5SJXF / NFYOWI retired the redundant
-``aerodrome.functions.calc_exact_in_stable`` Fraction-splitting wrapper —
-its delegation is now asserted directly against
+its delegation is asserted directly against
 ``aerodrome.math.calc_exact_in_stable_solidly``, with no intermediate
 Python callable). The Python oracle's ``calc_d`` / ``calc_k`` /
 ``calc_f`` / ``get_y_solidly`` / ``f_camelot`` / ``k_camelot`` /
@@ -149,9 +147,9 @@ class TestPoolCalcRouting:
 class TestStableExactOut:
     """Aerodrome stable exact-out roundtrip — the inverse of the stable exact-in.
 
-    The stable exact-out (`calc_exact_out_stable_solidly`) was previously a
-    `NotImplementedError` stub (ergo S5SJXF / LTLR2K — a gap-fill, not a port:
-    the Python leaf never existed). The §4.2 oracle is the property-based
+    The stable exact-out (`calc_exact_out_stable_solidly`) exists only on
+    the Rust leaf (the Python side never had one); the §4.2 oracle is the
+    property-based
     roundtrip over the Solidly/Aerodrome stable invariant: `exact_out` is the
     MINIMUM input producing at least the requested output, so
 

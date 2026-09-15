@@ -9,7 +9,7 @@ Provides three public functions:
 - :func:`keccak256` — the full 32-byte keccak digest of a byte string.
   Delegates to the Rust FFI ``keccak256`` pyfunction; parity with the
   pre-removal eth_utils vectors is pinned in
-  ``tests/test_crypto_parity.py`` (ergo 5JKNQH).
+  ``tests/test_crypto_parity.py``.
 - :func:`event_topic` — the 32-byte event topic hash for an ABI event entry.
   Computes ``keccak256(canonical_event_signature)`` in Rust from the ABI
   entry dict.

@@ -1,8 +1,7 @@
 """Plain-bytes hex utilities.
 
 Carries the conversion matrix that the old 1.3-era hex-bytes wrapper provided, as plain ``bytes``
-utilities (the wrapper type is abolished -- ergo JWXZ4A, option D: plain ``bytes`` + module-level
-helpers throughout). Golden-vector parity with the upstream behavior is pinned in
+utilities. Golden-vector parity with the upstream behavior is pinned in
 ``tests/utils/test_bytes_utils.py``.
 """
 
@@ -19,8 +18,7 @@ __all__ = [
 def to_0x_hex(data: bytes | bytearray | str) -> str:
     """Return ``0x``-prefixed lowercase hex of *data* (degenbot semantics).
 
-    Replacement for the old wrapper's ``to_0x_hex`` method now that the type
-    is abolished (ergo JWXZ4A, option D). ``bytes``/``bytearray`` are RAW
+    ``bytes``/``bytearray`` are RAW
     data: re-encoded via ``.hex()`` (this is how degenbot has historically
     derived address, pool-id and tx-hash hex from raw ``bytes``). ``str`` is
     first decoded as hex via :func:`to_bytes` (upstream ``str.__str__``

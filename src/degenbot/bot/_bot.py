@@ -430,11 +430,11 @@ class Bot:
     def block_stream(self) -> BlockStream:
         """Fresh async iterator over ``newHeads`` block notifications.
 
-        The settlement bot's authoritative block clock (epic 6W35AI): ticked
+        The settlement bot's authoritative block clock: ticked
         once per accepted header by the pump — NOT derived from
         ``ResultBatch.solve_block``, which lags by the send debounce.
 
-        ADR-027 completion (ergo 6VGMLY): the block-clock pipe is
+        ADR-027: the block-clock pipe is
         coordinator-owned, so this surfaces on the ``Bot`` (the
         pump-lifecycle handle) rather than on the arbitrage engine, which is
         out of the block path entirely. Once-only: a second call raises

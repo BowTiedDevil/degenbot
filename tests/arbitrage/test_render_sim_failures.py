@@ -154,7 +154,7 @@ def test_overflow_emits_summary_trailing_line(caplog: pytest.LogCaptureFixture) 
 
 
 def test_reverting_frame_surfaces_deep_attribution(caplog: pytest.LogCaptureFixture) -> None:
-    # Ergo epic 63I7WJ — the inspector-captured reverting frame: the CONTRACT
+    # The inspector-captured reverting frame: the CONTRACT
     # that reverted (not the top-level bubble), its call depth, selector, + the
     # classify_revert label. Plus the swaps captured before the revert.
     failures = [

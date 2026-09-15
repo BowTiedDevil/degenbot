@@ -1,4 +1,4 @@
-"""§4.2 parity for the Rust-backed SQLite file operations (ergo OP23QV).
+"""§4.2 parity for the Rust-backed SQLite file operations.
 
 The four file ops delegate to the Rust core (``degenbot._ffi.db_*`` over
 ``degenbot-db::ops``). These tests drive the Python wrappers in

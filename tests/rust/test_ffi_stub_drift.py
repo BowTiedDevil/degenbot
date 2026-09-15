@@ -1,4 +1,4 @@
-"""Registration↔stub drift gate — post-cutover residue (ADR-053, ergo XNEJRD).
+"""Registration↔stub drift gate (ADR-053).
 
 The hand-maintained ``src/degenbot/_ffi/*.pyi`` stubs stay the surface of
 record for the PyO3 extension seam (ADR-013). ``mypy.stubtest`` now owns the
@@ -9,12 +9,11 @@ existence-direction checks this file used to hand-roll in R1/R2/R3/R4
 - **R1 (coverage)** — every runtime symbol, on every module AND every class
   member, must appear in its stub. stubtest walks the installed extension.
 - **R2 (honest ``__all__``)** — stub ``__all`` matches runtime ``__all__`` in
-  BOTH directions. Verified at cutover: stubtest flags both the missing
-  re-export (its first run found 9 names missing from ``__init__.pyi``'s
-  ``__all__``) and the phantom promise (red-proven: a stub-exported name
+  BOTH directions. Verified: stubtest flags both the missing
+  re-export and the phantom promise (a stub-exported name
   removed from the runtime ``__all__`` fails the run).
 - **R3 (no phantom definitions)** — every stub-defined symbol must exist at
-  runtime. Red-proven: a stub-declared top-level function deleted from the
+  runtime. Verified: a stub-declared top-level function deleted from the
   runtime fails stubtest. Annotation-only type imports/aliases document
   parameter typing rather than the module surface and were exempted by the
   old R3; they now live in ``tests/rust/stubtest_allowlist.txt``.
@@ -36,7 +35,7 @@ This file keeps ONLY the checks stubtest cannot perform:
 - **R5 (retired-surface tombstones, SLIMMED)** — tombstones for surface
   *deletions*, kept only for names whose runtime home stubtest never visits:
   pure-Python driver modules (stubtest runs solely against ``degenbot._ffi``).
-  Red-proven matrix (ergo XNEJRD): exposing each retired
+  Exposing each retired
   ``degenbot._ffi.ArbitrageEngine`` name at runtime (which is the very object
   ``degenbot.arbitrage.engine_registry`` re-exports) FAILS stubtest — a
   resurrected runtime name on the compiled seam must also be added to the

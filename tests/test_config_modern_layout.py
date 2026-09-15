@@ -1,4 +1,4 @@
-"""Tests for the 0.6 modern config.toml layout loading in Python (ergo JLFE2F).
+"""Tests for the 0.6 modern config.toml layout loading in Python.
 
 The shared operator file ~/.config/degenbot/config.toml is now the typed
 Rust BotConfig file layer: its tables are the schema sections (telemetry,

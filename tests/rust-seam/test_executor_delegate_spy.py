@@ -43,14 +43,14 @@ class TestPythonEncoderRetired:
     """The retired Python encoder module is gone entirely."""
 
     def test_helpers_module_deleted(self) -> None:
-        """`examples/eth_backrun_helpers.py` is deleted (epic 5TSYKN).
+        """`examples/eth_backrun_helpers.py` is deleted.
 
         The config/display helpers it held moved into ``degenbot.runner.config``;
         the command-stream encoders were retired in the §4.3 cutover (their
         byte-exact parity lives in the Rust golden-file tests).
         """
         assert not (EXAMPLES_DIR / "eth_backrun_helpers.py").exists(), (
-            "examples/eth_backrun_helpers.py must be deleted (5TSYKN)"
+            "examples/eth_backrun_helpers.py must be deleted"
         )
 
     def test_cmd_stream_module_deleted(self) -> None:
@@ -210,8 +210,7 @@ class TestExampleRoutesThroughRust:
         class previously enforced: the five encoder/warmup symbols moved INTO
         the Rust core (``degenbot_simulation`` / ``degenbot_executor``), called
         internally by ``dispatch_profitable`` + ``SimulateContext``
-        construction. The dispatch path (moved from the example into
-        ``degenbot.runner._dispatch`` by epic 5TSYKN) is
+        construction. The dispatch route (``degenbot.runner._dispatch``) is
         ``dispatch_profitable`` (simulate) → ``dispatch_and_submit``
         (submit), both Rust-bound pyfunctions imported via the companion
         package ``degenbot.dispatch`` (stable re-exports of the FFI symbols —

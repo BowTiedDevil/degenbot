@@ -1,4 +1,4 @@
-"""RSP-8 running dual-driver decision gate (ergo 23DLCY).
+"""RSP-8 running dual-driver decision gate.
 
 The executable successor to the parity ledger: it diffs the Python driver's
 and the Rust driver's decision streams modulo a documented

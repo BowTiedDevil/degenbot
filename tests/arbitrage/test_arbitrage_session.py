@@ -1228,7 +1228,7 @@ class TestSubCBgRegistrationConcurrency:
 
         registry = _Registry()
         # The main loop ends on the finite block stream — carried by the bot
-        # now (the block-clock pipe is coordinator-owned, ergo 6VGMLY).
+        # now (the block-clock pipe is coordinator-owned).
         bot = _FakeBot(blocks=[_block_dict(500)])
         session = BotRunner(
             _cfg(),

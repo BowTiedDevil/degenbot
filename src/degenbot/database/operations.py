@@ -3,7 +3,7 @@
 The SQLite **file operations** (`create_new_sqlite_database`,
 `backup_sqlite_database`, `compact_sqlite_database`, `heal_database`) are thin
 delegating shells over the Rust core (`degenbot._ffi.db_*`), per ADR-005 / the
-three-layer architecture (ergo `OP23QV`). Session orchestration stays Python
+three-layer architecture. Session orchestration stays Python
 (shell concern — rubric §2.1); the schema is Rust-owned and upgrades itself at
 open (ADR-052).
 """

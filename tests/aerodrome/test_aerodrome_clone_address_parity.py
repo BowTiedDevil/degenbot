@@ -1,6 +1,6 @@
 """Aerodrome EIP-1167 clone-address derivation — Rust↔Python parity gate.
 
-Ergo S5SJXF/U43OVR: the Aerodrome V2/V3 deterministic pool-address derivation
+The Aerodrome V2/V3 deterministic pool-address derivation
 (a CREATE2 deployment of an EIP-1167 minimal proxy of a master
 implementation contract, the salt keyed on ``stable`` (V2) /
 ``tick_spacing`` (V3)) is ported to the pure-Rust

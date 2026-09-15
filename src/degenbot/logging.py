@@ -170,7 +170,7 @@ RUST_BRIDGE_LOGGER_NAMES = (
     "degenbot_decoders",
     "degenbot_uniswap",
     # The in-process sim engine + the settlement-arbitrage strategy. The divergence probe
-    # (``[sim-divergence]``, ergo task 4C33DP / epic TR6GWT) + the bridge-probe
+    # (``[sim-divergence]``) + the bridge-probe
     # (``[bridge-probe]``) emit events from these crates; without configuring
     # the crate-root here their records are dropped at the Python logger-level
     # gate before reaching a handler (silent even with the env var on).

@@ -1,4 +1,4 @@
-"""RSP-8 running dual-driver decision gate — pytest half (ergo 23DLCY).
+"""RSP-8 running dual-driver decision gate — pytest half.
 
 The CI-safe recorded comparator + its seeded-divergence proofs. The live
 anvil mode is wired but skipped by default (marked online_rpc and gated

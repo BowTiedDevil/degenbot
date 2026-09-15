@@ -1,4 +1,4 @@
-"""Typed cockpit phase machine (epic Y7PA5A, task 5OV35X).
+"""Typed cockpit phase machine.
 
 The driver cockpit enforces its startup ordering through a private
 ``_Phase`` machine: New -> Started -> Running -> Closed. Illegal

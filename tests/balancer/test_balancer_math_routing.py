@@ -1,6 +1,6 @@
 """Balancer V2 math routing — delegation-detection gate.
 
-Ergo 6TLIJ5/FSD3CR: the weighted + stable companion ``swap_fn`` paths
+The weighted + stable companion ``swap_fn`` paths
 route the core swap math through the ``degenbot-balancer-math`` Rust leaf
 (``degenbot._ffi.balancer_*``) instead of the Python ``balancer/libraries/``
 ports. Scaling orchestration + the stable ``_add_swap_fee_amount`` divUp

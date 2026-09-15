@@ -159,7 +159,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
 
 
 def test_supply_same_chunk_as_reserve_init_lands_collateral(tmp_path: Path) -> None:
-    """GREEN (W2S3WH (a)+(b)): the Supply's CollateralMint is found + the
+    """The Supply's CollateralMint is found + the
     collateral position lands under USER_ADDRESS (the onBehalfOf), with the
     aWETH asset + the supply balance.
 

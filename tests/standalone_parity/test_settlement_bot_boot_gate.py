@@ -1,4 +1,4 @@
-"""RSP-8 fixture boot gate — Python-consumer half (ergo 23DLCY).
+"""RSP-8 fixture boot gate — Python-consumer half.
 
 The Python companion to the Rust gate
 (rust/examples/settlement_bot/tests/boot_gate.rs): both read the SAME

@@ -1,4 +1,4 @@
-"""Pyclass Python-facing naming gate (ADR-032; ergo LEY2OD).
+"""Pyclass Python-facing naming gate (ADR-032).
 
 ADR-032 decision: new pyclass types must use clean Python-facing names; a
 Py-prefixed Python-visible name marks a Rust-internal seam type and may
@@ -10,8 +10,8 @@ grandfather list:
 
 - a NEW Py-prefixed registration fails the test (the prefix is never
   extended);
-- a DEAD list entry (a name no longer registered — e.g. after the VD5MD5
-  renames retire it without updating the list) also fails the test, keeping
+- a DEAD list entry (a name no longer registered — e.g. after a rename
+  retires it without updating the list) also fails the test, keeping
   the list honest as the retirement proceeds.
 
 PyO3 pyclasses report __module__ as the Python module they were registered
