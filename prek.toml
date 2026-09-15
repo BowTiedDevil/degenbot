@@ -68,27 +68,36 @@ hooks = [
   # `git commit --no-verify`). The fast format/invariant checks (fmt, no-pyo3)
   # already ran at commit time and are not re-run here.
   #
-  # 1. commitlint-push — re-lint every commit message in the outgoing push
+  # 1. object-gc — keep the loose object database below the size where the
+  #    push's own detached `git maintenance` fires an unbounded repack
+  #    (2026-09-15: 139k loose objects / 44.5 GiB -> pack-objects at 663% CPU /
+  #    21.4 GB RSS). Removes unreachable objects only (`git prune`), never
+  #    repacks, and runs first so the build/test gates below see a sane object
+  #    database.
+  #
+  # 2. commitlint-push — re-lint every commit message in the outgoing push
   #    range (safety net). prek's pre-push stage consumes git's push-line stdin
   #    and does not forward it to hooks, so the range is computed from the
   #    upstream tracking ref instead (mirrors `just lint-commits`).
   #
-  # 2. Code linters (whole crate): rust-clippy + python-lint (incl. ty). These
+  # 3. Code linters (whole crate): rust-clippy + python-lint (incl. ty). These
   #    moved off the per-commit gate; at pre-push they run unconditionally over
   #    the whole tree, so a config/Cargo change can't slip a regression.
   #
-  # 3. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
+  # 4. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
   #    build/test jobs (always_run = true, pass_filenames = false). python-build
   #    (maturin develop) produces the .so that python-test imports, so it must
   #    precede python-test.
   #
-  # 4. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
+  # 5. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
   #    aborts the push and the remaining gates are skipped. Without it, prek
   #    runs the whole stage to completion and reports every failure.
   #
   # Bypass with `git push --no-verify` (CI still runs), or re-run a subset
   # manually with `prek run --hook-stage pre-push --skip rust-test` etc.
   # (add `--fail-fast` there to mirror the installed push behavior).
+  { id = "object-gc", name = "Object DB GC", language = "system", entry = "scripts/hooks/object-gc.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+
   { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   { id = "rust-clippy", name = "Rust clippy", language = "system", entry = "just lint-rust-check",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },

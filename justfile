@@ -62,7 +62,8 @@ test-standalone:
 test: test-rust test-python
 
 # Run every pre-push gate manually, in hook order and fail-fast — the
-# commitlint push-range re-lint, then the Rust/Python code linters, then the
+# object-DB GC brake, the commitlint push-range re-lint, then the Rust/Python
+# code linters, then the
 # Rust and Python build + test tracks, exactly as the installed prek pre-push
 # hook runs them (prek.toml, stages = ["pre-push"]). The installed hook and
 # ci.yml stay authoritative on an actual push; this is for checking the gates
@@ -83,6 +84,7 @@ pre-push:
         "$@"
     }
 
+    run_gate "Object DB GC"            scripts/hooks/object-gc.sh
     run_gate "commitlint (push range)" scripts/hooks/commitlint-push.sh
     run_gate "Rust clippy"             just lint-rust-check
     run_gate "Python lint"             just lint-python-check
@@ -811,8 +813,9 @@ setup-git-hooks:
     echo "    pre-commit : Markdown lint + PLC0415 noqa guard (staged files)"
     echo "                + instant checks (Rust/Python fmt, Rust no-pyo3)"
     echo "    commit-msg : commitlint against .commitlintrc.yml (relaxed rules)"
-    echo "    pre-push   : commitlint push-range + Rust/Python lint (clippy/ty)"
-    echo "                 + build & test suite (rust build/test, python build/test)"
+    echo "    pre-push   : object-DB GC + commitlint push-range + Rust/Python lint"
+    echo "                 (clippy/ty) + build & test suite (rust build/test,"
+    echo "                 python build/test)"
     echo "    Bypass: git push --no-verify (CI still runs)."
     echo "✓ commit template configured."
 
