@@ -141,9 +141,9 @@ pub struct PyBot {
     /// constructed against this bot (the engine attaches its `Arc<PumpState>`
     /// back here during `new()`). Once attached, the three pump methods —
     /// `subscribe`, `backfill_from_snapshot`, `resume` — are drivable from
-    /// `PyBot` (the D4 owner) and read/write the SAME `PumpState` the
-    /// engine's snapshot/solve slices read.
-    pump: parking_lot::Mutex<Option<Arc<crate::bot::pump::PumpState>>>,
+    /// `PyBot` (the D4 owner) and read/write the SAME `EngineDriver` the
+    /// engine's snapshot/solve slices read (C5).
+    pump: parking_lot::Mutex<Option<Arc<degenbot_bot::arb_engine::EngineDriver>>>,
     /// Cached read-only `SnapshotDb` handle armed at `load_snapshot_from_db`
     /// time (Decisions 5 (B) + 9 (A); epic `XEANMB`). `None` for cold-start
     /// (no DB) or before the snapshot load is attempted. The registration-path
@@ -460,14 +460,13 @@ impl PyBot {
     /// `PyArbEngine` constructed against this bot. Called from
     /// `PyArbEngine::new` when `py_bot` is supplied. After this, the
     /// pump methods on `PyBot` drive the same `PumpState` the engine reads.
-    pub(crate) fn attach_pump_state(&self, pump: Arc<crate::bot::pump::PumpState>) {
-        *self.pump.lock() = Some(pump);
+    pub(crate) fn attach_pump_state(&self, driver: Arc<degenbot_bot::arb_engine::EngineDriver>) {
+        *self.pump.lock() = Some(driver);
     }
 
-    /// Borrow the attached `PumpState`, or error if no engine was constructed
-    /// against this bot.
-    // backfill_from_snapshot/resume) in the #[pymethods] impl
-    fn pump_state(&self) -> PyResult<Arc<crate::bot::pump::PumpState>> {
+    /// Borrow the attached `EngineDriver` (C5: no `PumpState` vessel), or
+    /// error if no engine was constructed against this bot.
+    fn pump_state(&self) -> PyResult<Arc<degenbot_bot::arb_engine::EngineDriver>> {
         self.pump.lock().clone().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
                 "No engine attached to this Bot. Construct an engine against it (py_bot=...) \
@@ -544,7 +543,7 @@ impl PyBot {
     /// against this bot) or the receiver was already handed out.
     pub fn block_stream(&self) -> PyResult<crate::bot::engine::BlockStream> {
         // parking_lot::lock() is infallible (no poisoning) — the guard derefs
-        // straight to Option<Arc<PumpState>>.
+        // straight to Option<Arc<EngineDriver>>.
         let pump = {
             let guard = self.pump.lock();
             match guard.as_ref() {
@@ -770,7 +769,7 @@ impl PyBot {
     /// started/subscribed, or the WS subscribe fails.
     #[pyo3(signature = (rpc_url))]
     fn subscribe(&self, py: Python<'_>, rpc_url: &str) -> PyResult<u64> {
-        self.pump_state()?.subscribe(py, rpc_url)
+        crate::bot::pump::subscribe(py, &self.pump_state()?, rpc_url)
     }
 
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
@@ -780,7 +779,7 @@ impl PyBot {
     /// `backfill_from_snapshot` method is retired (2SM4Y7). Delegates to the
     /// shared `PumpState`.
     fn resume(&self, py: Python<'_>) -> PyResult<()> {
-        self.pump_state()?.resume(py)
+        crate::bot::pump::resume(py, &self.pump_state()?)
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
@@ -792,7 +791,7 @@ impl PyBot {
     /// the `__aexit__` path and a signal handler. Delegates to the shared
     /// `PumpState`.
     fn stop(&self, _py: Python<'_>) -> PyResult<()> {
-        self.pump_state()?.stop()
+        crate::bot::pump::stop(&self.pump_state()?)
     }
 
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
@@ -825,8 +824,12 @@ impl PyBot {
         address: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?
-            .run_v3_registration_lifecycle(py, address, snapshot_block)
+        crate::bot::pump::run_v3_registration_lifecycle(
+            py,
+            &self.pump_state()?,
+            address,
+            snapshot_block,
+        )
     }
 
     /// V4 twin of `run_v3_registration_lifecycle`, keyed by
@@ -840,8 +843,9 @@ impl PyBot {
         pool_id_hex: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?.run_v4_registration_lifecycle(
+        crate::bot::pump::run_v4_registration_lifecycle(
             py,
+            &self.pump_state()?,
             pool_manager_address,
             pool_id_hex,
             snapshot_block,

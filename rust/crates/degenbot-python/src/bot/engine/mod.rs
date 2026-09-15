@@ -66,22 +66,20 @@ pub struct PyArbEngine {
     /// The ONE external engine seam (epic 5TBT7L Q2b).
     stages: Arc<EngineStages>,
 
-    /// ADR-006 D4 (T3): the pump lifecycle state (coordinator, reorg
-    /// coordinator, bot, shutdown, pump handle, subscribe state, phase) now
-    /// lives in a shared `Arc<PumpState>` co-owned with `PyBot`. The legacy
-    /// individual fields (`coordinator`, `reorg_coordinator`, `bot`, `shutdown`,
-    /// `pump_handle`, `subscribe_state`, `phase`) are reachable through this
-    /// handle — so snapshot.rs/solve.rs keep reading the SAME state while the
-    /// three pump methods also move onto `PyBot`.
-    pump: Arc<crate::bot::pump::PumpState>,
+    /// ADR-006 D4 (T3) / ADR-050 D7 (C5): the pump session (coordinator,
+    /// shutdown, pump handle, subscribe state, phase, verify provider,
+    /// result/block channel ends) lives in ONE shared `Arc<EngineDriver>`
+    /// co-owned with `PyBot`. The `PumpState` delegation vessel is dissolved;
+    /// the `PyO3` layer crosses the driver seam directly.
+    driver: Arc<degenbot_bot::arb_engine::EngineDriver>,
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.
     result_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<ResultBatch>>>>,
     // The block-notification receiver is NOT here any more (ADR-027
-    // completion): the block-clock pipe is coordinator-owned, and its
-    // receiver lives on the shared PumpState — `PyBot::block_stream`
-    // hands it to Python.
+    // completion): the block-clock pipe is driver-owned, and its receiver
+    // lives on the shared EngineDriver — `PyBot::block_stream` hands it to
+    // Python.
     /// The cross-block persistent bytecode + account-existence cache
     /// (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Held for the
     /// engine's life; cloned into each per-block `BlockSimHandle::build` so

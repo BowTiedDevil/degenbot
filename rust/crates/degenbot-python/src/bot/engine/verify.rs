@@ -24,8 +24,7 @@ impl PyArbEngine {
         address: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump
-            .run_v3_registration_lifecycle(py, address, snapshot_block)
+        crate::bot::pump::run_v3_registration_lifecycle(py, &self.driver, address, snapshot_block)
     }
 
     /// V4 twin of `run_v3_registration_lifecycle`, keyed by
@@ -39,8 +38,9 @@ impl PyArbEngine {
         pool_id_hex: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump.run_v4_registration_lifecycle(
+        crate::bot::pump::run_v4_registration_lifecycle(
             py,
+            &self.driver,
             pool_manager_address,
             pool_id_hex,
             snapshot_block,
@@ -60,8 +60,12 @@ impl PyArbEngine {
         address: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<()> {
-        self.pump
-            .run_v3_registration_lifecycle_blocking(py, address, snapshot_block)
+        crate::bot::pump::run_v3_registration_lifecycle_blocking(
+            py,
+            &self.driver,
+            address,
+            snapshot_block,
+        )
     }
 
     /// Blocking (seat-thread) V4 twin of `run_v3_registration_lifecycle_sync`.
@@ -73,8 +77,9 @@ impl PyArbEngine {
         pool_id_hex: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<()> {
-        self.pump.run_v4_registration_lifecycle_blocking(
+        crate::bot::pump::run_v4_registration_lifecycle_blocking(
             py,
+            &self.driver,
             pool_manager_address,
             pool_id_hex,
             snapshot_block,
@@ -234,7 +239,7 @@ impl PyArbEngine {
     #[pyo3(signature = (rpc_url))]
     fn set_verify_rpc_url(&self, rpc_url: &str) {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
-        self.pump.set_verify_rpc_url(rpc_url);
+        self.driver.set_verify_rpc_url(rpc_url);
     }
 
     /// Set the `StateView` contract address for V4 verification during registration.
@@ -243,6 +248,6 @@ impl PyArbEngine {
     #[pyo3(signature = (state_view_address))]
     fn set_verify_state_view(&self, state_view_address: &str) {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
-        self.pump.set_verify_state_view(state_view_address);
+        self.driver.set_verify_state_view(state_view_address);
     }
 }

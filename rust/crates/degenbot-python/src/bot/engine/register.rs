@@ -56,9 +56,9 @@ impl PyArbEngine {
             Arc::clone(&stages),
         ));
         let result_rx = driver.take_result_receiver();
-        let pump = Arc::new(crate::bot::pump::PumpState::new(Arc::clone(&driver)));
+        // C5: no `PumpState` vessel — both wrappers share the driver itself.
         if let Some(parent) = py_bot_ref {
-            parent.borrow(py).attach_pump_state(Arc::clone(&pump));
+            parent.borrow(py).attach_pump_state(Arc::clone(&driver));
         }
         // The cross-block warm bytecode cache (`HDEG7H` Option A) — one
         // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
@@ -67,7 +67,7 @@ impl PyArbEngine {
         let warm_code_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
         Self {
             stages,
-            pump,
+            driver,
             result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),
             warm_code_cache,
         }
@@ -211,10 +211,9 @@ impl PyArbEngine {
     #[expect(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
     fn subscribe(&self, py: Python<'_>, rpc_url: String) -> PyResult<u64> {
-        // ADR-006 D4 (T3): delegates to the shared `PumpState::subscribe` —
-        // the Bot-owned entry point. Kept on the engine for the engine-only
-        // test seam; production routes through PyBot::subscribe.
-        self.pump.subscribe(py, &rpc_url)
+        // ADR-050 D7 / C5: the engine-only test-seam twin of
+        // `PyBot::subscribe` — drives the shared `EngineDriver` directly.
+        crate::bot::pump::subscribe(py, &self.driver, &rpc_url)
     }
 
     /// Resume phase: begin normal pump processing.
@@ -228,8 +227,8 @@ impl PyArbEngine {
     ///
     /// Raises `RuntimeError` if `subscribe()` has not been called first.
     fn resume(&self, py: Python<'_>) -> PyResult<()> {
-        // ADR-006 D4 (T3): delegates to the shared `PumpState`.
-        self.pump.resume(py)
+        // C5: drives the shared `EngineDriver` directly.
+        crate::bot::pump::resume(py, &self.driver)
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
@@ -244,7 +243,7 @@ impl PyArbEngine {
     /// session teardown path and a signal handler. Delegates to the shared
     /// `PumpState`.
     fn stop(&self, _py: Python<'_>) -> PyResult<()> {
-        self.pump.stop()
+        crate::bot::pump::stop(&self.driver)
     }
 
     /// Awaitable pump-completion surface: resolves once the spawned pump task
@@ -255,7 +254,7 @@ impl PyArbEngine {
     /// still resolves (the completion is a retained broadcast, not a one-shot
     /// signal consumed at creation).
     fn pump_finished_future<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.pump.pump_finished_future(py)
+        crate::bot::pump::pump_finished_future(py, &self.driver)
     }
 }
 

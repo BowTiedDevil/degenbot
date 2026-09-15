@@ -766,6 +766,32 @@ impl EngineDriver {
     }
 }
 
+/// Soak-2026-08-22 forensics (relocated with the C5 `PumpState` dissolution):
+/// name teardown paths that bypass [`EngineDriver::stop`]. If the pump task
+/// handle is still armed at drop time, unwinding tore down the driver without
+/// calling `stop()` — the silent-exit shape this exists to catch. Leveling:
+/// only the bypassed-`stop()` shape is WARN; a post-`stop()` drop
+/// (`pump_handle_armed() == false`) is the healthy path every session takes
+/// at exit — warning there trains operators to dismiss the line and buries
+/// the real signal.
+impl Drop for EngineDriver {
+    fn drop(&mut self) {
+        if self.pump_handle_armed() {
+            op_warn!(
+                domain = pump,
+                pump_task_still_armed = true,
+                "EngineDriver dropped WITHOUT stop() — unwind bypassed graceful shutdown"
+            );
+        } else {
+            diag!(
+                domain = pump,
+                pump_task_still_armed = false,
+                "EngineDriver dropped after stop()"
+            );
+        }
+    }
+}
+
 #[expect(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
