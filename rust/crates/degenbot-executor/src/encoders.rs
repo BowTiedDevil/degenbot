@@ -216,9 +216,9 @@ fn push_forward_data(out: &mut Vec<u8>, data: &[u8]) -> Result<(), EncoderError>
     Ok(())
 }
 
-// ── `pack_config` / `pack_expected_balance` (re-exported from `config`) ────────
+// ── `pack_config` (re-exported from `config`) ─────────────────────────────────
 
-pub use crate::config::{pack_config, pack_expected_balance};
+pub use crate::config::pack_config;
 
 // ── AddressTable ────────────────────────────────────────────────────────────
 

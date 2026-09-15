@@ -2,8 +2,8 @@
 the Rust seam, not the retired Python encoder.
 
 After §4.3 oracle-retirement, the Python `encode_cmd_stream` /
-`compute_simulation_warmup_slots` / `pack_expected_balance` /
-`pack_config` / `mapping_slot` / `v4_input_is_native` functions are deleted
+`compute_simulation_warmup_slots` / `pack_config` / `mapping_slot` /
+`v4_input_is_native` functions are deleted
 from `examples/eth_backrun_helpers.py` and `examples/cmd_stream.py`. The
 example (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`) must source these from the
 Rust extension `degenbot_rs`.
@@ -87,9 +87,6 @@ class TestRustSeamPresent:
     def test_pack_config(self) -> None:
         assert hasattr(self.rs, "pack_config")
 
-    def test_pack_expected_balance(self) -> None:
-        assert hasattr(self.rs, "pack_expected_balance")
-
     def test_mapping_slot(self) -> None:
         assert hasattr(self.rs, "mapping_slot")
 
@@ -146,7 +143,8 @@ class TestExampleRoutesThroughRust:
             "driver must import dispatch symbols from degenbot.dispatch (the companion seam)"
         )
         assert not imports_ffi, (
-            "driver must NOT import degenbot._ffi directly (use degenbot.dispatch / degenbot.exceptions)"
+            "driver must NOT import degenbot._ffi directly "
+            "(use degenbot.dispatch / degenbot.exceptions)"
         )
 
     def test_does_not_import_python_encoder(self) -> None:
@@ -184,9 +182,9 @@ class TestExampleRoutesThroughRust:
         The example must NOT define the retired Python sim functions — their
         logic moved to the ``degenbot_simulation`` Rust crate
         (``dispatch_profitable_py`` owns simulate + the warmup/payload
-        helpers ``compute_simulation_warmup_slots`` /
-        ``pack_expected_balance`` / ``mapping_slot``, now called INTERNALLY
-        by the seam, not from the example). WEFVGE: the standalone
+        helpers ``compute_simulation_warmup_slots`` / ``mapping_slot``, now
+        called INTERNALLY by the seam, not from the example). WEFVGE: the
+        standalone
         ``encode_cmd_stream`` / ``v4_input_is_native`` /
         ``v4_output_is_native`` PyO3 pyfunctions are retired too (the encode
         path is core-internal; the candidate resolves ``composers::PathInfo``

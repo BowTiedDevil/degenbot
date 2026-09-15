@@ -1,8 +1,8 @@
 //! `PyO3` seam for the `degenbot_executor` core crate (feature = `"executor"`).
 //!
 //! Thin `#[pyfunction]` wrappers over the Rust command-stream encoding core:
-//! [`compute_simulation_warmup_slots`], [`pack_config`],
-//! [`pack_expected_balance`], [`mapping_slot`], [`nested_mapping_slot`].
+//! [`compute_simulation_warmup_slots`], [`pack_config`], [`mapping_slot`],
+//! [`nested_mapping_slot`].
 //!
 //! Architecture (ADR-005 §3.2): each wrapper extracts Python args → releases
 //! the GIL via `py.detach()` for the encode/warmup compute → calls the core →
@@ -158,23 +158,6 @@ fn pack_config<'py>(
     u256_to_py(py, &result)
 }
 
-/// `degenbot._ffi.executor.pack_expected_balance(check_mode, expected_value) -> int`
-///
-/// Deprecated alias for [`pack_config`] with `bribe_bips=0` /
-/// `bribe_recipient_idx=0`. Thin wrapper over [`config::pack_expected_balance`].
-#[pyfunction]
-fn pack_expected_balance<'py>(
-    py: Python<'py>,
-    check_mode: u8,
-    expected_value: &Bound<'_, PyAny>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let ev = extract_u256(expected_value)?;
-    let result = py
-        .detach(|| config::pack_expected_balance(check_mode, ev))
-        .map_err(config_err_to_py)?;
-    u256_to_py(py, &result)
-}
-
 /// `degenbot._ffi.executor.mapping_slot(base_slot, key) -> int`
 ///
 /// Compute a Solidity mapping storage slot: `keccak256(pad(key,32) || pad(base,32))`.
@@ -234,7 +217,6 @@ pub fn add_executor_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let submod = PyModule::new(py, "degenbot._ffi.executor")?;
     submod.add_function(wrap_pyfunction!(compute_simulation_warmup_slots, &submod)?)?;
     submod.add_function(wrap_pyfunction!(pack_config, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(pack_expected_balance, &submod)?)?;
     submod.add_function(wrap_pyfunction!(mapping_slot, &submod)?)?;
     submod.add_function(wrap_pyfunction!(nested_mapping_slot, &submod)?)?;
     m.add_submodule(&submod)?;

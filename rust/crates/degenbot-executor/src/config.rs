@@ -1,7 +1,6 @@
 //! The `execute(commands, config)` ABI `config` `uint256` packing.
 //!
-//! Ports `examples/cmd_stream.py::pack_config` (L137–L171) + the
-//! `pack_expected_balance` deprecated alias (L173–L184). Mirrors the
+//! Ports `examples/cmd_stream.py::pack_config` (L137–L171). Mirrors the
 //! `cmd_executor.vy` `execute` config-bitfield layout:
 //!
 //! - bits `0–7`:   `check_mode` (0=skip, 1=WETH+ETH, 2=ERC6909 WETH)
@@ -72,19 +71,6 @@ pub fn pack_config(
         | U256::from(check_mode))
 }
 
-/// Deprecated alias for [`pack_config`] with `bribe_bips=0` /
-/// `bribe_recipient_idx=0`.
-///
-/// Mirrors `examples/cmd_stream.py::pack_expected_balance`. Kept for callers
-/// that predate the bribe config move.
-///
-/// # Errors
-///
-/// Returns [`ConfigError::CheckModeOutOfRange`] if `check_mode > 3`.
-pub fn pack_expected_balance(check_mode: u8, expected_value: U256) -> Result<U256, ConfigError> {
-    pack_config(check_mode, expected_value, 0, 0)
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -138,15 +124,6 @@ mod tests {
         let mode = U256::from(2u64);
         let want = expected_shifted | recip | bribe | mode;
         assert_eq!(pack_config(2, expected, 500, 3).unwrap(), want);
-    }
-
-    #[test]
-    fn pack_expected_balance_alias_matches_zero_bribe() {
-        let expected = U256::from(0xDEAD_BEEFu64);
-        assert_eq!(
-            pack_expected_balance(1, expected).unwrap(),
-            pack_config(1, expected, 0, 0).unwrap(),
-        );
     }
 
     #[test]

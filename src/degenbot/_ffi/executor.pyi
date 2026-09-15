@@ -31,12 +31,6 @@ def pack_config(
 ) -> int:
     """Pack the ``execute(commands, config)`` ABI ``config`` uint256."""
 
-def pack_expected_balance(check_mode: int, expected_value: int) -> int:
-    """Return a deprecated alias for ``pack_config``.
-
-    Uses ``bribe_bips=0`` / ``bribe_recipient_idx=0``.
-    """
-
 def mapping_slot(base_slot: int, key: int) -> int:
     """Compute a Solidity mapping storage slot (``keccak256(pad(key,32) || pad(base,32))``)."""
 
@@ -48,5 +42,4 @@ __all__ = [
     "mapping_slot",
     "nested_mapping_slot",
     "pack_config",
-    "pack_expected_balance",
 ]
