@@ -21,6 +21,10 @@ pub enum CommandReport {
     Pool(PoolReport),
     /// An `aave` command report.
     Aave(AaveReport),
+    /// A `fleet` command report.
+    Fleet(FleetReport),
+    /// A `path` command report.
+    Path(PathReport),
 }
 
 impl CommandReport {
@@ -32,6 +36,8 @@ impl CommandReport {
             Self::Exchange(report) => report.render_lines(),
             Self::Pool(report) => report.render_lines(),
             Self::Aave(report) => report.render_lines(),
+            Self::Fleet(report) => report.render_lines(),
+            Self::Path(report) => report.render_lines(),
         }
     }
 }
@@ -330,6 +336,53 @@ impl PoolReport {
                 block_number,
                 divergences,
             } => verification_lines(pool, *family, *block_number, divergences),
+        }
+    }
+}
+
+/// The typed result of a `fleet` command (ADR-051 D6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FleetReport {
+    /// The live posture echo: the six `cordon_*` values plus `posture`,
+    /// rendered as one compact JSON object with sorted keys (the Python
+    /// `json.dumps(effective, sort_keys=True)` line).
+    Posture {
+        /// The rendered effective policy (`{}` when the host echoed none).
+        effective: String,
+    },
+}
+
+impl FleetReport {
+    /// The operator-facing lines for this report.
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        match self {
+            Self::Posture { effective } => vec![effective.clone()],
+        }
+    }
+}
+
+/// The typed result of a `path` command (ADR-051 D6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathReport {
+    /// `path add` enqueued the path.
+    Added {
+        /// The host's `detail` receipt.
+        detail: String,
+    },
+    /// `path discover` completed a bounded sweep.
+    Discovered {
+        /// The host's `detail` receipt.
+        detail: String,
+    },
+}
+
+impl PathReport {
+    /// The operator-facing lines for this report.
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        match self {
+            Self::Added { detail } | Self::Discovered { detail } => vec![detail.clone()],
         }
     }
 }

@@ -105,6 +105,17 @@ pub enum CliError {
     /// existing `tokio` runtime. `run_pool_update`/`run_aave_update` own their
     /// runtime and must not nest; the arms hold the same constraint.
     RuntimeNested,
+    /// The operator host refused a command: the `{"ok": false, "error": ...}`
+    /// frame, rendered as one line (ADR-051 D6).
+    OperatorRefused(String),
+    /// A protocol-level failure talking to the operator host: an unreachable
+    /// socket, a timed-out exchange, or a malformed/non-object/missing-`ok`
+    /// response frame.
+    OperatorProtocol(String),
+    /// A client-side wire-hygiene refusal (an unknown `cordon_*` key, an
+    /// empty posture patch, an unknown hop-family string), raised BEFORE the
+    /// socket is touched. Domain validation stays server-side.
+    OperatorHygiene(String),
 }
 
 impl CliError {
@@ -114,7 +125,10 @@ impl CliError {
         match self {
             Self::BootRefused(message)
             | Self::BlockResolution(message)
-            | Self::InvalidArgument(message) => message.clone(),
+            | Self::InvalidArgument(message)
+            | Self::OperatorRefused(message)
+            | Self::OperatorProtocol(message)
+            | Self::OperatorHygiene(message) => message.clone(),
             Self::Aborted => "Aborted!".to_string(),
             Self::DatabaseUpgradeRetired => {
                 "the database upgrades itself at open; for an explicit repair, run \
@@ -213,7 +227,10 @@ impl From<&CliError> for ExitCode {
             | CliError::NoActiveAaveMarkets
             | CliError::PoolUpdate(_)
             | CliError::AaveUpdate(_)
-            | CliError::RuntimeNested => Self::Failure,
+            | CliError::RuntimeNested
+            | CliError::OperatorRefused(_)
+            | CliError::OperatorProtocol(_)
+            | CliError::OperatorHygiene(_) => Self::Failure,
         }
     }
 }

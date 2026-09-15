@@ -34,6 +34,10 @@
 //! - `pool` ([`PoolCommand`]): the `degenbot-pool-updater` chunk loop +
 //!   on-chain-truth verify.
 //! - `aave` ([`AaveCommand`]): the `degenbot-aave` market run + row flips.
+//! - `fleet` ([`FleetCommand`]): the live cordon posture over the
+//!   operator command channel (ADR-051 D6).
+//! - `path` ([`PathCommand`]): live add-path / bounded discovery over
+//!   the same operator command channel.
 
 pub mod aave;
 pub mod block;
@@ -43,6 +47,9 @@ pub mod context;
 pub mod database;
 pub mod error;
 pub mod exchange;
+pub mod fleet;
+pub mod operator;
+pub mod path;
 pub mod pool;
 pub mod prompt;
 pub mod report;
@@ -61,12 +68,20 @@ pub use exchange::{
     resolve_deployment, ExchangeCommand, ExchangeDeployment, PoolManagerDeployment,
     RETIRED_EXCHANGES,
 };
+pub use fleet::FleetCommand;
+pub use operator::{
+    parse_hop_token, parse_sim_intake_floor, render_json_sorted, resolve_socket,
+    validate_posture_patch, PathDirection, PathFamily, PathStep, PosturePatchEntry,
+    PosturePatchValue, WireRequest, WireResponse, FLEET_POSTURE_THRESHOLD_KEYS,
+    SIM_INTAKE_FLOOR_RESTORE, SOCKET_DEFAULT, SOCKET_ENV,
+};
+pub use path::PathCommand;
 pub use pool::{PoolCommand, PoolFamily};
 pub use prompt::{PromptPlan, Prompter};
 pub use report::{
     schema_state_label, AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome,
     ActivateOutcome, CommandOutcome, CommandReport, CutoverOutcome, DatabaseReport,
-    DeactivateOutcome, DryRunKind, ExchangeReport, PoolReport,
+    DeactivateOutcome, DryRunKind, ExchangeReport, FleetReport, PathReport, PoolReport,
 };
 
 /// The ONE execution entry: run `command` against `ctx`, asking `prompter` when

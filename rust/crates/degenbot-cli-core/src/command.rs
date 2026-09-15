@@ -9,12 +9,14 @@ use crate::context::CliContext;
 use crate::database;
 use crate::error::CliError;
 use crate::exchange::{self, ExchangeCommand};
+use crate::fleet::{self, FleetCommand};
+use crate::path::{self, PathCommand};
 use crate::pool::{self, PoolCommand};
 use crate::prompt::{PromptPlan, Prompter};
 use crate::report::CommandReport;
 
 /// A console command.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     /// The `database` command group.
     Database(DatabaseCommand),
@@ -24,6 +26,10 @@ pub enum Command {
     Pool(PoolCommand),
     /// The `aave` command group.
     Aave(AaveCommand),
+    /// The `fleet` command group (ADR-051 D6).
+    Fleet(FleetCommand),
+    /// The `path` command group (ADR-051 D6).
+    Path(PathCommand),
 }
 
 impl Command {
@@ -35,6 +41,8 @@ impl Command {
             Self::Exchange(command) => command.prompt_plan(ctx),
             Self::Pool(command) => command.prompt_plan(ctx),
             Self::Aave(command) => command.prompt_plan(ctx),
+            Self::Fleet(command) => command.prompt_plan(ctx),
+            Self::Path(command) => command.prompt_plan(ctx),
         }
     }
 
@@ -81,6 +89,8 @@ impl Command {
             Self::Aave(command) => {
                 aave::execute(command, ctx, prompter, cancel).map(CommandReport::Aave)
             }
+            Self::Fleet(command) => fleet::execute(command, ctx).map(CommandReport::Fleet),
+            Self::Path(command) => path::execute(command, ctx).map(CommandReport::Path),
         }
     }
 }
