@@ -29,6 +29,13 @@ class Contract:
 
         """
 
+    def call_typed(
+        self,
+        function_signature: str,
+        args: list[str],
+        block_number: int | None = None,
+    ) -> list[Any]: ...
+
 class AsyncContract:
     """Async wrapper for contract interactions.
 
