@@ -526,6 +526,8 @@ impl ArbitrageEngine {
                 prefix_cache: std::sync::Arc::new(
                     ::degenbot_solvers::profit_envelope::PrefixCache::new(),
                 ),
+                min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),
+                inline_sim_enabled: cfg.solve.solve_inline_sim,
                 last_walk_sims: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
                 last_gate_us: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
                 streaming_delivery,

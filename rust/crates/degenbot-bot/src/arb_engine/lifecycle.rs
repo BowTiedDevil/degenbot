@@ -5,10 +5,9 @@
 //! `&mut ArbitrageEngine`; the stage surface (`EngineStages`) and the in-crate
 //! tests both call these directly, so no delegating inherent engine method
 //! remains outside `arb_engine/mod.rs` (the one-impl-block structural gate).
-use super::solve_cycle::{INLINE_SIM_ENABLED, MIN_PROFIT_FLOOR_WEI};
+
 use super::{ArbitrageEngine, HashMap};
 use ::degenbot_solvers::mixed::{PoolHop, SolvePathResult};
-use alloy::primitives::U256;
 /// KAHU5W: the solver crate's runtime stance is INSTANCE-SCOPED — built
 /// fresh per engine from the typed config and passed down; no `OnceLock`.
 #[must_use]
@@ -70,15 +69,9 @@ pub(crate) fn install_engine_stances(
         crate::arb_engine::boot_stamp::BootRole::Registration,
         boot_stamp.clone(),
     );
-    // J4HN66: streaming/detached stances are per-engine cfg values now
-    // (packed at construction); this install keeps only the statics that
-    // still have non-construction consumers (INLINE_SIM).
-    INLINE_SIM_ENABLED.store(
-        cfg.solve.solve_inline_sim,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    let min_profit = U256::from(cfg.solve.min_profit_wei);
-    let _ = MIN_PROFIT_FLOOR_WEI.set(min_profit);
+    // C2: the cycle's stance values are ENGINE instance values now
+    // (`SolveCycle::min_profit_floor` / `::inline_sim_enabled`, packed at
+    // construction) — no process statics remain for the solve cycle.
     crate::bot_core::resolve::install_projection_memo_stance(cfg.solve.cl_projection_cache);
     // 7LV6VN T2 (YI5NGB): the chunked parallel resolve stance is an ENGINE
     // instance value now — packed per construction from

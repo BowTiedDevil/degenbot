@@ -99,39 +99,14 @@ struct ResolveChunkOut {
     invalid_reasons: HashMap<String, u64>,
     deferred: Vec<u64>,
 }
-/// Pre-solve profitability floor for the profit-envelope gate (SU7MAE).
-/// Precedence: `DEGENBOT_MIN_PROFIT_WEI` (decimal wei) > default 0. Default 0
-/// skips only paths whose rigorous upper bound proves zero-or-negative profit.
-/// The full fee-aware derivation (`gas × base_fee_next + priority_fee`, the
-/// same shape as degenbot-execution's assess rule) replaces this once live
-/// numbers justify it — the solver API needs no change for that.
-/// (T4: parsed once from env at engine construction — see the runtime
-/// stance installer; the fn reads the static, never the environment.)
-pub(crate) fn min_profit_floor() -> U256 {
-    MIN_PROFIT_FLOOR_WEI.get().copied().unwrap_or(U256::ZERO)
-}
-pub(crate) static MIN_PROFIT_FLOOR_WEI: std::sync::OnceLock<U256> = std::sync::OnceLock::new();
 /// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
 /// The record tuple now lives with the walk (`arb_engine::lane_walk`,
 /// 5WCRWZ T4); T5 retires the heap itself.
 pub(crate) type PathTimesHeap =
     std::collections::BinaryHeap<std::cmp::Reverse<super::lane_walk::PathTimeRecord>>;
-/// `DEGENBOT_SOLVE_INLINE_SIM` (SIMPIPE2 T2 → T4, task PIRX3W / AK7VJB):
-/// relocate the CL-hop clamp from the engine-Mutex merge site INTO the
-/// per-path solve worker, so the worker can simulate on the clamp-committed
-/// inputs without an engine-lock round-trip (the M1 seam T1/T3 build on).
-/// Parsed ONCE at engine construction.
-///
-/// **Default ON since the T4 mainnet soak** (2026-09-05): payload counts
-/// matched solved paths per cycle, ~99% of sim batches skipped the FFI
-/// dispatch, header→first-payload-render p50 1ms / p90 31ms (vs the option-A
-/// FFI pipeline's ~26ms solve wall + 49ms async sim tail), and the 46-minute
-/// soak ran with zero deadlocks/panics/storage-key incidents through a
-/// 200k-path registration flood. `DEGENBOT_SOLVE_INLINE_SIM=0`/`false`
-/// opts OUT (restores the legacy merge-site clamp for a run); unset keeps
-/// the inline stance. Later 0.7 hardening may remove the env entirely.
-pub(crate) static INLINE_SIM_ENABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
+/// `DEGENBOT_SOLVE_INLINE_SIM` (SIMPIPE2 T2 → T4, task PIRX3W / AK7VJB) —
+/// stance semantics unchanged; since C2 it is the `SolveCycle` instance
+/// value `inline_sim_enabled`, never a process static.
 /// Per-cycle shared solve context (epic BXUSGL T1): everything the
 /// per-path dispatch touches besides the resolved snapshot. Bundled once
 /// per cycle so a worker handle is static for the dedicated-executor
@@ -145,6 +120,10 @@ pub(crate) struct SolveCycleShared {
     /// solvers-crate `PREFIX_CACHE` process static); epoch-generationed, so
     /// entries never survive a block boundary.
     pub(crate) prefix_cache: std::sync::Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
+    /// C2: the pre-solve profitability floor as an instance value (replaces
+    /// the retired `MIN_PROFIT_FLOOR_WEI` process static); construction-time
+    /// from `cfg.solve.min_profit_wei`.
+    pub(crate) min_profit: U256,
     /// KAHU5W: the instance-scoped solver runtime stance, threaded down —
     /// the solver crate has no process-global config anymore.
     pub(crate) runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig,
@@ -284,6 +263,15 @@ pub(crate) struct SolveCycle {
     pub(crate) walk_memo: Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
     /// C4: the engine-owned prefix-composition cache (was a solvers static).
     pub(crate) prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
+    /// C2: the pre-solve profitability floor (epic SU7MAE semantics: a
+    /// rigorous-upper-bound gate; `min_profit_wei` default 0 skips only
+    /// provably-zero-or-negative paths). Since C2 it is a packed instance
+    /// value, never a process static.
+    pub(crate) min_profit_floor: U256,
+    /// C2: the inline-sim stance as an engine instance value (replaces the
+    /// retired `INLINE_SIM_ENABLED` process static; documented stance
+    /// semantics unchanged, SIMPIPE2 T2/T4).
+    pub(crate) inline_sim_enabled: bool,
     /// Per-path previous-block MEASURED walk sims (recorded by `solve_fn`
     /// after each solve; lock-free-read at bin construction). Refines the
     /// LPT makespan predictor for stable pool shapes (loop-12 KUKHMX).
@@ -1750,7 +1738,8 @@ impl SolveCycle {
             test_solve_panic: self.test_solve_panic.clone(),
             core: std::sync::Arc::clone(&self.core),
             pool_refs,
-            worker_clamp: INLINE_SIM_ENABLED.load(std::sync::atomic::Ordering::Relaxed),
+            min_profit: self.min_profit_floor,
+            worker_clamp: self.inline_sim_enabled,
             inline_sim: self.inline_sim.clone(),
         });
         // The LPT bins are Arc-shared for every arm; the
@@ -2047,6 +2036,7 @@ impl SolveCycle {
         let core = std::sync::Arc::clone(&self.core);
         let results_block = self.cursor.results_block();
         let runtime_cfg = self.runtime_cfg;
+        let min_floor = self.min_profit_floor;
         let (tx, rx) = std::sync::mpsc::channel::<(u64, SolvePathResult)>();
         for (bin_idx, bin) in bins.iter().enumerate() {
             let bin = bin.clone();
@@ -2071,9 +2061,7 @@ impl SolveCycle {
                     let (path_id, resolved) = &to_solve_bin[i];
                     let _solve_ctx = solve_span_bin.enter();
                     if let Some(mut r) = ::degenbot_solvers::mixed::solve_path_with_min_profit(
-                        resolved,
-                        min_profit_floor(),
-                        &gate_deps,
+                        resolved, min_floor, &gate_deps,
                     )
                     .result
                     .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())

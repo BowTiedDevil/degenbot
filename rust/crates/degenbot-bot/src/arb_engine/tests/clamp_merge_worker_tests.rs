@@ -110,6 +110,7 @@ fn worker_probe_ctx(
             false, false,
         )),
         prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
+        min_profit: ::alloy::primitives::U256::ZERO,
         capture: None,
         capture_mixed: None,
         path_times: parking_lot::Mutex::new(PathTimesHeap::new()),

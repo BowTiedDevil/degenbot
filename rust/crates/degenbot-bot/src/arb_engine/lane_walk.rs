@@ -14,7 +14,6 @@
 //! walk-adjacent helpers (`clamp_result_in_worker`, `flush_solved_item`,
 //! `inline_sim_payload`) are defined HERE (5WCRWZ T7).
 use super::solve_cycle::clamp_result_with_state;
-use super::solve_cycle::min_profit_floor;
 use super::solve_cycle::SolveCycleShared;
 use super::{BlockMetadata, HashMap};
 use crate::arb_engine::executor::{SolveLane, SolveOutcome};
@@ -186,11 +185,8 @@ pub(crate) fn solve_one_path(
     let _path_ctx = path_span.enter();
     ::degenbot_solvers::profit_envelope::reset_gate_stats();
     let t0 = std::time::Instant::now();
-    let outcome = ::degenbot_solvers::mixed::solve_path_with_min_profit(
-        resolved,
-        min_profit_floor(),
-        &gate_deps,
-    );
+    let outcome =
+        ::degenbot_solvers::mixed::solve_path_with_min_profit(resolved, ctx.min_profit, &gate_deps);
     let micros = t0.elapsed().as_micros();
     ctx.solve_cpu_us.fetch_add(
         u64::try_from(micros).unwrap_or(u64::MAX),
