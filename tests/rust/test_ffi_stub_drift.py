@@ -367,3 +367,59 @@ def test_every_runtime_submodule_has_a_stub() -> None:
     }
     missing = sorted(runtime_subs - stub_stems)
     assert not missing, f"runtime submodules missing a stub: {missing}"
+
+# ---------------------------------------------------------------------------
+# R5 — retired-surface tombstones (ergo DOL4NL; folded from
+# test_per_pool_snapshot_ingestion_removed.py + test_legacy_start_removed.py)
+# ---------------------------------------------------------------------------
+# The tombstones for surface *deletions* (DADWUP: per-pool snapshot ingestion
+# crossings + the SQLAlchemy yield_per loops; XEANMB: the whole-dict
+# 'load_*_from_py' / 'clear_*_snapshot' surface; Plan 102 Slice 1: the legacy
+# one-shot 'start') were bespoke 'not hasattr' files. They are now data: each
+# owner — a module, or 'module::Class' resolved as an attribute — must NOT
+# expose its listed names at runtime. If a name returns, this gate fails;
+# resurrecting one requires deleting its row here in the same commit, with
+# justification, so the decision is reviewed rather than silent.
+#
+# The tombstones' positive half ("canonical phase methods remain") needs no R5
+# data: ArbitrageEngine is an R4 '_CLASS_STUBS' row and its stub declares
+# 'subscribe'/'resume', so losing either at runtime already fails R4.
+
+
+_RETIRED_NAMES: tuple[tuple[str, str], ...] = (
+    # DADWUP: per-pool PyO3 snapshot ingestion on ArbitrageEngine.
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "begin_v3_snapshot_stream"),
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "insert_v3_pool_snapshot"),
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "finish_v3_snapshot"),
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "begin_v4_snapshot_stream"),
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "insert_v4_pool_snapshot"),
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "finish_v4_snapshot"),
+    # XEANMB: whole-dict ingestion surface.
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "load_v3_snapshot_from_py"),
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "load_v4_snapshot_from_py"),
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "clear_v3_snapshot"),
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "clear_v4_snapshot"),
+    # DADWUP: the SQLAlchemy yield_per loops.
+    ("degenbot.uniswap.snapshot_binary", "stream_v3_snapshot_to_engine"),
+    ("degenbot.uniswap.snapshot_binary", "stream_v4_snapshot_to_engine"),
+    # Plan 102 Slice 1: the legacy one-shot startup.
+    ("degenbot.arbitrage.engine_registry::ArbitrageEngine", "start"),
+)
+
+
+def _resolve_owner(owner: str) -> object:
+    """A 'module' path, or 'module::Attr' for a module-level attribute."""
+    module_name, _, attr = owner.partition("::")
+    obj = importlib.import_module(module_name)
+    return getattr(obj, attr) if attr else obj
+
+
+@pytest.mark.parametrize(("owner", "name"), _RETIRED_NAMES)
+def test_retired_names_stay_absent(owner: str, name: str) -> None:
+    """R5: tombstoned surface never returns to the runtime."""
+    assert not hasattr(_resolve_owner(owner), name), (
+        f"{owner} exposes retired name {name!r} — it was deleted by DADWUP / "
+        f"XEANMB / Plan 102 Slice 1. If resurrecting it deliberately, remove "
+        f"the R5 tombstone row in tests/rust/test_ffi_stub_drift.py with "
+        f"justification in the same change."
+    )
