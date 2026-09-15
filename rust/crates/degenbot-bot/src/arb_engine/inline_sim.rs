@@ -229,6 +229,70 @@ pub trait InlineSimulator: Send + Sync + 'static {
         rx
     }
 }
+/// C3: the ONE inline-sim assembly (request + span + verdict record), shared by
+/// the production pipelined body and the otel-span tests. The former
+/// `lane_walk::inline_sim_payload` test twin — a byte-for-byte mirror the
+/// contracts pinned instead of THIS body — is retired into it (SIMSPANDUP /
+/// ADR-043 verdict discipline unchanged: the seam's `SimSpanVerdict` Drop owns
+/// the failure classification; the assembly only stamps the profitable arm).
+/// [`schedule_one`]'s span stayed open until the sim completed; that lifetime
+/// is preserved by entering the span inside this function.
+pub(crate) fn build_inline_sim_request(
+    ctx: &crate::arb_engine::solve_cycle::SolveCycleShared,
+    idx: usize,
+    pid: u64,
+    result: &degenbot_solvers::mixed::SolvePathResult,
+) -> InlineSimRequest {
+    InlineSimRequest {
+        path_id: pid,
+        hops: std::clone::Clone::clone(&ctx.pool_refs[idx].pools),
+        optimal_input: result.optimal_input,
+        consumed_inputs: std::clone::Clone::clone(&result.consumed_inputs),
+        hop_outputs: std::clone::Clone::clone(&result.hop_outputs),
+        state_nonces: std::clone::Clone::clone(&result.state_nonces),
+        sim_block: ctx.solve_block,
+        block_timestamp: ctx.metadata.timestamp,
+        parent_base_fee: ctx.metadata.base_fee_per_gas.unwrap_or(0),
+        parent_gas_used: ctx.metadata.gas_used,
+        parent_gas_limit: ctx.metadata.gas_limit,
+    }
+}
+
+/// Run one clamp-admitted path's sim under the ONE worker-inline span
+/// (`degenbot.bundle.simulate`, explicitly parented — 7LV6VN T1b, TLS re-entry
+/// alone forked orphan roots on worker threads). The verdict records live here
+/// (SIMSPANDUP): failure classification arrives via the seam's
+/// `SimSpanVerdict` Drop; this function only stamps the successful arm plus
+/// `expected_profit`. `None` = hook failure with no payload.
+pub(crate) fn run_inline_sim(
+    sim: &std::sync::Arc<dyn InlineSimulator>,
+    request: InlineSimRequest,
+    expected_profit: alloy::primitives::U256,
+    parent: tracing::Span,
+) -> Option<SimulatedPathResult> {
+    let span = tracing::info_span!(
+        target: "degenbot::solver",
+        parent: parent,
+        "degenbot.bundle.simulate",
+        sim.path = "worker_inline",
+        path_id = request.path_id,
+        sim_block = request.sim_block,
+        simulate.verdict = tracing::field::Empty,
+        simulate.expected_profit = tracing::field::Empty,
+        simulate.error_reason = tracing::field::Empty,
+    );
+    let _enter = span.enter();
+    let payload = sim.simulate_path(request);
+    if payload.as_ref().is_some_and(|p| p.failure.is_none()) {
+        span.record("simulate.verdict", "profitable");
+    }
+    span.record(
+        "simulate.expected_profit",
+        tracing::field::display(expected_profit),
+    );
+    payload
+}
+
 /// One scheduled sim: pid + the receipt the worker polls/joins.
 #[derive(Default)]
 pub(crate) struct PipelinedSims {
@@ -259,19 +323,10 @@ impl PipelinedSims {
         // byte so Jaeger nesting and the verdict records are unchanged:
         // the span stays open until the sim completes instead of closing
         // when the bin's synchronous call returns.
-        let request = crate::arb_engine::inline_sim::InlineSimRequest {
-            path_id: pid,
-            hops: std::clone::Clone::clone(&ctx.pool_refs[idx].pools),
-            optimal_input: result.optimal_input,
-            consumed_inputs: std::clone::Clone::clone(&result.consumed_inputs),
-            hop_outputs: std::clone::Clone::clone(&result.hop_outputs),
-            state_nonces: std::clone::Clone::clone(&result.state_nonces),
-            sim_block: ctx.solve_block,
-            block_timestamp: ctx.metadata.timestamp,
-            parent_base_fee: ctx.metadata.base_fee_per_gas.unwrap_or(0),
-            parent_gas_used: ctx.metadata.gas_used,
-            parent_gas_limit: ctx.metadata.gas_limit,
-        };
+        // C3: request assembly lives in ONE place; the legacy body mirrored it
+        // byte-for-byte.
+        let request =
+            crate::arb_engine::inline_sim::build_inline_sim_request(ctx, idx, pid, result);
         let sim = std::sync::Arc::clone(sim);
         let parent = parent_span.clone();
         let expected_profit = result.profit;
@@ -287,32 +342,11 @@ impl PipelinedSims {
         // ONLY in the machinery that runs it.
         let (tx, rx) = std::sync::mpsc::channel();
         let run_sim_body = move || {
-            let span = tracing::info_span!(
-                target: "degenbot::solver",
-                parent: parent,
-                "degenbot.bundle.simulate",
-                sim.path = "worker_inline",
-                path_id = request.path_id,
-                sim_block = request.sim_block,
-                simulate.verdict = tracing::field::Empty,
-                simulate.expected_profit = tracing::field::Empty,
-                // SIMSPANDUP: declared so the seam-reused span keeps the
-                // ADR-040 error classification on the inline arm too.
-                simulate.error_reason = tracing::field::Empty,
-            );
-            let _enter = span.enter();
-            let payload = sim.simulate_path(request);
-            // SIMSPANDUP: as in the sync arm - the seam's SimSpanVerdict
-            // Drop stamps the failure verdict (`not_profitable`/`error` +
-            // error_reason) before the payload returns; not clobbering it
-            // keeps the richer classification. A `None` payload = hook
-            // miss (no sim ran), so honestly no verdict stamp at all.
-            if payload.as_ref().is_some_and(|p| p.failure.is_none()) {
-                span.record("simulate.verdict", "profitable");
-            }
-            span.record(
-                "simulate.expected_profit",
-                tracing::field::display(expected_profit),
+            let payload = crate::arb_engine::inline_sim::run_inline_sim(
+                &sim,
+                request,
+                expected_profit,
+                parent,
             );
             let _ = tx.send(payload);
         };

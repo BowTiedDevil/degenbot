@@ -84,57 +84,14 @@ pub(crate) fn inline_sim_payload(
         return None;
     }
     let sim = ctx.inline_sim.as_ref()?;
-    // RKXN5Z/IJUBV3 (G6HSIS parity): the REAL per-path EVM sim rides the
-    // `degenbot.bundle.simulate` span, parented under the entered cycle span
-    // (both executor arms re-enter solve_span around `solve_one_path`), with
-    // the terminal verdict recorded at close. This is the only remaining
-    // owner of the name - the merge-site marker that used to borrow it is a
-    // merge-span event now, so Jaeger's `bundle.simulate` spans are all
-    // genuine ms-class simulations again.
-    // 7LV6VN T1b: EXPLICIT parent at creation. TLS re-entry alone proved
-    // insufficient on the detached bin threads (worker-side spans still
-    // forked their own trace with a dangling parent id - 1041 roots/60s
-    // live-probed). The macro `parent:` form binds the identity directly,
-    // independent of the thread-local current span.
-    let span = tracing::info_span!(
-        parent: parent_span.clone(),
-        "degenbot.bundle.simulate",
-        sim.path = "worker_inline",
-        path_id = pid,
-        sim_block = ctx.solve_block,
-        simulate.verdict = tracing::field::Empty,
-        simulate.expected_profit = tracing::field::Empty,
-        // SIMSPANDUP: declared so the seam-reused span keeps the ADR-040
-        // error classification on the inline arm too.
-        simulate.error_reason = tracing::field::Empty,
-    );
-    let _enter = span.enter();
-    let payload = sim.simulate_path(crate::arb_engine::inline_sim::InlineSimRequest {
-        path_id: pid,
-        hops: std::clone::Clone::clone(&ctx.pool_refs[idx].pools),
-        optimal_input: result.optimal_input,
-        consumed_inputs: std::clone::Clone::clone(&result.consumed_inputs),
-        hop_outputs: std::clone::Clone::clone(&result.hop_outputs),
-        state_nonces: std::clone::Clone::clone(&result.state_nonces),
-        sim_block: ctx.solve_block,
-        block_timestamp: ctx.metadata.timestamp,
-        parent_base_fee: ctx.metadata.base_fee_per_gas.unwrap_or(0),
-        parent_gas_used: ctx.metadata.gas_used,
-        parent_gas_limit: ctx.metadata.gas_limit,
-    })?;
-    // SIMSPANDUP: on failure the seam's SimSpanVerdict Drop (inside the
-    // inline hook's task) already stamped this span with
-    // `not_profitable`/`error` (+ error_reason) before the payload returns -
-    // don't clobber the richer classification with the bare string.
-    if payload.failure.is_none() {
-        span.record("simulate.verdict", "profitable");
-    }
-    span.record(
-        "simulate.expected_profit",
-        tracing::field::display(result.profit),
-    );
-    Some(payload)
+    // C3: the assembly lives in ONE home (`arb_engine::inline_sim`); this
+    // wrapper is only the guards + shape, and otel tests reachable through
+    // it pin the production assembly directly (RKXN5Z/IJUBV3 span shape,
+    // SIMSPANDUP verdict discipline).
+    let request = crate::arb_engine::inline_sim::build_inline_sim_request(ctx, idx, pid, result);
+    crate::arb_engine::inline_sim::run_inline_sim(sim, request, result.profit, parent_span.clone())
 }
+
 /// Stamp the sim payload onto the held Solved outcome and submit it —
 /// ONE flush shape for BOTH solve arms (7LV6VN T5 carry; unified by
 /// QR3NUS 43E3H3). The arms differ only in the `submit` closure:
