@@ -99,11 +99,21 @@ impl PumpState {
         self.driver.stop().map_err(map_driver_err)
     }
 
-    /// `true` when the spawned pump task has finished (cooperative timed
-    /// exit, WS stream end, or abort/panic).
-    #[must_use]
-    pub(crate) fn pump_finished(&self) -> bool {
-        self.driver.pump_finished()
+    /// Awaitable pump-completion surface (the `PyO3` twin of
+    /// [`EngineDriver::wait_pump_finished`]).
+    ///
+    /// Resolves when the spawned pump task stops — cooperative timed exit
+    /// (`HOTPATH_SHUTDOWN_MS`), WS stream end, abort, or panic. The future
+    /// also resolves for a consumer created AFTER the pump already ended.
+    ///
+    /// # Errors
+    /// Only if the `PyO3` bridge itself fails to create the future.
+    pub(crate) fn pump_finished_future<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let driver = Arc::clone(&self.driver);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            driver.wait_pump_finished().await;
+            Ok(())
+        })
     }
 
     // -- Verify config (ADR-006 D4 T4, re-parented onto the driver) ---------

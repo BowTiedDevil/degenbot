@@ -247,13 +247,15 @@ impl PyArbEngine {
         self.pump.stop()
     }
 
-    /// `true` once the spawned pump task has finished — cooperative timed
-    /// exit (`HOTPATH_SHUTDOWN_MS`), WS stream end, or abort/panic. The
-    /// Python runner's pump watchdog polls this so a completed pump triggers
-    /// the ordinary graceful shutdown instead of the runner idling forever
-    /// on a dead engine.
-    fn pump_finished(&self) -> bool {
-        self.pump.pump_finished()
+    /// Awaitable pump-completion surface: resolves once the spawned pump task
+    /// finishes — cooperative timed exit (`HOTPATH_SHUTDOWN_MS`), WS stream
+    /// end, abort, or panic. The Python runner awaits this instead of polling,
+    /// so a completed pump triggers the ordinary graceful shutdown within one
+    /// event-loop turn. A consumer that awaits it AFTER the pump already ended
+    /// still resolves (the completion is a retained broadcast, not a one-shot
+    /// signal consumed at creation).
+    fn pump_finished_future<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.pump.pump_finished_future(py)
     }
 }
 

@@ -87,6 +87,12 @@ class _FakeEngine:
         if self.stop_raises is not None:
             raise self.stop_raises
 
+    async def pump_finished_future(self) -> None:
+        # Injected engines have no real pump: satisfy the awaitable contract
+        # with a future that never resolves, so the watchdog stays parked
+        # until the session ends on its own (the real pre-finish shape).
+        await asyncio.Event().wait()
+
     def last_processed_block(self) -> int | None:
         return 12_345
 
@@ -474,6 +480,11 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
 
             def path_count(self) -> int:
                 return 0
+
+            async def pump_finished_future(self) -> None:
+                # Once-only engine double: satisfy the awaitable contract with
+                # a future that never resolves.
+                await asyncio.Event().wait()
 
         class _Registry:
             def __init__(self) -> None:
@@ -1181,6 +1192,11 @@ class TestSubCBgRegistrationConcurrency:
             def path_count(self) -> int:
                 return 0
 
+            async def pump_finished_future(self) -> None:
+                # Minimal engine double: satisfy the awaitable contract with a
+                # future that never resolves.
+                await asyncio.Event().wait()
+
             def block_stream(self):
                 self.block_stream_calls += 1
                 if self.block_stream_calls > 1:
@@ -1679,6 +1695,11 @@ class TestPumpFinishedWatchdog:
     """Pump watchdog: when the Rust pump task finishes OUTSIDE ``stop()``
     (hotpath timed exit / WS stream end / panic), the runner must notice and
     tear down gracefully instead of idling forever on a dead engine.
+
+    The watchdog awaits the engine's real completion future — no poll, no
+    injected-engine bypass. Test doubles satisfy the same awaitable contract:
+    ``_FakeEngine.pump_finished_future`` never resolves (a live fake pump),
+    while a finishing/panicking engine resolves it.
     """
 
     async def test_pump_finished_outside_stop_ends_run_gracefully(self) -> None:
@@ -1687,14 +1708,13 @@ class TestPumpFinishedWatchdog:
         class _FinishingEngine(_FakeEngine):
             def __init__(self) -> None:
                 super().__init__()
-                self._polls = 0
+                self.pump_ended = asyncio.Event()
 
-            def pump_finished(self) -> bool:
-                # finish on the second poll (first 0.5s tick is alive)
-                self._polls += 1
-                return self._polls > 1
+            async def pump_finished_future(self) -> None:
+                await self.pump_ended.wait()
 
-        engine_registry.engine = _FinishingEngine()
+        finishing = _FinishingEngine()
+        engine_registry.engine = finishing
 
         consumer_exited = asyncio.Event()
 
@@ -1715,16 +1735,69 @@ class TestPumpFinishedWatchdog:
             consumer=hanging_consumer,
         )
         await session.start()
-        # run() must RETURN (not hang) once the watchdog fires.
-        async with session:
-            await session.run()
+
+        async def _end_pump_soon() -> None:
+            # Let run() start the consumer + watchdog, then signal the pump end.
+            for _ in range(5):
+                await asyncio.sleep(0)
+            finishing.pump_ended.set()
+
+        fire = asyncio.create_task(_end_pump_soon())
+        try:
+            # run() must RETURN (not hang) once the watchdog fires.
+            async with session:
+                await session.run()
+        finally:
+            fire.cancel()
 
         assert consumer_exited.is_set(), "watchdog must cancel the idling consumer"
 
-    async def test_watchdog_noop_for_engines_without_pump_finished(self) -> None:
-        # Injected/test engines that lack `pump_finished` keep the pre-watchdog
-        # behavior entirely: the watchdog returns immediately (the `getattr`
-        # guard) and the consumer is left untouched.
+    async def test_pump_panic_completion_cancels_consumer_exactly_once(self) -> None:
+        # A panicked pump drops its completion sender, so the future resolves
+        # (never hangs). The watchdog then cancels the consumer exactly once.
+        engine_registry = _FakeEngineRegistry()
+
+        class _PanickedEngine(_FakeEngine):
+            async def pump_finished_future(self) -> None:
+                # A panicked pump task drops its completion sender; a real
+                # awaitable resolves after a beat (it does not raise).
+                for _ in range(3):
+                    await asyncio.sleep(0)
+
+        engine_registry.engine = _PanickedEngine()
+
+        cancel_count = 0
+        consumer_exited = asyncio.Event()
+
+        async def hanging_consumer(**kwargs):
+            nonlocal cancel_count
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancel_count += 1
+                consumer_exited.set()
+                raise
+
+        session = BotRunner(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=hanging_consumer,
+        )
+        await session.start()
+        async with session:
+            await session.run()
+
+        assert consumer_exited.is_set(), "panicked pump must cancel the consumer"
+        assert cancel_count == 1, "the consumer is cancelled exactly once"
+
+    async def test_watchdog_parks_on_injected_engine_future(self) -> None:
+        # Injected engines satisfy the real awaitable contract: a future that
+        # never resolves. The watchdog stays parked (does not trip) while the
+        # consumer is alive — the pre-finish consumer shape.
         async def hanging_consumer(**kwargs):
             await asyncio.Event().wait()
 
@@ -1739,5 +1812,12 @@ class TestPumpFinishedWatchdog:
         )
         await session.start()
         async with session:
-            # plain _FakeEngine has no pump_finished → watchdog returns at once
-            await asyncio.wait_for(session._pump_finished_watchdog(), timeout=2.0)
+            watchdog = asyncio.create_task(session._pump_finished_watchdog())
+            try:
+                _done, pending = await asyncio.wait({watchdog}, timeout=0.1)
+                assert watchdog in pending, "a fake live pump must park the watchdog"
+                assert not watchdog.done()
+            finally:
+                watchdog.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watchdog

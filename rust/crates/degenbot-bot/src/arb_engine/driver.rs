@@ -79,7 +79,7 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::Instrument as _;
 
 /// A typed engine-phase violation raised at the driver boundary.
@@ -177,6 +177,14 @@ pub struct EngineDriver {
     shutdown: Arc<AtomicBool>,
     /// The spawned live-loop handle (`None` until `resume`).
     pump_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The pump-completion broadcast sender. Created in `from_stages`; the
+    /// sender is MOVED into the spawned pump task by `resume` (or dropped by
+    /// `stop` when the pump never armed), so the channel closes — resolving
+    /// every waiter — on a normal return, stream end, abort, or panic.
+    pump_finished_tx: Mutex<Option<watch::Sender<bool>>>,
+    /// The pump-completion receiver. Cloned per `wait_pump_finished` waiter;
+    /// a clone created before OR after completion still resolves.
+    pump_finished_rx: watch::Receiver<bool>,
     /// The subscribe state held between `subscribe()` and `resume()`.
     subscribe_state: Mutex<Option<DriverSubscribeState>>,
     /// The HTTP RPC URL used for verification.
@@ -216,6 +224,7 @@ impl EngineDriver {
         stages.set_result_channel(result_tx);
         let (block_tx, block_rx) = mpsc::unbounded_channel();
         stages.set_block_channel(block_tx);
+        let (pump_finished_tx, pump_finished_rx) = watch::channel(false);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         Self {
             bot,
@@ -223,6 +232,8 @@ impl EngineDriver {
             reorg_coordinator,
             shutdown: Arc::new(AtomicBool::new(false)),
             pump_handle: Mutex::new(None),
+            pump_finished_tx: Mutex::new(Some(pump_finished_tx)),
+            pump_finished_rx,
             subscribe_state: Mutex::new(None),
             verify_rpc_url: Mutex::new(None),
             verify_provider: Mutex::new(None),
@@ -274,14 +285,28 @@ impl EngineDriver {
         self.pump_handle.lock().is_some()
     }
 
-    /// `true` when the spawned pump task has finished (cooperative exit,
-    /// stream end, abort, or panic).
-    #[must_use]
-    pub fn pump_finished(&self) -> bool {
-        self.pump_handle
-            .lock()
-            .as_ref()
-            .is_some_and(tokio::task::JoinHandle::is_finished)
+    /// Await the spawned pump task's completion — cooperative exit, stream
+    /// end, abort, or panic.
+    ///
+    /// The completion is a `watch` broadcast whose terminal state is
+    /// retained, so a waiter created before OR after the pump ends resolves
+    /// promptly instead of hanging. The pump task owns the channel's only
+    /// sender; dropping it (a normal return, or the unwind of a panic) closes
+    /// the channel, which `changed()` reports as end-of-stream.
+    ///
+    /// Multiple waiters are supported; each clones the shared receiver.
+    pub async fn wait_pump_finished(&self) {
+        let mut rx = self.pump_finished_rx.clone();
+        loop {
+            if *rx.borrow_and_update() {
+                return;
+            }
+            // `Err` = every sender dropped: the pump task ended (normal
+            // return or panic). That IS completion.
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     /// Take the result-batch receiver — once only, **before** `resume()`.
@@ -468,7 +493,14 @@ impl EngineDriver {
                 "EngineDriver: auto-backfill failed — starting live loop from gap (not closed)"
             );
         }
+        // Arm the completion broadcast: the sender is owned by the spawned
+        // task, so wherever the pump ends — cooperative return, stream end,
+        // abort, or panic — the sender drops and every `wait_pump_finished`
+        // waiter resolves. No explicit send is needed; channel close IS the
+        // terminal event (which is also what makes the panic path work).
+        let completion_tx = self.pump_finished_tx.lock().take();
         let handle = tokio::spawn(async move {
+            let _completion_tx = completion_tx;
             pump.run_with_stream(combined, first_block).await;
         });
         *self.pump_handle.lock() = Some(handle);
@@ -492,6 +524,9 @@ impl EngineDriver {
             return Ok(());
         }
         self.shutdown.store(true, Ordering::Relaxed);
+        // Drop any un-armed sender (the pump never resumed): without this a
+        // pre-finish waiter would hang after a stop-before-resume.
+        drop(self.pump_finished_tx.lock().take());
         let handle = self.pump_handle.lock().take();
         if let Some(handle) = handle {
             handle.abort();
@@ -921,5 +956,73 @@ mod tests {
         assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
         driver.stop().expect("stop");
         assert!(!driver.pump_handle_armed());
+    }
+
+    #[test]
+    fn wait_pump_finished_resolves_after_the_armed_pump_ends() {
+        let driver = driver_for_test();
+        let runtime = degenbot_core::runtime::get_runtime();
+        // Arm a stand-in pump task exactly as `resume` does: the completion
+        // sender moves into the task and drops when it returns.
+        let completion_tx = driver.pump_finished_tx.lock().take();
+        let handle = runtime.spawn(async move {
+            let _completion_tx = completion_tx;
+        });
+        *driver.pump_handle.lock() = Some(handle);
+        runtime.block_on(driver.wait_pump_finished());
+    }
+
+    #[test]
+    fn wait_pump_finished_resolves_once_when_the_armed_pump_panics() {
+        let driver = driver_for_test();
+        let runtime = degenbot_core::runtime::get_runtime();
+        let completion_tx = driver.pump_finished_tx.lock().take();
+        let handle = runtime.spawn(async move {
+            let _completion_tx = completion_tx;
+            panic!("simulated pump panic");
+        });
+        *driver.pump_handle.lock() = Some(handle);
+        // Two awaits both resolve: a panic is one terminal completion that
+        // every waiter observes — it must never leave a waiter hanging.
+        runtime.block_on(async {
+            driver.wait_pump_finished().await;
+            driver.wait_pump_finished().await;
+        });
+    }
+
+    #[test]
+    fn wait_pump_finished_resolves_for_a_late_waiter() {
+        let driver = driver_for_test();
+        let runtime = degenbot_core::runtime::get_runtime();
+        // Simulate a pump that ended before any consumer existed: drop the
+        // sender outright (closed channel = terminal completion).
+        drop(driver.pump_finished_tx.lock().take());
+        runtime.block_on(driver.wait_pump_finished());
+    }
+
+    #[test]
+    fn wait_pump_finished_stays_pending_until_the_armed_pump_ends() {
+        let driver = driver_for_test();
+        let runtime = degenbot_core::runtime::get_runtime();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let completion_tx = driver.pump_finished_tx.lock().take();
+        let handle = runtime.spawn(async move {
+            let _completion_tx = completion_tx;
+            let _ = release_rx.await;
+        });
+        *driver.pump_handle.lock() = Some(handle);
+        runtime.block_on(async {
+            assert!(
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    driver.wait_pump_finished(),
+                )
+                .await
+                .is_err(),
+                "the completion future must not fire before the pump ends"
+            );
+            release_tx.send(()).expect("release the pump");
+            driver.wait_pump_finished().await;
+        });
     }
 }

@@ -800,39 +800,36 @@ class BotRunner:
             f"Entering main loop.",
         )
 
-    async def _pump_finished_watchdog(self) -> bool:
-        """Poll the Rust pump task; when it finishes outside ``stop()``, shut down.
+    async def _pump_finished_watchdog(self) -> None:
+        """Await the Rust pump's completion event, then cancel the consumer.
 
         The hotpath timed exit (``HOTPATH_SHUTDOWN_MS``) makes the pump return
-        normally after writing its report. Without a watcher the runner's idle
-        consumer task keeps the process alive forever on a dead engine —
+        normally after writing its report. Without this watcher the runner's
+        idle consumer task keeps the process alive forever on a dead engine —
         ``run_bot.sh`` then reports "running" while nothing progresses (the
         post-unwind wedge: gil-probe idle for minutes after the pump exited).
-        Join-handle completion also covers a pump panic, so this doubles as a
-        panic fail-safe. Injected/test engines that lack ``pump_finished``
-        simply get no watchdog (no behavioral change on those paths).
+        The completion surface also fires on a pump panic (the pump task owns
+        the channel's only sender; unwinding drops it), so this doubles as a
+        panic fail-safe.
 
-        Returns True when a real pump finished outside stop() (the consumer was
-        cancelled here), False when there is no pump-finished surface at all —
-        callers must NOT treat False as "pump ended", or an injected/fake-engine
-        session deadlocks awaiting a consumer nobody cancelled (the fail-fast
-        channel must still own that path).
+        The await is the real Rust-backed completion future for every engine —
+        there is no injected-engine/no-surface bypass: test doubles satisfy the
+        same awaitable contract (a fake pump that never finishes parks here
+        forever, which is exactly the pre-finish consumer shape).
+
+        Returns once the pump finished; the consumer was cancelled here, so the
+        session watch observes the pump end as ``WatchdogTripped``.
         """
-        engine = self.engine_registry.engine if self.engine_registry is not None else None
-        pump_finished = getattr(engine, "pump_finished", None) if engine is not None else None
-        if pump_finished is None:
-            return False
-        while True:
-            await asyncio.sleep(0.5)
-            if pump_finished():
-                bot_logger.warning(
-                    "[shutdown] pump task completed outside stop() — "
-                    "cancelling the consumer for a graceful teardown"
-                )
-                main_task = self._result_consumer_task
-                if main_task is not None and not main_task.done():
-                    main_task.cancel()
-                return True
+        registry = self.engine_registry
+        assert registry is not None
+        await registry.engine.pump_finished_future()
+        bot_logger.warning(
+            "[shutdown] pump task completed outside stop() — "
+            "cancelling the consumer for a graceful teardown"
+        )
+        main_task = self._result_consumer_task
+        if main_task is not None and not main_task.done():
+            main_task.cancel()
 
     # ── Actor builders (production path — only used when not injected) ──
     @staticmethod

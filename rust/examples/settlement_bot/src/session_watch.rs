@@ -10,7 +10,7 @@
 //! and the cancel duties (it cancels the CONSUMER on a watchdog trip — it never
 //! owns or exits the process, the *watch-as-observer* discipline).
 //!
-//! The Python watchdog answers `engine.pump_finished()`; the Rust driver's
+//! The Python watchdog awaits `engine.pump_finished_future()`; the Rust driver's
 //! watchdog is a *heartbeat/stall* probe over the batch-consumption loop: the
 //! consumer beats a [`Heartbeat`] per `ResultBatch`, and [`stall_watchdog`]
 //! resolves `true` when no beat arrives within the stall window. A watchdog

@@ -34,33 +34,23 @@ async def _hanging_consumer() -> None:
     await asyncio.Event().wait()
 
 
-def _never_watchdog() -> Coroutine[Any, Any, bool]:
-    """A watchdog whose pump never finishes (never returns True)."""
+def _never_watchdog() -> Coroutine[Any, Any, None]:
+    """A watchdog whose pump never finishes (the pre-finish consumer shape)."""
 
-    async def _watchdog() -> bool:
+    async def _watchdog() -> None:
         await asyncio.Event().wait()
-        return False  # pragma: no cover - the event never sets
 
     return _watchdog()
 
 
-def _instant_false_watchdog() -> Coroutine[Any, Any, bool]:
-    """Injected/test engines: no pump-finished surface at all."""
-
-    async def _watchdog() -> bool:
-        return False
-
-    return _watchdog()
-
-
-def _pump_end_watchdog(consumer: asyncio.Task[Any]) -> Coroutine[Any, Any, bool]:
+def _pump_end_watchdog(consumer: asyncio.Task[Any]) -> Coroutine[Any, Any, None]:
     """Production watchdog semantics (``_pump_finished_watchdog``): the
-    watchdog itself cancels the idling consumer, then reports the pump end."""
+    watchdog itself cancels the idling consumer once its completion future
+    resolves; completion always means the pump ended."""
 
-    async def _watchdog() -> bool:
+    async def _watchdog() -> None:
         if not consumer.done():
             consumer.cancel()
-        return True
 
     return _watchdog()
 
@@ -119,7 +109,7 @@ class TestWatchSetMatrix:
             raise boom
 
         task = asyncio.create_task(consumer())
-        watch = _watch(task, _instant_false_watchdog)
+        watch = _watch(task, _never_watchdog)
 
         with pytest.raises(RuntimeError) as excinfo:
             await watch.wait()
@@ -166,8 +156,7 @@ class TestWatchSetMatrix:
     async def test_same_batch_fail_fast_outranks_watchdog(self) -> None:
         """THE ranking, written once: when a fatal registration error and a
         watchdog trip complete in the SAME wait batch, the fail-fast verdict
-        outranks the watchdog verdict (injected/fake engines return from the
-        watchdog instantly — that completion is NOT a pump end)."""
+        outranks the watchdog verdict."""
         consumer = asyncio.create_task(_hanging_consumer())
         boom = ValueError("verification mismatch")
 
@@ -176,16 +165,16 @@ class TestWatchSetMatrix:
 
         registration = asyncio.create_task(failing_registration())
 
-        def instant_true_watchdog() -> Coroutine[Any, Any, bool]:
+        def instant_finish_watchdog() -> Coroutine[Any, Any, None]:
             # Deliberately does NOT cancel the consumer: if this verdict won,
             # the consumer would be left pending and the verdict would be
             # WatchdogTripped — the assertion below pins which branch ran.
-            async def _watchdog() -> bool:
-                return True
+            async def _watchdog() -> None:
+                return
 
             return _watchdog()
 
-        watch = _watch(consumer, instant_true_watchdog, registration)
+        watch = _watch(consumer, instant_finish_watchdog, registration)
 
         assert await watch.wait() is SessionEndVerdict.RegistrationFailed
         assert watch.registration_error is boom
@@ -216,10 +205,12 @@ class TestWatchSetMatrix:
         await watch.teardown()
         assert registration.cancelled()
 
-    async def test_instant_false_watchdog_is_dropped_not_a_pump_end(self) -> None:
-        """The injected-engine shape: an instantly-False watchdog must be
-        dropped from the watch-set instead of misread as a pump end — and a
-        LATER registration failure must still be surfaced (never swallowed)."""
+    async def test_late_registration_failure_surfaces_with_hanging_watchdog(
+        self,
+    ) -> None:
+        """A hanging watchdog (a real pump that never finishes) keeps the
+        watch-set blocked while a LATER registration failure is still
+        surfaced (never swallowed) via the fail-fast channel."""
         consumer = asyncio.create_task(_quick_consumer(ticks=5))
         boom = ValueError("late registration failure")
 
@@ -229,20 +220,18 @@ class TestWatchSetMatrix:
             raise boom
 
         registration = asyncio.create_task(late_failing_registration())
-        watch = _watch(consumer, _instant_false_watchdog, registration)
+        watch = _watch(consumer, _never_watchdog, registration)
 
         assert await watch.wait() is SessionEndVerdict.RegistrationFailed
         assert watch.registration_error is boom
         assert consumer.cancelled()
 
-    async def test_instant_false_watchdog_with_consumer_alone_still_ends(
-        self,
-    ) -> None:
-        """{consumer} + instantly-False watchdog (injected engine, no
-        registration): the session still ends through the consumer — the
-        False is not a pump end and not a hang."""
+    async def test_hanging_watchdog_with_consumer_alone_still_ends(self) -> None:
+        """{consumer} + never-finishing watchdog (injected engine): the
+        session still ends through the consumer — a pending watchdog is not a
+        hang and not a pump end."""
         consumer = asyncio.create_task(_quick_consumer(ticks=3))
-        watch = _watch(consumer, _instant_false_watchdog)
+        watch = _watch(consumer, _never_watchdog)
 
         assert await watch.wait() is SessionEndVerdict.PumpEnded
         assert consumer.done() and not consumer.cancelled()

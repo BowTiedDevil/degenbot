@@ -16,6 +16,7 @@ with the runner-built owner + injected streams). No anvil, no live RPC.
 
 from __future__ import annotations
 
+import asyncio
 import signal
 
 import pytest
@@ -69,6 +70,11 @@ class _FakeEngine:
 
     def path_count(self) -> int:
         return 0
+
+    async def pump_finished_future(self) -> None:
+        # Injected engines have no real pump: the awaitable contract is a
+        # future that never resolves (the real pre-finish consumer shape).
+        await asyncio.Event().wait()
 
     async def block_stream(self):
         return

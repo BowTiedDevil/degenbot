@@ -52,16 +52,17 @@ class SessionWatch:
     Watch-set: {consumer} + {pump-finished watchdog} + optional {background
     registration} — assembled exactly as the former twin loops' sets. The
     watchdog stays in the set for the WHOLE loop (a timed-exit pump can still
-    finish after registration completes and must not be missed); an
-    instantly-False watchdog (injected engine with no ``pump_finished``
-    surface) is dropped instead of being misread as a pump end.
+    finish after registration completes and must not be missed). Its
+    completion IS a pump end, always: the engine's completion future stays
+    pending until the pump genuinely stops, so test doubles that never finish
+    simply park the watchdog.
     """
 
     def __init__(self) -> None:
         self._consumer_task: asyncio.Task[Any] | None = None
         self._registration_task: asyncio.Task[Any] | None = None
-        self._watchdog_factory: Callable[[], Coroutine[Any, Any, bool]] | None = None
-        self._watchdog_task: asyncio.Task[bool] | None = None
+        self._watchdog_factory: Callable[[], Coroutine[Any, Any, None]] | None = None
+        self._watchdog_task: asyncio.Task[None] | None = None
         self._registration_error: BaseException | None = None
 
     # ── Watch-set assembly ────────────────────────────────────────────
@@ -69,7 +70,7 @@ class SessionWatch:
         self,
         *,
         consumer_task: asyncio.Task[Any],
-        watchdog_factory: Callable[[], Coroutine[Any, Any, bool]],
+        watchdog_factory: Callable[[], Coroutine[Any, Any, None]],
     ) -> None:
         """Attach the always-on watch members: the consumer task and the
         pump-finished watchdog factory.
@@ -98,10 +99,9 @@ class SessionWatch:
         """Watch the session's task set until the session ends; return the verdict.
 
         The same-batch ranking is written ONCE here: a fail-fast registration
-        verdict outranks a watchdog verdict in the same wait batch
-        (injected/fake engines return from the watchdog instantly — that
-        completion is NOT a pump end). On the fail-fast path the consumer is
-        cancelled + drained and the error stored; the caller re-raises it.
+        verdict outranks a watchdog verdict in the same wait batch. On the
+        fail-fast path the consumer is cancelled + drained and the error
+        stored; the caller re-raises it.
 
         Returns:
             The end-state verdict — ``RegistrationFailed`` (caller must
@@ -120,15 +120,12 @@ class SessionWatch:
         watchdog_task = asyncio.create_task(watchdog_factory(), name="pump-finished-watchdog")
         self._watchdog_task = watchdog_task
         pump_ended = False
-        watchdog_active = True
         try:
             # The watchdog stays in the watch-set for the WHOLE loop — including
             # after registration completes (only the main loop remains then, but
             # a timed-exit pump can still finish, and must not be missed).
             while not consumer_task.done():
-                watch = {consumer_task}
-                if watchdog_active:
-                    watch.add(watchdog_task)
+                watch = {consumer_task, watchdog_task}
                 if registration_task is not None:
                     watch.add(registration_task)
                 done, _pending = await asyncio.wait(
@@ -137,10 +134,8 @@ class SessionWatch:
                 )
                 # Fail-fast outranks everything: a fatal registration error must
                 # be surfaced even when the watchdog fired in the same wait
-                # batch (injected/fake engines return from the watchdog
-                # instantly — that completion is NOT a pump end). Written ONCE
-                # here (MJJUXL) — the ranking used to live in the registration
-                # twin only.
+                # batch. Written ONCE here (MJJUXL) — the ranking used to live
+                # in the registration twin only.
                 if registration_task is not None and registration_task in done:
                     exc = registration_task.exception()
                     if exc is not None and not isinstance(exc, asyncio.CancelledError):
@@ -153,20 +148,15 @@ class SessionWatch:
                     # Registration finished cleanly; stop watching, keep
                     # blocking on {consumer, watchdog}.
                     registration_task = None
-                if watchdog_active and watchdog_task in done:
-                    if watchdog_task.result():
-                        # Pump finished outside stop() (timed exit / stream end /
-                        # abort): the watchdog already cancelled the consumer —
-                        # leave via the normal teardown so the process exits.
-                        pump_ended = True
-                        if registration_task is not None and not registration_task.done():
-                            registration_task.cancel()
-                        break
-                    # No pump-finished surface (injected engine): drop it from
-                    # the watch-set instead of misreading instant completion as
-                    # a pump end — that would deadlock on an un-cancelled
-                    # consumer while swallowing any later registration failure.
-                    watchdog_active = False
+                if watchdog_task in done:
+                    # The completion future resolves ONLY when the pump really
+                    # stopped, so its completion IS a pump end; surface a
+                    # watchdog fault (a raising future) rather than swallowing it.
+                    watchdog_task.result()
+                    pump_ended = True
+                    if registration_task is not None and not registration_task.done():
+                        registration_task.cancel()
+                    break
             if pump_ended:
                 with contextlib.suppress(asyncio.CancelledError):
                     await consumer_task
