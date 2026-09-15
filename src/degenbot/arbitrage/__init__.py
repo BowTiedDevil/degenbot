@@ -16,9 +16,14 @@ directly from their submodules:
     from degenbot.arbitrage.policy import PathPolicy, ...
 """
 
-from degenbot._ffi import ArbitrageEngine, solve_balancer_weighted_basket
+from degenbot._ffi import (
+    ArbitrageEngine,
+    solve_balancer_weighted_basket,
+    verification_retry_policy_defaults,
+)
 
 __all__ = (
     "ArbitrageEngine",
     "solve_balancer_weighted_basket",
+    "verification_retry_policy_defaults",
 )

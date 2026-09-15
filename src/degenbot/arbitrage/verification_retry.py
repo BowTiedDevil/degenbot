@@ -35,7 +35,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from degenbot._ffi import verification_retry_policy_defaults
+from degenbot.arbitrage import verification_retry_policy_defaults
 from degenbot.exceptions import VerificationRpcError
 
 if TYPE_CHECKING:
