@@ -132,13 +132,9 @@ lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-p
 # misses. One reasoned outer #[allow(..., reason = "...")] remains permitted for
 # the legitimate cross-target conditional suppressions #[expect] cannot express.
 check-no-inner-allow:
-    @command -v rg >/dev/null 2>&1 || { echo "ERROR: ripgrep (rg) is required for check-no-inner-allow" >&2; exit 1; }
-    @if rg -n '#!\[allow\(' rust/crates -g '*.rs'; then \
-        echo "ERROR: inner #![allow] is forbidden - use #[expect], or a reasoned outer #[allow] for cross-target conditionals" >&2; \
-        exit 1; \
-    else \
-        echo "ok: no inner #![allow] in Rust sources"; \
-    fi
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_inner_allow_attributes --exact --nocapture
 
 # Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check:
@@ -147,31 +143,14 @@ fmt-check:
 # Enforce the no-pyo3-in-core invariant (Plan 103). Pure Rust core crates must
 # not depend on pyo3 under their default features. Add new core crates here.
 check-no-pyo3-in-cores:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for crate in degenbot-core degenbot-math degenbot-abi degenbot-rpc degenbot-ingestion degenbot-bot degenbot-cli degenbot-cli-core degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index degenbot-arbitrage degenbot-fork degenbot-execution-sample; do
-        if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
-            echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
-            exit 1
-        fi
-    done
-    echo "OK: core crates + umbrella are pyo3-free under default features"
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- core_crates_are_pyo3_free_under_default_features --exact --nocapture
 
 check-cli-core-purity:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # ADR-051 D1/D2: degenbot-cli-core is the semantics home both front ends map
-    # into. It must stay clap-free (argv spelling is the facade's job) and
-    # indicatif-free (progress rendering is the facade's job). Mirrors
-    # check-no-pyo3-in-cores: walk the resolved dep graph, not just the manifest.
-    tree=$(cargo tree --manifest-path rust/Cargo.toml -p degenbot-cli-core --prefix none 2>/dev/null)
-    offenders=$(printf '%s\n' "$tree" | sed 's/ (.*//' | awk '{print $1}' | grep -E '^(clap|clap_derive|clap_builder|indicatif)$' || true)
-    if [ -n "$offenders" ]; then
-        echo "ERROR: degenbot-cli-core must not depend on clap or indicatif (ADR-051 D1/D2)." >&2
-        printf '%s\n' "$offenders" >&2
-        exit 1
-    fi
-    echo "OK: degenbot-cli-core is clap-free and indicatif-free"
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_core_is_clap_and_indicatif_free --exact --nocapture
 
 # Enforce the ADR-051 D2 dependency charter for the argv facade: `degenbot-cli`
 # may name workspace members (the clap-free semantics crate + the sink crates)
@@ -181,33 +160,9 @@ check-cli-core-purity:
 # maps argv into `degenbot-cli-core` and must never reach a domain-engine crate
 # on its own. Mirrors check-cli-core-purity / check-no-pyo3-in-cores.
 check-cli-shell-purity:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    manifest=rust/crates/degenbot-cli/Cargo.toml
-    [ -f "$manifest" ] || { echo "ERROR: $manifest not found" >&2; exit 1; }
-    # The declared allowlist: the facade's argv/interaction/sink plumbing.
-    allow='^(clap|indicatif|tokio|tracing|tracing-subscriber)$'
-    # Walk the dependency tables the crate may name. A workspace member
-    # (`.workspace = true`) is always allowed; every other entry must be on the
-    # allowlist. dev-dependencies are covered too - the charter is about what
-    # the crate may name, not only what the binary links.
-    offenders=$(awk '
-        /^\[(dependencies|build-dependencies|dev-dependencies)\]/ { in_deps = 1; next }
-        /^\[/ { in_deps = 0; next }
-        in_deps && /^[A-Za-z0-9_-]+[[:space:]]*=/ {
-            if ($0 ~ /workspace[[:space:]]*=[[:space:]]*true/) next
-            name = $1
-            sub(/[[:space:]]*=.*/, "", name)
-            print name
-        }
-    ' "$manifest" | grep -Ev "$allow" || true)
-    if [ -n "$offenders" ]; then
-        echo "ERROR: degenbot-cli may depend only on workspace members + the argv/sink allowlist (ADR-051 D2)." >&2
-        echo "  allowlist: clap, indicatif, tokio, tracing, tracing-subscriber" >&2
-        printf '  offender: %s\n' $offenders >&2
-        exit 1
-    fi
-    echo "OK: degenbot-cli lists only workspace members + argv/sink plumbing"
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_shell_names_only_allowlisted_externals --exact --nocapture
 
 
 # Structural gate for epic 5TBT7L (arch review #11, candidate 2): the engine
@@ -224,36 +179,9 @@ check-cli-shell-purity:
 #      pyclass `name = "ArbitrageEngine",` compat string (the deliberate
 #      Python-API name exemption). Any other hit is a seam regression.
 check-engine-impl-blocks:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v rg >/dev/null 2>&1 || { echo "ERROR: ripgrep (rg) is required for check-engine-impl-blocks" >&2; exit 1; }
-    matches=$(rg -n 'impl ArbitrageEngine\s*\{' rust/crates/degenbot-bot/src || true)
-    count=$(printf '%s\n' "$matches" | grep -c 'impl ArbitrageEngine' || true)
-    if [ "$count" -ne 1 ] || ! printf '%s\n' "$matches" | grep -q 'arb_engine/mod.rs'; then
-        echo "ERROR: 'impl ArbitrageEngine' is not consolidated to arb_engine/mod.rs (epic 5TBT7L)." >&2
-        echo "  expected exactly 1 block, in arb_engine/mod.rs; found $count" >&2
-        echo "  census (file: blocks):" >&2
-        printf '%s\n' "$matches" | cut -d: -f1 | sort | uniq -c | awk '{printf "    %s: %s\n", $2, $1}' >&2
-        echo "  matches:" >&2
-        printf '%s\n' "$matches" >&2
-        exit 1
-    fi
-    py_matches=$(rg -n 'ArbitrageEngine' rust/crates/degenbot-python/src || true)
-    if [ -z "$py_matches" ]; then
-        py_count=0
-    else
-        py_count=$(printf '%s\n' "$py_matches" | grep -c 'ArbitrageEngine' || true)
-    fi
-    if [ "$py_count" -ne 1 ] || ! printf '%s\n' "$py_matches" | grep -q 'name = "ArbitrageEngine",'; then
-        echo "ERROR: 'ArbitrageEngine' must name the pyclass compat string exactly once in degenbot-python (epic 5TBT7L)." >&2
-        echo "  expected exactly 1 hit, 'name = \"ArbitrageEngine\",'; found $py_count" >&2
-        echo "  census (file: hits):" >&2
-        printf '%s\n' "$py_matches" | cut -d: -f1 | sort | uniq -c | awk '{printf "    %s: %s\n", $2, $1}' >&2
-        echo "  matches:" >&2
-        printf '%s\n' "$py_matches" >&2
-        exit 1
-    fi
-    echo "ok: exactly one impl ArbitrageEngine block, in arb_engine/mod.rs; degenbot-python names ArbitrageEngine only as the pyclass compat string"
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- one_engine_impl_block --exact --nocapture
 
 # Build Rust extension module (correct for Python extension)
 build-rust-extension:
@@ -863,18 +791,9 @@ ci-no-python-cli-gate:
 # Python source under src/, and the migration-scripts package must be gone.
 # Mirrors check-no-pyo3-in-cores: a permanent, mechanical sweep gate.
 check-no-alembic:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v rg >/dev/null 2>&1 || { echo "ERROR: ripgrep (rg) is required for check-no-alembic" >&2; exit 1; }
-    if [ -d src/degenbot/migrations ]; then
-        echo "ERROR: src/degenbot/migrations still exists (retired per ADR-052 D6)." >&2
-        exit 1
-    fi
-    if rg -n -i --glob '*.py' 'alembic' src/; then
-        echo "ERROR: Alembic references remain in src/**/*.py (retired per ADR-052 D6)." >&2
-        exit 1
-    fi
-    echo "OK: no Alembic references remain in src/**/*.py"
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_alembic_references --exact --nocapture
 
 # ========== Stub-to-Runtime Drift Gate (ADR-053, ergo XNEJRD) ==========
 #
