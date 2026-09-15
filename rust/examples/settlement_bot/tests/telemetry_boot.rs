@@ -64,9 +64,33 @@ fn run(extra_env: &[(&str, &str)]) -> (String, String) {
         String::from_utf8_lossy(&output.stderr)
     );
     (
-        String::from_utf8(output.stdout).expect("boot stdout is UTF-8"),
-        String::from_utf8(output.stderr).expect("boot stderr is UTF-8"),
+        strip_ansi(&String::from_utf8(output.stdout).expect("boot stdout is UTF-8")),
+        strip_ansi(&String::from_utf8(output.stderr).expect("boot stderr is UTF-8")),
     )
+}
+
+/// Strip ANSI SGR escape sequences so substring assertions are color-agnostic.
+///
+/// Cargo feature unification differs between a single-package test run and a
+/// whole-workspace test run, and the telemetry formatter's ANSI stance differs
+/// with it. The boot announcement's field text (otel=active) is the contract;
+/// the terminal coloring is not.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for d in chars.by_ref() {
+                if d.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn free_port() -> u16 {
