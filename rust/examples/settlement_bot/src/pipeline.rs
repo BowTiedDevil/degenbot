@@ -510,10 +510,52 @@ mod tests {
         .to_string()
     }
 
+    /// A private copy of the chain-8453 parity fixture for one test.
+    ///
+    /// The committed fixture is Alembic-head-stamped, so the first
+    /// `DegenbotDb::open` heals it in place: the embedded DDL is written to a
+    /// `.heal-tmp` sidecar, the file is atomically swapped, and a `.bak`
+    /// backup is left behind. The two fixture tests run on parallel test
+    /// threads; opening the shared repo file from both raced that heal
+    /// (`SQLITE_IOERR` / "index ... already exists" / "database disk image is
+    /// malformed") — the intermittent `open fixture db` failure at
+    /// pipeline.rs:545. Each test heals its own copy instead, so the committed
+    /// fixture bytes stay historical and no two opens share a file.
+    struct FixtureCopy {
+        path: std::path::PathBuf,
+    }
+
+    impl FixtureCopy {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "settlement-pipeline-fixture-{}-{}.db",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::copy(Path::new(&fixture_path()), &path).expect("copy parity fixture");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for FixtureCopy {
+        fn drop(&mut self) {
+            for suffix in ["", "-shm", "-wal", ".bak", ".bak-shm", ".bak-wal"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", self.path.display()));
+            }
+        }
+    }
+
     #[test]
     fn graph_build_reads_the_parity_fixture_with_v4_offset() {
+        let fixture = FixtureCopy::new();
         let (db, _schema) =
-            degenbot::db::DegenbotDb::open(Path::new(&fixture_path())).expect("open fixture db");
+            degenbot::db::DegenbotDb::open(fixture.path()).expect("open fixture db");
         let rows = db.fetch_discovery_rows(8453).expect("fetch discovery rows");
         assert_eq!(rows.len(), 2, "fixture has one V3 + one V4 pool");
 
@@ -541,8 +583,9 @@ mod tests {
 
     #[tokio::test]
     async fn offline_pipeline_over_the_parity_fixture_is_empty_but_clean() {
+        let fixture = FixtureCopy::new();
         let (db, _schema) =
-            degenbot::db::DegenbotDb::open(Path::new(&fixture_path())).expect("open fixture db");
+            degenbot::db::DegenbotDb::open(fixture.path()).expect("open fixture db");
         let rows = db.fetch_discovery_rows(8453).expect("fetch discovery rows");
         let built = build_graph(&rows, &[PoolKind::V3, PoolKind::V4], None);
         let params = DiscoveryParams {

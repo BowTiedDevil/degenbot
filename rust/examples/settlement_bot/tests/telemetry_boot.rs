@@ -38,6 +38,10 @@ fn base_command() -> Command {
     command.env("HOME", std::env::temp_dir());
     command.env("PATH", std::env::var("PATH").unwrap_or_default());
     command.env("DEGENBOT_FIXTURE_DB", db_path());
+    // Same killswitch discipline as boot_gate.rs: the committed fixture is
+    // Alembic-head-stamped and four parallel tests shell out drivers that
+    // would otherwise race an in-place heal of the shared file.
+    command.env("DEGENBOT_DB_AUTO_HEAL", "0");
     command.env("DEGENBOT_RPC_HTTP_CHAINID_1", "http://127.0.0.1:1");
     command.env("DEGENBOT_RPC_WS_CHAINID_1", "ws://127.0.0.1:1");
     command.env("DEGENBOT_DISCOVERY_CHAIN_ID", "8453");

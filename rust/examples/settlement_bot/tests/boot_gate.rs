@@ -245,6 +245,12 @@ fn run_binary(discovery_chain_id: Option<&str>) -> String {
     command.env("HOME", std::env::temp_dir());
     command.env("PATH", std::env::var("PATH").unwrap_or_default());
     command.env("DEGENBOT_FIXTURE_DB", db_path());
+    // The committed chain-8453 fixture is Alembic-head-stamped. Pin the
+    // ADR-052 D1 heal-at-open killswitch so the spawned drivers read it
+    // read-only: the three #[test]s run on parallel threads and would
+    // otherwise race an in-place heal of the shared file (SQLITE_IOERR /
+    // "index ix_aave_asset_config_asset already exists") and fail the boot.
+    command.env("DEGENBOT_DB_AUTO_HEAL", "0");
     command.env("DEGENBOT_RPC_HTTP_CHAINID_1", "http://127.0.0.1:1");
     command.env("DEGENBOT_RPC_WS_CHAINID_1", "ws://127.0.0.1:1");
     // Hermetic telemetry (Gap G6 / ergo ZOBXVC): the example now boots the
