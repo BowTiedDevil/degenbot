@@ -7,7 +7,7 @@ use super::*;
 /// injected 3000ms slow path, `run_epoch` — driven via
 /// the production `EngineStages` solve seam, which also spawns the
 /// merge sidecar — RETURNS before the merge lands, and the sidecar
-/// populates the results within ~5000ms of enqueue.
+/// populates every result (slow + fast) shortly after enqueue.
 #[test]
 fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
     if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
@@ -42,20 +42,26 @@ fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
             "the slow path must NOT be merged at enqueue-end return"
         );
     }
-    // The sidecar populates the results within ~5000ms of enqueue.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(5000);
-    while !engine.lock().cycle.results.contains_key(&slow_pid) {
+    // The sidecar populates every result (fast + slow) shortly after
+    // enqueue. Wait for the FULL set, not just the slow pid: the fast
+    // stragglers merge on the same sidecar pipe and their completion order
+    // relative to the slow pid is not guaranteed, so a slow-pid-only wait
+    // could read `results.len()` while a fast merge was still in flight and
+    // flaked at 2 != 3. Widened ~15s: the sidecar shares solve seats with
+    // concurrently running tests, so the old 5s valve could expire under load.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while engine.lock().cycle.results.len() < 3 {
         assert!(
             std::time::Instant::now() < deadline,
-            "sidecar merge did not land within ~5000ms of enqueue"
+            "the sidecar must merge all three detached stragglers within ~15s of enqueue"
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    // And every path merged (fast + slow), applied by the sidecar.
-    assert_eq!(
-        engine.lock().cycle.results.len(),
-        3,
-        "all three detached stragglers must be applied by the sidecar"
+    // The slow (delayed) path is among them — proven applied by the sidecar,
+    // not the inline drain (it was absent at enqueue-end return above).
+    assert!(
+        engine.lock().cycle.results.contains_key(&slow_pid),
+        "the slow path must be applied by the sidecar"
     );
     let guard = engine.lock();
     assert_eq!(
