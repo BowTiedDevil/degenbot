@@ -343,6 +343,31 @@ fn reuse_v4_pool(bot: &Bot, pool_manager: Address, pool_id: &[u8; 32]) -> Option
         .map(|registered| registered.pool_id)
 }
 
+/// The V4 `StateView` contract address the registration verify lifecycle must
+/// use, resolved from the discovered `pool_managers` rows — the same
+/// per-manager column the V4 build path already trusts
+/// (`DiscoveryV4Row::manager.state_view`).
+///
+/// Python sources this fact from a chain deployment constant
+/// (`EthereumMainnetUniswapV4.state_view.address`) and passes it to
+/// `EngineRegistry.start(..., verify_state_view=...)`
+/// (`src/degenbot/runner/bot_runner.py:470`). The fresh Rust driver boots with
+/// no deployment registry, so the example resolves the same fact from the
+/// snapshot enumeration instead of hard-coding a chain address; the first
+/// manager row that carries one wins (one `StateView` per `pool_manager`, and
+/// the verify lifecycle takes a single address).
+///
+/// `None` when the enumeration carries no V4 manager row with a `state_view`;
+/// the caller then leaves the driver unconfigured and every V4 verify fails
+/// fast with its D-C no-config refusal (loud, never silently skipped).
+#[must_use]
+pub fn resolve_verify_state_view(rows: &[DiscoveryPoolRow]) -> Option<Address> {
+    rows.iter().find_map(|row| match row {
+        DiscoveryPoolRow::V4(v4) => v4.manager.state_view,
+        DiscoveryPoolRow::V2(_) | DiscoveryPoolRow::V3(_) => None,
+    })
+}
+
 /// Fold an admission result into a registry reuse when the engine reports a
 /// concurrent `AlreadyRegistered`.
 ///
@@ -489,10 +514,16 @@ fn build_failure_detail(failure: &BuildFailure) -> String {
     }
 }
 
+/// At most this many distinct samples are ever retained (and printed) per
+/// tag, so the sampler's cardinality stays bounded even across a multi-hour
+/// crawl.
+const REG_DEBUG_MAX_DISTINCT: usize = 3;
+
 /// Diagnostic-only sampler gated by `DEGENBOT_REG_DEBUG_SAMPLES=1`: prints
-/// up to 3 distinct `(tag, detail)` build-refusal pairs (with the failing
-/// pool's identity + kind) so the top-level `build-v2-refused` tag can be
-/// traced to its underlying `PoolBuilderError`/registration error.
+/// up to `REG_DEBUG_MAX_DISTINCT` distinct `(tag, detail)` build-refusal
+/// pairs (with the failing pool's identity + kind) so the top-level
+/// `build-v2-refused`/`build-v4-refused` tags can be traced to their
+/// underlying `PoolBuilderError`/registration error.
 ///
 /// Purely observational: it never mutates a counter, memo, or classification,
 /// and does nothing unless the env gate is set, so production behavior is
@@ -514,12 +545,47 @@ fn emit_build_refusal_sample(
         Err(poisoned) => poisoned.into_inner(),
     };
     let emitted = guard.entry(outcome.as_str().to_string()).or_insert(0);
-    if *emitted < 3 {
+    if *emitted < REG_DEBUG_MAX_DISTINCT {
         *emitted += 1;
         println!(
             "[reg-debug] tag={} kind={kind:?} pool={identity} detail={detail}",
             outcome.as_str()
         );
+    }
+}
+
+/// Diagnostic-only sampler gated by `DEGENBOT_REG_DEBUG_SAMPLES=1`: prints
+/// up to `REG_DEBUG_MAX_DISTINCT` DISTINCT register-failure detail strings
+/// (the `PathRegistrationError` display text returned by
+/// `EngineDriver::register_and_solve_path`) so the `register-fail` skip
+/// class — historically 7.1M members with no witness — can be traced to the
+/// engine-side refusal that produced it.
+///
+/// Bounded cardinality: at most `REG_DEBUG_MAX_DISTINCT` distinct detail
+/// strings are ever retained; repeats only bump a counter and are never
+/// printed, so a live crawl cannot grow this map without bound.
+///
+/// Purely observational: it never mutates a counter, memo, or classification,
+/// and does nothing unless the env gate is set, so production behavior is
+/// unchanged.
+pub(crate) fn emit_register_failure_sample(detail: &str) {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, usize>>> =
+        std::sync::OnceLock::new();
+    if std::env::var("DEGENBOT_REG_DEBUG_SAMPLES").ok().as_deref() != Some("1") {
+        return;
+    }
+    let seen = SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let mut guard = match seen.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(count) = guard.get_mut(detail) {
+        *count += 1;
+        return;
+    }
+    if guard.len() < REG_DEBUG_MAX_DISTINCT {
+        guard.insert(detail.to_string(), 1);
+        println!("[reg-debug] tag=register-fail detail={detail}");
     }
 }
 
@@ -565,6 +631,76 @@ mod tests {
             .write_at(LockSite::Core)
             .register_v2_pool(&v2_params(address))
             .expect("test setup: register V2 pool")
+    }
+
+    /// RSP-14: a V4 manager row carrying a `state_view` supplies the driver's
+    /// verify address. Before this, the live arm booted `driver.start` with
+    /// `verify_state_view = None`, so every V4 hop's verify folded the core
+    /// `RegistrationLifecycleError::MissingStateView` into a per-candidate
+    /// `register-fail` (the observed 46 612-member skip class).
+    #[test]
+    fn verify_state_view_resolves_from_the_first_v4_manager_row() {
+        let view = Address::from([0x77u8; 20]);
+        assert_eq!(
+            resolve_verify_state_view(&[v4_row_with_state_view(Some(view))]),
+            Some(view)
+        );
+        assert_eq!(resolve_verify_state_view(&[]), None);
+    }
+
+    /// A V4 manager row without a `state_view` resolves to `None`: the driver
+    /// stays unconfigured and the core lifecycle reports its loud
+    /// `MissingStateView` refusal rather than a silently skipped verify.
+    #[test]
+    fn verify_state_view_is_none_without_a_manager_state_view() {
+        assert_eq!(
+            resolve_verify_state_view(&[v4_row_with_state_view(None)]),
+            None
+        );
+    }
+
+    /// A minimal V4 discovery row whose manager carries `state_view`.
+    fn v4_row_with_state_view(state_view: Option<Address>) -> DiscoveryPoolRow {
+        use degenbot::db::discovery_read::DiscoveryV4Row;
+        use degenbot::db::rows::{Erc20TokenRow, ExchangeRow, PoolManagerRow};
+        let token = |id: i64, byte: u8| Erc20TokenRow {
+            id,
+            chain: 1,
+            address: Address::from([byte; 20]),
+            name: None,
+            symbol: None,
+            decimals: Some(18),
+        };
+        DiscoveryPoolRow::V4(DiscoveryV4Row {
+            managed_pool_id: 1,
+            pool_hash: alloy::primitives::B256::ZERO,
+            hooks: Address::ZERO,
+            manager: PoolManagerRow {
+                id: 1,
+                address: Address::from([0x44u8; 20]),
+                chain: 1,
+                kind: "uniswap_v4".to_string(),
+                state_view,
+                exchange_id: 1,
+            },
+            token0: token(1, 0xaa),
+            token1: token(2, 0xbb),
+            exchange: ExchangeRow {
+                id: 1,
+                chain_id: 1,
+                name: "uniswap_v4".to_string(),
+                active: true,
+                last_update_block: None,
+                factory: Address::ZERO,
+                deployer: None,
+            },
+            fee_currency0: 0,
+            fee_currency1: 0,
+            fee_denominator: 1_000_000,
+            tick_spacing: 10,
+            liquidity_update_block: None,
+            liquidity_update_log_index: None,
+        })
     }
 
     /// RSP-12 shortcut: a hop registered by an earlier candidate is answered

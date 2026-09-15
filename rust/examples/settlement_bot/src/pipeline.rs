@@ -362,7 +362,12 @@ impl RegistrationPipeline {
                     .skip_reasons
                     .entry(RegistrationOutcome::RegisterFailed.as_str().to_string())
                     .or_insert(0) += 1;
-                let _ = detail;
+                // RSP-14: the single choke point every
+                // CandidateOutcome::RegisterFailed funnels through — the
+                // verify folds in live::verify_one return before the
+                // register_and_solve_path arm, so sampling at the producer
+                // sites would miss them. Env-gated + cardinality-bounded.
+                crate::live::emit_register_failure_sample(detail);
             }
             CandidateOutcome::Cap => {
                 report.skip_count += 1;
