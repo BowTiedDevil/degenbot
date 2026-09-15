@@ -16,8 +16,11 @@
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::collections::BTreeMap;
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixListener;
+#[cfg(unix)]
 use std::path::Path;
 
 use degenbot_cli_core::operator::{
@@ -26,11 +29,15 @@ use degenbot_cli_core::operator::{
     WireResponse,
 };
 use degenbot_cli_core::{
-    run, CliContext, CliError, Command, CommandReport, ExitCode, FleetCommand, FleetReport,
-    PathCommand, PathDirection, PathReport, Prompter,
+    run, CliContext, CliError, Command, ExitCode, FleetCommand, PathCommand, Prompter,
 };
+// The report/decoded-frame types the Unix loopback transports assert over.
+#[cfg(unix)]
+use degenbot_cli_core::{CommandReport, FleetReport, PathDirection, PathReport};
 use degenbot_config::MapEnv;
-use serde_json::{json, Value};
+use serde_json::json;
+#[cfg(unix)]
+use serde_json::Value;
 use tempfile::TempDir;
 
 /// A prompter that never confirms (no arm here prompts).
@@ -49,6 +56,7 @@ fn empty_env() -> MapEnv {
 /// Bind `socket`, accept ONE connection, return the request line, and write
 /// the newline-terminated `body` back. Uses std blocking UDS so the test needs
 /// no runtime of its own.
+#[cfg(unix)]
 fn serve_once(socket: &Path, body: &'static str) -> std::thread::JoinHandle<String> {
     let listener = UnixListener::bind(socket).unwrap();
     std::thread::spawn(move || {
@@ -141,6 +149,7 @@ fn render_json_sorted_matches_python_sort_keys() {
 
 // -- loopback transport -----------------------------------------------------
 
+#[cfg(unix)]
 #[test]
 fn happy_ok_frame_round_trips_over_a_loopback_socket() {
     let dir = TempDir::new().unwrap();
@@ -176,6 +185,7 @@ fn happy_ok_frame_round_trips_over_a_loopback_socket() {
     assert!(decoded["payload"]["steps"][0].get("hash").is_none());
 }
 
+#[cfg(unix)]
 #[test]
 fn malformed_json_from_the_server_is_a_protocol_error_over_the_socket() {
     let dir = TempDir::new().unwrap();
@@ -194,8 +204,26 @@ fn unreachable_socket_is_a_protocol_error() {
     assert!(matches!(err, CliError::OperatorProtocol(_)), "got {err:?}");
 }
 
+/// Off Unix there is no transport at all: the one transport site returns the
+/// typed protocol refusal instead of the crate failing to build (the Windows
+/// wheel regression). The message names the missing Unix domain socket.
+#[cfg(not(unix))]
+#[test]
+fn no_unix_domain_socket_is_a_protocol_refusal() {
+    let dir = TempDir::new().unwrap();
+    let socket = dir.path().join("no-listener.sock");
+    let err = send_request(&socket, &WireRequest::GetFleetPosture).unwrap_err();
+    assert!(matches!(err, CliError::OperatorProtocol(_)), "got {err:?}");
+    assert_eq!(ExitCode::from(&err), ExitCode::Failure);
+    assert!(
+        err.message().contains("requires a Unix domain socket"),
+        "got {err:?}"
+    );
+}
+
 // -- arm-level happy path ---------------------------------------------------
 
+#[cfg(unix)]
 #[test]
 fn path_add_over_the_wire_returns_the_host_detail() {
     let dir = TempDir::new().unwrap();
@@ -228,6 +256,7 @@ fn path_add_over_the_wire_returns_the_host_detail() {
     assert_eq!(decoded["payload"]["directions"], json!([true, true]));
 }
 
+#[cfg(unix)]
 #[test]
 fn fleet_posture_show_renders_the_sorted_effective_policy() {
     let dir = TempDir::new().unwrap();
@@ -258,6 +287,7 @@ fn fleet_posture_show_renders_the_sorted_effective_policy() {
     assert_eq!(decoded["op"], "get_fleet_posture");
 }
 
+#[cfg(unix)]
 #[test]
 fn fleet_posture_show_maps_a_host_refusal_to_exit_one() {
     let dir = TempDir::new().unwrap();

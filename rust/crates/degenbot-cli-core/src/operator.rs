@@ -45,13 +45,17 @@
 //! the operator socket, so the env layer is the only config surface; a future
 //! typed key would slot in above the env layer at exactly one site.
 
+#[cfg(unix)]
 use std::future::Future;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::time::Duration;
 
 use degenbot_config::EnvVars;
 use serde_json::{json, Map, Value};
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 
 use crate::error::CliError;
@@ -69,7 +73,16 @@ const HOME_ENV: &str = "HOME";
 
 /// Per-request connect/read timeout (mirrors the server's `request_timeout`
 /// default of 60s).
+#[cfg(unix)]
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The refusal `send_request` returns on a host with no Unix domain socket.
+/// The channel is a UDS protocol end to end (the Python `OperatorServer`
+/// cannot bind one on Windows either), so off Unix the command arms stay
+/// compiled and fail here, at the one transport site.
+#[cfg(not(unix))]
+const UDS_UNSUPPORTED: &str = "the operator command channel requires a Unix domain socket, \
+     which this platform does not provide";
 
 /// The six fleet-posture threshold key names `set_fleet_posture` accepts (the
 /// typed `DEGENBOT_FLEET_CORDON_*` keys). Anything else is refused at the wire
@@ -577,13 +590,29 @@ fn expand_tilde(env: &dyn EnvVars, raw: &str) -> PathBuf {
 /// called from inside an existing `tokio` runtime.
 pub fn send_request(socket: &Path, request: &WireRequest) -> Result<WireResponse, CliError> {
     let line = request.encode_line();
+    exchange_blocking(socket, line)
+}
+
+/// Drive one encoded request line to its response line over the operator
+/// socket.
+#[cfg(unix)]
+fn exchange_blocking(socket: &Path, line: String) -> Result<WireResponse, CliError> {
     block_on_operator(exchange(socket, line))?
+}
+
+/// Off Unix there is no Unix domain socket to reach: the same
+/// [`CliError::OperatorProtocol`] the unreachable-socket arm raises reports it.
+#[cfg(not(unix))]
+fn exchange_blocking(socket: &Path, line: String) -> Result<WireResponse, CliError> {
+    let _ = (socket, line);
+    Err(CliError::OperatorProtocol(UDS_UNSUPPORTED.to_string()))
 }
 
 /// Drive the exchange future on a self-built runtime, reusing the console's one
 /// runtime helper. Only `RuntimeNested` is reachable from
 /// [`crate::block::block_on`]; any other mapping is a build failure and is
 /// reported as the operator-protocol error it is.
+#[cfg(unix)]
 fn block_on_operator<F: Future>(future: F) -> Result<F::Output, CliError> {
     crate::block::block_on(future).map_err(|err| match err {
         CliError::RuntimeNested => err,
@@ -592,7 +621,8 @@ fn block_on_operator<F: Future>(future: F) -> Result<F::Output, CliError> {
 }
 
 /// One request line out, one response line in (the server closes after the
-/// reply).
+/// reply). Unix-only: the wire rides a Unix domain socket.
+#[cfg(unix)]
 async fn exchange(socket: &Path, line: String) -> Result<WireResponse, CliError> {
     let connect = tokio::time::timeout(REQUEST_TIMEOUT, UnixStream::connect(socket))
         .await
