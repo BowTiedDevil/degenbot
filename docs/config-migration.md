@@ -91,3 +91,13 @@ Boot behavior: a surviving retired item fails the load and the process exits 2 w
 bot configuration invalid (1 problem(s)):
   - --config /home/you/.config/degenbot/config.toml: retired config-layout item [rpc] is no longer supported — move per-chain RPC endpoints to the DEGENBOT_RPC_HTTP_CHAINID_<chain> env names (or the Python config.py cascade); see docs/config-migration.md
 ```
+
+## Database upgrades
+
+A stale Alembic-marked database now heals **automatically at open** (ADR-052):
+`ensure_schema` runs the ADR-011 out-of-place heal on any `alembic_version`
+database — head-stamped or stale — preserves the old file as `*.bak`, and
+proceeds Rust-owned. There is no `degenbot database upgrade` command: it renders
+a pointed retirement error and exits non-zero, while `degenbot database heal`
+remains the explicit repair entry point. Set `DEGENBOT_DB_AUTO_HEAL=0` to
+disable heal-at-open for pinned environments.

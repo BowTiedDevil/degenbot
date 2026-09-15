@@ -4,6 +4,8 @@
 opt-in during the 0.6.x point releases (epic `2Z3Y46`); retiring the Alembic
 dependency and the legacy conversion is gated to a **0.7** release.
 
+**Partially superseded: the 0.6.x retention posture was retired 2026-09-15 by [ADR-052](ADR-052-db-auto-upgrade-alembic-retirement.md)**
+
 ## Context
 
 degenbot's database schema is, today, **Alembic-owned**: the canonical schema

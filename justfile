@@ -27,6 +27,13 @@ version:
 bump-version version:
     cargo set-version --workspace {{ version }} --manifest-path rust/Cargo.toml
 
+#
+# Release-checklist step (schema-carrying releases): bump the Rust schema
+# ritual in lockstep — `RUST_SCHEMA_VERSION` in `degenbot-db/src/schema.rs` →
+# append the matching `MigrationStep` to `RUST_MIGRATIONS` in
+# `degenbot-db/src/migrate.rs` → extend the fixture matrix (one DB per released
+# revision). Verify the publish chain with `just publish-dry-run`.
+
 # ========== Rust Development ==========
 
 # Run the standalone-Rust-consumer smoke (ADR-005 standalone claim). Proves a
