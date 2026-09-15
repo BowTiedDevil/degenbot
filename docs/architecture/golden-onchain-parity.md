@@ -23,9 +23,8 @@ secrets**.
 1. **`OfflineProvider`** (`src/degenbot/provider/offline_provider.py`) — already
    serves pre-recorded `eth_call` responses from per-block JSON files under
    `tests/fixtures/chain_data/`. Replay-only; no recorder exists yet.
-2. **I/O-free pool tests** (`tests/uniswap/v2/test_v2_pool_io_free.py`,
-   `test_v3_pool_io_free.py`, `test_v4_pool_io_free.py`,
-   `tests/curve/test_curve_io_free_example.py`) — already build pools from
+2. **I/O-free pool tests** (`tests/pool_companion/test_io_free_construction.py`,
+   `tests/pool_companion/test_io_free_behavior.py`) — already build pools from
    hardcoded constants + recorded tick data, no RPC. These are the
    **architectural template** (and align with ADR-005: pools are I/O-free;
    builders fetch state, pools receive values).

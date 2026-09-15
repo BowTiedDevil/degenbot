@@ -17,7 +17,7 @@ parity tests is, by construction, the same seam a real mainline swap hits,
 so this file pins the routing (no short-circuit to a stale Python calc) over
 a dense pool where the result is well-defined.
 
-Mirrors ``tests/uniswap/v2/test_v2_pool_io_free.py::TestV2CalcDelegation``.
+Mirrors ``tests/pool_companion/test_io_free_behavior.py::TestV2CalcDelegation``.
 """
 
 from __future__ import annotations

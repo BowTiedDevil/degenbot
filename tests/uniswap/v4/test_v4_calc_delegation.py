@@ -12,7 +12,7 @@ This is the **delegation-detection** counterpart to the parity tests in
 three-layer rubric §4.5, a routing cutover where the math already has a parity
 test should add a spy that proves the seam was hit with the right args — not
 just "the result matches". Mirrors
-``tests/uniswap/v2/test_v2_pool_io_free.py::TestV2CalcDelegation``.
+``tests/pool_companion/test_io_free_behavior.py::TestV2CalcDelegation``.
 """
 
 from __future__ import annotations
