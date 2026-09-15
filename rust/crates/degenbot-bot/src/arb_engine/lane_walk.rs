@@ -367,8 +367,8 @@ pub(crate) fn solve_one_path(
 /// The arm policy (WNH5OL; WFF6MM trimmed to the ONE detached arm): the
 /// lane walk body is ONE function; every per-arm behavior rides this value
 /// (the carrier stamps and the drain's ledger seq). The detached gauge hook
-/// stays on the lane itself — `SolveLane::set_on_solved_send`, contract 1's
-/// send-success-only bump.
+/// stays on the lane itself — fused into `SolveLane::new` (TD6), contract
+/// 1's send-success-only bump.
 pub(crate) struct LaneArmPolicy {
     /// The ledger key half (the ONE-domain rule of 43E3H3): the exact
     /// `solve_seq` tick the drain claims `(seq, pid)` with on the shared ONE

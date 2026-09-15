@@ -1208,7 +1208,7 @@ mod tests {
     fn drain_delivers_exactly_one_lane_outcome_per_submitted_path_when_third_path_panics() {
         let submitted: BTreeSet<u64> = [10, 11, 12, 13, 14].into_iter().collect();
         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
-        let mut lane = SolveLane::new(1, 0, vec![10, 11, 12, 13, 14], tx);
+        let mut lane = SolveLane::new(1, 0, vec![10, 11, 12, 13, 14], tx, None, None);
         run_solve_lane(&mut lane, &SeatSurvivesPolicy, |lane| {
             // Trace of a real bin: two survivor arms land, then the 3rd
             // path panics — 13 and 14 are still owed and must come back
@@ -1295,7 +1295,7 @@ mod tests {
         let owner = hermetic_owner();
         let submitted: BTreeSet<u64> = [30, 31, 32, 33, 34].into_iter().collect();
         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
-        let mut lane = SolveLane::new(7, 3, vec![30, 31, 32, 33, 34], tx);
+        let mut lane = SolveLane::new(7, 3, vec![30, 31, 32, 33, 34], tx, None, None);
         // The bin runs partially: two outcomes deliver, then the LANE
         // DIES — the seat thread is gone mid-flight (no unwind, no more
         // sends, nothing). 32/33/34 are still owed.
@@ -1377,7 +1377,7 @@ mod tests {
     #[test]
     fn a_bin_that_abandons_its_paths_mid_flight_drains_terminal_records() {
         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
-        let mut lane = SolveLane::new(9, 1, vec![40, 41, 42], tx);
+        let mut lane = SolveLane::new(9, 1, vec![40, 41, 42], tx, None, None);
         run_solve_lane(&mut lane, &SeatSurvivesPolicy, |lane| {
             lane.suppressed(40);
             // The body simply STOPS: 41/42 still owed. (A deliberate
@@ -1425,7 +1425,7 @@ mod tests {
                 let base = 100 + bin * 10;
                 let pids = vec![base, base + 1, base + 2, base + 3];
                 let work: SubmitWork = Box::new(move |_ctx: &LaneCtx| {
-                    let mut lane = SolveLane::new(bin, bin, pids, tx.clone());
+                    let mut lane = SolveLane::new(bin, bin, pids, tx.clone(), None, None);
                     run_solve_lane(&mut lane, &SeatSurvivesPolicy, |lane| {
                         lane.suppressed(base);
                         if bin == 1 {
@@ -1529,8 +1529,14 @@ mod tests {
                     Box::new(move |_ctx| {
                         observed.lock().push(std::thread::current().id());
                         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
-                        let mut lane =
-                            SolveLane::new(cycle, 0, vec![cycle * 10, cycle * 10 + 1], tx);
+                        let mut lane = SolveLane::new(
+                            cycle,
+                            0,
+                            vec![cycle * 10, cycle * 10 + 1],
+                            tx,
+                            None,
+                            None,
+                        );
                         run_solve_lane(&mut lane, verdict.as_ref(), |lane| {
                             if cycle == 0 {
                                 lane.suppressed(cycle * 10); // one pid emitted before the panic
@@ -1596,7 +1602,7 @@ mod tests {
             consulted: parking_lot::Mutex::new(Vec::new()),
         };
         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
-        let mut lane = SolveLane::new(7, 3, vec![21, 22], tx);
+        let mut lane = SolveLane::new(7, 3, vec![21, 22], tx, None, None);
         run_solve_lane(&mut lane, &verdict, |_lane| {
             red_panic("bin unit panics with its result pipe open (QR3NUS tripwire harness)");
         });

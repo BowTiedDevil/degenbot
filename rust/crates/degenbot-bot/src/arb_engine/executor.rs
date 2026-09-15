@@ -256,29 +256,29 @@ impl SolveLane {
     /// Build a lane for one bin: `unit`/`seat` name the accounting identity
     /// the panic records will carry; `pids` are the paths the bin's work
     /// owed the pipe.
-    pub(crate) fn new(unit: u64, seat: u64, pids: Vec<u64>, tx: mpsc::Sender<LaneOutcome>) -> Self {
+    ///
+    /// TD6 (P3): the hooks are fused into the constructor, turning the
+    /// former docstring-only sequencing invariant into structure: the
+    /// lane's hook state is immutable after construction, so there is no
+    /// window in which a driven lane could lack its hooks. `None` on the in-cycle arm (no
+    /// in-flight gauge; no drain-death hook); `Some` on the detached arm.
+    pub(crate) fn new(
+        unit: u64,
+        seat: u64,
+        pids: Vec<u64>,
+        tx: mpsc::Sender<LaneOutcome>,
+        on_solved_send: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+        on_send_failed: Option<DrainDeathHook>,
+    ) -> Self {
         Self {
             unit,
             seat,
             pids,
             emitted: BTreeSet::new(),
             tx,
-            on_solved_send: None,
-            on_send_failed: None,
+            on_solved_send,
+            on_send_failed,
         }
-    }
-    /// Install the detached arm's gauge hook (fired on `Solved` send
-    /// success). MUST be called before `run_solve_lane` drives the bin.
-    pub(crate) fn set_on_solved_send(
-        &mut self,
-        on_solved_send: std::sync::Arc<dyn Fn() + Send + Sync>,
-    ) {
-        self.on_solved_send = Some(on_solved_send);
-    }
-    /// Install the detached arm's drain-death hook (fired when a terminal
-    /// send fails). MUST be called before `run_solve_lane` drives the bin.
-    pub(crate) fn set_on_send_failed(&mut self, on_send_failed: DrainDeathHook) {
-        self.on_send_failed = Some(on_send_failed);
     }
     /// Deliver one real arm outcome (the worker's `Some` arm). The lane's
     /// `emitted` set is the DOUBLE-DELIVERY guard: every pid released this
@@ -504,13 +504,18 @@ mod tests {
         let seen_hook = Arc::clone(&seen);
         let gauge_calls = Arc::new(AtomicU64::new(0));
         let gauge_hook = Arc::clone(&gauge_calls);
-        let mut lane = SolveLane::new(7, 3, vec![11], tx);
-        lane.set_on_solved_send(Arc::new(move || {
-            gauge_hook.fetch_add(1, Ordering::Relaxed);
-        }));
-        lane.set_on_send_failed(Arc::new(move |failure| {
-            seen_hook.lock().expect("hook mutex").push(failure.clone());
-        }));
+        let mut lane = SolveLane::new(
+            7,
+            3,
+            vec![11],
+            tx,
+            Some(Arc::new(move || {
+                gauge_hook.fetch_add(1, Ordering::Relaxed);
+            })),
+            Some(Arc::new(move |failure| {
+                seen_hook.lock().expect("hook mutex").push(failure.clone());
+            })),
+        );
         lane.solved(solved(11));
         let failures = seen.lock().expect("hook mutex");
         assert_eq!(

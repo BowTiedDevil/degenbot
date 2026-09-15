@@ -1917,20 +1917,30 @@ impl SolveCycle {
                 let lane_key =
                     SOLVE_BIN_KEY_BASE.saturating_add(u64::try_from(bin_idx).unwrap_or(u64::MAX));
                 let spawn_job = move |_ctx: &LaneCtx| {
-                    let mut lane = SolveLane::new(lane_key, lane_key, lane_pids, tx.clone());
                     // 43E3H3 gauge pairing: the in-flight bump rides the
                     // lane's Solved send-success (send + bump + emitted
                     // in one path). Failed/Suppressed sends never fire
                     // it (REV 2 Defect 1) — the corresponding disposition
                     // arm never decrements.
-                    lane.set_on_solved_send(gauge_bump.clone());
+                    //
                     // AQV6EF: the same lane carries the drain-death
                     // hook — a terminal send failure on the merge pipe
                     // is counted and trips the sticky cordon instead of
                     // being swallowed.
-                    lane.set_on_send_failed(std::sync::Arc::new(|failure| {
-                        crate::arb_engine::executor::drain_death_response(failure, None);
-                    }));
+                    //
+                    // Both hooks are fused into the constructor (TD6),
+                    // so a constructed lane can never be driven without
+                    // them.
+                    let mut lane = SolveLane::new(
+                        lane_key,
+                        lane_key,
+                        lane_pids,
+                        tx.clone(),
+                        Some(gauge_bump.clone()),
+                        Some(std::sync::Arc::new(|failure| {
+                            crate::arb_engine::executor::drain_death_response(failure, None);
+                        })),
+                    );
                     run_solve_lane(&mut lane, &SeatSurvivesPolicy, run_bin);
                 };
                 // LW-T8: both arms submit through the ONE Executor
