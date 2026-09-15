@@ -608,6 +608,9 @@ lint-python:
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
 # CI's `lint-python`: fails on any issue `--fix` would have auto-applied.
+lint-comment-hygiene:
+    scripts/hooks/comment-hygiene.sh
+
 lint-python-check:
     uv run ruff check src/
     uv run ty check --no-progress src/

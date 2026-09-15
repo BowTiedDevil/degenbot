@@ -46,6 +46,14 @@ hooks = [
   # shared ruff config; the suppression must never be re-enabled per-line.
   { id = "forbid-noqa-PLC0415", name = "forbid noqa for PLC0415", language = "pygrep", entry = "noqa:.*PLC0415", types = ["python"], stages = ["pre-commit"] },
 
+  # Comment hygiene (AGENTS.md / docs/comments.md): work-tracker (ergo) IDs
+  # and RED/GREEN gate narration are banned in code comments. 237 pre-rule
+  # citations exist across 237 waived files
+  # (scripts/hooks/comment-hygiene-waivers.txt); the gate blocks NEW ones
+  # and the waiver list shrinks as comment-strip waves land. Whole-tree
+  # grep (one git grep) is ~instant, so it rides the per-commit tier.
+  { id = "comment-hygiene", name = "Comment hygiene gate", language = "system", entry = "just lint-comment-hygiene", types = ["python", "rust"], stages = ["pre-commit"], pass_filenames = false },
+
   # Whole-crate instant checks (pass_filenames = false, always_run), ordered
   # fastest first so formatting drift fails before the slower checks.
   { id = "rust-fmt-check",   name = "Rust fmt check",      language = "system", entry = "just fmt-check",                stages = ["pre-commit"], always_run = true, pass_filenames = false },

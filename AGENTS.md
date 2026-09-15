@@ -20,6 +20,9 @@ Use red/green test-driven development when refactoring and adding new features. 
 ## Complex System State
 Prefer enum-based finite state machines to manage transitions within systems. When you encounter an existing system with ad-hoc rules and detailed comments meant to clarify complex interactions, propose a refactor to encapsulate that logic into a state machine.
 
+## Comment Hygiene
+Comments carry the *why* only if it outlives its lookup: no task/epic IDs (commits carry those), no "RED/merged/post-fix" narration, no refactor provenance. Sequencing rules belong in types, acceptance criteria in named tests, history in ADRs. Full rules and the first-home test: `docs/comments.md`.
+
 ## Commands
 See the justfile.
 
