@@ -58,9 +58,9 @@ CLI-over-env cascade with a provenance tag, and the retired
 | `database reset` | `--force` | Remove and recreate the database at the current schema (prompts unless `--force`). |
 | `database upgrade` | `--force` | **RETIRED** (ADR-052 D4): prints `the database upgrades itself at open; for an explicit repair, run \`degenbot database heal\`` and exits 1. The flag is accepted for argv parity only. |
 | `database compact` | — | `VACUUM` the database; never prompts. |
-| `database cutover` | `--dry-run`, `--force` | One-way flip of a head-stamped Alembic DB into Rust schema ownership (ADR-010). Refuses stale/foreign/no-history DBs; prompts unless `--force`. |
-| `database heal` | `--dry-run`, `--force` | Out-of-place dump-and-restore rebuild into Rust ownership (ADR-011); accepts a stale Alembic DB, refuses a foreign file; prompts unless `--force`. |
-| `database inspect` | — | Read-only schema-state report (`alembic_current` / `alembic_stale` / `fresh_standalone` / `rust_owned` / `unrecognized`); never writes. |
+| `database cutover` | `--dry-run`, `--force` | One-way flip of an Alembic-marker DB into Rust schema ownership (ADR-010). Refuses foreign/no-history DBs; prompts unless `--force`. |
+| `database heal` | `--dry-run`, `--force` | Out-of-place dump-and-restore rebuild into Rust ownership (ADR-011); accepts a legacy Alembic-marker DB, refuses a foreign file; prompts unless `--force`. |
+| `database inspect` | — | Read-only schema-state report (`legacy_alembic` / `fresh_standalone` / `rust_owned` / `unrecognized`); never writes. |
 
 ### `degenbot exchange`
 
@@ -142,5 +142,5 @@ fixtures, and `exchange activate`/`deactivate` idempotence on a fresh DB copy,
 then diffs the machine-checkable stdout against the checked-in oracle
 `.github/workflows/cli-no-python-expected.txt`. Two `DEGENBOT_CLI_GATE_SEED`
 modes prove the comparator can fail (a mutated oracle line, and a live
-stale-fixture divergence). The CI job `cli-no-python` provisions no Python
+Rust-owned-state divergence). The CI job `cli-no-python` provisions no Python
 toolchain and never invokes `uv`.

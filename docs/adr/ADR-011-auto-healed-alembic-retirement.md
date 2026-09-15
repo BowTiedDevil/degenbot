@@ -182,7 +182,7 @@ from ADR-010).
 ## Consequences
 
 - **Positive:** Alembic retirement (0.7.0) becomes **non-breaking** —
-  any legacy DB (`alembic_current`, `alembic_stale`, or unrecognized
+  any legacy DB (an `alembic_version` marker, or unrecognized
   with content) can `degenbot database heal` into a `RustOwned` DB
   regardless of its old state. The incoherent migration chain's
   forward-buildability stops mattering; the chain can be deleted

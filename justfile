@@ -851,7 +851,7 @@ test-settlement-parity:
 #   DEGENBOT_CLI_GATE_SEED=expected just ci-no-python-cli-gate
 #       mutate one expected line in a temp oracle copy; the diff must trip.
 #   DEGENBOT_CLI_GATE_SEED=live just ci-no-python-cli-gate
-#       point `database inspect` at the stale fixture (real binary, real
+#       point `database inspect` at a Rust-owned DB copy (real binary, real
 #       different output); the diff must trip.
 # Authoring aid only: DEGENBOT_CLI_GATE_DUMP_ACTUAL=1 prints the normalized
 # capture so the oracle can be regenerated deliberately.

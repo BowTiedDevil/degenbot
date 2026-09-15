@@ -15,7 +15,8 @@
 #     normalized so a build-number advance is not oracle churn).
 #   * \`database inspect\` over committed Alembic-stamped fixtures copied into a
 #     temp dir (never the repo fixture: a write arm auto-heals in place, D1) —
-#     the head fixture reports \`alembic_current\`, the stale one \`alembic_stale\`.
+#     ADR-052 D6 classifies by marker presence only, so both the head and the
+#     stale fixture report \`legacy_alembic\`.
 #   * \`exchange activate\` / \`exchange deactivate\` idempotence on a fresh DB
 #     copy — first run flips, second run reports the already-in-state arm.
 # Fresh copies live under a \`mktemp -d\` workdir; the committed fixtures are
@@ -27,12 +28,12 @@
 # fail is not a gate. Two seeds, selected by DEGENBOT_CLI_GATE_SEED:
 #
 #   expected — mutate ONE expected line in a temp copy of the oracle
-#              (\`alembic_current\` -> \`rust_owned\`). The run PASSES only if the
+#              (\`legacy_alembic\` -> \`rust_owned\`). The run PASSES only if the
 #              diff is non-empty AND names the mutated token — i.e. the
 #              comparator caught the injected divergence.
-#   live     — point the \`database inspect\` arm at the STALE fixture instead
-#              of the head fixture (a real binary printing a real different
-#              schema state). The run PASSES only if the diff catches it.
+#   live     — point the \`database inspect\` arm at a Rust-owned DB instead of
+#              the head fixture (a real binary printing a real different schema
+#              state). The run PASSES only if the diff catches it.
 #
 # The oracle is never rewritten. Authoring aid only:
 # DEGENBOT_CLI_GATE_DUMP_ACTUAL=1 prints the normalized capture and exits 0, so
@@ -77,11 +78,11 @@ cp "$head_fixture" "$workdir/head.db"
 cp "$stale_fixture" "$workdir/stale.db"
 cp "$head_fixture" "$workdir/exchange.db"
 
-# The inspect arm's fixture. In the live seed this points at the stale fixture,
+# The inspect arm's fixture. In the live seed this points at a Rust-owned copy,
 # so the real binary prints a real different schema state.
 inspect_fixture="$workdir/head.db"
 if [ "${DEGENBOT_CLI_GATE_SEED:-}" = "live" ]; then
-    inspect_fixture="$workdir/stale.db"
+    inspect_fixture="$workdir/live.db"
 fi
 
 # Hermetic env: env -i clears any DEGENBOT_* leak from the host, HOME points at
@@ -92,6 +93,13 @@ run_cli() {
     env -i "PATH=$PATH" "HOME=$workdir" NO_COLOR=1 TERM=dumb CLICOLOR=0 \
         "$bin" "$@" 2>/dev/null
 }
+
+# In the live seed, materialize a Rust-owned DB (a real different schema state)
+# for the inspect arm to diverge on: flip a head-fixture copy via cutover.
+if [ "${DEGENBOT_CLI_GATE_SEED:-}" = "live" ]; then
+    cp "$head_fixture" "$workdir/live.db"
+    run_cli database cutover --force --database "$workdir/live.db" >/dev/null
+fi
 
 # One oracle section: the rendered command label, the stdout, and the exit code.
 capture() {
@@ -140,7 +148,9 @@ expected="$oracle"
 if [ "${DEGENBOT_CLI_GATE_SEED:-}" = "expected" ]; then
     # One injected divergence in a temp copy: flip the head-inspect label.
     expected="$workdir/mutated-expected.txt"
-    sed 's/^Schema state: alembic_current\.$/Schema state: rust_owned./' \
+    awk '/^Schema state: legacy_alembic\.$/ && !seen { \
+             print "Schema state: rust_owned."; seen = 1; next \
+         } { print }' \
         "$oracle" > "$expected"
 fi
 
@@ -162,7 +172,7 @@ case "$seed" in
         exit 1
         ;;
     expected)
-        if [ "$matched" -eq 0 ] && grep -q 'alembic_current' "$diff_file"; then
+        if [ "$matched" -eq 0 ] && grep -q 'legacy_alembic' "$diff_file"; then
             echo "cli-no-python gate: seeded-divergence (expected mutation) detected — comparator has teeth"
             exit 0
         fi
@@ -171,11 +181,11 @@ case "$seed" in
         exit 1
         ;;
     live)
-        if [ "$matched" -eq 0 ] && grep -q 'alembic_stale' "$diff_file"; then
-            echo "cli-no-python gate: seeded-divergence (live stale fixture) detected — comparator has teeth"
+        if [ "$matched" -eq 0 ] && grep -q 'rust_owned' "$diff_file"; then
+            echo "cli-no-python gate: seeded-divergence (live Rust-owned state) detected — comparator has teeth"
             exit 0
         fi
-        echo "cli-no-python gate: seeded-divergence (live stale fixture) NOT detected" >&2
+        echo "cli-no-python gate: seeded-divergence (live Rust-owned state) NOT detected" >&2
         cat "$diff_file" >&2
         exit 1
         ;;

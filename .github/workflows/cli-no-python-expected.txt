@@ -25,11 +25,11 @@ degenbot <semver> (build <receipt>)
 exit 0
 
 $ degenbot database inspect --database <head.db>
-Schema state: alembic_current.
+Schema state: legacy_alembic.
 exit 0
 
 $ degenbot database inspect --database <stale.db>
-Schema state: alembic_stale.
+Schema state: legacy_alembic.
 exit 0
 
 $ degenbot exchange activate --chain base --name aerodrome_v2 (1st, fresh DB copy)
