@@ -239,3 +239,8 @@ hp.json
 # agent-harness workspace snapshots (full repo copies incl. unformatted rust bins;
 # break the rust-fmt pre-commit hook — 2026-09-11)
 autoresearch/
+
+# user-journey exercise sealed material (PRD answer key + observer brief):
+# never committed — git history is a permanent leak channel to the worker
+docs/autonomous-user-journey/SEALED.md
+docs/autonomous-user-journey/OBSERVER_BRIEF.md
