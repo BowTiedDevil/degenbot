@@ -1,5 +1,4 @@
-//! `PyO3` binding for the Curve `get_dy` calculator layer (task `CNEP47`,
-//! epic `TV72EG`).
+//! `PyO3` binding for the Curve `get_dy` calculator layer.
 //!
 //! The Python companion (`CurveStableswapPool`) keeps its I/O orchestration
 //! (`_resolve_calculation_inputs_via_io`, amp/rates/xp, provider fetches) but

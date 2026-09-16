@@ -49,7 +49,7 @@ fn test_pump_disables_ws_completeness_by_default() {
     );
 }
 
-/// B4GX7C/sole-mode: the GIL-bound `on_send` (Python dispatch) runs on the
+/// the GIL-bound `on_send` (Python dispatch) runs on the
 /// background drainer task so the WS poller is never parked behind
 /// `Python::attach`. This exercises the (now sole) mode end-to-end: a
 /// header opens block 101, a V2 Sync log for 101 opens + quiesces it, and

@@ -1,4 +1,4 @@
-//! Facet A (T2TCJM) grammar coverage + routing invariant.
+//! Facet A grammar coverage + routing invariant.
 //!
 //! Since `encode_cmd_stream` / `encode_cmd_3_hop` all *delegate* to the Plan
 //! (`grammar::encode_grammar` → `derive_shape` → `build_*_plan` + validator +
@@ -178,7 +178,7 @@ fn every_combo_encodes_through_both_entry_points() {
 
 #[test]
 fn all_v2_entries_produce_identical_plan_bytes() {
-    // KO5NNB: the former all-V2 routing split is collapsed — both public
+    // the former all-V2 routing split is collapsed — both public
     // entries now route all-V2-3-hop through the same `build_all_v2_chain`
     // Plan producer (`encode_cmd_stream`'s `derive_all_v2` short-circuit and
     // `derive_shape`'s `(V2,V2,V2)` arm). This replaces

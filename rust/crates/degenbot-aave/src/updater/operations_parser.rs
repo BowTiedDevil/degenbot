@@ -85,7 +85,7 @@ use std::collections::{HashMap, HashSet};
 /// `operations_parser.py::TransactionOperationsParser`). Holds the per-tx
 /// context (`market_id`, `pool_address`, `treasury_address`, the pre-resolved
 /// GHO token/vToken addresses) + a borrowed chunk-tx `&Connection`. The
-/// orchestrator (6SWY4R) constructs one fresh per Ethereum tx.
+/// orchestrator constructs one fresh per Ethereum tx.
 ///
 /// # Lifetime
 ///
@@ -118,7 +118,7 @@ pub struct TransactionOperationsParser<'a> {
     pub conn: &'a rusqlite::Connection,
     /// The Pool contract revision resolved at parse-start (DP4). Read once
     /// via [`DegenbotDb::lookup_pool_revision_on_conn`]; mid-tx `PoolUpdated`
-    /// config events are the orchestrator's (6SWY4R) concern.
+    /// config events are the orchestrator's concern.
     pub pool_revision: u32,
 }
 
@@ -520,7 +520,7 @@ impl<'a> TransactionOperationsParser<'a> {
     // ── the `parse()` scaffold (mirror `operations_parser.py::parse`) ──
 
     /// Parse the tx's logs into [`TransactionOperations`]. The entry point
-    /// the orchestrator (6SWY4R) calls per-tx inside the chunk-tx loop.
+    /// the orchestrator calls per-tx inside the chunk-tx loop.
     ///
     /// # Errors
     /// Returns [`ParseError`] on any builder-matching failure (the caller
@@ -703,7 +703,7 @@ impl<'a> TransactionOperationsParser<'a> {
         } else if topic == aave_event_decoder::AAVE_REPAY_TOPIC {
             self.create_repay_operation(operation_id, pool_event, scaled_events, assigned_indices)
         } else if topic == aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC {
-            // HQF5NQ-B: the real liquidation engine (the
+            // the real liquidation engine (the
             // SINGLE/COMBINED_BURN/SEPARATE_BURNS pattern detection + the
             // `_analyze_liquidation_scenarios` / `_analyze_user_liquidation_
             // count` pre-analysis dicts over `all_events`).
@@ -1977,7 +1977,7 @@ impl<'a> TransactionOperationsParser<'a> {
                 || ev.event_type == ScaledTokenEventType::Erc20CollateralTransfer)
                 && ev.user_address == user
             {
-                // TYS5MS: mirror Python's `_should_skip_collateral_transfer`
+                // mirror Python's `_should_skip_collateral_transfer`
                 // (`transfers.py:25`) Liquidation-op filter — in Liquidation
                 // ops, ALL ERC20 CollateralTransfers (`Erc20CollateralTransfer`
                 // variant — index=None, the standard ERC20 Transfer event emitted
@@ -2778,7 +2778,7 @@ mod tests {
     // builder needs an in-memory DB substrate (the `get_a_token_for_asset` /
     // `get_v_token_for_asset` sibling lookups); an integration-test fixture
     // is HQF5NQ-C's concern (the apply dispatch glue + the §4.2 cross-check
-    // (U5YIBG) is the consumer).
+    // is the consumer).
 
     /// Construct a LiquidationCall-shape Log for tests: 4 topics
     /// (`AAVE_LIQUIDATION_CALL_TOPIC`, `collateralAsset`, `debtAsset`, `user`) + a 4-word
@@ -3090,7 +3090,7 @@ mod tests {
         );
         // The transfer to a non-ZERO liquidator (NOT the burn-side pair).
         //
-        // TYS5MS: this Erc20CollateralTransfer is now SKIPPED by the new mirror
+        // this Erc20CollateralTransfer is now SKIPPED by the new mirror
         // of Python's `_should_skip_collateral_transfer` LC-op filter — in
         // Liquidation ops, ALL ERC20 CollateralTransfers are filtered at
         // collect-time (Python's filter has the same behavior: `index is None
@@ -3516,7 +3516,7 @@ mod tests {
         // receives the minted-to-treasury aToken shares).
         let treasury = alloy::primitives::address!("0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c");
 
-        // SB3XJF-relevant block 16516952 evidence tuple — the MintedToTreasury
+        // the MintedToTreasury
         // emission that mints accrued yield to the treasury 0x464C's WETH
         // position.
         let amount_minted_raw = U256::from(64_746_517_106_584_784u128);

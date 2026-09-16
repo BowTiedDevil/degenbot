@@ -1,5 +1,4 @@
-//! Pure-Rust Curve swap `get_dy` + calculator layer (task `YY64IT`, epic
-//! `TV72EG`).
+//! Pure-Rust Curve swap `get_dy` + calculator layer.
 //!
 //! Ports the Python `curve/get_dy` orchestration into `degenbot-curve-math`:
 //! the per-`SwapStyle` calculators (`StandardDyCalculator`,

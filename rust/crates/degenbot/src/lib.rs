@@ -26,7 +26,7 @@ pub use degenbot_bot::arb_engine::{DriverError, EngineDriver, PhaseError};
 pub use degenbot_bot::bot_core;
 /// WS ingestion (subscriptions, topic filter, backfill fetch, watchdog
 /// windows) emitting `PoolEvent` into the runtime — the standalone-Rust
-/// consumer subscribes to its event stream without Python (MROOY7).
+/// consumer subscribes to its event stream without Python.
 pub use degenbot_ingestion as ingestion;
 /// traits (ADR-005 standalone-by-design pool value/trait layer).
 pub use degenbot_pools as pools;
@@ -69,7 +69,7 @@ pub use degenbot_simulation as simulation;
 /// co-implementation).
 pub use degenbot_arbitrage as arbitrage;
 
-/// consumer by this crate (B5L2XA).
+/// consumer by this crate.
 pub use degenbot_order_index as order_index;
 
 /// ABI encode/decode (`decoder`, `encoder`).

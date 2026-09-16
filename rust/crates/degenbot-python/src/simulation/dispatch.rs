@@ -168,7 +168,7 @@ pub fn dispatch_profitable_py<'py>(
     // ONLY at the dispatch skip (step 1.5) + feedback (step 5.5) bookends in
     // the core, never across the `.await`s.
     let pool_divergence_arc = dispatcher.pool_divergence_arc();
-    // The FoT registry arc (3O535Q) — same standalone-arc discipline: locked
+    // The FoT registry arc — same standalone-arc discipline: locked
     // ONLY at the dispatch skip (step 2.5) + feedback (step 7.5) + success
     // (step 8.5) bookends in the core, never across the `.await`s.
     let fot_registry_arc = dispatcher.fot_registry_arc();
@@ -182,7 +182,7 @@ pub fn dispatch_profitable_py<'py>(
     // `engine` is `None`, `bot_state = None` — but the legacy RPC sim path
     // retired (ADR-019 D1), so the core's `None` arm is now `unreachable!`;
     // production always supplies `engine`. Kept `Option` here transitively
-    // until step 6 (HZL664) collapses the FFI seam to a required `engine`.
+    // until step 6 collapses the FFI seam to a required `engine`.
     //
     // `warm_cache` is the cross-block bytecode cache (`HDEG7H` Option A) —
     // cloned from the engine's `warm_code_cache_arc()` (one Arc clone, no

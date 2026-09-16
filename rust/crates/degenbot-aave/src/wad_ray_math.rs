@@ -2,7 +2,7 @@
 //!
 //! Verbatim port of `src/degenbot/aave/libraries/wad_ray_math.py` (which is
 //! itself a port of the [Aave V3 Solidity `WadRayMath`][sol] library). The
-//! §4.2 (U5YIBG) parity cross-check compares these against the Python oracle
+//! §4.2 parity cross-check compares these against the Python oracle
 //! byte-for-byte, so the rounding + overflow semantics MUST match exactly.
 //!
 //! [sol]: https://github.com/aave/aave-v3-core/blob/master/contracts/protocol/libraries/math/WadRayMath.sol

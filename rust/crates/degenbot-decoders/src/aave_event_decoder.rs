@@ -1,6 +1,6 @@
 //! Aave V3 event-log decoders (34 events across 8 enums).
 //!
-//! The chunk-loop fetcher (epic `AZGJUN`, task `ECFB5C`) decodes raw Aave V3
+//! The chunk-loop fetcher decodes raw Aave V3
 //! event logs into typed `DecodedAaveEvent` variants (raw `Address`/`U256`
 //! fields — no id resolution; the orchestrator `6SWY4R` resolves
 //! address→id via `get_or_create_*_on_conn` within the chunk transaction).

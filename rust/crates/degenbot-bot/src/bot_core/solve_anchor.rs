@@ -39,7 +39,7 @@ use crate::bot_core::{BotState, Epoch};
 /// the pool-state head (see the module docs for the desync / IIA history),
 /// with the future-hop rule bound to the resolved anchor.
 ///
-/// T6IYKY: the anchor IS an `Epoch` now — the same coordinate type every
+/// the anchor IS an `Epoch` now — the same coordinate type every
 /// other block-carrying surface (the Published-edge verifier anchor,
 /// [`BlockContext`]-carrying drain work, the FSM's recovery anchor) uses.
 /// Solve/verify/sim work names its block with exactly one answer.

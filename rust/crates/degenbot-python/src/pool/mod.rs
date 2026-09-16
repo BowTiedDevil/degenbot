@@ -7,7 +7,7 @@
 //! engine; Python is the cockpit" framing: Python threads the args + a
 //! cancel handle; Rust owns the loop, the RPC fetches, the decode, the DB
 //! writes, + the per-chunk transaction, and emits its own throttled operator
-//! progress lines (Q5IKHX).
+//! progress lines.
 //!
 //! # GIL discipline
 //!
@@ -66,7 +66,7 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
 /// transaction-semantics core.
 ///
 /// The GIL is released across the WHOLE run (`py.detach`) and the core
-/// emits its own throttled operator progress lines (Q5IKHX) — no per-chunk
+/// emits its own throttled operator progress lines — no per-chunk
 /// GIL re-acquisition. A Python-side `KeyboardInterrupt` won't pre-empt
 /// mid-chunk; Task 5's SIGINT handler calls `cancel_handle.cancel()` (the
 /// cooperative flag the loop polls between chunks — §3.3 interrupt contract:
@@ -132,7 +132,7 @@ fn run_pool_update(
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
-    // The core emits its own throttled operator progress lines (Q5IKHX); the
+    // The core emits its own throttled operator progress lines; the
     // seam keeps a silent sink for the core's programmatic `ProgressSink`
     // parameter.
     let progress: Arc<dyn ProgressSink> = Arc::new(NoProgress);
@@ -203,7 +203,7 @@ fn verify_v3_liquidity_map(
     let divergences = py
         .detach(move || {
             use tokio::runtime::Handle;
-            // VJGZJ2: resolve the ambient runtime BEFORE any DB work. With no
+            // resolve the ambient runtime BEFORE any DB work. With no
             // ambient runtime we return a typed error instead of building +
             // dropping a per-call multi-thread runtime (its default
             // worker count is the raw core count — the dead tokio-rt-worker
@@ -281,7 +281,7 @@ fn verify_v4_liquidity_map(
     let divergences = py
         .detach(move || {
             use tokio::runtime::Handle;
-            // VJGZJ2: same ambient-runtime policy as the v3 sibling — typed
+            // same ambient-runtime policy as the v3 sibling — typed
             // error when no ambient runtime exists; never a per-call
             // multi-thread build.
             let Ok(handle) = Handle::try_current() else {
@@ -384,7 +384,7 @@ fn divergences_to_dicts(
 pub use crate::cancel::CancelHandle;
 
 /// The typed error for a Python-called verify path with no ambient tokio
-/// runtime (VJGZJ2): these seams used to build + drop a full
+/// runtime: these seams used to build + drop a full
 /// multi-thread runtime per call (default worker count = the raw core
 /// count), churning dead tokio-rt-worker threads in the live process. They
 /// now run only on the caller's ambient runtime and fail loudly here
@@ -392,7 +392,7 @@ pub use crate::cancel::CancelHandle;
 /// `run_err_to_py` maps it to `ValueError` like every other failure.
 fn no_ambient_runtime_err() -> RunError {
     RunError::Runtime(std::io::Error::other(
-        "no ambient tokio runtime: refusing to build a per-call multi-thread runtime (VJGZJ2); run under the shared degenbot-core ambient runtime",
+        "no ambient tokio runtime: refusing to build a per-call multi-thread runtime; run under the shared degenbot-core ambient runtime",
     ))
 }
 
@@ -437,7 +437,7 @@ pub fn add_pool_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
 
-    /// VJGZJ2: with NO ambient tokio runtime, the verify seams must fail with
+    /// with NO ambient tokio runtime, the verify seams must fail with
     /// the typed no-ambient-runtime error INSTEAD of building + dropping a
     /// per-call multi-thread runtime (its default worker count is the
     /// raw core count — the dead tokio-rt-worker churn seen in the live
@@ -471,7 +471,7 @@ mod tests {
         });
     }
 
-    /// VJGZJ2: v4 sibling of the v3 no-ambient-runtime pin.
+    /// v4 sibling of the v3 no-ambient-runtime pin.
     #[test]
     fn verify_v4_no_ambient_runtime_errors_instead_of_spawning() {
         assert!(

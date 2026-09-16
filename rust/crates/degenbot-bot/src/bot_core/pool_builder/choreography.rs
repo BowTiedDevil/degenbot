@@ -1,4 +1,4 @@
-//! Pool-builder construction orchestration (task `F2R2OC`, epic `Z5CNPB`).
+//! Pool-builder construction orchestration.
 //!
 //! Part 1 of the builder-choreography port: the orchestrated
 //! encode→call→decode choreography that the Python `builders/` used to drive

@@ -140,7 +140,7 @@ pub enum StageDecision {
     /// Block-clock notification for Python's head tracker (B2). The driver
     /// feeds the engine's block-clock pipe (`notify_block`).
     Notify { block: u64, metadata: BlockMetadata },
-    /// Mark a block solved on the engine (LEZJAS). The driver runs
+    /// Mark a block solved on the engine. The driver runs
     /// `sink.set_last_solved_block(block)`.
     SetLastSolved { block: u64 },
     /// Head-gap or inactivity backfill over `[from, to]` via `eth_getLogs`
@@ -151,7 +151,7 @@ pub enum StageDecision {
     /// returns from the loop.
     Stop,
     /// A watchdog tick concluded headers have been stale for >= the staleness
-    /// window (JIABO3). The driver runs `handle_timeout_eager` (an
+    /// window. The driver runs `handle_timeout_eager` (an
     /// authoritative `eth_getLogs` catch-up).
     Recover,
     /// A watchdog tick concluded the logs subscription is silent (headers
@@ -208,7 +208,7 @@ pub struct StageMachine {
     first_header: bool,
     /// Whether a quiesce-gated publish is armed (a forward log applied).
     publish_pending: bool,
-    /// BQ7ZBC — the highest block an authoritative catch-up has owned, with
+    /// the highest block an authoritative catch-up has owned, with
     /// the rewind generation the ownership was established in (T6IYKY: the
     /// recovery anchor is an `Epoch`, not a bare block).
     recovery_anchor: Epoch,
@@ -245,7 +245,7 @@ pub struct StageMachine {
     /// `None` = Streaming; advances as the row's decisions fire; resets on a
     /// rewind (the fresh epoch restarts the cycle).
     stage_in_cycle: Option<Stage>,
-    /// BM35LK: the adaptive trailing-quiesce estimator (pure; timings
+    /// the adaptive trailing-quiesce estimator (pure; timings
     /// arrive as data on `observe_settle_gap`). Parameters arrive from the
     /// driver via `set_quiesce_params`; defaults mirror the historical
     /// fixed-debounce posture.
@@ -296,7 +296,7 @@ impl StageMachine {
     }
 
     /// The FSM's CURRENT epoch: the cursor block in the current rewind
-    /// generation (T6IYKY). Contexts minted earlier — before the last
+    /// generation. Contexts minted earlier — before the last
     /// reorg episode bumped the generation — fail `ensure_current`
     /// against this epoch instead of silently applying.
     #[must_use]
@@ -317,11 +317,11 @@ impl StageMachine {
     /// A reorg episode opened (the FSM's `Rewind`): the rewind generation
     /// bumps, so every context minted before this point is stale and must
     /// fail `ensure_current` rather than silently applying to the rewound
-    /// chain view (T6IYKY). No separate driver call — the bump lives
+    /// chain view. No separate driver call — the bump lives
     /// inside `on_log`'s reorg classification.
     fn rewind(&mut self, reorg_block: u64) {
         self.rewind_seq += 1;
-        // LXDY4C review Q3 fold-in (7NFYQW): tighten the retained per-block
+        // tighten the retained per-block
         // keys to the epoch-voided window — the replaced chain segment (the
         // fork block and everything above it) keeps no pre-rewind
         // bookkeeping. Fresh WS logs + headers re-populate both maps in the
@@ -367,14 +367,14 @@ impl StageMachine {
         .block()
     }
 
-    /// BQ7ZBC — record that an authoritative catch-up (a header-gap backfill
+    /// record that an authoritative catch-up (a header-gap backfill
     /// or a `handle_timeout_eager` recovery) has OWNED the range up to the
-    /// epoch of that catch-up's work. Per the single-writer rule (DFQYM5),
+    /// epoch of that catch-up's work. Per the single-writer rule,
     /// the live WS no longer owns any block at/below the anchor's block, so
     /// later recovered forwards there are benign duplicates (dropped) rather
     /// than re-asserted faults. The anchor is stamped in the CURRENT rewind
     /// generation and only ever extends (monotone in the block coordinate —
-    /// T6IYKY: the anchor is an `Epoch` now).
+    /// the anchor is an `Epoch` now).
     pub fn record_backfill(&mut self, through: impl Into<Epoch>) {
         let through = through.into();
         if through.block() > self.recovery_anchor.block() {
@@ -412,7 +412,7 @@ impl StageMachine {
             LogDecision::EnterReorg(reorg_block) => {
                 // A reorg invalidates any publish armed from pre-reorg state —
                 // AND rewinds the machine: the rewind generation bumps so every
-                // context minted pre-reorg is stale (T6IYKY). The stage row
+                // context minted pre-reorg is stale. The stage row
                 // resets — the fresh epoch restarts the cycle at Streaming.
                 self.publish_pending = false;
                 self.rewind(reorg_block);
@@ -441,7 +441,7 @@ impl StageMachine {
                 }
             }
             LogDecision::LateForward(_) => {
-                // Benign late admission (HJ5HWF): no FSM transition — the
+                // Benign late admission: no FSM transition — the
                 // block is tombstoned and stays so; publication state,
                 // publish arm, and cutoff are all left untouched (I4/I5/I7).
                 // The pump owns the drop + count.
@@ -464,7 +464,7 @@ impl StageMachine {
     }
 
     /// Mark an authoritative backfill-range complete: advance the cursor and
-    /// extend the single-writer recovery anchor (BQ7ZBC).
+    /// extend the single-writer recovery anchor.
     pub fn on_backfill_range_done(&mut self, through: u64) {
         self.current_block = self.current_block.max(through);
         self.record_backfill(through);
@@ -513,7 +513,7 @@ impl StageMachine {
                     from: self.current_block + 1,
                     to: Some(number - 1),
                 });
-                // BQ7ZBC — this authoritative header-gap catch-up OWNS
+                // this authoritative header-gap catch-up OWNS
                 // `[old+1, number-1]`; a recovering WS flushing those blocks
                 // must be discarded (single-writer), not re-asserted.
                 self.record_backfill(number - 1);
@@ -711,7 +711,7 @@ mod block_clock_contract {
     #[test]
     fn non_first_gap_header_extends_recovery_anchor() {
         // The non-first-header gap branch must also own `[old+1, number-1]` for
-        // the single-writer recovery anchor (BQ7ZBC) — the old inline driver
+        // the single-writer recovery anchor — the old inline driver
         // copy did; `on_header` is now the single authority and must too.
         let mut fsm = StageMachine::new(100, 0);
         let _ = fsm.on_header(101, meta(101_000), 1_000); // contiguous first header
@@ -801,7 +801,7 @@ mod block_clock_contract {
 
     #[test]
     fn completeness_backfill_owned_block_is_not_ws_accountable() {
-        // Single-writer rule (DFQYM5/BQ7ZBC): a block <= recovery_anchor was
+        // Single-writer rule: a block <= recovery_anchor was
         // owned by an authoritative eth_getLogs catch-up, so the live WS is
         // NOT its delivery authority — the completeness cross-check is
         // vacuous there (an empty delivered set is expected, not a drop).
@@ -897,7 +897,7 @@ mod block_clock_contract {
     #[test]
     fn single_writer_recovery_anchor_drops_owned_range_only() {
         // Record an authoritative catch-up owning [.., 205]. Per the
-        // single-writer rule (DFQYM5) the WS no longer owns those blocks.
+        // single-writer rule the WS no longer owns those blocks.
         let mut fsm = StageMachine::new(200, 0);
         fsm.record_backfill(205);
         assert_eq!(fsm.recovery_anchor, 205);
@@ -1236,7 +1236,7 @@ impl StageMachine {
 
     /// Transition `block` from `LogsArriving` to `LogsApplied` (the tombstone).
     /// The pump driver mirrors this verdict into `BotState`'s delivery cutoff
-    /// (BGEDB6) — the clock holds no shared cutoff interior.
+    /// — the clock holds no shared cutoff interior.
     fn tombstone(&mut self, block: u64) {
         if let Some(state) = self.blocks.get_mut(&block) {
             *state = BlockState::LogsApplied;
@@ -1320,8 +1320,7 @@ impl StageMachine {
 }
 
 // ======================================================================
-// BM35LK — the adaptive trailing-quiesce estimator (epic FIMZES; design in
-// the gitignored logs/ design note logs/quiesce-design-20260908.md §6).
+// the adaptive trailing-quiesce estimator.
 // ======================================================================
 
 /// The settle-window mode declared by the typed config schema
@@ -1378,7 +1377,7 @@ impl QuiesceParams {
         }
     }
 
-    /// Snapshot the `pump.quiesce_*` schema keys (BM35LK). `fixed_ms` is
+    /// Snapshot the `pump.quiesce_*` schema keys. `fixed_ms` is
     /// the pump's live debounce — the fixed-mode window AND the adaptive
     /// fallback contract (the debounce's "never 0" parse rule carries over).
     /// The FSM stays I/O-free: it never reads the ambient config stance

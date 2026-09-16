@@ -45,10 +45,10 @@ pub struct Bot {
     chain_id: u64,
     /// The shared pure-data state. Handles clone this `Arc`.
     state: Arc<StateLock<BotState>>,
-    /// The per-`Bot` event bus (ADR-006 D4). The pump (slice 5) drives
+    /// The per-`Bot` event bus (ADR-006 D4). The pump drives
     /// [`dispatch_log`](Self::dispatch_log) per WS log.
     dispatcher: log_dispatcher::LogDispatcher,
-    /// The epoch's touched-pool ledger (epic MROOY7, task LXDY4C): every
+    /// The epoch's touched-pool ledger: every
     /// successful log application records its touched `(HopType, pool_id)`
     /// key here as a BYPRODUCT of [`dispatch_log`](Self::dispatch_log).
     /// Shared with the drain seam (the coordinator consumes it at solve
@@ -157,7 +157,7 @@ impl Bot {
     }
 
     /// Record the snapshot seed block `S` on `BotState` from a held-tx DB
-    /// handle (epic `XEANMB`). The single entry point a standalone Rust
+    /// handle. The single entry point a standalone Rust
     /// consumer and the pyo3 `PyBot` constructor both call.
     ///
     /// `db` is a [`degenbot_db::snapshot::TickMapDb`] — typically a
@@ -214,7 +214,7 @@ impl Bot {
     /// Drive one WS log through the event bus (ADR-006 D4). Decode via a
     /// registered decoder, apply to `BotState` under a write guard, release,
     /// then record the touched pool into the epoch `EpochDelta`. The pump
-    /// (slice 5) calls this per log.
+    /// calls this per log.
     #[hotpath::measure(impl_type = "Bot")]
     pub fn dispatch_log(&self, log: &alloy::rpc::types::Log) {
         self.dispatcher
@@ -275,14 +275,14 @@ impl Bot {
     }
 
     /// The shared epoch-delta ledger: log application records touched
-    /// pools here (epic MROOY7, task LXDY4C); the wiring hands clones to
+    /// pools here; the wiring hands clones to
     /// the drain seam so affected-path derivation reads this ledger.
     #[must_use]
     pub fn active_delta(&self) -> Arc<EpochDelta> {
         Arc::clone(&self.delta)
     }
 
-    /// Record `pool_id` as touched in the epoch ledger (LXDY4C).
+    /// Record `pool_id` as touched in the epoch ledger.
     /// `ReorgCoordinator` calls this after a per-pool restore so the
     /// re-restored pool re-enters the delta + re-solves at the next drain
     /// tick. `hop` is the restored event's family (the coordinator reads it

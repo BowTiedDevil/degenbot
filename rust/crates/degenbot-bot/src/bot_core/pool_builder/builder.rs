@@ -1270,7 +1270,7 @@ pub async fn build_v4(
         update_block,
     )
     .await?;
-    // Two-stamp OB7UNY (V4 twin of build_v3): a DB-seeded (`Tracked`) pool's
+    // Two-stamp rule (V4 twin of build_v3): a DB-seeded (`Tracked`) pool's
     // liquidity clock is its DB `liquidity_update_block`, not the head price
     // clock (regression 8c50e0cd).
     let tick_data_block = if coverage == PoolTickCoverage::Tracked {

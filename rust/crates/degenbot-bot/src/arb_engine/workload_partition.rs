@@ -10,9 +10,9 @@
 use ::degenbot_solvers::mixed::ResolvedMixedPath;
 use degenbot_core::op_info;
 // ---------------------------------------------------------------------------
-// RAYPAR T3: LPT-pre-balanced scoped-thread partition
+// LPT-pre-balanced scoped-thread partition
 // ---------------------------------------------------------------------------
-/// The ONE solve-bin sizing seam (P6YXA6): fleet-hosted cycles bin at the
+/// The ONE solve-bin sizing seam: fleet-hosted cycles bin at the
 /// fleet's structural Solver seat count (pins == bins, so every bin owns a
 /// warm keyed seat); every other arm bins at the machine-derived solve
 /// worker count. One funnel so the arms can never re-derive the count and
@@ -22,7 +22,7 @@ pub(crate) fn solve_bin_count() -> usize {
     crate::arb_engine::executor::global_executor().bin_count()
 }
 #[expect(clippy::doc_markdown)]
-/// RAYPAR T3: LPT (longest-processing-time) bin-packing. Sorts items by
+/// LPT (longest-processing-time) bin-packing. Sorts items by
 /// descending cost and greedily assigns each to the least-loaded bin. Returns
 /// indices into the original items slice, one Vec per bin.
 ///
@@ -387,7 +387,7 @@ mod dispatch_binning_properties {
     }
 }
 // ---------------------------------------------------------------------------
-// 5WCRWZ T2 test-upgrade: direct coverage for the moved items the relocated
+// direct coverage for the moved items the relocated
 // islands did not pin at their own interface (`solve_bin_count` was pinned
 // only through the engine's binning; `path_cost_proxy` only through
 // `prod_lpt_bins`). The moved islands above pin `lpt_partition`,
@@ -402,7 +402,7 @@ mod direct_seam_tests {
     use ::degenbot_solvers::mixed::{ResolvedHop, ResolvedMixedPath};
     use alloy::primitives::U256;
     use std::sync::Arc;
-    /// `solve_bin_count` is the ONE solve-bin sizing seam (P6YXA6): it answers
+    /// `solve_bin_count` is the ONE solve-bin sizing seam: it answers
     /// the executor's structural seat count (>= 1) rather than a re-derived
     /// number. Constructing an engine first satisfies `global_executor`'s
     /// construction-stamped boot precondition.

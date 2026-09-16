@@ -77,7 +77,7 @@ pub fn solve_path_with_min_profit(
                 seq: int_seq,
                 crossings: std::borrow::Cow::Borrowed(crossing_table),
             })),
-            // M6776W: Solidly volatile is the constant-product family → the
+            // Solidly volatile is the constant-product family → the
             // fee-agnostic V2 lines. Solidly stable is a stableswap whose
             // marginal rate is non-monotone → sound reserve cap only (loose);
             // the amplification-bounded peak-rate slope is a follow-up.
@@ -313,7 +313,7 @@ pub fn solve_path_inner(
         }
     } else if all_v2_or_solidly && has_solidly {
         // All-V2-or-Solidly with ≥1 Solidly hop — the two-stage Möbius
-        // precheck + golden-section solve (task DMPSNG). Scope (p):
+        // precheck + golden-section solve. Scope (p):
         // Solidly mixed with CL is rejected below.
         (
             solve_solidly_path_int(resolved),
@@ -1728,7 +1728,7 @@ mod gate_tests {
 
     #[test]
     fn solidly_and_stableswap_hops_are_now_screened_not_unsupported() {
-        // M6776W: Solidly/Curve/Balancer hops now carry rigorous (or sound
+        // Solidly/Curve/Balancer hops now carry rigorous (or sound
         // reserve-cap) bounds, so the path is EVALUATED by the gate rather
         // than SOLVED unscreened. A single Solidly-stable hop yields a
         // `Some` bound (reserve cap) → `evaluated`, NOT `unsupported`.

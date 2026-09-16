@@ -1,4 +1,4 @@
-//! Executor grammar — full axis model (GCC6I6) + a **ledger-validator** that
+//! Executor grammar — full axis model + a **ledger-validator** that
 //! makes the two real bug classes unrepresentable (ADR-029 D1/D2, D5).
 //!
 //! Two halves, per ADR-029 D4 (hybrid):
@@ -557,7 +557,7 @@ pub enum ValidationError {
     /// A `NativeTransfer` (the executor→PM native pay-in leg of a native
     /// settle) debited the executor's native balance before it held credit (the
     /// native analogue of `Erc20TransferBeforeCredit`). Surfaced by the
-    /// BP7KIR 3c native-gap work — a `WethWithdraw` (or native V4 take) must
+    /// a `WethWithdraw` (or native V4 take) must
     /// precede the native pay-in.
     NativeTransferBeforeCredit { wanted: u128, have: i128 },
     /// An `ExternalFlash`/`ExternalRepay` referenced an external-ledger index

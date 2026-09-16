@@ -122,7 +122,7 @@ fn fnv1a_boot(boot: &FleetBoot) -> u64 {
         state,
         &(boot.posture.sim_intake_floor_override.unwrap_or(0) as u64).to_le_bytes(),
     );
-    // FF-T2 (MEBF4V): the fleet profile folds in as the enum discriminant
+    // FF-T2: the fleet profile folds in as the enum discriminant
     // (auto | pinned | serial) — a forced profile is a DIFFERENT boot.
     state = fnv_mix(
         state,
@@ -189,7 +189,7 @@ pub(crate) fn record_ride(role: BootRole, stamp: &BootStamp) {
                 winner_cfg = format_args!("{winner_cfg:016x}"),
                 rider_engine = stamp.engine_id,
                 rider_cfg = format_args!("{:016x}", stamp.cfg_hash),
-                "mixed-boot fleet ride (YI5NGB): first-fleet-wins, rider cfg diverges"
+                "mixed-boot fleet ride: first-fleet-wins, rider cfg diverges"
             );
             #[cfg(test)]
             panic_mixed_boot_ride_illegal_in_tests(*winner_cfg, stamp);
@@ -197,7 +197,7 @@ pub(crate) fn record_ride(role: BootRole, stamp: &BootStamp) {
         None => rows.push((role.label(), stamp.engine_id, stamp.cfg_hash, Vec::new())),
     }
 }
-/// The test-build arm of the ledger (YI5NGB): a divergent-cfg ride is
+/// The test-build arm of the ledger: a divergent-cfg ride is
 /// ILLEGAL in tests by construction — the F2 fire drill. Prod builds never
 /// compile this (the warn + the ledger row carry the whole story there).
 #[cfg(test)]
@@ -285,7 +285,7 @@ mod tests {
         let c = BootStamp::of(other);
         assert!(!a.same_cfg(&c), "a divergent cfg is NOT a legal ride");
     }
-    /// F2 (YI5NGB): the mixed-cfg fire drill — a SECOND engine's
+    /// F2: the mixed-cfg fire drill — a SECOND engine's
     /// construction with a DIVERGENT cfg must make the ride ILLEGAL in
     /// tests.
     ///
@@ -378,7 +378,7 @@ mod tests {
             "engine A's construction boot is the schema-default boot (the divergent cfg stayed local to B)"
         );
     }
-    /// F3 (YI5NGB): the positive control — a second engine with a
+    /// F3: the positive control — a second engine with a
     /// byte-IDENTICAL boot is a legal, silent rider: no panic, the shared
     /// fleet materializes exactly ONCE (`std::ptr::eq` on the `&'static`
     /// handles across A's and B's submits), and the ledger holds ONE boot

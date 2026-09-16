@@ -1,4 +1,4 @@
-// Integration tests for the `otel` module (epic KDUED5 / DFN6FF).
+// Integration tests for the `otel` module.
 //
 // Compiled only under the `otel` feature so the default-feature test build
 // compiles zero OpenTelemetry code (same gating as the module itself).

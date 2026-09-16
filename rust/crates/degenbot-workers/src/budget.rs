@@ -31,7 +31,7 @@
 //! 6 bins — retires with the hard cutover). Walk ADMISSION stays the
 //! share `S`: a gated bin parks, per design doc §5.
 //!
-//! # Cross-authority contract: allocation floors, detection ceils (TTANQJ)
+//! # Cross-authority contract: allocation floors, detection ceils
 //!
 //! `degenbot_core::cpu_budget` CEILS fractional cgroup quotas for
 //! worker-existence sizing (a 4.5-core quota still buys a 5th worker);
@@ -91,7 +91,7 @@ impl BudgetOverrides {
             solver_cpus: cfg.fleet.solver_cpus.and_then(|v| u64::try_from(v).ok()),
             sim_slot_cap: cfg.fleet.sim_slot_cap,
             pool_state_updater_slots: cfg.fleet.pool_state_updater_slots,
-            // The typed T8 follow-through (W6EMBF): the headroom override
+            // The typed T8 follow-through: the headroom override
             // reaches the budget derive; unset stays None and the documented
             // constant rules below.
             solve_headroom: cfg.solve.solve_headroom,
@@ -236,7 +236,7 @@ pub struct FleetBudget {
     pub fractional_remainder: f64,
 }
 
-/// The per-tier projection mode (GAXX2Z): ONE owner
+/// The per-tier projection mode: ONE owner
 /// (`FleetBudget::project`) derives all three tier tables. The tier is MODE
 /// DATA, not a second derivation — plan.rs's pinned/marked/serial arms
 /// select a mode.
@@ -270,7 +270,7 @@ impl FleetBudget {
         Self::project(quota_cpus, overrides, BudgetMode::Pinned)
     }
 
-    /// The ONE tier projection (GAXX2Z): `mode` selects the pinned,
+    /// The ONE tier projection: `mode` selects the pinned,
     /// forced-pinned-marked, or serial table, all built from the SAME shared
     /// formulas (H, A, R, M, the structural pin count, the slot caps). Only
     /// the pinned arm enforces the sum check; the other two are total by
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(b.sim_slot_cap, 6);
     }
 
-    /// W6EMBF: the `solve.solve_headroom` typed key reaches the budget
+    /// the `solve.solve_headroom` typed key reaches the budget
     /// derive end-to-end — through the LOADER route (not just a hand-built
     /// struct) — while the default stays `None` (the documented constant
     /// rules below).
@@ -1017,7 +1017,7 @@ mod tests {
         );
     }
 
-    /// GAXX2Z: ONE projection owner. All three tier projections are produced
+    /// ONE projection owner. All three tier projections are produced
     /// by `FleetBudget::project(mode)` from the SAME shared formulas; this
     /// pin walks representative quotas and override shapes and asserts each
     /// mode's invariants against the derive formulas (the sum-check vs
@@ -1219,7 +1219,7 @@ mod tests {
                         BudgetError::QuotaTooSmallForPinnedRoles { .. }
                         | BudgetError::Oversubscribed { .. }
                         | BudgetError::TooFewSolverCpus { .. }
-                        // FF-T2 (MEBF4V): the plan-tier refusal classes.
+                        // FF-T2: the plan-tier refusal classes.
                         // The derive itself never produces them (the plan
                         // does); listed so the match stays exhaustive and
                         // a future arm is still a compile error.

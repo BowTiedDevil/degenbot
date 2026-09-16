@@ -168,7 +168,7 @@ fn cli_layer_overrides_env_and_file() {
 
 #[test]
 fn quiesce_keys_precedence_chain_env_beats_file_beats_default() {
-    // BM35LK: the pump.quiesce_* keys follow the same precedence law.
+    // the pump.quiesce_* keys follow the same precedence law.
     let path = temp_toml(
         "quiesce",
         "[pump]\nquiesce_mode = \"adaptive\"\nquiesce_floor_ms = 3\nquiesce_margin_ms = 2.5\n",
@@ -263,7 +263,7 @@ fn loader_fails_closed_on_bad_values_and_unknown_keys() {
         "the retired key is rejected: {err}"
     );
 
-    // P6YXA6: the RETIRED executor key is not a schema key anymore — a CLI
+    // the RETIRED executor key is not a schema key anymore — a CLI
     // override naming it is rejected as unknown (fail-closed).
     let err = must_err(
         &BotConfigLoader::new()

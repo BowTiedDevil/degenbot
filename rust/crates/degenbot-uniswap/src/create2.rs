@@ -133,7 +133,7 @@ pub fn compute_v3_address(
 }
 
 // ---------------------------------------------------------------------------
-// Aerodrome EIP-1167 clone address derivation (S5SJXF/U43OVR)
+// Aerodrome EIP-1167 clone address derivation
 // ---------------------------------------------------------------------------
 
 /// The EIP-1167 minimal-proxy creation bytecode prefix (10 bytes):
@@ -343,7 +343,7 @@ mod tests {
         );
     }
 
-    // --- Aerodrome EIP-1167 clone-address parity (S5SJXF/U43OVR) ---------
+    // --- Aerodrome EIP-1167 clone-address parity ---------
     // Cross-checked byte-for-byte against the Python
     // `generate_aerodrome_v2_pool_address` / `_v3_pool_address` parity oracle
     // (`src/degenbot/aerodrome/functions.py`) over a Base-deployment fixture

@@ -8,7 +8,7 @@
 //! any other sink) drains the receiver end. The pipe is neutral Rust: it
 //! knows nothing about the engine, the stage machine, or Python.
 //!
-//! Migrated from `degenbot-bot::bot_core` (epic MROOY7, 5WTYYQ): the
+//! Migrated from `degenbot-bot::bot_core`: the
 //! delivery-to-Python block-clock channel type is NOT runtime knowledge —
 //! the shared kernel owns the type, the engine merely relays.
 

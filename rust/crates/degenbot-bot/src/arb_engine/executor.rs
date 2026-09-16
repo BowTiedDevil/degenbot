@@ -21,7 +21,7 @@ pub(crate) type SubmitWork = Box<dyn FnOnce(&LaneCtx) + Send + 'static>;
 /// by the block pump directly, and every fleet host consults the same
 /// owner; the seam carries no posture channel anymore.)
 pub(crate) trait Executor: Send + Sync {
-    /// The structural seat count bins bind at (P6YXA6).
+    /// The structural seat count bins bind at.
     fn bin_count(&self) -> usize;
     /// Submit one LPT bin job; the unit body receives the seat's `LaneCtx`.
     /// Admission is posture-invariant (7OGY5V/024ef513d): a posture refusal
@@ -57,7 +57,7 @@ pub(crate) fn global_sim_executor(
 // ---------------------------------------------------------------------------
 // THE solve lane (QR3NUS 43E3H3): the one outcome-carrier module both solve
 // arms submit through. Folded here from the fleet solve executor's
-// provisional lane module (JI275C) — the placement is the one JI275C named.
+// provisional lane module — the placement is the one JI275C named.
 // WITNESS + CARRIER + LEDGER live together on purpose: the lane knows the
 // pids it owes, the carrier carries what the merge consumes, and the ledger
 // asserts the one-outcome-per-path-per-cycle law across BOTH arms.
@@ -151,7 +151,7 @@ impl LaneOutcome {
         }
     }
 }
-/// One typed terminal record for a DEAD MERGE DRAIN (AQV6EF): the merge
+/// One typed terminal record for a DEAD MERGE DRAIN: the merge
 /// pipe's only consumer is gone, so no later outcome can ever be delivered.
 /// Deliberately NOT a [`LaneFailure`]: a `LaneFailure` rides the (live)
 /// pipe as a typed `Failed` record; this names the death of the pipe
@@ -182,18 +182,18 @@ pub(crate) enum DrainFailure {
         pid: u64,
     },
 }
-/// The detached arm's drain-death hook (AQV6EF): `Arc`-shared so every
+/// The detached arm's drain-death hook: `Arc`-shared so every
 /// bin thread clones it; fired with the typed failure so the hook stays a
 /// plain policy function (`drain_death_response`, or a test recorder).
 pub(crate) type DrainDeathHook = std::sync::Arc<dyn Fn(&DrainFailure) + Send + Sync>;
-/// The drain-death loud-log cadence (AQV6EF): EVERY loss is counted (the
+/// The drain-death loud-log cadence: EVERY loss is counted (the
 /// metric and the posture cause), but the error line is emitted on the
 /// first occurrence and then every `DRAIN_DEATH_LOG_EVERY`th, so a dead
 /// pipe cannot flood the log while the terminal state stays continuously
 /// VISIBLE — a once-only line an operator can miss is not acceptable.
 const DRAIN_DEATH_LOG_EVERY: u64 = 256;
 static DRAIN_DEATH_LOGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// The ONE drain-death response (AQV6EF). The merge pipe's only consumer is
+/// The ONE drain-death response. The merge pipe's only consumer is
 /// the sidecar thread, and `spawn_merge_sidecar` spawns exactly one per
 /// engine lifetime — a dead merge seat can NEVER recover in-process.
 /// CLASSIFICATION: a dead merge seat is NOT a `failure_policy`
@@ -226,7 +226,7 @@ pub(crate) fn drain_death_response(
     if occurrence == 1 || occurrence.is_multiple_of(DRAIN_DEATH_LOG_EVERY) {
         op_error!(domain = exec, failure = ?failure,
             occurrence,
-            "merge drain DEAD — outcome lost and counted, sticky posture cordon set (FF-T4 lane death); the process lives, only a fresh process lifts it (AQV6EF)"
+            "merge drain DEAD — outcome lost and counted, sticky posture cordon set (FF-T4 lane death); the process lives, only a fresh process lifts it"
         );
     }
 }
@@ -239,12 +239,12 @@ pub(crate) struct SolveLane {
     pids: Vec<u64>,
     emitted: BTreeSet<u64>,
     tx: mpsc::Sender<LaneOutcome>,
-    /// 43E3H3: the DETACHED arm's in-flight gauge hook, fired on a
+    /// the DETACHED arm's in-flight gauge hook, fired on a
     /// `Solved` item's SEND SUCCESS only (never for Suppressed/Failed —
     /// REV 2 Defect 1: those never bump, so they may never decrement).
     /// `None` on the in-cycle arm (which has no in-flight gauge).
     on_solved_send: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
-    /// AQV6EF: the DETACHED arm's drain-death hook, fired on a terminal
+    /// the DETACHED arm's drain-death hook, fired on a terminal
     /// `LaneOutcome` send FAILURE (the merge pipe's Receiver is gone).
     /// Strictly additive: the failed send is NOT re-delivered and the
     /// in-flight gauge is NOT bumped — the ledger is owed deliveries for
@@ -310,7 +310,7 @@ impl SolveLane {
             self.note_send_failed(pid);
         }
     }
-    /// AQV6EF: surface a terminal send failure that would otherwise be
+    /// surface a terminal send failure that would otherwise be
     /// swallowed. Strictly additive — no pipe delivery is fabricated (the
     /// pid is already in `emitted`, the double-delivery guard) and no
     /// gauge is touched; the hook is the detached arm's drain-death signal.

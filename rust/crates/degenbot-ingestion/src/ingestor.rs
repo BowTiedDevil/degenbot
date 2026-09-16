@@ -23,7 +23,7 @@ pub const BACKFILL_TIMEOUT_SECS: u64 = 60;
 /// after the head is header-confirmed, wait (bounded) for the logs stream to
 /// deliver its first log before falling back to the header-confirmed
 /// boundary. Bounds startup latency on a quiet/log-free chain while still
-/// capturing the log stream's true live-from block on active ones (DFQYM5).
+/// capturing the log stream's true live-from block on active ones.
 pub const LOG_CATCHUP_SETTLE_SECS: u64 = 15;
 
 /// Default chunk size (blocks per `eth_getLogs` request) for the
@@ -102,7 +102,7 @@ impl WsIngestor {
         Ok(stream_select(block_stream, log_stream))
     }
 
-    /// MJXP5Z single-stream handshake + delivery-hole-free boundary (DFQYM5).
+    /// MJXP5Z single-stream handshake + delivery-hole-free boundary.
     /// Connects, merges both subscriptions, confirms the boundary from the
     /// LOG STREAM's actual liveness (two consecutive headers + first-delivered
     /// log, header fallback past the settle window), and returns the boundary
@@ -167,7 +167,7 @@ impl WsIngestor {
     }
 
     /// Handshake (MJXP5Z / Alternative B) that confirms the boundary from the
-    /// LOG STREAM's actual liveness, not headers alone (DFQYM5). Polls the
+    /// LOG STREAM's actual liveness, not headers alone. Polls the
     /// fused stream until (a) two consecutive distinct headers confirm the
     /// head is near/finalized AND (b) the `logs` sub has delivered at least
     /// one log — the block of that first log (`first_log_block`) is where the
@@ -184,7 +184,7 @@ impl WsIngestor {
         let mut prev_timestamp: u64 = 0;
         // The block of the FIRST log the WS `logs` sub delivers — the earliest
         // proof the log stream is provably LIVE. The resume boundary + backfill
-        // inclusive target = this block (DFQYM5).
+        // inclusive target = this block.
         let mut first_log_block: Option<u64> = None;
         // The highest header-confirmed-finalized block (two consecutive
         // headers). Advances as headers flow.
@@ -533,7 +533,7 @@ mod handshake_tests {
         );
     }
 
-    /// MJXP5Z: the handshake consumes ONLY headers (and collects logs); it
+    /// the handshake consumes ONLY headers (and collects logs); it
     /// never matches or interprets a log. Both W logs arrive between
     /// header(W) and header(W+1) and must be re-injected into `pending` for
     /// the resume stream.

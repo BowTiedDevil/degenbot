@@ -55,7 +55,7 @@
 
 pub mod doc;
 pub mod error;
-/// KAHU5W: the process-wide typed-config holder. The loader (the ONLY env
+/// the process-wide typed-config holder. The loader (the ONLY env
 /// reader) produces a [`BotConfig`]; the boot path installs it here and every
 /// formerly env-reading call site in the workspace reads a typed field off
 /// [`holder::config`] instead. A plain VALUE holder — zero env access.

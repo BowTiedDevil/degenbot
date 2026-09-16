@@ -60,7 +60,7 @@ use crate::dex_identity::DexName;
 /// pools read the per-row verified init hash from the deployment record
 /// (covering the `PancakeSwap` V3 separate-deployer case). Keeping this as a
 /// Rust `const` retires the second Python copy without dropping the fallback
-/// semantics non-JSON pools rely on (P62DKO).
+/// semantics non-JSON pools rely on.
 pub const UNISWAP_V3_MAINNET_INIT_HASH: alloy::primitives::B256 =
     alloy::primitives::b256!("e34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54");
 
@@ -70,7 +70,7 @@ pub const UNISWAP_V3_MAINNET_INIT_HASH: alloy::primitives::B256 =
 /// called for a `(chain, factory)` NOT in the shipped `deployments.json`
 /// (test/ad-hoc pools). JSON-registered pools read the per-row verified init
 /// hash from the deployment record. Rust `const` retires the Python copy
-/// (NSAZ4X).
+///.
 pub const UNISWAP_V2_MAINNET_INIT_HASH: alloy::primitives::B256 =
     alloy::primitives::b256!("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f");
 
@@ -80,7 +80,7 @@ pub const UNISWAP_V2_MAINNET_INIT_HASH: alloy::primitives::B256 =
 /// Returns the JSON row's `init_hash` when shipped with a CREATE2 init hash;
 /// otherwise [`UNISWAP_V2_MAINNET_INIT_HASH`] (the retired Python `ClassVar`'s
 /// documented default for non-`JSON` V2 pools). The V2 builder stores this on
-/// the identity; the `dex` getter merges it (NSAZ4X).
+/// the identity; the `dex` getter merges it.
 #[must_use]
 pub fn resolve_v2_init_hash(chain_id: u64, factory: Address) -> alloy::primitives::B256 {
     match lookup(chain_id, factory) {
@@ -109,7 +109,7 @@ pub fn resolve_deployer(chain_id: u64, factory: Address) -> Address {
 /// a CREATE2 init hash; otherwise [`UNISWAP_V3_MAINNET_INIT_HASH`] (the
 /// retired Python `ClassVar`'s documented default for non-`JSON` V3 pools). This
 /// is the value the V3 builder stores on the identity; the companion reads it
-/// off the handle (P62DKO).
+/// off the handle.
 #[must_use]
 pub fn resolve_v3_init_hash(chain_id: u64, factory: Address) -> alloy::primitives::B256 {
     match lookup(chain_id, factory) {
@@ -725,7 +725,7 @@ mod tests {
         assert!(!is_pancakeswap_v3_factory(1, pancake_v2_factory));
     }
 
-    // --- Registration-time verification (JC6OFG) ----------------------------
+    // --- Registration-time verification ----------------------------
     // Cross-checked addresses (Python `generate_v2/v3_pool_address` reference):
     //   V2 DAI/WETH mainnet:            0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11
     //   V3 UNI USDC/WETH 500 mainnet:   0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640
@@ -841,7 +841,7 @@ mod tests {
         assert_eq!(rec.init_hash, Some(UNISWAP_V3_MAINNET_INIT_HASH));
     }
 
-    // --- Aerodrome EIP-1167 implementation address (S5SJXF/D7VKQX) --------
+    // --- Aerodrome EIP-1167 implementation address --------
 
     const AERODROME_V2_BASE_FACTORY: Address = address!("420DD381b31aEf6683db6B902084cB0FFECe40Da");
     const AERODROME_V3_BASE_FACTORY: Address = address!("5e7BB104d84c7CB9B682AaC2F3d509f5F406809A");
@@ -896,7 +896,7 @@ mod tests {
         assert!(implementation_address(1, UNISWAP_V2_MAINNET_FACTORY).is_none());
     }
 
-    // --- Aerodrome register-time verification (S5SJXF/WLJD2Y) -------------
+    // --- Aerodrome register-time verification -------------
 
     #[test]
     fn verify_aerodrome_v2_round_trips() {

@@ -54,7 +54,7 @@ use std::sync::Arc;
 /// (P37YJG: the cap consult moved into the machine; WFF6MM: the consult
 /// retired with the arm.)
 pub(crate) const DETACHED_INFLIGHT_CAP: u64 = 8;
-/// THE persistent machine state (P37YJG). WFF6MM: the in-flight-cap
+/// THE persistent machine state. WFF6MM: the in-flight-cap
 /// `Saturated` state retired with the in-cycle arm — a begin ALWAYS opens,
 /// so the machine is `Unopened → Open`; no row ever returns to
 /// [`CycleArm::Unopened`] (a pipe, once open, stays open until teardown).
@@ -161,7 +161,7 @@ pub(crate) struct DetachedArm {
     pub(crate) merge_tx: std::sync::mpsc::Sender<LaneOutcome>,
 }
 /// The drain's counter aggregate (the sidecar's per-item consumption).
-/// P37YJG: the machine owns the disposition bookkeeping, so the aggregate
+/// the machine owns the disposition bookkeeping, so the aggregate
 /// lives here.
 #[derive(Default)]
 pub(crate) struct LaneDrainCounts {
@@ -172,7 +172,7 @@ pub(crate) struct LaneDrainCounts {
 // ---------------------------------------------------------------------------
 // THE machine
 // ---------------------------------------------------------------------------
-/// THE one detached solve-arm machine (P37YJG): the single owner of the
+/// THE one detached solve-arm machine: the single owner of the
 /// scattered per-cycle fields this module's doc header names. The engine
 /// holds ONE of these. WFF6MM: the in-cycle stance is gone — every begin
 /// issues the detached arm.
@@ -207,7 +207,7 @@ pub(crate) struct DetachedCycle {
     /// sidecar claims under the enqueue-stamped `cycle_seq`. Held on the
     /// ENGINE (`parking_lot` Mutex) — the fuse is stateful across sidecar
     /// restarts (the pipe outlives any one sidecar thread).
-    /// P37YJG: the machine OWNS and drives the field (via [`Self::claim`]);
+    /// the machine OWNS and drives the field (via [`Self::claim`]);
     /// the TYPE stays `executor::outcome_ledger::OutcomeLedger`.
     pub(crate) outcome_ledger: parking_lot::Mutex<OutcomeLedger>,
     /// In-flight gauge: detached results SENT but not yet dispositioned.
@@ -409,7 +409,7 @@ impl DetachedCycle {
             }
         }
     }
-    /// THE one ledger door (P37YJG): the machine drives the ledger — every
+    /// THE one ledger door: the machine drives the ledger — every
     /// arm's claim runs through here with the machine-issued seq half.
     /// Callers hold the engine mutex across `claim` (the ledger mutex is
     /// always an inner lock — never the reverse: no ABBA ordering; see the
@@ -417,8 +417,8 @@ impl DetachedCycle {
     pub(crate) fn claim(&self, k: (u64, u64)) -> Result<(), (u64, u64)> {
         self.outcome_ledger.lock().claim(k)
     }
-    /// Hand the parked merge-pipe Receiver to the spawner (epic SRQEK5
-    /// WV62TX): `EngineStages::run_solve_cycle` takes it ONCE, at the FIRST
+    /// Hand the parked merge-pipe Receiver to the spawner:
+    /// `EngineStages::run_solve_cycle` takes it ONCE, at the FIRST
     /// detached enqueue, and owns it inside the sidecar thread. `None` = the
     /// sidecar is already running (or no detached cycle ever enqueued).
     pub(crate) fn take_merge_rx(&mut self) -> Option<std::sync::mpsc::Receiver<LaneOutcome>> {
@@ -426,7 +426,7 @@ impl DetachedCycle {
     }
 }
 // ---------------------------------------------------------------------------
-// THE ONE sidecar spawn (P37YJG): both former engine_stages spawn sites
+// THE ONE sidecar spawn: both former engine_stages spawn sites
 // delegate here.
 // ---------------------------------------------------------------------------
 /// The detached merge sidecar's thread name (the sidecar IS the fleet
@@ -454,7 +454,7 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
     }
 }
 // ---------------------------------------------------------------------------
-// DETACHED SOLVE CYCLE (epic SRQEK5, task WV62TX)
+// DETACHED SOLVE CYCLE
 // ---------------------------------------------------------------------------
 // DETACH-ALWAYS (design locked 2026-09-02; WFF6MM cutover retired the
 // in-cycle arm so this is now the unconditional shape): the whole solve
@@ -480,7 +480,7 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
 // pipe now also carries the lane witness's `Failed` panic records). The
 // exactness ledger age moved with it (`executor::outcome_ledger::LEDGER_AGE`,
 // carried unchanged).
-/// The detached-merge SIDECAR thread body (epic SRQEK5 WV62TX): owns the
+/// The detached-merge SIDECAR thread body: owns the
 /// unbounded mpsc `Receiver` of the merge pipe and applies each item under
 /// the engine Mutex — Q1a stale gate + the SAME merge/emit path as the
 /// in-cycle drain (`merge_one_result`, which carries the streaming
@@ -500,13 +500,13 @@ pub(crate) fn detached_merge_sidecar(
         // `recv` (not `for .. in merge_rx`) keeps ownership of the
         // Receiver so the post-panic stranded-tail drain can `try_iter`.
         while let Ok(item) = merge_rx.recv() {
-            // AQV6EF: a panicking merge must NEVER silently kill this
+            // a panicking merge must NEVER silently kill this
             // thread — that drops the Receiver and strands every later
             // send with no signal. catch_unwind converts the panic into
             // the SAME typed drain-death terminal state as a failed send
             // (sticky cordon + counter + loud log); the process lives.
             let merged = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // 5TBT7L T4: the terminated member now chains machine-direct
+                // the terminated member now chains machine-direct
                 // (the engine-level `merge_detached_item` casing is gone).
                 // ONE engine acquisition per item; the machine's own drain
                 // never locks for itself.
@@ -543,9 +543,8 @@ pub(crate) fn detached_merge_sidecar(
         }
     });
 }
-/// Spawn the detached merge sidecar for the parked receiver (epic SRQEK5
-/// WV62TX; P37YJG: THE ONE spawn — both former `engine_stages` sites call
-/// this). The take-once is [`DetachedCycle::take_merge_rx`], done by the
+/// Spawn the detached merge sidecar for the parked receiver. The take-once
+/// is [`DetachedCycle::take_merge_rx`], done by the
 /// caller under whatever engine hold it already owns; this fn registers the
 /// pinned seat and starts the named thread. A spawn failure LOUDLY ABORTS:
 /// a stranded merge pipe would silently orphan every detached result
@@ -555,13 +554,13 @@ pub(crate) fn spawn_merge_sidecar(
     merge_rx: std::sync::mpsc::Receiver<LaneOutcome>,
 ) {
     let engine_arc = std::sync::Arc::clone(engine);
-    // PE4FPM: self-register the pinned merge sidecar (the fleet
+    // self-register the pinned merge sidecar (the fleet
     // Merge role — the only posture since the LW-T9 cutover).
     degenbot_core::worker_census::register(merge_sidecar_census_entry());
     if let Err(err) = std::thread::Builder::new()
         .name(merge_sidecar_thread_name())
         .spawn(move || {
-            // AQV6EF: production uses the process posture owner (None).
+            // production uses the process posture owner (None).
             detached_merge_sidecar(&engine_arc, merge_rx, None);
         })
     {
@@ -599,7 +598,7 @@ mod tests {
         }
         assert_eq!(ALL_CYCLE_ARMS, [CycleArm::Unopened, CycleArm::Open]);
     }
-    /// THE CONFORMANCE WALK (P37YJG): every legal (state × transition) cell
+    /// THE CONFORMANCE WALK: every legal (state × transition) cell
     /// lands on its table successor. WFF6MM: with the in-cycle arm retired
     /// every row is total — there is no illegal cell and therefore no typed
     /// rejection left to pin.
@@ -664,7 +663,7 @@ mod tests {
         );
         drop(merge_tx);
     }
-    /// WFF6MM: the begin ALWAYS issues the detached arm — a cycle whose
+    /// the begin ALWAYS issues the detached arm — a cycle whose
     /// in-flight gauge sits at/over the design depth safety valve still
     /// detaches (the admission draw, not a cap verdict, owns backpressure).
     #[test]

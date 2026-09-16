@@ -312,7 +312,7 @@ fn quiet_pool_that_swapped_11_blocks_ago_is_still_solved() {
     let (results, _block) = latest_results(&engine);
     let solve_result = results.get(&path_id).expect(
         "quiet-but-current path (hop 11 blocks quiet) must be solved, not deferred \
-             (QNFYR5/YXHHKR)",
+            ",
     );
     assert!(!solve_result.optimal_input.is_zero());
     assert!(!solve_result.profit.is_zero());

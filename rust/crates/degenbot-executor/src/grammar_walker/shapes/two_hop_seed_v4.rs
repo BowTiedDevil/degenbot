@@ -197,7 +197,7 @@ mod walk_probe {
     }
 
     /// RED by design : 60 literal `PlanStep::` sites
-    /// today. Goes GREEN when T3 (CP6BNJ) walks the v2v4/v3v4 arms onto
+    /// today. Goes GREEN when T3 walks the v2v4/v3v4 arms onto
     /// `mechanics` + the shared capture/bridge helpers; then it stays put as
     /// the honesty invariant that no per-family Plan bodies reappear (D6
     /// precedent: the RED probe committed at f3b06397, honesty test kept at

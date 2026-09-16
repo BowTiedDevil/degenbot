@@ -1,4 +1,4 @@
-//! Curve `get_dy` I/O orchestration (epic `TV72EG`, task `BPEM4V`).
+//! Curve `get_dy` I/O orchestration.
 //!
 //! The Rust twin of the Python companion's `_resolve_calculation_inputs_via_io`
 //! (+ the metapool resolver). Given a pool's immutable `CurvePoolIdentity`,

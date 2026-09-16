@@ -119,7 +119,7 @@ pub enum BootError {
     Invariant(&'static str),
 }
 
-/// The boot-frozen slot table geometry (2SIOHJ): ONE derivation behind the
+/// The boot-frozen slot table geometry: ONE derivation behind the
 /// fleet boot ordering — solver pin seats, sim seats, resolve seats, the
 /// registration-intake station, then the merge sidecar at the LAST index.
 /// Derived FIRST at boot from [`FleetBudget`] (before any slot cell,
@@ -136,7 +136,7 @@ pub enum BootError {
 // the small struct by clone.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SlotLayout {
-    /// The LPT-bin Solver pin seats: one per structural bin (P6YXA6) —
+    /// The LPT-bin Solver pin seats: one per structural bin —
     /// [`SlotLayout::of`] asserts this range's length equals the budget's
     /// `solver_pin_count` (pins == bins by construction).
     solver: std::ops::Range<usize>,
@@ -188,7 +188,7 @@ impl SlotLayout {
                  intake station (PRG-3) is a dead station",
             ));
         }
-        // pins == bins BY CONSTRUCTION (P6YXA6): the solver range is cut at
+        // pins == bins BY CONSTRUCTION: the solver range is cut at
         // exactly the structural LPT bin count — the authority boot (and
         // the solve executor's seat array) sizes by. If a future edit ever
         // cuts the range from anything else, this refuses the boot instead
@@ -416,7 +416,7 @@ pub struct FleetHost {
     /// budget). Boot-frozen like the layout; the census rows and
     /// `runtime_status` read it.
     plan: crate::plan::FleetPlan,
-    /// The boot-frozen slot table geometry (2SIOHJ): derived FIRST at
+    /// The boot-frozen slot table geometry: derived FIRST at
     /// boot, before any cell/queue/census row; see [`SlotLayout`].
     layout: SlotLayout,
     /// THE shared fleet posture owner (JCI2FW Part A): the host consults it
@@ -510,7 +510,7 @@ impl FleetHost {
     /// [`BootError::Invariant`] on a dead hosted station or a broken
     /// layout invariant.
     pub fn boot(boot: FleetBoot) -> Result<Self, BootError> {
-        // FF-T2 (MEBF4V): the PLAN is the first boot step — the tiered
+        // FF-T2: the PLAN is the first boot step — the tiered
         // host authority (LW-T4's one floor generalized into ordered tiers).
         // ONE boot log line names it (id + binding + budget); the serial
         // tier refuses with its own typed refusal until the arm lands
@@ -522,7 +522,7 @@ impl FleetHost {
             oversubscribed = plan.oversubscribed,
             "boot plan resolved"
         );
-        // FF-T4 (Z6XTDX): BOTH bindings boot — the projection is
+        // FF-T4: BOTH bindings boot — the projection is
         // binding-derived (pinned: the floor-checked budget; serial: the
         // one-solver-seat tier) and the executors' binding seam
         // instantiates the seat model over the SAME slot FSM.
@@ -535,7 +535,7 @@ impl FleetHost {
             .unwrap_or_else(|| crate::posture::install_process_owner(boot.posture));
         let posture_watch = posture.subscribe();
 
-        // THE boot ordering (2SIOHJ): the SlotLayout is derived FIRST —
+        // THE boot ordering: the SlotLayout is derived FIRST —
         // every v1-hosted range is checked non-empty (a dead station
         // refuses the boot loudly) and the merge sidecar is pinned to the
         // LAST index HERE, before anything is built.
@@ -609,7 +609,7 @@ impl FleetHost {
 
         // The merge pin: exactly one, pinned at boot (T4) — per-path sends
         // land in a pipe somebody drinks from. The slot is the layout's
-        // merge index — the LAST table slot (2SIOHJ).
+        // merge index — the LAST table slot.
         let merge_slot = host.merge_slot_id();
         let merge_claim = || Unit::noop(0, WorkerRole::Merge, Some(MERGE_PIN_KEY));
         host.lease_claim(merge_slot, WorkerRole::Merge, Some(MERGE_PIN_KEY))
@@ -657,7 +657,7 @@ impl FleetHost {
     }
 
     /// The per-role slot budget, read FROM the boot-frozen [`SlotLayout`]
-    /// (2SIOHJ) — the census rows are layout-built and byte-identical to
+    /// the census rows are layout-built and byte-identical to
     /// the old budget reads (the merge sidecar is the single `merge`
     /// seat, which the derive fixes at one `merge_cpus`).
     fn role_slot_budget(&self, role: WorkerRole) -> usize {
@@ -672,7 +672,7 @@ impl FleetHost {
         &self.budget
     }
 
-    /// The boot-frozen slot table geometry (2SIOHJ): derived once at boot
+    /// The boot-frozen slot table geometry: derived once at boot
     /// and never re-derived by [`FleetHost::resize_quota`].
     #[must_use]
     pub(crate) fn layout(&self) -> SlotLayout {
@@ -754,7 +754,7 @@ impl FleetHost {
     /// Slot id of the (unique) merge pin: the boot-frozen layout's LAST
     /// index (boot pins it T1→T2→T4 before anything else can claim it).
     /// Post-boot this is infallible — the table was built FROM this same
-    /// layout — so the `checked_sub`/`Option` dance is gone (2SIOHJ) and
+    /// layout — so the `checked_sub`/`Option` dance is gone and
     /// callers read a plain `SlotId`.
     #[must_use]
     pub fn merge_slot(&self) -> SlotId {
@@ -855,7 +855,7 @@ impl FleetHost {
     /// # Errors
     /// [`HostError::Transition`] (the FSM's `MidCyclePin`) off-boundary.
     pub fn release_pin(&mut self, key: PinKey) -> Result<SlotId, HostError> {
-        // Derived find over the renderer (DNZQ5G): the pin lives in the
+        // Derived find over the renderer: the pin lives in the
         // cell; no mirror to retain-clear and no merge_pin to reset.
         let slot = self
             .pin_slot(key)
@@ -884,7 +884,7 @@ impl FleetHost {
     ) -> Result<(), BudgetError> {
         let next = self.budget.resize(new_quota_cpus, new_overrides)?;
         self.budget = next;
-        // 2SIOHJ: `self.layout` stays INTENTIONALLY frozen here — the slot
+        // `self.layout` stays INTENTIONALLY frozen here — the slot
         // table does not resize under a live quota (cells move only at the
         // epoch-boundary T9 re-key). The new budget drives the LIVE
         // admission arithmetic (`queue_cap`, intake caps) while the layout

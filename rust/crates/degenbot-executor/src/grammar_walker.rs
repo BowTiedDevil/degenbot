@@ -970,7 +970,7 @@ mod tests {
             netzero_missing.join("\n  ")
         );
     }
-    /// T5 (PZBGP7): the terminal-form axis — one is-terminal-only field on
+    /// T5: the terminal-form axis — one is-terminal-only field on
     /// `HopFacts`, driving the merge of the v3v4v2/v3v4v4 pair behind a
     /// single three_hop arm body. Only the terminal hop carries Some; non-
     /// terminal positions carry None.

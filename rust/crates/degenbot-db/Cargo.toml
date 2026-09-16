@@ -25,7 +25,7 @@ alloy = { version = "^2.4" }
 # macros expand `::tracing::info!` at THIS crate's call site.
 degenbot-core.workspace = true
 # CL liquidity-mapping math — `apply_liquidity_mapping_update` drives the V3/V4
-# DB-aware liquidity updater's per-event tick/bitmap mutation (task QJSCA5).
+# DB-aware liquidity updater's per-event tick/bitmap mutation.
 # Pyo3-free core; verified by `just check-no-pyo3-in-cores`.
 degenbot-math.workspace = true
 degenbot-pathfinding.workspace = true

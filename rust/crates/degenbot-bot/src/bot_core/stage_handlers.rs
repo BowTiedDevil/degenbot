@@ -1,5 +1,4 @@
-//! `StageHandlers` — the ONE engine seam of the block-epoch pipeline (epic
-//! MROOY7, task YM2FZR; ADR-041 seam retirement #1).
+//! `StageHandlers` — the ONE engine seam of the block-epoch pipeline.
 //!
 //! The stage table in `docs/architecture/block-epoch-pipeline.md` (canonical
 //! copy on branch `pi-fabric/adr-041`, signed off) fixes the per-stage hook

@@ -58,7 +58,7 @@ use degenbot_core::op_warn;
 pub type Guard = hotpath::HotpathGuard;
 
 /// The `HOTPATH_SHUTDOWN_MS` window as a `Duration`, for callers orchestrating
-/// a cooperative timed exit (S53STH): raise the pump shutdown flag at this
+/// a cooperative timed exit: raise the pump shutdown flag at this
 /// deadline, unwind, flush telemetry, then drop the guard.
 /// `None` when unset or unparseable (warn on unparseable — a typo would
 /// otherwise silently disable the timed exit).
@@ -96,7 +96,7 @@ pub fn hotpath_guard(caller_name: &'static str) -> Option<Guard> {
     {
         let builder = hotpath::HotpathGuardBuilder::new(caller_name);
         let guard = builder.build();
-        // S53STH: HOTPATH_SHUTDOWN_MS no longer arms hotpath's own
+        // HOTPATH_SHUTDOWN_MS no longer arms hotpath's own
         // build_with_shutdown thread (which dropped the guard then called
         // process::exit() while tokio workers were still live - the TLS
         // teardown abort of incident 2026-08-21). The caller

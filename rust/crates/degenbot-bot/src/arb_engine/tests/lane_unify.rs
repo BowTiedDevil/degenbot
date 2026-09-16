@@ -10,7 +10,7 @@ use super::*;
 /// carrier naming the SAME (`cycle_seq`, pid) must collide on the ONE
 /// ledger — the fuse refuses the second arrival instead of merging
 /// twice.
-// 43E3H3 red-first: pins the (solve_seq, pid) key half the merged
+// pins the (solve_seq, pid) key half the merged
 // ledger owns (design §3.3).
 #[test]
 fn merged_ledger_rejects_same_seq_pid_replay() {
@@ -86,7 +86,7 @@ fn merged_ledger_rejects_same_seq_pid_replay() {
 /// detached-issued-seq). Red at HEAD: the in-cycle side has no
 /// ledger/rows at all; the detach-keyed prune ages on any current
 /// seq the claim sees.
-// 43E3H3 red-first: pins LEDGER_AGE=64 exactly and the anchor choice
+// pins LEDGER_AGE=64 exactly and the anchor choice
 // (design §3.3 + §3.3.1 REV 2).
 #[test]
 fn merged_ledger_prunes_only_past_ledger_age() {
@@ -130,7 +130,7 @@ fn merged_ledger_prunes_only_past_ledger_age() {
     seed(current - 65, 1111); // beyond LEDGER_AGE: must be PRUNED
     seed(current - 63, 2222); // within LEDGER_AGE: must be RETAINED
     seed(current, 3333); // the advancing merge itself
-                         // 43E3H3: the seq-100 merge's PRUNE swept BOTH seeds' rows as a
+                         // the seq-100 merge's PRUNE swept BOTH seeds' rows as a
                          // side effect (the engine-side ledger now prunes on every claim,
                          // not just the sidecar's). Restore the retained-row marker its
                          // (36, 2222) key placed there — the prune must prove (36, 2222)
@@ -182,7 +182,7 @@ fn merged_ledger_prunes_only_past_ledger_age() {
 /// undercount. Red at HEAD: the detached arm has NO lane witness
 /// (sD:2350 submits a raw bin body), so a panicked bin simply never
 /// delivers its undelivered pids.
-// 43E3H3 red-first: pins the detached arm's witness adoption
+// pins the detached arm's witness adoption
 // (design §5.2). GREEN requires Failed records on the detached pipe.
 #[test]
 fn detached_undercount_trips_the_fan_in_assert() {
@@ -247,12 +247,12 @@ fn detached_undercount_trips_the_fan_in_assert() {
         drop(guard);
         let disposed = applied + stale + dereg + dup;
         if disposed >= path_ids.len() as u64 || std::time::Instant::now() > deadline {
-            // 43E3H3: THE assert — every submitted path must be
+            // THE assert — every submitted path must be
             // dispositioned EXACTLY once. At HEAD the panicked bin's
             // undelivered pids NEVER arrive, so disposed < submitted.
             assert_eq!(
                     disposed, path_ids.len() as u64,
-                    "outcome accounting undercount — exactness fuse \\\n                     (QR3NUS/43E3H3): a panicked bin must still disposition \\\n                     every owed pid as a typed Failed record"
+                    "outcome accounting undercount — exactness fuse: \\\n                     a panicked bin must still disposition \\\n                     every owed pid as a typed Failed record"
                 );
             break;
         }
@@ -264,7 +264,7 @@ fn detached_undercount_trips_the_fan_in_assert() {
 /// keep the cap gate engaging on true load. Red at HEAD: the panicked
 /// bin's flushed Solved items bump at send but the panic kills the
 /// remaining path solves, nothing decrements the orphaned bumps
-// 43E3H3 red-first: pins constraint (b) THROUGH the panic path AND
+// pins constraint (b) THROUGH the panic path AND
 // the variant-gated bump/decrement pairing (design §4.6.1 REV 2).
 #[test]
 fn detached_panic_does_not_leak_inflight_gauge() {
@@ -450,7 +450,7 @@ fn cycle_arm_label_latches_for_every_dispatch_arm() {
 #[test]
 fn detached_solve_returns_at_enqueue_end_when_sync_drain_is_off() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(400);
-    // WFF6MM: direct-call engines merge inline (synchronous harness); turn
+    // direct-call engines merge inline (synchronous harness); turn
     // that OFF so this pins the PRODUCTION return semantics — enqueue end,
     // results ABSENT until the sidecar (or a later drain) lands them.
     engine.cycle.set_sync_merge_for_test(false);

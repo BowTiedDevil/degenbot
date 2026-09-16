@@ -189,7 +189,7 @@ impl PyIntakeReceipt {
 /// admission rides the Deferrable cordon class. Never drops: a full
 /// per-role queue spills to the executor's FIFO backlog.
 ///
-/// FF-T1 (BPHR6F): a refused fleet boot raises the TYPED `BootRefused`
+/// FF-T1: a refused fleet boot raises the TYPED `BootRefused`
 /// exception (detected budget + floor + one operator hint) BEFORE any
 /// unit is built or enqueued — the sticky materializer re-surfaces the
 /// same refusal on every submit, and the host process survives.
@@ -207,7 +207,7 @@ pub fn submit(fn_work: Py<PyAny>) -> PyResult<PyIntakeReceipt> {
     };
     let done = Arc::clone(&receipt.done);
     let outcome_slot = Arc::clone(&receipt.outcome);
-    // FF-T1 (BPHR6F): submit checks the boot state FIRST — a refused boot
+    // FF-T1: submit checks the boot state FIRST — a refused boot
     // raises the typed BootRefused before any unit, channel, or receipt is
     // created (never an enqueue into a pipe that will not be drained).
     let intake = degenbot_bot::fleet_intake::registration_intake()

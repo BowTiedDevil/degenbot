@@ -148,7 +148,7 @@ pub use pool::{
 ///
 /// Mirrors the Python `LiquidityAtTick` from `concentrated/types.py`. Used by
 /// the V3/V4 pool-state structs and by [`tick_fetch::FetchedTickWord`]. Pulled
-/// into this crate ahead of the full state-struct move (USPN7M/LTZ3TP)
+/// into this crate ahead of the full state-struct move
 /// because the `TickWordFetcher` seam returns `HashMap<i32, TickInfo>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TickInfo {

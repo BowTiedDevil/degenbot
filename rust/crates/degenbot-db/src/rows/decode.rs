@@ -42,7 +42,7 @@ pub(crate) fn decode_i128_net(s: &str) -> Result<i128, DbError> {
 /// # Errors
 ///
 /// Returns [`DbError::Decode`] if the non-null value is not a valid `U256`.
-// Reference-free until fetch_aave_* lands (AZGJUN) — keep it that way: a call
+// Reference-free until fetch_aave_* lands — keep it that way: a call
 // from dead code (e.g. the aave module's `RowGet` impls) left this `expect`
 // unfulfilled on older rustc versions, breaking builds under
 // `[workspace.lints.rust] warnings = "deny"` (macos-14 wheel CI).

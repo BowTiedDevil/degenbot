@@ -11,7 +11,7 @@
 //!   contract. The payload shape (a plain ABI call with `(optimal_input,
 //!   final_output, hop_outputs[])`) is **structurally distinct** from the
 //!   default adapter's yul-command stream — the distinct-payload doctrine
-//!   (UQ6WOG) that proves a foreign strategy is a genuinely different path,
+//!   that proves a foreign strategy is a genuinely different path,
 //!   never a re-derivation of `cmd_executor`.
 //! - **Probe** — [`SimpleExecutorStrategy::probes`]: declared pre/post
 //!   read-calls (`WETH.balanceOf`) the engine snapshots (declared data).
@@ -272,7 +272,7 @@ mod tests {
     /// 4-byte selector is the `execute(uint256,uint256,uint256[])` one, which
     /// structurally differs from `cmd_executor`'s `execute(commands, config)`
     /// selector and YUL-command argument stream. This is the distinct-path
-    /// doctrine the foreign corpus (UQ6WOG) pins.
+    /// doctrine the foreign corpus pins.
     #[test]
     fn foreign_payload_is_distinct_from_cmd_executor() {
         let composer = SimpleExecutorComposer { executor: EXECUTOR };
@@ -301,10 +301,10 @@ mod tests {
         );
     }
 
-    /// **Own expected-bytes corpus** (UQ6WOG): the foreign `SimpleExecutor`
+    /// **Own expected-bytes corpus**: the foreign `SimpleExecutor`
     /// payload for the canonical 2-hop sample path is a RECORDED constant —
     /// its own golden, distinct from the default adapter's. The Python mirror
-    /// (OULU5O) must reproduce these exact bytes (the cross-layer oracle), so
+    /// must reproduce these exact bytes (the cross-layer oracle), so
     /// this constant is the one source of truth both layers assert against.
     #[test]
     fn foreign_payload_matches_recorded_corpus() {

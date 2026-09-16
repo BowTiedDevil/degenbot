@@ -1,4 +1,4 @@
-//! V3/V4 DB-aware liquidity updater — the apply-and-persist core (task QJSCA5).
+//! V3/V4 DB-aware liquidity updater — the apply-and-persist core.
 //!
 //! Ports `cli/pool.py::apply_v3_liquidity_updates` / `apply_v4_liquidity_updates`
 //! (read pool row + positions → apply CL `apply_liquidity_mapping_update` per
@@ -1205,7 +1205,7 @@ fn apply_event_loop(
 
 /// The V3 persist step: delete stale positions/init-maps, upsert the live
 /// ones, + stamp the pool row's `liquidity_update_block`/`log_index`.
-/// CKXCOB 3a: accepts a borrowed [`rusqlite::Connection`] so the whole
+/// accepts a borrowed [`rusqlite::Connection`] so the whole
 /// persist step runs on the chunk's single transaction.
 fn persist_v3(
     conn: &rusqlite::Connection,

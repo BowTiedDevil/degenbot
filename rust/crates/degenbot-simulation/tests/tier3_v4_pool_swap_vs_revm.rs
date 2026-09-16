@@ -41,7 +41,7 @@
 //! ## Shared fixture (H5)
 //!
 //! The Tier-2 dual-driver concentrated liquidity math fixture `v4_swap.json` is a SINGLE shared
-//! file (HRT356) consumed by BOTH consumers — `rust/crates/degenbot/tests/
+//! file consumed by BOTH consumers — `rust/crates/degenbot/tests/
 //! parity_v4_swap.rs` (Rust) and `tests/standalone_parity/test_v4_swap_
 //! dual_driver.py` (Python) — so the V4 math constant is never independently
 //! redefined on either side. This tier-3 oracle uses its own REAL recorded
@@ -173,7 +173,7 @@ fn seed_v4_pool_storage(
             // on-chain `Pool.swap` `calculateSwapFee(direction_fee, lp_fee)`
             // path; omitting it (the original oracle, protocol_fee=0 everywhere)
             // would make the revm oracle blind to the protocol-fee fee-combination
-            // rounding — the exact gap the fee-1/tiny over-prediction (UO3JM4)
+            // rounding — the exact gap the fee-1/tiny over-prediction
             // probes. `state.protocol_fee` uses the same 24-bit packing as
             // on-chain `slot0.protocolFee` (low 12 bits = 0→1, high 12 = 1→0), so
             // seeding it verbatim reproduces the on-chain fee the swap charges.

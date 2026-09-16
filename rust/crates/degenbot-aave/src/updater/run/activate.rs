@@ -14,10 +14,10 @@ use super::{RunError, RPC_MAX_RETRIES};
 #[cfg(test)]
 use rusqlite::params;
 
-// ── Market activation / deactivation (MPI6Q3) ─────────────────────────────
+// ── Market activation / deactivation ─────────────────────────────
 //
 // The one-time market-activation path — the LAST Python ORM writer on the
-// Aave path after the §4.2 retirement (CZM7TI). These substrate fns seed the
+// Aave path after the §4.2 retirement. These substrate fns seed the
 // `aave_v3_markets` row + the `POOL_ADDRESS_PROVIDER` contract row + the GHO
 // `erc20_tokens` row (with caller-supplied metadata) + a bare `aave_gho_tokens`
 // row (token_id only; the discount columns are filled later by the GHO-config
@@ -162,7 +162,7 @@ pub struct ActivatedMarket {
 ///
 /// This is the Rust-owned replacement for the Python
 /// `activate_ethereum_aave_v3` (commands.py) — the last ORM writer on the Aave
-/// path after the §4.2 retirement (CZM7TI). A standalone Rust consumer (`cargo
+/// path after the §4.2 retirement. A standalone Rust consumer (`cargo
 /// add degenbot`) can activate a market without Python.
 ///
 /// # Args
@@ -349,7 +349,7 @@ pub fn deactivate_aave_market(database_path: &Path, market_id: i64) -> Result<()
 mod tests {
     use super::*;
 
-    // ── Market activation substrate (MPI6Q3) ──────────────────────────────
+    // ── Market activation substrate ──────────────────────────────
 
     /// A fresh in-memory writeable DB with NO pre-seeded market (the
     /// activation path seeds it from scratch).

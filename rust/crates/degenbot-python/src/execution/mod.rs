@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn view_projects_from_canonical_solve_result() {
-        // V6PLQA: `PySolveResult::from_solve_path` projects the typed view from
+        // `PySolveResult::from_solve_path` projects the typed view from
         // the canonical `SolvePathResult` (amounts) + `PathInfo` (hop
         // descriptors) — the "one genuinely new surface" (ADR-025 D4).
         use degenbot_solvers::mixed::SolvePathResult;

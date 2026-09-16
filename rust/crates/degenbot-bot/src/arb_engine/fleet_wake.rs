@@ -70,7 +70,7 @@ mod tests {
     use super::{deregister, register, wake_hosts, wakers};
     use crate::arb_engine::seat_host::HostMsg;
     use std::sync::mpsc;
-    /// TB4QGX T9: every bot-side production feeder MUST go through
+    /// every bot-side production feeder MUST go through
     /// [`super::feed_throttle`]/[`super::feed_cause`], which pair `observe_*`
     /// with `wake_hosts`. FALSIFICATION: a raw
     /// `observe_throttle(`/`observe_cause(` in the non-test prefix of any

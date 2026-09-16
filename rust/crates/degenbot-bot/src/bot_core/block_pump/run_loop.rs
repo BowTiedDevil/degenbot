@@ -13,7 +13,7 @@ use super::{
 use super::Arc;
 
 impl BlockPump {
-    // L3B6AE (epic VHCRD2, DECIDED 2026-09-10) — phasing-trigger POLICY: phase
+    // phasing-trigger POLICY: phase
     // this method only when a single change must touch MORE THAN TWO of its five
     // interleaved concerns in one PR (below the threshold the interleaving in a
     // single-writer loop is measured-and-accepted, not a hazard). Line anchors are
@@ -52,10 +52,10 @@ impl BlockPump {
     /// `NO_PROGRESS_STRIKE_LIMIT` consecutive no-progress pushes). Also shuts
     /// down on a
     /// late-forward log on a tombstoned block (unreliable WS, ADR-008 D3).
-    // MQUKB6-T0: `clippy::used_underscore_binding` expectation retired — it
+    // `clippy::used_underscore_binding` expectation retired — it
     // was only fired by the removed `#[tracing::instrument]` expansion.
     #[expect(clippy::too_many_lines, clippy::cast_possible_truncation)]
-    // MQUKB6-T0: the former `#[tracing::instrument]` here was a root span that
+    // the former `#[tracing::instrument]` here was a root span that
     // stayed open for the whole bot run. OTel only exports CLOSED spans, so the
     // root never reached Jaeger while every pump-task span referenced it as a
     // missing parent — one giant orphaned trace. Per-epoch `degenbot.epoch`
@@ -93,7 +93,7 @@ impl BlockPump {
         // hotpath feature is off.
         #[cfg(feature = "hotpath")]
         hotpath::tokio_runtime!(&tokio::runtime::Handle::current());
-        // AZZDBI/XXJR3A: apply any fixed DEGENBOT_MIMALLOC_PURGE_DELAY_MS and
+        // apply any fixed DEGENBOT_MIMALLOC_PURGE_DELAY_MS and
         // arm the block-cadence discovery for the purge-delay control.
         crate::allocator_ctrl::init_from_env_at_pump_start();
         // S53STH cooperative timed exit: a 500ms tick that polls the shutdown
@@ -191,11 +191,11 @@ impl BlockPump {
         // Epic A1: the pump's decision state now lives in the StageMachine; the
         // driver routes the decision arms through it. `current_block` seeds the FSM.
         let mut fsm = StageMachine::new(current_block, 0);
-        // BM35LK: the FSM owns the adaptive quiesce estimator (pure) — the
+        // the FSM owns the adaptive quiesce estimator (pure) — the
         // pump hands it the operator-tuned parameter snapshot once and then
         // only feeds settle-point observations and reads the armed window.
         fsm.set_quiesce_params(self.quiesce_params);
-        // DFQYM5 single-writer, now FSM-owned (epic O3HW7E/T3): on a resume
+        // DFQYM5 single-writer, now FSM-owned: on a resume
         // where the snapshot→WS gap was backfilled (S < W), the backfill owns
         // [S+1, W] inclusive and the live WS owns [W+1, ∞). Seed the FSM's
         // recovery anchor with W so `should_drop_recovered_forward` is the
@@ -233,7 +233,7 @@ impl BlockPump {
         // Replaces the wall-clock `DEBOUNCE_MS` send timer: publication is
         // gated on the truth condition (all dispatched logs applied).
 
-        // BQ7ZBC — FSM recovery state: `recovery_anchor` is the highest block an
+        // FSM recovery state: `recovery_anchor` is the highest block an
         // authoritative (eth_getLogs) catch-up has OWNEed — either a live-loop
         // gap/`handle_timeout_eager` backfill, or (at resume) the backfilled
         // snapshot→WS first block. Per the single-writer rule (DFQYM5
@@ -309,7 +309,7 @@ impl BlockPump {
         let tick_epoch = tokio::time::Instant::now();
         let now_ms = || tick_epoch.elapsed().as_millis() as u64;
 
-        // MQUKB6-T0: the current block's span, replaced by each accepted header.
+        // the current block's span, replaced by each accepted header.
         let mut block_span: Option<tracing::Span> = None;
 
         // Pre-solve gap decomposition (GC? tracking epilogue to the pump/`
@@ -326,14 +326,14 @@ impl BlockPump {
             logs: 0,
         };
 
-        // BM35LK — per-block intra-block silence-gap tracker: the max gap
+        // per-block intra-block silence-gap tracker: the max gap
         // between consecutive relevant logs feeds the FSM's adaptive
         // trailing-quiesce EWMA at each settle point (timings arrive as
         // data; the FSM owns no clock). Reset at each accepted header.
         let mut last_relevant_log_at: Option<std::time::Instant> = None;
         let mut block_max_gap_us: u64 = 0;
 
-        // PWPPAZ T2 early-slice state: `Some` from the first gate iteration
+        // `Some` from the first gate iteration
         // that observed unsolved dirt in the current block window; the slice
         // fires once when the age crosses `early_slice_ms`. `slice_done`
         // makes it one-per-window. Reset at each accepted header (new window)
@@ -350,13 +350,13 @@ impl BlockPump {
         let mut reorg_span: Option<tracing::Span> = None;
         let mut reorg_pools_restored: u64 = 0;
         let mut reorg_idempotent_noops: u64 = 0;
-        // BF43PM (epic MROOY7): the per-stage waterfall seam. The legacy
+        // the per-stage waterfall seam. The legacy
         // `pump.log_wait` / `pump.apply_stream` children are replaced by the
         // machine's stage cycle rendered as `degenbot.stage.*` spans under
         // the per-epoch root, and the SONJQA force-close law carries over
         // (`force_close_aged` from the timed-exit tick below).
         let mut stage_tel = crate::bot_core::stage_telemetry::StageTelemetry::new();
-        // REMED1 T3: per-block phase attribution - the apply-stream start
+        // per-block phase attribution - the apply-stream start
         // (first relevant log) vs the settle point, recorded on the throttled
         // diag line so slow-block serialization between the WS log wait and
         // the solve is visible from the console. (The apply-stream span
@@ -402,7 +402,7 @@ impl BlockPump {
             // inactivity backfill window. A new event arriving before the
             // window elapses cancels the flush (the burst is still in flight).
             let wait_timeout = if fsm.publish_pending() {
-                // BM35LK: the settle timers arm the FSM's window (fixed mode
+                // the settle timers arm the FSM's window (fixed mode
                 // = the debounce history; adaptive = the estimator's current
                 // W) instead of the raw debounce field.
                 Duration::from_millis(fsm.settle_window_ms())
@@ -494,7 +494,7 @@ impl BlockPump {
                     // (ADR-008 D2) vs the inactivity backfill. The driver only
                     // executes the emitted decisions.
                     //
-                    // BM35LK: feed the settled block's observed max silence
+                    // feed the settled block's observed max silence
                     // gap (when any relevant log arrived) so the estimator
                     // re-arms W for the NEXT settle, publish the current W on
                     // the quiesce-window gauge, and measure the
@@ -512,7 +512,7 @@ impl BlockPump {
                     for decision in settle_decisions {
                         match decision {
                             StageDecision::Publish { open, metadata } => {
-                                // Option-A solver-state accuracy gate (AV42C7):
+                                // Option-A solver-state accuracy gate:
                                 // publish the debounced batch to Python (the
                                 // Published edge — delivery/submission/Python
                                 // subscribe HERE, SZJUKL), then hand the
@@ -571,7 +571,7 @@ impl BlockPump {
                                         }
                                     }
                                 }
-                                // BF43PM: the publish stage span (parented to
+                                // the publish stage span (parented to
                                 // this epoch's root) carries the from/to/
                                 // queue-age attrs; the publish-cycle histogram
                                 // (first relevant log → publish, per quiesce
@@ -582,7 +582,7 @@ impl BlockPump {
                                     block_span.as_ref().unwrap_or(&tracing::Span::none()),
                                     Epoch::with_generation(open, fsm.rewind_seq()),
                                 );
-                                // REMED1 T3: throttled per-block phase
+                                // throttled per-block phase
                                 // attribution on the console (every 20th block
                                 // - the Jaeger span carries all blocks).
                                 #[expect(clippy::items_after_statements)]
@@ -637,7 +637,7 @@ impl BlockPump {
                     gas_used,
                     gas_limit,
                 })) => {
-                    // MQUKB6 (epic KDUED5) + BF43PM (epic MROOY7): the
+                    // MQUKB6 + BF43PM: the
                     // per-epoch beat — one entered root span per observed
                     // header, carrying the EPOCH context (block + rewind
                     // generation) every span in the epoch waterfall answers
@@ -671,7 +671,7 @@ impl BlockPump {
                     // dispatch) nest under it via the loop-context below; only
                     // the parent linkage at creation changes.
                     crate::telemetry::make_trace_root(&new_block_span);
-                    // MQUKB6-T0: this span becomes the loop's per-block context —
+                    // this span becomes the loop's per-block context —
                     // subsequent iterations (logs, settle decisions) nest under it
                     // until the next header replaces it.
                     // A span minted while no subscriber is installed carries
@@ -687,18 +687,18 @@ impl BlockPump {
                         last_log: None,
                         logs: 0,
                     };
-                    // BM35LK: restart the silence-gap tracker for the new
+                    // restart the silence-gap tracker for the new
                     // block window.
                     last_relevant_log_at = None;
                     block_max_gap_us = 0;
-                    // PWPPAZ T2: new block window — re-arm the early slice.
+                    // new block window — re-arm the early slice.
                     slice_first_dirty = None;
                     slice_done = false;
-                    // BF43PM: a new epoch root — close any held stage interval
+                    // a new epoch root — close any held stage interval
                     // from the prior epoch (an all-quiet prior block never
                     // reached a settle) so nothing dangles into the new one.
                     stage_tel.new_epoch();
-                    // NO4DIW: the epoch that just closed is fully accounted —
+                    // the epoch that just closed is fully accounted —
                     // sample its log ledger into the per-block funnel gauges.
                     let ledger = self.bot.dispatcher().snapshot_epoch_logs_and_reset();
                     if let Some(p) = crate::instruments::pipeline() {
@@ -710,7 +710,7 @@ impl BlockPump {
                             number,
                         );
                     }
-                    // Sync-only header-processing scope (TQ7PD6): this enter
+                    // Sync-only header-processing scope: this enter
                     // guard dies before the first await below, so it can never
                     // leak across a task migration. The backfill future below
                     // carries the same span across ITS await via Instrument.
@@ -719,7 +719,7 @@ impl BlockPump {
                         // [DIAG] newHeads-liveness: HEADER count, gap, and 20s stall
                         // warning → one call on the telemetry seam.
                         telemetry.on_header(number);
-                        // AZZDBI/XXJR3A: block-cadence sample for the runtime
+                        // block-cadence sample for the runtime
                         // mimalloc purge-delay control (hysteresis-limited
                         // option write; no-op unless allocator-ctrl + auto).
                         crate::allocator_ctrl::on_header_observed();
@@ -794,7 +794,7 @@ impl BlockPump {
                                     .await;
                             }
                             StageDecision::SetLastSolved { block } => {
-                                // LEZJAS: the backfill/first header solved up
+                                // the backfill/first header solved up
                                 // to `block` already — mark it solved so the
                                 // first `finalize_block` guard no-ops.
                                 let _ctx = new_block_span.enter();
@@ -832,7 +832,7 @@ impl BlockPump {
                     if let Some(p) = crate::instruments::pipeline() {
                         p.count_ws_log_seen();
                     }
-                    // NO4DIW: the funnel's `seen` leg — tallied at the event
+                    // the funnel's `seen` leg — tallied at the event
                     // source (pre topic-filter) exactly like the instrument.
                     self.bot.dispatcher().inc_seen();
                     // Logs-subscription liveness: ANY log (even one the topic
@@ -869,7 +869,7 @@ impl BlockPump {
                         }
                         pregap.last_log = Some(now);
                         pregap.logs += 1;
-                        // BM35LK: consecutive-relevant-log silence deltas —
+                        // consecutive-relevant-log silence deltas —
                         // the exact r.v. the adaptive trailing quiesce must
                         // cover (design §2.1 intra-block gaps).
                         if let Some(prev) = last_relevant_log_at {
@@ -880,7 +880,7 @@ impl BlockPump {
                         }
                         last_relevant_log_at = Some(now);
                     }
-                    // BF43PM: the Streaming stage interval opens at the first
+                    // the Streaming stage interval opens at the first
                     // relevant log of the epoch (idempotent within the epoch —
                     // the burst's remaining logs only bump its age); it runs
                     // until the quiesce/tombstone/rewind transition. REMED1 T3
@@ -892,7 +892,7 @@ impl BlockPump {
                         block_span.as_ref().unwrap_or(&tracing::Span::none()),
                         Epoch::with_generation(log_block, fsm.rewind_seq()),
                     );
-                    // BQ7ZBC — FSM single-writer recovery discard. After an
+                    // FSM single-writer recovery discard. After an
                     // authoritative eth_getLogs catch-up (`fsm.recovery_anchor`), a
                     // stalled WS that recovers flushes buffered forward logs for
                     // blocks ≤ the anchor — those are duplicates of state the
@@ -949,7 +949,7 @@ impl BlockPump {
                     // for N+1), a reorg signal, or an unreliable-WS late
                     // forward (→ shutdown), and returns the verdict for the
                     // driver to execute the I/O.
-                    // BF43PM: the stage row BEFORE this log's transition —
+                    // the stage row BEFORE this log's transition —
                     // the `stage.from` side of the transition attrs below.
                     let prev_stage = fsm.stage();
                     let log_decision = fsm.on_log(log_block, log.removed);
@@ -990,7 +990,7 @@ impl BlockPump {
                             // silent — the prior success path logged nothing,
                             // making a duplicate block log ambiguous (reorg
                             // vs. WS duplication).
-                            // BF43PM: the Rewind stage opens (from ANY row —
+                            // the Rewind stage opens (from ANY row —
                             // I6), counted for the A/B Rewind-frequency series.
                             stage_tel.on_enter_reorg(
                                 block_span.as_ref().unwrap_or(&tracing::Span::none()),
@@ -1126,7 +1126,7 @@ impl BlockPump {
                             if let Some(bs) = block_span.as_ref() {
                                 bs.record("reorg.closed", new_head);
                             }
-                            // BF43PM: the Rewind interval closes (its duration
+                            // the Rewind interval closes (its duration
                             // histogram records) and the fresh epoch's cycle
                             // restarts at Streaming.
                             stage_tel.on_close_reorg(
@@ -1139,7 +1139,7 @@ impl BlockPump {
                             // moved the cursor to `new_head` in `on_log`).
                         }
                         LogDecision::TombstonePrevious(prev) => {
-                            // 3M5PO5 correction (BGEDB6): this tombstone verdict is the
+                            // 3M5PO5 correction: this tombstone verdict is the
                             // pump's single writer of the delivery cutoff — `BotState`
                             // owns the value and the driver mirrors the verdict on
                             // execution (the same decision-execution pattern as the
@@ -1155,7 +1155,7 @@ impl BlockPump {
                             // publish (finalize_block) supersedes any pending
                             // quiesce publish for the open block.
                             //
-                            // YLYJM2: the tombstone is the ADR-008 D1 signal
+                            // the tombstone is the ADR-008 D1 signal
                             // that block `prev` is FULLY delivered — every log
                             // for `prev` has been buffered. Mark the V3/V4
                             // pump-buffer completeness marker so the
@@ -1195,7 +1195,7 @@ impl BlockPump {
                                 .block_metadata_for(prev)
                                 .unwrap_or(fsm.current_metadata());
                             let _ctx = block_span.as_ref().map(tracing::Span::enter);
-                            // BF43PM: the tombstone is the Finalize row of the
+                            // the tombstone is the Finalize row of the
                             // EPOCH `prev` (the machine's coordinate, stamped
                             // with the current rewind generation).
                             stage_tel.on_tombstone(
@@ -1211,7 +1211,7 @@ impl BlockPump {
                             // jitter LATENESS, not a structural fault. Blocks ≤
                             // the authoritative `fsm.recovery_anchor` are
                             // already dropped by the single-writer recovery
-                            // discard (BQ7ZBC) before they reach this
+                            // discard before they reach this
                             // classifier — so what lands here is a
                             // post-tombstone survivor ABOVE the anchor. It is
                             // dropped UN-applied: I4 forbids pool-state writes
@@ -1228,7 +1228,7 @@ impl BlockPump {
                             if let Some(p) = crate::instruments::pipeline() {
                                 p.count_late_log_admitted();
                             }
-                            // BM35LK: feed the estimator's sliding-hour
+                            // feed the estimator's sliding-hour
                             // ledger — sustained budget overruns hold the
                             // adaptive window at the ceiling (HJ5HWF
                             // backstop contract).
@@ -1271,7 +1271,7 @@ impl BlockPump {
                     // the engine's `has_logs_this_block` (finalize
                     // bookkeeping, LEZJAS). Coordinated here, once; do not
                     // split or drop either write.
-                    // 7LV6VN T1c: the DispatchForward arm never entered the
+                    // the DispatchForward arm never entered the
                     // block span (unlike Finalize et al.), so the
                     // `LogDispatcher::dispatch` instrument span ran with an
                     // empty thread-local and forked a single-span Jaeger ROOT
@@ -1281,7 +1281,7 @@ impl BlockPump {
                     let _block_ctx = block_span.as_ref().map(tracing::Span::enter);
                     self.bot.dispatch_log(&log);
                     fsm.on_log_applied(log_block);
-                    // BF43PM: the apply completed — the epoch's Streaming
+                    // the apply completed — the epoch's Streaming
                     // interval closes and the Quiesced (StreamingComplete)
                     // point span fires with the burst's log count.
                     stage_tel.on_quiesced(
@@ -1291,7 +1291,7 @@ impl BlockPump {
                     );
                     telemetry.note_apply();
 
-                    // LEZJAS: engine owns `has_logs_this_block` now — routed
+                    // engine owns `has_logs_this_block` now — routed
                     // through the sink so the next `finalize_block` sees it.
                     self.control.record_logs_this_block();
 
@@ -1317,7 +1317,7 @@ impl BlockPump {
                         match decision {
                             StageDecision::Publish { open, metadata } => {
                                 let _ctx = block_span.as_ref().map(tracing::Span::enter);
-                                // BF43PM: the final settle's publish carries
+                                // the final settle's publish carries
                                 // the same publish stage span as the timed
                                 // settle path.
                                 stage_tel.on_publish(
@@ -1373,7 +1373,7 @@ impl BlockPump {
             // solve. 50ms is well within the 12s block interval (same
             // `DEBOUNCE_MS` as the publish gate).
             let dirty_now = self.control.has_dirty_paths();
-            // PWPPAZ T2 — designed first-slice trigger: remember when the
+            // designed first-slice trigger: remember when the
             // window's unsolved dirt was first observed. While the burst
             // outlives `early_slice_ms`, ONE bounded early Drain fires
             // mid-burst (the timed peek below is shortened to the slice
@@ -1450,7 +1450,7 @@ impl BlockPump {
                 }
             }
         }
-        // S53STH: the loop has unwound — every span guard (pump iteration,
+        // the loop has unwound — every span guard (pump iteration,
         // drainer parent, solve) has popped through its scope on THIS task
         // before this point. Flush + shut down telemetry BEFORE the hotpath
         // guard drops at scope end (its Drop writes the report), so the report

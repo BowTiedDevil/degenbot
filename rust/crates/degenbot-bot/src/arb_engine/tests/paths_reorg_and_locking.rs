@@ -326,7 +326,7 @@ fn solve_3hop_mixed_v2_v3_v2_path() {
 #[test]
 fn hop_projection_cached_until_pool_state_nonce_advances() {
     let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
-    oracle.insert(0x00C0_FFEE, HopType::V2); // legacy intake probe (LXDY4C)
+    oracle.insert(0x00C0_FFEE, HopType::V2); // legacy intake probe
     let mut engine = ArbitrageEngine::new();
     // Three V2 pools: A-B and A-C cycles share pool A.
     let pool_a = Address::from([0x11u8; 20]);
@@ -475,7 +475,7 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
         .write_at(crate::bot_core::state_lock::LockSite::Solver)
         .restore_all_pools_before_block(5);
     engine.cycle.path_resolved.clear();
-    // LXDY4C: the re-restored pools re-enter the epoch delta; the solve
+    // the re-restored pools re-enter the epoch delta; the solve
     // consumes the delta's taken keys (all registered hop keys here).
     let reorg_keys: Vec<degenbot_solvers::affected_keys::AffectedKey> = engine
         .registry
@@ -550,7 +550,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
         fetcher: None,
         ..Default::default()
     });
-    // DFQYM5: Tracked pools register `Quarantined`; the driver's post-verify
+    // Tracked pools register `Quarantined`; the driver's post-verify
     // `set_live` is what makes it apply directly. Transition to `Live` so
     // this test's swap/Mint direct-apply (its model).
     engine
@@ -803,7 +803,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
         fetcher: None,
         ..Default::default()
     });
-    // DFQYM5: Tracked pools register `Quarantined`; this test drives
+    // Tracked pools register `Quarantined`; this test drives
     // backfill swaps that must direct-apply + journal, so release to Live.
     engine
         .core
@@ -819,7 +819,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
         v3_swap_log(pool_addr, sp_b1, 1_100_000, 1, b1),
         v3_swap_log(pool_addr, sp_b2, 1_200_000, 2, b2),
     ];
-    // X35QKN: the engine's `process_backfill_logs` delegator was retired
+    // the engine's `process_backfill_logs` delegator was retired
     // (the pump calls `BotState::process_backfill_logs` directly). The test
     // only asserts on journal/state, so call the BotState method directly
     // — the same path the production backfill uses.

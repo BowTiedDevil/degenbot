@@ -174,7 +174,7 @@ fn trace_boundary(hop_idx: usize, hop_lines: usize, survivors: usize, next: &[Li
 /// sum in `compose_exact`.
 const COMPOSE_TARGET_BITS: u32 = 240;
 /// Loop-18 T2 sweep knobs come from the caller-passed runtime config (T4,
-/// KAHU5W: threaded, never re-read from the environment) — defaults 32/48
+/// threaded, never re-read from the environment) — defaults 32/48
 /// (the loop-9/16 production values); the owner overrides at construction.
 /// Higher caps = tighter (lower) envelope = fewer missed opportunities,
 /// more compose time.
@@ -452,7 +452,7 @@ fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<
             if seq.ranges.is_empty() {
                 return None;
             }
-            // Carried crossings (BZSOJ7): the table the resolve pass already
+            // Carried crossings: the table the resolve pass already
             // built once per (pool, direction) for the active-set walk —
             // deriving it here per path dominated gate time. The table rides
             // the [ClHop] descriptor; tableless callers pay their own derive
@@ -803,7 +803,7 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
 }
 
 /// Serialize a CL hop's tick-range sequence to a JSON value for the
-/// degenerate-path capture harness (M6776W). Each range carries the 8
+/// degenerate-path capture harness. Each range carries the 8
 /// primitive fields the offline replay harness needs to reconstruct an
 /// `IntV3TickRangeSequence` (decimal-string big-ints, matching the
 /// `HeavyPathCapture` JSONL schema in `arb_engine/solver_capture.rs`).
@@ -1518,7 +1518,7 @@ pub struct GateDeps<'a> {
     /// The engine-owned cross-block walk-memo handle (SU7MAE T3); `None`
     /// disables the memo for this solve.
     pub walk_memo: Option<&'a crate::mobius_v3_int::WalkMemo>,
-    /// KAHU5W: the owner's runtime stance (envelope caps + trace gate),
+    /// the owner's runtime stance (envelope caps + trace gate),
     /// instance-scoped and passed down — the gate reads no environment.
     pub runtime: SolveRuntimeConfig,
 }
@@ -1574,7 +1574,7 @@ impl GateDeps<'_> {
     }
 }
 
-/// Degenerate-path capture config (M6776W): where to write + how many paths
+/// Degenerate-path capture config: where to write + how many paths
 /// to capture. The production engine and the harnesses build it from the
 /// typed `capture` config section (`DEGENBOT_GATE_CAPTURE*` env keys load
 /// there); the gate itself reads no environment.

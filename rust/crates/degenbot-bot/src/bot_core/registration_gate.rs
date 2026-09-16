@@ -16,7 +16,7 @@
 //! and transient RPC errors are NEVER recorded — they are not pool facts
 //! (CXKACI semantics).
 //!
-//! Hooked pools are NOT gate-recorded: per ADR-037/X4EU3J they are admitted
+//! Hooked pools are NOT gate-recorded: per ADR-037 they are admitted
 //! with a simulation caveat (the `HookedPool` variant is reserved).
 
 use alloy::primitives::Address;

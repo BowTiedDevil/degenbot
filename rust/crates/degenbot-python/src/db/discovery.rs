@@ -28,7 +28,7 @@ use crate::db::pool_read::{PyExchangeRow, PyPoolManagerRow};
 // Python row-input pyclasses (the arg-extraction boundary)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// One V2 pool-row to upsert (WR7EA6). Mirrors [`degenbot_db::V2PoolRowInput`]:
+/// One V2 pool-row to upsert. Mirrors [`degenbot_db::V2PoolRowInput`]:
 /// the `(address, token0_address, token1_address, fee_token0, fee_token1,
 /// stable)` tuple. The Python `update_v2_pools` shell decodes the
 /// `PoolCreated` event + builds these records; the `Rust` core get-or-create's
@@ -84,7 +84,7 @@ impl PyV2PoolRowInput {
     }
 }
 
-/// One V3 pool-row to upsert (WR7EA6). Mirrors [`degenbot_db::V3PoolRowInput`].
+/// One V3 pool-row to upsert. Mirrors [`degenbot_db::V3PoolRowInput`].
 #[pyclass(name = "V3PoolRowInput", module = "degenbot._ffi.db")]
 pub struct PyV3PoolRowInput {
     address: String,
@@ -129,7 +129,7 @@ impl PyV3PoolRowInput {
     }
 }
 
-/// One V4 pool-row to upsert (WR7EA6). Mirrors [`degenbot_db::V4PoolRowInput`].
+/// One V4 pool-row to upsert. Mirrors [`degenbot_db::V4PoolRowInput`].
 /// The `pool_id` / `manager_id` is resolved inside the `Rust` core from the
 /// passed `pool_manager_address` (one `SELECT` per batch).
 #[pyclass(name = "V4PoolRowInput", module = "degenbot._ffi.db")]

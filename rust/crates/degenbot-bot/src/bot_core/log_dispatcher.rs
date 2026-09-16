@@ -89,7 +89,7 @@ impl DecodedPoolEvent {
     /// index's hop half. The decoder selects the family, so LOG APPLICATION
     /// knows it directly: the retired `EngineSubscriber` classification
     /// (BotState bucket lookups per notify) is subsumed by this method
-    /// (epic MROOY7, task LXDY4C).
+    ///.
     #[must_use]
     pub fn hop_type(&self) -> degenbot_solvers::mixed::HopType {
         match self {
@@ -419,25 +419,25 @@ impl LogDecoder for V4ModifyLiquidityDecoder {
 ///
 /// `Bot` owns one and mediates the registry (cleaner than per-`PoolEntry`
 /// callback vecs in Rust). `dispatch` is the single entry point the pump
-/// (slice 5) calls per WS log.
+/// calls per WS log.
 ///
 /// Decoders are frozen after construction (read-only `&self` access); `Bot`
 /// is shared across threads.
 pub struct LogDispatcher {
     decoders: Vec<Box<dyn LogDecoder>>,
-    /// KAHU5W: strict decode-miss hard-fault gate. Historically the
+    /// strict decode-miss hard-fault gate. Historically the
     /// presence-gated `DEGENBOT_WS_COMPLETENESS` env var; now the typed
     /// `pump.ws_completeness` schema default AND'ed with the owning pump's
     /// per-pump opt-out (tests set the field OFF deterministically, keeping
     /// the synthetic-fixture streams decode-miss-neutral).
     strict_decode_fault: std::sync::atomic::AtomicBool,
-    /// NO4DIW: per-epoch log tally — the dispatcher outcomes sampled and
+    /// per-epoch log tally — the dispatcher outcomes sampled and
     /// reset by the pump at each header epilogue and projected to the
     /// `degenbot.epoch.logs_*` funnel gauges. Single-writer: the pump task.
     tally: EpochLogTally,
 }
 
-/// NO4DIW: the per-epoch leg of the log funnel. Order of magnitude of each
+/// the per-epoch leg of the log funnel. Order of magnitude of each
 /// leg (seen \u2265 received \u2265 [applied + ignored]); the pump samples and
 /// resets this at each accepted header, so a snapshot covers exactly the
 /// epoch that just closed.
@@ -495,14 +495,14 @@ impl LogDispatcher {
         }
     }
 
-    /// NO4DIW: the pump's header epilogue — sample and reset the per-epoch
+    /// the pump's header epilogue — sample and reset the per-epoch
     /// log ledger for projection onto the `degenbot.epoch.logs_*` gauges.
     #[must_use]
     pub fn snapshot_epoch_logs_and_reset(&self) -> EpochLogCounts {
         self.tally.snapshot_and_reset()
     }
 
-    /// NO4DIW: one WS-delivered log event (pre topic-filter). The pump calls
+    /// one WS-delivered log event (pre topic-filter). The pump calls
     /// this in the `WsEvent::Pool` arm next to `count_ws_log_seen` — the
     /// dispatcher never sees the logs the pre-filter drops, so `seen` must
     /// be tallied here for the funnel composition to close.
@@ -671,7 +671,7 @@ impl LogDispatcher {
         }
         // Route + execute under the write guard (cl_route table owns policy),
         // then RELEASE before notifying.
-        // LXDY4C: the event's hop family must be read BEFORE `apply`
+        // the event's hop family must be read BEFORE `apply`
         // consumes the decoded event.
         let event_hop = decoded.hop_type();
         // 7S4QAG: the ledger buckets by block, so the apply site carries the
@@ -703,7 +703,7 @@ impl LogDispatcher {
                 if let Some(p) = crate::instruments::pipeline() {
                     p.count_log_applied();
                 }
-                // EpochDelta dirty tracking (epic MROOY7, task LXDY4C): log
+                // EpochDelta dirty tracking: log
                 // application records the touched pool into the block's
                 // ledger as a BYPRODUCT of the apply outcome — the
                 // subscriber-side dirty write is retired. Event family comes
@@ -887,7 +887,7 @@ mod tests {
     /// RED: dispatching a log that decodes but targets an unregistered pool is
     /// a silent apply-miss through the funnel early-return - no subscriber
     /// notify, no state mutation.
-    /// NO4DIW: the per-epoch log tally sums the dispatcher's outcomes and
+    /// the per-epoch log tally sums the dispatcher's outcomes and
     /// snapshot_and_reset is one-shot (a second snapshot returns zeros).
     #[test]
     fn epoch_tally_sums_and_resets() {
@@ -936,7 +936,7 @@ mod tests {
         assert_eq!(c2.received, 0, "one-shot reset");
     }
 
-    /// NO4DIW: the `seen` leg is tallied at the WS event source by the pump
+    /// the `seen` leg is tallied at the WS event source by the pump
     /// (`inc_seen`), NOT by `dispatch` — the pre-filter drops most events
     /// before the dispatcher, so `seen` is independent of `received`.
     #[test]
@@ -1106,7 +1106,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
-        // DFQYM5: Tracked pools register `Quarantined`; transition to `Live`
+        // Tracked pools register `Quarantined`; transition to `Live`
         // (the driver's post-verify `set_live`) so the dispatched Mint
         // direct-applies as this test models.
         state

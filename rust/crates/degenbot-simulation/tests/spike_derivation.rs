@@ -1992,7 +1992,7 @@ fn all_v2_self_fund_executes_with_exact_delta_and_differs_from_flash() {
     );
 }
 
-/// WE45KC: builder bribe via `config` (ADR-029 D1 / Q3). The first bribe matrix
+/// builder bribe via `config` (ADR-029 D1 / Q3). The first bribe matrix
 /// row — closes the "no bribe tests exist" gap. An in-path-flash all-V2 path
 /// ends with `profit` WETH at the executor. With `check_mode=0` (no on-chain
 /// profit check) + `bribe_bips=500` (5%) + `recipient_idx=0` (block.coinbase),
@@ -2127,7 +2127,7 @@ fn all_v2_in_path_flash_pays_builder_bribe_from_profit() {
     );
 }
 
-/// WE45KC: the full axis→config→contract path. `EncodeOptions { bribe }`
+/// the full axis→config→contract path. `EncodeOptions { bribe }`
 /// → `config_for_options` (the axis-aware builder) → the packed `config` →
 /// the contract pays the builder bribe. Proves the axis layer isn't just
 /// modeled — it reaches the on-chain `execute()` config and pays.
@@ -2193,7 +2193,7 @@ fn config_for_options_bribe_axis_reaches_contract_and_pays() {
     println!("── config_for_options bribe axis (runtime): delta={delta}, bribe paid ~= {bribe}");
 }
 
-/// WE45KC: FundingSource::SelfFund on a mixed V2-led family (v2_v3). The
+/// FundingSource::SelfFund on a mixed V2-led family (v2_v3). The
 /// economic knob generalizes beyond all-V2: the executor pre-funds V2a with the
 /// entry WETH (V2_SWAP_CALC, no flash callback), the V2 output goes directly to
 /// the V3b pool, and the terminal V3 swaps to WETH profit (SELF, empty

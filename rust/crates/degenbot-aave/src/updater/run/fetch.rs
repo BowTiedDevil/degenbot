@@ -24,7 +24,7 @@ use crate::config_dispatch::{match_proxy_id, ProxyCreationResolution};
 /// larger window (a `BootstrapFailed` error surfaces the miss).
 const BOOTSTRAP_WINDOW: u64 = 2_000;
 
-/// Cold-boot the `POOL`/`POOL_CONFIGURATOR` contract rows (O4BOST). On a fresh
+/// Cold-boot the `POOL`/`POOL_CONFIGURATOR` contract rows. On a fresh
 /// market, `activate` seeds only the `POOL_ADDRESS_PROVIDER`; `build_fetch_spec`
 /// hard-errors without `POOL`/`POOL_CONFIGURATOR`. This pass fetches the
 /// `ProxyCreated` events from the `POOL_ADDRESS_PROVIDER` address over the

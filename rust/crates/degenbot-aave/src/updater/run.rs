@@ -362,7 +362,7 @@ async fn run_aave_update_driver(
         });
     }
 
-    // Cold-boot bootstrap (O4BOST). On a fresh market `activate` seeds only
+    // Cold-boot bootstrap. On a fresh market `activate` seeds only
     // `POOL_ADDRESS_PROVIDER`; `build_fetch_spec` below hard-errors if `POOL`/
     // `POOL_CONFIGURATOR` are missing. The bootstrap pass fetches the
     // `ProxyCreated` events from the `POOL_ADDRESS_PROVIDER` over the bootstrap

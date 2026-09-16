@@ -1,4 +1,4 @@
-// Cache-lab golden gate (epic KIMRKS, task UR7CUX): on the 12-line full-range
+// Cache-lab golden gate: on the 12-line full-range
 // fixture, every capture epoch must honor the two-sided golden contract and,
 // across a deterministic transition schedule, every catalog strategy must stay
 // BYTE-EQUAL to the full-rebuild reference. CI-fast knobs: DRCLAB_GOLD_PATHS,

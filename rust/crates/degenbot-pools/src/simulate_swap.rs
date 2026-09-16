@@ -176,7 +176,7 @@ pub fn simulate_swap(
             simulate_balancer_stable_swap(id, state, zero_for_one, amount_in)
         }
         // Curve (11a): the stableswap pure math (`stableswap_get_y`) is ported
-        // in `degenbot-curve-math` (slice 11c). The full `get_dy` flow —
+        // in `degenbot-curve-math`. The full `get_dy` flow —
         // variant dispatch, rate-multiplier `xp` scaling, A precision, admin-fee
         // split — is non-trivial enough that the Python companion keeps doing
         // its own math via `swap_fn` until the dedicated wiring slice lands. This
@@ -473,7 +473,7 @@ mod tests {
         U256::from(i)
     }
 
-    /// RPSW4Z: the MetaStable pass-through. `bpt_idx = None` leaves balances +
+    /// the MetaStable pass-through. `bpt_idx = None` leaves balances +
     /// indices untouched — the ComposableStable rebase machinery is a no-op.
     #[test]
     fn skip_bpt_metastable_none_is_passthrough() {
@@ -491,7 +491,7 @@ mod tests {
         );
     }
 
-    /// RPSW4Z: ComposableStable `bpt_idx = Some(2)` (BPT at the END). The BPT
+    /// ComposableStable `bpt_idx = Some(2)` (BPT at the END). The BPT
     /// is dropped and neither swap index is past `bpt_idx`, so `adj_in`/`adj_out`
     /// do NOT rebase — this is the BPT-drop branch exercisable end-to-end via
     /// `simulate_balancer_stable_swap` (covered by the parity fixture in
@@ -511,7 +511,7 @@ mod tests {
         );
     }
 
-    /// RPSW4Z: ComposableStable `bpt_idx = Some(1)` (BPT in the MIDDLE), swap
+    /// ComposableStable `bpt_idx = Some(1)` (BPT in the MIDDLE), swap
     /// `token0 → token2` (idx_in=0, idx_out=2). `idx_out` is PAST `bpt_idx`, so
     /// it rebases to `2 - 1 = 1`; `idx_in` (0, below bpt_idx) stays `0`. The BPT
     /// at index 1 is dropped, leaving [token0, token2] with adj_in=0, adj_out=1.
@@ -537,7 +537,7 @@ mod tests {
         );
     }
 
-    /// RPSW4Z: symmetric rebase — `idx_in` past `bpt_idx`, `idx_out` below.
+    /// symmetric rebase — `idx_in` past `bpt_idx`, `idx_out` below.
     /// `bpt_idx = Some(1)`, swap `token2 → token0` (idx_in=2, idx_out=0).
     /// Confirms the rebase applies to EITHER side, not just `idx_out`.
     #[test]
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(idx_out, 0, "idx_out (0, below bpt_idx=1) must not rebase");
     }
 
-    /// RPSW4Z: both indices past `bpt_idx` (`bpt_idx = Some(0)`, BPT at start,
+    /// both indices past `bpt_idx` (`bpt_idx = Some(0)`, BPT at start,
     /// swap `token1 → token2`). Both rebase by -1. Confirms the rebase is
     /// applied uniformly to both sides when both are past the BPT.
     #[test]

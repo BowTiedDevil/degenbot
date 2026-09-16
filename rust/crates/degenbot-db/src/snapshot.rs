@@ -8,7 +8,7 @@
 //! The domain types live HERE (in `degenbot-db`, a leaf) rather than borrowing
 //! `degenbot-bot`'s `TickInfo` — that would pull a `degenbot-db → degenbot-bot`
 //! dependency edge (BotState/state-machine logic into a persistence leaf). The
-//! sibling routing task (slice 14c) converts `LiquidityMap → V3PoolState`'s
+//! sibling routing task converts `LiquidityMap → V3PoolState`'s
 //! `tick_data` at the `PyBot`-registration seam (a 1:1 field copy).
 
 use hashbrown::HashMap;

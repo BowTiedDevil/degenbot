@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(action("submit_failure", None), Action::Event);
         assert_eq!(action("monitor_failure", None), Action::Event);
         assert_eq!(scope("monitor_failure", None), Scope::Path);
-        // HJ5HWF: delivery-jitter lateness is DELIBERATELY never fatal — the
+        // delivery-jitter lateness is DELIBERATELY never fatal — the
         // late-admit path drops + counts it; the deduped event keeps the
         // rate visible on the path scope (an out-of-order feed, not a
         // state-machine fault).

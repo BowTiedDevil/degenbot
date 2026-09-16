@@ -56,7 +56,7 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
 }
 
 /// Retry an async operation with exponential backoff, emitting `log` records on
-/// every retry attempt so operators can see backoff in logs (E2B542).
+/// every retry attempt so operators can see backoff in logs.
 ///
 /// The codebase's logging vocabulary is `log` (used across every Rust core
 /// crate); `log` is already a dependency of `degenbot-rpc`, so no new dep is
@@ -69,7 +69,7 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
 /// `transports::layers::RetryBackoffLayer` was evaluated as the
 /// transport-idiomatic replacement for this loop and rejected: it only
 /// `trace!`s retries (no E2B542 leveled records, no provider `{context}`
-/// labels), has no per-attempt deadline knob (EO75JH), its
+/// labels), has no per-attempt deadline knob, its
 /// `initial_backoff` is a fixed base that is explicitly "not an exponential
 /// base", and exhaustion collapses typed errors into a `custom_str`. It is
 /// also replay-unsafe for the non-idempotent `eth_sendRawTransaction` path
@@ -82,7 +82,7 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
 /// `ProviderError`s, its jitter is a multiplicative `randomization_factor`
 /// rather than the additive tenacity-style jitter the verification policy
 /// uses (adopting it would CHANGE the curves), and it cannot wrap the
-/// per-call `tokio::time::timeout` (EO75JH). The loop stays centralized here
+/// per-call `tokio::time::timeout`. The loop stays centralized here
 /// and consumes the shared [`RetryPolicy`] curve.
 ///
 /// Emission policy (the E2B542 decision):
@@ -109,7 +109,7 @@ where
     let mut attempt = 0;
 
     loop {
-        // EO75JH: bound every attempt so a stuck transport (especially
+        // bound every attempt so a stuck transport (especially
         // WS/IPC mid-read) cannot hang the loop indefinitely. HTTP has alloy's
         // read timeout, but WS/IPC have no default — a half-open socket hangs
         // forever without this wrapper. On elapsed, classify as
@@ -166,7 +166,7 @@ where
 }
 
 /// Compute the transaction hash locally from a raw signed (RLP-encoded)
-/// transaction payload (J3RIFU). Broadcasting via `eth_sendRawTransaction`
+/// transaction payload. Broadcasting via `eth_sendRawTransaction`
 /// can lose the response to a timeout / connection drop AFTER the body
 /// reached the node — so reconciliation via `get_transaction_receipt` needs
 /// the hash, and it must be computable without the broadcast response.
@@ -188,7 +188,7 @@ pub(crate) fn compute_tx_hash_from_signed_payload(encoded_tx: &[u8]) -> Provider
     Ok(*envelope.hash())
 }
 
-/// Broadcast-aware reconciliation loop for `eth_sendRawTransaction` (J3RIFU).
+/// Broadcast-aware reconciliation loop for `eth_sendRawTransaction`.
 ///
 /// Broadcast is NOT idempotent: a `Timeout` / `ConnectionFailed` after the
 /// body was sent may have delivered the tx to the mempool, so blindly
@@ -329,7 +329,7 @@ where
 /// spawning thousands of simultaneous connections.
 const MAX_CONCURRENT_REQUESTS_CAP: usize = 32;
 
-/// Default per-call timeout for `AlloyProvider` (EO75JH). HTTP uses alloy's
+/// Default per-call timeout for `AlloyProvider`. HTTP uses alloy's
 /// read timeout, but WS/IPC have no default — a half-open socket hangs the
 /// retry loop indefinitely. This bounds every attempt so a stuck transport
 /// retries (or fails) within a known wall-clock. 30s is generous for any
@@ -341,7 +341,7 @@ const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Alloy's default is 16, and `tokio::sync::broadcast` DROPS the OLDEST
 /// messages for a lagging receiver — so a 16-slot buffer overflows during the
 /// blocking snapshot→WS backfill (which does not drain the live stream) and
-/// silently loses the freshly-mined live logs (DFQYM5). This value effectively
+/// silently loses the freshly-mined live logs. This value effectively
 /// unbounds the receiver: it far exceeds any realistic backlog accumulated
 /// while the pump is not draining the stream, so a slow consumer can never lag
 /// the node's log stream out of existence.
@@ -814,7 +814,7 @@ pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
     rpc_url: String,
     max_attempts: u32,
-    /// Per-call timeout (EO75JH). Each `operation()` in `retry_with_backoff`
+    /// Per-call timeout. Each `operation()` in `retry_with_backoff`
     /// is wrapped in `tokio::time::timeout(call_timeout, ...)`; a stuck
     /// transport (especially WS/IPC mid-read) classifies as
     /// `ProviderError::Timeout` and feeds the existing `is_retryable()`.
@@ -1001,7 +1001,7 @@ impl AlloyProvider {
                 });
             };
 
-        // Effectively unbounded the pubsub receiver (DFQYM5): see
+        // Effectively unbounded the pubsub receiver: see
         // `SUBSCRIPTION_CHANNEL_SIZE`. Must be set BEFORE any subscription is
         // created (the channel size is read at subscription dispatch time);
         // `new` runs before the pump's `subscribe_blocks`/`subscribe_logs`.
@@ -1442,7 +1442,7 @@ impl AlloyProvider {
     /// the bytes for; this fn returns the resulting `TxHash` (the transport
     /// primitive — receipt monitoring is owned upstream).
     ///
-    /// # Broadcast-aware reconciliation (J3RIFU)
+    /// # Broadcast-aware reconciliation
     ///
     /// Broadcast is NOT idempotent: a timeout / connection drop after the body
     /// was sent may have delivered the tx to the mempool, so blindly retrying
@@ -2174,7 +2174,7 @@ mod tests {
         RETRY_CAPTURE.with(|c| *c.borrow_mut() = None);
     }
 
-    /// E2B542: a retryable error that exhausts all attempts emits one `error!`
+    /// a retryable error that exhausts all attempts emits one `error!`
     /// record (the terminal failure) plus a `debug!`/`warn!` per preceding retry,
     /// each carrying `attempt`, `max_attempts`, the delay, and the `ProviderError`
     /// display (which embeds the per-call context label).
@@ -2251,7 +2251,7 @@ mod tests {
         );
     }
 
-    /// E2B542: a non-retryable error is surfaced immediately with NO retry log
+    /// a non-retryable error is surfaced immediately with NO retry log
     /// emission (the loop returns before the logging branch).
     #[tokio::test]
     async fn retry_with_backoff_loop_emits_no_log_for_non_retryable_error() {
@@ -2275,7 +2275,7 @@ mod tests {
         );
     }
 
-    /// E2B542: a successful first attempt emits NO retry log (the happy path).
+    /// a successful first attempt emits NO retry log (the happy path).
     #[tokio::test]
     async fn retry_with_backoff_loop_emits_no_log_on_first_success() {
         let rx = capture_retry_logs();
@@ -2297,7 +2297,7 @@ mod tests {
         );
     }
 
-    /// EO75JH: a stuck call (operation sleeps longer than the per-call
+    /// a stuck call (operation sleeps longer than the per-call
     /// timeout) is bounded — the loop does NOT hang forever, it classifies
     /// the elapsed attempt as `ProviderError::Timeout`, retries, and after
     /// exhausting attempts returns `Timeout`. Wall-clock is bounded by
@@ -2338,7 +2338,7 @@ mod tests {
         );
     }
 
-    /// EO75JH: after a per-call timeout, the loop retries and can succeed on
+    /// after a per-call timeout, the loop retries and can succeed on
     /// a later attempt — the timeout is classified as retryable (feeds
     /// `is_retryable()`), the backoff applies, and a fast retry wins.
     #[tokio::test]

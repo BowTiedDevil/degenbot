@@ -25,7 +25,7 @@
 //! *separate* `Mutex<Connection>` — the `SnapshotDb` held-tx or a per-call
 //! `DegenbotDb`), decoupled from `BotState`. The Chain arm is an RPC trait
 //! object, also with no `BotState` guard. The former `Store` arm's closure
-//! (which briefly held a `BotState` read guard) is retired (XEANMB) — the
+//! (which briefly held a `BotState` read guard) is retired — the
 //! per-pool `fetch_liquidity_map` reads the DB directly with no `BotState`
 //! guard held across an `SQLite` read or an RPC `eth_call`. During
 //! `build_paths` the live pump holds `state.write()` on the same `BotState`
@@ -40,7 +40,7 @@
 //! `contextlib.suppress(Exception)`: a transient `database is locked` under
 //! the concurrent updater process is swallowed and the builder silently falls
 //! through to sparse RPC. This helper **propagates** `DbError` instead — the
-//! `PyO3` wrapper (task `A4YUYJ`) raises `RuntimeError`. The trade-off is
+//! `PyO3` wrapper raises `RuntimeError`. The trade-off is
 //! deliberate: loud failure on Db problems beats silent degradation to a
 //! solver-unsafe sparse state. Do NOT "restore" the swallow — if a transient Db
 //! error now aborts registration where it previously degraded, that is the
@@ -92,7 +92,7 @@ pub enum TickMapAssemblyError {
     /// A Tracked Db snapshot that contradicts itself: a bitmap bit and the
     /// liquidity rows disagree about an initialization (T3 OMDCIY, epic
     /// OU4SYZ). Registration is rejected AT INTAKE — the two-step verify
-    /// (IKGQ6F) is the on-chain oracle, but a corrupted snapshot must never
+    /// is the on-chain oracle, but a corrupted snapshot must never
     /// register. `tick` is the conflicting position (`i32::MIN` marks an
     /// out-of-range corrupted word position).
     #[error(

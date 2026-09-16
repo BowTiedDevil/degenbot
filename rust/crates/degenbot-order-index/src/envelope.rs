@@ -30,7 +30,7 @@
 //!   S2 strategy's *deferred demotion* plus a periodic `rebuild()` to tighten
 //!   is the refinement layered on top of this in a later pass.
 //!
-//! ## Per-block `top_k`: gas-ordered hot range (A33CRA)
+//! ## Per-block `top_k`: gas-ordered hot range
 //!
 //! The hot set is classified **per gas value, not per point**: `upper_bound`
 //! depends on a point only through the hull edge bracketing `p.gas`, so a gas

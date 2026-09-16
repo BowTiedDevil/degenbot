@@ -43,8 +43,7 @@ pub mod dispatch;
 
 /// Per-pool solver-divergence tracking (`PoolDivergence` +
 /// `is_solver_calc_failure`) — a stateful per-pool memo consumed by the
-/// dispatch leaf to skip paths through recently-divergent pools (ergo epic
-/// GAXXNJ, task GMWYIU). Parallels `PathSuppression` (a stateful per-key
+/// dispatch leaf to skip paths through recently-divergent pools. Parallels `PathSuppression` (a stateful per-key
 /// counter consumed by the same dispatch leaf).
 pub mod pool_divergence;
 
@@ -89,9 +88,9 @@ pub use simulator::{
     EXECUTE_GAS_ENV, GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN,
     MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
-// The swap-event-capture inspector's decoded per-swap struct (ergo epic
-// 63I7WJ). Re-exported here so the PyO3 wrapper (`degenbot-python` outcome)
-// can name the success-path `captured_swaps` element type — the same struct
+// The swap-event-capture inspector's decoded per-swap struct. Re-exported
+// here so the PyO3 wrapper (`degenbot-python` outcome) can name the
+// success-path `captured_swaps` element type — the same struct
 // `SimFailure.captured_swaps` carries (the revert path already surfaces it
 // via `failures()`); the success path surfaces it via
 // `PyDispatchOutcome.profitable_captured_swaps` (the prerequisite for the

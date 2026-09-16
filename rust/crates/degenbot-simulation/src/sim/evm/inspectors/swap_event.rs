@@ -537,7 +537,7 @@ mod tests {
     }
 
     // =====================================================================
-    // Frame-revert tracking (ergo: V4 reverted-frame over-capture).
+    // Frame-revert tracking.
     //
     // `log_full` fires per LOG opcode BEFORE the enclosing frame's revert is
     // resolved, so a swap emitted in a reverting sub-call (common in V4's

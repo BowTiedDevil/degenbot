@@ -251,7 +251,7 @@ fn cross_check_calc_exact_in_stable_camelot() {
     }
 }
 
-// ── calc_exact_out_stable_solidly roundtrip property (S5SJXF / LTLR2K) ──
+// ── calc_exact_out_stable_solidly roundtrip property ──
 //
 // The exact-out leaf has no deployed-contract oracle (the Python `_calc_tokens_in_stable`
 // raised `NotImplementedError`). The §4.2 oracle is the property-based check

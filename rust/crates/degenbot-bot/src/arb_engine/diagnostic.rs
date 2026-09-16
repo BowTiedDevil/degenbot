@@ -31,7 +31,7 @@ use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
 use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 /// A single typed field-level divergence between the engine's view of a pool
-/// and the on-chain snapshot (PCG2M3). The string rendering is the single
+/// and the on-chain snapshot. The string rendering is the single
 /// source of truth for the legacy human-readable `DiagnosticHop::diff` entry:
 /// `to_diff_string()` reproduces the exact `"<field>: engine=<v>, onchain=<v>"`
 /// shape callers and tests already depend on.
@@ -64,7 +64,7 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 /// Compute typed field-level differences between engine and on-chain pool
-/// state (PCG2M3). Pure — no RPC. Single source of truth for `diff`: a future
+/// state. Pure — no RPC. Single source of truth for `diff`: a future
 /// lightweight drift detector calls this and derives `DiagnosticHop::diff`
 /// lines via `FieldDiff::to_diff_string`, so the two never drift.
 ///
@@ -212,7 +212,7 @@ impl DiagnosticPoolState {
 ///
 /// The onchain-comparison fields (`onchain_state`, `diff`, `drift`,
 /// `field_drift`) are retained on the struct but stay at default (no fetch
-/// populates them) after the `fetch_onchain` retirement (AM5AJW). A future
+/// populates them) after the `fetch_onchain` retirement. A future
 /// lightweight drift detector may repopulate them via `compute_field_diffs`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -234,11 +234,11 @@ pub struct DiagnosticHop {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub diff: Vec<String>,
     /// True iff ANY field differs between `engine_state` and `onchain_state`
-    /// (PCG2M3). `false` when no on-chain fetch ran or every fetched field
+    ///. `false` when no on-chain fetch ran or every fetched field
     /// matched.
     #[serde(default, skip_serializing_if = "is_false")]
     pub drift: bool,
-    /// Typed field-level differences engine vs on-chain (PCG2M3). Empty when
+    /// Typed field-level differences engine vs on-chain. Empty when
     /// the fetch was skipped or every field matched. The `diff` strings are
     /// derived from these (`FieldDiff::to_diff_string`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -282,12 +282,12 @@ pub struct DiagnosticPathState {
     /// `engine_state` — so any visible `drift` against an onchain fetch pinned
     /// to `solve_block` is a SNAPSHOT TIMING ARTIFACT (the post-publish swap
     /// the live engine read includes but the pinned `solve_block` RPC
-    /// excludes), NOT a real publish-time state lag (O5SKZ6). The analyzer
+    /// excludes), NOT a real publish-time state lag. The analyzer
     /// classifies this case as `DriftArtifact`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_processed_block: Option<u64>,
     /// Block number at which on-chain state was fetched, if a fetch was
-    /// attempted. Always `None` after the `fetch_onchain` retirement (AM5AJW).
+    /// attempted. Always `None` after the `fetch_onchain` retirement.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onchain_block: Option<u64>,
     /// The hop snapshots.
@@ -359,7 +359,7 @@ pub(crate) fn diagnostic_path_state(
         engine.cycle.cursor.last_processed_block()
     };
     let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
-    // O5SKZ6: capture the engine's last-applied block alongside the
+    // capture the engine's last-applied block alongside the
     // published `solve_block`. When `engine_processed_block >
     // solve_block`, the engine has advanced past the published solve block
     // by the time the snapshot is read, so visible drift against an
@@ -657,7 +657,7 @@ mod tests {
         let engine = ArbitrageEngine::new();
         assert!(super::diagnostic_path_state(&engine, 1234).is_none());
     }
-    /// O5SKZ6: the snapshot's `engine_processed_block` (the engine's
+    /// the snapshot's `engine_processed_block` (the engine's
     /// last-applied block at snapshot time) MUST be present so the analyzer
     /// can distinguish post-publish snapshot timing artifacts (engine advanced
     /// past the published `solve_block`) from real publish-time state lags.
@@ -720,7 +720,7 @@ mod tests {
         assert_eq!(parsed.engine_processed_block, Some(124));
     }
     // -----------------------------------------------------------------
-    // Structured typed drift fields (PCG2M3) — pure field-diff utilities
+    // Structured typed drift fields — pure field-diff utilities
     // -----------------------------------------------------------------
     /// A V2 hop whose engine `reserve_in` / `reserve_out` both diverge from the
     /// on-chain snapshot yields TWO `FieldDiff` entries (`reserve_in`,

@@ -49,7 +49,7 @@ impl PyDispatchCandidate {
     ///
     /// The candidate resolves its `composers::PathInfo` from `path_id` via
     /// the engine's `path_info_for_core` projection over the shared
-    /// `BotState` — no Python `PathInfo` dataclass is threaded (NXM2BF).
+    /// `BotState` — no Python `PathInfo` dataclass is threaded.
     ///
     /// Args:
     ///     `engine`: the engine wrapper that owns `path_id` (the same

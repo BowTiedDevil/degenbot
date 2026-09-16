@@ -106,7 +106,7 @@ pub enum AaveChunkEvent {
     },
     /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken,
     /// interestRateStrategyAddress)` — seed the `aave_v3_assets` row (UR7QNL —
-    /// the other direct Pool-event DB writer). The orchestrator (6SWY4R)
+    /// the other direct Pool-event DB writer). The orchestrator
     /// pre-resolves the erc20 token ids + the `ATOKEN_REVISION()` /
     /// `DEBT_TOKEN_REVISION()` (via the EIP-1967 implementation slot) + the
     /// `getSourceOfAsset` `price_source`; this enum carries the resolved
@@ -252,7 +252,7 @@ pub enum AaveChunkEvent {
         amount: alloy::primitives::U256,
     },
     /// `RewardsController` `RewardsClaimed(user, reward, to, claimer,
-    /// claimedAmount)` — **no-op apply**. Investigation (RYKCC4) confirmed the
+    /// claimedAmount)` — **no-op apply**. Investigation confirmed the
     /// Python declares the event in `events.py` but has NO handler: rewards
     /// claims surface only via the stkAAVE token's `Transfer` events
     /// (`transaction_processor.py:249`). The DB has no rewards table. The
@@ -363,7 +363,7 @@ pub struct AaveChunkWriteReport {
     pub user_e_mode_set: usize,
     pub price_oracle_updated: usize,
     pub asset_source_updated: usize,
-    /// UR7QNL — the two direct-write Pool events.
+    /// the two direct-write Pool events.
     pub reserve_data_updated: usize,
     pub reserve_initialized: usize,
     /// 5Z3QQ2 — the three `ScaledToken` (aToken/vToken) events.
@@ -387,7 +387,7 @@ pub struct AaveChunkWriteReport {
     pub rewards_claimed: usize,
     /// The bad-debt liquidation reset count (C3 — `DebtPositionReset`).
     pub debt_position_reset: usize,
-    /// 6SWY4R-2b — the 6 missing-variant config events.
+    /// the 6 missing-variant config events.
     pub upgraded: usize,
     pub contract_revision_updated: usize,
     pub pool_data_provider_updated: usize,
@@ -730,7 +730,7 @@ pub fn apply_chunk_events_on_conn(
                 address,
                 revision,
             } => {
-                // O4BOST: for the bootstrap contracts (`POOL`/
+                // for the bootstrap contracts (`POOL`/
                 // `POOL_CONFIGURATOR`) use the IDEMPOTENT variant so the chunk
                 // loop's re-encounter of the bootstrap `ProxyCreated` events
                 // (the bootstrap pass already applied them over

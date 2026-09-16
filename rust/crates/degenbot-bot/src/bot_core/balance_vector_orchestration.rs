@@ -184,7 +184,7 @@ impl BotState {
 
     /// Read a registered Curve pool's state by `pool_id`.
     ///
-    /// The Python companion (slice 11b) reads `balances` / `update_block`
+    /// The Python companion reads `balances` / `update_block`
     /// through this accessor via `PyLiquidityPool.balances` getter. Returns
     /// `None` for non-Curve pools (silent no-op).
     #[must_use]
@@ -245,8 +245,7 @@ impl BotState {
         calculate_dy(i, j, dx, &inputs).map_err(CurveInputsError::Swap)
     }
 
-    /// Rust-owned Curve metapool `get_dy_underlying(i, j, dx)` (task
-    /// `V5X2YP`, epic `TV72EG`). Resolves the metapool snapshot via
+    /// Rust-owned Curve metapool `get_dy_underlying(i, j, dx)`. Resolves the metapool snapshot via
     /// [`degenbot_pools::resolve_dy_inputs`], then delegates the base-pool ops
     /// (`calc_token_amount` / `get_dy` / `calc_withdraw_one_coin`) through a
     /// [`BotCurveBasePoolPort`] over the registered base `CurvePoolState` in
@@ -292,7 +291,7 @@ impl BotState {
     }
 
     /// Rust twin of the companion `calc_token_amount(amounts, deposit)` on a
-    /// Curve pool (task `V5X2YP`). Base-pool delegation op for metapool
+    /// Curve pool. Base-pool delegation op for metapool
     /// `get_dy_underlying`; also a standalone calc entry. Computes `D` before
     /// and after the balance change and scales by the LP total supply
     /// (fetched via the stored provider).
@@ -352,7 +351,7 @@ impl BotState {
     }
 
     /// Rust twin of the companion `calc_withdraw_one_coin(token_amount, i)`
-    /// (task `V5X2YP`). Base-pool delegation op for metapool
+    ///. Base-pool delegation op for metapool
     /// `get_dy_underlying`; also a standalone calc entry. Returns the single
     /// coin-`i` output `dy` (the port only needs `dy`; the companion's extra
     /// tuple fields `dy_0 - dy` / `total_supply` aren't consumed).
@@ -418,7 +417,7 @@ impl BotState {
     /// (`pool_id`, vault, tokens, weights, `scaling_factors`, `swap_fee`,
     /// `pow_version`) + the registration `balances`/`update_block` are stored
     /// in a `BalancerWeightedPoolState` and seeded with a genesis reorg
-    /// journal delta. The Python `BalancerV2Pool` companion (slice 12b) will
+    /// journal delta. The Python `BalancerV2Pool` companion will
     /// be built over a `PyLiquidityPool` handle that reads back through
     /// [`Self::get_balancer_weighted_pool`].
     ///
@@ -465,7 +464,7 @@ impl BotState {
 
     /// Read a registered Balancer weighted pool's state by `pool_id`.
     ///
-    /// The Python companion (slice 12b) reads `balances` / `update_block`
+    /// The Python companion reads `balances` / `update_block`
     /// through this accessor via `PyLiquidityPool` getters. Returns `None`
     /// for non-Balancer-weighted pools (silent no-op).
     #[must_use]
@@ -495,7 +494,7 @@ impl BotState {
     /// `bpt_idx`, `invariant_version`) + the registration `balances`/
     /// `update_block` are stored in a `BalancerStablePoolState` and seeded
     /// with a genesis reorg journal delta. The Python `BalancerV2StablePool`
-    /// companion (slice 12d) will be built over a `PyLiquidityPool` handle
+    /// companion will be built over a `PyLiquidityPool` handle
     /// that reads back through [`Self::get_balancer_stable_pool`].
     ///
     /// # Panics
@@ -549,7 +548,7 @@ impl BotState {
 
     /// Read a registered Balancer stable pool's state by `pool_id`.
     ///
-    /// The Python companion (slice 12d) reads `balances` / `update_block` /
+    /// The Python companion reads `balances` / `update_block` /
     /// `bpt_idx` / `invariant_version` / `amp` through this accessor via
     /// `PyLiquidityPool` getters. Returns `None` for non-Balancer-stable
     /// pools (silent no-op).

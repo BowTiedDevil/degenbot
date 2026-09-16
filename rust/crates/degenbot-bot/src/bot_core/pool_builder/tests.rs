@@ -1,4 +1,4 @@
-//! Choreography decode unit tests (task `F2R2OC`, epic `Z5CNPB`).
+//! Choreography decode unit tests.
 //!
 //! The V2/V3/V4 + ERC-20 + tick encode→call→decode choreography moved core-side
 //! into this module. These tests drive each `choreography` fn through a
@@ -180,7 +180,7 @@ async fn fetch_erc20_metadata_returns_none_on_missing_selector() {
 
 #[tokio::test]
 async fn build_erc20_metadata_resolves_on_chain_with_no_db() {
-    // VK3YDM-S2: with NoDb the DB row is absent (all fields missing), so
+    // with NoDb the DB row is absent (all fields missing), so
     // build_erc20_metadata guards `get_code` then resolves all three on-chain
     // via the batched read; no write-back (no DB row).
     let mut f = FakeRpc::new();
@@ -931,7 +931,7 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
     assert_eq!(params.tick_data[&60].liquidity_net, 100i128);
 }
 
-/// Task 4TWM7C/B1 — a DB-seeded (`Tracked`) pool's LIQUIDITY clock
+/// a DB-seeded (`Tracked`) pool's LIQUIDITY clock
 /// (`tick_data_block`) must be the DB `liquidity_update_block`, NOT the
 /// caller-supplied head price clock. Before the fix the builder stamped
 /// `tick_data_block = update_block = head`, so the seed/post-drain verify
@@ -1005,7 +1005,7 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     );
     assert_eq!(
         params.update_block, 9_000_000,
-        "the PRICE clock stays at the fresh head read (two-stamp OB7UNY)"
+        "the PRICE clock stays at the fresh head read (two-stamp rule)"
     );
 }
 
@@ -1801,7 +1801,7 @@ async fn fetch_erc20_uint_and_string_field() {
 
 #[tokio::test]
 async fn resolve_v4_identity_orders_currencies_and_derives_hook_flags() {
-    // TF7RZB-S3: the override (kwargs) path of the core identity resolver —
+    // the override (kwargs) path of the core identity resolver —
     // over a NoDb io it must order currency0/1 by ascending address, carry
     // fee/tick_spacing, and derive hook_flags from the hook address (low 16
     // bits).
@@ -1837,7 +1837,7 @@ async fn resolve_v4_identity_orders_currencies_and_derives_hook_flags() {
 
 #[tokio::test]
 async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
-    // TF7RZB-S3: over a no-DB io with empty overrides the resolver must
+    // over a no-DB io with empty overrides the resolver must
     // degrade to the typed `MissingIdentity` error (never a panic).
     let io = io_with(FakeRpc::new());
     let overrides = builder::V4PoolBuildOverrides::default();

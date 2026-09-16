@@ -65,7 +65,7 @@ impl FleetRegistrationExecutor {
     /// and run the dispatch loop on the host thread. Fail-loud (the typed
     /// [`BootError`]) when the declared shares cannot host the quota.
     ///
-    /// candidate 4 (YUMQU3): the registration role's `IntakeFaultWatch` is
+    /// candidate 4: the registration role's `IntakeFaultWatch` is
     /// an OPTION parameter on the shared boot path; `boot` supplies a fresh
     /// watch (the sim host passes `None`).
     ///
@@ -114,7 +114,7 @@ mod tests {
         clippy::print_stderr,
         reason = "the self-skip channel when a parallel test won the stamp race (the documented F1 skip semantics)"
     )]
-    /// F1 white-box (YI5NGB): the materializer's init closure aborts LOUD
+    /// F1 white-box: the materializer's init closure aborts LOUD
     /// (the expect) when no construction ever installed a stamp — invoked
     /// directly so the expect fires WITHOUT a real `FleetHost` boot.
     #[test]
@@ -154,7 +154,7 @@ mod tests {
             PosturePolicy::doc_defaults(),
         )))
     }
-    /// FF-T1 (BPHR6F): a refused fleet boot is a TYPED, STICKY error at
+    /// FF-T1: a refused fleet boot is a TYPED, STICKY error at
     /// the process materializer — never a process abort. A sub-floor
     /// stamp (quota 2.0, the CI 4-vCPU shape shrunk one step further) is
     /// installed directly; the FIRST materialization surfaces the typed
@@ -208,9 +208,9 @@ mod tests {
     fn hermetic_boot() -> FleetBoot {
         hermetic_boot_with_owner(hermetic_owner())
     }
-    /// FF-T3 (Z2YW52): no new binding is reachable from `auto` yet — the
+    /// FF-T3: no new binding is reachable from `auto` yet — the
     /// serial arm lands with FF-T4. A sub-floor auto host refuses with
-    /// FF-T4 (Z6XTDX) — AC 1: serial boot on a simulated 2-core quota
+    /// FF-T4 — AC 1: serial boot on a simulated 2-core quota
     /// executes callables on the named seat, returns receipts, and
     /// balances the ledger (every submitted unit completes exactly once
     /// — the same never-drop receipt contract the pooled seats hold).
@@ -321,7 +321,7 @@ mod tests {
         got.sort_unstable();
         assert_eq!(got, vec![0, 1, 2, 3, 4, 5, 6, 7]);
     }
-    /// FF-T3 (Z2YW52): the census prints the lane-to-thread binding per
+    /// FF-T3: the census prints the lane-to-thread binding per
     /// entry — the fleet rows stamp `pinned` (dedicated seat threads)
     /// under the pinned binding.
     #[test]
@@ -337,7 +337,7 @@ mod tests {
             !fleet_rows.is_empty(),
             "the host registers the fleet census rows"
         );
-        // FF-T4 (Z6XTDX): the census is PROCESS-GLOBAL and the test
+        // FF-T4: the census is PROCESS-GLOBAL and the test
         // binary boots serial-binding hosts in parallel tests — a row
         // stamps whichever binding last registered that role. The
         // deterministic assertion is the VOCABULARY contract (FF-T2:

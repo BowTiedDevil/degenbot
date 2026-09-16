@@ -39,7 +39,7 @@
 //! unchanged: the sim body still enters via the installed hook, whose
 //! task-spawn executes on a multi-thread runtime worker.
 //!
-//! GIL ruling (task LTUE7I): the hook body is verified Python-free —
+//! GIL ruling: the hook body is verified Python-free —
 //! `degenbot_python::simulation::inline_hook` imports no `pyo3` symbol
 //! and never attaches the GIL on its hot path, so hosting the closure on
 //! fleet seats crosses the FFI only at the existing install/delivery
@@ -64,7 +64,7 @@ impl FleetSimExecutor {
     /// run the dispatch loop on the host thread. Fail-loud (the typed
     /// [`BootError`]) when the declared shares cannot host the quota.
     ///
-    /// candidate 4 (YUMQU3): the seat descriptor is read from the
+    /// candidate 4: the seat descriptor is read from the
     /// `FleetBootRegistry` slot — this module owns no role static. Sim hosts
     /// carry NO intake fault watch (`None`): their receipts are not
     /// pyo3-owned (S2 scope cut), so they never enter Faulted.
@@ -105,7 +105,7 @@ mod tests {
         clippy::print_stderr,
         reason = "the self-skip channel when a parallel test won the stamp race (the documented F1 skip semantics)"
     )]
-    /// F1 white-box (YI5NGB): the materializer's init closure aborts LOUD
+    /// F1 white-box: the materializer's init closure aborts LOUD
     /// (the expect) when no construction ever installed a stamp — invoked
     /// directly so the expect fires WITHOUT a real `FleetHost` boot.
     #[test]
@@ -293,7 +293,7 @@ mod tests {
             "concurrent sims {seen} exceeded the budget slot cap {cap}"
         );
     }
-    /// Census (PE4FPM/FPNT36): the booted host self-registers the fleet
+    /// Census: the booted host self-registers the fleet
     /// `SimDriver` resource row with the fleet seat naming.
     #[test]
     fn the_booted_host_registers_the_fleet_simdriver_census_row() {
@@ -309,7 +309,7 @@ mod tests {
     /// fail-fast — never a runtime throttle storm).
     #[test]
     fn a_budget_refusal_fails_loudly_at_boot() {
-        // FF-T4 (Z6XTDX): the 2-5-core tier BOOTS the serial binding
+        // FF-T4: the 2-5-core tier BOOTS the serial binding
         // now (the loud refusal moved below the serial floor — a
         // sub-2-core host cannot host the tier at all).
         let serial = FleetBoot {
@@ -383,7 +383,7 @@ mod tests {
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod fleet_sim_stance_tests {
-    //! ADR-042 F4 (task LTUE7I) fixtures: the inline-sim runtime on the
+    //! ADR-042 F4 fixtures: the inline-sim runtime on the
     //! fleet (LW-T9: the legacy-arm half of the parity/identity matrix is
     //! deleted with the stance — every sim rides the `SimDriver` seats).
     //! Parity — `SimDriver` seats execute requests derived from the committed

@@ -85,7 +85,7 @@ fn every_v1_active_role_walks_its_legal_transition_path() {
         let mut host = stub_host();
         match role {
             WorkerRole::Solver => {
-                // The SlotLayout owns the home geometry (2SIOHJ); the fresh
+                // The SlotLayout owns the home geometry; the fresh
                 // scripted host's first solver seat is idle.
                 let slot = u64::try_from(host.layout().solver.start)
                     .expect("the layout hosts a Solver seat");
@@ -133,7 +133,7 @@ fn every_v1_active_role_walks_its_legal_transition_path() {
                 host.complete(slot).expect("T4 again");
             }
             WorkerRole::SimDriver | WorkerRole::Resolve | WorkerRole::PoolStateUpdater => {
-                // The SlotLayout owns the home geometry (2SIOHJ); the fresh
+                // The SlotLayout owns the home geometry; the fresh
                 // scripted host's first home seat is idle.
                 let seat = match role {
                     WorkerRole::SimDriver => host.layout().sim.start,
@@ -520,7 +520,7 @@ fn declared_roles_gate_in_dispatch_until_their_migration_step() {
 /// start on over-subscription — never a runtime throttle storm).
 #[test]
 fn overly_small_quotas_never_boot() {
-    // FF-T4 (Z6XTDX): the 2-5-core tier BOOTS the serial plan; the loud
+    // FF-T4: the 2-5-core tier BOOTS the serial plan; the loud
     // refusal moved below the serial floor (HOST_FLOOR_CORES).
     let host = FleetHost::boot(FleetBoot {
         profile: degenbot_config::FleetProfile::Auto,
@@ -742,7 +742,7 @@ mod pin_derive {
         }
     }
 
-    /// The pin-order contract (DNZQ5G): the derived pin view renders in
+    /// The pin-order contract: the derived pin view renders in
     /// SLOT-INDEX order — the deliberate normalization of the old mirror's
     /// MRU order (no caller observes pin order; `pins()` had zero callers
     /// and continuations are per-key to per-key seats).

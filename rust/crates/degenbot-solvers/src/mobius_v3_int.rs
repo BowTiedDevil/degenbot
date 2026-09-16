@@ -387,7 +387,7 @@ fn cl_hop_min_input_for_output(
     }
     let w_ending = w - crossing.crossing_output;
     // Profiles are byte-equivalent to the linear `int_simulate_v3_swap`
-    // walk (E7ALWT), so the inversion routes through the profile tables.
+    // walk, so the inversion routes through the profile tables.
     let r = if let Some(p) = profile {
         word_profile_min_input_for_output(p, w_ending)?
     } else {
@@ -1490,7 +1490,7 @@ thread_local! {
     // Stop-time refinement (`walk_refine_window` ternary + dense sweep) sim
     // count — the measurement split for the 64-wei refinement-resolution cost.
     pub(crate) static WALK_REFINE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Refinement split (J3OU5F): sims in the ternary narrowing phase vs sims
+    // Refinement split: sims in the ternary narrowing phase vs sims
     // in the final coarse-grid / dense-sweep phase. Names the probe-budget
     // driver so the next optimization touches the right loop.
     pub(crate) static WALK_TERNARY_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1660,7 +1660,7 @@ const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 #[hotpath::measure(label = "cl_solve.active_set")]
 fn solve_active_set_path(hops: &[WalkHop], cfg: &SolveRuntimeConfig) -> WalkOutcome {
     let s_t0 = std::time::Instant::now();
-    // SU7MAE T2: the walk drains its own counters at entry — the solve
+    // the walk drains its own counters at entry — the solve
     // caller no longer resets, and the returned outcome carries THIS path's
     // telemetry (no frozen thread-locals on the read-back path).
     reset_walk_stats();
@@ -1749,7 +1749,7 @@ fn solve_active_set_path_inner(
             });
             if n_l <= n_hi {
                 let span = n_hi - n_l;
-                // Thin-edge peek trim (J3OU5F): the +2-wei corner probe
+                // Thin-edge peek trim: the +2-wei corner probe
                 // survives only when the upcoming search does NOT cover it.
                 // The dense sweep spans [n_l, n_hi] (covers +2 whenever
                 // span >= 2); the coarse grid's first point is n_l (+1).
@@ -1821,7 +1821,7 @@ fn solve_active_set_path_inner(
     // window boundaries, so it doubles as the next piece's left-edge scan
     // start (saves a full bisection per visited piece).
     let mut prev_right_edge: Option<U256> = None;
-    // Bracket warm start for the right-edge bisection (J3OU5F): the prior
+    // Bracket warm start for the right-edge bisection: the prior
     // piece's (edge, confirm_hi) pair. ks only advances componentwise, so
     // the prior edge remains a lower bound; the seeded helper re-validates
     // confirm_hi with a single probe. Byte-identical to the cold path.
@@ -4381,10 +4381,10 @@ mod tests {
         .expect("oracle must succeed");
         let result = int_simulate_v3_swap(amount_in, &hop);
 
-        // AGREEMENT (PXSY47): output is 0 on both sides.
+        // AGREEMENT: output is 0 on both sides.
         assert_eq!(result.output, U256::ZERO);
         assert_eq!(step.amount_out, U256::ZERO);
-        // AGREEMENT (PXSY47): on-chain consumes the full `amount_in` as fee —
+        // AGREEMENT: on-chain consumes the full `amount_in` as fee —
         // the delegated `compute_swap_step_v3` path now mirrors this
         // (previously the closed form reported `consumed_input = 0`).
         assert_eq!(
@@ -4398,7 +4398,7 @@ mod tests {
         );
     }
 
-    // ── Active-set piecewise walk tests (7J22EQ) ────────────────────────────
+    // ── Active-set piecewise walk tests ────────────────────────────
     //
     // The legacy solver enumerated ending-range tuples up to
     // `max_candidates = 10` per CL hop — a silent accuracy cap: when the
@@ -5019,7 +5019,7 @@ mod tests {
         );
     }
 
-    /// Property (7J22EQ): across a family of deep-late-liquidity
+    /// Property: across a family of deep-late-liquidity
     /// constructions, the solver must equal the uncapped reference — the
     /// walk never does worse than ANY enumeration prefix, capped or not.
     #[test]
@@ -5062,7 +5062,7 @@ mod tests {
         }
     }
 
-    /// Guard (7J22EQ): the walk must visit ≤ Σ ranges + 2 pieces and bound
+    /// Guard: the walk must visit ≤ Σ ranges + 2 pieces and bound
     /// its simulation count — the regression net against re-introducing
     /// combinatorial tuple enumeration (the legacy solver evaluated
     /// 10^n_hops tuples × 5 simulations regardless of where the optimum is).
@@ -5096,7 +5096,7 @@ mod tests {
             "visited pieces must be bounded by Σ ranges + 2, got {pieces}"
         );
         // Combinatorial bound PLUS the seeded-bracket regression contract
-        // (J3OU5F): the warm-started right-edge bisection must keep this
+        //: the warm-started right-edge bisection must keep this
         // fixture at/under the measured 832-sim ceiling. 900 = 832 + safety
         // margin for word-boundary perturbations.
         assert!(
@@ -5121,12 +5121,12 @@ mod tests {
             "3-hop: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
         );
         assert!(pieces <= 24 + 2);
-        // Seeded-bracket regression contract (J3OU5F): 251 measured with the
+        // Seeded-bracket regression contract: 251 measured with the
         // warm start; 300 keeps headroom.
         assert!(sims <= 300);
     }
 
-    /// Property (7J22EQ): the walk's profit must match a fine grid
+    /// Property: the walk's profit must match a fine grid
     /// maximization oracle (band tolerance — see the assertion) across BOTH the
     /// shallow/interior and deep/corner liquidity families. The uncapped
     /// enumeration reference is corner-blind (it can find NOTHING on these

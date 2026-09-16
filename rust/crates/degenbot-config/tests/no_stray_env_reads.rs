@@ -49,7 +49,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/degenbot-bot/src/profiling.rs",
             &["HOTPATH_SHUTDOWN_MS"][..],
         );
-        // 5WCRWZ T7: the CH-hop clamp (and its CLAMP_MARGIN dev-margin
+        // the CH-hop clamp (and its CLAMP_MARGIN dev-margin
         // override) moved out of the deleted solver_dispatch.rs onto the
         // cycle's solve_cycle.rs home. The probe-fixture names below are
         // already enumerated on the executor_ab_probe entry.
@@ -58,7 +58,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &["CLAMP_MARGIN"][..], // dev wei-margin override (cl-hop clamp lab)
         );
         m.insert(
-            // 5WCRWZ T6: the probe fixture loader moved out of solver_dispatch
+            // the probe fixture loader moved out of solver_dispatch
             // into its own test-only module (corpus path override, cfg(test)).
             "crates/degenbot-bot/src/arb_engine/executor_ab_probe.rs",
             &["DEGENBOT_PROBE_FIXTURE"][..],

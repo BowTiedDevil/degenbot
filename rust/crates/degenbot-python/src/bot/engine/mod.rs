@@ -198,7 +198,7 @@ pub(crate) fn hex_string_to_pool_id(
 /// snapshot-seed surface (the phase / startup ritual lives in `pump.rs`/`solve.rs`).
 #[pymethods]
 impl PyArbEngine {
-    /// The snapshot seed block `S` (JUCFCB) — set at `Bot.__init__` time by
+    /// The snapshot seed block `S` — set at `Bot.__init__` time by
     /// `Bot::load_snapshot_from_db` for the DB path, OR via
     /// [`set_snapshot_seed_block`](Self::set_snapshot_seed_block) for the
     /// non-DB (file/memory) path (2SM4Y7 — the pyo3 `backfill_from_snapshot`
@@ -218,7 +218,7 @@ impl PyArbEngine {
     /// non-DB path calls this once after `load_v3_snapshot_from_py` /
     /// `load_v4_snapshot_from_py` so the shared `BotState` carries `S =
     /// min(newest_block_v3, newest_block_v4)` — the seed the core
-    /// auto-backfill (J3FMDO) closes the snapshot→WS gap from.
+    /// auto-backfill closes the snapshot→WS gap from.
     ///
     /// `None` clears the seed (cold-start resume); `Some(b)` overrides the
     /// stored seed (used only when no snapshot has set it yet — the DB path's

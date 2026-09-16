@@ -38,7 +38,7 @@ use degenbot_math::cl::tick_math::{
 ///
 /// Pools with any of these bits set are excluded from SOLVING because the
 /// solver assumes standard V3 math — hooked pools can produce arbitrary deltas
-/// that violate this assumption. Since ADR-037/X4EU3J they are admitted at
+/// that violate this assumption. Since ADR-037 they are admitted at
 /// registration (simulations carry `Caveats::HOOKED_POOL`) rather than
 /// refused outright; only the solve path excludes them.
 /// - `BEFORE_SWAP` (1<<7 = 0x80)
@@ -181,7 +181,7 @@ pub struct RegisterV4PoolParams {
     pub tick: i32,
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
-    /// The **liquidity** clock seed (two-stamp OB7UNY) — the block the
+    /// The **liquidity** clock seed (two-stamp rule) — the block the
     /// supplied `tick_data` map is exact at. `None` (the default) falls back
     /// to [`Self::update_block`]. A fresh-read builder sets `update_block` to
     /// a HEAD slot0 read while `tick_data_block` stays at the DB liquidity
@@ -205,7 +205,7 @@ pub struct RegisterV4PoolParams {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegisterV4PoolError {
     /// Pool carries an amount-modifying hook (`hook_flags & 0xCC != 0`).
-    /// RESERVED since ADR-037/X4EU3J: no raise site remains (hooked pools
+    /// RESERVED since ADR-037: no raise site remains (hooked pools
     /// are admitted with a simulation caveat); kept so the `PyO3` error
     /// mapping stays stable.
     HookedPool { hook_flags: u16 },
@@ -317,7 +317,7 @@ pub struct V4PoolState {
     /// reorg panics.
     pub update_block: u64,
     /// The **liquidity** clock — see [`V3PoolState::tick_data_block`] (V4
-    /// twin, two-stamp OB7UNY). Monotonic non-decreasing; a backward stamp
+    /// twin, two-stamp rule). Monotonic non-decreasing; a backward stamp
     /// outside a reorg panics.
     pub tick_data_block: u64,
     /// The frozen registration/seed block — the `update_block` at
@@ -462,7 +462,7 @@ impl V4PoolState {
     }
 
     /// Monotonic advance of the **price** clock — see
-    /// [`V3PoolState::advance_update_block`] (V4 twin, two-stamp OB7UNY).
+    /// [`V3PoolState::advance_update_block`] (V4 twin, two-stamp rule).
     ///
     /// # Panics
     ///
@@ -480,7 +480,7 @@ impl V4PoolState {
     }
 
     /// Monotonic advance of the **liquidity** clock — see
-    /// [`V3PoolState::advance_tick_data_block`] (V4 twin, two-stamp OB7UNY).
+    /// [`V3PoolState::advance_tick_data_block`] (V4 twin, two-stamp rule).
     ///
     /// # Panics
     ///
@@ -537,7 +537,7 @@ impl V4PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
-            // Two-stamp OB7UNY (V4 twin): price clock at `update_block`;
+            // Two-stamp rule (V4 twin): price clock at `update_block`;
             // liquidity clock at `tick_data_block` when split, else the same
             // seed. The replay guard always keys on the PRICE seed block.
             tick_data_block: params.tick_data_block.unwrap_or(params.update_block),
@@ -576,7 +576,7 @@ impl V4PoolState {
         // relied on a later separate `update_tick_data` — the clobber the
         // closure removes. Seeding here makes the inline seed complete.
         state.seed_known_bitmap_words(tick_spacing);
-        // CBCH6H: pin the snapshot seed for Tracked pools so step-1 verify
+        // pin the snapshot seed for Tracked pools so step-1 verify
         // compares the seed (not pump-mutated `tick_data`) against
         // on-chain@snapshot_block. Sparse pools have no complete seed.
         state.snapshot_seed = if params.coverage == PoolTickCoverage::Tracked {
@@ -734,8 +734,7 @@ impl V4PoolState {
                 zero_for_one,
                 // Convert collapsed interior word-boundary ticks → sqrt
                 // prices (swap order) so `compute_crossing` /
-                // `int_simulate_v3_swap` re-walk them per boundary (ergo
-                // E7ALWT). V4 shares `compute_tick_ranges` + the V3-family
+                // `int_simulate_v3_swap` re-walk them per boundary. V4 shares `compute_tick_ranges` + the V3-family
                 // solver hop, so V4 gets the same per-step flooring parity fix.
                 word_boundary_prices: r
                     .interior_boundaries
@@ -1315,7 +1314,7 @@ mod apply_inherent_tests {
         );
         assert_eq!(after_lower.liquidity_net, prior_lower.liquidity_net + delta);
         assert_eq!(after_upper.liquidity_net, prior_upper.liquidity_net - delta);
-        // OB7UNY: out-of-range → only the LIQUIDITY clock advances.
+        // out-of-range → only the LIQUIDITY clock advances.
         assert_eq!(state.tick_data_block, 9);
         assert_eq!(state.update_block, 0);
         assert_eq!(state.sqrt_price_x96, sp_before);
@@ -1394,7 +1393,7 @@ mod apply_inherent_tests {
             state.liquidity, pre_liq,
             "replay at or before the seed block must NOT re-adjust the active liquidity (already in the seed)"
         );
-        // Two-stamp OB7UNY: the replay advances the LIQUIDITY clock (tick map
+        // Two-stamp rule: the replay advances the LIQUIDITY clock (tick map
         // mutated) but NOT the PRICE clock (slot0 head byte-identical).
         assert_eq!(
             state.tick_data_block, 50,
@@ -1443,7 +1442,7 @@ mod apply_inherent_tests {
 
         state.replace_tick_data(new_data, 5, 60);
 
-        // OB7UNY: replace advances only the LIQUIDITY clock (scalars/price
+        // replace advances only the LIQUIDITY clock (scalars/price
         // untouched).
         assert_eq!(state.tick_data_block, 5);
         assert_eq!(

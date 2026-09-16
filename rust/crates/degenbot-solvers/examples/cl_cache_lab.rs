@@ -1,4 +1,4 @@
-//! Cache-lab driver (epic KIMRKS): replay a capture JSONL as a command of
+//! Cache-lab driver: replay a capture JSONL as a command of
 //! deterministic pool-state transitions and solve every state through every
 //! registered cache strategy, checking byte-equality against the full-rebuild
 //! reference at each epoch and printing the rebuild-cost matrix.

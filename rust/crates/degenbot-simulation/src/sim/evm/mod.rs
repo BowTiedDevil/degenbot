@@ -19,8 +19,7 @@
 //! `IERC20.balanceOf`) produced K-invariant / `LOK` reverts from
 //! stale-vs-fresh state divergence. The wrapper persists as the option B
 //! seam the live `BlockSimHandle` chain references; collapsing it to
-//! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope (ergo
-//! task `V5HCR5`). See [`bot_state_db`] for the historical note on the
+//! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope. See [`bot_state_db`] for the historical note on the
 //! retired slot encoders.
 //!
 //! ```text
@@ -109,8 +108,7 @@ pub mod access_list;
 
 /// Composable `revm::Inspector` pair for simulation diagnostics
 /// (`CallTraceInspector`, `SwapEventCaptureInspector`) + the `SimInspector`
-/// composed-tuple alias. Additive + test-only in the prototype (ergo task
-/// `2LMT7A`); production wiring gated on the JHPW5W follow-on.
+/// composed-tuple alias. Additive + test-only in the prototype; production wiring gated on the JHPW5W follow-on.
 pub mod inspectors;
 
 /// Cross-block warm cache for immutable/long-TTL account data (bytecode +

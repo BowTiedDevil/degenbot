@@ -280,7 +280,7 @@ impl BlockPump {
         }
         let from_block = s + 1;
         // Include `w` (the resume boundary block) so the backfill covers
-        // [S+1, W] INCLUSIVE (DFQYM5). Block W is a delivery hole if excluded:
+        // [S+1, W] INCLUSIVE. Block W is a delivery hole if excluded:
         // the snapshot→WS gap backfill stops at W-1, and the fresh WS `logs`
         // subscription streams ONLY logs mined after it engages — block W's
         // pre-existing logs are never delivered by the WS (observed: 6 of 35

@@ -1,6 +1,6 @@
 # degenbot-pool-updater
 
-Pure-Rust pool-updater chunk-loop core: typed RPC event fetching + decode-to-row-input mapping (epic 2SFL6I).
+Pure-Rust pool-updater chunk-loop core: typed RPC event fetching + decode-to-row-input mapping.
 
 The pool-updater chunk-loop core: typed RPC event fetching and the decode-to-row-input mapping, the Rust side of the DB-aware pool state update path.
 

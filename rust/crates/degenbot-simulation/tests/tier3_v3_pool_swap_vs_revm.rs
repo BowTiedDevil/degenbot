@@ -9,7 +9,7 @@
 //! The shared deploy → setup → seed → swap → read-back pipeline lives in
 //! [`tier3_v3_common`](crate::tier3_v3_common) (and is reused by the
 //! Pancake-V3 oracle); this file owns the Uniswap fork's storage seeder and
-//! the oracle assertions. Hardening (epic `CMORFZ`):
+//! the oracle assertions. Hardening:
 //! - **H1 rejection-reason airtightness**: swaps are probed through
 //!   [`ProbeOutcome`](crate::tier3_v3_common::ProbeOutcome), which keeps a
 //!   Solidity `Revert` (a verdict) distinct from a verbless `Halt` (the

@@ -32,7 +32,7 @@ async fn stream_end_notifies_sink_on_pump_ended() {
 }
 
 // -----------------------------------------------------------------
-// HJ5HWF — late-log admission safety (the no-landmine rule).
+// late-log admission safety (the no-landmine rule).
 //
 // A tightened settle/debounce window (50ms → 16ms, task VD62GX) may
 // admit logs whose delivery jitter carries them PAST their block's
@@ -474,9 +474,9 @@ async fn late_forward_log_on_tombstoned_block_is_benign_late_admit() {
     drainer_settle(|| sink.logs_recorded() >= 2).await;
 
     assert!(
-            !shutdown.load(Ordering::Relaxed),
-            "late removed:false on a tombstoned block is counted lateness — the pump must keep running (HJ5HWF)"
-        );
+        !shutdown.load(Ordering::Relaxed),
+        "late removed:false on a tombstoned block is counted lateness — the pump must keep running"
+    );
     // Exactly the two in-window logs applied; the late survivor dropped.
     assert_eq!(
         sink.logs_recorded(),
@@ -501,7 +501,7 @@ async fn late_forward_log_on_tombstoned_block_is_benign_late_admit() {
     );
 }
 
-/// BQ7ZBC — FSM RECOVERY green path: after the header-staleness watchdog
+/// FSM RECOVERY green path: after the header-staleness watchdog
 /// performs an authoritative catch-up to block 102 (`recovery_anchor = 102`),
 /// a recovering WS flushes a buffered forward Sync log at block 102 (≤ the
 /// anchor). It is a single-writer duplicate of the already-applied backfill
@@ -556,9 +556,9 @@ async fn recovery_single_writer_discards_stale_forward_after_backfill() {
     pump.run_test_loop(combined, 100).await;
 
     assert!(
-            !shutdown.load(Ordering::Relaxed),
-            "a stale forward ≤ recovery_anchor (single-writer duplicate) must be discarded, not fatal (BQ7ZBC)"
-        );
+        !shutdown.load(Ordering::Relaxed),
+        "a stale forward ≤ recovery_anchor (single-writer duplicate) must be discarded, not fatal"
+    );
 }
 
 /// BQ7ZBC × HJ5HWF — FSM guard: the single-writer discard is scoped to
@@ -622,7 +622,7 @@ async fn recovery_anchor_stale_forward_above_anchor_is_benign_late_admit() {
         );
 }
 
-/// BQ7ZBC — FULL FSM lifecycle on a mocked websocket. One session drives
+/// FULL FSM lifecycle on a mocked websocket. One session drives
 /// `LIVE → RESET/CATCH_UP → back-to-LIVE`:
 ///   1. LIVE: a forward Sync@102 is applied (reserves 1500/2500).
 ///   2. Stall → the header-staleness watchdog does an authoritative catch-up
@@ -710,7 +710,7 @@ async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
 
     assert!(
         !shutdown.load(Ordering::Relaxed),
-        "the FSM must survive a stall-recovery and stay alive (BQ7ZBC)"
+        "the FSM must survive a stall-recovery and stay alive"
     );
     // The stale Sync@103 must NOT have been re-asserted: final reserves are
     // those of the last applied forward (Sync@104), not the stale 9999/9999.
@@ -722,12 +722,12 @@ async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
         assert_eq!(
             pool.reserve0.to::<u128>(),
             2_600,
-            "stale forward ≤ recovery_anchor must be dropped, not re-asserted (BQ7ZBC)"
+            "stale forward ≤ recovery_anchor must be dropped, not re-asserted"
         );
         assert_eq!(
             pool.reserve1.to::<u128>(),
             3_600,
-            "stale forward ≤ recovery_anchor must be dropped, not re-asserted (BQ7ZBC)"
+            "stale forward ≤ recovery_anchor must be dropped, not re-asserted"
         );
     } else {
         panic!("test setup: V2 pool not found for {pool_addr}");

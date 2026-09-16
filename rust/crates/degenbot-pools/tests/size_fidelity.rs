@@ -1,4 +1,4 @@
-//! Size-fidelity pins for the hot pool-state structs (epic HTPKLX, task KKNKVS).
+//! Size-fidelity pins for the hot pool-state structs.
 //!
 //! Every later layout change in the memory-optimization epilogue must land as a
 //! deliberate diff to this file: the asserts turn an unintended `repr(Rust)`

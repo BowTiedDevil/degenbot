@@ -23,8 +23,8 @@ use pyo3::{create_exception, PyErr};
 //   caller can choose retry/backoff vs abort without re-introducing the
 //   swallowing bug.
 //
-// VP42BP: per-call RPC transport failures inside `liquidity_verifier` are now
-// `LiquidityVerifyError::Rpc` (VP42BP), mapped here to `VerifyError::Rpc` →
+// per-call RPC transport failures inside `liquidity_verifier` are now
+// `LiquidityVerifyError::Rpc`, mapped here to `VerifyError::Rpc` →
 // `VerificationRpcError` (NOT flattened to `Snapshot`). The distinction here
 // covers the `VerifyError::Provider` (provider-construction) category AND the
 // `VerifyError::Rpc` (per-call transport) category the seam now routes to the
@@ -107,7 +107,7 @@ create_exception!(
     "A field on the pool registration params violates its on-chain Solidity bound (e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range). The message identifies the offending field, its value, and the bound it violates."
 );
 
-// ADR-037/X4EU3J: hooked V4 pools are admitted but their simulations use
+// ADR-037: hooked V4 pools are admitted but their simulations use
 // standard CL math that hooks may invalidate — ported from the archived
 // Python `PossibleInaccurateResult` (archive/main-20260721
 // src/degenbot/exceptions/liquidity_pool.py:94). Raised by the pool-handle
@@ -174,7 +174,7 @@ pub(crate) fn intake_faulted(fault: degenbot_bot::fleet_intake::IntakeFault) -> 
     ))
 }
 
-/// FF-T1 (BPHR6F): map the workers' typed `BootError` family onto the
+/// FF-T1: map the workers' typed `BootError` family onto the
 /// `BootRefused` exception — the ONE owner of the message shape (detected
 /// budget + floor + one operator hint), so the wording cannot drift per
 /// seam. Every pyo3 surface that can surface a fleet boot refusal maps

@@ -135,7 +135,7 @@ fn fixture_db_path() -> PathBuf {
         .join("parity.db")
 }
 
-/// (JLLE57) Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
+/// Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
 ///
 /// Proves the end-state contract of epic P73ER6 with zero Python: a
 /// `cargo add degenbot` consumer can
@@ -156,7 +156,7 @@ fn fixture_db_path() -> PathBuf {
 ///
 /// The remaining two steps — (d) `BlockPump::subscribe(...)` and
 /// (e) `pump.resume_from_subscribe(state)` — close the S→W snapshot→WS
-/// backfill *internally* (J3FMDO): `resume_from_subscribe` calls
+/// backfill *internally*: `resume_from_subscribe` calls
 /// `BlockPump::backfill_from_snapshot(W)` which fetches `eth_getLogs` for
 /// `S+1..W-1` and applies them via `BotState::process_backfill_logs`
 /// (state-only — no solve, no `on_send`), then enters the live loop with
@@ -216,8 +216,7 @@ fn main() {
     let pool = address!("000000000000000000000000000000000000000C");
 
     // 1_000_000 USDC (6dp) in / reserves roughly 0.5 WETH (18dp) — on-chain
-    // getAmountOut parity reference (slice-5 convention: gamma_numer is the
-    // RETAINED post-fee fraction = 997/1000 for a 0.3% Uniswap V2 fee).
+    // getAmountOut parity reference.
     let reserve0 = U256::from(1_000_000_000_000_u64); // 1e6 * 1e6
     let reserve1 = U256::from(500_000_000_000_000_000_u64); // 0.5 * 1e18
 
@@ -241,7 +240,7 @@ fn main() {
         .expect("standalone: register V2");
     assert_eq!(pool_id, 1, "first registered pool gets id 1");
 
-    // 2b. Standalone stage-surface lifecycle (ZU7RAF): the seam owns
+    // 2b. Standalone stage-surface lifecycle: the seam owns
     //    EnginePhase — a cargo-add degenbot consumer observes + guards it.
     let lifecycle_core = Arc::new(degenbot::bot_core::state_lock::StateLock::new(
         BotState::new(),
@@ -435,10 +434,10 @@ fn main() {
 
     println!("standalone degenbot consumer OK: curve D={d} dy={dy} balancer fp.mul_down(identity) solidly calc_d={got_d}");
 
-    // 7. (JLLE57) Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
+    // 7. Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
     //    See `fixture_snapshot_seed_block` for the end-state contract of
     //    epic P73ER6 (zero-Python), the S→W backfill that happens inside
-    //    `BlockPump::resume_from_subscribe` (J3FMDO), and the SMOKE_RPC_URL
+    //    `BlockPump::resume_from_subscribe`, and the SMOKE_RPC_URL
     //    gate for driving `subscribe`+`resume`.
     let seed_block = fixture_snapshot_seed_block();
 
@@ -510,7 +509,7 @@ fn registration_lifecycle_standalone_slice() {
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined,
-        "Tracked registers Quarantined (DFQYM5)"
+        "Tracked registers Quarantined"
     );
 
     // Drive the D4 lifecycle: quarantine → seed-verify @42 → drain+pin →
@@ -539,7 +538,7 @@ fn registration_lifecycle_standalone_slice() {
     );
 }
 
-/// (62YWCF) Standalone-Rust consumer reaches the in-process revm EVM sim.
+/// Standalone-Rust consumer reaches the in-process revm EVM sim.
 ///
 /// The SELFDESTRUCT-gift success path: the executor stub bytecode CALLs a
 /// gift contract; the gift (`CALLER SELFDESTRUCT`) sends 1 ETH to the
@@ -759,7 +758,7 @@ fn in_process_sim_standalone_slice() {
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_aerodrome_v2 over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
-    // Balancer V2 (SSSXG6): build_balancer_weighted + build_balancer_stable hit
+    // Balancer V2: build_balancer_weighted + build_balancer_stable hit
     // the same `FailingConstruction` stub — the vault read reverts, so each must
     // surface the typed Rpc error, pinning the umbrella path for the two
     // Balancer families (weighted + stable).
@@ -775,7 +774,7 @@ fn in_process_sim_standalone_slice() {
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_balancer_stable over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
-    // Curve (SSSXG6): build_curve_pool reads the same `FailingConstruction`
+    // Curve: build_curve_pool reads the same `FailingConstruction`
     // stub. Coin discovery tolerates the reverting probe (empty coin set), so
     // the fatal `fetch_curve_pool_params` A() read reverts next — the umbrella
     // path + `RegisterCurvePoolParams` for the Curve family are proven by the
@@ -788,7 +787,7 @@ fn in_process_sim_standalone_slice() {
     println!(
         "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (family={family:?})"
     );
-    // 8. Reach the PancakeSwap V3 storage-slot encoders (W32CAU): the fork's
+    // 8. Reach the PancakeSwap V3 storage-slot encoders: the fork's
     //    layout diverges from Uniswap V3 (two-word slot0, liquidity@5, ticks@6,
     //    tickBitmap@7). A `cargo add degenbot` consumer must reach the fork-aware
     //    constants + encoders via the umbrella with no pyo3, and they must

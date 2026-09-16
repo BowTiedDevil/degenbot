@@ -1,4 +1,4 @@
-//! TDD tests for the Curve dy calculator layer (task `YY64IT`).
+//! TDD tests for the Curve dy calculator layer.
 //!
 //! Oracle provenance: every expected constant below is a **recorded
 //! Python-oracle output** — computed by `scripts`/`/tmp` oracle scripts that

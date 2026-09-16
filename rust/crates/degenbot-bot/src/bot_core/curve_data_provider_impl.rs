@@ -1,5 +1,4 @@
-//! Pure-Rust [`CurveDataProvider`] implementation over an RPC double (task
-//! `V5F3DZ`, epic `TV72EG`).
+//! Pure-Rust [`CurveDataProvider`] implementation over an RPC double.
 //!
 //! The concrete RPC implementation of the `CurveDataProvider` trait (defined
 //! in the `pyo3`-free `degenbot-pools` crate) — a port of the Python

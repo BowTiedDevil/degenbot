@@ -22,14 +22,14 @@ fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
     );
     assert_eq!(outcome, ApplyOutcome::Buffered(BufferKind::Pump));
     assert_eq!(core.buffered_v3_event_count(&addr), 1);
-    // 7HUYWM: a buffered event is engine-witnessed activity — the
+    // a buffered event is engine-witnessed activity — the
     // event horizon advances at ARRIVAL time (parity with V4) so the
     // pin's stamp-provenance verdict sees the true witnessed span after
     // the staged drain, not just ApplyDirect-routed events.
     assert_eq!(core.v3_event_horizon(&addr), 10);
 }
 
-/// 7HUYWM: the event horizon tracks the MAX block across multiple buffered
+/// the event horizon tracks the MAX block across multiple buffered
 /// events for the same (still-unregistered) pool. The pin's
 /// `SeedTrustOnly{witnessed_horizon>0}` classification (the re-seed-after-
 /// activity tripwire) depends on this being the true high-water mark.
@@ -545,7 +545,7 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
 
     // 2. Register on the SAME core + 3. apply pump buffer.
     let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
-    // YLYJM2: the gated drain only yields fully-completed blocks. The
+    // the gated drain only yields fully-completed blocks. The
     // live pump marks `block_b` complete at its ADR-008 D1 tombstone (the
     // first log of block_b+1); mirror that here so the drain takes the
     // buffered Mint instead of leaving it pinned behind the gate.
@@ -689,7 +689,7 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
     );
 }
 
-/// Regression (RAJ3PP): `PyLiquidityPool.apply_swap` routed V4 pools into
+/// Regression: `PyLiquidityPool.apply_swap` routed V4 pools into
 /// `apply_v3_swap_by_pool_id`, which matches `PoolEntry::V3` only and
 /// silently no-op'd on `PoolEntry::V4` — a Python-side V4 update path
 /// (snapshots, regression tests, manual `external_update`) dropped every
@@ -1053,7 +1053,7 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
     assert_eq!(view_a.update_block(), view_b.update_block());
 }
 
-/// Regression (F7HX73): same-block multi-Swap reorg rollback.
+/// Regression: same-block multi-Swap reorg rollback.
 ///
 /// `push_delta` collapsed same-block deltas ("same-block replacement"):
 /// the second Swap at block B replaced the first, so the recorded

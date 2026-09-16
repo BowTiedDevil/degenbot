@@ -1,6 +1,6 @@
 //! `plan` — the `FleetPlan` tiered boot authority (FLEETFLOOR FF-T2 / MEBF4V).
 //!
-//! LW-T4 (TZ2ACJ) made the budget the sole sizing authority with ONE
+//! LW-T4 made the budget the sole sizing authority with ONE
 //! floor: below the pinned-role floor the boot refused. FF-T2 generalizes
 //! that one floor into ordered HOST TIERS, one pure function of the
 //! budget:
@@ -21,7 +21,7 @@
 //! pinned binding below the floor is MARKED `oversubscribed` (latency
 //! contract void, correctness contract intact) — loud, never silent.
 //!
-//! # Composition, never duplication (2SIOHJ)
+//! # Composition, never duplication
 //!
 //! The plan picks the BINDING and the per-binding budget projection;
 //! `SlotLayout::of` stays the ONE geometry derivation under each
@@ -49,7 +49,7 @@ pub const PLAN_ID: &str = "fleetplan/1";
 
 /// The minimum usable host (the epic's goal state): one core for I/O
 /// work, one core for solve work. Below this the plan refuses TYPED.
-/// Canonically owned by budget.rs (GAXX2Z) — re-exported for the plan's
+/// Canonically owned by budget.rs — re-exported for the plan's
 /// tier gate.
 pub use crate::budget::HOST_FLOOR_CORES;
 
@@ -129,7 +129,7 @@ pub struct FleetPlan {
 impl FleetPlan {
     /// The per-binding budget projection: the [`FleetBudget`] the binding
     /// boots under. Every binding selects a [`BudgetMode`] and the ONE
-    /// owner ([`FleetBudget::project`]) produces the table (GAXX2Z) — this
+    /// owner ([`FleetBudget::project`]) produces the table — this
     /// module holds no budget arithmetic. The PINNED eligible path is the
     /// sum-checked derivation (byte-stable); the marked and serial modes
     /// are total (the sum invariant is void there by contract —

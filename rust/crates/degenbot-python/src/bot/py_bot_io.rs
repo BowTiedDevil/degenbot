@@ -633,7 +633,7 @@ impl PyBotIo {
     /// `getLiquidity(bytes32)` on the state-view contract (ADR-005 slice 14o).
     ///
     /// Mirrors `degenbot/builders/v4_pool_builder.py`'s slot0/liquidity RPC
-    /// block in `_build_pool`. V4 differs from V3 (slice 14f) in two ways:
+    /// block in `_build_pool`. V4 differs from V3 in two ways:
     /// 1. Methods take a `bytes32 pool_id` prefix argument (like the V4 tick
     ///    RPCs from slices 14j/14k).
     /// 2. `getSlot0` returns `(uint160 sqrtPriceX96, int24 tick, uint24

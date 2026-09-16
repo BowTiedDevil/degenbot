@@ -265,7 +265,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
     stages
         .on_solve(&Solve { ctx, paths: drawn })
         .expect("solve hook is infallible");
-    // WFF6MM: the cycle enqueues and returns; wait for the sidecar merge.
+    // the cycle enqueues and returns; wait for the sidecar merge.
     // Widened ~15s: the sidecar merge shares solve seats with concurrently
     // running tests; uncontended it lands in ms, but a loaded suite can
     // delay seat acquisition past the old 2s valve.
@@ -368,7 +368,7 @@ fn admission_race_positive_draw_never_sheds() {
     stages
         .on_solve(&Solve { ctx, paths: drawn })
         .expect("solve hook is infallible");
-    // WFF6MM: the dispatch enqueues and returns; the sidecar merges. Wait
+    // the dispatch enqueues and returns; the sidecar merges. Wait
     // for the merge before reading the results/pending pipe.
     // Widened ~15s for the same sidecar seat-contention reason.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
@@ -543,7 +543,7 @@ fn admission_retention_window_expires_carried_leads() {
     assert!(delta.is_empty());
 }
 /// Flag OFF: `on_resolve` take-alls (even with the gauge saturated) and
-/// the engine DETACHES every cycle — never a shed, and (WFF6MM) never any
+/// the engine DETACHES every cycle — never a shed, and never any
 /// in-cycle degrade either.
 #[test]
 fn admission_off_keeps_take_all_and_never_sheds() {
@@ -571,7 +571,7 @@ fn admission_off_keeps_take_all_and_never_sheds() {
     assert_eq!(
         engine.cycle.cycle_arm(),
         "detached",
-        "flag OFF: the cycle still takes the one dispatch arm (WFF6MM)"
+        "flag OFF: the cycle still takes the one dispatch arm"
     );
     assert_eq!(
         engine
@@ -615,7 +615,7 @@ fn admission_off_keeps_take_all_and_never_sheds() {
 /// counted and logged, never merged twice. Red at HEAD against the
 /// NEW policy (today the in-cycle drain logs-and-merges anyway —
 /// sD:2550 — because its local set is dropped with the cycle).
-// 43E3H3 red-first: pins the tightened refuse-the-merge policy
+// pins the tightened refuse-the-merge policy
 // (design §4.4 REV 2 decision, Risk 5 option 1).
 #[test]
 fn duplicate_lane_outcome_does_not_double_apply() {
@@ -637,7 +637,7 @@ fn duplicate_lane_outcome_does_not_double_apply() {
         .detached_cycle
         .applied
         .load(std::sync::atomic::Ordering::Relaxed);
-    // WFF6MM: the machine issues the seq (no in-cycle counter) — read
+    // the machine issues the seq (no in-cycle counter) — read
     // back the tick the cycle actually claimed so the replay collides.
     let cycle_seq = engine.cycle.detached_cycle.issued_seq();
     // A second Solved arrival for the SAME (seq, pid) through the merge
@@ -736,7 +736,7 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
     };
     let run = |parallel: bool| {
         let (mut engine, path_ids, hub_a, hub_b) = build();
-        // YI5NGB: the A/B arm drives the INSTANCE stance now (no
+        // the A/B arm drives the INSTANCE stance now (no
         // process-global flip; no parallel-order dependence).
         engine.cycle.set_resolve_parallel_for_test(parallel);
         // Cycle 1: dirty BOTH hubs -> all N paths re-resolve in one cycle.
@@ -793,7 +793,7 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
     };
     let (serial_results, serial_same_state, serial_proj_delta, path_ids) = run(false);
     let (par_results, par_same_state, par_proj_delta, _path_ids) = run(true);
-    // YI5NGB: the instance-stance cutover -> nothing process-global remains to restore.
+    // the instance-stance cutover -> nothing process-global remains to restore.
     assert_eq!(path_ids.len(), N);
     for (path_id, _unique, _a, _b) in &path_ids {
         let sres = serial_results.get(path_id).expect("serial result");

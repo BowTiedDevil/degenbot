@@ -183,9 +183,9 @@ fn read_request_path(stream: &mut TcpStream) -> Option<String> {
 /// override is not a valid socket address — a boot-time config fault, surfaced
 /// at init rather than silently binding somewhere unexpected.
 pub fn metrics_addr_from_env() -> Result<SocketAddr, MetricsInitError> {
-    // KAHU5W: the address is a typed schema key (`telemetry.metrics_addr` /
+    // the address is a typed schema key (`telemetry.metrics_addr` /
     // `DEGENBOT_METRICS_ADDR`); the loader owns any env read.
-    // KAHU5W: typed schema key `telemetry.metrics_addr`; the loader owns
+    // typed schema key `telemetry.metrics_addr`; the loader owns
     // the env read — no direct env access here.
     let raw = crate::bot_core::stance::config()
         .telemetry
@@ -241,7 +241,7 @@ pub fn init_global_metrics_with_addr(addr: SocketAddr) -> Result<(), MetricsInit
     };
     GLOBAL.get_or_init(|| global);
 
-    // PE4FPM: self-register the scrape thread (before the spawn below).
+    // self-register the scrape thread (before the spawn below).
     degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {
         resource: "metrics_scrape",
         kind: "std scrape-server thread (Prometheus text endpoint)",

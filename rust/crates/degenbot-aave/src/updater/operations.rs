@@ -21,7 +21,7 @@
 //! [`ScaledTokenEvent`] + [`Operation`] borrow their source `&Log` (alloy's
 //! `alloy::rpc::types::Log`) — the parser is fed a `&[&Log]` slice and all
 //! `Operation`/`ScaledTokenEvent` references stay valid for the lifetime of
-//! that slice. The orchestrator (6SWY4R) owns the underlying `Vec<Log>` (the
+//! that slice. The orchestrator owns the underlying `Vec<Log>` (the
 //! RPC-fetched receipt list) and hands a `&[&Log]` view to the parser.
 
 use alloy::primitives::{Address, U256};

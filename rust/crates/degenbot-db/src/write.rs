@@ -427,7 +427,7 @@ impl DegenbotDb {
         decimals: Option<i64>,
     ) -> Result<i64, DbError> {
         if let Some(id) = existing_erc20_token(conn, chain, address)? {
-            // BOPQZ3: backfill any NULL metadata cells on the existing row
+            // backfill any NULL metadata cells on the existing row
             // with the freshly-passed values. Mirrors the Python
             // `activate_ethereum_aave_v3` pre-pass (commands.py:213) which
             // drives `get_or_create_erc20_token` on a freshly-seeded row →
@@ -845,7 +845,7 @@ impl DegenbotDb {
     /// Returns [`DbError::Sqlite`] on a query failure.
     /// The single-transaction-bound variant (the only form now exercised — the
     /// `&self` apply wrappers delegate here via their `_on_conn` siblings).
-    /// CXRGX4 — the §3.4 atomicity fix. See
+    /// the §3.4 atomicity fix. See
     /// [`Self::get_or_create_e_mode_category_on_conn`] for the rationale.
     ///
     /// # Errors
@@ -1182,7 +1182,7 @@ impl DegenbotDb {
     ///
     /// The RPC-resolved revisions (`ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()`
     /// via the EIP-1967 implementation slot) + `price_source`
-    /// (`getSourceOfAsset`) happen in the orchestrator (6SWY4R); the apply fn
+    /// (`getSourceOfAsset`) happen in the orchestrator; the apply fn
     /// takes pre-resolved fields (mirrors CXRGX4 design decision #1 — the
     /// apply core is pure substrate, no RPC). The GHO cross-link setup if the
     /// asset IS the GHO token is RYKCC4's concern, NOT this fn's.
@@ -2737,7 +2737,7 @@ fn existing_asset_config(
 
 /// Lookup `aave_v3_assets.id` by the `(market_id, underlying_asset_id)`
 /// natural key. The `ReserveInitialized` get-or-create path's existing-row
-/// probe (UR7QNL).
+/// probe.
 fn existing_aave_v3_asset(
     conn: &rusqlite::Connection,
     market_id: i64,
@@ -3109,7 +3109,7 @@ mod tests {
         assert_eq!(decimals, Some(18));
     }
 
-    /// BOPQZ3: when a row exists with NULL metadata (e.g. seeded by the
+    /// when a row exists with NULL metadata (e.g. seeded by the
     /// harness `_seed_market_db`) and a later `ReserveInitialized` dispatch
     /// is resolved with freshly-RPC-fetched metadata, the existing row must
     /// be UPDATED in place (mirrors the Python `activate_ethereum_aave_v3`

@@ -1,4 +1,4 @@
-//! Regression suite for the segment-patch clamps of S3/S4/S7 (epic KIMRKS).
+//! Regression suite for the segment-patch clamps of S3/S4/S7.
 //!
 //! Strategy-level through the public API so it never collides with the
 //! in-module unit tests while two sessions work cl_cache.rs.

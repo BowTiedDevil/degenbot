@@ -1,4 +1,4 @@
-//! Per-op heap tracking harness (epic HTPKLX, task KKNKVS).
+//! Per-op heap tracking harness.
 //!
 //! Cloudflare-method baseline: wrap the system allocator with an opt-in
 //! counting shim and measure heap bytes + allocation count for the core

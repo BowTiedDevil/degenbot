@@ -2,7 +2,7 @@
 //!
 //! Thin binding layer over `degenbot_math::v2` (`v2_swap_exact_in` /
 //! `v2_swap_exact_out`): `extract_u256` argument extraction, an error
-//! translator, and one `#[pyfunction]` per wrapped entrypoint (RH3L24).
+//! translator, and one `#[pyfunction]` per wrapped entrypoint.
 
 use crate::prelude::*;
 use alloy::primitives::U256;
@@ -119,7 +119,7 @@ pub fn calc_exact_out_v2(
 /// constant-product calcs on it with un-prefixed names. The Python
 /// companions `degenbot.uniswap.math` / `degenbot.aerodrome.math`
 /// re-export these as the stable import path, decoupling consumers
-/// from `degenbot._ffi` (RH3L24).
+/// from `degenbot._ffi`.
 ///
 /// # Errors
 ///

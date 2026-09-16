@@ -8,7 +8,7 @@
 //! `degenbot-bot` and never reached by `PyO3`. ADR-015 placement is unchanged —
 //! the projection stays in degenbot-bot; only its internals moved here.
 //!
-//! `resolve_hops` collects EVERY failing hop (R522XA) — it does not stop at
+//! `resolve_hops` collects EVERY failing hop — it does not stop at
 //! the first `Err`. Prior successful hops still project; each failure is
 //! returned as a `HopDeficit` so the path state machine can track every
 //! responsible pool independently and clear it as it becomes suitable.
@@ -285,7 +285,7 @@ pub(crate) enum MissingHopReason {
     /// A pairwise index fell outside the token list.
     OutOfRange,
     /// The pool carries an amount-modifying V4 hook: sims are caveated and
-    /// paths through it are excluded from solving (ADR-037/X4EU3J).
+    /// paths through it are excluded from solving (ADR-037).
     HookedPool,
     /// `build_int_v*_sequence` returned `None` (no integer tick-range sequence
     /// for the direction, e.g. tick-range cache miss).
@@ -302,7 +302,7 @@ pub(crate) enum MissingHopReason {
     NotViable,
 }
 
-/// One unprojectable hop inside a resolved path (R522XA): the failing pool
+/// One unprojectable hop inside a resolved path: the failing pool
 /// plus the reason. `resolve_hops` returns the FULL set (not just the first
 /// failure) so the path state machine can clear each responsible pool
 /// independently.
@@ -335,7 +335,7 @@ impl std::fmt::Display for MissingHopReason {
 }
 
 impl MissingHopReason {
-    /// R522XA: structural/topology failures that can never self-heal from a
+    /// structural/topology failures that can never self-heal from a
     /// pool going dirty — a misconfigured pool or path shape, not a state
     /// that can clear. A path with one must be REJECTED LOUDLY at
     /// construction (`register_path`), not stored as a state that could
@@ -383,7 +383,7 @@ pub(crate) fn resolve_hops(
     resolved: &mut ResolvedMixedPath,
     cache: &HopProjectionCache,
     mut projection_count: Option<&mut u64>,
-    // Fused memo switch (KGXFT7): 'false' makes this behave as if
+    // Fused memo switch: 'false' makes this behave as if
     // 'cache' were empty — never read a hit, never store an entry —
     // so the promoted S1 cache differs in build cost ONLY. The engine
     // resolves the default once at construction
@@ -394,7 +394,7 @@ pub(crate) fn resolve_hops(
     resolved.valid = false;
     resolved.state_nonces.clear();
 
-    // R522XA: a path with <2 hops is rejected loudly at `register_path`,
+    // a path with <2 hops is rejected loudly at `register_path`,
     // so reaching here is a programming error. Return no deficits rather than
     // fabricating a responsible pool that could never clear.
     if pool_refs.len() < 2 {
@@ -474,7 +474,7 @@ pub(crate) fn resolve_hops(
             }
             Err(reason) => {
                 log_invalidation(pool_ref, hop_index, reason);
-                // R522XA: CONTINUE past this failure — collect every failing
+                // CONTINUE past this failure — collect every failing
                 // pool so the path state machine can clear them independently.
                 deficits.push(HopDeficit {
                     hop_type: pool_ref.hop_type,
@@ -748,7 +748,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Winner-promotion parity gates (KGXFT7): the fused-epoch memo
+    // Winner-promotion parity gates: the fused-epoch memo
     // must change build COST only — solver intake is byte-exact for
     // all-CL (V3+V4) and mixed (V2+CL) paths with memo on or off.
     // ---------------------------------------------------------------

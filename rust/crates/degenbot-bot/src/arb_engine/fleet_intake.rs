@@ -6,7 +6,7 @@
 //! degenbot-python's closure body, never a port item. HARD RATCHET: the
 //! surface is this port + (after commit 2) 2 pub fns — add nothing.
 //!
-//! FF-T1 (BPHR6F) AMENDMENT: the two hand-outs went fallible — a refused
+//! FF-T1 AMENDMENT: the two hand-outs went fallible — a refused
 //! fleet boot surfaces the typed, sticky workers `BootError` instead of
 //! aborting the host process (the pyo3 leaf maps it onto the
 //! `BootRefused` exception). No new fn, no new type: the SAME two
@@ -105,7 +105,7 @@ pub trait FleetIntake: Send + Sync {
 /// that reaches this seam BEFORE any engine construction aborts LOUD.
 ///
 /// # Errors
-/// FF-T1 (BPHR6F): the typed, sticky fleet boot refusal — the sticky
+/// FF-T1: the typed, sticky fleet boot refusal — the sticky
 /// `BootError` the materializer parked (never a process abort).
 pub(crate) fn sim_intake() -> Result<&'static dyn FleetIntake, BootError> {
     crate::arb_engine::seat_host::FleetBootRegistry::process()
@@ -124,7 +124,7 @@ pub(crate) fn sim_intake() -> Result<&'static dyn FleetIntake, BootError> {
 /// seam BEFORE any engine construction aborts LOUD.
 ///
 /// # Errors
-/// FF-T1 (BPHR6F): the typed, sticky fleet boot refusal — surfaced at
+/// FF-T1: the typed, sticky fleet boot refusal — surfaced at
 /// the submit seam BEFORE any unit is enqueued (never a process abort;
 /// the pyo3 leaf maps it onto the `BootRefused` exception).
 pub fn registration_intake() -> Result<&'static dyn FleetIntake, BootError> {
@@ -140,7 +140,7 @@ pub fn registration_intake() -> Result<&'static dyn FleetIntake, BootError> {
 /// the commit-2 module-private flip.
 #[must_use]
 pub fn registration_boot_installed() -> bool {
-    // candidate 4 (YUMQU3): the PRG-5 gate reads the registry's first-wins
+    // candidate 4: the PRG-5 gate reads the registry's first-wins
     // process latch, so it stays byte-equivalent with
     // `fleet_status::fleet_runtime_status().fleet_booted`.
     crate::arb_engine::seat_host::FleetBootRegistry::process().boot_installed()

@@ -68,7 +68,7 @@ impl BlockPump {
     /// the stage-table row order the drained-settle gate and the backfill
     /// solve both express. The affected keys are the epoch delta's take
     /// (`on_resolve`), consumed by `on_solve`. Marks the block solved
-    /// (LEZJAS) on success. Ignores `StageError`s the engine cannot produce
+    /// on success. Ignores `StageError`s the engine cannot produce
     /// (its hooks are infallible; a hard failure logs loud, never silently
     /// skips — ADR-021 posture).
     pub(super) fn drive_solve(&self, fsm: &StageMachine, ctx: crate::bot_core::BlockContext) {
@@ -102,7 +102,7 @@ impl BlockPump {
         };
         match self.engine.on_solve(&Solve { ctx, paths }) {
             Ok(outcome) => {
-                // LEZJAS: the engine owns `last_solved_block`. The cursor
+                // the engine owns `last_solved_block`. The cursor
                 // fact now crosses the seam ON the outcome (the Solved row
                 // knows its anchor epoch), so the driver derives the cursor
                 // from the product instead of re-poking the seam with
@@ -177,7 +177,7 @@ impl BlockPump {
             // inside the FSM (`on_backfill_range_done`). The driver only reports
             // the engine-side solved boundary.
             fsm.on_backfill_range_done(latest_block);
-            // LEZJAS: engine owns `last_solved_block` now — mark the backfilled
+            // engine owns `last_solved_block` now — mark the backfilled
             // range solved through the engine seam.
             self.control.set_last_solved_block(Epoch::at(latest_block));
         }

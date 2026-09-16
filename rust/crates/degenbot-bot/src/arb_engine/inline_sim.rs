@@ -42,12 +42,12 @@ use crate::arb_engine::ArbitrageEngine;
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::{Address, I256, U256};
 use degenbot_solvers::mixed::{MixedPoolRef, SolvePathResult};
-// 5WCRWZ T3: the pipelined sim scheduler moved here beside `PendingSim` /
+// the pipelined sim scheduler moved here beside `PendingSim` /
 // `SimulatedPathResult`; it takes the cycle context from `solve_cycle` and
 // owns the once-per-process boot-refusal latch (5WCRWZ T5).
 use super::solve_cycle::SolveCycleShared;
 use degenbot_core::op_error;
-// FF-T1 (BPHR6F): one loud line for the sticky sim-fleet boot refusal — the
+// FF-T1: one loud line for the sticky sim-fleet boot refusal — the
 // materializer surfaces the typed Err on EVERY dispatch; the log rides a
 // once-flag so a refused boot cannot spam the per-block cadence.
 static SIM_BOOT_REFUSAL_LOGGED: std::sync::atomic::AtomicBool =
@@ -316,7 +316,7 @@ impl PipelinedSims {
         let Some(sim) = ctx.inline_sim.as_ref() else {
             return false;
         };
-        // 7LV6VN T1b: EXPLICIT parent at creation (TLS re-entry alone forked
+        // EXPLICIT parent at creation (TLS re-entry alone forked
         // orphan roots on worker threads). The span is created and entered
         // ON THE DRIVER THREAD (std thread context = no inherited span),
         // mirroring the legacy `inline_sim_payload` worker span byte for
@@ -362,7 +362,7 @@ impl PipelinedSims {
         // and FleetIntake (pooled sim/intake, fire-and-dispatch). Pooled SimDriver
         // unit, lane-2 dispatch precedence; receipts stay on the caller's
         // per-request channel (unchanged contract).
-        // FF-T1 (BPHR6F): a refused fleet boot surfaces the TYPED, sticky
+        // FF-T1: a refused fleet boot surfaces the TYPED, sticky
         // BootError here — never a process abort, and never a submit into a
         // pipe that will not be drained. The walker's existing “no sim can
         // ever land” arm (the same one a missing hook/clamp takes above)

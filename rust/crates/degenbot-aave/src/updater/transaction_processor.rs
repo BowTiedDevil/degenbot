@@ -24,7 +24,7 @@
 //! extract `raw_amount` from the Operation's Pool event + compute
 //! `scaled_amount = ray_div(raw_amount, index, strategy)` + pass it as
 //! `Some(...)`. This is the plumbing-equivalence caveat materialized; the
-//! §4.2 cross-check (U5YIBG) is the final arbiter.
+//! §4.2 cross-check is the final arbiter.
 //!
 //! # Scope (incremental)
 //!
@@ -86,7 +86,7 @@ pub enum ProcessTxError {
     Deferred(String),
 }
 
-/// The per-tx entry point the orchestrator (6SWY4R) calls. Mirrors
+/// The per-tx entry point the orchestrator calls. Mirrors
 /// `_process_transaction` — parses the tx logs into `Operation`s +
 /// dispatches each Operation's constituent scaled-token events to
 /// [`AaveChunkEvent`] variants (the enricher + processor pipeline). Returns
@@ -2413,7 +2413,7 @@ mod tests {
             &mut events,
             &mut gho_running_state,
         )
-        .expect("GHO interest accrual must not defer (WCRWL3)");
+        .expect("GHO interest accrual must not defer");
         assert_eq!(
             events.len(),
             1,

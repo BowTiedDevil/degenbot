@@ -126,7 +126,7 @@ fn emit_terminal_hop(
 // and the validator (`Plan→LedgerOp`, depth-first = execution order). One
 // representation, no drift, no reordering, no per-family trace duplication.
 //
-// Checkpoint 1 (`BP7KIR`): Step set scoped to the `v2_v3` (InPathFlash) family
+// Checkpoint 1: Step set scoped to the `v2_v3` (InPathFlash) family
 // — `FlashSwap` (V2/V3, carries its callback subtree) + `Erc20Transfer`. The
 // remaining Step variants (V4Unlock, V4Swap, V4Take, V4Sync/Settle, V2SwapCalc,
 // WethDeposit/Withdraw, V4Batch/Mint, …) land incrementally as families fold.

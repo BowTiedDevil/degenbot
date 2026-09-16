@@ -1,5 +1,5 @@
 //! `BlockPump` — `Bot`'s WS transport + drain loop (ADR-006 D4), now the
-//! thin driver of the unified stage machine (epic MROOY7, 7NFYQW + SZJUKL).
+//! thin driver of the unified stage machine.
 //!
 //! Holds `Arc<Bot>` + the two ADR-046 engine seams (`Arc<dyn StageHandlers>`
 //! stage hooks, `Arc<dyn PumpControl>` driver pokes). Per WS
@@ -22,7 +22,7 @@
 //!
 //! `apply_log` routes ALL log application through `Bot::dispatch_log`.
 //!
-//! (Epic MROOY7, 5WTYYQ) The WS transport moved OUT of this module into the
+//! The WS transport moved OUT of this module into the
 //! pyo3-free `degenbot-ingestion` crate: the dual `newHeads` + `logs`
 //! subscriptions, the MJXP5Z one-stream handshake, Rust-side topic filtering
 //! ([`degenbot_ingestion::RELEVANT_TOPICS`]), gap-backfill `eth_getLogs`
@@ -85,7 +85,7 @@ use crate::bot_core::{
 // (the topic-import list, the backfill/idle + handshake constants, and the
 // header/log watchdog windows all live in degenbot-ingestion now — 5WTYYQ.)
 
-// KAHU5W: the debounce / early-slice defaults moved into the typed schema
+// the debounce / early-slice defaults moved into the typed schema
 // (pump.pump_debounce_ms = 50, pump.early_slice_ms = 25; the loader validates
 // debounce > 0). The fail-open parse helpers disappeared with them.
 
@@ -176,7 +176,7 @@ pub struct BlockPump {
     /// `StageHandlers` so that trait carries only the eight pure stage
     /// hooks. Injected beside `engine` at construction.
     control: Arc<dyn PumpControl>,
-    /// The per-event reorg coordinator (slice 7). Owned by the pump (not
+    /// The per-event reorg coordinator. Owned by the pump (not
     /// routed through the engine seam — reorg is a `Bot` concern, parallel
     /// to `dispatch_log`).
     reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
@@ -214,12 +214,12 @@ pub struct BlockPump {
     /// nonzero and unsolved dirt has been observed this long in the current
     /// block window, the gate dispatches ONE bounded early Drain mid-burst
     /// instead of waiting for burst quiesce — the designed replacement for
-    /// the retired finalize steal (J2X3LZ). `0` disables the slice (exact
+    /// the retired finalize steal. `0` disables the slice (exact
     /// pre-T2 gate behavior). One slice per block window (reset at each
     /// accepted header and at each settle dispatch) keeps MBNASQ's unbounded
     /// per-gap serial solves from returning.
     early_slice_ms: u64,
-    /// BM35LK: the quiesce-estimator parameters the FSM's adaptive
+    /// the quiesce-estimator parameters the FSM's adaptive
     /// trailing window arms from (a snapshot of the `pump.quiesce_*`
     /// schema keys; `fixed` + `pump_debounce_ms` is today's behavior).
     /// Held on the pump (not read from the ambient stance inside the loop)

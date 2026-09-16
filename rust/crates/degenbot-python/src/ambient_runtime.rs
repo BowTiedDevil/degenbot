@@ -1,4 +1,4 @@
-//! Python-driver seam for the shared degenbot-core ambient runtime (VJGZJ2).
+//! Python-driver seam for the shared degenbot-core ambient runtime.
 //!
 //! The verify seams (`aave_updater::verify_touched_positions_on_chain`,
 //! `pool::verify_v3/v4_liquidity_map`) removed their per-call multi-thread

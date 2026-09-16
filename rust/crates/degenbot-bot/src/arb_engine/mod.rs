@@ -34,9 +34,9 @@
 //! | [`lane_walk`] | THE ONE lane walk: per-bin solve, the pipelined-sim pacing, and the walk-adjacent clamp/flush helpers |
 //! | [`solve_cycle`] | The solve cycle as a deep module (ADR-045): the CL-hop clamp + profit recompute live here |
 //! | [`delivery_lifecycle`] | Delivery lifecycle: channel open/send/close + the end-of-stream contract (incident 2026-08-20 #2) |
-//! | [`delivery_policy`] | Delivery policy: diff computation, thresholds, delivered-bookkeeping (BI7UZV) |
-//! | [`block_cursor`] | The engine block cursor — one owner of the engine-side block-coordinate residue (6XB6NJ) |
-//! | [`detached_cycle`] | THE one detached/in-cycle solve-arm machine: per-cycle states, the merge pipe, the gauge pair, the seq counters, the ledger door, the disposition counters, the fan-in tripwire, and the ONE sidecar spawn (P37YJG) |
+//! | [`delivery_policy`] | Delivery policy: diff computation, thresholds, delivered-bookkeeping |
+//! | [`block_cursor`] | The engine block cursor — one owner of the engine-side block-coordinate residue |
+//! | [`detached_cycle`] | THE one detached/in-cycle solve-arm machine: per-cycle states, the merge pipe, the gauge pair, the seq counters, the ledger door, the disposition counters, the fan-in tripwire, and the ONE sidecar spawn |
 //! | [`lifecycle`] | Path registration, buffer management, engine accessors |
 //! | [`py_binding`] | PyO3 wrapper (`PyArbitrageEngine`) |
 //! | [`tests`] | Unit tests |
@@ -56,17 +56,17 @@ use alloy::primitives::Address;
 use dashmap::DashMap;
 use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
-// THE construction-stamped fleet boot carrier (YI5NGB): the engine's own
+// THE construction-stamped fleet boot carrier: the engine's own
 // FleetBoot value + the ride ledger the per-role fleet statics consult.
 mod boot_stamp;
-// 6XB6NJ: the ONE engine block cursor — the consolidated owner of the
+// the ONE engine block cursor — the consolidated owner of the
 // engine-side block-coordinate residue (completes ADR-041 §3.5's
 // engine-side anchor fold; see the module's own doc header).
 pub(crate) mod block_cursor;
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
 mod delivery_lifecycle;
 mod delivery_policy;
-// THE one detached/in-cycle solve-arm machine (P37YJG): the per-cycle
+// THE one detached/in-cycle solve-arm machine: the per-cycle
 // states, the merge pipe, the gauge pair, the seq counters, the ledger
 // door, the disposition counters, the fan-in tripwire, and the ONE
 // sidecar spawn — see the module's own doc header.
@@ -94,7 +94,7 @@ pub mod inline_sim;
 pub mod lifecycle;
 pub mod path_info;
 mod path_lifecycle;
-// ADR-045 (`C4UAFP`): the path-identity registry (`PathRegistry`) —
+// ADR-045: the path-identity registry (`PathRegistry`) —
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;
 // 3WI4EO : the typed operator re-parameterization value crossing
@@ -108,23 +108,23 @@ mod retune;
 pub mod fleet_wake;
 mod seat_host;
 mod snapshot_verify;
-// 5WCRWZ T3: the per-bin lane walk's home — `solve_one_path` (the per-path
+// the per-bin lane walk's home — `solve_one_path` (the per-path
 // solve + diagnostics body the Solver seats' bins execute) lives here; the
 // walk driver and Lane* policy types are later tasks' inhabitants.
 mod lane_walk;
-// 5WCRWZ T1: heavy-path capture diagnostics, extracted from the retired
+// heavy-path capture diagnostics, extracted from the retired
 // grab file (import-only move; the module owns its honesty probe + test island).
 mod solver_capture;
-// 5WCRWZ T2: the pure workload-analysis cluster (solve-bin sizing, LPT
+// the pure workload-analysis cluster (solve-bin sizing, LPT
 // partition, named cordon-fallback seat plan, resolve-time cost proxies),
 // extracted from the retired grab file (import-only move; the module
 // owns its honesty probe + test islands).
 mod workload_partition;
-// ADR-045 T1 (`E7V2S6`): the solve-cycle data-type seam (`CycleOutcome` /
+// ADR-045 T1: the solve-cycle data-type seam (`CycleOutcome` /
 // `CycleArm` / `ResolveCensus` / `Registration`) — T3/T4 assemble
 // `SolveCycle` on top of it; nothing consumes the types yet.
 mod solve_cycle;
-// 5WCRWZ T6: the executor A/B probe fixtures (heavy-CL corpus loader, shared
+// the executor A/B probe fixtures (heavy-CL corpus loader, shared
 // solve-cycle fixture, production LPT bin packer) live test-only beside their
 // consumers; `#[cfg(test)]` so the fixtures never compile into production.
 #[cfg(test)]
@@ -158,7 +158,7 @@ pub use retune::EngineRetune;
 ///                                                        ──backfill()──► Backfilled
 ///                                                        ──resume()──► Resumed
 ///
-/// Construction-time-load path (RUQ637/TJT63P): snapshot loaded at `Bot`
+/// Construction-time-load path: snapshot loaded at `Bot`
 /// construction BEFORE subscribe. The snapshot lives in the shared core
 /// `BotState` and never advances the engine phase, so `subscribe()` uses
 /// `EnginePhase::after_subscribe(current, core_has_snapshot)` to reflect
@@ -254,7 +254,7 @@ impl EnginePhase {
     /// `PumpState::subscribe` used to unconditionally `set_phase(Subscribed)`,
     /// which is correct for the legacy path (`Created → subscribe →
     /// Subscribed → load_*_snapshot_from_py → SnapshotLoaded → resume`) but
-    /// crashes the construction-time-load path (RUQ637/TJT63P): the snapshot
+    /// crashes the construction-time-load path: the snapshot
     /// is loaded into the shared core `BotState` at `Bot` construction —
     /// BEFORE subscribe — and never advances the engine phase. After
     /// subscribe, the phase was `Subscribed` (1), and `resume()`'s
@@ -344,7 +344,7 @@ pub struct ResultBatch {
     /// legacy FFI-sim path for every entry — per-entry presence decides.
     pub payloads: HashMap<u64, inline_sim::SimulatedPathResult>,
 }
-/// KJWIK5: the deferred-path re-record hook (the ledger carry). The
+/// the deferred-path re-record hook (the ledger carry). The
 /// dispatch calls it with the deferred paths' hop-pool keys and the cycle's
 /// solve block; the `EngineStages` constructor installs the
 /// `EpochDelta::record` closure so a deferred path re-enters through the
@@ -364,14 +364,14 @@ pub(crate) type DeferredReRecordHook =
 /// and reads/writes pool state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
 pub(crate) struct ArbitrageEngine {
-    /// KAHU5W: the owner-loaded typed bot config (one loader process-wide;
+    /// the owner-loaded typed bot config (one loader process-wide;
     /// never re-read from the environment). Construction stances + capture
     /// config read from here. ADR-045 T4: the solve cycle owns its own clone
     /// for the resolve/solve bodies; this field remains for the construction
     /// stances.
     #[expect(dead_code)]
     pub(crate) cfg: std::sync::Arc<::degenbot_config::BotConfig>,
-    /// KAHU5W: the instance solver runtime stance, built at construction from
+    /// the instance solver runtime stance, built at construction from
     /// [`Self::cfg`] and threaded down into every solve cycle. Replaces the
     /// solver crate's removed process-global RUNTIME `OnceLock`.
     /// ADR-045 T4: the cycle owns its own copy.
@@ -382,7 +382,7 @@ pub(crate) struct ArbitrageEngine {
     /// mutations a write guard. Lock ordering when nested is
     /// engine-then-core; no code path ever nests in the opposite direction.
     pub(crate) core: Arc<StateLock<BotState>>,
-    /// ADR-045 (`C4UAFP`): the engine's path-identity registry — registered
+    /// ADR-045: the engine's path-identity registry — registered
     /// paths, the `pool_to_paths` reverse index, signature dedup, the path-id
     /// allocator, the registered-path cap, and the dedup counter. Hot solves
     /// read it through a shared `&PathRegistry`; only registration takes
@@ -402,7 +402,7 @@ pub(crate) struct ArbitrageEngine {
     /// thresholds, and `result_tx`/`block_tx`; decoupled from solve state so a
     /// standalone consumer gets raw results without it.
     pub(crate) delivery: DeliveryPolicy,
-    /// THE construction-stamped fleet boot (YI5NGB): the engine's OWN
+    /// THE construction-stamped fleet boot: the engine's OWN
     /// `FleetBoot`, derived from the CALLER's cfg at construction and
     /// stamped with the engine id + a deterministic cfg hash. Packed in
     /// `with_core_cfg` right beside `streaming_delivery` (the KAHU5W
@@ -453,7 +453,7 @@ impl ArbitrageEngine {
     /// for path/solver state; only the core lock type/flavor changes).
     #[must_use]
     pub fn with_core(core: Arc<StateLock<BotState>>) -> Self {
-        // KAHU5W/P6YXA6 production-boot fix: pack from the INSTALLED loader
+        // pack from the INSTALLED loader
         // config (the _ffi module init installs the env/file-loaded BotConfig
         // before any engine construction). A fresh `BotConfig::default()`
         // here meant the python-driven pump's engine never observed
@@ -462,7 +462,7 @@ impl ArbitrageEngine {
         // constructions, byte-compatible per the holder docs).
         Self::with_core_cfg(core, ::degenbot_config::holder::config_arc())
     }
-    /// KAHU5W: config-threaded construction. `cfg` is the typed `BotConfig`
+    /// config-threaded construction. `cfg` is the typed `BotConfig`
     /// (loaded ONCE by the owner from the `--config` file / env via the
     /// degenbot-config loader) — the engine packs its construction stances
     /// from it and threads the solver runtime stance down per instance.
@@ -475,18 +475,18 @@ impl ArbitrageEngine {
         // own cfg — never from an install-then-read process static. A
         // parallel construction flips such a static between our install and
         // a global read (TOCTOU). The install call remains for its process
-        // projections — the construction-STAMPED fleet boots (YI5NGB); the
+        // projections — the construction-STAMPED fleet boots; the
         // stance statics other consumers observe). LW-T9: there is no
         // stance — the fleet installs unconditionally, it is the only
         // behavior.
         let streaming_delivery = cfg.pump.streaming_delivery;
         let resolve_par_stance = cfg.solve.solve_resolve_par;
-        // KAHU5W/J4HN66: the engine's construction knobs are packed ONCE by
+        // the engine's construction knobs are packed ONCE by
         // the typed retune value (retune.rs) from the CALLER's own cfg — never
         // an install-then-read process static. The local value is applied
         // below, after the engine literal is assembled.
         let retune = EngineRetune::from_config(cfg);
-        // YI5NGB: the engine OWNS its fleet boot (KAHU5W) — the stamp is
+        // the engine OWNS its fleet boot — the stamp is
         // constructed from THIS cfg BEFORE the installer runs, so the
         // construction hand-off carries the caller's value, identified.
         let fleet_boot_stamp =
@@ -516,7 +516,7 @@ impl ArbitrageEngine {
                 solve_admission: retune.solve_admission,
                 admission_target_depth: retune.admission_target_depth,
                 admission_retention_blocks: retune.admission_retention_blocks,
-                // P37YJG: the machine's pre-cycle init lives on the machine
+                // the machine's pre-cycle init lives on the machine
                 // (dormant Unopened, pipe closed, counters at 0).
                 detached_cycle: detached_cycle::DetachedCycle::new(),
                 walk_memo: std::sync::Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
@@ -556,7 +556,7 @@ impl ArbitrageEngine {
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
             event_buffer_expiry_enabled: false,
         };
-        // KAHU5W/J4HN66: apply the config-derived retune ONCE at construction
+        // apply the config-derived retune ONCE at construction
         // — the engine's per-instance knob values come from the caller's cfg.
         engine.apply_retune(&retune);
         engine

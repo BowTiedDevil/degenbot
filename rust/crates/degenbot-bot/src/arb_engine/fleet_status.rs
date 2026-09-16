@@ -1,4 +1,4 @@
-//! FF-T5 (NT7HJC): the runtime fleet status - budget, plan, census.
+//! FF-T5: the runtime fleet status - budget, plan, census.
 //!
 //! `degenbot.runtime_status()` (the pyo3 leaf reads this) answers the
 //! operator's first three questions about a live process: what did the
@@ -69,7 +69,7 @@ pub struct FleetRuntimeStatus {
 #[must_use]
 pub fn fleet_runtime_status() -> FleetRuntimeStatus {
     let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
-    // candidate 4 (YUMQU3): the canonical process boot is the registry's
+    // candidate 4: the canonical process boot is the registry's
     // first-wins latch — whichever registry role (sim/registration) installed
     // first — never a role module's private static.
     let boot: FleetBoot = registry.process_boot().unwrap_or_else(live_default_boot);

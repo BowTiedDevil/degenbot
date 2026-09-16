@@ -1,5 +1,5 @@
 //! The Aave V3 updater chunk-loop — transactional apply of decoded Aave events
-//! under one `rusqlite::Transaction` (epic `AZGJUN`, task `CXRGX4`).
+//! under one `rusqlite::Transaction`.
 //!
 //! See the crate-root docs for the §3.4 atomicity invariant + the two-writer
 //! hazard this structure fixes. This module is the **transactional core**:

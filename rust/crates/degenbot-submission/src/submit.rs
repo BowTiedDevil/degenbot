@@ -499,7 +499,7 @@ pub async fn dispatch_and_submit(
         }
     }
 
-    // ZHVXW2: with the empty-batch gate the span is optional - the outcome
+    // with the empty-batch gate the span is optional - the outcome
     // counts land only when a batch (span) actually exists.
     if let Some(span) = span.as_ref() {
         span.record("dispatch.submitted", outcome.submitted_count());

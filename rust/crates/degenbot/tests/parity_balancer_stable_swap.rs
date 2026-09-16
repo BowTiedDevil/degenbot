@@ -191,7 +191,7 @@ fn composable_stable_bpt_drop_is_monotonic_and_bounded() {
 
 #[test]
 fn bpt_balance_does_not_affect_output_proving_drop() {
-    // RPSW4Z: the BPT balance MUST NOT affect the swap output, because `skip_bpt`
+    // the BPT balance MUST NOT affect the swap output, because `skip_bpt`
     // drops it from the invariant before any computation. Using a 7× BPT balance
     // (vs the 1× used elsewhere) would perturb a 3-balance invariant if the drop
     // were broken; the output staying `989` proves the drop is live. This is the

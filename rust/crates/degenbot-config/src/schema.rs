@@ -128,7 +128,7 @@ impl KeyDecl {
 
 crate::config_schema! {
 
-    // SMTH6M: the ambient I/O runtime of the two-runtime contract (solve
+    // the ambient I/O runtime of the two-runtime contract (solve
     // bins on one side, shared I/O runtime on the other) is sized from the
     // cgroup CPU budget; this section carries the explicit operator
     // override for that sizing. Declared once — the typed field, env name,
@@ -186,8 +186,7 @@ crate::config_schema! {
             doc = "Stream solved arms immediately (T3 default); `0` opts out to the debounce sweep.";
         ws_completeness [bool] = true, env = "DEGENBOT_WS_COMPLETENESS", def = "true",
             doc = "WS completeness gating (newHeads + logs double-delivery check); `0` disables.";
-        // BM35LK (epic FIMZES; design in the gitignored logs/ design note
-        // logs/quiesce-design-20260908.md §6): the
+        // the
         // adaptive trailing-quiesce estimator. Default flipped to `adaptive`
         // after the 2026-09-09 live A/B (the untracked `logs/` run artifact
         // logs/perf-after-20260909.md: settle

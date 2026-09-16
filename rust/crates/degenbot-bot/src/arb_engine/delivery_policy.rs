@@ -126,7 +126,7 @@ impl DeliveryPolicy {
     /// If the channel is full, the batch is dropped — the next one will carry
     /// a correct cumulative diff.
     ///
-    /// 6XB6NJ: `anchored` is handed in by the engine from the block cursor
+    /// `anchored` is handed in by the engine from the block cursor
     /// (`BlockCursor::is_anchored`) — the policy consumes the cursor's
     /// predicate instead of re-deriving it from the raw `results_block`.
     pub fn diff_and_send(
@@ -239,7 +239,7 @@ impl DeliveryPolicy {
     }
 }
 impl DeliveryPolicy {
-    /// T3 (epic BXUSGL): `DEGENBOT_STREAMING_DELIVERY` — emit ONE above
+    /// T3: `DEGENBOT_STREAMING_DELIVERY` — emit ONE above
     /// -threshold result as an immediate single-entry batch, advancing the
     /// per-entry diff bookkeeping. Per-entry deltas compose with the regular
     /// debounce sweep (which still owns `expired`/`removed` and the metadata
@@ -340,7 +340,7 @@ pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &Blo
         .map(|e| (*e.key(), e.value().clone()))
         .collect();
     engine.cycle.inline_payloads.clear();
-    // 6XB6NJ: the anchored gate comes from the block cursor.
+    // the anchored gate comes from the block cursor.
     let anchored = engine.cycle.cursor.is_anchored();
     engine.delivery.diff_and_send(
         &results_snapshot,

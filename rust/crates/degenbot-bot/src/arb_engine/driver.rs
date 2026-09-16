@@ -321,7 +321,7 @@ impl EngineDriver {
         self.block_rx.lock().take()
     }
 
-    /// The snapshot seed block `S` (JUCFCB) — read from the shared core.
+    /// The snapshot seed block `S` — read from the shared core.
     #[must_use]
     pub fn snapshot_seed_block(&self) -> Option<u64> {
         self.bot
@@ -480,7 +480,7 @@ impl EngineDriver {
             first_block,
             combined_stream,
         } = state;
-        // J3FMDO: the backfill is SYNCHRONOUS with respect to `resume` so the
+        // the backfill is SYNCHRONOUS with respect to `resume` so the
         // consumer's registration draining the per-pool backfill buffer cannot
         // race it. DFQYM5: `backfill_with_drain` also re-injects live events
         // drained during the backfill ahead of the live tail.

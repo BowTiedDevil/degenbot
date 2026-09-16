@@ -1,4 +1,4 @@
-//! `Epoch` + `BlockContext` — THE single block coordinate (epic MROOY7, task T6IYKY).
+//! `Epoch` + `BlockContext` — THE single block coordinate.
 //!
 //! Before this module, "what block is this work about" had several answers
 //! living in parallel field soups: the solve anchor ([`super::solve_anchor`]),
@@ -32,7 +32,7 @@
 //! The work-item description: the epoch plus the block's execution metadata
 //! (`BlockMetadata`). It carries the coordinate only — no `BotState`
 //! representation attaches here; the `StateView` mechanism is a separate
-//! data-plane decision (epic spike). `StageMachine::context_for` mints contexts
+//! data-plane decision. `StageMachine::context_for` mints contexts
 //! at the pump's decision points; the stage-machine task  makes the
 //! stages consume them.
 

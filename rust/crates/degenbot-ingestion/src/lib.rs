@@ -1,4 +1,4 @@
-//! `degenbot-ingestion` — the WS transport half of the bot (epic MROOY7).
+//! `degenbot-ingestion` — the WS transport half of the bot.
 //!
 //! This crate is the pyo3-free owner of everything that reaches Rust from the
 //! chain's event firehose:

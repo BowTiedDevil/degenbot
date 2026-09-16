@@ -536,7 +536,7 @@ fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
     assert!(
         stale_results.contains_key(&path_id),
         "a quiet pool frozen far behind the solve block is current, not stale — \
-             must be solved, not deferred (YXHHKR)"
+             must be solved, not deferred"
     );
 }
 /// YXHHKR (resolves QNFYR5): with the TQ43TU window gate removed, no
@@ -639,7 +639,7 @@ fn no_update_block_age_defers_a_quiet_path() {
     assert!(
         r2.contains_key(&path_id),
         "a pool 11 blocks past the old window is quiet-but-current — solved, not \
-             deferred (YXHHKR)"
+             deferred"
     );
 }
 /// V4 int128 guard: paths where V4 hop amounts exceed `int128_max` are rejected.

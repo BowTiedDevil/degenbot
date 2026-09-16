@@ -1,5 +1,5 @@
 //! Runtime mimalloc purge-delay control driven by observed block cadence
-//! (epic AZZDBI task XXJR3A).
+//!.
 //!
 //! # Why
 //!
@@ -55,7 +55,7 @@ const MI_OPTION_PURGE_DELAY: i32 = 15;
 /// headers. Set to 0: purges use `MADV_FREE` (lazy reclaim) instead of
 /// `MADV_DONTNEED`, so freed pages stay mapped and their zero-refault reuse
 /// is measurable until the kernel actually needs them under memory pressure.
-/// Matrix arm `madv-free` (epic AZZDBI T3): faults/block 5,598 vs 49,612 at
+/// Matrix arm `madv-free`: faults/block 5,598 vs 49,612 at
 /// default, best `on_drain` p95 of all arms, RSS delta fully reclaimable.
 #[cfg_attr(not(feature = "allocator-ctrl"), expect(dead_code))]
 const MI_OPTION_PURGE_DECOMMITS: i32 = 5;
@@ -129,7 +129,7 @@ pub struct PurgeConfig {
     pub decommits: bool,
 }
 
-/// KAHU5W: the purge config is a typed schema section
+/// the purge config is a typed schema section
 /// (`allocator.mimalloc_*` / `DEGENBOT_MIMALLOC_*`); the loader owns the
 /// environment read and the fail-closed parse. Fixed override > auto flag >
 /// mult; clamping mirrors the schema-declared ranges.
@@ -289,7 +289,7 @@ fn now_ms() -> u64 {
 /// Startup: apply any fixed override immediately; arm auto-discovery.
 /// Called once from the pump start (next to the hotpath guard).
 pub fn init_from_env_at_pump_start() {
-    // KAHU5W: typed schema section; the env read belongs to the loader.
+    // typed schema section; the env read belongs to the loader.
     let cfg = config_from_cfg(&crate::bot_core::stance::config().allocator);
     if INIT_DONE.set(()).is_err() {
         return; // another pump in this process already configured the seam
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn config_typed_section_maps_onto_purge_config() {
-        // KAHU5W: env parsing moved to the degenbot-config loader (its own
+        // env parsing moved to the degenbot-config loader (its own
         // tests own the string contract). This asserts the typed mapping.
         let cfg = config_from_cfg(&::degenbot_config::schema::AllocatorConfig {
             mimalloc_purge_delay_ms: Some(45_000),

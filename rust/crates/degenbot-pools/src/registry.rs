@@ -233,7 +233,7 @@ impl PoolEntry {
         }
     }
 
-    /// The pool's per-mutation state nonce (AV42C7). Bumped on every state
+    /// The pool's per-mutation state nonce. Bumped on every state
     /// change (`apply_swap`, `apply_liquidity_update`, `replace_tick_data`,
     /// `merge_tick_word`, `apply_sync`, `apply_balance_update`,
     /// `restore_before_block`). The solver snapshots this per-hop at resolve
@@ -384,7 +384,7 @@ fn some_cl_mut(entry: &mut PoolEntry) -> Option<&mut dyn ConcentratedLiquidityPo
 
 /// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
 /// fields the per-handle `PyLiquidityPool` reader API presents uniformly
-/// across the V3/V4 concentrated-liquidity families (J63J3N).
+/// across the V3/V4 concentrated-liquidity families.
 ///
 /// Both variants store the same mutable scalars (`sqrt_price_x96`/
 /// `liquidity`/`tick`/`update_block`) and an identical `tick_data:
@@ -407,7 +407,7 @@ pub trait ConcentratedLiquidityPool {
     fn sqrt_price_x96(&self) -> U256;
     fn liquidity(&self) -> u128;
     fn tick(&self) -> i32;
-    /// The **price** clock — block the slot0 scalars reflect (two-stamp OB7UNY).
+    /// The **price** clock — block the slot0 scalars reflect (two-stamp rule).
     fn update_block(&self) -> u64;
     /// The **liquidity** clock — block the `tick_data` map reflects (two-stamp
     /// OB7UNY). A pool can have a fresh price but a liquidity map that lags.
@@ -493,7 +493,7 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     /// invalidate the cached tick ranges. Scalars (`sqrt_price_x96`/
     /// `liquidity`/`tick`) ARE untouched and the **price** clock (`update_block`)
     /// is NOT advanced — a tick-map replace never claims the price is fresh
-    /// (two-stamp OB7UNY). `tick_data_block` is the block the new tick map is
+    /// (two-stamp rule). `tick_data_block` is the block the new tick map is
     /// from.
     ///
     /// No journal delta — a wholesale replace has undefined rollback
@@ -693,7 +693,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
 
         // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
         // clocks, and records both pre-event clock values for reorg restore
-        // (two-stamp OB7UNY).
+        // (two-stamp rule).
         let tick_before = self.tick;
         let update_block_before = self.update_block;
         let tick_data_block_before = self.tick_data_block;
@@ -828,7 +828,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         } else {
             // Backfill replay (block <= seed): sanctioned monotonic no-op —
             // mutate the tick map but never rewind the liquidity clock it
-            // already covers (AV42C7).
+            // already covers.
             if block_number > self.tick_data_block {
                 self.tick_data_block = block_number;
             }
@@ -897,7 +897,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
 
         // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
         // clocks, and records both pre-event clock values for reorg restore
-        // (two-stamp OB7UNY).
+        // (two-stamp rule).
         let tick_before = self.tick;
         let update_block_before = self.update_block;
         let tick_data_block_before = self.tick_data_block;
@@ -1020,7 +1020,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         } else {
             // Backfill replay (block <= seed): sanctioned monotonic no-op —
             // mutate the tick map but never rewind the liquidity clock it
-            // already covers (AV42C7).
+            // already covers.
             if block_number > self.tick_data_block {
                 self.tick_data_block = block_number;
             }

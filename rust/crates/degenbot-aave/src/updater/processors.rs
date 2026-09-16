@@ -25,7 +25,7 @@
 //! row's `balance` and `last_index` columns, taking the pre-computed
 //! `balance_delta` from this processor.
 //!
-//! # §4.2 parity (U5YIBG)
+//! # §4.2 parity
 //!
 //! The revision-strategy dicts and the `process_mint_event` /
 //! `process_burn_event` branch logic are byte-for-byte ports of the Python

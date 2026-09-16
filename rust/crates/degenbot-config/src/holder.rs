@@ -1,4 +1,4 @@
-//! The process-wide typed `BotConfig` holder (KAHU5W).
+//! The process-wide typed `BotConfig` holder.
 //!
 //! Exactly one site reads the environment for `DEGENBOT_*` keys: the
 //! 12-factor loader. The boot path loads the config once and installs the

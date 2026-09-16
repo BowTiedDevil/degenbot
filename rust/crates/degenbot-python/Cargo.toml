@@ -93,11 +93,11 @@ toml = "1.1.6"
 # crate::abi_types). `async` gates the rpc/ async submodules (no new dep).
 # The `degenbot-arbitrage` dep spec carries `features = ["order-index"]`, so
 # every `simulation` build (default) gets ADR-024's deterministic profit-
-# descending pre-sim selection inside `dispatch_profitable` (B5L2XA).
+# descending pre-sim selection inside `dispatch_profitable`.
 default = ["auto-initialize", "bot", "rpc", "price", "submission", "simulation", "abi", "concentrated-liquidity-math", "balancer-math", "curve-math", "solidly-math", "v2-math", "uniswap", "pathfinding", "async", "db", "executor", "execution", "pool", "aave-updater", "fork"]
 extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
-# FF-T1 (BPHR6F): `bot` also names degenbot-workers — the intake seam maps
+# FF-T1: `bot` also names degenbot-workers — the intake seam maps
 # the workers' typed BootError family onto the BootRefused exception at
 # the pyo3 leaf (the simulation feature already pulled the dep; bot-only
 # builds now name the type too).
@@ -131,7 +131,7 @@ async = []
 # this feature unless the initial-exec relocation count of _ffi.abi3.so
 # (readelf -rW .../abi3.so | grep -c TPOFF64) is verifiably still zero.
 mimalloc = ["dep:mimalloc", "mimalloc/local_dynamic_tls"]
-# OTel span export for the Python-driven path (K6PCKP): pulls degenbot-bot
+# OTel span export for the Python-driven path: pulls degenbot-bot
 # with its `otel` feature (OTLP exporter + layer). NOT in `default` -
 # release/CI wheels must not ship the OTLP client footprint (same
 # exclusion story as hotpath; pyproject [tool.maturin] dev builds enable it).
@@ -145,7 +145,7 @@ proptest = "^1.11"
 # feature.
 degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
 
-# Seam-C test seam: InMemorySpanExporter (K6PCKP). Same version lock as
+# Seam-C test seam: InMemorySpanExporter. Same version lock as
 # degenbot-bot (tracing-opentelemetry 0.33 <-> opentelemetry(-sdk) 0.32).
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "testing"] }
 

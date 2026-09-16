@@ -11,7 +11,7 @@
 //! because those families have materially different state shapes. It ALSO
 //! resolves the DEX name (`Uniswap` vs `SushiSwap` …) on [`Identity::dex`] for a
 //! known `(chain_id, factory)` deployment via `degenbot-uniswap::deployments`
-//! (QHGN2E) — Rust-owned, single-source — carrying the chain id on the handle.
+//! — Rust-owned, single-source — carrying the chain id on the handle.
 //! An unknown deployment degrades to a generic variant (`dex: None`), never an
 //! error.
 
@@ -41,7 +41,7 @@ pub enum Structure {
 /// Surfaces the protocol family sub-variant AND the resolved DEX name
 /// (`Uniswap` vs `SushiSwap` …). `dex: None` means the `(chain_id, factory)`
 /// deployment is unknown — the caller degrades to the generic family variant,
-/// never an error (QHGN2E).
+/// never an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Identity {
     ReservePair {

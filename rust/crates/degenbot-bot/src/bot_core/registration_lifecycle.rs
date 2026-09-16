@@ -22,7 +22,7 @@
 //! **Lock discipline (preserved exactly):** no guard is held across the
 //! `verify_seed` / `verify_post_drain` `.await`s (take-pin-then-drop); the
 //! drain + pin run under ONE `core.write()` hold (the step-2 rolling-start race
-//! fix); step-1 verifies the pinned snapshot seed @ snapshot block (CBCH6H);
+//! fix); step-1 verifies the pinned snapshot seed @ snapshot block;
 //! step-2 verifies the pin's own captured block (never a constant backfill
 //! block — the 2026-06-29 crash class).
 
@@ -188,7 +188,7 @@ where
     core.write_at(crate::bot_core::state_lock::LockSite::Registration)
         .set_v3_pool_quarantined(address);
 
-    // Step-1: verify the pinned snapshot SEED @ snapshot block (CBCH6H). Only
+    // Step-1: verify the pinned snapshot SEED @ snapshot block. Only
     // when a snapshot block is supplied (the seam's gated-skip posture); the
     // seed is consumed exactly once so memory is bounded. The comparison is
     // seed-vs-on-chain@snapshot, NOT engine-current (which would
@@ -230,7 +230,7 @@ where
     }
 
     // Step-2: verify the pinned POST-DRAIN pair @ the pin's OWN captured block
-    // (the `tick_data_block` — liquidity clock, two-stamp OB7UNY). Comparing
+    // (the `tick_data_block` — liquidity clock, two-stamp rule). Comparing
     // against a caller-supplied constant would fabricate a mismatch on active
     // pools (the 2026-06-29 crash). The pin is consumed exactly once.
     let pin = {
@@ -274,7 +274,7 @@ where
     F2: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut2 + Send,
     Fut2: Future<Output = Result<(), E>> + Send,
 {
-    // Coverage branch up-front (DFQYM5). A Sparse V4 pool stays `Live`, no
+    // Coverage branch up-front. A Sparse V4 pool stays `Live`, no
     // verification deferral / RPC, but its buffered events are still drained;
     // unregistered / non-V4 → no-op Ok.
     let coverage = core
@@ -295,7 +295,7 @@ where
     core.write_at(crate::bot_core::state_lock::LockSite::Registration)
         .set_v4_pool_quarantined(pool_manager, pool_id);
 
-    // Step-1: verify the pinned snapshot seed @ snapshot block (CBCH6H).
+    // Step-1: verify the pinned snapshot seed @ snapshot block.
     // Anchored at the pool's OWN liquidity clock , falling back
     // to the aggregate `S` only when the pool clock is unset — see the V3
     // commentary above.
@@ -538,7 +538,7 @@ mod tests {
     }
 
     /// A Sparse V3 pool goes straight to the end: the lifecycle is an
-    /// immediate no-op — `Live`, no verify closure invoked, no RPC (DFQYM5).
+    /// immediate no-op — `Live`, no verify closure invoked, no RPC.
     #[tokio::test]
     async fn sparse_v3_lifecycle_is_immediate_no_verify() {
         let core = new_core();
@@ -631,7 +631,7 @@ mod tests {
         assert_ne!(calls[1].1, 42);
     }
 
-    /// Task 4TWM7C/B1 — the reactivated wrong-block seed-verify regression:
+    /// the reactivated wrong-block seed-verify regression:
     /// a DB-seeded (`Tracked`) pool whose liquidity clock (`tick_data_block`,
     /// stamps the builder at the DB `liquidity_update_block`) trails the
     /// aggregate snapshot-seed block `S` must have step-1 anchor at the pool's
@@ -831,7 +831,7 @@ mod tests {
         );
     }
 
-    /// WSLCD2: the terminal `release_all_v3_v4_quarantined` is an ORPHAN sweep
+    /// the terminal `release_all_v3_v4_quarantined` is an ORPHAN sweep
     /// only — it must NOT be the productivity gate. A tracked pool released to
     /// `Live` by the per-path lifecycle stays `Live` (and solvable) regardless
     /// of whether the terminal batch ever runs; the batch only touches pools
@@ -957,7 +957,7 @@ mod tests {
         assert_eq!(lifecycle_v3(&c, pid), RegistrationLifecycle::Live);
     }
 
-    // ── Fused single-acquisition lookups (JCH5LF) ────────────────────────
+    // ── Fused single-acquisition lookups ────────────────────────
     //
     // The two seed-anchor sites used to compose
     // `pool_id_by_address`/`v4_pool_id_by_key` with `pool_tick_data_block`

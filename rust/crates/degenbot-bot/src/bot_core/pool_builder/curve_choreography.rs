@@ -1,5 +1,4 @@
-//! Curve `StableSwap` detection choreography over [`ConstructionIo`] (task
-//! `4EBHRC`, epic `TV72EG`).
+//! Curve `StableSwap` detection choreography over [`ConstructionIo`].
 //!
 //! The Curve detection pipeline that the Python `builders/curve_pool_builder.py`
 //! drove through `PyBotIo` moves **core-side** here as free async functions over

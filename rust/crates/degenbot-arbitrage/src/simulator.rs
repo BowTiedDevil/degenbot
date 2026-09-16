@@ -17,7 +17,7 @@
 //! it does NOT re-derive the 7-call bundle (AGENTS.md: "driver shell, not a
 //! co-implementation").
 //!
-//! # In-process revm sim (task `JHGLF4`, Tier 1 `V5HCR5`)
+//! # In-process revm sim
 //!
 //! Executes the 7-call vector (pre-balances → `execute()` → post-balances) via
 //! revm `transact_one`, returning the `SimResult` shape the dispatch leaf
@@ -117,7 +117,7 @@ pub const EXECUTE_GAS_ENV: &str = "DEGENBOT_SIM_EXECUTE_GAS";
 /// and falls back to [`INITIAL_EXECUTE_GAS`]), else [`INITIAL_EXECUTE_GAS`].
 #[must_use]
 pub fn execute_gas_limit() -> u64 {
-    // KAHU5W: typed schema key `simulation.sim_execute_gas`
+    // typed schema key `simulation.sim_execute_gas`
     // (`DEGENBOT_SIM_EXECUTE_GAS`); the loader owns the env read.
     ::degenbot_config::holder::config()
         .simulation
@@ -336,7 +336,7 @@ pub struct RevertingFrame {
 /// A revert-bucket tally accumulator (ports `_tally_fail`, L1769–L1771).
 ///
 /// `_tally_fail(bucket)` does `_fail_buckets[bucket] = _fail_buckets.get(bucket, 0) + 1`.
-/// The bucket strings are the `classify_revert` labels (SYI3PG) + a handful of
+/// The bucket strings are the `classify_revert` labels + a handful of
 /// orchestration-only buckets (`int128-overflow`, `rpc-failed`,
 /// `balance-decode`, `no-profit`, `encode-failed`, `blocked-path`).
 ///
@@ -385,7 +385,7 @@ impl FailBuckets {
         hop_outputs: Vec<u128>,
     ) {
         self.tally(bucket);
-        // D63GSE: every classified sim failure surfaces through OTel (span
+        // every classified sim failure surfaces through OTel (span
         // status + exception event + degenbot.errors counter). Callers hold
         // the `degenbot.bundle.simulate` span, so path context rides along.
         degenbot_bot::telemetry::record_exception(
@@ -863,7 +863,7 @@ impl SimulatePath {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// The in-process entry point (task JHGLF4)
+// The in-process entry point
 // ─────────────────────────────────────────────────────────────────────────
 
 /// The gas limit granted to each balance-of read call in the 7-call vector
@@ -935,7 +935,7 @@ where
         // `SimulateContext::block_timestamp`. The default `timestamp = 1`
         // causes V2 pair `_update` to overflow `price0CumulativeLast` in
         // Solidity 0.8+ forks (Camelot/Aerodrome), reverting every swap — the
-        // root cause of the in-process-evm parity gap (XPPMQG).
+        // root cause of the in-process-evm parity gap.
         block.timestamp = U256::from(ctx.block_timestamp);
     });
     simulate_path_on_evm(&mut evm, ctx, path, fail_buckets)
@@ -990,7 +990,7 @@ impl Drop for SimSpanVerdict {
 /// state accumulates across the 7 `transact_one` calls (pre reads → execute →
 /// post reads see execute's changes), then `finalize()` clears the journal so
 /// the next path on the same shared EVM starts from clean committed state —
-/// the per-path isolation Tier 1 (`V5HCR5`) needs for a shared per-block EVM.
+/// the per-path isolation Tier 1 needs for a shared per-block EVM.
 ///
 /// Generic over `E` so the smoke test (an `EmptyDB`-backed EVM built by the
 /// caller) and production (a shared `BotStateDb<WrapDatabaseAsync<AlloyDB>>`
@@ -1019,7 +1019,7 @@ where
         > + InspectEvm<Inspector = SimInspector>,
     <E as ExecuteEvm>::Error: std::fmt::Display,
 {
-    // G6HSIS: the shared sim seam opens its own `degenbot.bundle.simulate`
+    // the shared sim seam opens its own `degenbot.bundle.simulate`
     // span for callers that don't already hold one (the dispatch fan-out, the
     // in-process DB sim). The worker-inline arm re-uses the caller-held span
     // of the same name via `simulate_path_on_evm_in_span` instead.
@@ -1263,8 +1263,7 @@ where
     }
 
     // Finalize the journaled state (clears the journal). The state is available
-    // for access-list emission (task ED3Q7R — currently a no-op stub, so the
-    // access_list field stays None).
+    // for access-list emission.
     let _state = evm.finalize();
 
     // Drain the inspector buffers (call trace + captured swaps) ONCE here so
@@ -1306,7 +1305,7 @@ where
         // fall back to the plain `record` (top-level revert data, no deep
         // attribution).
         if let Some(frame) = captured_call_trace.failing_frame() {
-            // FULL call-trace dump (2LTKVO / W2UWZO): when a sim fails, emit
+            // FULL call-trace dump: when a sim fails, emit
             // every frame (depth/target/selector/outcome) so the exact nested
             // call sequence leading to the failing frame is attributable
             // against the executor Vyper source — e.g. the `execute → v3c.swap

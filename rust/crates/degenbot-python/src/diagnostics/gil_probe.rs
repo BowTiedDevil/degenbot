@@ -125,7 +125,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
     let threshold = Duration::from_millis(threshold_ms.max(1));
     let stuck = Duration::from_millis(stuck_ms.max(1));
 
-    // PE4FPM: self-register the probe pair (probe + stuck-watchdog; the
+    // self-register the probe pair (probe + stuck-watchdog; the
     // profiler-owned hp-* threads are untouched by the census).
     degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {
         resource: "gil_probe",
@@ -239,7 +239,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                         since_progress,
                         since_sample,
                     } => {
-                        // TPMFLV: on the first confirmed alarm (and every 10
+                        // on the first confirmed alarm (and every 10
                         // alarms after) self-record the thread table. The
                         // watchdog never takes the GIL, so this runs even
                         // during a hard GIL deadlock; /proc reads + a file
@@ -311,7 +311,7 @@ fn watchdog_verdict(
     }
 }
 
-/// Dump threshold for a long-Busy episode (MHE62T): after this much
+/// Dump threshold for a long-Busy episode: after this much
 /// heartbeat staleness with the probe still sampling, dump the registry once.
 /// A LONG Busy episode is the signature of a NON-GIL wedge — a Rust lock held
 /// across an await (incident 2026-08-21: the bot sat "busy" for 11 minutes
@@ -429,7 +429,7 @@ mod tests {
         ));
     }
 
-    /// MHE62T: a long-Busy episode crosses the dump threshold exactly once
+    /// a long-Busy episode crosses the dump threshold exactly once
     /// the age passes it (caller owns the once-per-episode flag).
     #[test]
     fn busy_dump_triggers_only_past_threshold() {

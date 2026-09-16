@@ -497,7 +497,7 @@ pub fn encode_cmd_stream(ctx: &EncodeContext, req: &EncodeRequest) -> Option<Vec
         opts: req.opts,
     };
 
-    // Facet A (T2TCJM): a generic per-shape-class hop-grammar walk replaces the
+    // Facet A: a generic per-shape-class hop-grammar walk replaces the
     // former 8 two-hop + 27 three-hop bespoke permutation bodies, producing
     // byte-identical output (validated by the golden corpus). All-V2 any-N uses
     // the Plan + validator path (`derive_all_v2` → `build_walk` → gate
@@ -615,7 +615,7 @@ pub fn encode_execute_call(
 
 /// Encode a 3-hop arbitrage path as a `cmd_executor` command stream.
 ///
-/// Facet A (T2TCJM): delegates to the generic per-shape-class grammar walk
+/// Facet A: delegates to the generic per-shape-class grammar walk
 /// ([`crate::grammar_shape`]), which dispatches to per-family hop adapters — the
 /// same byte-identical engine `encode_cmd_stream` now uses. Retained as a thin
 /// 3-hop convenience entry (public, `#[doc(hidden)]`) for callers/tests that
@@ -1088,7 +1088,7 @@ fn config_for_options_capture_erc6909_sets_check_mode_2() {
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
 fn config_for_options_capture_native_is_check_mode_1() {
-    // U3WVLL: Native capture also uses check_mode=1 (WETH+ETH combined assert;
+    // Native capture also uses check_mode=1 (WETH+ETH combined assert;
     // the in-stream WETH_WITHDRAW leaves the profit as ETH, still counted in
     // the combined balance). The profit assert is active for Native capture too.
     let opts = EncodeOptions {
@@ -1141,7 +1141,7 @@ fn config_for_options_bribe_packs_bips_and_recipient() {
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
 fn config_for_options_expected_value_is_ignored() {
-    // U3WVLL: expected_value is IGNORED (the contract reads its own combined
+    // expected_value is IGNORED (the contract reads its own combined
     // balance at start+end). The high bits are always 0 regardless of the
     // operator-supplied expected_value.
     let ev = U256::from(0xBEEFu64);
@@ -1169,7 +1169,7 @@ fn config_for_options_combines_all_axes() {
     assert_eq!(cfg & U256::from(255u64), U256::from(2u64)); // check_mode=2
     assert_eq!((cfg >> 8) & U256::from(65535u64), U256::from(500u64)); // bips
     assert_eq!((cfg >> 24) & U256::from(255u64), U256::ZERO); // recipient=0 (coinbase)
-    assert_eq!(cfg >> 32, U256::ZERO); // expected_value ignored (U3WVLL)
+    assert_eq!(cfg >> 32, U256::ZERO); // expected_value ignored
 }
 
 #[test]

@@ -18,7 +18,7 @@
 //!
 //! [`ProbeOutcome`] is deliberately verdict-shaped (mirroring the V2 driver's
 //! accept/revert/halt tri-state) so the tests can enforce rejection-reason
-//! airtightness — see H1 in the ORACLE-HARDENING epic (CMORFZ): a Solidity
+//! airtightness — see H1 in the ORACLE-HARDENING epic: a Solidity
 //! revert must be matched by an engine rejection, ONLY a verbless Halt (the
 //! documented OOG trap, not a math verdict) is a legitimate skip.
 

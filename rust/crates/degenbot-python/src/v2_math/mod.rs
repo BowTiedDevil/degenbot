@@ -7,6 +7,6 @@
 //! no I/O). The volatile V2 swap math (Uniswap V2 family + Aerodrome
 //! volatile) used to be a parallel pure-Python Fraction implementation;
 //! the companion layer now delegates here so Python and the Rust solver
-//! round identically (RH3L24).
+//! round identically.
 
 pub mod lib; // nudge

@@ -50,7 +50,7 @@ impl BlockPump {
                 stance::config().pump.pump_debounce_ms,
             ),
         };
-        // KAHU5W: the dispatcher-side strict decode-miss fault follows the
+        // the dispatcher-side strict decode-miss fault follows the
         // pump's completeness stance (respecting any per-pump opt-out).
         pump.bot
             .dispatcher()
@@ -75,7 +75,7 @@ impl BlockPump {
     }
 
     /// Resume the pump from a subscribe state — auto-backfilling the
-    /// snapshot→WS gap (J3FMDO) before the live loop begins.
+    /// snapshot→WS gap before the live loop begins.
     ///
     /// When the core `BotState` carries a snapshot seed `S` (set by
     /// `Bot::load_snapshot_from_db` or `load_*_from_py`) strictly less than
@@ -110,10 +110,10 @@ impl BlockPump {
         self.run_with_stream(combined, first_block).await;
     }
 
-    /// DFQYM5/WS-DROP: run the snapshot→WS gap backfill while concurrently
+    /// run the snapshot→WS gap backfill while concurrently
     /// draining `combined`, returning `(backfill_result, combined')` where
     /// `combined'` re-injects every event drained during the backfill ahead
-    /// of the still-owned live tail, preserving arrival order (MJXP5Z).
+    /// of the still-owned live tail, preserving arrival order.
     ///
     /// Why the drain is not optional: the alloy `logs` subscription buffers
     /// into a small broadcast channel (default capacity 16) that DROPS the

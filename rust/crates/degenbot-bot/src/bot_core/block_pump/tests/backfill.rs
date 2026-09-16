@@ -110,7 +110,7 @@ async fn newhead_promoted_solve_does_not_publish_until_quiesced() {
     );
 }
 
-/// FD7NFG: `backfill_from_snapshot` no-op when no snapshot loaded (cold
+/// `backfill_from_snapshot` no-op when no snapshot loaded (cold
 /// start — `snapshot_seed_block = None`). Default fresh `Bot` has S=None.
 #[tokio::test]
 async fn backfill_from_snapshot_cold_start_is_noop() {
@@ -120,7 +120,7 @@ async fn backfill_from_snapshot_cold_start_is_noop() {
     assert_eq!(n, 0, "cold start (S=None) → no blocks backfilled");
 }
 
-/// FD7NFG: `backfill_from_snapshot` no-op when `S >= W` (snapshot at/after
+/// `backfill_from_snapshot` no-op when `S >= W` (snapshot at/after
 /// the WS block — nothing to backfill).
 #[tokio::test]
 async fn backfill_from_snapshot_s_ge_w_is_noop() {
@@ -136,7 +136,7 @@ async fn backfill_from_snapshot_s_ge_w_is_noop() {
     assert_eq!(n, 0, "S >= W → nothing to backfill");
 }
 
-/// FD7NFG: `backfill_from_snapshot` no-op when `S = 0` (degenerate
+/// `backfill_from_snapshot` no-op when `S = 0` (degenerate
 /// snapshot block — guarded to avoid a `from_block=1` unbounded fetch).
 #[tokio::test]
 async fn backfill_from_snapshot_s_zero_is_noop() {
@@ -151,7 +151,7 @@ async fn backfill_from_snapshot_s_zero_is_noop() {
     assert_eq!(n, 0, "S = 0 → skip (degenerate)");
 }
 
-/// J3FMDO: `resume_from_subscribe` auto-backfills the snapshot→WS gap
+/// `resume_from_subscribe` auto-backfills the snapshot→WS gap
 /// (S < W) before the live loop begins — proving the core path closes the
 /// gap with zero Python orchestration. The Asserter queue drains by exactly
 /// one `eth_getLogs` response (S+1..W fits in a single default-size chunk).
@@ -223,7 +223,7 @@ async fn backfill_to_ws_block_populates_buffer_before_return() {
     );
 }
 
-/// DFQYM5/WS-DROP regression: the resume-path backfill helper must drain
+/// the resume-path backfill helper must drain
 /// the WS stream WHILE the snapshot backfill runs and re-inject the
 /// drained events ahead of the live tail. Pre-fix the pyo3
 /// `PumpState::resume` ran `backfill_to_ws_block` with the stream
@@ -285,7 +285,7 @@ async fn backfill_with_drain_reinjects_events_present_during_backfill() {
             .read_at(crate::bot_core::state_lock::LockSite::Pump)
             .buffered_v3_event_count(&pool_addr),
         1,
-        "backfill_with_drain must buffer the V3 burn before returning (J3FMDO)"
+        "backfill_with_drain must buffer the V3 burn before returning"
     );
 
     // The drained events were captured during the backfill and are
@@ -307,7 +307,7 @@ async fn backfill_with_drain_reinjects_events_present_during_backfill() {
     }
 }
 
-/// J3FMDO: `resume_from_subscribe` skips the auto-backfill entirely when no
+/// `resume_from_subscribe` skips the auto-backfill entirely when no
 /// snapshot seed is present (`S = None`, cold start). The Asserter queue is
 /// left untouched (the pump never calls `eth_getLogs`) and the live loop
 /// anchors on `first_observed_block` directly. An empty queue under a live
@@ -334,7 +334,7 @@ async fn auto_backfill_skipped_when_s_none_in_resume() {
     );
 }
 
-/// J3FMDO: `resume_from_subscribe` skips the auto-backfill when the
+/// `resume_from_subscribe` skips the auto-backfill when the
 /// snapshot is already at/after the WS block (`S >= W` — catch-up snapshot
 /// with no gap to backfill).
 #[tokio::test]

@@ -33,7 +33,7 @@ async fn early_slice_fires_mid_burst_then_settles() {
     );
 }
 
-/// PWPPAZ T2 — bounded: ONE early slice per block window, however long
+/// bounded: ONE early slice per block window, however long
 /// the burst (MBNASQ's unbounded per-gap serial solves must not return).
 /// Six gapped headers → exactly slice + tail, never a third dispatch.
 #[tokio::test(start_paused = true)]
@@ -55,7 +55,7 @@ async fn early_slice_fires_at_most_once_per_window() {
     );
 }
 
-/// PWPPAZ T2 — parity: `DEGENBOT_EARLY_SLICE_MS=0` disables the slice
+/// parity: `DEGENBOT_EARLY_SLICE_MS=0` disables the slice
 /// entirely — the same gapped burst produces exactly the pre-T2 gate
 /// behavior (one quiesce solve at stream end, timed by the full debounce).
 #[tokio::test(start_paused = true)]
@@ -85,7 +85,7 @@ async fn early_slice_disabled_restores_gate_parity() {
     );
 }
 
-/// BM35LK — adaptive quiesce: with `quiesce_mode = adaptive` (pre-seed
+/// adaptive quiesce: with `quiesce_mode = adaptive` (pre-seed
 /// window = the 20 ms ceiling) the drained-settle gate arms the
 /// ESTIMATOR window, not the fixed 50 ms debounce: the same 40 ms-gapped
 /// burst that settles at ≥ 120 ms under the fixed debounce (see

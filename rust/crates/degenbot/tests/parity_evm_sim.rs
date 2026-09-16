@@ -312,7 +312,7 @@ fn evm_sim_success_path_dual_driver_parity() {
 /// RED-verify the fixture is the shared contract: a deliberately-wrong
 /// expected `gas_used` in a mutated fixture copy must fail the Rust assertion
 /// (and, by symmetry, the Python `test_evm_sim_dual_driver.py` guard). Guards
-/// against the V3/V4 fixture-drift regression (HRT356): copied constants with
+/// against the V3/V4 fixture-drift regression: copied constants with
 /// no mechanical link left both tests green but testing *different* fixtures.
 #[test]
 fn deliberately_wrong_gas_used_fails_rust_half() {

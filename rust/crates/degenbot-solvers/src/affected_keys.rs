@@ -1,6 +1,6 @@
 //! Tiny container for the set of pool keys affected by a single engine event,
 //! and the path-index key type the affected-path derivation is keyed on
-//! (epic MROOY7, task LXDY4C).
+//!.
 
 use crate::mixed::HopType;
 

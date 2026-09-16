@@ -295,7 +295,7 @@ pub struct DispatchOutcome {
     /// per-call pre-filter drop count; the lifetime tally lives on
     /// [`FeeOnTransferRegistry::total_fot_dropped`].
     pub fot_dropped: usize,
-    /// AV42C7: candidates dropped because a pool's state nonce advanced past
+    /// candidates dropped because a pool's state nonce advanced past
     /// the snapshot captured at solve time (the solver computed against
     /// state the pump has since superseded — simulating would revert).
     pub stale_dropped: usize,
@@ -571,7 +571,7 @@ pub fn dispatch_profitable_results(
     outcome.thin_dropped = thin_dropped;
     candidates = kept;
 
-    // 3.5. Pre-filter — stale solve results (AV42C7). The solver computed
+    // 3.5. Pre-filter — stale solve results. The solver computed
     //      each candidate's hop_outputs against pool state captured at
     //      resolve time; the pump may have advanced a pool's state since (a
     //      user swap landed between the solve and the sim). The executor
@@ -646,7 +646,7 @@ pub fn dispatch_profitable_results(
             // snapshot is O(pools) scalar words; see
             // `bot_core::SimAnchorState` for the audited surface.
             //
-            // ADR-039 (K4ETHF): since T5 the snapshot is an ENUMERATED
+            // ADR-039: since T5 the snapshot is an ENUMERATED
             // per-family projection (`project_sim_anchor_scalars`), never an
             // arbitrary-key probe — this guard scope paid a ~2.7s hold per
             // block through the V3 tick-descent + V4 O(V^2) keccak paths.
@@ -841,9 +841,9 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 7.5. FoT feedback — record suspicions for FoT-suspected failures (ergo
-    //      `3O535Q`). The `fot_suspected_token` leaf returns `(token,
-    //      pool_key)` for failures whose `reverting_frame.label` is in
+    // 7.5. FoT feedback — record suspicions for FoT-suspected failures.
+    //      The `fot_suspected_token` leaf returns `(token, pool_key)` for
+    //      failures whose `reverting_frame.label` is in
     //      `FOT_REVERT_LABELS` (`IIA`, `CurrencyNotSettled`, `UniswapV2: K`).
     //      The pool_key is the hop's `PoolDivergenceKey` (V2/V3 address, V4
     //      `poolId`); the registry tracks the distinct
@@ -933,7 +933,7 @@ pub fn dispatch_profitable_results(
 /// at resolve time already dropped unresolvable paths; a transient miss here
 /// is the registry's responsibility, not a staleness signal).
 ///
-/// AV42C7: the executor chains the solver's predicted hop outputs as exact-in
+/// the executor chains the solver's predicted hop outputs as exact-in
 /// amounts, so a stale hop's over-prediction becomes an IIA underpayment
 /// revert. Dropping the candidate pre-sim avoids the revert.
 fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
@@ -1188,7 +1188,7 @@ mod tests {
     #[expect(clippy::expect_used)] // in-range axes; a fail-closed panic is the test contract
     fn custody_candidate_defaults_to_mode1_assert() {
         // Control: the default (no operator toggle) runs the ACTIVE
-        // WETH+ETH profit assert (U3WVLL), not the old check_mode=0 fast path.
+        // WETH+ETH profit assert, not the old check_mode=0 fast path.
         let cand = candidate(43, 1_000, 100);
         let path = cand.to_simulate_path();
         let req = path.encode_request();
@@ -1242,7 +1242,7 @@ mod tests {
         assert_eq!(kept[0].path_id, 2);
     }
 
-    // ── Tier 1 (V5HCR5): in-process serial branch ─────────────────────
+    // ── Tier 1: in-process serial branch ─────────────────────
 
     // ── ULUWNI: no BotState guard across provider I/O ──────────────────
 
@@ -1367,7 +1367,7 @@ mod tests {
         writer.join().expect("writer thread");
     }
 
-    /// Tier 1 (`V5HCR5`) parity: the in-process serial branch
+    /// Tier 1 parity: the in-process serial branch
     /// (`Some(bot_state)`) tallies `rpc-failed` for every candidate when the
     /// per-block EVM build fails. Under a `current_thread` tokio runtime,
     /// `WrapDatabaseAsync::new` returns `None` (it requires a multi-threaded

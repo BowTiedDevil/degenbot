@@ -66,7 +66,7 @@ impl PoolFamily {
 
 /// A decoded `PoolCreated`/`Initialize` event, family-tagged.
 ///
-/// The chunk loop (Task `CKXCOB`) maps each variant to the family-specific
+/// The chunk loop maps each variant to the family-specific
 /// `V*PoolRowInput` (carrying the `exchange_id`/`fee_denominator`/`kind`
 /// context the leaf correctly avoids).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -501,7 +501,7 @@ async fn fetch_logs_with_topics(
 }
 
 // (No trailing re-export — the fetchers above take `&LogFetcher` directly;
-// the chunk loop (Task `CKXCOB`) constructs the `LogFetcher` from the
+// the chunk loop constructs the `LogFetcher` from the
 // provider + `max_blocks_per_request` pool config.)
 
 #[expect(clippy::panic)]

@@ -180,7 +180,7 @@ async fn resume_never_resets_pump_complete_cutoff() {
 }
 
 // ==============================================================
-// T3 (epic O3HW7E): the single-writer boundary rule has one owner —
+// T3: the single-writer boundary rule has one owner —
 // the FSM's recovery anchor + `should_drop_recovered_forward` (the
 // BQ7ZBC drop path). The driver seeds the anchor from the resume
 // boundary; no inline `snapshot_seed` check remains in the log loop.
@@ -339,10 +339,10 @@ async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
     assert_eq!(st.update_block, w - 5);
 }
 
-/// T4 (epic O3HW7E): one fact — a forward log applied to engine state —
+/// T4: one fact — a forward log applied to engine state —
 /// feeds two consumers: the FSM quiesce arm (`on_log_applied`, which
 /// arms the quiesce-gated publish) and the engine-side
-/// `has_logs_this_block` bookkeeping (LEZJAS), routed through the
+/// `has_logs_this_block` bookkeeping, routed through the
 /// sink's `record_logs_this_block`. This pin asserts the pairing: a
 /// forward log fires exactly one `record_logs_this_block` AND arms the
 /// quiesce publish (`on_send`); a reorg (`removed: true`) log fires

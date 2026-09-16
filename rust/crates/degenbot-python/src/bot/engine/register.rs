@@ -43,7 +43,7 @@ impl PyArbEngine {
         // single-writer driver, so the cursor is drain-consistent by
         // construction (no `drain_lock` to wait on).
         // The stage surface consumes the SAME epoch ledger `Bot::dispatch_log`
-        // records into — one dirty-tracking mechanism (LXDY4C). The ledger
+        // records into — one dirty-tracking mechanism. The ledger
         // is injected at construction; the stage surface owns no swap.
         let stages = Arc::new(EngineStages::with_core(core, bot.active_delta()));
         // ADR-050 D7: the public Rust `EngineDriver` owns the pump session
@@ -107,7 +107,7 @@ impl PyArbEngine {
         }
 
         let stages = Arc::clone(&self.stages);
-        // YLYJM2: release the GIL across the stage-surface registration
+        // release the GIL across the stage-surface registration
         // (which internally takes `core.read()`) so the live pump + asyncio
         // loop keep making GIL progress. `PoolHop` is `Send`; the error maps
         // to a `PyErr` OUTSIDE the closure (GIL-held).
@@ -165,7 +165,7 @@ impl PyArbEngine {
         }
 
         let stages = Arc::clone(&self.stages);
-        // YLYJM2: release the GIL across the stage-surface registration +
+        // release the GIL across the stage-surface registration +
         // the single eager `solve_path`. See `register_path`. `PoolHop` is
         // `Send`; the error maps to a `PyErr` OUTSIDE the closure.
         let (path_id, created) = py.detach(move || {

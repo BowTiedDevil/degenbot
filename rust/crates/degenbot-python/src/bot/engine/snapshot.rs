@@ -5,7 +5,7 @@
 //! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 //!
-//! ## Retired surface (epic `XEANMB`)
+//! ## Retired surface
 //! RUQ637's `SnapshotStore` fields + the `load_*_from_py` / `clear_*_snapshot`
 //! ingestion surface are RETIRED. The in-memory `SnapshotStore` was a
 //! boot-time freeze of the DB cut; epic `XEANMB` replaced it with a WAL held
@@ -23,4 +23,4 @@
 //! the `#[pymethods]` snapshot methods are gone + the file remains as a home
 //! for the module-level documentation of the retirement.
 
-// No `#[pymethods]` here — the snapshot ingestion surface is retired (XEANMB).
+// No `#[pymethods]` here — the snapshot ingestion surface is retired.

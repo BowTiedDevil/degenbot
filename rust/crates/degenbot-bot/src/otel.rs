@@ -24,7 +24,7 @@
 //! (installed at `#[pymodule]` init, idempotent via its `OnceLock`), so
 //! `try_init` fails and this function returns
 //! [`OtelInitError::AlreadySetUp`] — by design, not a bug: on that path the
-//! `OTel` layer must live inside the existing registry (K6PCKP).
+//! `OTel` layer must live inside the existing registry.
 //!
 //! # Endpoint
 //!
@@ -294,7 +294,7 @@ pub fn provider_from_endpoint(
 /// The `OTel` span layer for an arbitrary `tracing_subscriber` registry.
 ///
 /// Registry-agnostic on purpose: [`init_otel_tracing`] composes it onto a
-/// fresh registry, and the Python-driven path (K6PCKP) composes it onto
+/// fresh registry, and the Python-driven path composes it onto
 /// `degenbot-python`'s own registry as a third layer.
 #[must_use]
 pub fn layer(
@@ -356,7 +356,7 @@ pub fn init_otel_tracing() -> Result<OtelHandle, OtelInitError> {
         .with(layer(tracer).with_filter(record_filter))
         .with(tracing_subscriber::fmt::layer().with_filter(console_filter));
     if subscriber.try_init().is_err() {
-        op_warn!(domain = pump, "OTel init: a global tracing subscriber already exists (e.g. degenbot-python's registry); the OTel layer must be added to that registry (epic KDUED5 task K6PCKP)");
+        op_warn!(domain = pump, "OTel init: a global tracing subscriber already exists (e.g. degenbot-python's registry); the OTel layer must be added to that registry");
         return Err(OtelInitError::AlreadySetUp(
             "a global tracing subscriber is already installed",
         ));

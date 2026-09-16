@@ -455,7 +455,7 @@ impl PyLiquidityPool {
             .is_some()
     }
 
-    /// RATR5A/CXRHW3 pre-pass: discover the missing bitmap words for
+    /// discover the missing bitmap words for
     /// the request (a collect-only transient walk), fetch them LOCK-FREE
     /// through the pool stored fetcher, and install them under SHORT
     /// writes with the fingerprint re-check. Bounded 3 passes; returns
@@ -673,7 +673,7 @@ impl PyLiquidityPool {
             tick: override_tick,
             tick_data: rust_tick_data,
         };
-        // RATR5A/CXRHW3: stage missing words OUTSIDE the read lock (bounded
+        // stage missing words OUTSIDE the read lock (bounded
         // passes) - the sim runs with miss recovery disarmed so no fetch can
         // execute under the caller read guard.
         for _ in 0..3u8 {
@@ -755,7 +755,7 @@ impl PyLiquidityPool {
                 "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
             )
         })?;
-        // RATR5A: DISARMED — miss recovery cannot run (no-raise-on-miss: sparse => 0).
+        // DISARMED — miss recovery cannot run (no-raise-on-miss: sparse => 0).
         // cdbc03bb (RATR5A Finding on ae2c4124f): two DISTINCT error classes:
         // - FetchExhausted/Failed (miss recovery) → U256::ZERO per the no-raise contract.
         // - NotComputable (V2 mul overflow >= 2^256) → ValueError raise (on-chain parity).
@@ -812,7 +812,7 @@ impl PyLiquidityPool {
             })?,
             sqrt_price_limit: None,
         };
-        // RATR5A: DISARMED — miss recovery cannot run (no-raise-on-miss).
+        // DISARMED — miss recovery cannot run (no-raise-on-miss).
         // NotComputable (V2 mul overflow) is a distinct class, NOT a miss:
         // documented legacy contract (silent-0 preserved per ADR-037).
         let result = self.with_state_mut(py, |core| {
@@ -910,7 +910,7 @@ impl PyLiquidityPool {
             amount_specified,
             sqrt_price_limit,
         };
-        // RATR5A/CXRHW3: stage missing words OUTSIDE the write lock (bounded
+        // stage missing words OUTSIDE the write lock (bounded
         // passes) - the sim below runs with miss recovery disarmed so no
         // fetch can execute under the caller write guard.
         if !self.ensure_missing_words_staged(py, block, &request) {
@@ -922,7 +922,7 @@ impl PyLiquidityPool {
         let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
             return Ok(None);
         };
-        // ADR-037/X4EU3J: an amount-modifying hook may have invalidated the
+        // ADR-037: an amount-modifying hook may have invalidated the
         // standard-math result — surface the archived exception (approximate
         // amounts attached) instead of silently returning a wrong number.
         if payload
@@ -982,7 +982,7 @@ impl PyLiquidityPool {
             amount_specified,
             sqrt_price_limit,
         };
-        // RATR5A/CXRHW3: stage missing words OUTSIDE the write lock (bounded
+        // stage missing words OUTSIDE the write lock (bounded
         // passes) - the sim below runs with miss recovery disarmed so no
         // fetch can execute under the caller write guard.
         if !self.ensure_missing_words_staged(py, block, &request) {
@@ -994,7 +994,7 @@ impl PyLiquidityPool {
         let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
             return Ok(None);
         };
-        // ADR-037/X4EU3J: an amount-modifying hook may have invalidated the
+        // ADR-037: an amount-modifying hook may have invalidated the
         // standard-math result — surface the archived exception (approximate
         // amounts attached) instead of silently returning a wrong number.
         if payload
@@ -1162,7 +1162,7 @@ impl PyLiquidityPool {
             if let Some(s) = core.get_v2_pool_state(self.pool_id) {
                 return s.update_block;
             }
-            // J63J3N: V3 *or* V4 (previously V3-only via get_v3_pool, which
+            // V3 *or* V4 (previously V3-only via get_v3_pool, which
             // returned None for V4 and fell through to 0).
             if let Some(s) = core.get_v3_or_v4_pool(self.pool_id) {
                 return s.update_block();
@@ -1186,7 +1186,7 @@ impl PyLiquidityPool {
         })
     }
 
-    /// The pool's **liquidity** clock (`tick_data_block`, two-stamp OB7UNY) —
+    /// The pool's **liquidity** clock (`tick_data_block`, two-stamp rule) —
     /// the block its tick map reflects. CL (V3/V4) only; the families without
     /// a tick-data clock (V2/Curve/Balancer) and unregistered ids return `0`.
     /// Mirrors the [`Self::update_block`] getter's family-falling-through
@@ -2034,7 +2034,7 @@ impl PyLiquidityPool {
     ) -> PyResult<()> {
         let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
-        // RAJ3PP: family-dispatching apply. Routes V4 pools to the V4 apply
+        // family-dispatching apply. Routes V4 pools to the V4 apply
         // path (previously this called `apply_v3_swap_by_pool_id`
         // unconditionally, which no-op'd on `PoolEntry::V4` and silently
         // dropped every Python-side V4 update). The dispatcher is one write
@@ -2046,7 +2046,7 @@ impl PyLiquidityPool {
         Ok(())
     }
 
-    /// Registration/seed genesis anchor (two-stamp OB7UNY): push a
+    /// Registration/seed genesis anchor (two-stamp rule): push a
     /// `before == after` reorg-journal delta at `block_number` WITHOUT
     /// advancing either clock, so a split-seed (price at HEAD, tick map at the
     /// DB block) pool keeps a non-empty journal for mid-window reorg restore.
@@ -2105,7 +2105,7 @@ impl PyLiquidityPool {
     /// Backfill an unknown tick-bitmap word for this pool (T2 FBJTUM — the
     /// write-path gate's fetch seam).
     ///
-    /// RATR5A: STAGED fetch — the multi-second fetch (`Python::attach` + the
+    /// STAGED fetch — the multi-second fetch (`Python::attach` + the
     /// companion's serial web3 RPC) runs with the `BotState` write guard
     /// RELEASED; the fetcher re-acquires the GIL via `Python::attach` and
     /// the pump applies events to other pools through the whole window.
@@ -2132,7 +2132,7 @@ impl PyLiquidityPool {
             }) else {
                 return Ok(false);
             };
-            // RATR5A: NO state lock held across this fetch.
+            // NO state lock held across this fetch.
             let Ok(fetched) = staged.fetch() else {
                 return Ok(false);
             };
@@ -2304,7 +2304,7 @@ impl PyLiquidityPool {
     #[pyo3(signature = (block))]
     fn discard_v3_before_block(&self, py: Python<'_>, block: u64) -> PyResult<()> {
         self.with_state_mut(py, |core| {
-            // J63J3N: only apply when this handle points at a V3/V4 pool —
+            // only apply when this handle points at a V3/V4 pool —
             // otherwise silently no-op. Unified dispatcher (ADR-016).
             if core.get_v3_or_v4_pool(self.pool_id).is_none() {
                 return Ok(());
@@ -2902,7 +2902,7 @@ impl PyLiquidityPool {
         })
     }
 
-    /// **The go-between (BQM2OA).** A `PyLiquidityPool` handle over this
+    /// **The go-between.** A `PyLiquidityPool` handle over this
     /// metapool's *base pool*, sharing the same `BotState` core. Resolves the
     /// stored `base_pool` address through the existing `pool_id_by_address`
     /// index — no Python registry needed. `None` for plain pools, non-Curve
@@ -2922,7 +2922,7 @@ impl PyLiquidityPool {
 
     /// Rust-owned Curve stableswap `curve_get_dy(i, j, dx, block_number,
     /// override_balances)` on this handle's pool — the single-call shape the
-    /// companion `CurveStableswapPool.get_dy` delegates to (task `V5X2YP`).
+    /// companion `CurveStableswapPool.get_dy` delegates to.
     /// Mirrors `PyBot.curve_get_dy` but bound to the handle's `pool_id`, so a
     /// swap runs start-to-finish with no Python provider / cache / calculator.
     #[pyo3(signature = (i, j, dx, block_number, override_balances=None))]
@@ -3017,8 +3017,7 @@ impl PyLiquidityPool {
 
     /// Rust-owned Curve `curve_calc_token_amount(amounts, deposit,
     /// block_number)` on this handle's pool — the single-call shape the
-    /// companion `CurveStableswapPool.calc_token_amount` delegates to (task
-    /// `WKKMJM`). No Python provider / cache / calculator on the path.
+    /// companion `CurveStableswapPool.calc_token_amount` delegates to. No Python provider / cache / calculator on the path.
     fn curve_calc_token_amount(
         &self,
         py: Python<'_>,
@@ -3048,7 +3047,7 @@ impl PyLiquidityPool {
     /// Rust-owned Curve `curve_calc_withdraw_one_coin(token_amount, i,
     /// block_number)` on this handle's pool — the single-call shape the
     /// companion `CurveStableswapPool.calc_withdraw_one_coin` delegates to
-    /// (task `WKKMJM`). Returns only the coin-`i` `dy` (the companion's
+    ///. Returns only the coin-`i` `dy` (the companion's
     /// extra tuple fields aren't consumed anywhere).
     fn curve_calc_withdraw_one_coin(
         &self,

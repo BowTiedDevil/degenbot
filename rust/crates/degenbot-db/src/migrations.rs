@@ -179,7 +179,7 @@ pub fn apply_forward_migrations(
 /// Apply the production [`RUST_MIGRATIONS`] registry up to
 /// [`RUST_SCHEMA_VERSION`]. The entry point the open path
 /// ([`crate::migrate::ensure_schema_at_open`]) calls: a genuine Rust-owned
-/// open and a post-heal reopen both run it (task IOGST2).
+/// open and a post-heal reopen both run it.
 ///
 /// # Errors
 ///

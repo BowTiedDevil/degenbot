@@ -152,7 +152,7 @@ impl crate::liquidity_event::LiquidityEvent for BufferedV3PoolEvent {
 
 /// The EVM storage-slot layout a concentrated-liquidity (V3-style) pool
 /// contract uses. The `PancakeSwap` V3 fork diverges from canonical Uniswap
-/// V3 (W32CAU): `slot0` spans TWO words, shifting every following slot by
+/// V3: `slot0` spans TWO words, shifting every following slot by
 /// one (liquidity@5, ticks@6). Reads of a fork pool through the Uniswap
 /// indices misread the contract (the false [sim-divergence] on pool
 /// 0x1ac1A8FE, VERIFY2 T4).
@@ -206,7 +206,7 @@ pub struct RegisterV3PoolParams {
     pub tick: i32,
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
-    /// The **liquidity** clock seed (two-stamp OB7UNY) — the block the
+    /// The **liquidity** clock seed (two-stamp rule) — the block the
     /// supplied `tick_data` map is exact at. `None` (the default) falls back
     /// to [`Self::update_block`], keeping a single-clock seed for existing
     /// callers. A fresh-read builder sets `update_block` to a HEAD slot0 read
@@ -408,7 +408,7 @@ pub struct V3PoolState {
     /// Initialized ticks: tick index → (`liquidity_gross`, `liquidity_net`).
     pub tick_data: HashMap<i32, TickInfo>,
 
-    /// The pinned snapshot seed (CBCH6H): a copy of the `tick_data` supplied
+    /// The pinned snapshot seed: a copy of the `tick_data` supplied
     /// at registration, NEVER mutated by `apply_v3_liquidity_update` /
     /// `apply_v3_swap`. Retained so step-1 verify can compare the **seed**
     /// against on-chain@snapshot_block — NOT the pump-mutated `tick_data`
@@ -600,7 +600,7 @@ impl V3PoolState {
     /// Sets it to `block` when `block > cur`; an equal `block` is an
     /// idempotent no-op. A `block < cur` is a BACKWARD STAMP — an invariant
     /// violation outside a reorg — and panics loudly with a stable, grep-able
-    /// literal (ADR-021 fail-fast discipline; two-stamp OB7UNY). The only
+    /// literal (ADR-021 fail-fast discipline; two-stamp rule). The only
     /// sanctioned rewind is `ReorgPoolState::restore_before_block`, which sets
     /// both clocks directly from the journal priors and must NOT call this.
     ///
@@ -643,7 +643,7 @@ impl V3PoolState {
     // `V4PoolState::merge_tick_word`; the trait dedups the two. See
     // `impl ConcentratedLiquidityPoolMut for V3PoolState` in `registry.rs`.
 
-    /// Registration/seed genesis anchor (two-stamp OB7UNY fresh-read builder).
+    /// Registration/seed genesis anchor (two-stamp rule fresh-read builder).
     ///
     /// Pushes a `before == after` journal delta at `block` so the reorg
     /// journal is non-empty from registration — keeping `has_state_prior_to`
@@ -688,7 +688,7 @@ impl V3PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
-            // Two-stamp OB7UNY: the price clock seeds at `update_block`; the
+            // Two-stamp rule: the price clock seeds at `update_block`; the
             // liquidity clock seeds at `tick_data_block` when the caller
             // split them (fresh-read builder), else falls back to the same
             // seed block. The historical-replay guard always keys on the
@@ -697,7 +697,7 @@ impl V3PoolState {
             tick_data_block: params.tick_data_block.unwrap_or(params.update_block),
             initial_state_block: params.update_block,
             state_nonce: 0,
-            // ADR-close of the rolling-start direct-apply gap (DFQYM5): a
+            // ADR-close of the rolling-start direct-apply gap: a
             // freshly-registered `Tracked` pool starts `Quarantined` so NO live
             // event can direct-apply before the two-step verify; `set_pool_live`
             // (post-verify) is the sole transition to `Live`. `Sparse` pools
@@ -730,7 +730,7 @@ impl V3PoolState {
             init_hash: params.init_hash,
             slot_layout: params.slot_layout,
         };
-        // CBCH6H: pin the snapshot seed for Tracked pools so step-1 verify
+        // pin the snapshot seed for Tracked pools so step-1 verify
         // compares the seed (not pump-mutated `tick_data`) against
         // on-chain@snapshot_block. Sparse pools have no complete seed. Computed
         // AFTER the struct literal because `tick_data` is moved into `state` above.
@@ -1022,7 +1022,7 @@ impl ReorgPoolState for V3PoolState {
         }
         // Reorg is the sole sanctioned rewind of both clocks: restore each to
         // its exact pre-target value from the rolled-back range's priors
-        // (two-stamp OB7UNY). A `None` prior means the rolled-back events did
+        // (two-stamp rule). A `None` prior means the rolled-back events did
         // not advance that clock — its current value is already correct.
         if let Some(b) = result.update_block_before {
             self.update_block = b;
@@ -1688,7 +1688,7 @@ mod apply_inherent_tests {
 
     #[test]
     fn apply_swap_advances_both_clocks() {
-        // OB7UNY: a Swap rewrites the slot0 head AND crosses ticks, so it
+        // a Swap rewrites the slot0 head AND crosses ticks, so it
         // advances BOTH the price clock and the liquidity clock.
         let mut state = state_with_position(1_000_000u128);
         assert_eq!(state.update_block, 0);
@@ -1714,7 +1714,7 @@ mod apply_inherent_tests {
 
     #[test]
     fn out_of_range_liquidity_advances_only_liquidity_clock() {
-        // OB7UNY: an out-of-range Mint/Burn mutates the tick map (liquidity
+        // an out-of-range Mint/Burn mutates the tick map (liquidity
         // clock advances) but leaves the slot0 head byte-identical (price clock
         // does NOT move).
         let mut state = state_with_position(1_000_000u128);
@@ -1887,7 +1887,7 @@ mod apply_inherent_tests {
             state.liquidity, pre_liq,
             "replay at or before the seed block must NOT re-adjust the active liquidity (already in the seed)"
         );
-        // Two-stamp OB7UNY: the replay mutates the TICK MAP (liquidity clock
+        // Two-stamp rule: the replay mutates the TICK MAP (liquidity clock
         // advances to 50) but does NOT advance the PRICE clock (update_block
         // stays 0 — the replay leaves the slot0 head byte-identical).
         assert_eq!(
@@ -1974,7 +1974,7 @@ mod apply_inherent_tests {
 
     #[test]
     fn replace_tick_data_does_not_rewind_block() {
-        // OB7UNY: replace_tick_data advances only the LIQUIDITY clock
+        // replace_tick_data advances only the LIQUIDITY clock
         // (`tick_data_block`) — scalars untouched, so the PRICE clock
         // (`update_block`) never moves here. Advancing the liquidity clock to a
         // NEWER block is fine; a lower block is a monotonicity panic (guarded
@@ -2005,7 +2005,7 @@ mod apply_inherent_tests {
     #[test]
     fn restore_before_block_writes_landed_at_scalars_and_restore_point_block() {
         // apply_swap captures scalar priors; restore_before_block pops the
-        // delta and writes the pre-swap scalars back. Two-stamp OB7UNY:
+        // delta and writes the pre-swap scalars back. Two-stamp rule:
         // restore rewinds BOTH clocks to their exact pre-swap values (the
         // delta's `update_block_before`/`tick_data_block_before`), NOT to the
         // restore-point block.
@@ -2251,7 +2251,7 @@ mod apply_inherent_tests {
 }
 
 // ---------------------------------------------------------------------------
-// Tests relocated from the `bot_core::v3_state` shim (USPN7M/P2CKRL): the shim
+// Tests relocated from the `bot_core::v3_state` shim: the shim
 // is deleted and these integration-style tests of `v3_simulate_swap` now live
 // beside the implementation.
 // ---------------------------------------------------------------------------
@@ -2800,7 +2800,7 @@ mod tests {
     /// `//`) + arithmetic right-shift (`>> 8`), so they agree for
     /// negative non-multiple current ticks — the regime a crossing swap's
     /// post-step price lives in. This test locks that equivalence so the V4
-    /// crossing-swap divergence under the fetch seam (slice 4) is NOT
+    /// crossing-swap divergence under the fetch seam is NOT
     /// mis-attributed to the miss-detection model. See the slice-3 diagnosis
     /// recorded in the slice-3 diagnosis: the models match, so V4 routing's fork
     /// divergence lives elsewhere (fee accounting / boundary-tick walk / fetch

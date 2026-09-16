@@ -1,6 +1,6 @@
 use super::*;
 
-// KJWIK5: the deferred-path carry — the ledger re-record at the deferral
+// the deferred-path carry — the ledger re-record at the deferral
 // site. The future-price tripwire is unreachable after the solve-anchor
 // head floor (only a mid-solve state advance can trip it), so these tests
 // install the `force_deferred` seam to exercise the carry

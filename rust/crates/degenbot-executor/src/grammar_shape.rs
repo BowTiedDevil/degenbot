@@ -14,7 +14,7 @@
 //! is isolated in `grammar_plan`.
 //!
 //! ---
-//! **Status after RVNIPD / EYQ6UF (epic MNF6VU):** the hand-written
+//! **Status after RVNIPD / EYQ6UF:** the hand-written
 //! `derive_2hop_*` / `derive_3hop_*` byte-assembling emitters and their
 //! parity-oracle are **deleted** — the Plan is the sole production producer
 //! for every 2/3-hop family. The revm runtime matrix (`degenbot-simulation`
@@ -49,7 +49,7 @@ pub use crate::grammar_plan::{
 // touches no PM ledger), and the exit `(preamble, plan, at)` assembly. The
 // helpers below own that scaffold so a family is authored as
 // "scaffold + a thin PlanStep sequence", and the class of symmetry bug
-// (RFPI6H) has exactly one site per concept. V4-crossing families stay on
+// has exactly one site per concept. V4-crossing families stay on
 // their own scaffold ([`v4_scaffold_table`] etc.) — their topology (one
 // `V4_UNLOCK` over the PM ledger) diverges; `finish_plan` is the only helper
 // every family shares. Currency resolution is the per-hop primitives
@@ -781,7 +781,7 @@ mod tests {
         let _ = U256::ZERO;
     }
 
-    // Increment 2 (BP7KIR): the remaining V2/V3 2-hop families on the Plan.
+    // Increment 2: the remaining V2/V3 2-hop families on the Plan.
     // Each: byte-parity with the proven emitter + the Plan projects a
     // validating trace. A shared helper drives both assertions per family.
     fn v3_v2_path_inputs() -> (PathInfo, ComposerInputs<'static>) {

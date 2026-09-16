@@ -65,7 +65,7 @@ pub fn to_checksum_address(address: &Bound<'_, PyAny>) -> PyResult<String> {
 ///
 /// Thin binding over the pure-Rust `degenbot_uniswap::create2::
 /// compute_aerodrome_v2_address` — byte-exact parity with the Python
-/// `aerodrome.functions.generate_aerodrome_v2_pool_address` (S5SJXF/U43OVR).
+/// `aerodrome.functions.generate_aerodrome_v2_pool_address`.
 ///
 /// The salt is `keccak256(abi.encodePacked(token0_sorted, token1_sorted,
 /// stable))` and the pool is the EIP-1167 minimal-proxy clone of
@@ -101,7 +101,7 @@ pub fn compute_aerodrome_v2_pool_address(
 ///
 /// Thin binding over the pure-Rust `degenbot_uniswap::create2::
 /// compute_aerodrome_v3_address` — byte-exact parity with the Python
-/// `aerodrome.functions.generate_aerodrome_v3_pool_address` (S5SJXF/U43OVR).
+/// `aerodrome.functions.generate_aerodrome_v3_pool_address`.
 ///
 /// The salt is `keccak256(abi.encode(token0_sorted, token1_sorted,
 /// tick_spacing))` and the pool is the EIP-1167 minimal-proxy clone of

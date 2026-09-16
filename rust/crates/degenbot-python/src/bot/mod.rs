@@ -508,7 +508,7 @@ impl PyBot {
     /// Refuses loudly under the legacy stance — the driver must keep the
     /// incumbent worker pool there.
     ///
-    /// FF-T1 (BPHR6F): a refused fleet boot raises the TYPED `BootRefused`
+    /// FF-T1: a refused fleet boot raises the TYPED `BootRefused`
     /// (detected budget + floor + one operator hint) at this submit and at
     /// every submit after it (the sticky materializer); the host process
     /// survives — the library never aborts on the boot-refusal arm.
@@ -568,7 +568,7 @@ impl PyBot {
     /// `Bot::load_snapshot_from_db` — the single Rust entry point that
     /// `stream_liquidity_maps`-loads V3+V4 pools into the core `SnapshotStore`s
     /// + records `S = min(fetch_newest_update_block(V3), V4)`. After this,
-    /// pool registration consumes the store via `take()` (RUQ637) — the
+    /// pool registration consumes the store via `take()` — the
     /// Python builder passes `tick_data=None, coverage=Tracked` and lets the
     /// store decide Tracked-vs-Sparse per pool.
     ///
@@ -582,7 +582,7 @@ impl PyBot {
     /// out of range.
     #[pyo3(signature = (db_path, chain_id))]
     fn load_snapshot_from_db(&self, db_path: &str, chain_id: u64) -> PyResult<()> {
-        // Epic XEANMB: open a `SnapshotDb` — a read-only handle with a held
+        // open a `SnapshotDb` — a read-only handle with a held
         // deferred read transaction. `Bot::load_snapshot_from_db` reads `S =
         // min(fetch_newest_update_block(V3), V4)` INSIDE the held tx so `S`
         // and every per-pool `fetch_liquidity_map` read share one frozen DB
@@ -608,7 +608,7 @@ impl PyBot {
         Ok(())
     }
 
-    /// Commit + drop the held snapshot read transaction (epic `XEANMB`).
+    /// Commit + drop the held snapshot read transaction.
     /// Call after `build_paths` finishes so the WAL snapshot is released + the
     /// updater's checkpoint can reclaim `-wal` space. After this, `db_handle()`
     /// returns `None` (the `assemble_*` Db arm goes through the held tx — once
@@ -618,7 +618,7 @@ impl PyBot {
     /// # Errors
     /// `PyRuntimeError` if the `COMMIT` fails.
     fn close_snapshot_tx(&self, py: Python<'_>) -> PyResult<()> {
-        // Canary (epic XEANMB task 5.7): capture S_snapshot (read inside the
+        // Canary: capture S_snapshot (read inside the
         // held tx) before committing, then re-read S_live after COMMIT on the
         // same connection (now seeing the live DB). If S_live > S_snapshot the
         // pool_updater committed concurrently with startup — a discipline
@@ -774,7 +774,7 @@ impl PyBot {
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
     ///
     /// The snapshot→WS gap is closed automatically inside the core
-    /// `BlockPump::resume_from_subscribe` (J3FMDO); the pyo3
+    /// `BlockPump::resume_from_subscribe`; the pyo3
     /// `backfill_from_snapshot` method is retired (2SM4Y7). Delegates to the
     /// shared `PumpState`.
     fn resume(&self, py: Python<'_>) -> PyResult<()> {
@@ -1361,7 +1361,7 @@ impl PyBot {
             })
             .transpose()
         };
-        // TF7RZB-S3: the V4 identity (currency0/1, fee, tick_spacing, hook,
+        // the V4 identity (currency0/1, fee, tick_spacing, hook,
         // state_view) is resolved CORE-side — the DB two-step (manager → V4 row
         // → per-FK tokens) first, else these raw caller overrides. The override
         // fields are all optional; the resolver raises a typed `MissingIdentity`
@@ -1833,7 +1833,7 @@ impl PyBot {
     /// This is the Python-facing mirror of the `BlockPump`'s per-log call to
     /// `Bot::dispatch_log`: decode via the registered `LogDecoder`s, apply the
     /// decoded event to the shared `BotState` under a write guard, release it,
-    /// then record the touched pool into the `EpochDelta` ledger (LXDY4C) so
+    /// then record the touched pool into the `EpochDelta` ledger so
     /// the next solve reads fresh keys.
     ///
     /// Reconstructs an `alloy::rpc::types::Log` from the WS-log shape Python
@@ -1985,7 +1985,7 @@ impl PyBot {
         let spacing_i32 = i32::try_from(tick_spacing)
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick_spacing out of range"))?;
         let db = self.db_handle();
-        // NOD4PS: extract the native alloy provider from `io` + construct an
+        // extract the native alloy provider from `io` + construct an
         // `AlloyTickBootstrapRpc` (Option B — pure-Rust choreography, no GIL
         // re-entry per RPC). `None` when `io=None` or the provider isn't
         // alloy-backed → Chain arm short-circuits (current behavior).
@@ -2247,7 +2247,7 @@ impl PyBot {
                 .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
             slot_layout,
         };
-        // YLYJM2: the write-lock acquisition + `register_v3_pool` run inside
+        // the write-lock acquisition + `register_v3_pool` run inside
         // the accessor's py.detach so the live pump + asyncio loop keep making GIL
         // progress while the main thread awaits `core.write()` (the startup-
         // stall enabler — see `register_token`). `RegisterV3PoolParams` is
@@ -2267,7 +2267,7 @@ impl PyBot {
     /// executor's 2-byte encoding limit (`fee > 65535`) are rejected here,
     /// surfacing as typed Python exceptions
     /// (`DynamicFeePoolRejectedError` / `HighFeePoolRejectedError`) so Python
-    /// classifies by type, not string matching. Since ADR-037/X4EU3J
+    /// classifies by type, not string matching. Since ADR-037
     /// amount-modifying hooked pools are ADMITTED (the ADR-037 guards use the
     /// registered hook address at hop projection / simulation-caveat time),
     /// and the `HookedPoolRejectedError` raise site is reserved (no longer
@@ -2397,7 +2397,7 @@ impl PyBot {
                 .filter(|f| !f.is_none())
                 .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
         };
-        // YLYJM2: the write-lock acquisition + `register_v4_pool` (see
+        // the write-lock acquisition + `register_v4_pool` (see
         // `register_token`) run inside the accessor's py.detach. `RegisterV4PoolParams` is
         // `Send`; the error is mapped to a `PyErr` OUTSIDE the closure.
         let result = self.with_state_mut(py, |s| s.register_v4_pool(&params));
@@ -2589,7 +2589,7 @@ impl PyBot {
     /// The core `builder::build_curve_pool` runs the full detection
     /// choreography (coins + balances, `A`/`fee`/`admin_fee`, A-ramping,
     /// lending, crypto params, `lp_token`, metapool base + underlying coins,
-    /// ERC20 decimals) and constructs a Rust `RpcCurveDataProvider` (V5F3DZ) —
+    /// ERC20 decimals) and constructs a Rust `RpcCurveDataProvider` —
     /// so the pool is registered with a **Rust-native** on-chain data
     /// provider, not a Python `CurveDataProviderImpl`. Returns the `pool_id`
     /// (`get_pool(id)` after this). `registry_addresses` is the list of
@@ -2988,7 +2988,7 @@ impl PyBot {
         let addr = parse_address(address)?;
         let name = name.to_string();
         let symbol = symbol.to_string();
-        // YLYJM2: release the GIL across the BotState write-lock acquisition +
+        // release the GIL across the BotState write-lock acquisition +
         // insert so the live pump (tokio) + the asyncio loop keep making GIL
         // progress while the main thread awaits `core.write()`. Pre-fix no
         // registration seam released the GIL, so a parked `core.write()` /
@@ -3465,7 +3465,7 @@ mod tests {
         });
     }
 
-    /// NOD4PS: Chain-arm end-to-end — a cold-start `PyBot` (empty Store, no Db)
+    /// Chain-arm end-to-end — a cold-start `PyBot` (empty Store, no Db)
     /// with an `io=Some(PyBotIo)` backed by an `OfflineProvider`-recorded alloy
     /// provider routes through the Chain arm + returns `Some((ticks, "sparse"))`
     /// with the recorded tick liquidity. Verifies wiring: `io=Some` → Chain arm

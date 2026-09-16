@@ -1,7 +1,7 @@
 use super::*;
 
 // -----------------------------------------------------------------------
-// Balancer weighted solve branch (AT2TGZ)
+// Balancer weighted solve branch
 // -----------------------------------------------------------------------
 /// Two-token Balancer weighted pool params, 50/50 weights, 0.1% fee.
 fn balancer_weighted_5050_params(
@@ -372,7 +372,7 @@ fn balancer_weighted_rejects_mixed_with_cl() {
         "Balancer weighted + CL must not solve"
     );
 }
-/// ZU7RAF: the core `ArbitrageEngine` OWNS the lifecycle phase — a
+/// the core `ArbitrageEngine` OWNS the lifecycle phase — a
 /// standalone Rust consumer can observe + guard the state machine directly
 /// (`current_phase` / `set_phase` / `require_phase` / `require_phase_before`)
 /// with no Python in the loop. Pins the Created → Subscribed →
@@ -407,7 +407,7 @@ fn core_engine_owns_and_guards_the_lifecycle_phase() {
         .is_err());
     assert!(engine.require_phase(EnginePhase::Resumed, "solve").is_ok());
 }
-/// TJT63P: `allow_subscribe` accepts `Created` (legacy subscribe-first path)
+/// `allow_subscribe` accepts `Created` (legacy subscribe-first path)
 /// AND `SnapshotLoaded` (construction-time-load path: load snapshot, then
 /// subscribe). Rejects `Subscribed`/`Backfilled`/`Resumed`.
 #[test]

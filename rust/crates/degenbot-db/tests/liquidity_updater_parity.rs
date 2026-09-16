@@ -1,4 +1,4 @@
-//! §4.2 parity for the V3/V4 DB-aware liquidity updater (task QJSCA5).
+//! §4.2 parity for the V3/V4 DB-aware liquidity updater.
 //!
 //! Opens the frozen `fixtures/liquidity_updater_v{3,4}_initial.db` (built by
 //! `fixtures/generate_liquidity_updater_parity.py` — REAL Alembic-stamped DBs

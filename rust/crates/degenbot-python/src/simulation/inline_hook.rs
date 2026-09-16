@@ -25,7 +25,7 @@
 //! (the LW-T2 wedge test pins this structurally; the old
 //! sync-inside-async BY DESIGN comment was that invariant's only
 //! enforcement before the cutover) — so the sim body spawns onto this
-//! hook's DEDICATED multi-thread runtime (task-spawn) and the SYNC sim
+//! hook's DEDICATED multi-thread runtime and the SYNC sim
 //! drive runs on that runtime's BLOCKING pool (`tokio::task::spawn_blocking`):
 //! a blocking-pool thread still carries the runtime handle (the
 //! build-time capture succeeds), and revm's `WrapDatabaseAsync::block_on`
@@ -339,7 +339,7 @@ where
 
 /// GOQWCL: the inline-sim runtime previously kept the default thread name
 /// (`tokio-runtime-worker`) — indistinguishable in thread dumps from every
-/// other defaulting pool. The census (PE4FPM) declares the distinct
+/// other defaulting pool. The census declares the distinct
 /// `degenbot-inline-sim-{n}` pattern; the seq closure mirrors tokio 1.53's
 /// per-thread `thread_name_fn` invocation (same mechanism as
 /// `degenbot_core::runtime`).
@@ -354,7 +354,7 @@ fn inline_sim_thread_name() -> String {
 
 /// The private multi-thread runtime hosting the payload sims (7LV6VN T5).
 /// Sized by [`inline_sim_worker_count`], named distinctly, census-registered
-/// (PE4FPM).
+///.
 fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
     let workers = inline_sim_worker_count();
     degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {
@@ -398,7 +398,7 @@ fn inline_sim_worker_count() -> usize {
     // parallelism), so sim runtime workers + solve bins never exceed
     // the quota.
     let default = degenbot_core::cpu_budget::leftover_worker_budget();
-    // KAHU5W: typed schema key `solve.inline_sim_workers`
+    // typed schema key `solve.inline_sim_workers`
     // (`DEGENBOT_INLINE_SIM_WORKERS`); the loader owns the env read.
     match ::degenbot_config::holder::config().solve.inline_sim_workers {
         Some(n) => n.clamp(1, 32),
@@ -487,7 +487,7 @@ impl InlineSimulator for InlineSimHook {
             .remove(&req.path_id);
         let spotcheck = {
             static PERMYRIAD: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-            // KAHU5W: typed schema key `verify.verify_spotcheck_permyriad`.
+            // typed schema key `verify.verify_spotcheck_permyriad`.
             let permyriad = *PERMYRIAD.get_or_init(|| {
                 ::degenbot_config::holder::config()
                     .verify
@@ -552,7 +552,7 @@ impl InlineSimulator for InlineSimHook {
         //    into the task (the outer conversions read the original after).
         let (result, buckets): (Result<Option<SimResult>, String>, FailBuckets) = {
             let req_task = req.clone();
-            // 7LV6VN T1: capture the caller's span (the worker's entered
+            // capture the caller's span (the worker's entered
             // `degenbot.bundle.simulate`) BEFORE the runtime hop; the helper
             // re-enters it inside the spawned task so `degenbot.simulate.inline`
             // joins the block trace instead of forking an orphan root.
@@ -858,7 +858,7 @@ mod tests {
     }
 }
 
-// 7LV6VN T1: the spawned sim task must JOIN the caller's trace, not fork a
+// the spawned sim task must JOIN the caller's trace, not fork a
 // new root. Pinned against the in-memory exporter seam (K6PCKP pattern): the
 // `degenbot.simulate.inline` span created inside `spawn_sim_task` must carry
 // the calling span's trace/parent - the exact relationship Jaeger lost when

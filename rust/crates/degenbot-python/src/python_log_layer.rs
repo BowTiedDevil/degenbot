@@ -118,7 +118,7 @@ impl PythonLogLayer {
             shutdown: AtomicBool::new(false),
         });
         let drainer_state = Arc::clone(&state);
-        // PE4FPM: self-register the drainer thread.
+        // self-register the drainer thread.
         degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {
             resource: "rust_log_drainer",
             kind: "std drainer thread (tracing → Python logging bridge)",
@@ -158,7 +158,7 @@ impl<S> Layer<S> for PythonLogLayer
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
 {
-    /// TPMFLV: every span creation records the creating thread into the
+    /// every span creation records the creating thread into the
     /// diagnostics thread-registry (std thread-id -> OS TID + last span).
     /// Runs on the span-creating thread; cheap (map lookup, one /proc read
     /// per thread lifetime) and feeds the GIL-deadlock self-dump.
@@ -507,7 +507,7 @@ pub fn shutdown_log_drainer() {
         state.shutdown.store(true, Ordering::Release);
     }
     flush_telemetry();
-    // K6PCKP: kill the OTel provider after the flush (None-safe when the
+    // kill the OTel provider after the flush (None-safe when the
     // DEGENBOT_OTEL env gate was off).
     #[cfg(feature = "otel")]
     if let Some(handle) = OTEL_PROVIDER.get() {
@@ -532,7 +532,7 @@ pub fn flush_telemetry() {
     }
 }
 
-/// K6PCKP: process-lifetime `OTel` tracer provider for the Python-driven
+/// process-lifetime `OTel` tracer provider for the Python-driven
 /// registry. Set by `init_logging_subscriber` when `DEGENBOT_OTEL=1`;
 /// `shutdown_log_drainer` flushes/kills it.
 #[cfg(feature = "otel")]
@@ -719,7 +719,7 @@ pub fn init_logging_subscriber() {
 
         #[cfg(feature = "otel")]
         {
-            // K6PCKP: OTel OTLP span layer. Import-time env gate (same
+            // OTel OTLP span layer. Import-time env gate (same
             // rationale as DEGENBOT_HOTPATH): the pymodule init is the one
             // justified implicit call site. Layered third on the base
             // registry; the provider lives in OTEL_PROVIDER for
@@ -739,7 +739,7 @@ pub fn init_logging_subscriber() {
                 Some(url) => degenbot_bot::otel::provider_from_endpoint(url),
                 None => degenbot_bot::otel::provider_from_env_endpoint(),
             };
-            // KAHU5W: typed schema key `telemetry.otel` (`DEGENBOT_OTEL`).
+            // typed schema key `telemetry.otel` (`DEGENBOT_OTEL`).
             // The legacy per-key `~/.config/degenbot/config.toml` fallback is
             // subsumed by the typed loader's `--config` layer.
             let otel_enabled = ::degenbot_config::holder::config().telemetry.otel;
@@ -769,7 +769,7 @@ pub fn init_logging_subscriber() {
             // serves whatever instruments the drain path records. Fail-open:
             // a bind failure logs and the bot runs without scrapeable metrics.
             if otel_layer.is_some() {
-                // Scrape endpoint (KAHU5W): typed schema key
+                // Scrape endpoint: typed schema key
                 // `telemetry.metrics_addr` / `DEGENBOT_METRICS_ADDR`.
                 let metrics_raw =
                     ::degenbot_config::holder::config().telemetry.metrics_addr.clone();
@@ -830,7 +830,7 @@ where
     }
 }
 
-// clippy --all-targets gate (UX66EM): this test module uses unwrap; the
+// clippy --all-targets gate: this test module uses unwrap; the
 // feature-gated otel test's expect calls carry their own targeted
 // #[expect(clippy::expect_used)] so the module attribute stays fulfilled
 // in default (no-otel) builds too.

@@ -152,7 +152,7 @@ impl ReorgCoordinator {
         bot.restore_pool_before_block(pool_id, block);
         if idempotent {
             span.record("reorg.action", "idempotent_noop");
-            // LXDY4C: restored pool re-enters the epoch ledger (its family
+            // restored pool re-enters the epoch ledger (its family
             // comes from the decode — no BotState classification).
             bot.record_pool_state_changed(pool_id, decoded.hop_type(), block);
             return Ok(ReorgOutcome::IdempotentNoop);

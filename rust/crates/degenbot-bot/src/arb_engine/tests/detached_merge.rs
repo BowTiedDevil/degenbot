@@ -1,7 +1,7 @@
 use super::*;
 
 // -------------------------------------------------------------------
-// Epic SRQEK5 (WV62TX): detached enqueue + sidecar merge
+// detached enqueue + sidecar merge
 // -------------------------------------------------------------------
 /// Structural acceptance (red/green): with the one (detached) arm and an
 /// injected 3000ms slow path, `run_epoch` — driven via
@@ -105,7 +105,7 @@ fn detached_straggler_with_stale_update_stamp_is_dropped() {
             && engine.cycle.results.contains_key(&fresh_pid),
         "precondition: fresh results merged by the inline drain"
     );
-    // WFF6MM: the baseline cycle's own merges counted here — the straggler
+    // the baseline cycle's own merges counted here — the straggler
     // assertions below are DELTAS against this snapshot.
     let applied_before = engine
         .cycle
@@ -175,7 +175,7 @@ fn detached_straggler_with_stale_update_stamp_is_dropped() {
     );
 }
 /// LW-T9 note-(a) carry (red): the DETACHED sidecar merge must carry the
-/// SAME exactness assert as the in-cycle drain (QR3NUS): one path outcome
+/// SAME exactness assert as the in-cycle drain: one path outcome
 /// exactly once — a duplicate (`cycle_seq`, `pid`) delivery trips the loud
 /// exactness fuse and is NOT applied a second time. RED before the
 /// cutover: the sidecar had no duplicate guard, so the twin merge
@@ -324,7 +324,7 @@ fn detached_straggler_after_deregister_is_dropped() {
         "the baseline inline-drain merges, and the dropped straggler adds none"
     );
 }
-/// MQUKB6-T2: the detached-merge sidecar thread has NO ambient span
+/// the detached-merge sidecar thread has NO ambient span
 /// context, so every `LaneOutcome::Solved` carrier carries the
 /// enqueue-time solve span — the merge-time event (here: the Q1a
 /// deregister drop) must land on the carried span rather than
@@ -444,7 +444,7 @@ fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
         "the panicked sidecar has exited: later sends hit the dead pipe (the send-failure signal)"
     );
 }
-/// T2 (epic SRQEK5 4QKZE3) cadence acceptance, SZJUKL-port: with detached
+/// T2 cadence acceptance, SZJUKL-port: with detached
 /// cycles ON through the PRODUCTION stage surface (`EngineStages` — the
 /// shipped `solve_dirty` cadence the driver executes INLINE at the machine's
 /// decision points), each solve call RETURNS at enqueue-end (µs) while the

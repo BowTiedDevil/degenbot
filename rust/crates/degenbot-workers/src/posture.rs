@@ -829,7 +829,7 @@ mod tests {
         assert_eq!(sm().state(), FleetPosture::Nominal);
     }
 
-    /// FF-T4 (Z6XTDX) — the DECIDED option (a): a typed `PostureCause`
+    /// FF-T4 — the DECIDED option (a): a typed `PostureCause`
     /// enters the cordon IMMEDIATELY (no sample hysteresis).
     #[test]
     fn a_lane_death_cordons_immediately() {

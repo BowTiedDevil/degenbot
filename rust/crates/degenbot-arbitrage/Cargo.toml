@@ -60,7 +60,7 @@ tracing = { version = "^0.1" }
 # top-K selection deterministic by profit instead of trusting the caller's
 # pre-sort (see ADR-024). Optional: default off for direct crate builds only;
 # both consumer paths — the `degenbot` umbrella and the `degenbot_rs` cdylib
-# — enable it (B5L2XA).
+# — enable it.
 degenbot-order-index = { workspace = true, optional = true }
 
 [features]
@@ -68,7 +68,7 @@ degenbot-order-index = { workspace = true, optional = true }
 # degenbot-order-index, replacing the "candidates arrive pre-sorted" contract.
 # Default off so a direct crate build keeps the caller's pre-sort contract;
 # both consumer paths (the `degenbot` umbrella + the `degenbot_rs` cdylib)
-# enable it (B5L2XA).
+# enable it.
 order-index = ["dep:degenbot-order-index"]
 
 [dev-dependencies]

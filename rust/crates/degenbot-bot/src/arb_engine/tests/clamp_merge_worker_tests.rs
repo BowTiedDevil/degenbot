@@ -299,7 +299,7 @@ fn merge_reports_worker_twins_and_never_reclips() {
     );
 }
 // ----------------- RKXN5Z / IJUBV3: bundle.simulate span hygiene -----------------
-/// RED-gate (IJUBV3): the merge-site microsecond `degenbot.bundle.simulate`
+/// RED-gate: the merge-site microsecond `degenbot.bundle.simulate`
 /// "verdict bookmark" spans collided with the REAL per-path EVM sim spans
 /// of the same name (traces 98f7cf52 / ab13f75fad50: 90-300 markers per
 /// block drowned the ms-scale sims). The merge must create NO span with
@@ -389,7 +389,7 @@ fn merge_payload_store_emits_no_bundle_simulate_span() {
              spans created: {created:?}"
     );
 }
-/// GREEN-gate (IJUBV3): the WORKER-side inline sim gets the honest
+/// GREEN-gate: the WORKER-side inline sim gets the honest
 /// `degenbot.bundle.simulate` span - a real ms-class EVM sim on the solve
 /// path, parented under the cycle span, with the terminal verdict.
 #[cfg(feature = "otel")]

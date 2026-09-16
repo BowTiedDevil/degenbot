@@ -16,7 +16,7 @@
 //! discipline: a journey narrative asserting the rugpull-protection invariant
 //! (rollback -> no pools + no stamp; restart re-processes cleanly because the
 //! rollback left no partial state). The testable seam is the D1 write-half
-//! split [`apply_chunk_writes_on_conn`] (Task `CKXCOB` 3c) — pure-sync, takes
+//! split [`apply_chunk_writes_on_conn`] — pure-sync, takes
 //! a `&Connection` + a [`ChunkInputs`], NO mock RPC needed (the RPC fetch
 //! half is covered by `degenbot-rpc`'s 88 tests; this test is about the
 //! transaction/rollback semantics).

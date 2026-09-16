@@ -82,7 +82,7 @@ fn v3_pool_handle_exposes_structure_identity_cl_view_and_swap() {
 }
 
 /// DEX-name resolution: a V3 pool whose `(chain_id, factory)` matches a known
-/// deployment resolves the DEX name on `Identity::dex` (QHGN2E). Uses the
+/// deployment resolves the DEX name on `Identity::dex`. Uses the
 /// Uniswap V3 mainnet factory (chain 1) → `Uniswap`.
 #[test]
 fn v3_resolves_uniswap_dex_name_from_known_deployment() {

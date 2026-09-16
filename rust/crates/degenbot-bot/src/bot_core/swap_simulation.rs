@@ -396,7 +396,7 @@ struct OverrideSim<'a> {
     limit: U256,
     fetcher: Option<Arc<dyn TickWordFetcher>>,
     pool_id: u64,
-    /// RATR5A/CXRHW3: miss recovery DISARMED - a fresh missing word
+    /// miss recovery DISARMED - a fresh missing word
     /// surfaces as `FetchExhausted` (typed contract) instead of an inline
     /// fetch under the caller read guard.
     disarm_fetch: bool,
@@ -499,7 +499,7 @@ pub(crate) struct RegisteredClSim<'a> {
     /// Engine-mapped `amountSpecified` (see [`engine_amount_specified`]).
     pub spec: I256,
     pub limit: U256,
-    /// RATR5A/CXRHW3: when set, miss recovery is DISARMED — a fresh missing
+    /// when set, miss recovery is DISARMED — a fresh missing
     /// word surfaces as `FetchExhausted` (additive, in-contract) instead of
     /// fetching under the caller's write guard. The python seams arm the
     /// staged pre-pass instead and enter this arm with words preinstalled.
@@ -537,7 +537,7 @@ impl ComputeMerge for RegisteredClSim<'_> {
     }
 
     fn fetch_word(&self, word: i32, block: u64) -> Result<FetchedTickWord, FetchFailure> {
-        // RATR5A/CXRHW3: disarmed sims never fetch — their callers staged
+        // disarmed sims never fetch — their callers staged
         // the missing words beforehand (lock-free) and the typed contract
         // answers FetchExhausted for any residual miss.
         if self.disarm_fetch {
@@ -561,7 +561,7 @@ impl ComputeMerge for RegisteredClSim<'_> {
 }
 
 impl BotState {
-    /// RATR5A/CXRHW3 discovery pass: the missing bitmap words a CL swap
+    /// the missing bitmap words a CL swap
     /// would need, WITHOUT fetching and WITHOUT mutating registered state
     /// (a forged-empty drive walks a TRANSIENT clone). Multi-word safe: one
     /// pass lists every missing word on the crossing (pair-review condition
@@ -704,7 +704,7 @@ impl BotState {
         }
     }
 
-    /// RATR5A/CXRHW3 discovery drive: one compute-walk over a TRANSIENT pool
+    /// one compute-walk over a TRANSIENT pool
     /// state recording every missing word instead of fetching. Forged empty
     /// fills land on the TRANSIENT (never registered state), so the walker
     /// steps past each discovered word and surfaces ALL of a pass missing
@@ -750,7 +750,7 @@ impl BotState {
     /// to keep the `PyO3` seam byte-stable; the typed outcome arrives when the
     /// driver layer adopts it.
     #[must_use]
-    /// RATR5A/CXRHW3: the override sim with miss recovery DISARMED - a
+    /// the override sim with miss recovery DISARMED - a
     /// missing word surfaces as None (the legacy Option contract) instead of
     /// an inline fetch under the caller read guard. The pooled caller
     /// pre-stages through [`Self::override_missing_words`] + the lock-free
@@ -763,7 +763,7 @@ impl BotState {
         self.simulate_override_ext(over, block, true)
     }
 
-    /// RATR5A/CXRHW3: the missing bitmap words the OVERLAY sim would fetch,
+    /// the missing bitmap words the OVERLAY sim would fetch,
     /// listed by a collect-only walk over a transient built from the
     /// override scalars + the caller tick data (no fetch, no registered
     /// mutation). Pair with the lock-free fetch choreography in pool.rs
@@ -991,7 +991,7 @@ impl BotState {
         self.swap_simulation_ext(block, pool_id, &request, false)
     }
 
-    /// RATR5A/CXRHW3: the swap with miss recovery DISARMED — a residual
+    /// the swap with miss recovery DISARMED — a residual
     /// missing word after the staged pre-pass surfaces as the typed
     /// `FetchExhausted` contract (additive, ADR-037) instead of fetching under
     /// the caller write guard. Identical arithmetic otherwise (the caller
@@ -1190,7 +1190,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     // ---------------------------------------------------------------------
-    // RATR5A/CXRHW3: the staged pre-pass + DISARMED sim contract.
+    // the staged pre-pass + DISARMED sim contract.
     // ---------------------------------------------------------------------
 
     /// Registered sparse pool whose stored fetcher counts every call.

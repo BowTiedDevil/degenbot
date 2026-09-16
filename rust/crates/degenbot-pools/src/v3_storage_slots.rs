@@ -250,7 +250,7 @@ pub fn encode_v3_liquidity_slot(liquidity: u128) -> U256 {
 /// oracle (`tier3_v3_pool_swap_vs_revm.rs`) previously seeded the pool with
 /// gross/net SWAPPED, and a swap crossing an upper boundary read `net = +
 /// gross` (liquidity grew instead of shrinking). Fixing the halves to match the
-/// canonical pool made the up-direction walk byte-exact (epic CMORFZ/6DLK7I).
+/// canonical pool made the up-direction walk byte-exact.
 #[must_use]
 pub fn encode_v3_tick_info_slot(tick_info: &TickInfo) -> U256 {
     let gross = U256::from(tick_info.liquidity_gross.to::<u128>());

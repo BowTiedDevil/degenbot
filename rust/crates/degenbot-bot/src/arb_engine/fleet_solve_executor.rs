@@ -57,7 +57,7 @@ pub(crate) fn abort_executor(context: &str, err: &str) -> ! {
 pub(crate) fn abort_loud(context: &str, err: &str) -> ! {
     abort_executor(context, err);
 }
-/// The pins == bins invariant check (P6YXA6): a Solver bin index must land
+/// The pins == bins invariant check: a Solver bin index must land
 /// within the structural seat count. Pure (no `&self`) so the tests hold
 /// the contract without booting a fleet.
 fn validate_bin_index(bin: usize, solver_seats: usize) -> Result<(), String> {
@@ -140,7 +140,7 @@ impl FleetSolveExecutor {
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
     pub(crate) fn boot(boot: FleetBoot) -> Result<Self, BootError> {
         let host = FleetHost::boot(boot)?;
-        // FF-T3 (Z2YW52): the LANE-TO-THREAD BINDING SEAM — the same
+        // FF-T3: the LANE-TO-THREAD BINDING SEAM — the same
         // adapter slot the pooled pair runs (seat_host): the PINNED
         // binding preserves today's topology exactly (the per-seat
         // keyed mailboxes over the ONE HostPump); the serial binding is
@@ -149,7 +149,7 @@ impl FleetSolveExecutor {
         // typed pending refusal (never a silent narrow).
         match host.plan().binding {
             degenbot_workers::plan::Binding::Pinned => Ok(Self::boot_pinned(host)),
-            // FF-T4 (Z6XTDX): the serial arm BOOTS — the serial
+            // FF-T4: the serial arm BOOTS — the serial
             // projection's ONE solver seat is the named serial-0 cycle
             // thread: one persistent keyed mailbox (bin 0) over the ONE
             // HostPump, the §10 never-drop shape unchanged.
@@ -198,7 +198,7 @@ impl FleetSolveExecutor {
         if seat_senders.len() != solver_seats {
             // Loud CONSTRUCTION abort, not a Result path: a seat array that
             // does not tile the SlotLayout solver range exactly would
-            // misroute bins positionally (2SIOHJ) — the executor discipline
+            // misroute bins positionally — the executor discipline
             // aborts, never returns a degraded handle.
             abort_executor(
                 "solver seat construction",
@@ -272,7 +272,7 @@ impl FleetSolveExecutor {
         bin: usize,
         work: crate::arb_engine::executor::SubmitWork,
     ) -> Result<SubmitReceipt, SubmitError> {
-        // The pins == bins invariant (P6YXA6), held at the submit seam: a
+        // The pins == bins invariant, held at the submit seam: a
         // bin without a structural seat must abort HERE — with both numbers
         // in the message — instead of decaying into an FSM transition
         // refusal deep in dispatch.
@@ -392,7 +392,7 @@ struct SolveSink<'a> {
 }
 impl SeatSink for SolveSink<'_> {
     fn deliver(&self, host: &mut FleetHost, grant: Grant, unit: Unit) {
-        // Positional seat map (2SIOHJ): seat i <-> FleetHost slot
+        // Positional seat map: seat i <-> FleetHost slot
         // `SlotLayout::solver.start + i` — the solver home range is cut
         // from index 0 at exactly this vec's length (pinned at the
         // executor's construction), so the get is the identity map over
@@ -475,7 +475,7 @@ impl HostDiscipline for SolveDiscipline {
 }
 static FLEET_SOLVE_BOOT: OnceLock<BootStamp> = OnceLock::new();
 static FLEET_EXECUTOR: OnceLock<FleetSolveExecutor> = OnceLock::new();
-/// Install the CONSTRUCTION-STAMPED boot (YI5NGB): the engine's own typed
+/// Install the CONSTRUCTION-STAMPED boot: the engine's own typed
 /// boot descriptor (fleet quota + overrides + posture) parsed at ITS
 /// construction from the CALLER cfg, stamped with the engine id + a
 /// deterministic cfg hash. Never overrides an installed value (first
@@ -490,7 +490,7 @@ pub(crate) fn install_boot(stamp: BootStamp) {
 /// fleet-stance solve and persisting for the process lifetime.
 pub(crate) fn global_fleet_solve_executor() -> &'static FleetSolveExecutor {
     FLEET_EXECUTOR.get_or_init(|| {
-        // YI5NGB: the absence window is CLOSED BY CONSTRUCTION — every
+        // the absence window is CLOSED BY CONSTRUCTION — every
         // dispatch path builds on a constructed engine, and construction
         // (with_core_cfg) installs the stamp BEFORE any dispatch can
         // exist. A missing stamp means a caller skipped the construction
@@ -503,7 +503,7 @@ pub(crate) fn global_fleet_solve_executor() -> &'static FleetSolveExecutor {
         let stamp = FLEET_SOLVE_BOOT
             .get()
             .expect(
-                "fleet solve boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
+                "fleet solve boot stamp missing: an engine must construct before the first fleet submit",
             );
         match FleetSolveExecutor::boot(stamp.boot()) {
             Ok(executor) => executor,
@@ -557,7 +557,7 @@ mod tests {
             owner: Some(owner),
         }
     }
-    /// The pins == bins contract (P6YXA6) as a pure validator: a
+    /// The pins == bins contract as a pure validator: a
     /// seat-bounded bin index passes; anything over it is shouted down with
     /// BOTH numbers so the loud abort decodes at a glance.
     #[test]
@@ -654,7 +654,7 @@ mod tests {
     fn solve_bin_keys_never_collide_with_the_merge_pin_key() {
         assert_ne!(SOLVE_BIN_KEY_BASE, degenbot_workers::slot::MERGE_PIN_KEY);
     }
-    /// Pinning fixture (BCA77G): per-bin worker pinning — every bin's
+    /// Pinning fixture: per-bin worker pinning — every bin's
     /// units ride the same seat across cycles (T3/T6), matching the
     /// RAYPAR T3 one-persistent-worker-per-bin contract.
     ///
@@ -667,7 +667,7 @@ mod tests {
         clippy::print_stderr,
         reason = "the self-skip channel when a parallel test won the stamp race (the documented F1 skip semantics)"
     )]
-    /// F1 white-box (YI5NGB): the materializer's init closure aborts LOUD
+    /// F1 white-box: the materializer's init closure aborts LOUD
     /// (the expect) when no construction ever installed a stamp — invoked
     /// directly so the expect fires WITHOUT a real `FleetHost` boot.
     #[test]
@@ -680,7 +680,7 @@ mod tests {
         }
         let closure = || {
             let stamp = super::FLEET_SOLVE_BOOT.get().expect(
-                "fleet solve boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
+                "fleet solve boot stamp missing: an engine must construct before the first fleet submit",
             );
             match FleetSolveExecutor::boot(stamp.boot()) {
                 Ok(_executor) => (),
@@ -1198,7 +1198,7 @@ mod tests {
     fn red_panic(message: &str) -> ! {
         panic!("{message}")
     }
-    /// The exactness fuse (QR3NUS): a bin whose 3rd of N paths panics
+    /// The exactness fuse: a bin whose 3rd of N paths panics
     /// still drains exactly one outcome per submitted path — survivors as
     /// real outcomes (a worker `None` IS an outcome), every undelivered
     /// path as a typed failure — so `solved + suppressed + failed ==
@@ -1284,7 +1284,7 @@ mod tests {
             "the 3rd path and everything after it must land as typed failures"
         );
     }
-    /// FF-T4 (Z6XTDX) — AC 3: a lane death mid-flight yields TERMINAL
+    /// FF-T4 — AC 3: a lane death mid-flight yields TERMINAL
     /// RECEIPTS for in-flight paths (typed `LaneFailure::LaneDeath`,
     /// exactly one outcome per submitted path — the ledger stays
     /// exact), the CORDONED posture (sticky — clean windows never lift

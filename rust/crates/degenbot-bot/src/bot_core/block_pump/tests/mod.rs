@@ -61,7 +61,7 @@ impl BlockPump {
         }
     }
 
-    /// Test-only override of the quiesce-estimator parameters (BM35LK) —
+    /// Test-only override of the quiesce-estimator parameters —
     /// per-pump field override (not env) so tests stay immune to the
     /// environment. Applied to the FSM when the run loop starts.
     pub fn set_quiesce_for_test(&mut self, params: QuiesceParams) {
@@ -86,7 +86,7 @@ impl BlockPump {
         self.run_with_stream(combined, first_observed_block).await;
     }
 
-    /// Test-only override of the header-staleness watchdog window (JIABO3).
+    /// Test-only override of the header-staleness watchdog window.
     /// Lets tests drive the watchdog `tokio::time::interval` to a sub-second
     /// period instead of the 30s production default, so the select-arm fire
     /// is observable without a 30s wait.
@@ -137,7 +137,7 @@ struct FakeStageEngine {
     /// is the sole path that backfills past the stream's observed block).
     solved: Mutex<Vec<u64>>,
     last_processed: AtomicU64,
-    /// Test knob for the active-block promotion RED test (BO5FBS):
+    /// Test knob for the active-block promotion RED test:
     /// when `true`, `has_dirty_paths()` reports dirty so the top-of-loop
     /// `on_drain` path fires. Default `false` keeps every existing test's
     /// no-drain behavior unchanged.
@@ -153,7 +153,7 @@ struct FakeStageEngine {
     /// stage seam. These split counters let the pin tell the two apart.
     pump_control_ends: std::sync::atomic::AtomicUsize,
     stage_seam_ends: std::sync::atomic::AtomicUsize,
-    /// PWPPAZ T2: virtual-time stamps for each `on_drain` (paired with
+    /// virtual-time stamps for each `on_drain` (paired with
     /// `drained`), read via `drained_at`.
     drained_at: Mutex<Vec<tokio::time::Instant>>,
 }
@@ -176,7 +176,7 @@ impl FakeStageEngine {
         }
     }
 
-    /// PWPPAZ T2: virtual-time stamps paired with `drained_blocks()`.
+    /// virtual-time stamps paired with `drained_blocks()`.
     fn drained_at(&self) -> Vec<tokio::time::Instant> {
         self.drained_at.lock().unwrap().clone()
     }
@@ -257,7 +257,7 @@ impl StageHandlers for FakeStageEngine {
             .lock()
             .unwrap()
             .push((block, *work.ctx.metadata()));
-        // PWPPAZ T2: virtual-time dispatch stamp (start_paused tests
+        // virtual-time dispatch stamp (start_paused tests
         // assert the slice fired at its deadline, not at burst end).
         self.drained_at
             .lock()
@@ -376,7 +376,7 @@ fn pump_for_test(last_processed: Option<u64>) -> (BlockPump, Arc<FakeStageEngine
 }
 
 /// Same shape as `pump_for_test` but also returns the mock transport's
-/// `Asserter` (JIABO3) so tests can queue `eth_blockNumber` /
+/// `Asserter` so tests can queue `eth_blockNumber` /
 /// `eth_getLogs` responses reached by the header-staleness watchdog's
 /// `handle_timeout_eager`. `pump_for_test` discards the asserter; this
 /// variant exposes it.
@@ -416,7 +416,7 @@ fn pump_for_test_sink_and_asserter(
     (pump, sink, asserter, shutdown)
 }
 
-/// PWPPAZ T2 gap-stream builder: the block-101 header, then `logs` V2
+/// the block-101 header, then `logs` V2
 /// Sync logs spaced `gap_ms` apart (a real burst shape: one header, a
 /// multi-event log burst), then END. Under `start_paused` the sleeps
 /// advance in virtual time, so the slice deadline (25ms < gap 40ms <
@@ -455,7 +455,7 @@ fn gap_burst_stream(logs: u64, gap_ms: u64) -> stream::BoxStream<'static, WsEven
     .boxed()
 }
 
-/// PWPPAZ T2 — designed first-slice: with a gapped multi-event burst
+/// designed first-slice: with a gapped multi-event burst
 /// (headers every 40ms; gap > slice deadline 25ms, gap < settle debounce
 /// 50ms), the gate dispatches ONE early Drain at ~first-dirty + 25ms
 /// (mid-burst, NOT at burst end), then the tail still gets its quiesce
@@ -834,7 +834,7 @@ async fn drainer_settle(cond: impl Fn() -> bool) {
 }
 
 // -----------------------------------------------------------------
-// DFQYM5: verify-mismatch drain/buffer race characterization.
+// verify-mismatch drain/buffer race characterization.
 //
 // The bot dies at registration `verify_v3_post_drain_snapshot` with a tick
 // gross mismatch: the pin reports `update_block = N` but is missing one
@@ -944,7 +944,7 @@ const FUZZ_POOL_COUNT: usize = 3;
 const FUZZ_TICKS: [i32; 3] = [-10, 7, 20];
 const FUZZ_SEED_GROSS: u128 = 10_000_000_000_000_000;
 
-/// JUCFCB/J3FMDO helper: build a `pump_for_test_with_bot` variant that
+/// build a `pump_for_test_with_bot` variant that
 /// also returns the `Asserter` so a test can push `eth_getLogs`
 /// responses and observe whether the auto-backfill path drains them.
 fn pump_for_test_with_asserter(

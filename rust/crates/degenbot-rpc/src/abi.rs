@@ -1307,7 +1307,7 @@ mod tests {
 
     // ── tick_data / tick_bitmap (V3 + V4) — independent-oracle tests ──
     //
-    // Migrated from `degenbot-pool-updater/src/verify.rs` (slice A, commit #1)
+    // Migrated from `degenbot-pool-updater/src/verify.rs`
     // to fill the home's gap: `decode_tick_data` / `decode_tick_bitmap` /
     // `decode_v4_tick_data` / `decode_v4_tick_bitmap` had NO unit tests here
     // before this commit. The reference payloads are built with an

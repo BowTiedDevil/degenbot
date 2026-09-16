@@ -23,7 +23,7 @@ impl PyArbEngine {
     /// Returns `None` if no block has been processed yet (before the first
     /// solve / before resume).
     fn last_processed_block(&self) -> Option<u64> {
-        // ZE67AE: route through the PumpControl trait (the inherent
+        // route through the PumpControl trait (the inherent
         // `EngineStages` twin was hard-cut); the trait cursor is Epoch-typed.
         use degenbot_bot::bot_core::PumpControl;
         PumpControl::last_processed_block(self.driver.stages().as_ref())
@@ -98,7 +98,7 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         let stages = Arc::clone(&self.stages);
-        // YLYJM2: release the GIL across the `core.write()` hold so the live
+        // release the GIL across the `core.write()` hold so the live
         // pump + asyncio loop keep making GIL progress while the main thread
         // awaits the lock. The SINGLE `core.write()` hold across both drains
         // AND the post-drain pin is PRESERVED (the step-2 rolling-start race
@@ -132,7 +132,7 @@ impl PyArbEngine {
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         let stages = Arc::clone(&self.stages);
-        // YLYJM2: release the GIL across the `core.write()` hold (V4 twin of
+        // release the GIL across the `core.write()` hold (V4 twin of
         // `apply_buffer_v3`). The single-write-hold invariant (the step-2
         // race fix) is preserved — `py.detach` wraps the OUTSIDE.
         py.detach(move || {
@@ -332,7 +332,7 @@ impl PyArbEngine {
         path_id: u64,
         rpc_url: Option<String>,
     ) -> PyResult<pyo3::Py<pyo3::PyAny>> {
-        let _ = rpc_url; // retained for API stability; onchain fetch retired (AM5AJW).
+        let _ = rpc_url; // retained for API stability; onchain fetch retired.
                          // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
         let snapshot = self.with_stages(py, |e| e.diagnostic_path_state(path_id));
 

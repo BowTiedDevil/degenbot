@@ -52,7 +52,7 @@ static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 /// operators/tests may adjust it at runtime (`set_warn_threshold_ms`).
 static WARN_THRESHOLD_MS: AtomicU64 = AtomicU64::new(0);
 static THRESHOLD_INIT: LazyLock<()> = LazyLock::new(|| {
-    // KAHU5W: typed schema key (`state_lock.warn_ms` / DEGENBOT_LOCK_WARN_MS).
+    // typed schema key (`state_lock.warn_ms` / DEGENBOT_LOCK_WARN_MS).
     let raw = crate::bot_core::stance::config().state_lock.warn_ms;
     WARN_THRESHOLD_MS.store(raw.max(1), Ordering::Relaxed);
 });
@@ -111,7 +111,7 @@ static ACTIVE_READS: LazyLock<Mutex<HashMap<usize, Vec<HoldRecord>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Lock-key -> active WRITE hold. Writers serialize, so at most one record
-/// per key; used to name a slow WRITE holder on drop (XC7SWD).
+/// per key; used to name a slow WRITE holder on drop.
 static ACTIVE_WRITES: LazyLock<Mutex<HashMap<usize, HoldRecord>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -149,7 +149,7 @@ fn advance_clock_ms(ms: u64) {
     CLOCK_OFFSET_MS.fetch_add(ms, Ordering::Relaxed);
 }
 
-/// Epic K4ETHF T2: closed-set acquire-site taxonomy for the
+/// closed-set acquire-site taxonomy for the
 /// `degenbot.state_lock` wait/hold histograms. The label IS the enum: a call
 /// site passes a `LockSite` (never a string), so a metric label cannot drift
 /// from the taxonomy and a new site must be classified deliberately. The raw
@@ -283,8 +283,7 @@ fn register_write(key: usize, location: &'static Location<'static>) -> u64 {
 
 /// Remove a read hold's registry entry, returning the removed record so the
 /// guard's `Drop` can report a slow hold that no later acquire flagged
-/// (epic K4ETHF T1: holders that release before the waiter stampede were
-/// invisible — the aged-check only runs on subsequent acquisitions).
+///.
 fn remove_read(key: usize, seq: u64) -> Option<HoldRecord> {
     let mut map = ACTIVE_READS.lock();
     let records = map.get_mut(&key)?;
@@ -518,7 +517,7 @@ impl<T> StateLock<T> {
 
     /// Acquire a write guard. Long blocks WARN with the reader snapshot taken
     /// immediately after acquisition (the readers we were waiting for); long
-    /// HOLDS warn on drop naming the hold site (XC7SWD).
+    /// HOLDS warn on drop naming the hold site.
     #[track_caller]
     pub fn write_at(&self, site: LockSite) -> StateWriteGuard<'_, T> {
         let location = Location::caller();
@@ -607,7 +606,7 @@ pub struct StateReadGuard<'a, T> {
     inner: RwLockReadGuard<'a, T>,
     key: usize,
     seq: u64,
-    /// K4ETHF T2: closed-set acquire-site class + acquire instant for the
+    /// closed-set acquire-site class + acquire instant for the
     /// hold histogram (recorded at drop regardless of the diag gate).
     site: LockSite,
     acquired: Instant,
@@ -627,7 +626,7 @@ impl<T> Drop for StateReadGuard<'_, T> {
         // seq == 0 is the gated-off sentinel (never registered; no removal).
         if self.seq != 0 {
             let removed = remove_read(self.key, self.seq);
-            // Drop-time slow-hold report (epic K4ETHF T1): complements the
+            // Drop-time slow-hold report: complements the
             // aged-check. The observed stall shape is holder-releases-first,
             // waiter-stampede-second — the aged-check (which only runs on a
             // later acquire) never saw the long holder. Warn-once: a hold the
@@ -655,7 +654,7 @@ pub struct StateWriteGuard<'a, T> {
     inner: RwLockWriteGuard<'a, T>,
     key: usize,
     seq: u64,
-    /// K4ETHF T2: closed-set acquire-site class + acquire instant for the
+    /// closed-set acquire-site class + acquire instant for the
     /// hold histogram (recorded at drop).
     site: LockSite,
     acquired: Instant,
@@ -831,7 +830,7 @@ mod tests {
         set_diag_enabled_for_tests(false);
     }
 
-    // ---- write-hold forensics (XC7SWD) ----------------------------------
+    // ---- write-hold forensics ----------------------------------
 
     #[test]
     #[expect(clippy::expect_used)]
@@ -977,7 +976,7 @@ mod tests {
         set_diag_enabled_for_tests(false);
     }
 
-    // ---- read-hold drop-time forensics (epic K4ETHF T1: the ~3.1s stall) ----
+    // ---- read-hold drop-time forensics ----
     //
     // The soak-observed hole: a read guard that exceeds the threshold and
     // releases BEFORE any later acquire fires the aged-check leaves the

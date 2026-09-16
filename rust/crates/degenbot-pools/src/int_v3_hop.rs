@@ -276,7 +276,7 @@ impl IntV3TickRangeHop {
     /// on-chain behaviour; the prior FLOOR version under-estimated the
     /// boundary-reaching input and over-predicted V4 multi-range swap output.
     ///
-    /// E7ALWT: for a collapsed multi-word range the on-chain V3/V4
+    /// for a collapsed multi-word range the on-chain V3/V4
     /// `PoolManager` floors `computeSwapStep` at EVERY word boundary, so this
     /// walks `word_boundary_prices` (entry→exit) one `exact_in_step_to_target`
     /// per boundary — keeping `max_gross_input_in_range ==

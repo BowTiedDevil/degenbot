@@ -463,7 +463,7 @@ fn precomputed_crossings_match_self_derived_bound() {
         let carried_bound = path_profit_bound(&carried, &GateDeps::offline());
         assert_eq!(
             derived_bound, carried_bound,
-            "caller-carried crossing tables must not change the envelope (BZSOJ7)"
+            "caller-carried crossing tables must not change the envelope"
         );
     }
 }

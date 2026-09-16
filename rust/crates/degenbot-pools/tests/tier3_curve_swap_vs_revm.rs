@@ -1,5 +1,4 @@
-//! Tier-3 Curve standard-stableswap `get_dy` on-chain accuracy oracle (ergo
-//! task `YXMNWB`, epic `UP5NH6` — family 2/3 of SH6HAK's Tier-3 cutover).
+//! Tier-3 Curve standard-stableswap `get_dy` on-chain accuracy oracle.
 //! Deploys the `CurveSwapOracleHarness` (solc-0.8.26 compiled — a faithful
 //! Solidity port of the STANDARD stableswap `get_dy`; Curve's canonical source
 //! is Vyper, absent here, so the documented algorithm is the on-chain

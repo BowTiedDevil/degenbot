@@ -50,7 +50,7 @@ fn host() -> FleetHost {
 
 #[test]
 fn boot_fails_loudly_on_an_unhostable_quota() {
-    // FF-T4 (Z6XTDX): the 2-5-core tier BOOTS the serial plan — the
+    // FF-T4: the 2-5-core tier BOOTS the serial plan — the
     // loud refusal moved below the serial floor (HOST_FLOOR_CORES: a
     // 1.5-core host cannot host ANY tier).
     let host = FleetHost::boot(FleetBoot {
@@ -210,7 +210,7 @@ fn merge_slot_reads_the_boot_layout() {
     );
 }
 
-/// 2SIOHJ: the boot geometry oracle. The Q=8 production shape (VERIFIED
+/// the boot geometry oracle. The Q=8 production shape (VERIFIED
 /// against the real derive: pins = floor(8) − 2 solve headroom = 6, sim =
 /// today's `SimSlots` cap 4, resolve fixed 1, the PRG-3 station 4, the merge
 /// sidecar last) tiles the table contiguously.
@@ -267,7 +267,7 @@ fn slot_layout_pins_the_merge_sidecar_to_the_last_index() {
     // oracle's 15. The replica died; the layout stands.
 }
 
-/// 2SIOHJ: the 1-bin edge — `solve_headroom` 5 at Q=6 sizes exactly one
+/// the 1-bin edge — `solve_headroom` 5 at Q=6 sizes exactly one
 /// LPT pin (`max(1, floor(Q) − headroom)`); the layout still boots with
 /// every other hosted range intact and merge last.
 #[test]
@@ -292,7 +292,7 @@ fn slot_layout_of_accepts_the_one_bin_edge() {
     assert_eq!(host.slot_states().len(), 11);
 }
 
-/// 2SIOHJ: a dead station — a v1-hosted role sized to ZERO slots — is a
+/// a dead station — a v1-hosted role sized to ZERO slots — is a
 /// loud `BootError::Invariant` at boot, never a silently unhostable
 /// station.
 #[test]

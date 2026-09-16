@@ -871,7 +871,7 @@ impl SeatHost {
         fault: Option<std::sync::Arc<crate::arb_engine::fleet_intake::IntakeFaultWatch>>,
     ) -> Result<Self, BootError> {
         let host = FleetHost::boot(boot)?;
-        // FF-T3 (Z2YW52): the LANE-TO-THREAD BINDING SEAM — one lane
+        // FF-T3: the LANE-TO-THREAD BINDING SEAM — one lane
         // interface, the binding is the adapter that maps lanes to
         // threads (the second adapter at the Executor seam; the
         // two-adapter rule makes the seam real). The PINNED binding
@@ -883,7 +883,7 @@ impl SeatHost {
         // narrow).
         match host.plan().binding {
             degenbot_workers::plan::Binding::Pinned => Ok(Self::boot_pinned(desc, host, fault)),
-            // FF-T4 (Z6XTDX): the serial arm BOOTS — one named cycle
+            // FF-T4: the serial arm BOOTS — one named cycle
             // thread (`work-fleet-serial-0`) runs the role's FSM slots in
             // grant order over the SAME queue and HostPump (§10
             // never-drop unchanged; the layout seats stay the FSM's
@@ -1145,7 +1145,7 @@ fn abort_executor(desc: &SeatRoleDesc, context: &str, err: &str) -> ! {
     );
     std::process::abort();
 }
-/// Install the CONSTRUCTION-STAMPED boot (YI5NGB): the engine's own typed
+/// Install the CONSTRUCTION-STAMPED boot: the engine's own typed
 /// boot descriptor (fleet quota + overrides + posture) parsed at ITS
 /// construction from the CALLER cfg, stamped with the engine id + a
 /// deterministic cfg hash. Never overrides an installed value (first
@@ -1155,7 +1155,7 @@ fn abort_executor(desc: &SeatRoleDesc, context: &str, err: &str) -> ! {
 /// [`BootRole`] row.
 pub(crate) fn install_boot(courier: &OnceLock<BootStamp>, desc: &SeatRoleDesc, stamp: BootStamp) {
     crate::arb_engine::boot_stamp::record_ride(desc.boot_role, &stamp);
-    // FF-T5 (NT7HJC): record the resolved fleet profile ONCE (first
+    // FF-T5: record the resolved fleet profile ONCE (first
     // writer wins, like the stamp itself): the process summary feeds the
     // degenbot_fleet_profile metric, and a serial-tier resolution fires
     // the production alert (never a silent narrow).
@@ -1165,13 +1165,13 @@ pub(crate) fn install_boot(courier: &OnceLock<BootStamp>, desc: &SeatRoleDesc, s
 /// The process-wide materializer (the global_* boilerplate, folded from
 /// the two executors): lazily boot the executor from the
 /// construction-stamped boot and persist it for the process lifetime.
-/// YI5NGB: the absence window is CLOSED BY CONSTRUCTION — every dispatch
+/// the absence window is CLOSED BY CONSTRUCTION — every dispatch
 /// path builds on a constructed engine, and construction (`with_core_cfg`)
 /// installs the stamp BEFORE any dispatch can exist. A missing stamp means
 /// a caller skipped the construction contract: LOUD abort (never a silent
 /// fallback boot of a boot nobody chose).
 ///
-/// FF-T1 (BPHR6F): the BOOT-REFUSAL arm is TYPED and STICKY — never a
+/// FF-T1: the BOOT-REFUSAL arm is TYPED and STICKY — never a
 /// process abort. A refused boot parks its `BootError` in the executor
 /// slot's `OnceLock`: the first caller surfaces the typed error and every
 /// later caller re-surfaces the SAME refusal. The refusal resolves
@@ -1196,7 +1196,7 @@ pub(crate) fn global_executor<T>(
         )]
         let stamp = courier.get().expect(desc.stamp_missing);
         boot(stamp.boot()).inspect_err(|err| {
-            // FF-T1 (BPHR6F): the BOOT-REFUSAL family is typed and sticky,
+            // FF-T1: the BOOT-REFUSAL family is typed and sticky,
             // never a process abort — the library must never abort the host
             // process on this arm (the 2026-09-11 CI failures: the fleet
             // budget refusal SIGABRT'd pytest-xdist workers inside the
@@ -1219,7 +1219,7 @@ pub(crate) fn global_executor<T>(
     .map_err(Clone::clone)
 }
 // ======================================================================
-// candidate 4 (DQA7YL / YUMQU3): the FleetBootRegistry.
+// candidate 4: the FleetBootRegistry.
 //
 // The ONE keyed owner of the two POOLED roles' boot facts. The solve host
 // is deliberately absent: it has a different seat model (per-seat keyed
@@ -1237,7 +1237,7 @@ static SIM_ROLE: SeatRoleDesc = SeatRoleDesc {
     noun: "sim",
     host_thread: "work-fleet-sim-host",
     stamp_missing:
-        "fleet sim boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
+        "fleet sim boot stamp missing: an engine must construct before the first fleet submit",
     seats: sim_seats_of,
 };
 /// The queue-cap source: the budget's `SimDriver` slot cap.
@@ -1254,7 +1254,7 @@ static REG_ROLE: SeatRoleDesc = SeatRoleDesc {
     noun: "intake",
     host_thread: "work-fleet-poolupd-host",
     stamp_missing:
-        "fleet registration boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
+        "fleet registration boot stamp missing: an engine must construct before the first fleet submit",
     seats: reg_seats_of,
 };
 /// The queue-cap source: the budget's `pool_state_updater_slots`.
@@ -1331,7 +1331,7 @@ impl<T: 'static> BootSlot<T> {
     /// boilerplate), keyed to this slot's couriers.
     ///
     /// # Errors
-    /// FF-T1 (BPHR6F): the typed, sticky fleet boot refusal.
+    /// FF-T1: the typed, sticky fleet boot refusal.
     pub(crate) fn global_executor(
         &self,
         boot: fn(FleetBoot) -> Result<T, BootError>,
@@ -1895,7 +1895,7 @@ mod tests {
     /// CORDON — into both host kinds. The unified shape consults posture
     /// unconditionally; the outcomes differ ONLY by the role's own cordon
     /// class, never by host-kind code: the Deferrable registration host
-    /// HOLDS intake in the backlog (JCI2FW), while the solve host ADMITS
+    /// HOLDS intake in the backlog, while the solve host ADMITS
     /// and grants under the cordon (7OGY5V — the consult is provably
     /// constant-true for `CordonClass::Never`, so the unconditional consult
     /// is behavior-EXACT for solve).
@@ -3027,7 +3027,7 @@ mod tests {
             "the record is first-wins"
         );
     }
-    // ── T7 (TB4QGX): mechanized safety, liveness, reachability ────────────
+    // ── T7: mechanized safety, liveness, reachability ────────────
     //
     // Falsification contract (adversarial-review requirement): every property
     // below states HOW it fails, not merely that it passes.

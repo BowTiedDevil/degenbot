@@ -43,7 +43,7 @@ pub trait BlockDelta {
     /// only its own "before" priors, so a wholesale replace discards the
     /// earliest same-block delta's priors — on `restore_before_block(B)` the
     /// single popped block-B delta then returns post-first-Swap scalars
-    /// instead of the true pre-block state (F7HX73). The override merges the
+    /// instead of the true pre-block state. The override merges the
     /// previous delta's earliest pre-block priors into `self` so they
     /// survive the single-delta-per-block invariant.
     fn coalesce_with_previous(&mut self, _previous: &Self) {}
@@ -249,7 +249,7 @@ impl BlockDelta for V3BlockDelta {
         self.block
     }
 
-    /// Merge the previous same-block delta's priors into `self` (F7HX73).
+    /// Merge the previous same-block delta's priors into `self`.
     ///
     /// `previous` is the EARLIER event (pushed first); `self` is the newer.
     /// Both are partial deltas carrying only their own "before" priors. The
@@ -274,7 +274,7 @@ impl BlockDelta for V3BlockDelta {
         }
 
         // Clock priors: earliest Some wins (previous is older → its before-
-        // value is the pre-block clock state; two-stamp OB7UNY).
+        // value is the pre-block clock state; two-stamp rule).
         if previous.update_block_before.is_some() {
             self.update_block_before = previous.update_block_before;
         }
@@ -333,7 +333,7 @@ pub struct V3RestoreResult {
     /// The `update_block` (**price** clock) value before the target block;
     /// `None` when no popped delta advanced the price clock (the current
     /// `update_block` is already correct — the rolled-back range was tick-only
-    /// for the price). Oldest-wins across popped deltas (two-stamp OB7UNY).
+    /// for the price). Oldest-wins across popped deltas (two-stamp rule).
     pub update_block_before: Option<u64>,
     /// The `tick_data_block` (**liquidity** clock) value before the target
     /// block; same semantics as [`Self::update_block_before`].
@@ -543,7 +543,7 @@ impl<D: BlockDelta> ReorgJournal<D> {
                 return false;
             }
             if delta.block() == newest.block() {
-                // F7HX73: before discarding the previous same-block delta,
+                // before discarding the previous same-block delta,
                 // let the delta merge the previous's earliest pre-block
                 // priors into itself. V2 (full-state deltas) returns the
                 // previous's `*_after` on restore, so the default no-op
@@ -688,7 +688,7 @@ impl ReorgJournal<V3BlockDelta> {
         let mut scalar_priors: Option<ScalarPriors> = None;
         // Clock priors: oldest-with-`Some` wins (same pop-newest→oldest rule
         // as `scalar_priors`) — the last popped delta that advanced the clock
-        // records the pre-target clock value (two-stamp OB7UNY).
+        // records the pre-target clock value (two-stamp rule).
         let mut update_block_before: Option<u64> = None;
         let mut tick_data_block_before: Option<u64> = None;
         let mut oldest_popped_block: Option<u64> = None;
@@ -1424,7 +1424,7 @@ mod v3_delta_priors_tests {
         assert_eq!(j.len(), 3, "no-op: nothing popped");
     }
 
-    /// F7HX73: V3 same-block coalesce preserves the EARLIEST pre-block scalar
+    /// V3 same-block coalesce preserves the EARLIEST pre-block scalar
     /// priors. Pre-fix `push_delta` wholesale-replaced the first Swap, so the
     /// recorded `scalar_priors` became post-first-Swap; `restore_before_block`
     /// then returned post-first-Swap instead of pre-block.
@@ -1499,7 +1499,7 @@ mod v3_delta_priors_tests {
         assert_eq!(j.len(), 1, "only the genesis delta survives the pop");
     }
 
-    /// F7HX73: the earliest `Some` `scalar_priors` survives regardless of order
+    /// the earliest `Some` `scalar_priors` survives regardless of order
     /// (tick-only `None` never clobbers a `Some`; a `Some` followed by
     /// tick-only keeps the `Some`).
     #[test]
@@ -1529,7 +1529,7 @@ mod v3_delta_priors_tests {
         );
     }
 
-    /// F7HX73: same-block `tick_priors` coalesce accumulates with
+    /// same-block `tick_priors` coalesce accumulates with
     /// oldest-wins de-dupe — a tick modified by both deltas keeps the EARLIER
     /// (previous) delta's prior (the pre-block tick state).
     #[test]
@@ -1622,7 +1622,7 @@ fn restore_returns_clock_priors_for_scalar_delta() {
     assert_eq!(result.tick_data_block_before, Some(6));
 }
 
-/// OB7UNY: same-block coalesce keeps the EARLIEST clock priors (previous
+/// same-block coalesce keeps the EARLIEST clock priors (previous
 /// wins), mirroring the scalar-prior oldest-wins rule.
 #[test]
 fn push_delta_same_block_coalesces_clock_priors_oldest_wins() {
@@ -1655,7 +1655,7 @@ fn push_delta_same_block_coalesces_clock_priors_oldest_wins() {
     );
 }
 
-/// OB7UNY: restore across a tick-only delta (no clock prior) keeps the
+/// restore across a tick-only delta (no clock prior) keeps the
 /// older scalar delta's clock priors — the pre-target clock state.
 #[test]
 fn restore_keeps_oldest_clock_prior_when_newest_delta_is_tick_only() {

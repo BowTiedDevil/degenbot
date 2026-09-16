@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn conservative_bot_flag_default_on() {
-    // KAHU5W: the env-flag parse contract moved to degenbot-config's
+    // the env-flag parse contract moved to degenbot-config's
     // fail-closed loader (parse_bool_flag). ADR-043 retired the old
     // verbosity flags; this asserts the holder's test-default stance on a
     // surviving default-ON behavior key.
@@ -278,7 +278,7 @@ fn pool_family_dispatches_every_registered_family() {
 /// `PyValueError` respectively.
 #[test]
 fn register_v4_pool_admits_amount_modifying_hook_with_caveat() {
-    // ADR-037/X4EU3J: hooked pools are ADMITTED (the hard rejection is
+    // ADR-037: hooked pools are ADMITTED (the hard rejection is
     // gone) — their sims carry Caveats::HOOKED_POOL and paths through
     // them are excluded from solving at projection time.
     use crate::arb_engine::PoolTickCoverage;
@@ -431,7 +431,7 @@ fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
 }
 
 // -----------------------------------------------------------------------
-// Spec-bound admission (epic WOYYS2 / task K3IICB).
+// Spec-bound admission.
 // Mirrors the V2/V3 spec-bound tests: `register_v4_pool` now rejects
 // out-of-solidity-bounds `sqrt_price_x96` / `tick` / V4 `fee` /
 // `tick_spacing` with a typed `RegisterV4PoolError::SpecViolation`, ahead
@@ -789,7 +789,7 @@ fn unregister_pool_on_unknown_address_returns_false_silently() {
 }
 
 // -----------------------------------------------------------------------
-// Spec-bound admission (epic WOYYS2 / task MSTAT2).
+// Spec-bound admission.
 // `register_v2_pool` is a typed `Result` that rejects (a) duplicate
 // address and (b) out-of-spec `uint112` reserves, rather than panicking
 // on (a) and silently degrading to `U256::MAX` on (b).

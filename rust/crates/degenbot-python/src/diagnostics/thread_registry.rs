@@ -169,7 +169,7 @@ pub(crate) fn note_current_thread(span_name: &str, span_loc: Option<&str>) {
 /// GIL; safe to call during a permanent GIL deadlock).
 pub fn dump_to_file() -> Option<std::path::PathBuf> {
     let pid = std::process::id();
-    // KAHU5W: typed schema key `state_lock.thread_registry_path`
+    // typed schema key `state_lock.thread_registry_path`
     // (`DEGENBOT_THREAD_REGISTRY_PATH`; `{pid}` expands here at use time).
     let path = ::degenbot_config::holder::config()
         .state_lock
@@ -238,7 +238,7 @@ pub fn dump_to_file() -> Option<std::path::PathBuf> {
         })
         .unwrap_or_default();
 
-    // MHE62T: the futex the gil-probe thread itself is blocked on. During a
+    // the futex the gil-probe thread itself is blocked on. During a
     // confirmed GIL deadlock every GIL waiter shares that address, and the
     // HOLDER is a thread NOT present in this table's futex waiters — naming
     // the address makes the waiter set (and the holder's absence) explicit.
@@ -354,7 +354,7 @@ mod tests {
         );
     }
 
-    /// MHE62T: the dump carries the likely-GIL futex (the probe's own wait
+    /// the dump carries the likely-GIL futex (the probe's own wait
     /// address) and, under the `bot` feature, the `StateLock` tracker status —
     /// phantom-reader forensics without gdb. Hold tracking is gated behind
     /// `DEGENBOT_STATE_LOCK_DIAG=1` (default OFF), so the dump carries the

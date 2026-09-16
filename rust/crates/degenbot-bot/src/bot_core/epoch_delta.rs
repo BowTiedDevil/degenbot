@@ -1,5 +1,4 @@
-//! `EpochDelta` — the per-block touched-pool recency ledger (epic MROOY7,
-//! tasks LXDY4C + 7S4QAG).
+//! `EpochDelta` — the per-block touched-pool recency ledger.
 //!
 //! ADR-041 seam-retirement lineage: `DirtySets` + the `EngineSubscriber`
 //! pool classification are retired in favor of this type. Log application

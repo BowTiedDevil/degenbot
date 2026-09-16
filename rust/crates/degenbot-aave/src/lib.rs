@@ -2,8 +2,7 @@
 //! position-analysis math.
 //!
 //! Three sibling concerns live here, each in its own submodule:
-//! - [`updater`] — the transactional apply core (epic `AZGJUN`, task
-//!   `CXRGX4`): pure, synchronous, fixture-testable, NO RPC, NO `pyo3`, NO
+//! - [`updater`] — the transactional apply core: pure, synchronous, fixture-testable, NO RPC, NO `pyo3`, NO
 //!   `database_path`, NO `open_for_writes`.
 //! - [`analysis`] — the pure position health-factor / LTV / eMode / isolation
 //!   math (port of `src/degenbot/aave/analysis/core.py`).

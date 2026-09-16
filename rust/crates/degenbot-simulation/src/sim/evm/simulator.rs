@@ -274,7 +274,7 @@ impl<'a> BlockSimHandle<'a> {
             // default `timestamp = 1` causes V2 pair `_update` to overflow
             // `price0CumulativeLast` in Solidity 0.8+ forks (Camelot/Aerodrome),
             // reverting every swap — the root cause of the in-process-evm
-            // parity gap (XPPMQG).
+            // parity gap.
             block.timestamp = U256::from(block_timestamp);
         });
         Some(Self { evm })

@@ -6,7 +6,7 @@
 //! `process_mint_event` / `process_burn_event` / `accrue_debt_on_action` /
 //! `get_discounted_balance` fns) + the GHO strategy dicts from
 //! `src/degenbot/aave/processors/strategies.py` (`GHO_STRATEGIES` +
-//! `GHO_DISCOUNT_STRATEGIES`). The §4.2 (U5YIBG) parity cross-check compares
+//! `GHO_DISCOUNT_STRATEGIES`). The §4.2 parity cross-check compares
 //! these against the Python oracle byte-for-byte, so the branch logic + the
 //! rounding selection MUST match exactly.
 //!

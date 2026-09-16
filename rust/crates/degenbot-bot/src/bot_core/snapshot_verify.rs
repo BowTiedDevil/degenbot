@@ -33,7 +33,7 @@ use parking_lot::Mutex;
 use crate::bot_core::{TickInfo, V3PoolState, V4PoolState};
 
 /// Error from `Bot::load_snapshot_from_db` / non-DB snapshot-load paths
-/// (B3OROH) — wraps the DB read failure or the per-pool hex/tick decode
+/// — wraps the DB read failure or the per-pool hex/tick decode
 /// failure. The pyo3 seam maps this to `PyRuntimeError`.
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotLoadError {
@@ -63,7 +63,7 @@ pub enum SnapshotLoadError {
 /// distinct here so the *orchestrator* (`run_cl_verification`) preserves the
 /// per-call-transport category through the pure layer (a future retry/backoff
 /// policy can branch on it). The Python seam folds both into the same
-/// retryable exception type (VP42BP).
+/// retryable exception type.
 #[derive(Debug)]
 pub enum VerifyError {
     /// `insert()` was called with no snapshot stream in progress.
@@ -78,7 +78,7 @@ pub enum VerifyError {
     /// `getTickLiquidity` read failed to reach the node). Transient — a
     /// retry/backoff candidate, NOT a genuine on-chain mismatch. Distinct from
     /// `Snapshot` (fatal) so the seam routes it to `VerificationRpcError`
-    /// instead of `VerificationMismatchError` (VP42BP).
+    /// instead of `VerificationMismatchError`.
     Rpc(String),
     /// Verification was opted into (`verify_on_register = true`) for a
     /// snapshot-built (`Tracked`) pool but a required precondition was never
@@ -573,7 +573,7 @@ mod tests {
         assert!(rpc.backfill_calls.lock().is_empty());
     }
 
-    /// VP42BP: a per-call RPC transport failure from the snapshot phase
+    /// a per-call RPC transport failure from the snapshot phase
     /// propagates as `VerifyError::Rpc` — NOT flattened to `Snapshot` (which
     /// would conflate a transient transport error with a genuine mismatch and
     /// surface as `VerificationMismatchError` at the Python seam). The
@@ -605,7 +605,7 @@ mod tests {
         );
     }
 
-    /// VP42BP: a per-call RPC transport failure from the backfill phase
+    /// a per-call RPC transport failure from the backfill phase
     /// propagates as `VerifyError::Rpc` (snapshot phase ran first + ok).
     #[test]
     fn run_cl_verification_backfill_rpc_error_propagates_unflattened() {

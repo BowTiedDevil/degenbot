@@ -39,7 +39,7 @@ use super::{
     V4PoolIdentity, V4PoolState, V4SwapUpdate,
 };
 
-/// RATR5A: the staged fetch plan captured under a SHORT write — pool, word,
+/// the staged fetch plan captured under a SHORT write — pool, word,
 /// fetch context, the stored fetcher Arc, and the pool's tick-mutation
 /// fingerprint the install re-validates.
 #[derive(Debug)]
@@ -55,7 +55,7 @@ impl StagedWordFetch {
     /// Run the fetch WITHOUT any state lock held. The stored fetcher
     /// re-enters Python (`Python::attach` + the companion's web3 RPC), so
     /// this call is the multi-second window the fetch-under-write defect
-    /// parked the whole pump inside (RATR5A).
+    /// parked the whole pump inside.
     ///
     /// # Errors
     /// Propagates the stored fetcher's [`FetchTickWordError`] (RPC/transport
@@ -139,7 +139,7 @@ impl BotState {
         self.next_pool_id += 1;
         let address = params.address;
 
-        // RUQ637/XEANMB: the `seed_from_store` path is retired — the DB
+        // the `seed_from_store` path is retired — the DB
         // seeding is handled by the Db arm of `assemble_v3_tick_map` (held
         // snapshot tx). Just clone + flow the params through.
         let params = params.clone();
@@ -365,7 +365,7 @@ impl BotState {
                     BufferKind::Backfill => self.v3_buffer.buffer_backfill(pool_address, event),
                     BufferKind::Pump => self.v3_buffer.buffer_pump(pool_address, event),
                 }
-                // FUWYUR provenance (7HUYWM): a buffered event is still
+                // FUWYUR provenance: a buffered event is still
                 // engine-witnessed activity for this pool — advance the
                 // event horizon at arrival time so the pin's stamp-provenance
                 // verdict sees the true witnessed span (parity with V4).
@@ -485,7 +485,7 @@ impl BotState {
     /// The pool_id-keyed twin of `sync_v3_pool_state` (address-keyed): the
     /// `PyLiquidityPool` handle holds the canonical `pool_id`, so this is the
     /// one-lock, one-lookup path. Family-agnostic (V3 + V4) — both store an
-    /// identical `tick_data: HashMap<i32, TickInfo>` (J63J3N).
+    /// identical `tick_data: HashMap<i32, TickInfo>`.
     #[must_use]
     pub fn sync_tick_data_by_pool_id(
         &mut self,
@@ -685,7 +685,7 @@ impl BotState {
             diag!(domain = pump, pool_addr = %format!("{address:x}"), "pump NOT REGISTERED");
             return;
         };
-        // YLYJM2: drain ONLY fully-completed blocks. The cutoff is the pump's
+        // drain ONLY fully-completed blocks. The cutoff is the pump's
         // `StageMachine` tombstone cutoff (3M5PO5) — a block is complete when
         // the first log of N+1 closes N; a drain mid-block would pin
         // `update_block=N` missing a later same-block log. Events for the
@@ -842,7 +842,7 @@ impl BotState {
     ///   (called by `engine_registry.start()` after `load_*_from_py`) records
     ///   `S = min(newest_block)` from the file/memory snapshot (2SM4Y7).
     /// - Tests: inject `S` directly to drive the `S≥W` / `S=0` no-op branches
-    ///   of `BlockPump::backfill_from_snapshot` without a DB (FD7NFG).
+    ///   of `BlockPump::backfill_from_snapshot` without a DB.
     ///
     /// `None` clears the seed (cold-start resume — `BlockPump::resume_from_subscribe`
     /// skips the auto-backfill).
@@ -850,7 +850,7 @@ impl BotState {
         self.snapshot_seed_block = s;
     }
 
-    /// Read the pinned snapshot seed for a V3 pool (CBCH6H). Returns the
+    /// Read the pinned snapshot seed for a V3 pool. Returns the
     /// seed if the pool is `Tracked` and the seed has not yet been taken; `None`
     /// for sparse pools or after `take_v3_snapshot_seed`. The seed is the
     /// registration-time `tick_data`, immutable across pump Mint/Burn — step-1
@@ -863,7 +863,7 @@ impl BotState {
         state.snapshot_seed.as_ref()
     }
 
-    /// Take (move out + clear) the pinned snapshot seed for a V3 pool (CBCH6H).
+    /// Take (move out + clear) the pinned snapshot seed for a V3 pool.
     /// Step-1 verify calls this to read+free the seed in one pass — the seed is
     /// verified exactly once (at the snapshot block during `build_paths`), then
     /// released to bound memory across 18k pools. Returns `None` for sparse
@@ -891,7 +891,7 @@ impl BotState {
         // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
         // `&self`) out of the inner scope, where `&mut state` is alive.
         let cutoff = self.pump_complete_cutoff();
-        // FUWYUR provenance (7HUYWM): hoist the engine-witnessed horizon for
+        // FUWYUR provenance: hoist the engine-witnessed horizon for
         // this pool — independent of the imported seed stamp — so the pin can
         // classify the stamp's freshness claim (the load-time tripwire).
         let witnessed = self.v3_event_horizon(&address);
@@ -955,7 +955,7 @@ impl BotState {
                 last_complete_block = self.pump_complete_cutoff(),
                 "V3 pin"
             );
-            // FUWYUR stamp provenance (7HUYWM) — the load-time tripwire. The
+            // FUWYUR stamp provenance — the load-time tripwire. The
             // seed stamp (`seed_block`) is honest only if independent of it,
             // something witnessed state at/beyond it: the tombstone-confirmed
             // delivery horizon (`cutoff`) or engine-witnessed events for THIS
@@ -991,7 +991,7 @@ impl BotState {
     /// for a V3 pool. Step-2 verify calls this to read+free the pin in one
     /// pass — the pin is verified exactly once (at the pinned block during
     /// `build_paths`), then released to bound memory. The returned block is the
-    /// `tick_data_block` (liquidity clock, two-stamp OB7UNY) captured
+    /// `tick_data_block` (liquidity clock, two-stamp rule) captured
     /// atomically with the drain; the verify compares
     /// `tick_data` against on-chain@THIS block, NOT a caller-supplied
     /// `verify_backfill_block` constant. Returns `None` for sparse pools, pools
@@ -1043,7 +1043,7 @@ impl BotState {
         state.invalidate_tick_range_cache();
     }
 
-    /// RATR5A: per-pool tick-mutation fingerprint for the staged word-fetch
+    /// per-pool tick-mutation fingerprint for the staged word-fetch
     /// install check. Any `tick_data` mutation moves `update_block` and/or
     /// the tick population; the stamp-sum term kills same-block net-zero
     /// churn that len alone would miss. `None` = pool gone.
@@ -1182,7 +1182,7 @@ impl BotState {
     ///
     /// Returns `true` if the merge applied to a registered V3/V4 pool,
     /// `false` otherwise (silent no-op — mirrors `sync_tick_data_by_pool_id`).
-    /// ADR-005 sparse-map feature parity (slice 2).
+    /// ADR-005 sparse-map feature parity.
     pub fn merge_tick_word(
         &mut self,
         pool_id: u64,
@@ -1255,7 +1255,7 @@ impl BotState {
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
-    /// ADR-037/X4EU3J: pools with amount-modifying hooks are ADMITTED (their
+    /// ADR-037: pools with amount-modifying hooks are ADMITTED (their
     /// simulations carry `Caveats::HOOKED_POOL` and hop projection excludes
     /// them from solving). Dynamic fees and static fees exceeding the
     /// `cmd_executor`'s 2-byte encoding limit are still rejected. Returns
@@ -1298,7 +1298,7 @@ impl BotState {
                 fee: params.pool_key.fee,
             });
         }
-        // DPODAZ: the cmd_executor encodes V4 `fee` as a 2-byte field in both
+        // the cmd_executor encodes V4 `fee` as a 2-byte field in both
         // swap commands; a static fee > 65535 is protocol-valid but
         // un-encodable. Reject at admission (mirroring the dynamic-fee floor)
         // so these pools never reach the composer's `u16::try_from` guard and
@@ -1327,7 +1327,7 @@ impl BotState {
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
 
-        // RUQ637/XEANMB: the `seed_from_store` path is retired — the DB
+        // the `seed_from_store` path is retired — the DB
         // seeding is handled by the Db arm of `assemble_v4_tick_map` (held
         // snapshot tx). Just clone + flow the params through.
         let params = params.clone();
@@ -1662,7 +1662,7 @@ impl BotState {
         let Some(&id) = self.v4_pool_ids.get(&key) else {
             return;
         };
-        // YLYJM2: drain ONLY fully-completed blocks. The cutoff is the pump's
+        // drain ONLY fully-completed blocks. The cutoff is the pump's
         // `StageMachine` tombstone cutoff (3M5PO5) — a block is complete when
         // the first log of N+1 closes N; a drain mid-block would pin
         // `update_block=N` missing a later same-block log.
@@ -1748,7 +1748,7 @@ impl BotState {
     /// Coverage flag for a registered V4 pool (`Tracked` / `Sparse`). Returns
     /// `None` for unregistered / non-V4 pools. V4 twin of
     /// [`v3_pool_coverage`] — read up-front by the registration-lifecycle to
-    /// keep Sparse pools out of the verify deferral (DFQYM5).
+    /// keep Sparse pools out of the verify deferral.
     #[must_use]
     pub fn v4_pool_coverage(
         &self,
@@ -2051,7 +2051,7 @@ impl BotState {
         state.snapshot_seed.as_ref()
     }
 
-    /// Take (move out + clear) the pinned snapshot seed for a V4 pool (CBCH6H).
+    /// Take (move out + clear) the pinned snapshot seed for a V4 pool.
     /// V4 twin of `take_v3_snapshot_seed` — step-1 verify consumes the seed once.
     pub fn take_v4_snapshot_seed(
         &mut self,
@@ -2158,7 +2158,7 @@ impl BotState {
 
     /// Take (move out + clear) the V4 post-drain `(tick_data, block)` pair.
     /// Step-2 verify consumes it once (at the pinned block). The returned
-    /// block is the `tick_data_block` (liquidity clock, two-stamp OB7UNY)
+    /// block is the `tick_data_block` (liquidity clock, two-stamp rule)
     /// captured atomically with the drain; the verify compares `tick_data`
     /// against on-chain@THIS block, NOT a caller-supplied
     /// `verify_backfill_block` constant. `None` for sparse / un-drained /

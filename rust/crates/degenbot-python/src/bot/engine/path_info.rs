@@ -1,4 +1,4 @@
-//! `PyArbEngine` — `path_info_for` core accessor (NXM2BF).
+//! `PyArbEngine` — `path_info_for` core accessor.
 //!
 //! [`PyArbEngine::path_info_for_core`] exposes the core
 //! the stage-surface `path_info_for` projection as a `pub(crate)` accessor so

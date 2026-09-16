@@ -1,4 +1,4 @@
-//! FF-T5 (NT7HJC): "degenbot.runtime_status()" - budget, plan, census.
+//! FF-T5: "degenbot.runtime_status()" - budget, plan, census.
 //!
 //! The operator's live-process view: what the fleet booted as (the plan:
 //! binding, oversubscription, the tier refusal it fell from), what it

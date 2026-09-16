@@ -7,7 +7,7 @@
 //! its ~500 lines (writer + variants + tests) churn independently of the
 //! lane walk.
 use ::degenbot_solvers::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-/// Degenerate-path capture config parse (M6776W) — the owner side of the
+/// Degenerate-path capture config parse — the owner side of the
 /// `capture` config section (the gate itself reads no env). KAHU5W:
 /// `gate_capture` is a typed bool (the presence-gated
 /// `DEGENBOT_GATE_CAPTURE` legacy is retired; `0`/false disables).

@@ -224,7 +224,7 @@ pub fn solve_worker_count() -> usize {
     static SOLVE_WORKERS: OnceLock<usize> = OnceLock::new();
     *SOLVE_WORKERS.get_or_init(|| {
         let budget = effective_cpu_budget();
-        // KAHU5W: typed schema overrides (`solve.solve_cpus` /
+        // typed schema overrides (`solve.solve_cpus` /
         // `solve.solve_headroom`); the loader owns the env read, and the
         // holder lives in degenbot-config (installed once at boot).
         let cfg = ::degenbot_config::holder::config().solve.clone();
@@ -256,7 +256,7 @@ pub fn leftover_worker_budget() -> usize {
         .max(1)
 }
 
-/// Ambient I/O runtime worker count from explicit inputs (SMTH6M): the
+/// Ambient I/O runtime worker count from explicit inputs: the
 /// `runtime.io_workers` override (`DEGENBOT_IO_WORKERS`) wins, floored at
 /// 1; otherwise the two-runtime contract — the ambient runtime takes the
 /// headroom the solve bins leave behind (`budget - solve_workers`), so the
@@ -624,7 +624,7 @@ mod tests {
         assert_eq!(solve_worker_count_from(Some("notanumber"), None, 8), 6);
     }
 
-    // ---- ambient I/O worker policy (SMTH6M) ----
+    // ---- ambient I/O worker policy ----
 
     #[test]
     fn ambient_workers_are_the_leftover_after_solve_bins() {

@@ -1,6 +1,6 @@
 use super::*;
 
-/// MQUKB6 (epic KDUED5): one entered `degenbot.epoch` root span per
+/// one entered `degenbot.epoch` root span per
 /// observed header, carrying a `block.number` field, parented under the
 /// `run_with_stream` instrument span. In-memory exporter +
 /// `set_global_default` (the repo convention: the thread-local `set_default`
@@ -85,7 +85,7 @@ async fn header_arms_per_block_span_with_number_and_parent() {
     );
     let block_span = &my_spans[0];
 
-    // BF43PM: the epoch root carries the rewind generation (no reorg yet
+    // the epoch root carries the rewind generation (no reorg yet
     // in this fixture — seq 0).
     assert!(
         block_span.attributes.iter().any(|kv| {
@@ -96,7 +96,7 @@ async fn header_arms_per_block_span_with_number_and_parent() {
         block_span.attributes
     );
 
-    // MQUKB6-T0: the per-block span is now a trace ROOT — the former
+    // the per-block span is now a trace ROOT — the former
     // `run_with_stream` instrument span was a never-closing root that OTel
     // never exported (orphaning every pump-task span under a missing
     // parent). Roots export cleanly; parent_span_id is the zero sentinel.
@@ -148,7 +148,7 @@ async fn header_arms_per_block_span_with_number_and_parent() {
 /// the observable symptom — all N spans closed — and exercises cross-await
 /// parking so CI load that DOES migrate the task surfaces the old leak.
 ///
-/// SONJQA/G3 note (BF43PM): the pump-level `log_wait` force-close test
+/// SONJQA/G3 note: the pump-level `log_wait` force-close test
 /// was retired with the `pump.log_wait` waterfall — quiet headers now open
 /// NO stage span at all. The force-close law it pinned lives on as the
 /// `stage_telemetry::otel_tests::stale_stage_span_exports_force_closed`
@@ -225,7 +225,7 @@ async fn header_burst_closes_every_block_span() {
     );
 }
 
-/// S53STH: the cooperative timed-exit path must make a PARKED select wake
+/// the cooperative timed-exit path must make a PARKED select wake
 /// and return promptly (unwinding all span guards on this task) when the
 /// hotpath timer raises the flag mid-park — not sit out the full settle
 /// window, and never `process::exit`.

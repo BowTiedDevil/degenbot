@@ -39,7 +39,7 @@ impl BotState {
         &mut self,
         params: &RegisterV2PoolParams,
     ) -> Result<u64, RegisterV2PoolError> {
-        // Spec-bound admission (epic WOYYS2 / MSTAT2): reject up-front rather
+        // Spec-bound admission: reject up-front rather
         // than propagating overlarge reserves into `V2PoolState` (where the
         // downstream swap-math U512→U256 narrowing would silently degrade to
         // `U256::MAX` under the prior sat-cap, or panic — see the helper's

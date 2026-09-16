@@ -289,7 +289,7 @@ fn per_call_reads_see_concurrent_writer_advance() {
     );
 }
 
-// ── Operator-discipline canary (epic XEANMB task 5.7) ──────────────────────
+// ── Operator-discipline canary ──────────────────────
 //
 // `SnapshotDb::close_with_canary` commits the held tx, re-reads `S_live` in a
 // fresh autocommit tx on the same connection, and reports `advanced = s_live >

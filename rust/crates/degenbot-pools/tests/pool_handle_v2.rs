@@ -58,7 +58,7 @@ fn v2_pool_handle_exposes_structure_identity_and_swap() {
 
 /// Aerodrome-style DEX-name resolution: a V2 pool whose `(chain_id, factory)`
 /// matches a known deployment resolves the DEX name on `Identity::dex`
-/// (QHGN2E). Uses the `SushiSwap` V2 mainnet factory (chain 1) → `SushiSwap`.
+///. Uses the `SushiSwap` V2 mainnet factory (chain 1) → `SushiSwap`.
 #[test]
 fn v2_resolves_sushiswap_dex_name_from_known_deployment() {
     // SushiSwap V2 mainnet factory.
@@ -78,7 +78,7 @@ fn v2_resolves_sushiswap_dex_name_from_known_deployment() {
 }
 
 /// Unknown deployment degrades gracefully: a factory not in `deployments.json`
-/// yields `dex: None` (generic variant), never an error (QHGN2E).
+/// yields `dex: None` (generic variant), never an error.
 #[test]
 fn v2_unknown_deployment_resolves_none_dex() {
     // Synthetic factory absent from deployments.json.

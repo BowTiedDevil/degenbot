@@ -37,7 +37,7 @@ pub mod error_kind {
     pub const DRAIN_STALL: &str = "drain_stall";
     /// Drain channel closed: the background drainer task is dead.
     pub const DRAIN_DEAD: &str = "drain_dead";
-    /// Post-tombstone delivery jitter (HJ5HWF): a forward log arriving after
+    /// Post-tombstone delivery jitter: a forward log arriving after
     /// its block's D1 tombstone. Dropped un-applied via the benign late-admit
     /// path — counted delivery noise, never a structural fault (the deduped
     /// event exists so the raw rate stays visible; spikes = an out-of-order
@@ -511,7 +511,7 @@ pub fn simulate_dispatch_span(current_block: u64, candidate_count: usize) -> tra
     )
 }
 
-/// Exact-match-only re-attach for SOLVE spans (ZZS6CG): a solve span must
+/// Exact-match-only re-attach for SOLVE spans: a solve span must
 /// parent to its OWN block's published span, or nowhere else. The nearest-
 /// previous fallback of [`attach_published_parent`] is correct when the
 /// consumer's notion of "current block" may run one AHEAD of the published

@@ -128,7 +128,7 @@ fn seed_genesis_anchors_journal_without_advancing_clocks() {
     // `before == after` journal delta that makes the journal non-empty
     // (so a mid-window reorg restores instead of a graceful
     // `NoStatePriorToBlock` shutdown) WITHOUT advancing either clock
-    // (two-stamp OB7UNY).
+    // (two-stamp rule).
     use crate::arb_engine::PoolTickCoverage;
     use crate::bot_core::{RegisterV3PoolParams, TickInfo};
     let mut core = BotState::new();
@@ -182,7 +182,7 @@ fn seed_genesis_anchors_journal_without_advancing_clocks() {
     assert_eq!(core.seed_genesis_by_pool_id(999_999, 1), None);
 }
 
-/// CBCH6H: the snapshot seed must be retained separately from the live
+/// the snapshot seed must be retained separately from the live
 /// `tick_data` so step-1 verify can compare the *seed* against
 /// on-chain@snapshot_block, NOT the pump-mutated current. During a rolling
 /// start (`resume()` precedes `build_paths`) the pump applies Mint/Burn to
@@ -228,7 +228,7 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
         ..Default::default()
     })
     .expect("test setup: V3 registration");
-    // DFQYM5: Tracked pools register `Quarantined`; transition to `Live`
+    // Tracked pools register `Quarantined`; transition to `Live`
     // (the driver's post-verify `set_live`) so the pump update below
     // direct-applies as this test models.
     core.set_v3_pool_live(v3_addr);
@@ -318,7 +318,7 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
         ..Default::default()
     })
     .expect("test setup: V3 registration");
-    // DFQYM5: Tracked pools register `Quarantined`; transition to `Live` so
+    // Tracked pools register `Quarantined`; transition to `Live` so
     // the pump Mint below direct-applies (this test's model).
     core.set_v3_pool_live(v3_addr);
 
@@ -465,7 +465,7 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
     // Drain both buffers + pin — exactly what `apply_buffer_v3` does
     // inside its single `core.write()` hold.
     core.apply_backfill_buffer_v3(&v3_addr);
-    // YLYJM2: the gated pump drain only yields fully-completed blocks.
+    // the gated pump drain only yields fully-completed blocks.
     // Mirror the live pump's ADR-008 D1 tombstone (first log of
     // `pump_block`+1 closes `pump_block`) so the drain takes the pump
     // Mint at `pump_block` rather than leaving it behind the gate.
@@ -549,7 +549,7 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
         fetcher: None,
     })
     .expect("V4 pool registers");
-    // DFQYM5: Tracked pools register `Quarantined`; transition to `Live`
+    // Tracked pools register `Quarantined`; transition to `Live`
     // (the driver's post-verify `set_live`) so the pump update below
     // direct-applies as this test models.
     core.set_v4_pool_live(pool_manager, pool_id_bytes);
@@ -652,7 +652,7 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
         fetcher: None,
     })
     .expect("V4 pool registers");
-    // DFQYM5: Tracked pools register `Quarantined`; transition to `Live` so
+    // Tracked pools register `Quarantined`; transition to `Live` so
     // the pump ModifyLiquidity below direct-applies (this test's model).
     core.set_v4_pool_live(pool_manager, pool_id_bytes);
 
@@ -790,7 +790,7 @@ fn load_snapshot_from_db_populates_store_and_seed_block() {
     );
 }
 
-/// B3OROH: `load_snapshot_from_db` on an empty chain → no snapshot loaded,
+/// `load_snapshot_from_db` on an empty chain → no snapshot loaded,
 /// S = None (cold-start path: the pump will anchor on `first_observed_block`).
 #[test]
 fn load_snapshot_from_db_empty_chain_is_cold_start() {

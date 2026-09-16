@@ -56,7 +56,7 @@ impl std::fmt::Display for VerificationMismatch {
 
 impl std::error::Error for VerificationMismatch {}
 
-/// Outcome of a liquidity-map verification call (VP42BP).
+/// Outcome of a liquidity-map verification call.
 ///
 /// Distinguishes a genuine on-chain **mismatch** (fatal — the engine's
 /// in-memory tick data disagrees with the chain; the bot must not operate

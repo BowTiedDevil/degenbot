@@ -46,7 +46,7 @@ fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
 // against `project_solidly`). This module keeps only the
 // engine-level classifier test (`solidly_hop_variant_is_not_v2_and_not_cl`).
 // -----------------------------------------------------------------
-// solve_solidly_path_int (task DMPSNG) — the two-stage Möbius precheck +
+// solve_solidly_path_int — the two-stage Möbius precheck +
 // golden-section search. Tests cover all four AC cases: (1) all-Solidly
 // 2-hop, (2) V2+Solidly mixed, (3) unprofitable → None (precheck),
 // (4) Solidly+CL → None (scope rejection).

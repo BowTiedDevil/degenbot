@@ -1,4 +1,4 @@
-// Cache-lab seam (epic KIMRKS): instrumented CL-table cache strategies driven
+// Cache-lab seam: instrumented CL-table cache strategies driven
 // by the `cl_cache_lab` example. Strategies refill crossing tables + word
 // profiles through the SAME production builders the bot uses and solve through
 // the production `int_solve_cl_path` entry, so every measurement is of

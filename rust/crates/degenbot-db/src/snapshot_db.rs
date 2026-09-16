@@ -1,5 +1,5 @@
 //! [`SnapshotDb`] — a held read-transaction handle that replaces [`SnapshotStore`]
-//! (epic `XEANMB`).
+//!.
 //!
 //! `SQLite` WAL is MVCC: a read transaction sees the database as of when its
 //! first read started, and concurrent writer commits (the `pool_updater`
@@ -51,7 +51,7 @@ const PRE_SCHEMA_PRAGMAS: &str = "PRAGMA journal_mode=WAL;\n\
 /// A read-only DB handle with an open deferred read transaction held for the
 /// lifetime of the handle. Every `fetch_*` call runs inside that one
 /// transaction, so all reads share a single DB snapshot frozen at the first
-/// read — immune to concurrent writer commits (epic `XEANMB`).
+/// read — immune to concurrent writer commits.
 ///
 /// `query_only=on` is set after `ensure_schema` (mirrors `DegenbotDb::open`),
 /// so the held tx stays a read tx — it can't accidentally upgrade and take a
@@ -66,7 +66,7 @@ pub struct SnapshotDb {
 }
 
 /// Report from [`SnapshotDb::close_with_canary`] — the operator-discipline
-/// canary (epic `XEANMB` task 5.7). `advanced == true` means the DB advanced
+/// canary. `advanced == true` means the DB advanced
 /// between bot startup (the held-tx snapshot `s_snapshot`) and end-of-
 /// `build_paths` (the fresh post-commit re-read `s_live`) — the
 /// `pool_updater` committed concurrently with startup. Correctness was
@@ -161,8 +161,7 @@ impl SnapshotDb {
     /// in autocommit mode — the held snapshot was released by `COMMIT`, so
     /// the next `SELECT` sees the live DB). Returns a [`CanaryReport`]
     /// flagging whether the DB advanced during startup (`s_live >
-    /// s_snapshot`) — the operator-discipline canary (epic `XEANMB` task
-    /// 5.7).
+    /// s_snapshot`) — the operator-discipline canary.
     ///
     /// Correctness was already preserved by the held tx (every per-pool read
     /// during `build_paths` shared the frozen `s_snapshot` cut); the canary

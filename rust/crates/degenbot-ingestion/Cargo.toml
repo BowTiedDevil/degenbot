@@ -1,6 +1,6 @@
 [package]
 name = "degenbot-ingestion"
-description = "PyO3-free WS ingestion crate: newHeads + logs subscriptions, Rust-side topic filtering, gap backfill fetching, and the header/logs watchdog windows. Emits PoolEvent { epoch, log_index, payload } into the stage-machine runtime (epic MROOY7, 5WTYYQ)."
+description = "PyO3-free WS ingestion crate: newHeads + logs subscriptions, Rust-side topic filtering, gap backfill fetching, and the header/logs watchdog windows. Emits PoolEvent { epoch, log_index, payload } into the stage-machine runtime."
 keywords = ["mev", "ingestion", "websocket", "evm", "uniswap"]
 version.workspace = true
 edition.workspace = true

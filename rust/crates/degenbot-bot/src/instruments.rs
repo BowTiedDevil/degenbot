@@ -93,13 +93,13 @@ pub struct PipelineInstruments {
     /// WAJEQP T-R1: log events discarded by the recovery-anchor rule
     /// (`DroppedRecovery`); spikes during reorg episodes.
     reorg_recovery_dropped: Counter<u64>,
-    /// HJ5HWF: forward logs admitted LATE — arrived after their block's D1
+    /// forward logs admitted LATE — arrived after their block's D1
     /// tombstone and dropped un-applied via the benign late-admit path (the
     /// no-landmine ruling: counted delivery noise, never a fatal signal).
     /// Distinct from `reorg_recovery_dropped`, which counts only single-
     /// writer duplicates inside an authoritative catch-up's owned range.
     late_log_admitted: Counter<u64>,
-    /// BM35LK: the currently-armed settle (quiesce) window in ms — fixed
+    /// the currently-armed settle (quiesce) window in ms — fixed
     /// mode the debounce, adaptive mode the estimator's clamped EWMA
     /// projection. The §6.2 design instrument pair with
     /// `late_log.admitted`.
@@ -130,7 +130,7 @@ pub struct PipelineInstruments {
     solves_executed: Counter<u64>,
     /// Registered solver paths (engine gauge).
     registered_paths: Gauge<f64>,
-    /// TB4QGX T7: host intake backlog depth, one series per role
+    /// host intake backlog depth, one series per role
     /// (`degenbot_fleet_intake_backlog{role=...}`). A stalled held backlog
     /// becomes observable here (T9 soak reads it).
     intake_backlog: Gauge<f64>,
@@ -138,7 +138,7 @@ pub struct PipelineInstruments {
     /// (`resource` = the `degenbot_core::worker_census` registry id, a
     /// small closed set). Rendered as `degenbot_worker_census{resource=...}`.
     worker_census: Gauge<f64>,
-    /// FF-T5 (NT7HJC): the resolved fleet profile — one series,
+    /// FF-T5: the resolved fleet profile — one series,
     /// low-cardinality labels (profile / binding / oversubscribed),
     /// value 1. Rendered as
     /// `degenbot_fleet_profile{profile=...,binding=...}`; the ops
@@ -181,21 +181,21 @@ pub struct PipelineInstruments {
     /// Monitor outcomes, labeled (`confirmed`, `expired`).
     monitor_outcomes: Counter<u64>,
     detached_in_flight: Gauge<f64>,
-    /// Epic SRQEK5 T2: detached stragglers DROPPED by the Q1a stale policy.
+    /// detached stragglers DROPPED by the Q1a stale policy.
     detached_stale_dropped: Counter<u64>,
-    /// Epic SRQEK5 T2: detached stragglers applied to the results map.
+    /// detached stragglers applied to the results map.
     detached_applied: Counter<u64>,
     /// Cold-start trace: cycles the machine DEGRADED to the in-cycle arm.
     /// WFF6MM retired that arm (and its producer): the series is retained so
     /// dashboards keep a stable zero rather than a missing metric.
     detached_degraded_cycles: Counter<u64>,
-    /// AQV6EF: detached outcomes LOST to a DEAD MERGE DRAIN — a
+    /// detached outcomes LOST to a DEAD MERGE DRAIN — a
     /// `LaneOutcome` send failed (the sidecar Receiver is gone) or an
     /// outcome was drained/counted as the panicked sidecar shut down. This
     /// is the only silent loss in the shipped posture; the counter makes it
     /// measurable and (with the sticky posture cordon) impossible to miss.
     detached_send_failed: Counter<u64>,
-    /// AQV6EF: merge-seat panics caught by the sidecar's `catch_unwind`
+    /// merge-seat panics caught by the sidecar's `catch_unwind`
     /// guard (the typed failure record for a dead merge seat).
     detached_merge_panic: Counter<u64>,
     /// QTZGFL: solve cycles SHED by capacity-modulated admission (zero draw
@@ -204,11 +204,11 @@ pub struct PipelineInstruments {
     /// QTZGFL: retained (carried) admission keys pruned by the retention
     /// window (`head − W`) — a starved lead's visible expiry.
     detached_leads_expired: Counter<u64>,
-    /// Epic K4ETHF T2: time an acquisition waited for the core `BotState`
+    /// time an acquisition waited for the core `BotState`
     /// lock, labeled by `site` (closed set from
     /// `bot_core::state_lock::crate::bot_core::state_lock::LockSite::label`) + `mode` (read|write).
     state_lock_wait: Histogram<f64>,
-    /// Epic K4ETHF T2: time a guard was held after acquisition, same labels.
+    /// time a guard was held after acquisition, same labels.
     state_lock_hold: Histogram<f64>,
     /// Epic FRKBGP close-out: resident set bytes of the bot process (the
     /// drift-watch signal — tick maps + revm working set grow linearly with
@@ -226,7 +226,7 @@ pub struct PipelineInstruments {
     /// ADR-040: per-error-reason tally for error-outcome simulations. The
     /// `reason` label is the closed `telemetry::error_reason` set.
     sim_error_reasons: Counter<u64>,
-    /// NO4DIW: per-block log funnel (the pump samples at each header).
+    /// per-block log funnel (the pump samples at each header).
     /// PROMETHEUS NAME COUPLING: renders as `degenbot_epoch_logs_{seen,
     /// received,applied,ignored,block}` — the dashboard stacked-funnel
     /// panel + the block-number xychart query those verbatim; rename here
@@ -237,13 +237,13 @@ pub struct PipelineInstruments {
     epoch_logs_applied: Gauge<f64>,
     epoch_logs_ignored: Gauge<f64>,
     epoch_logs_block: Gauge<f64>,
-    /// Epic MROOY7 (BF43PM): first relevant log → publish per quiesce cycle
+    /// first relevant log → publish per quiesce cycle
     /// (the publish-cycle duration for the Final-integration A/B).
     publish_cycle: Histogram<f64>,
-    /// Epic MROOY7 (BF43PM): Rewind frequency (one per `EnterReorg` — the
+    /// Rewind frequency (one per `EnterReorg` — the
     /// stage-table Rewind row; pairs with `reorg_windows` above).
     rewind_total: Counter<u64>,
-    /// Epic MROOY7 (BF43PM): Rewind open → close duration.
+    /// Rewind open → close duration.
     rewind_duration: Histogram<f64>,
     /// ADR-040: pools currently quarantine-excluded from solve resolution.
     /// Maintained by `BotState::quarantine_pool`/`release_pool`.
@@ -441,7 +441,7 @@ impl PipelineInstruments {
             worker_census: meter
                 .f64_gauge("degenbot.worker.census")
                 .with_description(
-                    "Worker census (PE4FPM): declared worker/slot count per execution resource; the resource label is the census registry id",
+                    "Worker census: declared worker/slot count per execution resource; the resource label is the census registry id",
                 )
                 .build(),
             fleet_profile: meter
@@ -622,7 +622,7 @@ impl PipelineInstruments {
         // not). This explicit 0 keeps the series always present, making a
         // scraped `0` mean what it says.
         instruments.detached_degraded_cycles.add(0, &[]);
-        // AQV6EF: same zero-init for the dead-drain instruments — a missing
+        // same zero-init for the dead-drain instruments — a missing
         // `send_failed_total` series must never read as "no lost outcomes".
         instruments.detached_send_failed.add(0, &[]);
         instruments.detached_merge_panic.add(0, &[]);
@@ -725,7 +725,7 @@ impl PipelineInstruments {
         self.late_log_admitted.add(1, &[]);
     }
 
-    /// BM35LK: the window the settle timers are currently armed with (ms).
+    /// the window the settle timers are currently armed with (ms).
     /// Observed once per settle point so the Grafana funnel gains the
     /// estimator's live posture without new scrape paths.
     #[expect(clippy::cast_precision_loss)]
@@ -825,7 +825,7 @@ impl PipelineInstruments {
             .record(f64::from(u32::try_from(count).unwrap_or(u32::MAX)), &[]);
     }
 
-    /// TB4QGX T7: the host intake backlog depth for `role`
+    /// the host intake backlog depth for `role`
     /// (`degenbot_fleet_intake_backlog{role=...}`).
     pub fn set_intake_backlog(&self, role: &str, depth: u64) {
         self.intake_backlog.record(
@@ -834,14 +834,14 @@ impl PipelineInstruments {
         );
     }
 
-    /// PE4FPM: one census row — declared workers/slots of `resource`.
+    /// one census row — declared workers/slots of `resource`.
     /// `resource` is a small closed set: the census registry ids.
     pub fn set_worker_census(&self, resource: &str, workers: f64) {
         self.worker_census
             .record(workers, &[KeyValue::new("resource", resource.to_owned())]);
     }
 
-    /// FF-T5 (NT7HJC): the resolved fleet profile — one series,
+    /// FF-T5: the resolved fleet profile — one series,
     /// value 1, the labels carry the tier.
     pub fn set_fleet_profile(
         &self,
@@ -943,7 +943,7 @@ impl PipelineInstruments {
             .add(1, &[KeyValue::new("outcome", outcome.to_owned())]);
     }
 
-    /// Epic SRQEK5 T2: detached merge-pipe in-flight depth (stragglers sent
+    /// detached merge-pipe in-flight depth (stragglers sent
     /// but not yet applied/dropped). Sampled at enqueue + per disposition.
     pub fn set_detached_in_flight(&self, count: u64) {
         self.detached_in_flight
@@ -955,13 +955,13 @@ impl PipelineInstruments {
         self.detached_stale_dropped.add(1, &[]);
     }
 
-    /// One detached outcome LOST to a dead merge drain (AQV6EF): a failed
+    /// One detached outcome LOST to a dead merge drain: a failed
     /// pipe send or an outcome drained as the panicked sidecar shut down.
     pub fn count_detached_send_failed(&self) {
         self.detached_send_failed.add(1, &[]);
     }
 
-    /// One merge-seat panic caught by the sidecar guard (AQV6EF).
+    /// One merge-seat panic caught by the sidecar guard.
     pub fn count_detached_merge_panic(&self) {
         self.detached_merge_panic.add(1, &[]);
     }
@@ -982,13 +982,13 @@ impl PipelineInstruments {
     }
 
     /// One solve cycle DEGRADED to the in-cycle arm (the cap verdict at begin).
-    /// WFF6MM: no producer remains (the in-cycle arm is deleted); kept so the
+    /// no producer remains (the in-cycle arm is deleted); kept so the
     /// zero-init + broken-pipe it exercises stay tested.
     pub fn count_detached_degraded_cycle(&self) {
         self.detached_degraded_cycles.add(1, &[]);
     }
 
-    /// Epic K4ETHF T2: one state-lock acquisition wait. `site` is a small
+    /// one state-lock acquisition wait. `site` is a small
     /// closed set (see `bot_core::state_lock::crate::bot_core::state_lock::LockSite::label`); `mode` is
     /// `read` | `write`.
     pub fn observe_state_lock_wait(&self, site: &str, mode: &str, secs: f64) {
@@ -1001,7 +1001,7 @@ impl PipelineInstruments {
         );
     }
 
-    /// Epic K4ETHF T2: one post-acquisition guard hold (same labels).
+    /// one post-acquisition guard hold (same labels).
     pub fn observe_state_lock_hold(&self, site: &str, mode: &str, secs: f64) {
         self.state_lock_hold.record(
             secs,
@@ -1012,7 +1012,7 @@ impl PipelineInstruments {
         );
     }
 
-    /// NO4DIW: per-block log funnel — the pump's header-epilogue snapshot
+    /// per-block log funnel — the pump's header-epilogue snapshot
     /// (degenbot.epoch.logs_*; see the field note for the coupling).
     /// `closing_block` = the header number at which the ledger closed.
     #[expect(clippy::cast_precision_loss)]
@@ -1031,18 +1031,18 @@ impl PipelineInstruments {
         self.epoch_logs_block.record(closing_block as f64, &[]);
     }
 
-    /// Epic MROOY7 (BF43PM): one publish-cycle duration (first relevant log
+    /// one publish-cycle duration (first relevant log
     /// → publish).
     pub fn observe_publish_cycle(&self, secs: f64) {
         self.publish_cycle.record(secs, &[]);
     }
 
-    /// Epic MROOY7 (BF43PM): one Rewind entered (`EnterReorg`).
+    /// one Rewind entered (`EnterReorg`).
     pub fn count_rewind(&self) {
         self.rewind_total.add(1, &[]);
     }
 
-    /// Epic MROOY7 (BF43PM): one Rewind open→close duration.
+    /// one Rewind open→close duration.
     pub fn observe_rewind_duration(&self, secs: f64) {
         self.rewind_duration.record(secs, &[]);
     }
@@ -1124,13 +1124,13 @@ pub fn pipeline() -> Option<&'static PipelineInstruments> {
             // stuck FIRING while the real series advanced). Empty-vs-absent
             // scrapes are already distinguishable via target_info.
             crate::metrics::try_global_meter().map(|meter| {
-                // PE4FPM: the census registry re-fires this hook on every
+                // the census registry re-fires this hook on every
                 // registration, so the scrape always reflects the table —
                 // including lazily-booted resources registered after the
                 // boot dump.
                 degenbot_core::worker_census::set_export_hook(export_worker_census);
                 let instruments = PipelineInstruments::new(&meter);
-                // FF-T5 (NT7HJC): if the stamp installed BEFORE the
+                // FF-T5: if the stamp installed BEFORE the
                 // pipeline, record the fleet profile now (the install
                 // path re-fires through note_fleet_profile when the
                 // pipeline came first).
@@ -1152,7 +1152,7 @@ fn export_worker_census(entries: &[degenbot_core::worker_census::WorkerCensusEnt
     }
 }
 
-/// FF-T5 (NT7HJC): record the resolved fleet profile (the stamp-install
+/// FF-T5: record the resolved fleet profile (the stamp-install
 /// site calls this; the pipeline may not exist yet — the build path
 /// below re-reads the summary so both orders land one series). No-op
 /// while the pipeline is un-built (non-otel builds / gate off).
@@ -1247,7 +1247,7 @@ mod kind_tests {
         drop(provider);
     }
 
-    /// HJ5HWF: the benign late-admit counter renders through the Prometheus
+    /// the benign late-admit counter renders through the Prometheus
     /// exposition — every late forward dropped past its block's D1 tombstone
     /// is counted here (never surfaced as a structural failure).
     #[test]
@@ -1267,7 +1267,7 @@ mod kind_tests {
         drop(provider);
     }
 
-    /// NO4DIW: per-block log funnel gauges (degenbot.epoch.logs_*) render
+    /// per-block log funnel gauges (degenbot.epoch.logs_*) render
     /// the EXACT per-epoch values the pump snapshots at each header; the
     /// dashboard stacks them as the per-block funnel bars.
     #[test]
@@ -1333,7 +1333,7 @@ mod kind_tests {
         );
     }
 
-    /// PE4FPM: the worker-census gauge renders as `degenbot_worker_census`
+    /// the worker-census gauge renders as `degenbot_worker_census`
     /// with the stable `resource` label (one row per resource).
     #[test]
     fn worker_census_gauge_is_scrapeable_by_resource() {
@@ -1352,7 +1352,7 @@ mod kind_tests {
         drop(provider);
     }
 
-    /// PE4FPM: the REGISTER→EXPORT round trip through the production helper:
+    /// the REGISTER→EXPORT round trip through the production helper:
     /// a registered census entry lands on the scrape with its count.
     #[test]
     fn worker_census_register_export_round_trip_reaches_the_scrape() {
@@ -1504,7 +1504,7 @@ mod kind_tests {
         drop(provider);
     }
 
-    /// AQV6EF: the dead-merge-drain counter must render BEFORE it ever
+    /// the dead-merge-drain counter must render BEFORE it ever
     /// fires — a missing series would read as "no lost outcomes" while a
     /// dead pipe silently drops every later result. Mirrors the
     /// degraded-cycle zero-init contract (9395c481b).
@@ -1605,7 +1605,7 @@ mod kind_tests {
         drop(provider);
     }
 
-    /// TB4QGX T7: the fleet intake backlog gauge renders with its role
+    /// the fleet intake backlog gauge renders with its role
     /// label and the live depth — a stalled held backlog must be observable
     /// (T9 reads this series).
     #[test]

@@ -25,7 +25,7 @@ pub(crate) fn fleet_boot_stamp(engine: &ArbitrageEngine) -> &BootStamp {
     &engine.fleet_boot_stamp
 }
 
-/// 5TBT7L T4 test harness: the direct-engine cycle drive the unit tests used
+/// the direct-engine cycle drive the unit tests used
 /// to reach via the retired `ArbitrageEngine::solve_dirty`. Runs the machine's
 /// `run_epoch` + the processed-cursor stamp. The PRODUCTION pre-cycle expiry +
 /// sidecar spawn live on `EngineStages::run_solve_cycle`, which the stage tests
@@ -43,12 +43,12 @@ pub(crate) fn run_test_cycle(
         &engine.registry,
         &mut engine.delivery,
     );
-    // 6XB6NJ: monotone advance on the block cursor.
+    // monotone advance on the block cursor.
     engine.cycle.cursor.advance_processed(block_number);
     outcome
 }
 
-/// 5TBT7L T4 test harness: terminal disposition of one detached straggler (the
+/// terminal disposition of one detached straggler (the
 /// retired `ArbitrageEngine::merge_detached_item`). The production caller is the
 /// detached-merge sidecar, which chains machine-direct.
 pub(crate) fn merge_detached_for_test(
@@ -60,7 +60,7 @@ pub(crate) fn merge_detached_for_test(
         .merge_detached_item(item, &engine.registry, &mut engine.delivery);
 }
 
-/// 5TBT7L T4 test harness: the guarded boundary advance + terminal publish (the
+/// the guarded boundary advance + terminal publish (the
 /// retired `ArbitrageEngine::finalize_block`, minus the apply-telemetry diag
 /// which now rides `EngineStages::on_finalize`).
 pub(crate) fn finalize_for_test(
@@ -114,7 +114,7 @@ pub(crate) fn process_updates(
         &engine.registry,
         &mut engine.delivery,
     );
-    // 6XB6NJ: monotone advance on the block cursor.
+    // monotone advance on the block cursor.
     engine.cycle.cursor.advance_processed(block_number);
 }
 

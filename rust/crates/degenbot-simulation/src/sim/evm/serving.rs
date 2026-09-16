@@ -83,7 +83,7 @@ fn serve_enabled() -> bool {
             return forced != 0;
         }
     }
-    // KAHU5W: typed schema key `simulation.sim_serve_engine_state`.
+    // typed schema key `simulation.sim_serve_engine_state`.
     *SERVE_ENABLED.get_or_init(|| {
         ::degenbot_config::holder::config()
             .simulation

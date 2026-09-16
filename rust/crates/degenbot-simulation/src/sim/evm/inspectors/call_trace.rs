@@ -144,7 +144,7 @@ impl CallTrace {
     /// indenting by `depth` reconstructs the full nested call sequence — e.g.
     /// `execute() → v3c.swap → callback → v3a.swap → callback → V4_UNLOCK →
     /// unlockCallback → swap → … Halt`. `#[must_use]` debug aid for the
-    /// `V4 dynamic swap Halt` attribution (2LTKVO / W2UWZO).
+    /// `V4 dynamic swap Halt` attribution.
     #[must_use]
     pub fn render_debug(&self) -> String {
         use FrameOutcome as FO;

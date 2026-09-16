@@ -1,4 +1,4 @@
-//! `PyO3` seam for the V3/V4 DB-aware liquidity updater — §4.3 (task QJSCA5).
+//! `PyO3` seam for the V3/V4 DB-aware liquidity updater — §4.3.
 //!
 //! Wraps `degenbot-db`'s apply-and-persist core
 //! ([`degenbot_db::DegenbotDb::apply_v3_liquidity_updates`] /

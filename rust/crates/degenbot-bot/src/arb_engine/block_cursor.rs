@@ -74,7 +74,7 @@ pub(crate) struct BlockCursor {
     /// Last block number processed by the engine (a solve cycle or a
     /// finalize boundary). `None` means no block has been processed yet.
     /// Used by the pump to determine the backfill boundary on startup, and
-    /// by the sim-diag snapshot as the engine's last-applied block (O5SKZ6).
+    /// by the sim-diag snapshot as the engine's last-applied block.
     last_processed_block: Option<u64>,
     /// The last block this engine's `finalize_block` guard advanced past
     /// (i.e. the last block whose boundary transition completed). Owned by
@@ -179,7 +179,7 @@ impl BlockCursor {
     pub(crate) const fn has_logs_this_block(&self) -> bool {
         self.has_logs_this_block
     }
-    /// White-box test seam (6XB6NJ): byte-identical replacement for the
+    /// White-box test seam: byte-identical replacement for the
     /// tests' direct `engine.results_block = n` writes (the field moved
     /// into the cursor). Plain assignment on purpose — tests force an
     /// arbitrary anchor state; production advances stay monotone.

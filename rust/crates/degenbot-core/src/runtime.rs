@@ -59,17 +59,17 @@ fn io_runtime_thread_name() -> String {
 }
 
 fn build_runtime() -> Result<Runtime, std::io::Error> {
-    // SMTH6M: the cgroup-aware budget is the single sizing authority for the
+    // the cgroup-aware budget is the single sizing authority for the
     // ambient runtime (see `crate::cpu_budget::ambient_io_worker_count`).
     let workers = crate::cpu_budget::ambient_io_worker_count();
-    // PE4FPM: self-register in the worker census; fail-destructive-free (the
+    // self-register in the worker census; fail-destructive-free (the
     // registry never rejects — see worker_census module docs).
     crate::worker_census::register(crate::worker_census::WorkerCensusEntry {
         resource: "io_runtime_workers",
         kind: "tokio multi-thread runtime (ambient I/O — pump, dispatch, delivery, pyo3-async)",
         count: workers,
         thread_name: "degenbot-io-rt-{n}",
-        sizing: "cpu_budget::ambient_io_worker_count — cgroup budget minus the solve bins, floored at 1 (SMTH6M); override `runtime.io_workers` (env DEGENBOT_IO_WORKERS)",
+        sizing: "cpu_budget::ambient_io_worker_count — cgroup budget minus the solve bins, floored at 1; override `runtime.io_workers` (env DEGENBOT_IO_WORKERS)",
         binding: "shared",
     });
     Builder::new_multi_thread()
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_build_runtime_sizes_from_cgroup_budget_policy() {
-        // SMTH6M: the ambient runtime is sized by the relocated cpu_budget
+        // the ambient runtime is sized by the relocated cpu_budget
         // policy (cgroup+affinity budget, minus the solve bins, floored at
         // 1) — never from tokio's available_parallelism default, which reads
         // 24 host cores inside an 8-core cgroup quota here.
@@ -144,7 +144,7 @@ mod tests {
         );
     }
 
-    /// PE4FPM: the runtime self-registers; the census row must agree with
+    /// the runtime self-registers; the census row must agree with
     /// the built runtime (count == worker count, thread-name pattern).
     #[test]
     fn ambient_runtime_registers_a_census_row_matching_its_worker_count() {

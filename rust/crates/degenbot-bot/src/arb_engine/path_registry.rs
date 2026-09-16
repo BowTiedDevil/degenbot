@@ -22,7 +22,7 @@ use std::sync::Arc;
 /// Typed refusal from `ArbitrageEngine::register_path` (PRG-4 / IRUMXD — was a
 /// bare `String`).
 ///
-/// Moved here from `lifecycle` by ADR-045 (`C4UAFP`); re-exported at the old
+/// Moved here from `lifecycle` by ADR-045; re-exported at the old
 /// `arb_engine::lifecycle` path so the `PyO3` mapper in `degenbot-python`
 /// stays byte-identical.
 #[derive(Debug, Clone, PartialEq, Eq)]

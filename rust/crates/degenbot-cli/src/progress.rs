@@ -5,7 +5,7 @@
 //! `ProgressSink` seam. cli-core's arms run the cores with `NoProgress` (the
 //! sealed semantic home hard-codes it), so the facade paints the bar from the
 //! cores' own operator-facing progress events: the throttled `op_info!` lines
-//! (`Q5IKHX`) carry `progress_pct` + the chunk fields on the closed domain
+//! carry `progress_pct` + the chunk fields on the closed domain
 //! targets, and [`Layer`] turns exactly those events into bar updates.
 //!
 //! # The two surfaces

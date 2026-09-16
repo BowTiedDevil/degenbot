@@ -1,8 +1,7 @@
-//! The Rust-owned pool-updater chunk loop — `run_pool_update` (epic
-//! `2SFL6I`, task `CKXCOB` 3c).
+//! The Rust-owned pool-updater chunk loop — `run_pool_update`.
 //!
 //! This is the standalone-Rust `pool_update` core: it opens ONE writeable
-//! [`DegenbotDb`], loads the active exchange specs (task `SHFIGX`), resolves
+//! [`DegenbotDb`], loads the active exchange specs, resolves
 //! the chain tip, + advances `last_update_block` chunk by chunk. Each chunk:
 //!
 //! 1. RPC-fetches (GIL-free, async) the chunk's `PoolCreated`/`Initialize`

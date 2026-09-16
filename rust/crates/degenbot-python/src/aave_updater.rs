@@ -7,7 +7,7 @@
 //! engine; Python is the cockpit" framing: Python threads the args + a
 //! cancel handle; Rust owns the loop, the RPC fetches, the decode, the DB
 //! writes, + the per-chunk transaction, and emits its own throttled operator
-//! progress lines (Q5IKHX).
+//! progress lines.
 //!
 //! # GIL discipline
 //!
@@ -72,7 +72,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 /// `last_update_block` unchanged → restart re-processes clean).
 ///
 /// The GIL is released across the WHOLE run (`py.detach`) and the core
-/// emits its own throttled operator progress lines (Q5IKHX) — no per-chunk
+/// emits its own throttled operator progress lines — no per-chunk
 /// GIL re-acquisition. A Python-side `KeyboardInterrupt` won't pre-empt
 /// mid-chunk; the SIGINT handler calls `cancel_handle.cancel()` (the
 /// cooperative flag the loop polls between chunks — §3.3 interrupt contract:
@@ -151,7 +151,7 @@ fn run_aave_update(
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
-    // The core emits its own throttled operator progress lines (Q5IKHX); the
+    // The core emits its own throttled operator progress lines; the
     // seam keeps a silent sink for the core's programmatic `ProgressSink`
     // parameter.
     let progress: Arc<dyn ProgressSink> = Arc::new(NoProgress);
@@ -182,7 +182,7 @@ fn run_aave_update(
 }
 
 /// The typed error for a Python-called verify path with no ambient tokio
-/// runtime (VJGZJ2): these seams used to build + drop a full
+/// runtime: these seams used to build + drop a full
 /// multi-thread runtime per call (default worker count = the raw core
 /// count), churning dead tokio-rt-worker threads in the live process. They
 /// now run only on the caller's ambient runtime and fail loudly here
@@ -190,7 +190,7 @@ fn run_aave_update(
 /// `run_err_to_py` maps it to `ValueError` like every other failure.
 fn no_ambient_runtime_err() -> RunError {
     RunError::Runtime(std::io::Error::other(
-        "no ambient tokio runtime: refusing to build a per-call multi-thread runtime (VJGZJ2); run under the shared degenbot-core ambient runtime",
+        "no ambient tokio runtime: refusing to build a per-call multi-thread runtime; run under the shared degenbot-core ambient runtime",
     ))
 }
 
@@ -299,7 +299,7 @@ fn verify_touched_positions_on_chain(
     let divergences = py
         .detach(move || {
             use tokio::runtime::Handle;
-            // VJGZJ2: resolve the ambient runtime BEFORE any DB work. With no
+            // resolve the ambient runtime BEFORE any DB work. With no
             // ambient runtime we return a typed error instead of building +
             // dropping a per-call multi-thread runtime (its default
             // worker count is the raw core count — the dead tokio-rt-worker
@@ -415,7 +415,7 @@ fn verify_all_positions_on_chain(
     let divergences = py
         .detach(move || {
             use tokio::runtime::Handle;
-            // VJGZJ2: same ambient-runtime policy as the touched-positions
+            // same ambient-runtime policy as the touched-positions
             // sibling — typed error when no ambient runtime exists; never a
             // per-call multi-thread build.
             let Ok(handle) = Handle::try_current() else {
@@ -542,7 +542,7 @@ fn cleanup_zero_balance_positions(
 /// Seed (or re-activate) an Aave V3 market — the ONE-TIME setup the chunk
 /// loop's `run_aave_update` bootstraps from. Rust-owned replacement for the
 /// Python `activate_ethereum_aave_v3` (commands.py) — the last ORM writer on
-/// the Aave path after the §4.2 retirement (CZM7TI). Activates the market,
+/// the Aave path after the §4.2 retirement. Activates the market,
 /// inserts the `POOL_ADDRESS_PROVIDER` contract row, + seeds the GHO
 /// `erc20_tokens` + `aave_gho_tokens` rows, all in ONE transaction.
 ///
@@ -637,7 +637,7 @@ pub fn add_aave_updater_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
 
-    /// VJGZJ2: with NO ambient tokio runtime, the aave verify seams must fail
+    /// with NO ambient tokio runtime, the aave verify seams must fail
     /// with the typed no-ambient-runtime error INSTEAD of building + dropping
     /// a per-call multi-thread runtime (default worker count = raw core
     /// count — the dead tokio-rt-worker churn source). An empty in-memory DB +
@@ -672,7 +672,7 @@ mod tests {
         });
     }
 
-    /// VJGZJ2: full-verify sibling of the touched-positions no-ambient pin.
+    /// full-verify sibling of the touched-positions no-ambient pin.
     #[test]
     fn verify_all_no_ambient_runtime_errors_instead_of_spawning() {
         assert!(

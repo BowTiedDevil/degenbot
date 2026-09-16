@@ -171,7 +171,7 @@ fn signal_start_failed(handle: &SubscriptionHandle, message: String) {
 /// existing backend reconnect path (`is_backend_gone` /
 /// `is_pubsub_unavailable`) rather than a duplicate WS backoff. During reconnect
 /// a [`RawSubItem::Disconnected`] is buffered so the Python side sees a clean
-/// restart, not a silent gap (O3JW5S).
+/// restart, not a silent gap.
 pub async fn pump_blocks(provider: Arc<dyn Provider<Ethereum>>, handle: Arc<SubscriptionHandle>) {
     let stream: HeaderStream = match provider.subscribe_blocks().await {
         Ok(s) => {
@@ -811,7 +811,7 @@ mod tests {
 
     /// A `newHeads` stream that NEVER yields (silently half-open socket) must
     /// trip the watchdog within the threshold and buffer a clean
-    /// `Disconnected` — not hang the pump forever (O3JW5S).
+    /// `Disconnected` — not hang the pump forever.
     #[tokio::test]
     async fn test_header_watchdog_fires_on_never_yielding_stream() {
         use futures_util::stream;

@@ -112,7 +112,7 @@ pub mod instruments {
         pub fn set_quarantined_pools(&self, _count: usize) {}
         /// no-op (ADR-040)
         pub fn count_sim_error_reason(&self, _reason: &str) {}
-        /// no-op (FRKBGP)
+        /// no-op
         pub fn set_process_rss_bytes(&self, _bytes: u64) {}
         /// no-op (NO4DIW per-block log funnel)
         pub fn observe_epoch_logs(

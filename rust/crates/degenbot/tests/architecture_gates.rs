@@ -184,7 +184,7 @@ fn cli_core_is_clap_and_indicatif_free() {
 
 #[test]
 fn one_engine_impl_block() {
-    // Epic 5TBT7L: exactly one `impl ArbitrageEngine` block, in arb_engine/mod.rs.
+    // exactly one `impl ArbitrageEngine` block, in arb_engine/mod.rs.
     let bot_src = workspace_root().join("crates/degenbot-bot/src");
     let mut hits: Vec<(String, usize)> = Vec::new();
     for_each_rust_source(&bot_src, &mut |path, text| {

@@ -245,7 +245,7 @@ fn matrix_covers_full_reachable_grammar() {
     );
 }
 
-/// Negative control (SMOZG3): a deliberately unprofitable chain under the
+/// Negative control: a deliberately unprofitable chain under the
 /// production axis-aware config (default Custody → `check_mode=1`) now reverts
 /// **on-chain** at the U3WVLL profit assert — the money-loss floor is active
 /// by default, so the loss never executes. The harness classifies the revert
@@ -301,7 +301,7 @@ fn unprofitable_chain_is_rejected() {
     assert_profitable(&result, 2, "unprofitable");
 }
 
-/// The off-chain delta guard remains the belt-and-suspenders (SMOZG3): with
+/// The off-chain delta guard remains the belt-and-suspenders: with
 /// the documented on-chain assert opt-out (`ProfitCapture::SweepToAddress` →
 /// `check_mode=3`, the ONLY way to defeat the U3WVLL assert), the losing path
 /// EXECUTES and a negative WETH delta is what reaches the operator — so
@@ -476,10 +476,10 @@ fn cl_hop_aligned_clamp_shape_executes_with_consistent_delta() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SMOZG3 — ERC6909-vault profit capture (the `erc6909_profit` operator toggle)
+// ERC6909-vault profit capture (the `erc6909_profit` operator toggle)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// SMOZG3: a 2-hop V4 WETH-terminal path with the `erc6909_profit` toggle,
+/// a 2-hop V4 WETH-terminal path with the `erc6909_profit` toggle,
 /// driven through the declarative entry — the production-mirror of the
 /// strategy's `SimulatePath → encode_request → execute(axis-aware config)`
 /// path. The stream mints the profit as an ERC6909 claim on the PoolManager;

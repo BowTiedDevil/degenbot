@@ -123,7 +123,7 @@ mod solidly;
 pub(crate) mod test_keys;
 
 // =======================================================================
-// 5WCRWZ T7: the fixture-driven clamp/merge/worker tests, moved here from
+// the fixture-driven clamp/merge/worker tests, moved here from
 // the deleted grab file's test island. They exercise the `SolveCycle`
 // clamp + merge surfaces through a real engine, so they live with the
 // engine-parity tests.

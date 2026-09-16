@@ -30,7 +30,7 @@
 //! `priority_fee` consumed here is *produced* there using the same
 //! float→int truncate convention).
 //!
-//! [`_compute_priority_fee`]: the Simulation leaf (task `YL2MTH`) — cross-epic
+//! [`_compute_priority_fee`]: the Simulation leaf — cross-epic
 //! reference; submission consumes the fee off `tx_params`, no edge.
 
 use crate::error::{SubmissionError, SubmissionResult};

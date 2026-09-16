@@ -619,7 +619,7 @@ pub struct OwnedPathFinder {
     /// abandons a sweep (aclose / GC) releases a mid-grind DFS promptly
     /// instead of pinning a tokio worker until the search finishes.
     cancel: Option<Arc<AtomicBool>>,
-    // --- discovery-phase heartbeat diagnostics (NY4EFN) ---
+    // --- discovery-phase heartbeat diagnostics ---
     // A silently-stalled DFS grinds here with the GIL released. On the async
     // path (4IOEVT) that grind runs on a tokio worker, so the Python event
     // loop keeps turning and a Python-side progress log cannot reflect the
@@ -639,7 +639,7 @@ pub struct OwnedPathFinder {
 /// Minimum elapsed wall-clock between discovery heartbeat emissions.
 ///
 /// ~10s keeps a long search quiet but surfaces a hang within the ~5-min
-/// bounded-time target (NY4EFN). Tuned so small synthetic test fixtures
+/// bounded-time target. Tuned so small synthetic test fixtures
 /// (which complete in µs) never emit.
 const DISCOVERY_HEARTBEAT: Duration = Duration::from_secs(10);
 
@@ -815,7 +815,7 @@ impl OwnedPathFinder {
             // but the hot DFS loop runs millions of iterations, so the modulo
             // keeps it out of the inner per-edge path. Fires a GIL-free stderr
             // line every `DISCOVERY_HEARTBEAT` while grinding, so a zero-yield
-            // hang surfaces immediately (NY4EFN). Touches only disjoint
+            // hang surfaces immediately. Touches only disjoint
             // heartbeat fields + the `stack_len` copy, so it cannot borrow
             // `self.stack` while the mutable `frame` below is live.
             self.advances_since_yield = self.advances_since_yield.wrapping_add(1);
@@ -1575,7 +1575,7 @@ mod tests {
         assert!(finder.next_path().is_none());
     }
 
-    /// The discovery-heartbeat diagnostics (NY4EFN) + the `while let` → `loop`
+    /// The discovery-heartbeat diagnostics + the `while let` → `loop`
     /// refactor of `OwnedPathFinder::advance` must not alter enumeration order
     /// or yield count. Two independent searches on the same graph must produce
     /// identical, stable output — the heartbeat is purely diagnostic stderr.

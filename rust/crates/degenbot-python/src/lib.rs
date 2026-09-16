@@ -30,7 +30,7 @@ use degenbot_core::op_info;
 // retention across per-thread arenas (system vs in-use spread of gigabytes,
 // reclaimed on demand by malloc_trim). mimalloc returns freed segments to the
 // OS aggressively instead of pooling them, at the cost of the system
-// allocator's free-list caching. TUNING (epic AZZDBI T4): the purge cadence
+// allocator's free-list caching. TUNING: the purge cadence
 // is runtime-controlled by degenbot-bot/src/allocator_ctrl.rs — default
 // MADV_FREE (lazy) + purge_delay discovered from observed block cadence
 // (2 x mean interval, 10 percent hysteresis); measured on mainnet:
@@ -49,7 +49,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 pub mod aave_updater;
 #[cfg(feature = "abi")]
 pub mod abi;
-/// Ambient-runtime driver seam (VJGZJ2): enter the shared degenbot-core
+/// Ambient-runtime driver seam: enter the shared degenbot-core
 /// runtime around a Python callable. Unconditional — degenbot-core is.
 pub mod ambient_runtime;
 #[cfg(feature = "balancer-math")]
@@ -105,7 +105,7 @@ pub mod price;
 pub mod python_log_layer;
 #[cfg(feature = "rpc")]
 pub mod rpc;
-/// FF-T5 (NT7HJC): the runtime fleet status — budget, plan, census
+/// FF-T5: the runtime fleet status — budget, plan, census
 /// ("degenbot.runtime_status()"). Unconditional — the plan
 /// function and the census are.
 pub mod runtime_status;
@@ -339,7 +339,7 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // fires for ANY panic anywhere (PythonLogLayer forwards it to Python).
     degenbot_core::telemetry::install_panic_hook();
 
-    // PE4FPM: dump the ONE structured worker-census boot line with the full
+    // dump the ONE structured worker-census boot line with the full
     // table (see degenbot_core::worker_census). Resources that boot lazily
     // (solve executor, drainers, sim slots) register later and emit their
     // own census line on first use — the metric gauge picks every row up

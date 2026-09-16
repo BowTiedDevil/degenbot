@@ -117,7 +117,7 @@ impl PyArbEngine {
                         });
                     }
                     // Solidly hop-info lands with the build/register plumbing
-                    // (task WCT5KR). Until then, a Solidly hop emits a minimal
+                    //. Until then, a Solidly hop emits a minimal
                     // HopInfo so the result-channel match is exhaustive; the
                     // resolve short-circuit means no Solidly hop reaches a solve.
                     HopType::SolidlyStable => {

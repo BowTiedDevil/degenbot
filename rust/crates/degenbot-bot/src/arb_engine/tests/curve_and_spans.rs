@@ -343,7 +343,7 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
     // panic: "fixture must produce phase spans"). Pre-seeding makes the
     // first solve deterministically dirty while the marker thread
     // continues to exercise the probe<->take race window.
-    // LXDY4C: the seeds + marker ride the SHARED epoch ledger; the drain
+    // the seeds + marker ride the SHARED epoch ledger; the drain
     // consumes take_keys per cycle (deterministically dirty on the first
     // solve; the marker thread keeps landing NEW dirt in later cycles).
     let marker_delta = std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64));
@@ -365,7 +365,7 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
         bar0.wait();
         let mut rot = 0usize;
         while !marker_stop.load(std::sync::atomic::Ordering::Relaxed) {
-            // LXDY4C: the marker records into the shared epoch ledger —
+            // the marker records into the shared epoch ledger —
             // the delta IS what the drain takes (no engine-local intake
             // remains, so the retired probe<->take window cannot exist).
             marker_delta_thread.record_affected(HopType::V2, pool_ids[rot % 8], 0u64);
@@ -491,7 +491,7 @@ fn finalize_block_consumes_no_dirt_and_emits_no_solve() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    // PWPPAZ T1: the finalize emits NO solve at all — no arb.solve span,
+    // the finalize emits NO solve at all — no arb.solve span,
     // no phase spans. Any solve here would race the successor block's
     // burst (the steal observed in traces ab13f75f / 98f7cf52).
     let solve_ids: HashSet<u64> = spans
@@ -512,7 +512,7 @@ fn finalize_block_consumes_no_dirt_and_emits_no_solve() {
         phase_spans.is_empty(),
         "finalize must emit no solve-phase spans; got {phase_spans:?}"
     );
-    // LXDY4C: unconsumed dirt lives in the DRAIN-SEAM epoch ledger now —
+    // unconsumed dirt lives in the DRAIN-SEAM epoch ledger now —
     // the engine has no local dirty intake to probe; finalize consumed no
     // keys (the coordinator's has_dirty/ledger tests pin that contract).
     // Boundary bookkeeping advanced under the same guard.
@@ -534,7 +534,7 @@ fn finalize_block_consumes_no_dirt_and_emits_no_solve() {
         .expect("finalize must emit the terminal boundary batch");
     assert_eq!(batch.solve_block, 5);
 }
-/// PWPPAZ T1: both guard branches — a block whose logs dirtied nothing
+/// both guard branches — a block whose logs dirtied nothing
 /// (or never arrived) still gets its one-shot boundary advance + terminal
 /// publish (`solve_block` = the finalized block), and a re-fire of the
 /// guard for the same boundary must not double-publish.
@@ -993,7 +993,7 @@ fn solve_cycle_skips_span_when_nothing_dirty() {
         "no-op solve must not emit a degenbot.arb.solve span"
     );
 }
-/// Epic BXUSGL T1 acceptance: with the tokio solve executor each path's
+/// with the tokio solve executor each path's
 /// result reaches `self.results` as soon as ITS OWN solve completes —
 /// the slowest path in the batch may not delay the fast ones' merge.
 /// RED before the per-path result-queue streaming exists: the batched
@@ -1166,7 +1166,7 @@ fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
              barrier order puts the marker first (probe = {observed:?})"
     );
 }
-/// T3 (epic BXUSGL) acceptance: with `DEGENBOT_STREAMING_DELIVERY` the drain
+/// T3 acceptance: with `DEGENBOT_STREAMING_DELIVERY` the drain
 /// emits each clamp-passed above-threshold result as an immediate single
 /// -entry batch — a fast path's batch must arrive on the channel while the
 /// slow path is still solving. RED before the per-result emission: the

@@ -16,11 +16,11 @@ use degenbot_config::SCHEMA;
 ///   `DEGENBOT_RPC_WS_CHAINID_<chain_id>` (documented next to `SCHEMA`).
 const SWEEP_ARTIFACTS: &[&str] = &[
     "DEGENBOT_JAEGER_E",
-    // KAHU5W: the family wildcard in the allocator doc comment (the loader
+    // the family wildcard in the allocator doc comment (the loader
     // owns the four concrete DEGENBOT_MIMALLOC_* keys).
     "DEGENBOT_MIMALLOC_",
     "DEGENBOT_RPC_WS_CHAINID_",
-    // JLFE2F: the family wildcard named by the retired-layout refusal text
+    // the family wildcard named by the retired-layout refusal text
     // in the loader (the dynamic per-chain var
     // DEGENBOT_RPC_HTTP_CHAINID_<chain_id>).
     "DEGENBOT_RPC_HTTP_CHAINID_",

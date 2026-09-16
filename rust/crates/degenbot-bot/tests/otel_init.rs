@@ -1,4 +1,4 @@
-// Integration test: `init_otel_tracing()` contract (epic KDUED5 / DFN6FF).
+// Integration test: `init_otel_tracing()` contract.
 //
 // This file is a dedicated test binary, i.e. its own process: the
 // process-global subscriber is guaranteed to be free, so the "second call is

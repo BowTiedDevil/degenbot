@@ -1,7 +1,7 @@
 //! The per-bin lane walk (from the retired grab-file dissolution, ergo epic
 //! `5WCRWZ`; T3 created the module for `solve_one_path`; T4 moved the walk
 //! driver in): home of `solve_one_path` — the per-path solve + diagnostics
-//! body every Solver seat's bin executes (epic BXUSGL T1) — and of THE ONE
+//! body every Solver seat's bin executes — and of THE ONE
 //! LANE WALK (`drive_lane_walk`, WNH5OL) plus its policy/context/result
 //! types (`LaneArmPolicy`, `LaneWalkBinPlan`, `WalkSubmitCtx`,
 //! `LaneWalkReads`) and the walk-side telemetry statics/record
@@ -37,7 +37,7 @@ static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
 /// aliases it (5WCRWZ T5 relocated the heap; NO re-export shim remains).
 pub(crate) type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 // ===========================================================================
-// 5WCRWZ T7: the walk-adjacent helpers, moved here with the walk they
+// the walk-adjacent helpers, moved here with the walk they
 // serve (the retired grab file is deleted outright).
 // ===========================================================================
 /// SIMPIPE2 T2: the WORKER-side clamp — drive the merge-site-identical
@@ -123,7 +123,7 @@ pub(crate) fn flush_solved_item(
         submit(outcome);
     }
 }
-/// Per-path solve + diagnostics (epic BXUSGL T1): the former `solve_fn`
+/// Per-path solve + diagnostics: the former `solve_fn`
 /// closure moved out verbatim so every dispatch arm (the legacy
 /// the dedicated tokio executor - dispatch a path identically. Takes the
 /// shared per-cycle context by reference; workers touch NO engine state
@@ -144,7 +144,7 @@ pub(crate) fn solve_one_path(
     if let Some(delay) = ctx.test_solve_delay.as_ref() {
         delay(pid);
     }
-    // 43E3H3 red-first: test-only panic hook — deliberately kill this
+    // test-only panic hook — deliberately kill this
     // path's solve mid-walk (catch_unwind on the seat/lane decides the
     // disposition; the breaker suite pins that disposition).
     #[cfg(test)]
@@ -164,7 +164,7 @@ pub(crate) fn solve_one_path(
         runtime: ctx.runtime,
     };
     let _solve_ctx = solve_span.enter();
-    // MQUKB6-T2: per-path child span. Created BEFORE the walk (the exported
+    // per-path child span. Created BEFORE the walk (the exported
     // duration is the real solve wall) and recorded after; the walk counters
     // ride span ATTRIBUTES on this `degenbot.arb.path` node instead of
     // events on the cycle span, making per-path latency a Jaeger query
@@ -263,7 +263,7 @@ pub(crate) fn solve_one_path(
         u64::try_from(refine_sims).unwrap_or(0),
         std::sync::atomic::Ordering::Relaxed,
     );
-    // MQUKB6-T2: seal the per-path span - walk counters become attributes
+    // seal the per-path span - walk counters become attributes
     // on the `degenbot.arb.path` node (guard drops at fn end, so the
     // recorded values are inside the exported duration).
     path_span.record("path.us", u64::try_from(micros).unwrap_or(u64::MAX));
@@ -350,7 +350,7 @@ pub(crate) fn solve_one_path(
 //   threads; the enqueue loop submits and RETURNS with the engine Mutex
 //   released. The merged stragglers re-acquire the Mutex per item on the
 //   sidecar thread.
-// Contract 3 — single lock context (WFF6MM): the only drain caller left is
+// Contract 3 — single lock context: the only drain caller left is
 //   the detached sidecar, which acquires the engine Mutex PER straggler
 //   item. The drain stays a plain `&mut self` method that NEVER locks (the
 //   compile-time `&mut self` signature proves no second lock); the
@@ -384,7 +384,7 @@ pub(crate) struct LaneArmPolicy {
     /// so the walk copies it and the drain reads it through the policy).
     pub(crate) metadata: BlockMetadata,
 }
-/// THE ONE LANE WALK (WNH5OL): the shared body of the two former `run_bin`
+/// THE ONE LANE WALK: the shared body of the two former `run_bin`
 /// closures (the ~64-common-line fold). Arm differences are the two
 /// parameters: the bin's items (`Arc<Vec>` indexed by the bin plan)
 /// and the policy value.
@@ -466,7 +466,7 @@ pub(crate) fn drive_lane_walk(
                     flush_solved_item(&mut held, &mut |o| lane.solved(o), done_pid, payload);
                 }
             } else {
-                // A None IS an outcome (QR3NUS): exactly one
+                // A None IS an outcome: exactly one
                 // Suppressed record through the LANE (both arms
                 // delivered this arm on the lane in the unfused
                 // code; the reads vector is the walk's silent

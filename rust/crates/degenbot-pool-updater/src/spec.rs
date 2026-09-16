@@ -8,7 +8,7 @@
 //! [`DegenbotDb::fetch_active_exchanges_by_chain`]) with a **static
 //! event-config map** — the Rust equivalent of `src/degenbot/cli/pool.py`'s
 //! `_V2_CONFIGS`/`_V3_CONFIGS`/`_V4_CONFIGS` dataclasses — to build a single
-//! [`ExchangeSpec`] carrying everything the chunk fn (task `CKXCOB`) needs to
+//! [`ExchangeSpec`] carrying everything the chunk fn needs to
 //! dispatch per exchange: the resolved [`PoolFamily`] (decode-leaf
 //! discriminator), the per-exchange `PoolCreated` topic0 (from task `SBICJJ`'s
 //! `degenbot-decoders` constants), the `fee_denominator`, and (for Aerodrome
@@ -22,8 +22,7 @@
 //! [`RpcFeeCall`]). Putting it in `degenbot-db` would couple the generic DB
 //! crate to decode/fetch concerns + force a `degenbot-decoders` dependency on
 //! the DB crate (today `degenbot-db` is a pure DB layer with no decoder dep —
-//! kept that way). The chunk-loop crate already owns [`PoolFamily`] (task
-//! `SBICJJ`'s `fetch.rs`) + the fetchers, so it's the natural home for the
+//! kept that way). The chunk-loop crate already owns [`PoolFamily`] + the fetchers, so it's the natural home for the
 //! resolved spec too. A standalone Rust consumer (`cargo add
 //! degenbot-pool-updater`) gets the loader + the spec + the fetchers in one
 //! self-contained crate.
@@ -57,7 +56,7 @@ use crate::fetch::PoolFamily;
 /// dataclasses — the source of truth for `family`/`event_topic`/
 /// `fee_denominator`/`v2_fee_token`/`rpc_fee_call`, which are NOT in the DB).
 ///
-/// One spec carries everything the chunk fn (task `CKXCOB`) needs to fetch +
+/// One spec carries everything the chunk fn needs to fetch +
 /// decode + persist one exchange's pool-creation events without consulting
 /// Python.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,7 +112,7 @@ pub struct ExchangeSpec {
     pub rpc_fee_call: Option<RpcFeeCall>,
     /// The persisted `exchanges.last_update_block` (the chunk loop's
     /// restart cursor — `None` if no chunk has advanced this exchange yet).
-    /// CKXCOB 3c: the chunk loop's laggard-computation + the
+    /// the chunk loop's laggard-computation + the
     /// `working_start_block` derivation read this; a restarted run resumes
     /// exactly where the last committed chunk left off (restart-invariant).
     pub last_update_block: Option<i64>,
@@ -127,7 +126,7 @@ pub struct ExchangeSpec {
 /// Modeled as a closed enum (not stringly-typed fields) because only two
 /// variants exist today (`aerodrome_v2`, `aerodrome_v3`) — encoding the
 /// call signature + return type + whether the `stable` arg is threaded as
-/// a single discriminant that the chunk fn (task `CKXCOB`) matches on to
+/// a single discriminant that the chunk fn matches on to
 /// build the right `degenbot-abi`/`alloy sol!` call. Adding a third
 /// variant is a deliberate breaking change (forcing a config review).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

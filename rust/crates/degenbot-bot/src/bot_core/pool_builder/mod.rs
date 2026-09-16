@@ -1,4 +1,4 @@
-//! Pool-builder construction orchestration (epic `Z5CNPB`, Part 1).
+//! Pool-builder construction orchestration.
 //!
 //! The builder-choreography port: the orchestrated encode→call→decode
 //! choreography that the Python `builders/` drove through `PyBotIo` moves

@@ -47,7 +47,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // passthrough is core, not a feature.
     m.add_function(wrap_pyfunction!(crate::cli::cli_main, m)?)?;
 
-    // FF-T5 (NT7HJC): the runtime fleet status — budget, plan,
+    // FF-T5: the runtime fleet status — budget, plan,
     // census ("degenbot.runtime_status()").
     m.add_function(wrap_pyfunction!(crate::runtime_status::runtime_status, m)?)?;
 
@@ -67,7 +67,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
 
-    // Ambient-runtime driver seam (VJGZJ2): lets a Python driver satisfy the
+    // Ambient-runtime driver seam: lets a Python driver satisfy the
     // ambient-runtime-only policy on the verify seams. Unconditional —
     // degenbot-core (the runtime singleton) is.
     m.add_function(wrap_pyfunction!(
@@ -200,7 +200,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::execution::add_execution_module(m)?;
 
     // Anvil-fork seam (feature = "fork") — `PyAnvilFork` over the
-    // `degenbot-fork` core crate (epic NXYVYU). Lifecycle + dev-RPC.
+    // `degenbot-fork` core crate. Lifecycle + dev-RPC.
     #[cfg(feature = "fork")]
     crate::fork::add_fork_module(m)?;
 
@@ -241,7 +241,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
             .get_type::<crate::bot::engine::VerificationRpcError>(),
     )?;
 
-    // FF-T1 (BPHR6F): the fleet boot refusal surfaces as the typed
+    // FF-T1: the fleet boot refusal surfaces as the typed
     // BootRefused exception — the library never aborts the host process
     // on the boot-refusal arm; the degenbot binary maps it to its loud
     // named fail-fast exit.
@@ -251,7 +251,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.py().get_type::<crate::bot::engine::BootRefused>(),
     )?;
 
-    // TB4QGX T6: the Faulted intake drain (spike S2) surfaces as a typed
+    // the Faulted intake drain (spike S2) surfaces as a typed
     // receipt exception.
     #[cfg(feature = "bot")]
     m.add(

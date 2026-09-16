@@ -8,7 +8,7 @@
 
 use super::{ArbitrageEngine, HashMap};
 use ::degenbot_solvers::mixed::{PoolHop, SolvePathResult};
-/// KAHU5W: the solver crate's runtime stance is INSTANCE-SCOPED — built
+/// the solver crate's runtime stance is INSTANCE-SCOPED — built
 /// fresh per engine from the typed config and passed down; no `OnceLock`.
 #[must_use]
 pub(crate) fn solve_runtime_config_from_cfg(
@@ -30,7 +30,7 @@ pub(crate) fn solve_runtime_config_from_cfg(
         memo_stats: cfg.solve.solver_walk_memo_stats,
     }
 }
-/// T4 (KAHU5W): the ONE config parse point for the engine's runtime stances —
+/// T4: the ONE config parse point for the engine's runtime stances —
 /// called at engine construction with the typed `BotConfig`; hot paths read
 /// the parsed statics. The crate performs ZERO environment reads: every stance
 /// is a schema key (env or TOML loads into it via the degenbot-config loader).
@@ -38,7 +38,7 @@ pub(crate) fn solve_runtime_config_from_cfg(
 /// holds an instance value built by [`solve_runtime_config_from_cfg`] and
 /// threads it down (KAHU5W: the solver `OnceLock` is retired).
 ///
-/// YI5NGB: the boots installed here are the CONSTRUCTION-STAMPED values —
+/// the boots installed here are the CONSTRUCTION-STAMPED values —
 /// the engine derived its own `FleetBoot` from THIS caller cfg and stamped it
 /// (`BootStamp`: engine id + deterministic cfg hash); the per-role fleet
 /// executors courier the identified stamp to the single fleet
@@ -51,10 +51,10 @@ pub(crate) fn install_engine_stances(
     // LW-T9 (no stance, no migration flag): the solve bins ALWAYS ride the
     // fleet-hosted executor; the typed boot descriptor (quota + overrides +
     // posture) is parsed here once.
-    // YI5NGB: the engine's OWN construction boot, stamped — each role's
+    // the engine's OWN construction boot, stamped — each role's
     // install records the identified ride (first-fleet-wins per role).
     crate::arb_engine::fleet_solve_executor::install_boot(boot_stamp.clone());
-    // candidate 4 (YUMQU3): the two POOLED roles install through the ONE
+    // candidate 4: the two POOLED roles install through the ONE
     // registry. Sim installs BEFORE registration, so the registry's
     // first-wins canonical process boot is sim's (same descriptor value as
     // registration's — the boot is shared). ADR-042 F4: the SimDriver seat
@@ -73,7 +73,7 @@ pub(crate) fn install_engine_stances(
     // (`SolveCycle::min_profit_floor` / `::inline_sim_enabled`, packed at
     // construction) — no process statics remain for the solve cycle.
     crate::bot_core::resolve::install_projection_memo_stance(cfg.solve.cl_projection_cache);
-    // 7LV6VN T2 (YI5NGB): the chunked parallel resolve stance is an ENGINE
+    // the chunked parallel resolve stance is an ENGINE
     // instance value now — packed per construction from
     // cfg.solve.solve_resolve_par (the KAHU5W construction-stance
     // trajectory); no installer store remains here.
@@ -154,7 +154,7 @@ pub(crate) fn flush_event_buffer(engine: &mut ArbitrageEngine) {
 }
 /// Read the last solved results and block number.
 ///
-/// RAYPAR engine-shard T1 (C42WKO): snaps a snapshot of the `DashMap`
+/// RAYPAR engine-shard T1: snaps a snapshot of the `DashMap`
 /// shards into an owned `HashMap` so the caller never holds a lock into the
 /// engine. `O(n_results)` — typically <50 entries (profitable solves only)
 /// per drain.
@@ -184,7 +184,7 @@ pub(crate) fn last_processed_block(engine: &ArbitrageEngine) -> Option<u64> {
 pub(crate) fn set_last_processed_block(engine: &mut ArbitrageEngine, block: u64) {
     engine.cycle.cursor.advance_processed(block);
 }
-/// KJWIK5: install the deferred-path re-record hook (the ledger carry). The
+/// install the deferred-path re-record hook (the ledger carry). The
 /// `EngineStages` constructor is the production installer — it captures the
 /// shared `EpochDelta` and re-records a deferred path's hop-pool keys at the
 /// cycle's solve block. Direct engine drives (unit tests, the cold-start
@@ -261,6 +261,6 @@ pub(crate) fn path_dedups(engine: &ArbitrageEngine) -> u64 {
 /// in-flight cap.
 #[cfg(test)]
 mod streaming_stance_tests {
-    // WFF6MM: the detached-solve stance key retired from the schema; there
+    // the detached-solve stance key retired from the schema; there
     // is no opt-out — the one solve arm is unconditional.
 }

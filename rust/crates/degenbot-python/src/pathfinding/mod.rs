@@ -4,7 +4,7 @@
 //! extract args (flat int tuples from Python) → build `OwnedPathFinder` →
 //! yield paths lazily via the Python iterator protocol.
 //!
-//! `build_path_graph` (AF7OEL) choreographs the DB read
+//! `build_path_graph` choreographs the DB read
 //! (`degenbot_db::fetch_path_graph_edges` and `fetch_tokens_with_min_degree`),
 //! the candidate-token edge filter, and `PathGraph::from_edges`/
 //! `prune_dead_ends`; the Python `_prepare_graph` becomes a delegating shell.
@@ -226,7 +226,7 @@ fn build_owned_finder(
 }
 
 /// Build the pathfinding edge list + address lookups via the Rust DB core
-/// (AF7OEL).
+///.
 ///
 /// Choreographs `degenbot_db::fetch_tokens_with_min_degree` (the candidate-
 /// token set, `degree` ≥ #requested pool kinds for a token to anchor a

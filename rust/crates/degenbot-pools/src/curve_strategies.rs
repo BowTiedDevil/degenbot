@@ -1,4 +1,4 @@
-//! Curve pool strategy + variant resolution (task `JVZO6T`, epic `TV72EG`).
+//! Curve pool strategy + variant resolution.
 //!
 //! Ports the Python `curve/_pool_strategies.py` + `curve/_variant_groups.py`
 //! address→strategy dispatch into pure-Rust static maps producing the raw

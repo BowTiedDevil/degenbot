@@ -97,14 +97,14 @@ pub(crate) fn project_v4(
     {
         return Err(MissingHopReason::NotViable);
     }
-    // ADR-037/X4EU3J: hooked pools are ADMITTED at registration but are
+    // ADR-037: hooked pools are ADMITTED at registration but are
     // not solvable — the CL math assumes no hook intervention. Paths that
     // would traverse one die here with a named reason so the existing
     // invalidation telemetry counts them.
     let identity = core
         .get_v4_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
-    // ADR-037/X4EU3J: hooked pools are ADMITTED at registration but are
+    // ADR-037: hooked pools are ADMITTED at registration but are
     // not solvable — the CL math assumes no hook intervention. Paths that
     // would traverse one die here with a named reason so the existing
     // invalidation telemetry counts them.
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn project_v4_hooked_pool_is_hooked_pool_reason() {
-        // ADR-037/X4EU3J: hooked pools are admitted but excluded from
+        // ADR-037: hooked pools are admitted but excluded from
         // solving — projection fails with the named HookedPool reason.
         let mut core = BotState::new();
         let v4_id = register_v4_with_hooks(&mut core, two_ticks(), 0x80);

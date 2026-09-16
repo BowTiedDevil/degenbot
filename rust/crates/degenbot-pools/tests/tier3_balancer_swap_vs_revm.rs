@@ -1,5 +1,4 @@
-//! Tier-3 Balancer weighted/stable swap on-chain accuracy oracle (ergo task
-//! `EZLECC`, epic `UP5NH6` — family 3/3 of SH6HAK's Tier-3 cutover). Deploys
+//! Tier-3 Balancer weighted/stable swap on-chain accuracy oracle. Deploys
 //! the `BalancerSwapOracleHarness` (solc-0.7.6 compiled) — a thin glass box
 //! over the CANONICAL balancer-v2-monorepo math cores (`FixedPoint`,
 //! `LogExpMath`, `WeightedMath`, `StableMath`, vendored at pinned commit

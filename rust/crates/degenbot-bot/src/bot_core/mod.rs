@@ -43,7 +43,7 @@ pub(crate) mod solve_anchor;
 pub mod stage_handlers;
 pub mod stage_machine;
 pub mod stage_telemetry;
-/// KAHU5W: the process-wide typed BotConfig holder. The degenbot-config
+/// the process-wide typed BotConfig holder. The degenbot-config
 /// loader (the ONLY environment-reading site in the workspace) produces the
 /// value once at startup; every formerly env-reading call site below reads
 /// its typed section from here. Purely a VALUE holder — no env access.
@@ -76,7 +76,7 @@ pub use balancer_stable_state::{
 pub use balancer_weighted_state::{
     BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
-// MROOY7 5WTYYQ: the block-clock channel type is a shared-kernel fact type
+// the block-clock channel type is a shared-kernel fact type
 // (degenbot-core), not bot_runtime knowledge — the runtime’s engine merely
 // relays header ticks through it and the PyO3 layer subscribes at the edge.
 pub use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
@@ -210,7 +210,7 @@ pub struct BotState {
     /// block, 3M5PO5). The registration drain reads this as the
     /// `drain_pump_completed` cutoff instead of a buffer-local shadow marker;
     /// `0` means no block has been tombstoned → nothing drains. Owned here as
-    /// a plain monotone value that outlives pump runs (BGEDB6): the pump
+    /// a plain monotone value that outlives pump runs: the pump
     /// driver advances it on the tombstone verdict, and a resume never resets
     /// it.
     pump_complete_cutoff: u64,
@@ -238,8 +238,7 @@ pub struct BotState {
 /// (insertion logged, no matching drain apply) or (b) never buffered at all
 /// (no insertion log). `tag` ∈ {'L' (unregistered Live-eligible path),
 /// 'Q' (Quarantined deferral)}. Always-on DEBUG on `pump`.
-/// The base-pool delegation port for metapool `get_dy_underlying` (task
-/// `V5X2YP`). Implements [`CurveBasePoolPort`] by delegating each op to a
+/// The base-pool delegation port for metapool `get_dy_underlying`. Implements [`CurveBasePoolPort`] by delegating each op to a
 /// registered base `CurvePool` in the same `BotState` — the Rust twin of the
 /// Python `_LazyBasePool`/`CurveStableswapPool` base-pool delegate. All
 /// methods are immutable reads on `&BotState`, so the port borrows the state
@@ -446,7 +445,7 @@ impl BotState {
             .unwrap_or(0)
     }
 
-    /// The pool's **liquidity** clock (`tick_data_block`, two-stamp OB7UNY) —
+    /// The pool's **liquidity** clock (`tick_data_block`, two-stamp rule) —
     /// the block its tick map reflects. See [`PoolEntry::tick_data_block`]. A
     /// CL pool with `pool_tick_data_block` well behind `pool_update_block` is
     /// the staged-clock desync class (`0x5653`): fresh price, stale tick map.
@@ -490,7 +489,7 @@ impl BotState {
 
     /// Monotonically advance the delivery cutoff (last complete block). The
     /// live pump drives this when executing the `TombstonePrevious` verdict
-    /// (BGEDB6); tests that drive the registration drain without a pump use
+    ///; tests that drive the registration drain without a pump use
     /// the same entry point.
     pub fn advance_pump_complete_cutoff(&mut self, block: u64) {
         if block > self.pump_complete_cutoff {
@@ -541,7 +540,7 @@ impl BotState {
     }
 
     /// Family-dispatching reader for the V3/V4 concentrated-liquidity
-    /// families (J63J3N). Returns a trait view over the shared read-only
+    /// families. Returns a trait view over the shared read-only
     /// surface — the mutable scalars (`sqrt_price_x96`/`liquidity`/`tick`/
     /// `update_block`), the immutable fee/tick-spacing, and `tick_data`.
     ///
@@ -921,7 +920,7 @@ impl BotState {
     // orientation derived at solve from `zero_for_one`)
     // -----------------------------------------------------------------------
 
-    /// Family-dispatching Swap apply (RAJ3PP). The single entry point
+    /// Family-dispatching Swap apply. The single entry point
     /// `PyLiquidityPool.apply_swap` calls — routes V3 pools to
     /// `apply_v3_swap_by_pool_id` and V4 pools to
     /// `apply_v4_swap_by_pool_id`. V2/unregistered → `None` (no-op, matching
@@ -963,7 +962,7 @@ impl BotState {
     }
 
     /// Registration/seed genesis anchor for a registered V3/V4 pool
-    /// (two-stamp OB7UNY): pushes a `before == after` journal delta at `block`
+    /// (two-stamp rule): pushes a `before == after` journal delta at `block`
     /// so the reorg journal is non-empty from registration, WITHOUT advancing
     /// either clock. The split-seed replacement for the builder's old
     /// `apply_swap` genesis, which would backward-panic `update_block` (price
@@ -983,7 +982,7 @@ impl BotState {
         }
     }
 
-    /// Family-dispatching liquidity update (RAJ3PP). The single entry point
+    /// Family-dispatching liquidity update. The single entry point
     /// `PyLiquidityPool.apply_liquidity_update` calls — routes V3 to
     /// `apply_v3_liquidity_update_by_pool_id` and V4 to
     /// `apply_v4_liquidity_update_by_pool_id`. V2/unregistered → `None`.

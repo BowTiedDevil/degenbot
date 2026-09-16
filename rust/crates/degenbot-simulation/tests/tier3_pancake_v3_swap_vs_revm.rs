@@ -1,5 +1,5 @@
 //! Tier-3 PancakeSwap V3 `PancakeV3Pool.swap` on-chain accuracy oracle
-//! (epic `CMORFZ` task `BXIOWT`). Deploys the REAL `PancakeV3Pool` — the
+//!. Deploys the REAL `PancakeV3Pool` — the
 //! Etherscan-verified deployment (pool 0x1445F32D1A74872bA41f3D8cF4022E9996120b31,
 //! solc 0.7.6, source vendored under `tier3-oracle/lib/pancake-src/`) via the
 //! `PancakeV3SwapOracleHarness`, seeds its storage slot-for-slot, drives

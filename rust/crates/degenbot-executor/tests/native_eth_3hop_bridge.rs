@@ -2,7 +2,7 @@
 // Structural + byte-exact tests for the native-ETH↔WETH wrap/unwrap bridge
 // in 3-hop V4 composers .
 //
-// EYQ6UF: built from the individual `enc_*` primitives — if the composer
+// built from the individual `enc_*` primitives — if the composer
 // emits the right opcodes in the right order, the bytes match. The native
 // V4-bridge opcode ORDER is the ordering risk the runtime matrix cannot name
 // precisely, so this byte-golden remains as the smoke-level byte cross-check.

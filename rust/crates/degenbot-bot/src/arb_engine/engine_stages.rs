@@ -1,6 +1,5 @@
 //! `EngineStages` — the arb engine's `StageHandlers` implementation and the
-//! Published-edge adapter for the delivery-to-Python channels (epic MROOY7,
-//! task SZJUKL — the seam-retirement cutover).
+//! Published-edge adapter for the delivery-to-Python channels.
 //!
 //! This is the ONE consumers-and-drivers surface that survived the seam
 //! retirement: the dissolved `SolveCoordinator` / `DrainSink` / `Engine`
@@ -22,7 +21,7 @@
 //!   sink (ADR-027 completion, B4GX7C lineage).
 //!
 //! The no-progress/strike obligations of the dissolved `DrainerHealth`
-//! map onto the machine's `WatchdogPhase` (7NFYQW): header staleness =
+//! map onto the machine's `WatchdogPhase`: header staleness =
 //! a dead `newHeads` arm, log silence = a dead logs arm. A wedge that
 //! stops the driver from executing stage work IS the pump stall the
 //! machine's watchdogs already abort on — there is no separate drainer
@@ -109,7 +108,7 @@ impl EngineStages {
     /// ONE Bot-owned epoch ledger (the wiring layer passes
     /// `Bot::active_delta`).
     ///
-    /// KJWIK5: construction is also the installer for the engine's
+    /// construction is also the installer for the engine's
     /// deferred-path re-record hook — the ledger carry for
     /// `paths.deferred_future_price` deferrals. The engine's dispatch maps a
     /// deferred path's pid to its hop-pool keys and calls the hook with the
@@ -361,7 +360,7 @@ impl EngineStages {
     /// The engine's solve cycle — the behavior port of the dissolved
     /// `EngineHandle::solve_dirty` hold/spans/sidecar logic, verbatim.
     ///
-    /// ADR-046 / ZE67AE: this is the **cycle surface** on `EngineStages`
+    /// ADR-046: this is the **cycle surface** on `EngineStages`
     /// (the solve entry that deliberately bypasses pump semantics). The
     /// driver arrives via `StageHandlers::on_solve`; the stage-span and
     /// detached-sidecar unit-test harnesses drive it directly. The
@@ -381,7 +380,7 @@ impl EngineStages {
         // ~2µs empty pass, gate + work under ONE mutex acquisition.
         let mut engine =
             hotpath::measure_block!("EngineStages::solve.probe_lock", self.engine.lock());
-        // WFF6MM: this path spawns the merge sidecar AFTER the cycle
+        // this path spawns the merge sidecar AFTER the cycle
         // returns (below), and the machine's merge Receiver is take-once —
         // a direct-call inline drain (the synchronous unit-test harness)
         // would steal it. Disable the inline drain for every EngineStages-
@@ -406,7 +405,7 @@ impl EngineStages {
             // verdict (or the admission shed) in the solve cycle.
             cycle.arm = tracing::field::Empty,
         );
-        // ZZS6CG: exact-match reparent onto this block's published pump
+        // exact-match reparent onto this block's published pump
         // span. The work now runs INLINE in the driver (no drainer task), so
         // the ambient span is already the pump's block span; the published-
         // parent attach keeps the block-boundary exactness.
@@ -424,7 +423,7 @@ impl EngineStages {
             hotpath::gauge!("engine_registered_paths").set(f64::from(
                 u32::try_from(path_count(&engine)).unwrap_or(u32::MAX),
             ));
-            // T3 (epic BXZBWY): the solve cycle must not pin a shared
+            // T3: the solve cycle must not pin a shared
             // pump-runtime worker while it runs. 2UVG3E seam #4: under the
             // detached stance the engine Mutex hold collapses to enqueue end
             // (µs); the in-cycle arm is the backpressure safety valve only.
@@ -452,9 +451,9 @@ impl EngineStages {
                     cycle_outcome.arm_label(),
                 );
             }
-            // SRQEK5 (WV62TX): spawn the detached merge sidecar at the FIRST
+            // spawn the detached merge sidecar at the FIRST
             // detached enqueue (rx take + spawn atomic under the held guard).
-            // P37YJG: THE ONE spawn — the machine owns the census register +
+            // THE ONE spawn — the machine owns the census register +
             // named thread + loud abort; this site only takes the parked rx.
             if let Some(merge_rx) = engine.cycle.detached_cycle.take_merge_rx() {
                 super::detached_cycle::spawn_merge_sidecar(&self.engine, merge_rx);
@@ -469,9 +468,9 @@ impl EngineStages {
         }
         cycle_outcome
     }
-    /// SRQEK5 (WV62TX): if the empty-affected solve path took the parked
+    /// if the empty-affected solve path took the parked
     /// Receiver tradeoff, the sidecar spawn happens here instead.
-    /// P37YJG: THE ONE spawn — the machine owns it (the take-once rides the
+    /// THE ONE spawn — the machine owns it (the take-once rides the
     /// machine; the census/thread/abort body is `spawn_merge_sidecar`).
     fn spawn_detached_sidecar_if_pending(&self) {
         let Some(merge_rx) = self.engine.lock().cycle.detached_cycle.take_merge_rx() else {
@@ -490,7 +489,7 @@ impl EngineStages {
 /// byte-identical to the retired engine method (never takes the engine lock
 /// while holding the core lock).
 ///
-/// LXDY4C: the affected keys arrive from the block's `EpochDelta` (consumed
+/// the affected keys arrive from the block's `EpochDelta` (consumed
 /// by the stage surface's `on_resolve` hook); no engine-local dirty-set
 /// intake remains.
 ///
@@ -517,7 +516,7 @@ fn run_engine_cycle(
         &engine.registry,
         &mut engine.delivery,
     );
-    // 6XB6NJ: monotone advance on the block cursor.
+    // monotone advance on the block cursor.
     engine.cycle.cursor.advance_processed(block_number);
     outcome
 }
@@ -525,7 +524,7 @@ fn run_engine_cycle(
 /// on `BotState`) — the relocation of the retired
 /// `event_routing.rs::solve_dirty` prologue.
 ///
-/// XC7SWD: these `core.write()` calls ran uninstrumented and own a
+/// these `core.write()` calls ran uninstrumented and own a
 /// ~2.8-3.1s window of every engine mutex hold (`solve_duration` p95
 /// 4.85s vs the rebuild-cycle internal p95 of 0.46s; Jaeger children
 /// sum to <0.5s of a 3.1-3.3s solve span).
@@ -596,7 +595,7 @@ fn expire_buffered_telemetry(
     span.record("expire_work_us", expire_work_us);
     (lock_wait_us, expire_work_us)
 }
-// P37YJG: the sidecar's thread name + census row + the ONE spawn moved
+// the sidecar's thread name + census row + the ONE spawn moved
 // into the machine — `detached_cycle::{merge_sidecar_thread_name,
 // merge_sidecar_census_entry, spawn_merge_sidecar}` (byte-identical
 // naming and census row).
@@ -780,7 +779,7 @@ impl PumpControl for EngineStages {
 mod fleet_stance_tests {
     //! BCA77G: the merge sidecar hosted as the fleet `Merge` role. LW-T9:
     //! the fleet.stance flip matrix is retired — ONE posture survives.
-    // P37YJG: the naming/census fns moved into the machine; the pins
+    // the naming/census fns moved into the machine; the pins
     // (byte-identical naming + census row) stay right here.
     use crate::arb_engine::detached_cycle::{
         merge_sidecar_census_entry, merge_sidecar_thread_name,
