@@ -150,9 +150,6 @@ allow-star-arg-any = true
     "ARG",
     "D",
     "DOC",
-    "unconventional-import-alias",   # benchmark scripts may import networkx without alias
-    "implicit-namespace-package",   # benchmark scripts are not part of a package
-    "import-outside-top-level",  # benchmark scripts may import conditionally
     "import-private-name",  # tests may need to import private modules
     "PLR",
     "suspicious-pickle-usage",
