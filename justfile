@@ -63,11 +63,11 @@ test: test-rust test-python
 
 # Run every pre-push gate manually, in hook order and fail-fast — the
 # object-DB GC brake, the commitlint push-range re-lint, then the Rust/Python
-# code linters, then the
-# Rust and Python build + test tracks, exactly as the installed prek pre-push
-# hook runs them (prek.toml, stages = ["pre-push"]). The installed hook and
-# ci.yml stay authoritative on an actual push; this is for checking the gates
-# with `just pre-push` before `git push`.
+# code linters (clippy, ruff+ty, stubtest), then the Rust and Python build +
+# test tracks, exactly as the installed prek pre-push hook runs them
+# (prek.toml, stages = ["pre-push"]). The installed hook and ci.yml stay
+# authoritative on an actual push; this is for checking the gates with
+# `just pre-push` before `git push`.
 #
 # Manual pre-push gate check (mirrors prek.toml pre-push stage, fail-fast).
 pre-push:
@@ -88,6 +88,7 @@ pre-push:
     run_gate "commitlint (push range)" scripts/hooks/commitlint-push.sh
     run_gate "Rust clippy"             just lint-rust-check
     run_gate "Python lint"             just lint-python-check
+    run_gate "Stubtest drift gate"     just lint-stubtest
     run_gate "Rust build"              just build-rust-extension
     run_gate "Rust tests"              just test-rust
     run_gate "Python build (maturin)"  just dev
