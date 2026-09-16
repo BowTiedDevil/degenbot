@@ -30,19 +30,60 @@ fn fnv1a(data: &[u8], seed: u64) -> u64 {
     hash
 }
 
-/// Content fingerprint of everything that defines this crate's compiled
-/// behavior: `build.rs`, `Cargo.toml`, and every file under `src/` (sorted by
-/// path, path + bytes hashed — renaming a module changes the fingerprint).
+/// Content fingerprint of everything that defines the compiled artifact's
+/// behavior: this crate's `build.rs`/`Cargo.toml`/`src/`, PLUS every sibling
+/// workspace crate under `rust/crates` (`Cargo.toml` + `build.rs` + `src/`)
+/// and the workspace manifest + lockfile. The linker folds those crates into
+/// the shipped wheel, so a dependency-only edit MUST move the fingerprint —
+/// otherwise the receipt blesses a stale wheel as fresh.
 fn source_fingerprint(crate_dir: &Path) -> Option<u64> {
-    let build_rs = fs::read(crate_dir.join("build.rs")).ok()?;
-    let cargo_toml = fs::read(crate_dir.join("Cargo.toml")).ok()?;
-    let mut hash = fnv1a(&build_rs, fnv1a(&cargo_toml, 0xcbf2_9ce4_8422_2325));
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut mix = |tag: &[u8], content: &[u8]| {
+        hash = fnv1a(tag, hash);
+        hash = fnv1a(content, hash);
+    };
+
+    mix(b"build.rs", &fs::read(crate_dir.join("build.rs")).ok()?);
+    mix(b"Cargo.toml", &fs::read(crate_dir.join("Cargo.toml")).ok()?);
 
     let mut files = BTreeMap::new();
     collect_source_files(&crate_dir.join("src"), &mut files);
     for (rel, content) in files {
-        hash = fnv1a(rel.as_bytes(), hash);
-        hash = fnv1a(&content, hash);
+        mix(rel.as_bytes(), &content);
+    }
+
+    // Workspace level: rust/Cargo.toml + rust/Cargo.lock + each crate dir.
+    let crates_dir = crate_dir.parent()?.to_path_buf();
+    let workspace_root = crates_dir.parent()?.to_path_buf();
+    for extra in ["Cargo.toml", "Cargo.lock"] {
+        if let Ok(content) = fs::read(workspace_root.join(extra)) {
+            mix(extra.as_bytes(), &content);
+        }
+    }
+    let mut crate_dirs: Vec<PathBuf> = fs::read_dir(&crates_dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    crate_dirs.sort();
+    for dir in crate_dirs {
+        if dir == crate_dir {
+            continue;
+        }
+        let name = dir.file_name()?.to_str()?.as_bytes().to_vec();
+        if let Ok(content) = fs::read(dir.join("Cargo.toml")) {
+            mix(&name, &content);
+        }
+        if let Ok(content) = fs::read(dir.join("build.rs")) {
+            mix(&name, &content);
+        }
+        let mut files = BTreeMap::new();
+        collect_source_files(&dir.join("src"), &mut files);
+        for (rel, content) in files {
+            mix(&name, rel.as_bytes());
+            mix(&name, &content);
+        }
     }
     Some(hash)
 }
@@ -97,7 +138,12 @@ fn main() {
         let count = parts.next()?.parse::<u64>().ok()?;
         // Optional second token: legacy (pre-fingerprint) files have only
         // a bare count, which must still be honored (not reset).
-        let fingerprint = parts.next().and_then(|tok| tok.parse::<u64>().ok());
+        // The receipt writes the fingerprint hex-formatted; parse it as hex
+        // or every receipt whose digits contain a-f misparses to None and
+        // the counter advances spuriously on unchanged content.
+        let fingerprint = parts
+            .next()
+            .and_then(|tok| u64::from_str_radix(tok, 16).ok());
         Some((count, fingerprint))
     });
     let fingerprint = source_fingerprint(&crate_dir);
