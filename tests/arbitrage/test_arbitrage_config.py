@@ -169,6 +169,33 @@ class TestLiveModeRequiresOperator:
             ArbitrageConfig.from_env(env, live=True, permutation=None)
 
 
+class TestLiveOwnerOperatorTriangle:
+    """Live mode refuses an owner/operator mismatch.
+
+    The simulator's execute() caller is executor_owner; a mismatched owner
+    makes every simulation revert on the contract's owner gate, and the bot
+    then live-idles indefinitely with zero submissions and no error.
+    """
+
+    def test_live_mismatched_owner_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        env = _full_env() | {"EXECUTOR_OWNER_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"}
+        with pytest.raises(ValueError, match="EXECUTOR_OWNER_ADDRESS"):
+            ArbitrageConfig.from_env(env, live=True, permutation=None)
+
+    def test_live_empty_owner_defaults_to_operator(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        env = {k: v for k, v in _full_env().items() if k != "EXECUTOR_OWNER_ADDRESS"}
+        cfg = ArbitrageConfig.from_env(env, live=True, permutation=None)
+        assert cfg.executor_owner == cfg.operator_address
+
+    def test_dry_run_mismatched_owner_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        env = _full_env() | {"EXECUTOR_OWNER_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"}
+        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+        assert cfg.executor_owner == "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"
+
+
 class TestRpcCascade:
     """from_env delegates to resolve_rpc_uris: CLI > OS env > legacy > config.toml > raise."""
 

@@ -337,9 +337,19 @@ class ArbitrageConfig:
         injected_address = _checksum_or_empty(
             env.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
         )
-        executor_owner = _checksum_or_empty(
-            env.get("EXECUTOR_OWNER_ADDRESS") or _DEFAULT_EXECUTOR_OWNER
-        )
+        # Owner defaulting follows the deployment invariant: a real
+        # deployment makes the owner the deployer, and the operator IS the
+        # deployer (bot.env key), so an unset owner is the operator — with
+        # the dry-run placeholder pair as the only non-live fallback.
+        default_owner = operator_address if live else _DEFAULT_EXECUTOR_OWNER
+        executor_owner = _checksum_or_empty(env.get("EXECUTOR_OWNER_ADDRESS") or default_owner)
+        if live and executor_owner != operator_address:
+            msg = (
+                "EXECUTOR_OWNER_ADDRESS must equal OPERATOR_ADDRESS in live mode "
+                f"(owner {executor_owner} != operator {operator_address}): the "
+                "executor's owner gate and the sim's caller both key off this address"
+            )
+            raise ValueError(msg)
         # main() behavior: when INJECT_EXECUTOR_CODE, override executor with injected
         if inject_executor_code:
             executor_address = injected_address
