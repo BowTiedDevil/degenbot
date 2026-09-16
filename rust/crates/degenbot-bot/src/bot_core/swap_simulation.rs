@@ -347,7 +347,7 @@ pub fn simulate_balancer_pair_in_given_out(
 
 /// Balancer V2 (weighted + stable): exact-input across an explicit token
 /// pair (standalone-driver N-token surface). Overrides carry the caller's
-/// view of balances (and stable scaling factors - MetaStable rates). Returns
+/// view of balances (and stable scaling factors - `MetaStable` rates). Returns
 /// None for non-Balancer pools or an out-of-domain computation.
 #[must_use]
 pub fn simulate_balancer_pair_out(

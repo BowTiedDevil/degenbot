@@ -213,7 +213,7 @@ fn simulate_balancer_weighted_swap(
 ///
 /// # Errors
 /// `NotComputable` for an index out of range, `idx_in == idx_out`, the
-/// on-chain MAX_IN_RATIO breach, or an arithmetic overflow (mirroring the
+/// on-chain `MAX_IN_RATIO` breach, or an arithmetic overflow (mirroring the
 /// pipe-line's `SafeMath` revert contract).
 pub fn simulate_balancer_weighted_swap_pair(
     id: &crate::balancer_weighted_state::BalancerWeightedPoolIdentity,
@@ -268,13 +268,13 @@ pub fn simulate_balancer_weighted_swap_pair(
 
 /// Balancer V2 weighted exact-output across an explicit token pair.
 ///
-/// Mirrors the python companion calculate_tokens_in_from_tokens_out:
-/// upscale the out amount (mulDown), calc_in_given_out in scaled space,
+/// Mirrors the python companion `calculate_tokens_in_from_tokens_out`:
+/// upscale the out amount (`mulDown`), `calc_in_given_out` in scaled space,
 /// downscale UP, then add the fee LAST (div-up over the complement).
 ///
 /// # Errors
-/// NotComputable for an index/shape or MAX_OUT_RATIO breach, or an
-/// arithmetic overflow (mirroring the on-chain SafeMath revert contract).
+/// `NotComputable` for an index/shape or `MAX_OUT_RATIO` breach, or an
+/// arithmetic overflow (mirroring the on-chain `SafeMath` revert contract).
 pub fn simulate_balancer_weighted_swap_pair_in_given_out(
     id: &crate::balancer_weighted_state::BalancerWeightedPoolIdentity,
     state: &crate::balancer_weighted_state::BalancerWeightedPoolState,
@@ -322,14 +322,14 @@ pub fn simulate_balancer_weighted_swap_pair_in_given_out(
 
 /// Balancer V2 stable exact-output across an explicit token pair.
 ///
-/// Mirrors the python companion calculate_tokens_in_from_tokens_out:
-/// upscale balances + the out amount (mulDown), BPT-skip, the registered
-/// invariant revision, calc_in_given_out in scaled space, downscale UP,
+/// Mirrors the python companion `calculate_tokens_in_from_tokens_out`:
+/// upscale balances + the out amount (`mulDown`), BPT-skip, the registered
+/// invariant revision, `calc_in_given_out` in scaled space, downscale UP,
 /// add the fee LAST.
 ///
 /// # Errors
-/// NotComputable for an index/shape breach or an arithmetic overflow
-/// (mirroring the on-chain SafeMath revert contract).
+/// `NotComputable` for an index/shape breach or an arithmetic overflow
+/// (mirroring the on-chain `SafeMath` revert contract).
 pub fn simulate_balancer_stable_swap_pair_in_given_out(
     id: &crate::balancer_stable_state::BalancerStablePoolIdentity,
     state: &crate::balancer_stable_state::BalancerStablePoolState,
@@ -389,13 +389,13 @@ pub fn simulate_balancer_stable_swap_pair_in_given_out(
 }
 
 /// Balancer V2 stable exact-input swap for the token0/1 pair. Mirrors the
-/// python companion BalancerV2StablePool.calculate_tokens_out_from_tokens_in:
+/// python companion `BalancerV2StablePool.calculate_tokens_out_from_tokens_in`:
 ///   1. Subtract swap fee from the RAW amount.
-///   2. Upscale balances (drop BPT for ComposableStable pools) + amount.
-///   3. Compute invariant per invariant_version (V1 roundDown D_P,
-///      V2 roundUp P_D).
-///   4. calc_out_given_in in scaled space with BPT-skipped indices.
-///   5. Downscale the output (divDown).
+///   2. Upscale balances (drop BPT for `ComposableStable` pools) + amount.
+///   3. Compute invariant per `invariant_version` (V1 roundDown `D_P`,
+///      V2 roundUp `P_D`).
+///   4. `calc_out_given_in` in scaled space with BPT-skipped indices.
+///   5. Downscale the output (`divDown`).
 fn simulate_balancer_stable_swap(
     id: &crate::balancer_stable_state::BalancerStablePoolIdentity,
     state: &crate::balancer_stable_state::BalancerStablePoolState,
@@ -412,8 +412,8 @@ fn simulate_balancer_stable_swap(
 /// already rebases indices; this adds explicit selections).
 ///
 /// # Errors
-/// NotComputable for an index/shape breach or an arithmetic overflow
-/// (mirroring the on-chain SafeMath revert contract).
+/// `NotComputable` for an index/shape breach or an arithmetic overflow
+/// (mirroring the on-chain `SafeMath` revert contract).
 pub fn simulate_balancer_stable_swap_pair(
     id: &crate::balancer_stable_state::BalancerStablePoolIdentity,
     state: &crate::balancer_stable_state::BalancerStablePoolState,

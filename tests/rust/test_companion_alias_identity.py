@@ -63,9 +63,12 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     (_DISPATCH, "dispatch_profitable", _SIM, "dispatch_profitable_py"),
     (_DISPATCH, "merge_payload_results", _SIM, "merge_payload_results_py"),
     # degenbot.dispatch — submission seam
+    # dispatch_and_submit is deliberately NOT pinned here: it is the one
+    # non-alias on the seam, a thin async wrapper decoding the leaf's record
+    # dicts into the typed records of degenbot.dispatch.records (behavior is
+    # pinned by tests/dispatch/test_submit_records.py).
     (_DISPATCH, "Dispatcher", _SUBMIT, "Dispatcher"),
     (_DISPATCH, "TxSigner", _SUBMIT, "TxSigner"),
-    (_DISPATCH, "dispatch_and_submit", _SUBMIT, "dispatch_and_submit_py"),
     (_DISPATCH, "fetch_fee_history", _SUBMIT, "fetch_fee_history_py"),
     # degenbot.updater
     (_UPDATER, "CancelHandle", _CANCEL, "CancelHandle"),
@@ -127,12 +130,17 @@ def test_dispatch_all_pins_public_surface() -> None:
         "PayloadOutcome",
         "PayloadVerdict",
         "SimulateContext",
+        "SkippedRecord",
         "SubmitCandidate",
+        "SubmitRecord",
+        "SubmitSkipReason",
+        "SubmittedRecord",
         "TxSigner",
         "dispatch_and_submit",
         "dispatch_profitable",
         "fetch_fee_history",
         "merge_payload_results",
+        "typed_submit_record",
     }
     assert expected.issubset(set(dir(d)))
     assert expected == set(d.__all__)

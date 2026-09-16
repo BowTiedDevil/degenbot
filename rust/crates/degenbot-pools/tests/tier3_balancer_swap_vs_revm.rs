@@ -447,7 +447,7 @@ fn stable_v2_out_given_in_is_byte_exact_to_onchain_reference() {
     );
 }
 
-/// The engine's weighted GIVEN_OUT required-input via the pair surface.
+/// The engine's weighted `GIVEN_OUT` required-input via the pair surface.
 fn engine_weighted_in_given_out(case: &WeightedCase, zfo: bool, amount_out: U256) -> Option<U256> {
     let (identity, state) = BalancerWeightedPoolState::from_params(
         RegisterBalancerWeightedPoolParams {
@@ -471,7 +471,7 @@ fn engine_weighted_in_given_out(case: &WeightedCase, zfo: bool, amount_out: U256
     .ok()
 }
 
-/// The engine's stable GIVEN_OUT required-input (invariant_version == 1).
+/// The engine's stable `GIVEN_OUT` required-input (`invariant_version` == 1).
 fn engine_stable_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) -> Option<U256> {
     let (identity, state) = BalancerStablePoolState::from_params(
         RegisterBalancerStablePoolParams {
@@ -497,7 +497,7 @@ fn engine_stable_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) ->
     .ok()
 }
 
-/// The engine's stable GIVEN_OUT required-input (invariant_version == 2).
+/// The engine's stable `GIVEN_OUT` required-input (`invariant_version` == 2).
 fn engine_stable_v2_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) -> Option<U256> {
     let (identity, state) = BalancerStablePoolState::from_params(
         RegisterBalancerStablePoolParams {
@@ -523,7 +523,7 @@ fn engine_stable_v2_in_given_out(case: &StableCase, zfo: bool, amount_out: U256)
     .ok()
 }
 
-/// Assert the engine/on-chain parity for a weighted GIVEN_OUT case.
+/// Assert the engine/on-chain parity for a weighted `GIVEN_OUT` case.
 fn assert_weighted_in_given_out_parity(case: &WeightedCase, zfo: bool, amount_out: U256) {
     let engine = engine_weighted_in_given_out(case, zfo, amount_out);
     let sig = if zfo {
@@ -545,7 +545,7 @@ fn assert_weighted_in_given_out_parity(case: &WeightedCase, zfo: bool, amount_ou
     }
 }
 
-/// Assert the engine/on-chain parity for a stable GIVEN_OUT case (V1).
+/// Assert the engine/on-chain parity for a stable `GIVEN_OUT` case (V1).
 fn assert_stable_in_given_out_parity(case: &StableCase, zfo: bool, amount_out: U256) {
     let engine = engine_stable_in_given_out(case, zfo, amount_out);
     let sig = if zfo {
@@ -567,7 +567,7 @@ fn assert_stable_in_given_out_parity(case: &StableCase, zfo: bool, amount_out: U
     }
 }
 
-/// Assert the engine/on-chain parity for a stable GIVEN_OUT case (V2).
+/// Assert the engine/on-chain parity for a stable `GIVEN_OUT` case (V2).
 fn assert_stable_v2_in_given_out_parity(case: &StableCase, zfo: bool, amount_out: U256) {
     let engine = engine_stable_v2_in_given_out(case, zfo, amount_out);
     let sig = if zfo {

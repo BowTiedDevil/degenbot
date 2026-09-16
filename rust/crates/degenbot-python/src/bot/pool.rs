@@ -801,8 +801,8 @@ impl PyLiquidityPool {
     ///
     /// Raises:
     ///     `ValueError`: On out-of-range/equal indices, the on-chain
-    ///         MAX_IN_RATIO breach, or a uint256 intermediate overflow (the
-    ///         same on-chain-parity contracts as [calculate_tokens_out]).
+    ///         `MAX_IN_RATIO` breach, or a uint256 intermediate overflow (the
+    ///         same on-chain-parity contracts as [`calculate_tokens_out`]).
     #[pyo3(signature = (index_in, index_out, amount_in, override_balances=None, override_scaling_factors=None))]
     fn calculate_tokens_out_for_pair(
         &self,
@@ -860,14 +860,14 @@ impl PyLiquidityPool {
 
     /// Calculate the required input for an explicit token pair (N-token pools).
     ///
-    /// The standalone-driver companion for the balanced GIVEN_OUT protocol arm
-    /// (see calculate_tokens_out_for_pair): the weighted/stable math reads only
+    /// The standalone-driver companion for the balanced `GIVEN_OUT` protocol arm
+    /// (see `calculate_tokens_out_for_pair`): the weighted/stable math reads only
     /// the in/out pair of the registered identity.
     ///
     /// Raises:
-    ///     ValueError: On out-of-range/equal indices, the on-chain MAX_OUT_RATIO
+    ///     `ValueError`: On out-of-range/equal indices, the on-chain `MAX_OUT_RATIO`
     ///         breach, or a uint256 intermediate overflow (the same
-    ///         on-chain-parity contracts as [calculate_tokens_out]).
+    ///         on-chain-parity contracts as [`calculate_tokens_out`]).
     #[pyo3(signature = (index_in, index_out, amount_out, override_balances=None, override_scaling_factors=None))]
     fn calculate_tokens_in_for_pair(
         &self,

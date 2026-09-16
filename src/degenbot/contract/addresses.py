@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import create2_address as _rs_create2_address
+from degenbot.contract import _rs_create2_address
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:

@@ -2,6 +2,15 @@
 
 # Deployment resolver functions — bridged from the Rust ``degenbot-core``
 # deployments resolver (ADR-013: ``_ffi`` only in ``__init__.py`` barrier).
+# Pool-address derivation — the keccak/create2 math lives in the Rust core
+# (ADR-013: `_ffi` only in the `__init__.py` barrier; leaf modules import
+# from this stable home).
+from degenbot._ffi import (
+    generate_v2_pool_address as _rs_generate_v2_pool_address,
+)
+from degenbot._ffi import (
+    generate_v3_pool_address as _rs_generate_v3_pool_address,
+)
 from degenbot._ffi.deployments import (
     resolve_deployer,
     resolve_v2_init_hash,
@@ -56,6 +65,8 @@ __all__ = (
     "UniswapV4Pool",
     "UniswapV4PoolExternalUpdate",
     "UniswapV4PoolState",
+    "_rs_generate_v2_pool_address",
+    "_rs_generate_v3_pool_address",
     "resolve_deployer",
     "resolve_v2_init_hash",
     "resolve_v3_init_hash",

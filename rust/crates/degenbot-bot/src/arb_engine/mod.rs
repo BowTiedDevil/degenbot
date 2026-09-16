@@ -11,9 +11,9 @@
 //! - A [`BotState`] for V2 pool state and constant-product solving (ADR-003:
 //!   `BotState` is the single state owner; the engine is a consumer)
 //! - A [`BotState`](crate::bot_core::BotState) for V2+V3 pool state (ADR-003:
-//! `BotState` is the single state owner, peer to this engine)
+//!   `BotState` is the single state owner, peer to this engine)
 //! - A [`BotState`](crate::bot_core::BotState) for all pool state (V2+V3+V4 —
-//! ADR-003), the single Rust state owner peer to this engine
+//!   ADR-003), the single Rust state owner peer to this engine
 //!
 //! V4 pools share identical concentrated-liquidity math with V3. The solver
 //! treats V3 and V4 hops identically — both produce `IntV3TickRangeSequence`.

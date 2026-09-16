@@ -45,7 +45,8 @@ def _arm_tracemalloc(interval: float) -> None:
     import tracemalloc
 
     tracemalloc.start(1)
-    mem_state = {"snap": tracemalloc.take_snapshot(), "n": 0}
+    last_snap = tracemalloc.take_snapshot()
+    cycle = 0
     libc = ctypes.CDLL("libc.so.6")
     libc.fopen.restype = ctypes.c_void_p
     libc.malloc_info.argtypes = [ctypes.c_int, ctypes.c_void_p]
@@ -53,14 +54,16 @@ def _arm_tracemalloc(interval: float) -> None:
     libc.malloc_trim.argtypes = [ctypes.c_size_t]
 
     def dump_malloc_info() -> None:
-        mem_state["n"] += 1
-        path = f"logs/malloc_info_{mem_state['n']}.json"
+        nonlocal cycle
+        cycle += 1
+        path = f"logs/malloc_info_{cycle}.json"
         f = libc.fopen(path.encode(), b"w")
         if f:
             libc.malloc_info(0, f)
             libc.fclose(f)
 
     def mem_reporter() -> None:
+        nonlocal last_snap, cycle
         while True:
             time.sleep(interval)
             snap = tracemalloc.take_snapshot()
@@ -69,12 +72,12 @@ def _arm_tracemalloc(interval: float) -> None:
             # Evidence probe — if RSS drops after this call the climb is
             # free-chunk retention, not a logical leak.
             libc.malloc_trim(0)
-            stats = snap.compare_to(mem_state["snap"], "lineno")
-            mem_state["snap"] = snap
+            stats = snap.compare_to(last_snap, "lineno")
+            last_snap = snap
             current, peak = tracemalloc.get_traced_memory()
             lines = [
                 f"[mem] traced-current={current / 1e6:.1f}MB peak={peak / 1e6:.1f}MB "
-                + f"trim-cycle={mem_state['n']} top-growth:"
+                + f"trim-cycle={cycle} top-growth:"
             ]
             lines.extend(
                 f"[mem]   +{stat.size_diff / 1e6:8.1f}MB count={stat.count_diff:+7d} "

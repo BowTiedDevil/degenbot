@@ -29,6 +29,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+# Address derivation — the keccak/create2 math lives in the Rust core
+# (ADR-013: `_ffi` only in the `__init__.py` barrier; leaf modules import
+# from this stable home).
+from degenbot._ffi import create2_address as _rs_create2_address
 from degenbot._ffi.contract import Contract as _Contract
 from degenbot._ffi.contract import decode_return_data as _decode_return_data
 from degenbot._ffi.contract import encode_function_call as _encode_function_call
@@ -309,6 +313,7 @@ def decode_return_data(data: bytes, output_types: Sequence[str]) -> list[str]:
 
 __all__ = [
     "Contract",
+    "_rs_create2_address",
     "decode_return_data",
     "encode_function_call",
     "get_function_selector",

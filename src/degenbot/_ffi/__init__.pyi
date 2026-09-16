@@ -652,6 +652,22 @@ class LiquidityPool:
         balances: list[int],
         block_number: int,
     ) -> bool: ...
+    def calculate_tokens_out_for_pair(
+        self,
+        index_in: int,
+        index_out: int,
+        amount_in: int,
+        override_balances: list[int] | None = None,
+        override_scaling_factors: list[int] | None = None,
+    ) -> int: ...
+    def calculate_tokens_in_for_pair(
+        self,
+        index_in: int,
+        index_out: int,
+        amount_out: int,
+        override_balances: list[int] | None = None,
+        override_scaling_factors: list[int] | None = None,
+    ) -> int: ...
     def journal_len(self) -> int: ...
     def discard_before_block(self, block: int) -> None: ...
     def restore_before_block(self, block: int) -> tuple[int, int, int] | None: ...

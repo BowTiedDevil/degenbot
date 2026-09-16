@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import generate_v2_pool_address as _rs_generate_v2_pool_address
+from degenbot.uniswap import _rs_generate_v2_pool_address
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:

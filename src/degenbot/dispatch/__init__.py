@@ -63,7 +63,9 @@ from degenbot.dispatch.records import (
 )
 
 if TYPE_CHECKING:
-    from degenbot.provider import AsyncAlloyProvider
+    # The FFI pyfunction dispatch_and_submit_py requires the Rust pyclass,
+    # not the degenbot.provider wrapper — annotate the seam accordingly.
+    from degenbot._ffi.provider import AsyncAlloyProvider
 
 
 async def dispatch_and_submit(
