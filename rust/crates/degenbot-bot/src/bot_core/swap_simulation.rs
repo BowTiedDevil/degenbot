@@ -277,6 +277,30 @@ pub(crate) fn cl_payload(
     }
 }
 
+/// Balancer V2 weighted: exact-input across an explicit token pair
+/// (standalone-driver N-token surface — the seat engine's hop universe stays
+/// the token0/1 pair, which routes through the `zero_for_one` arm).
+/// Returns `None` for non-weighted pools or an out-of-domain computation.
+#[must_use]
+pub fn simulate_balancer_weighted_pair_out(
+    bot: &BotState,
+    pool_id: u64,
+    idx_in: usize,
+    idx_out: usize,
+    amount_in: U256,
+) -> Option<U256> {
+    match bot.pools.get(&pool_id)? {
+        PoolEntry::BalancerWeighted(p) => {
+            let (id, state) = (&p.0, &p.1);
+            ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair(
+                id, state, idx_in, idx_out, amount_in,
+            )
+            .ok()
+        }
+        _ => None,
+    }
+}
+
 /// `(reserve_in, reserve_out)` for a V2 swap direction, widened to U256.
 fn v2_reserves(entry: &PoolEntry, zero_for_one: bool) -> Option<(U256, U256)> {
     match entry {

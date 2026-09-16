@@ -18,19 +18,22 @@ that touches the Balancer companions keeps this green.
 
 from __future__ import annotations
 
-import contextlib
 from fractions import Fraction
+from typing import Any
 
 import pytest
 
 from degenbot._ffi import Bot
+from degenbot.exceptions.pool import StaleRateResult
 from tests.helpers.balancer_pool_factory import (
     make_balancer_stable_pool,
     make_balancer_weighted_pool,
 )
 from tests.helpers.erc20_factory import make_erc20
 
-_MULTS = (0.001, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9)
+# Max 0.25: beyond 30% of balance_in the pool & engine correctly revert
+# (on-chain MAX_IN_RATIO constraint) — out-of-domain inputs are not parity rows.
+_MULTS = (0.000001, 0.001, 0.01, 0.1, 0.25)
 _VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8"
 
 INVARIANT_V1 = 1
@@ -61,8 +64,8 @@ def _sf(decimals: int) -> int:
 class TestWeightedCompanionVsEngine:
     """WeightedPool: python companion == rust engine (both directions)."""
 
-    @pytest.mark.parametrize("d0,d1", [(18, 18), (18, 6), (6, 18), (8, 18), (18, 8)])
-    @pytest.mark.parametrize("w0,w1", [(50, 50), (80, 20), (20, 80)])
+    @pytest.mark.parametrize(("d0", "d1"), [(18, 18), (18, 6), (6, 18), (8, 18), (18, 8)])
+    @pytest.mark.parametrize(("w0", "w1"), [(50, 50), (80, 20), (20, 80)])
     @pytest.mark.parametrize("fee_frac", [Fraction(0), Fraction(3, 1000), Fraction(7, 10000)])
     @pytest.mark.parametrize("pow_version", [1, 2])
     def test_given_in_matches_engine(
@@ -103,6 +106,36 @@ class TestWeightedCompanionVsEngine:
                     f"mult={mult}: py={calc} engine={engine}"
                 )
 
+    def test_multitoken_pairs_match_engine_pair_surface(self) -> None:
+        """A 3-token weighted pool: every pair via the N-token engine surface."""
+        bot = Bot()
+        decs = (18, 6, 8)
+        tokens = [_token(bot, d, i + 3) for i, d in enumerate(decs)]
+        balances = [50_000 * 10 ** d for d in decs]
+        weights = [33 * 10 ** 16, 33 * 10 ** 16, 34 * 10 ** 16]
+        lp = make_balancer_weighted_pool(
+            _addr(0xAB03),
+            pool_id=b"\x03" + bytes(range(31)),
+            vault=_VAULT,
+            tokens=tokens,
+            balances=balances,
+            fee=Fraction(3, 1000),
+            weights=weights,
+            pow_version=2,
+        )
+        for i, j in ((0, 1), (1, 2), (0, 2), (2, 0), (2, 1)):
+            for mult in _MULTS:
+                amount = int(balances[i] * mult)
+                engine = lp._py_pool.calculate_tokens_out_for_pair(
+                    index_in=i, index_out=j, amount_in=amount,
+                )
+                calc = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=tokens[i], token_out=tokens[j], token_in_quantity=amount,
+                )
+                assert calc == engine, (
+                    f"pair({i},{j}) mult={mult}: py={calc} engine={engine}"
+                )
+
 
 class TestStableCompanionVsEngine:
     """StablePool: python companion == rust engine (V1 + V2 invariants)."""
@@ -123,7 +156,7 @@ class TestStableCompanionVsEngine:
             tokens=tokens,
             balances=balances,
             fee=Fraction(1, 1000),
-            amp=250,
+            amp=250 * 1000,
             scaling_factors=[_sf(18), _sf(6), _sf(18)],
             bpt_idx=2,
             invariant_version=INVARIANT_V1,
@@ -133,14 +166,18 @@ class TestStableCompanionVsEngine:
             for mult in _MULTS:
                 amount = int(balances[i] * mult)
                 engine = lp._py_pool.calculate_tokens_out(zero_for_one=zfo, amount_in=amount)
-                with contextlib.suppress(Exception):
-                    calc = lp.calculate_tokens_out_from_tokens_in(
+                py_unwrapped: int
+                try:
+                    py_unwrapped = lp.calculate_tokens_out_from_tokens_in(
                         token_in=t_in,
                         token_out=t_out,
                         token_in_quantity=amount,
                     )
-                assert calc == engine, (
-                    f"composable V1 zfo={zfo} mult={mult}: py={calc} engine={engine}"
+                except StaleRateResult as stale:
+                    # The wrap preserves the computed amounts (shell behavior).
+                    py_unwrapped = stale.amount_out
+                assert py_unwrapped == engine, (
+                    f"composable V1 zfo={zfo} mult={mult}: py={py_unwrapped} engine={engine}"
                 )
 
     def test_metastable_v2_matches_engine(self) -> None:
@@ -155,7 +192,7 @@ class TestStableCompanionVsEngine:
             tokens=tokens,
             balances=balances,
             fee=Fraction(4, 10000),
-            amp=1000,
+            amp=1000 * 1000,
             scaling_factors=[_sf(18), _sf(18)],
             bpt_idx=None,
             invariant_version=INVARIANT_V2,
@@ -165,12 +202,11 @@ class TestStableCompanionVsEngine:
             for mult in _MULTS:
                 amount = int(balances[i] * mult)
                 engine = lp._py_pool.calculate_tokens_out(zero_for_one=zfo, amount_in=amount)
-                with contextlib.suppress(Exception):
-                    calc = lp.calculate_tokens_out_from_tokens_in(
-                        token_in=t_in,
-                        token_out=t_out,
-                        token_in_quantity=amount,
-                    )
+                calc = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=t_in,
+                    token_out=t_out,
+                    token_in_quantity=amount,
+                )
                 assert calc == engine, (
                     f"metastable V2 zfo={zfo} mult={mult}: py={calc} engine={engine}"
                 )

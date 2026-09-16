@@ -792,6 +792,41 @@ impl PyLiquidityPool {
         }
     }
 
+    /// Calculate the output for an explicit token pair (N-token pools).
+    ///
+    /// The weighted engine's math reads only the in/out pair, so any index
+    /// selection of an N-token pool is the same 2-token computation. Surfaced
+    /// for the standalone-driver `MultiTokenSwapCalculation` protocol — the
+    /// seat engine's hop universe stays the token0/1 pair.
+    ///
+    /// Raises:
+    ///     `ValueError`: On out-of-range/equal indices, the on-chain
+    ///         MAX_IN_RATIO breach, or a uint256 intermediate overflow (the
+    ///         same on-chain-parity contracts as [calculate_tokens_out]).
+    #[pyo3(signature = (index_in, index_out, amount_in))]
+    fn calculate_tokens_out_for_pair(
+        &self,
+        py: Python<'_>,
+        index_in: usize,
+        index_out: usize,
+        amount_in: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
+        let outcome = self.with_state(py, |core| {
+            use degenbot_bot::bot_core::swap_simulation::simulate_balancer_weighted_pair_out;
+            simulate_balancer_weighted_pair_out(core, self.pool_id, index_in, index_out, amount)
+        });
+        match outcome {
+            Some(out) => {
+                let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+                Ok(bound.unbind())
+            }
+            None => Err(pyo3::exceptions::PyValueError::new_err(
+                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+            )),
+        }
+    }
+
     /// Calculate the required input token amount for a given output amount.
     #[pyo3(signature = (zero_for_one, amount_out))]
     fn calculate_tokens_in(

@@ -191,16 +191,43 @@ pub fn simulate_swap(
 /// Balancer V2 weighted exact-input swap. Mirrors the Vault's
 /// `_swapMinimalInfoGivenIn`: upscale balances + amount (mulDown), subtract
 /// swap fee (mulUp on the scaled amount), compute, downscale output (divDown).
+///
+/// The token pair is fixed to token0 → token1 — N-token weighted pools are
+/// served through [`simulate_balancer_weighted_swap_pair`] with explicit
+/// indices (the seat engine's hop universe is the token0/1 pair).
 fn simulate_balancer_weighted_swap(
     id: &crate::balancer_weighted_state::BalancerWeightedPoolIdentity,
     state: &crate::balancer_weighted_state::BalancerWeightedPoolState,
     zero_for_one: bool,
     amount_in: U256,
 ) -> Result<U256, SimulateSwapError> {
+    let (idx_in, idx_out) = if zero_for_one { (0, 1) } else { (1, 0) };
+    simulate_balancer_weighted_swap_pair(id, state, idx_in, idx_out, amount_in)
+}
+
+/// Balancer V2 weighted exact-input swap across an explicit token pair.
+///
+/// Generalizes [`simulate_balancer_weighted_swap`] to N-token pools (the
+/// weighted math only reads the in/out pair, so any index selection is the
+/// same 2-token computation).
+///
+/// # Errors
+/// `NotComputable` for an index out of range, `idx_in == idx_out`, the
+/// on-chain MAX_IN_RATIO breach, or an arithmetic overflow (mirroring the
+/// pipe-line's `SafeMath` revert contract).
+pub fn simulate_balancer_weighted_swap_pair(
+    id: &crate::balancer_weighted_state::BalancerWeightedPoolIdentity,
+    state: &crate::balancer_weighted_state::BalancerWeightedPoolState,
+    idx_in: usize,
+    idx_out: usize,
+    amount_in: U256,
+) -> Result<U256, SimulateSwapError> {
+    if idx_in >= id.tokens.len() || idx_out >= id.tokens.len() || idx_in == idx_out {
+        return Err(SimulateSwapError::NotComputable);
+    }
     if amount_in.is_zero() {
         return Ok(U256::ZERO);
     }
-    let (idx_in, idx_out) = if zero_for_one { (0, 1) } else { (1, 0) };
     let sf_in = id.scaling_factors[idx_in];
     let sf_out = id.scaling_factors[idx_out];
     // Fee is subtracted from the RAW amount, then upscaled (matches the
@@ -214,13 +241,18 @@ fn simulate_balancer_weighted_swap(
         mul_down(state.balances[idx_out], sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_amount_in =
         mul_down(amount_in_less_fee, sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
+    // Respect the registered pow revision (V1 = 2021-era general path, V2 =
+    // fast paths): the revision changes last-digit rounding, so a pow_version
+    // != V2 registration must not be computed with V2 semantics.
+    let pow_version =
+        PowVersion::from_u8(id.pow_version).ok_or(SimulateSwapError::NotComputable)?;
     let scaled_amount_out = weighted_math::calc_out_given_in(
         scaled_balance_in,
         id.weights[idx_in],
         scaled_balance_out,
         id.weights[idx_out],
         scaled_amount_in,
-        PowVersion::V2,
+        pow_version,
     )
     .map_err(|_| SimulateSwapError::NotComputable)?;
     let amount_out =
