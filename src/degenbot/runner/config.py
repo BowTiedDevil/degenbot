@@ -224,6 +224,10 @@ class ArbitrageConfig:
     # Operator identity
     operator_address: str
     operator_private_key: str
+    # The chain identity: used for the RPC cascade AND stamped onto every
+    # signed transaction by the submit leaf's TxSigner — signing against a
+    # different chain than sims/RPC would be a silent replay-fail.
+    chain_id: int
     # Node endpoints
     node_http: str
     node_ws: str
@@ -374,6 +378,7 @@ class ArbitrageConfig:
         return cls(
             operator_address=operator_address,
             operator_private_key=operator_private_key,
+            chain_id=chain_id,
             node_http=node_http,
             node_ws=node_ws,
             executor_address=executor_address,

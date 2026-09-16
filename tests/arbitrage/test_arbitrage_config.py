@@ -54,6 +54,7 @@ class TestFromEnvFull:
         assert cfg.dry_run is False
         assert cfg.operator_address == "0x9C56a29c7231974c269E24F9FB3c29203039089E"
         assert cfg.operator_private_key == "0x" + "a" * 64
+        assert cfg.chain_id == 1
         assert cfg.node_http == "https://eth.example.com"
         assert cfg.node_ws == "wss://ws.eth.example.com"
         assert cfg.executor_address == "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"

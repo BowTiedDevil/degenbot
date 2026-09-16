@@ -453,7 +453,7 @@ async def _submit_batch_records(
             f"net_wei={_c.net_profit} gas={_c.gas_used} "
             f"calldata={_cd.hex() if _cd else '<unavailable>'}",
         )
-    signer = TxSigner(key=session.cfg.operator_private_key, chain_id=1)
+    signer = TxSigner(key=session.cfg.operator_private_key, chain_id=session.cfg.chain_id)
     records = await dispatch_and_submit(
         candidates=outcome.gas_profitable,
         dispatcher=session.dispatcher,
