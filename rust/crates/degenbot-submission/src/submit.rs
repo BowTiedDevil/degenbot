@@ -258,6 +258,7 @@ pub async fn dispatch_and_submit(
     current_block: u64,
     dry_run: bool,
     inject_code: bool,
+    extra_broadcast: &[std::sync::Arc<AlloyProvider>],
 ) -> Result<SubmitOutcome, crate::SubmissionError> {
     // RMHQAR  + ZHVXW2: one Jaeger node per dispatch batch
     // (degenbot.bundle.dispatch).
@@ -414,25 +415,53 @@ pub async fn dispatch_and_submit(
         let raw_signed = signer.sign_eip1559(&tx_params)?;
 
         // 2h. Broadcast (L2648–L2654). Lock-free — pure provider call.
-        let tx_hash = match provider.eth_send_raw_transaction(&raw_signed).await {
-            Ok(hash) => hash,
-            Err(e) => {
-                // The broadcast failed — skip with the typed reason. The
-                // claimed nonce + pools are NOT released here (ports the
-                // `continue` on Web3Exception — the nonce is leaked until a
-                // manual cleanup or the dispatcher's reap). The monitor is
-                // NOT spawned (no tx to track).
-                degenbot_bot::telemetry::record_exception(
-                    degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
-                    format_args!("path {} broadcast failed: {e}", candidate.path_id),
-                );
+        // Fan-out: the SAME signed bytes go to every relay in
+        // `extra_broadcast` (the read provider is NOT broadcast to unless the
+        // list is empty — the legacy single-endpoint behavior). First
+        // acceptance defines the tracked hash; total failure = the typed skip.
+        let mut accepted_hash: Option<B256> = None;
+        let broadcast_targets: Vec<&AlloyProvider> = if extra_broadcast.is_empty() {
+            vec![provider]
+        } else {
+            extra_broadcast.iter().map(std::sync::Arc::as_ref).collect()
+        };
+        for relay_provider in &broadcast_targets {
+            match relay_provider.eth_send_raw_transaction(&raw_signed).await {
+                Ok(hash) => {
+                    if accepted_hash.is_none() {
+                        accepted_hash = Some(hash);
+                    }
+                }
+                Err(e) => {
+                    degenbot_bot::telemetry::record_exception(
+                        degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+                        format_args!("path {} relay broadcast failed: {e}", candidate.path_id),
+                    );
+                }
+            }
+        }
+        let tx_hash = match accepted_hash {
+            Some(hash) => {
+                if let Some(p) = degenbot_bot::instruments::pipeline() {
+                    p.count_submit_outcome("relay_accepted");
+                }
+                hash
+            }
+            None => {
+                // The broadcast failed on EVERY relay — skip with the typed
+                // reason. The claimed nonce + pools are NOT released here
+                // (ports the `continue` on Web3Exception — the nonce is
+                // leaked until a manual cleanup or the dispatcher's reap).
+                // The monitor is NOT spawned (no tx to track).
                 if let Some(p) = degenbot_bot::instruments::pipeline() {
                     p.count_submit_outcome("skipped_broadcast_failed");
                     p.add_profit_missed(candidate_net_wei(&candidate));
                 }
                 outcome.records.push(SubmitRecord::Skipped {
                     path_id: candidate.path_id,
-                    reason: SkipReason::BroadcastFailed(format!("{e}")),
+                    reason: SkipReason::BroadcastFailed(
+                        "all relays rejected the raw transaction".to_string(),
+                    ),
                 });
                 continue;
             }
@@ -724,6 +753,7 @@ mod tests {
             100,
             true, // dry_run
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -772,6 +802,7 @@ mod tests {
             100,
             true, // dry_run — A commits POOL_A, B is blocked
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -810,6 +841,7 @@ mod tests {
             100,
             false,
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -844,6 +876,7 @@ mod tests {
             100,
             true, // dry_run
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -870,6 +903,7 @@ mod tests {
             100,
             false,
             true, // inject_code
+            &[],
         )
         .await
         .unwrap();
@@ -913,6 +947,7 @@ mod tests {
             100,
             false,
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -964,6 +999,7 @@ mod tests {
             100,
             false,
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -1014,6 +1050,7 @@ mod tests {
             100,
             false,
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -1152,6 +1189,7 @@ mod tests {
             MY_BLOCK,
             true, // dry_run
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -1214,6 +1252,7 @@ mod tests {
             MY_BLOCK,
             true,
             false,
+            &[],
         )
         .await
         .unwrap();

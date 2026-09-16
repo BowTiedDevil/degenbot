@@ -144,6 +144,8 @@ class SubmitCandidate:
     def priority_fee(self) -> int: ...
     @property
     def path_pools(self) -> set[str]: ...
+    @property
+    def execute_calldata(self) -> bytes: ...
 
 def dispatch_and_submit_py(
     candidates: list[SubmitCandidate],
@@ -154,6 +156,7 @@ def dispatch_and_submit_py(
     current_block: int,
     dry_run: bool,
     inject_code: bool,
+    broadcast_providers: list[AsyncAlloyProvider] | None = None,
 ) -> Coroutine[Any, Any, list[dict[str, Any]]]: ...
 def fetch_fee_history_py(
     provider: AsyncAlloyProvider,

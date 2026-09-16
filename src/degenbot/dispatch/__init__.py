@@ -78,6 +78,7 @@ async def dispatch_and_submit(
     current_block: int,
     dry_run: bool,
     inject_code: bool,
+    broadcast_providers: list[AsyncAlloyProvider] | None = None,
 ) -> list[SubmitRecord]:
     """Await the Rust submit leaf and decode its records to typed values.
 
@@ -99,6 +100,7 @@ async def dispatch_and_submit(
         current_block=current_block,
         dry_run=dry_run,
         inject_code=inject_code,
+        broadcast_providers=broadcast_providers,
     )
     return [typed_submit_record(record) for record in raw]
 

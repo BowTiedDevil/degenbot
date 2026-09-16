@@ -151,6 +151,14 @@ impl PySubmitCandidate {
         alloy_py::u256_to_py(py, &self.inner.net_profit)
     }
 
+    /// The composed `execute(bytes, uint256)` calldata (the exact bytes the
+    /// submit leaf signs + broadcasts). Forensic/fork-replay seam (R3b): a
+    /// candidate judged submittable must be replayable at its solve block.
+    #[getter]
+    fn execute_calldata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        Ok(PyBytes::new(py, &self.inner.execute_calldata))
+    }
+
     #[getter]
     fn gas_used(&self) -> u64 {
         self.inner.gas_used
@@ -249,7 +257,7 @@ impl ReceiptProbe for PyReceiptProbe {
 /// `ValueError`: If the dispatch+submit leaf returns a `SubmissionError`
 ///         (a non-"not-found" RPC error during broadcast/access-list/sign).
 #[pyfunction]
-#[pyo3(signature = (candidates, dispatcher, provider, signer, operator_nonce, current_block, dry_run, inject_code))]
+#[pyo3(signature = (candidates, dispatcher, provider, signer, operator_nonce, current_block, dry_run, inject_code, broadcast_providers=None))]
 #[expect(clippy::too_many_arguments)]
 pub fn dispatch_and_submit_py<'py>(
     py: Python<'py>,
@@ -261,6 +269,7 @@ pub fn dispatch_and_submit_py<'py>(
     current_block: u64,
     dry_run: bool,
     inject_code: bool,
+    broadcast_providers: Option<Vec<PyRef<'py, PyAsyncAlloyProvider>>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     // ── GIL-held arg extraction ──
     let mut built: Vec<SubmitCandidate> = Vec::with_capacity(candidates.len());
@@ -276,6 +285,17 @@ pub fn dispatch_and_submit_py<'py>(
     let provider_arc = provider.provider_arc();
     let signer = signer.signer().clone();
     let probe = Arc::new(PyReceiptProbe::new(&provider_arc));
+    // Optional relay fan-out: the SAME signed bytes go to every listed
+    // provider; the read provider is broadcast to only when the list is empty.
+    let extra_broadcast: Vec<std::sync::Arc<degenbot_rpc::provider::AlloyProvider>> =
+        broadcast_providers
+            .map(|providers| {
+                providers
+                    .into_iter()
+                    .map(|p| p.provider_arc())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
     // ── GIL release across the RPC submits ──
     future_into_py(py, async move {
@@ -289,6 +309,7 @@ pub fn dispatch_and_submit_py<'py>(
             current_block,
             dry_run,
             inject_code,
+            &extra_broadcast,
         )
         .await
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e:?}")))?;
