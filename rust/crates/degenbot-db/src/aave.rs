@@ -1,5 +1,5 @@
 //! Aave V3 position read-back fns (read-only). Rehydrates the very rows the
-//! `AZGJUN` writers persist: `aave_v3_users` (+ isolation-debt-ceiling join),
+//! Writers persist: `aave_v3_users` (+ isolation-debt-ceiling join),
 //! `aave_v3_collateral_positions` / `aave_v3_debt_positions` (+ asset /
 //! `asset_config` / `e_mode_category` / `underlying_token` joins),
 //! `aave_v3_user_collateral_configs`, `aave_v3_contracts` (`PRICE_ORACLE`),
@@ -398,9 +398,9 @@ impl DegenbotDb {
         Ok(out)
     }
 
-    // ── 6SWY4R-1: the orchestrator's market-bootstrap substrate ─────────
+    // ── the orchestrator's market-bootstrap substrate ─────────
     //
-    // Four read fns the `run_aave_update` orchestrator (sibling `6SWY4R`)
+    // Four read fns the `run_aave_update` orchestrator
     // calls once at the top of a run to build the per-market `AaveMarketContext`
     // (the pool/configurator/oracle/gho-asset addresses + the scaled-token
     // address set + the `last_update_block` cursor). These mirror the Python

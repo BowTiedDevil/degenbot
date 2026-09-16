@@ -1230,7 +1230,7 @@ fn persist_v3(
 }
 
 /// The V4 persist step (mirror of [`persist_v3`] for the V4 tables +
-/// `uniswap_v4_pools` stamp). CKXCOB 3a: accepts a borrowed
+/// `uniswap_v4_pools` stamp). Accepts a borrowed
 /// [`rusqlite::Connection`].
 fn persist_v4(
     conn: &rusqlite::Connection,
@@ -1265,7 +1265,7 @@ fn persist_v4(
 /// Shared stale-row deleter for the V3/V4 liquidity positions + init-maps.
 /// Deletes every row for `id_value` whose `key_col` is NOT in `live_keys`
 /// (the ticks/words still present in the freshly-applied `tick_data`/
-/// `tick_bitmap`). Binds `id_value` then the live keys. CKXCOB 3a: accepts a
+/// `tick_bitmap`). Binds `id_value` then the live keys. Accepts a
 /// borrowed [`rusqlite::Connection`] (the chunk-loop `Transaction` derefs to
 /// one) so the delete runs on the chunk's single owned connection — no re-lock.
 ///
@@ -1309,7 +1309,7 @@ fn delete_stale_rows(
 }
 
 /// Shared `upsert_init_maps` impl — V3/V4 differ only in the table name + the
-/// id column name. CKXCOB 3a: accepts a borrowed [`rusqlite::Connection`].
+/// id column name. Accepts a borrowed [`rusqlite::Connection`].
 fn upsert_init_maps_impl(
     conn: &rusqlite::Connection,
     id_value: i64,

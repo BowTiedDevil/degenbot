@@ -1,5 +1,5 @@
-//! Regression test for the WAL held-read-tx concurrency model (spike
-//! `HKJ7VR` / epic `XEANMB`): `DegenbotDb::open_snapshot_tx()` acquires one
+//! Regression test for the WAL held-read-tx concurrency model (spike):
+//! `DegenbotDb::open_snapshot_tx()` acquires one
 //! deferred read transaction at bot startup and holds it across `build_paths`
 //! so every per-pool `fetch_liquidity_map` + the `fetch_newest_update_block`
 //! read share a single DB snapshot, immune to concurrent `pool_updater`

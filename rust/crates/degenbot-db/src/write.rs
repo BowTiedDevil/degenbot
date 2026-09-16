@@ -1,5 +1,5 @@
 //! Aave V3 lending-market DB writers — the per-event apply fns +
-//! `get_or_create_*` upsert substrate (row N4 of the AZGJUN writer scope
+//! `get_or_create_*` upsert substrate (row N4 of the writer scope
 //! `RQXEKH` — `port-now`).
 //!
 //! Port of `src/degenbot/cli/aave/event_handlers.py::_process_*` handlers +
@@ -225,7 +225,7 @@ impl DegenbotDb {
     /// [`rusqlite::Connection`] (a chunk-loop `Transaction` derefs to one) so
     /// the Aave-updater chunk loop can call it on its ONE owned connection
     /// without re-locking the `Mutex` or opening a per-call write handle
-    /// (CXRGX4 — the §3.4 atomicity fix).
+    /// (the §3.4 atomicity fix).
     ///
     /// # Errors
     ///
@@ -267,7 +267,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_asset_config`] (CXRGX4 — the §3.4 atomicity
+    /// [`Self::get_or_create_asset_config`] (the §3.4 atomicity
     /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
     /// rationale.
     ///
@@ -311,7 +311,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_user_collateral_config`] (CXRGX4 — the §3.4
+    /// [`Self::get_or_create_user_collateral_config`] (the §3.4
     /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
     /// for the rationale.
     ///
@@ -360,7 +360,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::get_or_create_user`]
-    /// (CXRGX4 — the §3.4 atomicity fix). See
+    /// (the §3.4 atomicity fix). See
     /// [`Self::get_or_create_e_mode_category_on_conn`] for the rationale.
     ///
     /// # Errors
@@ -414,7 +414,7 @@ impl DegenbotDb {
     /// derefs to one) so the pool-updater chunk loop can call it on its ONE
     /// owned connection without re-locking the `Mutex` (avoids the
     /// `parking_lot` non-reentrant deadlock + retires the per-row lock cycle
-    /// the `discovery::upsert_v*_pools` paths previously needed). CKXCOB 3a.
+    /// the `discovery::upsert_v*_pools` paths previously needed).
     /// # Errors
     ///
     /// Same error conditions as the `&self` wrapper variant.
@@ -513,7 +513,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_collateral_position`] (CXRGX4 — the §3.4
+    /// [`Self::get_or_create_collateral_position`] (the §3.4
     /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
     /// for the rationale.
     ///
@@ -541,7 +541,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_debt_position`] (CXRGX4 — the §3.4 atomicity
+    /// [`Self::get_or_create_debt_position`] (the §3.4 atomicity
     /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
     /// rationale.
     ///
@@ -586,7 +586,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_collateral_configuration_changed`] (CXRGX4 — the §3.4
+    /// [`Self::apply_collateral_configuration_changed`] (the §3.4
     /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
     /// for the rationale.
     ///
@@ -690,7 +690,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_e_mode_category_added`] (CXRGX4 — the §3.4 atomicity
+    /// [`Self::apply_e_mode_category_added`] (the §3.4 atomicity
     /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
     /// rationale.
     ///
@@ -762,7 +762,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_emode_asset_category_changed`] (CXRGX4 — the §3.4
+    /// [`Self::apply_emode_asset_category_changed`] (the §3.4
     /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
     /// for the rationale.
     ///
@@ -805,7 +805,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_asset_collateral_in_emode_changed`] (CXRGX4 — the §3.4
+    /// [`Self::apply_asset_collateral_in_emode_changed`] (the §3.4
     /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
     /// for the rationale.
     ///
@@ -897,7 +897,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_reserve_used_as_collateral`] (CXRGX4 — the §3.4
+    /// [`Self::apply_reserve_used_as_collateral`] (the §3.4
     /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
     /// for the rationale.
     ///
@@ -940,7 +940,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::apply_user_e_mode_set`]
-    /// (CXRGX4 — the §3.4 atomicity fix). See
+    /// (the §3.4 atomicity fix). See
     /// [`Self::get_or_create_e_mode_category_on_conn`] for the rationale.
     ///
     /// # Errors
@@ -979,7 +979,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_price_oracle_updated`] (CXRGX4 — the §3.4 atomicity
+    /// [`Self::apply_price_oracle_updated`] (the §3.4 atomicity
     /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
     /// rationale.
     ///
@@ -1033,7 +1033,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_asset_source_updated`] (CXRGX4 — the §3.4 atomicity
+    /// [`Self::apply_asset_source_updated`] (the §3.4 atomicity
     /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
     /// rationale.
     ///
@@ -1055,7 +1055,7 @@ impl DegenbotDb {
     /// Set the `aave_v3_markets.last_update_block` stamp for `market_id`.
     /// This is the Aave-updater chunk loop's end-of-chunk stamp, the mirror of
     /// [`DegenbotDb::set_exchange_last_update_block_on_conn`] for the pool
-    /// loop. CXRGX4: callable on the chunk's `Transaction` so the stamp
+    /// loop. Callable on the chunk's `Transaction` so the stamp
     /// commits atomically with the chunk's Aave writes (the §3.4 atomicity
     /// invariant's structural fix — on rollback the stamp does NOT advance,
     /// so a restart re-processes the chunk clean).
@@ -1183,7 +1183,7 @@ impl DegenbotDb {
     /// The RPC-resolved revisions (`ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()`
     /// via the EIP-1967 implementation slot) + `price_source`
     /// (`getSourceOfAsset`) happen in the orchestrator; the apply fn
-    /// takes pre-resolved fields (mirrors CXRGX4 design decision #1 — the
+    /// takes pre-resolved fields (mirrors design decision #1 — the
     /// apply core is pure substrate, no RPC). The GHO cross-link setup if the
     /// asset IS the GHO token is RYKCC4's concern, NOT this fn's.
     ///
@@ -1297,7 +1297,7 @@ impl DegenbotDb {
         Ok(asset_id)
     }
 
-    // ── 6SWY4R-2b: the 6 missing-variant config-event apply fns ──────────
+    // ── the 6 missing-variant config-event apply fns ──────────
 
     /// Apply an `Upgraded` event: set the aToken or vToken revision on the
     /// `aave_v3_assets` row + conditionally fire the GHO-discount-deprecation
@@ -1758,7 +1758,7 @@ impl DegenbotDb {
     ///
     /// `user_id` is pre-resolved by the orchestrator/parser (the Python calls
     /// `get_or_create_user` upstream; the apply fn takes the resolved id — the
-    /// CXRGX4 precedent).
+    /// precedent).
     ///
     /// # Errors
     ///

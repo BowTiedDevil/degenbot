@@ -437,7 +437,7 @@ mod tests {
         );
     }
 
-    // ── IOGST2: the D2 forward version-lock wired into the open entry ──────
+    // ── the D2 forward version-lock wired into the open entry ──────
 
     /// The connection factory the open paths pass — mirrors
     /// `connection::PRE_SCHEMA_PRAGMAS`.

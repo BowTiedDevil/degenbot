@@ -23,7 +23,7 @@ pub(crate) fn decode_u256(s: &str) -> Result<U256, DbError> {
 /// signed decimal string (Python `str(int)`), so `U256::from_str_radix`
 /// rejects the leading `-`; `I256::from_dec_str` accepts it.
 /// Decode a signed-decimal `liquidity_net` TEXT value to `i128` (the on-chain
-/// int128 width, HTPKLX LIBQKE). Byte-identical round-trip versus the old I256
+/// int128 width). Byte-identical round-trip versus the old I256
 /// codec: both emit `str(value)` signed decimal; any out-of-i128-range row is
 /// a decode error rather than a silent wraparound.
 ///

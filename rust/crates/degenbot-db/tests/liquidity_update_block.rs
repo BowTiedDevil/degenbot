@@ -64,7 +64,7 @@ fn fetch_liquidity_update_block_reads_v3_pool_row() {
 
 #[test]
 fn fetch_liquidity_update_block_reads_nondex_v3_kinds() {
-    // Task 4TWM7C follow-up: a pancake/sushi/aerodrome V3 pool stores its
+    // a pancake/sushi/aerodrome V3 pool stores its
     // liquidity clock in its OWN per-dex table — a uniswap-only lookup returned
     // None and the seed verify fell back to head (pool 0x1ac1... pancake crash).
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();

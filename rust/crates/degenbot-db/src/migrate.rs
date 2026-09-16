@@ -180,7 +180,7 @@ where
 }
 
 /// [`ensure_schema_at_open`] with an injectable forward-migration registry +
-/// target — the seam the IOGST2 tests use to exercise the D2 version-lock
+/// target — the seam the version-lock check relies on to exercise the D2 forward lock
 /// (pending apply / ordering / step failure / gap / ahead) without waiting for
 /// a real [`RUST_SCHEMA_VERSION`] bump. Production always passes
 /// [`RUST_MIGRATIONS`] / [`RUST_SCHEMA_VERSION`].

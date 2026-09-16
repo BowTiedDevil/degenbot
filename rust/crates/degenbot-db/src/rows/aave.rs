@@ -4,12 +4,12 @@
 //! [`alloy::primitives::Address`]. Column SELECT order matches each table's
 //! `from_row` layout below.
 //!
-//! Writes for Aave belong to the AZGJUN writer-orchestration scope (Non-goals);
+//! Writes for Aave belong to the writer-orchestration scope (Non-goals);
 //! only the row structs + read decoding land here, so the snapshot reader can
 //! surface them.
 
 #![expect(dead_code)] // Aave read structs decode here (spike AC); the fetch_aave_*
-                      // read fns + writer upserts land in AZGJUN, at which point these
+                      // read fns + writer upserts land in the writer-orchestration scope, at which point these
                       // decoders are exercised. Defined now so the typed surface is
                       // ready for the consumer tasks.
 

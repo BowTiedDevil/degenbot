@@ -141,14 +141,14 @@ fn fixture_db_path() -> PathBuf {
 /// `cargo add degenbot` consumer can
 ///   a. open a `SnapshotDb` (file-backed — here the `parity.db` fixture
 ///      read handle with a held deferred read tx so `S` + per-pool reads
-///      share one frozen DB snapshot, epic `XEANMB`) from the bot's
+///      share one frozen DB snapshot) from the bot's
 ///      `-pl fixtures/parity.db` path,
 ///      shipped alongside `degenbot-db`, chain 8453, which carries an
 ///      `aerodrome_v3` exchange with V3 tick rows + an empty `uniswap_v4`
 ///      family),
 ///   b. construct a `Bot` for that chain,
 ///   c. call `Bot::load_snapshot_from_db(&snap, chain)` — pure Rust, reads `S`
-///      inside the held tx (no `SnapshotStore` materialization, epic `XEANMB`)
+///      inside the held tx (no `SnapshotStore` materialization)
 ///      that emits `S = MIN(last_update_block)` over the V3/V4 `exchanges`
 ///      rows for the chain (here `S = 12_340_000` = min(V3 `12_345_000`, V4
 ///      `12_340_000`)); no tick dict ever crosses the FFI (the DB read is owned

@@ -310,7 +310,7 @@ pub struct TickBefore {
     /// `None` means the tick was not initialized — on rollback, delete it.
     pub liquidity_gross_before: Option<alloy::primitives::U128>,
     /// Liquidity net at this tick *before* the modification.
-    /// Stored at the on-chain int128 width (HTPKLX LIBQKE); the DB TEXT
+    /// Stored at the on-chain int128 width; the DB TEXT
     /// codec round-trips signed-decimal byte-identically at this width.
     pub liquidity_net_before: i128,
 }

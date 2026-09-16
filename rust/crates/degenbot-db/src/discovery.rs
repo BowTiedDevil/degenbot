@@ -853,7 +853,7 @@ mod tests {
         assert!(cross_chain.is_none());
     }
 
-    // ── CKXCOB 3a: single-transaction chunk atomicity ──────────────────
+    // ── single-transaction chunk atomicity ──────────────────
     //
     // The §1 atomicity invariant's structural proof: the `*_on_conn` write
     // variants run on ONE borrowed `Connection` (the chunk's `Transaction`),

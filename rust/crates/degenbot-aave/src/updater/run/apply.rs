@@ -110,7 +110,7 @@ pub enum AaveChunkEvent {
     /// pre-resolves the erc20 token ids + the `ATOKEN_REVISION()` /
     /// `DEBT_TOKEN_REVISION()` (via the EIP-1967 implementation slot) + the
     /// `getSourceOfAsset` `price_source`; this enum carries the resolved
-    /// fields (mirrors CXRGX4 design decision #1 — the apply core is pure
+    /// fields (mirrors design decision #1 — the apply core is pure
     /// substrate, no RPC, no address→id resolution).
     ReserveInitialized {
         market_id: i64,
@@ -133,7 +133,7 @@ pub enum AaveChunkEvent {
     /// SCALEAPPLY). Carries the PRE-COMPUTED signed `balance_delta` (the
     /// orchestrator/parser ran [`ScaledTokenProcessor::process_collateral_mint`]
     /// / [`ScaledTokenProcessor::process_debt_mint`] BEFORE constructing this
-    /// variant — mirrors CXRGX4 design decision #1: the apply core is pure
+    /// variant — mirrors design decision #1: the apply core is pure
     /// substrate, no processor calls). The apply dispatch just forwards the
     /// delta to [`DegenbotDb::apply_scaled_token_mint_on_conn`].
     ScaledTokenMint {
@@ -277,7 +277,7 @@ pub enum AaveChunkEvent {
         /// max-with-prev).
         new_index: alloy::primitives::U256,
     },
-    // ── 6SWY4R-2b: the 6 missing-variant config events ───────────────────
+    // ── the 6 missing-variant config events ───────────────────
     /// `Upgraded(implementation)` — emitted by an aToken or vToken proxy. The
     /// dispatch resolves which asset (by `a_token`/`v_token` address match) +
     /// RPCs `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` on the new
@@ -681,7 +681,7 @@ pub fn apply_chunk_events_on_conn(
                 DegenbotDb::reset_debt_position_to_zero_on_conn(conn, *position_id, *new_index)?;
                 report.debt_position_reset += 1;
             }
-            // ── 6SWY4R-2b: the 6 missing-variant config events ─────────
+            // ── the 6 missing-variant config events ─────────
             AaveChunkEvent::Upgraded {
                 asset_id,
                 market_id: _,
@@ -2108,7 +2108,7 @@ mod tests {
         );
     }
 
-    // ── 6SWY4R-2b: the 6 missing-variant event apply tests ────────────────
+    // ── the 6 missing-variant event apply tests ────────────────
 
     #[test]
     fn apply_upgraded_on_conn_updates_a_token_revision() {

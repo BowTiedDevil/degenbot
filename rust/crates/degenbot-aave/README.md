@@ -1,6 +1,6 @@
 # degenbot-aave
 
-Pure-Rust Aave V3 domain crate: the updater chunk-loop (transactional apply of decoded Aave events under one rusqlite Transaction) + the position-analysis math (health-factor / LTV / eMode / isolation) + the Aave V3 fixed-point math libraries (WadRayMath / PercentageMath). Epic AZGJUN.
+Pure-Rust Aave V3 domain crate: the updater chunk-loop (transactional apply of decoded Aave events under one rusqlite Transaction) + the position-analysis math (health-factor / LTV / eMode / isolation) + the Aave V3 fixed-point math libraries (WadRayMath / PercentageMath). the AZGJUN-era writer plan.
 
 The Aave V3 domain: a transactional chunk-loop that applies decoded Aave events under one SQLite transaction, position analysis (health factor, LTV, eMode, isolation mode), and the V3 fixed-point math libraries (WadRayMath / PercentageMath).
 

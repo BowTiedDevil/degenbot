@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generate the §4.2 parity fixture for the V3/V4 DB-aware liquidity updater
-(task QJSCA5 — the Rust `apply_v3_liquidity_updates` / `apply_v4_liquidity_updates`
+(the Rust `apply_v3_liquidity_updates` / `apply_v4_liquidity_updates`
 in `rust/crates/degenbot-db/src/liquidity_updater.rs`).
 
 Builds two Alembic-stamped SQLite DBs — one V3, one V4 — each seeded with a

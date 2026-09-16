@@ -23,7 +23,7 @@ use crate::rows::decode::{decode_address, decode_i128_net, decode_u256};
 use crate::schema::table::is_v3_kind;
 
 /// Per-tick (`liquidity_gross`, `liquidity_net`) pair (the value type of a batch
-/// read entry). `liquidity_net` is `i128` — the on-chain width (HTPKLX LIBQKE);
+/// read entry). `liquidity_net` is `i128` — the on-chain width;
 /// the DB stores it as a signed decimal string (`VARCHAR(78)` with a leading
 /// `-` for upper ticks), which round-trips byte-identically at this width.
 pub type TickMap = HashMap<i32, (U256, i128)>;
@@ -103,7 +103,7 @@ impl DegenbotDb {
 
     /// The `uniswap_v3_pools.liquidity_update_block` for a pool (the block its
     /// DB liquidity map is EXACT at, i.e. the authoritative liquidity clock of
-    /// a DB-seeded `Tracked` pool). Task 4TWM7C: the Rust `PoolBuilder` uses
+    /// a DB-seeded `Tracked` pool). The Rust `PoolBuilder` uses
     /// this to stamp a DB-seeded pool's `tick_data_block` at the DB seed block
     /// rather than the live head, so the seed/post-drain verify anchors at the
     /// block the tick data actually reflects — not the aggregate `S`.
@@ -373,7 +373,7 @@ impl DegenbotDb {
 //
 // Extracted so a held-tx connection (see `SnapshotDb`) reuses the SAME SQL as
 // the per-call `DegenbotDb` reads — the tick-map assembly Db arm works against
-// either handle. Epic `XEANMB`: the held read transaction (`SnapshotDb`)
+// either handle. The held read transaction (`SnapshotDb`)
 // freezes the DB view across `build_paths`, replacing `SnapshotStore`.
 
 /// `fetch_liquidity_map` body taking a borrowed `&Connection` (works on either
@@ -640,7 +640,7 @@ pub fn fetch_liquidity_update_block_v4_on_conn(
 /// Implemented by [`DegenbotDb`] (per-call `lock()` — each read its own
 /// snapshot) AND [`crate::snapshot_db::SnapshotDb`] (held read transaction —
 /// every read shares one frozen DB view across `build_paths`, the consistency
-/// replacement for the retired `SnapshotStore`, epic `XEANMB`).
+/// replacement for the retired `SnapshotStore`).
 ///
 /// `fetch_newest_update_block` is included so the snapshot-seed block `S` can
 /// be read on the SAME held tx as the per-pool data (so `S` matches the data).

@@ -32,7 +32,7 @@
 //!
 //! # Design references
 //!
-//! Non-goal: writes (`write.rs` + `upsert_*`) are deferred to Epic AZGJUN
+//! Non-goal: writes (`write.rs` + `upsert_*`) are deferred to the writer-orchestration plan
 //! (Phase 3) until the Rust writer is parity-tested; this crate ships read
 //! fns only.
 

@@ -1077,7 +1077,7 @@ async fn dispatch_single_config_event(
             )
             .await?
         }
-        // ── 6SWY4R-2b: the 6 missing-variant config events ──────────────────
+        // ── the 6 missing-variant config events ──────────────────
         // Delegated to `resolve_missing_variant_event` to keep this fn under
         // the 100-line `clippy::too_many_lines` limit.
         //
@@ -1387,7 +1387,7 @@ pub async fn refresh_gho_discount(
     Ok(())
 }
 
-// ── 6SWY4R-2b: the 6 missing-variant event resolvers ─────────────────────
+// ── the 6 missing-variant event resolvers ─────────────────────
 
 /// The right-padded ASCII bytes32 id `b"POOL"` (4 bytes + 28 zeros). The
 /// Python's `eth_abi.abi.encode(["bytes32"], [b"POOL"])` — §4.2 finding:
@@ -2165,7 +2165,7 @@ mod tests {
         assert!(deprecated, "V4+ deprecates");
     }
 
-    // ── 6SWY4R-2b: the 6 missing-variant pure-decode tests ──────────────
+    // ── the 6 missing-variant pure-decode tests ──────────────
 
     #[test]
     fn strip_trailing_nulls_from_ascii_decodes_pool() {
