@@ -479,4 +479,4 @@ async def _submit_batch_records(
                     "executor code injection is active (simulation.inject_executor_code)",
                 )
             case SkippedRecord(reason=SubmitSkipReason.BROADCAST_FAILED, detail=detail):
-                bot_logger.debug(f"Send failed: {detail or ''}")
+                bot_logger.warning(f"[dispatch] broadcast failed: {detail or 'no detail'}")
