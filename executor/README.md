@@ -558,12 +558,14 @@ The `config` parameter of `execute()` is packed: `(expected_value << 32) | (brib
 | 0 | Skip (no check) | `config=0` — off-chain verification only |
 | 1 | `WETH.balanceOf(self) + self.balance >= value` | Default for V2/V3/V4+other paths (WETH warm from transfers) |
 | 2 | `PM.balanceOf(self, weth_id) >= value` | V4V4V4 with `V4_MINT_COMPACT` profit capture |
+| 3 | **SWEEP — assert defeated** | Operator withdrawal: move accumulated profit out (e.g. `SEND_ETH_ALL` / `ERC20_XFER_BALANCE` to a recipient index). A sweep intentionally makes `combined_after < combined_before`, which mode 1 would flag as a loss, so mode 3 treats `combined_before` as 0. It is the *only* legitimate assert-defeat — do not approximate it with `expected_value=0` under mode 1, which would also zero the bribe base. Bribes in mode 3 compute on the post-sweep balance: `(10000 << 8) | (recipient_idx << 24) | 3` pays 100% of it to the recipient. |
 
 **Why mode 2 exists**: On pure V4 paths (V4V4V4), the `WETH.balanceOf(self)` SLOAD is cold (~2,600 gas) because V4 operations use delta accounting — no physical WETH transfers. But after `V4_MINT_COMPACT` writes to the ERC6909 slot, reading `PM.balanceOf(self, weth_id)` is warm (~100 gas). Mode 2 saves ~3,500 gas on V4V4V4 by reading the warm ERC6909 slot instead of cold WETH.
 
 The operator constructs:
 - Mode 1: `(pre_tx_weth_eth_balance << 32) | 1`
 - Mode 2: `(2 << 248) | (pre_tx_erc6909_weth_balance)`
+- Mode 3 (sweep): `3` — plus `(bips << 8) | (recipient_idx << 24)` to route the payout
 - Skip: `0`
 
 2^248 ≈ 3.4×10^74 wei — far exceeds any real token balance, so the top 8 bits are always zero and safe to use for the mode flag.
