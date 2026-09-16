@@ -82,7 +82,7 @@ fn probe_span_is_exported_with_name_field_event_and_resource() {
 
 /// The layer constructor consumes the tracer and yields a registry-agnostic
 /// layer that composes onto a plain `tracing_subscriber::Registry` (the
-/// Python-path task, K6PCKP, composes it onto its own registry the same way).
+/// Python path composes it onto its own registry the same way).
 #[test]
 fn layer_builds_on_bare_registry() {
     let exporter = InMemorySpanExporter::default();

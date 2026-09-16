@@ -137,7 +137,7 @@ async fn header_arms_per_block_span_with_number_and_parent() {
     );
 }
 
-/// TQ7PD6 regression: a header burst through the pump must CLOSE (export)
+/// Regression: a header burst through the pump must CLOSE (export)
 /// every per-epoch span, never leaking still-entered spans on worker
 /// threads (the pre-fix loop-wide `Span::enter()` guard lived across the
 /// select's await points; when the multi-threaded runtime migrated the task

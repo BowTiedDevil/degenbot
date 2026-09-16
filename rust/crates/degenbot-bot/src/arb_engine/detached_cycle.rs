@@ -1,4 +1,4 @@
-//! THE one detached solve-arm machine (P37YJG, epic SRQEK5 lineage).
+//! THE one detached solve-arm machine.
 //!
 //! The detached solve arm of [`crate::arb_engine::ArbitrageEngine`] is ONE
 //! conceptual per-cycle machine. This module is its single owner: the
@@ -51,7 +51,7 @@ use std::sync::Arc;
 /// (`budget = max(0, admission_target_depth − in-flight)`) is now the sole
 /// backpressure, and `admission_target_depth` is itself clamped to this
 /// value so an operator can never raise the pipe depth past the design cap.
-/// (P37YJG: the cap consult moved into the machine; WFF6MM: the consult
+/// (the cap consult moved into the machine; the consult
 /// retired with the arm.)
 pub(crate) const DETACHED_INFLIGHT_CAP: u64 = 8;
 /// THE persistent machine state. WFF6MM: the in-flight-cap
@@ -121,7 +121,7 @@ pub(crate) enum Transition {
     )]
     Disposition(Disposition),
 }
-/// THE legal-transition table (P37YJG; house pattern:
+/// THE legal-transition table (house pattern:
 /// `degenbot-workers` `slot.rs::transition`). WFF6MM: with the in-cycle arm
 /// retired every row is TOTAL, so the table is infallible (no typed
 /// rejections remain):
@@ -197,11 +197,11 @@ pub(crate) struct DetachedCycle {
     /// the engine stays `Sync` (the parked Receiver behind the worker-only
     /// guard is touched exactly once, by the spawner thread).
     merge_rx: parking_lot::Mutex<Option<std::sync::mpsc::Receiver<LaneOutcome>>>,
-    /// LW-T9 note-(a) carry: the duplicate-outcome fuse counter (the QR3NUS
-    /// exactness assert). 43E3H3: the sidecar's ledger claims feed it — one
+    /// Note-(a) carry: the duplicate-outcome fuse counter (the
+    /// exactness assert). The sidecar's ledger claims feed it — one
     /// process-cumulative count.
     pub(crate) duplicate_outcomes: std::sync::atomic::AtomicU64,
-    /// THE exactness ledger (LW-T9 note (a) -> QR3NUS 43E3H3): one outcome
+    /// THE exactness ledger: one outcome
     /// per (`solve_seq`, path) EXACTLY once — keyed (`solve_seq`, pid); the
     /// sidecar claims under the enqueue-stamped `cycle_seq`. Held on the
     /// ENGINE (`parking_lot` Mutex) — the fuse is stateful across sidecar

@@ -5,7 +5,7 @@
 //! `TickMapDb::fetch_liquidity_map` read (the held `SnapshotDb` tx for the
 //! DB path, a per-call `DegenbotDb` otherwise), then on a miss falls back to
 //! the **Chain arm** — a sparse-RPC word read via [`TickBootstrapRpc`]
-//! (`Db → Chain` precedence). Epic `XEANMB` retired the former `Store` arm
+//! (`Db → Chain` precedence). The former `Store` arm was retired
 //! (the in-memory `SnapshotStore` is replaced by a WAL held read transaction
 //! so every per-pool read during `build_paths` shares one frozen DB cut).
 //!
@@ -144,7 +144,7 @@ pub type TickMapAssemblyResult =
 /// [`TickMapAssemblyError::Chain`] from `bootstrap_v3_tick_word` (Decision 8
 /// (A) — neither is swallowed).
 /// Compact serialize of a `HashMap<i32, TickInfo>` (ascending tick) into
-/// `tick:gross,net;...`, for the snapshot-seed dump (UO3JM4/ADR-021
+/// `tick:gross,net;...`, for the snapshot-seed dump (ADR-021
 /// re-assembly aid).
 fn serialize_tick_info_map(ticks: &HashMap<i32, TickInfo>) -> String {
     let mut keys: Vec<&i32> = ticks.keys().collect();
@@ -160,7 +160,7 @@ fn serialize_tick_info_map(ticks: &HashMap<i32, TickInfo>) -> String {
 
 /// Emit the snapshot-seed tick map (Db snapshot + backfill) at TRACE on
 /// `state`, so it can be compared against the map that later went into the
-/// verifier (UO3JM4/ADR-021 re-assembly aid). Forensic: silent unless the sink
+/// verifier (ADR-021 re-assembly aid). Forensic: silent unless the sink
 /// enables `degenbot=trace`.
 pub(crate) fn dump_tick_map_seed(
     pool_ident: &str,
@@ -171,7 +171,7 @@ pub(crate) fn dump_tick_map_seed(
         coverage = ?seed.1,
         tick_count = seed.0.len(),
         seed_map = %serialize_tick_info_map(&seed.0),
-        "tick-map snapshot-seed (UO3JM4 re-assembly aid)"
+        "tick-map snapshot-seed (ADR-021 re-assembly aid)"
     );
 }
 
@@ -321,7 +321,7 @@ pub(crate) fn liquidity_map_to_tick_info(
     Ok(Some((ticks, PoolTickCoverage::Tracked)))
 }
 
-/// Tracked intake reconciliation (T3 OMDCIY, epic OU4SYZ): the on-chain
+/// Tracked intake reconciliation : the on-chain
 /// invariant, checked per word the snapshot supplied — a bit is set iff a
 /// tick row with `liquidity_gross > 0` exists at that position. The row side
 /// checks every gross>0 row whose word the snapshot carries (the bit must be

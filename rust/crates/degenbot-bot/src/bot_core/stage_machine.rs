@@ -105,7 +105,7 @@ pub enum LogDecision {
     /// A `removed: false` forward log for a block that is ALREADY
     /// tombstoned (delivery jitter carried it past its quiesce/tombstone
     /// edge) while NOT in the reorg path — the benign LATE-ADMIT class
-    /// (HJ5HWF no-landmine ruling). The pump drops it UN-applied, counts it
+    /// (the no-landmine ruling). The pump drops it UN-applied, counts it
     /// (`degenbot.late_log.admitted` + the deduped `late_log` failure-policy
     /// bucket), and KEEPS RUNNING: post-tombstone lateness is counted
     /// delivery noise, never a structural fault. The FSM mutates nothing
@@ -209,11 +209,11 @@ pub struct StageMachine {
     /// Whether a quiesce-gated publish is armed (a forward log applied).
     publish_pending: bool,
     /// the highest block an authoritative catch-up has owned, with
-    /// the rewind generation the ownership was established in (T6IYKY: the
+    /// the rewind generation the ownership was established in (the
     /// recovery anchor is an `Epoch`, not a bare block).
     recovery_anchor: Epoch,
     /// The rewind generation — bumped once per reorg episode (the stage
-    /// machine's future `Rewind` event, T6IYKY). Epochs minted before the
+    /// machine's future `Rewind` event). Epochs minted before the
     /// bump are stale and fail fast via `Epoch::ensure_current`.
     rewind_seq: u64,
     /// Per-block metadata snapshots (deferred tombstone finalize, VTWCIG).
@@ -534,7 +534,7 @@ impl StageMachine {
     /// Reorg logs (`removed: true`) are NEVER dropped — they must reach the
     /// reorg classifier to unwind the backfilled range. A forward ABOVE
     /// `recovery_anchor` that is still stale takes the same benign
-    /// `LateForward` drop as any other post-tombstone survivor (HJ5HWF:
+    /// `LateForward` drop as any other post-tombstone survivor:
     /// lateness is never a fatal signal — only the pump's own single-writer
     /// range is a silent duplicate).
     #[must_use]
@@ -1084,7 +1084,7 @@ impl StageMachine {
             Some(open) if block < open => {
                 // A forward log for a block older than the open block → the
                 // open block has moved past it: a late forward on a
-                // tombstoned block. BENIGN under the HJ5HWF no-landmine
+                // tombstoned block. BENIGN under the no-landmine
                 // ruling — the pump drops + counts it (the `LateForward`
                 // late-admit class); it must never mutate state or rewind
                 // the cursor here.
@@ -1397,7 +1397,7 @@ impl QuiesceParams {
     }
 }
 
-/// Sliding-hour retention of the late-admit ledger (the HJ5HWF backstop
+/// Sliding-hour retention of the late-admit ledger (the backstop
 /// contract window).
 pub const LATE_LEDGER_WINDOW_MS: u64 = 60 * 60 * 1000;
 
@@ -1510,7 +1510,7 @@ impl QuiesceEstimator {
         self.refresh_hold();
     }
 
-    /// Record one late-admit event (benign counted delivery noise, HJ5HWF)
+    /// Record one late-admit event (benign counted delivery noise)
     /// at driver-clock stamp `now_ms`.
     fn record_late_admit(&mut self, now_ms: u64) {
         self.prune_late_ledger(now_ms);
@@ -1575,7 +1575,7 @@ impl StageMachine {
         self.quiesce.observe(max_gap_ms, now_ms);
     }
 
-    /// Record one benign late-admit event (the HJ5HWF counted class) at
+    /// Record one benign late-admit event (the counted class) at
     /// driver-clock `now_ms` for the sliding-hour budget backstop: over
     /// budget → the window is held at the ceiling (design §6.1).
     pub fn record_late_admit(&mut self, now_ms: u64) {
@@ -1724,7 +1724,7 @@ mod tests {
     }
 
     /// A late `removed: false` log on a `Drained` block, outside a reorg,
-    /// takes the BENIGN late-admit class (HJ5HWF no-landmine ruling):
+    /// takes the BENIGN late-admit class (no-landmine ruling):
     /// `LateForward` — never a fatal signal. The pinned invariants: the
     /// cursor never silently regresses (I7), the block's tombstoned state is
     /// untouched (I4: no re-entry into a writable state), and the publish
@@ -1921,7 +1921,7 @@ mod quiesce_estimator_contract {
         assert_eq!(fsm.settle_window_ms(), 1);
     }
 
-    /// VD62GX design §6.1: the FIRST observation seeds the EWMA fully (no
+    /// Design §6.1: the FIRST observation seeds the EWMA fully (no
     /// halved first update), so the estimator arms at a meaningful window
     /// from the very first block instead of drifting up from the floor.
     #[test]
@@ -2000,7 +2000,7 @@ mod quiesce_estimator_contract {
         assert!(fsm.quiesce_ewma_ms().is_finite(), "EWMA must stay finite");
     }
 
-    /// HJ5HWF contract §6.1: exceeding the late-admit budget in a sliding
+    /// Late-admit contract §6.1: exceeding the late-admit budget in a sliding
     /// hour HOLDS the window at the ceiling; the hold releases once the
     /// ledger ages out. At-budget (not over) must NOT hold.
     #[test]
@@ -2054,7 +2054,7 @@ mod quiesce_estimator_contract {
 }
 
 // ======================================================================
-// 7NFYQW fold additions: stage-cycle view + watchdog phase space
+// Fold additions: stage-cycle view + watchdog phase space
 // ======================================================================
 
 /// The watchdog phase space (the dissolved `DrainerHealth`'s no-progress

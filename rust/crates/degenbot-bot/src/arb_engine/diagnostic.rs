@@ -226,7 +226,7 @@ pub struct DiagnosticHop {
     /// Engine-owned state captured under the engine lock.
     pub engine_state: DiagnosticPoolState,
     /// On-chain state fetched after the lock was released (`None` — the
-    /// `fetch_onchain` half was retired in AM5AJW; retained for a future
+    /// `fetch_onchain` half was retired; retained for a future
     /// lightweight drift detector).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onchain_state: Option<DiagnosticPoolState>,
@@ -431,7 +431,7 @@ pub(crate) fn diagnostic_path_state(
 /// Thread the solver's `optimal_input` + `hop_outputs` (the solver's REPORTED
 /// per-hop amounts — the EXPECTED basis the classifier compares captured
 /// swaps against) onto the snapshot. The recompute-population half that used
-/// to live here was retired in AM5AJW (captured swaps replace the recompute).
+/// to live here was retired (captured swaps replace the recompute).
 fn thread_solver_result_onto_snapshot(
     snapshot: &mut DiagnosticPathState,
     solve_result: Option<&::degenbot_solvers::mixed::SolvePathResult>,

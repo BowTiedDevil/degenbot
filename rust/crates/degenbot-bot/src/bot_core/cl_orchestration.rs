@@ -182,7 +182,7 @@ impl BotState {
 
         // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
         // clocks, so record both pre-event clock values for reorg restore, then
-        // advance both monotonic (two-stamp pool state, OB7UNY). A backward
+        // advance both monotonic (two-stamp pool state). A backward
         // stamp outside a reorg panics via the advance helpers.
         let update_block_before = state.update_block;
         let tick_data_block_before = state.tick_data_block;
@@ -207,7 +207,7 @@ impl BotState {
         state.invalidate_tick_range_cache();
     }
 
-    /// Event-witnessed horizon for a V3 pool (FUWYUR clock-provenance):
+    /// Event-witnessed horizon for a V3 pool:
     /// highest block of any routed event for this pool. `0` = none witnessed.
     #[must_use]
     pub fn v3_event_horizon(&self, pool_address: &Address) -> u64 {
@@ -256,7 +256,7 @@ impl BotState {
     ///
     /// Every production entry point — live dispatch, snapshot-gap backfill,
     /// pyo3 staged appliers — must ask this function instead of embedding its
-    /// own copy of the policy (FUWYUR: three divergent routers each knew a
+    /// own copy of the policy (three divergent routers each knew a
     /// subset; the funnel's "unregistered implies drop" inference silently lost
     /// live Mints). Callers execute the returned outcome; they do not pre-judge.
     ///
@@ -365,7 +365,7 @@ impl BotState {
                     BufferKind::Backfill => self.v3_buffer.buffer_backfill(pool_address, event),
                     BufferKind::Pump => self.v3_buffer.buffer_pump(pool_address, event),
                 }
-                // FUWYUR provenance: a buffered event is still
+                // Stamp provenance: a buffered event is still
                 // engine-witnessed activity for this pool — advance the
                 // event horizon at arrival time so the pin's stamp-provenance
                 // verdict sees the true witnessed span (parity with V4).
@@ -428,7 +428,7 @@ impl BotState {
     }
 
     /// Apply a V3 liquidity update (Mint/Burn) — thin adapter over
-    /// [`Self::route_v3_event`] at `Phase::Live`. FUWYUR: unregistered pools
+    /// [`Self::route_v3_event`] at `Phase::Live`. Unregistered pools
     /// stage into the PUMP buffer here so late registration captures them;
     /// under the old funnel this row was a silent drop.
     pub fn apply_v3_liquidity_update(
@@ -891,7 +891,7 @@ impl BotState {
         // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
         // `&self`) out of the inner scope, where `&mut state` is alive.
         let cutoff = self.pump_complete_cutoff();
-        // FUWYUR provenance: hoist the engine-witnessed horizon for
+        // Stamp provenance: hoist the engine-witnessed horizon for
         // this pool — independent of the imported seed stamp — so the pin can
         // classify the stamp's freshness claim (the load-time tripwire).
         let witnessed = self.v3_event_horizon(&address);
@@ -912,7 +912,7 @@ impl BotState {
             };
             if state.coverage == PoolTickCoverage::Tracked {
                 let liquidity_clock = state.tick_data_block;
-                // OB7UNY two-stamp: the pin pairs the TICK MAP with its own
+                // Two-stamp rule: the pin pairs the TICK MAP with its own
                 // LIQUIDITY clock (`tick_data_block`), not the price clock —
                 // step-2 verify compares `tick_data` against on-chain@the
                 // pinned block, so the pinned block must be the liquidity clock.
@@ -955,13 +955,13 @@ impl BotState {
                 last_complete_block = self.pump_complete_cutoff(),
                 "V3 pin"
             );
-            // FUWYUR stamp provenance — the load-time tripwire. The
+            // Stamp provenance — the load-time tripwire. The
             // seed stamp (`seed_block`) is honest only if independent of it,
             // something witnessed state at/beyond it: the tombstone-confirmed
             // delivery horizon (`cutoff`) or engine-witnessed events for THIS
             // pool (`witnessed_horizon`). A re-seed-after-activity (a fresher
             // stamp arrived after the engine already processed events for
-            // this pool) is exactly the FUWYUR lie shape and warns loudly;
+            // this pool) is exactly the mis-stamped lie shape and warns loudly;
             // the verify tripwire that follows covers content-correctness, but
             // provenance covers freshness-claim honesty.
             match verdict {
@@ -1033,7 +1033,7 @@ impl BotState {
         state.liquidity = liquidity;
         state.tick = tick;
         state.tick_data = tick_data;
-        // OB7UNY two-stamp: a wholesale full-state sync replaces BOTH clocks
+        // Two-stamp rule: a wholesale full-state sync replaces BOTH clocks
         // with the same source block (the sync provides scalars AND tick_data
         // from one snapshot). A full replacement is a sanctioned reset (not an
         // incremental backward stamp), so it sets both directly — reorg is not
@@ -1271,9 +1271,8 @@ impl BotState {
     ///
     /// Returns `Err` if the pool uses a dynamic fee (`fee == 0x100000`),
     /// has a static fee exceeding the executor's `u16` encoding field
-    /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`, ergo
-    /// DPODAZ), or a pool with the same `(pool_manager, pool_id)` is
-    /// already registered.
+    /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`), or a pool
+    /// with the same `(pool_manager, pool_id)` is already registered.
     pub fn register_v4_pool(
         &mut self,
         params: &RegisterV4PoolParams,
@@ -1499,7 +1498,7 @@ impl BotState {
     }
 
     /// Apply a V4 `ModifyLiquidity` event — thin adapter over
-    /// [`Self::route_v4_event`] at `Phase::Live`. FUWYUR-class safety:
+    /// [`Self::route_v4_event`] at `Phase::Live`. The same class of safety:
     /// unregistered pools stage into the PUMP buffer here so late registration
     /// captures them; the old inline arms embedded a partial policy copy.
     pub fn apply_v4_liquidity_update(
@@ -2081,7 +2080,7 @@ impl BotState {
         // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
         // `&self`) out of the inner scope, where `&mut state` is alive.
         let cutoff = self.pump_complete_cutoff();
-        // FUWYUR provenance (7HUYWM, V4 twin): hoist the engine-witnessed
+        // Stamp provenance (V4 twin): hoist the engine-witnessed
         // horizon so the pin can classify the seed stamp's freshness claim.
         let witnessed = self.v4_event_horizon(&key);
         // Capture the pin scalar in an inner scope so the `&mut state` borrow
@@ -2100,7 +2099,7 @@ impl BotState {
                 return;
             };
             if state.coverage == PoolTickCoverage::Tracked {
-                // OB7UNY two-stamp (V4 twin): pin pairs tick_data with the
+                // Two-stamp rule (V4 twin): pin pairs tick_data with the
                 // LIQUIDITY clock, not the price clock.
                 let liquidity_clock = state.tick_data_block;
                 // DFQYM5 fabricated-mismatch clamp (V4 twin): verify only at
@@ -2130,7 +2129,7 @@ impl BotState {
                 last_complete_block = self.pump_complete_cutoff(),
                 "V4 pin"
             );
-            // FUWYUR stamp provenance (7HUYWM, V4 twin) — see the V3 pin.
+            // Stamp provenance (V4 twin) — see the V3 pin.
             match verdict {
                 PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {
                     op_warn!(domain = state, pool_manager = %format!("{pool_manager:x}"),
@@ -2229,7 +2228,7 @@ impl BotState {
         state.liquidity = update.liquidity;
         state.tick = update.tick;
         state.tick_data = update.tick_data;
-        // OB7UNY two-stamp (V4 twin of `sync_v3_pool_state`): wholesale sync
+        // Two-stamp rule (V4 twin of `sync_v3_pool_state`): wholesale sync
         // replaces both clocks with the same source block (sanctioned reset).
         state.update_block = update.update_block;
         state.tick_data_block = update.update_block;

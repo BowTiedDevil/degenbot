@@ -12,7 +12,7 @@
 //! the shared clamp body (`clamp_result_with_state`) from `solve_cycle`, and
 //! the lane/pipelined-sim seams from `executor`/`inline_sim`. The
 //! walk-adjacent helpers (`clamp_result_in_worker`, `flush_solved_item`,
-//! `inline_sim_payload`) are defined HERE (5WCRWZ T7).
+//! `inline_sim_payload`) are defined HERE.
 use super::solve_cycle::clamp_result_with_state;
 use super::solve_cycle::SolveCycleShared;
 use super::{BlockMetadata, HashMap};

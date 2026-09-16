@@ -360,7 +360,7 @@ async fn on_drain_receives_promoted_active_block_not_stalled_header() {
     );
 }
 
-/// TQ7PD6 follow-up — drained-settle solve gate (header form): the solve
+/// Drained-settle solve gate (header form): the solve
 /// fires EXACTLY ONCE, after the buffered header burst is drained, at the
 /// newest observed block — never eagerly at the top of every loop
 /// iteration (the old behavior dispatched one solve per buffered event and

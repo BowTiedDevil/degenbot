@@ -88,7 +88,7 @@ pub mod instruments {
         pub fn observe_reorg_depth(&self, _blocks: u64) {}
         /// no-op (WAJEQP T-R1)
         pub fn count_reorg_recovery_dropped(&self) {}
-        /// no-op (HJ5HWF benign late-admit family)
+        /// no-op (benign late-admit family)
         pub fn count_late_log_admitted(&self) {}
         /// no-op (BM35LK adaptive quiesce window)
         pub fn observe_quiesce_window(&self, _ms: u64) {}
@@ -104,9 +104,9 @@ pub mod instruments {
         pub fn count_backfill(&self) {}
         /// no-op
         pub fn observe_cgroup_throttled(&self, _events_delta: u64, _usecs_delta: u64) {}
-        /// no-op (K4ETHF T2)
+        /// no-op
         pub fn observe_state_lock_wait(&self, _site: &str, _mode: &str, _secs: f64) {}
-        /// no-op (K4ETHF T2)
+        /// no-op
         pub fn observe_state_lock_hold(&self, _site: &str, _mode: &str, _secs: f64) {}
         /// no-op (ADR-040)
         pub fn set_quarantined_pools(&self, _count: usize) {}
@@ -124,11 +124,11 @@ pub mod instruments {
             _closing_block: u64,
         ) {
         }
-        /// no-op (MROOY7 BF43PM)
+        /// no-op
         pub fn observe_publish_cycle(&self, _secs: f64) {}
-        /// no-op (MROOY7 BF43PM)
+        /// no-op
         pub fn count_rewind(&self) {}
-        /// no-op (MROOY7 BF43PM)
+        /// no-op
         pub fn observe_rewind_duration(&self, _secs: f64) {}
         /// no-op
         pub fn set_state_head_lag(&self, _head_minus_clock: i64) {}
@@ -162,7 +162,7 @@ pub mod instruments {
         pub fn observe_dispatch_gas(&self, _gas: u64) {}
         /// no-op
         pub fn count_submit_outcome(&self, _outcome: &str) {}
-        /// no-op (PRG-2 / IRUMXD registration-skip family)
+        /// no-op (PRG-2 registration-skip family)
         pub fn count_registration_skip(&self, _reason: &str) {}
         /// no-op
         pub fn observe_submit_latency(&self, _secs: f64) {}
@@ -196,7 +196,7 @@ pub mod instruments {
         pub fn count_detached_leads_expired(&self, _n: u64) {}
     }
 
-    /// Epic FRKBGP close-out: resident set bytes (drift-watch). Default
+    /// Close-out: resident set bytes (drift-watch). Default
     /// builds return None — the otel twin reads /proc/self/statm.
     #[must_use]
     pub fn read_process_rss_bytes() -> Option<u64> {

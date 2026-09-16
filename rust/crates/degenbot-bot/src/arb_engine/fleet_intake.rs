@@ -99,7 +99,7 @@ pub trait FleetIntake: Send + Sync {
 /// by `executor.rs::global_sim_executor()` so the §3.1 re-route reads
 /// through ONE module; crate-internal because only the sim dispatch route
 /// needs it.
-/// YI5NGB construction precondition: the fleet materializes LAZILY on the
+/// Construction precondition: the fleet materializes LAZILY on the
 /// first call — from the construction-STAMPED boot the first engine
 /// construction installed (`with_core_cfg`). No fallback exists: a caller
 /// that reaches this seam BEFORE any engine construction aborts LOUD.

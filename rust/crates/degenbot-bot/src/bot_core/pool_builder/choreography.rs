@@ -11,7 +11,7 @@
 //! Decision D-C scopes the first move to the **V2/V3/V4 + ERC-20 + tick**
 //! choreography — exactly what the MEV `PoolBuilder`  needs.
 //! Curve / Aerodrome wrappers (and the camelot/balancer re-points) were
-//! absorbed as follow-ups (tasks `SSSXG6`, `LWKLMP`); the Curve + Aerodrome
+//! absorbed as follow-ups as follow-ups; the Curve + Aerodrome
 //! wrappers are the last families still on the temporary `PyBotIo` inline path.
 //!
 //! Every encode/decode comes from [`degenbot_rpc::abi`], shared with
@@ -667,7 +667,7 @@ pub async fn fetch_erc20_string_field(
 }
 
 // ---------------------------------------------------------------------------
-// Balancer V2 reads (the SSSXG6 buyer primitive layer)
+// Balancer V2 reads (the buyer primitive layer)
 // ---------------------------------------------------------------------------
 
 /// The Balancer pool sub-type resolved by [`probe_balancer_type`] — mirrored

@@ -1192,7 +1192,7 @@ pub(crate) fn global_executor<T>(
     slot.get_or_init(|| {
         #[expect(
             clippy::expect_used,
-            reason = "the loud construction-contract abort IS the YI5NGB design: a stamp-less materialization must abort, never fall back silently"
+            reason = "the loud construction-contract abort IS the design: a stamp-less materialization must abort, never fall back silently"
         )]
         let stamp = courier.get().expect(desc.stamp_missing);
         boot(stamp.boot()).inspect_err(|err| {

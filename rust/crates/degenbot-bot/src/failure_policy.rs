@@ -128,7 +128,7 @@ pub fn bucket(kind: &str, reason: Option<&str>) -> (Severity, Scope) {
         ("monitor_failure", _) => (Severity::Degraded, Scope::Path),
         ("ws_completeness" | "drain_stall" | "drain_dead", _) => (Severity::Fatal, Scope::Process),
 
-        // Post-tombstone delivery jitter (HJ5HWF no-landmine ruling): a
+        // Post-tombstone delivery jitter (no-landmine ruling): a
         // late forward is dropped via the benign late-admit path — the
         // tombstone already proved the block delivered, and no state is
         // mutated. Degraded/Event (deduped) so a sustained rate stays

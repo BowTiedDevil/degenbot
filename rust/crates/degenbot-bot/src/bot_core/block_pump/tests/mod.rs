@@ -54,7 +54,7 @@ impl BlockPump {
             // `set_quiesce_for_test`. The fixed 50 mirrors the retired
             // `debounce_ms` field this constructor used to set.
             quiesce_params: QuiesceParams::fixed(50),
-            // Production default (PWPPAZ T2) — finite test streams end before
+            // Production default — finite test streams end before
             // the slice deadline, so existing quiesce tests are unaffected;
             // the gap-stream tests below set the field explicitly.
             early_slice_ms: 25,
@@ -94,7 +94,7 @@ impl BlockPump {
         self.watchdog.header_staleness = staleness;
     }
 
-    /// Test-only override of the early-slice window (PWPPAZ T2) — per-pump
+    /// Test-only override of the early-slice window — per-pump
     /// field override (not env) so tests stay immune to the environment.
     pub fn set_early_slice_ms_for_test(&mut self, ms: u64) {
         self.early_slice_ms = ms;
@@ -142,8 +142,7 @@ struct FakeStageEngine {
     /// `on_drain` path fires. Default `false` keeps every existing test's
     /// no-drain behavior unchanged.
     dirty: AtomicBool,
-    /// `record_logs_this_block` call count (T4 pairing pin, epic
-    /// O3HW7E): the LEZJAS bookkeeping write must fire exactly when the
+    /// `record_logs_this_block` call count (T4 pairing pin): the bookkeeping write must fire exactly when the
     /// FSM's `on_log_applied` ran for an applied forward log.
     logs_recorded: std::sync::atomic::AtomicUsize,
     /// `pump_ended` recorded (incident 2026-08-20 stream-death test).
@@ -917,7 +916,7 @@ fn make_v3_swap_log_with_block(pool_address: Address, block_number: u64) -> Log 
 // -----------------------------------------------------------------
 // BAMKKI: interleaving fuzz harness. Randomized (seed-deterministic)
 // composition of event feeds x pool lifecycle roles, driven through the
-// REAL pump, with a replay oracle. Any member of the FUWYUR family
+// REAL pump, with a replay oracle. Any member of the late-admit family
 // (lost, duplicated, or mis-staged application across the
 // unregistered/quarantined/live boundaries) shows up as an oracle
 // divergence instead of waiting for chain data to find it.

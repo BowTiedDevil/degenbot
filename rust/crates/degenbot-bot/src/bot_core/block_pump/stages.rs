@@ -5,7 +5,7 @@ use super::{
 
 impl BlockPump {
     /// Shared strictly-synchronous solve execution for the drained-settle
-    /// gate's quiesce solve and the PWPPAZ T2 early slice (TQ7PD6: no await
+    /// gate's quiesce solve and the early slice (no await
     /// inside — the stage hooks run INLINE on this driver task, so their
     /// spans nest under the entered cursor block span naturally).
     ///
@@ -32,7 +32,7 @@ impl BlockPump {
         self.drive_solve(fsm, fsm.context_for(block, metadata));
     }
 
-    /// The I3 stale-epoch drop (7NFYQW, T6IYKY review Q2 edge) — the
+    /// The I3 stale-epoch drop (review Q2 edge) — the
     /// dissolved `DispatchOwner` FIFO drop, moved onto the driver: a work
     /// item whose rewind generation sits BELOW the machine's current one is
     /// reorg-flying. It is dropped LOUDLY here instead of silently consuming

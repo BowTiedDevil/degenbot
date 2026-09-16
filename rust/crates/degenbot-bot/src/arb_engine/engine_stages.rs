@@ -88,13 +88,13 @@ pub(crate) fn record_cycle_arm_telemetry(span: &tracing::Span, arm: &'static str
 /// ledger it solves from + the delivered-to-Python block clock.
 pub struct EngineStages {
     /// The shared engine state (the same `Arc` `PyArbitrageEngine.engine`
-    /// holds). The stage hooks lock per call — the SRQEK5 detached-solve
+    /// holds). The stage hooks lock per call — the detached-solve
     /// posture keeps the steady-state hold at enqueue length (µs).
     engine: Arc<Mutex<ArbitrageEngine>>,
     /// The epoch ledger the hooks take keys from — the ONE Bot-owned
     /// ledger (`Bot::active_delta`) injected at construction, so log
     /// application records into the SAME ledger `on_resolve` consumes
-    /// (LXDY4C shared dirty tracking). Identity is structural: there is no
+    /// Identity is structural: there is no
     /// swap surface and no second handle.
     delta: Arc<EpochDelta>,
     /// The block-clock pipe (delivery-to-Python at the async boundary).
@@ -116,7 +116,7 @@ impl EngineStages {
     /// ledger, so the next draw re-includes the path through the same
     /// freshness ordering, admission budget, and retention window (one
     /// deferral concept). This is the ONE engine access to the ledger
-    /// (engine-side ownership was deliberately avoided — LXDY4C); lock order
+    /// (engine-side ownership was deliberately avoided); lock order
     /// stays engine mutex outer, ledger mutex inner, matching `on_resolve`.
     /// THE external construction seam : builds the engine
     /// itself from the shared core + the caller's typed config, so no consumer
@@ -237,7 +237,7 @@ impl EngineStages {
         latest_results(&self.engine.lock())
     }
 
-    /// Set the registered-path cap (PRG-4 / IRUMXD). `None` = unlimited.
+    /// Set the registered-path cap (PRG-4). `None` = unlimited.
     pub fn set_path_cap(&self, cap: Option<usize>) {
         set_path_cap(&mut self.engine.lock(), cap);
     }
@@ -375,7 +375,7 @@ impl EngineStages {
         block: u64,
         metadata: &BlockMetadata,
     ) -> CycleOutcome {
-        // P5FEOI / T0 / K4ETHF span-gate lineage preserved verbatim from the
+        // span-gate lineage preserved verbatim from the
         // dissolved wrapper: one Jaeger node for dirty solves, none for the
         // ~2µs empty pass, gate + work under ONE mutex acquisition.
         let mut engine =
@@ -424,7 +424,7 @@ impl EngineStages {
                 u32::try_from(path_count(&engine)).unwrap_or(u32::MAX),
             ));
             // T3: the solve cycle must not pin a shared
-            // pump-runtime worker while it runs. 2UVG3E seam #4: under the
+            // pump-runtime worker while it runs. Seam #4: under the
             // detached stance the engine Mutex hold collapses to enqueue end
             // (µs); the in-cycle arm is the backpressure safety valve only.
             let hold_start = std::time::Instant::now();
@@ -493,7 +493,7 @@ impl EngineStages {
 /// by the stage surface's `on_resolve` hook); no engine-local dirty-set
 /// intake remains.
 ///
-/// 5WCRWZ T7 carry (the doc that lived on the deleted
+/// Carry (the doc that lived on the deleted
 /// `rebuild_and_solve_affected`): re-resolve and re-solve only paths that
 /// contain updated pools, using the `pool_to_paths` reverse index to
 /// identify `affected_path_ids`; unaffected paths carry their previous
@@ -618,7 +618,7 @@ impl StageHandlers for EngineStages {
         })
     }
     /// Resolved row: consume the epoch ledger's touched keys ONCE (the
-    /// LXDY4C take preserves the retired `DirtySets::take_all` semantics;
+    /// The take preserves the retired `DirtySets::take_all` semantics;
     /// keys recorded while this drain runs land in the NEXT cycle).
     ///
     /// QTZGFL: under the construction-stamped admission stance this is a
@@ -680,7 +680,7 @@ impl StageHandlers for EngineStages {
         Ok(PublishOutcome::default())
     }
     /// Finalized row: the boundary catch — advance + terminal publish, no
-    /// solve cycle (PWPPAZ T1).
+    /// solve cycle.
     fn on_finalize(&self, work: &Finalize) -> Result<FinalizeOutcome, StageError> {
         // The guarded boundary advance + terminal publish, inlined from the
         // retired ArbitrageEngine::finalize_block . The
@@ -824,7 +824,7 @@ mod fleet_stance_tests {
 #[cfg(test)]
 mod candidate2_seam_pins {
     use std::sync::Arc;
-    /// Pin 2 (GREEN after T2; extended at ZE67AE so it cannot quietly rot).
+    /// Pin 2 (extended so it cannot quietly rot).
     ///
     /// The eight `EngineStages` inherent twins are killed HARD:
     /// `solve_dirty`, `last_processed_block`, `send_result_batch`,
@@ -932,7 +932,7 @@ mod candidate2_seam_pins {
     /// poke-free on the engine TODAY (the engine's remaining surface is the
     /// lifecycle/delivery setters and the machine pokes), so the pin is
     /// green now and turns red exactly when a driver name leaks onto the
-    /// engine. 5TBT7L T4 added `solve_dirty` to the probe: the engine-level
+    /// engine. `solve_dirty` was added to the probe: the engine-level
     /// cycle method is GONE (the expiry now runs inside
     /// `EngineStages::run_solve_cycle`).
     #[test]
@@ -1127,7 +1127,7 @@ mod dissolution_complete {
     fn solver_dispatch_is_gone_from_the_module_tree() {
         assert!(
             !MOD_RS.contains("mod solver_dispatch;"),
-            "the arb_engine module tree still declares solver_dispatch (5WCRWZ T7)"
+            "the arb_engine module tree still declares solver_dispatch"
         );
         assert!(
             !MOD_RS.contains("solver_dispatch"),
@@ -1144,7 +1144,7 @@ mod dissolution_complete {
         ] {
             assert!(
                 LANE_WALK.contains(marker),
-                "lane_walk.rs must own {marker:?} (5WCRWZ T7)"
+                "lane_walk.rs must own {marker:?}"
             );
         }
         // The clamp body + its profit recompute moved to solve_cycle.
@@ -1154,7 +1154,7 @@ mod dissolution_complete {
         ] {
             assert!(
                 SOLVE_CYCLE.contains(marker),
-                "solve_cycle.rs must own {marker:?} (5WCRWZ T7)"
+                "solve_cycle.rs must own {marker:?}"
             );
         }
         // The detached-merge chain `self.cycle.merge_detached_item(` moved
@@ -1163,13 +1163,13 @@ mod dissolution_complete {
         for marker in ["fn run_engine_cycle(", "fn expire_buffered_events("] {
             assert!(
                 ENGINE_STAGES.contains(marker),
-                "engine_stages.rs must own {marker:?} (5TBT7L T4 expiry relocation)"
+                "engine_stages.rs must own {marker:?}"
             );
         }
         // The Default impl moved beside the engine struct.
         assert!(
             MOD_RS.contains("impl Default for ArbitrageEngine"),
-            "arb_engine/mod.rs must own the ArbitrageEngine Default impl (5WCRWZ T7)"
+            "arb_engine/mod.rs must own the ArbitrageEngine Default impl"
         );
     }
     /// Compile-time inherent-absence probe (the candidate2 `NoInherentTwinProbe`

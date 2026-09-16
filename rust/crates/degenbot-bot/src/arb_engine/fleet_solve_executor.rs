@@ -184,7 +184,7 @@ impl FleetSolveExecutor {
             seat_senders.push(stx);
             seat_mailboxes.push(srx);
         }
-        // 2SIOHJ seat<->slot bijection, explicit at build time: the pump's
+        // Seat<->slot bijection, explicit at build time: the pump's
         // `seats.get(grant.slot)` is a POSITIONAL map — mailbox i serves
         // the unit granted to the FleetHost slot `SlotLayout::solver
         // .start + i` (degenbot-workers' boot-frozen table geometry; this
@@ -385,7 +385,7 @@ fn host_loop(
 }
 /// The solve host's seat model (P-RZEWTX, unchanged by 6HE6RF): per-seat
 /// keyed mailboxes — a seat is a persistent pin (T3/T6 warm arenas), so a
-/// granted unit routes POSITIONALLY to the grant slot's mailbox (2SIOHJ:
+/// granted unit routes POSITIONALLY to the grant slot's mailbox:
 /// seat i <-> `SlotLayout::solver.start` + i).
 struct SolveSink<'a> {
     seats: &'a [mpsc::Sender<SeatJob>],
@@ -498,7 +498,7 @@ pub(crate) fn global_fleet_solve_executor() -> &'static FleetSolveExecutor {
         // nobody chose).
         #[expect(
             clippy::expect_used,
-            reason = "the loud construction-contract abort IS the YI5NGB design: a stamp-less materialization must abort, never fall back silently"
+            reason = "the loud construction-contract abort IS the design: a stamp-less materialization must abort, never fall back silently"
         )]
         let stamp = FLEET_SOLVE_BOOT
             .get()
@@ -695,8 +695,8 @@ mod tests {
             .or_else(|| err.downcast_ref::<&str>().copied())
             .expect("panic payload is the expect message");
         assert!(
-            msg.contains("(YI5NGB)"),
-            "the expect must name the task: {msg}"
+            msg.contains("fleet solve boot stamp missing"),
+            "the expect must name the loud construction abort: {msg}"
         );
     }
     #[test]
@@ -1226,7 +1226,7 @@ mod tests {
             };
             lane.solved(arm);
             lane.suppressed(11);
-            red_panic("path 12 panicked mid-bin (QR3NUS red harness)");
+            red_panic("path 12 panicked mid-bin (red harness)");
             // 13/14 never run — the panic ends the bin body.
         });
         drop(lane); // close the pipe so the drain completes
@@ -1540,7 +1540,7 @@ mod tests {
                         run_solve_lane(&mut lane, verdict.as_ref(), |lane| {
                             if cycle == 0 {
                                 lane.suppressed(cycle * 10); // one pid emitted before the panic
-                                red_panic("cycle-0 bin panics (QR3NUS red harness)");
+                                red_panic("cycle-0 bin panics (red harness)");
                             } else {
                                 // cycle 1 runs CLEAN — every path delivers on
                                 // the surviving seat (FF-T4: a bin that returns
@@ -1604,7 +1604,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
         let mut lane = SolveLane::new(7, 3, vec![21, 22], tx, None, None);
         run_solve_lane(&mut lane, &verdict, |_lane| {
-            red_panic("bin unit panics with its result pipe open (QR3NUS tripwire harness)");
+            red_panic("bin unit panics with its result pipe open (tripwire harness)");
         });
         drop(lane); // close the pipe so the drain completes
         let outcomes: Vec<LaneOutcome> = rx.into_iter().collect();

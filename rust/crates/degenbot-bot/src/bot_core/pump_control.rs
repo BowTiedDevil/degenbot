@@ -1,4 +1,4 @@
-//! `PumpControl` — the driver-facing control seam (ADR-046, epic KLLYHS T2).
+//! `PumpControl` — the driver-facing control seam (ADR-046).
 //!
 //! ADR-041's seam retirement landed the pump↔engine coordination on the ONE
 //! `StageHandlers` trait, mixing two vocabularies: the eight pure stage hooks
@@ -30,7 +30,7 @@ pub trait PumpControl: Send + Sync + 'static {
     #[must_use]
     fn has_dirty_paths(&self) -> bool;
 
-    /// Mark `solved` as solved (engine-owned bookkeeping since LEZJAS).
+    /// Mark `solved` as solved (engine-owned bookkeeping).
     fn set_last_solved_block(&self, solved: Epoch);
 
     /// Seed the cold-start `results_block` anchor to a settled block (the
@@ -38,7 +38,7 @@ pub trait PumpControl: Send + Sync + 'static {
     fn set_solve_anchor(&self, anchor: Epoch);
 
     /// Record that at least one forward log applied this block (cleared by
-    /// the next finalize — LEZJAS).
+    /// the next finalize).
     fn record_logs_this_block(&self);
 
     /// The last block this engine solved. The resume path reads it to seed

@@ -31,10 +31,10 @@
 //! ## Input surface
 //!
 //! Each hook receives its [`BlockContext`] (the one epoch coordinate,
-//! task T6IYKY, plus the block's execution metadata) plus the previous
+//! plus the block's execution metadata) plus the previous
 //! stage's output. The per-epoch dirty tracking travels as the opaque
 //! [`EpochDelta`] handle — the real touched-pool ledger
-//! (`crate::bot_core::epoch_delta`, LXDY4C), re-exported by this module;
+//! (`crate::bot_core::epoch_delta`), re-exported by this module;
 //! its internals are NOT
 //! part of this seam, so the dirty-tracking rewrite cannot fork the trait.
 
@@ -301,7 +301,7 @@ pub struct RewindOutcome {
 pub struct StreamingComplete<'a> {
     /// The epoch that quiesced.
     pub ctx: BlockContext,
-    /// The epoch's dirty-tracking handle (opaque; LXDY4C owns internals).
+    /// The epoch's dirty-tracking handle (opaque; the epoch-delta module owns internals).
     pub delta: &'a EpochDelta,
     /// The gap-backfill episode applied during Streaming, if any.
     pub backfill: Option<BackfillEpisode>,
@@ -1461,7 +1461,7 @@ mod conformance {
     }
 
     // ==================================================================
-    // 7NFYQW landmine proof (guidance e): the NoopStubEngine conformance
+    // landmine proof (guidance e): the NoopStubEngine conformance
     // harness driven by the REAL unified block stage machine
     // (`bot_core::stage_machine::StageMachine`) — the machine's
     // decisions select the cycles, the harness executes them on the

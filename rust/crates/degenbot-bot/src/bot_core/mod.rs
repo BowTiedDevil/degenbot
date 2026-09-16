@@ -30,7 +30,7 @@ pub mod log_dispatcher;
 pub mod pool_builder;
 pub mod pump_control;
 pub mod pump_telemetry;
-/// PRG-2 / IRUMXD: the keyed registration-gate table for immutable V4
+/// PRG-2: the keyed registration-gate table for immutable V4
 /// admission verdicts (see [registration_gate] docs).
 pub mod registration_gate;
 pub mod registration_lifecycle;
@@ -195,7 +195,7 @@ pub struct BotState {
     /// `pool_managers` DB row); the solver-state verifier reads it via
     /// [`BotState::state_view_for`].
     v4_state_views: HashMap<Address, Address>,
-    /// PRG-2 / IRUMXD: the keyed registration-gate — immutable V4
+    /// PRG-2: the keyed registration-gate — immutable V4
     /// admission verdicts (dynamic fee / fee-exceeds-encoder-limit) recorded
     /// by [`Self::register_v4_pool`] refusals and consulted pre-RPC by the
     /// `PyO3` build path. Bounded by refused pools, not candidates.
@@ -214,7 +214,7 @@ pub struct BotState {
     /// driver advances it on the tombstone verdict, and a resume never resets
     /// it.
     pump_complete_cutoff: u64,
-    /// Per-pool event-witnessed horizon (FUWYUR clock-provenance): the
+    /// Per-pool event-witnessed horizon: the
     /// highest block of any V3/V4 event ROUTED for this pool (applied
     /// directly OR staged into a buffer). Advanced ONLY by routed events —
     /// never by imported DB-row stamps — so it corroborates (or refutes) a
@@ -574,7 +574,7 @@ impl BotState {
     }
 
     /// The address-keyed registration of record, family-tagged (PRG-1 /
-    /// IRUMXD registry unification). `BotState` is the sole pool registry,
+    /// registry unification). `BotState` is the sole pool registry,
     /// so the `PyO3` build adapters (`build_v2_pool` / `build_v3_pool` /
     /// `build_aerodrome_v2_pool` / `build_balancer_*_pool`) consult this
     /// pre-check INSTEAD of a Python-mirror registry: an address this core

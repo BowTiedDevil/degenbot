@@ -253,7 +253,7 @@ impl BotState {
     ///
     /// Pure observation — the caller (`BotStateDb.storage_ref`) compares the
     /// returned word against the RPC value WITHOUT changing what the sim reads.
-    /// Epic K4ETHF T5 / ADR-039: the ENUMERATED sim-anchor projection -
+    /// ADR-039: the ENUMERATED sim-anchor projection -
     /// the scalar surface the sim consults, projected per pool family using
     /// the SAME pack helpers as the env-gated probe (single packing source -
     /// the serving.rs duplication point). Snapshot is an enumerated surface,

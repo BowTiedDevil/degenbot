@@ -89,7 +89,7 @@ allocator-ctrl = ["dep:libmimalloc-sys", "libmimalloc-sys/extended"]
 # OpenTelemetry tracer bullet (see src/otel.rs). Enable with --features otel.
 # Unlike the hotpath bullet this feature has no env gate: init_otel_tracing()
 # is an explicit call site (pure-Rust consumers); the Python-driven path
-# (degenbot-python, epic task K6PCKP) adds the layer to its own registry behind
+# (degenbot-python) adds the layer to its own registry behind
 # DEGENBOT_OTEL=1. Release wheels and just build-rust-extension do NOT enable
 # this feature (the PyPI maturin build overrides the dev feature list, same
 # story as hotpath), so shipped artifacts carry zero OTel footprint.
@@ -129,7 +129,7 @@ libc = "^0.2"
 [dev-dependencies]
 
 
-# `start_paused` runtime for the PWPPAZ T2 early-slice gap-stream tests
+# `start_paused` runtime for the early-slice gap-stream tests
 # (virtual-time determinism). Version pinned to the normal dep's spec above.
 tokio = { version = "^1.53", features = ["test-util"] }
 proptest = "^1.11"
@@ -145,6 +145,6 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 # Captures alloy/tungstenite tracing for the `ws_getlogs_large_filter_diagnostic`
 # ignored test (reconnect-cycle investigation, 2026-07-12). "registry" is
 # required by the otel-independent span-capture layer used by the
-# solve_dirty span-gate regression test (K4ETHF follow-up O3Z5MD) so that
+# solve_dirty span-gate regression test so that
 # span-parenting invariants run in the DEFAULT test gate, not just --features otel.
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter", "registry"] }

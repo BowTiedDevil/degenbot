@@ -1,4 +1,4 @@
-//! Tests for `assemble_v3_tick_map` / `assemble_v4_tick_map` (Candidate 1 / UHPXSD).
+//! Tests for `assemble_v3_tick_map` / `assemble_v4_tick_map` (Candidate 1).
 //!
 //! Six branches per family, per the ME7I5P acceptance criteria:
 //!  1. Store hit  → `Ok(Some((ticks, Tracked)))`, store entry consumed.
@@ -599,7 +599,7 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
     );
 }
 
-// ── Tracked intake reconciliation (T3 OMDCIY, epic OU4SYZ) ─────────────────
+// ── Tracked intake reconciliation  ─────────────────
 //
 //  A Tracked Db snapshot must be self-consistent: for every word the
 //  snapshot supplied, the on-chain invariant must hold — bit set ⟺ a tick

@@ -203,11 +203,11 @@ pub(crate) fn record_ride(role: BootRole, stamp: &BootStamp) {
 #[cfg(test)]
 #[expect(
     clippy::panic,
-    reason = "in test builds a mixed-boot ride is ILLEGAL by construction (the YI5NGB design's F2 fire drill)"
+    reason = "in test builds a mixed-boot ride is ILLEGAL by construction (the F2 fire drill)"
 )]
 fn panic_mixed_boot_ride_illegal_in_tests(winner_cfg: u64, stamp: &BootStamp) {
     panic!(
-        "(YI5NGB) mixed-boot rides are ILLEGAL in tests: engine {} (cfg_hash {winner_cfg:016x} won) rode a fleet booted for a different cfg (rider cfg_hash {:016x})",
+        "Mixed-boot rides are ILLEGAL in tests: engine {} (cfg_hash {winner_cfg:016x} won) rode a fleet booted for a different cfg (rider cfg_hash {:016x})",
         stamp.engine_id,
         stamp.cfg_hash
     );
@@ -349,8 +349,8 @@ mod tests {
             .or_else(|| err.downcast_ref::<&str>().copied())
             .expect("panic payload is the ledger panic");
         assert!(
-            msg.contains("mixed-boot rides are ILLEGAL in tests") && msg.contains("(YI5NGB)"),
-            "the panic must name the audit + the task: {msg}"
+            msg.contains("Mixed-boot rides are ILLEGAL in tests"),
+            "the panic must name the construction rule: {msg}"
         );
         assert_eq!(
             installed_before, installed_after,

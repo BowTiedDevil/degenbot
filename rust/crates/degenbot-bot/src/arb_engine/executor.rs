@@ -39,7 +39,7 @@ pub(crate) trait Executor: Send + Sync {
 /// not through this fn — the fleet-hosted executors remain the only
 /// executors since the LW-T9 cutover (the tokio stance is deleted; there
 /// is no stance parameter).
-/// YI5NGB construction precondition: the fleet materializes LAZILY on the
+/// Construction precondition: the fleet materializes LAZILY on the
 /// first call — from the construction-STAMPED boot the first engine
 /// construction installed (`with_core_cfg`). There is NO fallback boot: a
 /// caller that reaches this seam BEFORE any engine construction is a
@@ -72,7 +72,7 @@ use std::sync::mpsc;
 /// result pipe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LaneFailure {
-    /// The bin closure panicked mid-unit; the seat survives (QR3NUS
+    /// The bin closure panicked mid-unit; the seat survives (
     /// decision A) and every undelivered path becomes one of these.
     SeatPanic {
         /// The host-tracked unit id that panicked.
@@ -408,7 +408,7 @@ pub(crate) fn run_solve_lane(
                 seat = lane.seat,
                 message = ?message,
                 patched,
-                "bin job panicked — seat survives with typed failure records (QR3NUS decision A)"
+                "bin job panicked — seat survives with typed failure records (decision A)"
             );
         }
         PanicAction::Abort => {

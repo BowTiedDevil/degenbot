@@ -194,7 +194,7 @@ where
     // seed-vs-on-chain@snapshot, NOT engine-current (which would
     // false-mismatch every active pool under a rolling start).
     //
-    // Task 4TWM7C/B1 (reactivated wrong-block regression, 4GQWZ4): anchor at
+    // Reactivated wrong-block regression: anchor at
     // the pool's OWN liquidity clock (the block its seed data reflects — a
     // DB-seeded `Tracked` pool's `liquidity_update_block`) rather than the
     // aggregate snapshot-seed block `S`. The builder stamps a DB-seeded pool's

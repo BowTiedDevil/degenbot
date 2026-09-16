@@ -232,11 +232,11 @@ pub struct V3BlockDelta {
     /// value. `Some` when this delta advanced the price clock (a Swap, or an
     /// in-range post-seed liquidity event); `None` when it did not (a tick-,
     /// only event that left the slot0 head untouched). Oldest-wins on
-    /// same-block coalesce (two-stamp pool state, OB7UNY).
+    /// same-block coalesce (two-stamp pool state).
     pub update_block_before: Option<u64>,
     /// The `tick_data_block` (**liquidity** clock) value *before* this delta's
     /// event. Same semantics as [`Self::update_block_before`] for the tick-map
-    /// clock (two-stamp pool state, OB7UNY).
+    /// clock (two-stamp pool state).
     pub tick_data_block_before: Option<u64>,
     /// Per-tick priors for ticks modified during this block.
     /// Each entry is `(tick_index, TickBefore)` storing the `liquidity_gross`

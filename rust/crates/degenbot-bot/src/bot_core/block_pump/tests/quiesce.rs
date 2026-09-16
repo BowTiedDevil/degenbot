@@ -361,7 +361,7 @@ fn reorg_restore_without_delta_is_idempotent_noop() {
     );
 }
 
-/// TQ7PD6 follow-up — drained-settle solve gate (log form): the solve must
+/// Drained-settle solve gate (log form): the solve must
 /// NOT fire before a still-buffered log for the block is applied. Header
 /// 101 + V2 Sync@101 are delivered back-to-back; the old loop-head solve
 /// dispatched at block 100 (the pre-log anchor) before consuming the log.

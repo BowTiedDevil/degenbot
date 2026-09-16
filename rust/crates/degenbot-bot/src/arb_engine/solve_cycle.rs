@@ -100,11 +100,11 @@ struct ResolveChunkOut {
     deferred: Vec<u64>,
 }
 /// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
-/// The record tuple now lives with the walk (`arb_engine::lane_walk`,
-/// 5WCRWZ T4); T5 retires the heap itself.
+/// The record tuple now lives with the walk (`arb_engine::lane_walk`);
+/// T5 retires the heap itself.
 pub(crate) type PathTimesHeap =
     std::collections::BinaryHeap<std::cmp::Reverse<super::lane_walk::PathTimeRecord>>;
-/// `DEGENBOT_SOLVE_INLINE_SIM` (SIMPIPE2 T2 → T4, task PIRX3W / AK7VJB) —
+/// `DEGENBOT_SOLVE_INLINE_SIM` —
 /// stance semantics unchanged; it is the `SolveCycle` instance
 /// value `inline_sim_enabled`, never a process static.
 /// Per-cycle shared solve context: everything the
@@ -925,9 +925,8 @@ impl SolveCycle {
             );
             return;
         }
-        // QR3NUS exactness fuse carried to the DETACHED sidecar
-        // (LW-T9 note (a) carry; now THE ONE ledger, 43E3H3): the
-        // in-cycle drain claims the same engine-side ledger keyed
+        // Exactness fuse carried to the DETACHED sidecar
+        // Note-(a) carry: the in-cycle drain claims the same engine-side ledger keyed
         // (solve_seq, pid) — this sidecar claims (cycle_seq, pid)
         // with the cycle_seq its enqueue stamped. A duplicate
         // delivery is a bin/pipe bug (an outcome emitted twice):
@@ -1287,10 +1286,10 @@ impl SolveCycle {
         // from "this pool is genuinely far behind" (missed swap events), so
         // its false-positive rate is catastrophic.
         //
-        // YXHHKR (resolved QNFYR5): NO solve-time staleness gate here. The former
-        // TQ43TU bounded-window gate deferred a whole path on any co-hop trailing
+        // NO solve-time staleness gate here. The former
+        // bounded-window gate deferred a whole path on any co-hop trailing
         // >10 blocks, but `update_block` is a last-activity clock, so a quiet-but-
-        // current pool was falsely deferred (QNFYR5 proved 3,550 of them live).
+        // current pool was falsely deferred (3,550 proved live).
         // `deferred_paths` is now reserved for the genuinely illegitimate future-
         // price case below; genuine chain/solver divergence is left to the ADR-021
         // verifier, which fatal-aborts loudly (the preferred failure, esp. in dev).
@@ -1843,7 +1842,7 @@ impl SolveCycle {
                 // ONLY (variant-gated pairing, design §4.6.1: Suppressed
                 // and Failed ride lane.solved/lane.failed, which touch
                 // neither the pipe gauge bump nor this closure). A bin
-                // that dies before sending never leaks a count. 43E3H3
+                // that dies before sending never leaks a count.
                 // (fix for the breaker over-disposition): the bump now
                 // rides THE LANE's Solved send (`SolveLane::solved`),
                 // installed below as the lane's gauge hook — so the
@@ -1899,7 +1898,7 @@ impl SolveCycle {
                         "detached walk must flush every Solved item before the bin body returns"
                     );
                 };
-                // 43E3H3 (design §5.2, REV 2 Defect 3): the detached arm
+                // (design §5.2, REV 2 Defect 3): the detached arm
                 // seals its bins with the lane witness. The explicit
                 // `&LaneCtx` annotation is load-bearing: without it the
                 // closure-parameter inference drifts and `run_bin`'s lane
@@ -1910,7 +1909,7 @@ impl SolveCycle {
                 let lane_key =
                     SOLVE_BIN_KEY_BASE.saturating_add(u64::try_from(bin_idx).unwrap_or(u64::MAX));
                 let spawn_job = move |_ctx: &LaneCtx| {
-                    // 43E3H3 gauge pairing: the in-flight bump rides the
+                    // Gauge pairing: the in-flight bump rides the
                     // lane's Solved send-success (send + bump + emitted
                     // in one path). Failed/Suppressed sends never fire
                     // it (REV 2 Defect 1) — the corresponding disposition
@@ -2031,7 +2030,7 @@ impl SolveCycle {
             .collect();
         let bins = lpt_partition(to_solve.len(), n_bins, |i| costs[i]);
         // Bin jobs are 'static over Arc-cloned state: walk memo, core and
-        // the pool-ref map for the UO3JM4 clamp. No engine state is touched
+        // the pool-ref map for the empty-march clamp. No engine state is touched
         // (engine-then-core invariant intact; the mixer only reads core).
         let memo = std::sync::Arc::clone(&self.walk_memo);
         let prefix_store_out = std::sync::Arc::clone(&self.prefix_cache);
@@ -2178,7 +2177,7 @@ impl SolveCycle {
                 resolved: None,
             });
         }
-        // PRG-4 / IRUMXD: the registered-path cap lives HERE, in the engine
+        // PRG-4: the registered-path cap lives HERE, in the engine
         // path registry (was the Python `MAX_REGISTERED_PATHS` counter +
         // the `DiscoveryCrawlComplete` unwind). A new registration past the
         // cap is refused with the typed benign-stop refusal — the crawl

@@ -3,7 +3,7 @@
 //!
 //! Completes ADR-041 §3.5's anchor-soup fold on the engine side (no ADR
 //! change — the §3.5 data-plane answer, one block coordinate carried on the
-//! epoch context, already landed with epic MROOY7/PLRGIN; what remained was
+//! epoch context, already landed; what remained was
 //! exactly this engine-side residue). The four block coordinates that used
 //! to live as free-floating engine fields move into one [`BlockCursor`],
 //! and every advance rule lives in one place.
@@ -45,7 +45,7 @@
 //!
 //! ## The ONE intentional behavior strengthening
 //!
-//! A late/stale stamp can no longer regress `results_block` (the 6XB6NJ
+//! A late/stale stamp can no longer regress `results_block` (the
 //! review's Q6 decision; pinned by
 //! `tests::late_solve_stamp_cannot_regress_results_anchor`): the solve
 //! stamps were unconditional writes, so a stale cycle (a lagging drain
@@ -54,10 +54,10 @@
 //! [`BlockCursor::advance_solved`] clamps at the max. Everything else here
 //! is behavior-preserving.
 /// The engine block cursor — one owner of the engine-side block-coordinate
-/// residue (6XB6NJ; the module docs carry the fold map, the monotone
+/// residue (the module docs carry the fold map, the monotone
 /// discipline, and the one intentional strengthening).
 //
-// The field names are the settled 6XB6NJ interface — the pre-cursor engine
+// The field names are the settled interface — the pre-cursor engine
 // field names carried over verbatim (CONTEXT.md "Engine block cursor"); the
 // shared `_block` postfix is the point, not an accident.
 #[expect(clippy::struct_field_names)]
@@ -86,13 +86,13 @@ pub(crate) struct BlockCursor {
     last_solved_block: u64,
     /// Whether any forward log applied since the last [`Self::finalize`].
     /// `true` after `record_logs()` (the pump's forward-log path), cleared
-    /// by `finalize`. Owned by the engine since LEZJAS.
+    /// by `finalize`. Owned by the engine.
     has_logs_this_block: bool,
 }
 impl BlockCursor {
     /// The guarded combined finalize transition — the engine's
     /// `finalize_block` boundary. The `block > last_solved_block` guard is
-    /// load-bearing (PWPPAZ T1): it makes the boundary advance one-shot
+    /// load-bearing: it makes the boundary advance one-shot
     /// even when the tombstone re-fires for an already-finalized block.
     ///
     /// On fire: `last_solved_block = block`, `has_logs_this_block = false`,
@@ -103,7 +103,7 @@ impl BlockCursor {
     ///
     /// The processed-cursor write is monotone too: the finalize is
     /// tombstone-dispatched and runs while the successor block's log burst
-    /// is being applied (the PWPPAZ interleave), so a solve at N+1 can
+    /// is being applied (the interleave), so a solve at N+1 can
     /// already have advanced `last_processed_block` past N and a late
     /// finalize(N) must not drag it back.
     pub(crate) fn finalize(&mut self, block: u64) -> bool {
@@ -126,7 +126,7 @@ impl BlockCursor {
     }
     /// The solve-anchor stamp (`results_block`): monotone-max, so a
     /// late/stale stamp can never regress a real solve's anchor (the ONE
-    /// intentional 6XB6NJ strengthening — see the module docs).
+    /// intentional strengthening — see the module docs).
     ///
     /// This also subsumes the resume-time cold-start seed
     /// (`set_solve_anchor`'s old only-if-zero guard): seeding the settled

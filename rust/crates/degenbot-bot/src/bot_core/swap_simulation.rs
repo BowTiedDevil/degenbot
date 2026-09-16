@@ -76,7 +76,7 @@ impl Caveats {
     /// Sparse tick coverage: the walk may have traversed unfetched regions.
     pub const SPARSE_COVERAGE: Self = Self(1 << 0);
     /// The pool carries an amount-modifying V4 hook — standard CL math may
-    /// mis-price the swap. (Reachable since X4EU3J admitted hooked pools.)
+    /// mis-price the swap. (Reachable since hooked pools were admitted.)
     pub const HOOKED_POOL: Self = Self(1 << 1);
 
     /// No caveats — the outcome is trustworthy.
@@ -1005,7 +1005,7 @@ impl BotState {
         self.swap_simulation_ext(block, pool_id, request, true)
     }
 
-    // TODO(X4EU3J follow-up): extract the per-family arms once the hook
+    // TODO(extract-per-family-arms): extract the per-family arms once the hook
     // caveat plumbing settles; the body is 114 lines against a 100-line
     // clippy::too_many_lines budget.
     #[expect(clippy::too_many_lines)]

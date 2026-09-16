@@ -1,6 +1,6 @@
 //! The single authoritative routing table for decoded CL pool events.
 //!
-//! FUWYUR/UO3JM4 root cause: a decoded event's fate was decided in three
+//! Root cause: a decoded event's fate was decided in three
 //! places with divergent partial policies (`LogDispatcher::dispatch`'s
 //! APPLY-MISS funnel, `process_backfill_logs`, and the inline quarantine/
 //! unregistered arms inside the `apply_*` methods). Each site knew a subset
@@ -31,7 +31,7 @@ pub enum Phase {
 
 /// Pool presence as seen by the router: `RegistrationLifecycle` covers only
 /// registered pools; "not in `BotState` at all" is its own row of the table
-/// (the FUWYUR row), not an `Option` the caller gets to interpret.
+/// (the staged-mutation row), not an `Option` the caller gets to interpret.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PoolPresence {
     /// No `BotState` entry yet — crawl has not reached this pool.
@@ -85,7 +85,7 @@ pub enum BufferKind {
 }
 
 /// Why an event was deliberately dropped. Dropping requires naming a reason —
-/// the compiler-enforced antidote to the FUWYUR silent drop, where "no-op"
+/// the compiler-enforced antidote to the historical silent drop, where "no-op"
 /// was inferred instead of chosen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NoOpReason {
@@ -134,7 +134,7 @@ pub enum RouteAction {
 /// - Backfill × {Unregistered, Quarantined} × `TickMutation` stages into the
 ///   BACKFILL buffer: drained fully at registration, matching
 ///   `buffer_backfill_v3_liquidity_update`.
-/// - Live × Unregistered × `TickMutation` is the FUWYUR row: it MUST stage
+/// - Live × Unregistered × `TickMutation` is the staged-mutation row: it MUST stage
 ///   into the pump buffer. It used to be an implicit drop.
 // The per-cell rows are deliberate: this IS the table — merging arms would
 // hide which cell each behavior belongs to.
@@ -181,7 +181,7 @@ pub fn route_action(phase: Phase, presence: PoolPresence, kind: EventKind) -> Ro
 /// How the registration pin's freshness claim is corroborated. The pin may
 /// only claim block B when something INDEPENDENT of the imported DB-row stamp
 /// witnessed state at/beyond B: either the tombstone-confirmed WS delivery
-/// horizon (`cutoff` — every relevant event <= it was routed, post-FUWYUR),
+/// horizon (`cutoff` — every relevant event <= it was routed),
 /// or an engine-witnessed event for THIS pool (highest routed event block).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PinProvenance {
@@ -195,7 +195,7 @@ pub enum PinProvenance {
     /// - `witnessed_horizon == 0`: expected startup shape (fresh seed, no
     ///   events routed yet) — benign, DEBUG-level interest.
     /// - `witnessed_horizon > 0`: RE-SEED AFTER ACTIVITY — exactly the
-    ///   FUWYUR lie shape (engine personally processed older events, then a
+    ///   lie shape (engine personally processed older events, then a
     ///   stamp arrived claiming fresher content). LOUD warn warranted.
     SeedTrustOnly { witnessed_horizon: u64 },
 }
@@ -243,7 +243,7 @@ mod tests {
         }
     }
 
-    /// THE FUWYUR ROW: a live-phase tick mutation for a not-yet-registered
+    /// THE STAGED-MUTATION ROW: a live-phase tick mutation for a not-yet-registered
     /// pool MUST stage into the pump buffer. It used to be an implicit drop
     /// at the dispatcher funnel — this test exists so nobody can reintroduce
     /// that inference here.
@@ -256,7 +256,7 @@ mod tests {
                 EventKind::TickMutation
             ),
             RouteAction::Buffer(BufferKind::Pump),
-            "FUWYUR regression: live-window tick mutations for unregistered pools \
+            "regression: live-window tick mutations for unregistered pools \
              must stage into the pump buffer, never drop"
         );
     }
@@ -315,7 +315,7 @@ mod tests {
         );
     }
 
-    /// THE FUWYUR LIE SHAPE: engine witnessed events up to block 60 (its own
+    /// THE STALE-HORIZON LIE SHAPE: engine witnessed events up to block 60 (its own
     /// applied history), then an external stamp claims freshness at 105 with
     /// empty buffers and no corroborating delivery. Must classify as
     /// `SeedTrustOnly` with a non-zero horizon so the pin seam can warn loudly.
@@ -336,7 +336,7 @@ mod tests {
         );
     }
 
-    /// Presence mapping: `None` lifecycle is Unregistered (the FUWYUR blind
+    /// Presence mapping: `None` lifecycle is Unregistered (the blind
     /// spot made a first-class value), not something callers get to interpret.
     #[test]
     fn none_lifecycle_maps_to_unregistered() {

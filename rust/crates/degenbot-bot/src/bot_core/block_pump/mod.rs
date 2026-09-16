@@ -5,7 +5,7 @@
 //! stage hooks, `Arc<dyn PumpControl>` driver pokes). Per WS
 //! log, the pump calls `bot.dispatch_log(log)` (decode → apply to `BotState`
 //! → `EpochDelta` byproduct; the retired `EngineSubscriber` classification is
-//! GONE — touched-pool tracking is the ledger's job since LXDY4C). At the
+//! GONE — touched-pool tracking is the ledger's job). At the
 //! machine's decision points the pump drives the engine's stage hooks
 //! directly (`on_resolve` → `on_solve`, `on_publish` at the Published edge,
 //! `on_finalize` at the tombstone) — the drain FIFO/dispatch-owner
@@ -15,7 +15,7 @@
 //! wedged driver IS a header-staleness stall the machine's watchdogs abort
 //! on (`StageMachine::watchdog_phase`).
 //!
-//! The stale-epoch drop the FIFO needed (7NFYQW I3: pre-rewind items must
+//! The stale-epoch drop the FIFO needed (I3: pre-rewind items must
 //! not consume `epoch.block()`) survives as the driver-side
 //! `reorg_flying_stale` check at each work site — same WARN + metric,
 //! no queue to check.
@@ -47,7 +47,7 @@
 //!
 //! **Critical ordering**: backfill must run AFTER `subscribe()` returns but
 //! BEFORE `resume_from_subscribe()`. The engine's
-//! `last_processed_block()` is the backfill-start boundary. (Pre-epic-P73ER6
+//! `last_processed_block()` is the backfill-start boundary. (Pre-epic
 //! Python orchestrated this manually; the epic relocates backfill into the
 //! core, driven automatically by `resume`.)
 
@@ -210,7 +210,7 @@ pub struct BlockPump {
     /// `ws_delivered` index-tracking map is not populated
     /// (no work on the hot loop).
     ws_completeness_enabled: bool,
-    /// Early-slice window (ms) for the drained-settle gate (PWPPAZ T2): when
+    /// Early-slice window (ms) for the drained-settle gate: when
     /// nonzero and unsolved dirt has been observed this long in the current
     /// block window, the gate dispatches ONE bounded early Drain mid-burst
     /// instead of waiting for burst quiesce — the designed replacement for

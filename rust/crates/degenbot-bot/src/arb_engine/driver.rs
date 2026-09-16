@@ -56,7 +56,7 @@
 //!   `PyO3` adapter, preserving its synchronous `ValueError` raise (the
 //!   Python-visible behavior is byte-identical).
 //! - **Main loop.** No `run_until_stopped` convenience: the consumer owns its
-//!   consume/dispatch loop (ADR-050 D9 maps that to `L4E7RI`).
+//!   consume/dispatch loop (ADR-050 D9).
 
 use crate::arb_engine::lifecycle::PathRegistrationError;
 use crate::arb_engine::path_info::PathInfoBuildError;

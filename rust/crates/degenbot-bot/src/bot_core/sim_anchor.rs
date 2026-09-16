@@ -84,7 +84,7 @@ mod tests {
     use alloy::primitives::Address;
     use degenbot_uniswap::dex_identity::DexVariant;
 
-    // ---- K4ETHF T5: enumerated projection (ADR-039) ------------------------
+    // ---- enumerated projection (ADR-039) ------------------------
     //
     // PARITY: the projection's anchor_words are byte-identical to the
     // query-interface semantics on per-family valid indices, and ABSENT for

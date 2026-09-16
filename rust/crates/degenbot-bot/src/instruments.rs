@@ -1,4 +1,4 @@
-//! Named metric instruments for the drain path (T2/T3 of epic RMH23E).
+//! Named metric instruments for the drain path.
 //!
 //! One struct owns every instrument so the naming stays consistent and the
 //! Prometheus families are discoverable in one place. Construction is lazy and
@@ -134,7 +134,7 @@ pub struct PipelineInstruments {
     /// (`degenbot_fleet_intake_backlog{role=...}`). A stalled held backlog
     /// becomes observable here (T9 soak reads it).
     intake_backlog: Gauge<f64>,
-    /// PE4FPM worker census: one row per registered execution resource
+    /// Worker census: one row per registered execution resource
     /// (`resource` = the `degenbot_core::worker_census` registry id, a
     /// small closed set). Rendered as `degenbot_worker_census{resource=...}`.
     worker_census: Gauge<f64>,
@@ -171,7 +171,7 @@ pub struct PipelineInstruments {
     submit_latency: Histogram<f64>,
     /// Cumulative confirmed net profit (wei).
     profit_realized: Counter<f64>,
-    /// PRG-2 / IRUMXD: registration skips by reason (closed set; the
+    /// PRG-2: registration skips by reason (closed set; the
     /// Python-side per-pool `SkipGate` memo retired in favor of the Rust
     /// registration gate + this family). Error-class detail stays in log
     /// spans and the `[build_paths] Progress` breakdown.
@@ -210,7 +210,7 @@ pub struct PipelineInstruments {
     state_lock_wait: Histogram<f64>,
     /// time a guard was held after acquisition, same labels.
     state_lock_hold: Histogram<f64>,
-    /// Epic FRKBGP close-out: resident set bytes of the bot process (the
+    /// Close-out: resident set bytes of the bot process (the
     /// drift-watch signal — tick maps + revm working set grow linearly with
     /// the registry, and a container OOM-kill presents as an overnight
     /// availability failure, not a solver symptom).
@@ -250,7 +250,7 @@ pub struct PipelineInstruments {
     ///
     /// PROMETHEUS NAME COUPLING (ADR-040): the `OTel` name-mapping renders this
     /// gauge as `degenbot_engine_quarantined_pools`; the Grafana panel added
-    /// with epic DO5Q5E queries that string verbatim. Rename here and the
+    /// with the metrics doc queries that string verbatim. Rename here and the
     /// panel together.
     quarantined_pools: Gauge<f64>,
 }
@@ -351,7 +351,7 @@ impl PipelineInstruments {
             late_log_admitted: meter
                 .u64_counter("degenbot.late_log.admitted")
                 .with_description(
-                    "Forward logs dropped via the benign late-admit path (arrived after their block's D1 tombstone; HJ5HWF)",
+                    "Forward logs dropped via the benign late-admit path (arrived after their block's D1 tombstone)",
                 )
                 .build(),
             logs_received: meter
@@ -610,7 +610,7 @@ impl PipelineInstruments {
                 .f64_gauge("degenbot.process.rss")
                 .with_unit("By")
                 .with_description(
-                    "Resident set bytes of the bot process (drift-watch, FRKBGP close-out)",
+                    "Resident set bytes of the bot process (drift-watch)",
                 )
                 .build(),
         };
@@ -718,7 +718,7 @@ impl PipelineInstruments {
     }
 
     /// One forward log admitted LATE (past its block's D1 tombstone) and
-    /// dropped un-applied via the benign late-admit path — HJ5HWF. The
+    /// dropped un-applied via the benign late-admit path. The
     /// counted home for settle-window delivery jitter; a sustained rate
     /// says the WS feed reordered, not that the state machine misbehaved.
     pub fn count_late_log_admitted(&self) {
@@ -911,7 +911,7 @@ impl PipelineInstruments {
             .add(1, &[KeyValue::new("outcome", outcome.to_owned())]);
     }
 
-    /// PRG-2 / IRUMXD: one registration-candidate skip; `reason` is a small
+    /// PRG-2: one registration-candidate skip; `reason` is a small
     /// closed set (`v4-admission`, `path-cap`, `dup`, `pool-build-error`,
     /// `engine-reject`, `register-fail`, ...). The live registration-gate
     /// table refuses immutable V4 admission facts pre-RPC, so this family
@@ -1059,7 +1059,7 @@ impl PipelineInstruments {
         self.quarantined_pools.record(count as f64, &[]);
     }
 
-    /// Epic FRKBGP close-out: current resident set bytes (drift-watch).
+    /// Close-out: current resident set bytes (drift-watch).
     #[expect(clippy::cast_precision_loss)]
     pub fn set_process_rss_bytes(&self, bytes: u64) {
         self.process_rss_bytes.record(bytes as f64, &[]);
@@ -1143,7 +1143,7 @@ pub fn pipeline() -> Option<&'static PipelineInstruments> {
         .as_ref()
 }
 
-/// PE4FPM production census exporter — installed as the
+/// Production census exporter — installed as the
 /// [`degenbot_core::worker_census`] export hook at instruments init.
 /// No-op while the pipeline is un-built (non-otel builds / gate off).
 fn export_worker_census(entries: &[degenbot_core::worker_census::WorkerCensusEntry]) {

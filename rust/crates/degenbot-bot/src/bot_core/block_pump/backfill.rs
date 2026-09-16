@@ -225,10 +225,10 @@ impl BlockPump {
     }
 
     /// Backfill the snapshot→WS gap `S+1..W` (inclusive) using the NO-SOLVE path
-    /// (FD7NFG, epic P73ER6). Reads `S` from `BotState::snapshot_seed_block`
+    /// path. Reads `S` from `BotState::snapshot_seed_block`
     /// (set by `Bot::load_snapshot_from_db`) and `W` from the `ws_block` param
     /// (the block the WS subscription landed on — `SubscribeState::first_block`,
-    /// passed by the pyo3 caller or J3FMDO's auto-backfill before `resume`).
+    /// passed by the pyo3 caller or the engine's auto-backfill before `resume`).
     /// Fetches logs via the pump's own `AlloyProvider` (no `rpc_url` from
     /// Python) in `chunk_size` chunks via `build_backfill_filter`, applying
     /// each chunk via `BotState::process_backfill_logs` (the relocated engine

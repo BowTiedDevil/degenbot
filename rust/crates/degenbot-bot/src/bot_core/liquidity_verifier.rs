@@ -104,7 +104,7 @@ impl From<VerificationMismatch> for LiquidityVerifyError {
 }
 
 // ---------------------------------------------------------------------------
-// Desync re-assembly helpers (UO3JM4 / ADR-021).
+// Desync re-assembly helpers (ADR-021).
 // ---------------------------------------------------------------------------
 
 /// Serialize a full `(tick -> (liquidity_gross, liquidity_net))` map in
@@ -149,7 +149,7 @@ fn serialize_divergences(ds: &[TickDivergence]) -> String {
 
 /// Emit the `[dbg-verify] TICK-MAP DESYNC` diagnostic on ANY divergence: the
 /// full divergence set as an INFO event, plus the full engine/on-chain maps as
-/// a forensic TRACE event. UO3JM4/ADR-021 re-assembly aid — lets an
+/// a forensic TRACE event. ADR-021 re-assembly aid — lets an
 /// investigation re-assemble the exact map that went into the verifier.
 //
 // The argument list mirrors the tracing event's field-for-field diagnostic
@@ -183,7 +183,7 @@ fn log_tick_map_desync(
         block_tag = %block_tag,
         engine_map = %serialize_liquidity_map(stored_map),
         observed_map = %serialize_liquidity_map(observed_map),
-        "TICK-MAP DESYNC full maps (UO3JM4 re-assembly aid)"
+        "TICK-MAP DESYNC full maps (re-assembly aid)"
     );
 }
 
@@ -1327,7 +1327,7 @@ mod tests {
     // `tickBitmap()` fan-out + the per-tick `ticks()` fan-out into ONE
     // Multicall3 `aggregate3` eth_call per phase (2 total), instead of
     // K_words + T_ticks serial round-trips. A revert on a batched sub-call is
-    // a hard `Rpc` error (the verifier is a hard gate). See task DHAZQF.
+    // a hard `Rpc` error (the verifier is a hard gate).
 
     /// Minimal `TickMap` test double — owns a pool address, `tick_spacing`,
     /// `active_tick` + a `tick_data` map. `verify_v3_pool<T: TickMap>` takes `&T`,

@@ -187,7 +187,7 @@ impl LockSite {
     }
 }
 
-/// Emit the wait observation if the metrics pipeline is up (K4ETHF T2;
+/// Emit the wait observation if the metrics pipeline is up ;
 /// seconds - the instruments' unit). Cheap one-Option-branch per acquire.
 fn record_wait(site: &'static str, mode: &'static str, t0: Instant) {
     if let Some(p) = crate::instruments::pipeline() {
@@ -380,7 +380,7 @@ pub fn dump_active_holds() -> String {
             }
         }
     }
-    // Released slow holds (K4ETHF T1): a hold that dropped before any later
+    // Released slow holds: a hold that dropped before any later
     // acquire fired the aged-check is invisible in the active table — the
     // drop-time ring is the only record of it.
     let drops = SLOW_READ_DROPS.lock();
@@ -620,7 +620,7 @@ impl<T> Deref for StateReadGuard<'_, T> {
 
 impl<T> Drop for StateReadGuard<'_, T> {
     fn drop(&mut self) {
-        // Hold telemetry rides the guard in both diag modes (K4ETHF T2).
+        // Hold telemetry rides the guard in both diag modes.
         record_hold(self.site.label(), "read", self.acquired);
         // seq == 0 is the gated-off sentinel (never registered; no removal).
         if self.seq != 0 {
@@ -674,7 +674,7 @@ impl<T> DerefMut for StateWriteGuard<'_, T> {
 
 impl<T> Drop for StateWriteGuard<'_, T> {
     fn drop(&mut self) {
-        // Hold telemetry rides the guard in both diag modes (K4ETHF T2).
+        // Hold telemetry rides the guard in both diag modes.
         record_hold(self.site.label(), "write", self.acquired);
         if self.seq == 0 {
             return; // gated-off sentinel: never registered
@@ -761,12 +761,12 @@ mod tests {
         assert!(flag_aged_records(&mut records, 6_000, 500).is_empty());
     }
 
-    // ---- K4ETHF T2 telemetry taxonomy --------------------------------------
+    // ---- telemetry taxonomy --------------------------------------
 
     #[test]
     fn lock_site_taxonomy_is_exhaustive_and_pinned() {
         // The histogram label comes exactly from `LockSite::label`, never a
-        // string built at the acquire site (K4ETHF T2). Pinning every variant
+        // string built at the acquire site. Pinning every variant
         // here keeps the closed set exhaustive and rename-proof: a new variant
         // fails the `label` match at compile time, and this test fails if a
         // label is changed without a deliberate review.

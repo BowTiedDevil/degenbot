@@ -128,8 +128,8 @@ mod tests {
             .or_else(|| err.downcast_ref::<&str>().copied())
             .expect("panic payload is the expect message");
         assert!(
-            msg.contains("(YI5NGB)"),
-            "the expect must name the task: {msg}"
+            msg.contains("fleet sim boot stamp missing"),
+            "the expect must name the loud construction abort: {msg}"
         );
     }
     use super::FleetSimExecutor;

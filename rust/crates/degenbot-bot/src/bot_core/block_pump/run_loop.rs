@@ -65,7 +65,7 @@ impl BlockPump {
         combined: stream::BoxStream<'static, WsEvent>,
         first_observed_block: u64,
     ) {
-        // Drained-settle solve gate (TQ7PD6 follow-up): peekable so the loop
+        // Drained-settle solve gate: peekable so the loop
         // can probe "is another event already buffered?" WITHOUT consuming it.
         let mut combined = combined.peekable();
         // [DIAG] newHeads-stall investigation: track header arrivals so the
@@ -219,7 +219,7 @@ impl BlockPump {
         // disabled).
         let ws_completeness_enabled = self.ws_completeness_enabled;
 
-        // `has_logs_this_block` is engine-owned since LEZJAS — driven through
+        // `has_logs_this_block` is engine-owned — driven through
         // `self.sink.record_logs_this_block()` (cleared by `finalize_block`).
         // Debounce timer: started when the first dirty log arrives, reset on
         // each new log. When it fires, we send the accumulated result batch
@@ -244,7 +244,7 @@ impl BlockPump {
         // drop). Reorg logs (`removed: true`) are NEVER dropped — they always
         // reach the reorg classifier. A forward ABOVE `recovery_anchor` that
         // is stale takes the same benign `LateForward` drop as any other
-        // post-tombstone survivor (HJ5HWF: lateness is counted noise, never
+        // post-tombstone survivor: lateness is counted noise, never
         // a fatal signal — only blocks the pump itself backfilled are silent
         // duplicates by construction).
 
@@ -363,7 +363,7 @@ impl BlockPump {
         // itself was folded into the stage waterfall's streaming interval.)
         let mut apply_started_at: Option<std::time::Instant> = None;
         loop {
-            // Span lifecycle (TQ7PD6 fix): an enter guard must never outlive a
+            // Span lifecycle: an enter guard must never outlive a
             // single poll. This task runs on a multi-threaded tokio runtime and
             // may migrate between worker threads at any `.await`; a guard
             // entered on one thread and dropped on another leaks the span's
@@ -376,7 +376,7 @@ impl BlockPump {
             // `.instrument(…)` instead.
             //
             // Solve execution moved OUT of the loop head to the drained-settle
-            // gate at the bottom of the loop (TQ7PD6 follow-up): the solver
+            // gate at the bottom of the loop: the solver
             // must not fire while buffered WS events are still unprocessed —
             // the 2026-08-22 stall crash was exactly the loop-head solve
             // racing a still-queued swap log.
@@ -422,9 +422,9 @@ impl BlockPump {
                         op_info!(domain = pump, "timed exit: shutdown signaled — unwinding pump loop");
                         break;
                     }
-                    // SONJQA (G3, preserved — BF43PM): force-close a stale
+                    // Preserved G3: force-close a stale
                     // held stage interval. The epoch root exports when the
-                    // header arm's ENTERED scope exits (TQ7PD6 entry-refcount
+                    // header arm's ENTERED scope exits (entry-refcount
                     // law) - microseconds after header acceptance on an
                     // all-quiet block - so an open stage span dangling until
                     // the next transition would extend a waterfall child far
@@ -499,7 +499,7 @@ impl BlockPump {
                     // re-arms W for the NEXT settle, publish the current W on
                     // the quiesce-window gauge, and measure the
                     // on_settle-entry-to-decision latency in the hotpath
-                    // profiler (VD62GX open item #1 — the 8.4%-of-blocks
+                    // profiler (open item #1 — the 8.4%-of-blocks
                     // settle-overshoot suspects become visible as a bucket).
                     if pregap.logs > 0 {
                         fsm.observe_settle_gap(block_max_gap_us / 1000, now_ms());
@@ -637,7 +637,7 @@ impl BlockPump {
                     gas_used,
                     gas_limit,
                 })) => {
-                    // MQUKB6 + BF43PM: the
+                    // The
                     // per-epoch beat — one entered root span per observed
                     // header, carrying the EPOCH context (block + rewind
                     // generation) every span in the epoch waterfall answers
@@ -1206,7 +1206,7 @@ impl BlockPump {
                         }
                         LogDecision::DispatchForward => {}
                         LogDecision::LateForward(b) => {
-                            // HJ5HWF no-landmine ruling: a removed:false log on
+                            // No-landmine ruling: a removed:false log on
                             // a tombstoned block (NOT a reorg) is delivery-
                             // jitter LATENESS, not a structural fault. Blocks ≤
                             // the authoritative `fsm.recovery_anchor` are
@@ -1230,8 +1230,7 @@ impl BlockPump {
                             }
                             // feed the estimator's sliding-hour
                             // ledger — sustained budget overruns hold the
-                            // adaptive window at the ceiling (HJ5HWF
-                            // backstop contract).
+                            // adaptive window at the ceiling (backstop contract).
                             fsm.record_late_admit(now_ms());
                             // The bool (first sighting vs cooldown-suppressed)
                             // is informational; the counted home is the
@@ -1266,10 +1265,10 @@ impl BlockPump {
                     // records the clock's received/applied edges and arms the
                     // quiesce-gated publish (ADR-008 D2).
                     // One fact — a forward log applied to engine state — feeds
-                    // two consumers (T4 pairing pin, epic O3HW7E): the FSM
+                    // two consumers (T4 pairing pin): the FSM
                     // quiesce arm (`on_log_applied` -> publish_pending) and
                     // the engine's `has_logs_this_block` (finalize
-                    // bookkeeping, LEZJAS). Coordinated here, once; do not
+                    // bookkeeping). Coordinated here, once; do not
                     // split or drop either write.
                     // the DispatchForward arm never entered the
                     // block span (unlike Finalize et al.), so the
@@ -1349,7 +1348,7 @@ impl BlockPump {
                 }
             }
 
-            // DRAINED-SETTLE SOLVE GATE (TQ7PD6 follow-up): the solve fires
+            // DRAINED-SETTLE SOLVE GATE: the solve fires
             // only once the combined stream is drained — no event is
             // immediately buffered. "Freshest available state" therefore
             // means "everything the WS has delivered so far has been applied",
@@ -1432,7 +1431,7 @@ impl BlockPump {
             if !has_buffered && dirty_now {
                 // Strictly-synchronous solve dispatch: enter the cursor
                 // block span just long enough for dispatch() to capture it
-                // as the drainer parent (no await inside — TQ7PD6).
+                // as the drainer parent (no await inside).
                 let slice_due = slice_pending
                     && slice_first_dirty.is_some_and(|first| {
                         first.elapsed() >= Duration::from_millis(self.early_slice_ms)

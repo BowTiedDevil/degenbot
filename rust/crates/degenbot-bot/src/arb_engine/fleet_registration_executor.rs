@@ -137,7 +137,7 @@ mod tests {
             .or_else(|| err.downcast_ref::<&str>().copied())
             .expect("panic payload is the expect message");
         assert!(
-            msg.contains("(YI5NGB)"),
+            msg.contains("mixed-boot rides are ILLEGAL"),
             "the expect must name the task: {msg}"
         );
     }

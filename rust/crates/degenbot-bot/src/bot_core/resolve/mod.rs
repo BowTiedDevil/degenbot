@@ -89,7 +89,7 @@ impl CachedProjection {
 /// microseconds, adding risk without a measured win.
 /// Sharded concurrency-ready form of the former flat
 /// `HashMap<(HopType, pool_key, zero_for_one), (CachedProjection, u64)>`
-/// (7LV6VN T2): the per-path resolve loop runs across parallel chunks, so the
+/// : the per-path resolve loop runs across parallel chunks, so the
 /// memo must be shared by reference - chunk-local caches would multiply the
 /// expensive CL tick-walk per shared pool (the cache exists so one walk
 /// serves N paths). Shard locks guard only map access; the projection walk

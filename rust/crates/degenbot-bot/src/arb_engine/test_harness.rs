@@ -1,7 +1,7 @@
-//! 5TBT7L T6: test-only free-function harness for the direct-engine drives.
+//! Test-only free-function harness for the direct-engine drives.
 //!
 //! The T4 shims (`run_test_cycle`, `merge_detached_for_test`,
-//! `finalize_for_test`, `process_updates`) and the YI5NGB boot-stamp probe
+//! `finalize_for_test`, `process_updates`) and the boot-stamp probe
 //! were inherent `ArbitrageEngine` methods. The one-impl-block structural gate
 //! (`just check-engine-impl-blocks`) forbids any inherent engine member outside
 //! `arb_engine/mod.rs`, and these carry no composition work — so they live here
@@ -18,7 +18,7 @@ use alloy::primitives::aliases::U112;
 use alloy::primitives::Address;
 use hashbrown::HashSet;
 
-/// YI5NGB test-only F-suite probe: the engine's construction-stamped boot —
+/// Test-only F-suite probe: the engine's construction-stamped boot —
 /// lets the white-box tests verify twin constructions share a byte-identical
 /// boot value WITHOUT reaching into the fleet statics.
 pub(crate) fn fleet_boot_stamp(engine: &ArbitrageEngine) -> &BootStamp {

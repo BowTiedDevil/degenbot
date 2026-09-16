@@ -13,8 +13,8 @@
 //! Unlike the hotpath bullet there is **no env gate**: [`init_otel_tracing`]
 //! is an explicit call site for pure-Rust consumers (this crate is a cdylib
 //! with no Rust `main`; the Python-driven path adds the layer to its own
-//! registry in `degenbot-python`, behind `DEGENBOT_OTEL=1` — epic KDUED5,
-//! task K6PCKP).
+//! registry in `degenbot-python`, behind `DEGENBOT_OTEL=1`  — the
+//! Python path composes it the same way).
 //!
 //! # Who may install the global subscriber
 //!
@@ -56,7 +56,7 @@ const SERVICE_NAME: &str = "degenbot-bot";
 /// env).
 ///
 /// Public so consumers composing their own registry (e.g. the `degenbot-python`
-/// path, task K6PCKP) can share the exact identity, and so the resource is
+/// path) can share the exact identity, and so the resource is
 /// directly testable (the SDK no longer stamps the resource per `SpanData`).
 #[must_use]
 pub fn bot_resource() -> Resource {
@@ -76,7 +76,7 @@ pub enum OtelInitError {
     /// A global tracing subscriber is already installed (typical:
     /// `degenbot-python`'s registry, installed at module init). The `OTel`
     /// layer must be added to that registry instead — see the module docs
-    /// and epic KDUED5 task K6PCKP.
+    /// and the Python path.
     #[error("{0}")]
     AlreadySetUp(&'static str),
 }
@@ -103,7 +103,7 @@ pub struct OtelHandle {
     provider: SdkTracerProvider,
 }
 impl OtelHandle {
-    /// Create a handle owning the given provider (K6PCKP: the
+    /// Create a handle owning the given provider (the
     /// `degenbot-python` path stores one so its drainer can
     /// flush/kill it at shutdown).
     pub fn new(provider: SdkTracerProvider) -> Self {

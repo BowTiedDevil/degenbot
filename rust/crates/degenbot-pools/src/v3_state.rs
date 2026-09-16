@@ -363,7 +363,7 @@ pub struct V3PoolState {
     /// event, a fresh slot0 read, or registration. NEVER advanced by a tick-
     /// map-only change (`replace_tick_data`/`merge_tick_word`/backfill replay).
     /// Monotonic non-decreasing — a backward stamp outside a reorg panics
-    /// (two-stamp pool state, OB7UNY).
+    /// (two-stamp pool state).
     pub update_block: u64,
     /// The **liquidity** clock — the block the `tick_data` map reflects.
     /// Advanced by any event that mutates the tick map: a Swap (crossings),

@@ -1,5 +1,5 @@
 //! Keyed registration-gate table for immutable V4 admission verdicts
-//! (PRG-2 / epic IRUMXD).
+//! (PRG-2).
 //!
 //! `BotState` itself owns the gate: when `register_v4_pool` refuses a pool
 //! on an IMMUTABLE pool fact (dynamic fee, static fee exceeding the

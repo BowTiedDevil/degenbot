@@ -3,7 +3,7 @@
 //! `LogDispatcher` owns a decoder registry. `Bot` drives `dispatch(log)`:
 //! decode the log, apply the decoded event to `BotState` under a **write**
 //! guard, **release the guard**, then record the touched key into the epoch's
-//! `EpochDelta` ledger (the sole dirty-tracking mechanism since LXDY4C).
+//! `EpochDelta` ledger (the sole dirty-tracking mechanism).
 //!
 //! This module ships the dispatcher in isolation (ADR-006 slice 4). The pump
 //! driving the dispatcher lands in slice 5.
@@ -568,7 +568,7 @@ impl LogDispatcher {
         // Telemetry: raw-event arrival (field exprs evaluate lazily — zero
         // cost unless RUST_LOG enables debug for this target). Attaches to the
         // per-log dispatch span, which parents under `degenbot.epoch` (the
-        // per-epoch root, BF43PM).
+        // per-epoch root).
         diag!(domain = ingest, block = log.block_number,
             address = format!("{:#x}", log.address()),
             topic0 = format!("{:#x}", log.topics().first().copied().unwrap_or_default()),
@@ -646,7 +646,7 @@ impl LogDispatcher {
         // without mutating anything). Everything else falls through to the
         // write-lock router: registered pools (any lifecycle), and
         // unregistered TICK-MUTATION events which must stage into a buffer
-        // (FUWYUR: these were silently lost when this pre-check used to
+        // (these were silently lost when this pre-check used to
         // decide their fate itself).
         let confirmed_drop = decoded
             .resolve_pool_id(&state.read_at(crate::bot_core::state_lock::LockSite::Core))
@@ -980,7 +980,7 @@ mod tests {
     /// `dispatch` path (`with_uniswap_decoders` → `V3MintBurnDecoder`) and
     /// asserts tick 201020 == seed + amount. Red => the Mint is mis-routed/
     /// dropped at the decode+apply seam.
-    /// FUWYUR (dispatcher level): dispatching a Mint whose pool is NOT yet
+    /// Dispatcher-level rule: dispatching a Mint whose pool is NOT yet
     /// registered must route the event into the V3 pump buffer (staged
     /// application at the later registration's drain+pin seam), NOT silently
     /// drop it at the APPLY-MISS funnel. Liquidity events mutate `tick_data`,
@@ -1045,7 +1045,7 @@ mod tests {
                 .read_at(crate::bot_core::state_lock::LockSite::Core)
                 .buffered_v3_event_count(&pool_addr)
                 > 0,
-            "FUWYUR: an unregistered pool's Mint must be buffered for staged \
+            "an unregistered pool's Mint must be buffered for staged \
              application at registration — the APPLY-MISS funnel must not drop it"
         );
     }

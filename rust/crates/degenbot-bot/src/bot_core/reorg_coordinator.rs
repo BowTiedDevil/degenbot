@@ -629,7 +629,7 @@ mod tests {
                 0,
                 "the block-7 delta was popped — journal now empty"
             );
-            // OB7UNY two-stamp exact-restore: update_block rewinds to its
+            // Two-stamp exact-restore: update_block rewinds to its
             // exact pre-swap value (5 = the registration block the swap's
             // delta recorded as `update_block_before`), NOT the popped delta's
             // block (7). The scalars are the registration state.
