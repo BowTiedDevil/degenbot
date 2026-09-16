@@ -202,7 +202,7 @@ fn simulate_balancer_weighted_swap(
     amount_in: U256,
 ) -> Result<U256, SimulateSwapError> {
     let (idx_in, idx_out) = if zero_for_one { (0, 1) } else { (1, 0) };
-    simulate_balancer_weighted_swap_pair(id, state, idx_in, idx_out, amount_in)
+    simulate_balancer_weighted_swap_pair(id, state, idx_in, idx_out, amount_in, None)
 }
 
 /// Balancer V2 weighted exact-input swap across an explicit token pair.
@@ -221,10 +221,16 @@ pub fn simulate_balancer_weighted_swap_pair(
     idx_in: usize,
     idx_out: usize,
     amount_in: U256,
+    override_balances: Option<&[U256]>,
 ) -> Result<U256, SimulateSwapError> {
     if idx_in >= id.tokens.len() || idx_out >= id.tokens.len() || idx_in == idx_out {
         return Err(SimulateSwapError::NotComputable);
     }
+    let balances: &[U256] = match override_balances {
+        Some(ob) if ob.len() == id.tokens.len() => ob,
+        Some(_) => return Err(SimulateSwapError::NotComputable),
+        None => &state.balances,
+    };
     if amount_in.is_zero() {
         return Ok(U256::ZERO);
     }
@@ -236,9 +242,9 @@ pub fn simulate_balancer_weighted_swap_pair(
         weighted_math::subtract_swap_fee_amount(amount_in, U256::from(id.swap_fee))
             .map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_balance_in =
-        mul_down(state.balances[idx_in], sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
+        mul_down(balances[idx_in], sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_balance_out =
-        mul_down(state.balances[idx_out], sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
+        mul_down(balances[idx_out], sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_amount_in =
         mul_down(amount_in_less_fee, sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
     // Respect the registered pow revision (V1 = 2021-era general path, V2 =
@@ -275,10 +281,16 @@ pub fn simulate_balancer_weighted_swap_pair_in_given_out(
     idx_in: usize,
     idx_out: usize,
     amount_out: U256,
+    override_balances: Option<&[U256]>,
 ) -> Result<U256, SimulateSwapError> {
     if idx_in >= id.tokens.len() || idx_out >= id.tokens.len() || idx_in == idx_out {
         return Err(SimulateSwapError::NotComputable);
     }
+    let balances: &[U256] = match override_balances {
+        Some(ob) if ob.len() == id.tokens.len() => ob,
+        Some(_) => return Err(SimulateSwapError::NotComputable),
+        None => &state.balances,
+    };
     if amount_out.is_zero() {
         return Ok(U256::ZERO);
     }
@@ -286,9 +298,9 @@ pub fn simulate_balancer_weighted_swap_pair_in_given_out(
     let sf_out = id.scaling_factors[idx_out];
     let swap_fee = U256::from(id.swap_fee);
     let scaled_balance_in =
-        mul_down(state.balances[idx_in], sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
+        mul_down(balances[idx_in], sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_balance_out =
-        mul_down(state.balances[idx_out], sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
+        mul_down(balances[idx_out], sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_amount_out =
         mul_down(amount_out, sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_amount_in = weighted_math::calc_in_given_out(
@@ -324,20 +336,31 @@ pub fn simulate_balancer_stable_swap_pair_in_given_out(
     idx_in: usize,
     idx_out: usize,
     amount_out: U256,
+    override_balances: Option<&[U256]>,
+    override_scaling_factors: Option<&[U256]>,
 ) -> Result<U256, SimulateSwapError> {
     if idx_in >= id.tokens.len() || idx_out >= id.tokens.len() || idx_in == idx_out {
         return Err(SimulateSwapError::NotComputable);
     }
+    let balances: &[U256] = match override_balances {
+        Some(ob) if ob.len() == id.tokens.len() => ob,
+        Some(_) => return Err(SimulateSwapError::NotComputable),
+        None => &state.balances,
+    };
+    let scaling_factors: &[U256] = match override_scaling_factors {
+        Some(osf) if osf.len() == id.tokens.len() => osf,
+        Some(_) => return Err(SimulateSwapError::NotComputable),
+        None => &id.scaling_factors,
+    };
     if amount_out.is_zero() {
         return Ok(U256::ZERO);
     }
-    let sf_in = id.scaling_factors[idx_in];
-    let sf_out = id.scaling_factors[idx_out];
+    let sf_in = scaling_factors[idx_in];
+    let sf_out = scaling_factors[idx_out];
     let swap_fee = U256::from(id.swap_fee);
-    let upscaled_balances: Vec<U256> = state
-        .balances
+    let upscaled_balances: Vec<U256> = balances
         .iter()
-        .zip(id.scaling_factors.iter())
+        .zip(scaling_factors.iter())
         .map(|(&b, &sf)| mul_down(b, sf).map_err(|_| SimulateSwapError::NotComputable))
         .collect::<Result<_, _>>()?;
     let scaled_amount_out =
@@ -365,13 +388,13 @@ pub fn simulate_balancer_stable_swap_pair_in_given_out(
         .map_err(|_| SimulateSwapError::NotComputable)
 }
 
-/// Balancer V2 stable exact-input swap. Mirrors the Python companion
-/// `BalancerV2StablePool.calculate_tokens_out_from_tokens_in`:
+/// Balancer V2 stable exact-input swap for the token0/1 pair. Mirrors the
+/// python companion BalancerV2StablePool.calculate_tokens_out_from_tokens_in:
 ///   1. Subtract swap fee from the RAW amount.
-///   2. Upscale balances (drop BPT for `ComposableStable` pools) + amount.
-///   3. Compute invariant per `invariant_version` (V1 roundDown `D_P`,
-///      V2 roundUp `P_D`).
-///   4. `calc_out_given_in` in scaled space with BPT-skipped indices.
+///   2. Upscale balances (drop BPT for ComposableStable pools) + amount.
+///   3. Compute invariant per invariant_version (V1 roundDown D_P,
+///      V2 roundUp P_D).
+///   4. calc_out_given_in in scaled space with BPT-skipped indices.
 ///   5. Downscale the output (divDown).
 fn simulate_balancer_stable_swap(
     id: &crate::balancer_stable_state::BalancerStablePoolIdentity,
@@ -379,29 +402,61 @@ fn simulate_balancer_stable_swap(
     zero_for_one: bool,
     amount_in: U256,
 ) -> Result<U256, SimulateSwapError> {
+    let (idx_in, idx_out) = if zero_for_one { (0, 1) } else { (1, 0) };
+    simulate_balancer_stable_swap_pair(id, state, idx_in, idx_out, amount_in, None, None)
+}
+
+/// Balancer V2 stable exact-input across an explicit token pair.
+///
+/// Generalizes the token0/1 path to N-token pools (the composable BPT skip
+/// already rebases indices; this adds explicit selections).
+///
+/// # Errors
+/// NotComputable for an index/shape breach or an arithmetic overflow
+/// (mirroring the on-chain SafeMath revert contract).
+pub fn simulate_balancer_stable_swap_pair(
+    id: &crate::balancer_stable_state::BalancerStablePoolIdentity,
+    state: &crate::balancer_stable_state::BalancerStablePoolState,
+    idx_in: usize,
+    idx_out: usize,
+    amount_in: U256,
+    override_balances: Option<&[U256]>,
+    override_scaling_factors: Option<&[U256]>,
+) -> Result<U256, SimulateSwapError> {
+    if idx_in >= id.tokens.len() || idx_out >= id.tokens.len() || idx_in == idx_out {
+        return Err(SimulateSwapError::NotComputable);
+    }
+    let balances: &[U256] = match override_balances {
+        Some(ob) if ob.len() == id.tokens.len() => ob,
+        Some(_) => return Err(SimulateSwapError::NotComputable),
+        None => &state.balances,
+    };
+    let scaling_factors: &[U256] = match override_scaling_factors {
+        Some(osf) if osf.len() == id.tokens.len() => osf,
+        Some(_) => return Err(SimulateSwapError::NotComputable),
+        None => &id.scaling_factors,
+    };
     if amount_in.is_zero() {
         return Ok(U256::ZERO);
     }
-    let (idx_in, idx_out) = if zero_for_one { (0, 1) } else { (1, 0) };
-    let sf_in = id.scaling_factors[idx_in];
-    let sf_out = id.scaling_factors[idx_out];
+    let sf_in = scaling_factors[idx_in];
+    let sf_out = scaling_factors[idx_out];
     // Step 1: subtract fee from the raw amount.
     let amount_in_less_fee =
         weighted_math::subtract_swap_fee_amount(amount_in, U256::from(id.swap_fee))
             .map_err(|_| SimulateSwapError::NotComputable)?;
     // Step 2: upscale balances + amount; drop BPT for ComposableStable pools.
-    let upscaled_balances: Vec<U256> = state
-        .balances
+    let upscaled_balances: Vec<U256> = balances
         .iter()
-        .zip(id.scaling_factors.iter())
+        .zip(scaling_factors.iter())
         .map(|(&b, &sf)| mul_down(b, sf).map_err(|_| SimulateSwapError::NotComputable))
         .collect::<Result<_, _>>()?;
     let scaled_amount_in =
         mul_down(amount_in_less_fee, sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
     // Adjust indices/balances to skip the BPT token (ComposableStable).
     let (inv_balances, adj_in, adj_out) = skip_bpt(&upscaled_balances, id.bpt_idx, idx_in, idx_out);
-    // Step 3: invariant per deployed version (V1 always-roundDown `D_P`,
-    // V2 `P_D` with round_up).
+    // Step 3: invariant per deployed version (V1 always-roundDown D_P,
+    // V2 P_D with round_up).
     let amp = U256::from(id.amp);
     let invariant = if id.invariant_version == 1 {
         stable_math::calculate_invariant(amp, &inv_balances)

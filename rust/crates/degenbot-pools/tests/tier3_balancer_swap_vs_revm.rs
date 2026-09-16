@@ -466,7 +466,7 @@ fn engine_weighted_in_given_out(case: &WeightedCase, zfo: bool, amount_out: U256
     );
     let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
     ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair_in_given_out(
-        &identity, &state, idx_in, idx_out, amount_out,
+        &identity, &state, idx_in, idx_out, amount_out, None,
     )
     .ok()
 }
@@ -492,7 +492,7 @@ fn engine_stable_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) ->
     );
     let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
     ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
-        &identity, &state, idx_in, idx_out, amount_out,
+        &identity, &state, idx_in, idx_out, amount_out, None, None,
     )
     .ok()
 }
@@ -518,7 +518,7 @@ fn engine_stable_v2_in_given_out(case: &StableCase, zfo: bool, amount_out: U256)
     );
     let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
     ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
-        &identity, &state, idx_in, idx_out, amount_out,
+        &identity, &state, idx_in, idx_out, amount_out, None, None,
     )
     .ok()
 }

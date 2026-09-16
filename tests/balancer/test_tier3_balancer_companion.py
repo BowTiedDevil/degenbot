@@ -137,6 +137,46 @@ class TestWeightedCompanionVsEngine:
                 )
 
 
+    def test_given_out_matches_engine_pair_surface(self) -> None:
+        """Given-out: python companion == engine pair surface (both pow versions).
+
+        The recorded on-chain GIVEN_OUT reference lands with the harness
+        inGivenOut entries (tier3 proptest); this row pins python == engine.
+        """
+        bot = Bot()
+        d0, d1 = 18, 6
+        t0, t1 = _token(bot, d0, 1), _token(bot, d1, 2)
+        balances = [10_000 * 10 ** d0, 10_000 * 10 ** d1]
+        for pow_version, fee_frac in ((1, Fraction(0)), (2, Fraction(3, 1000))):
+            lp = make_balancer_weighted_pool(
+                _addr(0xCC00 + pow_version),
+                pool_id=bytes([0x40 + pow_version]) + bytes(range(31)),
+                vault=_VAULT,
+                tokens=[t0, t1],
+                balances=balances,
+                fee=fee_frac,
+                weights=[50 * 10 ** 16, 50 * 10 ** 16],
+                pow_version=pow_version,
+            )
+            for i, zfo in ((0, True), (1, False)):
+                t_in, t_out = (t0, t1)[i], (t0, t1)[1 - i]
+                out_balance = balances[1 - i]
+                for mult in _MULTS:
+                    amount_out = int(out_balance * mult)
+                    engine = lp._py_pool.calculate_tokens_in_for_pair(
+                        index_in=i, index_out=1 - i, amount_out=amount_out,
+                    )
+                    calc = lp.calculate_tokens_in_from_tokens_out(
+                        token_in=t_in,
+                        token_out=t_out,
+                        token_out_quantity=amount_out,
+                    )
+                    assert calc == engine, (
+                        f"given-out pow={pow_version} zfo={zfo} mult={mult}: "
+                        f"py={calc} engine={engine}"
+                    )
+
+
 class TestStableCompanionVsEngine:
     """StablePool: python companion == rust engine (V1 + V2 invariants)."""
 

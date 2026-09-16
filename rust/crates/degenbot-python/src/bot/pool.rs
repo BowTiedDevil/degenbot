@@ -803,18 +803,49 @@ impl PyLiquidityPool {
     ///     `ValueError`: On out-of-range/equal indices, the on-chain
     ///         MAX_IN_RATIO breach, or a uint256 intermediate overflow (the
     ///         same on-chain-parity contracts as [calculate_tokens_out]).
-    #[pyo3(signature = (index_in, index_out, amount_in))]
+    #[pyo3(signature = (index_in, index_out, amount_in, override_balances=None, override_scaling_factors=None))]
     fn calculate_tokens_out_for_pair(
         &self,
         py: Python<'_>,
         index_in: usize,
         index_out: usize,
         amount_in: &Bound<'_, PyAny>,
+        override_balances: Option<Vec<Bound<'_, PyAny>>>,
+        override_scaling_factors: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<Py<PyAny>> {
+        let to_u256 = |v: &Bound<'_, PyAny>| crate::conversion::alloy::extract_python_u256(v);
+        let override_balances = match override_balances {
+            Some(list) => {
+                let mut parsed = Vec::with_capacity(list.len());
+                for item in &list {
+                    parsed.push(to_u256(item)?);
+                }
+                Some(parsed)
+            }
+            None => None,
+        };
+        let override_scaling_factors = match override_scaling_factors {
+            Some(list) => {
+                let mut parsed = Vec::with_capacity(list.len());
+                for item in &list {
+                    parsed.push(to_u256(item)?);
+                }
+                Some(parsed)
+            }
+            None => None,
+        };
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let outcome = self.with_state(py, |core| {
-            use degenbot_bot::bot_core::swap_simulation::simulate_balancer_weighted_pair_out;
-            simulate_balancer_weighted_pair_out(core, self.pool_id, index_in, index_out, amount)
+            use degenbot_bot::bot_core::swap_simulation::simulate_balancer_pair_out;
+            simulate_balancer_pair_out(
+                core,
+                self.pool_id,
+                index_in,
+                index_out,
+                amount,
+                override_balances.as_deref(),
+                override_scaling_factors.as_deref(),
+            )
         });
         match outcome {
             Some(out) => {
@@ -837,18 +868,48 @@ impl PyLiquidityPool {
     ///     ValueError: On out-of-range/equal indices, the on-chain MAX_OUT_RATIO
     ///         breach, or a uint256 intermediate overflow (the same
     ///         on-chain-parity contracts as [calculate_tokens_out]).
-    #[pyo3(signature = (index_in, index_out, amount_out))]
+    #[pyo3(signature = (index_in, index_out, amount_out, override_balances=None, override_scaling_factors=None))]
     fn calculate_tokens_in_for_pair(
         &self,
         py: Python<'_>,
         index_in: usize,
         index_out: usize,
         amount_out: &Bound<'_, PyAny>,
+        override_balances: Option<Vec<Bound<'_, PyAny>>>,
+        override_scaling_factors: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<Py<PyAny>> {
+        let override_balances = match override_balances {
+            Some(list) => {
+                let mut parsed = Vec::with_capacity(list.len());
+                for item in &list {
+                    parsed.push(crate::conversion::alloy::extract_python_u256(item)?);
+                }
+                Some(parsed)
+            }
+            None => None,
+        };
+        let override_scaling_factors = match override_scaling_factors {
+            Some(list) => {
+                let mut parsed = Vec::with_capacity(list.len());
+                for item in &list {
+                    parsed.push(crate::conversion::alloy::extract_python_u256(item)?);
+                }
+                Some(parsed)
+            }
+            None => None,
+        };
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let outcome = self.with_state(py, |core| {
             use degenbot_bot::bot_core::swap_simulation::simulate_balancer_pair_in_given_out;
-            simulate_balancer_pair_in_given_out(core, self.pool_id, index_in, index_out, amount)
+            simulate_balancer_pair_in_given_out(
+                core,
+                self.pool_id,
+                index_in,
+                index_out,
+                amount,
+                override_balances.as_deref(),
+                override_scaling_factors.as_deref(),
+            )
         });
         match outcome {
             Some(out) => {

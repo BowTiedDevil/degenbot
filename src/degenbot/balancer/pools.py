@@ -8,28 +8,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
-    _downscale_down,
-    _downscale_up,
-    _upscale,
-    _upscale_array,
-)
-from degenbot.balancer.math import (
-    weighted_add_swap_fee_amount as _rs_add_swap_fee_amount,
-)
-from degenbot.balancer.math import (
-    weighted_calc_in_given_out as _rs_calc_in_given_out,
-)
-from degenbot.balancer.math import (
-    weighted_calc_out_given_in as _rs_calc_out_given_in,
-)
-from degenbot.balancer.math import (
-    weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount,
 )
 from degenbot.balancer.types import (
     BalancerV2PoolState,
     BalancerV2WeightedPoolExternalUpdate,
 )
-from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -229,41 +212,19 @@ class BalancerV2Pool(AbstractLiquidityPool):
     ) -> int:
         """Calculate tokens out from tokens in.
 
+        Thin driver shell over the Rust core: token resolution stays
+        Python-side, the swap math is fully Rust-owned.
+
         Returns:
             The computed integer value.
 
         """
-        token_in_index = self._tokens.index(token_in)
-        token_out_index = self._tokens.index(token_out)
-
-        fee_scaled = int(self.fee * self.FEE_DENOMINATOR)
-
-        amount_new = _rs_subtract_swap_fee_amount(
-            token_in_quantity,
-            fee_scaled,
-        )
-
-        if override_state is not None:
-            balances = list(override_state.balances)
-        else:
-            balances = list(self.balances)  # make a copy because _upscale_array will mutate it
-
-        _upscale_array(amounts=balances, scaling_factors=self.scaling_factors)
-        amount_new = _upscale(amount_new, scaling_factor=self.scaling_factors[token_in_index])
-
-        amount_out = _rs_calc_out_given_in(
-            int(balances[token_in_index]),
-            self.weights[token_in_index],
-            int(balances[token_out_index]),
-            self.weights[token_out_index],
-            int(amount_new),
-            BalancerBuilderBase.pow_version_to_rust(self.pow_version),
-        )
-
-        return int(
-            _downscale_down(
-                amount=amount_out,
-                scaling_factor=self.scaling_factors[token_out_index],
+        return self._py_pool.calculate_tokens_out_for_pair(
+            index_in=self._tokens.index(token_in),
+            index_out=self._tokens.index(token_out),
+            amount_in=token_in_quantity,
+            override_balances=(
+                list(override_state.balances) if override_state is not None else None
             ),
         )
 
@@ -276,44 +237,20 @@ class BalancerV2Pool(AbstractLiquidityPool):
     ) -> int:
         """Compute how many tokens must be sent to take `token_out_quantity` out.
 
+        Thin driver shell over the Rust core.
+
         Returns:
             The computed integer value.
 
         """
-        token_in_index = self._tokens.index(token_in)
-        token_out_index = self._tokens.index(token_out)
-
-        fee_scaled = int(self.fee * self.FEE_DENOMINATOR)
-
-        if override_state is not None:
-            balances = list(override_state.balances)
-        else:
-            balances = list(self.balances)  # make a copy because _upscale_array will mutate it
-
-        _upscale_array(amounts=balances, scaling_factors=self.scaling_factors)
-        amount_out_scaled = _upscale(
-            token_out_quantity,
-            scaling_factor=self.scaling_factors[token_out_index],
-        )
-
-        amount_in = _rs_calc_in_given_out(
-            int(balances[token_in_index]),
-            self.weights[token_in_index],
-            int(balances[token_out_index]),
-            self.weights[token_out_index],
-            int(amount_out_scaled),
-            BalancerBuilderBase.pow_version_to_rust(self.pow_version),
-        )
-
-        # Downscale first, then add fee — matching Solidity's onSwap GIVEN_OUT path
-        amount_in_token = int(
-            _downscale_up(
-                amount=amount_in,
-                scaling_factor=self.scaling_factors[token_in_index],
+        return self._py_pool.calculate_tokens_in_for_pair(
+            index_in=self._tokens.index(token_in),
+            index_out=self._tokens.index(token_out),
+            amount_out=token_out_quantity,
+            override_balances=(
+                list(override_state.balances) if override_state is not None else None
             ),
         )
-
-        return _rs_add_swap_fee_amount(amount_in_token, fee_scaled)
 
     def external_update(
         self,

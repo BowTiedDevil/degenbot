@@ -293,7 +293,7 @@ pub fn simulate_balancer_weighted_pair_out(
         PoolEntry::BalancerWeighted(p) => {
             let (id, state) = (&p.0, &p.1);
             ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair(
-                id, state, idx_in, idx_out, amount_in,
+                id, state, idx_in, idx_out, amount_in, None,
             )
             .ok()
         }
@@ -312,19 +312,76 @@ pub fn simulate_balancer_pair_in_given_out(
     idx_in: usize,
     idx_out: usize,
     amount_out: U256,
+    override_balances: Option<&[U256]>,
+    override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
     match bot.pools.get(&pool_id)? {
         PoolEntry::BalancerWeighted(p) => {
             let (id, state) = (&p.0, &p.1);
             ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair_in_given_out(
-                id, state, idx_in, idx_out, amount_out,
+                id,
+                state,
+                idx_in,
+                idx_out,
+                amount_out,
+                override_balances,
             )
             .ok()
         }
         PoolEntry::BalancerStable(p) => {
             let (id, state) = (&p.0, &p.1);
             ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
-                id, state, idx_in, idx_out, amount_out,
+                id,
+                state,
+                idx_in,
+                idx_out,
+                amount_out,
+                override_balances,
+                override_scaling_factors,
+            )
+            .ok()
+        }
+        _ => None,
+    }
+}
+
+/// Balancer V2 (weighted + stable): exact-input across an explicit token
+/// pair (standalone-driver N-token surface). Overrides carry the caller's
+/// view of balances (and stable scaling factors - MetaStable rates). Returns
+/// None for non-Balancer pools or an out-of-domain computation.
+#[must_use]
+pub fn simulate_balancer_pair_out(
+    bot: &BotState,
+    pool_id: u64,
+    idx_in: usize,
+    idx_out: usize,
+    amount_in: U256,
+    override_balances: Option<&[U256]>,
+    override_scaling_factors: Option<&[U256]>,
+) -> Option<U256> {
+    match bot.pools.get(&pool_id)? {
+        PoolEntry::BalancerWeighted(p) => {
+            let (id, state) = (&p.0, &p.1);
+            ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair(
+                id,
+                state,
+                idx_in,
+                idx_out,
+                amount_in,
+                override_balances,
+            )
+            .ok()
+        }
+        PoolEntry::BalancerStable(p) => {
+            let (id, state) = (&p.0, &p.1);
+            ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair(
+                id,
+                state,
+                idx_in,
+                idx_out,
+                amount_in,
+                override_balances,
+                override_scaling_factors,
             )
             .ok()
         }
