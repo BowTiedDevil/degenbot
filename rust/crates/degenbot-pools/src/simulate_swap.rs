@@ -260,6 +260,111 @@ pub fn simulate_balancer_weighted_swap_pair(
     Ok(amount_out)
 }
 
+/// Balancer V2 weighted exact-output across an explicit token pair.
+///
+/// Mirrors the python companion calculate_tokens_in_from_tokens_out:
+/// upscale the out amount (mulDown), calc_in_given_out in scaled space,
+/// downscale UP, then add the fee LAST (div-up over the complement).
+///
+/// # Errors
+/// NotComputable for an index/shape or MAX_OUT_RATIO breach, or an
+/// arithmetic overflow (mirroring the on-chain SafeMath revert contract).
+pub fn simulate_balancer_weighted_swap_pair_in_given_out(
+    id: &crate::balancer_weighted_state::BalancerWeightedPoolIdentity,
+    state: &crate::balancer_weighted_state::BalancerWeightedPoolState,
+    idx_in: usize,
+    idx_out: usize,
+    amount_out: U256,
+) -> Result<U256, SimulateSwapError> {
+    if idx_in >= id.tokens.len() || idx_out >= id.tokens.len() || idx_in == idx_out {
+        return Err(SimulateSwapError::NotComputable);
+    }
+    if amount_out.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let sf_in = id.scaling_factors[idx_in];
+    let sf_out = id.scaling_factors[idx_out];
+    let swap_fee = U256::from(id.swap_fee);
+    let scaled_balance_in =
+        mul_down(state.balances[idx_in], sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
+    let scaled_balance_out =
+        mul_down(state.balances[idx_out], sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
+    let scaled_amount_out =
+        mul_down(amount_out, sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
+    let scaled_amount_in = weighted_math::calc_in_given_out(
+        scaled_balance_in,
+        id.weights[idx_in],
+        scaled_balance_out,
+        id.weights[idx_out],
+        scaled_amount_out,
+        PowVersion::from_u8(id.pow_version).ok_or(SimulateSwapError::NotComputable)?,
+    )
+    .map_err(|_| SimulateSwapError::NotComputable)?;
+    // Downscale UP first, then add the fee - matching the Solidity
+    // onSwap GIVEN_OUT path (python `_downscale_up` then `addSwapFeeAmount`).
+    let in_raw = degenbot_math::balancer::fixed_point::div_up(scaled_amount_in, sf_in)
+        .map_err(|_| SimulateSwapError::NotComputable)?;
+    weighted_math::add_swap_fee_amount(in_raw, swap_fee)
+        .map_err(|_| SimulateSwapError::NotComputable)
+}
+
+/// Balancer V2 stable exact-output across an explicit token pair.
+///
+/// Mirrors the python companion calculate_tokens_in_from_tokens_out:
+/// upscale balances + the out amount (mulDown), BPT-skip, the registered
+/// invariant revision, calc_in_given_out in scaled space, downscale UP,
+/// add the fee LAST.
+///
+/// # Errors
+/// NotComputable for an index/shape breach or an arithmetic overflow
+/// (mirroring the on-chain SafeMath revert contract).
+pub fn simulate_balancer_stable_swap_pair_in_given_out(
+    id: &crate::balancer_stable_state::BalancerStablePoolIdentity,
+    state: &crate::balancer_stable_state::BalancerStablePoolState,
+    idx_in: usize,
+    idx_out: usize,
+    amount_out: U256,
+) -> Result<U256, SimulateSwapError> {
+    if idx_in >= id.tokens.len() || idx_out >= id.tokens.len() || idx_in == idx_out {
+        return Err(SimulateSwapError::NotComputable);
+    }
+    if amount_out.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let sf_in = id.scaling_factors[idx_in];
+    let sf_out = id.scaling_factors[idx_out];
+    let swap_fee = U256::from(id.swap_fee);
+    let upscaled_balances: Vec<U256> = state
+        .balances
+        .iter()
+        .zip(id.scaling_factors.iter())
+        .map(|(&b, &sf)| mul_down(b, sf).map_err(|_| SimulateSwapError::NotComputable))
+        .collect::<Result<_, _>>()?;
+    let scaled_amount_out =
+        mul_down(amount_out, sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
+    let (inv_balances, adj_in, adj_out) = skip_bpt(&upscaled_balances, id.bpt_idx, idx_in, idx_out);
+    let amp = U256::from(id.amp);
+    let invariant = if id.invariant_version == 1 {
+        stable_math::calculate_invariant(amp, &inv_balances)
+    } else {
+        stable_math::calculate_invariant_deployed(amp, &inv_balances, true)
+    }
+    .map_err(|_| SimulateSwapError::NotComputable)?;
+    let scaled_amount_in = stable_math::calc_in_given_out(
+        amp,
+        &inv_balances,
+        adj_in,
+        adj_out,
+        scaled_amount_out,
+        invariant,
+    )
+    .map_err(|_| SimulateSwapError::NotComputable)?;
+    let in_raw = degenbot_math::balancer::fixed_point::div_up(scaled_amount_in, sf_in)
+        .map_err(|_| SimulateSwapError::NotComputable)?;
+    weighted_math::add_swap_fee_amount(in_raw, swap_fee)
+        .map_err(|_| SimulateSwapError::NotComputable)
+}
+
 /// Balancer V2 stable exact-input swap. Mirrors the Python companion
 /// `BalancerV2StablePool.calculate_tokens_out_from_tokens_in`:
 ///   1. Subtract swap fee from the RAW amount.

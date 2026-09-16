@@ -447,6 +447,150 @@ fn stable_v2_out_given_in_is_byte_exact_to_onchain_reference() {
     );
 }
 
+/// The engine's weighted GIVEN_OUT required-input via the pair surface.
+fn engine_weighted_in_given_out(case: &WeightedCase, zfo: bool, amount_out: U256) -> Option<U256> {
+    let (identity, state) = BalancerWeightedPoolState::from_params(
+        RegisterBalancerWeightedPoolParams {
+            address: Address::from([0x22u8; 20]),
+            vault: Address::from([0x33u8; 20]),
+            pool_id: [0u8; 32],
+            tokens: vec![Address::from([0xAAu8; 20]), Address::from([0xBBu8; 20])],
+            weights: case.weights.to_vec(),
+            scaling_factors: case.scaling_factors.to_vec(),
+            swap_fee: case.swap_fee.to::<u128>(),
+            pow_version: 2,
+            balances: case.balances.to_vec(),
+            update_block: 100,
+        },
+        8,
+    );
+    let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
+    ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair_in_given_out(
+        &identity, &state, idx_in, idx_out, amount_out,
+    )
+    .ok()
+}
+
+/// The engine's stable GIVEN_OUT required-input (invariant_version == 1).
+fn engine_stable_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) -> Option<U256> {
+    let (identity, state) = BalancerStablePoolState::from_params(
+        RegisterBalancerStablePoolParams {
+            address: Address::from([0x44u8; 20]),
+            vault: Address::from([0x55u8; 20]),
+            pool_id: [0x44u8; 32],
+            tokens: vec![Address::from([0xAAu8; 20]), Address::from([0xBBu8; 20])],
+            amp: case.amp.to::<u128>(),
+            scaling_factors: case.scaling_factors.to_vec(),
+            swap_fee: case.swap_fee.to::<u128>(),
+            bpt_idx: None,
+            invariant_version: 1,
+            balances: case.balances.to_vec(),
+            update_block: 100,
+            rate_provider: None,
+        },
+        8,
+    );
+    let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
+    ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
+        &identity, &state, idx_in, idx_out, amount_out,
+    )
+    .ok()
+}
+
+/// The engine's stable GIVEN_OUT required-input (invariant_version == 2).
+fn engine_stable_v2_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) -> Option<U256> {
+    let (identity, state) = BalancerStablePoolState::from_params(
+        RegisterBalancerStablePoolParams {
+            address: Address::from([0x44u8; 20]),
+            vault: Address::from([0x55u8; 20]),
+            pool_id: [0x44u8; 32],
+            tokens: vec![Address::from([0xAAu8; 20]), Address::from([0xBBu8; 20])],
+            amp: case.amp.to::<u128>(),
+            scaling_factors: case.scaling_factors.to_vec(),
+            swap_fee: case.swap_fee.to::<u128>(),
+            bpt_idx: None,
+            invariant_version: 2,
+            balances: case.balances.to_vec(),
+            update_block: 100,
+            rate_provider: None,
+        },
+        8,
+    );
+    let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
+    ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
+        &identity, &state, idx_in, idx_out, amount_out,
+    )
+    .ok()
+}
+
+/// Assert the engine/on-chain parity for a weighted GIVEN_OUT case.
+fn assert_weighted_in_given_out_parity(case: &WeightedCase, zfo: bool, amount_out: U256) {
+    let engine = engine_weighted_in_given_out(case, zfo, amount_out);
+    let sig = if zfo {
+        "weightedInGivenOut0to1(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
+    } else {
+        "weightedInGivenOut1to0(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
+    };
+    let onchain = call_onchain(weighted_call(sig, case, amount_out));
+    match (engine, onchain) {
+        (Some(e), BalancerOutcome::Ok(o)) => assert_eq!(e, o, "engine vs on-chain byte-exact"),
+        (None, BalancerOutcome::GenuineReject(_)) => {}
+        (Some(e), BalancerOutcome::GenuineReject(l)) => {
+            panic!("engine produced {e} but on-chain rejected: {l}")
+        }
+        (None, BalancerOutcome::Ok(o)) => panic!("engine rejected but on-chain produced {o}"),
+        (_, BalancerOutcome::Spurious(l)) => {
+            panic!("spurious/non-modeled on-chain revert: {l}")
+        }
+    }
+}
+
+/// Assert the engine/on-chain parity for a stable GIVEN_OUT case (V1).
+fn assert_stable_in_given_out_parity(case: &StableCase, zfo: bool, amount_out: U256) {
+    let engine = engine_stable_in_given_out(case, zfo, amount_out);
+    let sig = if zfo {
+        "stableInGivenOut0to1(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+    } else {
+        "stableInGivenOut1to0(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+    };
+    let onchain = call_onchain(stable_call(sig, case, amount_out, 2));
+    match (engine, onchain) {
+        (Some(e), BalancerOutcome::Ok(o)) => assert_eq!(e, o, "engine vs on-chain byte-exact"),
+        (None, BalancerOutcome::GenuineReject(_)) => {}
+        (Some(e), BalancerOutcome::GenuineReject(l)) => {
+            panic!("engine produced {e} but on-chain rejected: {l}")
+        }
+        (None, BalancerOutcome::Ok(o)) => panic!("engine rejected but on-chain produced {o}"),
+        (_, BalancerOutcome::Spurious(l)) => {
+            panic!("spurious/non-modeled on-chain revert: {l}")
+        }
+    }
+}
+
+/// Assert the engine/on-chain parity for a stable GIVEN_OUT case (V2).
+fn assert_stable_v2_in_given_out_parity(case: &StableCase, zfo: bool, amount_out: U256) {
+    let engine = engine_stable_v2_in_given_out(case, zfo, amount_out);
+    let sig = if zfo {
+        "stableInGivenOut0to1V2(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+    } else {
+        "stableInGivenOut1to0V2(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+    };
+    let onchain = call_onchain(stable_call(sig, case, amount_out, 2));
+    match (engine, onchain) {
+        (Some(e), BalancerOutcome::Ok(o)) => assert_eq!(e, o, "engine [V2] vs on-chain byte-exact"),
+        (None, BalancerOutcome::GenuineReject(_)) => {}
+        (Some(e), BalancerOutcome::GenuineReject(l)) => {
+            panic!("engine [V2] produced {e} but on-chain rejected: {l}")
+        }
+        (None, BalancerOutcome::Ok(o)) => {
+            panic!("engine [V2] rejected but on-chain produced {o}")
+        }
+        (_, BalancerOutcome::Spurious(l)) => {
+            panic!("spurious/non-modeled on-chain revert: {l}")
+        }
+    }
+}
+
 // ── H4 widened proptest strategies (tiny → nominal → near-max arms). ───
 
 /// A physically-valid balance PAIR: both tokens drawn from the SAME magnitude
@@ -631,6 +775,89 @@ proptest! {
         }
         assert_stable_v2_parity(&case, zfo, amount_in);
     }
+    /// Proptest the byte-exact weighted GIVEN_OUT oracle (required input) over
+    /// the same field as the given-in sweep. The OUT-requested amount stays
+    /// <= 30% of the out-balance so MAX_OUT_RATIO agrees.
+    #[test]
+    fn weighted_in_given_out_matches_onchain_proptest(
+        (balance0, balance1) in arb_balance_pair(),
+        weight_frac in prop_oneof![10u64..90u64, Just(1u64), Just(50u64), Just(99u64)],
+        swap_fee in prop_oneof![0u64..100_000_000_000_000_000u64, Just(0u64), Just(100_000_000_000_000_000u64)],
+        amount_mode in 0u8..4u8,
+        amount_frac in 4u64..100u64, // <= 25% of out-balance (under MAX_OUT_RATIO)
+        zfo in any::<bool>(),
+    ) {
+        let weight0 = ONE * U256::from(weight_frac) / U256::from(100u64);
+        let weight1 = ONE - weight0;
+        if weight0.is_zero() || weight1.is_zero() {
+            return Ok(()); // a zero weight is degenerate
+        }
+        let case = WeightedCase {
+            balances: [U256::from(balance0), U256::from(balance1)],
+            weights: [weight0, weight1],
+            scaling_factors: [ONE, ONE],
+            swap_fee: U256::from(swap_fee),
+        };
+        let out_balance = if zfo { balance1 } else { balance0 };
+        let amount_out = compute_in_amount(out_balance, amount_mode, amount_frac);
+        if amount_out.is_zero() {
+            return Ok(());
+        }
+        assert_weighted_in_given_out_parity(&case, zfo, amount_out);
+    }
+
+    /// Proptest the byte-exact stable GIVEN_OUT oracle (invariant_version==1).
+    #[test]
+    fn stable_in_given_out_matches_onchain_proptest(
+        (balance0, balance1) in stable_balance_pair(),
+        sf0 in arb_scaling(),
+        sf1 in arb_scaling(),
+        amp in arb_amp(),
+        swap_fee in prop_oneof![0u64..100_000_000_000_000_000u64, Just(0u64), Just(100_000_000_000_000_000u64)],
+        amount_mode in prop_oneof![Just(0u8), Just(2u8), Just(3u8)],
+        amount_frac in 4u64..100u64,
+        zfo in any::<bool>(),
+    ) {
+        let case = StableCase {
+            balances: [U256::from(balance0), U256::from(balance1)],
+            scaling_factors: [U256::from(sf0), U256::from(sf1)],
+            swap_fee: U256::from(swap_fee),
+            amp: U256::from(amp),
+        };
+        let out_balance = if zfo { balance1 } else { balance0 };
+        let amount_out = compute_in_amount(out_balance, amount_mode, amount_frac);
+        if amount_out.is_zero() {
+            return Ok(());
+        }
+        assert_stable_in_given_out_parity(&case, zfo, amount_out);
+    }
+
+    /// Proptest the byte-exact stable GIVEN_OUT oracle at invariant_version==2.
+    #[test]
+    fn stable_v2_in_given_out_matches_onchain_proptest(
+        (balance0, balance1) in stable_balance_pair(),
+        sf0 in arb_scaling(),
+        sf1 in arb_scaling(),
+        amp in arb_amp(),
+        swap_fee in prop_oneof![0u64..100_000_000_000_000_000u64, Just(0u64), Just(100_000_000_000_000_000u64)],
+        amount_mode in prop_oneof![Just(0u8), Just(2u8), Just(3u8)],
+        amount_frac in 4u64..100u64,
+        zfo in any::<bool>(),
+    ) {
+        let case = StableCase {
+            balances: [U256::from(balance0), U256::from(balance1)],
+            scaling_factors: [U256::from(sf0), U256::from(sf1)],
+            swap_fee: U256::from(swap_fee),
+            amp: U256::from(amp),
+        };
+        let out_balance = if zfo { balance1 } else { balance0 };
+        let amount_out = compute_in_amount(out_balance, amount_mode, amount_frac);
+        if amount_out.is_zero() {
+            return Ok(());
+        }
+        assert_stable_v2_in_given_out_parity(&case, zfo, amount_out);
+    }
+
 }
 
 /// H3 — pinned deterministic edge corpus across the three families: minimal +

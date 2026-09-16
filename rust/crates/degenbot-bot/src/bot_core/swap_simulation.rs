@@ -302,6 +302,36 @@ pub fn simulate_balancer_weighted_pair_out(
 }
 
 /// `(reserve_in, reserve_out)` for a V2 swap direction, widened to U256.
+/// Balancer V2 (weighted + stable): exact-output across an explicit token
+/// pair (standalone-driver N-token surface). Returns None for non-Balancer
+/// pools or an out-of-domain computation.
+#[must_use]
+pub fn simulate_balancer_pair_in_given_out(
+    bot: &BotState,
+    pool_id: u64,
+    idx_in: usize,
+    idx_out: usize,
+    amount_out: U256,
+) -> Option<U256> {
+    match bot.pools.get(&pool_id)? {
+        PoolEntry::BalancerWeighted(p) => {
+            let (id, state) = (&p.0, &p.1);
+            ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair_in_given_out(
+                id, state, idx_in, idx_out, amount_out,
+            )
+            .ok()
+        }
+        PoolEntry::BalancerStable(p) => {
+            let (id, state) = (&p.0, &p.1);
+            ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
+                id, state, idx_in, idx_out, amount_out,
+            )
+            .ok()
+        }
+        _ => None,
+    }
+}
+
 fn v2_reserves(entry: &PoolEntry, zero_for_one: bool) -> Option<(U256, U256)> {
     match entry {
         PoolEntry::V2(p) => {

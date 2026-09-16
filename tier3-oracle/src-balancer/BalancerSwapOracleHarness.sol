@@ -37,6 +37,8 @@ import "@balancer-labs/v2-solidity-utils/contracts/math/StableMath.sol";
 
 // Max coins the stable harness accepts (matches StableMath `_MAX_STABLE_TOKENS`).
 uint256 constant MAX_STABLE_TOKENS = 5;
+// The FixedPoint `ONE` (1e18) — the harness computes raw e18 arithmetic directly.
+uint256 constant ONE = 1e18;
 
 contract BalancerSwapOracleHarness {
     using FixedPoint for uint256;
@@ -230,4 +232,139 @@ contract BalancerSwapOracleHarness {
         uint256 saOut = StableMath._calcOutGivenIn(amp, ub, 1, 0, saIn, invariant);
         return saOut.divDown(scalingFactors[0]);
     }
+
+
+    // --- GIVEN_OUT entries (inGivenOut): mirror the python
+    // `calculate_tokens_in_from_tokens_out` choreography — upscale the out
+    // amount (mulDown), `WeightedMath._calcInGivenOut` / `StableMath._calcInGivenOut`
+    // in scaled space, downscale UP (divUp), then add the swap fee LAST
+    // (`divUp(ONE - swapFee)`, matching FixedPoint `addSwapFeeAmount`).
+
+    function weightedInGivenOut0to1(
+        uint256 amountOut,
+        uint256 swapFee,
+        uint256 balance0,
+        uint256 balance1,
+        uint256 weight0,
+        uint256 weight1,
+        uint256 sf0,
+        uint256 sf1
+    ) external pure returns (uint256) {
+        if (amountOut == 0) return 0;
+        uint256 sbIn = balance0.mulDown(sf0);
+        uint256 sbOut = balance1.mulDown(sf1);
+        uint256 saOut = amountOut.mulDown(sf1);
+        uint256 saIn = WeightedMath._calcInGivenOut(sbIn, weight0, sbOut, weight1, saOut);
+        uint256 inRaw = saIn.divUp(sf0);
+        return inRaw.divUp(ONE.sub(swapFee));
+    }
+
+    function weightedInGivenOut1to0(
+        uint256 amountOut,
+        uint256 swapFee,
+        uint256 balance0,
+        uint256 balance1,
+        uint256 weight0,
+        uint256 weight1,
+        uint256 sf0,
+        uint256 sf1
+    ) external pure returns (uint256) {
+        if (amountOut == 0) return 0;
+        uint256 sbIn = balance1.mulDown(sf1);
+        uint256 sbOut = balance0.mulDown(sf0);
+        uint256 saOut = amountOut.mulDown(sf0);
+        uint256 saIn = WeightedMath._calcInGivenOut(sbIn, weight1, sbOut, weight0, saOut);
+        uint256 inRaw = saIn.divUp(sf1);
+        return inRaw.divUp(ONE.sub(swapFee));
+    }
+
+    function stableInGivenOut0to1(
+        uint256 amountOut,
+        uint256 swapFee,
+        uint256 amp,
+        uint256[MAX_STABLE_TOKENS] memory balances,
+        uint256[MAX_STABLE_TOKENS] memory scalingFactors,
+        uint256 tokenCount
+    ) external pure returns (uint256) {
+        if (amountOut == 0) return 0;
+        require(tokenCount >= 2 && tokenCount <= MAX_STABLE_TOKENS, "tokenCount");
+
+        uint256[] memory ub = new uint256[](tokenCount);
+        for (uint256 i = 0; i < tokenCount; i++) {
+            ub[i] = balances[i].mulDown(scalingFactors[i]);
+        }
+        uint256 saOut = amountOut.mulDown(scalingFactors[1]);
+        uint256 invariant = StableMath._calculateInvariant(amp, ub);
+        uint256 saIn = StableMath._calcInGivenOut(amp, ub, 0, 1, saOut, invariant);
+        uint256 inRaw = saIn.divUp(scalingFactors[0]);
+        return inRaw.divUp(ONE.sub(swapFee));
+    }
+
+    function stableInGivenOut1to0(
+        uint256 amountOut,
+        uint256 swapFee,
+        uint256 amp,
+        uint256[MAX_STABLE_TOKENS] memory balances,
+        uint256[MAX_STABLE_TOKENS] memory scalingFactors,
+        uint256 tokenCount
+    ) external pure returns (uint256) {
+        if (amountOut == 0) return 0;
+        require(tokenCount >= 2 && tokenCount <= MAX_STABLE_TOKENS, "tokenCount");
+
+        uint256[] memory ub = new uint256[](tokenCount);
+        for (uint256 i = 0; i < tokenCount; i++) {
+            ub[i] = balances[i].mulDown(scalingFactors[i]);
+        }
+        uint256 saOut = amountOut.mulDown(scalingFactors[0]);
+        uint256 invariant = StableMath._calculateInvariant(amp, ub);
+        uint256 saIn = StableMath._calcInGivenOut(amp, ub, 1, 0, saOut, invariant);
+        uint256 inRaw = saIn.divUp(scalingFactors[1]);
+        return inRaw.divUp(ONE.sub(swapFee));
+    }
+
+    function stableInGivenOut0to1V2(
+        uint256 amountOut,
+        uint256 swapFee,
+        uint256 amp,
+        uint256[MAX_STABLE_TOKENS] memory balances,
+        uint256[MAX_STABLE_TOKENS] memory scalingFactors,
+        uint256 tokenCount
+    ) external pure returns (uint256) {
+        if (amountOut == 0) return 0;
+        require(tokenCount >= 2 && tokenCount <= MAX_STABLE_TOKENS, "tokenCount");
+
+        uint256[] memory ub = new uint256[](tokenCount);
+        for (uint256 i = 0; i < tokenCount; i++) {
+            ub[i] = balances[i].mulDown(scalingFactors[i]);
+        }
+        uint256 saOut = amountOut.mulDown(scalingFactors[1]);
+        // V2: round_up = true for swaps (per the deployed contract).
+        uint256 invariant = _calculateInvariantDeployed(amp, ub, true);
+        uint256 saIn = StableMath._calcInGivenOut(amp, ub, 0, 1, saOut, invariant);
+        uint256 inRaw = saIn.divUp(scalingFactors[0]);
+        return inRaw.divUp(ONE.sub(swapFee));
+    }
+
+    function stableInGivenOut1to0V2(
+        uint256 amountOut,
+        uint256 swapFee,
+        uint256 amp,
+        uint256[MAX_STABLE_TOKENS] memory balances,
+        uint256[MAX_STABLE_TOKENS] memory scalingFactors,
+        uint256 tokenCount
+    ) external pure returns (uint256) {
+        if (amountOut == 0) return 0;
+        require(tokenCount >= 2 && tokenCount <= MAX_STABLE_TOKENS, "tokenCount");
+
+        uint256[] memory ub = new uint256[](tokenCount);
+        for (uint256 i = 0; i < tokenCount; i++) {
+            ub[i] = balances[i].mulDown(scalingFactors[i]);
+        }
+        uint256 saOut = amountOut.mulDown(scalingFactors[0]);
+        uint256 invariant = _calculateInvariantDeployed(amp, ub, true);
+        uint256 saIn = StableMath._calcInGivenOut(amp, ub, 1, 0, saOut, invariant);
+        uint256 inRaw = saIn.divUp(scalingFactors[1]);
+        return inRaw.divUp(ONE.sub(swapFee));
+    }
+
 }

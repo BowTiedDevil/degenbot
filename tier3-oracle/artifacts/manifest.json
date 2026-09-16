@@ -1,6 +1,6 @@
 {
   "BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json": {
-    "sha256": "7552ea194c85b6eab8ec26e2e13400aaf0fad0b9b7a940edb1f2c9ad1466db44",
+    "sha256": "83742ce3bfac9dbd21cc072023014614374b18d5a2855c79d08d1dc466c5e8fe",
     "source": "src-balancer/BalancerSwapOracleHarness.sol"
   },
   "CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json": {

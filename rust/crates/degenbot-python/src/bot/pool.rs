@@ -827,6 +827,40 @@ impl PyLiquidityPool {
         }
     }
 
+    /// Calculate the required input for an explicit token pair (N-token pools).
+    ///
+    /// The standalone-driver companion for the balanced GIVEN_OUT protocol arm
+    /// (see calculate_tokens_out_for_pair): the weighted/stable math reads only
+    /// the in/out pair of the registered identity.
+    ///
+    /// Raises:
+    ///     ValueError: On out-of-range/equal indices, the on-chain MAX_OUT_RATIO
+    ///         breach, or a uint256 intermediate overflow (the same
+    ///         on-chain-parity contracts as [calculate_tokens_out]).
+    #[pyo3(signature = (index_in, index_out, amount_out))]
+    fn calculate_tokens_in_for_pair(
+        &self,
+        py: Python<'_>,
+        index_in: usize,
+        index_out: usize,
+        amount_out: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
+        let outcome = self.with_state(py, |core| {
+            use degenbot_bot::bot_core::swap_simulation::simulate_balancer_pair_in_given_out;
+            simulate_balancer_pair_in_given_out(core, self.pool_id, index_in, index_out, amount)
+        });
+        match outcome {
+            Some(out) => {
+                let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+                Ok(bound.unbind())
+            }
+            None => Err(pyo3::exceptions::PyValueError::new_err(
+                "Pool swap math overflowed uint256 intermediate (on-chain getAmountIn SafeMath revert)",
+            )),
+        }
+    }
+
     /// Calculate the required input token amount for a given output amount.
     #[pyo3(signature = (zero_for_one, amount_out))]
     fn calculate_tokens_in(
