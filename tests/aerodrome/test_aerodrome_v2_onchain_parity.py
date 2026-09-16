@@ -219,14 +219,12 @@ def _run_parity(
             assert calc == oracle.value, f"{key}: helper={calc} contract={oracle.value}"
 
 
-@pytest.mark.base
 @pytest.mark.onchain_oracle
 def test_aerodrome_v2_volatile_get_amount_out(golden_factory) -> None:
     """Aerodrome V2 volatile (tBTC v2/WETH): local calc == golden(getAmountOut)."""
     _run_parity(golden_factory, _VOLATILE_CASSETTE)
 
 
-@pytest.mark.base
 @pytest.mark.onchain_oracle
 def test_aerodrome_v2_stable_get_amount_out(golden_factory) -> None:
     """Aerodrome V2 stable (DOLA/USDbC): local calc == golden(getAmountOut)."""

@@ -214,7 +214,6 @@ def _get_amounts_out_callable(
     return _call
 
 
-@pytest.mark.base
 @pytest.mark.onchain_oracle
 def test_pancakeswap_v2_router_get_amounts_out(golden_factory) -> None:
     """PancakeSwap V2 router: local calc == golden(getAmountsOut[-1])."""

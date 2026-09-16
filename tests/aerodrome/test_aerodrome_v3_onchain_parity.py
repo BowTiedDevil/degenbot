@@ -211,7 +211,6 @@ def _quote_callable(
     return _call
 
 
-@pytest.mark.base
 @pytest.mark.onchain_oracle
 def test_aerodrome_v3_cbeth_weth_quote(golden_factory) -> None:
     """Aerodrome V3 cbETH/WETH: local calc == golden(quoteExactInputSingle)."""
