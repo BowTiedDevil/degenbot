@@ -174,7 +174,9 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
 #: new paths once ``path_count`` reaches this value (each capped candidate is
 #: counted as a ``path-cap`` skip); the engine then reaches steady state with
 #: a bounded path universe so solve performance is observable without ongoing
-#: registration load. Override with DEGENBOT_MAX_PATHS (0 = uncapped).
+#: registration load. Override with DEGENBOT_MAX_PATHS (0 = uncapped). The
+#: code default and the running environment may diverge (devcontainers export
+#: their own value), so the pipeline announces the effective cap at startup.
 MAX_REGISTERED_PATHS = int(os.environ.get("DEGENBOT_MAX_PATHS", "100000"))
 
 
@@ -449,6 +451,11 @@ class PathRegistrationPipeline:
         py_engine = getattr(self.engine_registry, "engine", None)
         if py_engine is not None and hasattr(py_engine, "set_path_cap"):
             py_engine.set_path_cap(MAX_REGISTERED_PATHS or None)
+        bot_logger.info(
+            f"[build_paths] registered-path cap: "
+            f"{MAX_REGISTERED_PATHS or 'uncapped'} "
+            f"({'DEGENBOT_MAX_PATHS' if os.environ.get('DEGENBOT_MAX_PATHS') else 'code default'})"
+        )
 
         # Summary counters.
         self.path_count = 0
