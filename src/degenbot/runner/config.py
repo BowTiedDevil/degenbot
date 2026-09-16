@@ -16,6 +16,7 @@ legacy ``main()`` (``filter_thin_margin_results`` with its ``BPS_DENOM`` /
 """
 
 import dataclasses
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -166,6 +167,34 @@ def _parse_float_env(raw: str | None, default: float, name_suffix: str) -> float
         raise ValueError(msg) from None
 
 
+def _resolve_inject_executor_code(env: Mapping[str, str | None]) -> bool:
+    """Resolve the executor code-injection stance from one precedence chain.
+
+    Chain: OS env ``DEGENBOT_INJECT_EXECUTOR_CODE`` > the example dotenv's
+    ``INJECT_EXECUTOR_CODE`` > ``False``. Injection is opt-in: the default is
+    the deployed-executor posture a live run needs.
+
+    The bare name is refused in the OS environment: it historically fed a
+    second import-time constant with the opposite default, and a dotenv-only
+    override then produced a live bot that never submitted (the divergence
+    went to WARNING-only skip lines, not an error). A ValueError at config
+    load is cheap; a silently non-submitting live bot is not.
+    """
+    if "INJECT_EXECUTOR_CODE" in os.environ:
+        msg = (
+            "INJECT_EXECUTOR_CODE is retired as an OS environment variable. "
+            "Set DEGENBOT_INJECT_EXECUTOR_CODE instead (typed key "
+            "simulation.inject_executor_code, docs/rust-config-keys.md). "
+            "The example dotenv file may still carry INJECT_EXECUTOR_CODE as "
+            "its file-layer spelling of the same stance."
+        )
+        raise ValueError(msg)
+    typed = os.environ.get("DEGENBOT_INJECT_EXECUTOR_CODE")
+    if typed is not None:
+        return typed.lower() in ("1", "true", "on")
+    return (env.get("INJECT_EXECUTOR_CODE") or "0") == "1"
+
+
 def _checksum_or_empty(addr: str | None) -> str:
     """Checksum an address, returning "" for empty input.
 
@@ -304,7 +333,7 @@ class ArbitrageConfig:
             msg = "EXECUTOR_CONTRACT_ADDRESS is the zero address"
             raise ValueError(msg)
 
-        inject_executor_code = (env.get("INJECT_EXECUTOR_CODE") or "1") == "1"
+        inject_executor_code = _resolve_inject_executor_code(env)
         injected_address = _checksum_or_empty(
             env.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
         )

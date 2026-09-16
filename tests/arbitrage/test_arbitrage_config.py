@@ -75,6 +75,60 @@ class TestFromEnvFull:
         assert cfg.executor_address == cfg.injected_address
 
 
+class TestInjectExecutorCodeUnifiedResolution:
+    """One flag, one surface: the injection stance resolves once in from_env.
+
+    The retired arrangement read the bare name from two layers with opposite
+    defaults (dotenv dict here, module constant off os.environ elsewhere), so
+    a file-only override produced a bot that booted live but never submitted.
+    """
+
+    _LEGACY = "INJECT_EXECUTOR_CODE"
+    _TYPED = "DEGENBOT_INJECT_EXECUTOR_CODE"
+
+    def test_legacy_bare_os_env_name_raises_with_migration_message(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        monkeypatch.setenv(self._LEGACY, "1")
+        monkeypatch.delenv(self._TYPED, raising=False)
+        with pytest.raises(ValueError, match=self._TYPED):
+            ArbitrageConfig.from_env({}, live=False, permutation=None)
+
+    def test_typed_os_env_beats_dotenv_layer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.setenv(self._TYPED, "1")
+        env = _full_env() | {"INJECT_EXECUTOR_CODE": "0"}
+        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+        assert cfg.inject_executor_code is True
+
+    def test_dotenv_only_and_env_only_agree(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.delenv(self._TYPED, raising=False)
+        for value, expected in (("0", False), ("1", True)):
+            via_dotenv = ArbitrageConfig.from_env(
+                _full_env() | {"INJECT_EXECUTOR_CODE": value}, live=False, permutation=None
+            )
+            dotenv_free = {k: v for k, v in _full_env().items() if k != "INJECT_EXECUTOR_CODE"}
+            monkeypatch.setenv(self._TYPED, value)
+            via_env = ArbitrageConfig.from_env(dotenv_free, live=False, permutation=None)
+            monkeypatch.delenv(self._TYPED, raising=False)
+            assert via_dotenv.inject_executor_code == expected
+            assert via_env.inject_executor_code == expected
+
+    def test_unset_everywhere_defaults_to_no_injection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.delenv(self._TYPED, raising=False)
+        env = {k: v for k, v in _full_env().items() if k != "INJECT_EXECUTOR_CODE"}
+        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+        assert cfg.inject_executor_code is False
+
+
 class TestDryRunDefaults:
     _DRY_RUN_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     _DRY_RUN_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"

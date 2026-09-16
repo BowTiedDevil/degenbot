@@ -21,18 +21,6 @@ import os
 import pathlib
 from typing import TYPE_CHECKING, Any
 
-from degenbot.dispatch import (
-    DispatchCandidate,
-    SkippedRecord,
-    SubmitCandidate,
-    SubmitSkipReason,
-    SubmittedRecord,
-    TxSigner,
-    dispatch_and_submit,
-    dispatch_profitable,
-    merge_payload_results,
-)
-from degenbot.logging import logger as bot_logger
 from degenbot.runner._render import (
     _render_fot_tokens,
     _render_profit_logs,
@@ -46,6 +34,24 @@ if TYPE_CHECKING:
     from degenbot.dispatch import DispatchOutcome
     from degenbot.runner.bot_runner import _SessionState
 
+from degenbot.dispatch import (
+    DispatchCandidate,
+    SkippedRecord,
+    SubmitCandidate,
+    SubmitSkipReason,
+    SubmittedRecord,
+    TxSigner,
+    dispatch_and_submit,
+    dispatch_profitable,
+    merge_payload_results,
+)
+from degenbot.logging import logger as bot_logger
+
+# Cached relay submit providers (broadcast fan-out). Built lazily on the
+# first gate-clearing candidate; reused so streaming batches never re-dial
+# the builder endpoints per batch.
+_RELAY_SUBMIT_PROVIDERS: list[tuple[str, Any]] | None = None
+
 #: One raw engine-result row (path_id, optimal_input, profit, hop_outputs,
 #: consumed_inputs, solve_block, state_nonces) - the tuple shape the result
 #: batch stream delivers.
@@ -53,7 +59,6 @@ _RawResult = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[i
 
 from degenbot.runner._driver_constants import (  # ruff: ignore[module-import-not-at-top-of-file] - after the type alias block
     ERC6909_PROFIT,
-    INJECT_EXECUTOR_CODE,
     MIN_PROFIT_MARGIN_BPS,
     MIN_PROFIT_NET,
 )
@@ -408,6 +413,46 @@ async def _submit_batch_records(
     if async_alloy is None:
         bot_logger.error("[dispatch] async_w3 is not an Alloy-backed provider; cannot submit")
         return
+    # Relay submission seam (ADR-025 companion: same signed bytes, dedicated
+    # broadcast URL). When DEGENBOT_SUBMIT_RELAY_URL is set, broadcast through
+    # the revert-protecting private builder endpoint instead of the public
+    # mempool; reads (nonce, fees, access list fallback) stay on the local node.
+    relay_urls_raw = (
+        os.environ.get("DEGENBOT_SUBMIT_RELAY_URLS")
+        or os.environ.get("DEGENBOT_SUBMIT_RELAY_URL")
+        or ""
+    )
+    relay_urls = [u.strip() for u in relay_urls_raw.split(",") if u.strip()]
+    if relay_urls and outcome.gas_profitable:
+        global _RELAY_SUBMIT_PROVIDERS
+        if _RELAY_SUBMIT_PROVIDERS is None or [u for u, _ in _RELAY_SUBMIT_PROVIDERS] != relay_urls:
+            from degenbot.provider import AsyncAlloyProvider as _AsyncAlloyProvider
+
+            _RELAY_SUBMIT_PROVIDERS = [
+                (relay_url, await _AsyncAlloyProvider.create(rpc_url=relay_url))
+                for relay_url in relay_urls
+            ]
+            endpoints = ",".join(
+                relay_url.split("//", 1)[1].split("/", 1)[0]
+                for relay_url, _ in _RELAY_SUBMIT_PROVIDERS
+            )
+            bot_logger.info(f"[submit] relay fan-out: {endpoints}")
+        broadcast_providers = [
+            relay_provider.as_async_alloy() for _, relay_provider in _RELAY_SUBMIT_PROVIDERS
+        ]
+    else:
+        broadcast_providers = None
+    # Forensic capture (R3b fork-replay): record the exact calldata + the
+    # candidate economics for every gate-clearing candidate BEFORE broadcast,
+    # one INFO line, so any later tx can be replayed at its solve block.
+    solve_block = session.dispatcher.current_block
+    for _c in outcome.gas_profitable:
+        _cd = getattr(_c, "execute_calldata", None)
+        bot_logger.info(
+            f"[submit-arm] path={_c.path_id} solve_block={solve_block} "
+            f"net_wei={_c.net_profit} gas={_c.gas_used} "
+            f"calldata={_cd.hex() if _cd else '<unavailable>'}",
+        )
     signer = TxSigner(key=session.cfg.operator_private_key, chain_id=1)
     records = await dispatch_and_submit(
         candidates=outcome.gas_profitable,
@@ -417,7 +462,8 @@ async def _submit_batch_records(
         operator_nonce=operator_nonce,
         current_block=session.dispatcher.current_block,
         dry_run=session.cfg.dry_run,
-        inject_code=INJECT_EXECUTOR_CODE,
+        inject_code=session.cfg.inject_executor_code,
+        broadcast_providers=broadcast_providers,
     )
     for record in records:
         match record:
@@ -430,7 +476,7 @@ async def _submit_batch_records(
             case SkippedRecord(path_id=path_id, reason=SubmitSkipReason.INJECT_CODE):
                 bot_logger.warning(
                     f"[dispatch] path={path_id}: skipping submission - "
-                    "INJECT_EXECUTOR_CODE is active",
+                    "executor code injection is active (simulation.inject_executor_code)",
                 )
             case SkippedRecord(reason=SubmitSkipReason.BROADCAST_FAILED, detail=detail):
                 bot_logger.debug(f"Send failed: {detail or ''}")

@@ -308,6 +308,8 @@ crate::config_schema! {
     simulation SimulationConfig {
         sim_execute_gas [opt u64] = None, env = "DEGENBOT_SIM_EXECUTE_GAS", def = "(unset; EIP-7825 TX_GAS_LIMIT_CAP)",
             doc = "Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating).";
+        inject_executor_code [bool] = false, env = "DEGENBOT_INJECT_EXECUTOR_CODE", def = "false",
+            doc = "Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture).";
         sim_exit_on_fail [bool] = false, env = "DEGENBOT_SIM_EXIT_ON_FAIL", def = "false",
             doc = "Abort the process when a sim fails (the live trap used to capture V3-hop fixtures).";
         sim_serve_engine_state [bool] = false, env = "DEGENBOT_SIM_SERVE_ENGINE_STATE", def = "false",
@@ -446,6 +448,19 @@ mod tests {
         assert!(
             !SCHEMA.iter().any(|k| k.env == "DEGENBOT_FLEET"),
             "DEGENBOT_FLEET must be retired from the schema"
+        );
+    }
+
+    #[test]
+    fn inject_executor_code_is_declared_with_default_false() {
+        let key = SCHEMA
+            .iter()
+            .find(|k| k.toml_path == "simulation.inject_executor_code");
+        assert!(key.is_some(), "key must be declared exactly once");
+        assert_eq!(key.map(|k| k.env), Some("DEGENBOT_INJECT_EXECUTOR_CODE"));
+        assert!(
+            !BotConfig::default().simulation.inject_executor_code,
+            "production default is the deployed executor: injection is opt-in"
         );
     }
 

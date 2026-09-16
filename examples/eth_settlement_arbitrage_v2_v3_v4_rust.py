@@ -22,6 +22,7 @@ the shared constants) has moved to ``degenbot.runner`` (epic 5TSYKN).
 
 import asyncio
 import contextlib
+import os
 import sys
 import time
 
@@ -53,6 +54,21 @@ async def main() -> None:
         bot_logger.info("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS! ***\n")
 
     env = dotenv.dotenv_values("examples/mainnet.env")
+    # OS-env overlay: the launcher sources bot.env and exports the operator
+    # identity + executor address, so no secret ever lands in a workspace file.
+    # Injection stance is intentionally absent here: DEGENBOT_INJECT_EXECUTOR_CODE
+    # reaches from_env directly (its own env layer beats the dotenv), and the bare
+    # name is retired with a loud refusal.
+    for _k in (
+        "OPERATOR_ADDRESS",
+        "OPERATOR_PRIVATE_KEY",
+        "EXECUTOR_CONTRACT_ADDRESS",
+        "EXECUTOR_OWNER_ADDRESS",
+        "EXECUTOR_RUNTIME",
+    ):
+        _v = os.environ.get(_k)
+        if _v:
+            env[_k] = _v
     try:
         cfg = ArbitrageConfig.from_env(
             env,

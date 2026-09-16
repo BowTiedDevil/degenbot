@@ -54,8 +54,6 @@ from degenbot.runner._dispatch import _load_executor_runtime_bytecode
 from degenbot.runner._driver_constants import (
     ERC6909_PROFIT,
     ETH_MAINNET_ALLOWED_TOKENS,
-    INJECT_EXECUTOR_CODE,
-    INJECTED_EXECUTOR_ADDRESS,
     MULTICALL3_ADDRESS,
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
@@ -423,9 +421,9 @@ class BotRunner:
                 weth_address=WETH_ADDRESS,
                 pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
                 multicall3_address=MULTICALL3_ADDRESS,
-                inject_code=INJECT_EXECUTOR_CODE,
+                inject_code=cfg.inject_executor_code,
                 executor_runtime_bytecode=bytes.fromhex(runtime_code[2:]),
-                injected_address=INJECTED_EXECUTOR_ADDRESS if INJECT_EXECUTOR_CODE else None,
+                injected_address=cfg.injected_address if cfg.inject_executor_code else None,
             )
             # SIMPIPE2 T4: the inline-sim stance (`DEGENBOT_SOLVE_INLINE_SIM`)
             # needs the ENGINE hook installed from this session's sim config —

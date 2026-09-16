@@ -42,6 +42,26 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
     "0xc00e94Cb662C3520282E6f5717214004A7f26888",  # COMP
     "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
     "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",  # MATIC/POL
+    # Curated second-tier widening (this run's scope decision): established
+    # no-tax tokens with deep pools, so long-tail arbitrage candidates are
+    # offered to the solver instead of being filtered at crawl time.
+    "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",  # SHIB
+    "0x6982508145454Ce325dDbE47a25d4ec3d2311933",  # PEPE
+    "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",  # LDO
+    "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",  # AAVE
+    "0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F",  # SNX
+    "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",  # MKR
+    "0x912CE59144191C1204E64559FE8253a0e49E6548",  # ARB
+    "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",  # wstETH (non-rebasing wrap)
+    "0xae78736Cd615f374D3085123A210448E74Fc6393",  # rETH
+    "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",  # crvUSD
+    "0x853d955aCEf822Db058eb1555913474ccaD85CA7",  # FRAX
+    "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",  # USDe
+    "0x18084fbA666a33d37592fA2633fD49a74DD93a88",  # tBTC
+    "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",  # cbBTC
+    "0x2416092f143aa786967e909fda3cb38aac16d7e4",  # ezETH
+    "0x111111111117dC0aa78b770fA6A738034120C302",  # 1INCH
+    "0x4d224452801ACEd8B2F0aebE155379bb5D594381",  # APE
 }
 
 # Only build paths where intermediate hops use these tokens. Set to None to
@@ -86,18 +106,6 @@ PANCAKESWAP_V3_MAINNET_FACTORY = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
 # V4 PoolManager (Ethereum mainnet).
 UNISWAP_V4_POOL_MANAGER_ADDRESS = get_checksum_address("0x000000000004444c5dc75cB358380D2e3De08A90")
 
-# Executor code injection via the in-process revm sim. When active, the
-# cmd_executor runtime bytecode is injected at a fresh address through the
-# SimulateContext's inject_code / executor_runtime_bytecode fields, which the
-# engine's `apply_simulation_overrides` writes into the per-block CacheDB —
-# testing the V2/V3/V4-capable executor WITHOUT deploying it on mainnet.
-INJECT_EXECUTOR_CODE = os.environ.get("INJECT_EXECUTOR_CODE", "1") == "1"
-INJECTED_EXECUTOR_ADDRESS = get_checksum_address(
-    os.environ.get(
-        "INJECTED_EXECUTOR_ADDRESS",
-        "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1",
-    ),
-)
 
 # Cap on per-batch `[sim-fail]` lines emitted by the renderer. A thin-margin
 # revert storm can otherwise flood the log during a stalled head.

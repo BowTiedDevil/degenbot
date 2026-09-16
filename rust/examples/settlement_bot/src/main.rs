@@ -410,8 +410,23 @@ impl SettlementBotConfig {
         if executor_address == ZERO_ADDRESS {
             return Err("EXECUTOR_CONTRACT_ADDRESS is the zero address".to_string());
         }
-        let inject_executor_code =
-            env.get("INJECT_EXECUTOR_CODE").map_or("1", String::as_str) == "1";
+        // Injection stance resolves from one precedence chain (env > dotenv
+        // > deployed-default false), mirroring the Python runner's
+        // from_env: the bare dotenv/OsEnv name with the old implicit-true
+        // default used to overlap a second import-time read, and divergence
+        // silently vetoed live submission. A bare INJECT_EXECUTOR_CODE in the
+        // process environment is refused rather than re-admitted.
+        let inject_executor_code = if std::env::var_os("INJECT_EXECUTOR_CODE").is_some() {
+            return Err(
+                "INJECT_EXECUTOR_CODE is retired as an OS environment variable; set \
+                 DEGENBOT_INJECT_EXECUTOR_CODE (typed key simulation.inject_executor_code)"
+                    .to_string(),
+            );
+        } else if let Ok(typed) = std::env::var("DEGENBOT_INJECT_EXECUTOR_CODE") {
+            matches!(typed.to_ascii_lowercase().as_str(), "1" | "true" | "on")
+        } else {
+            env.get("INJECT_EXECUTOR_CODE").map_or("0", String::as_str) == "1"
+        };
         let injected_address = checksum_or_empty(
             env.get("INJECTED_EXECUTOR_ADDRESS")
                 .map_or(DEFAULT_INJECTED_ADDRESS, String::as_str),

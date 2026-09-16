@@ -188,6 +188,10 @@ impl SubmissionSeam for LiveSubmissionSeam<'_> {
                 current_block,
                 false,
                 self.inject_code,
+                // No relay fan-out: the standalone example submits to its
+                // configured provider only (the exercise's relay posture is
+                // Python-runner policy).
+                &[],
             )
             .await
             .map_err(|e| e.to_string())?;
