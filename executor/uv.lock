@@ -936,7 +936,7 @@ dev = [
 requires-dist = [
     { name = "eth-ape", extras = ["recommended-plugins"] },
     { name = "hypothesis" },
-    { name = "vyper", specifier = "==0.5.0a3" },
+    { name = "vyper", specifier = "==0.5.0b1" },
 ]
 
 [package.metadata.requires-dev]
@@ -2134,7 +2134,7 @@ wheels = [
 
 [[package]]
 name = "vyper"
-version = "0.5.0a3"
+version = "0.5.0b1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cbor2" },
@@ -2144,9 +2144,9 @@ dependencies = [
     { name = "pycryptodome" },
     { name = "wheel" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/38/c0/7ddb8d16e80631bf02f8cca51f428c0fbd3384b1f16fc35ed698b3eac326/vyper-0.5.0a3.tar.gz", hash = "sha256:a0712e52b4b155324b298191db74790ad91707bcffff25fa280fcf9b32f7acdb", size = 1348764, upload-time = "2026-06-14T18:19:03.255Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/b1/52b494bab667fc27b6ca004eff1c5afd5fa5ab2b56eda1247d707bad7bc3/vyper-0.5.0b1.tar.gz", hash = "sha256:c98ed60eaa1c04e079052ef5adf76ab1b5c581107b8dd1031d0d6dea50d0400e", size = 1450101, upload-time = "2026-09-01T10:03:25.076Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/b4/9600200f0980e9e057b6e776b5c940ff35d5b56a9da72115083863ea3b6c/vyper-0.5.0a3-py3-none-any.whl", hash = "sha256:b266e26f441582419350f8ba94abdbfce486c0b813c22e59e6ef92bc37747268", size = 617110, upload-time = "2026-06-14T18:19:01.868Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/49/9574463d87f9abf0e5ed56d3c7bc22dbd61d08a3f7cb7eaedfc298b36258/vyper-0.5.0b1-py3-none-any.whl", hash = "sha256:e2fe1e26e242f31210eabdbcc1ad54167046aa6c5d0ea4472d2ab3f0f2367cd1", size = 668309, upload-time = "2026-09-01T10:03:23.341Z" },
 ]
 
 [[package]]

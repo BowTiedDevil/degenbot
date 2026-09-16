@@ -25,5 +25,5 @@
       "source": "executor/contracts/cmd_executor.vy"
     }
   },
-  "vyper_version": "0.5.0a3"
+  "vyper_version": "0.5.0b1"
 }
