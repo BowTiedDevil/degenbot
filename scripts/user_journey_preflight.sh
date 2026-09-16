@@ -5,7 +5,10 @@
 # Usage: scripts/user_journey_preflight.sh [min_balance_eth]
 set -u
 cd "$(dirname "$0")/.."
-MIN_ETH="${1:-0.1}"
+# Floor is deploy-dominated (3.6M gas): 0.005 ETH suffices with base fee
+# <= ~1.3 gwei; the [FAIL] threshold defaults to that floor, and the base-fee
+# check below gates the deploy window.
+MIN_ETH="${1:-0.005}"
 FAIL=0
 ok()   { printf '[OK]   %s\n' "$1"; }
 bad()  { printf '[FAIL] %s\n' "$1"; FAIL=1; }
@@ -58,6 +61,18 @@ if [ -f "$DB" ]; then
   [ "$GAP" -lt 50000 ] && ok "DB snapshot gap $GAP blocks (< 50k)" || warn "DB snapshot gap $GAP blocks (boot backfill will be slow)"
 else
   warn "no DB at $DB — the agent will need to bootstrap pool snapshots"
+fi
+
+# 6b. base fee window (deploy is the bankroll-dominant cost)
+BF=$(cast base-fee --rpc-url "$RPC" 2>/dev/null || echo 0)
+DEPLOY_GAS=3595884
+if [ "$BF" != "0" ]; then
+  DEPLOY_WEI=$(python3 -c "print($DEPLOY_GAS * $BF)")
+  DEPLOY_ETH=$(cast from-wei "$DEPLOY_WEI" 2>/dev/null)
+  # warn if deploy alone would exceed the funded floor + leave < 0.002 buffer
+  [ "$(python3 -c "print(1 if $BF <= 1_300_000_000 else 0)")" = "1" ] \
+    && ok "base fee $(python3 -c "print(round($BF/1e9,3))") gwei — deploy ~$DEPLOY_ETH ETH (window open)" \
+    || warn "base fee $(python3 -c "print(round($BF/1e9,3))") gwei — deploy ~$DEPLOY_ETH ETH; wait for <= ~1.3 gwei"
 fi
 
 # 7. relay allowlist liveness (read-only chain-id probes)

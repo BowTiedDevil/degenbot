@@ -8,8 +8,11 @@ deterministically, repeatably, with evidence.
 ## 1. Pre-flight
 
 ```bash
-# fund the bot.env key first (recommended >= 0.1 ETH), then:
-scripts/user_journey_preflight.sh 0.1   # min balance arg, ETH
+# fund the bot.env key first (0.005 ETH is the measured floor: deploy is
+# 3,595,884 gas — bankroll-dominated; at base fee <= ~1.3 gwei deploy costs
+# <= ~0.0047 ETH and leaves a working buffer, and landed txs self-fund).
+# Deploy only inside the preflight's fee window.
+scripts/user_journey_preflight.sh        # default floor 0.005 ETH
 ```
 
 Exit 0 required. The script checks: RPC set + chain-id 1 + blocks advancing,
@@ -42,7 +45,7 @@ exact text:
 > The gas budget is [BUDGET] ETH. Begin with a written plan in
 > logs/user-journey/journal.md, then execute.
 
-Fill [TIMEBOX] (recommended 90–180) and [BUDGET] (recommended 0.05). Note the chosen
+Fill [TIMEBOX] (recommended 90–180) and [BUDGET] (recommended: funding minus deploy estimate — e.g. 0.0034 ETH when funded 0.005 at ~0.6 gwei; landed txs are self-funding or shielded, so the budget is a bug-catcher, not an operating allowance). Note the chosen
 guidance phase (A = minimal / B = hint ladder) in your own score sheet.
 
 ## 3. During the run

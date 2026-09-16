@@ -36,9 +36,10 @@ satisfied by construction (no anvil `--chain-id` problem).
 
 - `contracts/cmd_executor_bytecode.txt`: creation bytecode **16,277 bytes**.
 - `cast estimate --create` (WETH + PoolManager constructor args): **3,595,884 gas**.
-- At 0.64 gwei: ≈ **0.0023 ETH**. At a 20 gwei spike: ≈ 0.072 ETH — this can
-  exceed a cavalier budget. Mitigation: deploy when base fee is low, or set an
-  explicit `max_fee` cap via the deploy command.
+- At 0.64 gwei: ≈ **0.0023 ETH**. Fee-window rule: at ~1.39 gwei the deploy
+  alone consumes an entire 0.005 ETH fund. Mitigation: preflight's base-fee
+  gate (deploy only ≤ ~1.3 gwei), plus an explicit `max_fee` cap on the
+  deploy command.
 - Per-arb `execute()` ≈ 70–130k gas (repo gas benchmarks) ≈ 0.00005–0.0001 ETH
   at 0.64 gwei.
 

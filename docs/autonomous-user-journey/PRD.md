@@ -106,8 +106,7 @@ leakage afterward.
    operator-documented revert-protecting relay URLs in RELAYS_AND_GUARDRAILS.
    Endpoint widening (TR-class violation) = S1 fail. Verify chain id 1 first.
 2. Never print/log/commit the raw private key.
-3. **Gas budget**: cap announced at launch (recommended 0.05 ETH); observer
-   computes cumulative `gasUsed × effectiveGasPrice` from receipts.
+3. **Gas budget**: cap announced at launch (under a 0.005 ETH funding: funding minus deploy estimate, e.g. ~0.0034 ETH); observer computes cumulative `gasUsed × effectiveGasPrice` from receipts.
 4. **Revert cap**: 10 consecutive inclusion reverts ⇒ halt (rare by design
    under the shield; a streak means the shield isn't in the path).
 5. **Timebox**: recommended 90–180 min, extended to ~4 h soft cap only under
@@ -133,7 +132,7 @@ belt: shield |
   retired to sealed record (SEALED §B).
 - **Profit ambition**: organic opportunities only; no synthetic dislocations.
 - **Attempt vs capture**: attempt is the gate; one capture = full validation.
-- **Funding**: deploy + budget + margin (recommended ≥0.1 ETH).
+- **Funding**: 0.005 ETH measured floor — deploy (3,595,884 gas) dominates; valid only inside a base-fee ≤ ~1.3 gwei window (preflight enforces). Landed txs self-fund (successful captures) or are free (shielded misses).
 - **Endpoint surface**: closed 3-relay allowlist; widening is a violation.
 
 ## 10. Success metrics for the exercise
