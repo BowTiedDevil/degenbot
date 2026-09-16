@@ -11,7 +11,7 @@
 //! config-event dispatch). The apply step (`-3`'s `apply_aave_chunk_writes_on_conn`)
 //! consumes the emitted variants on the chunk `Transaction` (§3.4 atomicity).
 //!
-//! # 6SWY4R-2a scope (this file)
+//! # Scope (this file)
 //!
 //! The **10 enum-covered** config events (the ones with existing
 //! [`AaveChunkEvent`] variants + `apply_*_on_conn` fns):
@@ -26,7 +26,7 @@
 //!   (`getConfiguration(address)`).
 //! - The discount pre-pass: [`build_discount_snapshot`] (the 3-way hybrid).
 //!
-//! # 6SWY4R-2b scope (NOT this file — the 6 missing-variant events)
+//! # Out-of-scope references (the 6 missing-variant events live elsewhere)
 //!
 //! The 6 config events with NO `AaveChunkEvent` variant + NO apply fn (a
 //! §4.2-parity gap to land in -2b): `Upgraded` (incl. the GHO-discount
@@ -1100,7 +1100,7 @@ async fn dispatch_single_config_event(
     Ok(ev)
 }
 
-/// Resolve the 6 missing-variant config events (6SWY4R-2b). Extracted from
+/// Resolve the 6 missing-variant config events. Extracted from
 /// [`dispatch_single_config_event`] to keep that fn under the 100-line
 /// `clippy::too_many_lines` limit. Returns `Ok(None)` for non-missing-variant
 /// events (operation events) + for `ProxyCreated` when the `id` doesn't match
@@ -1422,7 +1422,7 @@ pub(crate) struct ProxyCreationResolution {
     pub(crate) revision: i64,
 }
 
-/// Resolve an `Upgraded` event (the riskiest piece — 6SWY4R-2b). Port of
+/// Resolve an `Upgraded` event (the riskiest piece). Port of
 /// `_process_scaled_token_upgrade_event` (event_handlers.py:848-940).
 ///
 /// 1. The event's `proxy_address` (the emitter) is matched against existing

@@ -371,7 +371,7 @@ pub(super) struct ChunkCoreReport {
 mod tests {
     use super::*;
 
-    // ── 6SWY4R-3: the `group_logs_by_tx` unit tests (the loop's pure
+    // ── the `group_logs_by_tx` unit tests (the loop's pure
     //    tx-grouping seam — mirrors the Python `_build_transaction_contexts`).
 
     /// Build a minimal `alloy::rpc::types::Log` with the given tx hash,

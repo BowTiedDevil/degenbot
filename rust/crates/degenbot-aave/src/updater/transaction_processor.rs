@@ -461,7 +461,7 @@ fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Op
         // (address) at data word 0, with `amount` at word 1; Repay, RepayWithAtokens,
         // and Withdraw encode `amount` at word 0. Using word 0 uniformly here
         // produced SENDER balances equal to the user ADDRESS interpreted as
-        // a U256 (the "~10^69 oddity" — see task NMWPI6).
+        // a U256 (the "~10^69 oddity").
         match op.operation_type {
             OperationType::Supply | OperationType::Borrow | OperationType::GhoBorrow => {
                 extract_pool_amount_word1(pool_event)

@@ -215,7 +215,7 @@ pub struct ScaledTokenEvent<'a> {
     /// The source log (mirror of `ScaledTokenEvent.event`).
     pub log: &'a Log,
     /// Field-by-field decoded event data (the Mint/Burn/BalanceTransfer/
-    /// `Erc20Transfer` struct from ECFB5C's `aave_event_decoder`).
+    /// `Erc20Transfer` struct from `degenbot_decoders::aave_event_decoder`).
     pub decoded: ScaledTokenEventData,
     /// The classification (mirror of `ScaledTokenEvent.event_type`).
     pub event_type: ScaledTokenEventType,
@@ -246,7 +246,7 @@ pub struct ScaledTokenEvent<'a> {
 
 /// Field-by-field decoded scaled-token event data (the discriminator for the
 /// 4 emission shapes — Mint/Burn/BalanceTransfer/Transfer — re-extracted from
-/// the ECFB5C `DecodedAaveEvent` variants). Owned data (no lifetime).
+/// the upstream `DecodedAaveEvent` variants). Owned data (no lifetime).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScaledTokenEventData {
     /// `ScaledTokenMint` raw fields.

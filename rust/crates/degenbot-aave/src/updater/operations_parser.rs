@@ -165,7 +165,7 @@ pub struct TransactionOperations<'a> {
 
 impl<'a> TransactionOperationsParser<'a> {
     /// Construct a parser with the per-tx context pre-resolved by the caller
-    /// (the orchestrator — 6SWY4R — does the GHO-token / treasury resolution
+    /// (the orchestrator does the GHO-token / treasury resolution
     /// before instantiation; the parser doesn't RPC).
     /// # Errors
     /// Returns [`ParseError::Substrate`] if the pool-revision lookup fails.
@@ -236,7 +236,7 @@ impl<'a> TransactionOperationsParser<'a> {
     // ── the decode wrappers (mirror `_decode_mint/burn/balance_transfer/transfer_event`) ──
 
     /// Mirrors `_decode_mint_event`. Decodes a `ScaledTokenMint` log via
-    /// ECFB5C + classifies by emitter-address → [`ScaledTokenEventType`]
+    /// the event decoder + classifies by emitter-address → [`ScaledTokenEventType`]
     /// (`GhoDebtMint` if the emitter is `gho_vtoken_address`; `CollateralMint` if
     /// aToken; `DebtMint` if vToken).
     fn decode_mint_event(
@@ -2490,7 +2490,7 @@ fn _amounts_match_eq(a: U256, b: U256) -> bool {
 // ── pool-event decode helpers ─────────────────────────────────────────────
 //
 // Tiny structure-only decoders for Pool-event fields the parser-matching needs
-// (user + reserve address + amount). These bypass ECFB5C's full decode (which
+// (user + reserve address + amount). These bypass the full decode (which
 // returns many fields the parser doesn't use) — direct topic/data slicing for
 // the literal fields every builder needs.
 

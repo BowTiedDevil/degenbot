@@ -47,9 +47,9 @@
 //!
 //! The fix is structural: route the WHOLE chunk's writes through ONE
 //! `Transaction` via the `_on_conn` variants of the `write.rs` apply/get-or-
-//! create fns (extracted in CXRGX4). This crate owns nothing about the
+//! create fns. This crate owns nothing about the
 //! connection lifecycle — the caller (the `run_aave_update` orchestrator,
-//! sibling `6SWY4R`) opens ONE `DegenbotDb`, begins ONE `Transaction`, calls
+//! (the orchestrator) opens ONE `DegenbotDb`, begins ONE `Transaction`, calls
 //! [`apply_aave_chunk_writes_on_conn`], and commits.
 //!
 //! # The TWO roles the [`updater`] module plays in the epic

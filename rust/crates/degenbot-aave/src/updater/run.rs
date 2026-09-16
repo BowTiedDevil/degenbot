@@ -22,7 +22,7 @@ pub use apply::{
 use fetch::{bootstrap_pool_contracts, build_fetch_spec};
 use process::{group_logs_by_tx, process_chunk_on_conn};
 
-// ── the outer chunk loop (RPC-bound; the §4.4 atomicity owner — 6SWY4R-3) ──
+// ── the outer chunk loop (RPC-bound; the §4.4 atomicity owner) ──
 
 use std::collections::HashSet;
 use std::path::Path;

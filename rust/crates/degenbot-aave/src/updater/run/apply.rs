@@ -13,7 +13,7 @@ use rusqlite::Connection;
 /// Each variant carries the resolved ids/fields the matching
 /// `DegenbotDb::apply_*_on_conn` fn consumes — the RPC fetch + decode + the
 /// `get_or_create_user` / `get_asset_by_token_type` resolution happen in the
-/// `run_aave_update` orchestrator (sibling `6SWY4R`, NOT this task), which
+/// `run_aave_update` orchestrator, which
 /// constructs this enum. This core does NO RPC, NO ABI decode, NO
 /// address→id resolution.
 ///
@@ -1057,7 +1057,7 @@ mod tests {
     // ── UR7QNL: the two direct-write Pool events ────────────────────────────
 
     /// Seed the erc20 parents (underlying + aToken + vToken) + return the
-    /// seeded asset's id. Mirrors the CXRGX4 `fresh_db` seeding shape.
+    /// seeded asset's id. Mirrors the Aave-writer `fresh_db` seeding shape.
     fn seed_asset_row(db: &DegenbotDb, asset_pk: i64) {
         let conn = db.lock();
         for id in 1..=3 {
@@ -1267,7 +1267,7 @@ mod tests {
         // ReserveDataUpdated targets an asset_id that has NO row → the UPDATE
         // affects zero rows → Err(MissingRow) → the caller drops the tx →
         // rollback. Asserts the stamp does NOT advance + no stray write landed.
-        // This is the Pool-event counterpart to the CXRGX4 FK-violation
+        // This is the Pool-event counterpart to the Aave-writer FK-violation
         // rollback test (the apply fns are idempotent get-or-create, so the
         // deterministic injected failure is the MissingRow path here).
         let db = fresh_db();
@@ -1715,7 +1715,7 @@ mod tests {
     // ── RYKCC4 (SPECIALAPPLY): GHO + stkAAVE + Rewards apply fns ──────────
 
     /// Seed a bare `aave_v3_users` row at `user_id` (in market 1) with the
-    /// CXRGX4 seeding defaults (`e_mode=0`, `gho_discount=0`, `stk_aave_balance=NULL`).
+    /// Aave-writer seeding defaults (`e_mode=0`, `gho_discount=0`, `stk_aave_balance=NULL`).
     /// Lighter than `seed_collateral_position_with_balance` (no erc20/asset
     /// parents) — the GHO/stkAAVE tests don't need them.
     fn seed_aave_v3_user(db: &DegenbotDb, user_id: i64) {
@@ -1903,7 +1903,7 @@ mod tests {
     fn apply_aave_chunk_writes_on_conn_stk_aave_transfer_from_zero_increments_recipient() {
         let db = fresh_db();
         seed_aave_v3_user(&db, 1);
-        // Pre-set stk_aave_balance = NULL (CXRGX4 default — a never-touched user).
+        // Pre-set stk_aave_balance = NULL (the Aave-writer default — a never-touched user).
 
         // Transfer(0x0 → user) — the mint-from-zero leg (Staked pattern).
         let events = vec![AaveChunkEvent::StkAaveTransfer {
