@@ -51,6 +51,7 @@ async def test_broadcast_failure_renders_at_warning(monkeypatch: pytest.MonkeyPa
         async_w3=types.SimpleNamespace(as_async_alloy=lambda: object()),
         cfg=types.SimpleNamespace(
             operator_private_key="0x" + "a" * 64,
+            chain_id=1,
             dry_run=False,
             inject_executor_code=False,
         ),
