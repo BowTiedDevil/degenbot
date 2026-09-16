@@ -11,7 +11,7 @@
 //! - [`SwapEventCaptureInspector`] — V2 `Sync` / V3 `Swap` / V4 `Swap` LOG
 //!   capture + decode, replacing the onchain-recompute pipeline.
 //!
-//! # Composition (spike KCKGP4, finding Q2)
+//! # Composition (spike, finding Q2)
 //!
 //! revm's `Inspector` impl for `(L, R)` delegates every hook to both members.
 //! The spike proved `(AccessListCollector, ProbeInspector)` composes on one

@@ -1,7 +1,7 @@
 //! The event surface this crate emits into the stage-machine runtime.
 //!
 //! `WsEvent` (the `block_pump`'s merged-stream enum) lived here in all but name
-//! since the MROOY7 extraction: a merged `newHeads` + `logs` stream whose log
+//! since the bot-core extraction: a merged `newHeads` + `logs` stream whose log
 //! arm is now the structured [`PoolEvent`] `{ epoch, log_index, payload }`
 //! instead of a bare alloy `Log` — the emission shape ingestion promises to
 //! the runtime (and to any pure-Rust consumer that subscribes upstream of

@@ -1,5 +1,5 @@
 //! EIP-1559 base-fee math (relocated from the retired single-function crate
-//! `degenbot-evm-math`, task `MYOUJ6`).
+//! `degenbot-evm-math`).
 //!
 //! Pure-integer EVM math ported from the Python reference
 //! (`src/degenbot/calculations/evm_math.py`), which is retained as the **parity

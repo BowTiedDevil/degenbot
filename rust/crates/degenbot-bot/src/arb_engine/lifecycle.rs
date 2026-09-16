@@ -1,6 +1,6 @@
 //! Path registration, buffer management, and engine accessors.
 //!
-//! 5TBT7L T6: the inherent `impl ArbitrageEngine` block was dissolved. Every
+//! The inherent `impl ArbitrageEngine` block was dissolved. Every
 //! member is now a machine-direct free function over `&ArbitrageEngine` /
 //! `&mut ArbitrageEngine`; the stage surface (`EngineStages`) and the in-crate
 //! tests both call these directly, so no delegating inherent engine method
@@ -78,7 +78,7 @@ pub(crate) fn install_engine_stances(
     // cfg.solve.solve_resolve_par (the KAHU5W construction-stance
     // trajectory); no installer store remains here.
 }
-/// PRG-4 / IRUMXD: `PathRegistrationError` moved to
+/// PRG-4: `PathRegistrationError` moved to
 /// [`super::path_registry`] (ADR-045 `C4UAFP`); re-exported here at its old
 /// path so the `PyO3` mapper (`degenbot-python`) and white-box tests compile
 /// unchanged.
@@ -179,7 +179,7 @@ pub(crate) fn last_processed_block(engine: &ArbitrageEngine) -> Option<u64> {
 /// Set the last processed block manually (machine-direct cursor poke).
 ///
 /// Called by Python after backfill completes, so the Rust pump knows not to
-/// re-process the backfilled range. 6XB6NJ: a monotone advance on the block
+/// re-process the backfilled range. A monotone advance on the block
 /// cursor — a lower value cannot pull the processed boundary backwards.
 pub(crate) fn set_last_processed_block(engine: &mut ArbitrageEngine, block: u64) {
     engine.cycle.cursor.advance_processed(block);
@@ -238,7 +238,7 @@ pub(crate) fn v4_pool_count(engine: &ArbitrageEngine) -> usize {
 pub(crate) fn path_count(engine: &ArbitrageEngine) -> usize {
     engine.registry.len()
 }
-/// PRG-4 / IRUMXD: the engine path registry owns the registered-path cap (was
+/// PRG-4: the engine path registry owns the registered-path cap (was
 /// the Python `MAX_REGISTERED_PATHS` counter). `None` = unlimited. The
 /// `PyO3` driver sets it once at boot from the typed config value.
 pub(crate) fn set_path_cap(engine: &mut ArbitrageEngine, cap: Option<usize>) {

@@ -326,7 +326,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
         let combined = stream::iter(ws_events).boxed();
         pump.run_test_loop(combined, min_block - 1).await;
 
-        // Late registration for role-1 pools (the FUWYUR shape), then the
+        // Late registration for role-1 pools (the staged-mint shape), then the
         // standard staged-application seam for every pool.
         for (i, addr) in addrs.iter().enumerate() {
             if roles[i] != 1 {
@@ -408,7 +408,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
 /// registration — but `LogDispatcher::dispatch`'s APPLY-MISS funnel
 /// early-returns BEFORE reaching `apply_v3_liquidity_update`'s
 /// unregistered-buffering arm, so the event never reaches the buffer and
-/// the pool goes Live permanently missing it (UO3JM4 desync class).
+/// the pool goes Live permanently missing it (the desync class).
 /// Uses the exact on-chain numbers from the trip: pool 0x88e6A0c2 tick
 /// 193370 liquidityGross `244_132_769_082_101_7` -> `256_007_624_942_870_5`.
 #[tokio::test]
@@ -484,7 +484,7 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
     assert_eq!(
         tick_data.get(&7).expect("tick 7 seeded").liquidity_gross,
         alloy::primitives::U128::from(SEED_GROSS + MINT_DELTA),
-        "FUWYUR: the live-window Mint for a not-yet-registered pool must \
+        "the live-window Mint for a not-yet-registered pool must \
              reach the pump buffer and land via the registration drain/flush. \
              RED means dispatch's APPLY-MISS funnel silently dropped it."
     );
@@ -498,7 +498,7 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
 /// the observed symptom: a pin at `update_block = N` requires the
 /// tombstone to have fired (cutoff = N), and the tombstone can only fire
 /// AFTER all of N's logs were dispatched (else `LateForward` — the benign
-/// late-admit drop, HJ5HWF). So all
+/// late-admit drop). So all
 /// delivered Mints@N are drained together. The missing Mint must have
 /// been never delivered (scenario B).
 #[tokio::test]

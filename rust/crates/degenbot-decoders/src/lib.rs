@@ -26,16 +26,15 @@
 //! - [`v4_swap_decoder`] — V4 `Swap` (from `PoolManager`).
 //! - [`v4_modify_liquidity_decoder`] — V4 `ModifyLiquidity` (signed delta; replaces V3 Mint/Burn).
 //! - [`pool_created_decoder`] — V2/V3/V4 `PoolCreated`/`Initialize` events
-//!   (the pool-discovery events the chunk-loop fetcher consumes; epic
-//!   `2SFL6I`, task SBICJJ). Pure leaf — produces decoder-native structs;
+//!   (the pool-discovery events the chunk-loop fetcher consumes). Pure leaf — produces decoder-native structs;
 //!   mapping to `degenbot-db` row-input types is the chunk loop's job.
 //! - [`aave_event_decoder`] — Aave V3 events (Supply/Borrow/Repay/Withdraw/
 //!   LiquidationCall/MintedToTreasury/ReserveDataUpdated/ScaledToken Mint-Burn-
 //!   BalanceTransfer/EMode/Discount/ProxyCreated/Upgraded/ERC20 Transfer —
 //!   34 events across 8 decoded families). The dispatch fn
 //!   [`aave_event_decoder::decode_aave_log`] returns a `DecodedAaveEvent`;
-//!   epic `AZGJUN`, task `ECFB5C`. Pure leaf — emits raw `Address`/`U256`
-//!   fields; id resolution is the orchestrator's job.
+//!   pure leaf — emits raw `Address`/`U256` fields; id resolution is the
+//!   orchestrator's job.
 //! - [`revert`] — revert-data taxonomy (`classify_revert`): bytes → stable
 //!   label for the `[sim]` summary + engine revert tallies.
 //! - [`uniswap_tick_range`] — the shared Uniswap V3 tick bounds

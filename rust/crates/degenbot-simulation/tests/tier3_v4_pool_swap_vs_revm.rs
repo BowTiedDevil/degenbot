@@ -281,7 +281,7 @@ fn dense_v4_state(
 }
 
 /// Build a fully-tracked V4 state from an **arbitrary** liquidity distribution
-/// — the V4 twin of `tier3_v3_common::build_arbitrary_v3_state`. Folds the
+/// the V4 twin of `tier3_v3_common::build_arbitrary_v3_state`. Folds the
 /// same `ArbV3Position` layout into `tick_data` (each `lower` +liq gross/net,
 /// each `upper` +gross/−net), derives active liquidity as the sum covering
 /// `current_tick`, and snaps every boundary to the `tick_spacing` grid via the
@@ -354,7 +354,7 @@ fn build_arbitrary_v4_state(
 }
 
 // ---------------------------------------------------------------------------
-// Dense-tick swap oracle (V4 leg of 2LTKVO). Same fixture philosophy as V3.
+// Dense-tick swap oracle (the V4 leg). Same fixture philosophy as V3.
 // ---------------------------------------------------------------------------
 
 /// ABI-encode the V4 harness `swap(bool,int256,uint160)` call.
@@ -945,7 +945,7 @@ fn v4_pool_arbitrary_liquidity_matches_sim_proptest() {
                 // Positions sit entirely above OR entirely below `cur` (a sign
                 // picks the side and `min`/`max` keep lower < upper), so NO
                 // position covers the current tick and the seed liquidity is 0
-                // — the real mainnet pattern (liquidity withdrawn, no swap): a
+                // the real mainnet pattern (liquidity withdrawn, no swap): a
                 // swap must walk the empty region back into remaining liquidity.
                 let empty_positions = {
                     let band = (
@@ -1386,7 +1386,7 @@ fn fee1_protocol_fee_state(protocol_fee: u32, lp_fee: u32) -> V4PoolState {
     state
 }
 
-/// **UO3JM4 protocol-fee discriminator** — the exact gap the fee-1 live record
+/// **Protocol-fee discriminator** — the exact gap the fee-1 live record
 /// leaves open. The fixture's divergence pool carried BOTH a tiny static fee
 /// (`lp_fee=50`) AND a non-zero protocol override (`protocol_fee=0xd00d` =
 /// 13 pips each direction). Every pre-existing tier-3b V4 oracle seeded

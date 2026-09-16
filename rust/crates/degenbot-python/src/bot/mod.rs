@@ -144,7 +144,7 @@ pub struct PyBot {
     /// engine's snapshot/solve slices read.
     pump: parking_lot::Mutex<Option<Arc<degenbot_bot::arb_engine::EngineDriver>>>,
     /// Cached read-only `SnapshotDb` handle armed at `load_snapshot_from_db`
-    /// time (Decisions 5 (B) + 9 (A); epic `XEANMB`). `None` for cold-start
+    /// time (Decisions 5 (B) + 9 (A)). `None` for cold-start
     /// (no DB) or before the snapshot load is attempted. The registration-path
     /// `PyO3` functions clone this Arc to feed `&dyn TickMapDb` to the tick-map
     /// assembly helper's Db arm (`bot_core::tick_assembly`).
@@ -155,7 +155,7 @@ pub struct PyBot {
     /// shares one frozen DB snapshot across `build_paths` (WAL MVCC).
     /// `close_snapshot_tx()` commits the tx at end of `build_paths`.
     db: parking_lot::Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>,
-    /// PRG-1 / IRUMXD: the engine-internal single-flight build table —
+    /// PRG-1: the engine-internal single-flight build table —
     /// claims collapsed into the Rust build path (was the `PoolBuildClaims`
     /// FFI peer + the Python `(family, key)` claim driver).
     flights: build_flights::BuildFlights,
@@ -221,7 +221,7 @@ impl PyBot {
     }
 
     /// The cached read-only `SnapshotDb` handle armed by
-    /// `load_snapshot_from_db` (Decision 5 (B) / task A6J5HG + epic `XEANMB`),
+    /// `load_snapshot_from_db` (Decision 5 (B)),
     /// or `None` on the cold-start path (no DB configured, or the snapshot
     /// load hasn't run, or `close_snapshot_tx()` dropped it). The registration-
     /// path `PyO3` functions (`assemble_v3_tick_map` / `assemble_v4_tick_map`)
@@ -234,7 +234,7 @@ impl PyBot {
         self.db.lock().clone()
     }
 
-    // ===================== PRG-1 / IRUMXD build-flight seam ==================
+    // ===================== PRG-1 build-flight seam ==================
 
     /// Re-raise a single-flight peer's published failure: the exception value
     /// the leader raised, converted back into a `PyErr` under the caller's
@@ -243,7 +243,7 @@ impl PyBot {
         pyo3::PyErr::from_value(exc.into_bound(py).into_any())
     }
 
-    /// PRG-2 / IRUMXD: record one registration-candidate skip into the
+    /// PRG-2: record one registration-candidate skip into the
     /// `degenbot.registration.skips` metric family (Rust meter). `reason`
     /// is collapsed onto a small closed label set (instruments cardinality
     /// discipline) — per-error-class detail stays in the greppable
@@ -734,7 +734,7 @@ impl PyBot {
         Ok(())
     }
 
-    /// PRG-2 / IRUMXD: the Python driver records registration skips into
+    /// PRG-2: the Python driver records registration skips into
     /// the Rust `degenbot.registration.skips` meter family; the former
     /// Python `SkipGate` memo is retired — immutable V4 admission verdicts
     /// are refused pre-RPC by the core registration gate. No `self` state —
@@ -941,7 +941,7 @@ impl PyBot {
         Ok(pool_id)
     }
 
-    /// Build + register a V2 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
+    /// Build + register a V2 pool through the Rust `PoolBuilder` (
     /// delegation adapter). Runs the core async builder — ALL the io
     /// choreography in Rust: immutable data, reserves, DEX-resolution incl.
     /// the Camelot branch, CREATE2 verify, deployer/init-hash, narrow reserves
@@ -1032,7 +1032,7 @@ impl PyBot {
     }
 
     /// Build + register an Aerodrome V2 pool through the Rust `PoolBuilder`
-    /// (SSSXG6 / SSD2XI delegation adapter) — the Aerodrome twin of
+    /// (the delegation adapter) — the Aerodrome twin of
     /// [`Self::build_v2_pool`]. The core `builder::build_aerodrome_v2` runs the
     /// full `stable()`+`getFee()` + reserves + CREATE2 choreography and returns
     /// a [`RegisterAerodromeV2PoolParams`]; this adapter registers it into
@@ -1084,7 +1084,7 @@ impl PyBot {
     }
 
     /// Build + register a Balancer V2 **weighted** pool through the Rust
-    /// `PoolBuilder` (SSSXG6 delegation adapter). The core
+    /// `PoolBuilder` (the delegation adapter). The core
     /// `builder::build_balancer_weighted` runs the full `getPoolId` + Vault
     /// `getPoolTokens` + `getSwapFeePercentage` + `getNormalizedWeights` +
     /// bytecode `PowVersion` detect + `decimals()` scaling-factor choreography
@@ -1138,7 +1138,7 @@ impl PyBot {
     }
 
     /// Build + register a Balancer V2 **stable** pool through the Rust
-    /// `PoolBuilder` (SSSXG6 delegation adapter). The core
+    /// `PoolBuilder` (the delegation adapter). The core
     /// `builder::build_balancer_stable` runs the `getPoolId` + Vault
     /// `getPoolTokens` + `getSwapFeePercentage` + `getAmplificationParameter`
     /// + BPT-detect + rate-provider/rate + scaling-factor + `invariant_version`
@@ -1198,7 +1198,7 @@ impl PyBot {
         )
     }
 
-    /// Build + register a V3 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
+    /// Build + register a V3 pool through the Rust `PoolBuilder` (
     /// delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
     /// map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the
     /// IKGQ6F quarantine→verify lifecycle; `db=false` forces the Chain-arm
@@ -1310,7 +1310,7 @@ impl PyBot {
         )
     }
 
-    /// Build a V4 pool via the Rust `PoolBuilder` (T4 / 4GQWZ4), registered
+    /// Build a V4 pool via the Rust `PoolBuilder` ), registered
     /// into `BotState` via `register_v4_pool`.
     ///
     /// V4 identity is **caller-supplied** (mirrors `register_v4_pool`: the
@@ -1943,7 +1943,7 @@ impl PyBot {
     }
 
     /// Assemble a V3 pool's tick map from the stored DB snapshot (`Store → Db`
-    /// precedence — epic UHPXSD / Decision 6 (B)). Returns
+    /// precedence — Decision 6 (B)). Returns
     /// `(tick_data, coverage)` on a hit, `None` on a miss (caller runs Branch 3
     /// sparse RPC and registers inline). Raises `RuntimeError` on a Db read
     /// failure — Decision 8 (A): loud error over silent degrade.
@@ -3274,7 +3274,7 @@ mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
     use super::*;
 
-    /// PRG-1 / IRUMXD registry unification: `build_v2_pool` answers an
+    /// PRG-1 registry unification: `build_v2_pool` answers an
     /// address that is already registered in `BotState` (the registry of
     /// record) WITHOUT replaying the RPC choreography — proven by giving it
     /// NO `ConstructionIo` at all: the legacy path raised
@@ -3671,7 +3671,7 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
     }
 
-    /// T3 (OMDCIY, epic OU4SYZ): a Tracked snapshot whose bitmap and tick
+    /// T3: a Tracked snapshot whose bitmap and tick
     /// rows disagree (bit 2 set, row only at tick 10 / bit 1) must be
     /// REJECTED at intake with a typed error (Python `ValueError`), not
     /// registered. Sparse / Chain-arm data is indeterminate and never

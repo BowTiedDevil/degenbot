@@ -2,14 +2,14 @@
 //!
 //! The chunk-loop fetcher decodes raw Aave V3
 //! event logs into typed `DecodedAaveEvent` variants (raw `Address`/`U256`
-//! fields — no id resolution; the orchestrator `6SWY4R` resolves
+//! fields — no id resolution; the orchestrator resolves
 //! address→id via `get_or_create_*_on_conn` within the chunk transaction).
 //! This module is the pure-Rust decode leaf — alloy-only, no `pyo3`/`tokio`/
 //! `degenbot-core`/`degenbot-abi` (the same constraint as
 //! [`crate::pool_created_decoder`] + [`crate::v3_mint_burn_decoder`]).
 //!
 //! The returned `DecodedAaveEvent` variants align by-name with the
-//! `AaveChunkEvent` variants from CXRGX4/UR7QNL/5Z3QQ2/RYKCC4 — the decoder
+//! `AaveChunkEvent` variants — the decoder
 //! emits raw fields (addresses + U256 amounts + the emitter address); the
 //! orchestrator/parser maps them to resolved ids before constructing
 //! `AaveChunkEvent` variants the apply layer consumes.
@@ -519,7 +519,7 @@ pub struct AaveV3ScaledTokenBalanceTransferEvent {
 /// for the canonical values (degenbot doesn't trust the on-chain event
 /// emission for the config bits, since a pool upgrade can emit stale values).
 /// The decoder emits the event fields verbatim; the orchestrator's
-/// `_process_collateral_configuration_changed_event` port (CXRGX4's purview)
+/// `_process_collateral_configuration_changed_event` port)
 /// decides whether to use them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AaveV3CollateralConfigurationChangedEvent {

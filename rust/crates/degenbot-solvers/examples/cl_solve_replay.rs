@@ -116,7 +116,7 @@ fn main() {
     let regen_golden = std::env::var("DR_REPLAY_REGEN").is_ok();
     let mut regen_queue: Vec<(usize, Value)> = Vec::new();
     let mut regen_count = 0u64;
-    // Gate A/B rows (SU7MAE N6NBUY): (path_id, golden JSON, derived bound).
+    // Gate A/B rows : (path_id, golden JSON, derived bound).
     let mut gate_rows: Vec<(u64, Value, Option<U256>)> = Vec::new();
     let mut n_golden_ok = 0u64;
     // Null-golden (gate-skipped) captures, loop-18 T4: excluded from the
@@ -184,7 +184,7 @@ fn main() {
         }
         let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
 
-        // Gate A/B (SU7MAE N6NBUY): derive the profit-envelope bound and time
+        // Gate A/B: derive the profit-envelope bound and time
         // it, so the end-of-run floor analysis can name would-be skips and the
         // derivation overhead per path.
         let views: Vec<Option<HopMath<'_>>> =
@@ -442,7 +442,7 @@ fn main() {
             heaviest = (med, pid);
         }
     }
-    // Gate floor analysis (SU7MAE N6NBUY): for each candidate min_profit
+    // Gate floor analysis: for each candidate min_profit
     // floor, how many captured paths would the gate have skipped, and would
     // ANY skip have discarded a path whose golden profit clears the floor
     // (a false skip — must be zero by soundness)?

@@ -310,7 +310,7 @@ impl PyDispatcher {
     }
 
     /// Look up the recorded timestamp for `block` (the in-process `evm` sim
-    /// uses it as the EVM `block.timestamp` — task XPPMQG). Returns `None` if
+    /// uses it as the EVM `block.timestamp` ). Returns `None` if
     /// `block` is outside the recorded window.
     fn block_timestamp_for(&self, block: u64) -> Option<u64> {
         self.inner

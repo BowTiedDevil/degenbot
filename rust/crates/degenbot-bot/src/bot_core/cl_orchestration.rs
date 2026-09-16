@@ -884,7 +884,7 @@ impl BotState {
     /// rolling start accumulates pump Mint/Burn journals AFTER the drain) and
     /// NOT a start()-time `verify_backfill_block` constant (which predates the
     /// pump buffer's drain and would fabricate a mismatch on any active pool
-    /// — the 2026-06-29 crash). `Some` only for `Tracked` pools; `Sparse`
+    /// the 2026-06-29 crash). `Some` only for `Tracked` pools; `Sparse`
     /// stays `None` (no complete `tick_data` → step-2 is a no-op). Idempotent
     /// if called twice (the second pin overwrites; only step-2 consumes it).
     pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
@@ -970,7 +970,7 @@ impl BotState {
                         seed_block,
                         cutoff,
                         witnessed_horizon,
-                        "V3 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (FUWYUR lie shape)"
+                        "V3 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (the mis-stamped lie shape)"
                     );
                 }
                 PinProvenance::CorroboratedByDelivery
@@ -2070,7 +2070,7 @@ impl BotState {
     /// pinned block** — NOT engine-current (which accumulates pump
     /// `ModifyLiquidity` journals after the drain) and NOT a start()-time
     /// `verify_backfill_block` constant (which predates the pump buffer's drain
-    /// — the 2026-06-29 crash). `Tracked` pools only.
+    /// the 2026-06-29 crash). `Tracked` pools only.
     pub fn pin_v4_post_drain_snapshot(
         &mut self,
         pool_manager: Address,
@@ -2137,7 +2137,7 @@ impl BotState {
                         seed_block,
                         cutoff,
                         witnessed_horizon,
-                        "V4 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (FUWYUR lie shape)"
+                        "V4 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (the mis-stamped lie shape)"
                     );
                 }
                 PinProvenance::CorroboratedByDelivery

@@ -205,7 +205,7 @@ crate::config_schema! {
         quiesce_ewma_alpha [f64] = 0.1, env = "DEGENBOT_PUMP_QUIESCE_EWMA_ALPHA", def = "0.1",
             doc = "Adaptive mode: EWMA smoothing constant over per-block max silence gaps (≈10-block memory); clamped to (0, 1].";
         quiesce_late_budget [u64] = 120, env = "DEGENBOT_PUMP_QUIESCE_LATE_BUDGET", def = "120",
-            doc = "Adaptive-mode runtime backstop (HJ5HWF contract): more than this many benign late-admit events in a sliding hour holds the window at quiesce_ceil_ms until the ledger drains.";
+            doc = "Adaptive-mode runtime backstop: more than this many benign late-admit events in a sliding hour holds the window at quiesce_ceil_ms until the ledger drains.";
     }
 
     trace TraceConfig {

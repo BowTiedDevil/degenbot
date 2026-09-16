@@ -35,7 +35,7 @@ impl PyArbEngine {
             let bot = Arc::new(Bot::with_core(Arc::clone(&core)));
             (core, bot)
         };
-        // SZJUKL seam retirement / 5TBT7L Q2b: the stage surface IS the engine
+        // The stage surface IS the engine
         // seam — it builds the engine internally from the shared core, so this
         // crate never names the engine type. The pump drives it through the
         // stage hooks. Python polls the engine's own cursor
@@ -190,7 +190,7 @@ impl PyArbEngine {
     /// authority for the gap between snapshot and WS start.
     ///
     /// Raises `RuntimeError` if the pump is already started or subscribed.
-    /// PRG-4 / IRUMXD: the registered-path cap owned by the engine path
+    /// PRG-4: the registered-path cap owned by the engine path
     /// registry. The Python driver sets it once at boot from the typed
     /// config value; `None` = unlimited. `None` clears any set cap
     /// (operator override).
@@ -372,7 +372,7 @@ pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolErr
     }
 }
 
-/// Map a Rust `PoolBuilder` error (the T4 / 4GQWZ4 delegation adapter's
+/// Map a Rust `PoolBuilder` error (the delegation adapter's
 /// builder stage) to a Python `RuntimeError` carrying the RPC/CREATE2/spec/DB
 /// failure cause. Registration-stage errors are mapped by the `map_register_v*`
 /// fns above, so this covers only the pre-registration build stage.

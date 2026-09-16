@@ -313,7 +313,7 @@ pub struct V4PoolState {
     pub liquidity: u128,
     pub tick: i32,
     /// The **price** clock — see [`V3PoolState::update_block`] (V4 twin, two-
-    /// stamp OB7UNY). Monotonic non-decreasing; a backward stamp outside a
+    /// ). Monotonic non-decreasing; a backward stamp outside a
     /// reorg panics.
     pub update_block: u64,
     /// The **liquidity** clock — see [`V3PoolState::tick_data_block`] (V4
@@ -321,7 +321,7 @@ pub struct V4PoolState {
     /// outside a reorg panics.
     pub tick_data_block: u64,
     /// The frozen registration/seed block — the `update_block` at
-    /// construction. Historical-replay guard (UO3JM4, twin of
+    /// construction. Historical-replay guard (twin of
     /// [`V3PoolState::initial_state_block`]): an in-range liquidity event
     /// replayed at `block_number <= initial_state_block` must NOT adjust the
     /// active-liquidity scalar (the seed already reflects it). Frozen.
@@ -776,7 +776,7 @@ impl ReorgPoolState for V4PoolState {
             self.tick = p.tick_before;
         }
         // Reorg is the sole sanctioned rewind of both clocks (two-stamp
-        // OB7UNY) — see `V3PoolState::restore_before_block`.
+        // ) — see `V3PoolState::restore_before_block`.
         if let Some(b) = result.update_block_before {
             self.update_block = b;
         }
@@ -1378,7 +1378,7 @@ mod apply_inherent_tests {
 
     #[test]
     fn apply_liquidity_update_replay_at_or_before_seed_block_does_not_adjust_scalar() {
-        // UO3JM4 historical-replay guard (V4 twin of the V3 test): a pool
+        // Historical-replay guard (V4 twin of the V3 test): a pool
         // seeded against head already reflects every on-chain in-range
         // Mint/Burn <= its seed block in its `liquidity` scalar. Replaying one
         // after seed must NOT re-adjust it (double-count).
@@ -1491,7 +1491,7 @@ mod apply_inherent_tests {
         assert_eq!(state.tick, pre_tick);
         assert_eq!(
             state.update_block, 0,
-            "OB7UNY: the price clock rewinds to its exact pre-swap value (both clocks start at 0)"
+            "the price clock rewinds to its exact pre-swap value (both clocks start at 0)"
         );
         assert_eq!(state.tick_data_block, 0, "the liquidity clock rewinds to 0");
         assert_eq!(state.journal_len(), 0, "swap delta popped");

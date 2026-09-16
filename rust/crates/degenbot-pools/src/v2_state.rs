@@ -65,7 +65,7 @@ pub struct V2PoolIdentity {
 /// The reserves are typed `U112` to mirror v2-core's on-chain `uint112`
 /// storage width (`UniswapV2Pair._update`'s
 /// `require(balance0 <= uint112(-1))`). The spec-bound admission contract
-/// (ADR-012 / epic `WOYYS2`) enforces this width at `register_v2_pool`;
+/// (ADR-012) enforces this width at `register_v2_pool`;
 /// typing the field `U112` makes that contract a *type-level* guarantee —
 /// the runtime `validate_v2_reserve` check below it is a tautology against
 /// `U112::MAX`, retained for diagnostic-message uniformity with the other

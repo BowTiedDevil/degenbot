@@ -306,7 +306,7 @@ fn merge_reports_worker_twins_and_never_reclips() {
 /// that name - the verdict is an `info!` event on the enclosing merge
 /// span, and the span name now belongs solely to simulation work.
 ///
-/// DEFAULT-GATE VISIBLE (no otel cfg), on the K4ETHF pattern: the marker
+/// DEFAULT-GATE VISIBLE (no otel cfg), on the established pattern: the marker
 /// flood was what made Jaeger unreadable, so the regression gate must not
 /// hide behind --features otel.
 #[test]

@@ -1054,7 +1054,7 @@ mod tests {
         assert_eq!(market_stamp(&db), Some(1_000));
     }
 
-    // ── UR7QNL: the two direct-write Pool events ────────────────────────────
+    // ── the two direct-write Pool events ────────────────────────────
 
     /// Seed the erc20 parents (underlying + aToken + vToken) + return the
     /// seeded asset's id. Mirrors the Aave-writer `fresh_db` seeding shape.
@@ -1553,7 +1553,7 @@ mod tests {
     /// Python ref had zero 0-address rows for rETH.
     ///
     /// Python's mirror filter lives in `transfers.py:_process_collateral_transfer`
-    /// — the recipient block (`if scaled_event.target_address != ZERO_ADDRESS:`)
+    /// the recipient block (`if scaled_event.target_address != ZERO_ADDRESS:`)
     /// is skipped when `to == ZERO_ADDRESS`. The SENDER side is written
     /// unconditionally (matches the 2 pre-existing 0-address rows on
     /// 0x83F2 / 0xD533 in both Python ref + Rust). The Rust equivalent: the
@@ -2378,7 +2378,7 @@ mod tests {
         assert_eq!(rev, Some(2));
     }
 
-    // ── O4BOST: the idempotent `apply_contract_inserted_if_absent_on_conn`
+    // ── the idempotent `apply_contract_inserted_if_absent_on_conn`
     //    (the cold-bootstrap idempotency substrate).
 
     #[test]

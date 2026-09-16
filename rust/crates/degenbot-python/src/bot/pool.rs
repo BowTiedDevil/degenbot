@@ -58,7 +58,7 @@ pub(crate) fn make_tick_fetcher(
 }
 
 /// Construct a Chain-arm `TickBootstrapRpc` from a `PyBotIo`'s native alloy
-/// provider, if present (5NT2OC / NOD4PS — Option B: route the Chain arm
+/// provider, if present (Option B: route the Chain arm
 /// through the pure-Rust [`AlloyTickBootstrapRpc`]).
 ///
 /// Returns `None` when the `PyBotIo` has no native alloy provider (legacy
@@ -1433,7 +1433,7 @@ impl PyLiquidityPool {
         })
     }
 
-    // --- V2 token-recovery getters (ADR-005 identity slice, task EO2SLK) ---
+    // --- V2 token-recovery getters (ADR-005 identity slice) ---
     // Recover `PyErc20Token` handles for the pool's token0/token1 from the
     // SAME shared BotState (ADR-006: one Bot per chain owns all assets). The
     // companion wraps these via `Erc20Token._from_py_token` so the

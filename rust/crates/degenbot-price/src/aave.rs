@@ -29,7 +29,7 @@ const GET_ASSET_PRICE_SIG: &str = "getAssetPrice(address) returns (uint256)";
 ///
 /// Constructed with the oracle contract address + the shared RPC provider; the
 /// caller resolves *which* oracle address applies (e.g. from the Aave
-/// `getAssetPrice`/reserve-config DB path — task `OKKMG5`), this crate CONSUMES
+/// `getAssetPrice`/reserve-config DB path — ) — this crate CONSUMES
 /// the resolved `Address`.
 #[derive(Clone)]
 pub struct AavePriceOracle {

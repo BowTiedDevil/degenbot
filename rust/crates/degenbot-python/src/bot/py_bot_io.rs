@@ -908,7 +908,7 @@ impl PyBotIo {
     /// `selector` / `sign_extend_to_32_bytes` here. The encode/decode helpers
     /// are shared with `AlloyTickBootstrapRpc` (the standalone-Rust `cargo add
     /// degenbot` consumer path), so the choreography stays byte-identical
-    /// across the pyo3 adapter and the alloy impl (5NT2OC epic / Y5MHJV).
+    /// across the pyo3 adapter and the alloy impl ).
     ///
     /// Errors propagate: provider revert surfaces as `PyErr` (the Python
     /// caller's `except Exception: return` handles it).
@@ -1436,7 +1436,7 @@ impl PyBotIo {
     /// `PyAlloyProvider`-backed (live alloy or the offline shell). `None` for
     /// non-alloy providers (legacy test doubles).
     ///
-    /// Used by the Chain-arm wiring (5NT2OC / NOD4PS) to construct an
+    /// Used by the Chain-arm wiring ) to construct an
     /// [`AlloyTickBootstrapRpc`] without a GIL round-trip per RPC call — the
     /// pure-Rust impl owns the tick-bitmap + tick-data choreography directly.
     #[must_use]

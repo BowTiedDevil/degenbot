@@ -1748,7 +1748,7 @@ impl DegenbotDb {
         )
     }
 
-    // ── RYKCC4: GHO / stkAAVE / Rewards apply fns ──────────────────────────
+    // ── GHO / stkAAVE / Rewards apply fns ──────────────────────────
 
     /// Apply a GHO `DiscountPercentUpdated` event: set the user's
     /// `gho_discount` column (an `INTEGER` percentage; the Python path stores

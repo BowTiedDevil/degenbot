@@ -54,7 +54,7 @@ pub struct ComposerInputs<'a> {
     /// Per-hop consumed input amounts (the CL-clamp swap-in). For a
     /// non-over-fed CL hop (and V2/Curve/Balancer/Solidly hops) this equals
     /// `hop_outputs[i-1]`; for an over-fed CL hop the clamp reduces it to
-    /// `input_consumed − 1` (UO3JM4 / path-5000 EMPTY-HALT).
+    /// `input_consumed − 1` (path-5000 EMPTY-HALT).
     pub consumed_inputs: &'a [u128],
     /// Adapter-agnostic encode knobs (decoupled from `cmd_executor` opcodes).
     pub opts: ComposeOptions,

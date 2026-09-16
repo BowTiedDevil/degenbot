@@ -1,4 +1,4 @@
-//! Executor A/B probe fixtures (5WCRWZ T6): the harness support the
+//! Executor A/B probe fixtures : the harness support the
 //! fleet parity/identity fixtures and the workload-partition binning
 //! property draw on (the heavy-CL capture-corpus loader, the shared
 //! solve-cycle fixture, and the production LPT bin packer).

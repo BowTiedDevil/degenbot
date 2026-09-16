@@ -91,7 +91,7 @@ pub enum TickMapAssemblyError {
     Chain(#[from] BootstrapTickError),
     /// A Tracked Db snapshot that contradicts itself: a bitmap bit and the
     /// liquidity rows disagree about an initialization (T3 OMDCIY, epic
-    /// OU4SYZ). Registration is rejected AT INTAKE — the two-step verify
+    /// ). Registration is rejected AT INTAKE — the two-step verify
     /// is the on-chain oracle, but a corrupted snapshot must never
     /// register. `tick` is the conflicting position (`i32::MIN` marks an
     /// out-of-range corrupted word position).

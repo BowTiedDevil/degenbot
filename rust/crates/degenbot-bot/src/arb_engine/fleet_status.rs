@@ -7,7 +7,7 @@
 //! shares), and who is executing (the worker census rows, with the
 //! lane-to-thread binding per resource).
 //!
-//! Sources of truth, in order: the CONSTRUCTION-STAMPED boot (YI5NGB -
+//! Sources of truth, in order: the CONSTRUCTION-STAMPED boot (
 //! the boot the first engine construction derived from its own config;
 //! every later construction rides it), else the LIVE-detected quota with
 //! the default profile (the pre-construction projection - the pure plan

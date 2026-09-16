@@ -21,7 +21,7 @@
 //! internally compute `calculateSwapFee(500, 3000) = 3499` pips and feed it as
 //! the swap-step fee. The result must be the ON-CHAIN ACTUAL (25_885), not the
 //! stale-feeling lpFee-only prediction (25_898). The two pre-fix sides —
-//! solver vs `v4_simulate_swap` — still agree byte-for-byte (W2UWZO parity),
+//! solver vs `v4_simulate_swap` — still agree byte-for-byte (parity),
 //! now against the REAL bytecode answer.
 //!
 //! A `protocol_fee = 0` variant reproduces the OLD prediction (25_898) — the
@@ -167,7 +167,7 @@ fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
 
     assert_eq!(
         sim_out, solver_out,
-        "v4_simulate_swap and the solver crossing path must agree (W2UWZO parity holds post-fix); \
+        "v4_simulate_swap and the solver crossing path must agree (parity holds post-fix); \
          sim={sim_out} solver={solver_out}",
     );
     assert_eq!(

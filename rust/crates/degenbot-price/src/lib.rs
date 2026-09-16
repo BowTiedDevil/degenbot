@@ -33,7 +33,7 @@
 //!
 //! - The `PyO3` seam + Python cutover (sibling task).
 //! - Reading the oracle address from the DB (the Aave rehydrate path,
-//!   `OKKMG5`) — this crate **consumes** a resolved `Address`.
+//!   ) — this crate **consumes** a resolved `Address`.
 //! - Valuation/ranking orchestration using the prices (stays-Python).
 //!
 //! [`degenbot_rpc::contract::Contract::call_typed`]: ../degenbot_rpc/contract/struct.Contract.html#method.call_typed

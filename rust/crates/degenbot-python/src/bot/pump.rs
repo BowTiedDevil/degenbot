@@ -129,7 +129,7 @@ pub(crate) fn run_v4_registration_lifecycle<'py>(
 }
 
 /// Blocking (GIL-detached) V3 verify-lifecycle — the seat-thread twin of
-/// [`run_v3_registration_lifecycle`] (PRG-5 / IRUMXD).
+/// [`run_v3_registration_lifecycle`] (PRG-5).
 ///
 /// # Errors
 ///

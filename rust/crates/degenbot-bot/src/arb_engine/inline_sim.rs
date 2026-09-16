@@ -1,4 +1,4 @@
-//! The inline-sim hook seam (SIMPIPE2 T1, epic WMMABS).
+//! The inline-sim hook seam ).
 //!
 //! ADR-019 D7 keeps the engine free of strategy-simulation types — so the
 //! inline simulation (SIMPIPE: run the per-path EVM sim inside the Rust
@@ -44,7 +44,7 @@ use alloy::primitives::{Address, I256, U256};
 use degenbot_solvers::mixed::{MixedPoolRef, SolvePathResult};
 // the pipelined sim scheduler moved here beside `PendingSim` /
 // `SimulatedPathResult`; it takes the cycle context from `solve_cycle` and
-// owns the once-per-process boot-refusal latch (5WCRWZ T5).
+// owns the once-per-process boot-refusal latch ).
 use super::solve_cycle::SolveCycleShared;
 use degenbot_core::op_error;
 // FF-T1: one loud line for the sticky sim-fleet boot refusal — the
@@ -80,7 +80,7 @@ pub struct InlineSimRequest {
     /// The block to simulate against (the cycle's solve block — the
     /// head-anchored promoted block, MQIZ5M).
     pub sim_block: u64,
-    /// The block timestamp (the pump's header; XPPMQG — the default `1`
+    /// The block timestamp (the pump's header; the default `1`
     /// timestamp forks Solidity-0.8 pair updates).
     pub block_timestamp: u64,
     /// The parent block's base fee + gas used/limit — the EIP-1559
@@ -171,7 +171,7 @@ pub struct SimulatedPathResult {
     /// payload; T3). A failed payload carries no useful profit/gas values.
     pub failure: Option<InlineSimFailure>,
 }
-/// A scheduled-but-maybe-unfinished inline sim (7LV6VN T5). The solve
+/// A scheduled-but-maybe-unfinished inline sim ). The solve
 /// worker schedules the eager EVM simulation and keeps walking paths; the
 /// receipt is polled non-blockingly (delivery as soon as each sim lands)
 /// and joined at bin end. The in-flight slot (budget-derived pacing cap)
@@ -214,7 +214,7 @@ pub trait InlineSimulator: Send + Sync + 'static {
     /// legacy FFI sim path per entry).
     fn simulate_path(&self, request: InlineSimRequest) -> Option<SimulatedPathResult>;
     /// Eagerly START the sim for ONE clamp-admitted path and return a
-    /// receipt the worker polls/joins later (7LV6VN T5 pipelining). The
+    /// receipt the worker polls/joins later ). The
     /// default runs the synchronous [`InlineSimulator::simulate_path`]
     /// immediately and hands the finished value back through the receipt
     /// (stubs and sync-only hooks stay correct without threads); the
@@ -259,7 +259,7 @@ pub(crate) fn build_inline_sim_request(
 }
 
 /// Run one clamp-admitted path's sim under the ONE worker-inline span
-/// (`degenbot.bundle.simulate`, explicitly parented — 7LV6VN T1b, TLS re-entry
+/// (`degenbot.bundle.simulate`, explicitly parented — TLS re-entry
 /// alone forked orphan roots on worker threads). The verdict records live here
 /// (SIMSPANDUP): failure classification arrives via the seam's
 /// `SimSpanVerdict` Drop; this function only stamps the successful arm plus
@@ -330,14 +330,14 @@ impl PipelinedSims {
         let sim = std::sync::Arc::clone(sim);
         let parent = parent_span.clone();
         let expected_profit = result.profit;
-        // Two-runtime pacing (7LV6VN T5): the slot is acquired INSIDE the
+        // Two-runtime pacing : the slot is acquired INSIDE the
         // driver thread, so a saturated sim pipeline parks queued sims at
         // zero CPU cost instead of stalling the bins mid-walk (T5 window:
         // schedule-time blocking starved the walks). Concurrent EXECUTING
         // sims stay bounded by the budget-derived cap - the explicit
         // The sim EXECUTION body is stance-invariant: one span
         // (`degenbot.bundle.simulate`, explicitly parented under the
-        // caller's span — 7LV6VN T1b), one `simulate_path` call, the
+        // caller's span ), one `simulate_path` call, the
         // SIMSPANDUP verdict records, and the receipt send. The arms differ
         // ONLY in the machinery that runs it.
         let (tx, rx) = std::sync::mpsc::channel();

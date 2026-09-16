@@ -1,9 +1,9 @@
-//! `PyO3` seam for the pool discovery writers — WR7EA6 (split out of QJSCA5).
+//! `PyO3` seam for the pool discovery writers — (split out of the discovery writers).
 //!
 //! Wraps `degenbot-db`'s `discovery` substrate
 //! ([`degenbot_db::DegenbotDb::upsert_v2_pools`] / [`upsert_v3_pools`] /
 //! [`upsert_v4_pools`] / [`set_exchange_last_update_block`]) as module-level
-//! `#[pyfunction]`s taking a `database_path` (same pattern as the QJSCA5
+//! `#[pyfunction]`s taking a `database_path` (same pattern as the discovery
 //! `db_apply_v3/v4_liquidity_updates` seam). The Python
 //! `cli/pool_updater_configs.py::update_v2/v3/v4_pools` shells decode the raw
 //! `PoolCreated` `LogReceipt`s (topics/data → addresses/fee/tick-spacing) + do

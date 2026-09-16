@@ -335,7 +335,7 @@ pub fn gen_ticks_iter<S: std::hash::BuildHasher>(
 /// holds the interior word-boundary ticks (swap order, entry→exit) collapsed
 /// out of range `i` = `[boundary_ticks[i], boundary_ticks[i+1]]`.
 ///
-/// # Collapse policy (sparse-tick budget + ON5QMD/E7ALWT parity)
+/// # Collapse policy (sparse-tick budget + per-step rounding parity)
 ///
 /// Runs of consecutive zero-`liquidity_net` word-boundary ticks are collapsed
 /// so the `max_ranges` budget is not starved by tick-sparse pools
@@ -343,7 +343,7 @@ pub fn gen_ticks_iter<S: std::hash::BuildHasher>(
 /// — see mainnet fixture `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md`,
 /// a gitignored logs/ artifact since removed).
 /// The on-chain V3/V4 `PoolManager` floors `computeSwapStep` at EVERY word
-/// boundary; the `ON5QMD` per-step rounding parity is preserved TWO ways:
+/// boundary; the per-step rounding parity is preserved TWO ways:
 /// (1) the boundary tick IMMEDIATELY ADJACENT to each initialized tick in the
 /// swap direction is kept as a range endpoint (flanking flooring), and (2) the
 /// interior word-boundary ticks dropped here are RECORDED on the emitted range
@@ -386,7 +386,7 @@ fn collapse_walk_to_range_boundaries(
         // neighbors are also uninitialized boundaries — i.e. it is strictly
         // interior to a constant-liquidity run, not flanking an initialized
         // tick. The flanking boundary ticks (one or both neighbors
-        // initialized) are kept for ON5QMD rounding parity.
+        // initialized) are kept for rounding parity.
         if !is_init && j > 0 && j + 1 < all_walk.len() {
             let prev_is_boundary = !all_walk[j - 1].1;
             let next_is_boundary = !all_walk[j + 1].1;

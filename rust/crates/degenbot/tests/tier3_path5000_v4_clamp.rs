@@ -19,7 +19,7 @@
 //! now the EIP-7825 16.7M default). GREEN must fill under the harness's own
 //! `EXECUTOR_5M` gas threshold.
 //!
-//! The production solver clamp (AGENTS.md UO3JM4 / VAASFM; `arb_engine`
+//! The production solver clamp (`arb_engine`
 //! `clamp_cl_hop_capacity`) re-reads the live pool state post-solve and caps
 //! the committed CL-hop input to `input_consumed − margin` (margin = 1 wei), so
 //! the loop exits on `amountRemaining == 0` at the last funded tick (~190k gas,
@@ -65,7 +65,7 @@ const FIXTURE_PATH: &str = concat!(
 
 /// The VAASFM clamp margin (must stay in sync with
 /// `ArbitrageEngine::cl_hop_clamp_margin` in degenbot-bot — 1 wei, the
-/// maximum-extraction choice; see the 7E5D7W margin-policy checkpoint).
+/// maximum-extraction choice; see the margin-policy checkpoint).
 const CLAMP_MARGIN: u64 = 1;
 
 /// The recorded byte-exact V4 output the clamp must preserve (== the recorded

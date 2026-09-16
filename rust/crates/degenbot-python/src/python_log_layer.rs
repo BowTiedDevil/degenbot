@@ -228,7 +228,7 @@ where
 ///    explicit, always wins),
 /// 2. `telemetry.jaeger_endpoint` in the user config file (the modern
 ///    OTLP-key home; the pre-0.6 `[otel]` table is retired and any file
-///    still carrying it is refused at boot — JLFE2F),
+///    still carrying it is refused at boot),
 /// 3. `None` — the exporter falls back to its built-in default
 ///    (`http://localhost:4318`).
 ///
@@ -601,8 +601,8 @@ type MiddleRegistry = Layered<
 type BaseRegistry<P> = Layered<P, MiddleRegistry>;
 
 /// Assembles the base logging registry: `EnvFilter` + stderr `fmt` and a
-/// final Python-forwarding slot `P` (K6PCKP extraction). Byte-equivalent
-/// to the pre-K6PCKP inline assembly in `init_logging_subscriber`;
+/// final Python-forwarding slot `P`). Byte-equivalent
+/// to the pre-extraction inline assembly in `init_logging_subscriber`;
 /// extracted so the `OTel` layer can layer on top and the stack is testable
 /// without a `Python::attach`-capable drainer (seam C).
 #[must_use]
@@ -725,11 +725,11 @@ pub fn init_logging_subscriber() {
             // registry; the provider lives in OTEL_PROVIDER for
             // `shutdown_log_drainer` flush/kill.
             //
-            // T5/RMH23E dev default: ON whenever the `otel` feature is
+            // Dev default: ON whenever the `otel` feature is
             // compiled (dev builds only — release wheels carry zero OTel
             // code). Opt out with DEGENBOT_OTEL=0. Endpoint precedence:
             // OTEL_EXPORTER_OTLP_ENDPOINT env > telemetry.jaeger_endpoint
-            // in ~/.config/degenbot/config.toml (JLFE2F: the pre-0.6
+            // in ~/.config/degenbot/config.toml (the pre-0.6
             // [otel] table is retired) > exporter default.
             let endpoint = resolve_otlp_endpoint(
                 std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok().as_deref(),
@@ -892,7 +892,7 @@ mod tests {
         assert_eq!(state.dropped.load(Ordering::Relaxed), 1);
         assert_eq!(state.queue.len(), 2);
     }
-    /// K6PCKP seam C: the "`OTel`" layer composes onto the base logging
+    /// Seam C: the "`OTel`" layer composes onto the base logging
     /// registry (`EnvFilter` + fmt + the Python slot) and receives spans
     /// without a "`Python::attach"-capable` drainer thread. A "Capture"
     /// stand-in plays the Python slot (the real drainer needs the
@@ -923,7 +923,7 @@ mod tests {
         );
         // Scoped thread-local subscriber: every span this test observes is
         // created on THIS thread (in_scope), so the once-per-process global
-        // slot stays free for the cross-thread sim-span test (7LV6VN T1).
+        // slot stays free for the cross-thread sim-span test.
         tracing::subscriber::with_default(subscriber, || {
             tracing::info_span!("seam.c.span").in_scope(|| {
                 tracing::warn!(target: "degenbot_bot::bot_core::block_pump", "seam c event");
@@ -1023,7 +1023,7 @@ mod tests {
         );
     }
 
-    // T5/RMH23E: OTLP endpoint precedence - env var beats config file;
+    // OTLP endpoint precedence - env var beats config file;
     // config file beats None; missing/malformed config falls through to None
     // (exporter default) without disabling telemetry.
     #[cfg(feature = "otel")]

@@ -6,7 +6,7 @@
 //! (`revm-inspector/src/test_inspector.rs`) minus the per-opcode `Step`
 //! records (which `TracerEip3155` shows how to emit if later wanted).
 //!
-//! # The revert-attribution seam (spike KCKGP4, finding Q3)
+//! # The revert-attribution seam (spike, finding Q3)
 //!
 //! `call_end` receives the [`CallOutcome`] of the **deepest reverting frame**
 //! (a child contract that reverts), not just the top-level bubble. The

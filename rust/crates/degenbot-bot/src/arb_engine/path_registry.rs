@@ -19,7 +19,7 @@
 use ::degenbot_solvers::mixed::{HopType, MixedPath, MixedPoolRef};
 use hashbrown::HashMap;
 use std::sync::Arc;
-/// Typed refusal from `ArbitrageEngine::register_path` (PRG-4 / IRUMXD — was a
+/// Typed refusal from `ArbitrageEngine::register_path` (PRG-4 — was a
 /// bare `String`).
 ///
 /// Moved here from `lifecycle` by ADR-045; re-exported at the old

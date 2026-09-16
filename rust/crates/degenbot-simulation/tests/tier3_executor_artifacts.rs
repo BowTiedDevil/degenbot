@@ -1,7 +1,7 @@
 //! Toolchain-free integrity guard for the Vyper executor artifact (BHL2R2 /
 //! tier-3b deterministic revm-replay oracle).
 //!
-//! The tier-3b executor tests (S2/S3, tasks 4O7BPZ/72YZXI) run in the default
+//! The tier-3b executor tests (S2/S3) run in the default
 //! `cargo test --workspace` suite and load the canonical executor bytecode from
 //! the COMMITTED `tier3-oracle/artifacts/executor/` tree, so no vyper is needed
 //! to RUN the suite. This test closes the drift hole that committed-binary

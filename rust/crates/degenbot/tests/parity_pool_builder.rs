@@ -1,6 +1,6 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — Rust pool builder identity+state
-//! (ADR-005 standalone claim, the behavioral tier; task A2QRWO).
+//! (ADR-005 standalone claim, the behavioral tier).
 //!
 //! The swap parities (`parity_v2_swap.rs` / `parity_v3_swap.rs`) prove the
 //! FFI seam on the *math* is lossless (same swap output across consumers).

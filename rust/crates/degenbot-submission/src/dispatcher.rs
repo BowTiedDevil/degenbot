@@ -470,7 +470,7 @@ impl Dispatcher {
 
     /// Look up the recorded timestamp for `block` (the in-process `evm` sim
     /// uses it as the EVM `block.timestamp` so the V2 pair's `_update()` does
-    /// not overflow `timeElapsed` — task XPPMQG). `None` if `block` is outside
+    /// not overflow `timeElapsed` ). `None` if `block` is outside
     /// the recorded window (falls back to 0 at the sim seam).
     #[must_use]
     pub fn block_timestamp_for(&self, block: u64) -> Option<u64> {

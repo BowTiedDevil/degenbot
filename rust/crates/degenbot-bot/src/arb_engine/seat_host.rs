@@ -101,7 +101,7 @@
 //!   resolve units' completions ride the slot FSM (T5), no caller pipes.
 //! - **M (merge)** — the merge sidecar's per-path result pipe: EVERY
 //!   solved/suppressed/failed path's terminal send lands here — the
-//!   QR3NUS/LW-T7 exactness fuse (solved + suppressed + failed ==
+//!   exactness fuse (solved + suppressed + failed ==
 //!   submitted) is enforced at the merge drain, per cycle.
 //! - **`PoolStateUpdater` seats** — the registration intake: each unit
 //!   owns its intake receipt (the awaiting caller's join), held in the
@@ -166,7 +166,7 @@ pub(crate) struct SeatRoleDesc {
     /// The host thread's census name
     /// (`"work-fleet-sim-host"` / `"work-fleet-poolupd-host"`).
     pub host_thread: &'static str,
-    /// The YI5NGB stamp-missing panic message (the F1 loud construction
+    /// The stamp-missing panic message (the F1 loud construction
     /// contract — the materializer must abort, never fall back silently).
     pub stamp_missing: &'static str,
     /// The queue-cap source: the budget field this role's seat pool sizes
@@ -520,7 +520,7 @@ impl HostDiscipline for PooledDiscipline {
 /// the solve loop had pre-fold. The same proof covers the `try_enqueue`
 /// hand-back arm: `EnqueueError::PostureHeld` fires only for Deferrable
 /// units, never a Solver unit. Do NOT re-add a Solver cordon gate by hand
-/// — the consult's unconditional presence here IS the point (one shape,
+/// the consult's unconditional presence here IS the point (one shape,
 /// one consult, class-derived).
 ///
 /// # Wake discipline (the ratified contract — TB4QGX, ADR-044)
@@ -1616,7 +1616,7 @@ mod tests {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum HostKind {
         /// The pooled pair's registration arm: `PoolStateUpdater` (Deferrable
-        /// — the JCI2FW cordon hold is reachable), one grant kind, no
+        /// the JCI2FW cordon hold is reachable), one grant kind, no
         /// receipt mirror (the fire-and-forget port).
         Pooled,
         /// The solve host: `Solver` (`CordonClass::Never`), the pin-pair

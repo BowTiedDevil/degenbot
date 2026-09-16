@@ -251,7 +251,7 @@ pub(crate) fn db_fetch_exchange_by_name(
     }
 }
 ///
-/// Module-level pool-row read by `(chain_id, address)` (QJSCA5 §4.3) — the V3
+/// Module-level pool-row read by `(chain_id, address)` () — the V3
 /// `apply_v3_liquidity_updates` shell uses this to fetch the pool's
 /// `exchange_id` for the `exchanges_in_scope` precondition before delegating
 /// the math+persist to [`super::liquidity_updater::db_apply_v3_liquidity_updates`].

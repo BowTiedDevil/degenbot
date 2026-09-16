@@ -329,7 +329,7 @@ fn missing_config_file_is_reported() {
     assert!(format!("{err}").contains("unreadable"));
 }
 
-// ---- SMTH6M: ambient-runtime sizing key (`runtime.io_workers`) ----
+// ---- ambient-runtime sizing key (`runtime.io_workers`) ----
 
 #[test]
 fn runtime_io_workers_unset_by_default_and_derived_marker() {

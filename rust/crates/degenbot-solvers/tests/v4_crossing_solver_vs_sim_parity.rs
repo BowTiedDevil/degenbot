@@ -445,7 +445,7 @@ fn v4_fee1_solver_path_matches_v4_simulate_swap() {
     );
 }
 
-/// UO3JM4 regression: the REAL UNI V4 pool `0x9a5c1d2f...` at block 25673381
+/// Regression: the REAL UNI V4 pool `0x9a5c1d2f...` at block 25673381
 /// (path 57150) - deep 134-range tick topology, protocol_fee 2048500. The
 /// tier-3 on-chain oracle `v4_simulate_swap` at the solver's recorded V4 input
 /// (3135) reproduces the recorded on-chain `actual` EXACTLY (772076574181336),
@@ -1601,7 +1601,7 @@ fn v4_uni_9a5c1d2f_oracle_matches_recorded_actual_not_solver_overprediction() {
 /// Real fee-1 USDC/USDT V4 pool `0x76f75965…` (ts=1, fee=50, protocol_fee
 /// 53261) at the live-captured on-chain state (tick=0, sqrt
 /// 79231869042278935382727675145, liq 94294142), tick_data from DB managed
-/// pool 2337 ({-2:+L, 3:-L}). This is the UO3JM4 fee-1 topology whose crossing
+/// pool 2337 ({-2:+L, 3:-L}). This is the fee-1 topology whose crossing
 /// over-predicts by 1 wei at certain inputs (captured live, path 10338).
 fn build_fee1_76f75965_v4_state() -> V4PoolState {
     let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
@@ -1646,7 +1646,7 @@ fn build_fee1_76f75965_v4_state() -> V4PoolState {
     state
 }
 
-/// The fee-1 over-prediction (UO3JM4 live capture, path 10338): at the
+/// The fee-1 over-prediction (live capture, path 10338): at the
 /// solver's recorded input 4728 the on-chain oracle gives 4726 (= the recorded
 /// actual). The solver predicted 4727 == oracle at input 4729 (1 unit MORE).
 /// This pins the on-chain truth AND proves the crossing math is EXACT (the
@@ -1675,7 +1675,7 @@ fn fee1_76f75965_crossing_overprediction_at_4728() {
 
     // Localize the +1: does the solver-crossing mirror re-derive the solver's
     // 4727 (bug) or match the oracle 4726? Printed, not asserted, so the suite
-    // stays green until the W2UWZO fix lands (then re-run to check it flipped
+    // stays green until the fix lands (then re-run to check it flipped
     // to 4726 == oracle, i.e. the +1 is gone).
     let seq = state
         .build_int_v4_sequence(1, 50, zero_for_one)
@@ -1775,7 +1775,7 @@ fn cl_hop_clamp_margin_exceeds_worst_solver_over_prediction() {
     // pin this to 0; a regression here would re-introduce a non-zero value.
     let mut worst_over_predict: u64 = 0;
 
-    // fee-1 / ts=1 (the UO3JM4 low-fee topology whose live +1..+3 residuals
+    // fee-1 / ts=1 (the low-fee topology whose live +1..+3 residuals
     // were localized and fixed), both swap directions.
     let fee1 = build_fee1_76f75965_v4_state();
     for &zfo in &[true, false] {

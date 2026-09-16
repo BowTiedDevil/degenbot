@@ -268,7 +268,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for SpanParentCapture 
         });
     }
 }
-/// K4ETHF follow-up (trace f06ea422 / block 25900244): the old
+/// Follow-up (trace f06ea422 / block 25900244): the old
 /// two-acquisition gate let a concurrent dirty marker land BETWEEN the
 /// probe and the take - the solve then did real work (1518 affected
 /// paths) through the no-span branch, orphaning its phase spans under
@@ -422,7 +422,7 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
         fanouts.len()
     );
 }
-/// PWPPAZ T1 (flips the trace-91a4a776 pin): the tombstone finalize must
+/// (flips the trace-91a4a776 pin): the tombstone finalize must
 /// NOT run a solve cycle. Trace 91a4a776's inner `solve_dirty` — and the
 /// span gate later added around it — retired with this task: the finalize
 /// is dispatched tombstone-driven and executed by the drainer while the
@@ -431,7 +431,7 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
 /// ab13f75f: finalize(83) solved 1,755 paths of 84's dirt; 98f7cf52 and
 /// the fresh census: 2/20 blocks with the degenerate pattern). The
 /// boundary is now bookkeeping-only: the guarded transition advances the
-/// block cursor (6XB6NJ: `BlockCursor::finalize`) and emits the terminal
+/// block cursor (`BlockCursor::finalize`) and emits the terminal
 /// publish; dirt stays unconsumed for the pump's drained-settle gate. RED
 /// while `finalize_block` still called `solve_dirty`.
 #[test]
@@ -562,7 +562,7 @@ fn finalize_boundary_publishes_even_when_nothing_dirtied() {
 }
 /// ZZS6CG (trace hygiene): a solve span must parent to its OWN block's
 /// published epoch root span (`degenbot.epoch`) - exact-match only. The stale
-/// `DrainWork::Finalize` (retired in MROOY7) crossing a block boundary parked
+/// `DrainWork::Finalize` retired) crossing a block boundary parked
 /// block N-1's
 /// `arb.solve` inside block N's trace in 19/20 of the recent traces
 /// analyzed (the drain/finalize arms inherited the dispatch-time loop

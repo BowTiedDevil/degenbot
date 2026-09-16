@@ -23,7 +23,7 @@
 //! and required a `getAmountOut` recompute from separately-fetched reserves,
 //! which is the half `diagnostic.rs` the onchain-recompute retirement deletes.
 //!
-//! # Why `log_full` and not `log` (spike KCKGP4, finding Q1)
+//! # Why `log_full` and not `log` (spike finding Q1)
 //!
 //! For LOG opcodes, revm calls `Inspector::log_full` (with the `&mut
 //! Interpreter`), NOT `Inspector::log`. `log` fires only for the frame-init
@@ -32,7 +32,7 @@
 //! the `Log` itself (`.address`), so the interpreter is not strictly needed
 //! for the address — but the hook that fires is `log_full`.
 //!
-//! # The Log-type conversion (spike KCKGP4, finding Q1)
+//! # The Log-type conversion (spike finding Q1)
 //!
 //! `Inspector::log_full` hands out `alloy_primitives::Log`, but the decoders
 //! consume `alloy::rpc::types::Log` (an RPC wrapper around `primitives::Log`
@@ -375,7 +375,7 @@ impl SwapEventCaptureHandle {
 impl<CTX, INTR: revm::interpreter::InterpreterTypes> Inspector<CTX, INTR>
     for SwapEventCaptureInspector
 {
-    /// Fires for every LOG opcode during instruction execution (spike KCKGP4
+    /// Fires for every LOG opcode during instruction execution (spike
     /// Q1: `log` does NOT fire for instruction logs — only `log_full` does).
     /// The decoded swap lands in the **top frame's** tentative buffer (not the
     /// committed `swaps`) so a swap emitted in a reverting sub-frame is dropped

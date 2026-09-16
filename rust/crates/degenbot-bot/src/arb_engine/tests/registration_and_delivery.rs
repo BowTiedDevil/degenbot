@@ -462,7 +462,7 @@ fn register_path_after_start_succeeds() {
     .unwrap();
 }
 use crate::arb_engine::lifecycle::PathRegistrationError;
-/// PRG-4 / IRUMXD: the engine path registry owns the registered-path
+/// PRG-4: the engine path registry owns the registered-path
 /// cap. At the cap, a NEW path registration is refused with the typed
 /// benign-stop refusal (`RegistryFull`) — no Python counters involve —
 /// while a DUPLICATE registration still answers with the existing id
@@ -1065,7 +1065,7 @@ fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
         "set_solve_anchor never clobbers a real anchor"
     );
 }
-/// 6XB6NJ pin (the review's Q6 strengthening): the solve-stamp path is
+/// Pin (the review's Q6 strengthening): the solve-stamp path is
 /// MONOTONE - a late/stale stamp can no longer regress the results
 /// anchor. Both stamps below go through the REAL solve-stamp path
 /// (`solve_dirty` -> `run_epoch`'s anchor re-stamp):
@@ -1265,9 +1265,8 @@ fn finalize_block_threads_metadata_into_send() {
         gas_limit: 30_000_000,
     };
     // `last_solved_block < block(=10)` so the guard fires. The engine
-    // now OWNS this bookkeeping (the pump out-params retired in ergo task
-    // LEZJAS) — drive it through the engine's own accessor so the test
-    // exercises the same path the pump uses.
+    // now OWNS this bookkeeping — drive it through the engine's own
+    // accessor so the test exercises the same path the pump uses.
     engine.cycle.cursor.record_logs();
     finalize_for_test(&mut engine, 10, &metadata);
     // The emitted batch must carry the passed metadata, not default.

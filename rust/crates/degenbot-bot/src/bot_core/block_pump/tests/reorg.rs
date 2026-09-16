@@ -34,7 +34,7 @@ async fn stream_end_notifies_sink_on_pump_ended() {
 // -----------------------------------------------------------------
 // late-log admission safety (the no-landmine rule).
 //
-// A tightened settle/debounce window (50ms → 16ms, task VD62GX) may
+// A tightened settle/debounce window (50ms → 16ms) may
 // admit logs whose delivery jitter carries them PAST their block's
 // quiesce/tombstone edge (the first successor log — ADR-008 D1). Every
 // such late log must land in a counted, benign, documented state-
@@ -49,7 +49,7 @@ async fn stream_end_notifies_sink_on_pump_ended() {
 
 /// A forward log for a block that is ALREADY tombstoned (delivery jitter
 /// past the tombstone edge) must NOT shut the pump down (the retired
-/// ADR-008 D3 hard-fault behavior). Target contract, task HJ5HWF:
+/// ADR-008 D3 hard-fault behavior). Target contract:
 /// - the pump keeps running and later blocks still process normally;
 /// - the late log is dropped WITHOUT applying it (no pool-state mutation
 ///   outside the Streaming window — I4);
@@ -148,7 +148,7 @@ async fn late_forward_after_tombstone_is_benign_late_admit() {
     );
 }
 
-// HJ5HWF property: synthetic lateness across a whole capture. The tail
+// Property: synthetic lateness across a whole capture. The tail
 // of EVERY block's log set (a randomized subset) is jitted past its
 // quiesce/tombstone edge (delivered behind the successor's first log).
 // Invariants asserted per run:
@@ -443,7 +443,7 @@ async fn reorg_contiguous_chunk_closes_on_first_forward_and_continues() {
     );
 }
 
-/// HJ5HWF pump-level (supersedes the retired ADR-008 D3 hard-fault
+/// Pump-level (supersedes the retired ADR-008 D3 hard-fault
 /// behavior, the no-landmine ruling): a `removed: false` log on a
 /// tombstoned block (NOT a reorg) is delivery-jitter LATENESS. The pump
 /// takes the benign late-admit path: the late log is dropped UN-applied,
@@ -561,7 +561,7 @@ async fn recovery_single_writer_discards_stale_forward_after_backfill() {
     );
 }
 
-/// BQ7ZBC × HJ5HWF — FSM guard: the single-writer discard is scoped to
+/// FSM guard: the single-writer discard is scoped to
 /// blocks the pump itself backfilled (≤ `recovery_anchor`). The
 /// header-staleness watchdog catch-up anchors at 102, then a
 /// `removed:false` forward at block 103 arrives late (103 tombstoned by
@@ -618,7 +618,7 @@ async fn recovery_anchor_stale_forward_above_anchor_is_benign_late_admit() {
 
     assert!(
             !shutdown.load(Ordering::Relaxed),
-            "a stale forward ABOVE recovery_anchor is counted lateness — the pump keeps running (HJ5HWF no-landmine)"
+            "a stale forward ABOVE recovery_anchor is counted lateness — the pump keeps running (no-landmine)"
         );
 }
 

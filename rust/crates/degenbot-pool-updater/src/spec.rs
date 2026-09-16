@@ -10,7 +10,7 @@
 //! `_V2_CONFIGS`/`_V3_CONFIGS`/`_V4_CONFIGS` dataclasses — to build a single
 //! [`ExchangeSpec`] carrying everything the chunk fn needs to
 //! dispatch per exchange: the resolved [`PoolFamily`] (decode-leaf
-//! discriminator), the per-exchange `PoolCreated` topic0 (from task `SBICJJ`'s
+//! discriminator), the per-exchange `PoolCreated` topic0 (from `degenbot_decoders`'s
 //! `degenbot-decoders` constants), the `fee_denominator`, and (for Aerodrome
 //! DEXes) the RPC fee-override call descriptor.
 //!
@@ -34,7 +34,7 @@
 //! **silently skipped** (forward-compat: the chunk loop updates the exchanges
 //! it can resolve; the unknown ones are left for a future Rust build). A
 //! `log::warn!` would be the ideal diagnostic, but this crate deliberately
-//! has no `log` dependency yet (kept minimal); when task `CKXCOB` wires up
+//! has no `log` dependency yet (kept minimal); when the chunk loop wires up
 //! `tracing`, the skip site is the natural warn target.
 
 use alloy::primitives::{Address, B256};
@@ -82,7 +82,7 @@ pub struct ExchangeSpec {
     /// topic0 + a `stable` indexed flag).
     pub family: PoolFamily,
     /// The per-exchange resolved `PoolCreated`/`Initialize` topic0. From
-    /// task `SBICJJ`'s `degenbot-decoders` constants (NOT re-declared here).
+    /// the decoders' constants (NOT re-declared here).
     /// Note: [`PoolFamily`] alone is NOT enough to resolve the topic —
     /// `aerodrome_v3` shares the V3 decode structure but has its own topic
     /// ([`AERODROME_V3_POOL_CREATED_TOPIC`] vs the canonical
@@ -205,7 +205,7 @@ fn resolve_static_config(name: &str) -> Option<StaticExchangeConfig> {
     // the chunk fn uses `spec.event_topic` (NOT `spec.family.topic0()`) for
     // the RPC filter, so the per-exchange topic is faithfully carried. The
     // decode leaf dispatching on `PoolFamily::V3` must additionally accept
-    // `AERODROME_V3_POOL_CREATED_TOPIC` (a task `CKXCOB` concern).
+    // `AERODROME_V3_POOL_CREATED_TOPIC` (a chunk-loop concern).
     let aerodrome_v3 = StaticExchangeConfig {
         family: PoolFamily::V3,
         event_topic: AERODROME_V3_POOL_CREATED_TOPIC,

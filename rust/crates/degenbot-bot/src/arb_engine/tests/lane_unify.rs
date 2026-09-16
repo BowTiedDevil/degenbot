@@ -1,7 +1,7 @@
 use super::*;
 
 // =================================================================
-// 43E3H3 red-first breaker suite (design logs/lane-unify-design.md §5).
+// Red-first breaker suite (design logs/lane-unify-design.md §5).
 // Status at HEAD (commit 1): each test below is RED against current
 // code — they pin the POST-merge contracts (one carrier, one ledger,
 // the detached arm's lane witness). They GREEN in commit 2.
@@ -203,7 +203,7 @@ fn detached_undercount_trips_the_fan_in_assert() {
             if pid != kill {
                 return;
             }
-            panic!("path killed mid-bin (43E3H3 red harness)");
+            panic!("path killed mid-bin (red harness)");
         }));
     let affected_keys_v2: Vec<degenbot_solvers::affected_keys::AffectedKey> = pool_ids
         .iter()
@@ -280,7 +280,7 @@ fn detached_panic_does_not_leak_inflight_gauge() {
             if pid != kill {
                 return;
             }
-            panic!("path killed mid-bin (43E3H3 red harness)");
+            panic!("path killed mid-bin (red harness)");
         }));
     let g0 = engine
         .cycle

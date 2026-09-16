@@ -204,7 +204,7 @@ fn operation_sort_key(op: &Operation) -> u64 {
 ///
 /// The `debt_v_token` for each `LiquidationCall` is resolved from the call's
 /// indexed `debtAsset` (topic 2) via the asset substrate (underlying → vToken
-/// — mirrors `_get_v_token_for_asset`). The matched burns' `debt_v_token` is
+/// mirrors `_get_v_token_for_asset`). The matched burns' `debt_v_token` is
 /// their vToken emitter (`ev.token_address`), which equals the
 /// `LiquidationCall`'s resolved vToken — so burns attach to the same group.
 ///
@@ -617,7 +617,7 @@ fn build_scaled_event_chunk_event(
                 // `ExplicitRoundingMath.get_debt_burn_scaled_amount = ray_div_floor`
                 // (rev ≥4); for rev ≤3 it's `HalfUpRoundingMath`. Distinct from
                 // `strategy_mode.burn` (the processor-fallback `RoundingStrategy`)
-                // — they happen to agree for debt burn, but the enricher is the
+                // they happen to agree for debt burn, but the enricher is the
                 // on-chain TokenMath contract here, not the post-decode fallback.
                 let scaled_amount = ray_div(
                     raw_amount,
@@ -886,7 +886,7 @@ fn build_scaled_event_chunk_event(
 /// authoritative inputs for credit/debit + `last_index` advancement
 /// (mirrors Python's `_match_paired_balance_transfer` in transfers.py).
 /// Pre-fix this dispatched the ERC20's UNDERLYING amount with `transfer_index=0`
-/// — at `liquidity_index != 1` the underlying > the credited scaled balance
+/// at `liquidity_index != 1` the underlying > the credited scaled balance
 /// → `balance would go negative`. Post-fix we use the BT's scaled amount + index.
 fn dispatch_balance_transfer(
     op: &Operation,
@@ -1780,7 +1780,7 @@ fn dispatch_liquidation(
 /// first (credit the user's collateral position), then burn events (debit,
 /// including accrued interest). The burn's `scaled_amount` is computed
 /// directly from the burn's `amount` + `index` (skip enrichment validation
-/// — the deficit-coverage burn includes interest accrued between the
+/// the deficit-coverage burn includes interest accrued between the
 /// transfer + the burn within the same tx).
 fn dispatch_deficit_coverage(
     op: &Operation,
@@ -2283,7 +2283,7 @@ mod tests {
         assert!(!ctx.is_gho_vtoken(Address::from([0xCD; 20])));
     }
 
-    // ── WCRWL3: GHO interest-accrual dispatch (crash #2) ───────────────
+    // ── GHO interest-accrual dispatch (crash #2) ───────────────
 
     /// Seed an in-memory DB with a market + a GHO debt asset (V4, no
     /// discount) whose vToken erc20 is `0xvtoken`. Returns (db, `vtoken_addr`).

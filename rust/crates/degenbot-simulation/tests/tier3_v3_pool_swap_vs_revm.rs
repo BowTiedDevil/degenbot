@@ -465,8 +465,7 @@ fn state_at_tick_zero(liq: u128, tick_spacing: i32) -> V3PoolState {
 }
 
 // ---------------------------------------------------------------------------
-// Dense-tick swap oracle (the end-to-end slice of 2LTKVO), hardened per
-// CMORFZ/6DLK7I. See `tier3_v3_common::dense_state` for the fixture rationale
+// Dense-tick swap oracle (the end-to-end slice), hardened per See `tier3_v3_common::dense_state` for the fixture rationale
 // (dense band + mid-word current tick + `sqrtPriceLimit` inside the band so the
 // on-chain walk terminates at the same price the Rust simulator stops at).
 // ---------------------------------------------------------------------------

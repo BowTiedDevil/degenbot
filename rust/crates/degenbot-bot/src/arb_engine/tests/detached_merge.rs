@@ -77,12 +77,12 @@ fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
 /// is stale (a pool ticked during the solve → its `update_block` moved)
 /// is DROPPED, not applied. A fresh-stamp straggler applies
 /// (apply-if-unchanged) through the same merge seam. LW-T9: the two
-/// dispositions ride DIFFERENT pids — the QR3NUS exactness fuse (carried
+/// dispositions ride DIFFERENT pids — the exactness fuse (carried
 /// to the sidecar) owns per-(cycle_seq, pid) delivery uniqueness, so the
 /// stale→fresh stamp flip on ONE pid is fused by construction now.
 #[test]
 fn detached_straggler_with_stale_update_stamp_is_dropped() {
-    // 43E3H3 const hoist: the straggler probes a seq the baseline
+    // Const hoist: the straggler probes a seq the baseline
     // in-cycle run did NOT claim (that run consumed seq 1; the ONE
     // (`solve_seq`, pid) ledger must not false-trip a plain sidecar
     // Q1a probe).
@@ -182,7 +182,7 @@ fn detached_straggler_with_stale_update_stamp_is_dropped() {
 /// counted applied == 2.
 #[test]
 fn detached_duplicate_straggler_trips_the_exactness_fuse() {
-    // 43E3H3 const hoist: the baseline in-cycle run consumed seq 1 — the
+    // Const hoist: the baseline in-cycle run consumed seq 1 — the
     // straggler probes the NEXT seq so it cannot shadow a key the
     // in-cycle arm already claimed under the ONE (`solve_seq`, pid)
     // ledger (that collision is N2's job; R1 pins a SIDECAR-ONLY

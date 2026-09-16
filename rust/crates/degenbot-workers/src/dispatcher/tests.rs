@@ -173,7 +173,7 @@ fn exactly_one_pin_per_key_is_representable() {
     assert_eq!(host.pin_slot(7), Some(slot));
 }
 
-/// 2SIOHJ done: `merge_slot()` reads the boot-frozen `SlotLayout`'s merge
+/// Layout probe: `merge_slot()` reads the boot-frozen `SlotLayout`'s merge
 /// index — the LAST boot slot (the boot construction pins it there
 /// T1→T2→T4).
 #[test]
@@ -261,7 +261,7 @@ fn slot_layout_pins_the_merge_sidecar_to_the_last_index() {
             key: MERGE_PIN_KEY,
         }
     );
-    // RED evidence (2SIOHJ, captured before the replica died): the stale
+    // Evidence (captured before the replica died): the stale
     // `first_idle_of` replica returned 11 — the first PoolStateUpdater
     // seat, misclassified as Merge by its else-arm — against this
     // oracle's 15. The replica died; the layout stands.
@@ -474,7 +474,7 @@ fn sim_before_solve_at_lease_time_and_solver_pins_first_via_continuations() {
     assert_eq!(continuation.0.slot, solver_slot, "the pin IS the key");
 }
 
-// (2SIOHJ deleted the first_idle_of replica: PROVEN drifted against the
+// (the deleted first_idle_of replica: PROVEN drifted against the
 // boot-frozen SlotLayout — its else-arm misclassified every poolupd seat
 // as Merge (RED: Merge home ⇒ 11, oracle ⇒ 15 at Q=8). Callers read the
 // layout directly.)
@@ -730,7 +730,7 @@ fn the_intake_queue_is_bounded_per_role() {
 }
 
 /// The `PoolStateUpdater` home range start (the boot-frozen `SlotLayout`
-/// owns the geometry, 2SIOHJ — poolupd seats boot Idle).
+/// owns the geometry — poolupd seats boot Idle).
 fn idle_intake_slot(host: &FleetHost) -> u64 {
     u64::try_from(host.layout().poolupd.start).unwrap_or(u64::MAX)
 }

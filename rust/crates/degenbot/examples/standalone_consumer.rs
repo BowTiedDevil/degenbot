@@ -137,7 +137,7 @@ fn fixture_db_path() -> PathBuf {
 
 /// Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
 ///
-/// Proves the end-state contract of epic P73ER6 with zero Python: a
+/// Proves the end-state contract with zero Python: a
 /// `cargo add degenbot` consumer can
 ///   a. open a `SnapshotDb` (file-backed — here the `parity.db` fixture
 ///      read handle with a held deferred read tx so `S` + per-pool reads
@@ -308,7 +308,7 @@ fn main() {
     //      amountInWithFee = amount_in * 997
     //      numerator       = amountInWithFee * reserve_out
     //      denominator     = reserve_in * 1000 + amountInWithFee
-    //    — byte-identical to the core's EVM-exact integer path
+    //    byte-identical to the core's EVM-exact integer path
     //    (`degenbot_math::v2::IntHopState::swap`).
     let amount_in_with_fee = amount_in * U256::from(997_u64);
     let numer = amount_in_with_fee * reserve1;
@@ -374,7 +374,7 @@ fn main() {
     let expected_f = a * b / ONE;
     assert_eq!(got_f, expected_f, "solidly calc_f direct port");
 
-    // Curve `get_dy` calc layer (T6, YY64IT): a standalone consumer builds a
+    // Curve `get_dy` calc layer : a standalone consumer builds a
     //    `DyCalculationInputs` snapshot and runs a full swap through the pure
     //    `calculate_dy` — the counterpart of the Python companion's delegation
     //    (T7). Matches the `standard_plain` canonical fixture (recorded dy).
@@ -436,7 +436,7 @@ fn main() {
 
     // 7. Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
     //    See `fixture_snapshot_seed_block` for the end-state contract of
-    //    epic P73ER6 (zero-Python), the S→W backfill that happens inside
+    //    the S→W backfill that happens inside
     //    `BlockPump::resume_from_subscribe`, and the SMOKE_RPC_URL
     //    gate for driving `subscribe`+`resume`.
     let seed_block = fixture_snapshot_seed_block();
@@ -750,7 +750,7 @@ fn in_process_sim_standalone_slice() {
         matches!(err, Err(PoolBuilderError::MissingIdentity { .. })),
         "resolve_v4_identity with empty overrides must yield MissingIdentity, got {err:?}"
     );
-    // Aerodrome V2: build_aerodrome_v2 (the SSSXG6 follow-up) reads the same
+    // Aerodrome V2: build_aerodrome_v2 follow-up reads the same
     // failing `FailingConstruction` stub — must surface the typed Rpc error too,
     // pinning the umbrella path (re-export + error type) for the Aerodrome family.
     let err = degenbot::runtime::get_runtime().block_on(build_aerodrome_v2(1, POOL_B, &io, None));

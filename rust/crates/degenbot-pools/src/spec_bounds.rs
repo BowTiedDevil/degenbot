@@ -140,7 +140,7 @@ pub fn validate_v2_reserve(value: U112, field: &'static str) -> Result<(), SpecV
 /// `U112` via `.to::<U112>()` (which panics on overflow — this fn runs the
 /// check first, so the `.to` is infallible here).
 ///
-/// Post-ZPHT6X the `V2PoolState` / `V2BlockDelta` fields are typed `U112`,
+/// The `V2PoolState` / `V2BlockDelta` fields are typed `U112`,
 /// so any `U256`-sourced reserve must narrow through this seam before
 /// reaching typed storage.
 ///
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn v2_reserve_accepts_uint112_max() {
-        // Post-ZPHT6X the field is typed `U112`, so `U112::MAX` *is*
+        // The field is typed `U112`, so `U112::MAX` *is*
         // `UINT112_MAX`; the type-level bound supersedes the runtime check.
         assert_eq!(validate_v2_reserve(U112::MAX, "reserve0"), Ok(()));
     }
@@ -278,7 +278,7 @@ mod tests {
     fn v2_reserve_accepts_zero() {
         assert_eq!(validate_v2_reserve(U112::ZERO, "reserve1"), Ok(()));
     }
-    // Note: the pre-ZPHT6X `v2_reserve_rejects_uint112_max_plus_one` test is
+    // Note: the pre-widening `v2_reserve_rejects_uint112_max_plus_one` test is
     // removed — a value `> UINT112_MAX` cannot be constructed as a `U112`
     // (the type's `MAX` *is* `UINT112_MAX`), so the runtime reject branch is
     // unreachable for `U112`-typed input. The branch remains live for the

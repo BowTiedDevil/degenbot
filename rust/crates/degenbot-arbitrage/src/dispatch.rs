@@ -190,13 +190,13 @@ pub fn filter_thin_margin_results(
 /// A pre-simulation candidate — the engine result + the resolved [`PathInfo`].
 ///
 /// Ports the `EngineResult` tuple `(path_id, opt_input, profit, hop_outputs,
-/// consumed_inputs, solve_block)` (L1672 + L2486). The Python oracle resolves
+/// consumed_inputs, solve_block)`. The Python oracle resolves
 /// the `PathInfo` from `engine_registry.paths.get(path_id)`; this leaf takes
 /// it pre-resolved (the registry lookup is the caller's concern — the
 /// `degenbot` umbrella's `Bot` owns the engine registry).
-/// One per-hop row of a candidate (Cloudflare fewer-lists pattern — HTPKLX
-/// 4JLQNS continuation): the solver's output, the executable input, and the
-/// solve-time state nonce, contiguous per hop.
+/// One per-hop row of a candidate (a Cloudflare-style fewer-lists row):
+/// the solver's output, the executable input, and the solve-time state
+/// nonce, contiguous per hop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SolveStep {
     /// The solver's output after this hop (the former `hop_outputs[i]`).
@@ -348,7 +348,7 @@ impl DispatchOutcome {
 ///    the sort, ports L1684).
 /// 5. **Fan-out** — the in-process revm path: build ONE per-block
 ///    `BlockSimHandle` + simulate each candidate SERIALLY on the shared
-///    `&mut evm` (Tier 1, `V5HCR5`). `bot_state` is `Option` so that
+///    `&mut evm` (Tier 1). `bot_state` is `Option` so that
 ///    empty / pre-filtered-to-empty input (which short-circuits at step 5)
 ///    need not construct an engine; the `None` arm is the unreachable
 ///    anti-pattern guard for non-empty input without a `BotState` (the
@@ -459,7 +459,7 @@ pub fn dispatch_profitable_results(
     fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
     // The fan-out routes each candidate through the in-process revm sim
     // over the borrowed `&BotState` via a per-block shared `BlockSimHandle`
-    // (Tier 1, `V5HCR5` — retired the per-path `simulate_in_process`
+    // (Tier 1 — retired the per-path `simulate_in_process`
     // fresh-`CacheDB`-per-call build), the sole executor since the
     // `eth_simulateV1` RPC path retired (ADR-019 D1). The `Arc<RwLock<BotState>>`
     // is the engine's shared state owner (ADR-003); a per-block read guard is
@@ -607,12 +607,12 @@ pub fn dispatch_profitable_results(
     }
 
     // 5. Fan-out — build ONE per-block `BlockSimHandle` + simulate each
-    //    candidate SERIALLY on the shared `&mut evm` (Tier 1, `V5HCR5`).
+    //    candidate SERIALLY on the shared `&mut evm` (Tier 1).
     //    `buffer_unordered(MAX_SIMULATE_CONCURRENT)` was the Rust idiom for
     //    the Python `asyncio.gather(*sim_tasks)` + the
     //    `results[:MAX_SIMULATE_CONCURRENT]` cap under the retired RPC path
     //    (the cap is double-asserted: the L2491 truncate + the buffer bound
-    //    — belt + suspenders); the in-process serial path uses a plain
+    //    belt + suspenders); the in-process serial path uses a plain
     //    `.map().collect()` over the borrowed `&mut evm`. Unlike
     //    `tokio::spawn`, neither borrows `'static` — the closure borrows
     //    `ctx` for its lifetime, and we collect within this fn (no task
@@ -624,7 +624,7 @@ pub fn dispatch_profitable_results(
     let lab_fanout_started = std::time::Instant::now();
     let fanout_candidate_count = candidates.len();
     let sim_results: Vec<(u64, FailBuckets, Result<Option<SimResult>, String>)> = match bot_state {
-        // In-process revm path (Tier 1, `V5HCR5`): build ONE per-block EVM
+        // In-process revm path (Tier 1): build ONE per-block EVM
         // (`BlockSimHandle`) and simulate each candidate SERIALLY on the
         // shared `&mut evm`. The shared `CacheDB` captures the ~50× latency
         // win (benchmark `examples/rpc_cache_fanout.rs` config B vs A): the
@@ -880,7 +880,7 @@ pub fn dispatch_profitable_results(
     // 8.5. FoT success recording. For every SUCCEEDED path,
     //      record `record_success(token)` for EVERY token on the path — each
     //      hop's input AND output (via `hop_input_token` + `hop_output_token`)
-    //      — the 0-success disambiguator. A true FoT token can never succeed
+    //      the 0-success disambiguator. A true FoT token can never succeed
     //      (the fee always shorts the input), so a single success clears the
     //      token. Recording BOTH sides (not just hop inputs) is important: a
     //      committed swap proves EVERY token that crossed a leg transferred
@@ -1123,7 +1123,7 @@ mod tests {
         assert_eq!(dropped, 0);
     }
 
-    // ── SMOZG3: the production axis chain (kwarg → intake → config) ────────
+    // ── the production axis chain (kwarg → intake → config) ────────
 
     #[test]
     #[expect(clippy::expect_used)] // in-range axes; a fail-closed panic is the test contract

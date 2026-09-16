@@ -1,4 +1,4 @@
-//! T1 (arch-review epic PZBGP7) module-boundary probe for the walker
+//! Module-boundary probe for the walker
 //! structural decomposition.
 //!
 //! `derive_plan` must be a thin dispatcher over six shape modules; the
@@ -36,7 +36,7 @@ fn walker_shape_modules_exist() {
         assert!(
             p.exists(),
             "missing walker shape module {} — T1 structural split wants \
-             one module per enclosure block (arch-review epic PZBGP7)",
+             one module per enclosure block (arch review)",
             p.display()
         );
     }

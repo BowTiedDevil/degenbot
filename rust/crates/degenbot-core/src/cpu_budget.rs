@@ -12,7 +12,7 @@
 //! whose parents may be tighter) and takes the tightest limit found, min'd
 //! with the affinity budget.
 //!
-//! Two-runtime sizing policy (SMTH6M: this module is the single sizing
+//! Two-runtime sizing policy (this module is the single sizing
 //! authority for BOTH runtimes):
 //! - solve bins: budget minus solve headroom (the main runtime, Python, the
 //!   pump, and the `OTel` exporter share the quota and must not starve
@@ -183,7 +183,7 @@ pub(crate) fn effective_budget_from_with_roots(
 /// (`override_headroom`, default [`DEFAULT_SOLVE_HEADROOM`]), floored at 1.
 ///
 /// Public so the fleet budget authority can property-test the
-/// cross-authority sizing contract `TTANQJ` , and so a
+/// cross-authority sizing contract, and so a
 /// standalone (ADR-005) consumer can size solve bins from a budget it
 /// derived itself.
 #[must_use]
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(ambient_io_worker_count_from(Some(0), 6, 8), 1);
     }
 
-    // ---- [cpu-budget] boot log (SMTH6M acceptance) ----
+    // ---- [cpu-budget] boot log ----
 
     /// Minimal recording subscriber so the boot-log contract is asserted
     /// without a tracing-subscriber dependency in this leaf crate.

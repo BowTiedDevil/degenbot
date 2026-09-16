@@ -61,7 +61,7 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_PUMP_QUIESCE_CEIL_MS` | `pump.quiesce_ceil_ms` | `duration-ms (u64)` | `20` | Adaptive mode: upper bound (ms) of the trailing settle window; the estimator never grows beyond it (inherits the debounce parse contract: unset/zero/invalid falls back, never 0). |
 | `DEGENBOT_PUMP_QUIESCE_MARGIN_MS` | `pump.quiesce_margin_ms` | `f64` | `3.0` | Adaptive mode: safety multiplier over the silence-gap EWMA (W = EWMA × margin, then floor/ceiling clamp). |
 | `DEGENBOT_PUMP_QUIESCE_EWMA_ALPHA` | `pump.quiesce_ewma_alpha` | `f64` | `0.1` | Adaptive mode: EWMA smoothing constant over per-block max silence gaps (≈10-block memory); clamped to (0, 1]. |
-| `DEGENBOT_PUMP_QUIESCE_LATE_BUDGET` | `pump.quiesce_late_budget` | `u64` | `120` | Adaptive-mode runtime backstop (HJ5HWF contract): more than this many benign late-admit events in a sliding hour holds the window at quiesce_ceil_ms until the ledger drains. |
+| `DEGENBOT_PUMP_QUIESCE_LATE_BUDGET` | `pump.quiesce_late_budget` | `u64` | `120` | Adaptive-mode runtime backstop: more than this many benign late-admit events in a sliding hour holds the window at quiesce_ceil_ms until the ledger drains. |
 ## `trace`
 
 | Env var | TOML key | Type | Default | Description |

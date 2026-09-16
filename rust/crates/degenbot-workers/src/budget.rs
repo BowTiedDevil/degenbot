@@ -60,7 +60,7 @@ pub const DEFAULT_SIM_SLOT_CAP: usize = 4;
 pub const DEFAULT_POOL_STATE_UPDATER_SLOTS: usize = 4;
 
 /// Terminal, typed overrides (config/env) consumed by [`FleetBudget::derive`]
-/// — a configured value wins, is logged, and participates in the same sum
+/// a configured value wins, is logged, and participates in the same sum
 /// check (design doc §5: "overrides are terminal").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BudgetOverrides {
@@ -151,12 +151,12 @@ pub enum BudgetError {
         quota: f64,
     },
     /// A `runtime.io_workers` override the resolved plan cannot honor
-    /// (FF-T2): below the SMTH6M ambient floor (A >= 1) on the pinned
+    /// (FF-T2): below the ambient floor (A >= 1) on the pinned
     /// binding, or off the serial binding\u0027s exactly-one ambient I/O lane.
     /// Refused with a hint, never a silent clamp.
     #[error(
         "runtime.io_workers override {requested} is out of bounds for the {binding} \
-         binding (pinned: A >= 1, the SMTH6M ambient floor; serial: exactly one \
+         binding (pinned: A >= 1, the ambient floor; serial: exactly one \
          ambient I/O lane) — fix or drop the override, never a silent clamp"
     )]
     IoWorkersOutOfBounds {
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(b.solver_cpus, 4);
         // Pins are STRUCTURAL: one seat per LPT bin = floor(Q) - the solve
         // headroom (allocation FLOORS the quota; cpu_budget's worker-
-        // existence detection ceils it — the TTANQJ property in this file
+        // existence detection ceils it — the cross-authority property in this file
         // pins that split) — not the 2:1 parked-wait over-subscription
         // (P6YXA6 sizing note).
         assert_eq!(b.solver_pin_count, 6);
@@ -1064,7 +1064,7 @@ mod tests {
     }
 
     mod cross_authority {
-        //! TTANQJ : the settled contract between the two CPU
+        //! The settled contract between the two CPU
         //! sizing authorities over ARBITRARY quota shapes. Fleet allocation
         //! floors: `seats = max(1, floor(Q) - headroom)`. `cpu_budget`
         //! worker-existence ceils: `solve = max(1, min(ceil(cgroup Q),

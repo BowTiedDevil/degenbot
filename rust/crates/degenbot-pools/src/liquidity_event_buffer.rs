@@ -97,7 +97,7 @@ where
     /// Drain and return the pump events for `key` whose `block_number` is at
     /// or below `cutoff` — the highest block the pump has tombstoned (the
     /// stage machine's tombstone completeness cutoff — the delivery cutoff,
-    /// 3M5PO5; named `BlockClock` in the pre-epic code, retired in MROOY7).
+    /// named `BlockClock` in the pre-epic code, since retired).
     /// Events for a block
     /// the pump has NOT finished processing stay buffered, so a drain+pin at
     /// the registration seam cannot capture a half-delivered block.

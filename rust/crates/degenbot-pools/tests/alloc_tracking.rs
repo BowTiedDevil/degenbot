@@ -50,7 +50,7 @@ static A: Tracking = Tracking;
 
 #[expect(
     clippy::print_stdout,
-    reason = "JSON lines are the harness report consumed by the HTPKLX baseline log"
+    reason = "JSON lines are the harness report consumed by the allocation baseline log"
 )]
 fn measure<T>(label: &str, f: impl FnOnce() -> T) -> T {
     BYTES.store(0, Ordering::Relaxed);

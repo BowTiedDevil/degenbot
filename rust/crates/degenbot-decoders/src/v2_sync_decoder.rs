@@ -26,7 +26,7 @@ pub const V2_SYNC_TOPIC: B256 =
 pub struct SyncEvent {
     /// The pair contract that emitted the event.
     pub pool_address: Address,
-    /// Reserve of token0 (on-chain `uint112` — typed `U112` post-ZPHT6X;
+    /// Reserve of token0 (on-chain `uint112` — typed `U112`;
     /// the decoder validates the high 144 bits of the ABI word are zero
     /// before narrowing).
     pub reserve0: U112,

@@ -23,7 +23,7 @@ use pyo3::prelude::*;
 
 use crate::db::db_err_to_py;
 
-/// One decoded liquidity event the apply loop consumes (QJSCA5 §4.3).
+/// One decoded liquidity event the apply loop consumes ).
 ///
 /// Mirrors [`degenbot_db::LiquidityUpdateEvent`]: the
 /// `(block_number, log_index, tick_lower, tick_upper, liquidity_delta)`

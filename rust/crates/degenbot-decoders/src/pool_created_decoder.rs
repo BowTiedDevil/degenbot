@@ -121,7 +121,7 @@ pub const AERODROME_V2_POOL_CREATED_TOPIC: B256 =
 /// Python `update_v3_pools` updater that handles both `uniswap_v3` and
 /// `aerodrome_v3`). See `src/degenbot/cli/pool.py`'s
 /// `AERODROME_V3_POOLCREATED_EVENT_HASH`. The decode leaf that accepts this
-/// topic is deferred to task `CKXCOB` (the chunk loop) — the constant is
+/// topic is deferred to the chunk loop — the constant is
 /// surfaced here so `ExchangeSpec.event_topic` can carry it faithfully.
 pub const AERODROME_V3_POOL_CREATED_TOPIC: B256 =
     b256!("0xab0d57f0df537bb25e80245ef7748fa62353808c54d6e528a9dd20887aed9ac2");

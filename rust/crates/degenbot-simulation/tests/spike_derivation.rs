@@ -59,7 +59,7 @@ fn liq() -> u128 {
 /// emitter + gate (every touched PM delta nets to zero by `V4UnlockEnd`) +
 /// runtime exact delta.
 /// BP7KIR Increment 3b: the `v4_v2` boundary-seed family on the Plan tree
-/// — the V4 forward output is taken directly to the V2 pair (PM→pool,
+/// the V4 forward output is taken directly to the V2 pair (PM→pool,
 /// `SeedPair`), consumed by a terminal `V2SwapCalc` (the 2PT5HH rule across
 /// the PM boundary), and the V4 WETH-input debt is settled by the
 /// `V4Sync`+`Erc20Transfer(WETH→PM)`+`V4Settle` boundary-seed funded by the
@@ -2426,7 +2426,7 @@ fn u3wvll_bribe_on_self_fund_computes_on_true_profit_not_balance() {
     println!("── u3wvll self-fund bribe: delta={weth_delta}, true_profit={true_profit}, bribe={bribe} (not over-bribed)");
 }
 
-/// U3WVLL follow-up (767TN5): the sweep opt-in (`check_mode=3`) defeats the
+/// follow-up (767TN5): the sweep opt-in (`check_mode=3`) defeats the
 /// profit assert for the rare "send accumulated profit to another address"
 /// case. The executor holds accumulated WETH (combined_before > 0); a sweep
 /// command stream sends it away (combined_after < combined_before) — which

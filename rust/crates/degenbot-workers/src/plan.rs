@@ -264,7 +264,7 @@ pub fn plan(
 
 /// The per-binding `runtime.io_workers` bounds (FF-T2: an out-of-bounds
 /// override raises a typed refusal with a hint, never a silent clamp).
-/// The pinned binding keeps the SMTH6M ambient floor (A >= 1); the serial
+/// The pinned binding keeps the ambient floor (A >= 1); the serial
 /// binding owns exactly ONE ambient I/O lane (A == 1).
 fn validate_io_workers(binding: Binding, overrides: &BudgetOverrides) -> Result<(), BootError> {
     let Some(requested) = overrides.ambient_io_workers else {
@@ -396,11 +396,11 @@ mod tests {
 
     /// `runtime.io_workers` is validated against the plan bounds: an
     /// out-of-bounds override raises a typed refusal with a hint, never
-    /// a silent clamp. The pinned binding keeps the SMTH6M ambient floor
+    /// a silent clamp. The pinned binding keeps the ambient floor
     /// (A >= 1); the serial binding owns exactly ONE ambient I/O lane.
     #[test]
     fn io_workers_overrides_are_validated_against_plan_bounds() {
-        // Pinned + A=0: below the SMTH6M ambient floor.
+        // Pinned + A=0: below the ambient floor.
         let ov = BudgetOverrides {
             ambient_io_workers: Some(0),
             ..overrides()

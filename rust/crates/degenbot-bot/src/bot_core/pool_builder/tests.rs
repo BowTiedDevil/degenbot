@@ -862,7 +862,7 @@ impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
     }
 }
 
-/// A DB hit gives a TRACKED pool (the cross-task capture in 4GQWZ4): the builder
+/// A DB hit gives a TRACKED pool : the builder
 /// favors the `TickMapDb` full tick map (Tracked → feeds the verify lifecycle)
 /// over the chain-arm single-word bootstrap, and must NOT consult the chain
 /// (no `tick_bitmap` response is seeded, so a chain probe would error).
@@ -936,7 +936,7 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
 /// caller-supplied head price clock. Before the fix the builder stamped
 /// `tick_data_block = update_block = head`, so the seed/post-drain verify
 /// compared stale DB seed data against on-chain at head and fabricated a
-/// mismatch (the 4GQWZ4 reactivation of regression 8c50e0cd).
+/// mismatch (regression 8c50e0cd).
 #[tokio::test]
 async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     use crate::bot_core::PoolTickCoverage;
@@ -1009,7 +1009,7 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     );
 }
 
-// --- SSSXG6: Balancer choreography + builder decode tests -------------------
+// --- Balancer choreography + builder decode tests -------------------
 
 fn pool_id_ret(pool_id: &[u8; 32]) -> Vec<u8> {
     enc(DynSolValue::FixedBytes(FixedBytes::from(*pool_id), 32))

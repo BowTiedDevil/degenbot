@@ -28,7 +28,7 @@ use std::mem::size_of;
 #[test]
 #[expect(
     clippy::print_stdout,
-    reason = "size report feeds the HTPKLX baseline log"
+    reason = "size report feeds the allocation baseline log"
 )]
 fn report_pool_state_sizes() {
     println!(

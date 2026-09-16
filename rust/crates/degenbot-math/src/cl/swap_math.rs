@@ -463,7 +463,7 @@ mod protocol_fee_tests {
     /// pips in BOTH directions; `lpFee = 100`. The effective swap fee is
     /// therefore 125 pips (0.0125%) — NOT 200 and NOT the bare `lpFee` 100.
     ///
-    /// This pins the RZKFKR fix (thread `calculateSwapFee(protocol_dir,
+    /// This pins the protocol-fee fix (thread `calculateSwapFee(protocol_dir,
     /// lp_fee)` into the V4 swap-step fee): if the protocol fee were omitted
     /// the solver would model 100 pips and diverge from on-chain. The
     /// `fee_bps=2` `[solver-st]` display of this hop is a rounding artifact

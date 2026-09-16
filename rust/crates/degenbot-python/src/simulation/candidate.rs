@@ -128,7 +128,7 @@ impl PyDispatchCandidate {
             use_v4_batch,
             ..Default::default()
         };
-        // Merged per-hop rows (HTPKLX 4JLQNS continuation): the Python seam
+        // Merged per-hop rows (allocation continuation): the Python seam
         // keeps its three-list API (adapted accessors, per the epic guardrail);
         // the core candidate stores one row per hop.
         let steps: Vec<degenbot_arbitrage::SolveStep> = hop_outputs

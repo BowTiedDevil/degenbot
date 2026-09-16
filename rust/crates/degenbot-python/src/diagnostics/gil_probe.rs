@@ -129,7 +129,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
     // profiler-owned hp-* threads are untouched by the census).
     degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {
         resource: "gil_probe",
-        kind: "std probe + watchdog threads (GIL-held sampler + main-loop stuck watchdog, 66H3KJ)",
+        kind: "std probe + watchdog threads (GIL-held sampler + main-loop stuck watchdog, )",
         count: 2,
         thread_name: "gil-probe + gil-probe-watchdog",
         sizing: "exactly two (fixed; started once, guarded by the PROBE_RUNNING swap)",

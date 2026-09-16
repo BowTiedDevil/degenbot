@@ -75,7 +75,7 @@ mod diagnostic;
 // SZJUKL seam retirement: the arb engine's StageHandlers implementation —
 // the ONE surface left between the machine driver and the engine. The
 // dissolved `engine_handle` (wrapper Mutex), `engine_subscriber` (liveness
-// adapter), and `epoch_delta_parity`/`test_oracle` (the LXDY4C parity
+// adapter), and `epoch_delta_parity`/`test_oracle` (the parity
 // oracle, GONE now that `EpochDelta` is sole authority) are deleted —
 // hard cutover, Q6.
 pub mod engine_stages;
@@ -557,7 +557,7 @@ impl ArbitrageEngine {
             event_buffer_expiry_enabled: false,
         };
         // apply the config-derived retune ONCE at construction
-        // — the engine's per-instance knob values come from the caller's cfg.
+        // the engine's per-instance knob values come from the caller's cfg.
         engine.apply_retune(&retune);
         engine
     }

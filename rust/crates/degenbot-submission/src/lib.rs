@@ -48,7 +48,7 @@
 //!
 //! The fee constants (`TARGET_PROFIT_RATIO` / `AGE_DECAY_CONSTANT` /
 //! `MIN_PRIORITY_FEE_PERCENTILE` / `MAX_PRIORITY_FEE_PERCENTILE`) live in
-//! `_compute_priority_fee` (`YL2MTH`, Simulation) — NOT this crate's concern.
+//! `_compute_priority_fee` (Simulation) — NOT this crate's concern.
 //! The `priority_fee` is CONSUMED off `tx_params` (no hard edge — the
 //! Simulation leaf computes it; submission reads it). For §4.2 parity the fee
 //! is a fixture value.
@@ -57,7 +57,7 @@
 //!
 //! - The `eth_sendRawTransaction` broadcast (`bytes → TxHash`) — `ZUZANP`.
 //! - `next_base_fee` — `JTLWA3` (consumed via `base_fee_next`).
-//! - `_compute_priority_fee` (the `priority_fee` value) — `YL2MTH` (consumed
+//! - `_compute_priority_fee` (the `priority_fee` value) (consumed
 //!   via `tx_params`; for §4.2 it is a fixture).
 //! - The submit orchestration (claim nonce → finalize → re-compute access
 //!   list → sign → broadcast → monitor) — the N6 sibling.

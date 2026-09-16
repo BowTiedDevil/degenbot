@@ -74,7 +74,7 @@ pub enum ProfitCapture {
     /// (Balancer) captured into the external Vault ledger — modeled, not yet
     /// executable by the current executor.
     BalancerVault,
-    /// U3WVLL follow-up (767TN5): the rare 'send accumulated profit to
+    /// follow-up (767TN5): the rare 'send accumulated profit to
     /// another address' case. Defeats the profit assert (the sweep sends the
     /// balance away, so combined_after < combined_before is expected). Routes
     /// to the contract's `check_mode=3` (SWEEP) — the ONLY way to defeat the

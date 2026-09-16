@@ -33,7 +33,7 @@
 //! literal + the label is `classify_revert` on that selector) is noted inline
 //! as a sanity check, but the byte-exact fixture comparison is the real gate.
 //!
-//! V4 slice is deferred (gated on `5RI47E`, the transient V4 pool seeder).
+//! V4 slice is deferred (gated on the transient V4 pool seeder).
 
 #![expect(clippy::doc_markdown)]
 

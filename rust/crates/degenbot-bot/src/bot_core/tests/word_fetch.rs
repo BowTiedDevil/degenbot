@@ -487,7 +487,7 @@ fn swap_simulation_empty_word_not_refetched() {
     // A fetcher that returns an empty word (checked-but-empty) marks the
     // word known in `known_bitmap_words`. A second solve must NOT re-invoke
     // the fetcher — the empty word survived in the bitmap (ADR-006/005
-    // stored-tick-fetcher task MLJT4V). This is the bitmap empty-word fix
+    // stored-tick-fetcher ). This is the bitmap empty-word fix
     // that lets the companion delete `_bitmap_override`.
     use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
     use std::sync::atomic::{AtomicU32, Ordering};

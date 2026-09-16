@@ -1,5 +1,5 @@
-//! Tier-3 PancakeSwap V3 `PancakeV3Pool.swap` on-chain accuracy oracle
-//!. Deploys the REAL `PancakeV3Pool` — the
+//! Tier-3 PancakeSwap V3 `PancakeV3Pool.swap` on-chain accuracy oracle.
+//! Deploys the REAL `PancakeV3Pool` — the
 //! Etherscan-verified deployment (pool 0x1445F32D1A74872bA41f3D8cF4022E9996120b31,
 //! solc 0.7.6, source vendored under `tier3-oracle/lib/pancake-src/`) via the
 //! `PancakeV3SwapOracleHarness`, seeds its storage slot-for-slot, drives
@@ -8,12 +8,12 @@
 //! post-liquidity).
 //!
 //! The shared deploy → setup → seed → swap → read-back pipeline lives in
-//! [`tier3_v3_common`](crate::tier3_v3_common) (created by the V3 task
-//! `6DLK7I`); this file is the PancakeSwap fork consumer — it declares its
+//! [`tier3_v3_common`](crate::tier3_v3_common); this file is the PancakeSwap
+//! fork consumer — it declares its
 //! `V3Fork` (EIP-170 override), its fork-specific storage seeder
 //! (`v3_pancakeswap_storage_slots` — a 2-word `slot0`, liquidity@5, ticks@6,
-//! tickBitmap@7), and its 9-field `Swap`-event-variant assertions. Per epic
-//! `CMORFZ` this adds H1 rejection-reason airtightness, an H3 pinned edge
+//! tickBitmap@7), and its 9-field `Swap`-event-variant assertions. On top of
+//! the shared suite this adds H1 rejection-reason airtightness, an H3 pinned
 //! corpus (incl. a protocol-fee-on case), and an H4 widened proptest.
 //!
 //! ## The variant under test

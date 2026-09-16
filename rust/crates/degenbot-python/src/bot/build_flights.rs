@@ -1,4 +1,4 @@
-//! Engine-internal single-flight pool builds (PRG-1 / IRUMXD registry
+//! Engine-internal single-flight pool builds (PRG-1 registry
 //! unification).
 //!
 //! Replaces the CXKACI FFI claim table (`pool_build_claims.rs`, a `PyO3`

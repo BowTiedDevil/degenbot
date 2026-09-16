@@ -6,7 +6,7 @@ use crate::mixed::HopType;
 
 /// One affected (hop family, pool id) key — the `pool_to_paths` reverse
 /// index key (the "path-index role" of this module). The affected-path
-/// derivation is DELTA-DRIVEN since epic MROOY7 task LXDY4C: log application
+/// derivation is DELTA-DRIVEN: log application
 /// records `AffectedKey`s into the block's
 /// `degenbot_bot::bot_core::EpochDelta` as a byproduct of
 /// `dispatch_log`, and the drain's derivation consumes the delta's taken

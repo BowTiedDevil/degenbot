@@ -37,7 +37,7 @@
 //!
 //! A future pure-async standalone `Bot` API can introduce a sibling `async`
 //! trait sharing the same value types — out of scope for the
-//! `5NT2OC` epic (see the chain-bootstrap-tick-map guide, removed in the stale-docs cleanup `71ec78b2`, §1).
+//! the chain-bootstrap epic (see the chain-bootstrap-tick-map guide, removed in the stale-docs cleanup `71ec78b2`, §1).
 
 use hashbrown::HashMap;
 use std::sync::Arc;

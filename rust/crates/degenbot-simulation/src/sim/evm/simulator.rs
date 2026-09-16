@@ -18,7 +18,7 @@
 //! strategies (the settlement-arbitrage bundle today; sandwich/JIT-L/liquidation later) can
 //! drive the same engine with their own `SimulateContext`-equivalent config.
 //!
-//! # Per-block shared-EVM handle (Tier 1, `V5HCR5`)
+//! # Per-block shared-EVM handle (Tier 1)
 //!
 //! Retires the per-path `simulate_in_process` (which rebuilt the full
 //! `CacheDB`+EVM stack per call). The per-block handle is built ONCE per block
@@ -85,7 +85,7 @@ impl Provider<Ethereum> for ArcDynProviderEthereum {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// The per-block shared-EVM handle (Tier 1, task `V5HCR5`)
+// The per-block shared-EVM handle (Tier 1)
 // ─────────────────────────────────────────────────────────────────────────
 
 /// The production DB stack backing a per-block [`BlockEvm`] —
@@ -119,7 +119,7 @@ pub type BlockEvm<'a> = revm::MainnetEvm<
 >;
 
 /// Owns a per-block shared EVM (one `CacheDB` + revm `Context`, state overrides
-/// applied once) for the in-process sim fan-out (Tier 1, `V5HCR5`).
+/// applied once) for the in-process sim fan-out (Tier 1).
 ///
 /// Built ONCE per block by [`BlockSimHandle::build`] (the strategy's
 /// `dispatch_profitable_results` calls it), then each candidate path is

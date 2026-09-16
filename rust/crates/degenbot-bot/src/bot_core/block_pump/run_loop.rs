@@ -465,7 +465,7 @@ impl BlockPump {
                                 // of header staleness): headers are FRESH (the
                                 // Recover branch did not fire) but no
                                 // `WsEvent::Log` arrived in `self.log_silence`
-                                // — the `eth_subscribe "logs"` arm is presumed
+                                // the `eth_subscribe "logs"` arm is presumed
                                 // stalled/dead while `newHeads` is alive. One
                                 // warning per silence episode (re-armed when
                                 // the next log resumes the sub).
@@ -490,7 +490,7 @@ impl BlockPump {
                 // inactivity backfill path.
                 Err(_) => {
                     // A2: settle-point rules live in the FSM (`on_settle`)
-                    // — the quiesce-before-publish gate + solver-release gate
+                    // the quiesce-before-publish gate + solver-release gate
                     // (ADR-008 D2) vs the inactivity backfill. The driver only
                     // executes the emitted decisions.
                     //
@@ -726,7 +726,7 @@ impl BlockPump {
                         // T2: blocks-observed counter + the header→solved anchor.
                         if let Some(p) = crate::instruments::pipeline() {
                             p.count_block();
-                            // VPD5ZH follow-up: the kernel throttle counters
+                            // follow-up: the kernel throttle counters
                             // that identified the >10s solve p95 belong on the
                             // dashboard, one sample per block cadence.
                             if let Some(stats) = degenbot_core::cpu_budget::cgroup_throttle_delta()
@@ -739,7 +739,7 @@ impl BlockPump {
                                 // Part A: the SAME per-block sample feeds
                                 // the ONE process fleet posture owner
                                 // (`degenbot_workers::posture::process()`
-                                // — the Executor seam channel is
+                                // the Executor seam channel is
                                 // dissolved). The pump owns the
                                 // header-cadence delta
                                 // (LAST_HEADER_SAMPLE_MS). Always fed.

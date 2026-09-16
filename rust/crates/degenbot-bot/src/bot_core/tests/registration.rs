@@ -65,7 +65,7 @@ fn pool_family_dispatches_v2_and_unknown() {
 
 #[test]
 fn curve_get_dy_runs_the_rust_owned_swap_path() {
-    // Task `45QBUG`: the Rust-owned `get_dy` entry replays the shared
+    // The Rust-owned `get_dy` entry replays the shared
     // `standard_plain` fixture and reproduces the recorded dy — proving
     // the whole swap path (orchestration + calc) runs with no Python
     // provider / cache / calculator.
@@ -658,7 +658,7 @@ fn unregister_v2_pool_returns_true_then_re_register_allocates_fresh_id() {
 }
 
 // -----------------------------------------------------------------------
-// PRG-1 / IRUMXD registry unification: BotState is the registry of record.
+// PRG-1 registry unification: BotState is the registry of record.
 // `registered_pool_by_address` answers the PyO3 build adapters' pre-check
 // with the family-tagged entry, so a duplicate build resolves to the
 // registered handle instead of replaying the builder into an
@@ -810,7 +810,7 @@ fn register_v2_pool_rejects_duplicate_address_as_already_registered() {
     );
 }
 
-// Note: the overlarge-reserve rejection that lived here pre-ZPHT6X has
+// Note: the overlarge-reserve rejection that lived here previously has
 // moved to the `narrow_v2_reserve` ingestion seam (PyO3 `sync_reserves` /
 // `register_*_pool` paths + the V2 Sync decoder) — see
 // `degenbot_pools::spec_bounds::narrow_v2_reserve` and its tests. With

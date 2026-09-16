@@ -72,7 +72,7 @@ pub struct AerodromeV2PoolIdentity {
 /// Reserves are typed `U112` to mirror the on-chain `uint112` storage width
 /// (Solidly / Aerodrome pair contracts mirror v2-core's
 /// `Sync(uint112,uint112)` reserve shape). See [`crate::V2PoolState`] for the
-/// type-level enforcement rationale (ADR-012 / epic `ZPHT6X`).
+/// type-level enforcement rationale (ADR-012).
 #[derive(Clone, Debug)]
 pub struct AerodromeV2PoolState {
     /// Current reserve of token0 (on-chain `uint112`).

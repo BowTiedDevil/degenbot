@@ -156,7 +156,7 @@ pub struct TickInfo {
     pub liquidity_gross: alloy::primitives::U128,
     /// The liquidity delta for ticks entered from left to right.
     /// Positive for lower ticks, negative for upper ticks. Stored at the
-    /// on-chain width (`ticks(tick).liquidityNet` is `int128`) — the HTPKLX
+    /// on-chain width (`ticks(tick).liquidityNet` is `int128`) — the
     /// LIBQKE narrowing from the previous `alloy::primitives::I256`.
     pub liquidity_net: i128,
     /// The block at which this tick was last mutated (Mint/Burn event block,

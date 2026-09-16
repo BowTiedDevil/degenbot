@@ -184,7 +184,7 @@ pub fn decode_get_reserves(bytes: &[u8]) -> ProviderResult<(U256, U256)> {
 }
 
 // ---------------------------------------------------------------------------
-// Balancer V2 reads (pool + Vault) — the SSSXG6 buyer primitive layer
+// Balancer V2 reads (pool + Vault) — the buyer primitive layer
 // ---------------------------------------------------------------------------
 
 /// Encode the `getPoolId()` calldata (4-byte selector only).
@@ -223,7 +223,7 @@ pub fn encode_get_pool_tokens(pool_id: &[u8; 32]) -> Vec<u8> {
 }
 
 /// Decode Vault `getPoolTokens(bytes32)` return data into `(tokens, balances)`
-/// — the third field (`lastChangeBlock`) is dropped, mirroring
+/// the third field (`lastChangeBlock`) is dropped, mirroring
 /// `balancer_builder_base.py::decode_vault_tokens`.
 ///
 /// # Errors
@@ -540,7 +540,7 @@ pub fn encode_tick_data(tick: i32) -> Vec<u8> {
 }
 
 /// Decode `ticks(int24)` return data into `(liquidity_gross, liquidity_net)`
-/// — only the first two of the eight packed return fields. Both are
+/// only the first two of the eight packed return fields. Both are
 /// right-aligned in their 32-byte ABI words; `liquidity_gross` is
 /// `uint128`, `liquidity_net` is `int128` (sign-extended in the lower 16
 /// bytes).
@@ -559,7 +559,7 @@ pub fn decode_tick_data(bytes: &[u8]) -> ProviderResult<(U128, i128)> {
     let gross = U128::from_be_slice(&bytes[16..32]);
     // Word 1: liquidity_net (int128, sign-extended in 32-byte word). The
     // value is the LOW 16 bytes two's-complement (the high 16 are pure sign
-    // extension) — decode straight to the on-chain width (HTPKLX LIBQKE).
+    // extension) — decode straight to the on-chain width.
     let low: [u8; 16] = bytes[48..64]
         .try_into()
         .map_err(|_| ProviderError::DecodingError {

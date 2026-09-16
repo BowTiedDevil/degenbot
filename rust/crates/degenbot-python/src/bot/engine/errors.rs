@@ -64,7 +64,7 @@ create_exception!(
 //      │                                              amount-modifying hook)
 //      ├─ DynamicFeePoolRejectedError                (V4 admission — dynamic fee)
 //      ├─ HighFeePoolRejectedError                   (V4 admission — static
-//      │                                              fee > 65535, DPODAZ)
+//      │                                              fee > 65535)
 //      ├─ PoolAlreadyRegisteredError                (V2/V3/V4 — duplicate
 //      │                                              address at registration)
 //      └─ SpecViolationError                        (V2/V3/V4 — out-of-spec
@@ -120,7 +120,7 @@ create_exception!(
     "The simulated swap crosses a pool whose amount-modifying hook may have invalidated the result; the attached amounts are the standard-math approximation."
 );
 
-// PRG-4 / IRUMXD: the registered-path cap refusal. A BENIGN stop signal, not
+// PRG-4: the registered-path cap refusal. A BENIGN stop signal, not
 // an error: the crawl catches it and stops discovery (it replaces the Python
 // DiscoveryCrawlComplete pre-count unwind). Deliberately NOT under
 // PoolRegistrationError — a full registry is a state, not a pool-admission
@@ -200,7 +200,7 @@ pub(crate) fn boot_refused(err: degenbot_workers::dispatcher::BootError) -> PyEr
         ),
         BootError::Budget(BudgetError::IoWorkersOutOfBounds { requested, binding }) => {
             BootRefused::new_err(format!(
-                "fleet boot refused: runtime.io_workers override {requested} is out of bounds for the {binding} binding (pinned: A >= 1, the SMTH6M ambient floor; serial: exactly one ambient I/O lane) — fix or drop the override, never a silent clamp"
+                "fleet boot refused: runtime.io_workers override {requested} is out of bounds for the {binding} binding (pinned: A >= 1, the ambient floor; serial: exactly one ambient I/O lane) — fix or drop the override, never a silent clamp"
             ))
         }
         BootError::Budget(BudgetError::TooFewSolverCpus { solver, min }) => {

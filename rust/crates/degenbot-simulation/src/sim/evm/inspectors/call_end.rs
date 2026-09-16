@@ -6,7 +6,7 @@
 //! so the most-recently-pushed frame whose `outcome` is still `None` is the
 //! innermost unmatched — pair it.
 //!
-//! This was confirmed by spike KCKGP4 (Q3): a parent STATICCALLs a child that
+//! This was confirmed by the spike (Q3): a parent STATICCALLs a child that
 //! reverts; `call_end` for the child (depth 2) fires first, then `call_end` for
 //! the parent (depth 1). Naive `last_mut()` pairing mis-attributes the child's
 //! outcome to itself but then leaves the parent's outcome unset (the `is_none`

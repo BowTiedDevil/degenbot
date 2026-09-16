@@ -1604,7 +1604,7 @@ mod v3_delta_priors_tests {
     }
 }
 
-/// OB7UNY (two-stamp): a Swap-style delta records both clock before-
+/// Two-stamp rule: a Swap-style delta records both clock before-
 /// values; restoring before it returns them so the caller rewinds the
 /// price AND liquidity clocks to their exact pre-target values.
 #[test]

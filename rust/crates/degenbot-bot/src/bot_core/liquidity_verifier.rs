@@ -1053,7 +1053,7 @@ mod tests {
     //
     // Python: tick // tickSpacing (Python // already floors)
 
-    // --- desync re-assembly serializers (UO3JM4 / ADR-021) ---
+    // --- desync re-assembly serializers (ADR-021) ---
 
     #[test]
     fn serialize_liquidity_map_sorts_ascending_and_round_trips() {

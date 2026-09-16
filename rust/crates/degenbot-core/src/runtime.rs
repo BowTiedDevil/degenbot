@@ -126,7 +126,7 @@ mod tests {
         );
     }
 
-    /// PE4FPM (GOQWCL): ambient runtime workers must carry the DISTINCT
+    /// Ambient runtime workers must carry the DISTINCT
     /// census thread name (no `tokio-runtime-worker` collisions with the
     /// inline-sim runtime or the solve fleet).
     #[test]

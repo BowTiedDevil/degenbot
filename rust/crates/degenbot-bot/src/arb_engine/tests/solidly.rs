@@ -2,7 +2,7 @@ use super::*;
 
 // -----------------------------------------------------------------
 // HopType::SolidlyStable + ResolvedHop::SolidlyStable variant (Plan: Port
-// Solidly solve into the Rust engine — task BFIWUG).
+// Solidly solve into the Rust engine).
 // -----------------------------------------------------------------
 #[test]
 fn solidly_hop_variant_is_not_v2_and_not_cl() {

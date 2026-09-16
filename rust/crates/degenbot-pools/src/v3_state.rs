@@ -383,7 +383,7 @@ pub struct V3PoolState {
     /// liquidity event replayed at `block_number <= initial_state_block`
     /// (e.g. a backfilled Burn applied after the pool was registered against
     /// head) must NOT adjust the active-liquidity scalar — it would double-
-    /// count a removal/addition the seed already contains (UO3JM4 solver
+    /// count a removal/addition the seed already contains (solver
     /// desync: a pre-seed in-range Burn subtracted its net twice). Frozen —
     /// never advanced by `apply_swap`/`apply_liquidity_update`/`update_block`.
     pub initial_state_block: u64,
@@ -1133,7 +1133,7 @@ impl V3SwapOutcome {
 mod exact_input_clamp_tests {
     //! Unit tests for `V3SwapOutcome::exact_input_clamp_bound` — the solver's
     //! CL-hop input clamp that prevents over-feeding a pool past its capacity
-    //! (the path-5000 20M-gas EMPTY-HALT class, AGENTS.md UO3JM4).
+    //! (the path-5000 20M-gas EMPTY-HALT class, ).
     use super::V3SwapOutcome;
     use alloy::primitives::U256;
 
@@ -1704,7 +1704,7 @@ mod apply_inherent_tests {
     #[test]
     #[should_panic(expected = "monotonicity violated: update_block")]
     fn apply_swap_backward_block_panics() {
-        // OB7UNY monotonicity: applying a Swap at a block BELOW the current
+        // Two-stamp monotonicity: applying a Swap at a block BELOW the current
         // price clock is a backward stamp → must fail loudly, never silently
         // regress the clock.
         let mut state = state_with_position(1_000_000u128);
@@ -1731,7 +1731,7 @@ mod apply_inherent_tests {
     #[test]
     #[should_panic(expected = "monotonicity violated: tick_data_block")]
     fn replace_tick_data_backward_block_panics() {
-        // OB7UNY monotonicity on the liquidity clock: replacing the tick map
+        // Two-stamp monotonicity on the liquidity clock: replacing the tick map
         // with data from a block BELOW the current liquidity clock is a
         // backward stamp → panic loudly.
         let mut state = state_with_position(1_000_000u128);
@@ -1790,7 +1790,7 @@ mod apply_inherent_tests {
         // The mutating helper advances the tick's `block` field too.
         assert_eq!(after_lower.block, 9);
         assert_eq!(after_upper.block, 9);
-        // (2) OB7UNY: out-of-range → only the LIQUIDITY clock advances; the
+        // (2) Two-stamp rule: out-of-range → only the LIQUIDITY clock advances; the
         // price clock does NOT move (slot0 head byte-identical).
         assert_eq!(state.tick_data_block, 9);
         assert_eq!(state.update_block, 0);
@@ -1866,7 +1866,7 @@ mod apply_inherent_tests {
 
     #[test]
     fn apply_liquidity_update_replay_at_or_before_seed_block_does_not_adjust_scalar() {
-        // UO3JM4 (historical-replay guard, Python `_initial_state_block` twin):
+        // (historical-replay guard, Python `_initial_state_block` twin):
         // a pool seeded against head already reflects in its `liquidity` scalar
         // every on-chain in-range Mint/Burn at or before the seed block.
         // Replaying one such event after seed (e.g. a backfilled Burn applied
@@ -1953,7 +1953,7 @@ mod apply_inherent_tests {
         );
         assert!(!state.tick_data.contains_key(&-60));
         assert!(!state.tick_data.contains_key(&60));
-        // (2) OB7UNY: the tick-map replace advances only the LIQUIDITY clock;
+        // (2) Two-stamp rule: the tick-map replace advances only the LIQUIDITY clock;
         // the price clock is untouched (scalars aren't changed).
         assert_eq!(state.tick_data_block, 5);
         assert_eq!(state.update_block, 0);

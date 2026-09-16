@@ -157,7 +157,7 @@ fn every_v1_active_role_walks_its_legal_transition_path() {
     }
 }
 
-// (2SIOHJ deleted the first_idle_home_slot budget re-derivation: every
+// (the deleted first_idle_home_slot budget re-derivation: every
 // scripted-seat read now goes through the boot-frozen SlotLayout.)
 
 /// §3.3's illegal table, asserted on the pure FSM for EVERY role in
@@ -293,7 +293,7 @@ fn budget_sum_invariant_holds_across_a_scripted_quota_resize() {
     for key in [1_u64, 2] {
         // The first IDLE solver seat: the previous iteration's pin holds
         // its seat warm, so the scan walks the SlotLayout's solver range
-        // (the layout owns the geometry — 2SIOHJ, no budget re-derivation).
+        // (the layout owns the geometry — no budget re-derivation).
         let seat = host
             .layout()
             .solver

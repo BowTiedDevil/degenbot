@@ -156,7 +156,7 @@ pub fn fot_suspected_token_from_reverting_frame(
 /// (the triple-length guard), returns the input token + POOL KEY of the
 /// first mismatch. The pool key is the hop's [`PoolDivergenceKey`] (via
 /// [`hop_pool_key`]), NOT `swap.emitter` — the shared PoolManager for V4, so
-/// keying on the emitter would re-create the `DLSKD7` V4-collapse gap here
+/// keying on the emitter would re-create the V4-collapse gap here
 /// too.
 #[must_use]
 pub fn fot_suspected_token_from_swap_mismatch(

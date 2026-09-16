@@ -539,7 +539,7 @@ fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
              must be solved, not deferred"
     );
 }
-/// YXHHKR (resolves QNFYR5): with the TQ43TU window gate removed, no
+/// With the bounded-window gate removed, no
 /// `update_block` age defers a path. Never-updated pools and pools far past
 /// the old 10-block window are all SOLVED — they are quiet-but-current, not
 /// stale. Genuine divergence is the ADR-021 verifier's job (fatal abort).
@@ -909,7 +909,7 @@ fn clamp_cl_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
         "post-clamp profit must be recomputed from the corrected outputs"
     );
 }
-/// VAASFM margin) — the UO3JM4 empty-march clamp, now enforced in
+/// margin) — the empty-march clamp, now enforced in
 /// production at the solve→result merge seam.
 #[expect(clippy::too_many_lines)]
 #[test]

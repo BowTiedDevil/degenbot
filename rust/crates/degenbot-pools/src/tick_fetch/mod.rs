@@ -3,7 +3,7 @@
 //! Two sibling traits serve two distinct callsites — see
 //! `docs/migration-guides/chain-bootstrap-tick-map.md`
 //! (removed in the stale-docs cleanup `71ec78b2`) §3 for why they are
-//! kept separate for now (consolidation is a post-`XEANMB` follow-up):
+//! kept separate for now (consolidation is a follow-up):
 //!
 //! - [`miss::TickWordFetcher`] — the **live-pump miss path** during swap
 //!   simulation (`v3_simulate_swap` / `v4_simulate_swap` →

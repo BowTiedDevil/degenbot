@@ -78,7 +78,7 @@ pub(crate) fn derive(
             && facts[1].prot == Prot::V4
             && matches!(facts[2].prot, Prot::V2 | Prot::V4)
         {
-            // ── v3v4{v2,v4} — MERGED on the terminal-form axis (T6 / PZBGP7).
+            // ── v3v4{v2,v4} — MERGED on the terminal-form axis (T6).
             // Same leading V3 flash + V4 mid unlock; the trailing hop reads
             // `facts[2].terminal_form`.
             let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);

@@ -944,7 +944,7 @@ impl AlloyProvider {
                 // used for BOTH subscriptions (`newHeads`/logs — tiny messages)
                 // AND batch `eth_getLogs` (the snapshot→WS backfill issues a
                 // 6-topic OR filter over up to 2000 blocks → ~100k logs, ~90 MB
-                // — well over both default caps).
+                // well over both default caps).
                 //
                 // Failure mode WITHOUT the raise (confirmed via
                 // `ws_getlogs_large_filter_diagnostic` + tracing, 2026-07-12):
@@ -2094,7 +2094,7 @@ mod tests {
         }
     }
 
-    // ── E2B542: retry-loop emits tracing records on every attempt ───────
+    // ── retry-loop emits tracing records on every attempt ───────
     //
     // `tracing::subscriber::set_global_default` is once-per-process, so a
     // `Once` guard installs a subscriber that forwards events to a
@@ -2812,7 +2812,7 @@ mod tests {
         assert_eq!(params, serde_json::json!(["0x02f8700107"]));
     }
 
-    // ── J3RIFU: local tx-hash computation + broadcast-aware reconciliation ─
+    // ── local tx-hash computation + broadcast-aware reconciliation ─
 
     /// A real signed type-2 transaction broadcast by anvil key 0 (cast send
     /// of 1 wei to the zero address), and its on-chain hash as returned by the

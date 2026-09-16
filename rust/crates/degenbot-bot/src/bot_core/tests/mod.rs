@@ -85,7 +85,7 @@ fn register_v3(core: &mut BotState, update_block: u64) -> u64 {
     .expect("test setup: V3 registration")
 }
 
-// --- HO3GWT: buffer appliers push journal deltas + advance update_block ---
+// --- buffer appliers push journal deltas + advance update_block ---
 /// Register a V3 pool with tick 60 pre-initialized (gross/net 100) and
 /// tick 120 absent, so a buffered Mint at [60,120] bumps 60 → 600 and
 /// newly initializes 120. Helper does NOT create the `BotState` — the

@@ -28,7 +28,7 @@ pub enum PoolEntry {
     AerodromeV2(Box<(AerodromeV2PoolIdentity, AerodromeV2PoolState)>),
 }
 
-/// Family tag for the address-keyed registration readers (PRG-1 / IRUMXD
+/// Family tag for the address-keyed registration readers (PRG-1
 /// registry unification): the reader returns which family owns an address so
 /// a `PyO3` build adapter can fast-path onto the registered entry of record
 /// (or see a foreign-family address and fall through to the real build).
@@ -275,7 +275,7 @@ impl PoolEntry {
     }
 
     /// The **liquidity** clock — the block the tick map reflects (two-stamp
-    /// OB7UNY; the `tick_data_block` twin of [`Self::update_block`]). Only
+    /// the `tick_data_block` twin of [`Self::update_block`]). Only
     /// the concentrated-liquidity families carry a tick map; the AMM/Curve/
     /// Balancer variants have no tick-data clock and fall back to their
     /// `update_block`. A CL pool can have a FRESH price clock but a liquidity
@@ -409,8 +409,9 @@ pub trait ConcentratedLiquidityPool {
     fn tick(&self) -> i32;
     /// The **price** clock — block the slot0 scalars reflect (two-stamp rule).
     fn update_block(&self) -> u64;
-    /// The **liquidity** clock — block the `tick_data` map reflects (two-stamp
-    /// OB7UNY). A pool can have a fresh price but a liquidity map that lags.
+    /// The **liquidity** clock — block the `tick_data` map reflects (the
+    /// two-stamp rule). A pool can have a fresh price but a liquidity map
+    /// that lags.
     fn tick_data_block(&self) -> u64;
     fn tick_data(&self) -> &HashMap<i32, TickInfo>;
     /// Registration coverage (Sparse/Tracked). Sparse pools consult
@@ -647,7 +648,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
     // applied while its staged fetch was in flight (the word re-fetches at
     // its context block after a Raced retry). A fetched tick with an OLDER
     // stamp than a resident tick must never regress the resident value -
-    // the OB7UNY two-stamp discipline, enforced at the insert.
+    // the two-stamp discipline, enforced at the insert.
     fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool {
         for (tick, info) in &fetched.ticks {
             match self.tick_data.get(tick) {
@@ -747,7 +748,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         liquidity_delta: i128,
         block_number: u64,
     ) {
-        // Historical-replay guard (UO3JM4 / Python `_initial_state_block`):
+        // Historical-replay guard (the Python `_initial_state_block` guard):
         // only a genuinely in-range event STRICTLY AFTER the seed block adjusts
         // the active-liquidity scalar. The seed's `liquidity` already reflects
         // every on-chain event <= initial_state_block, so replaying one (e.g. a
@@ -781,9 +782,9 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         // A liquidity event ALWAYS mutates the tick map (advance the liquidity
         // clock); it advances the PRICE clock only when in-range post-seed (the
         // scalar adjust). An out-of-range or historical-replay event leaves the
-        // slot0 head byte-identical, so the price clock must NOT move (two-stamp
-        // OB7UNY). The price-clock prior is `None` in that case so a reorg
-        // restore leaves `update_block` untouched.
+        // slot0 head byte-identical, so the price clock must NOT move (the
+        // two-stamp rule). The price-clock prior is `None` in that case so a
+        // reorg restore leaves `update_block` untouched.
         self.journal.push_delta(V3BlockDelta {
             block: block_number,
             scalar_priors: if in_range {

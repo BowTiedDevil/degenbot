@@ -267,7 +267,7 @@ where
 /// and is visible at [`EscalationPort::counters`].
 ///
 /// RED scaffold: the budget is NOT enforced and the caller's span context
-/// is NOT propagated (the SGDXWU orphan-root pattern) — the red tests
+/// is NOT propagated (the orphan-root pattern) — the red tests
 /// fail exactly there.
 pub(crate) struct SimRuntimeEscalationPort {
     runtime: Arc<tokio::runtime::Runtime>,
@@ -299,7 +299,7 @@ impl degenbot_workers::lane::EscalationPort for SimRuntimeEscalationPort {
         // Fail-fast: the cold-miss budget is the escalation capacity
         // ceiling — a refusal is typed and synchronous, never a hang.
         let permit = self.gate.begin()?;
-        // SGDXWU (LW-T3): the escalation RE-ENTERS the caller's span —
+        // Span re-entry: the escalation RE-ENTERS the caller's span —
         // Jaeger continuity survives the port (no orphan roots).
         let parent = tracing::Span::current();
         // FinishOnDrop moves INTO the task: completion, panic and cancel
@@ -352,7 +352,7 @@ fn inline_sim_thread_name() -> String {
     )
 }
 
-/// The private multi-thread runtime hosting the payload sims (7LV6VN T5).
+/// The private multi-thread runtime hosting the payload sims ).
 /// Sized by [`inline_sim_worker_count`], named distinctly, census-registered
 fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
     let workers = inline_sim_worker_count();
@@ -361,7 +361,7 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
         kind: "tokio multi-thread runtime (inline-sim hook — payload sims; fleet-hosted SimDriver target, ADR-042)",
         count: workers,
         thread_name: "degenbot-inline-sim-{n}",
-        sizing: "leftover_worker_budget (7LV6VN T5); override `solve.inline_sim_workers` (env DEGENBOT_INLINE_SIM_WORKERS), clamp 1..=32",
+        sizing: "leftover_worker_budget; override `solve.inline_sim_workers` (env DEGENBOT_INLINE_SIM_WORKERS), clamp 1..=32",
         binding: "shared",
     });
     #[expect(clippy::expect_used)]
@@ -392,7 +392,7 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
 /// Value parsing/validation is the loader's job (fail-closed at boot,
 /// KAHU5W); this layer just clamps to 1..=32.
 fn inline_sim_worker_count() -> usize {
-    // Two-runtime sizing (7LV6VN T5): the sim runtime follows the LEFTOVER
+    // Two-runtime sizing: the sim runtime follows the LEFTOVER
     // of the CPU budget after the solve bins (not raw available
     // parallelism), so sim runtime workers + solve bins never exceed
     // the quota.
@@ -741,7 +741,7 @@ mod tests {
     // The override parsing matrix moved to degenbot-config's precedence
     // tests (KAHU5W: the loader owns the env read). This pins the production
     // default only: with no override, the count follows the leftover CPU
-    // budget (7LV6VN T5), NOT raw available_parallelism.
+    // budget, NOT raw available_parallelism.
     #[test]
     fn inline_sim_worker_count_defaults_to_leftover_budget() {
         let default = degenbot_core::cpu_budget::leftover_worker_budget();
@@ -830,7 +830,7 @@ mod tests {
             .expect("a leaked slot must NOT hard-refuse subsequent escalations");
     }
 
-    /// PE4FPM (GOQWCL): the inline-sim runtime's workers must carry the
+    /// The inline-sim runtime's workers must carry the
     /// DISTINCT census thread name — never the shared
     /// `tokio-runtime-worker` default that made thread dumps
     /// unattributable when both runtimes overlapped.
@@ -858,7 +858,7 @@ mod tests {
 }
 
 // the spawned sim task must JOIN the caller's trace, not fork a
-// new root. Pinned against the in-memory exporter seam (K6PCKP pattern): the
+// new root. Pinned against the in-memory exporter seam pattern): the
 // `degenbot.simulate.inline` span created inside `spawn_sim_task` must carry
 // the calling span's trace/parent - the exact relationship Jaeger lost when
 // 635 orphan roots/60s fragmented the block traces.
@@ -946,7 +946,7 @@ mod spawn_span_parent_tests {
     }
 
     /// LW-T3 (Seam C): escalations RE-ENTER the caller's span through the
-    /// port — Jaeger continuity survives the port (SGDXWU: no orphan roots).
+    /// port — Jaeger continuity survives the port (no orphan roots).
     /// RED scaffold: the port does not propagate the span yet.
     #[test]
     fn escalations_reenter_the_caller_span_through_the_port() {

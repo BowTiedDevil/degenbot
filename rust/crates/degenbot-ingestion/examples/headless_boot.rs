@@ -1,4 +1,4 @@
-//! (MROOY7 / 5WTYYQ) Headless standalone-Rust boot against the
+//! Headless standalone-Rust boot against the
 //! `degenbot-ingestion` crate — NO Python, NO network.
 //!
 //! Boots the crate's public surface end-to-end over a synthetic fused event

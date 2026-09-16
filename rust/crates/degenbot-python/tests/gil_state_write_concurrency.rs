@@ -89,7 +89,7 @@ fn update_v3_pool_write_does_not_invert_with_reader_gil() {
 
 /// (The former mod.rs-only write scan is folded into the directory-walking
 /// scan below: it covers writes as well as reads, in every file under src/bot/.)
-/// Source guard for the 2026-08-21 run-9 cycle (KTXKUF/OB7UNY regression),
+/// Source guard for the 2026-08-21 run-9 cycle (the two-stamp regression),
 /// generalized from the pool.rs-only scan : NO file under
 /// `src/bot/` may acquire a BotState/engine lock outside a `py.detach` scope —
 /// new modules are covered automatically. The captured run-9 cycle: the

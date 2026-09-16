@@ -1,6 +1,6 @@
 #![expect(clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — Curve `get_dy` (ADR-005 standalone
-//! claim, the behavioral tier; epic `TV72EG`, task `SGJR2W`).
+//! claim, the behavioral tier).
 //!
 //! The Curve StableSwap dy math has no simple closed form (`stableswap_get_y`
 //! is a Newton solve), so — like the V3/V4 CL tests — this asserts the direct

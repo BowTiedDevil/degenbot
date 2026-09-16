@@ -567,7 +567,7 @@ fn live_pool_applies_modify_liquidity_directly() {
         "Live pool never buffers"
     );
     let s = core.get_v4_pool(pool_id).unwrap();
-    // OB7UNY two-stamp: tick-map-only ModifyLiquidity → liquidity clock
+    // Two-stamp rule: tick-map-only ModifyLiquidity → liquidity clock
     // advances; the price clock stays at the seed block 10.
     assert_eq!(s.tick_data_block, 11, "applied directly (liquidity clock)");
     assert_eq!(
@@ -652,7 +652,7 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     // set_live flushes the retained tail (block-11 Burn).
     core.set_v4_pool_live(pool_manager, pool_id_bytes);
     let s = core.get_v4_pool(pool_id).unwrap();
-    // OB7UNY two-stamp: the retained-tail Burn (block 11) is tick-map-only,
+    // Two-stamp rule: the retained-tail Burn (block 11) is tick-map-only,
     // so it advances the LIQUIDITY clock; the price clock stays at 10.
     assert_eq!(
         s.tick_data_block, 11,

@@ -76,7 +76,7 @@ fn pool_state_head_is_max_update_block_across_all_pools() {
 
 #[test]
 fn pool_tick_data_block_exposes_staged_liquidity_clock() {
-    // OB7UNY two-stamp / the `0x5653` staged-clock class: a CL pool whose
+    // Two-stamp rule / the `0x5653` staged-clock class: a CL pool whose
     // PRICE clock (`update_block`) is fresh but whose LIQUIDITY clock
     // (`tick_data_block`) lags. The scalar-only ADR-021 diff keys on
     // `update_block` and therefore cannot see this stagger; the new
@@ -742,11 +742,11 @@ fn v4_post_drain_snapshot_is_none_for_sparse_pools() {
     );
 }
 
-/// B3OROH / epic `XEANMB`: `Bot::load_snapshot_from_db` against the parity
+/// `Bot::load_snapshot_from_db` against the parity
 /// fixture DB (`crates/degenbot-db/tests/fixtures/parity.db`) — opens a
 /// `SnapshotDb` (held read tx) + records `S = min(newest_update_block(V3),
 /// V4)` read INSIDE the held tx. The `SnapshotStore` is NOT populated
-/// (the Store is retired by epic `XEANMB`; the held tx replaces it).
+/// (the Store is retired; the held tx replaces it).
 #[test]
 fn load_snapshot_from_db_populates_store_and_seed_block() {
     use degenbot_db::snapshot::TickMapDb;

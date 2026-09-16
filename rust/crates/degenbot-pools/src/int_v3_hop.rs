@@ -37,7 +37,7 @@ fn u512_to_u256(v: U512) -> U256 {
     v.to::<U256>()
 }
 
-/// One ON5QMD-faithful exact-in swap step that REACHES its target price —
+/// A parity-faithful exact-in swap step that REACHES its target price —
 /// the per-word-boundary flooring the on-chain V3/V4 PoolManager performs in
 /// `computeSwapStep`. Returns `(gross_input, output)` where `gross_input =
 /// amount_in + fee_amount` with `amount_in` rounded UP

@@ -366,7 +366,7 @@ impl EncodeContext {
 /// without its path is the shape that lets amounts be synthesized blind to
 /// what the path constrains — so path and amounts are one unit.
 ///
-/// **The CL overfeed-clamp invariant (UO3JM4 / path-5000 EMPTY-HALT) attaches
+/// **The CL overfeed-clamp invariant (path-5000 EMPTY-HALT) attaches
 /// to this value**: `consumed_inputs[i]` is the *executable* input fed to hop
 /// `i`. For a non-over-fed CL hop (and for V2/Balancer/Curve/Solidly hops) it
 /// equals `hop_outputs[i − 1]`; for an over-fed CL hop the producer clamps it
@@ -455,7 +455,7 @@ pub struct ComposerInputs<'a> {
     /// V2/Curve/Balancer/Solidly hops) this equals `hop_outputs[i-1]`; for an
     /// over-fed CL hop the clamp reduces it to `input_consumed - 1` so the
     /// on-chain exact-in loop terminates on `amountRemaining == 0` instead of
-    /// marching empty bitmap words (UO3JM4 / path-5000 EMPTY-HALT).
+    /// marching empty bitmap words (path-5000 EMPTY-HALT).
     pub consumed_inputs: &'a [u128],
     pub opts: EncodeOptions,
 }
@@ -964,7 +964,7 @@ mod tests {
     }
 }
 
-// ── WE45KC: resolve_axes (ADR-029 D1) ────────────────────────────────
+// ── resolve_axes (ADR-029 D1) ────────────────────────────────
 
 #[test]
 fn resolve_axes_default_is_custody_no_bribe() {
@@ -1048,7 +1048,7 @@ fn resolve_axes_funding_passes_through() {
     }
 }
 
-// ── WE45KC: config_for_options axis→config mapping ───────────────────
+// ── config_for_options axis→config mapping ───────────────────
 
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
@@ -1175,7 +1175,7 @@ fn config_for_options_combines_all_axes() {
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
 fn config_for_options_capture_sweep_to_address_sets_check_mode_3() {
-    // U3WVLL follow-up (767TN5): ProfitCapture::SweepToAddress routes to
+    // follow-up (767TN5): ProfitCapture::SweepToAddress routes to
     // check_mode=3 (SWEEP) — the only way to defeat the profit assert.
     let opts = EncodeOptions {
         capture: crate::grammar_ledger::ProfitCapture::SweepToAddress,

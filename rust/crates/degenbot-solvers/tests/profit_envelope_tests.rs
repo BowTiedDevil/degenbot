@@ -742,7 +742,7 @@ fn bound_dominates_golden_profit_on_heavy_cl_captures() {
         n_checked += 1;
     }
     // Most fixture lines record golden=null (regenerated post-revert); only
-    // the fully-recorded ones are checkable here. Task N6NBUY regenerates a
+    // the fully-recorded ones are checkable here. Regenerating harnesses rebuild a
     // full golden set for gate A/B.
     assert!(
         n_checked >= 2,

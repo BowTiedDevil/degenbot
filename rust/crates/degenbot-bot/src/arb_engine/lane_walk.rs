@@ -1,5 +1,5 @@
 //! The per-bin lane walk (from the retired grab-file dissolution, ergo epic
-//! `5WCRWZ`; T3 created the module for `solve_one_path`; T4 moved the walk
+//! T3 created the module for `solve_one_path`; T4 moved the walk
 //! driver in): home of `solve_one_path` — the per-path solve + diagnostics
 //! body every Solver seat's bin executes — and of THE ONE
 //! LANE WALK (`drive_lane_walk`, WNH5OL) plus its policy/context/result
@@ -34,7 +34,7 @@ static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
 /// event name the cost driver of the slowest routes: gate-envelope bound
 /// composition (with its derive/compose/search phase split) vs the walk
 /// proper, not just wall time. `pub(crate)` because `solve_cycle::PathTimesHeap`
-/// aliases it (5WCRWZ T5 relocated the heap; NO re-export shim remains).
+/// aliases it (T5 relocated the heap; NO re-export shim remains).
 pub(crate) type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 // ===========================================================================
 // the walk-adjacent helpers, moved here with the walk they
@@ -92,8 +92,8 @@ pub(crate) fn inline_sim_payload(
 }
 
 /// Stamp the sim payload onto the held Solved outcome and submit it —
-/// ONE flush shape for BOTH solve arms (7LV6VN T5 carry; unified by
-/// QR3NUS 43E3H3). The arms differ only in the `submit` closure:
+/// ONE flush shape for BOTH solve arms (carry; unified by
+/// ). The arms differ only in the `submit` closure:
 /// the detached arm's closure sends on the merge pipe AND bumps its
 /// in-flight gauge at SEND success (a bin that dies before sending
 /// never leaks a count); the in-cycle arm's closure is `lane.solved`.
@@ -151,7 +151,7 @@ pub(crate) fn solve_one_path(
     if let Some(panic_pid) = ctx.test_solve_panic.as_ref() {
         panic_pid(pid);
     }
-    // Worker-local view of the cycle gate deps (BXUSGL T1): the Arc-d
+    // Worker-local view of the cycle gate deps : the Arc-d
     // memo + owned capture cfg land in the shared ctx per cycle; the
     // prefix cache is generationed by the block epoch - same semantics
     // as the old single borrowed GateDeps shared by the scope workers.
@@ -323,7 +323,7 @@ pub(crate) fn solve_one_path(
 }
 // ---------------------------------------------------------------------------
 // --------------------------------------------------------------------------
-// THE arm policy + THE one drain (WNH5OL, epic BPZUCM fold).
+// THE arm policy + THE one drain ).
 // --------------------------------------------------------------------------
 // The two walk arms (
 //  - detached enqueue, `run_bin` at ~:2291 (tip), 90 code lines,
@@ -370,10 +370,10 @@ pub(crate) fn solve_one_path(
 /// stays on the lane itself — fused into `SolveLane::new`, contract
 /// 1's send-success-only bump.
 pub(crate) struct LaneArmPolicy {
-    /// The ledger key half (the ONE-domain rule of 43E3H3): the exact
+    /// The ledger key half (the ONE-domain rule): the exact
     /// `solve_seq` tick the drain claims `(seq, pid)` with on the shared ONE
     /// ledger for carrier-keyed outcomes (Solved always; Suppressed/Failed
-    /// never claim — contract 4). P37YJG: the seq half is MACHINE-ISSUED —
+    /// never claim — contract 4). The seq half is MACHINE-ISSUED —
     /// the detached arm's `DetachedArm.cycle_seq` — and the claim itself
     /// runs through the machine's one ledger door (`DetachedCycle::claim`).
     pub(crate) ledger_seq: u64,
@@ -396,7 +396,7 @@ pub(crate) fn drive_lane_walk(
     ws_ctx: &WalkSubmitCtx,
     lane: &mut SolveLane,
 ) -> LaneWalkReads {
-    // 7LV6VN T5 (pipelined arm): results park until their sim lands;
+    // (pipelined arm): results park until their sim lands;
     // the walk never waits on a sim. Sims pace on the fleet
     // SimDriver seat pool (the budget's sim slot cap), so walk + sim
     // demand never exceeds the CPU quota by construction.
@@ -434,7 +434,7 @@ pub(crate) fn drive_lane_walk(
                     }
                     // The pre-filter skip IS one delivered outcome
                     // (this IS the detached arm's live record —
-                    // QR3NUS): no gauge (contract 1's pairing — it
+                    //): no gauge (contract 1's pairing — it
                     // never bumped), keyless → no claim (contract 4).
                     lane.suppressed(pid);
                     continue;

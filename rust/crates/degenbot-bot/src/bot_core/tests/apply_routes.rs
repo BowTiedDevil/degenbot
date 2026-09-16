@@ -1,6 +1,6 @@
 use super::*;
 
-/// FUWYUR router contract (`cl_route)`: `route_v3_event` is THE decision
+/// Staged-router contract (`cl_route)`: `route_v3_event` is THE decision
 /// point — a live-phase tick mutation for an unregistered pool must
 /// stage into the pump buffer (not drop), and the buffered event lands
 /// in `v3_buffer` keyed by address for the registration drain+pin seam.
@@ -54,7 +54,7 @@ fn v3_event_horizon_tracks_max_block_across_buffered_events() {
 
 #[test]
 fn v3_split_clock_seed_prices_at_head_ticks_at_db_block() {
-    // OB7UNY two-stamp / the fresh-read builder: seed the PRICE clock at
+    // Two-stamp rule / the fresh-read builder: seed the PRICE clock at
     // HEAD (`update_block` — a cheap slot0 read) while the LIQUIDITY
     // clock stays at the DB liquidity snapshot block (`tick_data_block`).
     // The historical-replay guard must key on the PRICE seed block
@@ -486,7 +486,7 @@ fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
 
     {
         let s = core.get_v3_pool(pool_id).expect("registered");
-        // OB7UNY two-stamp: a Mint mutates the TICK MAP (liquidity clock
+        // Two-stamp rule: a Mint mutates the TICK MAP (liquidity clock
         // advances) but, being out of range, leaves the slot0 head
         // untouched (price clock stays at registration block 0).
         assert_eq!(
@@ -554,7 +554,7 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
 
     {
         let s = core.get_v3_pool(pool_id).expect("registered");
-        // OB7UNY two-stamp: tick-map-only mint → liquidity clock advances,
+        // Two-stamp rule: tick-map-only mint → liquidity clock advances,
         // price clock untouched.
         assert_eq!(
             s.tick_data_block, block_b,
@@ -653,7 +653,7 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
 
     {
         let s = core.get_v4_pool(pool_id).expect("registered");
-        // OB7UNY two-stamp: tick-map-only ModifyLiquidity → liquidity clock
+        // Two-stamp rule: tick-map-only ModifyLiquidity → liquidity clock
         // advances, price clock untouched.
         assert_eq!(
             s.tick_data_block, block_b,
@@ -837,7 +837,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
         "dispatcher must report an applied V4 liquidity update"
     );
     let s_a = core_a.get_v4_pool(id_a).expect("registered A");
-    // OB7UNY two-stamp: out-of-range mint → liquidity clock advances, price
+    // Two-stamp rule: out-of-range mint → liquidity clock advances, price
     // clock untouched.
     assert_eq!(s_a.tick_data_block, block_b);
     assert_eq!(s_a.update_block, 0);

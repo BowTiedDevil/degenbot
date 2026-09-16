@@ -56,7 +56,7 @@ pub enum Repay {
     NetZero,
 }
 
-/// The terminal-form axis (T5 / PZBGP7): how the trailing hop of a
+/// The terminal-form axis (T5): how the trailing hop of a
 /// V4-containing 3-hop shape completes its stream. `DirectHandoff` — the
 /// trailing swap completes on its own pool and hands output to SELF (the
 /// v3v4v2 trailing `v2_swap`). `UnlockInternal` — the trailing swap is an op
@@ -78,7 +78,7 @@ pub enum TerminalForm {
     UnlockInternal,
 }
 
-/// The **repay-mechanism** axis (T6c / PZBGP7): how a flash hop's borrowed
+/// The **repay-mechanism** axis (T6c): how a flash hop's borrowed
 /// input is repaid, AND the timing of the draw relative to the callback.
 /// The existing [`Repay`] tag fixes the *obligation category* (who owes what)
 /// but is identical for the V2 flash in `v3v2v4` (forward nest, draws the
@@ -106,7 +106,7 @@ pub enum RepayMechanism {
     DownstreamTakeSeeds,
 }
 
-/// The **seed-delivery** axis (T6c / PZBGP7): how a WETH prefund (the optimal
+/// The **seed-delivery** axis (T6c): how a WETH prefund (the optimal
 /// seed that funds a leading V2/V3 calc) is emitted. `Erc20Transfer` (the
 /// default) is the plain pre-callback transfer; `V4TakeCompact` emits the
 /// prefund as a `V4TakeCompact` *inside* the active V4Unlock's delta ledger

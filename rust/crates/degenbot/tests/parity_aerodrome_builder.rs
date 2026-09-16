@@ -1,6 +1,6 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — Aerodrome V2 pool builder identity
-//! + state (ADR-005 standalone claim, the behavioral tier; task SSSXG6).
+//! + state (ADR-005 standalone claim, the behavioral tier).
 //!
 //! The V3 builder parity (`parity_pool_builder.rs`) proves the FFI seam on
 //! the pool a `PoolBuilder` emits is lossless for CL pools. This Aerodrome

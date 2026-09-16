@@ -65,7 +65,7 @@ pub use crate::grammar_plan::{
 
 // ═══════════════════════════════════════════════════════════════════════════// ═══════════════════════════════════════════════════════════════════════════
 // 3-hop Plan scaffolding (W7FQN6 pilot). The shared topology pieces every
-// V4-crossing 3-hop builder (this pilot + task HPZTNT) calls: the sentinel
+// V4-crossing 3-hop builder (this pilot) calls: the sentinel
 // AddressTable scaffold, per-hop currency/orientation, the ADR-029 D1 capture
 // guard, the terminal-capture steps, and the native↔WETH bridge steps. The
 // pilot proves the existing `PlanStep` vocabulary needs NO new variant for the

@@ -1,7 +1,7 @@
 //! Composition-parity integration test for the prototype inspector pair
 //!
 //! Proves the three prototype claims over `CacheDB<EmptyDB>` with hand-rolled
-//! bytecode fixtures (the same fixtures as the spike probe `KCKGP4`):
+//! bytecode fixtures (the same fixtures as the spike probe):
 //!
 //! 1. `(AccessListCollector, CallTraceInspector, SwapEventCaptureInspector)`
 //!    composes on ONE `inspect_one` run — all three handles drain
@@ -12,7 +12,7 @@
 //! 3. The captured swap `Log` decodes to the expected V2 `SyncEvent`
 //!    (reserve0=1000, reserve1=2000), and the access list equals the
 //!    `AccessListCollector`-alone case (AL parity preserved under
-//!    composition — spike KCKGP4 Q2).
+//!    composition — spike Q2).
 //!
 //! Additive + test-only — no changes to `simulate_path_on_evm`, `SimFailure`,
 //! `BlockEvm`, or any production call site (the prototype AC).
@@ -277,7 +277,7 @@ fn composed_inspector_tuple_parities_al_and_captures_frames_and_swap() {
     );
 
     // No frame reverted in this fixture — the revert-attribution seam is
-    // covered by the spike probe (KCKGP4 Q3); here we confirm the happy path.
+    // covered by the spike probe ); here we confirm the happy path.
     assert!(trace.deepest_revert().is_none());
 }
 

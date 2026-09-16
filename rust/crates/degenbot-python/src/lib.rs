@@ -232,7 +232,7 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // the ONLY env-reading site; without this install every production run
     // observed schema defaults (metrics bound 127.0.0.1, default debounce),
     // silently ignoring DEGENBOT_* env.
-    // JLFE2F (Option B hard cutover): the standard file layer is LIVE —
+    // Option B hard cutover: the standard file layer is LIVE —
     // DEGENBOT_CONFIG (or ~/.config/degenbot/config.toml) feeds the typed
     // BotConfig; the retired pre-0.6 vocabulary ([rpc]/[ws]/[database]/
     // [otel]/default_chain_id) fails the load with pointed migration

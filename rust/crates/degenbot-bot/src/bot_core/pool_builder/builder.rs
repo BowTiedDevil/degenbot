@@ -506,7 +506,7 @@ pub async fn build_aerodrome_v2(
 }
 
 // ---------------------------------------------------------------------------
-// Balancer V2 constructors (the SSSXG6 builder-follow-up: weighted + stable)
+// Balancer V2 constructors (builder follow-up: weighted + stable)
 // ---------------------------------------------------------------------------
 
 /// Balancer V2 pool-ID decoding (mirrors
@@ -601,7 +601,7 @@ async fn decimals_of(
 }
 
 /// Assemble `build_balancer_weighted` params for a Balancer V2 weighted pool
-/// (the ADR-005 slice 12b builder twin, SSSXG6): reads the 32-byte `poolId`,
+/// (the ADR-005 slice 12b builder twin): reads the 32-byte `poolId`,
 /// the Vault `getPoolTokens`, `getSwapFeePercentage`, `getNormalizedWeights`,
 /// detects the `PowVersion` from the deployed bytecode, and computes the token
 /// scaling factors from on-chain `decimals()` — producing a
@@ -651,7 +651,7 @@ pub async fn build_balancer_weighted(
 }
 
 /// Assemble `build_balancer_stable` params for a Balancer V2 stable pool (the
-/// ADR-005 slice 12d builder twin, SSSXG6): reads the `poolId`, Vault
+/// ADR-005 slice 12d builder twin): reads the `poolId`, Vault
 /// `getPoolTokens`, `getSwapFeePercentage`, `getAmplificationParameter`; detects
 /// the BPT index (token whose address matches the pool — `None` for
 /// `MetaStablePools`); reads `getRateProviders` + per-provider `getRate()`
@@ -892,7 +892,7 @@ async fn bootstrap_v3_tick_map(
 }
 
 /// Assemble `build_curve_pool` params for a Curve `StableSwap` pool (the task
-/// `4TPB35`, epic `TV72EG`, assembly twin of `CurvePoolBuilder.build`):
+/// assembly twin of `CurvePoolBuilder.build`):
 /// discovers coins/balances, fetches `A`/`fee`/`admin_fee`, detects A-ramping,
 /// lending, crypto, `lp_token` + metapool (base pool + underlying coins),
 /// resolves the strategy discriminants (T3), computes rate/precision
@@ -1182,7 +1182,7 @@ async fn bootstrap_v4_tick_map(
 
 /// Caller-supplied V4 pool identity (mirrors the `register_v4_pool` argument
 /// set — the core never reads these on-chain; hook flags are carried through
-/// for caveat tagging since X4EU3J, not for rejection). Bundled so `build_v4`
+/// for caveat tagging, not for rejection). Bundled so `build_v4`
 /// stays under `clippy::too_many_arguments`
 /// (same convention as `RegisterV4PoolParams`).
 #[derive(Debug, Clone, Copy)]

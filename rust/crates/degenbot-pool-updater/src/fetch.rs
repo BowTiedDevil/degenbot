@@ -5,7 +5,7 @@
 //! and the `degenbot-decoders` leaves (the `PoolCreated` decoders from
 //! [`degenbot_decoders::pool_created_decoder`] and the existing V3/V4
 //! liquidity decoders), returning either decoder-native structs (pool
-//! creation — mapped to `V*PoolRowInput` by the chunk loop in Task `CKXCOB`)
+//! creation — mapped to `V*PoolRowInput` by the chunk loop)
 //! or DB-ready [`LiquidityUpdateEvent`]s (liquidity — the apply step
 //! consumes these directly).
 //!
@@ -292,7 +292,7 @@ pub async fn fetch_v4_liquidity_logs(
 
 /// Like [`decode_v3_liquidity_log`] but preserves the emitting pool address
 /// (V3 Mint/Burn events are emitted BY the pool contract — the log emitter
-/// IS the pool address the apply step needs). Pure (no RPC). CKXCOB 3b.
+/// IS the pool address the apply step needs). Pure (no RPC)..
 ///
 /// `main`'s `get_v3_liquidity_events` returns a `{pool_address: [events]}`
 /// dict — this decode is the building block for that grouping.
@@ -391,7 +391,7 @@ pub async fn fetch_v3_liquidity_logs_grouped(
 /// Like [`decode_v4_liquidity_log`] but preserves the V4 `PoolId` (topic1 of
 /// the `ModifyLiquidity` event) as a `0x`-prefixed 66-char hex string (the
 /// `pool_hash` form `apply_v4_liquidity_updates(pool_hash, ...)` + the
-/// `uniswap_v4_pools.pool_hash` column expect). Pure (no RPC). CKXCOB 3b.
+/// `uniswap_v4_pools.pool_hash` column expect). Pure (no RPC)..
 ///
 /// `main`'s `get_v4_liquidity_events` returns a `{pool_id: [events]}` dict —
 /// this decode is the building block for that grouping.
@@ -912,7 +912,7 @@ mod tests {
         let _ = U256::ZERO;
     }
 
-    // ── CKXCOB 3b: pool-address-preserving decode ────────────────────────
+    // ── pool-address-preserving decode ────────────────────────
 
     #[test]
     fn decode_v3_liquidity_log_with_pool_preserves_emitter() {

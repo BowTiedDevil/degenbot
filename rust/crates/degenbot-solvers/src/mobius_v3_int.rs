@@ -313,7 +313,7 @@ pub fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
 }
 
 // ---------------------------------------------------------------------------
-// Event-solver inversion (loop-15 T1 / 5CC2ZP)
+// Event-solver inversion (loop 15)
 // ---------------------------------------------------------------------------
 
 // The floor-cancel lemma: for integer W, `floor(f(x)) >= W  ⟺  f(x) >= W`.
@@ -479,7 +479,7 @@ fn walk_event_first_above_predicted_inner(hops: &[WalkHop], ks: &[usize]) -> Opt
 }
 
 // ---------------------------------------------------------------------------
-// Event census (loop-15 T1 / 5CC2ZP): predicted vs bisected first-above
+// Event census (loop 15): predicted vs bisected first-above
 // ---------------------------------------------------------------------------
 
 /// One replay session's census tally of the nested inversion against the
@@ -1148,7 +1148,7 @@ struct WalkRecorder {
 
 // (Duplicate-input probe counters removed after the measurement answered
 // the dedup question: 1.4% dup rate — memoization would cost more than it
-// saves. See epic YO2ST3 / task CGZBRP.)
+// saves. )
 
 impl WalkRecorder {
     fn new() -> Self {
@@ -1238,7 +1238,7 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
     piece_window_right_edge_seeded(hops, ks, hint, None, None).0
 }
 
-/// The EVENT-SOLVER right edge (loop-15 5CC2ZP): predict the first-above
+/// The EVENT-SOLVER right edge (loop 15): predict the first-above
 /// input via the nested ceil-inversion, then accept it on a two-probe proof
 /// (`landed(pa)` above the tuple AND `landed(pa-1)` not - which by
 /// monotonicity proves `pa` is exactly the smallest such input). A verified
@@ -1502,7 +1502,7 @@ thread_local! {
     pub(crate) static WALK_LEFT_EDGE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_RIGHT_EDGE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_ANCHOR_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Event solver (loop-15 5CC2ZP): pieces whose right edge came from the
+    // Event solver (loop 15): pieces whose right edge came from the
     // nested ceil-inversion (accepted on the two verify probes) vs pieces
     // that fell back to the grow + bisection. Live-corpus census: 158,283 of
     // 158,283 exact - the fallback is defense-in-depth, not a hot path.
@@ -2370,11 +2370,11 @@ pub struct V3SwapResult {
 #[must_use = "the V3 swap result should be used"]
 #[hotpath::measure(label = "cl_solve.int_simulate_v3_swap")]
 pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3SwapResult {
-    // PXSY47 + E7ALWT: per-step rounding is delegated to the canonical V3
-    // step function `compute_swap_step_v3` — the single source of ON5QMD
+    // Per-step parity: per-step rounding is delegated to the canonical V3
+    // step function `compute_swap_step_v3` — the single source of the
     // word-boundary flooring parity (previously re-implemented here as a
     // parallel closed form; the two-track seam produced the V4
-    // `CurrencyNotSettled` revert class). E7ALWT extends this to the
+    // `CurrencyNotSettled` revert class). The on-chain divergence work extends this to the
     // interior word boundaries a collapsed multi-word range spans: the
     // on-chain V3/V4 PoolManager floors `computeSwapStep` at EVERY word
     // boundary, so this function walks `word_boundary_prices` (entry→exit,
@@ -4352,7 +4352,7 @@ mod tests {
     /// the full `amount_in` as fee-only (`amount_in=0, fee=amount_in,
     /// output=0`).
     ///
-    /// PXSY47 (delegation to `compute_swap_step_v3`): the solver now MATCHES
+    /// Per-step delegation to `compute_swap_step_v3`: the solver now MATCHES
     /// on-chain byte-for-byte here too. Previously the closed form rounded
     /// `net_in` to 0 and reported `consumed_input = 0` (a documented
     /// limitation that the dust-agreement test below has now flipped).
@@ -4666,7 +4666,7 @@ mod tests {
     }
 
     /// The legacy all-CL enumeration with NO `max_candidates` cap. This is
-    /// the pre-7J22EQ `int_solve_cl_path` general case verbatim except the
+    /// the pre-cutover `int_solve_cl_path` general case verbatim except the
     /// radix is the full range count. Kept in-tree as the brute-force
     /// reference: the production solver must equal it (concavity ⇒ both find
     /// the same argmax piece), while the historical capped enumeration
@@ -4766,7 +4766,7 @@ mod tests {
     }
 
     /// The legacy mixed V2+CL enumeration with NO `max_candidates` cap
-    /// (uncapped twin of the pre-7J22EQ `exact_solve_mixed_path_n`).
+    /// (uncapped twin of the pre-cutover `exact_solve_mixed_path_n`).
     #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
     fn reference_uncapped_mixed_solve(
         v2_hops: &[Option<IntHopState>],

@@ -13,7 +13,7 @@
 //! - The header-staleness / logs-silence watchdog windows ([`Watchdog`])
 //!   + the transport timeouts (60s idle/degraded, log-catchup settle).
 //!
-//! The boundary contract (ADR-005 driver-shell + the MROOY7 extraction):
+//! The boundary contract (ADR-005 driver-shell + the bot-core extraction):
 //! **ingestion emits, the runtime decides.** This crate knows nothing about
 //! `BotState`, `StageMachine`, Python, or pyo3 — a standalone Rust consumer
 //! subscribes to the emitted event stream (or drives a stage machine itself)

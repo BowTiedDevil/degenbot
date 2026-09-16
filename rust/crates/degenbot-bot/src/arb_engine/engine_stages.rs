@@ -500,8 +500,7 @@ impl EngineStages {
 /// results forward.
 ///
 /// # Panics
-/// When the merged drain's outcome accounting undercounts (exactness fuse,
-/// QR3NUS/LW-T7): the cycle thread fails loudly, never silently mis-sizes.
+/// When the merged drain's outcome accounting undercounts (exactness fuse): the cycle thread fails loudly, never silently mis-sizes.
 fn run_engine_cycle(
     engine: &mut ArbitrageEngine,
     affected: &[degenbot_solvers::affected_keys::AffectedKey],

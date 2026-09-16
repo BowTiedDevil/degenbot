@@ -128,7 +128,7 @@ pub enum BootError {
 ///
 /// Frozen by design: [`FleetHost::resize_quota`] re-declares the LIVE
 /// budget (queue bounds, admission shares) but never re-derives the table
-/// — slot cells move only at an epoch boundary's T9 re-key — so a layout
+/// slot cells move only at an epoch boundary's T9 re-key — so a layout
 /// read is always the boot truth and a budget read is always the live
 /// admission truth. See the asymmetry note on [`FleetHost::queue_cap`].
 // (`Copy` is unreachable here: the fields are `Range<usize>`, which is
@@ -498,7 +498,7 @@ impl PartialEq for FleetBoot {
 
 impl FleetHost {
     /// Boot the fleet host: derive the budget (fail-fast), derive the
-    /// boot-frozen [`SlotLayout`] from it FIRST (2SIOHJ — the ONE boot
+    /// boot-frozen [`SlotLayout`] from it FIRST (the ONE boot
     /// ordering authority: every hosted range non-empty, the merge sidecar
     /// pinned to the LAST index, solver seats == LPT bins), then build the
     /// slot table / per-role queues / census rows FROM that layout, pin
@@ -632,7 +632,7 @@ impl FleetHost {
     /// The merge sidecar's slot: the boot-frozen [`SlotLayout`] merge
     /// index — structurally the LAST slot of the boot table (the pin
     /// itself is claimed T1→T2→T4 immediately after boot construction —
-    /// that conversion is the standing proof of the cell's state). 2SIOHJ:
+    /// that conversion is the standing proof of the cell's state).
     /// the layout owns this read; no re-derivation from the table length.
     fn merge_slot_id(&self) -> SlotId {
         u64::try_from(self.layout().merge).unwrap_or(SlotId::MAX)
@@ -1000,7 +1000,7 @@ impl FleetHost {
     /// The per-role queue bound: 2× the role's slot budget (pipelining
     /// depth); Merge is unbounded-by-type because it is never queued.
     ///
-    /// RESIZE-QUOTA ASYMMETRY (2SIOHJ — read before "fixing" this to read
+    /// RESIZE-QUOTA ASYMMETRY (read before "fixing" this to read
     /// `self.layout`): this bound INTENTIONALLY reads the LIVE budget,
     /// not the boot-frozen [`SlotLayout`]. [`FleetHost::resize_quota`]
     /// re-declares the budget under a new quota while the slot table (and
@@ -1460,7 +1460,7 @@ fn loud_abort(_reason: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// Panic-verdict policy (QR3NUS, Seam D): a unit panic whose results feed a
+// Panic-verdict policy (Seam D): a unit panic whose results feed a
 // pipe is expressible as DATA — a policy object decides between converting
 // the panic to typed per-path failure records (the seat survives, decision
 // A) and the loud structural abort. The unit runner consults the verdict;
@@ -1472,7 +1472,7 @@ fn loud_abort(_reason: &str) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanicAction {
     /// Convert the panic to typed per-path failure records; the seat keeps
-    /// taking its pinned units (QR3NUS decision A).
+    /// taking its pinned units (decision A).
     RecordAndContinue,
     /// Loud structural abort (strict ADR-021 posture). Reserved for
     /// dev/prod wiring that demands hard failure — never installed under
@@ -1490,7 +1490,7 @@ pub trait PanicVerdict: Send + Sync + 'static {
     fn on_unit_panic(&self, unit: u64, seat: u64) -> PanicAction;
 }
 
-/// Seat-survives policy (QR3NUS decision A): the panic becomes typed
+/// Seat-survives policy (decision A): the panic becomes typed
 /// failure records on the result pipe, and the seat keeps serving its pin.
 pub struct SeatSurvivesPolicy;
 

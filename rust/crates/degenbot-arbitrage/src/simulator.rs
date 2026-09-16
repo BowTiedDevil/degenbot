@@ -756,7 +756,7 @@ pub struct SimulateContext<'a> {
     /// The timestamp of `current_block` (the block header's `timestamp`). Used
     /// as the EVM's `block.timestamp` so the V2 pair's `_update()` computes a
     /// correct `timeElapsed` (a stale/default timestamp overflows
-    /// `UQ112x112.mul(timeElapsed)` — task XPPMQG). Threaded from the pump's
+    /// `UQ112x112.mul(timeElapsed)` — ). Threaded from the pump's
     /// block header to avoid a per-path `eth_getBlockByNumber` RPC.
     pub block_timestamp: u64,
     /// The latest block priority-fee percentiles (p10/p50) — the
@@ -800,8 +800,7 @@ pub struct SimulatePath {
     /// The arb's optimal input (`optimal_input`).
     pub optimal_input: u128,
     /// Per-hop rows (output / executable input / solve-time nonce) — one
-    /// allocation instead of the former three parallel `Vec`s (HTPKLX
-    /// 4JLQNS).
+    /// allocation instead of the former three parallel `Vec`s.
     pub steps: Box<[SolveStep]>,
     /// The path info (the ordered hops — consumed by `encode_cmd_stream`).
     pub path_info: PathInfo,
@@ -916,7 +915,7 @@ where
     // Build the EVM (`CacheDB` → revm `Context`) + pin the block env to the
     // per-block `ctx` values (shared by every path in the fan-out). The 7-call
     // orchestration + profit/access-list logic lives in
-    // [`simulate_path_on_evm`] so a shared per-block EVM (Tier 1, `V5HCR5`)
+    // [`simulate_path_on_evm`] so a shared per-block EVM (Tier 1)
     // can call it with `&mut evm` without rebuilding the DB stack per path.
     //
     // `disable_nonce_check`: the 7 calls share ONE owner; `eth_simulateV1` does
@@ -2717,7 +2716,7 @@ mod tests {
     /// the exact-in amount, and the post-swap sim scalars — so a recurrence can
     /// be driven through `v4_simulate_swap` at the EXACT state+input that
     /// produced `actual_out` (closing the solve-vs-sim gap). Shape mirrors the
-    /// real UNI pool 0x9a5c1d2f UO3JM4 recurrence (block 25673381, path 57150).
+    /// real UNI pool 0x9a5c1d2f recurrence (block 25673381, path 57150).
     #[test]
     fn reverted_swap_carries_pool_id_input_and_sim_scalars() {
         use degenbot_executor::composers::{HopInfo, V4HopInfo};
