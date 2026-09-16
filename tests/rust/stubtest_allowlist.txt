@@ -31,6 +31,7 @@ degenbot._ffi.PathBatchIterator
 degenbot._ffi.PathIterator
 degenbot._ffi.Pool
 degenbot._ffi.ReservePairView
+degenbot._ffi.RetryPolicyDefaults
 degenbot._ffi.cancel.CancelHandle
 degenbot._ffi.contract.AsyncContract
 degenbot._ffi.contract.Contract
