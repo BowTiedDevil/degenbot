@@ -23,7 +23,10 @@ from typing import TYPE_CHECKING, Any
 
 from degenbot.dispatch import (
     DispatchCandidate,
+    SkippedRecord,
     SubmitCandidate,
+    SubmitSkipReason,
+    SubmittedRecord,
     TxSigner,
     dispatch_and_submit,
     dispatch_profitable,
@@ -417,19 +420,17 @@ async def _submit_batch_records(
         inject_code=INJECT_EXECUTOR_CODE,
     )
     for record in records:
-        if record["kind"] == "submitted":
-            bot_logger.info(
-                f"Submitted path {record['path_id']} "
-                f"hash={record['tx_hash']} nonce={record['nonce']}",
-            )
-        elif record["reason"] == "pools_claimed":
-            bot_logger.debug(f"[dispatch] skip path={record['path_id']}: pools claimed after sim")
-        elif record["reason"] == "dry_run":
-            pass  # dry_run skip already logged above
-        elif record["reason"] == "inject_code":
-            bot_logger.warning(
-                f"[dispatch] path={record.get('path_id')}: skipping submission - "
-                "INJECT_EXECUTOR_CODE is active",
-            )
-        elif record["reason"] == "broadcast_failed":
-            bot_logger.debug(f"Send failed: {record.get('detail', '')}")
+        match record:
+            case SubmittedRecord(path_id=path_id, tx_hash=tx_hash, nonce=nonce):
+                bot_logger.info(f"Submitted path {path_id} hash={tx_hash} nonce={nonce}")
+            case SkippedRecord(path_id=path_id, reason=SubmitSkipReason.POOLS_CLAIMED):
+                bot_logger.debug(f"[dispatch] skip path={path_id}: pools claimed after sim")
+            case SkippedRecord(reason=SubmitSkipReason.DRY_RUN):
+                pass  # dry_run skip already logged above
+            case SkippedRecord(path_id=path_id, reason=SubmitSkipReason.INJECT_CODE):
+                bot_logger.warning(
+                    f"[dispatch] path={path_id}: skipping submission - "
+                    "INJECT_EXECUTOR_CODE is active",
+                )
+            case SkippedRecord(reason=SubmitSkipReason.BROADCAST_FAILED, detail=detail):
+                bot_logger.debug(f"Send failed: {detail or ''}")

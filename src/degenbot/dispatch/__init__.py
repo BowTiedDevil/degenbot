@@ -3,42 +3,44 @@
 This package re-exports the Rust-owned dispatch, simulation, and transaction
 signing symbols under stable, seam-agnostic names. Driver code (bot
 operators, example bots) imports from here — never from the PyO3 wrapper
-:mod:`degenbot._ffi`.
+module degenbot._ffi.
 
-The ``Py*`` prefix and ``*_py`` suffix on the FFI names are the seam naming
-itself: ``Py*`` marks a raw ``#[pyclass]``, ``*_py`` marks a
-``#[pyfunction]``. Those conventions are for the FFI layer's own bookkeeping
-and should never leak into driver code. This package hides them.
+The Py* prefix and *_py suffix on the FFI names are the seam naming itself:
+Py* marks a raw pyclass, *_py marks a pyfunction. Those conventions are for
+the FFI layer's own bookkeeping and should never leak into driver code. This
+package hides them.
 
 .. note::
 
-    These are **direct alias re-exports** (``from degenbot._ffi import PyX as
-    X``), not Python wrapper classes. The Rust engine constructs and
+    Most of these are **direct alias re-exports** (from degenbot._ffi import
+    PyX as X), not Python wrapper classes. The Rust engine constructs and
     consumes these pyclasses / pyfunctions directly — driver code constructs
-    a ``SimulateContext`` / ``TxSigner`` in Python and passes it to a Rust
-    pyfunction that expects the exact ``SimulateContext`` /
-    ``TxSigner`` pyclass. A wrapper class would break type identity at the
-    FFI boundary. The companion's only job is to give the symbols stable
-    names so driver code does not import ``degenbot._ffi``.
+    a SimulateContext / TxSigner in Python and passes it to a Rust
+    pyfunction that expects the exact SimulateContext / TxSigner pyclass. A
+    wrapper class would break type identity at the FFI boundary.
 
-    If a future driver needs Python-side ergonomics over these types (block-tag
-    resolution, ``__repr__``, context-manager protocol — the way
-    :class:`degenbot.provider.AlloyProvider` wraps the Rust
-    ``AlloyProvider``), a wrapper-class follow-up can add it; out of scope
-    here.
+dispatch_and_submit is the one deliberate exception: it is a thin async
+wrapper whose ONLY transformation is decoding the leaf's returned record
+dicts into the typed records of degenbot.dispatch.records (the single home
+for that wire format). Call-site arguments pass to the FFI pyfunction
+unchanged — pyclass identity for candidates/dispatcher/signer is preserved.
 
 Symbol map (FFI name → stable companion name):
 
-- ``DispatchCandidate`` → :class:`DispatchCandidate`
-- ``DispatchOutcome``   → :class:`DispatchOutcome`
-- ``Dispatcher``        → :class:`Dispatcher`
-- ``SimulateContext``   → :class:`SimulateContext`
-- ``TxSigner``          → :class:`TxSigner`
-- ``dispatch_profitable_py`` → :func:`dispatch_profitable`
-- ``merge_payload_results_py`` → :func:`merge_payload_results`
-- ``dispatch_and_submit_py`` → :func:`dispatch_and_submit`
-- ``fetch_fee_history_py``   → :func:`fetch_fee_history`
+- DispatchCandidate → DispatchCandidate
+- DispatchOutcome → DispatchOutcome
+- Dispatcher → Dispatcher
+- SimulateContext → SimulateContext
+- TxSigner → TxSigner
+- dispatch_profitable_py → dispatch_profitable
+- merge_payload_results_py → merge_payload_results
+- dispatch_and_submit_py → dispatch_and_submit (wrapper: dict → typed records)
+- fetch_fee_history_py → fetch_fee_history
 """
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from degenbot._ffi.simulation import (
     DispatchCandidate,
@@ -50,8 +52,54 @@ from degenbot._ffi.simulation import (
 from degenbot._ffi.simulation import dispatch_profitable_py as dispatch_profitable
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
 from degenbot._ffi.submission import Dispatcher, SubmitCandidate, TxSigner
-from degenbot._ffi.submission import dispatch_and_submit_py as dispatch_and_submit
+from degenbot._ffi.submission import dispatch_and_submit_py as _dispatch_and_submit_py
 from degenbot._ffi.submission import fetch_fee_history_py as fetch_fee_history
+from degenbot.dispatch.records import (
+    SkippedRecord,
+    SubmitRecord,
+    SubmitSkipReason,
+    SubmittedRecord,
+    typed_submit_record,
+)
+
+if TYPE_CHECKING:
+    from degenbot.provider import AsyncAlloyProvider
+
+
+async def dispatch_and_submit(
+    candidates: list[SubmitCandidate],
+    dispatcher: Dispatcher,
+    provider: AsyncAlloyProvider,
+    *,
+    signer: TxSigner,
+    operator_nonce: int,
+    current_block: int,
+    dry_run: bool,
+    inject_code: bool,
+) -> list[SubmitRecord]:
+    """Await the Rust submit leaf and decode its records to typed values.
+
+    The FFI pyfunction returns raw dicts (a "kind" discriminator plus
+    payloads); this companion wrapper is the single home for decoding them
+    into SubmittedRecord / SkippedRecord — unknown wire values raise instead
+    of dropping a submission event.
+
+    Returns:
+        The typed per-candidate records, in submit order.
+
+    """
+    raw = await _dispatch_and_submit_py(
+        candidates=candidates,
+        dispatcher=dispatcher,
+        provider=provider,
+        signer=signer,
+        operator_nonce=operator_nonce,
+        current_block=current_block,
+        dry_run=dry_run,
+        inject_code=inject_code,
+    )
+    return [typed_submit_record(record) for record in raw]
+
 
 __all__ = [
     "DispatchCandidate",
@@ -60,10 +108,15 @@ __all__ = [
     "PayloadOutcome",
     "PayloadVerdict",
     "SimulateContext",
+    "SkippedRecord",
     "SubmitCandidate",
+    "SubmitRecord",
+    "SubmitSkipReason",
+    "SubmittedRecord",
     "TxSigner",
     "dispatch_and_submit",
     "dispatch_profitable",
     "fetch_fee_history",
     "merge_payload_results",
+    "typed_submit_record",
 ]
