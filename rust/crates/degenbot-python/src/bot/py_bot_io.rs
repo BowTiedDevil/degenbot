@@ -853,12 +853,18 @@ impl PyBotIo {
     /// which probe succeeded so the Python caller can construct a
     /// `PoolTypeDescriptor` from the registry.
     ///
-    /// Returns one of:
-    /// - `"slot0"` — V3 concentrated-liquidity pool.
-    /// - `"getReserves"` — V2 constant-product pool.
-    /// - `"balancer_weighted"` — Balancer weighted pool.
-    /// - `"balancer_stable"` — Balancer stable pool.
-    /// - `"stableswap"` — Curve fallback (all probes reverted).
+    /// Returns the 1-based `u8` code of the
+    /// ``degenbot.types.pool_type.PoolProbe`` member (the `curve_math`
+    /// `try_from_u8` crossing convention):
+    /// - `PoolProbe.V2` (1) — V2 constant-product pool.
+    /// - `PoolProbe.V3` (2) — V3 concentrated-liquidity pool.
+    /// - `PoolProbe.BALANCER_WEIGHTED` (3) — Balancer weighted pool.
+    /// - `PoolProbe.BALANCER_STABLE` (4) — Balancer stable pool.
+    /// - `PoolProbe.STABLESWAP` (5) — Curve fallback (all probes reverted).
+    ///
+    /// Keep the `match` below in lock-step with `PoolProbe`'s member order —
+    /// a new `PoolFamily` variant fails this match to compile until its wire
+    /// code is assigned on both sides.
     ///
     /// Each probe is a fire-and-forget `call` — the result is not decoded, only
     /// whether the call succeeded or reverted matters. Reverts (any `PyErr`)
@@ -869,7 +875,7 @@ impl PyBotIo {
         py: Python<'_>,
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
-    ) -> String {
+    ) -> u8 {
         use degenbot_bot::bot_core::pool_builder::builder::PoolFamily;
 
         // Non-`PyResult` signature (mirrors the Python `-> str` contract), so
@@ -893,11 +899,11 @@ impl PyBotIo {
             })
         });
         match family {
-            PoolFamily::V3 => "slot0".to_string(),
-            PoolFamily::V2 => "getReserves".to_string(),
-            PoolFamily::BalancerWeighted => "balancer_weighted".to_string(),
-            PoolFamily::BalancerStable => "balancer_stable".to_string(),
-            PoolFamily::Curve => "stableswap".to_string(),
+            PoolFamily::V2 => 1,               // PoolProbe.V2
+            PoolFamily::V3 => 2,               // PoolProbe.V3
+            PoolFamily::BalancerWeighted => 3, // PoolProbe.BALANCER_WEIGHTED
+            PoolFamily::BalancerStable => 4,   // PoolProbe.BALANCER_STABLE
+            PoolFamily::Curve => 5,            // PoolProbe.STABLESWAP
         }
     }
 

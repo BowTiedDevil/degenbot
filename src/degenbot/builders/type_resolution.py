@@ -24,7 +24,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
+from degenbot.types.pool_type import PoolFamily, PoolProbe, PoolTypeDescriptor, derive_kind
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
@@ -148,21 +148,25 @@ def _build_descriptor_from_seam_rows(
 
 def _descriptor_from_probing_result(
     *,
-    succeeded_method: str | None,
+    succeeded: PoolProbe | None,
     chain_id: ChainId,
     factory: ChecksummedAddress,
 ) -> PoolTypeDescriptor:
-    """Map 'which method succeeded' to a PoolTypeDescriptor.
+    """Map 'which probe succeeded' to a PoolTypeDescriptor.
 
     If the factory is registered in pool_type_registry, uses the registry
-    descriptor. Otherwise derives a default descriptor from the method name.
-    If succeeded_method is None (no method succeeded), returns STABLESWAP.
+    descriptor. Otherwise derives a default descriptor from the probe.
+    ``None`` (no probe answered — read before this call) returns STABLESWAP.
 
     Returns:
         The computed value.
 
+    Raises:
+        DegenbotValueError: On a probe result outside the PoolProbe space —
+            seam drift, never silently classified.
+
     """
-    if succeeded_method is None:
+    if succeeded is None:
         return PoolTypeDescriptor(
             family=PoolFamily.STABLESWAP,
             variant=None,
@@ -174,13 +178,13 @@ def _descriptor_from_probing_result(
     if registry_descriptor is not None:
         return registry_descriptor
 
-    match succeeded_method:
-        case "slot0":
+    match succeeded:
+        case PoolProbe.V3:
             family = PoolFamily.CONCENTRATED_LIQUIDITY
-        case "getReserves":
+        case PoolProbe.V2:
             family = PoolFamily.CONSTANT_PRODUCT
         case _:
-            family = PoolFamily.STABLESWAP
+            raise DegenbotValueError(message=f"Unrecognized probe result: {succeeded!r}")
 
     return PoolTypeDescriptor(
         family=family,
@@ -218,50 +222,61 @@ def resolve_pool_type_by_probing(
 ) -> PoolTypeDescriptor:
     """Determine pool type by probing the contract on-chain.
 
-    Tries V3 methods first (slot0), then V2 methods (getReserves),
-    then falls back to STABLESWAP. Descriptor construction is
-    delegated to _descriptor_from_probing_result.
+    Tries V3 first (slot0), then V2 (getReserves), then Balancer
+    (getPoolId + getNormalizedWeights); when all probes revert, the Rust
+    probe returns the Curve fallback. Descriptor construction goes through
+    _descriptor_from_probing_result.
 
     Returns:
         The computed value.
+
+    Raises:
+        DegenbotValueError: On a probe code outside the PoolProbe space —
+            Rust/Python wire-order drift, never silently classified.
 
     """
     # ADR-005 slice 14i: delegate the 4-call probing choreography to Rust
     # (``BotIo.probe_pool_type``). BotIo is the only executor; the
     # Python slot0/getReserves/getPoolId probing fallback is retired.
     result = io.probe_pool_type(address)
-    if result == "slot0":
-        return _descriptor_from_probing_result(
-            succeeded_method="slot0",
-            chain_id=chain_id,
-            factory=factory,
-        )
-    if result == "getReserves":
-        return _descriptor_from_probing_result(
-            succeeded_method="getReserves",
-            chain_id=chain_id,
-            factory=factory,
-        )
-    if result == "balancer_weighted":
-        return PoolTypeDescriptor(
-            family=PoolFamily.WEIGHTED,
-            variant="balancer_weighted",
-            kind=derive_kind(PoolFamily.WEIGHTED, "balancer_weighted"),
-            factory=factory,
-        )
-    if result == "balancer_stable":
-        return PoolTypeDescriptor(
-            family=PoolFamily.STABLESWAP,
-            variant="balancer_stable",
-            kind=derive_kind(PoolFamily.STABLESWAP, "balancer_stable"),
-            factory=factory,
-        )
-    # "stableswap" fallback.
-    return _descriptor_from_probing_result(
-        succeeded_method=None,
-        chain_id=chain_id,
-        factory=factory,
-    )
+    try:
+        probe = PoolProbe(result)
+    except ValueError as e:
+        raise DegenbotValueError(
+            message=(
+                f"Unrecognized probe result from BotIo: {result!r} — "
+                "the Rust PoolFamily match in py_bot_io.rs::probe_pool_type "
+                "and degenbot.types.pool_type.PoolProbe are out of lock-step"
+            ),
+        ) from e
+
+    match probe:
+        case PoolProbe.V3 | PoolProbe.V2:
+            return _descriptor_from_probing_result(
+                succeeded=probe,
+                chain_id=chain_id,
+                factory=factory,
+            )
+        case PoolProbe.BALANCER_WEIGHTED:
+            return PoolTypeDescriptor(
+                family=PoolFamily.WEIGHTED,
+                variant="balancer_weighted",
+                kind=derive_kind(PoolFamily.WEIGHTED, "balancer_weighted"),
+                factory=factory,
+            )
+        case PoolProbe.BALANCER_STABLE:
+            return PoolTypeDescriptor(
+                family=PoolFamily.STABLESWAP,
+                variant="balancer_stable",
+                kind=derive_kind(PoolFamily.STABLESWAP, "balancer_stable"),
+                factory=factory,
+            )
+        case PoolProbe.STABLESWAP:
+            return _descriptor_from_probing_result(
+                succeeded=None,
+                chain_id=chain_id,
+                factory=factory,
+            )
 
 
 def resolve_pool_type(

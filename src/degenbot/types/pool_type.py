@@ -3,11 +3,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress
+
+
+class PoolProbe(IntEnum):
+    """The on-chain probe outcome BotIo.probe_pool_type returns.
+
+    The Rust probe (pool_builder::builder) classifies a contract by which
+    read-only call answers. The enum crosses the PyO3 seam as a 1-based u8
+    (auto() values, the curve_math try_from_u8 crossing convention); an
+    unrecognized code is seam drift and must raise, never silently classify.
+
+    Member order is the wire contract - keep in lock-step with the
+    PoolFamily match in py_bot_io.rs::probe_pool_type (a new Rust variant
+    fails that match to compile until a code is assigned here).
+    """
+
+    V2 = 1
+    V3 = 2
+    BALANCER_WEIGHTED = 3
+    BALANCER_STABLE = 4
+    STABLESWAP = 5
 
 
 class PoolFamily(Enum):

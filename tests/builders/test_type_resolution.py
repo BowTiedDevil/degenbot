@@ -24,7 +24,7 @@ from degenbot.builders.type_resolution import (
     resolve_pool_type_by_probing,
 )
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor
+from degenbot.types.pool_type import PoolFamily, PoolProbe, PoolTypeDescriptor
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
@@ -90,7 +90,7 @@ class FakePyBotIo:
         self,
         *,
         factory_address: str | None = None,
-        probe_result: str = "",
+        probe_result: int = 0,
         pool_row: object | None = None,
         exchange_row: object | None = None,
     ) -> None:
@@ -105,7 +105,7 @@ class FakePyBotIo:
     def fetch_factory_address(self, _address: str) -> str | None:
         return self._factory_address
 
-    def probe_pool_type(self, _address: str) -> str:
+    def probe_pool_type(self, _address: str) -> int:
         return self._probe_result
 
     def fetch_pool_row(self, chain_id: int, address: str) -> object | None:
@@ -143,7 +143,7 @@ class TestResolvePoolTypeByProbing:
     """Tests for the sync resolve_pool_type_by_probing."""
 
     def test_v3_probe_returns_concentrated_liquidity(self) -> None:
-        io = FakePyBotIo(probe_result="slot0")
+        io = FakePyBotIo(probe_result=PoolProbe.V3)
         result = resolve_pool_type_by_probing(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
@@ -153,7 +153,7 @@ class TestResolvePoolTypeByProbing:
         assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
 
     def test_v2_probe_returns_constant_product(self) -> None:
-        io = FakePyBotIo(probe_result="getReserves")
+        io = FakePyBotIo(probe_result=PoolProbe.V2)
         result = resolve_pool_type_by_probing(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
@@ -162,9 +162,19 @@ class TestResolvePoolTypeByProbing:
         )
         assert result.family == PoolFamily.CONSTANT_PRODUCT
 
-    def test_fallback_returns_stableswap(self) -> None:
-        # An unrecognized probe result falls through to the STABLESWAP default.
-        io = FakePyBotIo(probe_result="")
+    def test_balancer_weighted_probe_returns_weighted(self) -> None:
+        io = FakePyBotIo(probe_result=PoolProbe.BALANCER_WEIGHTED)
+        result = resolve_pool_type_by_probing(
+            "0xPool",  # type: ignore[arg-type]
+            chain_id=CHAIN_ID,
+            factory="0xFactory",  # type: ignore[arg-type]
+            io=io,
+        )
+        assert result.family == PoolFamily.WEIGHTED
+        assert result.variant == "balancer_weighted"
+
+    def test_balancer_stable_probe_returns_stableswap_variant(self) -> None:
+        io = FakePyBotIo(probe_result=PoolProbe.BALANCER_STABLE)
         result = resolve_pool_type_by_probing(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
@@ -172,6 +182,30 @@ class TestResolvePoolTypeByProbing:
             io=io,
         )
         assert result.family == PoolFamily.STABLESWAP
+        assert result.variant == "balancer_stable"
+
+    def test_curve_fallback_returns_stableswap(self) -> None:
+        """All probes reverted (Curve fallback tag) → STABLESWAP."""
+        io = FakePyBotIo(probe_result=PoolProbe.STABLESWAP)
+        result = resolve_pool_type_by_probing(
+            "0xPool",  # type: ignore[arg-type]
+            chain_id=CHAIN_ID,
+            factory="0xFactory",  # type: ignore[arg-type]
+            io=io,
+        )
+        assert result.family == PoolFamily.STABLESWAP
+
+    def test_unknown_probe_code_raises(self) -> None:
+        """An unrecognized probe code is seam drift — it must raise, never
+        silently classify as STABLESWAP."""
+        io = FakePyBotIo(probe_result=99)
+        with pytest.raises(DegenbotValueError, match="Unrecognized probe result"):
+            resolve_pool_type_by_probing(
+                "0xPool",  # type: ignore[arg-type]
+                chain_id=CHAIN_ID,
+                factory="0xFactory",  # type: ignore[arg-type]
+                io=io,
+            )
 
 
 class TestResolvePoolType:
@@ -191,7 +225,7 @@ class TestResolvePoolType:
         io = FakePyBotIo(
             factory_address=factory_address,
             pool_row=None,
-            probe_result="slot0",
+            probe_result=PoolProbe.V3,
         )
         result = resolve_pool_type(
             "0xPool",  # type: ignore[arg-type]

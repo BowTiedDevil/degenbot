@@ -23,6 +23,7 @@ from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
+from degenbot.types.pool_type import PoolProbe
 from degenbot.utils.bytes import to_bytes
 
 # A minimal real offline provider (recorded JSON, no RPC) for tests that need a
@@ -273,33 +274,33 @@ _GET_NORMALIZED_WEIGHTS = function_selector("getNormalizedWeights()").hex()
 
 
 def test_pybot_io_probe_pool_type_returns_slot0_for_v3():
-    """When slot0() succeeds, probe returns 'slot0'."""
+    """When slot0() succeeds, probe returns the V3 probe code."""
     io = BotIo(provider=_probe_offline_provider({_SLOT0}))
-    assert io.probe_pool_type("0x" + "aa" * 20) == "slot0"
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.V3
 
 
 def test_pybot_io_probe_pool_type_returns_getreserves_for_v2():
-    """When slot0() reverts but getReserves() succeeds, probe returns 'getReserves'."""
+    """When slot0() reverts but getReserves() succeeds, probe returns the V2 code."""
     io = BotIo(provider=_probe_offline_provider({_GET_RESERVES}))
-    assert io.probe_pool_type("0x" + "aa" * 20) == "getReserves"
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.V2
 
 
 def test_pybot_io_probe_pool_type_returns_balancer_weighted():
-    """When getPoolId() + getNormalizedWeights() succeed, probe returns 'balancer_weighted'."""
+    """When getPoolId() + getNormalizedWeights() succeed, probe returns the weighted code."""
     io = BotIo(provider=_probe_offline_provider({_GET_POOL_ID, _GET_NORMALIZED_WEIGHTS}))
-    assert io.probe_pool_type("0x" + "aa" * 20) == "balancer_weighted"
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.BALANCER_WEIGHTED
 
 
 def test_pybot_io_probe_pool_type_returns_balancer_stable():
-    """When getPoolId() succeeds but getNormalizedWeights() reverts, probe returns 'balancer_stable'."""
+    """getPoolId() succeeds, getNormalizedWeights() reverts → stable code."""
     io = BotIo(provider=_probe_offline_provider({_GET_POOL_ID}))
-    assert io.probe_pool_type("0x" + "aa" * 20) == "balancer_stable"
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.BALANCER_STABLE
 
 
 def test_pybot_io_probe_pool_type_returns_stableswap_fallback():
-    """When all probes revert, probe returns 'stableswap' (Curve fallback)."""
+    """When all probes revert, probe returns the Curve fallback code."""
     io = BotIo(provider=_probe_offline_provider(set()))
-    assert io.probe_pool_type("0x" + "aa" * 20) == "stableswap"
+    assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
 
 
 # === V3 tick bitmap + tick data RPCs (slice 14j) ===
