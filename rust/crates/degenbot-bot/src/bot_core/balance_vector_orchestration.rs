@@ -351,7 +351,7 @@ impl BotState {
     }
 
     /// Rust twin of the companion `calc_withdraw_one_coin(token_amount, i)`
-    ///. Base-pool delegation op for metapool
+    /// Base-pool delegation op for metapool
     /// `get_dy_underlying`; also a standalone calc entry. Returns the single
     /// coin-`i` output `dy` (the port only needs `dy`; the companion's extra
     /// tuple fields `dy_0 - dy` / `total_supply` aren't consumed).

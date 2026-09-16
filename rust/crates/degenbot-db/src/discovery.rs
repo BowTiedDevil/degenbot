@@ -114,10 +114,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::fetch_pool_manager_id_by_address`] (CKXCOB 3a).
+    /// [`Self::fetch_pool_manager_id_by_address`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn fetch_pool_manager_id_by_address_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -162,7 +162,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::upsert_v2_pools`]
-    /// (CKXCOB 3a). Accepts a borrowed [`rusqlite::Connection`] (a chunk-loop
+    /// Accepts a borrowed [`rusqlite::Connection`] (a chunk-loop
     /// `Transaction` derefs to one) so the pool-updater chunk loop can write a
     /// batch under ONE connection + ONE transaction. Retires the per-row
     /// `self.lock()` cycle the `&self` path previously needed (the token
@@ -170,7 +170,7 @@ impl DegenbotDb {
     /// SAME borrowed conn — no re-lock → no `parking_lot` non-reentrant deadlock).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn upsert_v2_pools_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -267,10 +267,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::upsert_v3_pools`]
-    /// (CKXCOB 3a). See [`Self::upsert_v2_pools_on_conn`].
+    /// See [`Self::upsert_v2_pools_on_conn`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn upsert_v3_pools_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -353,10 +353,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::upsert_v4_pools`]
-    /// (CKXCOB 3a). See [`Self::upsert_v2_pools_on_conn`].
+    /// See [`Self::upsert_v2_pools_on_conn`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn upsert_v4_pools_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -431,13 +431,13 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::set_exchange_last_update_block`] (CKXCOB 3a) — the chunk loop's
+    /// [`Self::set_exchange_last_update_block`] — the chunk loop's
     /// end-of-chunk stamp, callable on the chunk's `Transaction` so the stamp
     /// commits atomically with the chunk's pool + liquidity writes (the §1
     /// atomicity invariant's structural fix).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn set_exchange_last_update_block_on_conn(
         conn: &rusqlite::Connection,
         chain_id: i64,

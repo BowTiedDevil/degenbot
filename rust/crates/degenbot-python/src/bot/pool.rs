@@ -2168,7 +2168,7 @@ impl PyLiquidityPool {
 
     /// Replace this pool's `tick_data` with an external snapshot (Python
     /// sparse-map backfill). Mirrors the Python `UniswapV3Pool.update_tick_data`
-    /// — the companion delegates here once it's rewritten over the handle
+    /// the companion delegates here once it's rewritten over the handle
     /// (plan-101 slice 8b). No journal delta (full-sync; the pump is the
     /// authority for event-derived ticks — mirrors `sync_v3_pool_state`).
     ///
@@ -3047,7 +3047,7 @@ impl PyLiquidityPool {
     /// Rust-owned Curve `curve_calc_withdraw_one_coin(token_amount, i,
     /// block_number)` on this handle's pool — the single-call shape the
     /// companion `CurveStableswapPool.calc_withdraw_one_coin` delegates to
-    ///. Returns only the coin-`i` `dy` (the companion's
+    /// Returns only the coin-`i` `dy` (the companion's
     /// extra tuple fields aren't consumed anywhere).
     fn curve_calc_withdraw_one_coin(
         &self,

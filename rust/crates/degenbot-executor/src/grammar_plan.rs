@@ -127,7 +127,7 @@ fn emit_terminal_hop(
 // representation, no drift, no reordering, no per-family trace duplication.
 //
 // Checkpoint 1: Step set scoped to the `v2_v3` (InPathFlash) family
-// — `FlashSwap` (V2/V3, carries its callback subtree) + `Erc20Transfer`. The
+// `FlashSwap` (V2/V3, carries its callback subtree) + `Erc20Transfer`. The
 // remaining Step variants (V4Unlock, V4Swap, V4Take, V4Sync/Settle, V2SwapCalc,
 // WethDeposit/Withdraw, V4Batch/Mint, …) land incrementally as families fold.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -327,7 +327,7 @@ pub enum PlanStep {
         amount: u128,
     },
     /// `NATIVE_TRANSFER(amount)` — the executor→PM native pay-in leg of a
-    /// native settle (BP7KIR 3c). Ledger-only (encodes to nothing, like
+    /// native settle. Ledger-only (encodes to nothing, like
     /// `SelfFund`): on-chain the native flows as `msg.value` on the
     /// `V4_SETTLE*` call, so there is no separate byte instruction. Modeled
     /// explicitly so the executor's native debit is a separate observable op

@@ -410,14 +410,14 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::get_or_create_erc20_token`]
-    /// — accepts a borrowed [`rusqlite::Connection`] (a chunk-loop `Transaction`
+    /// accepts a borrowed [`rusqlite::Connection`] (a chunk-loop `Transaction`
     /// derefs to one) so the pool-updater chunk loop can call it on its ONE
     /// owned connection without re-locking the `Mutex` (avoids the
     /// `parking_lot` non-reentrant deadlock + retires the per-row lock cycle
     /// the `discovery::upsert_v*_pools` paths previously needed). CKXCOB 3a.
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn get_or_create_erc20_token_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -2781,7 +2781,7 @@ fn existing_user(
 }
 
 /// Look up an `aave_gho_tokens.id` by the underlying GHO token's `(chain, address)`
-/// — joins through `erc20_tokens` (the `aave_gho_tokens` table is keyed by
+/// joins through `erc20_tokens` (the `aave_gho_tokens` table is keyed by
 /// `token_id`, not by address).
 fn existing_gho_token(
     conn: &rusqlite::Connection,

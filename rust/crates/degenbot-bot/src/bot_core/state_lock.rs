@@ -283,7 +283,6 @@ fn register_write(key: usize, location: &'static Location<'static>) -> u64 {
 
 /// Remove a read hold's registry entry, returning the removed record so the
 /// guard's `Drop` can report a slow hold that no later acquire flagged
-///.
 fn remove_read(key: usize, seq: u64) -> Option<HoldRecord> {
     let mut map = ACTIVE_READS.lock();
     let records = map.get_mut(&key)?;

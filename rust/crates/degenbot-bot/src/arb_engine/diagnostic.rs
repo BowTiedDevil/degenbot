@@ -234,7 +234,7 @@ pub struct DiagnosticHop {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub diff: Vec<String>,
     /// True iff ANY field differs between `engine_state` and `onchain_state`
-    ///. `false` when no on-chain fetch ran or every fetched field
+    /// `false` when no on-chain fetch ran or every fetched field
     /// matched.
     #[serde(default, skip_serializing_if = "is_false")]
     pub drift: bool,
@@ -512,7 +512,7 @@ fn build_engine_pool_state(
         // Solidly-stable diagnostics land with the resolve+solve wiring
         // . Until then, a Solidly hop records a
         // "not yet wired" placeholder; same for Balancer stable and weighted
-        // — the path is still solvable via the other hops' diagnostic data.
+        // the path is still solvable via the other hops' diagnostic data.
         HopType::SolidlyStable
         | HopType::BalancerWeighted
         | HopType::BalancerStable

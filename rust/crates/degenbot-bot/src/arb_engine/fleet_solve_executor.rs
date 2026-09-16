@@ -512,7 +512,7 @@ pub(crate) fn global_fleet_solve_executor() -> &'static FleetSolveExecutor {
     })
 }
 // The solve-lane adapter (witness + carrier + ledger) now lives in
-// `crate::arb_engine::executor` (QR3NUS 43E3H3): the former provisional
+// `crate::arb_engine::executor`: the former provisional
 // lane module folded there per the JI275C placement. The fleet executor
 // retains SOLVE_BIN_KEY_BASE and its host machinery here.
 #[cfg(test)]

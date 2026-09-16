@@ -131,7 +131,7 @@ pub use stage_machine::{
 // Pool registry sum type + V2 identity/state + token entry + swap-sim dispatch.
 // **Relocated** to `degenbot-pools`; re-exported here at the historical
 // `bot_core::*` paths so consumers resolve unchanged.
-// Transient re-export — repointed at `degenbot_pools::*` natively by USPN7M/P2CKRL.
+// Transient re-export — repointed at `degenbot_pools::*` natively.
 // ---------------------------------------------------------------------------
 
 pub use ::degenbot_pools::registry::{
@@ -431,7 +431,7 @@ impl BotState {
     /// This is the block the live pool state actually reflects. During a
     /// backfill/drain desync the pools are advanced ahead of the pump's
     /// header clock, so `pool_state_head()` can exceed the drain `block_number`
-    /// — the correct solve/verify/sim anchor is this head, NOT the lagging
+    /// the correct solve/verify/sim anchor is this head, NOT the lagging
     /// clock. Because a pool is unchanged from its `update_block` onward, a
     /// single head anchor reproduces each path's solver state exactly
     /// (unchanged pools have byte-identical EVM state at `update_block` and
@@ -695,7 +695,7 @@ impl BotState {
     /// for ad-hoc bulk rollback); the engine no longer calls it on the hot path.
     ///
     /// Pools with no journal delta at/after `target` are left as-is (idempotent
-    /// — a reorg touches only a subset of pools). Returns the count of pools
+    /// a reorg touches only a subset of pools). Returns the count of pools
     /// that were rolled back.
     pub fn restore_all_pools_before_block(&mut self, target: u64) -> usize {
         let pool_ids: Vec<u64> = self.pools.keys().copied().collect();
@@ -876,7 +876,7 @@ impl BotState {
                     .is_some_and(|earliest| earliest < block)
             }
             // Aerodrome carries a genesis delta (mirror of V2/Curve/Balancer)
-            // — ADR-005 Aerodrome slice. Same predicate: `earliest < block`.
+            // ADR-005 Aerodrome slice. Same predicate: `earliest < block`.
             PoolEntry::AerodromeV2(p) => {
                 p.1.journal
                     .earliest_block()
@@ -1101,7 +1101,7 @@ impl Default for BotState {
 // lone ADR-006 D4 helper row not previously file-extracted; siblings
 // `log_dispatcher`/`block_pump`/`solve_coordinator`/`reorg_coordinator`/...).
 // Reachability path `degenbot_bot::bot_core::Bot` preserved by the re-export
-// — the 4 reachers (`block_pump`, `degenbot-python/bot/mod.rs`,
+// the 4 reachers (`block_pump`, `degenbot-python/bot/mod.rs`,
 // `degenbot-python/bot/pump.rs` ×2) are byte-identical.
 // ---------------------------------------------------------------------------
 pub use bot::Bot;

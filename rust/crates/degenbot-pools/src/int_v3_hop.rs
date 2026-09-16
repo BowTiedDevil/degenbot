@@ -4,7 +4,7 @@
 //! **Relocated** from `degenbot-bot/src/solvers/mobius_v3_int.rs` (these are
 //! pure value types, previously mis-homed under `solvers/`); re-exported there
 //! at the historical `crate::solvers::mobius_v3_int::IntV3*` path so consumers
-//! resolve unchanged. Transient re-export — repointed natively by USPN7M/P2CKRL.
+//! resolve unchanged. Transient re-export — repointed natively.
 
 use alloy::primitives::{U256, U512};
 use degenbot_math::v2::IntHopState;

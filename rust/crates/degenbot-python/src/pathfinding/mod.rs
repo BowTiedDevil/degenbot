@@ -226,7 +226,6 @@ fn build_owned_finder(
 }
 
 /// Build the pathfinding edge list + address lookups via the Rust DB core
-///.
 ///
 /// Choreographs `degenbot_db::fetch_tokens_with_min_degree` (the candidate-
 /// token set, `degree` ≥ #requested pool kinds for a token to anchor a

@@ -1,5 +1,5 @@
 #![expect(clippy::print_stdout, clippy::similar_names, clippy::unwrap_used)]
-//! Loop-12 (BY7BLS 4EG7P3): synthesize replayable corpus lines for the
+//! Loop-12: synthesize replayable corpus lines for the
 //! giant-liquidity family shapes observed live (walk-heavy path 27817: ~400
 //! piece hop with deep middle liquidity; gate-heavy paths 10760/15012/26030:
 //! fat multi-hundred-to-low-thousands tick ranges feeding the envelope).

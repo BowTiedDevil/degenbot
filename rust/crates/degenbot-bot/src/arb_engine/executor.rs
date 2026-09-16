@@ -55,7 +55,7 @@ pub(crate) fn global_sim_executor(
     crate::arb_engine::fleet_intake::sim_intake()
 }
 // ---------------------------------------------------------------------------
-// THE solve lane (QR3NUS 43E3H3): the one outcome-carrier module both solve
+// THE solve lane: the one outcome-carrier module both solve
 // arms submit through. Folded here from the fleet solve executor's
 // provisional lane module — the placement is the one JI275C named.
 // WITNESS + CARRIER + LEDGER live together on purpose: the lane knows the
@@ -419,7 +419,7 @@ pub(crate) fn run_solve_lane(
         }
     }
 }
-/// THE outcome ledger (QR3NUS 43E3H3): ONE implementation asserting one
+/// THE outcome ledger: ONE implementation asserting one
 /// typed outcome per path per cycle exactly once, across BOTH solve arms
 /// (the in-cycle drain and the detached merge sidecar). Keyed
 /// `(solve_seq, pid)`; the prune-age constant is carried unchanged from

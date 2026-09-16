@@ -124,7 +124,7 @@ pub async fn fetch_pool_created_logs(
         .collect())
 }
 
-/// Spec-aware `PoolCreated`/`Initialize` fetch (CKXCOB 3c): like
+/// Spec-aware `PoolCreated`/`Initialize` fetch: like
 /// [`fetch_pool_created_logs`] but resolved from an [`ExchangeSpec`] — uses
 /// `spec.event_topic` (NOT `spec.family.topic0()`) so Aerodrome V3 (which
 /// shares the V3 decode structure but has its own
@@ -278,7 +278,7 @@ pub async fn fetch_v4_liquidity_logs(
     Ok(logs.iter().filter_map(decode_v4_liquidity_log).collect())
 }
 
-// ── pool-address-preserving variants (CKXCOB 3b) ─────────────────────────
+// ── pool-address-preserving variants ─────────────────────────
 //
 // Task 1's `fetch_v3/v4_liquidity_logs` flatten away the per-pool grouping
 // the chunk loop needs: V3 Mint/Burn events are emitted by individual pool

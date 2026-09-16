@@ -3,7 +3,7 @@
 //! **Relocated** from `degenbot-bot/src/solvers/liquidity_event_buffer.rs`
 //! (a pure value trait, previously mis-homed under `solvers/`); re-exported
 //! there at the historical `crate::solvers::liquidity_event_buffer::LiquidityEvent`
-//! path. Transient re-export — repointed natively by USPN7M/P2CKRL.
+//! path. Transient re-export — repointed natively.
 
 /// Trait for buffered liquidity events that support expiry by block number.
 pub trait LiquidityEvent {

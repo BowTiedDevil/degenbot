@@ -70,7 +70,6 @@ pub const UNISWAP_V3_MAINNET_INIT_HASH: alloy::primitives::B256 =
 /// called for a `(chain, factory)` NOT in the shipped `deployments.json`
 /// (test/ad-hoc pools). JSON-registered pools read the per-row verified init
 /// hash from the deployment record. Rust `const` retires the Python copy
-///.
 pub const UNISWAP_V2_MAINNET_INIT_HASH: alloy::primitives::B256 =
     alloy::primitives::b256!("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f");
 

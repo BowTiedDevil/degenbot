@@ -154,10 +154,9 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::fetch_v3_pool_update_state`]
-    /// (CKXCOB 3a).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn fetch_v3_pool_update_state_on_conn(
         conn: &rusqlite::Connection,
         chain_id: i64,
@@ -247,10 +246,9 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::fetch_v4_pool_update_state`]
-    /// (CKXCOB 3a).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn fetch_v4_pool_update_state_on_conn(
         conn: &rusqlite::Connection,
         pool_hash: &str,
@@ -310,10 +308,9 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::fetch_v3_liquidity_map`]
-    /// (CKXCOB 3a).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn fetch_v3_liquidity_map_on_conn(
         conn: &rusqlite::Connection,
         pool_id: i64,
@@ -382,10 +379,9 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::fetch_v4_liquidity_map`]
-    /// (CKXCOB 3a).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn fetch_v4_liquidity_map_on_conn(
         conn: &rusqlite::Connection,
         managed_pool_id: i64,
@@ -540,10 +536,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::apply_v3_liquidity_updates`]
-    /// (CKXCOB 3a) — compute → persist with no on-chain gate (backward compat).
+    /// compute → persist with no on-chain gate (backward compat).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn apply_v3_liquidity_updates_on_conn(
         conn: &rusqlite::Connection,
         chain_id: i64,
@@ -650,10 +646,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::apply_v4_liquidity_updates`]
-    /// (CKXCOB 3a) — compute → persist with no on-chain gate (backward compat).
+    /// compute → persist with no on-chain gate (backward compat).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn apply_v4_liquidity_updates_on_conn(
         conn: &rusqlite::Connection,
         pool_hash: &str,
@@ -687,10 +683,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::set_v3_liquidity_update_marker`] (CKXCOB 3a).
+    /// [`Self::set_v3_liquidity_update_marker`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn set_v3_liquidity_update_marker_on_conn(
         conn: &rusqlite::Connection,
         pool_id: i64,
@@ -742,10 +738,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::set_v4_liquidity_update_marker`] (CKXCOB 3a).
+    /// [`Self::set_v4_liquidity_update_marker`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn set_v4_liquidity_update_marker_on_conn(
         conn: &rusqlite::Connection,
         managed_pool_id: i64,
@@ -783,10 +779,9 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::delete_stale_v3_positions`]
-    /// (CKXCOB 3a).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn delete_stale_v3_positions_on_conn(
         conn: &rusqlite::Connection,
         pool_id: i64,
@@ -818,10 +813,9 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::delete_stale_v3_init_maps`]
-    /// (CKXCOB 3a).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn delete_stale_v3_init_maps_on_conn(
         conn: &rusqlite::Connection,
         pool_id: i64,
@@ -853,10 +847,9 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::delete_stale_v4_positions`]
-    /// (CKXCOB 3a).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn delete_stale_v4_positions_on_conn(
         conn: &rusqlite::Connection,
         managed_pool_id: i64,
@@ -888,10 +881,9 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of [`Self::delete_stale_v4_init_maps`]
-    /// (CKXCOB 3a).
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn delete_stale_v4_init_maps_on_conn(
         conn: &rusqlite::Connection,
         managed_pool_id: i64,
@@ -932,10 +924,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::upsert_v3_liquidity_positions`] (CKXCOB 3a).
+    /// [`Self::upsert_v3_liquidity_positions`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn upsert_v3_liquidity_positions_on_conn(
         conn: &rusqlite::Connection,
         pool_id: i64,
@@ -1013,10 +1005,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::upsert_v4_liquidity_positions`] (CKXCOB 3a).
+    /// [`Self::upsert_v4_liquidity_positions`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn upsert_v4_liquidity_positions_on_conn(
         conn: &rusqlite::Connection,
         managed_pool_id: i64,
@@ -1087,10 +1079,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::upsert_v3_initialization_maps`] (CKXCOB 3a).
+    /// [`Self::upsert_v3_initialization_maps`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn upsert_v3_initialization_maps_on_conn(
         conn: &rusqlite::Connection,
         pool_id: i64,
@@ -1116,10 +1108,10 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::upsert_v4_initialization_maps`] (CKXCOB 3a).
+    /// [`Self::upsert_v4_initialization_maps`].
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    /// Same error conditions as the `&self` wrapper variant.
     pub fn upsert_v4_initialization_maps_on_conn(
         conn: &rusqlite::Connection,
         managed_pool_id: i64,

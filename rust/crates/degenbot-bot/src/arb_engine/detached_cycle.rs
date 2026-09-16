@@ -191,7 +191,6 @@ pub(crate) struct DetachedCycle {
     /// Sender half of the UNBOUNDED mpsc merge pipe; `Some` from the first
     /// detached enqueue until teardown. Each enqueue clones it into the
     /// per-bin bin jobs. Carries the unified [`executor::LaneOutcome`]
-    /// (QR3NUS 43E3H3).
     merge_tx: Option<std::sync::mpsc::Sender<LaneOutcome>>,
     /// Receiver parked until `EngineStages::run_solve_cycle` spawns the merge
     /// sidecar (taken once via [`Self::take_merge_rx`]). `Mutex`-wrapped so

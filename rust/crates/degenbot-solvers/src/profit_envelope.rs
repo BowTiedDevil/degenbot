@@ -3192,7 +3192,7 @@ mod tests {
         }
     }
 
-    /// Regression (SU7MAE 7SI5G2): eval() saturates to I512::MAX on overflow,
+    /// Regression: eval() saturates to I512::MAX on overflow,
     /// and ceil_div previously did a bare `n + d - 1` that overflowed on that
     /// saturated input, panicking inside register_and_solve_path at startup.
     /// Regression: composition reduction on a dense 500-bit line must

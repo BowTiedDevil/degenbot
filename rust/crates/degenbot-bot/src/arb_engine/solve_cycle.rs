@@ -453,7 +453,7 @@ pub(crate) struct Registration {
 /// (solver `hop_outputs[i]` vs the tier-3-proven `v4_simulate_swap`/
 /// `v3_simulate_swap` pool twin) OVER-prediction, so the clamp never lands
 /// exactly on an over-predicted tight value and re-enters the EMPTY march
-///. The `v4_crossing_solver_vs_sim_parity`/
+/// The `v4_crossing_solver_vs_sim_parity`/
 /// `v4_word_boundary_solver_divergence`/`v4_fee1_solver_path_matches_v4_simulate_swap`
 /// suites assert byte-exact solver==twin across the fee-3000/ts-60 multi-tick
 /// corpus AND the fee-1/ts-1 low-fee topology in both swap directions — i.e.
@@ -981,7 +981,7 @@ impl SolveCycle {
         }
         // ADR-021 publish-verifier scoping retired : the
         // solver-state verifier (and its publish change set) is gone
-        // — merges apply the Q1a stale policy only.
+        // merges apply the Q1a stale policy only.
     }
     fn drain_lane_outcomes(
         &mut self,
@@ -1784,7 +1784,7 @@ impl SolveCycle {
         };
         // -----------------------------------------------------------------
         // DETACHED arm: the ONLY solve arm since WFF6MM
-        // — enqueue the SOLVES on a plain std::thread per LPT bin (riding
+        // enqueue the SOLVES on a plain std::thread per LPT bin (riding
         // the fleet executor) and RETURN at enqueue end. Every result flows
         // through the unbounded mpsc to the merge sidecar, which applies the
         // Q1a stale policy under the engine Mutex.

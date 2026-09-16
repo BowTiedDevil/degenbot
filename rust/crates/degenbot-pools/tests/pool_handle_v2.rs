@@ -58,7 +58,7 @@ fn v2_pool_handle_exposes_structure_identity_and_swap() {
 
 /// Aerodrome-style DEX-name resolution: a V2 pool whose `(chain_id, factory)`
 /// matches a known deployment resolves the DEX name on `Identity::dex`
-///. Uses the `SushiSwap` V2 mainnet factory (chain 1) → `SushiSwap`.
+/// Uses the `SushiSwap` V2 mainnet factory (chain 1) → `SushiSwap`.
 #[test]
 fn v2_resolves_sushiswap_dex_name_from_known_deployment() {
     // SushiSwap V2 mainnet factory.

@@ -3,7 +3,7 @@
 //! historical `bot_core::balancer_stable_state` path so consumers resolve unchanged. The
 //! `#[cfg(test)]` integration-test mod stays here (it exercises the state
 //! through the `BotState` registry, which stays in bot). Transient re-export —
-//! repointed at `degenbot_pools::balancer_stable_state` natively by USPN7M/P2CKRL.
+//! repointed at `degenbot_pools::balancer_stable_state` natively.
 
 pub use ::degenbot_pools::balancer_stable_state::*;
 

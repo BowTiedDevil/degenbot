@@ -38,7 +38,7 @@ pub enum Prot {
 
 /// The declared origin of a command stream's **entry (seed)** capital
 /// (ADR-029 D1). **One per stream, chosen at runtime by the strategy/operator**
-/// — an economic knob (self-fund = cheaper gas for small opportunities; flash
+/// an economic knob (self-fund = cheaper gas for small opportunities; flash
 /// = access to outside capital for large ones).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum FundingSource {
@@ -355,7 +355,7 @@ pub enum LedgerOp {
     /// `Erc20[cur] == 0` and be rejected — the cross-ledger analogue of D0
     /// (the boundary take must precede the outside-ledger consume).
     Erc20Credit { currency: Address, amount: u128 },
-    /// The executor→PM native pay-in leg of a **native settle** (BP7KIR 3c).
+    /// The executor→PM native pay-in leg of a **native settle**.
     /// On-chain, native flows to the PM as `msg.value` on the `V4_SETTLE`
     /// call (no separate transfer instruction); this op models the executor's
     /// native balance debit explicitly (the settle credits PM via
@@ -844,7 +844,7 @@ impl LedgerValidator {
                     }
                 } else if let Some(pool) = seeds_pool {
                     // The take hands the credit directly to a V2 pool (PM→pool
-                    // — the 2PT5HH terminal-V2 rule across the V4 boundary):
+                    // the 2PT5HH terminal-V2 rule across the V4 boundary):
                     // seed its pair-handoff so a following `V2SwapCalc` sees it.
                     let h = *self.pair.get(&pool).unwrap_or(&0);
                     self.pair.insert(pool, h + amount);

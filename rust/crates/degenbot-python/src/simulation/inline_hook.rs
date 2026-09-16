@@ -354,7 +354,6 @@ fn inline_sim_thread_name() -> String {
 
 /// The private multi-thread runtime hosting the payload sims (7LV6VN T5).
 /// Sized by [`inline_sim_worker_count`], named distinctly, census-registered
-///.
 fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
     let workers = inline_sim_worker_count();
     degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {

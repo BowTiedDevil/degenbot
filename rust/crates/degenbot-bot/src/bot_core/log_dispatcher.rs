@@ -89,7 +89,6 @@ impl DecodedPoolEvent {
     /// index's hop half. The decoder selects the family, so LOG APPLICATION
     /// knows it directly: the retired `EngineSubscriber` classification
     /// (BotState bucket lookups per notify) is subsumed by this method
-    ///.
     #[must_use]
     pub fn hop_type(&self) -> degenbot_solvers::mixed::HopType {
         match self {
