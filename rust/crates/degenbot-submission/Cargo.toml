@@ -12,6 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 alloy = { version = "^2.4", features = ["full", "signer-local", "network"] }
 degenbot-core.workspace = true
 # T4 economics metrics record through the bot crate's instruments module —

@@ -122,6 +122,7 @@ async fn run_frame(
     dispatcher: &Arc<Mutex<Dispatcher>>,
     operator_nonce: u64,
     signer: Option<&TxSigner>,
+    gap_probe: &degenbot_submission::gap_probe::GapProbe,
 ) {
     // Decode-stage reject: a frame whose gas field reads zero can never
     // pass the EVM's pre-checks (`CallGasCostMoreThanGasLimit` fires
@@ -170,6 +171,21 @@ async fn run_frame(
             "head": head,
         }),
     );
+    if let Decision::Observe {
+        reason: "gap_pending",
+    } = &artifacts.decision
+    {
+        let probe_out = gap_probe.probe_gap(ev.from, ev.nonce).await;
+        trace_jsonl(
+            "gap_probe",
+            serde_json::json!({
+                "tx": ev.hash.to_string(),
+                "sender": format!("0x{:x}", ev.from),
+                "claimed_nonce": ev.nonce,
+                "probe": probe_out,
+            }),
+        );
+    }
     match artifacts.decision {
         Decision::Bid { bid_wei } => {
             let Some(s) = signer else {
@@ -292,6 +308,10 @@ async fn main() {
             .parse()
             .expect("sim url parses as an http url"),
     );
+    // The gap-boundary probe samples the chain node's pending-pool lanes
+    // whenever a frame claims a nonce ahead of the parent state.
+    let gap_probe = degenbot_submission::gap_probe::GapProbe::new(sim_client.clone());
+
     // Bid mode legality was already decided in `decide`; the signer only
     // loads when the key material exists so observe-only runs need none.
     let signer: Option<TxSigner> = cfg.key_file.as_ref().map(|p| {
@@ -454,6 +474,7 @@ async fn main() {
                 &dispatcher,
                 operator_nonce,
                 signer.as_ref(),
+                &gap_probe,
             )
             .await;
         }
@@ -520,6 +541,7 @@ async fn main() {
                 &dispatcher,
                 operator_nonce,
                 signer.as_ref(),
+                &gap_probe,
             )
             .await;
         }

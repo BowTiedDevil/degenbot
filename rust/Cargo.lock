@@ -2648,6 +2648,7 @@ dependencies = [
  "proptest",
  "pyo3",
  "revm",
+ "serde",
  "serde_json",
  "thiserror",
  "tokio",
