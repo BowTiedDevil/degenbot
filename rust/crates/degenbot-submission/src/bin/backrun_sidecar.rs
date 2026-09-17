@@ -32,6 +32,17 @@ use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submit::{dispatch_and_submit, SubmitCandidate};
 
+// Console subscriber so observe-mode frames are visible; structured (OTel)
+// export stays the operator's layering choice via the bot crate.
+fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
+}
+
 /// Provider-backed receipt probe (the sidecar's own node join; the `PyReceiptProbe`
 /// twin is the python driver's -- this keeps the sidecar standalone).
 struct SidecarProbe {
@@ -66,6 +77,7 @@ impl ReceiptProbe for SidecarProbe {
     reason = "bin orchestration loop reads top-to-bottom"
 )]
 async fn main() {
+    init_tracing();
     let cfg = SidecarConfig::from_env();
 
     let client = alloy::rpc::client::ClientBuilder::default().http(
@@ -101,7 +113,11 @@ async fn main() {
     });
 
     let feed = BackrunFeed::spawn(BackrunFeedConfig {
-        url: cfg.stream_url.clone(),
+        url: if cfg.stream_url.is_empty() {
+            BackrunFeedConfig::for_mainnet().url
+        } else {
+            cfg.stream_url.clone()
+        },
         ..BackrunFeedConfig::for_mainnet()
     });
 
@@ -134,8 +150,13 @@ async fn main() {
         .await
         .unwrap_or_default();
 
+    let effective_stream = if cfg.stream_url.is_empty() {
+        degenbot_rpc::backrun_feed::DEFAULT_STREAM_URL.to_string()
+    } else {
+        cfg.stream_url.clone()
+    };
     tracing::info!(
-        stream = %cfg.stream_url,
+        stream = %effective_stream,
         bid_mode = cfg.bid_mode_legal(),
         budget = %cfg.budget_wei,
         stop_file = %cfg.stop_file.display(),

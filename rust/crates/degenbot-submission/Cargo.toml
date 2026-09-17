@@ -28,6 +28,11 @@ thiserror = { version = "^2.0" }
 # process-wide subscriber (degenbot-bot/degenbot-python) exports them;
 # no OTel dependency here (core-crate rule).
 tracing = { version = "^0.1" }
+# Console subscriber for the sidecar bin (observe-mode visibility; the
+# OTel layering is the bot crates job).
+tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry", "fmt", "env-filter"
+, "time"
+] }
 # Async runtime for the dispatcher's `active_tasks` `JoinSet` (auto-discards
 # completed tasks) + the by-reference `current_block` `Mutex<u64>` clock read
 # across consumer/monitor task boundaries (ADR-005 standalone core).
@@ -54,8 +59,6 @@ serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 proptest = "^1.11"
-# Plain-`tracing` span capture for the OTel tier-1 span tests (RMHQAR).
-tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry"] }
 
 [features]
 default = []

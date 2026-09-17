@@ -50,8 +50,9 @@ impl SidecarConfig {
     pub fn from_env() -> Self {
         let env = |k: &str| std::env::var(k).ok();
         Self {
-            stream_url: env("SIDECAR_STREAM_URL")
-                .unwrap_or_else(|| String::from("wss://rpc.mevblocker.io/stream")),
+            // Empty default = defer to the feed crate's mainnet default
+            // (DEFAULT_STREAM_URL) so the endpoint lives in ONE place.
+            stream_url: env("SIDECAR_STREAM_URL").unwrap_or_default(),
             rpc_url: env("SIDECAR_RPC_URL").unwrap_or_else(|| {
                 tracing::error!("sidecar requires SIDECAR_RPC_URL");
                 std::process::exit(2);
