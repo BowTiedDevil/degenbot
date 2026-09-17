@@ -29,6 +29,7 @@ pub mod epoch_delta;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
 pub mod pool_builder;
+pub mod post_target;
 pub mod pump_control;
 pub mod pump_telemetry;
 /// PRG-2: the keyed registration-gate table for immutable V4
