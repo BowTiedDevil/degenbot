@@ -13,6 +13,7 @@ from typing import Any, overload
 from degenbot.types.chain import HexAddress
 
 from . import aave as aave
+from . import backrun as backrun
 
 # ------------------------------------------------------------------
 # ── Balancer V2 math (feature = "balancer-math"). ──
@@ -1700,6 +1701,7 @@ __all__ = [
     "VerificationRpcError",
     "aave",
     "abi",
+    "backrun",
     "balancer_math",
     "build_fingerprint",
     "build_number",

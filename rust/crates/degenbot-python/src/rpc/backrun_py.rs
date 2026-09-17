@@ -37,7 +37,11 @@ fn ev_to_dict(py: Python<'_>, ev: &BackrunFeedEvent) -> PyResult<Py<PyAny>> {
 }
 
 /// Live `MEVBlocker` searcher feed handle (RSUB-2).
-#[pyclass(module = "degenbot._ffi")]
+///
+/// The struct keeps the Rust-internal `Py` prefix; the Python-facing name is
+/// the ADR-032 clean form (`BackrunFeed`) — the naming gate extends no
+/// grandfather list.
+#[pyclass(name = "BackrunFeed", module = "degenbot._ffi")]
 pub struct PyBackrunFeed {
     inner: BackrunFeed,
 }

@@ -31,7 +31,7 @@ def main() -> int:
     ap.add_argument("--out", default="logs/backrun/soak_report.json")
     args = ap.parse_args()
 
-    feed = br.PyBackrunFeed()  # production defaults: mainnet, 48s watchdog, 4096 ring
+    feed = br.BackrunFeed()  # production defaults: mainnet, 48s watchdog, 4096 ring
     started = time.time()
     deadline = started + args.minutes * 60
 

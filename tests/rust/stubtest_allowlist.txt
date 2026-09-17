@@ -18,6 +18,7 @@
 # need a per-class @final boilerplate that adds no checking power. R4's
 # existence direction (members both ways) is unaffected by these entries.
 degenbot._ffi.ArbitrageEngine
+degenbot._ffi.backrun.BackrunFeed
 degenbot._ffi.BalanceVectorView
 degenbot._ffi.BlockStream
 degenbot._ffi.Bot
@@ -75,6 +76,8 @@ degenbot._ffi.submission.TxSigner
 # __init__ (runtime has no params) and __new__ (stub has params) for the same class.
 degenbot._ffi.ArbitrageEngine.__init__
 degenbot._ffi.ArbitrageEngine.__new__
+degenbot._ffi.backrun.BackrunFeed.__init__
+degenbot._ffi.backrun.BackrunFeed.__new__
 degenbot._ffi.Bot.__init__
 degenbot._ffi.Bot.__new__
 degenbot._ffi.BotIo.__init__
