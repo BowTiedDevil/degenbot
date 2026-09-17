@@ -12,6 +12,7 @@ use ::degenbot_pools::state_history::{JournalError, ReorgPoolState};
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
 pub mod apply_telemetry;
+pub mod backrun_resolver;
 pub mod balance_vector_orchestration;
 pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
