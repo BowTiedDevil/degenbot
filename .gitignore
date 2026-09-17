@@ -175,14 +175,6 @@ cython_debug/
 # VSCode
 .vscode
 
-# Opencode
-.opencode/*
-.opencode/plans
-.opencode/skills
-.opencode/tmp
-.opencode/*
-.ignore
-
 # SQLite
 *.db
 *.db.bak

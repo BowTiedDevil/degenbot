@@ -116,7 +116,7 @@ jobs:
           node-version: 22
 
       - name: Lint Markdown
-        run: npx markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**" "!logs/**"
+        run: npx markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.venv/**" "!logs/**"
 
   rust:
     # Consolidation of the former rust-check / rust-test /
