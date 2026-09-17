@@ -37,6 +37,15 @@ pub struct DeclaredPath {
     pub hops: Vec<MixedPoolRef>,
 }
 
+/// The evaluate pipeline's tri-state verdict plus the solved result.
+enum EvalVerbose {
+    NoSuchPath,
+    Invalid(usize),
+    GateSkipped,
+    Unsolved,
+    Solved(SolvePathResult),
+}
+
 /// The standalone frame solver (private state; FORK-1 isolated).
 pub struct SidecarSolver {
     state: BotState,
@@ -102,6 +111,22 @@ impl SidecarSolver {
     /// Declare a path from admitted pool ids + directions; returns its index.
     /// Hops referencing unknown pools make the path invalid for this frame
     /// (dropped loudly at resolve, not admitted lazily here).
+    /// Declare a path from executable hop refs (the declare side of
+    /// [`SidecarHopRef`] -- cycle order is hop order).
+    #[must_use]
+    pub fn declare_hops(&mut self, hops: &[SidecarHopRef]) -> usize {
+        let refs = hops
+            .iter()
+            .map(|h| MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: h.pool_id,
+                zero_for_one: h.zfo,
+            })
+            .collect();
+        self.paths.push(DeclaredPath { hops: refs });
+        self.paths.len() - 1
+    }
+
     #[must_use]
     pub fn declare(&mut self, hops: &[(u64, bool)]) -> usize {
         let refs = hops
@@ -116,21 +141,55 @@ impl SidecarSolver {
         self.paths.len() - 1
     }
 
+    /// Diagnostic: the full evaluate path for one declared index -- resolve
+    /// facts + the solve/gate verdict. Standalone + e2e observability only.
+    #[must_use]
+    pub fn resolve_debug(&mut self, path_idx: usize) -> String {
+        match self.evaluate_verbose(path_idx, U256::ZERO) {
+            EvalVerbose::NoSuchPath => String::from("no-such-path"),
+            EvalVerbose::Invalid(deficits) => format!("invalid deficits={deficits}"),
+            EvalVerbose::GateSkipped => String::from("gate-skipped"),
+            EvalVerbose::Unsolved => String::from("unsolved (solver returned None)"),
+            EvalVerbose::Solved(r) => format!(
+                "solved: input={} profit={} hops_out={:?}",
+                r.optimal_input, r.profit, r.hop_outputs
+            ),
+        }
+    }
+
     /// Envelope-gated solve of a declared path at `min_profit` (the gas
     /// floor + a safety margin). `None` = gate skipped or unsolvable.
     pub fn evaluate(&mut self, path_idx: usize, min_profit: U256) -> Option<SolvePathResult> {
-        let refs = self.paths.get(path_idx)?.hops.clone();
+        match self.evaluate_verbose(path_idx, min_profit) {
+            EvalVerbose::Solved(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// The evaluate pipeline with a tri-state verdict for observability.
+    fn evaluate_verbose(&mut self, path_idx: usize, min_profit: U256) -> EvalVerbose {
+        let Some(refs) = self.paths.get(path_idx).map(|p| p.hops.clone()) else {
+            return EvalVerbose::NoSuchPath;
+        };
         let mut resolved = ResolvedMixedPath::default();
         let deficits = resolve_hops(&self.state, &refs, &mut resolved, &self.cache, None, true);
         if !deficits.is_empty() || !resolved.valid {
-            return None;
+            return EvalVerbose::Invalid(deficits.len());
         }
-        degenbot_solvers::mixed::solve_path_with_min_profit(
+
+        let outcome = degenbot_solvers::mixed::solve_path_with_min_profit(
             &resolved,
             min_profit,
             &GateDeps::offline(),
-        )
-        .result
+        );
+        match outcome.result {
+            Some(r) => EvalVerbose::Solved(r),
+            // Gate-skipped vs solver-None are indistinguishable at this
+            // seam; the walk stats tell them apart (a gate skip reports no
+            // walk steps at a non-zero bound).
+            None if outcome.stats.sims == 0 => EvalVerbose::GateSkipped,
+            None => EvalVerbose::Unsolved,
+        }
     }
 
     #[must_use]
@@ -145,13 +204,45 @@ impl Default for SidecarSolver {
     }
 }
 
-/// One executable hop of a lane candidate (executor-composer input).
+/// One executable hop of a lane candidate (executor-composer input). Both
+/// the declared solver key (`pool_id`) and the composer identity (`pool`)
+/// ride together so a declared cycle and its executable form cannot drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SidecarHopRef {
+    pub pool_id: u64,
     pub pool: Address,
     pub token0: Address,
     pub token1: Address,
     pub zfo: bool,
+}
+
+/// Build both cycles of a (staged P, connector C) pairing. Hops are the
+/// executable form themselves -- declaration and composition share these
+/// objects, so orientation cannot drift between the two surfaces.
+fn connector_cycles(
+    p_id: u64,
+    pool_p: Address,
+    c_id: u64,
+    pool_c: Address,
+    tokens: (Address, Address),
+    tok_is_t0: bool,
+) -> Vec<Vec<SidecarHopRef>> {
+    let hop = |pool_id: u64, pool: Address, zfo: bool| SidecarHopRef {
+        pool_id,
+        pool,
+        token0: tokens.0,
+        token1: tokens.1,
+        zfo,
+    };
+    // P: WETH -> USDC (token1 -> token0) and P: USDC -> WETH (token0 -> token1).
+    // Cycle 1: buy USDC on the market connector, sell into the staged P.
+    // Cycle 2: buy USDC on the staged P, sell into the connector. The
+    // envelope gate prunes the fee-drain direction per pair for free.
+    let buy_on_c = hop(c_id, pool_c, !tok_is_t0);
+    let sell_into_p = hop(p_id, pool_p, tok_is_t0);
+    let buy_on_p = hop(p_id, pool_p, !tok_is_t0);
+    let sell_into_c = hop(c_id, pool_c, tok_is_t0);
+    vec![vec![buy_on_c, sell_into_p], vec![buy_on_p, sell_into_c]]
 }
 
 /// The best executable path a lane found: everything the composer + exact
@@ -171,6 +262,10 @@ pub struct LaneCandidate {
 pub struct LaneGrade {
     pub connectors: usize,
     pub paths_evaluated: usize,
+    /// Connectors whose live-reserve admission failed (skipped for frame).
+    pub admit_failures: usize,
+    /// Direction-pairs declared (both drift directions count).
+    pub paths_declared: usize,
     pub best_profit: U256,
     pub best_input: U256,
     /// The best candidate when one cleared the gas floor.
@@ -264,7 +359,7 @@ impl SidecarSolver {
         } else {
             (pair_reserves.1, pair_reserves.0)
         };
-        let Some((p_id, p_weth_side_zfo, p_tok_side_zfo)) = self.stage_affected_pair(
+        let Some((p_id, _p_weth_side_zfo, _p_tok_side_zfo)) = self.stage_affected_pair(
             (pool_addr, token0, token1),
             tok_is_t0,
             amount_in,
@@ -281,42 +376,38 @@ impl SidecarSolver {
                 .admit_connector(provider, c_edge.address, token0, token1)
                 .await
             else {
+                grade.admit_failures += 1;
                 continue;
             };
-            // Both directions of the (P staged, C) cycle, best kept.
-            self.eval_connector_directions(
-                &mut grade,
-                gas_floor_wei,
+            // Both cycles of the (staged P, connector C) pairing, best kept.
+            // Hops are built explicitly per cycle so the executable form and
+            // the declared form are the SAME objects (identity cannot drift)
+            // -- the earlier (p-side zfo, c-side zfo) tuple encoding
+            // mis-assigned a column once; explicit hops cannot mis-encode.
+            let cycles = connector_cycles(
                 p_id,
-                c_id,
-                (p_weth_side_zfo, tok_is_t0),
-                (p_tok_side_zfo, !tok_is_t0),
                 pool_addr,
+                c_id,
                 c_edge.address,
                 (token0, token1),
+                tok_is_t0,
             );
+            self.eval_cycles(&mut grade, gas_floor_wei, cycles);
         }
         grade
     }
 
-    /// Declare both cycle directions of a (staged P, connector C) pairing and
-    /// keep the best envelope-gated result on `grade`.
-    #[expect(clippy::too_many_arguments)]
-    fn eval_connector_directions(
+    /// Declare each candidate cycle (hop lists in traversal order), evaluate
+    /// envelope-gated, and keep the best result on `grade`.
+    fn eval_cycles(
         &mut self,
         grade: &mut LaneGrade,
         gas_floor_wei: U256,
-        p_id: u64,
-        c_id: u64,
-        dir1: (bool, bool),
-        dir2: (bool, bool),
-        pool_p: Address,
-        pool_c: Address,
-        tokens: (Address, Address),
+        cycles: Vec<Vec<SidecarHopRef>>,
     ) {
-        let idx1 = self.declare(&[(p_id, dir1.0), (c_id, dir1.1)]);
-        let idx2 = self.declare(&[(c_id, dir2.0), (p_id, dir2.1)]);
-        for idx in [idx1, idx2] {
+        for hops in cycles {
+            let idx = self.declare_hops(&hops);
+            grade.paths_declared += 1;
             let Some(res) = self.evaluate(idx, gas_floor_wei) else {
                 continue;
             };
@@ -326,25 +417,8 @@ impl SidecarSolver {
             }
             grade.best_profit = res.profit;
             grade.best_input = res.optimal_input;
-            let d1 = idx == idx1;
-            let hop_p = SidecarHopRef {
-                pool: pool_p,
-                token0: tokens.0,
-                token1: tokens.1,
-                zfo: if d1 { dir1.0 } else { dir2.1 },
-            };
-            let hop_c = SidecarHopRef {
-                pool: pool_c,
-                token0: tokens.0,
-                token1: tokens.1,
-                zfo: if d1 { dir1.1 } else { dir2.0 },
-            };
             grade.best = Some(LaneCandidate {
-                hops: if d1 {
-                    vec![hop_p, hop_c]
-                } else {
-                    vec![hop_c, hop_p]
-                },
+                hops,
                 optimal_input: res.optimal_input.to::<u128>(),
                 hop_outputs: res.hop_outputs.iter().map(|v| v.to::<u128>()).collect(),
                 consumed_inputs: res.consumed_inputs.iter().map(|v| v.to::<u128>()).collect(),
@@ -614,12 +688,14 @@ mod tests {
         let candidate = LaneCandidate {
             hops: vec![
                 SidecarHopRef {
+                    pool_id: 1,
                     pool: P,
                     token0,
                     token1: WETH,
                     zfo: false,
                 },
                 SidecarHopRef {
+                    pool_id: 2,
                     pool: Q,
                     token0,
                     token1: WETH,
@@ -644,12 +720,14 @@ mod tests {
         let candidate = LaneCandidate {
             hops: vec![
                 SidecarHopRef {
+                    pool_id: 1,
                     pool: P,
                     token0: TOK,
                     token1: WETH,
                     zfo: false,
                 },
                 SidecarHopRef {
+                    pool_id: 2,
                     pool: Q,
                     token0: TOK,
                     token1: WETH,

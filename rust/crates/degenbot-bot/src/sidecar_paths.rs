@@ -43,7 +43,9 @@ impl V2ConnectorIndex {
         let data = db.fetch_path_graph_edges(chain_id, &[PoolKind::V2])?;
         let mut index = Self::default();
         index.edges.reserve(data.edges.len());
-        for (pool_id, t0, t1, kind) in &data.edges {
+        // PathEdge is (token0_id, token1_id, pool_id, kind) -- the pool id
+        // rides THIRD (see fetch_path_graph_edges' push order).
+        for (t0, t1, pool_id, kind) in &data.edges {
             if *kind != PoolKind::V2 {
                 continue;
             }
