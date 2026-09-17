@@ -79,6 +79,19 @@ const DB_OPEN_KEYS: &[&str] = &["DEGENBOT_DB_AUTO_HEAL"];
 /// they fail the load loudly and point at the replacement rather than
 /// silently falling back — the deprecation-style hard error. They are not
 /// schema keys anymore; the guard lives in the env layer of `loader.rs`.
+/// Test-harness knobs (live fixtures + guards): these steer the replay
+/// test tiers (fixture block pins, scan windows, trace toggles) and the
+/// classifier panic-guard — they change which STATIC inputs a test sees,
+/// never runtime configuration, so they are deliberately NOT schema keys.
+const TEST_HARNESS_KEYS: &[&str] = &[
+    "DEGENBOT_CLASSIFIER_GUARD",
+    "DEGENBOT_FRAME_ORACLE_CAPTURE",
+    "DEGENBOT_ORACLE_",
+    "DEGENBOT_ORACLE_SCAN_BLOCKS",
+    "DEGENBOT_ORACLE_TRACE",
+    "DEGENBOT_PARITY_BLOCK",
+];
+
 const RETIRED_KEYS: &[&str] = &[
     "DEGENBOT_LPT_PARTITION",
     "DEGENBOT_SOLVE_EXECUTOR",
@@ -168,6 +181,7 @@ fn schema_covers_the_full_key_inventory() {
                 && !BUILD_ARTIFACT_KEYS.contains(&k.as_str())
                 && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
                 && !DB_OPEN_KEYS.contains(&k.as_str())
+                && !TEST_HARNESS_KEYS.contains(&k.as_str())
                 && !RETIRED_KEYS.contains(&k.as_str())
         })
         .cloned()

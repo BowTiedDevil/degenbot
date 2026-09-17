@@ -5,7 +5,7 @@
 //! wire behavior: the subscribe handshake, typed event parse, chain-id gate,
 //! reconnect-on-drop, silent-socket watchdog, ring eviction, parse resilience.
 
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex};

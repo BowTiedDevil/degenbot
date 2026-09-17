@@ -1,7 +1,7 @@
 //! On-demand backrun pair resolution + staged path planning (task B6H2KO).
 //!
-//! The backrun pipeline receives swap legs from the target classifier
-//! (`degenbot-decoders::target_classifier`), but the boot-time path graph only
+//! The backrun pipeline receives swap legs from the frame replay, but the
+//! boot-time path graph only
 //! covers pools the crawler discovered before launch. This module owns the
 //! **incremental** side of registration:
 //!

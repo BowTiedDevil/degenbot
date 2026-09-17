@@ -3,14 +3,12 @@
 //!
 //! Solves over a PRIVATE planning [`Workspace`] (the FORK-1 isolation: the
 //! scope's scratch state never touches the mainline pump's registry), admits
-//! pools on demand with explicit typed state, stages the target's effect with
-//! the exact `v2_post_target` overlay (applied through the same journal the
-//! live path uses), declares two-hop paths, and evaluates them with the
-//! solvers' envelope-gated mixed solve (V2-V2 = the closed-form integer
-//! Mobius; no hand-composed pricing anywhere).
-//!
-//! Frame flow: `admit_v2` (affected + connectors) -> `stage_target_swap` ->
-//! `declare` the 2-hop family -> `evaluate` with `min_profit = gas floor`.
+//! pools with explicit typed state, declares two-hop paths, and evaluates
+//! them with the solvers' envelope-gated mixed solve (V2-V2 = the closed-form
+//! integer Mobius; no hand-composed pricing anywhere). Pool state arrives via
+//! the frame pipeline's replay-extracted post-states (`admit_v2`,
+//! `admit_v3_explicit`) or the RPC fetch ladders (`admit_v3_full`); discovery
+//! over the DB connector index is the pipeline's job.
 
 use alloy::primitives::{Address, U256};
 use degenbot_pools::v3_state::PoolTickCoverage;
@@ -77,21 +75,6 @@ impl SidecarSolver {
                 1,
             )
             .map_err(|e| format!("v2 admission failed: {e:?}"))
-    }
-
-    /// Stage the target's effect onto an admitted pool: journal + apply the
-    /// post-target reserves through the canonical live-path mutation (the
-    /// staging is exact for constant-product via `v2_post_target` upstream).
-    /// No-op when the address was never admitted or reserves exceed uint112.
-    pub fn stage_target_swap(
-        &mut self,
-        address: Address,
-        reserve0: u128,
-        reserve1: u128,
-        block: u64,
-    ) {
-        self.ws
-            .stage_v2_reserves(address, reserve0, reserve1, block);
     }
 
     /// Declare a path from admitted pool ids + directions; returns its index.
@@ -162,84 +145,6 @@ pub struct SidecarHopRef {
     pub family: LaneFamily,
 }
 
-/// The lane's resolved frame: everything the guard ladder derives, so the
-/// lane body stays a linear pipeline over checked inputs.
-struct LaneFrame {
-    pool_addr: Address,
-    tok_id: u64,
-    weth_id: u64,
-    p_pool_id: u64,
-    token0: Address,
-    token1: Address,
-    tok_is_t0: bool,
-    amount_in: u128,
-    in_is_t0: bool,
-    /// The leg's live `(reserve_in, reserve_out)` view.
-    r_view: (u128, u128),
-    cap: usize,
-    gas_floor_wei: U256,
-}
-
-/// Run the lane's guard ladder over the frame ctx: protocol/direction/
-/// amount/index checks, canonical pair order, and the leg->pair reserve
-/// mapping. `None` = the frame is outside the WETH-denominated 2-hop lane.
-fn resolve_lane_frame(ctx: &ConnectorLaneCtx<'_>) -> Option<LaneFrame> {
-    use degenbot_decoders::target_classifier::PoolProtocol;
-
-    let leg = ctx.leg;
-    if leg.protocol != PoolProtocol::V2 || leg.hops != 0 {
-        return None;
-    }
-    let pool_addr = leg.pool?;
-    let t_in = leg.token_in?;
-    let t_out = leg.token_out?;
-    let amount_in = u128::try_from(leg.amount_in?).ok()?;
-    if amount_in == 0 {
-        return None;
-    }
-    let weth = crate::sidecar_solve::weth();
-    let weth_id = *ctx.ids.get(&weth)?;
-    let t_in_id = *ctx.ids.get(&t_in)?;
-    let t_out_id = *ctx.ids.get(&t_out)?;
-    // WETH-denominated 2-hop family only (the mono-pool lane's domain).
-    let (tok, tok_id) = if weth_id == t_in_id {
-        (t_out, t_out_id)
-    } else if weth_id == t_out_id {
-        (t_in, t_in_id)
-    } else {
-        return None;
-    };
-    let p_edge = ctx.index.edge_by_address(pool_addr)?;
-    let (t0_id, t1_id) = (p_edge.token0_id, p_edge.token1_id);
-    if !((t0_id == tok_id && t1_id == weth_id) || (t0_id == weth_id && t1_id == tok_id)) {
-        return None;
-    }
-
-    // V2 canonical order: token0 = the smaller address.
-    let (token0, token1) = if tok < weth { (tok, weth) } else { (weth, tok) };
-    let tok_is_t0 = tok == token0;
-    let in_is_t0 = leg.token_in == Some(token0);
-    let r_view = if in_is_t0 {
-        ctx.pair_reserves
-    } else {
-        (ctx.pair_reserves.1, ctx.pair_reserves.0)
-    };
-    Some(LaneFrame {
-        pool_addr,
-        tok_id,
-        weth_id,
-        p_pool_id: p_edge.pool_id,
-        token0,
-        token1,
-        tok_is_t0,
-        amount_in,
-        in_is_t0,
-        r_view,
-        cap: ctx.cap,
-        gas_floor_wei: ctx.gas_floor_wei,
-    })
-}
-
 /// The lane hop's protocol family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneFamily {
@@ -260,36 +165,6 @@ impl LaneFamily {
     }
 }
 
-/// Build both cycles of a (staged P, connector C) pairing. Hops are the
-/// executable form themselves -- declaration and composition share these
-/// objects, so orientation cannot drift between the two surfaces.
-fn connector_cycles(
-    p: (u64, Address),
-    c: (u64, Address),
-    tokens: (Address, Address),
-    tok_is_t0: bool,
-    c_family: LaneFamily,
-    p_family: LaneFamily,
-) -> Vec<Vec<SidecarHopRef>> {
-    let hop = |pool_id: u64, pool: Address, zfo: bool, family: LaneFamily| SidecarHopRef {
-        pool_id,
-        pool,
-        token0: tokens.0,
-        token1: tokens.1,
-        zfo,
-        family,
-    };
-    // P: WETH -> USDC (token1 -> token0) and P: USDC -> WETH (token0 -> token1).
-    // Cycle 1: buy USDC on the market connector, sell into the staged P.
-    // Cycle 2: buy USDC on the staged P, sell into the connector. The
-    // envelope gate prunes the fee-drain direction per pair for free.
-    let buy_on_c = hop(c.0, c.1, !tok_is_t0, c_family);
-    let sell_into_p = hop(p.0, p.1, tok_is_t0, p_family);
-    let buy_on_p = hop(p.0, p.1, !tok_is_t0, p_family);
-    let sell_into_c = hop(c.0, c.1, tok_is_t0, c_family);
-    vec![vec![buy_on_c, sell_into_p], vec![buy_on_p, sell_into_c]]
-}
-
 /// The best executable path a lane found: everything the composer + exact
 /// sim need (epic DFYDYI B4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,212 +177,7 @@ pub struct LaneCandidate {
     pub profit: u128,
 }
 
-/// Observe-lane grade for one frame's connector solve (the B3/B4 seam).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct LaneGrade {
-    pub connectors: usize,
-    pub paths_evaluated: usize,
-    /// Connectors whose live-reserve admission failed (skipped for frame).
-    pub admit_failures: usize,
-    /// Direction-pairs declared (both drift directions count).
-    pub paths_declared: usize,
-    pub best_profit: U256,
-    pub best_input: U256,
-    /// The best candidate when one cleared the gas floor.
-    pub best: Option<LaneCandidate>,
-}
-
-/// Per-frame lane inputs (bundled to keep the lane signature narrow).
-/// Per-frame inputs for the V3-affected-pool lane (the B1 follow-up). The
-/// pool resolution + post-target staging happened upstream (bin owner).
-pub struct V3LaneCtx<'a> {
-    pub index: &'a crate::sidecar_paths::V2ConnectorIndex,
-    /// DB ids for the affected pool's tokens: `tok_id` = the token that the
-    /// target's swap MOVES INTO the pool's quoting side (`token_in`),
-    /// `other_id` = the token out. Connectors are those sharing either.
-    pub tok_id: u64,
-    pub other_id: u64,
-    /// The affected pool's DB cluster id + address.
-    pub p_pool_id: u64,
-    pub p_id: u64,
-    pub pool: Address,
-    pub token0: Address,
-    pub token1: Address,
-    pub tok_is_t0: bool,
-    pub fee: u32,
-    pub head: u64,
-    pub cap: usize,
-    pub gas_floor_wei: U256,
-}
-
-pub struct ConnectorLaneCtx<'a> {
-    pub index: &'a crate::sidecar_paths::V2ConnectorIndex,
-    /// Frame token addresses -> DB token ids (the bin owns the cache).
-    pub ids: &'a std::collections::HashMap<Address, u64>,
-    pub leg: &'a degenbot_decoders::target_classifier::SwapLeg,
-    /// Affected-pool family (V2 staged via the lean overlay; V3 staged via
-    /// the in-range post-target sqrtP — the B1 follow-up).
-    pub p_family: LaneFamily,
-    /// PRE-STAGED affected pool (the V3 path registers it before the lane
-    /// runs, with the post-target sqrtPriceX96): `(pool_id, tok_is_t0)`.
-    /// `None` = let the lane stage the V2 overlay itself.
-    pub staged_p: Option<(u64, bool)>,
-    /// The affected pair's live `getReserves` in PAIR order (token0, token1).
-    pub pair_reserves: (u128, u128),
-    /// The head block (the V3 admission's seed stamp).
-    pub head: u64,
-    pub cap: usize,
-    pub gas_floor_wei: U256,
-}
-
 impl SidecarSolver {
-    /// The frame's connector lane: stage the affected pairing, admit DB
-    /// connectors at live reserves, declare + evaluate the 2-hop family,
-    /// return the grade. Orientation is derived from V2 canonical token
-    /// order (token0 = min-address), never assumed. The exact-sim oracle
-    /// still gates anything this labels profitable (B4 wires the calldata).
-    pub async fn run_connector_lane(
-        &mut self,
-        provider: &degenbot_rpc::provider::AlloyProvider,
-        ctx: &ConnectorLaneCtx<'_>,
-    ) -> LaneGrade {
-        let Some(frame) = resolve_lane_frame(ctx) else {
-            return LaneGrade::default();
-        };
-
-        let staged_result = if let Some((id, tok_is_t0)) = ctx.staged_p {
-            Some((id, !tok_is_t0, tok_is_t0))
-        } else {
-            self.stage_affected_pair(
-                (frame.pool_addr, frame.token0, frame.token1),
-                frame.tok_is_t0,
-                frame.amount_in,
-                frame.in_is_t0,
-                frame.r_view,
-            )
-        };
-        let Some((p_id, _pw, _pt)) = staged_result else {
-            return LaneGrade::default();
-        };
-
-        self.fan_connectors(
-            provider,
-            ctx.index,
-            frame.tok_id,
-            frame.weth_id,
-            frame.p_pool_id,
-            p_id,
-            frame.pool_addr,
-            (frame.token0, frame.token1),
-            frame.tok_is_t0,
-            ctx.p_family,
-            ctx.head,
-            frame.cap,
-            frame.gas_floor_wei,
-        )
-        .await
-    }
-
-    /// The shared connector fan: admit live V2 + V3 connectors for the staged
-    /// affected pool `p_id`, declare both drift cycles per connector, evaluate,
-    /// return the best. Used by the V2 overlay lane AND the V3 staged lane.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the fan takes a full frame descriptor"
-    )]
-    async fn fan_connectors(
-        &mut self,
-        provider: &degenbot_rpc::provider::AlloyProvider,
-        index: &crate::sidecar_paths::V2ConnectorIndex,
-        tok_id: u64,
-        weth_id: u64,
-        p_pool_id: u64,
-        p_id: u64,
-        pool_p: Address,
-        tokens: (Address, Address),
-        tok_is_t0: bool,
-        p_family: LaneFamily,
-        head: u64,
-        cap: usize,
-        gas_floor_wei: U256,
-    ) -> LaneGrade {
-        let mut grade = LaneGrade::default();
-
-        // Spot connectors (V2): live reserves, same two-cycle shape.
-        let cands = index.connectors(tok_id, weth_id, p_pool_id, cap).await;
-        grade.connectors = cands.len();
-        for (c_edge, _tok_flag) in cands {
-            let Some(c_id) = self
-                .admit_connector(provider, c_edge.address, tokens.0, tokens.1)
-                .await
-            else {
-                grade.admit_failures += 1;
-                continue;
-            };
-            let cycles = connector_cycles(
-                (p_id, pool_p),
-                (c_id, c_edge.address),
-                tokens,
-                tok_is_t0,
-                LaneFamily::V2,
-                p_family,
-            );
-            self.eval_cycles(&mut grade, gas_floor_wei, cycles);
-        }
-
-        // CL connectors (B2-CL): the same two-cycle shape with a V3 second
-        // hop. Admission costs 3-6 RPC round trips per pool (bounded by
-        // cap); the exact-sim oracle remains the truth bar.
-        let v3cands = index.v3_connectors(tok_id, weth_id, p_pool_id, cap).await;
-        grade.connectors += v3cands.len();
-        for (v3_edge, _tok_flag) in v3cands {
-            let Some(c_id) = self
-                .admit_v3_connector(provider, v3_edge, tokens.0, tokens.1, head)
-                .await
-            else {
-                grade.admit_failures += 1;
-                continue;
-            };
-            let cycles = connector_cycles(
-                (p_id, pool_p),
-                (c_id, v3_edge.address),
-                tokens,
-                tok_is_t0,
-                LaneFamily::V3 { fee: v3_edge.fee },
-                p_family,
-            );
-            self.eval_cycles(&mut grade, gas_floor_wei, cycles);
-        }
-        grade
-    }
-
-    /// The V3-affected-pool lane (the B1 follow-up): the router-side V3 pool was
-    /// already resolved + staged (post-target sqrtPriceX96 registered) by the
-    /// caller; this fans connectors across BOTH pool tokens and grades the
-    /// mixed-family cycles.
-    pub async fn run_v3_target_lane(
-        &mut self,
-        provider: &degenbot_rpc::provider::AlloyProvider,
-        ctx: &V3LaneCtx<'_>,
-    ) -> LaneGrade {
-        self.fan_connectors(
-            provider,
-            ctx.index,
-            ctx.tok_id,
-            ctx.other_id,
-            ctx.p_pool_id,
-            ctx.p_id,
-            ctx.pool,
-            (ctx.token0, ctx.token1),
-            ctx.tok_is_t0,
-            LaneFamily::V3 { fee: ctx.fee },
-            ctx.head,
-            ctx.cap,
-            ctx.gas_floor_wei,
-        )
-        .await
-    }
-
     /// Admit a V3 pool with EXPLICIT journal-provided state — the frame
     /// pipeline's no-RPC admission: post-target `slot0`/`liquidity` + the
     /// replayed per-tick words land here verbatim (`Sparse` coverage; the
@@ -549,60 +219,6 @@ impl SidecarSolver {
                 seed_block,
             )
             .ok()
-    }
-
-    /// Admit a V3 connector    /// Admit a V3 connector at HEAD state: slot0 + liquidity + a Sparse tick
-    /// bootstrap (current word +- 1) via the provider-level V3 probes.
-    /// `None` on any fetch/spec failure (the connector is skipped).
-    /// Declare each candidate cycle (hop lists in traversal order), evaluate
-    /// envelope-gated, and keep the best result on `grade`.
-    fn eval_cycles(
-        &mut self,
-        grade: &mut LaneGrade,
-        gas_floor_wei: U256,
-        cycles: Vec<Vec<SidecarHopRef>>,
-    ) {
-        for hops in cycles {
-            let idx = self.declare_hops(&hops);
-            grade.paths_declared += 1;
-            let Some(res) = self.evaluate(idx, gas_floor_wei) else {
-                continue;
-            };
-            grade.paths_evaluated += 1;
-            if res.profit <= grade.best_profit {
-                continue;
-            }
-            grade.best_profit = res.profit;
-            grade.best_input = res.optimal_input;
-            grade.best = Some(LaneCandidate {
-                hops,
-                optimal_input: res.optimal_input.to::<u128>(),
-                hop_outputs: res.hop_outputs.iter().map(|v| v.to::<u128>()).collect(),
-                consumed_inputs: res.consumed_inputs.iter().map(|v| v.to::<u128>()).collect(),
-                profit: res.profit.to::<u128>(),
-            });
-        }
-    }
-
-    async fn admit_v3_connector(
-        &mut self,
-        provider: &degenbot_rpc::provider::AlloyProvider,
-        edge: &crate::sidecar_paths::V3Edge,
-        token0: Address,
-        token1: Address,
-        head: u64,
-    ) -> Option<u64> {
-        self.admit_v3_full(
-            provider,
-            edge.address,
-            token0,
-            token1,
-            edge.fee,
-            edge.tick_spacing,
-            None,
-            head,
-        )
-        .await
     }
 
     /// Register a V3 pool at HEAD (via the connector edge's shared ladder
@@ -685,61 +301,6 @@ impl SidecarSolver {
                 head,
             )
             .ok()
-    }
-
-    /// Admit a connector pool at its live reserves. `None` on fetch or
-    /// uint112-overflow failure (the connector is skipped for the frame).
-    async fn admit_connector(
-        &mut self,
-        provider: &degenbot_rpc::provider::AlloyProvider,
-        address: Address,
-        token0: Address,
-        token1: Address,
-    ) -> Option<u64> {
-        let (r0, r1) = crate::sidecar_solve::fetch_v2_reserves(provider, address).await?;
-        self.admit_v2(&SidecarV2Pool {
-            address,
-            token0,
-            token1,
-            reserve0: r0,
-            reserve1: r1,
-        })
-        .ok()
-    }
-
-    /// Stage the affected pair for a frame: exact `v2_post_target` overlay on
-    /// the leg's (in, out) reserves, mapped back to canonical pair order, then
-    /// admission. Returns `(pool_id, zfo for the P WETH-side hop, zfo for the
-    /// P TOK-side hop)`.
-    fn stage_affected_pair(
-        &mut self,
-        pair: (Address, Address, Address),
-        tok_is_t0: bool,
-        amount_in: u128,
-        in_is_t0: bool,
-        reserves: (u128, u128),
-    ) -> Option<(u64, bool, bool)> {
-        use crate::bot_core::post_target::{v2_post_target, V2FeeParams};
-        let fee = V2FeeParams {
-            gamma_numer: 997,
-            fee_denom: 1000,
-        };
-        let overlay = v2_post_target(reserves.0, reserves.1, fee, amount_in).ok()?;
-        let (staged_r0, staged_r1) = if in_is_t0 {
-            (overlay.new_reserve_in, overlay.new_reserve_out)
-        } else {
-            (overlay.new_reserve_out, overlay.new_reserve_in)
-        };
-        let p_id = self
-            .admit_v2(&SidecarV2Pool {
-                address: pair.0,
-                token0: pair.1,
-                token1: pair.2,
-                reserve0: staged_r0,
-                reserve1: staged_r1,
-            })
-            .ok()?;
-        Some((p_id, !tok_is_t0, tok_is_t0))
     }
 }
 
@@ -880,7 +441,7 @@ mod tests {
         let mut s = Workspace::new();
         let p_id = admitted_v2(&mut s, P, 500_000, 1_000);
         let q_id = admitted_v2(&mut s, Q, 200_000, 900);
-        // The target's exact effect (v2_post_target: 50 WETH in on P).
+        // The target's exact effect: 50 WETH in on P.
         s.stage_v2_reserves(P, 476_259, 1_050, 2);
         // Cycle: WETH -> TOK at staged P (token1->token0, zfo=false),
         // TOK -> WETH at Q (token0->token1, zfo=true).

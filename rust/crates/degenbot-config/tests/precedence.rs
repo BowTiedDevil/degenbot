@@ -45,22 +45,22 @@ fn cleanup(path: &PathBuf) {
 /// name is the only env-side surface (there is no alternate env spelling).
 #[test]
 fn inject_executor_code_env_parity() {
-    let loader =
+    let env_loader =
         BotConfigLoader::new().with_env(map_env(&[("DEGENBOT_INJECT_EXECUTOR_CODE", "1")]));
-    let loaded = must_ok(&loader);
+    let configured = must_ok(&env_loader);
     assert!(
-        loaded.config.simulation.inject_executor_code,
+        configured.config.simulation.inject_executor_code,
         "env DEGENBOT_INJECT_EXECUTOR_CODE=1"
     );
     assert_eq!(
-        loaded.source_of("DEGENBOT_INJECT_EXECUTOR_CODE"),
+        configured.source_of("DEGENBOT_INJECT_EXECUTOR_CODE"),
         Some(Source::Env)
     );
 
-    let loader = BotConfigLoader::new().with_env(map_env(&[]));
-    let loaded = must_ok(&loader);
+    let default_loader = BotConfigLoader::new().with_env(map_env(&[]));
+    let fallback = must_ok(&default_loader);
     assert!(
-        !loaded.config.simulation.inject_executor_code,
+        !fallback.config.simulation.inject_executor_code,
         "unset env -> default false"
     );
 }

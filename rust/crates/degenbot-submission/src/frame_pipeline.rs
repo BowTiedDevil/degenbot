@@ -19,13 +19,13 @@
 //!   is visible to the next frame — the next frame re-admits from its own
 //!   replay (stale post-target state is structurally impossible to reuse).
 //!
-//! # Classifier-free frames
+//! # Calldata-free frames
 //!
-//! `target_classifier` is OFF this path (the wire task): the touched set +
-//! journalled words decide everything. The downstream `decide()` gate keeps
-//! its `TargetClass` parameter shape, so the pipeline feeds the actionable
-//! sentinel directly (a frame evaluated end-to-end here is actionable by
-//! construction) and carries TRUTHFUL observe reasons via
+//! The touched set + journalled words decide everything; call bytes are never
+//! decoded. The downstream `decide()` gate keeps its `TargetClass` parameter
+//! shape, so the pipeline feeds the actionable sentinel directly (a frame
+//! evaluated end-to-end here is actionable by construction) and carries
+//! TRUTHFUL observe reasons via
 //! [`FrameArtifacts::decision`]: `replay_failed`, `reverted`,
 //! `v4_unsupported`, and `no_candidate` are distinct and mutually exclusive.
 //!
@@ -82,7 +82,7 @@ use crate::anchored_dfs::{
     resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, DiscoveryBudget, ResolvedHop,
 };
 use degenbot_db::connection::DegenbotDb;
-use degenbot_decoders::target_classifier::TargetClass;
+use degenbot_decoders::target_class::TargetClass;
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::{slot_layout, v3_storage_slots, TickInfo};
@@ -1148,7 +1148,12 @@ async fn admit_hop_pool(
         ResolvedHop::V2(e) => {
             let reserves = match view_v2_reserves(scratch, e.address) {
                 Some(r) => r,
-                None => degenbot_bot::sidecar_solve::fetch_v2_reserves(provider, e.address).await?,
+                None => {
+                    match degenbot_rpc::abi::fetch_v2_reserves(provider, &e.address, None).await {
+                        Ok((r0, r1)) => Some((u128::try_from(r0).ok()?, u128::try_from(r1).ok()?)),
+                        Err(_) => None,
+                    }?
+                }
             };
             let token0 = rt.token_addr(e.token0_id)?;
             let token1 = rt.token_addr(e.token1_id)?;
@@ -1312,7 +1317,11 @@ async fn price_normalization(
     for (edge, quote_is_token0) in cands {
         let reserves: Option<(u128, u128)> = match view_v2_reserves(scratch, edge.address) {
             Some(r) => Some(r),
-            None => degenbot_bot::sidecar_solve::fetch_v2_reserves(provider, edge.address).await,
+            None => match degenbot_rpc::abi::fetch_v2_reserves(provider, &edge.address, None).await
+            {
+                Ok((r0, r1)) => Some((u128::try_from(r0).ok()?, u128::try_from(r1).ok()?)),
+                Err(_) => None,
+            },
         };
         let Some((r0, r1)) = reserves else {
             continue;
@@ -1627,11 +1636,14 @@ pub async fn process_frame(
                 let reserves = match view_v2_reserves(scratch, edge.address) {
                     Some(r) => r,
                     None => {
-                        match degenbot_bot::sidecar_solve::fetch_v2_reserves(provider, edge.address)
+                        match degenbot_rpc::abi::fetch_v2_reserves(provider, &edge.address, None)
                             .await
                         {
-                            Some(r) => r,
-                            None => continue,
+                            Ok((r0, r1)) => match (u128::try_from(r0), u128::try_from(r1)) {
+                                (Ok(r0), Ok(r1)) => (r0, r1),
+                                _ => continue,
+                            },
+                            Err(_) => continue,
                         }
                     }
                 };

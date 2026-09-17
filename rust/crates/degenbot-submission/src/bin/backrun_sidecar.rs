@@ -8,11 +8,8 @@
 //! exclusively via the private-RPC extra broadcast). Observe-only default;
 //! all state is local; zero touches to the live engine block pump (FORK-1).
 //!
-//! `target_classifier` is NOT on this path: frames are shaped by the replay
-//! (touched set + journalled words), never by calldata decoding. The
-//! panic-guard shim (`DEGENBOT_CLASSIFIER_GUARD=1` in degenbot-decoders)
-//! proves the classifier is never entered — the shim is deleted by the
-//! cutover task.
+//! Frames are shaped by the replay (touched set + journalled words), never
+//! by calldata decoding.
 //!
 //! Run (observe-only): `SIDECAR_RPC_URL=$RPC cargo run --bin backrun_sidecar`.
 //! Bid mode adds `SIDECAR_BID_MODE=1`, `SIDECAR_BUDGET_WEI=<wei>` and

@@ -228,7 +228,6 @@ pub mod profiling;
 pub mod sidecar;
 pub mod sidecar_engine;
 pub mod sidecar_paths;
-pub mod sidecar_solve;
 pub mod telemetry;
 
 // P6YXA6 hard cutover: the process-global rayon pool (`configure_rayon_

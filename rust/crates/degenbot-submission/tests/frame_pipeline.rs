@@ -1,16 +1,13 @@
 //! Frame-pipeline tests (task WKPZQK).
 //!
-//! 1. The classifier guard: with `DEGENBOT_CLASSIFIER_GUARD=1` armed, a
-//!    classifier entry PANICS — the dry-run e2e runs with the guard armed so
-//!    any hot-path classification aborts the run.
-//! 2. The golden frame (offline): a hand-built replay journal (post-target
+//! 1. The golden frame (offline): a hand-built replay journal (post-target
 //!    V2 reserves at slot 8) flows descriptors → `extract_pool_post_states`
 //!    → workspace admission → 2-hop discovery/solve → compose, matching the
 //!    hand-derived golden reference.
-//! 3. The live e2e (`#[ignore]`-gated): a captured frame JSONL replays
-//!    end-to-end against a forked node with the guard armed.
+//! 2. The live e2e (`#[ignore]`-gated): a captured frame JSONL replays
+//!    end-to-end against a forked node.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use alloy::primitives::{address, aliases::U112, Address, U256};
 use degenbot_bot::sidecar_engine::{LaneFamily, SidecarHopRef, SidecarSolver, SidecarV2Pool};
@@ -22,34 +19,6 @@ use degenbot_submission::frame_pipeline::{
     DiscoveredConnector, StrategyRuntime, WETH,
 };
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
-
-// ─────────────────────────── the classifier guard ──────────────────────────
-
-#[test]
-fn classifier_guard_armed_aborts_classify() {
-    // Arm the panic-guard shim (WKPZQK; deleted by the cutover task). The
-    // pipeline never calls classify, so the arm is only observed here.
-    std::env::set_var("DEGENBOT_CLASSIFIER_GUARD", "1");
-    let result = std::panic::catch_unwind(|| {
-        degenbot_decoders::target_classifier::classify(
-            address!("0x7a250d5630b4cf539739df2c5dacb4c659f2488d"),
-            &[0x38, 0xed, 0x17, 0x39],
-            &degenbot_decoders::target_classifier::RouterRegistry::mainnet(),
-        )
-    });
-    std::env::remove_var("DEGENBOT_CLASSIFIER_GUARD");
-    let err = result.expect_err("the armed guard MUST abort the classifier entry");
-    let msg = err
-        .downcast_ref::<&'static str>()
-        .copied()
-        .unwrap_or("")
-        .to_string();
-    assert_eq!(
-        msg,
-        degenbot_decoders::target_classifier::CLASSIFIER_GUARD_MSG,
-        "the panic carries the guard message"
-    );
-}
 
 // ─────────────────── the golden frame (offline, end to end) ────────────────
 

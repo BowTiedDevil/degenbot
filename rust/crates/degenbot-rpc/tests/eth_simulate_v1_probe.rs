@@ -5,7 +5,7 @@
 //! Ignored by default (network-dependent); run:
 //!   `cargo test -p degenbot-rpc --test eth_simulate_v1_probe -- --ignored`
 
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![expect(clippy::unwrap_used)]
 
 use std::sync::Arc;
 

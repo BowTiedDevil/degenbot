@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 
 use alloy::primitives::U256;
-use degenbot_decoders::target_classifier::TargetClass;
+use degenbot_decoders::target_class::TargetClass;
 
 /// Env-driven sidecar config (bot.env convention; the key never leaves the
 /// signer - only `key_file` is named here).
@@ -48,28 +48,30 @@ impl SidecarConfig {
     /// both modes; the feed URL already has a default).
     #[must_use]
     pub fn from_env() -> Self {
-        let env = |k: &str| std::env::var(k).ok();
         Self {
             // Empty default = defer to the feed crate's mainnet default
             // (DEFAULT_STREAM_URL) so the endpoint lives in ONE place.
-            stream_url: env("SIDECAR_STREAM_URL").unwrap_or_default(),
-            rpc_url: env("SIDECAR_RPC_URL").unwrap_or_else(|| {
+            stream_url: std::env::var("SIDECAR_STREAM_URL").ok().unwrap_or_default(),
+            rpc_url: std::env::var("SIDECAR_RPC_URL").ok().unwrap_or_else(|| {
                 tracing::error!("sidecar requires SIDECAR_RPC_URL");
                 std::process::exit(2);
             }),
-            key_file: env("SIDECAR_KEY_FILE").map(PathBuf::from),
-            bid_mode: env("SIDECAR_BID_MODE").is_some_and(|v| v == "1"),
-            budget_wei: env("SIDECAR_BUDGET_WEI")
+            key_file: std::env::var("SIDECAR_KEY_FILE").ok().map(PathBuf::from),
+            bid_mode: std::env::var("SIDECAR_BID_MODE").ok().as_deref() == Some("1"),
+            budget_wei: std::env::var("SIDECAR_BUDGET_WEI")
+                .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or_default(),
-            max_bundle_wei: env("SIDECAR_MAX_BUNDLE_WEI")
+            max_bundle_wei: std::env::var("SIDECAR_MAX_BUNDLE_WEI")
+                .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(U256::from(1_000_000_000_000_000u64)),
-            stop_file: env("SIDECAR_STOP_FILE").map_or_else(
+            stop_file: std::env::var("SIDECAR_STOP_FILE").ok().map_or_else(
                 || PathBuf::from("/tmp/degenbot-sidecar-STOP"),
                 PathBuf::from,
             ),
-            stale_ms: env("SIDECAR_STALE_MS")
+            stale_ms: std::env::var("SIDECAR_STALE_MS")
+                .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1500),
         }
@@ -163,7 +165,7 @@ pub fn decide(
 mod tests {
     use super::*;
     use alloy::primitives::address;
-    use degenbot_decoders::target_classifier::{PoolProtocol, SwapLeg};
+    use degenbot_decoders::target_class::{PoolProtocol, SwapLeg};
 
     fn cfg() -> SidecarConfig {
         SidecarConfig {

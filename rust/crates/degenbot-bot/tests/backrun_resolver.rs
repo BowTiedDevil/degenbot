@@ -9,7 +9,7 @@
 //! stages edges the dispatcher merges under its write lock via `apply_staged`,
 //! then rebuilds `PathGraph` from the authoritative list.
 
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![expect(clippy::unwrap_used)]
 
 use std::collections::HashSet;
 

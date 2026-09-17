@@ -13,13 +13,11 @@
 //!   cargo test -p degenbot-bot --test backrun_lane_e2e -- --ignored --nocapture
 //! ```
 
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::panic,
     clippy::expect_used,
     clippy::print_stdout,
-    clippy::print_stderr,
-    clippy::too_many_lines,
     reason = "diagnostic e2e probe: narrates the whole-pipeline fixture"
 )]
 

@@ -11,7 +11,7 @@
 //! 4. Cancel budget: a per-frame time slice fires on a hostile fixture
 //!    without hanging.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(clippy::unwrap_used)]
 
 use std::time::{Duration, Instant};
 

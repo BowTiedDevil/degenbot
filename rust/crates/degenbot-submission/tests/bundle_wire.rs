@@ -5,7 +5,7 @@
 //! replacement_uuid_for, encode_config_word, decode_config_word,
 //! send_request}`. The relay round-trip runs against a local mock WS server.
 
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![expect(clippy::unwrap_used)]
 
 use std::time::Duration;
 

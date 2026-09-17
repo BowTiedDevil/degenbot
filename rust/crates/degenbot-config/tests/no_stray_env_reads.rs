@@ -109,6 +109,47 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             // the repo receipt file itself (a build-time path, not config).
             &["CARGO_MANIFEST_DIR", "DEGENBOT_BUILD_NUMBER_FILE"][..],
         );
+        // Backrun sidecar operator tooling: the standalone test-driving
+        // binary + its support modules take flags by env (its whole
+        // configuration surface is operator knobs; no BotConfig owner
+        // exists for it and none should).
+        m.insert(
+            "crates/degenbot-bot/src/sidecar.rs",
+            &[
+                "SIDECAR_STREAM_URL",
+                "SIDECAR_RPC_URL",
+                "SIDECAR_KEY_FILE",
+                "SIDECAR_BID_MODE",
+                "SIDECAR_BUDGET_WEI",
+                "SIDECAR_MAX_BUNDLE_WEI",
+                "SIDECAR_STOP_FILE",
+                "SIDECAR_STALE_MS",
+            ][..],
+        );
+        m.insert(
+            "crates/degenbot-submission/src/bin/backrun_sidecar.rs",
+            &[
+                "EXECUTOR_OWNER_ADDRESS",
+                "SIDECAR_BRIBE_BIPS",
+                "SIDECAR_CONNECTORS",
+                "SIDECAR_DB_PATH",
+                "SIDECAR_DRY_RUN",
+                "SIDECAR_DRY_RUN_JSONL",
+                "SIDECAR_EXECUTOR",
+                "SIDECAR_OPERATOR",
+                "SIDECAR_PRIORITY_FEE_GWEI",
+                "SIDECAR_RANK_EVIDENCE",
+                "SIDECAR_SIM_URL",
+            ][..],
+        );
+        m.insert(
+            "crates/degenbot-submission/src/bundle.rs",
+            &["SIDECAR_TRACE_JSONL"][..],
+        );
+        m.insert(
+            "crates/degenbot-submission/src/frame_pipeline.rs",
+            &["SIDECAR_TRACE_JSONL"][..],
+        );
         m
     })
 }

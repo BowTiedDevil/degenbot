@@ -79,6 +79,29 @@ fi
 USER="dev"
 
 # ---------------------------------------------------------------------------
+# Terminal type: forward and, if needed, teach the container about it.
+#
+# The host's TERM (e.g. xterm-ghostty from Ghostty, xterm-kitty, wezterm) is
+# forwarded via --env below. Modern terminals use TERM values whose terminfo
+# entries are NOT in the container image, and tmux >= 3.x aborts with
+# "missing or unsuitable terminal" when it can't resolve $TERM. So if the
+# container lacks the entry but the host has it, compile it into the user's
+# ~/.terminfo inside the container (infocmp | tic). If neither side can supply
+# a resolvable entry, degrade to the universally-present xterm-256color.
+TERM_FWD="${TERM:-xterm-256color}"
+if command -v infocmp >/dev/null 2>&1 && infocmp -x "$TERM_FWD" >/dev/null 2>&1; then
+  if ! podman exec --user "$USER" "$name" infocmp -x "$TERM_FWD" >/dev/null 2>&1; then
+    if ! infocmp -x "$TERM_FWD" | podman exec -i --user "$USER" "$name" tic -x - >/dev/null 2>&1; then
+      echo "⚠️  could not install container terminfo for '$TERM_FWD'" >&2
+    fi
+  fi
+fi
+if ! podman exec --user "$USER" "$name" infocmp -x "$TERM_FWD" >/dev/null 2>&1; then
+  echo "⚠️  container has no terminfo for '$TERM_FWD'; falling back to xterm-256color." >&2
+  TERM_FWD="xterm-256color"
+fi
+
+# ---------------------------------------------------------------------------
 # Timezone: forward the HOST's timezone into the container.
 #
 # attach.sh does `podman start` + `podman exec` — it has no knowledge of
@@ -179,7 +202,7 @@ fi
 # tmux new -A attaches to an existing session or creates a new one.
 exec podman exec -it \
     --user "$USER" \
-    --env TERM="${TERM}" \
+    --env TERM="${TERM_FWD}" \
     --env COLORTERM="${COLORTERM:-}" \
     --env TZ="${TZ_FWD}" \
     "$name" tmux new -As dev

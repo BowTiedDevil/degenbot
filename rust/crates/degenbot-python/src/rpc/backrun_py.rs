@@ -2,19 +2,13 @@
 //!
 //! - `PyBackrunFeed` — owns the `degenbot-rpc` feed pump; `drain()` returns
 //!   plain dicts (lossless fields), `status()` the counters snapshot.
-//! - `classify_target` — the `degenbot-decoders` target classifier bound as a
-//!   free function over `(to, calldata)`.
 //! - `send_bundle_request` — one-shot relay round-trip through the
 //!   submission crate's golden-tested wire leaf.
 
 use std::time::Duration;
 
-use alloy::primitives::Address;
-
 use crate::prelude::*;
-use alloy::hex::FromHex;
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig, BackrunFeedEvent};
-use pyo3::exceptions::PyValueError;
 use pyo3::types::PyDict;
 
 fn ev_to_dict(py: Python<'_>, ev: &BackrunFeedEvent) -> PyResult<Py<PyAny>> {
@@ -98,67 +92,7 @@ impl PyBackrunFeed {
     }
 }
 
-/// Classify a pending call `(to, calldata)`. Returns one of:
-/// `{"kind": "swap", "legs": [...]}`, `{"kind": "inert"}` or
-/// `{"kind": "opaque", "reason": "..."}`.
-#[pyfunction]
-fn classify_target(py: Python<'_>, to: &str, calldata_hex: &str) -> PyResult<Py<PyAny>> {
-    let to_addr = Address::from_hex(to.trim_start_matches("0x"))
-        .map_err(|e| PyValueError::new_err(format!("bad to: {e}")))?;
-    let cd = alloy::hex::decode(calldata_hex.trim_start_matches("0x"))
-        .map_err(|e| PyValueError::new_err(format!("bad calldata: {e}")))?;
-    let reg = degenbot_decoders::target_classifier::RouterRegistry::mainnet();
-    let out = degenbot_decoders::target_classifier::classify(to_addr, &cd, &reg);
-    let dict = match out {
-        degenbot_decoders::target_classifier::TargetClass::Inert => {
-            let d = PyDict::new(py);
-            d.set_item("kind", "inert")?;
-            d.into_any().unbind()
-        }
-        degenbot_decoders::target_classifier::TargetClass::Opaque(r) => {
-            let d = PyDict::new(py);
-            d.set_item("kind", "opaque")?;
-            d.set_item("reason", format!("{r:?}"))?;
-            d.into_any().unbind()
-        }
-        degenbot_decoders::target_classifier::TargetClass::Swap(legs) => {
-            let mut out = Vec::with_capacity(legs.len());
-            for l in legs {
-                let pool: Py<PyAny> = match l.pool {
-                    Some(a) => a.to_string().into_pyobject(py)?.unbind().into_any(),
-                    None => py.None().into_any(),
-                };
-                let tin: Py<PyAny> = match l.token_in {
-                    Some(a) => a.to_string().into_pyobject(py)?.unbind().into_any(),
-                    None => py.None().into_any(),
-                };
-                let tout: Py<PyAny> = match l.token_out {
-                    Some(a) => a.to_string().into_pyobject(py)?.unbind().into_any(),
-                    None => py.None().into_any(),
-                };
-                let ld = PyDict::new(py);
-                ld.set_item("protocol", format!("{:?}", l.protocol))?;
-                ld.set_item("pool", pool)?;
-                ld.set_item("tokenIn", tin)?;
-                ld.set_item("tokenOut", tout)?;
-                ld.set_item("value", l.value.to_string())?;
-                ld.set_item("amountIn", l.amount_in.map(|v| v.to_string()))?;
-                ld.set_item("amountOutMin", l.amount_out_min.map(|v| v.to_string()))?;
-                ld.set_item("amountOut", l.amount_out.map(|v| v.to_string()))?;
-                ld.set_item("amountInMax", l.amount_in_max.map(|v| v.to_string()))?;
-                ld.set_item("hops", l.hops)?;
-                out.push(ld.into_any().unbind());
-            }
-            let d = PyDict::new(py);
-            d.set_item("kind", "swap")?;
-            d.set_item("legs", out)?;
-            d.into_any().unbind()
-        }
-    };
-    Ok(dict)
-}
-
-/// Register the `degenbot._ffi.backrun` submodule (feed class + classifier).
+/// Register the `degenbot._ffi.backrun` submodule (the feed pump).
 ///
 /// # Errors
 ///
@@ -167,7 +101,6 @@ pub fn add_backrun_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.backrun")?;
     submod.add_class::<PyBackrunFeed>()?;
-    submod.add_function(wrap_pyfunction!(classify_target, &submod)?)?;
     m.add_submodule(&submod)?;
     py.import("sys")?
         .getattr("modules")?
