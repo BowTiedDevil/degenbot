@@ -8,9 +8,13 @@
 //! ## What this caches (the staleness line)
 //!
 //! Only the immutable rows:
-//! - `basic_ref` — `AccountInfo` (balance is mutable per-block, but EIP-1967
-//!   proxy upgrades change the implementation *storage* slot, not code; the
-//!   bytecode at a given address is immutable for the contract's life).
+//! - `basic_ref` — `AccountInfo` FOR CONTRACTS ONLY. An EOA's nonce/balance
+//!   mutate every block, so EOA rows (empty code hash) are never cached —
+//!   they fall through to the per-block `CacheDB` + RPC path fresh at each
+//!   block build. (A cached contract's AccountInfo byte-RARELY mutates:
+//!   contract nonces advance only via `CREATE*`; a stale contract nonce does
+//!   not gate frame-replay validation the way a sender nonce does, and the
+//!   TTL refresh bounds that edge.)
 //! - `code_by_hash_ref` — `Bytecode` keyed by `code_hash` (immutable by hash).
 //!
 //! `storage_ref` + `block_hash_ref` are forwarded UNCHECKED to the inner `Db`
@@ -209,12 +213,21 @@ where
                 }
             }
         }
-        // Miss (or stale): forward + cache.
+        // Miss (or stale): forward. EOA rows are NEVER cached — an EOA's
+        // nonce + balance mutate every block, and the warm layer is
+        // cross-block: caching them froze frame-replay nonce validation
+        // at its first touch for a full TTL window (observed live as replay
+        // errors stuck at the capture-time `expected` across head advances).
         let (info, dur) = super::sim_metrics::timed(|| self.db.basic_ref(address));
         super::sim_metrics::record_basic(dur);
         let info = info?;
-        let mut guard = self.cache.write();
-        guard.accounts.insert(address, (self.block, info.clone()));
+        let is_contract = info
+            .as_ref()
+            .is_some_and(|i| i.code_hash != revm::primitives::KECCAK_EMPTY);
+        if is_contract {
+            let mut guard = self.cache.write();
+            guard.accounts.insert(address, (self.block, info.clone()));
+        }
         Ok(info)
     }
 
@@ -491,10 +504,10 @@ mod tests {
     // ── Acceptance test 6: None (no-account) IS cached ───────────────────
 
     #[test]
-    fn basic_ref_none_is_cached() {
-        // A None-returning fallback: a fresh EmptyDB-backed mock whose
-        // basic_ref returns None. The warm cache should cache the None +
-        // NOT re-query on the second call (same block).
+    fn basic_ref_none_is_not_cached() {
+        // A None-returning fallback: an absent account is an EOA-shaped row
+        // (nonce/balance mutate per-block) and must NOT enter the cross-block
+        // warm cache: caching it froze sender nonces at first touch here.
         struct NoneDb {
             calls: Cell<u64>,
         }
@@ -527,11 +540,11 @@ mod tests {
         assert!(info1.is_none(), "first call returns None");
         assert_eq!(v.db.calls.get(), 1, "first call hit the db");
         let info2 = v.basic_ref(ADDR).unwrap();
-        assert!(info2.is_none(), "second call returns cached None");
+        assert!(info2.is_none(), "second call returns None again");
         assert_eq!(
             v.db.calls.get(),
-            1,
-            "second call hit the cache (None is cached, not re-queried)"
+            2,
+            "EOA-shaped rows never cache — the second call re-queries"
         );
     }
 
@@ -540,9 +553,9 @@ mod tests {
     #[test]
     fn warm_code_cache_compiles_over_empty_db() {
         // The smoke-test shape: a WarmCodeCache<EmptyDB> (no RPC, no BotState).
-        // EmptyDB::basic_ref returns Ok(None) (no account) — the warm cache
-        // forwards + caches the Ok(None) (the existence-negative IS cached,
-        // per the decision). This proves the type bound `Db: DatabaseRef`
+        // EmptyDB::basic_ref returns Ok(None) (no account) — an EOA-shaped
+        // row the warm cache deliberately NEVER caches (nonce/balance mutate
+        // per-block on real chains). This proves the type bound
         // (no Display requirement on Error) compiles + the forwarding path
         // works.
         let inner = WarmCodeCacheInner::shared_default();
@@ -551,8 +564,8 @@ mod tests {
         assert!(info.is_none(), "EmptyDB returns no account");
         assert_eq!(
             inner.read().accounts.len(),
-            1,
-            "Ok(None) IS cached (the existence-negative decision)"
+            0,
+            "Ok(None) is never cached — EOA-shaped rows stay live"
         );
     }
 
