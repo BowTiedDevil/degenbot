@@ -127,6 +127,38 @@ async fn main() {
         .parse()
         .expect("SIDECAR_EXECUTOR is a valid address");
 
+    // DFYDYI B3: the DB-backed V2 connector index -- ONE startup scan,
+    // never a per-frame query. Optional (SIDECAR_DB_PATH): without it the
+    // connector lane stays disabled and the bids ride the lean eval alone.
+    let (connector_index, connector_db): (
+        Option<degenbot_bot::sidecar_paths::V2ConnectorIndex>,
+        Option<degenbot_db::connection::DegenbotDb>,
+    ) = match std::env::var("SIDECAR_DB_PATH") {
+        Ok(path) => match degenbot_db::connection::DegenbotDb::open(std::path::Path::new(&path)) {
+            Ok((db, _)) => match degenbot_bot::sidecar_paths::V2ConnectorIndex::load(&db, 1) {
+                Ok(ix) => {
+                    tracing::info!(edges = ix.len(), "connector index loaded");
+                    (Some(ix), Some(db))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "connector index load failed - lane disabled");
+                    (None, None)
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "SIDECAR_DB_PATH unopenable - lane disabled");
+                (None, None)
+            }
+        },
+        Err(_) => (None, None),
+    };
+    let connector_cap: usize = std::env::var("SIDECAR_CONNECTORS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
+    let mut token_ids: std::collections::HashMap<alloy::primitives::Address, u64> =
+        std::collections::HashMap::new();
+
     // The gate-2 sweep leg (executor sweep = coinbase bid). The overlay solver
     // (S7KG7E) will prepend the backrun target tx; the bid leg is standard.
     let sweep = {
@@ -221,6 +253,60 @@ async fn main() {
                         requested_bid = requested_bid.max(o.net_wei);
                     } else {
                         // Unprofitable/unstageable: fall back to the sweep-min bid.
+                    }
+
+                    // DFYDYI B3/B4 observe lane: the engine-backed connector
+                    // solve grades the frame's 2-hop family against the DB
+                    // index. Bids stay LEAN-sized until B4 wires multi-hop
+                    // executor calldata -- never bid beyond wired calldata.
+                    if let (Some(index), Some(db)) =
+                        (connector_index.as_ref(), connector_db.as_ref())
+                    {
+                        let mut need: Vec<alloy::primitives::Address> =
+                            vec![degenbot_bot::sidecar_solve::weth()];
+                        if let Some(ti) = l.token_in {
+                            need.push(ti);
+                        }
+                        if let Some(to) = l.token_out {
+                            need.push(to);
+                        }
+                        need.retain(|a| !token_ids.contains_key(a));
+                        if !need.is_empty() {
+                            match db.fetch_token_ids_by_address(1, &need) {
+                                Ok(m) => token_ids.extend(m),
+                                Err(e) => tracing::debug!(error = %e, "token id fetch failed"),
+                            }
+                        }
+                        let mut solver = degenbot_bot::sidecar_engine::SidecarSolver::new();
+                        let grade = solver
+                            .run_connector_lane(
+                                &provider,
+                                &degenbot_bot::sidecar_engine::ConnectorLaneCtx {
+                                    index,
+                                    ids: &token_ids,
+                                    leg: l,
+                                    pair_reserves: (r0, r1),
+                                    cap: connector_cap,
+                                    gas_floor_wei: U256::from(50_000_000_000_000u64),
+                                },
+                            )
+                            .await;
+                        if grade.best_profit > U256::ZERO {
+                            tracing::info!(
+                                pool = ?l.pool,
+                                connectors = grade.connectors,
+                                evaluated = grade.paths_evaluated,
+                                best_profit = %grade.best_profit,
+                                best_input = %grade.best_input,
+                                "[connectors] profitable 2-hop family (observe lane)"
+                            );
+                        } else if grade.connectors > 0 {
+                            tracing::debug!(
+                                connectors = grade.connectors,
+                                evaluated = grade.paths_evaluated,
+                                "[connectors] no profitable 2-hop family"
+                            );
+                        }
                     }
                 }
             }

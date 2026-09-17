@@ -226,6 +226,8 @@ pub mod metrics;
 pub mod otel;
 pub mod profiling;
 pub mod sidecar;
+pub mod sidecar_engine;
+pub mod sidecar_paths;
 pub mod sidecar_solve;
 pub mod telemetry;
 
