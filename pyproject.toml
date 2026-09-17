@@ -105,12 +105,6 @@ ignore = [
     "multi-line-summary-second-line",
     "missing-trailing-comma",
     "error-suffix-on-exception-name",
-    "too-many-public-methods",
-    "too-many-return-statements",
-    "too-many-branches",
-    "too-many-arguments",
-    "too-many-locals",
-    "too-many-statements",
     "docstring-in-stub", # required for IDE to show wrapped Rust code info
     "non-empty-init-module", # asserts are used often, but not as input validation
     "assert",
@@ -124,6 +118,80 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
+# complexity baseline — retire per-file (IEECS4)
+"src/degenbot/aerodrome/v2_pool_calc.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/bot/_bot.py" = [
+    "PLR0904",  # too-many-public-methods
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+    "PLR0914",  # too-many-locals
+]
+"src/degenbot/builders/erc20_builder.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/builders/tick_data_fetcher.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/curve/curve_stableswap_liquidity_pool.py" = [
+    "PLR0912",  # too-many-branches
+    "PLR0914",  # too-many-locals
+]
+"src/degenbot/dispatch/__init__.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/fork/__init__.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/pathfinding/_pathfinding.py" = [
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/provider/__init__.py" = [
+    "PLR0904",  # too-many-public-methods
+]
+"src/degenbot/provider/offline_provider.py" = [
+    "PLR0904",  # too-many-public-methods
+]
+"src/degenbot/registry/pool_type.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/uniswap/trackers.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/updater/pool_updater_configs.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/runner/_dispatch.py" = [
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+    "PLR0914",  # too-many-locals
+]
+"src/degenbot/runner/_render.py" = [
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+    "PLR0914",  # too-many-locals
+    "PLR0915",  # too-many-statements
+]
+"src/degenbot/runner/_sim_submit_pipeline.py" = [
+    "PLR0913",  # too-many-arguments
+]
+"src/degenbot/runner/bot_runner.py" = [
+    "PLR0913",  # too-many-arguments
+    "PLR0914",  # too-many-locals
+]
+"src/degenbot/runner/build_paths.py" = [
+    "PLR0911",  # too-many-return-statements
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+    "PLR0914",  # too-many-locals
+    "PLR0915",  # too-many-statements
+]
+"src/degenbot/runner/config.py" = [
+    "PLR0911",  # too-many-return-statements
+    "PLR0913",  # too-many-arguments
+]
 "scripts/aave_replay_diff.py" = [
     "any-type",   # the drive/compare JSON-report dicts are dict[str, Any]
     "unused-function-argument",   # CLI dispatchers take unused `args` for argparse's set_defaults
