@@ -213,6 +213,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Provider + contract + subscription modules (feature = "rpc")
     #[cfg(feature = "rpc")]
     crate::rpc::provider::add_provider_module(m)?;
+
+    // Backrun pipeline bindings (feed + classifier; feature = "rpc")
+    #[cfg(feature = "rpc")]
+    crate::rpc::backrun_py::add_backrun_module(m)?;
     #[cfg(feature = "rpc")]
     crate::rpc::contract::add_contract_module(m)?;
 

@@ -1,0 +1,38 @@
+{
+  "window_minutes": 30,
+  "wall_seconds": 1800,
+  "events_total": 28,
+  "classes": {
+    "inert": 27,
+    "swap": 1
+  },
+  "opaque_reasons": {},
+  "unique_targets": 9,
+  "first_swap_sample": {
+    "target": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+    "legs": [
+      {
+        "protocol": "V2",
+        "pool": null,
+        "tokenIn": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "tokenOut": "0xAaAAAA20D9E0e2461697782ef11675f668207961",
+        "value": "0",
+        "amountIn": "57390260",
+        "amountOutMin": "3720373075844379659884",
+        "amountOut": null,
+        "amountInMax": null,
+        "hops": 2
+      }
+    ]
+  },
+  "feed_status": {
+    "connected": true,
+    "accepted": 28,
+    "droppedRing": 0,
+    "rejectedChainId": 0,
+    "rejectedParse": 0,
+    "reconnects": 1,
+    "lastEventUnixMs": 1789607053978
+  },
+  "submissions": 0
+}
