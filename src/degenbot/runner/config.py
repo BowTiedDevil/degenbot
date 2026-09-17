@@ -198,7 +198,7 @@ def _knob_float(env: Mapping[str, str | None], name: str, default: float) -> flo
 
 def _knob_bool(env: Mapping[str, str | None], name: str, default: bool) -> bool:
     raw = _knob_raw(env, name, "1" if default else "0")
-    return raw.lower() in ("1", "true", "on")
+    return raw.lower() in {"1", "true", "on"}
 
 
 def _resolve_inject_executor_code(env: Mapping[str, str | None]) -> bool:
@@ -225,7 +225,7 @@ def _resolve_inject_executor_code(env: Mapping[str, str | None]) -> bool:
         raise ValueError(msg)
     typed = os.environ.get("DEGENBOT_INJECT_EXECUTOR_CODE")
     if typed is not None:
-        return typed.lower() in ("1", "true", "on")
+        return typed.lower() in {"1", "true", "on"}
     return (env.get("INJECT_EXECUTOR_CODE") or "0") == "1"
 
 
@@ -452,7 +452,7 @@ class ArbitrageConfig:
             allowed_intermediate_tokens=_ALLOWED_INTERMEDIATE_TOKENS,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
-            erc6909_profit=_knob_bool(env, "DEGENBOT_ERC6909_PROFIT", False),
+            erc6909_profit=_knob_bool(env, "DEGENBOT_ERC6909_PROFIT", default=False),
             min_profit_margin_bps=_knob_int(env, "DEGENBOT_MIN_PROFIT_MARGIN_BPS", 0),
             reg_progress_secs=_knob_float(env, "DEGENBOT_REG_PROGRESS_SECS", 30.0),
             max_registered_paths=_knob_int(env, "DEGENBOT_MAX_PATHS", 100_000),

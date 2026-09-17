@@ -456,12 +456,12 @@ async def _submit_batch_records(
     # candidate economics for every gate-clearing candidate BEFORE broadcast,
     # one INFO line, so any later tx can be replayed at its solve block.
     solve_block = session.dispatcher.current_block
-    for _c in outcome.gas_profitable:
-        _cd = getattr(_c, "execute_calldata", None)
+    for c in outcome.gas_profitable:
+        calldata = getattr(c, "execute_calldata", None)
         bot_logger.info(
-            f"[submit-arm] path={_c.path_id} solve_block={solve_block} "
-            f"net_wei={_c.net_profit} gas={_c.gas_used} "
-            f"calldata={_cd.hex() if _cd else '<unavailable>'}",
+            f"[submit-arm] path={c.path_id} solve_block={solve_block} "
+            f"net_wei={c.net_profit} gas={c.gas_used} "
+            f"calldata={calldata.hex() if calldata else '<unavailable>'}",
         )
     signer = TxSigner(key=session.cfg.operator_private_key, chain_id=session.cfg.chain_id)
     records = await dispatch_and_submit(
