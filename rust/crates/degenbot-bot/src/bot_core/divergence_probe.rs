@@ -53,17 +53,18 @@
 //!   revm's `CacheDB` caches `storage_ref`, so each cold slot pays once per
 //!   sim. Bounded by the sim's working set of Pool.State slots.
 
-// The tick→u32 bit-pattern cast (two's-complement packing of an `int24`) is
-// intentional; clippy's `cast_sign_loss` suggestion (`cast_unsigned`) is not a
-// real std method — allow the intentional signed→unsigned bit cast here.
-#![expect(clippy::cast_sign_loss)]
 #![cfg_attr(
     test,
     allow(clippy::decimal_bitwise_operands, clippy::unreadable_literal)
 )]
 
-use alloy::primitives::{keccak256, Address, B256, U256};
+use alloy::primitives::{Address, B256, U256};
 
+use degenbot_pools::slot_layout;
+use degenbot_pools::slot_layout::{
+    cl_liquidity_tracked_word as pack_cl_liquidity_word,
+    cl_slot0_tracked_word as pack_cl_slot0_word, pack_v2_reserves_word,
+};
 use degenbot_pools::{ClSlotLayout, V3PoolState};
 
 use crate::bot_core::{BotState, PoolEntry};
@@ -120,39 +121,19 @@ impl TrackedSlotKind {
         match self {
             // reserve0 (low 112) | reserve1 (bits 112..224); high 32 (ts) NOT
             // tracked. Mask = low 224 bits set.
-            Self::V2Reserves => word_low_bits(224),
+            Self::V2Reserves => slot_layout::V2_RESERVES_TRACKED_MASK,
             // sqrtPriceX96 (low 160) | tick (bits 160..184); high 72 NOT
             // tracked. Mask = low 184 bits set.
-            Self::V3Slot0 | Self::V4Slot0 => word_low_bits(184),
+            Self::V3Slot0 | Self::V4Slot0 => slot_layout::CL_SLOT0_TRACKED_MASK,
             // uint128 liquidity (low 128); high 128 NOT tracked (zero on-chain
             // anyway, but mask to be safe against a packed-but-nonzero rpc).
-            Self::V3Liquidity | Self::V4Liquidity => word_low_bits(128),
+            Self::V3Liquidity | Self::V4Liquidity => slot_layout::CL_LIQUIDITY_TRACKED_MASK,
             // ticks(tick) slot+0: uint128 liquidityGross (low 128) |
             // int128 liquidityNet (high 128); the full 256-bit word IS tracked
             // (the engine carries both fields in TickInfo).
-            Self::V3TickInfo | Self::V4TickInfo => word_low_bits(256),
+            Self::V3TickInfo | Self::V4TickInfo => slot_layout::CL_TICK_WORD_MASK,
         }
     }
-}
-
-/// A `B256` with the low `n` bits set (0 < n <= 256), rest zero.
-const fn word_low_bits(n: u32) -> B256 {
-    // big-endian: the low `n` bits are the LAST `n` bytes set to 0xff when the
-    // bit count is a byte multiple; the standard slots here are byte-aligned
-    // (184 = 23 bytes, 224 = 28, 128 = 16), so the general non-byte-aligned
-    // path is unreachable for the kinds in use — but a full-byte-set helper
-    // keeps the const-eval honest for any `n`.
-    let mut out = [0u8; 32];
-    let full_bytes = (n / 8) as usize;
-    let mut i = 0usize;
-    while i < 32 {
-        // big-endian byte index: low bytes are at the tail.
-        if (32 - full_bytes) <= i {
-            out[i] = 0xff;
-        }
-        i += 1;
-    }
-    B256::new(out)
 }
 
 /// The packed engine word + the bookkeeping the divergence log needs.
@@ -422,68 +403,22 @@ impl BotState {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// The on-chain word encoders (re-derived from the Solidity storage layout).
+// The on-chain word encoders — single-sourced in `degenbot_pools::slot_layout`
+// (the same rows the journal post-state extractors decode through, so pack
+// and decode cannot drift). Only the reverse-map orchestration (below) is
+// BotState-specific.
 // ─────────────────────────────────────────────────────────────────────────
-
-/// Pack V2 `reserves` slot 8: `uint112 reserve0 | uint112 reserve1 << 112 |
-/// uint32 blockTimestampLast << 224`. The timestamp (high 32) is NOT tracked
-/// by the engine → zeroed (the probe masks the high 32 out of the comparison
-/// so a divergence fires only on reserves).
-fn pack_v2_reserves_word(
-    reserve0: alloy::primitives::aliases::U112,
-    reserve1: alloy::primitives::aliases::U112,
-) -> B256 {
-    let r0 = U256::from(reserve0);
-    let r1 = U256::from(reserve1);
-    // reserve1 shifted left 112; ts = 0 (engine doesn't track it).
-    let word: U256 = r0 | (r1 << 112u32);
-    word.into()
-}
-
-/// Pack a concentrated-liquidity `slot0`:
-/// `uint160 sqrtPriceX96 | int24 tick << 160`. The remaining high bits
-/// (`observationIndex`/`slow`, `feeProtocol`, `unlocked`) are NOT tracked →
-/// zeroed + masked out (low 184 bits).
-fn pack_cl_slot0_word(sqrt_price_x96: U256, tick: i32) -> B256 {
-    // sqrtPriceX96 occupies the low 160 bits of the packed slot0 word.
-    // tick is a SIGNED int24 — on-chain it's the two's-complement 24-bit
-    // pattern placed at bits 160..184. Mask sqrtPrice to 160 bits so a
-    // stray high bit can't bleed into the tick field.
-    let sqrt_masked = sqrt_price_x96 & be_uint160_mask();
-    let tick_u = (tick as u32) & 0x00ff_ffff; // low 24 bits two's-complement.
-    let word: U256 = sqrt_masked | (U256::from(tick_u) << 160u32);
-    word.into()
-}
-
-/// Pack a concentrated-liquidity `liquidity` slot: `uint128` (low 128 bits;
-/// high 128 zero on-chain).
-fn pack_cl_liquidity_word(liquidity: u128) -> B256 {
-    U256::from(liquidity).into()
-}
-
-/// `0xffffffffffffffffffffffffffffffffffff` (low 160 bits set — 2 full
-/// 64-bit limbs + 32 bits in the third limb) — the sqrtPriceX96 field mask
-/// inside `slot0` (160 bits = uint160).
-const fn be_uint160_mask() -> U256 {
-    U256::from_limbs([u64::MAX, u64::MAX, 0xffff_ffff, 0])
-}
 
 /// Derive the V4 `Pool.State` storage base for a poolId:
 /// `S_state = keccak256(abi.encode(poolId, uint256(6)))` — the
 /// `_pools` mapping lives at top-level slot 6 (per
 /// `docs/architecture/v4_poolmanager_storage_layout.md`). `poolId` is the
 /// already-computed `keccak256(PoolKey)` bytes (the engine stores it as
-/// `V4PoolIdentity.pool_id`). `abi.encode(bytes32,uint256)` = 32 + 32 bytes
-/// (the uint256 6 big-endian-padded).
+/// `V4PoolIdentity.pool_id`). Delegates to the V4 storage-slot table.
 pub(crate) fn derive_v4_pool_state_base(
     pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
 ) -> U256 {
-    let mut input = [0u8; 64];
-    input[..32].copy_from_slice(pool_id);
-    // uint256(6) big-endian: 31 zero bytes + 0x06.
-    input[63] = 6;
-    let hash: [u8; 32] = keccak256(input).into();
-    U256::from_be_bytes(hash)
+    degenbot_pools::v4_storage_slots::v4_pool_state_base_slot(B256::new(*pool_id))
 }
 
 /// Reverse-map a per-tick `ticks(tick)` storage slot for a CL pool: for
@@ -494,7 +429,8 @@ pub(crate) fn derive_v4_pool_state_base(
 ///
 /// `base` is the mapping base (V3 slot 5; V4 `S_state+4`). The packed
 /// slot+0 word is `uint128 liquidityGross | int128 liquidityNet` (the
-/// engine's `TickInfo` carries both → full 256-bit comparison).
+/// engine's `TickInfo` carries both → full 256-bit comparison). Slot
+/// derivation + word packing are single-sourced in `slot_layout`.
 fn probe_tick_slot<'a, I>(
     ticks: I,
     base: U256,
@@ -506,54 +442,18 @@ where
     I: Iterator<Item = (&'a i32, &'a degenbot_pools::TickInfo)>,
 {
     for (&tick, info) in ticks {
-        let tick_slot = derive_tick_storage_slot(tick, base);
-        if tick_slot == index {
+        if slot_layout::tick_mapping_slot_at_base(tick, base) == index {
             return Some(TrackedSlotProbe {
                 kind,
-                engine_word: pack_tick_info_word(info),
+                engine_word: slot_layout::tick_word_of(
+                    info.liquidity_gross.to::<u128>(),
+                    info.liquidity_net,
+                ),
                 update_block,
             });
         }
     }
     None
-}
-
-/// Derive the per-tick storage slot for a CL `ticks` mapping at `base`:
-/// `keccak256(abi.encode(int24 tick, uint256 base))` — the int24 is
-/// sign-extended to 32 bytes (two's-complement), the base is BE-padded.
-fn derive_tick_storage_slot(tick: i32, base: U256) -> U256 {
-    let mut input = [0u8; 64];
-    // abi.encode(int24): sign-extend the int24 to 32 bytes (bytes 29..31 hold
-    // the 24-bit two's-complement pattern, bytes 0..28 hold the sign fill).
-    let tick_u = tick as u32; // two's-complement bit pattern (i32 has the sign on the top bit).
-                              // The int24 is the low 24 bits of the i32 cast; sign-extend to 32 bytes.
-    let tick_24 = tick_u & 0x00ff_ffff;
-    let sign_fill = if (tick_u & 0x0080_0000) != 0 {
-        0xff
-    } else {
-        0x00
-    };
-    input[..29].fill(sign_fill);
-    // The int24 occupies the low 24 bits of `tick_24`; its 3 big-endian bytes
-    // land at input[29..32] (bytes 29, 30, 31 of the 32-byte sign-extended key).
-    let tick_be = tick_24.to_be_bytes();
-    input[29..32].copy_from_slice(&tick_be[1..4]);
-    // abi.encode(uint256 base): big-endian 32 bytes.
-    input[32..64].copy_from_slice(&base.to_be_bytes::<32>());
-    let hash: [u8; 32] = keccak256(input).into();
-    U256::from_be_bytes(hash)
-}
-
-/// Pack the per-tick `ticks(tick)` slot+0 word:/// `uint128 liquidityGross | int128 liquidityNet` (gross in the low 128 bits,
-/// net in the high 128 bits as a two's-complement int128).
-fn pack_tick_info_word(info: &degenbot_pools::TickInfo) -> B256 {
-    let gross = U256::from(info.liquidity_gross.to::<u128>());
-    // The int128 liquidity_net: the on-chain slot holds the LOW 128 bits of
-    // the two's-complement. The shared low-16-byte projection
-    // (`TickInfo::liquidity_net_i128`), re-unsigned into the slot's high
-    // half via the width-preserving `cast_unsigned()` bit-pattern cast.
-    let net = U256::from(info.liquidity_net_i128().cast_unsigned()) << 128u32;
-    (gross | net).into()
 }
 
 #[expect(clippy::unwrap_used, clippy::expect_used)]
@@ -567,6 +467,17 @@ mod tests {
     use alloy::primitives::{address, aliases::U112, keccak256, Address, B256, U256};
     use degenbot_pools::TickInfo;
     use hashbrown::HashMap;
+
+    // The sqrtPriceX96 field mask inside slot0 (160 bits = uint160), against
+    // which the packed word's low field is read back.
+    const fn be_uint160_mask() -> U256 {
+        U256::from_limbs([u64::MAX, u64::MAX, 0xffff_ffff, 0])
+    }
+
+    /// The per-tick mapping slot at `base` — single-sourced in `slot_layout`.
+    fn derive_tick_storage_slot(tick: i32, base: U256) -> U256 {
+        degenbot_pools::slot_layout::tick_mapping_slot_at_base(tick, base)
+    }
 
     const V3_ADDR: Address = address!("777777775ce34e0b60a4a79bb5bc5d34b7e5fab4");
     const V4_PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
@@ -707,7 +618,7 @@ mod tests {
         let tick_u = (word >> 160u32) & U256::from(0x00ff_ffffu32);
         // The two's-complement 24-bit pattern of -5010 (computed, not
         // hardcoded, to avoid a stale hex constant drifting from the value).
-        let expected_tick_word = U256::from((-5010i32) as u32 & 0x00ff_ffff);
+        let expected_tick_word = U256::from((-5010i32).cast_unsigned() & 0x00ff_ffff);
         assert_eq!(tick_u, expected_tick_word);
         assert_eq!(
             sqrt,

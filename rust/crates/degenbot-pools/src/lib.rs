@@ -88,6 +88,7 @@ pub mod pool;
 pub mod rate_provider;
 pub mod registry;
 pub mod simulate_swap;
+pub mod slot_layout;
 pub mod spec_bounds;
 pub mod state_history;
 /// Re-export the *`PancakeSwap` V3 fork* storage-slot encoders at the crate root

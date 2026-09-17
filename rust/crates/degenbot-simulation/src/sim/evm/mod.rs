@@ -111,12 +111,13 @@ pub mod access_list;
 /// composed-tuple alias. Additive + test-only in the prototype; production wiring gated on the JHPW5W follow-on.
 pub mod inspectors;
 
+pub mod frame_replay;
 /// The frame-replay seam — replay ONE externally-received signed tx through
 /// a scratch EVM and return a typed, settled outcome
 /// ([`ReplayableTx`](frame_replay::ReplayableTx) /
 /// [`ReplayOutcome`](frame_replay::ReplayOutcome)). The seam decision +
 /// replay policy live in the module doc.
-pub mod frame_replay;
+pub mod journal_pools;
 
 /// Cross-block warm cache for immutable/long-TTL account data (bytecode +
 /// account existence) — the persistent layer underneath the per-block

@@ -4,8 +4,8 @@
 //!
 //! # The seam decision
 //!
-//! [`super::BlockSimHandle`] exposes ONE shared `&mut BlockEvm` whose journal
-//! + per-block `CacheDB` the settlement-arbitrage strategy's 7-call
+//! [`super::BlockSimHandle`] exposes ONE shared `&mut BlockEvm` — the
+//! settlement-arbitrage strategy's 7-call fan relies on its journal and the
 //! `transact_one` fan relies on (journaled-state accumulation across calls).
 //! A foreign-tx frame replay must not pollute either. Rather than aliasing
 //! the shared EVM (journal contamination + commit risk), the handle opens an
