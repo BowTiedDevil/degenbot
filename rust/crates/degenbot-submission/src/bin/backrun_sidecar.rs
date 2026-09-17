@@ -440,6 +440,13 @@ async fn main() {
                     let (Some(token_in), Some(token_out), Some(amount_in)) =
                         (l.token_in, l.token_out, l.amount_in)
                     else {
+                        trace_jsonl(
+                            "v3_skip",
+                            serde_json::json!({
+                                "tx": format!("0x{}", ev.hash),
+                                "stage": "leg-fields"
+                            }),
+                        );
                         continue;
                     };
                     let token0 = token_in.min(token_out);
@@ -448,11 +455,25 @@ async fn main() {
                     let Some((pool, fee, tick_spacing)) =
                         resolve_v3_pool(&provider, &pool_v3_cache, token_in, token_out).await
                     else {
+                        trace_jsonl(
+                            "v3_skip",
+                            serde_json::json!({
+                                "tx": format!("0x{}", ev.hash),
+                                "stage": "pool-resolve"
+                            }),
+                        );
                         continue;
                     };
                     let Ok((sqrt_p, _tick, liquidity)) =
                         degenbot_rpc::abi::fetch_v3_slot0_liquidity(&provider, &pool, None).await
                     else {
+                        trace_jsonl(
+                            "v3_skip",
+                            serde_json::json!({
+                                "tx": format!("0x{}", ev.hash),
+                                "stage": "slot0"
+                            }),
+                        );
                         continue;
                     };
                     let Some(staged) = degenbot_bot::bot_core::post_target::v3_exact_in_post_target(
@@ -480,6 +501,13 @@ async fn main() {
                         token_ids.get(&token_in).copied(),
                         token_ids.get(&token_out).copied(),
                     ) else {
+                        trace_jsonl(
+                            "v3_skip",
+                            serde_json::json!({
+                                "tx": format!("0x{}", ev.hash),
+                                "stage": "db-ids"
+                            }),
+                        );
                         continue;
                     };
                     let Some(p_id) = solver
@@ -495,6 +523,13 @@ async fn main() {
                         )
                         .await
                     else {
+                        trace_jsonl(
+                            "v3_skip",
+                            serde_json::json!({
+                                "tx": format!("0x{}", ev.hash),
+                                "stage": "admit-staged"
+                            }),
+                        );
                         continue;
                     };
                     let p_pool_id = u64::from_be_bytes(pool.0[0..8].try_into().expect("8 bytes"));
@@ -518,6 +553,18 @@ async fn main() {
                             },
                         )
                         .await;
+                    trace_jsonl(
+                        "v3_grade",
+                        serde_json::json!({
+                            "tx": format!("0x{}", ev.hash),
+                            "pool": format!("0x{}", alloy::hex::encode(pool)),
+                            "connectors": grade.connectors,
+                            "declared": grade.paths_declared,
+                            "evaluated": grade.paths_evaluated,
+                            "admit_failures": grade.admit_failures,
+                            "best_profit": format!("0x{:x}", grade.best_profit),
+                        }),
+                    );
                     if let Some(cand) = grade.best.as_ref() {
                         // Compose + gate the composed artifact (same share as
                         // the on-chain config word)...
