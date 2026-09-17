@@ -575,14 +575,6 @@ pub struct AffectedPool {
     pub family: LaneFamily,
 }
 
-/// A discovery-fan connector admitted into THIS frame's scope.
-#[derive(Debug, Clone)]
-pub struct DiscoveredConnector {
-    pub address: Address,
-    pub workspace_pool_id: u64,
-    pub family: LaneFamily,
-}
-
 /// The supported-quote orientations of an admitted pool: one entry per
 /// [`SUPPORTED_QUOTES`] member the pool trades, with the other side's DB id
 /// for the fan. Unjoined ids drop that orientation (no id, no fan).
@@ -873,72 +865,11 @@ fn floor_div_i64(a: i64, b: i64) -> i64 {
 // Discovery + solve
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The two drift cycles for a (staged affected pool, connector) pairing in
-/// `quote`: enter on the quote side, exit on the token side (and reverse).
-/// Both cycle pools trade the SAME token pair, so pair-level canonical
-/// order is shared; the QUOTE level is only closed in WETH (wei-honest
-/// 2-hops) — for every other quote the caller must wrap these with the
-/// priced [`Normalization`] legs before declaring.
-#[must_use]
-pub fn two_hop_cycles(
-    p: &AffectedPool,
-    c: &DiscoveredConnector,
-    token0: Address,
-    token1: Address,
-    tok: Address,
-    quote: Address,
-) -> Vec<Vec<SidecarHopRef>> {
-    let hop = |pool_id: u64, pool: Address, zfo: bool, family: LaneFamily| SidecarHopRef {
-        pool_id,
-        pool,
-        token0,
-        token1,
-        zfo,
-        family,
-    };
-    let buy_on_c = hop(c.workspace_pool_id, c.address, quote == token0, c.family);
-    let sell_into_p = hop(p.workspace_pool_id, p.address, tok == token0, p.family);
-    let buy_on_p = hop(p.workspace_pool_id, p.address, quote == token0, p.family);
-    let sell_into_c = hop(c.workspace_pool_id, c.address, tok == token0, c.family);
-    vec![vec![buy_on_c, sell_into_p], vec![buy_on_p, sell_into_c]]
-}
-
-/// The priced WETH ↔ quote normalization lane for a non-WETH settlement
-/// quote: two DISTINCT deep quote pools from the depth-ranked index, one
-/// WETH→quote and one quote→WETH. Both legs ride the candidate as hops, so
-/// the cycle closes in WETH and the solver's profit is wei; a reused pool
-/// would double-count its reserves in the chain solve, hence the pair.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Normalization {
-    /// WETH → quote (input = WETH).
-    pub inbound: SidecarHopRef,
-    /// Quote → WETH (input = quote, the inverse direction).
-    pub outbound: SidecarHopRef,
-}
-
-/// One quote's discovery fan for an affected pool: the quote's connectors
-/// (already admitted) and the priced normalization legs when the quote is
-/// not WETH.
-#[derive(Debug, Clone)]
-pub struct QuoteFan {
-    pub quote: Address,
-    pub quote_id: u64,
-    pub connectors: Vec<DiscoveredConnector>,
-    /// `None` for WETH (already the base quote — 2-hop cycles are
-    /// wei-honest) or when the normalization could not be priced on the
-    /// spot (the fan's candidates drop with the frame's `non_base_quote`
-    /// observation).
-    pub normalization: Option<Normalization>,
-}
-
 /// Solve stats for the JSONL trace + the composed candidate.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SolveStats {
-    pub connectors: usize,
-    pub cycles_declared: usize,
-    pub cycles_evaluated: usize,
-    /// Rounded-up to the same gate as the fans: the anchored walker's
-    /// depth-3 chains declared / envelope-evaluated.
+    /// The anchored walker's WETH-entry chains declared / envelope-evaluated
+    /// (any depth — 2-hop parity cycles included).
     pub dfs_declared: usize,
     pub dfs_evaluated: usize,
     pub best: Option<LaneCandidate>,
@@ -946,82 +877,6 @@ pub struct SolveStats {
     /// normalization lane, so its candidates were refused (the frame's
     /// truthful `non_base_quote` observation when nothing else composed).
     pub non_base_quote_dropped: bool,
-}
-
-/// Wrap the quote-land 2-hop drift cycle with the priced normalization
-/// legs: `WETH →quote → tok → quote → WETH`, one connected WETH-closed
-/// path whose solver profit is wei. Both hops carry their own pool's
-/// canonical pair order and zfo direction.
-fn normalized_cycle(base: Vec<SidecarHopRef>, norm: &Normalization) -> Vec<SidecarHopRef> {
-    let mut path = Vec::with_capacity(base.len() + 2);
-    path.push(norm.inbound);
-    path.extend(base);
-    path.push(norm.outbound);
-    path
-}
-
-/// Solve every quote fan of one affected pool: declare both drift cycles
-/// per (quote, connector) pairing — wrapped in the priced normalization
-/// lane for non-WETH quotes — evaluate envelope-gated (wei floor vs wei
-/// profit for every quote), and keep the best. Pure workspace work (no
-/// I/O) — the code-only fixture tests drive this directly; ranking across
-/// quotes compares profits in wei, never in quote units.
-pub fn solve_fans(
-    solver: &mut SidecarSolver,
-    affected: &AffectedPool,
-    fans: &[QuoteFan],
-    gas_floor_wei: U256,
-) -> SolveStats {
-    let mut stats = SolveStats {
-        connectors: fans.iter().map(|f| f.connectors.len()).sum(),
-        ..SolveStats::default()
-    };
-    for fan in fans {
-        if fan.quote != WETH && fan.normalization.is_none() {
-            // Quote-land candidates exist but cannot close in WETH honestly:
-            // refuse them (never "convert for ranking only").
-            stats.non_base_quote_dropped = !fan.connectors.is_empty();
-            continue;
-        }
-        let tok = if affected.token0 == fan.quote {
-            affected.token1
-        } else {
-            affected.token0
-        };
-        for c in &fan.connectors {
-            for base in two_hop_cycles(
-                affected,
-                c,
-                affected.token0,
-                affected.token1,
-                tok,
-                fan.quote,
-            ) {
-                let cycle = match fan.normalization {
-                    Some(norm) => normalized_cycle(base, &norm),
-                    None => base,
-                };
-                let idx = solver.declare_hops(&cycle);
-                stats.cycles_declared += 1;
-                let Some(res) = solver.evaluate(idx, gas_floor_wei) else {
-                    continue;
-                };
-                stats.cycles_evaluated += 1;
-                let profit = res.profit.to::<u128>();
-                if stats.best.as_ref().is_some_and(|b| b.profit >= profit) {
-                    continue;
-                }
-                stats.best = Some(LaneCandidate {
-                    hops: cycle,
-                    optimal_input: res.optimal_input.to::<u128>(),
-                    hop_outputs: res.hop_outputs.iter().map(|v| v.to::<u128>()).collect(),
-                    consumed_inputs: res.consumed_inputs.iter().map(|v| v.to::<u128>()).collect(),
-                    profit,
-                });
-            }
-        }
-    }
-    stats
 }
 
 /// Evaluate the anchored walker's depth-3 chains through the SAME
@@ -1062,77 +917,6 @@ pub fn solve_dfs_chains(
 /// bridges straddle exactly that token path — the cycle came from the
 /// walker, and this re-derives its traversal from index identity instead
 /// of trusting orientation.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the identity fields name the traversal: derived ids, addresses, admissions"
-)]
-#[must_use]
-pub fn three_hop_refs(
-    a: &AffectedPool,
-    weth_id: u64,
-    tok_id: u64,
-    tok_addr: Address,
-    mid_id: u64,
-    mid_addr: Address,
-    h1: &ResolvedHop,
-    h2: &ResolvedHop,
-    ws1: u64,
-    ws2: u64,
-) -> Option<Vec<SidecarHopRef>> {
-    let straddles = |r: &ResolvedHop, x: u64, y: u64| {
-        (r.token0_id() == x && r.token1_id() == y) || (r.token1_id() == x && r.token0_id() == y)
-    };
-    if !straddles(h1, tok_id, mid_id) || !straddles(h2, mid_id, weth_id) {
-        return None;
-    }
-    let family = |r: &ResolvedHop| match r {
-        ResolvedHop::V2(_) => LaneFamily::V2,
-        ResolvedHop::V3(e) => LaneFamily::V3 { fee: e.fee },
-    };
-    let anchor = SidecarHopRef {
-        pool_id: a.workspace_pool_id,
-        pool: a.address,
-        token0: a.token0,
-        token1: a.token1,
-        // The anchor hop consumes WETH: `zfo` ⇔ the input is the hop's token0.
-        zfo: a.token0 == WETH,
-        family: a.family,
-    };
-    let hop1 = SidecarHopRef {
-        pool_id: ws1,
-        pool: *h1.address(),
-        token0: if h1.token0_id() == tok_id {
-            tok_addr
-        } else {
-            mid_addr
-        },
-        token1: if h1.token0_id() == tok_id {
-            mid_addr
-        } else {
-            tok_addr
-        },
-        zfo: h1.token0_id() == tok_id,
-        family: family(h1),
-    };
-    let hop2 = SidecarHopRef {
-        pool_id: ws2,
-        pool: *h2.address(),
-        token0: if h2.token0_id() == weth_id {
-            WETH
-        } else {
-            mid_addr
-        },
-        token1: if h2.token1_id() == weth_id {
-            WETH
-        } else {
-            mid_addr
-        },
-        zfo: h2.token0_id() == mid_id,
-        family: family(h2),
-    };
-    Some(vec![anchor, hop1, hop2])
-}
-
 /// Admit one walker hop's pool at the frame's chain view (raw-RPC fallback)
 /// and return its workspace id. A pool whose state reads as unusable
 /// (zero reserves, incomplete slot0/liquidity) is skipped, never guessed.
@@ -1207,16 +991,86 @@ async fn admit_hop_pool(
     }
 }
 
-/// The anchored walker's depth-3 lane: per WETH-entry cycle, admit the two
-/// bridge pools at the frame's chain view and build the anchor-first hop
-/// chain the shared gate evaluates. 2-hop walker cycles never reach here —
-/// the depth-ranked fan owns that surface (parity is proven at the engine
-/// level) — so the walker's NEW candidates are exactly these chains.
+/// The hop refs of one WETH-entry walker cycle of arbitrary depth >= 2,
+/// anchored at `a`: quote →(anchor) `first_out` →(mids...) quote. Each mid hop
+/// is re-oriented from index identity (the walker's traversal is re-derived,
+/// never trusted). `None` unless the mid chain straddles a contiguous token
+/// path back to the quote token.
+///
+/// `mids` carries one entry per non-anchor pool in traversal order:
+/// (`out_token_id`, `out_token_address`, resolved pool, admitted workspace id),
+/// where "out" is the token the frame holds AFTER that hop.
+#[must_use]
+pub fn n_hop_refs(
+    a: &AffectedPool,
+    quote_id: u64,
+    quote_addr: Address,
+    first_out_id: u64,
+    first_out_addr: Address,
+    mids: &[(u64, Address, ResolvedHop, u64)],
+) -> Option<Vec<SidecarHopRef>> {
+    if mids.is_empty() {
+        return None;
+    }
+    let anchor = SidecarHopRef {
+        pool_id: a.workspace_pool_id,
+        pool: a.address,
+        token0: a.token0,
+        token1: a.token1,
+        // The anchor hop consumes the quote: `zfo` ⇔ the input is the hop's token0.
+        zfo: a.token0 == quote_addr,
+        family: a.family,
+    };
+    let mut out = Vec::with_capacity(mids.len() + 1);
+    out.push(anchor);
+    let mut in_id = first_out_id;
+    let mut in_addr = first_out_addr;
+    let last_idx = mids.len() - 1;
+    for (i, (out_id, out_addr, h, ws_id)) in mids.iter().enumerate() {
+        let straddles = (h.token0_id() == in_id && h.token1_id() == *out_id)
+            || (h.token1_id() == in_id && h.token0_id() == *out_id);
+        if !straddles {
+            return None;
+        }
+        let zfo = h.token0_id() == in_id;
+        let (t0, t1) = if zfo {
+            (in_addr, *out_addr)
+        } else {
+            (*out_addr, in_addr)
+        };
+        out.push(SidecarHopRef {
+            pool_id: *ws_id,
+            pool: *h.address(),
+            token0: t0,
+            token1: t1,
+            zfo,
+            family: match h {
+                ResolvedHop::V2(_) => LaneFamily::V2,
+                ResolvedHop::V3(e) => LaneFamily::V3 { fee: e.fee },
+            },
+        });
+        if i == last_idx {
+            // The final mid must close on the quote token.
+            if *out_id != quote_id {
+                return None;
+            }
+        } else {
+            in_id = *out_id;
+            in_addr = *out_addr;
+        }
+    }
+    Some(out)
+}
+
+/// Resolve and admit every mid hop of each WETH-entry cycle of ANY depth the
+/// anchored walker produced for this affected pool, returning the solved
+/// chain refs. Cycles whose mid chain re-derivation fails (unresolvable hop,
+/// unadmittable pool, straddle mismatch) are skipped, never guessed.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the lane takes the runtime surfaces it needs"
+    reason = "the workspace, index, solver, and provider are distinct seams the pipeline threads"
 )]
-async fn dfs_three_hop_chains(
+async fn dfs_cycle_chains(
     rt: &StrategyRuntime,
     idx: &V2ConnectorIndex,
     a: &AffectedPool,
@@ -1226,51 +1080,61 @@ async fn dfs_three_hop_chains(
     solver: &mut SidecarSolver,
     provider: &AlloyProvider,
     head: u64,
-) -> Vec<Vec<SidecarHopRef>> {
+) -> (usize, Vec<Vec<SidecarHopRef>>) {
     let mut chains = Vec::new();
+    let mut admitted = 0usize;
     let Some(tok_addr) = rt.token_addr(wq.tok_id) else {
-        return chains;
+        return (admitted, chains);
     };
-    for cycle in cycles
-        .iter()
-        .filter(|c| c.pools.len() == 3 && c.entry_token_id == wq.quote_id)
-    {
-        let Some(h1) = resolve_hop(idx, cycle.pools[1]) else {
+    let Some(quote_addr) = rt.token_addr(wq.quote_id) else {
+        return (admitted, chains);
+    };
+    for cycle in cycles {
+        if cycle.entry_token_id != wq.quote_id || cycle.pools.len() < 2 {
             continue;
-        };
-        let Some(h2) = resolve_hop(idx, cycle.pools[2]) else {
+        }
+        let mut mids: Vec<(u64, Address, ResolvedHop, u64)> =
+            Vec::with_capacity(cycle.pools.len() - 1);
+        let mut in_id = wq.tok_id;
+        let mut rejected = false;
+        for key in &cycle.pools[1..] {
+            let Some(h) = resolve_hop(idx, *key) else {
+                rejected = true;
+                break;
+            };
+            let Some(out_id) = (if h.token0_id() == in_id {
+                h.token1_id().into()
+            } else if h.token1_id() == in_id {
+                h.token0_id().into()
+            } else {
+                rejected = true;
+                None
+            }) else {
+                break;
+            };
+            let Some(out_addr) = rt.token_addr(out_id) else {
+                rejected = true;
+                break;
+            };
+            let Some(ws) = admit_hop_pool(rt, solver, scratch, provider, &h, head).await else {
+                rejected = true;
+                break;
+            };
+            admitted += 1;
+            mids.push((out_id, out_addr, h, ws));
+            in_id = out_id;
+        }
+        if rejected {
             continue;
-        };
-        let mid_id = if h1.token0_id() == wq.tok_id {
-            h1.token1_id()
-        } else {
-            h1.token0_id()
-        };
-        let Some(mid_addr) = rt.token_addr(mid_id) else {
-            continue;
-        };
-        let Some(ws1) = admit_hop_pool(rt, solver, scratch, provider, &h1, head).await else {
-            continue;
-        };
-        let Some(ws2) = admit_hop_pool(rt, solver, scratch, provider, &h2, head).await else {
-            continue;
-        };
-        if let Some(chain) = three_hop_refs(
-            a,
-            wq.quote_id,
-            wq.tok_id,
-            tok_addr,
-            mid_id,
-            mid_addr,
-            &h1,
-            &h2,
-            ws1,
-            ws2,
-        ) {
-            chains.push(chain);
+        }
+        if let Some(chain) = n_hop_refs(a, wq.quote_id, quote_addr, wq.tok_id, tok_addr, &mids) {
+            // Parity check: the re-derived traversal must close on the quote.
+            if mids.last().is_some_and(|(id, _, _, _)| *id == wq.quote_id) {
+                chains.push(chain);
+            }
         }
     }
-    chains
+    (admitted, chains)
 }
 
 /// The truthful observe label for an un-composed frame: a non-base-quote
@@ -1289,81 +1153,6 @@ pub fn honest_observe(
         _ => reason,
     }
 }
-
-/// Price the WETH ↔ `quote` normalization lane on the spot for a non-WETH
-/// settlement quote: walk the quote's depth-ranked WETH connector ranking,
-/// admit the first TWO distinct pools priced through the frame's chain view
-/// (raw-RPC fallback), and build the two hops. `None` when fewer than two
-/// pools price — the caller drops the quote's candidates with the frame's
-/// `non_base_quote` observation. `exclude_pool` keeps the affected pool
-/// itself out of the lane (it already runs as the arbitrage hop).
-async fn price_normalization(
-    rt: &StrategyRuntime,
-    idx: &V2ConnectorIndex,
-    quote: &AffectedQuote,
-    exclude_pool: u64,
-    solver: &mut SidecarSolver,
-    scratch: &mut ScratchEvm<ScratchDb<'_>>,
-    provider: &AlloyProvider,
-) -> Option<Normalization> {
-    let weth_id = rt.weth_id()?;
-    let quote_addr = rt.token_addr(quote.quote_id)?;
-    // Deepest first (the ranking memo); only V2 legs — the cheapest to
-    // price honestly per frame.
-    let cands = idx
-        .connectors(quote.quote_id, weth_id, exclude_pool, rt.connector_cap)
-        .await;
-    let mut legs: Vec<SidecarHopRef> = Vec::with_capacity(2);
-    for (edge, quote_is_token0) in cands {
-        let reserves: Option<(u128, u128)> = match view_v2_reserves(scratch, edge.address) {
-            Some(r) => Some(r),
-            None => match degenbot_rpc::abi::fetch_v2_reserves(provider, &edge.address, None).await
-            {
-                Ok((r0, r1)) => Some((u128::try_from(r0).ok()?, u128::try_from(r1).ok()?)),
-                Err(_) => None,
-            },
-        };
-        let Some((r0, r1)) = reserves else {
-            continue;
-        };
-        let (token0, token1) = if quote_is_token0 {
-            (quote_addr, WETH)
-        } else {
-            (WETH, quote_addr)
-        };
-        let Ok(ws_id) = solver.admit_v2(&SidecarV2Pool {
-            address: edge.address,
-            token0,
-            token1,
-            reserve0: r0,
-            reserve1: r1,
-        }) else {
-            continue;
-        };
-        legs.push(SidecarHopRef {
-            pool_id: ws_id,
-            pool: edge.address,
-            token0,
-            token1,
-            // The inbound leg inputs WETH; zfo is true iff WETH is token0.
-            zfo: WETH == token0,
-            family: LaneFamily::V2,
-        });
-        if legs.len() == 2 {
-            break;
-        }
-    }
-    let inbound = legs.first().copied()?;
-    let outbound = SidecarHopRef {
-        zfo: !legs[1].zfo, // the outbound leg inputs quote
-        ..legs[1]
-    };
-    Some(Normalization { inbound, outbound })
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// The `eth_callMany` bundle-sim gate: READ/SIM ONLY — never a broadcast.
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Does `[target, backrun]` survive as one bundle? (read/sim only.)
 ///
@@ -1544,176 +1333,12 @@ pub async fn process_frame(
     if rt.weth_id().is_none() {
         return FrameArtifacts::observe("no_candidate", stages);
     }
-    // Quote selection by touched-token edge degree (V2 + V3 index): quotes
-    // that actually connect rank first (WETH on ties), quotes that cannot
-    // connect drop out, and the connector budget splits across the rest.
-    let mut selected: Vec<Vec<AffectedQuote>> = Vec::with_capacity(affected.len());
-    for a in &affected {
-        let mut ranked: Vec<(AffectedQuote, usize)> = a
-            .quotes
-            .iter()
-            .map(|q| {
-                (
-                    *q,
-                    idx.edge_degree(q.tok_id, q.quote_id)
-                        + idx.v3_edge_degree(q.tok_id, q.quote_id),
-                )
-            })
-            .collect();
-        ranked.retain(|(_, deg)| *deg > 0);
-        ranked
-            .sort_by_key(|(q, deg)| (std::cmp::Reverse(*deg), std::cmp::Reverse(q.quote == WETH)));
-        selected.push(ranked.into_iter().map(|(q, _)| q).collect());
-    }
-    let mut fans: Vec<Vec<QuoteFan>> = Vec::with_capacity(affected.len());
-    // Normalization lanes memoize per (quote, excluded affected pool) so a
-    // second pool settling in the same quote reuses the priced hops.
-    let mut normalizations: HashMap<(u64, u64), Option<Normalization>> = HashMap::new();
-    let mut cycles_proposed = 0usize;
-    let mut connectors_seen = 0usize;
+    // WETH-only instance: a frame whose affected pool trades no WETH
+    // quote composes no candidate. The anchored walker owns discovery
+    // entirely (2-hop parity and deep cycles both land in the DFS lane);
+    // the ranking, fan-build, and normalization machinery of the star
+    // lane was cut by the cutover.
     let mut non_base_quote_dropped = false;
-    for (ai, a) in affected.iter().enumerate() {
-        let quotes = &selected[ai];
-        let mut pool_fans = Vec::with_capacity(quotes.len());
-        let per_quote_cap = if rt.connector_cap == 0 {
-            0
-        } else {
-            (rt.connector_cap / quotes.len()).max(1)
-        };
-        for q in quotes {
-            let normalization = if q.quote == WETH {
-                None
-            } else {
-                let key = (q.quote_id, a.index_pool_id);
-                if let std::collections::hash_map::Entry::Vacant(e) = normalizations.entry(key) {
-                    let priced = price_normalization(
-                        rt,
-                        idx,
-                        q,
-                        a.index_pool_id,
-                        &mut solver,
-                        scratch,
-                        provider,
-                    )
-                    .await;
-                    trace_jsonl(
-                        "normalize",
-                        serde_json::json!({
-                            "tx": tx_hex,
-                            "quote": format!("0x{}", alloy::hex::encode(q.quote)),
-                            "priced": priced.is_some(),
-                        }),
-                    );
-                    e.insert(priced);
-                }
-                normalizations.get(&key).copied().flatten()
-            };
-            if q.quote != WETH && normalization.is_none() {
-                // Quote-land candidates exist in the index but cannot close
-                // in WETH honestly: refuse instead of converting for
-                // ranking only.
-                trace_jsonl(
-                    "discover_skip",
-                    serde_json::json!({
-                        "tx": tx_hex,
-                        "reason": "non_base_quote",
-                        "quote": format!("0x{}", alloy::hex::encode(q.quote)),
-                    }),
-                );
-                non_base_quote_dropped = true;
-                continue;
-            }
-            let cands = idx
-                .connectors(q.tok_id, q.quote_id, a.index_pool_id, per_quote_cap)
-                .await;
-            let v3cands = idx
-                .v3_connectors(q.tok_id, q.quote_id, a.index_pool_id, per_quote_cap)
-                .await;
-            connectors_seen += cands.len() + v3cands.len();
-            cycles_proposed += 2 * (cands.len() + v3cands.len());
-            let mut admitted = Vec::new();
-            for (edge, _) in cands {
-                let reserves = match view_v2_reserves(scratch, edge.address) {
-                    Some(r) => r,
-                    None => {
-                        match degenbot_rpc::abi::fetch_v2_reserves(provider, &edge.address, None)
-                            .await
-                        {
-                            Ok((r0, r1)) => match (u128::try_from(r0), u128::try_from(r1)) {
-                                (Ok(r0), Ok(r1)) => (r0, r1),
-                                _ => continue,
-                            },
-                            Err(_) => continue,
-                        }
-                    }
-                };
-                if let Ok(c_id) = solver.admit_v2(&SidecarV2Pool {
-                    address: edge.address,
-                    token0: a.token0,
-                    token1: a.token1,
-                    reserve0: reserves.0,
-                    reserve1: reserves.1,
-                }) {
-                    admitted.push(DiscoveredConnector {
-                        address: edge.address,
-                        workspace_pool_id: c_id,
-                        family: LaneFamily::V2,
-                    });
-                }
-            }
-            for (v3e, _) in v3cands {
-                // Same-chain-view first; the raw-RPC ladder only as fallback.
-                let admitted_id = if let Some((sqrt, tk, liq, tick_data)) = read_v3_view(
-                    scratch,
-                    v3e.address,
-                    ClSlotLayout::UniswapV3,
-                    v3e.tick_spacing,
-                    head,
-                ) {
-                    solver.admit_v3_explicit(
-                        v3e.address,
-                        a.token0,
-                        a.token1,
-                        v3e.fee,
-                        v3e.tick_spacing,
-                        sqrt,
-                        liq,
-                        tk,
-                        tick_data,
-                        head,
-                    )
-                } else {
-                    solver
-                        .admit_v3_full(
-                            provider,
-                            v3e.address,
-                            a.token0,
-                            a.token1,
-                            v3e.fee,
-                            v3e.tick_spacing,
-                            None,
-                            head,
-                        )
-                        .await
-                };
-                if let Some(c_id) = admitted_id {
-                    admitted.push(DiscoveredConnector {
-                        address: v3e.address,
-                        workspace_pool_id: c_id,
-                        family: LaneFamily::V3 { fee: v3e.fee },
-                    });
-                }
-            }
-            pool_fans.push(QuoteFan {
-                quote: q.quote,
-                quote_id: q.quote_id,
-                connectors: admitted,
-                normalization,
-            });
-        }
-        fans.push(pool_fans);
-    }
-
     // ── anchored walker: the depth-3 lane ────────────────────────────────
     // Anchors are this frame's touched pools; every cycle includes its
     // anchor by construction; the walker's cancel budget is the frame's
@@ -1725,10 +1350,12 @@ pub async fn process_frame(
     // envelope gate; non-WETH quotes keep their priced-normalization lane.
     let mut dfs_chains: Vec<Vec<SidecarHopRef>> = Vec::new();
     let mut dfs_cycles = 0usize;
+    let mut connectors_seen = 0usize;
     if let Some(graph) = rt.dfs.as_ref() {
         let budget = DiscoveryBudget::after(FRAME_DISCOVERY_SLICE);
         for a in &affected {
             let Some(wq) = a.quotes.iter().find(|q| q.quote == WETH) else {
+                non_base_quote_dropped |= !a.quotes.is_empty();
                 continue;
             };
             let anchor = AnchorPool {
@@ -1742,7 +1369,7 @@ pub async fn process_frame(
             };
             let cycles = graph.cycles_through_pool(anchor, &budget, rt.connector_cap.max(1));
             dfs_cycles += cycles.len();
-            let chains = dfs_three_hop_chains(
+            let (admitted, chains) = dfs_cycle_chains(
                 rt,
                 idx,
                 a,
@@ -1754,6 +1381,7 @@ pub async fn process_frame(
                 head,
             )
             .await;
+            connectors_seen += admitted;
             dfs_chains.extend(chains);
             if budget.expired() {
                 break;
@@ -1766,7 +1394,7 @@ pub async fn process_frame(
         serde_json::json!({
             "tx": tx_hex,
             "connectors": connectors_seen,
-            "cycles_proposed": cycles_proposed,
+            "cycles_proposed": dfs_cycles,
             "dfs_cycles": dfs_cycles,
             "dfs_chains": dfs_chains.len(),
             "affected": affected.len(),
@@ -1777,23 +1405,7 @@ pub async fn process_frame(
     // ── stage: solve (envelope-gated fans; wei across every quote) ───────
     let t = Instant::now();
     let mut aggregate = SolveStats::default();
-    for (a, pool_fans) in affected.iter().zip(&fans) {
-        let stats = solve_fans(&mut solver, a, pool_fans, pl.gas_floor_wei);
-        aggregate.connectors += stats.connectors;
-        aggregate.cycles_declared += stats.cycles_declared;
-        aggregate.cycles_evaluated += stats.cycles_evaluated;
-        aggregate.non_base_quote_dropped |= stats.non_base_quote_dropped;
-        if stats.best.as_ref().is_some_and(|b| {
-            aggregate
-                .best
-                .as_ref()
-                .is_none_or(|best| b.profit > best.profit)
-        }) {
-            aggregate.best = stats.best;
-        }
-    }
-    // The walker's depth-3 chains meet the same envelope gate and wei
-    // ranking as the fans' best candidates.
+
     if !dfs_chains.is_empty() {
         let dfs_stats = solve_dfs_chains(&mut solver, &dfs_chains, pl.gas_floor_wei);
         aggregate.dfs_declared += dfs_stats.dfs_declared;

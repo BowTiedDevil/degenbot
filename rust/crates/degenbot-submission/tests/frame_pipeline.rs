@@ -15,8 +15,8 @@ use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout;
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
 use degenbot_submission::frame_pipeline::{
-    admit_extracted, bid_from_profit, build_descriptors, solve_fans, state_digest,
-    DiscoveredConnector, StrategyRuntime, WETH,
+    admit_extracted, bid_from_profit, build_descriptors, solve_dfs_chains, state_digest,
+    StrategyRuntime, WETH,
 };
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
@@ -90,6 +90,10 @@ fn runtime_fixture() -> (StrategyRuntime, u64, u64) {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "fixture plumbing reads top-to-bottom: extract, admit, refs by hand, solve, compose, digest"
+)]
 fn golden_frame_extract_admit_solve_compose_end_to_end() {
     let (rt, _tok_id, _weth_id) = runtime_fixture();
     let outcome = golden_replay_outcome();
@@ -139,8 +143,9 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     assert_eq!(affected[0].address, P);
     assert_eq!(affected[0].family, LaneFamily::V2);
 
-    // Admit the connector the fan discovered (the discovery lane's admission
-    // shape; the discovery fan call itself is exercised in the live e2e).
+    // Admit the connector the walker would have discovered (the admission
+    // shape is unchanged; the discovery traversal itself is exercised in the
+    // live e2e).
     let q_id = solver
         .admit_v2(&SidecarV2Pool {
             address: Q,
@@ -150,29 +155,55 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
             reserve1: 900,
         })
         .expect("connector admits");
-    let connectors = vec![DiscoveredConnector {
-        address: Q,
-        workspace_pool_id: q_id,
-        family: LaneFamily::V2,
-    }];
 
-    // solve: both drift cycles declared + evaluated; the golden profit.
-    let quote_id = rt.token_id(WETH).unwrap();
-    let stats = solve_fans(
+    // solve: both drift cycles declared + evaluated; the golden profit. The
+    // refs replicate the anchored lane's re-derived traversal exacts (anchor
+    // consumes WETH, mid consumes TOK) — the 2-hop walker output verbatim.
+    let (t0, t1) = (affected[0].token0, affected[0].token1);
+    let tok = if t0 == WETH { t1 } else { t0 };
+    let anchor_consuming_weth = SidecarHopRef {
+        pool_id: affected[0].workspace_pool_id,
+        pool: P,
+        token0: t0,
+        token1: t1,
+        zfo: t0 == WETH,
+        family: LaneFamily::V2,
+    };
+    let mid_consuming_tok = SidecarHopRef {
+        pool_id: q_id,
+        pool: Q,
+        token0: t0,
+        token1: t1,
+        zfo: tok == t0,
+        family: LaneFamily::V2,
+    };
+    let mid_consuming_weth = SidecarHopRef {
+        pool_id: q_id,
+        pool: Q,
+        token0: t0,
+        token1: t1,
+        zfo: t0 == WETH,
+        family: LaneFamily::V2,
+    };
+    let anchor_consuming_tok = SidecarHopRef {
+        pool_id: affected[0].workspace_pool_id,
+        pool: P,
+        token0: t0,
+        token1: t1,
+        zfo: tok == t0,
+        family: LaneFamily::V2,
+    };
+    let stats = solve_dfs_chains(
         &mut solver,
-        &affected[0],
-        &[degenbot_submission::frame_pipeline::QuoteFan {
-            quote: WETH,
-            quote_id,
-            connectors,
-            normalization: None,
-        }],
+        &[
+            vec![anchor_consuming_weth, mid_consuming_tok],
+            vec![mid_consuming_weth, anchor_consuming_tok],
+        ],
         U256::ZERO,
     );
-    assert_eq!(stats.connectors, 1);
-    assert_eq!(stats.cycles_declared, 2, "both drift directions proposed");
+    assert_eq!(stats.dfs_declared, 2, "both drift directions proposed");
     assert!(
-        stats.cycles_evaluated >= 1,
+        stats.dfs_evaluated >= 1,
         "at least the profitable direction solves (fee-drain direction may not)"
     );
     let best = stats.best.expect("the golden cycle profits");
@@ -303,15 +334,6 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
     );
 }
 
-/// Q2: the USDC frame's discovery connector (cheap TOK against a drained
-/// USDC side).
-const Q2: Address = address!("000000000000000000000000000000000000b004");
-/// N1/N2: the two DISTINCT WETH/USDC normalization pools (the quote lane's
-/// priced back-to-WETH legs; one pool twice would double-count its
-/// reserves in the chain solve).
-const N1: Address = address!("000000000000000000000000000000000000b005");
-const N2: Address = address!("000000000000000000000000000000000000b006");
-
 /// Reference constant-product output (independent of the mixed solver's
 /// closed form): `out = in*997*r_out / (r_in*1000 + in*997)`.
 fn reference_out(r_in: u128, r_out: u128, amount_in: u128) -> u128 {
@@ -340,46 +362,6 @@ fn best_chain_profit(chains: &[(u128, u128)], max_in: u128) -> (u128, u128) {
     best
 }
 
-/// The in-memory runtime fixture for the USDC frame: seeded DB + index
-/// edges for P2/Q2 (TOK, USDC) and the N1/N2 (USDC, WETH) normalizers.
-fn usdc_runtime_fixture() -> (StrategyRuntime, u64, u64, u64) {
-    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
-    let tok_id = db
-        .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
-        .unwrap();
-    let weth_id = db
-        .get_or_create_erc20_token(1, &WETH.to_checksum(None), None, None, None)
-        .unwrap();
-    let usdc_id = db
-        .get_or_create_erc20_token(1, &USDC.to_checksum(None), None, None, None)
-        .unwrap();
-    let (tok_id, weth_id, usdc_id) = (
-        u64::try_from(tok_id).unwrap(),
-        u64::try_from(weth_id).unwrap(),
-        u64::try_from(usdc_id).unwrap(),
-    );
-    let mut index = degenbot_bot::sidecar_paths::V2ConnectorIndex::default();
-    for (pool_id, t0, t1, addr) in [
-        (103u64, tok_id, usdc_id, P2),
-        (104u64, tok_id, usdc_id, Q2),
-        (105u64, usdc_id, weth_id, N1),
-        (106u64, usdc_id, weth_id, N2),
-    ] {
-        index.push_edge(degenbot_bot::sidecar_paths::V2Edge {
-            pool_id,
-            token0_id: t0,
-            token1_id: t1,
-            address: addr,
-        });
-    }
-    (
-        StrategyRuntime::new(1, Some(index), Some(db), 8),
-        tok_id,
-        weth_id,
-        usdc_id,
-    )
-}
-
 /// Admit an abstract-units V2 fixture pool (canonical token order by
 /// address, which the fixture constants already are).
 fn admitted_pair(
@@ -401,170 +383,12 @@ fn admitted_pair(
         .unwrap()
 }
 
-/// The wrapped USDC-frame candidate: a quote-land 2-hop cycle closed in
-/// WETH through TWO priced normalization pools. Every non-base-quote
-/// candidate carries these hops as part of the candidate itself, and the
-/// profit is wei — compared against the reference CLP chain (not the USDC
-/// unit profit).
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "fixture plumbing reads top-to-bottom: admit, fan, solve, compose, verify"
-)]
-fn usdc_frame_produces_candidate_with_priced_normalization() {
-    let (rt, _tok_id, _weth_id, usdc_id) = usdc_runtime_fixture();
-    let outcome = usdc_frame_replay_outcome();
-    let (descriptors, _) = build_descriptors(rt.index.as_ref(), &outcome.touched);
-    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
-        &outcome,
-        &descriptors,
-    );
-    let mut solver = SidecarSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture");
-    assert_eq!(affected.len(), 1);
-
-    // Canonical orders: TOK(0x…0aa1) < USDC; USDC < WETH.
-    let q2_id = admitted_pair(&mut solver, Q2, TOK, USDC, 200_000, 150);
-    let n1_id = admitted_pair(&mut solver, N1, USDC, WETH, 1_000_000, 1_000_000);
-    let n2_id = admitted_pair(&mut solver, N2, USDC, WETH, 500_000, 1_500_000);
-    let norm = degenbot_submission::frame_pipeline::Normalization {
-        // N1: WETH -> USDC (in = WETH = token1, zfo = false).
-        inbound: SidecarHopRef {
-            pool_id: n1_id,
-            pool: N1,
-            token0: USDC,
-            token1: WETH,
-            zfo: false,
-            family: LaneFamily::V2,
-        },
-        // N2: USDC -> WETH (in = USDC = token0, zfo = true).
-        outbound: SidecarHopRef {
-            pool_id: n2_id,
-            pool: N2,
-            token0: USDC,
-            token1: WETH,
-            zfo: true,
-            family: LaneFamily::V2,
-        },
-    };
-
-    let stats = solve_fans(
-        &mut solver,
-        &affected[0],
-        &[degenbot_submission::frame_pipeline::QuoteFan {
-            quote: USDC,
-            quote_id: usdc_id,
-            connectors: vec![DiscoveredConnector {
-                address: Q2,
-                workspace_pool_id: q2_id,
-                family: LaneFamily::V2,
-            }],
-            normalization: Some(norm),
-        }],
-        U256::ZERO,
-    );
-
-    assert_eq!(
-        stats.cycles_declared, 2,
-        "both wrapped drift cycles declared"
-    );
-    let best = stats.best.expect("the USDC frame composes a candidate");
-    assert_eq!(
-        best.hops.len(),
-        4,
-        "priced normalization hops ride the path"
-    );
-    assert_eq!(best.hops[0].pool, N1, "inbound WETH -> quote leg");
-    assert_eq!(best.hops[1].pool, Q2, "quote-land arbitrage hop");
-    assert_eq!(best.hops[3].pool, N2, "outbound quote -> WETH leg");
-    assert!(
-        !best.hops[0].zfo && best.hops[3].zfo,
-        "directions close the WETH cycle"
-    );
-    assert_eq!(
-        best.hop_outputs.len(),
-        4,
-        "per-hop alignment for the composer"
-    );
-
-    // The normalization hops compose: the 4-hop all-V2 stream encodes to
-    // execute() calldata (InPathFlash repays the WETH entry from the WETH
-    // output; the bid stays WETH-denominated).
-    let cd = degenbot_bot::sidecar_engine::build_candidate_calldata(
-        &best,
-        address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
-        WETH,
-        9_800,
-    )
-    .expect("the normalized 4-hop candidate composes");
-    assert!(cd.len() > 4 + 32 * 3 + 64, "execute() calldata shape");
-
-    // Wei honesty: the recorded profit matches the independent CLP-chain
-    // optimum (WETH in -> USDC -> TOK -> USDC -> WETH out), NOT the USDC
-    // unit profit; the envelope compares exactly this number.
-    let (w_star, p_star) = best_chain_profit(
-        &[
-            (1_000_000, 1_000_000), // N1: WETH -> USDC
-            (150, 200_000),         // Q2: USDC -> TOK
-            (900_000, 1_100),       // P2: TOK -> USDC (staged)
-            (500_000, 1_500_000),   // N2: USDC -> WETH
-        ],
-        60_000,
-    );
-    assert!(p_star > 0, "the scanned chain profits");
-    assert!(
-        (i128::try_from(best.profit).unwrap() - i128::try_from(p_star).unwrap()).abs() <= 3,
-        "wei profit {} vs reference {}",
-        best.profit,
-        p_star
-    );
-    assert!(
-        best.optimal_input.abs_diff(w_star) <= 100,
-        "optimal WETH input {} vs reference {}",
-        best.optimal_input,
-        w_star
-    );
-    assert!(
-        best.profit > 60,
-        "the normalized candidate beats this frame's WETH-only golden scale (55..56)"
-    );
-}
-
-/// The honest drop: with no priceable normalization lane, the USDC fan's
-/// candidates are refused (`non_base_quote_dropped`) and the frame's
-/// observe label is `non_base_quote` — never a fake conversion for
-/// ranking only.
+/// The honest drop: a frame whose affected pool trades no WETH quote
+/// composes no candidate, and the observe label is `non_base_quote` — never
+/// a fake conversion for ranking only. This pins the full label matrix of
+/// `honest_observe`: the truthful verdict in every combination.
 #[test]
 fn non_base_quote_drop_is_truthful() {
-    let (rt, _tok, _weth, usdc_id) = usdc_runtime_fixture();
-    let outcome = usdc_frame_replay_outcome();
-    let (descriptors, _) = build_descriptors(rt.index.as_ref(), &outcome.touched);
-    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
-        &outcome,
-        &descriptors,
-    );
-    let mut solver = SidecarSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture");
-    let q2_id = admitted_pair(&mut solver, Q2, TOK, USDC, 200_000, 150);
-
-    let stats = solve_fans(
-        &mut solver,
-        &affected[0],
-        &[degenbot_submission::frame_pipeline::QuoteFan {
-            quote: USDC,
-            quote_id: usdc_id,
-            connectors: vec![DiscoveredConnector {
-                address: Q2,
-                workspace_pool_id: q2_id,
-                family: LaneFamily::V2,
-            }],
-            normalization: None,
-        }],
-        U256::ZERO,
-    );
-    assert!(stats.best.is_none(), "nothing composed without the lane");
-    assert!(stats.non_base_quote_dropped);
-    assert_eq!(stats.cycles_declared, 0);
     assert_eq!(
         degenbot_submission::frame_pipeline::honest_observe("no_candidate", true, false),
         "non_base_quote"
@@ -581,208 +405,8 @@ fn non_base_quote_drop_is_truthful() {
     );
 }
 
-/// Cross-quote ranking: a WETH frame's golden candidate (55..56 wei) and
-/// the USDC frame's normalized candidate meet in one aggregate — the
-/// selector compares wei, never quote units; the recorded profit is the
-/// WETH-closed chain output, not the USDC-unit delta.
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "two-quote fixture plumbing reads top-to-bottom: extract, admit, fan both, aggregate"
-)]
-fn mixed_quotes_rank_in_wei_not_quote_units() {
-    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
-    let tok_id = db
-        .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
-        .unwrap();
-    let weth_id = db
-        .get_or_create_erc20_token(1, &WETH.to_checksum(None), None, None, None)
-        .unwrap();
-    let usdc_id = db
-        .get_or_create_erc20_token(1, &USDC.to_checksum(None), None, None, None)
-        .unwrap();
-    let (tok_id, weth_id, usdc_id) = (
-        u64::try_from(tok_id).unwrap(),
-        u64::try_from(weth_id).unwrap(),
-        u64::try_from(usdc_id).unwrap(),
-    );
-    let mut index = degenbot_bot::sidecar_paths::V2ConnectorIndex::default();
-    for (pool_id, t0, t1, addr) in [
-        (101u64, tok_id, weth_id, P),
-        (102u64, tok_id, weth_id, Q),
-        (103u64, tok_id, usdc_id, P2),
-        (104u64, tok_id, usdc_id, Q2),
-        (105u64, usdc_id, weth_id, N1),
-        (106u64, usdc_id, weth_id, N2),
-    ] {
-        index.push_edge(degenbot_bot::sidecar_paths::V2Edge {
-            pool_id,
-            token0_id: t0,
-            token1_id: t1,
-            address: addr,
-        });
-    }
-    let rt = StrategyRuntime::new(1, Some(index), Some(db), 8);
-
-    // One frame touching the WETH pair (slot 8 drained) AND the USDC pair.
-    let mut state = EvmState::default();
-    for (pool, r0, r1) in [(P, 476_259u64, 1_050u64), (P2, 900_000u64, 1_100u64)] {
-        let reserves = slot_layout::pack_v2_reserves_word(U112::from(r0), U112::from(r1));
-        let mut account = Account::default();
-        account.status = AccountStatus::Touched;
-        account.storage.insert(
-            U256::from(slot_layout::V2_RESERVES_SLOT),
-            EvmStorageSlot {
-                original_value: U256::ZERO,
-                present_value: U256::from_be_bytes(reserves.0),
-                transaction_id: revm::state::TransactionId::ZERO,
-                is_cold: false,
-            },
-        );
-        state.insert(pool, account);
-    }
-    let outcome = ReplayOutcome {
-        status: ReplayStatus::Success,
-        state,
-        touched: vec![
-            (P, vec![U256::from(slot_layout::V2_RESERVES_SLOT)]),
-            (P2, vec![U256::from(slot_layout::V2_RESERVES_SLOT)]),
-        ],
-        rpc_reads: 0,
-        wall: std::time::Duration::from_micros(42),
-        base_fee_source: BaseFeeSource::Projected,
-    };
-    let (descriptors, _) = build_descriptors(rt.index.as_ref(), &outcome.touched);
-    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
-        &outcome,
-        &descriptors,
-    );
-    assert_eq!(extracted.len(), 2, "both tracked pools extracted");
-    let mut solver = SidecarSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture");
-    assert_eq!(affected.len(), 2, "WETH-pair AND USDC-pair both admit");
-    let weth_pool = affected
-        .iter()
-        .find(|a| a.address == P)
-        .expect("WETH orientation present");
-    let usdc_pool = affected
-        .iter()
-        .find(|a| a.address == P2)
-        .expect("USDC orientation present");
-    assert!(weth_pool.quotes.iter().any(|q| q.quote == WETH));
-    assert!(!usdc_pool.quotes.iter().any(|q| q.quote == WETH));
-
-    // WETH fan (golden): connector Q at (200_000, 900).
-    let weth_conn_id = admitted_pair(&mut solver, Q, TOK, WETH, 200_000, 900);
-    let weth_stats = solve_fans(
-        &mut solver,
-        weth_pool,
-        &[degenbot_submission::frame_pipeline::QuoteFan {
-            quote: WETH,
-            quote_id: weth_id,
-            connectors: vec![DiscoveredConnector {
-                address: Q,
-                workspace_pool_id: weth_conn_id,
-                family: LaneFamily::V2,
-            }],
-            normalization: None,
-        }],
-        U256::ZERO,
-    );
-
-    // USDC fan (wrapped): connector Q2 + the priced normalization pair.
-    let usdc_conn_id = admitted_pair(&mut solver, Q2, TOK, USDC, 200_000, 150);
-    let n1_id = admitted_pair(&mut solver, N1, USDC, WETH, 1_000_000, 1_000_000);
-    let n2_id = admitted_pair(&mut solver, N2, USDC, WETH, 500_000, 1_500_000);
-    let usdc_stats = solve_fans(
-        &mut solver,
-        usdc_pool,
-        &[degenbot_submission::frame_pipeline::QuoteFan {
-            quote: USDC,
-            quote_id: usdc_id,
-            connectors: vec![DiscoveredConnector {
-                address: Q2,
-                workspace_pool_id: usdc_conn_id,
-                family: LaneFamily::V2,
-            }],
-            normalization: Some(degenbot_submission::frame_pipeline::Normalization {
-                inbound: SidecarHopRef {
-                    pool_id: n1_id,
-                    pool: N1,
-                    token0: USDC,
-                    token1: WETH,
-                    zfo: false,
-                    family: LaneFamily::V2,
-                },
-                outbound: SidecarHopRef {
-                    pool_id: n2_id,
-                    pool: N2,
-                    token0: USDC,
-                    token1: WETH,
-                    zfo: true,
-                    family: LaneFamily::V2,
-                },
-            }),
-        }],
-        U256::ZERO,
-    );
-
-    // Cross-quote aggregation exactly as the pipeline's solve stage does it.
-    let mut aggregate = weth_stats.clone();
-    aggregate.connectors += usdc_stats.connectors;
-    aggregate.cycles_declared += usdc_stats.cycles_declared;
-    aggregate.cycles_evaluated += usdc_stats.cycles_evaluated;
-    aggregate.non_base_quote_dropped |= usdc_stats.non_base_quote_dropped;
-    if usdc_stats.best.as_ref().is_some_and(|b| {
-        aggregate
-            .best
-            .as_ref()
-            .is_none_or(|best| b.profit > best.profit)
-    }) {
-        aggregate.best = usdc_stats.best;
-    }
-
-    let golden = weth_stats.best.expect("golden WETH candidate");
-    assert!(
-        (55..=56).contains(&golden.profit),
-        "WETH candidate unchanged: {}",
-        golden.profit
-    );
-    let normalized = aggregate.best.expect("aggregate carries a candidate");
-    assert_eq!(
-        normalized.hops[0].pool, N1,
-        "the wei ranking picked the normalized USDC candidate"
-    );
-    assert!(
-        normalized.profit > golden.profit,
-        "wei comparison crossed quotes: {} > {}",
-        normalized.profit,
-        golden.profit
-    );
-    let (_w_star, p_star) = best_chain_profit(
-        &[
-            (1_000_000, 1_000_000),
-            (150, 200_000),
-            (900_000, 1_100),
-            (500_000, 1_500_000),
-        ],
-        60_000,
-    );
-    assert!(
-        (i128::try_from(normalized.profit).unwrap() - i128::try_from(p_star).unwrap()).abs() <= 3,
-        "the aggregate's number is the WETH-closed chain optimum ({p_star}), not a USDC-unit delta"
-    );
-    assert!(!aggregate.non_base_quote_dropped, "nothing was dropped");
-}
-
-// ─────────────────────── the live dry-run e2e ──────────────────────────────
-
-/// Live dry-run: the captured frame JSONL (`tests/fixtures/`, the
-/// `/tmp/mb_trace.jsonl` conventions) flows the FULL pipeline — frame-replay
-/// seam → extract → admission → discovery → solve → compose → gate — with
-/// the CLASSIFIER GUARD ARMED: any hot-path classification aborts the run.
 /// No DB/index is attached (offline-review without the workspace DB), so the
-/// discovery fan stays shut and every observe reason must be truthful.
+/// discovery lane stays shut and every observe reason must be truthful.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live network: needs a chain-1 RPC behind DEGENBOT_RPC_HTTP_CHAINID_1"]
 #[expect(
