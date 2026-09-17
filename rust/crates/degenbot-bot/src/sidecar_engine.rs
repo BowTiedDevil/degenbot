@@ -224,7 +224,7 @@ pub struct SidecarHopRef {
 
 /// The lane's resolved frame: everything the guard ladder derives, so the
 /// lane body stays a linear pipeline over checked inputs.
-struct LaneFrame<'a> {
+struct LaneFrame {
     pool_addr: Address,
     tok_id: u64,
     weth_id: u64,
@@ -238,13 +238,12 @@ struct LaneFrame<'a> {
     r_view: (u128, u128),
     cap: usize,
     gas_floor_wei: U256,
-    index: &'a crate::sidecar_paths::V2ConnectorIndex,
 }
 
 /// Run the lane's guard ladder over the frame ctx: protocol/direction/
 /// amount/index checks, canonical pair order, and the leg->pair reserve
 /// mapping. `None` = the frame is outside the WETH-denominated 2-hop lane.
-fn resolve_lane_frame<'a>(ctx: &'a ConnectorLaneCtx<'_>) -> Option<LaneFrame<'a>> {
+fn resolve_lane_frame(ctx: &ConnectorLaneCtx<'_>) -> Option<LaneFrame> {
     use degenbot_decoders::target_classifier::PoolProtocol;
 
     let leg = ctx.leg;
@@ -298,7 +297,6 @@ fn resolve_lane_frame<'a>(ctx: &'a ConnectorLaneCtx<'_>) -> Option<LaneFrame<'a>
         r_view,
         cap: ctx.cap,
         gas_floor_wei: ctx.gas_floor_wei,
-        index: ctx.index,
     })
 }
 
@@ -326,13 +324,12 @@ impl LaneFamily {
 /// executable form themselves -- declaration and composition share these
 /// objects, so orientation cannot drift between the two surfaces.
 fn connector_cycles(
-    p_id: u64,
-    pool_p: Address,
-    c_id: u64,
-    pool_c: Address,
+    p: (u64, Address),
+    c: (u64, Address),
     tokens: (Address, Address),
     tok_is_t0: bool,
     c_family: LaneFamily,
+    p_family: LaneFamily,
 ) -> Vec<Vec<SidecarHopRef>> {
     let hop = |pool_id: u64, pool: Address, zfo: bool, family: LaneFamily| SidecarHopRef {
         pool_id,
@@ -346,10 +343,10 @@ fn connector_cycles(
     // Cycle 1: buy USDC on the market connector, sell into the staged P.
     // Cycle 2: buy USDC on the staged P, sell into the connector. The
     // envelope gate prunes the fee-drain direction per pair for free.
-    let buy_on_c = hop(c_id, pool_c, !tok_is_t0, c_family);
-    let sell_into_p = hop(p_id, pool_p, tok_is_t0, LaneFamily::V2);
-    let buy_on_p = hop(p_id, pool_p, !tok_is_t0, LaneFamily::V2);
-    let sell_into_c = hop(c_id, pool_c, tok_is_t0, c_family);
+    let buy_on_c = hop(c.0, c.1, !tok_is_t0, c_family);
+    let sell_into_p = hop(p.0, p.1, tok_is_t0, p_family);
+    let buy_on_p = hop(p.0, p.1, !tok_is_t0, p_family);
+    let sell_into_c = hop(c.0, c.1, tok_is_t0, c_family);
     vec![vec![buy_on_c, sell_into_p], vec![buy_on_p, sell_into_c]]
 }
 
@@ -381,11 +378,40 @@ pub struct LaneGrade {
 }
 
 /// Per-frame lane inputs (bundled to keep the lane signature narrow).
+/// Per-frame inputs for the V3-affected-pool lane (the B1 follow-up). The
+/// pool resolution + post-target staging happened upstream (bin owner).
+pub struct V3LaneCtx<'a> {
+    pub index: &'a crate::sidecar_paths::V2ConnectorIndex,
+    /// DB ids for the affected pool's tokens: `tok_id` = the token that the
+    /// target's swap MOVES INTO the pool's quoting side (`token_in`),
+    /// `other_id` = the token out. Connectors are those sharing either.
+    pub tok_id: u64,
+    pub other_id: u64,
+    /// The affected pool's DB cluster id + address.
+    pub p_pool_id: u64,
+    pub p_id: u64,
+    pub pool: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub tok_is_t0: bool,
+    pub fee: u32,
+    pub head: u64,
+    pub cap: usize,
+    pub gas_floor_wei: U256,
+}
+
 pub struct ConnectorLaneCtx<'a> {
     pub index: &'a crate::sidecar_paths::V2ConnectorIndex,
     /// Frame token addresses -> DB token ids (the bin owns the cache).
     pub ids: &'a std::collections::HashMap<Address, u64>,
     pub leg: &'a degenbot_decoders::target_classifier::SwapLeg,
+    /// Affected-pool family (V2 staged via the lean overlay; V3 staged via
+    /// the in-range post-target sqrtP — the B1 follow-up).
+    pub p_family: LaneFamily,
+    /// PRE-STAGED affected pool (the V3 path registers it before the lane
+    /// runs, with the post-target sqrtPriceX96): `(pool_id, tok_is_t0)`.
+    /// `None` = let the lane stage the V2 overlay itself.
+    pub staged_p: Option<(u64, bool)>,
     /// The affected pair's live `getReserves` in PAIR order (token0, token1).
     pub pair_reserves: (u128, u128),
     /// The head block (the V3 admission's seed stamp).
@@ -408,76 +434,138 @@ impl SidecarSolver {
         let Some(frame) = resolve_lane_frame(ctx) else {
             return LaneGrade::default();
         };
-        let mut grade = LaneGrade::default();
 
-        // Stage the target's exact effect on P (in the leg's (in, out) view,
-        // mapped back to the pair's canonical order); both drift directions
-        // are declared per connector -- the target's own direction alone
-        // does not fix which side of P dislocated against the connector, and
-        // the envelope gate prunes the fee-drain direction for free.
-        let Some((p_id, _pw, _pt)) = self.stage_affected_pair(
-            (frame.pool_addr, frame.token0, frame.token1),
-            frame.tok_is_t0,
-            frame.amount_in,
-            frame.in_is_t0,
-            frame.r_view,
-        ) else {
-            return grade;
+        let staged_result = if let Some((id, tok_is_t0)) = ctx.staged_p {
+            Some((id, !tok_is_t0, tok_is_t0))
+        } else {
+            self.stage_affected_pair(
+                (frame.pool_addr, frame.token0, frame.token1),
+                frame.tok_is_t0,
+                frame.amount_in,
+                frame.in_is_t0,
+                frame.r_view,
+            )
+        };
+        let Some((p_id, _pw, _pt)) = staged_result else {
+            return LaneGrade::default();
         };
 
+        self.fan_connectors(
+            provider,
+            ctx.index,
+            frame.tok_id,
+            frame.weth_id,
+            frame.p_pool_id,
+            p_id,
+            frame.pool_addr,
+            (frame.token0, frame.token1),
+            frame.tok_is_t0,
+            ctx.p_family,
+            ctx.head,
+            frame.cap,
+            frame.gas_floor_wei,
+        )
+        .await
+    }
+
+    /// The shared connector fan: admit live V2 + V3 connectors for the staged
+    /// affected pool `p_id`, declare both drift cycles per connector, evaluate,
+    /// return the best. Used by the V2 overlay lane AND the V3 staged lane.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the fan takes a full frame descriptor"
+    )]
+    async fn fan_connectors(
+        &mut self,
+        provider: &degenbot_rpc::provider::AlloyProvider,
+        index: &crate::sidecar_paths::V2ConnectorIndex,
+        tok_id: u64,
+        weth_id: u64,
+        p_pool_id: u64,
+        p_id: u64,
+        pool_p: Address,
+        tokens: (Address, Address),
+        tok_is_t0: bool,
+        p_family: LaneFamily,
+        head: u64,
+        cap: usize,
+        gas_floor_wei: U256,
+    ) -> LaneGrade {
+        let mut grade = LaneGrade::default();
+
         // Spot connectors (V2): live reserves, same two-cycle shape.
-        let cands = frame
-            .index
-            .connectors(frame.tok_id, frame.weth_id, frame.p_pool_id, frame.cap);
+        let cands = index.connectors(tok_id, weth_id, p_pool_id, cap);
         grade.connectors = cands.len();
         for (c_edge, _tok_flag) in cands {
             let Some(c_id) = self
-                .admit_connector(provider, c_edge.address, frame.token0, frame.token1)
+                .admit_connector(provider, c_edge.address, tokens.0, tokens.1)
                 .await
             else {
                 grade.admit_failures += 1;
                 continue;
             };
             let cycles = connector_cycles(
-                p_id,
-                frame.pool_addr,
-                c_id,
-                c_edge.address,
-                (frame.token0, frame.token1),
-                frame.tok_is_t0,
+                (p_id, pool_p),
+                (c_id, c_edge.address),
+                tokens,
+                tok_is_t0,
                 LaneFamily::V2,
+                p_family,
             );
-            self.eval_cycles(&mut grade, frame.gas_floor_wei, cycles);
+            self.eval_cycles(&mut grade, gas_floor_wei, cycles);
         }
 
         // CL connectors (B2-CL): the same two-cycle shape with a V3 second
         // hop. Admission costs 3-6 RPC round trips per pool (bounded by
         // cap); the exact-sim oracle remains the truth bar.
-        let v3cands =
-            frame
-                .index
-                .v3_connectors(frame.tok_id, frame.weth_id, frame.p_pool_id, frame.cap);
+        let v3cands = index.v3_connectors(tok_id, weth_id, p_pool_id, cap);
         grade.connectors += v3cands.len();
         for (v3_edge, _tok_flag) in v3cands {
             let Some(c_id) = self
-                .admit_v3_connector(provider, v3_edge, frame.token0, frame.token1, ctx.head)
+                .admit_v3_connector(provider, v3_edge, tokens.0, tokens.1, head)
                 .await
             else {
                 grade.admit_failures += 1;
                 continue;
             };
             let cycles = connector_cycles(
-                p_id,
-                frame.pool_addr,
-                c_id,
-                v3_edge.address,
-                (frame.token0, frame.token1),
-                frame.tok_is_t0,
+                (p_id, pool_p),
+                (c_id, v3_edge.address),
+                tokens,
+                tok_is_t0,
                 LaneFamily::V3 { fee: v3_edge.fee },
+                p_family,
             );
-            self.eval_cycles(&mut grade, frame.gas_floor_wei, cycles);
+            self.eval_cycles(&mut grade, gas_floor_wei, cycles);
         }
         grade
+    }
+
+    /// The V3-affected-pool lane (the B1 follow-up): the router-side V3 pool was
+    /// already resolved + staged (post-target sqrtPriceX96 registered) by the
+    /// caller; this fans connectors across BOTH pool tokens and grades the
+    /// mixed-family cycles.
+    pub async fn run_v3_target_lane(
+        &mut self,
+        provider: &degenbot_rpc::provider::AlloyProvider,
+        ctx: &V3LaneCtx<'_>,
+    ) -> LaneGrade {
+        self.fan_connectors(
+            provider,
+            ctx.index,
+            ctx.tok_id,
+            ctx.other_id,
+            ctx.p_pool_id,
+            ctx.p_id,
+            ctx.pool,
+            (ctx.token0, ctx.token1),
+            ctx.tok_is_t0,
+            LaneFamily::V3 { fee: ctx.fee },
+            ctx.head,
+            ctx.cap,
+            ctx.gas_floor_wei,
+        )
+        .await
     }
 
     /// Admit a V3 connector    /// Admit a V3 connector at HEAD state: slot0 + liquidity + a Sparse tick
@@ -521,12 +609,44 @@ impl SidecarSolver {
         token1: Address,
         head: u64,
     ) -> Option<u64> {
+        self.admit_v3_full(
+            provider,
+            edge.address,
+            token0,
+            token1,
+            edge.fee,
+            edge.tick_spacing,
+            None,
+            head,
+        )
+        .await
+    }
+
+    /// Register a V3 pool at HEAD (via the connector edge's shared ladder
+    /// logic), optionally OVERRIDING `sqrt_price_x96` with the post-target
+    /// staged price (the V3-affected-pool path). Args are decoded-wire
+    /// semantics: `fee` in the v3 tier convention, `tick_spacing` from the
+    /// pool's immutables.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "pool identity + staged override describe distinct layers"
+    )]
+    pub async fn admit_v3_full(
+        &mut self,
+        provider: &degenbot_rpc::provider::AlloyProvider,
+        address: Address,
+        token0: Address,
+        token1: Address,
+        fee: u32,
+        tick_spacing: i32,
+        sqrt_override: Option<U256>,
+        head: u64,
+    ) -> Option<u64> {
         use degenbot_rpc::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v3_slot0_liquidity};
 
-        let (sqrt_price_x96, tick, liquidity) =
-            fetch_v3_slot0_liquidity(provider, &edge.address, None)
-                .await
-                .ok()?;
+        let (sqrt_price_x96, tick, liquidity) = fetch_v3_slot0_liquidity(provider, &address, None)
+            .await
+            .ok()?;
         let liquidity = u128::try_from(liquidity).ok()?;
 
         // Sparse coverage: the current word +- 1 (a 3-word window around the
@@ -534,7 +654,7 @@ impl SidecarSolver {
         let tick_i32 = i32::try_from(tick).ok()?;
         let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
             tick_i32,
-            edge.tick_spacing,
+            tick_spacing,
         );
         let word_i16 = i16::try_from(word).ok()?;
         let mut tick_data: hashbrown::HashMap<i32, TickInfo> = hashbrown::HashMap::new();
@@ -543,16 +663,13 @@ impl SidecarSolver {
             word_i16,
             word_i16.saturating_add(1),
         ] {
-            let bitmap = fetch_tick_bitmap(provider, &edge.address, w, None)
-                .await
-                .ok()?;
+            let bitmap = fetch_tick_bitmap(provider, &address, w, None).await.ok()?;
             for bit in 0..256usize {
                 if !bitmap.bit(bit) {
                     continue;
                 }
-                let active_tick =
-                    ((i32::from(w) << 8) + i32::try_from(bit).ok()?) * edge.tick_spacing;
-                let (gross, net) = fetch_tick_data(provider, &edge.address, active_tick, None)
+                let active_tick = ((i32::from(w) << 8) + i32::try_from(bit).ok()?) * tick_spacing;
+                let (gross, net) = fetch_tick_data(provider, &address, active_tick, None)
                     .await
                     .ok()?;
                 tick_data.insert(
@@ -567,12 +684,12 @@ impl SidecarSolver {
         }
 
         let params = RegisterV3PoolParams {
-            address: edge.address,
+            address,
             token0,
             token1,
-            fee: edge.fee,
-            tick_spacing: edge.tick_spacing,
-            sqrt_price_x96,
+            fee,
+            tick_spacing,
+            sqrt_price_x96: sqrt_override.unwrap_or(sqrt_price_x96),
             liquidity,
             tick: tick_i32,
             tick_data,

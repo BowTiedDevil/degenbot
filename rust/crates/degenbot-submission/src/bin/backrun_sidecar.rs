@@ -76,6 +76,127 @@ impl ReceiptProbe for SidecarProbe {
     }
 }
 
+/// Resolved (pool, fee, `tick_spacing`) per (`tokenIn`, `tokenOut`) pair.
+type V3PoolCache =
+    std::sync::Mutex<std::collections::HashMap<(Address, Address), (Address, u32, i32)>>;
+
+/// The Uniswap V3 factory (the pool CREATE2 deployer on mainnet).
+const V3_FACTORY: alloy::primitives::Address =
+    alloy::primitives::address!("1F98431c8aD98523631AE4a59f267346ea31F984");
+
+fn pool_v3_cache_new() -> V3PoolCache {
+    std::sync::Mutex::new(std::collections::HashMap::new())
+}
+
+/// Resolve the V3 pool for a router decoded (tokenIn, tokenOut) by probing
+/// the four standard fee tiers' CREATE2 addresses with a slot0 call (the one
+/// that returns state is the pool). Cached per token pair per process.
+async fn resolve_v3_pool(
+    provider: &degenbot_rpc::provider::AlloyProvider,
+    cache: &V3PoolCache,
+    token_in: Address,
+    token_out: Address,
+) -> Option<(Address, u32, i32)> {
+    {
+        #[expect(clippy::expect_used, reason = "poisoned std sync-guard = process bug")]
+        let hit = cache
+            .lock()
+            .expect("v3 pool cache")
+            .get(&(token_in, token_out))
+            .copied();
+        if hit.is_some() {
+            return hit;
+        }
+    }
+    let init_hash = degenbot_uniswap::deployments::resolve_v3_init_hash(1, V3_FACTORY);
+    for fee in [100u32, 500, 3_000, 10_000] {
+        let pool = degenbot_uniswap::create2::compute_v3_address(
+            V3_FACTORY,
+            token_in.min(token_out),
+            token_in.max(token_out),
+            fee,
+            init_hash,
+        );
+        if degenbot_rpc::abi::fetch_v3_slot0_liquidity(provider, &pool, None)
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        let tick_spacing = fetch_v3_tick_spacing(provider, &pool).await?;
+        #[expect(clippy::expect_used)]
+        let mut guard = cache.lock().expect("v3 pool cache");
+        guard.insert((token_in, token_out), (pool, fee, tick_spacing));
+        return Some((pool, fee, tick_spacing));
+    }
+    None
+}
+
+/// `tickSpacing()` (selector 0xd0c93a7c) -> int24 sovereign per pool.
+async fn fetch_v3_tick_spacing(
+    provider: &degenbot_rpc::provider::AlloyProvider,
+    pool: &Address,
+) -> Option<i32> {
+    let ret = provider
+        .eth_call(
+            pool,
+            alloy::primitives::Bytes::from([0xd0, 0xc9, 0x3a, 0x7c, 0, 0, 0, 0][..4].to_vec()),
+            None,
+        )
+        .await
+        .ok()?;
+    let word = ret.get(0..32)?;
+    // int24: last byte holds the sign in the ABI word's top extension —
+    // the fee tiers use POSITIVE spacings; read the low byte.
+    Some(i32::from(word[31]))
+}
+
+/// The bundle sim for a V3-target candidate: [target, backrun] via
+/// `eth_callMany` on the /fast READ endpoint. Same question the V2 gate
+/// asks: does the composed artifact survive + profit after the target lands?
+async fn simulate_candidate(
+    sim_client: &alloy::rpc::client::RpcClient,
+    ev: &degenbot_rpc::backrun_feed::BackrunFeedEvent,
+    exec: Address,
+    owner: Address,
+    cd: &alloy::primitives::Bytes,
+) -> bool {
+    let target_call = serde_json::json!({
+        "from": format!("0x{}", alloy::hex::encode(ev.from)),
+        "to": format!("0x{}", alloy::hex::encode(ev.to.unwrap_or_default())),
+        "data": format!("0x{}", alloy::hex::encode(&ev.data)),
+        "value": format!("0x{:x}", ev.value),
+        "gas": format!("0x{:x}", ev.gas.max(120_000)),
+        "gasPrice": format!("0x{:x}", ev.max_fee_per_gas.max(1)),
+    });
+    let backrun_call =
+        degenbot_submission::bundle::backrun_sim_call(owner, exec, cd, 900_000, 30_000_000_000);
+    let params = degenbot_submission::bundle::eth_call_many_bundle_sim_params(
+        &[target_call, backrun_call],
+        "latest",
+    );
+    match sim_client
+        .request::<serde_json::Value, serde_json::Value>("eth_callMany", params)
+        .await
+    {
+        Ok(resp) => {
+            let txt = serde_json::to_string(&resp).unwrap_or_default();
+            !txt.contains("error")
+        }
+        Err(_) => false,
+    }
+}
+
+/// The bribe share of TRUE profit paid to the builder (98% default; the
+/// env override steers the competitiveness ladder without a rebuild).
+fn bribe_bips() -> u16 {
+    std::env::var("SIDECAR_BRIBE_BIPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9_800)
+        .min(10_000)
+}
+
 #[tokio::main]
 #[expect(
     clippy::too_many_lines,
@@ -116,6 +237,8 @@ async fn main() {
             let _ = writeln!(f, "{line}");
         }
     }
+
+    let pool_v3_cache = pool_v3_cache_new();
 
     init_tracing();
     let cfg = SidecarConfig::from_env();
@@ -302,7 +425,125 @@ async fn main() {
             // full candidate (coinbase bribe via the executor config word);
             // submission calldata only ever holds a sim-verified artifact.
             let mut candidate_calldata: Option<(alloy::primitives::Bytes, U256)> = None;
+            // Fresh per-frame engine: staged state (post-target overlays,
+            // staged V3 prices) is frame-scoped BY DESIGN.
+            let mut solver = degenbot_bot::sidecar_engine::SidecarSolver::new();
             if let TargetClass::Swap(legs) = &class {
+                // V3 router targets (EXACT_INPUT[_SINGLE]) do not name the
+                // pool in the wire: resolve it CREATE2-style from the decoded
+                // (tokenIn, tokenOut, fee tier probe), stage the post-target
+                // sqrtP (the B1 follow-up), and run the same mixed fan.
+                let Some(index) = connector_index.as_ref() else {
+                    continue;
+                };
+                for l in legs.iter().filter(|l| l.protocol == PoolProtocol::V3) {
+                    let (Some(token_in), Some(token_out), Some(amount_in)) =
+                        (l.token_in, l.token_out, l.amount_in)
+                    else {
+                        continue;
+                    };
+                    let token0 = token_in.min(token_out);
+                    let token1 = token_in.max(token_out);
+                    let tok_is_t0 = token_in == token0;
+                    let Some((pool, fee, tick_spacing)) =
+                        resolve_v3_pool(&provider, &pool_v3_cache, token_in, token_out).await
+                    else {
+                        continue;
+                    };
+                    let Ok((sqrt_p, _tick, liquidity)) =
+                        degenbot_rpc::abi::fetch_v3_slot0_liquidity(&provider, &pool, None).await
+                    else {
+                        continue;
+                    };
+                    let Some(staged) = degenbot_bot::bot_core::post_target::v3_exact_in_post_target(
+                        sqrt_p,
+                        u128::try_from(liquidity).unwrap_or(0),
+                        fee,
+                        amount_in,
+                        tok_is_t0,
+                    ) else {
+                        continue;
+                    };
+                    // DB ids for both pool tokens (the fan's connector index
+                    // lookup is id-keyed).
+                    let mut need_vec = vec![token0, token1];
+                    need_vec.retain(|a| !token_ids.contains_key(a));
+                    if !need_vec.is_empty() {
+                        if let Some(Ok(m)) = connector_db
+                            .as_ref()
+                            .map(|db| db.fetch_token_ids_by_address(1, &need_vec))
+                        {
+                            token_ids.extend(m);
+                        }
+                    }
+                    let (Some(tok_id), Some(other_id)) = (
+                        token_ids.get(&token_in).copied(),
+                        token_ids.get(&token_out).copied(),
+                    ) else {
+                        continue;
+                    };
+                    let Some(p_id) = solver
+                        .admit_v3_full(
+                            &provider,
+                            pool,
+                            token0,
+                            token1,
+                            fee,
+                            tick_spacing,
+                            Some(staged.sqrt_p_x96),
+                            current_block,
+                        )
+                        .await
+                    else {
+                        continue;
+                    };
+                    let p_pool_id = u64::from_be_bytes(pool.0[0..8].try_into().expect("8 bytes"));
+                    let grade = solver
+                        .run_v3_target_lane(
+                            &provider,
+                            &degenbot_bot::sidecar_engine::V3LaneCtx {
+                                index,
+                                tok_id,
+                                other_id,
+                                p_pool_id,
+                                p_id,
+                                pool,
+                                token0,
+                                token1,
+                                tok_is_t0,
+                                fee,
+                                head: current_block,
+                                cap: connector_cap,
+                                gas_floor_wei: U256::from(50_000_000_000_000u64),
+                            },
+                        )
+                        .await;
+                    if let Some(cand) = grade.best.as_ref() {
+                        // Compose + gate the composed artifact (same share as
+                        // the on-chain config word)...
+                        let composed = degenbot_bot::sidecar_engine::build_candidate_calldata(
+                            cand,
+                            exec,
+                            degenbot_bot::sidecar_solve::weth(),
+                            bribe_bips(),
+                        );
+                        if let Some(cd) = composed {
+                            if simulate_candidate(&sim_client, &ev, exec, owner, &cd).await {
+                                let bid = U256::from(cand.profit) * U256::from(bribe_bips())
+                                    / U256::from(10_000u16);
+                                requested_bid = requested_bid.max(bid.max(U256::from(1)));
+                                candidate_calldata = Some((cd, bid.max(U256::from(1))));
+                                tracing::info!(
+                                    pool = ?pool,
+                                    connectors = grade.connectors,
+                                    profit = %cand.profit,
+                                    input = %cand.optimal_input,
+                                    "[connectors] v3 target candidate composed + bundle sim PASSED"
+                                );
+                            }
+                        }
+                    }
+                }
                 for l in legs.iter().filter(|l| l.protocol == PoolProtocol::V2) {
                     let Some(pool) = l.pool else { continue };
                     let Some((r0, r1)) =
@@ -346,7 +587,6 @@ async fn main() {
                                 Err(e) => tracing::debug!(error = %e, "token id fetch failed"),
                             }
                         }
-                        let mut solver = degenbot_bot::sidecar_engine::SidecarSolver::new();
                         let grade = solver
                             .run_connector_lane(
                                 &provider,
@@ -354,6 +594,8 @@ async fn main() {
                                     index,
                                     ids: &token_ids,
                                     leg: l,
+                                    p_family: degenbot_bot::sidecar_engine::LaneFamily::V2,
+                                    staged_p: None,
                                     pair_reserves: (r0, r1),
                                     cap: connector_cap,
                                     head: current_block,
@@ -376,11 +618,7 @@ async fn main() {
                             // cycle filtering and makes the bid strictly
                             // cheaper-for-us than every 90%-or-less rival on
                             // the same dislocation.
-                            let bribe_bips: u16 = std::env::var("SIDECAR_BRIBE_BIPS")
-                                .ok()
-                                .and_then(|v| v.parse().ok())
-                                .unwrap_or(9_800)
-                                .min(10_000);
+                            let bribe_bips: u16 = bribe_bips();
                             match degenbot_bot::sidecar_engine::build_candidate_calldata(
                                 cand,
                                 exec,

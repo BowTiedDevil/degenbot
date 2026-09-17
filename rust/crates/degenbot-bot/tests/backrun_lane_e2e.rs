@@ -99,6 +99,8 @@ async fn lane_pipeline_reaches_exact_sim() {
                 index: &index,
                 ids: &ids,
                 leg: &leg,
+                p_family: degenbot_bot::sidecar_engine::LaneFamily::V2,
+                staged_p: None,
                 pair_reserves: (r0, r1),
                 cap: 8,
                 head: provider.get_block_number().await.unwrap_or(1),

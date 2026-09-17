@@ -2636,6 +2636,7 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-rpc",
+ "degenbot-uniswap",
  "futures-util",
  "proptest",
  "pyo3",

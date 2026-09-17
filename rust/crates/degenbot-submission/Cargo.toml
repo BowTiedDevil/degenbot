@@ -26,6 +26,9 @@ degenbot-decoders.workspace = true
 # The sidecar bin's DB-backed connector index (DFYDYI B3) reads the
 # workspace DB once at startup.
 degenbot-db.workspace = true
+
+# V3 pool CREATE2 resolution (the router wire never names the pool).
+degenbot-uniswap.workspace = true
 thiserror = { version = "^2.0" }
 # OTel tier-1 spans (RMHQAR, epic 2LXPPV): plain `tracing` spans - the
 # process-wide subscriber (degenbot-bot/degenbot-python) exports them;
