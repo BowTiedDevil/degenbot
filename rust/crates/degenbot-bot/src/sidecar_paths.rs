@@ -381,6 +381,26 @@ impl V2ConnectorIndex {
         order
     }
 
+    /// The V2 edge degree for a `(token, quote)` pair: how many indexed
+    /// edges actually connect the two. The per-frame quote selector reads
+    /// this to keep only quotes the touched token really trades against.
+    #[must_use]
+    pub fn edge_degree(&self, token_id: u64, quote_id: u64) -> usize {
+        let Some(idxs) = self.by_token.get(&token_id) else {
+            return 0;
+        };
+        rank_candidates(&self.edges, idxs, token_id, quote_id, PoolKind::V2).len()
+    }
+
+    /// The V3 edge degree — the V3 half of the per-frame quote selector.
+    #[must_use]
+    pub fn v3_edge_degree(&self, token_id: u64, quote_id: u64) -> usize {
+        let Some(idxs) = self.v3_by_token.get(&token_id) else {
+            return 0;
+        };
+        rank_candidates(&self.v3_edges, idxs, token_id, quote_id, PoolKind::V3).len()
+    }
+
     /// The edge of a known pool id.
     #[must_use]
     pub fn pool_edge(&self, pool_id: u64) -> Option<&V2Edge> {
@@ -631,6 +651,29 @@ mod tests {
 
         assert!(ix.pool_edge(3).is_some());
         assert!(ix.pool_edge(99).is_none());
+    }
+
+    #[tokio::test]
+    async fn edge_degree_counts_only_pair_edges() {
+        let mut ix = V2ConnectorIndex::default();
+        // (20, 10) edges: 1, 2; (20, 30): 3; V3 (20, 10): 12.
+        ix.push_edge(edge(1, 20, 10));
+        ix.push_edge(edge(2, 10, 20));
+        ix.push_edge(edge(3, 20, 30));
+        ix.push_v3_edge(V3Edge {
+            pool_id: 12,
+            token0_id: 20,
+            token1_id: 10,
+            address: Address::new([12; 20]),
+            fee: 500,
+            tick_spacing: 10,
+        });
+
+        assert_eq!(ix.edge_degree(20, 10), 2);
+        assert_eq!(ix.edge_degree(20, 30), 1);
+        assert_eq!(ix.edge_degree(30, 10), 0);
+        assert_eq!(ix.v3_edge_degree(20, 10), 1);
+        assert_eq!(ix.v3_edge_degree(20, 30), 0);
     }
 }
 

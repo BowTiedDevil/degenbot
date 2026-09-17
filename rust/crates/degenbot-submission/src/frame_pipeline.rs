@@ -70,9 +70,16 @@ use parking_lot::RwLock;
 /// `v4_unsupported` instead of guessing a decode).
 const V4_POOL_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
 
-/// The canonical mainnet WETH address — the quote asset every frame family
-/// here is denominated in.
+/// The canonical mainnet WETH address — the base (settlement) quote.
 pub const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+/// The canonical mainnet USDC address — a supported per-frame quote.
+pub const USDC: Address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+/// The canonical mainnet USDT address — a supported per-frame quote.
+pub const USDT: Address = address!("dac17f958d2ee523a2206206994597c13d831ec7");
+/// The per-frame quote set: every affected pool may settle its drift cycle
+/// in any of these, selected by the touched token's edge degree. Outside
+/// the set, a pool keeps its truthful no-quote skip.
+pub const SUPPORTED_QUOTES: [Address; 3] = [WETH, USDC, USDT];
 
 // ─────────────────────────────────────────────────────────────────────────
 // Offline-review capture (moved verbatim from the bin: capture failures
@@ -487,6 +494,16 @@ pub const fn family_label(family: PoolFamily) -> &'static str {
 // Workspace admission (frame-scoped scope; replayed state verbatim)
 // ─────────────────────────────────────────────────────────────────────────
 
+/// One settlement quote an admitted pool supports: the quote's identity +
+/// DB ids for the fan's `(token, quote)` connector lookups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AffectedQuote {
+    pub quote: Address,
+    pub quote_id: u64,
+    /// The pool's OTHER token — the discovery fan's token side.
+    pub tok_id: u64,
+}
+
 /// An affected pool admitted into THIS frame's scope with its replayed
 /// post-target state.
 #[derive(Debug, Clone)]
@@ -498,8 +515,10 @@ pub struct AffectedPool {
     pub index_pool_id: u64,
     pub token0: Address,
     pub token1: Address,
-    /// The non-WETH token's DB id (the discovery fan's token side).
-    pub tok_index_id: u64,
+    /// The supported quotes the pool trades (a subset of
+    /// [`SUPPORTED_QUOTES`]; empty keeps the truthful no-quote skip). The
+    /// discovery fan picks per frame by edge degree.
+    pub quotes: Vec<AffectedQuote>,
     pub family: LaneFamily,
 }
 
@@ -511,19 +530,32 @@ pub struct DiscoveredConnector {
     pub family: LaneFamily,
 }
 
-/// WETH-denomination orientation of an admitted pool: `None` when the pool
-/// does not trade WETH (outside this lane's domain).
-fn weth_orientation(rt: &StrategyRuntime, token0: Address, token1: Address) -> Option<u64> {
-    let weth_id = rt.weth_id()?;
-    let t0 = rt.token_id(token0)?;
-    let t1 = rt.token_id(token1)?;
-    if t0 == weth_id {
-        Some(t1)
-    } else if t1 == weth_id {
-        Some(t0)
-    } else {
-        None
+/// The supported-quote orientations of an admitted pool: one entry per
+/// [`SUPPORTED_QUOTES`] member the pool trades, with the other side's DB id
+/// for the fan. Unjoined ids drop that orientation (no id, no fan).
+fn quote_orientations(
+    rt: &StrategyRuntime,
+    token0: Address,
+    token1: Address,
+) -> Vec<AffectedQuote> {
+    let mut out = Vec::new();
+    for (quote, other) in [(token0, token1), (token1, token0)] {
+        if !SUPPORTED_QUOTES.contains(&quote) {
+            continue;
+        }
+        let Some(quote_id) = rt.token_id(quote) else {
+            continue;
+        };
+        let Some(tok_id) = rt.token_id(other) else {
+            continue;
+        };
+        out.push(AffectedQuote {
+            quote,
+            quote_id,
+            tok_id,
+        });
     }
+    out
 }
 
 /// Admit every typed extracted post-state into the frame's fresh workspace
@@ -586,18 +618,19 @@ pub fn admit_extracted(
                     skip(st.address, "v2-admit");
                     continue;
                 };
-                if let Some(tok_id) = weth_orientation(rt, token0, token1) {
+                let quotes = quote_orientations(rt, token0, token1);
+                if quotes.is_empty() {
+                    skip(st.address, "no-supported-quote");
+                } else {
                     out.push(AffectedPool {
                         address: st.address,
                         workspace_pool_id: p_id,
                         index_pool_id: edge.pool_id,
                         token0,
                         token1,
-                        tok_index_id: tok_id,
+                        quotes,
                         family: LaneFamily::V2,
                     });
-                } else {
-                    skip(st.address, "not-weth-pair");
                 }
             }
             PoolFamily::V3 { tick_spacing, .. } => {
@@ -647,18 +680,19 @@ pub fn admit_extracted(
                     skip(st.address, "v3-admit");
                     continue;
                 };
-                if let Some(tok_id) = weth_orientation(rt, token0, token1) {
+                let quotes = quote_orientations(rt, token0, token1);
+                if quotes.is_empty() {
+                    skip(st.address, "no-supported-quote");
+                } else {
                     out.push(AffectedPool {
                         address: st.address,
                         workspace_pool_id: p_id,
                         index_pool_id: edge.pool_id,
                         token0,
                         token1,
-                        tok_index_id: tok_id,
+                        quotes,
                         family: LaneFamily::V3 { fee: edge.fee },
                     });
-                } else {
-                    skip(st.address, "not-weth-pair");
                 }
             }
             // Descriptors guarantee `Unsupported` was filtered upstream.
@@ -786,10 +820,12 @@ fn floor_div_i64(a: i64, b: i64) -> i64 {
 // Discovery + solve
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The two 2-hop cycles for a (staged affected pool, connector) pairing:
-/// buy at the connector + sell into the staged pool, and the reverse. Both
-/// pools trade the SAME token pair, so the canonical token order is shared
-/// and orientations cannot drift between the solve and the composer.
+/// The two drift cycles for a (staged affected pool, connector) pairing in
+/// `quote`: enter on the quote side, exit on the token side (and reverse).
+/// Both cycle pools trade the SAME token pair, so pair-level canonical
+/// order is shared; the QUOTE level is only closed in WETH (wei-honest
+/// 2-hops) — for every other quote the caller must wrap these with the
+/// priced [`Normalization`] legs before declaring.
 #[must_use]
 pub fn two_hop_cycles(
     p: &AffectedPool,
@@ -797,8 +833,8 @@ pub fn two_hop_cycles(
     token0: Address,
     token1: Address,
     tok: Address,
+    quote: Address,
 ) -> Vec<Vec<SidecarHopRef>> {
-    let weth = WETH;
     let hop = |pool_id: u64, pool: Address, zfo: bool, family: LaneFamily| SidecarHopRef {
         pool_id,
         pool,
@@ -807,11 +843,39 @@ pub fn two_hop_cycles(
         zfo,
         family,
     };
-    let buy_on_c = hop(c.workspace_pool_id, c.address, weth == token0, c.family);
+    let buy_on_c = hop(c.workspace_pool_id, c.address, quote == token0, c.family);
     let sell_into_p = hop(p.workspace_pool_id, p.address, tok == token0, p.family);
-    let buy_on_p = hop(p.workspace_pool_id, p.address, weth == token0, p.family);
+    let buy_on_p = hop(p.workspace_pool_id, p.address, quote == token0, p.family);
     let sell_into_c = hop(c.workspace_pool_id, c.address, tok == token0, c.family);
     vec![vec![buy_on_c, sell_into_p], vec![buy_on_p, sell_into_c]]
+}
+
+/// The priced WETH ↔ quote normalization lane for a non-WETH settlement
+/// quote: two DISTINCT deep quote pools from the depth-ranked index, one
+/// WETH→quote and one quote→WETH. Both legs ride the candidate as hops, so
+/// the cycle closes in WETH and the solver's profit is wei; a reused pool
+/// would double-count its reserves in the chain solve, hence the pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Normalization {
+    /// WETH → quote (input = WETH).
+    pub inbound: SidecarHopRef,
+    /// Quote → WETH (input = quote, the inverse direction).
+    pub outbound: SidecarHopRef,
+}
+
+/// One quote's discovery fan for an affected pool: the quote's connectors
+/// (already admitted) and the priced normalization legs when the quote is
+/// not WETH.
+#[derive(Debug, Clone)]
+pub struct QuoteFan {
+    pub quote: Address,
+    pub quote_id: u64,
+    pub connectors: Vec<DiscoveredConnector>,
+    /// `None` for WETH (already the base quote — 2-hop cycles are
+    /// wei-honest) or when the normalization could not be priced on the
+    /// spot (the fan's candidates drop with the frame's `non_base_quote`
+    /// observation).
+    pub normalization: Option<Normalization>,
 }
 
 /// Solve stats for the JSONL trace + the composed candidate.
@@ -821,46 +885,170 @@ pub struct SolveStats {
     pub cycles_declared: usize,
     pub cycles_evaluated: usize,
     pub best: Option<LaneCandidate>,
+    /// A non-WETH quote fan had connectors but no priceable WETH
+    /// normalization lane, so its candidates were refused (the frame's
+    /// truthful `non_base_quote` observation when nothing else composed).
+    pub non_base_quote_dropped: bool,
 }
 
-/// Declare both drift cycles per (affected, connector) pairing, evaluate
-/// envelope-gated, and keep the best. Pure workspace work (no I/O) — the
-/// code-only fixture test drives this directly.
-pub fn solve_pairs(
+/// Wrap the quote-land 2-hop drift cycle with the priced normalization
+/// legs: `WETH →quote → tok → quote → WETH`, one connected WETH-closed
+/// path whose solver profit is wei. Both hops carry their own pool's
+/// canonical pair order and zfo direction.
+fn normalized_cycle(base: Vec<SidecarHopRef>, norm: &Normalization) -> Vec<SidecarHopRef> {
+    let mut path = Vec::with_capacity(base.len() + 2);
+    path.push(norm.inbound);
+    path.extend(base);
+    path.push(norm.outbound);
+    path
+}
+
+/// Solve every quote fan of one affected pool: declare both drift cycles
+/// per (quote, connector) pairing — wrapped in the priced normalization
+/// lane for non-WETH quotes — evaluate envelope-gated (wei floor vs wei
+/// profit for every quote), and keep the best. Pure workspace work (no
+/// I/O) — the code-only fixture tests drive this directly; ranking across
+/// quotes compares profits in wei, never in quote units.
+pub fn solve_fans(
     solver: &mut SidecarSolver,
     affected: &AffectedPool,
-    connectors: &[DiscoveredConnector],
-    token0: Address,
-    token1: Address,
+    fans: &[QuoteFan],
     gas_floor_wei: U256,
 ) -> SolveStats {
-    let tok = if token0 == WETH { token1 } else { token0 };
     let mut stats = SolveStats {
-        connectors: connectors.len(),
+        connectors: fans.iter().map(|f| f.connectors.len()).sum(),
         ..SolveStats::default()
     };
-    for c in connectors {
-        for cycle in two_hop_cycles(affected, c, token0, token1, tok) {
-            let idx = solver.declare_hops(&cycle);
-            stats.cycles_declared += 1;
-            let Some(res) = solver.evaluate(idx, gas_floor_wei) else {
-                continue;
-            };
-            stats.cycles_evaluated += 1;
-            let profit = res.profit.to::<u128>();
-            if stats.best.as_ref().is_some_and(|b| b.profit >= profit) {
-                continue;
+    for fan in fans {
+        if fan.quote != WETH && fan.normalization.is_none() {
+            // Quote-land candidates exist but cannot close in WETH honestly:
+            // refuse them (never "convert for ranking only").
+            stats.non_base_quote_dropped = !fan.connectors.is_empty();
+            continue;
+        }
+        let tok = if affected.token0 == fan.quote {
+            affected.token1
+        } else {
+            affected.token0
+        };
+        for c in &fan.connectors {
+            for base in two_hop_cycles(
+                affected,
+                c,
+                affected.token0,
+                affected.token1,
+                tok,
+                fan.quote,
+            ) {
+                let cycle = match fan.normalization {
+                    Some(norm) => normalized_cycle(base, &norm),
+                    None => base,
+                };
+                let idx = solver.declare_hops(&cycle);
+                stats.cycles_declared += 1;
+                let Some(res) = solver.evaluate(idx, gas_floor_wei) else {
+                    continue;
+                };
+                stats.cycles_evaluated += 1;
+                let profit = res.profit.to::<u128>();
+                if stats.best.as_ref().is_some_and(|b| b.profit >= profit) {
+                    continue;
+                }
+                stats.best = Some(LaneCandidate {
+                    hops: cycle,
+                    optimal_input: res.optimal_input.to::<u128>(),
+                    hop_outputs: res.hop_outputs.iter().map(|v| v.to::<u128>()).collect(),
+                    consumed_inputs: res.consumed_inputs.iter().map(|v| v.to::<u128>()).collect(),
+                    profit,
+                });
             }
-            stats.best = Some(LaneCandidate {
-                hops: cycle,
-                optimal_input: res.optimal_input.to::<u128>(),
-                hop_outputs: res.hop_outputs.iter().map(|v| v.to::<u128>()).collect(),
-                consumed_inputs: res.consumed_inputs.iter().map(|v| v.to::<u128>()).collect(),
-                profit,
-            });
         }
     }
     stats
+}
+
+/// The truthful observe label for an un-composed frame: a non-base-quote
+/// fan whose normalization hop could not be priced dropped a real
+/// quote-land candidate — distinct from "no work on this frame" — unless a
+/// WETH-closing candidate actually solved (then the existing label, which
+/// already explains the composed/sim verdict, stays).
+#[must_use]
+pub fn honest_observe(
+    reason: &'static str,
+    non_base_quote_dropped: bool,
+    solved_any: bool,
+) -> &'static str {
+    match (reason, non_base_quote_dropped, solved_any) {
+        ("no_candidate", true, false) => "non_base_quote",
+        _ => reason,
+    }
+}
+
+/// Price the WETH ↔ `quote` normalization lane on the spot for a non-WETH
+/// settlement quote: walk the quote's depth-ranked WETH connector ranking,
+/// admit the first TWO distinct pools priced through the frame's chain view
+/// (raw-RPC fallback), and build the two hops. `None` when fewer than two
+/// pools price — the caller drops the quote's candidates with the frame's
+/// `non_base_quote` observation. `exclude_pool` keeps the affected pool
+/// itself out of the lane (it already runs as the arbitrage hop).
+async fn price_normalization(
+    rt: &StrategyRuntime,
+    idx: &V2ConnectorIndex,
+    quote: &AffectedQuote,
+    exclude_pool: u64,
+    solver: &mut SidecarSolver,
+    scratch: &mut ScratchEvm<ScratchDb<'_>>,
+    provider: &AlloyProvider,
+) -> Option<Normalization> {
+    let weth_id = rt.weth_id()?;
+    let quote_addr = rt.token_addr(quote.quote_id)?;
+    // Deepest first (the ranking memo); only V2 legs — the cheapest to
+    // price honestly per frame.
+    let cands = idx
+        .connectors(quote.quote_id, weth_id, exclude_pool, rt.connector_cap)
+        .await;
+    let mut legs: Vec<SidecarHopRef> = Vec::with_capacity(2);
+    for (edge, quote_is_token0) in cands {
+        let reserves: Option<(u128, u128)> = match view_v2_reserves(scratch, edge.address) {
+            Some(r) => Some(r),
+            None => degenbot_bot::sidecar_solve::fetch_v2_reserves(provider, edge.address).await,
+        };
+        let Some((r0, r1)) = reserves else {
+            continue;
+        };
+        let (token0, token1) = if quote_is_token0 {
+            (quote_addr, WETH)
+        } else {
+            (WETH, quote_addr)
+        };
+        let Ok(ws_id) = solver.admit_v2(&SidecarV2Pool {
+            address: edge.address,
+            token0,
+            token1,
+            reserve0: r0,
+            reserve1: r1,
+        }) else {
+            continue;
+        };
+        legs.push(SidecarHopRef {
+            pool_id: ws_id,
+            pool: edge.address,
+            token0,
+            token1,
+            // The inbound leg inputs WETH; zfo is true iff WETH is token0.
+            zfo: WETH == token0,
+            family: LaneFamily::V2,
+        });
+        if legs.len() == 2 {
+            break;
+        }
+    }
+    let inbound = legs.first().copied()?;
+    let outbound = SidecarHopRef {
+        zfo: !legs[1].zfo, // the outbound leg inputs quote
+        ..legs[1]
+    };
+    Some(Normalization { inbound, outbound })
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1022,97 +1210,179 @@ pub async fn process_frame(
         return FrameArtifacts::observe("no_candidate", stages);
     }
 
-    // ── stage: discovery fan (connectors(), depth-ranked) ────────────────
+    // ── stage: discovery fan (per-frame quote set; depth-ranked) ─────────
     let t = Instant::now();
     let Some(idx) = rt.index.as_ref() else {
         return FrameArtifacts::observe("no_candidate", stages);
     };
-    let Some(weth_id) = rt.weth_id() else {
+    if rt.weth_id().is_none() {
         return FrameArtifacts::observe("no_candidate", stages);
-    };
-    let mut discovered: HashMap<Address, Vec<DiscoveredConnector>> = HashMap::new();
+    }
+    // Quote selection by touched-token edge degree (V2 + V3 index): quotes
+    // that actually connect rank first (WETH on ties), quotes that cannot
+    // connect drop out, and the connector budget splits across the rest.
+    let mut selected: Vec<Vec<AffectedQuote>> = Vec::with_capacity(affected.len());
+    for a in &affected {
+        let mut ranked: Vec<(AffectedQuote, usize)> = a
+            .quotes
+            .iter()
+            .map(|q| {
+                (
+                    *q,
+                    idx.edge_degree(q.tok_id, q.quote_id)
+                        + idx.v3_edge_degree(q.tok_id, q.quote_id),
+                )
+            })
+            .collect();
+        ranked.retain(|(_, deg)| *deg > 0);
+        ranked
+            .sort_by_key(|(q, deg)| (std::cmp::Reverse(*deg), std::cmp::Reverse(q.quote == WETH)));
+        selected.push(ranked.into_iter().map(|(q, _)| q).collect());
+    }
+    let mut fans: Vec<Vec<QuoteFan>> = Vec::with_capacity(affected.len());
+    // Normalization lanes memoize per (quote, excluded affected pool) so a
+    // second pool settling in the same quote reuses the priced hops.
+    let mut normalizations: HashMap<(u64, u64), Option<Normalization>> = HashMap::new();
     let mut cycles_proposed = 0usize;
     let mut connectors_seen = 0usize;
-    for a in &affected {
-        let cands = idx
-            .connectors(a.tok_index_id, weth_id, a.index_pool_id, rt.connector_cap)
-            .await;
-        let v3cands = idx
-            .v3_connectors(a.tok_index_id, weth_id, a.index_pool_id, rt.connector_cap)
-            .await;
-        connectors_seen += cands.len() + v3cands.len();
-        cycles_proposed += 2 * (cands.len() + v3cands.len());
-        let mut admitted = Vec::new();
-        for (edge, _) in cands {
-            let reserves = match view_v2_reserves(scratch, edge.address) {
-                Some(r) => r,
-                None => {
-                    match degenbot_bot::sidecar_solve::fetch_v2_reserves(provider, edge.address)
-                        .await
-                    {
-                        Some(r) => r,
-                        None => continue,
-                    }
-                }
-            };
-            if let Ok(c_id) = solver.admit_v2(&SidecarV2Pool {
-                address: edge.address,
-                token0: a.token0,
-                token1: a.token1,
-                reserve0: reserves.0,
-                reserve1: reserves.1,
-            }) {
-                admitted.push(DiscoveredConnector {
-                    address: edge.address,
-                    workspace_pool_id: c_id,
-                    family: LaneFamily::V2,
-                });
-            }
-        }
-        for (v3e, _) in v3cands {
-            // Same-chain-view first; the raw-RPC ladder only as fallback.
-            let admitted_id = if let Some((sqrt, tk, liq, tick_data)) = read_v3_view(
-                scratch,
-                v3e.address,
-                ClSlotLayout::UniswapV3,
-                v3e.tick_spacing,
-                head,
-            ) {
-                solver.admit_v3_explicit(
-                    v3e.address,
-                    a.token0,
-                    a.token1,
-                    v3e.fee,
-                    v3e.tick_spacing,
-                    sqrt,
-                    liq,
-                    tk,
-                    tick_data,
-                    head,
-                )
+    let mut non_base_quote_dropped = false;
+    for (ai, a) in affected.iter().enumerate() {
+        let quotes = &selected[ai];
+        let mut pool_fans = Vec::with_capacity(quotes.len());
+        let per_quote_cap = if rt.connector_cap == 0 {
+            0
+        } else {
+            (rt.connector_cap / quotes.len()).max(1)
+        };
+        for q in quotes {
+            let normalization = if q.quote == WETH {
+                None
             } else {
-                solver
-                    .admit_v3_full(
+                let key = (q.quote_id, a.index_pool_id);
+                if let std::collections::hash_map::Entry::Vacant(e) = normalizations.entry(key) {
+                    let priced = price_normalization(
+                        rt,
+                        idx,
+                        q,
+                        a.index_pool_id,
+                        &mut solver,
+                        scratch,
                         provider,
+                    )
+                    .await;
+                    trace_jsonl(
+                        "normalize",
+                        serde_json::json!({
+                            "tx": tx_hex,
+                            "quote": format!("0x{}", alloy::hex::encode(q.quote)),
+                            "priced": priced.is_some(),
+                        }),
+                    );
+                    e.insert(priced);
+                }
+                normalizations.get(&key).copied().flatten()
+            };
+            if q.quote != WETH && normalization.is_none() {
+                // Quote-land candidates exist in the index but cannot close
+                // in WETH honestly: refuse instead of converting for
+                // ranking only.
+                trace_jsonl(
+                    "discover_skip",
+                    serde_json::json!({
+                        "tx": tx_hex,
+                        "reason": "non_base_quote",
+                        "quote": format!("0x{}", alloy::hex::encode(q.quote)),
+                    }),
+                );
+                non_base_quote_dropped = true;
+                continue;
+            }
+            let cands = idx
+                .connectors(q.tok_id, q.quote_id, a.index_pool_id, per_quote_cap)
+                .await;
+            let v3cands = idx
+                .v3_connectors(q.tok_id, q.quote_id, a.index_pool_id, per_quote_cap)
+                .await;
+            connectors_seen += cands.len() + v3cands.len();
+            cycles_proposed += 2 * (cands.len() + v3cands.len());
+            let mut admitted = Vec::new();
+            for (edge, _) in cands {
+                let reserves = match view_v2_reserves(scratch, edge.address) {
+                    Some(r) => r,
+                    None => {
+                        match degenbot_bot::sidecar_solve::fetch_v2_reserves(provider, edge.address)
+                            .await
+                        {
+                            Some(r) => r,
+                            None => continue,
+                        }
+                    }
+                };
+                if let Ok(c_id) = solver.admit_v2(&SidecarV2Pool {
+                    address: edge.address,
+                    token0: a.token0,
+                    token1: a.token1,
+                    reserve0: reserves.0,
+                    reserve1: reserves.1,
+                }) {
+                    admitted.push(DiscoveredConnector {
+                        address: edge.address,
+                        workspace_pool_id: c_id,
+                        family: LaneFamily::V2,
+                    });
+                }
+            }
+            for (v3e, _) in v3cands {
+                // Same-chain-view first; the raw-RPC ladder only as fallback.
+                let admitted_id = if let Some((sqrt, tk, liq, tick_data)) = read_v3_view(
+                    scratch,
+                    v3e.address,
+                    ClSlotLayout::UniswapV3,
+                    v3e.tick_spacing,
+                    head,
+                ) {
+                    solver.admit_v3_explicit(
                         v3e.address,
                         a.token0,
                         a.token1,
                         v3e.fee,
                         v3e.tick_spacing,
-                        None,
+                        sqrt,
+                        liq,
+                        tk,
+                        tick_data,
                         head,
                     )
-                    .await
-            };
-            if let Some(c_id) = admitted_id {
-                admitted.push(DiscoveredConnector {
-                    address: v3e.address,
-                    workspace_pool_id: c_id,
-                    family: LaneFamily::V3 { fee: v3e.fee },
-                });
+                } else {
+                    solver
+                        .admit_v3_full(
+                            provider,
+                            v3e.address,
+                            a.token0,
+                            a.token1,
+                            v3e.fee,
+                            v3e.tick_spacing,
+                            None,
+                            head,
+                        )
+                        .await
+                };
+                if let Some(c_id) = admitted_id {
+                    admitted.push(DiscoveredConnector {
+                        address: v3e.address,
+                        workspace_pool_id: c_id,
+                        family: LaneFamily::V3 { fee: v3e.fee },
+                    });
+                }
             }
+            pool_fans.push(QuoteFan {
+                quote: q.quote,
+                quote_id: q.quote_id,
+                connectors: admitted,
+                normalization,
+            });
         }
-        discovered.insert(a.address, admitted);
+        fans.push(pool_fans);
     }
     stages.discover_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
     trace_jsonl(
@@ -1122,20 +1392,19 @@ pub async fn process_frame(
             "connectors": connectors_seen,
             "cycles_proposed": cycles_proposed,
             "affected": affected.len(),
+            "non_base_quote_dropped": non_base_quote_dropped,
         }),
     );
 
-    // ── stage: solve (envelope-gated 2-hop fans) ──────────────────────────
+    // ── stage: solve (envelope-gated fans; wei across every quote) ───────
     let t = Instant::now();
     let mut aggregate = SolveStats::default();
-    for a in &affected {
-        let Some(conns) = discovered.get(&a.address) else {
-            continue;
-        };
-        let stats = solve_pairs(&mut solver, a, conns, a.token0, a.token1, pl.gas_floor_wei);
+    for (a, pool_fans) in affected.iter().zip(&fans) {
+        let stats = solve_fans(&mut solver, a, pool_fans, pl.gas_floor_wei);
         aggregate.connectors += stats.connectors;
         aggregate.cycles_declared += stats.cycles_declared;
         aggregate.cycles_evaluated += stats.cycles_evaluated;
+        aggregate.non_base_quote_dropped |= stats.non_base_quote_dropped;
         if stats.best.as_ref().is_some_and(|b| {
             aggregate
                 .best
@@ -1145,6 +1414,7 @@ pub async fn process_frame(
             aggregate.best = stats.best;
         }
     }
+    aggregate.non_base_quote_dropped |= non_base_quote_dropped;
     stages.solve_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
 
     // ── stage: compose + `eth_callMany` gate ──────────────────────────────
@@ -1209,7 +1479,18 @@ pub async fn process_frame(
             Decision::Observe {
                 reason: "sim_gate_failed",
             } => Decision::Observe {
-                reason: "no_candidate",
+                reason: honest_observe(
+                    "no_candidate",
+                    aggregate.non_base_quote_dropped,
+                    aggregate.best.is_some(),
+                ),
+            },
+            Decision::Observe { reason } => Decision::Observe {
+                reason: honest_observe(
+                    reason,
+                    aggregate.non_base_quote_dropped,
+                    aggregate.best.is_some(),
+                ),
             },
             d => d,
         }
