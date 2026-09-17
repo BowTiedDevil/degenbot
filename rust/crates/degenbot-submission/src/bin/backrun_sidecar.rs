@@ -43,6 +43,7 @@ use degenbot_submission::frame_pipeline::{
     build_block_handle, load_fixture_frames, process_frame, trace_jsonl, PipelineConfig,
     StrategyRuntime,
 };
+use degenbot_submission::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submit::{dispatch_and_submit, BundleTarget, SubmitCandidate};
@@ -123,6 +124,7 @@ async fn run_frame(
     operator_nonce: u64,
     signer: Option<&TxSigner>,
     gap_probe: &degenbot_submission::gap_probe::GapProbe,
+    quarantine: &mut Quarantine,
 ) {
     // Decode-stage reject: a frame whose gas field reads zero can never
     // pass the EVM's pre-checks (`CallGasCostMoreThanGasLimit` fires
@@ -171,6 +173,38 @@ async fn run_frame(
             "head": head,
         }),
     );
+    if let Some(degenbot_simulation::sim::evm::frame_replay::ReplayFrameError::GapPending {
+        claimed,
+        expected,
+    }) = &artifacts.replay_frame_error
+    {
+        let parked = ParkedFrame {
+            hash: ev.hash,
+            from: ev.from,
+            to: ev.to,
+            value: ev.value,
+            data: ev.data.clone(),
+            gas: ev.gas,
+            max_fee_per_gas: ev.max_fee_per_gas,
+            max_priority_fee_per_gas: ev.max_priority_fee_per_gas,
+            claimed_nonce: ev.nonce,
+            arrived_at: std::time::Instant::now(),
+            expected_at_capture: *expected,
+        };
+        let parked_count = quarantine.push(parked);
+        trace_jsonl(
+            "quarantine",
+            serde_json::json!({
+                "action": "park",
+                "tx": ev.hash.to_string(),
+                "claimed_nonce": claimed,
+                "expected_nonce": expected,
+                "parked": parked_count,
+                "gap": claimed - expected,
+            }),
+        );
+    }
+
     if let Decision::Observe {
         reason: "gap_pending",
     } = &artifacts.decision
@@ -446,6 +480,8 @@ async fn main() {
 
     let mut spent = U256::ZERO;
 
+    let mut quarantine = Quarantine::new();
+
     if let Some(frames) = fixture_frames {
         // Dry-run over the capture: every frame processed once, in order.
         for ev in &frames {
@@ -475,6 +511,7 @@ async fn main() {
                 operator_nonce,
                 signer.as_ref(),
                 &gap_probe,
+                &mut quarantine,
             )
             .await;
         }
@@ -514,6 +551,95 @@ async fn main() {
                         );
                     }
                 }
+
+                // Gap-quarantine FSM tick: on a fresh head every parked sender
+                // re-polls against the new state; frames the state closure
+                // covered rerun through the full frame path.
+                for sender in quarantine.senders() {
+                    let head_nonce: u64 = sim_client
+                        .request::<(Address, &str), U256>(
+                            std::borrow::Cow::from("eth_getTransactionCount"),
+                            (sender, "latest"),
+                        )
+                        .await
+                        .ok()
+                        .map_or(u64::MAX, |v| u64::try_from(v).unwrap_or(u64::MAX));
+                    for (frame, decision) in
+                        quarantine.poll(sender, head_nonce, &[], std::time::Instant::now())
+                    {
+                        match decision {
+                            QuarantineDecision::ClosedByHead => {
+                                trace_jsonl(
+                                    "quarantine",
+                                    serde_json::json!({"action": "closed_by_head", "tx": frame.hash.to_string()}),
+                                );
+                                let ev = degenbot_rpc::backrun_feed::BackrunFeedEvent {
+                                    hash: frame.hash,
+                                    chain_id: 1,
+                                    from: frame.from,
+                                    to: frame.to,
+                                    value: frame.value,
+                                    data: frame.data,
+                                    gas: frame.gas,
+                                    max_fee_per_gas: frame.max_fee_per_gas,
+                                    max_priority_fee_per_gas: frame.max_priority_fee_per_gas,
+                                    nonce: frame.claimed_nonce,
+                                    access_list: serde_json::Value::Null,
+                                    tx_type: 2,
+                                    received_unix_ms: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(0)),
+                                };
+                                run_frame(
+                                    &ev,
+                                    &mut runtime,
+                                    &provider,
+                                    &sim_client,
+                                    &cfg,
+                                    &pl,
+                                    &mut handle,
+                                    head,
+                                    0,
+                                    &mut spent,
+                                    &dispatcher,
+                                    operator_nonce,
+                                    signer.as_ref(),
+                                    &gap_probe,
+                                    &mut quarantine,
+                                )
+                                .await;
+                            }
+                            QuarantineDecision::GapExpired => {
+                                trace_jsonl(
+                                    "quarantine",
+                                    serde_json::json!({"action": "gap_expired", "tx": frame.hash.to_string()}),
+                                );
+                                tracing::info!(
+                                    "observe tx=0x{:x} reason=\"gap_expired\"",
+                                    frame.hash
+                                );
+                            }
+                            QuarantineDecision::Rescue { predecessors } => {
+                                trace_jsonl(
+                                    "quarantine",
+                                    serde_json::json!({"action": "rescue_event_unsupported",
+                                        "tx": frame.hash.to_string(),
+                                        "predecessors": predecessors,
+                                    }),
+                                );
+                            }
+                            QuarantineDecision::StillWaiting { unknown } => {
+                                trace_jsonl(
+                                    "quarantine",
+                                    serde_json::json!({"action": "still_waiting",
+                                        "tx": frame.hash.to_string(),
+                                        "unknown_nonces": unknown,
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -542,6 +668,7 @@ async fn main() {
                 operator_nonce,
                 signer.as_ref(),
                 &gap_probe,
+                &mut quarantine,
             )
             .await;
         }

@@ -72,6 +72,7 @@ pub mod error;
 pub mod fee;
 pub mod frame_pipeline;
 pub mod gap_probe;
+pub mod gap_quarantine;
 pub mod monitor;
 pub mod params;
 pub mod signer;

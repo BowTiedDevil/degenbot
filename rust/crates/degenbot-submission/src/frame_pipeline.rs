@@ -301,16 +301,27 @@ impl StageTimings {
 /// Everything the bin needs after one frame: the gate decision (with a
 /// TRUTHFUL observe reason), the bid request, the composed artifact, and
 /// the stage timings for the JSONL trace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct FrameArtifacts {
     pub decision: Decision,
     pub requested_bid: U256,
     pub submit_calldata: Option<Bytes>,
     pub stages: StageTimings,
+    /// The typed replay failure when the frame died at the replay seam
+    /// (`Decision::Observe { reason }` mirrors `replay_observe_reason`).
+    pub replay_frame_error: Option<ReplayFrameError>,
 }
 
 impl FrameArtifacts {
     fn observe(reason: &'static str, stages: StageTimings) -> Self {
+        Self::observe_with_replay_error(reason, stages, None)
+    }
+
+    fn observe_with_replay_error(
+        reason: &'static str,
+        stages: StageTimings,
+        replay_frame_error: Option<ReplayFrameError>,
+    ) -> Self {
         // The frame never composed a bid-able artifact: observe it with the
         // reason the STAGE produced, never a generic sim-gate label.
         Self {
@@ -318,6 +329,7 @@ impl FrameArtifacts {
             requested_bid: U256::ZERO,
             submit_calldata: None,
             stages,
+            replay_frame_error,
         }
     }
 }
@@ -1287,7 +1299,8 @@ pub async fn process_frame(
             }
             payload["observe_reason"] = serde_json::Value::String(reason.to_string());
             trace_jsonl("replay", payload);
-            return FrameArtifacts::observe(reason, stages);
+            let err = e.clone();
+            return FrameArtifacts::observe_with_replay_error(reason, stages, Some(err));
         }
     };
     stages.replay_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -1532,5 +1545,6 @@ pub async fn process_frame(
         requested_bid,
         submit_calldata,
         stages,
+        replay_frame_error: None,
     }
 }
