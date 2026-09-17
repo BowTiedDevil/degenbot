@@ -682,6 +682,7 @@ async fn main() {
             // Exact-sim gate: the submitted artifact (composed candidate or
             // the bare sweep) must succeed on the current head state or
             // nothing downstream may bid.
+            let composed_any = candidate_calldata.is_some();
             let submit_calldata = match candidate_calldata {
                 Some((cd, bid)) => {
                     requested_bid = requested_bid.max(bid);
@@ -747,6 +748,20 @@ async fn main() {
                 spent,
             );
 
+            // The observe label tells the truth: a frame that never composed
+            // a candidate must not read as "the sim rejected our work".
+            let decision = if composed_any {
+                decision
+            } else {
+                match decision {
+                    Decision::Observe {
+                        reason: "sim_gate_failed",
+                    } => Decision::Observe {
+                        reason: "no_candidate",
+                    },
+                    d => d,
+                }
+            };
             match decision {
                 Decision::Bid { bid_wei } => {
                     let Some(s) = signer.as_ref() else {

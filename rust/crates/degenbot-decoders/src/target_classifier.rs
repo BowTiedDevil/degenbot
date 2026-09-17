@@ -87,6 +87,9 @@ pub struct SwapLeg {
 pub struct RouterRegistry {
     v2_router: Option<Address>,
     v3_router: Option<Address>,
+    /// `SwapRouter02`: the same wire semantics as `v3_router` under different
+    /// selectors; the shape that dominates current feed traffic.
+    v3_router_02: Option<Address>,
     universal_router: Option<Address>,
     v3_npm: Option<Address>,
     v4_pool_manager: Option<Address>,
@@ -103,6 +106,7 @@ impl RouterRegistry {
         Self {
             v2_router: Some(addr("0x7a250d5630b4cf539739df2c5dacb4c659f2488d")),
             v3_router: Some(addr("0xE592427A0AEce92De3Edee1F18E0157C05861564")),
+            v3_router_02: Some(addr("0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45")),
             universal_router: Some(addr("0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD")),
             v3_npm: Some(addr("0xC36442b4a4522E871399CD717aBDD847Ab11FE88")),
             v4_pool_manager: Some(addr("0x000000000004444c5dc75cb358380d2e3de08a90")),
@@ -149,6 +153,12 @@ mod sel {
     pub const V3_EXACT_INPUT: [u8; 4] = [0xc0, 0x4b, 0x8d, 0x59];
     pub const V3_EXACT_OUTPUT_SINGLE: [u8; 4] = [0xdb, 0x3e, 0x21, 0x98];
     pub const V3_EXACT_OUTPUT: [u8; 4] = [0xf2, 0x8c, 0x04, 0x91];
+    // SwapRouter02 (0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45): the SAME
+    // tuple layouts, different selectors, dominating current traffic.
+    pub const V3_EXACT_INPUT_SINGLE_02: [u8; 4] = [0x04, 0xe4, 0x5a, 0xaf];
+    pub const V3_EXACT_INPUT_02: [u8; 4] = [0x42, 0xd9, 0x8b, 0xf6];
+    pub const V3_EXACT_OUTPUT_SINGLE_02: [u8; 4] = [0x50, 0x23, 0xb4, 0xdf];
+    pub const V3_EXACT_OUTPUT_02: [u8; 4] = [0x09, 0xb8, 0x13, 0x46];
     pub const NPM_COLLECT: [u8; 4] = [0xac, 0x96, 0x50, 0xd8];
     pub const NPM_DECREASE_LIQUIDITY: [u8; 4] = [0x0e, 0xc9, 0x3d, 0x7c];
     pub const UR_EXECUTE_ARR: [u8; 4] = [0x24, 0x85, 0x6b, 0xc3];
@@ -217,7 +227,7 @@ pub fn classify(to: Address, data: &[u8], reg: &RouterRegistry) -> TargetClass {
     if Some(to) == reg.v2_router {
         return classify_v2_router(sel, args);
     }
-    if Some(to) == reg.v3_router {
+    if Some(to) == reg.v3_router || Some(to) == reg.v3_router_02 {
         return classify_v3_router(sel, args);
     }
     // Unknown target + selector: provably uninteresting for our pool set.
@@ -293,7 +303,7 @@ fn classify_v2_router(sel: [u8; 4], args: &[u8]) -> TargetClass {
 
 fn classify_v3_router(sel: [u8; 4], args: &[u8]) -> TargetClass {
     match sel {
-        s if s == sel::V3_EXACT_INPUT_SINGLE => {
+        s if s == sel::V3_EXACT_INPUT_SINGLE || s == sel::V3_EXACT_INPUT_SINGLE_02 => {
             // (ExactInputSingleParams): (tokenIn, tokenOut, fee, recipient,
             //  amountIn, amountOutMinimum, sqrtPriceLimitX96)
             let Some(t) = read_tuple(args) else {
@@ -315,7 +325,7 @@ fn classify_v3_router(sel: [u8; 4], args: &[u8]) -> TargetClass {
                 hops: 0,
             }])
         }
-        s if s == sel::V3_EXACT_OUTPUT_SINGLE => {
+        s if s == sel::V3_EXACT_OUTPUT_SINGLE || s == sel::V3_EXACT_OUTPUT_SINGLE_02 => {
             // (tokenIn, tokenOut, fee, recipient, amountOut, amountInMaximum, sqrtLimit)
             let Some(t) = read_tuple(args) else {
                 return TargetClass::Opaque(OpaqueReason::MalformedArgs);
@@ -336,7 +346,7 @@ fn classify_v3_router(sel: [u8; 4], args: &[u8]) -> TargetClass {
                 hops: 0,
             }])
         }
-        s if s == sel::V3_EXACT_INPUT => {
+        s if s == sel::V3_EXACT_INPUT || s == sel::V3_EXACT_INPUT_02 => {
             // (ExactInputParams): (bytes path, address recipient,
             //  uint256 amountIn, uint256 amountOutMinimum)
             let Some(t) = read_tuple(args) else {
@@ -355,7 +365,7 @@ fn classify_v3_router(sel: [u8; 4], args: &[u8]) -> TargetClass {
                 hops: v3_path_hops(t).unwrap_or_default(),
             }])
         }
-        s if s == sel::V3_EXACT_OUTPUT => {
+        s if s == sel::V3_EXACT_OUTPUT || s == sel::V3_EXACT_OUTPUT_02 => {
             // (bytes path, address recipient, uint256 amountOut,
             //  uint256 amountInMaximum). For exact-output the encoded path
             // direction REVERSES relative to the swap (first = tokenOut).

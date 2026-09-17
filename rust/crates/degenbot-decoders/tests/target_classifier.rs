@@ -100,6 +100,19 @@ fn v3_exact_input_single_calldata(
     cd
 }
 
+/// `SwapRouter02` carries the IDENTICAL tuple shape under a different
+/// selector -- and it is the router shape dominating the current feed.
+fn v3_exact_input_single_02_calldata(
+    token_in: Address,
+    token_out: Address,
+    amount_in: u64,
+    min_out: u64,
+) -> Vec<u8> {
+    let mut cd = v3_exact_input_single_calldata(token_in, token_out, amount_in, min_out);
+    cd[0..4].copy_from_slice(&[0x04, 0xe4, 0x5a, 0xaf]);
+    cd
+}
+
 /// V3 router exactInput(ExactInputParams): multihop path.
 fn v3_exact_input_calldata(hop_path_bytes: &[u8], amount_in: u64, min_out: u64) -> Vec<u8> {
     let mut args = Vec::new();
@@ -275,6 +288,7 @@ fn t06_v2_eth_paths_surface_weth_endpoint_and_min() {
     while args.len() % 32 != 0 {
         args.push(0);
     }
+
     let mut cd = vec![0x7f, 0xf3, 0x6a, 0xb5];
     cd.extend_from_slice(&args);
     let out = classify(
@@ -368,4 +382,27 @@ fn t12_malformed_v2_path_offset_is_opaque_never_guessed() {
         &RouterRegistry::mainnet(),
     );
     assert_eq!(out, TargetClass::Opaque(OpaqueReason::MalformedArgs));
+}
+
+#[test]
+fn t17_swaprouter02_exact_input_single_decodes_identically() {
+    // SwapRouter02: the SAME tuple shape under 0x04e45aaf, and the router
+    // shape dominating current MEVBlocker feed traffic.
+    let a = addr(TOKEN_A);
+    let b = addr(TOKEN_B);
+    let cd = v3_exact_input_single_02_calldata(a, b, 5_000, 4_999);
+    let out = classify(
+        addr("0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45"),
+        &cd,
+        &RouterRegistry::mainnet(),
+    );
+    let TargetClass::Swap(legs) = out else {
+        panic!("expected Swap, got {out:?}");
+    };
+    let l = &legs[0];
+    assert_eq!(l.protocol, PoolProtocol::V3);
+    assert_eq!(l.token_in, Some(a));
+    assert_eq!(l.token_out, Some(b));
+    assert_eq!(l.amount_in, Some(U256::from(5_000)));
+    assert_eq!(l.amount_out_min, Some(U256::from(4_999)));
 }
