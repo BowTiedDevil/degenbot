@@ -52,8 +52,10 @@ pub use oracle::{
 // now live in `degenbot-arbitrage`.
 pub use sim::evm::{
     apply_simulation_overrides, divergence_probe, emit_access_list_from_state, AccessListCollector,
-    BlockEvm, BlockSimHandle, BotStateDb, CallFrame, CallTrace, CallTraceHandle,
-    CallTraceInspector, CapturedSwap, FrameOutcome, ProductionBlockDb, SimInspector,
-    SimulationOverrideParams, StorageMemo, SwapEventCaptureHandle, SwapEventCaptureInspector,
-    SwapFamily, WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS,
+    BaseFeeSource, BlockEvm, BlockSimHandle, BotStateDb, CallFrame, CallTrace, CallTraceHandle,
+    CallTraceInspector, CapturedSwap, CountingFrameDb, FrameOutcome, FrameRpcCounter,
+    ProductionBlockDb, ReplayFrameError, ReplayOutcome, ReplayStatus, ReplayableTx, ScratchBlock,
+    ScratchDb, ScratchEvm, SimInspector, SimulationOverrideParams, StorageMemo,
+    SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily, WarmCodeCache,
+    WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS,
 };

@@ -13,14 +13,33 @@ workspace = true
 
 [dependencies]
 # revm — the canonical Rust EVM (audited, used by Reth/Foundry/many L2s).
-# `default-features = true` brings std + secp256k1 + c-kzg + blst + portable +
-# tracer (all mainnet precompiles — keep). `alloydb` enables `AlloyDB` (the
-# RPC-backed DatabaseAsyncRef). `asyncdb` enables `DatabaseAsyncRef` +
-# `WrapDatabaseAsync` (the async→sync Database bridge). `dev` is NOT enabled —
-# owner-funding uses explicit `CacheDB::insert_account_info` (the owner is
-# genuinely credited), keeping the sim a faithful mainnet execution (no
-# balance-check bypass).
-revm = { version = "^43.0", default-features = true, features = ["alloydb", "asyncdb"] }
+# Default-revmm features (std + secp256k1 + c-kzg + blst + portable + tracer —
+# all mainnet precompiles) are enumerated explicitly. `alloydb` enables
+# `AlloyDB` (the RPC-backed DatabaseAsyncRef). `asyncdb` enables
+# `DatabaseAsyncRef` + `WrapDatabaseAsync` (the async→sync Database bridge).
+revm = { version = "^43.0", default-features = false, features = [
+    # `default-features = true` + the two toggles the frame-replay seam needs
+    # (the strategy path leaves both at their default `false`):
+    # - `optional_balance_check` — the pending-tx balance-relaxation policy
+    #   (`ScratchEvm` sets `cfg.disable_balance_check`, see `frame_replay`);
+    # - `optional_no_base_fee` — the projected-basefee fallback
+    #   (`cfg.disable_base_fee`).
+    # All other revm defaults (std, secp256k1, c-kzg, blst, portable, tracer —
+    # all mainnet precompiles) are enumerated explicitly below. `dev` is NOT
+    # enabled — owner-funding uses explicit `CacheDB::insert_account_info` (the
+    # owner is genuinely credited), keeping the strategy sim a faithful
+    # mainnet execution (no balance-check bypass).
+    "alloydb",
+    "asyncdb",
+    "blst",
+    "c-kzg",
+    "optional_balance_check",
+    "optional_no_base_fee",
+    "portable",
+    "secp256k1",
+    "std",
+    "tracer",
+] }
 # The alloy umbrella (single source, matches degenbot-rpc's convention). The
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.

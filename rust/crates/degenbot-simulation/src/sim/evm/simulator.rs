@@ -103,6 +103,21 @@ pub type ProductionBlockDb<'a> = CacheDB<
     >,
 >;
 
+/// The frame-replay scratch stack's layered DB — the production stack with
+/// the cold-read counter ([`super::frame_replay::CountingFrameDb`]) embedded
+/// at its cold path (below the cross-block `WarmCodeCache` + the persistent
+/// ext `CacheDB`), so only true cold fetches count. See `frame_replay`.
+pub type ScratchDb<'a> = CacheDB<
+    super::WarmCodeCache<
+        super::frame_replay::CountingFrameDb<
+            super::BotStateDb<
+                'a,
+                WrapDatabaseAsync<revm::database::AlloyDB<Ethereum, ArcDynProviderEthereum>>,
+            >,
+        >,
+    >,
+>;
+
 /// The concrete per-block EVM type held by [`BlockSimHandle`] — revm's
 /// [`revm::MainnetEvm`] over the production [`ProductionBlockDb`] stack. The
 /// inspector type parameter is [`super::inspectors::SimInspector`] (a nested
@@ -145,6 +160,25 @@ pub struct BlockSimHandle<'a> {
     /// The shared revm EVM. `&mut`-borrowed per path via [`evm_mut`](Self::evm_mut)
     /// by the strategy; never aliased — the fan-out is serial.
     evm: BlockEvm<'a>,
+    /// Build inputs retained ONLY to stack frame-replay scratch EVMs
+    /// ([`Self::scratch_evm`]) — the same shape `build` took, so a scratch is
+    /// a faithful fresh instance of the layered stack under the same per-block
+    /// env. The shared EVM itself is never re-derivable from these.
+    provider_arc: Arc<dyn Provider<Ethereum>>,
+    rpc_url: String,
+    base_fee_next: u128,
+    current_block: u64,
+    block_timestamp: u64,
+    anchor: &'a SimAnchorState,
+    warm_cache: Arc<RwLock<super::WarmCodeCacheInner>>,
+    storage_memo: Option<std::sync::Arc<super::StorageMemo>>,
+    verify_divergence: bool,
+    /// The frame-replay scratch EVM, built lazily on the FIRST
+    /// [`Self::scratch_evm`] call and kept for the handle's life so its
+    /// warmed read-caches serve every later frame — only the per-frame DB
+    /// layer inside the scratch is discarded. `None` until first use (and
+    /// when no ambient multi-threaded runtime exists).
+    scratch: Option<super::frame_replay::ScratchEvm<super::ScratchDb<'a>>>,
 }
 
 impl<'a> BlockSimHandle<'a> {
@@ -277,7 +311,19 @@ impl<'a> BlockSimHandle<'a> {
             // parity gap.
             block.timestamp = U256::from(block_timestamp);
         });
-        Some(Self { evm })
+        Some(Self {
+            evm,
+            provider_arc: provider.provider_arc(),
+            rpc_url: provider.rpc_url().to_string(),
+            base_fee_next,
+            current_block,
+            block_timestamp,
+            anchor,
+            warm_cache: Arc::clone(warm_cache),
+            storage_memo: storage_memo.cloned(),
+            verify_divergence,
+            scratch: None,
+        })
     }
 
     /// Borrow the shared per-block EVM mutably — the strategy's
@@ -290,5 +336,60 @@ impl<'a> BlockSimHandle<'a> {
     #[must_use]
     pub fn evm_mut(&mut self) -> &mut BlockEvm<'a> {
         &mut self.evm
+    }
+
+    /// The frame-replay seam ([`super::frame_replay`]): a scratch engine over
+    /// a FRESHLY STACKED instance of the layered DB (same layers, new
+    /// instances — the shared EVM's journal and per-block `CacheDB` are never
+    /// aliased; the cross-block `WarmCodeCacheInner` owner arc IS shared, so
+    /// warm bytecode/account caches carry over). State overrides are NOT
+    /// applied — a foreign frame runs against chain state, not the strategy's
+    /// executor funding. Built lazily ONCE and kept for the handle's life, so
+    /// the scratch's warmed read-caches serve every later frame; only the
+    /// scratch's per-frame DB layer is discarded. The cold path is counted
+    /// (the soak-budget `rpc_reads`).
+    ///
+    /// Returns `None` when no ambient multi-threaded runtime exists for the
+    /// fresh `WrapDatabaseAsync` (same failure surface as [`Self::build`]).
+    pub fn scratch_evm(
+        &mut self,
+    ) -> Option<&mut super::frame_replay::ScratchEvm<super::ScratchDb<'a>>> {
+        if self.scratch.is_none() {
+            let alloy_db = revm::database::AlloyDB::new(
+                ArcDynProviderEthereum(Arc::clone(&self.provider_arc)),
+                BlockId::Number(self.current_block.into()),
+            );
+            let counter = std::sync::Arc::new(super::frame_replay::FrameRpcCounter::default());
+            self.scratch = WrapDatabaseAsync::new(alloy_db).map(|wrap_db| {
+                let bot_state_db = super::BotStateDb::new_with_code_probe(
+                    self.anchor,
+                    wrap_db,
+                    &self.rpc_url,
+                    self.current_block,
+                )
+                .with_storage_memo_opt(self.storage_memo.as_ref())
+                .with_divergence_probe(self.verify_divergence);
+                let counted_cold_path = super::frame_replay::CountingFrameDb::new(
+                    bot_state_db,
+                    std::sync::Arc::clone(&counter),
+                );
+                let warm_code_cache = super::WarmCodeCache::with_owner(
+                    Arc::clone(&self.warm_cache),
+                    self.current_block,
+                    counted_cold_path,
+                );
+                let ext = CacheDB::new(warm_code_cache);
+                super::frame_replay::ScratchEvm::with_counter(
+                    ext,
+                    super::frame_replay::ScratchBlock {
+                        number: self.current_block.saturating_add(1),
+                        timestamp: self.block_timestamp,
+                        base_fee_next: self.base_fee_next,
+                    },
+                    counter,
+                )
+            });
+        }
+        self.scratch.as_mut()
     }
 }

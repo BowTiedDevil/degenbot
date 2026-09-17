@@ -111,6 +111,13 @@ pub mod access_list;
 /// composed-tuple alias. Additive + test-only in the prototype; production wiring gated on the JHPW5W follow-on.
 pub mod inspectors;
 
+/// The frame-replay seam — replay ONE externally-received signed tx through
+/// a scratch EVM and return a typed, settled outcome
+/// ([`ReplayableTx`](frame_replay::ReplayableTx) /
+/// [`ReplayOutcome`](frame_replay::ReplayOutcome)). The seam decision +
+/// replay policy live in the module doc.
+pub mod frame_replay;
+
 /// Cross-block warm cache for immutable/long-TTL account data (bytecode +
 /// account existence) — the persistent layer underneath the per-block
 /// `CacheDB`. Caches `basic_ref` + `code_by_hash_ref` with a per-entry TTL;
@@ -119,6 +126,10 @@ pub mod warm_code_cache;
 
 pub use access_list::{emit_access_list_from_state, AccessListCollector};
 pub use bot_state_db::BotStateDb;
+pub use frame_replay::{
+    BaseFeeSource, CountingFrameDb, FrameRpcCounter, ReplayFrameError, ReplayOutcome, ReplayStatus,
+    ReplayableTx, ScratchBlock, ScratchEvm,
+};
 /// Re-export the diagnostic inspectors + captured structs (engine-generic,
 /// ADR-019 D7 — the PyO3 wrapper surfaces them as `#[pyclass]` thin shells).
 pub use inspectors::{
@@ -129,7 +140,7 @@ pub use inspectors::{
 /// surface it for the strategy crate (`degenbot-arbitrage`) + the
 /// PyO3 wrapper. The strategy types (`SimResult`, `SimulateContext`, …) now
 /// live in `degenbot-arbitrage`.
-pub use simulator::{BlockEvm, BlockSimHandle, ProductionBlockDb};
+pub use simulator::{BlockEvm, BlockSimHandle, ProductionBlockDb, ScratchDb};
 pub use state_override::{apply_simulation_overrides, SimulationOverrideParams};
 pub use storage_memo::StorageMemo;
 pub use warm_code_cache::{WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS};
