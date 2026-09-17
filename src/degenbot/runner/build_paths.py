@@ -512,20 +512,68 @@ class PathRegistrationPipeline:
         path_steps: Any,
         directions: list[bool] | None = None,
     ) -> RegistrationUnitOutcome:
-        """The per-path registration unit — SYNC, runs on a fleet seat (PRG-5).
+        """The per-path registration unit — SYNC, runs on a fleet seat.
 
-        The whole ``_consume`` body of the retired crawl shell, re-homed: the
-        hop builds ride the SAME Rust single-flighted build path (PRG-1), the
-        V3/V4 verify lifecycles run BLOCKING on the shared tokio runtime
-        (the seat owns no loop — the async twins serve the operator surface)
-        under the seat-claims at-most-once table (DMZ3DD), and the path Las
-        registers straight through the engine FFI (the dedup + cap are the
-        engine's, PRG-4). One unit = one path = one receipt; counters are
-        NEVER mutated here (concurrent seats) — the outcome travels back to
-        the single-loop driver, which folds it into the summary (the
-        counter-parity contract).
+        One unit = one path = one receipt. Hop builds ride the Rust
+        single-flighted build path, the V3/V4 verify lifecycles run BLOCKING
+        on the shared tokio runtime under the seat-claims at-most-once table,
+        and the engine FFI owns the path dedup + cap. Counters are NEVER
+        mutated here (concurrent seats): the returned outcome travels back to
+        the single-loop driver, which folds it into the summary.
         """
         steps = list(path_steps)
+        pool_type_strs = self._hop_pool_types(steps)
+
+        memoized = self._memoized_unregistrable_outcome(steps, pool_type_strs)
+        if memoized is not None:
+            return memoized
+
+        built = self._build_hop_pools(steps, pool_type_strs)
+        if isinstance(built, RegistrationUnitOutcome):
+            return built
+        pools = built
+
+        # Pools that reached the registration stage are the v4_pool_count
+        # parity witness (counted on registered AND rejected outcomes).
+        v4_hops = sum(1 for pt in pool_type_strs if pt == "V4")
+        reg = self.engine_registry
+
+        # Fatal contract: VerificationMismatchError / VerificationRpcError /
+        # DirectionResolutionError propagate out of the seat (through the
+        # receipt) and abort the pipeline loudly. Every OTHER
+        # registration-stage exception is the counted engine-reject path.
+        try:
+            plan = self._evaluate_registration_eligibility(pools, directions, v4_hops)
+            if isinstance(plan, RegistrationUnitOutcome):
+                return plan
+            engine_hops, hop_sig = plan
+
+            self._run_verify_lifecycles(pools, pool_type_strs, reg)
+
+            outcome = self._register_path_outcome(reg, engine_hops, hop_sig, v4_hops)
+            if outcome.kind == "registered":
+                # Only a completed registration (created or engine-dedup'd
+                # dup) enters the memo; stable negatives entered theirs at
+                # their own sites, and a failed verify stays retriable.
+                self._ledger.memoize_registered_path(hop_sig)
+        except (
+            VerificationMismatchError,
+            VerificationRpcError,
+            DirectionResolutionError,
+        ):
+            raise
+        except Exception as exc:
+            tag = f"{type(exc).__name__}: {exc}"
+            bot_logger.info(
+                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
+            )
+            return RegistrationUnitOutcome(kind="reject", tag=tag, v4_hops=v4_hops)
+        else:
+            return outcome
+
+    @staticmethod
+    def _hop_pool_types(steps: list[Any]) -> list[str]:
+        """Map each hop's DB table type to its version tag ("" when unknown)."""
         pool_type_strs: list[str] = []
         for step in steps:
             if issubclass(step.type, UniswapV2PoolTableBase):
@@ -536,11 +584,18 @@ class PathRegistrationPipeline:
                 pool_type_strs.append("V4")
             else:
                 pool_type_strs.append("")
+        return pool_type_strs
 
-        # Unregistrable-pool memo: a hop whose STABLE build refusal was already
-        # recorded answers here, before any build or verify — the pathological
-        # DFS region re-yielded one refused pool alongside thousands of
-        # candidate paths. The ledger owns the record.
+    def _memoized_unregistrable_outcome(
+        self,
+        steps: list[Any],
+        pool_type_strs: list[str],
+    ) -> RegistrationUnitOutcome | None:
+        """Answer a hop whose stable build refusal is already memoized.
+
+        The pathological DFS region re-yielded one refused pool alongside
+        thousands of candidate paths; the ledger owns the record.
+        """
         for step, pt in zip(steps, pool_type_strs, strict=True):
             memo = self._ledger.unregistrable_record(self._ledger.pool_memo_key(step, pt))
             if memo is not None:
@@ -549,7 +604,20 @@ class PathRegistrationPipeline:
                     tag=memo.outcome.value,
                     counts_as_skip=memo.counts_as_skip,
                 )
+        return None
 
+    def _build_hop_pools(
+        self,
+        steps: list[Any],
+        pool_type_strs: list[str],
+    ) -> list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] | RegistrationUnitOutcome:
+        """Build (or registry-answer) every hop, or return the refusal outcome.
+
+        V4 admission (dynamic-fee / fee-encoder-limit / hooked) is answered
+        pre-RPC by the FFI build call as a typed refusal; a stable refusal is a
+        pool fact and memoizes its hop identity, while a transient failure
+        stays retryable.
+        """
         pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] = []
         for step, pt in zip(steps, pool_type_strs, strict=True):
             if pt not in {"V2", "V3", "V4"}:
@@ -563,11 +631,6 @@ class PathRegistrationPipeline:
                     tag=RegistrationOutcome.V4_NO_HASH.value,
                 )
             try:
-                # PRG-1: the Rust build path single-flights duplicate builds
-                # and answers already-registered identities from the registry
-                # of record; PRG-2: the V4 admission gate (dynamic-fee /
-                # fee-encoder-limit / hooked) is answered pre-RPC by the FFI
-                # build call as a typed refusal.
                 if pt == "V2":
                     pool = self.constr_bot.build_pool(step.address, silent=True)
                 elif pt == "V3":
@@ -578,11 +641,6 @@ class PathRegistrationPipeline:
                         BuildManagedPoolRequest(pool_id=step.hash, silent=True),
                     )
             except Exception as exc:
-                # Ledger ask: typed stable-vs-transient classification (never
-                # the exception class name). A stable refusal is a pool fact —
-                # memoize its hop identity; a transient failure stays
-                # retryable (CXKACI: PoolAlreadyRegisteredError is a race
-                # artifact, never a pool fact).
                 refusal = self._ledger.classify_build_refusal(exc, pool_type=pt)
                 if refusal.stable:
                     self._ledger.memoize_unregistrable(
@@ -597,208 +655,161 @@ class PathRegistrationPipeline:
                     detail=refusal.detail,
                 )
             pools.append(cast("UniswapV2Pool | UniswapV3Pool | UniswapV4Pool", pool))
+        return pools
 
-        # Every hop is built (or was answered by the registry): the pools that
-        # reached the registration stage are the v4_pool_count parity witness.
-        v4_hops = sum(1 for pt in pool_type_strs if pt == "V4")
+    def _evaluate_registration_eligibility(
+        self,
+        pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
+        directions: list[bool] | None,
+        v4_hops: int,
+    ) -> tuple[list[tuple[int, bool]], tuple[tuple[int, bool], ...]] | RegistrationUnitOutcome:
+        """Resolve directions and run the pre-verify gates for one path.
 
-        reg = self.engine_registry
+        Returns the (engine_hops, hop_sig) plan to verify + register, or an
+        early outcome: a direction mismatch (skip), a memoized deny
+        (reject), or a hop signature already registered (registered dup).
+        The deployment-policy gate and the dup fast-path both sit in front of
+        ALL verify/RPC work.
+        """
+        zfo_list = self._resolve_path_directions(pools, directions)
+        if zfo_list is None:
+            # Operator-pinned directions whose per-hop count disagrees with
+            # the resolved path — name it rather than letting the later
+            # zip(strict=True) raise a cryptic TypeError.
+            return RegistrationUnitOutcome(
+                kind="skip",
+                tag=RegistrationOutcome.DIRECTION_MISMATCH.value,
+            )
 
-        # ── Registration stage (seat-thread) ──
-        # Pool registration INTO the engine already happened inside the build
-        # (PRG-1: the builders publish into the shared BotState). What remains
-        # per CL pool is the verify choreography (quarantine → seed-verify →
-        # drain+pin → post-drain-verify → set_live, IKGQ6F/ADR-022 D1), then
-        # the path registration (D7KMQO predicate + engine hop list). The sync
-        # lifecycle twins run parked on the shared tokio runtime inside
-        # py.detach; the seat claims table keeps them at-most-once per live
-        # window (concurrent paths sharing a pool would otherwise verify
-        # twice — wasted RPC and a false-mismatch tripwire risk).
-        #
-        # Fatal contract preserved byte-for-byte from the retired body: a
-        # VerificationMismatchError / VerificationRpcError is NOT swallowed —
-        # it propagates out of the seat (through the receipt) and aborts the
-        # pipeline loudly. Every OTHER registration-stage exception is the
-        # counted engine-reject path.
-        #
-        # Order within the try: directions → policy gate → hop ids → the dup
-        # fast-path → verify → register. The D7KMQO docstring promises
-        # "before any work", and the dup fast-path (W73FVY) must sit in front
-        # of verify: behind it, every duplicate candidate re-paid the full
-        # verify choreography because the engine dedup only answers at
-        # register_crawl_path (post-PRG-4 the crawl could not outrun its own
-        # duplicates — verified-pool thrash of 945 lifecycles/122 pools live).
+        engine_hops = [
+            (self._pool_engine_id(pool), zfo) for pool, zfo in zip(pools, zfo_list, strict=True)
+        ]
+        hop_sig = tuple(engine_hops)
+
+        # The policy deny is deterministic per hop signature, so a re-yielded
+        # candidate is answered without a second gate evaluation.
+        if self._ledger.path_rejected(hop_sig):
+            return RegistrationUnitOutcome(
+                kind="reject",
+                tag=RegistrationOutcome.PATH_REJECTED.value,
+            )
+
         try:
-            # Resolve directions. A resolution failure is a fatal invariant
-            # violation (subgraph vs constructed-pool disagree); the raised
-            # DirectionResolutionError aborts the registration pipeline and
-            # propagates to shut the bot down loudly.
-            zfo_list = self._resolve_path_directions(pools, directions)
-            if zfo_list is None:
-                # Operator-pinned directions whose per-hop count disagrees with
-                # the resolved path — the `zip(strict=True)` below would raise
-                # a cryptic TypeError (None is not iterable): name it, skip.
-                return RegistrationUnitOutcome(
-                    kind="skip",
-                    tag=RegistrationOutcome.DIRECTION_MISMATCH.value,
-                )
+            self.engine_registry.path_predicate.evaluate(list(zip(pools, zfo_list, strict=True)))
+        except PathRejectedError:
+            self._ledger.memoize_rejected_path(hop_sig)
+            raise
 
-            # Hop ids before the gate: pure reads of the built pools, needed
-            # by BOTH the negative path memo below and the D7KMQO gate — the
-            # gate still precedes ALL verify/RPC work (the constraint it has
-            # always carried).
-            engine_hops = [
-                (self._pool_engine_id(pool), zfo) for pool, zfo in zip(pools, zfo_list, strict=True)
-            ]
-            hop_sig = tuple(engine_hops)
+        # Dup fast-path: answer hop signatures already registered with the
+        # same outcome shape the engine dedup produces (created=False). The
+        # engine path registry stays the source of truth; a memo miss merely
+        # re-pays the old cost, and the only mutation is a GIL-atomic set.add.
+        if self._ledger.path_registered(hop_sig):
+            return RegistrationUnitOutcome(
+                kind="registered",
+                created=False,
+                v4_hops=v4_hops,
+            )
+        return engine_hops, hop_sig
 
-            # Rejected-path memo (cold-soak follow-up): the D7KMQO gate deny
-            # and the engine path-predicate deny are DETERMINISTIC per hop
-            # signature — a re-yieldedcandidate is answered without a second
-            # gate evaluation.
-            if self._ledger.path_rejected(hop_sig):
-                return RegistrationUnitOutcome(
-                    kind="reject",
-                    tag=RegistrationOutcome.PATH_REJECTED.value,
-                )
+    def _run_verify_lifecycles(
+        self,
+        pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
+        pool_type_strs: list[str],
+        reg: EngineRegistry,
+    ) -> None:
+        """Run the per-pool verify choreography before path registration.
 
-            # D7KMQO: enforce deployment policy before any verify work — the
-            # same pre-check register_path runs for the operator surface (a
-            # rejection is a typed PathRejectedError subtype, never engine);
-            # the deny is deterministic, so it memoizes before propagating.
-            try:
-                reg.path_predicate.evaluate(list(zip(pools, zfo_list, strict=True)))
-            except PathRejectedError:
-                self._ledger.memoize_rejected_path(hop_sig)
-                raise
+        The sync lifecycle twins run parked on the shared tokio runtime; the
+        seat-claims table keeps them at-most-once per live window, and the
+        verify-once memo makes a completed lifecycle a pool fact for this
+        pipeline lifetime.
+        """
+        for pool, pt in zip(pools, pool_type_strs, strict=True):
+            if pt == "V2":
+                self._warn_asymmetric_v2_fees(cast("UniswapV2Pool", pool))
+            elif pt == "V3":
+                self._verify_v3_pool(cast("UniswapV3Pool", pool), reg)
+            elif pt == "V4":
+                self._verify_v4_pool(cast("UniswapV4Pool", pool), reg)
 
-            # Dup fast-path (W73FVY): answer hop signatures ALREADY registered
-            # before the verify choreography, with the SAME outcome shape the
-            # engine dedup produces (created=False → the driver folds the dup
-            # counters identically, v4_hops parity included). The engine path
-            # registry stays the source of truth: this memo is exact within
-            # the pipeline (every crawl path and both operator surfaces funnel
-            # through _registration_unit; no other production caller registers
-            # crawl paths), and a memo miss merely re-pays the old cost — the
-            # engine still dedups at register_crawl_path. Concurrency: the
-            # signature is an immutable tuple and the only mutation is
-            # set.add (GIL-atomic); a raced duplicate add is idempotent, and
-            # a raced miss still resolves through engine dedup. Memory is
-            # bounded by the registered-path cap (MAX_REGISTERED_PATHS).
-            if self._ledger.path_registered(hop_sig):
-                return RegistrationUnitOutcome(
-                    kind="registered",
-                    created=False,
-                    v4_hops=v4_hops,
-                )
+    @staticmethod
+    def _warn_asymmetric_v2_fees(v2_pool: UniswapV2Pool) -> None:
+        """Warn when a V2 pool's two fee tiers differ."""
+        if v2_pool._fee_token0 != v2_pool._fee_token1:  # ruff:ignore[private-member-access]
+            bot_logger.warning(
+                f"Asymmetric V2 fees detected for {v2_pool.address} "
+                f"(fee_token0={v2_pool._fee_token0}, "  # ruff:ignore[private-member-access]
+                f"fee_token1={v2_pool._fee_token1}).",  # ruff:ignore[private-member-access]
+            )
 
-            for pool, pt in zip(pools, pool_type_strs, strict=True):
-                if pt == "V2":
-                    # V2 needs no lifecycle; mirror the retired
-                    # register_v2_pool diagnostic (asymmetric-fee warning) —
-                    # the key cache itself is the OPERATOR surface's state.
-                    v2_pool = cast("UniswapV2Pool", pool)
-                    if v2_pool._fee_token0 != v2_pool._fee_token1:  # ruff:ignore[private-member-access]
-                        bot_logger.warning(
-                            f"Asymmetric V2 fees detected for {v2_pool.address} "
-                            f"(fee_token0={v2_pool._fee_token0}, "  # ruff:ignore[private-member-access]
-                            f"fee_token1={v2_pool._fee_token1}).",  # ruff:ignore[private-member-access]
-                        )
-                elif pt == "V3":
-                    # DMZ3DD seat twin: at-most-once verify per pool address.
-                    # Cold-soak verify-once memo: the claims table dedups
-                    # CONCURRENT windows only; sequential sightings re-ran
-                    # the lifecycle for the same live pool (~50x live). A
-                    # completed lifecycle is a pool fact — never re-run it
-                    # this pipeline lifetime; a failed one is not recorded
-                    # (the add rides a successful return).
-                    v3_key = f"v3:{pool.address}"
-                    if not self._ledger.pool_verified(v3_key):
-                        self._verify_claims.run_exclusive(
-                            v3_key,
-                            lambda pool=pool, reg=reg: reg.run_v3_verify_lifecycle_sync(
-                                pool.address,
-                            ),
-                        )
-                        self._ledger.memoize_verified_pool(v3_key)
-                elif pt == "V4":
-                    v4_pool = cast("UniswapV4Pool", pool)
-                    v4_key = f"v4:{to_0x_hex(v4_pool.pool_id)}"
-                    if not self._ledger.pool_verified(v4_key):
-                        self._verify_claims.run_exclusive(
-                            v4_key,
-                            lambda v4_pool=v4_pool, reg=reg, policy=self.retry_policy_obj: (
-                                retry_verification_call(
-                                    policy,
-                                    reg.run_v4_verify_lifecycle_sync,
-                                    UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                                    to_0x_hex(v4_pool.pool_id),
-                                )
-                            ),
-                        )
-                        self._ledger.memoize_verified_pool(v4_key)
+    def _verify_v3_pool(self, pool: UniswapV3Pool, reg: EngineRegistry) -> None:
+        """At-most-once V3 verify per pool address (seat + memo dedup)."""
+        v3_key = f"v3:{pool.address}"
+        if self._ledger.pool_verified(v3_key):
+            return
+        self._verify_claims.run_exclusive(
+            v3_key,
+            lambda pool=pool, reg=reg: reg.run_v3_verify_lifecycle_sync(pool.address),
+        )
+        self._ledger.memoize_verified_pool(v3_key)
 
-            # PRG-4: the engine path registry dedups by construction; `created`
-            # is False exactly when the core signature dedup answered, and the
-            # cap refusal surfaces as the typed PathRegistryFullError (PRG-4).
-            try:
-                _path_id, created = reg.register_crawl_path(engine_hops)
-            except PathRegistryFullError:
-                # PRG-4: the cap refusal came from the ENGINE path registry —
-                # the benign stop (the driver stops discovery on this outcome).
-                return RegistrationUnitOutcome(
-                    kind="cap",
-                    tag=RegistrationOutcome.PATH_CAP.value,
-                    v4_hops=v4_hops,
-                )
-            except PathRejectedError:
-                # The engine path-predicate deny is deterministic per hop
-                # signature — stable-negative memo before propagating (the
-                # outer driver folds the reject identically).
-                self._ledger.memoize_rejected_path(hop_sig)
-                raise
-            except (
-                VerificationMismatchError,
-                VerificationRpcError,
-                DirectionResolutionError,
-            ):
-                # The typed fatals are never downgraded to a register-fail —
-                # a verification failure surfacing through the FFI refuses
-                # registration and refuses to be counted as a benign miss.
-                raise
-            except Exception as exc:
-                # A TRANSIENT register failure is deliberately NOT negatively
-                # memoized (a raced build or blip must stay retryable).
-                return RegistrationUnitOutcome(
-                    kind="register-fail",
-                    tag=RegistrationOutcome.REGISTER_FAILED.value,
-                    detail=f"{type(exc).__name__}: {exc}",
-                    v4_hops=v4_hops,
-                )
+    def _verify_v4_pool(self, pool: UniswapV4Pool, reg: EngineRegistry) -> None:
+        """At-most-once V4 verify per pool id, under the retry policy."""
+        v4_key = f"v4:{to_0x_hex(pool.pool_id)}"
+        if self._ledger.pool_verified(v4_key):
+            return
+        self._verify_claims.run_exclusive(
+            v4_key,
+            lambda v4_pool=pool, reg=reg, policy=self.retry_policy_obj: retry_verification_call(
+                policy,
+                reg.run_v4_verify_lifecycle_sync,
+                UNISWAP_V4_POOL_MANAGER_ADDRESS,
+                to_0x_hex(v4_pool.pool_id),
+            ),
+        )
+        self._ledger.memoize_verified_pool(v4_key)
 
-            # A completed registration (created or engine-dedup'd dup) enters
-            # the memo; stable-negative outcomes entered THEIR memos at their
-            # sites above — a failed verify never registered a path and must
-            # stay retriable, so it records nothing here.
-            self._ledger.memoize_registered_path(hop_sig)
+    def _register_path_outcome(
+        self,
+        reg: EngineRegistry,
+        engine_hops: list[tuple[int, bool]],
+        hop_sig: tuple[tuple[int, bool], ...],
+        v4_hops: int,
+    ) -> RegistrationUnitOutcome:
+        """Register the path with the engine, classifying the refusal.
+
+        The engine path registry dedups by construction; `created` is False
+        exactly when the core signature dedup answered, and the cap refusal
+        surfaces as the typed PathRegistryFullError. The typed fatals are
+        never downgraded to a register-fail, and a transient register failure
+        is deliberately NOT negatively memoized (a raced build or blip must
+        stay retryable).
+        """
+        try:
+            _path_id, created = reg.register_crawl_path(engine_hops)
+        except PathRegistryFullError:
+            return RegistrationUnitOutcome(
+                kind="cap",
+                tag=RegistrationOutcome.PATH_CAP.value,
+                v4_hops=v4_hops,
+            )
+        except PathRejectedError:
+            self._ledger.memoize_rejected_path(hop_sig)
+            raise
         except (
             VerificationMismatchError,
             VerificationRpcError,
             DirectionResolutionError,
         ):
-            # Fatal invariants preserved from the retired body: on-chain
-            # divergence (mismatch = the tripwire), transient-RPC exhaustion
-            # after retries, and the subgraph/constructed-pool disagreement —
-            # all propagate through the receipt and abort the crawl loudly.
             raise
         except Exception as exc:
-            # Engine registration failed — the counted (non-fatal) refusal.
-            tag = f"{type(exc).__name__}: {exc}"
-            bot_logger.info(
-                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
+            return RegistrationUnitOutcome(
+                kind="register-fail",
+                tag=RegistrationOutcome.REGISTER_FAILED.value,
+                detail=f"{type(exc).__name__}: {exc}",
+                v4_hops=v4_hops,
             )
-            return RegistrationUnitOutcome(kind="reject", tag=tag, v4_hops=v4_hops)
-
         return RegistrationUnitOutcome(
             kind="registered",
             created=created,
@@ -1153,16 +1164,28 @@ class PathRegistrationPipeline:
             )
 
 
+@dataclass
+class BuildPathsOptions:
+    """Optional knobs for :func:`build_paths`, all defaulted.
+
+    Bundling the optional construction/registration inputs keeps the
+    ``build_paths`` call site to the two required resources plus one options
+    object; each field mirrors the former keyword parameter.
+    """
+
+    v3_snapshot: UniswapV3LiquiditySnapshot | None = None
+    v4_snapshot: UniswapV4LiquiditySnapshot | None = None
+    retry_policy: VerificationRetryPolicy | None = None
+    context: ConstructionContext | None = None
+    pipeline: PathRegistrationPipeline | None = None
+    permutation_filter: frozenset[str] | None = None
+
+
 async def build_paths(
     *,
     bot: Bot,
     engine_registry: EngineRegistry,
-    v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
-    v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
-    retry_policy: VerificationRetryPolicy | None = None,
-    context: ConstructionContext | None = None,
-    pipeline: PathRegistrationPipeline | None = None,
-    permutation_filter: frozenset[str] | None = None,
+    options: BuildPathsOptions | None = None,
 ) -> None:
     """Discover V2/V3/V4 arb paths, build Python pools, register with Rust engine.
 
@@ -1178,14 +1201,19 @@ async def build_paths(
     :class:`PathRegistrationPipeline`; after it completes the orphan sweep
     releases Tracked pools whose path was skipped before ``register_vN_pool``.
     """
-    constr_ctx = context if context is not None else ConstructionContext.for_bot(bot, v3_snapshot)
+    opts = options if options is not None else BuildPathsOptions()
+    constr_ctx = (
+        opts.context
+        if opts.context is not None
+        else ConstructionContext.for_bot(bot, opts.v3_snapshot)
+    )
 
-    pipeline = pipeline or PathRegistrationPipeline(
+    pipeline = opts.pipeline or PathRegistrationPipeline(
         context=constr_ctx,
         engine_registry=engine_registry,
-        retry_policy=retry_policy,
+        retry_policy=opts.retry_policy,
     )
-    perms = set(permutation_filter) if permutation_filter else None
+    perms = set(opts.permutation_filter) if opts.permutation_filter else None
     pipeline.pool_type_per_depth = _parse_permutation_filter(perms)
     pipeline.pool_types = _pool_types_from_filter(perms)
     if pipeline.pool_type_per_depth is not None:

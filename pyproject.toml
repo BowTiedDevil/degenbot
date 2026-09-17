@@ -175,13 +175,6 @@ allow-star-arg-any = true
     "PLR0913",  # too-many-arguments
     "PLR0914",  # too-many-locals
 ]
-"src/degenbot/runner/build_paths.py" = [
-    "PLR0911",  # too-many-return-statements
-    "PLR0912",  # too-many-branches
-    "PLR0913",  # too-many-arguments
-    "PLR0914",  # too-many-locals
-    "PLR0915",  # too-many-statements
-]
 "src/degenbot/runner/config.py" = [
     "PLR0911",  # too-many-return-statements
     "PLR0913",  # too-many-arguments

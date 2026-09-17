@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from degenbot.runner.build_paths import (
+    BuildPathsOptions,
     _parse_permutation_filter,
     _pool_types_from_filter,
     build_paths,
@@ -78,10 +79,12 @@ class TestPermutation:
         await build_paths(
             bot=object(),  # type: ignore[arg-type]
             engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
-            context=object(),  # type: ignore[arg-type]
-            pipeline=pipe,  # type: ignore[arg-type]
-            retry_policy=None,
-            permutation_filter=frozenset({"V3-V4-V3"}),
+            options=BuildPathsOptions(
+                context=object(),  # type: ignore[arg-type]
+                pipeline=pipe,  # type: ignore[arg-type]
+                retry_policy=None,
+                permutation_filter=frozenset({"V3-V4-V3"}),
+            ),
         )
         assert pipe.pool_type_per_depth == _parse_permutation_filter({"V3-V4-V3"})
         assert pipe.pool_types == _pool_types_from_filter({"V3-V4-V3"})
@@ -91,9 +94,11 @@ class TestPermutation:
         await build_paths(
             bot=object(),  # type: ignore[arg-type]
             engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
-            context=object(),  # type: ignore[arg-type]
-            pipeline=pipe,  # type: ignore[arg-type]
-            retry_policy=None,
+            options=BuildPathsOptions(
+                context=object(),  # type: ignore[arg-type]
+                pipeline=pipe,  # type: ignore[arg-type]
+                retry_policy=None,
+            ),
         )
         assert pipe.pool_type_per_depth is None
         assert pipe.pool_types == _pool_types_from_filter(None)

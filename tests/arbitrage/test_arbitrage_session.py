@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import signal
 import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -52,9 +53,8 @@ def _restore_sigint() -> None:
     assertions. This fixture restores ``SIG_DFL`` after each test unconditionally.
     """
     yield
-    import signal as _signal
 
-    _signal.signal(_signal.SIGINT, _signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
 def _cfg(**overrides) -> ArbitrageConfig:
@@ -676,7 +676,6 @@ class TestBotRunnerSigintHandler:
     """
 
     async def test_install_binds_custom_handler_after_start(self) -> None:
-        import signal
 
         prev = signal.getsignal(signal.SIGINT)
         engine_registry = _FakeEngineRegistry()
@@ -697,7 +696,6 @@ class TestBotRunnerSigintHandler:
         assert bound != signal.SIG_DFL, "custom handler must replace the default"
 
     async def test_aexit_restores_previous_handler(self) -> None:
-        import signal
 
         baseline = signal.getsignal(signal.SIGINT)
         engine_registry = _FakeEngineRegistry()
@@ -724,7 +722,6 @@ class TestBotRunnerSigintHandler:
         )
 
     async def test_install_sigint_false_does_not_bind(self) -> None:
-        import signal
 
         baseline = signal.getsignal(signal.SIGINT)
         engine_registry = _FakeEngineRegistry()
@@ -750,7 +747,6 @@ class TestBotRunnerSigintHandler:
         # is killed the instant SIGINT arrives — not deferred until find_paths
         # yields. We invoke the handler directly (not via OS signal, which is
         # unsafe under pytest) — same callable Python would call.
-        import signal
 
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
@@ -850,8 +846,8 @@ class TestConstructionContext:
         # Injected builder => run() must NOT construct a context, and must pass
         # context=None to the injected builder.
         assert session._registration_context is None
-        assert "context" in seen["kwargs"]
-        assert seen["kwargs"]["context"] is None
+        assert "options" in seen["kwargs"]
+        assert seen["kwargs"]["options"].context is None
         # The builder still receives the other construction kwargs.
         assert seen["kwargs"]["engine_registry"] is engine_registry
 
@@ -924,7 +920,7 @@ class TestSubBBackgroundRegistration:
 
         async def recording_path_builder(**kwargs):
             await asyncio.sleep(0)
-            calls.append(kwargs["context"])
+            calls.append(kwargs["options"].context)
 
         await session._run_registration_background(
             path_builder=recording_path_builder,

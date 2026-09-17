@@ -59,7 +59,12 @@ from degenbot.runner._driver_constants import (
 from degenbot.runner._nonce_lane import NonceLane, relay_urls_from_env
 from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
 from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
-from degenbot.runner.build_paths import ConstructionContext, PathRegistrationPipeline, build_paths
+from degenbot.runner.build_paths import (
+    BuildPathsOptions,
+    ConstructionContext,
+    PathRegistrationPipeline,
+    build_paths,
+)
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.diag import arm_diagnostics
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
@@ -606,12 +611,14 @@ class BotRunner:
             await path_builder(
                 bot=session.bot,
                 engine_registry=session.engine_registry,
-                v3_snapshot=self.v3_snapshot,
-                v4_snapshot=self.v4_snapshot,
-                retry_policy=cfg.verification_retry_policy,
-                context=registration_context,
-                pipeline=pipeline,
-                permutation_filter=cfg.permutation_filter,
+                options=BuildPathsOptions(
+                    v3_snapshot=self.v3_snapshot,
+                    v4_snapshot=self.v4_snapshot,
+                    retry_policy=cfg.verification_retry_policy,
+                    context=registration_context,
+                    pipeline=pipeline,
+                    permutation_filter=cfg.permutation_filter,
+                ),
             )
             self._trim_python_state()
 
@@ -725,12 +732,14 @@ class BotRunner:
             await path_builder(
                 bot=self.bot,
                 engine_registry=self.engine_registry,
-                v3_snapshot=self.v3_snapshot,
-                v4_snapshot=self.v4_snapshot,
-                retry_policy=retry_policy,
-                context=registration_context,
-                pipeline=pipeline,
-                permutation_filter=self.cfg.permutation_filter,
+                options=BuildPathsOptions(
+                    v3_snapshot=self.v3_snapshot,
+                    v4_snapshot=self.v4_snapshot,
+                    retry_policy=retry_policy,
+                    context=registration_context,
+                    pipeline=pipeline,
+                    permutation_filter=self.cfg.permutation_filter,
+                ),
             )
             self._trim_python_state()
         except asyncio.CancelledError:
