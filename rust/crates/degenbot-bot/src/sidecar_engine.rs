@@ -145,13 +145,36 @@ impl Default for SidecarSolver {
     }
 }
 
+/// One executable hop of a lane candidate (executor-composer input).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidecarHopRef {
+    pub pool: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub zfo: bool,
+}
+
+/// The best executable path a lane found: everything the composer + exact
+/// sim need (epic DFYDYI B4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneCandidate {
+    pub hops: Vec<SidecarHopRef>,
+    pub optimal_input: u128,
+    pub hop_outputs: Vec<u128>,
+    pub consumed_inputs: Vec<u128>,
+    /// The solver's closed-form profit in the quote asset (wei).
+    pub profit: u128,
+}
+
 /// Observe-lane grade for one frame's connector solve (the B3/B4 seam).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LaneGrade {
     pub connectors: usize,
     pub paths_evaluated: usize,
     pub best_profit: U256,
     pub best_input: U256,
+    /// The best candidate when one cleared the gas floor.
+    pub best: Option<LaneCandidate>,
 }
 
 /// Per-frame lane inputs (bundled to keep the lane signature narrow).
@@ -254,36 +277,100 @@ impl SidecarSolver {
         let cands = index.connectors(tok_id, weth_id, p_edge.pool_id, cap);
         grade.connectors = cands.len();
         for (c_edge, _tok_flag) in cands {
-            let Some((cr0, cr1)) =
-                crate::sidecar_solve::fetch_v2_reserves(provider, c_edge.address).await
+            let Some(c_id) = self
+                .admit_connector(provider, c_edge.address, token0, token1)
+                .await
             else {
                 continue;
             };
-            let Ok(c_id) = self.admit_v2(&SidecarV2Pool {
-                address: c_edge.address,
-                token0,
-                token1,
-                reserve0: cr0,
-                reserve1: cr1,
-            }) else {
-                continue;
-            };
-            // Connector drives the opposite leg of the cycle.
-            // Direction 1: buy TOK on the staged P, sell to the connector.
-            let idx1 = self.declare(&[(p_id, p_weth_side_zfo), (c_id, tok_is_t0)]);
-            // Direction 2: buy TOK on the connector, sell into staged P.
-            let idx2 = self.declare(&[(c_id, !tok_is_t0), (p_id, p_tok_side_zfo)]);
-            for idx in [idx1, idx2] {
-                if let Some(res) = self.evaluate(idx, gas_floor_wei) {
-                    grade.paths_evaluated += 1;
-                    if res.profit > grade.best_profit {
-                        grade.best_profit = res.profit;
-                        grade.best_input = res.optimal_input;
-                    }
-                }
-            }
+            // Both directions of the (P staged, C) cycle, best kept.
+            self.eval_connector_directions(
+                &mut grade,
+                gas_floor_wei,
+                p_id,
+                c_id,
+                (p_weth_side_zfo, tok_is_t0),
+                (p_tok_side_zfo, !tok_is_t0),
+                pool_addr,
+                c_edge.address,
+                (token0, token1),
+            );
         }
         grade
+    }
+
+    /// Declare both cycle directions of a (staged P, connector C) pairing and
+    /// keep the best envelope-gated result on `grade`.
+    #[expect(clippy::too_many_arguments)]
+    fn eval_connector_directions(
+        &mut self,
+        grade: &mut LaneGrade,
+        gas_floor_wei: U256,
+        p_id: u64,
+        c_id: u64,
+        dir1: (bool, bool),
+        dir2: (bool, bool),
+        pool_p: Address,
+        pool_c: Address,
+        tokens: (Address, Address),
+    ) {
+        let idx1 = self.declare(&[(p_id, dir1.0), (c_id, dir1.1)]);
+        let idx2 = self.declare(&[(c_id, dir2.0), (p_id, dir2.1)]);
+        for idx in [idx1, idx2] {
+            let Some(res) = self.evaluate(idx, gas_floor_wei) else {
+                continue;
+            };
+            grade.paths_evaluated += 1;
+            if res.profit <= grade.best_profit {
+                continue;
+            }
+            grade.best_profit = res.profit;
+            grade.best_input = res.optimal_input;
+            let d1 = idx == idx1;
+            let hop_p = SidecarHopRef {
+                pool: pool_p,
+                token0: tokens.0,
+                token1: tokens.1,
+                zfo: if d1 { dir1.0 } else { dir2.1 },
+            };
+            let hop_c = SidecarHopRef {
+                pool: pool_c,
+                token0: tokens.0,
+                token1: tokens.1,
+                zfo: if d1 { dir1.1 } else { dir2.0 },
+            };
+            grade.best = Some(LaneCandidate {
+                hops: if d1 {
+                    vec![hop_p, hop_c]
+                } else {
+                    vec![hop_c, hop_p]
+                },
+                optimal_input: res.optimal_input.to::<u128>(),
+                hop_outputs: res.hop_outputs.iter().map(|v| v.to::<u128>()).collect(),
+                consumed_inputs: res.consumed_inputs.iter().map(|v| v.to::<u128>()).collect(),
+                profit: res.profit.to::<u128>(),
+            });
+        }
+    }
+
+    /// Admit a connector pool at its live reserves. `None` on fetch or
+    /// uint112-overflow failure (the connector is skipped for the frame).
+    async fn admit_connector(
+        &mut self,
+        provider: &degenbot_rpc::provider::AlloyProvider,
+        address: Address,
+        token0: Address,
+        token1: Address,
+    ) -> Option<u64> {
+        let (r0, r1) = crate::sidecar_solve::fetch_v2_reserves(provider, address).await?;
+        self.admit_v2(&SidecarV2Pool {
+            address,
+            token0,
+            token1,
+            reserve0: r0,
+            reserve1: r1,
+        })
+        .ok()
     }
 
     /// Stage the affected pair for a frame: exact `v2_post_target` overlay on
@@ -320,6 +407,87 @@ impl SidecarSolver {
             .ok()?;
         Some((p_id, !tok_is_t0, tok_is_t0))
     }
+}
+
+/// The composed candidate bundle: the executor's `execute(commands, config)`
+/// calldata, ready for the exact-sim oracle + submission (DFYDYI B4).
+///
+/// Funding = in-path flash (the leading pool's swap callback extends entry
+/// credit, repaid by the path), capture = executor custody, and the bid is
+/// the executor's native coinbase bribe: config `bribe_bips` on the TRUE
+/// profit delta (check mode 1 = WETH+ETH), recipient 0 = coinbase, with
+/// WETH auto-unwrap built into the bribe payout.
+///
+/// `None` when the composer rejects the shape (unsupported family / uint96
+/// overflow on a hop amount) -- the frame then falls back to observe.
+#[must_use]
+pub fn build_candidate_calldata(
+    candidate: &LaneCandidate,
+    executor: Address,
+    weth: Address,
+    bribe_bips: u16,
+) -> Option<alloy::primitives::Bytes> {
+    use degenbot_executor::composers::{
+        encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
+        HopInfo, V2HopInfo,
+    };
+    use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
+
+    if candidate.hops.len() < 2
+        || candidate.hop_outputs.len() != candidate.hops.len()
+        || candidate.consumed_inputs.len() != candidate.hops.len()
+    {
+        return None;
+    }
+    // V2_SWAP_COMPACT carries uint96 amounts.
+    let u96_max = u128::from(u64::MAX) * 0x1_0000_0000 + 0xFFFF_FFFF;
+    let too_big = |v: u128| v >= u96_max;
+    if too_big(candidate.optimal_input)
+        || candidate.hop_outputs.iter().any(|&v| too_big(v))
+        || candidate.consumed_inputs.iter().any(|&v| too_big(v))
+    {
+        return None;
+    }
+
+    let hops = candidate
+        .hops
+        .iter()
+        .map(|h| {
+            HopInfo::V2(V2HopInfo {
+                pool_address: h.pool,
+                token0_address: h.token0,
+                token1_address: h.token1,
+                fee: 30,
+                zfo: h.zfo,
+            })
+        })
+        .collect();
+    let req = EncodeRequest::new(
+        degenbot_executor::composers::PathInfo::new(hops),
+        candidate.optimal_input,
+        candidate.hop_outputs.clone(),
+        candidate.consumed_inputs.clone(),
+        EncodeOptions {
+            erc6909_profit: false,
+            use_v4_batch: false,
+            funding: FundingSource::InPathFlash,
+            capture: ProfitCapture::Custody,
+            bribe: Bribe::None,
+        },
+    );
+    // V4-only context field: irrelevant for all-V2 streams; the canonical
+    // mainnet PoolManager keeps the context well-formed.
+    let ctx = EncodeContext::new(
+        executor,
+        alloy::primitives::address!("000000000004444c5dc75cb358380d2e3de08a90"),
+        weth,
+    );
+    let commands = encode_cmd_stream(&ctx, &req)?;
+    // check_mode 1 (WETH+ETH true-delta check) + coinbase bribe bips.
+    let config = (U256::from(bribe_bips) << 8) | U256::from(1u8);
+    encode_execute_call(executor, &commands, config)
+        .ok()
+        .map(|call| alloy::primitives::Bytes::from(call.data.clone()))
 }
 
 #[cfg(test)]
@@ -436,5 +604,63 @@ mod tests {
         let mut s = SidecarSolver::new();
         let idx = s.declare(&[(1, false), (2, true)]);
         assert!(s.evaluate(idx, U256::ZERO).is_none());
+    }
+
+    #[test]
+    fn golden_candidate_composes_to_execute_calldata() {
+        use degenbot_executor::composers::EXECUTE_SELECTOR;
+        // canonical order: TOK (0x..aa1) < WETH -> token0 = TOK
+        let token0 = TOK;
+        let candidate = LaneCandidate {
+            hops: vec![
+                SidecarHopRef {
+                    pool: P,
+                    token0,
+                    token1: WETH,
+                    zfo: false,
+                },
+                SidecarHopRef {
+                    pool: Q,
+                    token0,
+                    token1: WETH,
+                    zfo: true,
+                },
+            ],
+            // The golden solve's numbers, via a scoped solver eval:
+            optimal_input: 123,
+            hop_outputs: vec![5_893_000, 1_235], // tok out + weth back (shape only)
+            consumed_inputs: vec![123, 5_892_315],
+            profit: 55,
+        };
+        let cd = build_candidate_calldata(&candidate, P, WETH, 1000).expect("composes");
+        assert_eq!(&cd[0..4], &EXECUTE_SELECTOR[..]);
+        // config = (1000 << 8) | 1 rides the head of the ABI tail; just
+        // sanity the total size bounds (selector + 0x40 + words + bytes).
+        assert!(cd.len() > 4 + 32 * 3 + 64);
+    }
+
+    #[test]
+    fn candidate_rejects_misaligned_hops() {
+        let candidate = LaneCandidate {
+            hops: vec![
+                SidecarHopRef {
+                    pool: P,
+                    token0: TOK,
+                    token1: WETH,
+                    zfo: false,
+                },
+                SidecarHopRef {
+                    pool: Q,
+                    token0: TOK,
+                    token1: WETH,
+                    zfo: true,
+                },
+            ],
+            optimal_input: 1,
+            hop_outputs: vec![1],
+            consumed_inputs: vec![1],
+            profit: 1,
+        };
+        assert!(build_candidate_calldata(&candidate, P, WETH, 1000).is_none());
     }
 }

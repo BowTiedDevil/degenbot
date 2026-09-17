@@ -233,6 +233,11 @@ async fn main() {
             // Reserves are fetched async BEFORE the (non-async) decision, so
             // the loop stays sequential and without nested executors.
             let mut requested_bid = U256::from(1);
+            // DFYDYI B4: when the connector lane finds a profitable 2-hop
+            // family, this becomes the composed execute(calldata) of the
+            // full candidate (coinbase bribe via the executor config word);
+            // submission calldata only ever holds a sim-verified artifact.
+            let mut candidate_calldata: Option<(alloy::primitives::Bytes, U256)> = None;
             if let TargetClass::Swap(legs) = &class {
                 for l in legs.iter().filter(|l| l.protocol == PoolProtocol::V2) {
                     let Some(pool) = l.pool else { continue };
@@ -291,14 +296,61 @@ async fn main() {
                                 },
                             )
                             .await;
-                        if grade.best_profit > U256::ZERO {
+                        if let Some(cand) = grade.best.as_ref() {
+                            // B4: compose + exact-sim the full candidate. The
+                            // bid rides the executor's native coinbase bribe
+                            // (bips on the TRUE profit delta), so the wire
+                            // bid = bips share of the solver profit.
+                            const BRIBE_BIPS: u16 = 1_000; // 10% of realized profit
+                            match degenbot_bot::sidecar_engine::build_candidate_calldata(
+                                cand,
+                                exec,
+                                degenbot_bot::sidecar_solve::weth(),
+                                BRIBE_BIPS,
+                            ) {
+                                Some(cd) => {
+                                    let sim_ok =
+                                        simulate_sweep(&provider, exec, ev.from, cd.clone())
+                                            .await
+                                            .is_some_and(|blocks| {
+                                                blocks.first().is_some_and(|b| {
+                                                    b.calls.first().is_some_and(|c| c.status)
+                                                })
+                                            });
+                                    if sim_ok {
+                                        let bid = U256::from(cand.profit) * U256::from(BRIBE_BIPS)
+                                            / U256::from(10_000u16);
+                                        candidate_calldata = Some((cd, bid.max(U256::from(1))));
+                                        tracing::info!(
+                                            pool = ?l.pool,
+                                            connectors = grade.connectors,
+                                            evaluated = grade.paths_evaluated,
+                                            profit = %cand.profit,
+                                            input = %cand.optimal_input,
+                                            "[connectors] candidate composed + sim PASSED"
+                                        );
+                                    } else {
+                                        tracing::info!(
+                                            pool = ?l.pool,
+                                            profit = %cand.profit,
+                                            "[connectors] candidate sim FAILED - observe"
+                                        );
+                                    }
+                                }
+                                None => {
+                                    tracing::debug!(
+                                        "[connectors] candidate shape rejected by composer"
+                                    );
+                                }
+                            }
+                        } else if grade.best_profit > U256::ZERO {
                             tracing::info!(
                                 pool = ?l.pool,
                                 connectors = grade.connectors,
                                 evaluated = grade.paths_evaluated,
                                 best_profit = %grade.best_profit,
                                 best_input = %grade.best_input,
-                                "[connectors] profitable 2-hop family (observe lane)"
+                                "[connectors] profitable family, no executable candidate"
                             );
                         } else if grade.connectors > 0 {
                             tracing::debug!(
@@ -311,15 +363,28 @@ async fn main() {
                 }
             }
 
-            // Exact-sim gate: the candidate bundle (sweep leg) must succeed on
-            // the current head state or nothing downstream may bid.
-            let sim_ok = simulate_sweep(&provider, exec, ev.from, sweep.clone())
-                .await
-                .is_some_and(|blocks| {
-                    blocks
-                        .first()
-                        .is_some_and(|b| b.calls.first().is_some_and(|c| c.status))
-                });
+            // Exact-sim gate: the submitted artifact (composed candidate or
+            // the bare sweep) must succeed on the current head state or
+            // nothing downstream may bid.
+            let submit_calldata = match candidate_calldata {
+                Some((cd, bid)) => {
+                    requested_bid = requested_bid.max(bid);
+                    Some(cd)
+                }
+                None => None,
+            };
+            let sim_ok = simulate_sweep(
+                &provider,
+                exec,
+                ev.from,
+                submit_calldata.clone().unwrap_or_else(|| sweep.clone()),
+            )
+            .await
+            .is_some_and(|blocks| {
+                blocks
+                    .first()
+                    .is_some_and(|b| b.calls.first().is_some_and(|c| c.status))
+            });
 
             let decision = decide(
                 &cfg,
@@ -358,7 +423,7 @@ async fn main() {
                         gas_used: 300_000,
                         priority_fee,
                         base_fee_next,
-                        execute_calldata: sweep.clone(),
+                        execute_calldata: submit_calldata.clone().unwrap_or_else(|| sweep.clone()),
                         executor_address: exec,
                         access_list: None,
                         path_pools: HashSet::new(),
