@@ -30,6 +30,11 @@ pub struct V2ConnectorIndex {
     by_pool: HashMap<u64, usize>,
     by_address: HashMap<Address, usize>,
     by_token: HashMap<u64, Vec<usize>>,
+    /// V3 edges + their adjacency (the CL connector lane, B2-CL).
+    v3_edges: Vec<V3Edge>,
+    v3_by_pool: HashMap<u64, usize>,
+    v3_by_address: HashMap<Address, usize>,
+    v3_by_token: HashMap<u64, Vec<usize>>,
 }
 
 impl V2ConnectorIndex {
@@ -127,6 +132,127 @@ impl V2ConnectorIndex {
     pub fn is_empty(&self) -> bool {
         self.edges.is_empty()
     }
+
+    /// The loaded V3 edge count (the B2-CL lane surface).
+    #[must_use]
+    pub fn v3_len(&self) -> usize {
+        self.v3_edges.len()
+    }
+}
+
+// ───────────────────────── V3 edges (DFYDYI B2-CL) ─────────────────────────
+
+/// One V3 edge: identity + the seed facts admission needs (fee in the 1e6
+/// convention + tick spacing) without a second scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V3Edge {
+    pub pool_id: u64,
+    pub token0_id: u64,
+    pub token1_id: u64,
+    pub address: Address,
+    /// The pool's fee, `bips` of 1e6 (3000 = 0.3%) -- the composer's unit.
+    pub fee: u32,
+    pub tick_spacing: i32,
+}
+
+impl V2ConnectorIndex {
+    /// Load the V3 edges (all v3-kind pools joined to their family table for
+    /// fee + tick spacing). One scan; call once at startup after `load`.
+    ///
+    /// # Errors
+    ///
+    /// DB failures propagate (`DbError`).
+    pub fn load_v3(&mut self, db: &DegenbotDb, chain_id: i64) -> Result<(), DbError> {
+        // The DB emits `0x`-prefixed checksum addresses; alloy parses those.
+        // (rows::decode::decode_address is pub(crate) to degenbot-db.)
+        let conn = db.lock();
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.token0_id, p.token1_id, p.address, v.fee_token0, v.tick_spacing \
+             FROM pools p JOIN uniswap_v3_pools v ON v.pool_id = p.id WHERE p.chain = ?1",
+        )?;
+        let mut rows = stmt.query([chain_id])?;
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let t0: i64 = row.get(1)?;
+            let t1: i64 = row.get(2)?;
+            let address: String = row.get(3)?;
+            let fee: i64 = row.get(4)?;
+            let tick_spacing: i64 = row.get(5)?;
+            let (Ok(pool_id), Ok(token0_id), Ok(token1_id)) =
+                (u64::try_from(id), u64::try_from(t0), u64::try_from(t1))
+            else {
+                continue;
+            };
+            let (Ok(fee), Ok(tick_spacing)) = (u32::try_from(fee), i32::try_from(tick_spacing))
+            else {
+                continue;
+            };
+            // The DB emits `0x`-prefixed checksum addresses; alloy parses
+            // those directly (rows::decode::decode_address is pub(crate)).
+            let address: Address = match address.parse() {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            let edge = V3Edge {
+                pool_id,
+                token0_id,
+                token1_id,
+                address,
+                fee,
+                tick_spacing,
+            };
+            let idx = self.v3_edges.len();
+            self.v3_by_pool.insert(edge.pool_id, idx);
+            self.v3_by_address.insert(edge.address, idx);
+            self.v3_by_token
+                .entry(edge.token0_id)
+                .or_default()
+                .push(idx);
+            self.v3_by_token
+                .entry(edge.token1_id)
+                .or_default()
+                .push(idx);
+            self.v3_edges.push(edge);
+        }
+        Ok(())
+    }
+
+    /// V3 connector candidates trading `token_id` against `quote_id`, same
+    /// contract as [`Self::connectors`]: `(edge, token is token0)`.
+    #[must_use]
+    pub fn v3_connectors(
+        &self,
+        token_id: u64,
+        quote_id: u64,
+        exclude_pool: u64,
+        limit: usize,
+    ) -> Vec<(&V3Edge, bool)> {
+        let mut out = Vec::new();
+        let Some(idxs) = self.v3_by_token.get(&token_id) else {
+            return out;
+        };
+        for &i in idxs {
+            let e = &self.v3_edges[i];
+            if e.pool_id == exclude_pool {
+                continue;
+            }
+            if e.token0_id == token_id && e.token1_id == quote_id {
+                out.push((e, true));
+            } else if e.token1_id == token_id && e.token0_id == quote_id {
+                out.push((e, false));
+            }
+            if out.len() >= limit {
+                break;
+            }
+        }
+        out
+    }
+
+    /// A V3 pool's edge by on-chain address.
+    #[must_use]
+    pub fn v3_edge_by_address(&self, address: Address) -> Option<&V3Edge> {
+        self.v3_by_address.get(&address).map(|&i| &self.v3_edges[i])
+    }
 }
 
 #[cfg(test)]
@@ -138,7 +264,7 @@ mod tests {
             pool_id,
             token0_id: t0,
             token1_id: t1,
-            address: Address::new([pool_id as u8; 20]),
+            address: Address::new([u8::try_from(pool_id).unwrap_or(0); 20]),
         }
     }
 

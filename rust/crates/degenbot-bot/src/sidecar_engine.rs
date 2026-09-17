@@ -14,6 +14,8 @@
 
 use alloy::primitives::{Address, U256};
 use degenbot_pools::v2_state::RegisterV2PoolParams;
+use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+use degenbot_pools::TickInfo;
 use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
 use degenbot_solvers::profit_envelope::GateDeps;
 
@@ -112,13 +114,14 @@ impl SidecarSolver {
     /// Hops referencing unknown pools make the path invalid for this frame
     /// (dropped loudly at resolve, not admitted lazily here).
     /// Declare a path from executable hop refs (the declare side of
-    /// [`SidecarHopRef`] -- cycle order is hop order).
+    /// [`SidecarHopRef`] -- cycle order is hop order; the per-hop family
+    /// carries the solver `HopType` so V2/V3 mixes resolve in one cycle).
     #[must_use]
     pub fn declare_hops(&mut self, hops: &[SidecarHopRef]) -> usize {
         let refs = hops
             .iter()
             .map(|h| MixedPoolRef {
-                hop_type: HopType::V2,
+                hop_type: h.family.hop_type(),
                 pool_key: h.pool_id,
                 zero_for_one: h.zfo,
             })
@@ -214,6 +217,109 @@ pub struct SidecarHopRef {
     pub token0: Address,
     pub token1: Address,
     pub zfo: bool,
+    /// The hop's protocol family (V2 or V3 with its 1e6 fee). The declared
+    /// `HopType` and the composer `HopInfo` both derive from this one tag.
+    pub family: LaneFamily,
+}
+
+/// The lane's resolved frame: everything the guard ladder derives, so the
+/// lane body stays a linear pipeline over checked inputs.
+struct LaneFrame<'a> {
+    pool_addr: Address,
+    tok_id: u64,
+    weth_id: u64,
+    p_pool_id: u64,
+    token0: Address,
+    token1: Address,
+    tok_is_t0: bool,
+    amount_in: u128,
+    in_is_t0: bool,
+    /// The leg's live `(reserve_in, reserve_out)` view.
+    r_view: (u128, u128),
+    cap: usize,
+    gas_floor_wei: U256,
+    index: &'a crate::sidecar_paths::V2ConnectorIndex,
+}
+
+/// Run the lane's guard ladder over the frame ctx: protocol/direction/
+/// amount/index checks, canonical pair order, and the leg->pair reserve
+/// mapping. `None` = the frame is outside the WETH-denominated 2-hop lane.
+fn resolve_lane_frame<'a>(ctx: &'a ConnectorLaneCtx<'_>) -> Option<LaneFrame<'a>> {
+    use degenbot_decoders::target_classifier::PoolProtocol;
+
+    let leg = ctx.leg;
+    if leg.protocol != PoolProtocol::V2 || leg.hops != 0 {
+        return None;
+    }
+    let pool_addr = leg.pool?;
+    let t_in = leg.token_in?;
+    let t_out = leg.token_out?;
+    let amount_in = u128::try_from(leg.amount_in?).ok()?;
+    if amount_in == 0 {
+        return None;
+    }
+    let weth = crate::sidecar_solve::weth();
+    let weth_id = *ctx.ids.get(&weth)?;
+    let t_in_id = *ctx.ids.get(&t_in)?;
+    let t_out_id = *ctx.ids.get(&t_out)?;
+    // WETH-denominated 2-hop family only (the mono-pool lane's domain).
+    let (tok, tok_id) = if weth_id == t_in_id {
+        (t_out, t_out_id)
+    } else if weth_id == t_out_id {
+        (t_in, t_in_id)
+    } else {
+        return None;
+    };
+    let p_edge = ctx.index.edge_by_address(pool_addr)?;
+    let (t0_id, t1_id) = (p_edge.token0_id, p_edge.token1_id);
+    if !((t0_id == tok_id && t1_id == weth_id) || (t0_id == weth_id && t1_id == tok_id)) {
+        return None;
+    }
+
+    // V2 canonical order: token0 = the smaller address.
+    let (token0, token1) = if tok < weth { (tok, weth) } else { (weth, tok) };
+    let tok_is_t0 = tok == token0;
+    let in_is_t0 = leg.token_in == Some(token0);
+    let r_view = if in_is_t0 {
+        ctx.pair_reserves
+    } else {
+        (ctx.pair_reserves.1, ctx.pair_reserves.0)
+    };
+    Some(LaneFrame {
+        pool_addr,
+        tok_id,
+        weth_id,
+        p_pool_id: p_edge.pool_id,
+        token0,
+        token1,
+        tok_is_t0,
+        amount_in,
+        in_is_t0,
+        r_view,
+        cap: ctx.cap,
+        gas_floor_wei: ctx.gas_floor_wei,
+        index: ctx.index,
+    })
+}
+
+/// The lane hop's protocol family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneFamily {
+    V2,
+    /// Concentrated liquidity carrying the pool's 1e6-convention fee.
+    V3 {
+        fee: u32,
+    },
+}
+
+impl LaneFamily {
+    #[must_use]
+    pub const fn hop_type(self) -> degenbot_solvers::mixed::HopType {
+        match self {
+            Self::V2 => degenbot_solvers::mixed::HopType::V2,
+            Self::V3 { .. } => degenbot_solvers::mixed::HopType::V3,
+        }
+    }
 }
 
 /// Build both cycles of a (staged P, connector C) pairing. Hops are the
@@ -226,22 +332,24 @@ fn connector_cycles(
     pool_c: Address,
     tokens: (Address, Address),
     tok_is_t0: bool,
+    c_family: LaneFamily,
 ) -> Vec<Vec<SidecarHopRef>> {
-    let hop = |pool_id: u64, pool: Address, zfo: bool| SidecarHopRef {
+    let hop = |pool_id: u64, pool: Address, zfo: bool, family: LaneFamily| SidecarHopRef {
         pool_id,
         pool,
         token0: tokens.0,
         token1: tokens.1,
         zfo,
+        family,
     };
     // P: WETH -> USDC (token1 -> token0) and P: USDC -> WETH (token0 -> token1).
     // Cycle 1: buy USDC on the market connector, sell into the staged P.
     // Cycle 2: buy USDC on the staged P, sell into the connector. The
     // envelope gate prunes the fee-drain direction per pair for free.
-    let buy_on_c = hop(c_id, pool_c, !tok_is_t0);
-    let sell_into_p = hop(p_id, pool_p, tok_is_t0);
-    let buy_on_p = hop(p_id, pool_p, !tok_is_t0);
-    let sell_into_c = hop(c_id, pool_c, tok_is_t0);
+    let buy_on_c = hop(c_id, pool_c, !tok_is_t0, c_family);
+    let sell_into_p = hop(p_id, pool_p, tok_is_t0, LaneFamily::V2);
+    let buy_on_p = hop(p_id, pool_p, !tok_is_t0, LaneFamily::V2);
+    let sell_into_c = hop(c_id, pool_c, tok_is_t0, c_family);
     vec![vec![buy_on_c, sell_into_p], vec![buy_on_p, sell_into_c]]
 }
 
@@ -280,6 +388,8 @@ pub struct ConnectorLaneCtx<'a> {
     pub leg: &'a degenbot_decoders::target_classifier::SwapLeg,
     /// The affected pair's live `getReserves` in PAIR order (token0, token1).
     pub pair_reserves: (u128, u128),
+    /// The head block (the V3 admission's seed stamp).
+    pub head: u64,
     pub cap: usize,
     pub gas_floor_wei: U256,
 }
@@ -295,108 +405,84 @@ impl SidecarSolver {
         provider: &degenbot_rpc::provider::AlloyProvider,
         ctx: &ConnectorLaneCtx<'_>,
     ) -> LaneGrade {
-        use degenbot_decoders::target_classifier::PoolProtocol;
-
-        let leg = ctx.leg;
-        let ids = ctx.ids;
-        let cap = ctx.cap;
-        let gas_floor_wei = ctx.gas_floor_wei;
-        let pair_reserves = ctx.pair_reserves;
-        let index = ctx.index;
+        let Some(frame) = resolve_lane_frame(ctx) else {
+            return LaneGrade::default();
+        };
         let mut grade = LaneGrade::default();
-        if leg.protocol != PoolProtocol::V2 || leg.hops != 0 {
-            return grade;
-        }
-        let Some(pool_addr) = leg.pool else {
-            return grade;
-        };
-        let (Some(t_in), Some(t_out)) = (leg.token_in, leg.token_out) else {
-            return grade;
-        };
-        let Some(amount_in_u256) = leg.amount_in else {
-            return grade;
-        };
-        let Ok(amount_in) = u128::try_from(amount_in_u256) else {
-            return grade;
-        };
-        if amount_in == 0 {
-            return grade;
-        }
-        let weth = crate::sidecar_solve::weth();
-        let (Some(&weth_id), Some(&t_in_id), Some(&t_out_id)) =
-            (ids.get(&weth), ids.get(&t_in), ids.get(&t_out))
-        else {
-            return grade;
-        };
-        // WETH-denominated 2-hop family only (the mono-pool lane's domain).
-        let (tok, tok_id, _target_bought_tok) = if weth_id == t_in_id {
-            (t_out, t_out_id, true)
-        } else if weth_id == t_out_id {
-            (t_in, t_in_id, false)
-        } else {
-            return grade;
-        };
-        let Some(p_edge) = index.edge_by_address(pool_addr) else {
-            return grade;
-        };
-        let (t0_id, t1_id) = (p_edge.token0_id, p_edge.token1_id);
-        if !((t0_id == tok_id && t1_id == weth_id) || (t0_id == weth_id && t1_id == tok_id)) {
-            return grade;
-        }
-
-        // V2 canonical order: token0 = the smaller address.
-        let (token0, token1) = if tok < weth { (tok, weth) } else { (weth, tok) };
-        let tok_is_t0 = tok == token0;
 
         // Stage the target's exact effect on P (in the leg's (in, out) view,
         // mapped back to the pair's canonical order); both drift directions
         // are declared per connector -- the target's own direction alone
         // does not fix which side of P dislocated against the connector, and
         // the envelope gate prunes the fee-drain direction for free.
-        let in_is_t0 = leg.token_in == Some(token0);
-        let (r_in, r_out) = if in_is_t0 {
-            (pair_reserves.0, pair_reserves.1)
-        } else {
-            (pair_reserves.1, pair_reserves.0)
-        };
-        let Some((p_id, _p_weth_side_zfo, _p_tok_side_zfo)) = self.stage_affected_pair(
-            (pool_addr, token0, token1),
-            tok_is_t0,
-            amount_in,
-            in_is_t0,
-            (r_in, r_out),
+        let Some((p_id, _pw, _pt)) = self.stage_affected_pair(
+            (frame.pool_addr, frame.token0, frame.token1),
+            frame.tok_is_t0,
+            frame.amount_in,
+            frame.in_is_t0,
+            frame.r_view,
         ) else {
             return grade;
         };
 
-        let cands = index.connectors(tok_id, weth_id, p_edge.pool_id, cap);
+        // Spot connectors (V2): live reserves, same two-cycle shape.
+        let cands = frame
+            .index
+            .connectors(frame.tok_id, frame.weth_id, frame.p_pool_id, frame.cap);
         grade.connectors = cands.len();
         for (c_edge, _tok_flag) in cands {
             let Some(c_id) = self
-                .admit_connector(provider, c_edge.address, token0, token1)
+                .admit_connector(provider, c_edge.address, frame.token0, frame.token1)
                 .await
             else {
                 grade.admit_failures += 1;
                 continue;
             };
-            // Both cycles of the (staged P, connector C) pairing, best kept.
-            // Hops are built explicitly per cycle so the executable form and
-            // the declared form are the SAME objects (identity cannot drift)
-            // -- the earlier (p-side zfo, c-side zfo) tuple encoding
-            // mis-assigned a column once; explicit hops cannot mis-encode.
             let cycles = connector_cycles(
                 p_id,
-                pool_addr,
+                frame.pool_addr,
                 c_id,
                 c_edge.address,
-                (token0, token1),
-                tok_is_t0,
+                (frame.token0, frame.token1),
+                frame.tok_is_t0,
+                LaneFamily::V2,
             );
-            self.eval_cycles(&mut grade, gas_floor_wei, cycles);
+            self.eval_cycles(&mut grade, frame.gas_floor_wei, cycles);
+        }
+
+        // CL connectors (B2-CL): the same two-cycle shape with a V3 second
+        // hop. Admission costs 3-6 RPC round trips per pool (bounded by
+        // cap); the exact-sim oracle remains the truth bar.
+        let v3cands =
+            frame
+                .index
+                .v3_connectors(frame.tok_id, frame.weth_id, frame.p_pool_id, frame.cap);
+        grade.connectors += v3cands.len();
+        for (v3_edge, _tok_flag) in v3cands {
+            let Some(c_id) = self
+                .admit_v3_connector(provider, v3_edge, frame.token0, frame.token1, ctx.head)
+                .await
+            else {
+                grade.admit_failures += 1;
+                continue;
+            };
+            let cycles = connector_cycles(
+                p_id,
+                frame.pool_addr,
+                c_id,
+                v3_edge.address,
+                (frame.token0, frame.token1),
+                frame.tok_is_t0,
+                LaneFamily::V3 { fee: v3_edge.fee },
+            );
+            self.eval_cycles(&mut grade, frame.gas_floor_wei, cycles);
         }
         grade
     }
 
+    /// Admit a V3 connector    /// Admit a V3 connector at HEAD state: slot0 + liquidity + a Sparse tick
+    /// bootstrap (current word +- 1) via the provider-level V3 probes.
+    /// `None` on any fetch/spec failure (the connector is skipped).
     /// Declare each candidate cycle (hop lists in traversal order), evaluate
     /// envelope-gated, and keep the best result on `grade`.
     fn eval_cycles(
@@ -425,6 +511,77 @@ impl SidecarSolver {
                 profit: res.profit.to::<u128>(),
             });
         }
+    }
+
+    async fn admit_v3_connector(
+        &mut self,
+        provider: &degenbot_rpc::provider::AlloyProvider,
+        edge: &crate::sidecar_paths::V3Edge,
+        token0: Address,
+        token1: Address,
+        head: u64,
+    ) -> Option<u64> {
+        use degenbot_rpc::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v3_slot0_liquidity};
+
+        let (sqrt_price_x96, tick, liquidity) =
+            fetch_v3_slot0_liquidity(provider, &edge.address, None)
+                .await
+                .ok()?;
+        let liquidity = u128::try_from(liquidity).ok()?;
+
+        // Sparse coverage: the current word +- 1 (a 3-word window around the
+        // active range; the exact-sim oracle is the truth bar behind this).
+        let tick_i32 = i32::try_from(tick).ok()?;
+        let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
+            tick_i32,
+            edge.tick_spacing,
+        );
+        let word_i16 = i16::try_from(word).ok()?;
+        let mut tick_data: hashbrown::HashMap<i32, TickInfo> = hashbrown::HashMap::new();
+        for w in [
+            word_i16.saturating_sub(1),
+            word_i16,
+            word_i16.saturating_add(1),
+        ] {
+            let bitmap = fetch_tick_bitmap(provider, &edge.address, w, None)
+                .await
+                .ok()?;
+            for bit in 0..256usize {
+                if !bitmap.bit(bit) {
+                    continue;
+                }
+                let active_tick =
+                    ((i32::from(w) << 8) + i32::try_from(bit).ok()?) * edge.tick_spacing;
+                let (gross, net) = fetch_tick_data(provider, &edge.address, active_tick, None)
+                    .await
+                    .ok()?;
+                tick_data.insert(
+                    active_tick,
+                    TickInfo {
+                        liquidity_gross: gross,
+                        liquidity_net: net,
+                        block: head,
+                    },
+                );
+            }
+        }
+
+        let params = RegisterV3PoolParams {
+            address: edge.address,
+            token0,
+            token1,
+            fee: edge.fee,
+            tick_spacing: edge.tick_spacing,
+            sqrt_price_x96,
+            liquidity,
+            tick: tick_i32,
+            tick_data,
+            update_block: head,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Sparse,
+            ..RegisterV3PoolParams::default()
+        };
+        self.state.register_v3_pool(&params).ok()
     }
 
     /// Admit a connector pool at its live reserves. `None` on fetch or
@@ -503,7 +660,7 @@ pub fn build_candidate_calldata(
 ) -> Option<alloy::primitives::Bytes> {
     use degenbot_executor::composers::{
         encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
-        HopInfo, V2HopInfo,
+        HopInfo, V2HopInfo, V3HopInfo,
     };
     use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
 
@@ -526,14 +683,21 @@ pub fn build_candidate_calldata(
     let hops = candidate
         .hops
         .iter()
-        .map(|h| {
-            HopInfo::V2(V2HopInfo {
+        .map(|h| match h.family {
+            LaneFamily::V2 => HopInfo::V2(V2HopInfo {
                 pool_address: h.pool,
                 token0_address: h.token0,
                 token1_address: h.token1,
                 fee: 30,
                 zfo: h.zfo,
-            })
+            }),
+            LaneFamily::V3 { fee } => HopInfo::V3(V3HopInfo {
+                pool_address: h.pool,
+                token0_address: h.token0,
+                token1_address: h.token1,
+                fee,
+                zfo: h.zfo,
+            }),
         })
         .collect();
     let req = EncodeRequest::new(
@@ -565,6 +729,10 @@ pub fn build_candidate_calldata(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "golden-reference tests: admitted fixtures are spec-valid by construction"
+)]
 mod tests {
     use super::*;
     use alloy::primitives::address;
@@ -593,10 +761,10 @@ mod tests {
     }
 
     /// The golden 2-hop frame (values hand-derived):
-    /// P (TOK,WETH) live (500_000, 1_000); the target swaps 50 WETH -> TOK;
-    /// exact staged reserves (476_259, 1_050). Q (TOK,WETH) live (200_000, 900).
-    /// Optimal integer 2-hop: input ~123 WETH, profit 56 wei (plateau 55..56);
-    /// equal-reserves control: max profit 0.
+    /// Golden frame values (hand-derived): staged reserves `(476_259, 1_050)`
+    /// after the target swaps 50 WETH into the pair; connector live reserves
+    /// `(200_000, 900)`. Optimal integer 2-hop: input ~123 WETH, profit 56 wei
+    /// (plateau 55..56); equal-reserves control: max profit 0.
     fn staged_frame() -> (SidecarSolver, usize) {
         let mut s = SidecarSolver::new();
         let p_id = s
@@ -693,6 +861,7 @@ mod tests {
                     token0,
                     token1: WETH,
                     zfo: false,
+                    family: LaneFamily::V2,
                 },
                 SidecarHopRef {
                     pool_id: 2,
@@ -700,6 +869,7 @@ mod tests {
                     token0,
                     token1: WETH,
                     zfo: true,
+                    family: LaneFamily::V2,
                 },
             ],
             // The golden solve's numbers, via a scoped solver eval:
@@ -725,6 +895,7 @@ mod tests {
                     token0: TOK,
                     token1: WETH,
                     zfo: false,
+                    family: LaneFamily::V2,
                 },
                 SidecarHopRef {
                     pool_id: 2,
@@ -732,6 +903,7 @@ mod tests {
                     token0: TOK,
                     token1: WETH,
                     zfo: true,
+                    family: LaneFamily::V2,
                 },
             ],
             optimal_input: 1,

@@ -135,7 +135,9 @@ async fn main() {
         Option<degenbot_db::connection::DegenbotDb>,
     ) = match std::env::var("SIDECAR_DB_PATH") {
         Ok(path) => match degenbot_db::connection::DegenbotDb::open(std::path::Path::new(&path)) {
-            Ok((db, _)) => match degenbot_bot::sidecar_paths::V2ConnectorIndex::load(&db, 1) {
+            Ok((db, _)) => match degenbot_bot::sidecar_paths::V2ConnectorIndex::load(&db, 1)
+                .and_then(|mut ix| ix.load_v3(&db, 1).map(|()| ix))
+            {
                 Ok(ix) => {
                     tracing::info!(edges = ix.len(), "connector index loaded");
                     (Some(ix), Some(db))
@@ -292,6 +294,7 @@ async fn main() {
                                     leg: l,
                                     pair_reserves: (r0, r1),
                                     cap: connector_cap,
+                                    head: current_block,
                                     gas_floor_wei: U256::from(50_000_000_000_000u64),
                                 },
                             )

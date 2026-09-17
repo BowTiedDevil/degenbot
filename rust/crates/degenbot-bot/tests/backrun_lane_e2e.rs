@@ -9,7 +9,15 @@
 //!   cargo test -p degenbot-bot --test backrun_lane_e2e -- --ignored --nocapture
 //! ```
 
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::too_many_lines,
+    reason = "diagnostic e2e probe: narrates the whole-lane pipeline"
+)]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,7 +28,7 @@ use degenbot_bot::sidecar_engine::{build_candidate_calldata, ConnectorLaneCtx, S
 use degenbot_bot::sidecar_paths::V2ConnectorIndex;
 use degenbot_rpc::provider::AlloyProvider;
 
-async fn live_provider() -> Arc<AlloyProvider> {
+fn live_provider() -> Arc<AlloyProvider> {
     let rpc_url = std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1").unwrap();
     let client = alloy::rpc::client::ClientBuilder::default().http(rpc_url.parse().unwrap());
     let inner = alloy::providers::ProviderBuilder::default().connect_client(client);
@@ -38,12 +46,13 @@ const USDC: alloy::primitives::Address = address!("a0b86991c6218b36c1d19d4a2e9eb
 #[tokio::test]
 #[ignore = "live network + local DB: the whole-lane pipeline probe"]
 async fn lane_pipeline_reaches_exact_sim() {
-    let provider = live_provider().await;
+    let provider = live_provider();
     let db_path = std::env::var("DEGENBOT_DB_PATH").unwrap();
     let (db, _) =
         degenbot_db::connection::DegenbotDb::open(std::path::Path::new(&db_path)).unwrap();
-    let index = V2ConnectorIndex::load(&db, 1).unwrap();
-    println!("index edges: {}", index.len());
+    let mut index = V2ConnectorIndex::load(&db, 1).unwrap();
+    index.load_v3(&db, 1).unwrap();
+    println!("index edges: {} v3: {}", index.len(), index.v3_len());
 
     let p_edge = index
         .edge_by_address(USDC_WETH_V2)
@@ -92,6 +101,7 @@ async fn lane_pipeline_reaches_exact_sim() {
                 leg: &leg,
                 pair_reserves: (r0, r1),
                 cap: 8,
+                head: provider.get_block_number().await.unwrap_or(1),
                 gas_floor_wei: U256::from(50_000_000_000_000u64),
             },
         )
