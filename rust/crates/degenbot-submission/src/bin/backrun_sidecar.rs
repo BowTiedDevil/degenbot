@@ -299,12 +299,26 @@ async fn main() {
                             // bid rides the executor's native coinbase bribe
                             // (bips on the TRUE profit delta), so the wire
                             // bid = bips share of the solver profit.
-                            const BRIBE_BIPS: u16 = 1_000; // 10% of realized profit
+                            //
+                            // Backrun auction stance: the TARGET's searcher
+                            // normally dictates the clearing price -- we
+                            // compete for inclusion behind their tx, so the
+                            // builder's payoff is the lever we control.
+                            // Default 98% (9800 bips) of TRUE profit goes to
+                            // the builder; the 2% floor retains dominated-
+                            // cycle filtering and makes the bid strictly
+                            // cheaper-for-us than every 90%-or-less rival on
+                            // the same dislocation.
+                            let bribe_bips: u16 = std::env::var("SIDECAR_BRIBE_BIPS")
+                                .ok()
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(9_800)
+                                .min(10_000);
                             match degenbot_bot::sidecar_engine::build_candidate_calldata(
                                 cand,
                                 exec,
                                 degenbot_bot::sidecar_solve::weth(),
-                                BRIBE_BIPS,
+                                bribe_bips,
                             ) {
                                 Some(cd) => {
                                     let sim_ok = simulate_sweep(&provider, exec, owner, cd.clone())
@@ -315,7 +329,7 @@ async fn main() {
                                             })
                                         });
                                     if sim_ok {
-                                        let bid = U256::from(cand.profit) * U256::from(BRIBE_BIPS)
+                                        let bid = U256::from(cand.profit) * U256::from(bribe_bips)
                                             / U256::from(10_000u16);
                                         candidate_calldata = Some((cd, bid.max(U256::from(1))));
                                         tracing::info!(
