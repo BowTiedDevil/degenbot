@@ -139,11 +139,29 @@ pub struct ReplayOutcome {
     pub base_fee_source: BaseFeeSource,
 }
 
-/// A frame that could not be replayed (an invalid tx against the layered
-/// view — stale nonce, out-of-gas validation, a cold-miss RPC failure).
+/// A frame that could not be replayed against the layered view. The
+/// variants carry the reconstructable nonce/saturation evidence, so every
+/// observe label downstream is truthful about WHICH class it belonged to.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("frame replay failed: {0}")]
-pub struct ReplayFrameError(pub String);
+pub enum ReplayFrameError {
+    /// The wire frame claims a nonce AHEAD of the parent state: pending
+    /// predecessors sit between the snapshot and the frame (the dominant
+    /// class on today's soak, resolved by gap-prefix replay).
+    #[error("gap pending: frame nonce {claimed}, parent expects {expected}")]
+    GapPending { claimed: u64, expected: u64 },
+    /// The frame nonce is already consumed at the parent state: the block-
+    /// boundary race the live feed accumulates. Nothing to rescue; final.
+    #[error("already settled: frame nonce {frame} consumed at parent nonce {parent}")]
+    AlreadySettled { frame: u64, parent: u64 },
+    /// The envelope itself is unprocessable for replay (zero gas limit,
+    /// malformed chain id, ...) — rejected at decode-downstream.
+    #[error("envelope artifact: {raw}")]
+    EnvelopeArtifact { raw: std::string::String },
+    /// Anything else — RPC hydrate failure, validation, or an
+    /// unexpected revm variant.
+    #[error("replay failed: {raw}")]
+    Other { raw: std::string::String },
+}
 
 /// The projected block env a scratch frame executes under. `base_fee_next`
 /// is the projected next base fee in wei per gas.
@@ -253,9 +271,14 @@ impl<Db: Database> ScratchEvm<Db> {
                             BaseFeeSource::DisabledFallback,
                         )
                     })
-                    .map_err(|abort| ReplayFrameError(abort.to_string()))
+                    .map_err(|abort| match abort {
+                        FrameAbort::OtherError(e) => e,
+                        FrameAbort::BaseFeeRejected => ReplayFrameError::Other {
+                            raw: abort.to_string(),
+                        },
+                    })
             }
-            Err(FrameAbort::Other(msg)) => Err(ReplayFrameError(msg)),
+            Err(FrameAbort::OtherError(e)) => Err(e),
         }
     }
 }
@@ -371,13 +394,33 @@ fn run_frame<Db: Database>(
         EVMError::Transaction(InvalidTransaction::GasPriceLessThanBasefee) => {
             FrameAbort::BaseFeeRejected
         }
-        other => FrameAbort::Other(other.to_string()),
+        EVMError::Transaction(InvalidTransaction::NonceTooHigh { tx, state }) => {
+            FrameAbort::OtherError(ReplayFrameError::GapPending {
+                claimed: tx,
+                expected: state,
+            })
+        }
+        EVMError::Transaction(InvalidTransaction::NonceTooLow { tx, state }) => {
+            FrameAbort::OtherError(ReplayFrameError::AlreadySettled {
+                frame: tx,
+                parent: state,
+            })
+        }
+        EVMError::Transaction(InvalidTransaction::CallGasCostMoreThanGasLimit {
+            initial_gas,
+            gas_limit,
+        }) => FrameAbort::OtherError(ReplayFrameError::EnvelopeArtifact {
+            raw: format!("call gas cost ({initial_gas}) exceeds the gas limit ({gas_limit})"),
+        }),
+        other => FrameAbort::OtherError(ReplayFrameError::Other {
+            raw: other.to_string(),
+        }),
     })
 }
 
 enum FrameAbort {
     BaseFeeRejected,
-    Other(String),
+    OtherError(ReplayFrameError),
 }
 
 impl std::fmt::Display for FrameAbort {
@@ -386,7 +429,7 @@ impl std::fmt::Display for FrameAbort {
             Self::BaseFeeRejected => {
                 write!(f, "base-fee projection rejected (fallback also failed)")
             }
-            Self::Other(msg) => f.write_str(msg),
+            Self::OtherError(e) => write!(f, "{e}"),
         }
     }
 }

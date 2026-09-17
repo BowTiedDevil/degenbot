@@ -88,7 +88,9 @@ use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::{slot_layout, v3_storage_slots, TickInfo};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm::frame_replay::{ReplayStatus, ReplayableTx, ScratchEvm};
+use degenbot_simulation::sim::evm::frame_replay::{
+    ReplayFrameError, ReplayStatus, ReplayableTx, ScratchEvm,
+};
 use degenbot_simulation::sim::evm::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
@@ -1206,6 +1208,26 @@ pub async fn simulate_candidate(
 // The frame pipeline (one feed frame, end to end)
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Map a typed replay failure to the truthful observe reason + the JSONL
+/// evidence the trace carries. Single source for the histogram split.
+#[must_use]
+pub fn replay_observe_reason(e: &ReplayFrameError) -> (&'static str, serde_json::Value) {
+    match e {
+        ReplayFrameError::GapPending { claimed, expected } => (
+            "gap_pending",
+            serde_json::json!({"claimed_nonce": claimed, "expected_nonce": expected}),
+        ),
+        ReplayFrameError::AlreadySettled { frame, parent } => (
+            "already_settled",
+            serde_json::json!({"frame_nonce": frame, "parent_nonce": parent}),
+        ),
+        ReplayFrameError::EnvelopeArtifact { raw } => {
+            ("envelope_artifact", serde_json::json!({"detail": raw}))
+        }
+        ReplayFrameError::Other { .. } => ("replay_failed", serde_json::json!({})),
+    }
+}
+
 /// Process ONE feed frame: replay → extract → admit → discover → solve →
 /// compose → sim gate → decision. The bin drives this per drained event and
 /// owns dispatch/submit; the returned [`FrameArtifacts::decision`] already
@@ -1256,11 +1278,16 @@ pub async fn process_frame(
         Ok(o) => o,
         Err(e) => {
             stages.replay_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
-            trace_jsonl(
-                "replay",
-                serde_json::json!({"tx": tx_hex, "error": e.to_string()}),
-            );
-            return FrameArtifacts::observe("replay_failed", stages);
+            let (reason, extra) = replay_observe_reason(&e);
+            let mut evidence = extra;
+            evidence["error"] = serde_json::Value::String(e.to_string());
+            let mut payload = serde_json::json!({"tx": tx_hex});
+            if let (Some(dst), Some(src)) = (payload.as_object_mut(), evidence.as_object_mut()) {
+                dst.append(src);
+            }
+            payload["observe_reason"] = serde_json::Value::String(reason.to_string());
+            trace_jsonl("replay", payload);
+            return FrameArtifacts::observe(reason, stages);
         }
     };
     stages.replay_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);

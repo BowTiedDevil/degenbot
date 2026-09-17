@@ -661,3 +661,46 @@ fn bid_ladder_is_floor_of_bribe_share() {
     // A different ladder share moves the bid with it.
     assert_eq!(bid_from_profit(10_000, 9_000), 9_000);
 }
+
+/// The observe-reason histogram split: every typed `ReplayFrameError` maps to
+/// exactly one honest label, and the JSONL evidence carries the nonce pair.
+#[test]
+fn replay_reasons_split() {
+    use degenbot_simulation::sim::evm::frame_replay::ReplayFrameError;
+
+    let (r, v) =
+        degenbot_submission::frame_pipeline::replay_observe_reason(&ReplayFrameError::GapPending {
+            claimed: 12,
+            expected: 10,
+        });
+    assert_eq!(r, "gap_pending");
+    assert_eq!(v["claimed_nonce"], 12);
+    assert_eq!(v["expected_nonce"], 10);
+
+    let (r, v) = degenbot_submission::frame_pipeline::replay_observe_reason(
+        &ReplayFrameError::AlreadySettled {
+            frame: 30673,
+            parent: 30674,
+        },
+    );
+    assert_eq!(r, "already_settled");
+    assert_eq!(v["frame_nonce"], 30673);
+    assert_eq!(v["parent_nonce"], 30674);
+
+    let (r, v) = degenbot_submission::frame_pipeline::replay_observe_reason(
+        &ReplayFrameError::EnvelopeArtifact {
+            raw: "call gas cost (49784) exceeds the gas limit (0)".into(),
+        },
+    );
+    assert_eq!(r, "envelope_artifact");
+    assert_eq!(
+        v["detail"],
+        "call gas cost (49784) exceeds the gas limit (0)"
+    );
+
+    let (r, _) =
+        degenbot_submission::frame_pipeline::replay_observe_reason(&ReplayFrameError::Other {
+            raw: "rpc timeout".into(),
+        });
+    assert_eq!(r, "replay_failed");
+}

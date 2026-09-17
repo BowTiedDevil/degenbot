@@ -123,6 +123,22 @@ async fn run_frame(
     operator_nonce: u64,
     signer: Option<&TxSigner>,
 ) {
+    // Decode-stage reject: a frame whose gas field reads zero can never
+    // pass the EVM's pre-checks (`CallGasCostMoreThanGasLimit` fires
+    // structurally) — dropping here keeps the pipeline histogram
+    // truthful about WHICH class the frame died in.
+    if ev.gas == 0 {
+        tracing::info!(
+            "observe tx=0x{:x} reason=\"envelope_artifact\" (zero-gas envelope)",
+            ev.hash
+        );
+        trace_jsonl(
+            "envelope_artifact",
+            serde_json::json!({"tx": format!("0x{:x}", ev.hash), "zero_gas": true}),
+        );
+        return;
+    }
+
     // Offline-review capture: the feed wire shape, verbatim in all its
     // fields (doc how-to/searchers/listen) keyed by frame hash.
     trace_jsonl(
