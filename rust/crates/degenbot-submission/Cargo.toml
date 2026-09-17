@@ -22,6 +22,7 @@ degenbot-bot.workspace = true
 # `eth_createAccessList` surfaces the N6 submit orchestration consumes —
 # ZUZANP typed, no `make_request` escape hatch).
 degenbot-rpc.workspace = true
+degenbot-decoders.workspace = true
 thiserror = { version = "^2.0" }
 # OTel tier-1 spans (RMHQAR, epic 2LXPPV): plain `tracing` spans - the
 # process-wide subscriber (degenbot-bot/degenbot-python) exports them;

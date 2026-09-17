@@ -4,7 +4,9 @@
 //! The sidecar owns the full edge: `MEVBlocker` feed -> hub classification ->
 //! exact-sim oracle gate -> budgeted bid via the submission leaf. The DECISION
 //! layer lives here as a pure function ([`decide`]) so the safety invariants
-//! are testable without a network; the bin wires the live halves.
+//! are testable without a network; the bin lives in `degenbot-submission`
+//! (the only crate allowed to depend on both this crate and the submission
+//! leaf - see the dependency one-way note in that crate's Cargo.toml).
 //!
 //! Safety model (task acceptance):
 //! - observe-only default: no bid unless `bid_mode` is set AND the budget is

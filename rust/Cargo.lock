@@ -2633,6 +2633,7 @@ dependencies = [
  "alloy",
  "degenbot-bot",
  "degenbot-core",
+ "degenbot-decoders",
  "degenbot-rpc",
  "futures-util",
  "proptest",
