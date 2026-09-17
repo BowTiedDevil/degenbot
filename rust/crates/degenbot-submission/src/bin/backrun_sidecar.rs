@@ -29,7 +29,9 @@ use degenbot_bot::sidecar::{decide, Decision, SidecarConfig};
 use degenbot_decoders::target_classifier::{classify, PoolProtocol, RouterRegistry, TargetClass};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
+use degenbot_submission::bundle::{
+    backrun_sim_call, eth_call_many_bundle_sim_params, MEVBLOCKER_STREAM_URL,
+};
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
@@ -80,6 +82,41 @@ impl ReceiptProbe for SidecarProbe {
     reason = "bin orchestration loop reads top-to-bottom"
 )]
 async fn main() {
+    const MEVBLOCKER_SIM_URL: &str = "https://rpc.mevblocker.io/fast";
+
+    // Offline-review capture (env-gated): SIDECAR_TRACE_JSONL=<path> appends
+    // one JSON line per feed frame / bundle wire / sim round-trip so MEVBlocker
+    // payloads and our bids can be replayed and reviewed away from the hot loop.
+    /// Append one JSON line to the offline-review capture (best-effort:
+    /// capture failures never disturb the hot loop).
+    fn trace_jsonl(kind: &str, mut v: serde_json::Value) {
+        use std::io::Write;
+        let Ok(path) = std::env::var("SIDECAR_TRACE_JSONL") else {
+            return;
+        };
+        let mut line = serde_json::json!({
+            "ts_unix_ms": u64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0_u128, |d| d.as_millis()),
+            )
+            .unwrap_or_default(),
+            "kind": kind,
+        });
+        if let (Some(dst), Some(src)) = (line.as_object_mut(), v.as_object_mut()) {
+            for (k, val) in std::mem::take(src) {
+                dst.insert(k, val);
+            }
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+
     init_tracing();
     let cfg = SidecarConfig::from_env();
 
@@ -92,6 +129,11 @@ async fn main() {
         alloy::providers::ProviderBuilder::default().connect_client(client),
     )));
 
+    // The bundle-sim client: MEVBlocker's /fast read endpoint (doc
+    // how-to/searchers/bid step 2). READ/SIM ONLY -- `eth_callMany` never
+    // broadcasts, and this client is passed nothing else.
+    let sim_client = alloy::rpc::client::ClientBuilder::default()
+        .http(MEVBLOCKER_SIM_URL.parse().expect("sim url"));
     // Bid mode legality was already decided in `decide`; the signer only
     // loads when the key material exists so observe-only runs need none.
     let signer: Option<TxSigner> = cfg.key_file.as_ref().map(|p| {
@@ -216,6 +258,31 @@ async fn main() {
         }
 
         for ev in feed.drain() {
+            // Offline-review capture: the feed wire shape, verbatim in all its
+            // fields (doc how-to/searchers/listen) keyed by frame hash.
+            trace_jsonl(
+                "frame",
+                serde_json::json!({
+                    "hash": format!("0x{}", ev.hash),
+                    "chain_id": ev.chain_id,
+                    "from": format!("0x{}", alloy::hex::encode(ev.from)),
+                    "to": ev.to.map(|a| format!("0x{}", alloy::hex::encode(a))),
+                    "value": format!("0x{:x}", ev.value),
+                    "data": format!("0x{}", alloy::hex::encode(&ev.data)),
+                    "gas": ev.gas,
+                    "max_fee_per_gas": ev.max_fee_per_gas,
+                    "max_priority_fee_per_gas": ev.max_priority_fee_per_gas,
+                    "nonce": ev.nonce,
+                    "tx_type": ev.tx_type,
+                    "received_unix_ms": ev.received_unix_ms,
+                }),
+            );
+            tracing::debug!(
+                tx = %ev.hash, from = %ev.from, to = ?ev.to, value = %ev.value,
+                gas = ev.gas, max_fee = ev.max_fee_per_gas, prio = ev.max_priority_fee_per_gas,
+                data_len = ev.data.len(), type_ = ev.tx_type,
+                "feed frame"
+            );
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(0));
@@ -384,21 +451,52 @@ async fn main() {
                 }
                 None => None,
             };
-            // Sim gate: ONLY the composed candidate. The bare sweep probe
-            // (cmd 0x15, config 2560003) is never bid -- it carries no
-            // strategy, and as config 3 (no profit assert) + a 100% builder
-            // bribe it would simply transfer the executor's balance to the
-            // block builder (this exact artifact mined as tx 0x723c25.. on
-            // block 25995965 before this guard existed).
+            // Sim gate: ONLY the composed candidate, and ONLY as [target,
+            // backrun] via `eth_callMany` on MEVBlocker's /fast read
+            // endpoint (doc how-to/searchers/bid, step 2 -- read/sim only,
+            // never a broadcast). A head-only sim of the backrun alone
+            // answers the wrong question: the profit exists ONLY after the
+            // target lands, so pre-target execution structurally rejects
+            // perfect backruns while admitting weakest already-live ones.
+            // (The bare sweep probe stays retired: check_mode 3 + 100%
+            // bribe = a balance transfer to the builder, never an artifact.)
             let sim_ok = match &submit_calldata {
-                Some(cd) => simulate_sweep(&provider, exec, owner, cd.clone())
-                    .await
-                    .is_some_and(|blocks| {
-                        blocks
-                            .first()
-                            .is_some_and(|b| b.calls.first().is_some_and(|c| c.status))
-                    }),
-                None => false,
+                Some(cd) => {
+                    let target_call = serde_json::json!({
+                        "from": format!("0x{}", alloy::hex::encode(ev.from)),
+                        "to": format!("0x{}", alloy::hex::encode(ev.to.unwrap_or_default())),
+                        "data": format!("0x{}", alloy::hex::encode(&ev.data)),
+                        "value": format!("0x{:x}", ev.value),
+                        "gas": format!("0x{:x}", ev.gas.max(120_000)),
+                        "gasPrice": format!("0x{:x}", ev.max_fee_per_gas.max(1)),
+                    });
+                    let backrun_call =
+                        backrun_sim_call(owner, exec, cd, 900_000, u128::from(30_000_000_000u64));
+                    let req =
+                        eth_call_many_bundle_sim_params(&[target_call, backrun_call], "latest");
+                    match sim_client
+                        .request::<serde_json::Value, serde_json::Value>("eth_callMany", req)
+                        .await
+                    {
+                        Ok(resp) => {
+                            let txt = serde_json::to_string(&resp).unwrap_or_default();
+                            let ok = !txt.contains("error");
+                            if !ok {
+                                tracing::debug!(
+                                    tx = %ev.hash,
+                                    resp = %serde_json::to_string(&resp).unwrap_or_default(),
+                                    "bundle sim: backrun does not survive the target"
+                                );
+                            }
+                            ok
+                        }
+                        Err(e) => {
+                            tracing::debug!(tx = %ev.hash, error = %e, "bundle sim rpc error");
+                            false
+                        }
+                    }
+                }
+                _ => false,
             };
 
             let decision = decide(

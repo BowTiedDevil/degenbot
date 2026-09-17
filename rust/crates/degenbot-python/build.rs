@@ -53,14 +53,14 @@ fn source_fingerprint(crate_dir: &Path) -> Option<u64> {
     }
 
     // Workspace level: rust/Cargo.toml + rust/Cargo.lock + each crate dir.
-    let crates_dir = crate_dir.parent()?.to_path_buf();
-    let workspace_root = crates_dir.parent()?.to_path_buf();
+    let workspace_crates_dir = crate_dir.parent()?.to_path_buf();
+    let workspace_root = workspace_crates_dir.parent()?.to_path_buf();
     for extra in ["Cargo.toml", "Cargo.lock"] {
         if let Ok(content) = fs::read(workspace_root.join(extra)) {
             mix(extra.as_bytes(), &content);
         }
     }
-    let mut crate_dirs: Vec<PathBuf> = fs::read_dir(&crates_dir)
+    let mut crate_dirs: Vec<PathBuf> = fs::read_dir(&workspace_crates_dir)
         .ok()?
         .flatten()
         .map(|e| e.path())

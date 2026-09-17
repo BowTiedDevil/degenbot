@@ -192,6 +192,9 @@ impl SubmissionSeam for LiveSubmissionSeam<'_> {
                 // configured provider only (the exercise's relay posture is
                 // Python-runner policy).
                 &[],
+                // No MEVBlocker bid target: this example is a public-mempool
+                // submitter, not a target-tx backrunner.
+                None,
             )
             .await
             .map_err(|e| e.to_string())?;

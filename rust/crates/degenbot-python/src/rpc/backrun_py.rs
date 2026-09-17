@@ -1,4 +1,4 @@
-//! PyO3 bindings for the backrun pipeline crates (task NYVL2F slice).
+//! `PyO3` bindings for the backrun pipeline crates (task NYVL2F slice).
 //!
 //! - `PyBackrunFeed` — owns the `degenbot-rpc` feed pump; `drain()` returns
 //!   plain dicts (lossless fields), `status()` the counters snapshot.
@@ -17,7 +17,7 @@ use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig, BackrunFeedEven
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyDict;
 
-fn ev_to_dict(py: Python<'_>, ev: BackrunFeedEvent) -> PyResult<Py<PyAny>> {
+fn ev_to_dict(py: Python<'_>, ev: &BackrunFeedEvent) -> PyResult<Py<PyAny>> {
     let to: Py<PyAny> = match ev.to {
         Some(a) => a.to_string().into_pyobject(py)?.unbind().into_any(),
         None => py.None().into_any(),
@@ -42,7 +42,7 @@ fn ev_to_dict(py: Python<'_>, ev: BackrunFeedEvent) -> PyResult<Py<PyAny>> {
     Ok(d.into_any().unbind())
 }
 
-/// Live MEVBlocker searcher feed handle (RSUB-2).
+/// Live `MEVBlocker` searcher feed handle (RSUB-2).
 #[pyclass(module = "degenbot._ffi")]
 pub struct PyBackrunFeed {
     inner: BackrunFeed,
@@ -54,7 +54,7 @@ impl PyBackrunFeed {
     /// watchdog selects the production default.
     #[new]
     #[pyo3(signature = (url = None, watchdog_secs = 0u64, ring_capacity = 0usize))]
-    fn new(url: Option<String>, watchdog_secs: u64, ring_capacity: usize) -> PyResult<Self> {
+    fn new(url: Option<String>, watchdog_secs: u64, ring_capacity: usize) -> Self {
         let mut cfg = BackrunFeedConfig::for_mainnet();
         if let Some(u) = url {
             cfg.url = u;
@@ -65,9 +65,9 @@ impl PyBackrunFeed {
         if ring_capacity > 0 {
             cfg.ring_capacity = ring_capacity;
         }
-        Ok(Self {
+        Self {
             inner: BackrunFeed::spawn(cfg),
-        })
+        }
     }
 
     /// Drain all buffered events (plain dicts; lossless fields).
@@ -75,7 +75,7 @@ impl PyBackrunFeed {
         self.inner
             .drain()
             .into_iter()
-            .map(|ev| ev_to_dict(py, ev))
+            .map(|ev| ev_to_dict(py, &ev))
             .collect()
     }
 

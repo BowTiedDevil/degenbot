@@ -155,8 +155,8 @@ impl PySubmitCandidate {
     /// submit leaf signs + broadcasts). Forensic/fork-replay seam (R3b): a
     /// candidate judged submittable must be replayable at its solve block.
     #[getter]
-    fn execute_calldata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        Ok(PyBytes::new(py, &self.inner.execute_calldata))
+    fn execute_calldata<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.inner.execute_calldata)
     }
 
     #[getter]
@@ -310,6 +310,9 @@ pub fn dispatch_and_submit_py<'py>(
             dry_run,
             inject_code,
             &extra_broadcast,
+            // No bundle context at the Python seam: the driver submits via
+            // the public mempool path until a Py-side bid target is exposed.
+            None,
         )
         .await
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e:?}")))?;

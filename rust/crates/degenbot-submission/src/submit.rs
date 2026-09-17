@@ -40,6 +40,8 @@ use std::sync::{Arc, Mutex};
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::TransactionRequest;
+use serde_json::json;
+
 use degenbot_rpc::provider::AlloyProvider;
 
 use crate::dispatcher::{Dispatcher, PoolKey};
@@ -490,6 +492,15 @@ pub async fn dispatch_and_submit(
                         p.count_submit_outcome("skipped_broadcast_failed");
                         p.add_profit_missed(candidate_net_wei(&candidate));
                     }
+                    crate::bundle::trace_wire_jsonl(
+                        "bundle_wire_error",
+                        &json!({
+                            "path_id": candidate.path_id,
+                            "target": format!("0x{}", bt.target_tx_hash),
+                            "block": bt.block_number,
+                            "error": format!("{e}"),
+                        }),
+                    );
                     outcome.records.push(SubmitRecord::Skipped {
                         path_id: candidate.path_id,
                         reason: SkipReason::BroadcastFailed(format!(

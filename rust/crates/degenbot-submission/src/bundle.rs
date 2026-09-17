@@ -81,6 +81,41 @@ pub fn eth_send_bundle_cancel_request(replacement_uuid: &str) -> Json {
     })
 }
 
+/// Build the `eth_callMany` bundle-sim request (doc step 2, upgraded to a
+/// requirement for backrun gating): `params[0].transactions = [targetCall,
+/// backrunCall]` executes the pending TARGET -- as an unsigned call object,
+/// every field of which the feed wire provides -- followed by our backrun,
+/// atomically. A head-only sim of the backrun alone asks the wrong question:
+/// a legitimate backrun's profit exists ONLY after the target lands, so the
+/// pre-target state structurally rejects perfect backruns and admits only
+/// cycles that were already live (the weakest possible bids).
+#[must_use]
+pub fn eth_call_many_bundle_sim_params(transactions: &[Json], state_block: &str) -> Json {
+    json!([
+        { "transactions": transactions },
+        { "blockNumber": state_block, "transactionIndex": 0 },
+    ])
+}
+
+/// The backrun leg's call object for the sim (the operator calling our
+/// executor with the composed calldata).
+#[must_use]
+pub fn backrun_sim_call(
+    operator: alloy::primitives::Address,
+    executor: alloy::primitives::Address,
+    calldata: &alloy::primitives::Bytes,
+    gas_limit: u64,
+    max_fee_per_gas: u128,
+) -> Json {
+    json!({
+        "from": format!("0x{}", alloy::hex::encode(operator)),
+        "to": format!("0x{}", alloy::hex::encode(executor)),
+        "data": format!("0x{}", alloy::hex::encode(calldata)),
+        "gas": format!("0x{gas_limit:x}"),
+        "gasPrice": format!("0x{max_fee_per_gas:x}"),
+        "value": "0x0",
+    })
+}
 /// Deterministic ``replacementUuid`` per (target hash, block): idempotent
 /// replace/cancel across retries without a UUID crate (32 hex chars).
 #[must_use]
@@ -124,6 +159,35 @@ pub fn decode_config_word(config: U256) -> (u8, u16, u8, U256) {
         u8::try_from(u64::try_from(idx_word).unwrap_or_default()).unwrap_or_default();
     let expected_value = config >> 32;
     (check_mode, bribe_bips, bribe_recipient_idx, expected_value)
+}
+
+/// Offline-review capture (env-gated): append one JSON line describing a
+/// bundle-wire round-trip (request envelope + relay response) so the auction
+/// behavior can be replayed away from the hot loop. Best-effort: capture
+/// failures never disturb submission.
+pub fn trace_wire_jsonl(kind: &str, v: &Json) {
+    use std::io::Write;
+    let Ok(path) = std::env::var("SIDECAR_TRACE_JSONL") else {
+        return;
+    };
+    let mut line = json!({
+        "ts_unix_ms": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0_u128, |d| d.as_millis()),
+        "kind": kind,
+    });
+    if let (Some(dst), Some(src)) = (line.as_object_mut(), v.as_object()) {
+        for (k, val) in src {
+            dst.insert(k.clone(), val.clone());
+        }
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 /// Errors from the relay round-trip.
@@ -188,6 +252,10 @@ pub async fn send_request(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests: fixtures use unwrap for loud, precise failures"
+)]
 mod tests {
     use super::*;
 
@@ -255,5 +323,29 @@ mod tests {
             u1,
             "a new target is a new auction"
         );
+    }
+
+    #[test]
+    fn call_many_bundle_sim_carries_target_then_backrun() {
+        // doc: params[0].transactions is the atomic tx list (unsigned call
+        // objects); params[1] is the state position (head, index 0 for a
+        // pending target). Returns the PARAMS ARRAY directly so the caller
+        // can paste it into request("eth_callMany", params).
+        let params = eth_call_many_bundle_sim_params(
+            &[
+                serde_json::json!({"from": "0xcb1588f3f7e92a1278c68a6aed4bdcbc68534b29"}),
+                serde_json::json!({"from": "0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"}),
+            ],
+            "latest",
+        );
+        let txs = params[0]["transactions"].as_array().unwrap();
+        assert_eq!(txs.len(), 2);
+        assert_eq!(
+            txs[0]["from"],
+            serde_json::json!("0xcb1588f3f7e92a1278c68a6aed4bdcbc68534b29"),
+            "the pending target goes FIRST"
+        );
+        assert_eq!(params[1]["blockNumber"], "latest");
+        assert_eq!(params[1]["transactionIndex"], 0);
     }
 }
