@@ -22,6 +22,7 @@ import pathlib
 import time
 from typing import TYPE_CHECKING, Any
 
+from degenbot.runner._nonce_lane import relay_urls_from_env
 from degenbot.runner._render import (
     _render_fot_tokens,
     _render_profit_logs,
@@ -413,43 +414,64 @@ async def _submit_batch_records(
     outcome: _SimOutcome,
     *,
     operator_nonce: int,
+    submitter: Any = None,
+    relay_providers: Any = None,
 ) -> None:
     """Submit gas-profitable candidates via the Rust submit leaf + render records.
 
     Shared by the serial leaf and the pipeline's ordered submitter. Expects
-    the operator nonce fetched AT submit time (serialized consumers only).
+    the operator nonce fetched AT submit time (serialized consumers only);
+    under a relay posture the session's :class:`NonceLane` overlays still-
+    pending private-lane nonces onto that read before broadcast.
+
+    ``submitter``/``relay_providers`` are the DI seams (tests inject a
+    recording submitter + opaque providers; production runs the default
+    ``dispatch_and_submit`` + the cached relay provider set).
     """
     async_alloy = session.async_w3.as_async_alloy()
     if async_alloy is None:
         bot_logger.error("[dispatch] async_w3 is not an Alloy-backed provider; cannot submit")
         return
-    # Relay submission seam (ADR-025 companion: same signed bytes, dedicated
-    # broadcast URL). When DEGENBOT_SUBMIT_RELAY_URL is set, broadcast through
-    # the revert-protecting private builder endpoint instead of the public
-    # mempool; reads (nonce, fees, access list fallback) stay on the local node.
-    relay_urls_raw = (
-        os.environ.get("DEGENBOT_SUBMIT_RELAY_URLS")
-        or os.environ.get("DEGENBOT_SUBMIT_RELAY_URL")
-        or ""
-    )
-    relay_urls = [u.strip() for u in relay_urls_raw.split(",") if u.strip()]
+    # Relay submission seam (ADR-025 companion): same signed bytes, dedicated
+    # broadcast URL, revert-protecting private builder endpoints instead of
+    # the public mempool. The POSTURE is owned by the session's NonceLane
+    # (built once from the relay env at session start — see _nonce_lane);
+    # sessions without one (bare test fakes) fall back to the env read.
+    nonce_lane = getattr(session, "nonce_lane", None)
+    relay_urls = nonce_lane.relay_urls if nonce_lane is not None else relay_urls_from_env()
     if relay_urls and outcome.gas_profitable:
-        global _RELAY_SUBMIT_PROVIDERS
-        if _RELAY_SUBMIT_PROVIDERS is None or [u for u, _ in _RELAY_SUBMIT_PROVIDERS] != relay_urls:
-            from degenbot.provider import AsyncAlloyProvider as _AsyncAlloyProvider
-
-            _RELAY_SUBMIT_PROVIDERS = [
-                (relay_url, await _AsyncAlloyProvider.create(rpc_url=relay_url))
-                for relay_url in relay_urls
+        if relay_providers is not None:
+            broadcast_providers = [
+                relay_provider.as_async_alloy() for relay_provider in relay_providers
             ]
-            endpoints = ",".join(
-                relay_url.split("//", 1)[1].split("/", 1)[0]
-                for relay_url, _ in _RELAY_SUBMIT_PROVIDERS
+        else:
+            global _RELAY_SUBMIT_PROVIDERS
+            if (
+                _RELAY_SUBMIT_PROVIDERS is None
+                or [u for u, _ in _RELAY_SUBMIT_PROVIDERS] != relay_urls
+            ):
+                from degenbot.provider import AsyncAlloyProvider as _AsyncAlloyProvider
+
+                _RELAY_SUBMIT_PROVIDERS = [
+                    (relay_url, await _AsyncAlloyProvider.create(rpc_url=relay_url))
+                    for relay_url in relay_urls
+                ]
+                endpoints = ",".join(
+                    relay_url.split("//", 1)[1].split("/", 1)[0]
+                    for relay_url, _ in _RELAY_SUBMIT_PROVIDERS
+                )
+                bot_logger.info(f"[submit] relay fan-out: {endpoints}")
+            broadcast_providers = [
+                relay_provider.as_async_alloy() for _, relay_provider in _RELAY_SUBMIT_PROVIDERS
+            ]
+        if nonce_lane is not None:
+            # The local pending read cannot see relay-pending broadcasts: book
+            # this batch's nonce range against the lane so the next relay batch
+            # cannot re-claim it (the exclusive relay branch of _nonce_lane).
+            operator_nonce = nonce_lane.reserve_base(
+                local_nonce=int(operator_nonce),
+                size=len(outcome.gas_profitable),
             )
-            bot_logger.info(f"[submit] relay fan-out: {endpoints}")
-        broadcast_providers = [
-            relay_provider.as_async_alloy() for _, relay_provider in _RELAY_SUBMIT_PROVIDERS
-        ]
     else:
         broadcast_providers = None
     # Forensic capture (R3b fork-replay): record the exact calldata + the
@@ -464,7 +486,7 @@ async def _submit_batch_records(
             f"calldata={calldata.hex() if calldata else '<unavailable>'}",
         )
     signer = TxSigner(key=session.cfg.operator_private_key, chain_id=session.cfg.chain_id)
-    records = await dispatch_and_submit(
+    records = await (submitter if submitter is not None else dispatch_and_submit)(
         candidates=outcome.gas_profitable,
         dispatcher=session.dispatcher,
         provider=async_alloy,

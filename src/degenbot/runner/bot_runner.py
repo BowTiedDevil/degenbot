@@ -57,6 +57,7 @@ from degenbot.runner._driver_constants import (
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
 )
+from degenbot.runner._nonce_lane import NonceLane, relay_urls_from_env
 from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
 from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
 from degenbot.runner.build_paths import ConstructionContext, PathRegistrationPipeline, build_paths
@@ -175,6 +176,11 @@ class _SessionState:
     #: the real build_paths runs): the operator add-a-path surface, kept
     #: reachable for the session's lifetime; ``None`` for injected/fake runs.
     registration_pipeline: Any = None
+    #: Private-lane nonce reservations (the relay posture's overlay over the
+    #: local pending read — see ``_nonce_lane``). Built once here from the
+    #: relay env; ``None`` only for injected sessions constructed directly,
+    #: which the submit seam then treats as no-relay posture.
+    nonce_lane: NonceLane | None = None
 
     def advance_block(self, block_number: int) -> None:
         """Advance the session's block clock (the consumer's one mutation)."""
@@ -489,6 +495,7 @@ class BotRunner:
             cfg=cfg,
             current_block=current_block,
             bot=bot,
+            nonce_lane=NonceLane(relay_urls=relay_urls_from_env()),
         )
         self._install_sigint_handler()
         self._phase = _Phase.STARTED
