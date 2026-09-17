@@ -52,7 +52,6 @@ from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner._dispatch import _load_executor_runtime_bytecode
 from degenbot.runner._driver_constants import (
-    ERC6909_PROFIT,
     ETH_MAINNET_ALLOWED_TOKENS,
     MULTICALL3_ADDRESS,
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
@@ -432,7 +431,7 @@ class BotRunner:
             # stance, so installing it unconditionally is a no-op when off.
             engine_registry.engine.install_inline_simulator(
                 sim_ctx,
-                erc6909_profit=ERC6909_PROFIT,
+                erc6909_profit=cfg.erc6909_profit,
             )
 
         # ── Snapshots (V3 pool tracker pre-population only; the engine's DB
@@ -569,6 +568,8 @@ class BotRunner:
                 context=registration_context,
                 engine_registry=session.engine_registry,
                 retry_policy=cfg.verification_retry_policy,
+                max_paths=cfg.max_registered_paths,
+                progress_interval_secs=cfg.reg_progress_secs,
             )
             session.attach_registration_pipeline(pipeline)
 

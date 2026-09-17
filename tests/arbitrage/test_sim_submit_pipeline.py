@@ -32,7 +32,16 @@ class _FakeSession:
     def __init__(self) -> None:
         self.dispatcher = type("D", (), {"current_block": 42})()
         self.sim_ctx = object()
-        self.cfg = type("C", (), {"operator_address": "0xop", "dry_run": True})()
+        self.cfg = type(
+            "C",
+            (),
+            {
+                "operator_address": "0xop",
+                "dry_run": True,
+                "inject_executor_code": False,
+                "min_profit_margin_bps": 0,
+            },
+        )()
         self.async_w3 = self
         self.engine_registry = type("R", (), {"engine": object()})()
         self.nonce_calls = 0

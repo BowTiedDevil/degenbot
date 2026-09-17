@@ -59,8 +59,6 @@ _RELAY_SUBMIT_PROVIDERS: list[tuple[str, Any]] | None = None
 _RawResult = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]
 
 from degenbot.runner._driver_constants import (  # ruff: ignore[module-import-not-at-top-of-file] - after the type alias block
-    ERC6909_PROFIT,
-    MIN_PROFIT_MARGIN_BPS,
     MIN_PROFIT_NET,
 )
 
@@ -199,7 +197,7 @@ def _build_dispatch_candidates(
                 # SMOZG3: the operator's ERC6909 vault-capture toggle - the
                 # Rust seam defaults it to False (custody capture, the
                 # long-standing production behavior); env-gated opt-in.
-                erc6909_profit=ERC6909_PROFIT,
+                erc6909_profit=session.cfg.erc6909_profit,
             ),
         )
     return candidates
@@ -382,7 +380,7 @@ async def _simulate_batch(
         current_block=current_block,
         block_timestamp=block_timestamp,
         min_profit_net=MIN_PROFIT_NET,
-        min_profit_margin_bps=MIN_PROFIT_MARGIN_BPS,
+        min_profit_margin_bps=session.cfg.min_profit_margin_bps,
         engine=session.engine_registry.engine,
     )
 

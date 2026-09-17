@@ -69,18 +69,12 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
 # eliminating tax/fee-on-transfer tokens that waste sim gas and always revert.
 ALLOWED_INTERMEDIATE_TOKENS: set[str] | None = ETH_MAINNET_ALLOWED_TOKENS
 
-# Dispatch tunables read directly by the hot-path modules.
+#: Dispatch tunables read directly by the hot-path modules. The sibling
+#: knobs (margin bps, ERC6909 capture) moved to ArbitrageConfig runner-knob
+#: fields — env-layer surprises at import time bit us with a silently
+#: non-submitting live bot once; config objects, once.
 MIN_PROFIT_NET = 1
-MIN_PROFIT_MARGIN_BPS = int(os.environ.get("DEGENBOT_MIN_PROFIT_MARGIN_BPS", "0"))
 FEE_PERCENTILES = (10, 50)
-
-# ERC6909 vault profit capture (SMOZG3): capture Uniswap-V4 profit as an
-# ERC6909 claim on the PoolManager (``V4_MINT_COMPACT``) instead of custody
-# WETH, with the ``check_mode=2`` on-chain assert. The stream effect is
-# limited to pure-V4 paths (``v4_v4`` / ``v4_v4_v4``); other families keep
-# custody capture and only the ERC6909 floor is armed. Enable with
-# ``DEGENBOT_ERC6909_PROFIT=1``.
-ERC6909_PROFIT = os.environ.get("DEGENBOT_ERC6909_PROFIT", "0") == "1"
 
 # ── Retired at the PRG-5 hard cutover (IRUMXD) ─────────────────────────
 # The crawl shell (bounded producer/consumer queue + the bounded offload

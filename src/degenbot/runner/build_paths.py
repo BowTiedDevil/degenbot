@@ -403,6 +403,8 @@ class PathRegistrationPipeline:
         context: ConstructionContext,
         engine_registry: EngineRegistry,
         retry_policy: VerificationRetryPolicy | None = None,
+        max_paths: int = MAX_REGISTERED_PATHS,
+        progress_interval_secs: float | None = None,
     ) -> None:
         self.constr_ctx = context
         self.constr_bot = context.bot
@@ -450,11 +452,16 @@ class PathRegistrationPipeline:
         # (Pipeline tests run with engine_registry=None.)
         py_engine = getattr(self.engine_registry, "engine", None)
         if py_engine is not None and hasattr(py_engine, "set_path_cap"):
-            py_engine.set_path_cap(MAX_REGISTERED_PATHS or None)
+            py_engine.set_path_cap(max_paths or None)
+        self._progress_interval_s = (
+            progress_interval_secs
+            if progress_interval_secs is not None
+            else PathRegistrationPipeline._PROGRESS_INTERVAL_S
+        )
         bot_logger.info(
-            f"[build_paths] registered-path cap: "
-            f"{MAX_REGISTERED_PATHS or 'uncapped'} "
-            f"({'DEGENBOT_MAX_PATHS' if os.environ.get('DEGENBOT_MAX_PATHS') else 'code default'})"
+            f"[build_paths] registered-path cap: {max_paths or 'uncapped'} "
+            "(change with DEGENBOT_MAX_PATHS); progress cadence "
+            f"{self._progress_interval_s:.0f}s"
         )
 
         # Summary counters.
@@ -497,7 +504,7 @@ class PathRegistrationPipeline:
 
     #: Seconds between periodic registration-progress summaries (time-based, so
     #: they fire even when ``path_count`` never reaches the 1000 print gate).
-    _PROGRESS_INTERVAL_S = float(os.environ.get("DEGENBOT_REG_PROGRESS_SECS", "30"))
+    _PROGRESS_INTERVAL_S = 30.0
 
     def _registration_unit(
         self,
@@ -861,7 +868,7 @@ class PathRegistrationPipeline:
         """
         if not force:
             now = time.monotonic()
-            if now - self._last_progress_ts < self._PROGRESS_INTERVAL_S:
+            if now - self._last_progress_ts < self._progress_interval_s:
                 return
             self._last_progress_ts = now
         top = self._skip_reasons.most_common(8)

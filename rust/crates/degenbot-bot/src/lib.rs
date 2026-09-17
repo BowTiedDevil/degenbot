@@ -226,6 +226,7 @@ pub mod metrics;
 pub mod otel;
 pub mod profiling;
 pub mod sidecar;
+pub mod sidecar_solve;
 pub mod telemetry;
 
 // P6YXA6 hard cutover: the process-global rayon pool (`configure_rayon_

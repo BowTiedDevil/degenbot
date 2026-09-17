@@ -167,6 +167,40 @@ def _parse_float_env(raw: str | None, default: float, name_suffix: str) -> float
         raise ValueError(msg) from None
 
 
+def _knob_raw(env: Mapping[str, str | None], name: str, default: str) -> str:
+    """One override layer for runner knobs: OS env wins over the dotenv dict.
+
+    Same spelling in both layers; empty strings are unset.
+    """
+    raw = os.environ.get(name)
+    if not raw:
+        raw = env.get(name)
+    return raw or default
+
+
+def _knob_int(env: Mapping[str, str | None], name: str, default: int) -> int:
+    raw = _knob_raw(env, name, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        msg = f"{name} must be an integer, got {raw!r}"
+        raise ValueError(msg) from None
+
+
+def _knob_float(env: Mapping[str, str | None], name: str, default: float) -> float:
+    raw = _knob_raw(env, name, str(default))
+    try:
+        return float(raw)
+    except ValueError:
+        msg = f"{name} must be numeric, got {raw!r}"
+        raise ValueError(msg) from None
+
+
+def _knob_bool(env: Mapping[str, str | None], name: str, default: bool) -> bool:
+    raw = _knob_raw(env, name, "1" if default else "0")
+    return raw.lower() in ("1", "true", "on")
+
+
 def _resolve_inject_executor_code(env: Mapping[str, str | None]) -> bool:
     """Resolve the executor code-injection stance from one precedence chain.
 
@@ -254,6 +288,14 @@ class ArbitrageConfig:
     # VP42BP AC item 4: bounded retry-with-backoff for transient verification
     # RPC failures (per-call transport / provider-init). Mismatch stays fatal.
     verification_retry_policy: VerificationRetryPolicy
+    # Runner knobs — the DEGENBOT_* operational stances. One resolution
+    # chain (OS env > example dotenv > default), fail-loud parse; the
+    # import-time module constants that used to carry them diverged from the
+    # dotenv silently when set in only one layer.
+    erc6909_profit: bool
+    min_profit_margin_bps: int
+    reg_progress_secs: float
+    max_registered_paths: int
     # Run mode
     dry_run: bool
     # Explicit executor-runtime bytecode path (file containing 0x-prefixed hex).
@@ -410,6 +452,10 @@ class ArbitrageConfig:
             allowed_intermediate_tokens=_ALLOWED_INTERMEDIATE_TOKENS,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
+            erc6909_profit=_knob_bool(env, "DEGENBOT_ERC6909_PROFIT", False),
+            min_profit_margin_bps=_knob_int(env, "DEGENBOT_MIN_PROFIT_MARGIN_BPS", 0),
+            reg_progress_secs=_knob_float(env, "DEGENBOT_REG_PROGRESS_SECS", 30.0),
+            max_registered_paths=_knob_int(env, "DEGENBOT_MAX_PATHS", 100_000),
             verification_retry_policy=verification_retry_policy,
             executor_runtime=executor_runtime,
             diag=diag,

@@ -203,6 +203,62 @@ class TestLiveOwnerOperatorTriangle:
         assert cfg.executor_owner == "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"
 
 
+class TestRunnerKnobResolution:
+    """Runner knobs resolve once: OS env > example dotenv > code default,
+    with fail-loud numeric parsing (a typo'd knob is a loud error)."""
+
+    _KNOB_ENVS = (
+        "DEGENBOT_MAX_PATHS",
+        "DEGENBOT_MIN_PROFIT_MARGIN_BPS",
+        "DEGENBOT_ERC6909_PROFIT",
+        "DEGENBOT_REG_PROGRESS_SECS",
+    )
+
+    def _cfg(self, monkeypatch: pytest.MonkeyPatch, extra: dict[str, str]) -> ArbitrageConfig:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        # The layer-under-test is the dotenv dict: ambient OS env (the
+        # devcontainer exports DEGENBOT_MAX_PATHS) must not leak in.
+        for name in self._KNOB_ENVS:
+            monkeypatch.delenv(name, raising=False)
+        return ArbitrageConfig.from_env(_full_env() | extra, live=False, permutation=None)
+
+    def test_dotenv_layer_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = self._cfg(
+            monkeypatch,
+            {
+                "DEGENBOT_MAX_PATHS": "50000",
+                "DEGENBOT_MIN_PROFIT_MARGIN_BPS": "25",
+                "DEGENBOT_ERC6909_PROFIT": "1",
+                "DEGENBOT_REG_PROGRESS_SECS": "15",
+            },
+        )
+        assert cfg.max_registered_paths == 50000
+        assert cfg.min_profit_margin_bps == 25
+        assert cfg.erc6909_profit is True
+        assert cfg.reg_progress_secs == 15.0
+
+    def test_os_env_beats_dotenv(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        # Bypass _cfg: the helper strips knob OS env to isolate layers, but
+        # THIS test is the OS-env-beats-dotenv layer.
+        monkeypatch.setenv("DEGENBOT_MAX_PATHS", "70000")
+        cfg = ArbitrageConfig.from_env(
+            _full_env() | {"DEGENBOT_MAX_PATHS": "50000"}, live=False, permutation=None
+        )
+        assert cfg.max_registered_paths == 70000
+
+    def test_invalid_numeric_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        with pytest.raises(ValueError, match="DEGENBOT_MAX_PATHS"):
+            self._cfg(monkeypatch, {"DEGENBOT_MAX_PATHS": "not-a-number"})
+
+    def test_defaults_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = self._cfg(monkeypatch, {})
+        assert cfg.max_registered_paths == 100000
+        assert cfg.min_profit_margin_bps == 0
+        assert cfg.erc6909_profit is False
+        assert cfg.reg_progress_secs == 30.0
+
+
 class TestRpcCascade:
     """from_env delegates to resolve_rpc_uris: CLI > OS env > legacy > config.toml > raise."""
 

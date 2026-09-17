@@ -41,7 +41,6 @@ from degenbot.runner._dispatch import (
     dispatch_profitable,
 )
 from degenbot.runner._driver_constants import (
-    MIN_PROFIT_MARGIN_BPS,
     MIN_PROFIT_NET,
 )
 
@@ -110,7 +109,7 @@ async def _run_sim(
                 current_block=work.current_block,
                 block_timestamp=work.block_timestamp,
                 min_profit_net=MIN_PROFIT_NET,
-                min_profit_margin_bps=MIN_PROFIT_MARGIN_BPS,
+                min_profit_margin_bps=session.cfg.min_profit_margin_bps,
                 engine=session.engine_registry.engine,
             )
         merged = _merge_payload_outcome(session, outcome, work.payloads)
