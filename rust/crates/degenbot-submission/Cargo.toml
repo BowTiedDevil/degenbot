@@ -22,6 +22,17 @@ degenbot-bot.workspace = true
 # `eth_createAccessList` surfaces the N6 submit orchestration consumes —
 # ZUZANP typed, no `make_request` escape hatch).
 degenbot-rpc.workspace = true
+# The frame pipeline (WKPZQK): frame-replay seam + journal-pool extraction
+# (degenbot-simulation) over the bot crate's workspace/planning scope.
+degenbot-simulation.workspace = true
+# The zero-warmup `WarmupSlots` the frame-replay handle's override set rides.
+degenbot-executor.workspace = true
+# The journal extractor's descriptor-map type (`extract_pool_post_states`).
+hashbrown.workspace = true
+# Slot layouts (V2 reserves slot, CL slot0/tick layouts) + `ClSlotLayout`.
+degenbot-pools.workspace = true
+# `WarmCodeCacheInner::shared_default()` returns a parking_lot RwLock.
+parking_lot = "^0.12" 
 degenbot-decoders.workspace = true
 # The sidecar bin's DB-backed connector index (DFYDYI B3) reads the
 # workspace DB once at startup.
@@ -61,6 +72,9 @@ tokio-tungstenite = { version = "^0.29", default-features = false, features = ["
 # without a live RPC. Production builds (the umbrella, the cdylib) never
 # enable this feature.
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
+# The frame-pipeline fixture test hand-builds `ReplayOutcome` journals
+# (revm state) to drive replay→extract→admit→solve end-to-end offline.
+revm = { version = "^43.0", default-features = false, features = ["std"] }
 serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }

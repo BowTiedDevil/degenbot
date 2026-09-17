@@ -508,6 +508,49 @@ impl SidecarSolver {
         .await
     }
 
+    /// Admit a V3 pool with EXPLICIT journal-provided state — the frame
+    /// pipeline's no-RPC admission: post-target `slot0`/`liquidity` + the
+    /// replayed per-tick words land here verbatim (`Sparse` coverage; the
+    /// solver's projections fail loudly on missing words instead of guessing).
+    /// `None` on a spec-bound registration rejection (bad replayed state).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "explicit V3 state admission carries the full typed state"
+    )]
+    pub fn admit_v3_explicit(
+        &mut self,
+        address: Address,
+        token0: Address,
+        token1: Address,
+        fee: u32,
+        tick_spacing: i32,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: hashbrown::HashMap<i32, TickInfo>,
+        seed_block: u64,
+    ) -> Option<u64> {
+        self.ws
+            .register_with_state(
+                PlanningPoolParams {
+                    address,
+                    token0,
+                    token1,
+                },
+                ExplicitPoolState::V3 {
+                    sqrt_price_x96,
+                    liquidity,
+                    tick,
+                    fee,
+                    tick_spacing,
+                    tick_data,
+                    coverage: PoolTickCoverage::Sparse,
+                },
+                seed_block,
+            )
+            .ok()
+    }
+
     /// Admit a V3 connector    /// Admit a V3 connector at HEAD state: slot0 + liquidity + a Sparse tick
     /// bootstrap (current word +- 1) via the provider-level V3 probes.
     /// `None` on any fetch/spec failure (the connector is skipped).

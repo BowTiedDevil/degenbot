@@ -165,9 +165,34 @@ mod sel {
     pub const UR_EXECUTE_BYTES: [u8; 4] = [0x35, 0x93, 0x56, 0x4c];
 }
 
+/// The panic-guard arming env var . Set `1` to fail loudly on
+/// any classifier entry — the frame pipeline's proof that the classification
+/// hot path is never entered.
+pub const CLASSIFIER_GUARD_ENV: &str = "DEGENBOT_CLASSIFIER_GUARD";
+
+/// The panic-guard message (a distinct substring the guard test asserts on).
+pub const CLASSIFIER_GUARD_MSG: &str =
+    "target_classifier entered with DEGENBOT_CLASSIFIER_GUARD armed";
+
+/// TEMPORARY panic-guard shim (DELETED BY THE CUTOVER TASK):
+/// the frame pipeline replayed frames through the frame-replay seam, so
+/// hot-path callers must never reach a classifier entry point. Arming via
+/// `DEGENBOT_CLASSIFIER_GUARD=1` turns every entry into a loud abort; the
+/// env is read per call (cheap) so tests arm/disarm process-globally.
+fn classifier_guard() {
+    if std::env::var(CLASSIFIER_GUARD_ENV).as_deref() == Ok("1") {
+        #[expect(
+            clippy::panic,
+            reason = "the the wire task shim: classifier entry must abort loudly when armed; deleted by the cutover task"
+        )]
+        std::panic::panic_any(CLASSIFIER_GUARD_MSG);
+    }
+}
+
 /// Classify a pending call. `to`/`data` come straight off a feed event.
 #[must_use]
 pub fn classify(to: Address, data: &[u8], reg: &RouterRegistry) -> TargetClass {
+    classifier_guard();
     if data.len() < SEL_LEN {
         return TargetClass::Opaque(OpaqueReason::CalldataTooShort);
     }

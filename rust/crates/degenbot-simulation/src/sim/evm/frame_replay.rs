@@ -212,6 +212,15 @@ impl<Db: Database> ScratchEvm<Db> {
         &mut self.ext
     }
 
+    /// The layered ext as a SHARED read view: connector-state reads the
+    /// admission layer serves from the same chain view the frames replay
+    /// over (the scratch's read-caches answer; cold misses count in the
+    /// shared counter). See [`read_view_word`].
+    #[must_use]
+    pub fn ext(&self) -> &Db {
+        &self.ext
+    }
+
     /// Replay ONE frame: transact it through the full pipeline in a frame
     /// EVM over the ext (which finalizes — the journal is cleared inside
     /// the pipeline and nothing is committed; see the isolation decision
@@ -249,6 +258,17 @@ impl<Db: Database> ScratchEvm<Db> {
             Err(FrameAbort::Other(msg)) => Err(ReplayFrameError(msg)),
         }
     }
+}
+
+/// Read ONE word through a layered [`DatabaseRef`] view — the admission
+/// layer's read for connector state from the SAME chain view the frames
+/// replay over (scratch read-cache first, cold misses forwarded to the
+/// layered DB's cold source). `None` on a read failure (transport error);
+/// a zero word reads through as `Some(U256::ZERO)` — the caller decides
+/// whether zero is a usable pool state (the journal never fabricates).
+#[must_use]
+pub fn read_view_word<Ext: DatabaseRef>(ext: &Ext, address: Address, slot: U256) -> Option<U256> {
+    ext.storage_ref(address, slot).ok()
 }
 
 impl ReplayableTx {

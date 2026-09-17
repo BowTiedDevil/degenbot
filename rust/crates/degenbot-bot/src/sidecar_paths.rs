@@ -315,7 +315,9 @@ impl V2ConnectorIndex {
         Ok(index)
     }
 
-    fn push_edge(&mut self, edge: V2Edge) {
+    /// In-memory edge insertion (the loader's body; pub so external
+    /// pipelines/tests can assemble a fixture index without a DB).
+    pub fn push_edge(&mut self, edge: V2Edge) {
         let idx = self.edges.len();
         self.by_pool.insert(edge.pool_id, idx);
         self.by_address.insert(edge.address, idx);
@@ -324,7 +326,9 @@ impl V2ConnectorIndex {
         self.edges.push(edge);
     }
 
-    fn push_v3_edge(&mut self, edge: V3Edge) {
+    /// In-memory V3 edge insertion (the loader's body; pub for fixture
+    /// assembly — see [`Self::push_edge`]).
+    pub fn push_v3_edge(&mut self, edge: V3Edge) {
         let idx = self.v3_edges.len();
         self.v3_by_pool.insert(edge.pool_id, idx);
         self.v3_by_address.insert(edge.address, idx);
