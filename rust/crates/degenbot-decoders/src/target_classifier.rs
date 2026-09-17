@@ -91,6 +91,9 @@ pub struct RouterRegistry {
     v3_npm: Option<Address>,
     v4_pool_manager: Option<Address>,
     v4_router: Option<Address>,
+    /// Aggregator routers (1inch v5 et al.) — private-flow magnets whose
+    /// inner command encodings we deliberately do not decode.
+    aggregators: Vec<Address>,
 }
 
 impl RouterRegistry {
@@ -103,7 +106,8 @@ impl RouterRegistry {
             universal_router: Some(addr("0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD")),
             v3_npm: Some(addr("0xC36442b4a4522E871399CD717aBDD847Ab11FE88")),
             v4_pool_manager: Some(addr("0x000000000004444c5dc75cb358380d2e3de08a90")),
-            v4_router: None,
+            v4_router: Some(addr("0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af")),
+            aggregators: vec![addr("0x111111125421cA6dc452d289314280a0f8842A65")],
         }
     }
 
@@ -117,6 +121,13 @@ impl RouterRegistry {
     /// (returns the previous binding, if any).
     pub fn register_v4_router(&mut self, a: Address) -> Option<Address> {
         self.v4_router.replace(a)
+    }
+
+    /// Register an aggregator router (private-flow hub).
+    pub fn register_aggregator(&mut self, a: Address) {
+        if !self.aggregators.contains(&a) {
+            self.aggregators.push(a);
+        }
     }
 }
 
@@ -194,6 +205,9 @@ pub fn classify(to: Address, data: &[u8], reg: &RouterRegistry) -> TargetClass {
         // Registered v4 router: actionable target, inner unlock-bytes decode
         // is a documented follow-up.
         return TargetClass::Opaque(OpaqueReason::HubInnerUndecodable);
+    }
+    if reg.aggregators.contains(&to) {
+        return TargetClass::Opaque(OpaqueReason::HubSelectorUnknown);
     }
     if Some(to) == reg.v4_pool_manager {
         // v4 swaps enter via a router holding `unlock(bytes)`; direct
