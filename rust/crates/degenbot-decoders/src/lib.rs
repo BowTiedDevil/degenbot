@@ -44,6 +44,7 @@
 pub mod aave_event_decoder;
 pub mod pool_created_decoder;
 pub mod revert;
+pub mod target_classifier;
 pub mod uniswap_tick_range;
 pub mod v2_swap_decoder;
 pub mod v2_sync_decoder;
