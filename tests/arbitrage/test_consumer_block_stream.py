@@ -21,6 +21,7 @@ import pytest
 
 from degenbot.dispatch import Dispatcher
 from degenbot.runner._consume import consume_result_batches
+from tests.fakes.runner_pipelines import StubPipeline
 
 
 class _Eth:
@@ -178,29 +179,12 @@ async def _run(
     _runner_consume._dispatch_profitable = _fake_dispatch  # type: ignore[assignment]
 
     # SIMPIPE option A: the default consumer path routes batches through the
-    # pipeline; the fake pipeline records the dispatch clock the same way the
-    # serial-leaf fake above does (both seams share the session owner).
-    class _StubPipeline:
-        def __init__(self, session: Any, **kwargs: Any) -> None:
-            self._session = session
-
-        async def enqueue(
-            self,
-            results: Any,
-            *,
-            block_timestamp: int,
-            base_fee_next: int,
-            payloads: dict[int, dict] | None = None,
-        ) -> None:
-            dispatched.append(self._session.dispatcher.current_block)
-
-        def raise_if_failed(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-    _runner_consume.SimSubmitPipeline = _StubPipeline  # type: ignore[misc-assignment]
+    # pipeline; the shared void stub records the dispatch clock at enqueue
+    # the same way the serial-leaf fake above does (owner + clock captures
+    # ride StubPipeline.instances, drained into `dispatched` after the drive
+    # because both paths can never fire for the same batch).
+    StubPipeline.instances.clear()
+    _runner_consume.SimSubmitPipeline = StubPipeline  # type: ignore[misc-assignment]
     owner = _SessionState(
         engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
         async_w3=w3,  # type: ignore[arg-type]
@@ -231,6 +215,8 @@ async def _run(
     finally:
         _runner_consume._dispatch_profitable = orig  # type: ignore[assignment]
         _runner_consume.SimSubmitPipeline = orig_pipe  # type: ignore[assignment]
+    for stub in StubPipeline.instances:
+        dispatched.extend(stub.enqueue_clock)
     return dispatcher, w3, dispatched
 
 

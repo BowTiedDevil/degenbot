@@ -20,6 +20,7 @@ import pytest
 
 from degenbot.runner import BotRunner
 from degenbot.runner.config import ArbitrageConfig
+from tests.fakes.runner_pipelines import StubPipeline
 
 
 @pytest.fixture(autouse=True)
@@ -230,29 +231,8 @@ class TestSessionOwner:
         # SIMPIPE option A: the default consumer path routes batches through
         # the pipeline — the owner flows into the pipeline at construction,
         # which is the same "one owner" contract the serial leaf asserted.
-        captured_pipelines: list[object] = []
-
-        class _StubPipeline:
-            def __init__(self, session: object, **kwargs: object) -> None:
-                captured_pipelines.append(session)
-
-            async def enqueue(
-                self,
-                results: object,
-                *,
-                block_timestamp: int,
-                base_fee_next: int,
-                payloads: dict[int, dict] | None = None,
-            ) -> None:
-                return None
-
-            def raise_if_failed(self) -> None:
-                return None
-
-            async def stop(self) -> None:
-                return None
-
-        monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", _StubPipeline)
+        monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", StubPipeline)
+        StubPipeline.instances.clear()
 
         dispatcher = _FakeDispatcher(current_block=12_346)
         owner = _SessionState(
@@ -273,7 +253,9 @@ class TestSessionOwner:
         # SIMPIPE: the "same owner" contract now rides the pipeline seam -
         # the consumer must hand THE session owner into the pipeline (which
         # the sim+submit leaves read exclusively).
-        assert captured_pipelines == [owner], "dispatch pipeline did not receive the session owner"
+        assert [stub.session for stub in StubPipeline.instances] == [owner], (
+            "dispatch pipeline did not receive the session owner"
+        )
 
     async def test_owner_advances_with_the_block_clock(
         self, monkeypatch: pytest.MonkeyPatch
@@ -292,27 +274,7 @@ class TestSessionOwner:
 
         # SIMPIPE option A: the default consumer path constructs the pipeline
         # — keep the fake-engine session out of the real Rust seam.
-        class _StubPipeline:
-            def __init__(self, session: object, **kwargs: object) -> None:
-                return None
-
-            async def enqueue(
-                self,
-                results: object,
-                *,
-                block_timestamp: int,
-                base_fee_next: int,
-                payloads: dict[int, dict] | None = None,
-            ) -> None:
-                return None
-
-            def raise_if_failed(self) -> None:
-                return None
-
-            async def stop(self) -> None:
-                return None
-
-        monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", _StubPipeline)
+        monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", StubPipeline)
         owner = _SessionState(
             engine_registry=_FakeEngineRegistry(),
             async_w3=_FakeAsyncW3(),

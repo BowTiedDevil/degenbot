@@ -9,156 +9,83 @@ The pipeline (``_sim_submit_pipeline.SimSubmitPipeline``) must:
 - surface a failed sim/submit leaf via ``raise_if_failed`` (the loud-abort
   contract — incident 2026-08-20's no-silent-death rule).
 
-The Rust FFI seams (``dispatch_profitable`` / ``dispatch_and_submit``) are
-monkeypatched at the module boundary — no live RPC, no Rust engine.
+The pipeline's collaborators (candidate builder, FFI sim, renderer, submit
+leaf) arrive through its constructor DI seams, and sims are gated with
+asyncio events (see ``tests.fakes.runner_pipelines.SimSubmitHarness``) — no
+live RPC, no Rust engine, no wall-clock sleeps.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 
 import pytest
 
 import degenbot.runner._sim_submit_pipeline as mod
-from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
+from tests.fakes.runner_pipelines import SimSubmitHarness
 
 Raw = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]
-
-
-class _FakeSession:
-    """The pipeline's real dependencies, faked at the module seams."""
-
-    def __init__(self) -> None:
-        self.dispatcher = type("D", (), {"current_block": 42})()
-        self.sim_ctx = object()
-        self.cfg = type(
-            "C",
-            (),
-            {
-                "operator_address": "0xop",
-                "dry_run": True,
-                "inject_executor_code": False,
-                "min_profit_margin_bps": 0,
-            },
-        )()
-        self.async_w3 = self
-        self.engine_registry = type("R", (), {"engine": object()})()
-        self.nonce_calls = 0
-
-    async def get_transaction_count(self, address: str) -> int:
-        self.nonce_calls += 1
-        return self.nonce_calls
-
-
-@dataclass
-class _FakeCandidate:
-    path_id: int
-
-
-@dataclass
-class _Outcome:
-    gas_profitable: list[int] = field(default_factory=list)
-
-
-class _Harness:
-    """Patched module seams + observation state for one test run."""
-
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, sim_delays: dict[int, float]) -> None:
-        self.in_flight = 0
-        self.max_in_flight = 0
-        self.sim_order: list[int] = []
-        self.submitted_ids: list[int] = []
-        self.sim_delays = sim_delays
-
-        async def fake_dispatch_profitable(**kwargs):
-            pid = kwargs["candidates"][0].path_id
-            self.in_flight += 1
-            self.max_in_flight = max(self.max_in_flight, self.in_flight)
-            try:
-                await asyncio.sleep(sim_delays.get(pid, 0.0))
-                return _Outcome(gas_profitable=[pid])
-            finally:
-                self.in_flight -= 1
-
-        def fake_submit(session, outcome, *, operator_nonce, inject_code=True):
-            self.submitted_ids.append(outcome.gas_profitable[0])
-
-        monkeypatch.setattr(mod, "dispatch_profitable", fake_dispatch_profitable)
-        monkeypatch.setattr(mod, "_submit_batch_records", fake_submit)
-        monkeypatch.setattr(mod, "_render_outcome", lambda *a, **k: None)
-
-
-@pytest.fixture
-def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
-    """Patch module seams + make the candidate builder emit cheap stand-ins."""
-    h = _Harness(monkeypatch, sim_delays={})
-    # Cheap candidate stand-ins: the real builder needs an engine; the seam
-    # under test is the PIPELINE (concurrency + ordering), not the builder
-    # (the dispatch tests already cover builder shaping).
-    monkeypatch.setattr(
-        mod,
-        "_build_dispatch_candidates",
-        lambda session, results, **kwargs: [_FakeCandidate(path_id=results[0][0])],
-    )
-    return h
-
-
-async def test_fifo_submit_order_under_out_of_order_sims(harness: _Harness) -> None:
-    """Arrival order 0..4 with sims finishing in REVERSE — submits stay FIFO."""
-    session = _FakeSession()
-    pipe = SimSubmitPipeline(session, concurrency=8)
-    delays = {0: 0.20, 1: 0.16, 2: 0.12, 3: 0.08, 4: 0.04}
-    for pid in range(5):
-        harness.sim_delays[pid] = delays[pid]
-    for pid in range(5):
-        await pipe.enqueue([_raw(pid)], block_timestamp=1, base_fee_next=1)
-    await pipe.stop()
-    assert harness.submitted_ids == [0, 1, 2, 3, 4], "submit order must be FIFO"
-    assert session.nonce_calls == 5, "one nonce fetch per submission"
-
-
-async def test_sims_bounded_by_semaphore(harness: _Harness) -> None:
-    """In-flight sims never exceed the configured width (and DO exceed 1)."""
-    session = _FakeSession()
-    pipe = SimSubmitPipeline(session, concurrency=3)
-    for pid in range(6):
-        harness.sim_delays[pid] = 0.05
-    for pid in range(6):
-        await pipe.enqueue([_raw(pid)], block_timestamp=1, base_fee_next=1)
-    await asyncio.sleep(0.02)  # let the sims overlap
-    peak_during_run = harness.max_in_flight
-    await pipe.stop()
-    assert harness.submitted_ids == list(range(6))
-    assert peak_during_run >= 2, "sims must overlap (the whole point of A)"
-    assert harness.max_in_flight <= 3, "semaphore bounds in-flight sims"
 
 
 class _SimRocketExploded(RuntimeError):
     """Test leaf failure carrier (raw-string-exception lint)."""
 
 
-async def test_leaf_failure_aborts_loudly(harness: _Harness) -> None:
-    """A sim failure is stored and re-raised from the consumer's frame."""
-    session = _FakeSession()
-    pipe = SimSubmitPipeline(session, concurrency=2)
+async def test_fifo_submit_order_under_out_of_order_sims() -> None:
+    """Arrival order 0..4 with sims finishing in REVERSE — submits stay FIFO."""
+    harness = SimSubmitHarness()
+    pipe = harness.pipeline(concurrency=8)
+    for pid in range(5):
+        harness.gate(pid)
+    for pid in range(5):
+        await pipe.enqueue([_raw(pid)], block_timestamp=1, base_fee_next=1)
+    await harness.wait_entered(range(5))
+    # Sims 4..1 complete while the queue head (pid 0) is still gated.
+    harness.release([4, 3, 2, 1])
+    assert harness.submitted_ids == [], "no submit may pass the still-gated head"
+    harness.release([0])
+    await pipe.stop()
+    assert harness.submitted_ids == [0, 1, 2, 3, 4], "submit order must be FIFO"
+    assert harness.session.nonce_calls == 5, "one nonce fetch per submission"
 
-    orig = mod.dispatch_profitable
+
+async def test_sims_bounded_by_semaphore() -> None:
+    """In-flight sims never exceed the configured width (and DO exceed 1)."""
+    harness = SimSubmitHarness()
+    pipe = harness.pipeline(concurrency=3)
+    for pid in range(6):
+        harness.gate(pid)
+    for pid in range(6):
+        await pipe.enqueue([_raw(pid)], block_timestamp=1, base_fee_next=1)
+    # Three gated sims in flight = the semaphore is saturated with LIVE overlap.
+    await harness.wait_entered(range(3))
+    peak_during_run = harness.max_in_flight
+    harness.release(range(6))
+    await pipe.stop()
+    assert harness.submitted_ids == list(range(6))
+    assert peak_during_run >= 2, "sims must overlap (the whole point of A)"
+    assert harness.max_in_flight <= 3, "semaphore bounds in-flight sims"
+
+
+async def test_leaf_failure_aborts_loudly() -> None:
+    """A sim failure is stored and re-raised from the consumer's frame."""
+    harness = SimSubmitHarness()
+    base = harness.simulate
 
     async def fail_first(**kwargs):
         if kwargs["candidates"][0].path_id == 99:
             raise _SimRocketExploded
-        return await orig(**kwargs)
+        return await base(**kwargs)
 
-    mod.dispatch_profitable = fail_first
-    try:
-        await pipe.enqueue([_raw(1)], block_timestamp=1, base_fee_next=1)
-        await pipe.enqueue([_raw(99)], block_timestamp=1, base_fee_next=1)
-        await asyncio.sleep(0.05)  # let the failing sim surface
-        with pytest.raises(RuntimeError, match="aborting the consumer loudly"):
-            pipe.raise_if_failed()
-    finally:
-        mod.dispatch_profitable = orig
+    pipe = harness.pipeline(concurrency=2, simulator=fail_first)
+    await pipe.enqueue([_raw(1)], block_timestamp=1, base_fee_next=1)
+    await pipe.enqueue([_raw(99)], block_timestamp=1, base_fee_next=1)
+    # The failing leaf kills the submitter; its death is the deterministic
+    # signal that the failure is stored.
+    assert pipe._submitter is not None
+    await asyncio.wait([pipe._submitter])
+    with pytest.raises(RuntimeError, match="aborting the consumer loudly"):
+        pipe.raise_if_failed()
 
 
 def test_concurrency_env_parse(monkeypatch: pytest.MonkeyPatch) -> None:

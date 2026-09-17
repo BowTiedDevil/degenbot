@@ -45,9 +45,17 @@ from degenbot.runner._driver_constants import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from degenbot.dispatch import DispatchOutcome
     from degenbot.runner._dispatch import _RawResult, _SimOutcome
     from degenbot.runner.bot_runner import _SessionState
+
+    _CandidateBuilder = Callable[..., list]
+    _Renderer = Callable[..., None]
+    _Simulator = Callable[..., Any]
+    _Submitter = Callable[..., Any]
 
 
 def pipeline_concurrency_from_env() -> int:
@@ -84,6 +92,9 @@ async def _run_sim(
     session: _SessionState,
     work: _BatchWork,
     sem: asyncio.Semaphore,
+    *,
+    candidate_builder: _CandidateBuilder,
+    simulator: _Simulator,
 ) -> _SimOutcome | None:
     """The simulate leaf for one batch (GIL-free across the RPC part)."""
     async with sem:
@@ -91,7 +102,7 @@ async def _run_sim(
         # order as the legacy serial path - engine-then-core via
         # path_info_for_core). SIMPIPE2 T3: payload entries skip the FFI sim
         # (already simulated inline in the engine).
-        candidates = _build_dispatch_candidates(session, work.results, payloads=work.payloads)
+        candidates = candidate_builder(session, work.results, payloads=work.payloads)
         outcome: DispatchOutcome | None = None
         if candidates:
             sim_ctx = session.sim_ctx
@@ -101,7 +112,7 @@ async def _run_sim(
                     " (non-Alloy provider or sim context unbuilt)"
                 )
                 raise RuntimeError(msg)
-            outcome = await dispatch_profitable(
+            outcome = await simulator(
                 candidates=candidates,
                 context=sim_ctx,
                 dispatcher=session.dispatcher,
@@ -122,13 +133,16 @@ async def _submit_ordered(
     session: _SessionState,
     work: _BatchWork,
     outcome: _SimOutcome,
+    *,
+    renderer: _Renderer,
+    submitter: _Submitter,
 ) -> None:
     """Render + submit one completed batch outcome (the fan-in step)."""
-    _render_outcome(session, outcome, work.current_block)
+    renderer(session, outcome, work.current_block)
     # The nonce fetch moves to SUBMIT time (it was pre-sim in the serial
     # loop; serialized here it is at least as fresh).
     operator_nonce = int(await session.async_w3.get_transaction_count(session.cfg.operator_address))
-    submitted = _submit_batch_records(
+    submitted = submitter(
         session,
         outcome,
         operator_nonce=operator_nonce,
@@ -149,7 +163,23 @@ LEAF_FAILURE_MESSAGE = "[sim-submit-pipeline] leaf task failed - aborting the co
 class SimSubmitPipeline:
     """K-way concurrent sims, strictly ordered submits (see module doc)."""
 
-    def __init__(self, session: _SessionState, *, concurrency: int | None = None) -> None:
+    def __init__(
+        self,
+        session: _SessionState,
+        *,
+        concurrency: int | None = None,
+        candidate_builder: _CandidateBuilder | None = None,
+        simulator: _Simulator | None = None,
+        renderer: _Renderer | None = None,
+        submitter: _Submitter | None = None,
+    ) -> None:
+        """Wire the pipeline to ``session``.
+
+        ``candidate_builder``/``simulator``/``renderer``/``submitter`` are DI
+        seams (the ``_submit_batch_records`` submitter/relay_providers
+        pattern): tests inject fakes at construction instead of patching the
+        module; omitted kwargs keep the production bindings unchanged.
+        """
         self._session = session
         self._concurrency = (
             concurrency if concurrency is not None else pipeline_concurrency_from_env()
@@ -160,6 +190,12 @@ class SimSubmitPipeline:
         self._failure: BaseException | None = None
         self._enqueued = 0
         self._submitted = 0
+        self._candidate_builder = (
+            candidate_builder if candidate_builder is not None else _build_dispatch_candidates
+        )
+        self._simulator = simulator if simulator is not None else dispatch_profitable
+        self._renderer = renderer if renderer is not None else _render_outcome
+        self._submit_leaf = submitter if submitter is not None else _submit_batch_records
 
     @property
     def concurrency(self) -> int:
@@ -218,7 +254,15 @@ class SimSubmitPipeline:
         )
         self._enqueued += 1
         self._queue.put_nowait(work)
-        work.sim_task = asyncio.ensure_future(_run_sim(self._session, work, self._sem))
+        work.sim_task = asyncio.ensure_future(
+            _run_sim(
+                self._session,
+                work,
+                self._sem,
+                candidate_builder=self._candidate_builder,
+                simulator=self._simulator,
+            )
+        )
 
     async def _submit_loop(self) -> None:
         """The single ordered submitter (fan-in)."""
@@ -231,7 +275,13 @@ class SimSubmitPipeline:
                     assert work.sim_task is not None
                     outcome = await work.sim_task
                     if outcome is not None:
-                        await _submit_ordered(self._session, work, outcome)
+                        await _submit_ordered(
+                            self._session,
+                            work,
+                            outcome,
+                            renderer=self._renderer,
+                            submitter=self._submit_leaf,
+                        )
                     self._submitted += 1
                 finally:
                     self._queue.task_done()

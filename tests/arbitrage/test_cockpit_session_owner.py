@@ -25,6 +25,7 @@ from degenbot.runner import BotRunner
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner.bot_runner import PhaseError, _Phase, _SessionState
 from degenbot.runner.config import ArbitrageConfig
+from tests.fakes.runner_pipelines import StubPipeline
 
 
 @pytest.fixture(autouse=True)
@@ -201,33 +202,10 @@ def _empty_batch() -> dict[str, object]:
     }
 
 
-class _StubPipeline:
-    """Stands in for ``SimSubmitPipeline`` at the consumer's module seam."""
-
-    def __init__(self, session: object, **kwargs: object) -> None:
-        self.session = session
-
-    async def enqueue(
-        self,
-        results: object,
-        *,
-        block_timestamp: int,
-        base_fee_next: int,
-        payloads: dict[int, dict] | None = None,
-    ) -> None:
-        return None
-
-    def raise_if_failed(self) -> None:
-        return None
-
-    async def stop(self) -> None:
-        return None
-
-
 @pytest.fixture(name="stub_pipeline")
-def _stub_pipeline(monkeypatch: pytest.MonkeyPatch) -> type[_StubPipeline]:
-    monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", _StubPipeline)
-    return _StubPipeline
+def _stub_pipeline(monkeypatch: pytest.MonkeyPatch) -> type[StubPipeline]:
+    monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", StubPipeline)
+    return StubPipeline
 
 
 async def _drive_one_block(session: _SessionState, *, tick: int) -> None:
@@ -314,7 +292,7 @@ class TestNoFrozenMirrors:
     """
 
     async def test_consumer_advanced_block_visible_through_every_reader(
-        self, stub_pipeline: type[_StubPipeline]
+        self, stub_pipeline: type[StubPipeline]
     ) -> None:
         runner = _runner()
         await runner.start()
@@ -336,7 +314,7 @@ class TestNoFrozenMirrors:
         assert getattr(runner, "_sim_ctx", session.sim_ctx) is session.sim_ctx
 
     async def test_pipeline_attach_visible_through_the_owner(
-        self, stub_pipeline: type[_StubPipeline]
+        self, stub_pipeline: type[StubPipeline]
     ) -> None:
         runner = _runner()
         await runner.start()
