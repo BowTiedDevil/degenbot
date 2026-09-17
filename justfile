@@ -817,7 +817,7 @@ check-no-alembic:
 # allowlist (tests/rust/stubtest_allowlist.txt) carries only PyO3-
 # introspection noise and stub-only type exemptions, each group annotated with
 # the drift rule it serves. What stubtest cannot see (Python-side surface in
-# driver modules) stays in tests/rust/test_ffi_stub_drift.py.
+# driver modules) stays in tests/rust/test_ffi_registration_surface.py.
 lint-stubtest:
     #!/usr/bin/env bash
     set -euo pipefail

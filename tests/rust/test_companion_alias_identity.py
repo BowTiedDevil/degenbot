@@ -26,6 +26,7 @@ Pinned by this table:
 - ``degenbot.exceptions`` (verification/arbitrage exception seams)
 - ``degenbot.types`` (dex-identity seam)
 - ``degenbot.chainlink`` / ``degenbot.aave`` (price seam)
+- ``degenbot.uniswap.math`` / ``degenbot.aerodrome.math`` (v2-math re-export seam)
 """
 
 from __future__ import annotations
@@ -51,6 +52,10 @@ _DEX_ID = "degenbot._ffi.dex_identity"
 _CHAINLINK = "degenbot.chainlink"
 _AAVE = "degenbot.aave"
 _PRICE = "degenbot._ffi.price"
+_UNI_MATH = "degenbot.uniswap.math"
+_AERO_MATH = "degenbot.aerodrome.math"
+_V2_MATH = "degenbot._ffi.v2_math"
+
 
 # Each row: companion_module, companion_attr, ffi_module, ffi_attr
 ALIAS_TABLE: list[tuple[str, str, str, str]] = [
@@ -87,6 +92,10 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     # price seam
     (_CHAINLINK, "ChainlinkPriceFeed", _PRICE, "ChainlinkPriceFeed"),
     (_AAVE, "AavePriceOracle", _PRICE, "AavePriceOracle"),
+    # v2-math reexports
+    (_UNI_MATH, "calc_exact_in_v2", _V2_MATH, "calc_exact_in_v2"),
+    (_UNI_MATH, "calc_exact_out_v2", _V2_MATH, "calc_exact_out_v2"),
+    (_AERO_MATH, "calc_exact_out_v2", _V2_MATH, "calc_exact_out_v2"),
 ]
 
 

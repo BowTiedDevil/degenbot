@@ -50,7 +50,7 @@ a convention by drift, not by policy.
    import sites updated in-repo, no backward-compat aliases). Each rename
    removes the name from this list and from the gate test's grandfather set
    in the same commit.
-5. **Enforcement**: `tests/rust/test_pyclass_naming_gate.py` walks the
+5. **Enforcement**: `tests/rust/test_ffi_registration_surface.py` walks the
    runtime `degenbot._ffi` module tree and asserts, in both directions, that
    the set of registered `Py`-prefixed class names equals the grandfather
    list. A new `Py`-prefixed registration — or a dead list entry — fails the
