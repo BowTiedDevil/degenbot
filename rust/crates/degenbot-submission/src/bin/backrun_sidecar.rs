@@ -126,6 +126,17 @@ async fn main() {
         .unwrap_or_else(|_| String::from("0x30b28ed8aa581fbc0191c3b532b0697773070e97"))
         .parse()
         .expect("SIDECAR_EXECUTOR is a valid address");
+    // The sim oracle's caller identity: the executor is OWNER-gated
+    // (`execute()` asserts msg.sender == OWNER_ADDR), so the simulated
+    // call must come from the OPERATOR address -- never the target tx's
+    // original sender (that reverts Unauthorized on every frame, which is
+    // exactly the sim_gate_failed storm this replaced). The bid tx
+    // itself is signed by the operator key, so sim-from == tx-from.
+    let owner: Address = std::env::var("SIDECAR_OPERATOR")
+        .or_else(|_| std::env::var("EXECUTOR_OWNER_ADDRESS"))
+        .unwrap_or_else(|_| String::from("0x5c603b8a137A40426E0dDFA981EC10c245AF080e"))
+        .parse()
+        .expect("executor owner address parses");
 
     // DFYDYI B3: the DB-backed V2 connector index -- ONE startup scan,
     // never a per-frame query. Optional (SIDECAR_DB_PATH): without it the
@@ -312,14 +323,13 @@ async fn main() {
                                 BRIBE_BIPS,
                             ) {
                                 Some(cd) => {
-                                    let sim_ok =
-                                        simulate_sweep(&provider, exec, ev.from, cd.clone())
-                                            .await
-                                            .is_some_and(|blocks| {
-                                                blocks.first().is_some_and(|b| {
-                                                    b.calls.first().is_some_and(|c| c.status)
-                                                })
-                                            });
+                                    let sim_ok = simulate_sweep(&provider, exec, owner, cd.clone())
+                                        .await
+                                        .is_some_and(|blocks| {
+                                            blocks.first().is_some_and(|b| {
+                                                b.calls.first().is_some_and(|c| c.status)
+                                            })
+                                        });
                                     if sim_ok {
                                         let bid = U256::from(cand.profit) * U256::from(BRIBE_BIPS)
                                             / U256::from(10_000u16);
@@ -379,7 +389,7 @@ async fn main() {
             let sim_ok = simulate_sweep(
                 &provider,
                 exec,
-                ev.from,
+                owner,
                 submit_calldata.clone().unwrap_or_else(|| sweep.clone()),
             )
             .await
