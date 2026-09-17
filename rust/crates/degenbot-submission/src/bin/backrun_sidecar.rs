@@ -24,7 +24,7 @@ use std::time::Duration;
 use alloy::eips::BlockId;
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_bot::sidecar::{decide, Decision, SidecarConfig};
-use degenbot_decoders::target_classifier::{classify, RouterRegistry, TargetClass};
+use degenbot_decoders::target_classifier::{classify, PoolProtocol, RouterRegistry, TargetClass};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::dispatcher::Dispatcher;
@@ -175,6 +175,35 @@ async fn main() {
                 .to
                 .map_or(TargetClass::Inert, |to| classify(to, &ev.data, &registry));
 
+            // Overlay-solve: decoded V2 WETH legs stage through the lean
+            // post-target view; the eval output sizes the requested bid.
+            // Reserves are fetched async BEFORE the (non-async) decision, so
+            // the loop stays sequential and without nested executors.
+            let mut requested_bid = U256::from(1);
+            if let TargetClass::Swap(legs) = &class {
+                for l in legs.iter().filter(|l| l.protocol == PoolProtocol::V2) {
+                    let Some(pool) = l.pool else { continue };
+                    let Some((r0, r1)) =
+                        degenbot_bot::sidecar_solve::fetch_v2_reserves(&provider, pool).await
+                    else {
+                        continue;
+                    };
+                    if let Ok(o) = degenbot_bot::sidecar_solve::stage_and_eval_v2(
+                        l,
+                        (r0, r1),
+                        degenbot_bot::bot_core::post_target::V2FeeParams {
+                            gamma_numer: 997,
+                            fee_denom: 1000,
+                        },
+                        U256::from(50_000_000_000_000u64),
+                    ) {
+                        requested_bid = requested_bid.max(o.net_wei);
+                    } else {
+                        // Unprofitable/unstageable: fall back to the sweep-min bid.
+                    }
+                }
+            }
+
             // Exact-sim gate: the candidate bundle (sweep leg) must succeed on
             // the current head state or nothing downstream may bid.
             let sim_ok = simulate_sweep(&provider, exec, ev.from, sweep.clone())
@@ -190,7 +219,7 @@ async fn main() {
                 cfg.stop_file.exists(),
                 &class,
                 sim_ok,
-                cfg.max_bundle_wei,
+                requested_bid,
                 age_ms,
                 spent,
             );
