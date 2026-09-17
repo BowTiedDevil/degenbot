@@ -304,8 +304,28 @@ async fn main() {
             Ok((db, _)) => match degenbot_bot::sidecar_paths::V2ConnectorIndex::load(&db, 1)
                 .and_then(|mut ix| ix.load_v3(&db, 1).map(|()| ix))
             {
-                Ok(ix) => {
+                Ok(mut ix) => {
+                    ix.set_ranker(Arc::new(
+                        degenbot_bot::sidecar_paths::OnChainLiquidityRanker::new(Arc::clone(
+                            &provider,
+                        )),
+                    ));
                     tracing::info!(edges = ix.len(), "connector index loaded");
+                    // Evidence mode (SIDECAR_RANK_EVIDENCE=1): a LIVE sanity
+                    // probe before any frame trusts the depth truncation --
+                    // the canonical deep USDC/WETH pair must top the ranking.
+                    if std::env::var("SIDECAR_RANK_EVIDENCE").as_deref() == Ok("1") {
+                        match degenbot_bot::sidecar_paths::deep_pair_ranking_evidence(&ix, &db)
+                            .await
+                        {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "rank evidence: deep USDC/WETH pair tops the ranking"
+                                );
+                            }
+                            Err(e) => tracing::warn!(evidence = %e, "rank evidence FAILED"),
+                        }
+                    }
                     (Some(ix), Some(db))
                 }
                 Err(e) => {
@@ -585,7 +605,7 @@ async fn main() {
                                     connectors = grade.connectors,
                                     profit = %cand.profit,
                                     input = %cand.optimal_input,
-                                    "[connectors] v3 target candidate composed + bundle sim PASSED"
+                                    "v3 target candidate composed + bundle sim PASSED"
                                 );
                             }
                         }
@@ -690,20 +710,18 @@ async fn main() {
                                             evaluated = grade.paths_evaluated,
                                             profit = %cand.profit,
                                             input = %cand.optimal_input,
-                                            "[connectors] candidate composed + sim PASSED"
+                                            "candidate composed + sim PASSED"
                                         );
                                     } else {
                                         tracing::info!(
                                             pool = ?l.pool,
                                             profit = %cand.profit,
-                                            "[connectors] candidate sim FAILED - observe"
+                                            "candidate sim FAILED - observe"
                                         );
                                     }
                                 }
                                 None => {
-                                    tracing::debug!(
-                                        "[connectors] candidate shape rejected by composer"
-                                    );
+                                    tracing::debug!("candidate shape rejected by composer");
                                 }
                             }
                         } else if grade.best_profit > U256::ZERO {
@@ -713,13 +731,13 @@ async fn main() {
                                 evaluated = grade.paths_evaluated,
                                 best_profit = %grade.best_profit,
                                 best_input = %grade.best_input,
-                                "[connectors] profitable family, no executable candidate"
+                                "profitable family, no executable candidate"
                             );
                         } else if grade.connectors > 0 {
                             tracing::debug!(
                                 connectors = grade.connectors,
                                 evaluated = grade.paths_evaluated,
-                                "[connectors] no profitable 2-hop family"
+                                "no profitable 2-hop family"
                             );
                         }
                     }

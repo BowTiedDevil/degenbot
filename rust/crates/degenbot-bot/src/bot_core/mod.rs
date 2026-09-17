@@ -28,6 +28,7 @@ pub mod epoch;
 pub mod epoch_delta;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
+pub mod planning;
 pub mod pool_builder;
 pub mod post_target;
 pub mod pump_control;

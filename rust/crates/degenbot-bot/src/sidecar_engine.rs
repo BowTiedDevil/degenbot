@@ -1,26 +1,23 @@
 //! Sidecar connector-solve engine (epic DFYDYI, task B3): the standalone
 //! engine-backed path solver replacing the hand-composed mono-pool probe.
 //!
-//! Owns a PRIVATE [`BotState`] (the FORK-1 isolation: nothing here touches the
-//! mainline pump's state) + a CL hop-projection cache, admits V2 pools on
-//! demand, stages the target's effect with the exact `v2_post_target` overlay
-//! (applied through the same journal the live path uses), declares two-hop
-//! paths, and evaluates them with the solvers' envelope-gated mixed solve
-//! (V2-V2 = the closed-form integer Mobius; no hand-composed pricing
-//! anywhere).
+//! Solves over a PRIVATE planning [`Workspace`] (the FORK-1 isolation: the
+//! scope's scratch state never touches the mainline pump's registry), admits
+//! pools on demand with explicit typed state, stages the target's effect with
+//! the exact `v2_post_target` overlay (applied through the same journal the
+//! live path uses), declares two-hop paths, and evaluates them with the
+//! solvers' envelope-gated mixed solve (V2-V2 = the closed-form integer
+//! Mobius; no hand-composed pricing anywhere).
 //!
 //! Frame flow: `admit_v2` (affected + connectors) -> `stage_target_swap` ->
 //! `declare` the 2-hop family -> `evaluate` with `min_profit = gas floor`.
 
 use alloy::primitives::{Address, U256};
-use degenbot_pools::v2_state::RegisterV2PoolParams;
-use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::TickInfo;
-use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
-use degenbot_solvers::profit_envelope::GateDeps;
+use degenbot_solvers::mixed::SolvePathResult;
 
-use crate::bot_core::resolve::{resolve_hops, HopProjectionCache};
-use crate::bot_core::BotState;
+use crate::bot_core::planning::{ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace};
 
 /// One admitted V2 pool: identity + the LIVE reserves the caller fetched
 /// (the adapter keeps this narrow; reserves come from `fetch_v2_reserves`).
@@ -33,35 +30,21 @@ pub struct SidecarV2Pool {
     pub reserve1: u128,
 }
 
-/// A declared path: mixed pool refs in hop order.
-#[derive(Debug, Clone)]
-pub struct DeclaredPath {
-    pub hops: Vec<MixedPoolRef>,
-}
-
-/// The evaluate pipeline's tri-state verdict plus the solved result.
-enum EvalVerbose {
-    NoSuchPath,
-    Invalid(usize),
-    GateSkipped,
-    Unsolved,
-    Solved(SolvePathResult),
-}
-
-/// The standalone frame solver (private state; FORK-1 isolated).
+/// The standalone frame solver: the backrun lane's driver shell over a
+/// planning [`Workspace`] (FORK-1 isolation — the scope's scratch state
+/// never touches the mainline pump's registry). Admission, staging,
+/// declaration, and evaluation delegate to the workspace; the lane owns the
+/// RPC fetch ladders that PRODUCE the explicit state (slot0/tick bootstrap,
+/// live reserves).
 pub struct SidecarSolver {
-    state: BotState,
-    cache: HopProjectionCache,
-    paths: Vec<DeclaredPath>,
+    ws: Workspace,
 }
 
 impl SidecarSolver {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            state: BotState::new(),
-            cache: HopProjectionCache::new(),
-            paths: Vec::new(),
+            ws: Workspace::new(),
         }
     }
 
@@ -78,19 +61,21 @@ impl SidecarSolver {
         let Ok(reserve1) = p.reserve1.try_into() else {
             return Err(format!("reserve1 out of uint112: {}", p.reserve1));
         };
-        let params = RegisterV2PoolParams {
-            address: p.address,
-            token0: p.token0,
-            token1: p.token1,
-            reserve0,
-            reserve1,
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
-            update_block: 1,
-            ..RegisterV2PoolParams::default()
-        };
-        self.state
-            .register_v2_pool(&params)
+        self.ws
+            .register_with_state(
+                PlanningPoolParams {
+                    address: p.address,
+                    token0: p.token0,
+                    token1: p.token1,
+                },
+                ExplicitPoolState::V2 {
+                    reserve0,
+                    reserve1,
+                    fee_token0: (997, 1000),
+                    fee_token1: (997, 1000),
+                },
+                1,
+            )
             .map_err(|e| format!("v2 admission failed: {e:?}"))
     }
 
@@ -105,9 +90,8 @@ impl SidecarSolver {
         reserve1: u128,
         block: u64,
     ) {
-        let Ok(r0) = reserve0.try_into() else { return };
-        let Ok(r1) = reserve1.try_into() else { return };
-        let _applied = self.state.apply_v2_sync(address, r0, r1, block);
+        self.ws
+            .stage_v2_reserves(address, reserve0, reserve1, block);
     }
 
     /// Declare a path from admitted pool ids + directions; returns its index.
@@ -118,86 +102,42 @@ impl SidecarSolver {
     /// carries the solver `HopType` so V2/V3 mixes resolve in one cycle).
     #[must_use]
     pub fn declare_hops(&mut self, hops: &[SidecarHopRef]) -> usize {
-        let refs = hops
+        let refs: Vec<PlanningHop> = hops
             .iter()
-            .map(|h| MixedPoolRef {
+            .map(|h| PlanningHop {
+                pool_id: h.pool_id,
                 hop_type: h.family.hop_type(),
-                pool_key: h.pool_id,
                 zero_for_one: h.zfo,
             })
             .collect();
-        self.paths.push(DeclaredPath { hops: refs });
-        self.paths.len() - 1
+        self.ws.declare(&refs)
     }
 
     #[must_use]
     pub fn declare(&mut self, hops: &[(u64, bool)]) -> usize {
-        let refs = hops
+        let refs: Vec<PlanningHop> = hops
             .iter()
-            .map(|&(pool_id, zfo)| MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: pool_id,
-                zero_for_one: zfo,
-            })
+            .map(|(pool_id, zfo)| PlanningHop::v2(*pool_id, *zfo))
             .collect();
-        self.paths.push(DeclaredPath { hops: refs });
-        self.paths.len() - 1
+        self.ws.declare(&refs)
+    }
+
+    /// Envelope-gated solve of a declared path at `min_profit` (the gas
+    /// floor + a safety margin). `None` = gate skipped or unsolvable.
+    pub fn evaluate(&mut self, path_idx: usize, min_profit: U256) -> Option<SolvePathResult> {
+        self.ws.evaluate(path_idx, min_profit)
     }
 
     /// Diagnostic: the full evaluate path for one declared index -- resolve
     /// facts + the solve/gate verdict. Standalone + e2e observability only.
     #[must_use]
     pub fn resolve_debug(&mut self, path_idx: usize) -> String {
-        match self.evaluate_verbose(path_idx, U256::ZERO) {
-            EvalVerbose::NoSuchPath => String::from("no-such-path"),
-            EvalVerbose::Invalid(deficits) => format!("invalid deficits={deficits}"),
-            EvalVerbose::GateSkipped => String::from("gate-skipped"),
-            EvalVerbose::Unsolved => String::from("unsolved (solver returned None)"),
-            EvalVerbose::Solved(r) => format!(
-                "solved: input={} profit={} hops_out={:?}",
-                r.optimal_input, r.profit, r.hop_outputs
-            ),
-        }
-    }
-
-    /// Envelope-gated solve of a declared path at `min_profit` (the gas
-    /// floor + a safety margin). `None` = gate skipped or unsolvable.
-    pub fn evaluate(&mut self, path_idx: usize, min_profit: U256) -> Option<SolvePathResult> {
-        match self.evaluate_verbose(path_idx, min_profit) {
-            EvalVerbose::Solved(r) => Some(r),
-            _ => None,
-        }
-    }
-
-    /// The evaluate pipeline with a tri-state verdict for observability.
-    fn evaluate_verbose(&mut self, path_idx: usize, min_profit: U256) -> EvalVerbose {
-        let Some(refs) = self.paths.get(path_idx).map(|p| p.hops.clone()) else {
-            return EvalVerbose::NoSuchPath;
-        };
-        let mut resolved = ResolvedMixedPath::default();
-        let deficits = resolve_hops(&self.state, &refs, &mut resolved, &self.cache, None, true);
-        if !deficits.is_empty() || !resolved.valid {
-            return EvalVerbose::Invalid(deficits.len());
-        }
-
-        let outcome = degenbot_solvers::mixed::solve_path_with_min_profit(
-            &resolved,
-            min_profit,
-            &GateDeps::offline(),
-        );
-        match outcome.result {
-            Some(r) => EvalVerbose::Solved(r),
-            // Gate-skipped vs solver-None are indistinguishable at this
-            // seam; the walk stats tell them apart (a gate skip reports no
-            // walk steps at a non-zero bound).
-            None if outcome.stats.sims == 0 => EvalVerbose::GateSkipped,
-            None => EvalVerbose::Unsolved,
-        }
+        self.ws.resolve_debug(path_idx)
     }
 
     #[must_use]
     pub fn path_count(&self) -> usize {
-        self.paths.len()
+        self.ws.path_count()
     }
 }
 
@@ -494,7 +434,7 @@ impl SidecarSolver {
         let mut grade = LaneGrade::default();
 
         // Spot connectors (V2): live reserves, same two-cycle shape.
-        let cands = index.connectors(tok_id, weth_id, p_pool_id, cap);
+        let cands = index.connectors(tok_id, weth_id, p_pool_id, cap).await;
         grade.connectors = cands.len();
         for (c_edge, _tok_flag) in cands {
             let Some(c_id) = self
@@ -518,7 +458,7 @@ impl SidecarSolver {
         // CL connectors (B2-CL): the same two-cycle shape with a V3 second
         // hop. Admission costs 3-6 RPC round trips per pool (bounded by
         // cap); the exact-sim oracle remains the truth bar.
-        let v3cands = index.v3_connectors(tok_id, weth_id, p_pool_id, cap);
+        let v3cands = index.v3_connectors(tok_id, weth_id, p_pool_id, cap).await;
         grade.connectors += v3cands.len();
         for (v3_edge, _tok_flag) in v3cands {
             let Some(c_id) = self
@@ -683,22 +623,25 @@ impl SidecarSolver {
             }
         }
 
-        let params = RegisterV3PoolParams {
-            address,
-            token0,
-            token1,
-            fee,
-            tick_spacing,
-            sqrt_price_x96: sqrt_override.unwrap_or(sqrt_price_x96),
-            liquidity,
-            tick: tick_i32,
-            tick_data,
-            update_block: head,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            ..RegisterV3PoolParams::default()
-        };
-        self.state.register_v3_pool(&params).ok()
+        self.ws
+            .register_with_state(
+                PlanningPoolParams {
+                    address,
+                    token0,
+                    token1,
+                },
+                ExplicitPoolState::V3 {
+                    sqrt_price_x96: sqrt_override.unwrap_or(sqrt_price_x96),
+                    liquidity,
+                    tick: tick_i32,
+                    fee,
+                    tick_spacing,
+                    tick_data,
+                    coverage: PoolTickCoverage::Sparse,
+                },
+                head,
+            )
+            .ok()
     }
 
     /// Admit a connector pool at its live reserves. `None` on fetch or
@@ -852,7 +795,7 @@ pub fn build_candidate_calldata(
 )]
 mod tests {
     use super::*;
-    use alloy::primitives::address;
+    use alloy::primitives::{address, aliases::U112};
 
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     const TOK: Address = address!("0000000000000000000000000000000000000aa1");
@@ -861,20 +804,28 @@ mod tests {
     /// Q: the DB-discovered connector pool (cheaper TOK than staged P).
     const Q: Address = address!("000000000000000000000000000000000000b002");
 
-    fn pool_conf(
-        address_: Address,
-        token0: Address,
-        token1: Address,
-        r0: u128,
-        r1: u128,
-    ) -> SidecarV2Pool {
-        SidecarV2Pool {
-            address: address_,
-            token0,
-            token1,
-            reserve0: r0,
-            reserve1: r1,
-        }
+    /// Admit a V2 fixture into a workspace scope with the canonical 0.3%
+    /// fee preset (the lane's admission params, inlined per fixture).
+    fn admitted_v2(s: &mut Workspace, address_: Address, r0: u128, r1: u128) -> u64 {
+        s.register_with_state(
+            PlanningPoolParams {
+                address: address_,
+                token0: TOK,
+                token1: WETH,
+            },
+            ExplicitPoolState::V2 {
+                reserve0: U112::from(r0),
+                reserve1: U112::from(r1),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+            },
+            1,
+        )
+        .expect("admits")
+    }
+
+    fn declared_cycle(s: &mut Workspace, p_id: u64, q_id: u64, p_zfo: bool, q_zfo: bool) -> usize {
+        s.declare(&[PlanningHop::v2(p_id, p_zfo), PlanningHop::v2(q_id, q_zfo)])
     }
 
     /// The golden 2-hop frame (values hand-derived):
@@ -882,19 +833,15 @@ mod tests {
     /// after the target swaps 50 WETH into the pair; connector live reserves
     /// `(200_000, 900)`. Optimal integer 2-hop: input ~123 WETH, profit 56 wei
     /// (plateau 55..56); equal-reserves control: max profit 0.
-    fn staged_frame() -> (SidecarSolver, usize) {
-        let mut s = SidecarSolver::new();
-        let p_id = s
-            .admit_v2(&pool_conf(P, TOK, WETH, 500_000, 1_000))
-            .expect("P admits");
-        let q_id = s
-            .admit_v2(&pool_conf(Q, TOK, WETH, 200_000, 900))
-            .expect("Q admits");
+    fn staged_frame() -> (Workspace, usize) {
+        let mut s = Workspace::new();
+        let p_id = admitted_v2(&mut s, P, 500_000, 1_000);
+        let q_id = admitted_v2(&mut s, Q, 200_000, 900);
         // The target's exact effect (v2_post_target: 50 WETH in on P).
-        s.stage_target_swap(P, 476_259, 1_050, 2);
+        s.stage_v2_reserves(P, 476_259, 1_050, 2);
         // Cycle: WETH -> TOK at staged P (token1->token0, zfo=false),
         // TOK -> WETH at Q (token0->token1, zfo=true).
-        let idx = s.declare(&[(p_id, false), (q_id, true)]);
+        let idx = declared_cycle(&mut s, p_id, q_id, false, true);
         (s, idx)
     }
 
@@ -927,16 +874,12 @@ mod tests {
 
     #[test]
     fn equal_price_connector_yields_no_profit() {
-        let mut s = SidecarSolver::new();
-        let p_id = s
-            .admit_v2(&pool_conf(P, TOK, WETH, 500_000, 1_000))
-            .expect("P");
-        s.stage_target_swap(P, 476_259, 1_050, 2);
+        let mut s = Workspace::new();
+        let p_id = admitted_v2(&mut s, P, 500_000, 1_000);
+        s.stage_v2_reserves(P, 476_259, 1_050, 2);
         // Q priced identically to staged P: no arbitrage room (fees drain).
-        let q_id = s
-            .admit_v2(&pool_conf(Q, TOK, WETH, 476_259, 1_050))
-            .expect("Q");
-        let idx = s.declare(&[(p_id, false), (q_id, true)]);
+        let q_id = admitted_v2(&mut s, Q, 476_259, 1_050);
+        let idx = declared_cycle(&mut s, p_id, q_id, false, true);
         let res = s.evaluate(idx, U256::ZERO);
         assert!(
             res.as_ref().is_none_or(|r| r.profit.is_zero()),
@@ -948,9 +891,7 @@ mod tests {
     fn orientation_flipped_path_hurts() {
         let (mut s, _) = staged_frame();
         // Deliberately wrong directions: the cycle drains on fees both ways.
-        let p_id = 1;
-        let q_id = 2;
-        let idx = s.declare(&[(p_id, true), (q_id, false)]);
+        let idx = s.declare(&[PlanningHop::v2(1, true), PlanningHop::v2(2, false)]);
         let res = s.evaluate(idx, U256::ZERO);
         assert!(
             res.as_ref().is_none_or(|r| r.profit.is_zero()),
@@ -960,8 +901,8 @@ mod tests {
 
     #[test]
     fn unknown_pool_path_is_dropped() {
-        let mut s = SidecarSolver::new();
-        let idx = s.declare(&[(1, false), (2, true)]);
+        let mut s = Workspace::new();
+        let idx = s.declare(&[PlanningHop::v2(1, false), PlanningHop::v2(2, true)]);
         assert!(s.evaluate(idx, U256::ZERO).is_none());
     }
 

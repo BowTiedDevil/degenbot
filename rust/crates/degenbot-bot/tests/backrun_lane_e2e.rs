@@ -90,7 +90,7 @@ async fn lane_pipeline_reaches_exact_sim() {
         "joined: weth_id={weth_id} usdc_id={usdc_id} edge=({},{}) edge_pool={}",
         p_edge.token0_id, p_edge.token1_id, p_edge.pool_id
     );
-    let direct = index.connectors(usdc_id, weth_id, p_edge.pool_id, 8);
+    let direct = index.connectors(usdc_id, weth_id, p_edge.pool_id, 8).await;
     eprintln!("direct connectors: {}", direct.len());
     let grade = solver
         .run_connector_lane(
