@@ -429,9 +429,31 @@ pub struct PathFinder<'a> {
     visited: Vec<bool>,
     pending_reverse: Option<Vec<EdgeKey>>,
     done: bool,
+    /// Cooperative cancellation flag, shared with [`OwnedPathFinder`] via the
+    /// same `with_cancel` contract: once set, the search exhausts at its next
+    /// loop iteration instead of grinding to a natural end.
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl PathFinder<'_> {
+    /// Attach a cooperative cancellation flag checked on every DFS advance —
+    /// the same contract as [`OwnedPathFinder::with_cancel`]. A caller burning
+    /// a per-frame time budget flips the flag between yields; the search
+    /// reports exhaustion at its next loop iteration.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
+    /// Whether the attached cancellation flag has been set.
+    #[must_use]
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed))
+    }
+
     /// Advance the DFS and return the next complete path, or `None` if
     /// the search is exhausted.
     ///
@@ -439,7 +461,8 @@ impl PathFinder<'_> {
     /// first, then the reversed path on the next call.
     #[must_use]
     pub fn next_path(&mut self) -> Option<Vec<EdgeKey>> {
-        if self.done {
+        if self.done || self.cancelled() {
+            self.done = true;
             return None;
         }
 
@@ -449,6 +472,18 @@ impl PathFinder<'_> {
         }
 
         while let Some(frame) = self.stack.last_mut() {
+            // Cooperative cancellation (borrowed walker): a set flag stops the
+            // search at the next loop iteration. Field access mirrors
+            // OwnedPathFinder::advance's in-loop check; the direct field read
+            // keeps the `frame` borrow disjoint.
+            if self
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed))
+            {
+                self.done = true;
+                break;
+            }
             let (node, edge_idx, yield_checked) = frame;
 
             // Check yield condition (once per frame arrival).
@@ -1169,6 +1204,7 @@ impl PathGraph {
             visited: vec![false; self.pools.len()],
             pending_reverse: None,
             done,
+            cancel: None,
         }
     }
 
@@ -1573,6 +1609,42 @@ mod tests {
             "a set cancel flag must exhaust the search immediately"
         );
         assert!(finder.next_path().is_none());
+    }
+
+    /// The borrowed walker (`find_paths_iter`) must support the same
+    /// cooperative cancellation the owned one does: an armed flag before the
+    /// first advance exhausts immediately, and a flag set mid-stream stops
+    /// the search at its next loop iteration.
+    #[test]
+    fn test_borrowed_finder_cancel_before_first_advance() {
+        let graph = build_fixture_graph();
+        let cancel = Arc::new(AtomicBool::new(true));
+        let mut finder = graph
+            .find_paths_iter(WETH, WETH, 2, Some(3), true, None, None)
+            .with_cancel(cancel);
+        assert!(
+            finder.next_path().is_none(),
+            "an armed cancel flag must yield nothing"
+        );
+        assert!(finder.next_path().is_none(), "exhaustion is sticky");
+    }
+
+    #[test]
+    fn test_borrowed_finder_cancel_mid_stream() {
+        let graph = build_fixture_graph();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut finder = graph
+            .find_paths_iter(WETH, WETH, 2, Some(3), true, None, None)
+            .with_cancel(Arc::clone(&cancel));
+        assert!(
+            finder.next_path().is_some(),
+            "the first cycle yields before any cancel"
+        );
+        cancel.store(true, Ordering::Release);
+        assert!(
+            finder.next_path().is_none(),
+            "a flag set between advances stops the search promptly"
+        );
     }
 
     /// The discovery-heartbeat diagnostics + the `while let` → `loop`

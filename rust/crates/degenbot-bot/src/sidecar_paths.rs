@@ -565,6 +565,28 @@ impl V2ConnectorIndex {
     pub fn v3_edge_by_address(&self, address: Address) -> Option<&V3Edge> {
         self.v3_by_address.get(&address).map(|&i| &self.v3_edges[i])
     }
+
+    /// A V3 pool's edge by pool id (the walker-cycle → index-edge join).
+    #[must_use]
+    pub fn v3_pool_edge(&self, pool_id: u64) -> Option<&V3Edge> {
+        self.v3_by_pool.get(&pool_id).map(|&i| &self.v3_edges[i])
+    }
+
+    /// The flat `(token0_id, token1_id, pool_id, PoolKind)` edge list the
+    /// discovery walker builds its `PathGraph` from — the SAME loaded edge
+    /// set every fan reads; `PoolKind` carries the pool-table family.
+    #[must_use]
+    pub fn path_edges(&self) -> Vec<(u64, u64, u64, PoolKind)> {
+        self.edges
+            .iter()
+            .map(|e| (e.token0_id, e.token1_id, e.pool_id, PoolKind::V2))
+            .chain(
+                self.v3_edges
+                    .iter()
+                    .map(|e| (e.token0_id, e.token1_id, e.pool_id, PoolKind::V3)),
+            )
+            .collect()
+    }
 }
 
 // ───────────────────────── startup evidence (LIVE) ─────────────────────────

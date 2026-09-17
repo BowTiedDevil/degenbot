@@ -65,6 +65,7 @@
 //!   hands it to the Rust signer ONCE).
 //! - The `SubmittedTx` monitor / dispatcher state — sibling tasks in the epic.
 
+pub mod anchored_dfs;
 pub mod bundle;
 pub mod dispatcher;
 pub mod error;

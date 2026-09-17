@@ -959,3 +959,90 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         "one replay event per fixture frame"
     );
 }
+
+// ─────────────── the anchored walker's depth-3 lane ───────────────
+
+/// M: the depth-3 intermediate (canonical token order: TOK < M < WETH).
+const M: Address = address!("0000000000000000000000000000000000000ab2");
+/// C1/C2: the walker-discovered bridge pools (TOK-M and M-WETH).
+const C1: Address = address!("000000000000000000000000000000000000b101");
+const C2: Address = address!("000000000000000000000000000000000000b102");
+
+/// The walker's 3-hop chain (WETH entry, P tok->weth anchor first, then
+/// C1 tok->M, then C2 M->WETH) runs through the SAME declare/evaluate gate
+/// as the fans: declared once, envelope-evaluated, best candidate kept and
+/// composable. Profit matches the independent reference CLP-chain scan.
+#[test]
+fn walker_three_hop_chain_solves_and_composes() {
+    let mut solver = SidecarSolver::new();
+    // P staged golden (476_259 TOK / 1_050 WETH), C1 (400_000 TOK /
+    // 800_000 M), C2 (800_000 M / 2_000 WETH): the bridge pays ~0.005 WETH
+    // per TOK against P's ~0.0022, so the WETH-entry chain profits.
+    let p_id = admitted_pair(&mut solver, P, TOK, WETH, 476_259, 1_050);
+    let c1_id = admitted_pair(&mut solver, C1, TOK, M, 400_000, 800_000);
+    let c2_id = admitted_pair(&mut solver, C2, M, WETH, 800_000, 2_000);
+
+    // Canonical `zfo` rule: the INPUT token is the hop's token0.
+    let chains = vec![vec![
+        SidecarHopRef {
+            pool_id: p_id,
+            pool: P,
+            token0: TOK,
+            token1: WETH,
+            zfo: false, // entry WETH = token1
+            family: LaneFamily::V2,
+        },
+        SidecarHopRef {
+            pool_id: c1_id,
+            pool: C1,
+            token0: TOK,
+            token1: M,
+            zfo: true, // input TOK = token0
+            family: LaneFamily::V2,
+        },
+        SidecarHopRef {
+            pool_id: c2_id,
+            pool: C2,
+            token0: M,
+            token1: WETH,
+            zfo: true, // input M = token0
+            family: LaneFamily::V2,
+        },
+    ]];
+
+    let stats =
+        degenbot_submission::frame_pipeline::solve_dfs_chains(&mut solver, &chains, U256::ZERO);
+    assert_eq!(stats.dfs_declared, 1, "the walker chain declares once");
+    assert_eq!(stats.dfs_evaluated, 1, "the chain clears the zero floor");
+    let best = stats.best.expect("the 3-hop walker chain profits");
+    assert_eq!(best.hops.len(), 3);
+
+    // Wei honesty: the recorded profit matches the independent CLP-chain
+    // optimum (WETH -> TOK -> M -> WETH).
+    let (w_star, p_star) = best_chain_profit(
+        &[(1_050, 476_259), (400_000, 800_000), (800_000, 2_000)],
+        60_000,
+    );
+    assert!(p_star > 0, "the scanned 3-hop chain profits");
+    assert!(
+        (i128::try_from(best.profit).unwrap() - i128::try_from(p_star).unwrap()).abs() <= 3,
+        "wei profit {} vs reference {}",
+        best.profit,
+        p_star
+    );
+    assert!(
+        best.optimal_input.abs_diff(w_star) <= 100,
+        "optimal WETH input {} vs reference {}",
+        best.optimal_input,
+        w_star
+    );
+
+    let cd = degenbot_bot::sidecar_engine::build_candidate_calldata(
+        &best,
+        address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
+        WETH,
+        9_800,
+    )
+    .expect("the 3-hop walker candidate composes");
+    assert!(cd.len() > 4 + 32 * 3 + 64, "execute() calldata shape");
+}

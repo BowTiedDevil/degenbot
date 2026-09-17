@@ -2636,6 +2636,7 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-executor",
+ "degenbot-pathfinding",
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-simulation",

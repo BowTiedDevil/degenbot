@@ -40,7 +40,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use alloy::primitives::{address, Address, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorState;
@@ -50,8 +50,14 @@ use degenbot_bot::sidecar_engine::{
     SidecarV2Pool,
 };
 use degenbot_bot::sidecar_paths::V2ConnectorIndex;
+// The anchored touched-set discovery walker (startup graph + per-frame
+// cycles) and the pathfinding leaf it runs on.
+use crate::anchored_dfs::{
+    resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, DiscoveryBudget, ResolvedHop,
+};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_decoders::target_classifier::TargetClass;
+use degenbot_pathfinding::PoolKind;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::{slot_layout, v3_storage_slots, TickInfo};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
@@ -80,6 +86,11 @@ pub const USDT: Address = address!("dac17f958d2ee523a2206206994597c13d831ec7");
 /// in any of these, selected by the touched token's edge degree. Outside
 /// the set, a pool keeps its truthful no-quote skip.
 pub const SUPPORTED_QUOTES: [Address; 3] = [WETH, USDC, USDT];
+
+/// The per-frame discovery slice: how long the anchored walker may grind on
+/// one frame before its cancel flag fires. The slice bounds only the walker
+/// (its churn is checked between yields) — never the solve/sim stages.
+const FRAME_DISCOVERY_SLICE: Duration = Duration::from_millis(2);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Offline-review capture (moved verbatim from the bin: capture failures
@@ -144,6 +155,10 @@ pub struct StrategyRuntime {
     /// Cross-block warm bytecode/account cache owner, shared into every
     /// per-block replay handle.
     pub warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
+    /// The startup-built discovery graph over the connector index's edge
+    /// set (V2 + V3; `None` exactly when the index is `None` — the walker
+    /// lane stays shut with it).
+    pub dfs: Option<AnchoredGraph>,
     token_ids: Mutex<HashMap<Address, u64>>,
     token_addrs: Mutex<HashMap<u64, Address>>,
 }
@@ -158,6 +173,8 @@ impl StrategyRuntime {
     ) -> Self {
         Self {
             chain_id,
+            // Built from the index BEFORE it moves: one startup graph pass.
+            dfs: index.as_ref().map(AnchoredGraph::from_connector_index),
             index,
             db,
             connector_cap,
@@ -884,6 +901,10 @@ pub struct SolveStats {
     pub connectors: usize,
     pub cycles_declared: usize,
     pub cycles_evaluated: usize,
+    /// Rounded-up to the same gate as the fans: the anchored walker's
+    /// depth-3 chains declared / envelope-evaluated.
+    pub dfs_declared: usize,
+    pub dfs_evaluated: usize,
     pub best: Option<LaneCandidate>,
     /// A non-WETH quote fan had connectors but no priceable WETH
     /// normalization lane, so its candidates were refused (the frame's
@@ -965,6 +986,250 @@ pub fn solve_fans(
         }
     }
     stats
+}
+
+/// Evaluate the anchored walker's depth-3 chains through the SAME
+/// declare/evaluate/envelope gate as the fans (wei floor vs wei profit),
+/// keeping the best. The chains arrive anchor-first in traversal order;
+/// selection across fans, quotes, and walker chains still compares wei
+/// downstream — this function only bundles the walker surface's counts.
+pub fn solve_dfs_chains(
+    solver: &mut SidecarSolver,
+    chains: &[Vec<SidecarHopRef>],
+    gas_floor_wei: U256,
+) -> SolveStats {
+    let mut stats = SolveStats::default();
+    for chain in chains {
+        let idx = solver.declare_hops(chain);
+        stats.dfs_declared += 1;
+        let Some(res) = solver.evaluate(idx, gas_floor_wei) else {
+            continue;
+        };
+        stats.dfs_evaluated += 1;
+        let profit = res.profit.to::<u128>();
+        if stats.best.as_ref().is_some_and(|b| b.profit >= profit) {
+            continue;
+        }
+        stats.best = Some(LaneCandidate {
+            hops: chain.clone(),
+            optimal_input: res.optimal_input.to::<u128>(),
+            hop_outputs: res.hop_outputs.iter().map(|v| v.to::<u128>()).collect(),
+            consumed_inputs: res.consumed_inputs.iter().map(|v| v.to::<u128>()).collect(),
+            profit,
+        });
+    }
+    stats
+}
+
+/// The hop refs of one WETH-entry 3-hop walker cycle:
+/// `WETH →(anchor) tok →(h1) mid →(h2) WETH`. `None` unless the resolved
+/// bridges straddle exactly that token path — the cycle came from the
+/// walker, and this re-derives its traversal from index identity instead
+/// of trusting orientation.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the identity fields name the traversal: derived ids, addresses, admissions"
+)]
+#[must_use]
+pub fn three_hop_refs(
+    a: &AffectedPool,
+    weth_id: u64,
+    tok_id: u64,
+    tok_addr: Address,
+    mid_id: u64,
+    mid_addr: Address,
+    h1: &ResolvedHop,
+    h2: &ResolvedHop,
+    ws1: u64,
+    ws2: u64,
+) -> Option<Vec<SidecarHopRef>> {
+    let straddles = |r: &ResolvedHop, x: u64, y: u64| {
+        (r.token0_id() == x && r.token1_id() == y) || (r.token1_id() == x && r.token0_id() == y)
+    };
+    if !straddles(h1, tok_id, mid_id) || !straddles(h2, mid_id, weth_id) {
+        return None;
+    }
+    let family = |r: &ResolvedHop| match r {
+        ResolvedHop::V2(_) => LaneFamily::V2,
+        ResolvedHop::V3(e) => LaneFamily::V3 { fee: e.fee },
+    };
+    let anchor = SidecarHopRef {
+        pool_id: a.workspace_pool_id,
+        pool: a.address,
+        token0: a.token0,
+        token1: a.token1,
+        // The anchor hop consumes WETH: `zfo` ⇔ the input is the hop's token0.
+        zfo: a.token0 == WETH,
+        family: a.family,
+    };
+    let hop1 = SidecarHopRef {
+        pool_id: ws1,
+        pool: *h1.address(),
+        token0: if h1.token0_id() == tok_id {
+            tok_addr
+        } else {
+            mid_addr
+        },
+        token1: if h1.token0_id() == tok_id {
+            mid_addr
+        } else {
+            tok_addr
+        },
+        zfo: h1.token0_id() == tok_id,
+        family: family(h1),
+    };
+    let hop2 = SidecarHopRef {
+        pool_id: ws2,
+        pool: *h2.address(),
+        token0: if h2.token0_id() == weth_id {
+            WETH
+        } else {
+            mid_addr
+        },
+        token1: if h2.token1_id() == weth_id {
+            WETH
+        } else {
+            mid_addr
+        },
+        zfo: h2.token0_id() == mid_id,
+        family: family(h2),
+    };
+    Some(vec![anchor, hop1, hop2])
+}
+
+/// Admit one walker hop's pool at the frame's chain view (raw-RPC fallback)
+/// and return its workspace id. A pool whose state reads as unusable
+/// (zero reserves, incomplete slot0/liquidity) is skipped, never guessed.
+async fn admit_hop_pool(
+    rt: &StrategyRuntime,
+    solver: &mut SidecarSolver,
+    scratch: &mut ScratchEvm<ScratchDb<'_>>,
+    provider: &AlloyProvider,
+    hop: &ResolvedHop,
+    head: u64,
+) -> Option<u64> {
+    match hop {
+        ResolvedHop::V2(e) => {
+            let reserves = match view_v2_reserves(scratch, e.address) {
+                Some(r) => r,
+                None => degenbot_bot::sidecar_solve::fetch_v2_reserves(provider, e.address).await?,
+            };
+            let token0 = rt.token_addr(e.token0_id)?;
+            let token1 = rt.token_addr(e.token1_id)?;
+            solver
+                .admit_v2(&SidecarV2Pool {
+                    address: e.address,
+                    token0,
+                    token1,
+                    reserve0: reserves.0,
+                    reserve1: reserves.1,
+                })
+                .ok()
+        }
+        ResolvedHop::V3(e) => {
+            let token0 = rt.token_addr(e.token0_id)?;
+            let token1 = rt.token_addr(e.token1_id)?;
+            if let Some((sqrt, tk, liq, tick_data)) = read_v3_view(
+                scratch,
+                e.address,
+                ClSlotLayout::UniswapV3,
+                e.tick_spacing,
+                head,
+            ) {
+                solver.admit_v3_explicit(
+                    e.address,
+                    token0,
+                    token1,
+                    e.fee,
+                    e.tick_spacing,
+                    sqrt,
+                    liq,
+                    tk,
+                    tick_data,
+                    head,
+                )
+            } else {
+                solver
+                    .admit_v3_full(
+                        provider,
+                        e.address,
+                        token0,
+                        token1,
+                        e.fee,
+                        e.tick_spacing,
+                        None,
+                        head,
+                    )
+                    .await
+            }
+        }
+    }
+}
+
+/// The anchored walker's depth-3 lane: per WETH-entry cycle, admit the two
+/// bridge pools at the frame's chain view and build the anchor-first hop
+/// chain the shared gate evaluates. 2-hop walker cycles never reach here —
+/// the depth-ranked fan owns that surface (parity is proven at the engine
+/// level) — so the walker's NEW candidates are exactly these chains.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the lane takes the runtime surfaces it needs"
+)]
+async fn dfs_three_hop_chains(
+    rt: &StrategyRuntime,
+    idx: &V2ConnectorIndex,
+    a: &AffectedPool,
+    wq: &AffectedQuote,
+    cycles: &[DfsCycle],
+    scratch: &mut ScratchEvm<ScratchDb<'_>>,
+    solver: &mut SidecarSolver,
+    provider: &AlloyProvider,
+    head: u64,
+) -> Vec<Vec<SidecarHopRef>> {
+    let mut chains = Vec::new();
+    let Some(tok_addr) = rt.token_addr(wq.tok_id) else {
+        return chains;
+    };
+    for cycle in cycles
+        .iter()
+        .filter(|c| c.pools.len() == 3 && c.entry_token_id == wq.quote_id)
+    {
+        let Some(h1) = resolve_hop(idx, cycle.pools[1]) else {
+            continue;
+        };
+        let Some(h2) = resolve_hop(idx, cycle.pools[2]) else {
+            continue;
+        };
+        let mid_id = if h1.token0_id() == wq.tok_id {
+            h1.token1_id()
+        } else {
+            h1.token0_id()
+        };
+        let Some(mid_addr) = rt.token_addr(mid_id) else {
+            continue;
+        };
+        let Some(ws1) = admit_hop_pool(rt, solver, scratch, provider, &h1, head).await else {
+            continue;
+        };
+        let Some(ws2) = admit_hop_pool(rt, solver, scratch, provider, &h2, head).await else {
+            continue;
+        };
+        if let Some(chain) = three_hop_refs(
+            a,
+            wq.quote_id,
+            wq.tok_id,
+            tok_addr,
+            mid_id,
+            mid_addr,
+            &h1,
+            &h2,
+            ws1,
+            ws2,
+        ) {
+            chains.push(chain);
+        }
+    }
+    chains
 }
 
 /// The truthful observe label for an un-composed frame: a non-base-quote
@@ -1384,6 +1649,53 @@ pub async fn process_frame(
         }
         fans.push(pool_fans);
     }
+
+    // ── anchored walker: the depth-3 lane ────────────────────────────────
+    // Anchors are this frame's touched pools; every cycle includes its
+    // anchor by construction; the walker's cancel budget is the frame's
+    // discovery slice. The depth-ranked fan owns the 2-hop surface until
+    // cutover — the walker's NEW candidates here are exactly the 3-hop
+    // chains (an anchor pool bridging two connectors through an
+    // intermediate token), admitted at the frame's chain view. WETH-transit
+    // cycles only: the cycle's transit currency must be wei for the shared
+    // envelope gate; non-WETH quotes keep their priced-normalization lane.
+    let mut dfs_chains: Vec<Vec<SidecarHopRef>> = Vec::new();
+    let mut dfs_cycles = 0usize;
+    if let Some(graph) = rt.dfs.as_ref() {
+        let budget = DiscoveryBudget::after(FRAME_DISCOVERY_SLICE);
+        for a in &affected {
+            let Some(wq) = a.quotes.iter().find(|q| q.quote == WETH) else {
+                continue;
+            };
+            let anchor = AnchorPool {
+                pool_id: a.index_pool_id,
+                pool_kind: match a.family {
+                    LaneFamily::V2 => PoolKind::V2,
+                    LaneFamily::V3 { .. } => PoolKind::V3,
+                },
+                token_a_id: wq.quote_id,
+                token_b_id: wq.tok_id,
+            };
+            let cycles = graph.cycles_through_pool(anchor, &budget, rt.connector_cap.max(1));
+            dfs_cycles += cycles.len();
+            let chains = dfs_three_hop_chains(
+                rt,
+                idx,
+                a,
+                wq,
+                &cycles,
+                scratch,
+                &mut solver,
+                provider,
+                head,
+            )
+            .await;
+            dfs_chains.extend(chains);
+            if budget.expired() {
+                break;
+            }
+        }
+    }
     stages.discover_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
     trace_jsonl(
         "discover",
@@ -1391,6 +1703,8 @@ pub async fn process_frame(
             "tx": tx_hex,
             "connectors": connectors_seen,
             "cycles_proposed": cycles_proposed,
+            "dfs_cycles": dfs_cycles,
+            "dfs_chains": dfs_chains.len(),
             "affected": affected.len(),
             "non_base_quote_dropped": non_base_quote_dropped,
         }),
@@ -1412,6 +1726,21 @@ pub async fn process_frame(
                 .is_none_or(|best| b.profit > best.profit)
         }) {
             aggregate.best = stats.best;
+        }
+    }
+    // The walker's depth-3 chains meet the same envelope gate and wei
+    // ranking as the fans' best candidates.
+    if !dfs_chains.is_empty() {
+        let dfs_stats = solve_dfs_chains(&mut solver, &dfs_chains, pl.gas_floor_wei);
+        aggregate.dfs_declared += dfs_stats.dfs_declared;
+        aggregate.dfs_evaluated += dfs_stats.dfs_evaluated;
+        if dfs_stats.best.as_ref().is_some_and(|b| {
+            aggregate
+                .best
+                .as_ref()
+                .is_none_or(|best| b.profit > best.profit)
+        }) {
+            aggregate.best = dfs_stats.best;
         }
     }
     aggregate.non_base_quote_dropped |= non_base_quote_dropped;

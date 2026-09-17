@@ -55,6 +55,10 @@ tracing-subscriber = { version = "^0.3", default-features = false, features = ["
 # across consumer/monitor task boundaries (ADR-005 standalone core).
 tokio = { version = "^1.53", features = ["rt", "sync", "time", "macros"] }
 
+# The anchored touched-set discovery walker: the frame pipeline's cycle
+# finder runs the shared pathfinding DFS over the connector index's edge set.
+degenbot-pathfinding.workspace = true
+
 # Gated (not default) so pure-Rust consumers build without pulling pyo3.
 # Enables `impl From<degenbot_submission::SubmissionError> for pyo3::PyErr` so
 # the `degenbot-python` binding layer can `?`-propagate signing/fee errors as a
