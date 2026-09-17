@@ -255,8 +255,6 @@ async fn run_frame(
     reason = "bin orchestration loop reads top-to-bottom"
 )]
 async fn main() {
-    const MEVBLOCKER_SIM_URL: &str = "https://rpc.mevblocker.io/fast";
-
     init_tracing();
     let cfg = SidecarConfig::from_env();
 
@@ -269,11 +267,18 @@ async fn main() {
         alloy::providers::ProviderBuilder::default().connect_client(client),
     )));
 
-    // The bundle-sim client: MEVBlocker's /fast read endpoint (doc
-    // how-to/searchers/bid step 2). READ/SIM ONLY -- `eth_callMany` never
-    // broadcasts, and this client is passed nothing else.
-    let sim_client = alloy::rpc::client::ClientBuilder::default()
-        .http(MEVBLOCKER_SIM_URL.parse().expect("sim url"));
+    // The bundle-sim client (`SIDECAR_SIM_URL`, default: the chain node
+    // the frames replay against). READ/SIM ONLY -- `eth_callMany` never
+    // broadcasts, and this client is passed nothing else. The sim MUST run
+    // on an endpoint that actually serves `eth_callMany`; MEVBlocker's
+    // /fast http tier answers method-missing for it, so the node is the
+    // fallback and /fast stays available as an explicit override.
+    let sim_client = alloy::rpc::client::ClientBuilder::default().http(
+        std::env::var("SIDECAR_SIM_URL")
+            .unwrap_or_else(|_| cfg.rpc_url.clone())
+            .parse()
+            .expect("sim url parses as an http url"),
+    );
     // Bid mode legality was already decided in `decide`; the signer only
     // loads when the key material exists so observe-only runs need none.
     let signer: Option<TxSigner> = cfg.key_file.as_ref().map(|p| {

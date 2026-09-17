@@ -18,8 +18,8 @@ use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout;
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
 use degenbot_submission::frame_pipeline::{
-    admit_extracted, build_descriptors, solve_fans, state_digest, DiscoveredConnector,
-    StrategyRuntime, WETH,
+    admit_extracted, bid_from_profit, build_descriptors, solve_fans, state_digest,
+    DiscoveredConnector, StrategyRuntime, WETH,
 };
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
@@ -1045,4 +1045,26 @@ fn walker_three_hop_chain_solves_and_composes() {
     )
     .expect("the 3-hop walker candidate composes");
     assert!(cd.len() > 4 + 32 * 3 + 64, "execute() calldata shape");
+}
+
+// ───────────────────── the bid ladder (single bribe site) ──────────────────
+
+#[test]
+fn bid_ladder_is_floor_of_bribe_share() {
+    // The 98% ladder applied to an exact-solve profit: the bid is the
+    // TRUNCATED (floor) share, and nothing else gates on a second
+    // application of the share. Expected values are worked literals, not
+    // recomputed by the code under test.
+    assert_eq!(
+        bid_from_profit(55_000_000_000_000_000_000u128, 9_800),
+        53_900_000_000_000_000_000u128
+    );
+    // Truncation: 123 wei at 98% floors to 120 wei, never rounds up.
+    assert_eq!(bid_from_profit(123, 9_800), 120);
+    // Sub-wei share floors to zero at the formula (the caller refuses a
+    // zero bid through the decision layer's `zero_bid` vocabulary after
+    // flooring to 1 when a candidate DID compose and sim-pass).
+    assert_eq!(bid_from_profit(5, 9_800), 4);
+    // A different ladder share moves the bid with it.
+    assert_eq!(bid_from_profit(10_000, 9_000), 9_000);
 }

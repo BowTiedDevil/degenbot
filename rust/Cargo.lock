@@ -2295,6 +2295,7 @@ dependencies = [
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-solvers",
+ "degenbot-submission",
  "degenbot-uniswap",
  "degenbot-workers",
  "futures-util",

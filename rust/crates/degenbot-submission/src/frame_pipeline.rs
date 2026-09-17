@@ -37,6 +37,32 @@
 //! ladder) is only the fallback where the view read fails or returns no
 //! usable state. Nothing is fabricated: a zero/failed read skips or falls
 //! back, never guesses.
+//!
+//! # Envelope floor and the bid ladder (single bribe site)
+//!
+//! Profit `P` (wei) is the exact solver delta over the frame's REPLAYED
+//! post-states, WETH-closed for every quote — never an analytic post-target
+//! estimate. Two economic gates hang off `P` and they must not double-count
+//! each other's term:
+//!
+//! 1. **Envelope floor** `F = gas_units × b_next`: the gas a landed bundle
+//!    costs at the projected next-block base fee `b_next`. The per-block
+//!    replay handle ([`build_block_handle`]) projects `b_next` as the
+//!    EIP-1559 100%-full-block worst case, `parent_basefee × 12 / 10`; the
+//!    operator's gas budget is denominated at that projected fee and rides
+//!    [`PipelineConfig::gas_floor_wei`]. [`SidecarSolver::evaluate`] gates
+//!    on `P`'s rigorous upper bound (the solver's profit-envelope gate)
+//!    BEFORE the bribe: a candidate must clear its gas cost from true
+//!    profit. The residual we keep after the bribe (`P − B`, the 2% of the
+//!    98% ladder) funds nothing further — the executor's non-zero
+//!    check-mode seatbelts the landed tx's worst case to gas.
+//! 2. **Bid ladder** `B = floor(P × bribe_bips / 10_000)` (98% default).
+//!    The builder's share enters the decision AT MOST ONCE, at
+//!    [`bid_from_profit`] — the only site that computes the bid from
+//!    profit. [`crate::bundle`]'s composed executor config echoes the SAME
+//!    `bribe_bips` for the on-chain coinbase payout (one share decision,
+//!    not a second gate), and [`decide`] only caps `B` against the
+//!    budget/bundle ceilings.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -292,6 +318,16 @@ impl FrameArtifacts {
             stages,
         }
     }
+}
+
+/// The bid ladder, at the ONE site that turns profit into a bid: the
+/// builder's truncated share of the exact-solve profit. The envelope gate
+/// above consumed TRUE profit against the gas floor BEFORE this; the
+/// composed executor config echoes the same `bribe_bips` for the on-chain
+/// payout (one share decision — no second site scales profit again).
+#[must_use]
+pub fn bid_from_profit(profit: u128, bribe_bips: u16) -> U256 {
+    U256::from(profit).saturating_mul(U256::from(u64::from(bribe_bips))) / U256::from(10_000u16)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1317,11 +1353,17 @@ async fn price_normalization(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// The `eth_callMany` bundle-sim gate (moved verbatim from the bin: read/SIM
-// ONLY on MEVBlocker's /fast endpoint — never a broadcast).
+// The `eth_callMany` bundle-sim gate: READ/SIM ONLY — never a broadcast.
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Does `[target, backrun]` survive as one bundle? (read/sim only).
+/// Does `[target, backrun]` survive as one bundle? (read/sim only.)
+///
+/// Endpoints disagree on the bundle envelope: the `MEVBlocker`
+/// searcher-doc shape carries `params[0] = { transactions: [...] }`, while
+/// mev-geth lineage nodes (reth included) parse `params[0]` as a LIST of
+/// blocks — `params[0] = [{ transactions: [...] }]`. Both shapes are
+/// attempted in that order; a parameter-shape or method-missing error on
+/// one endpoint must never read as "the bundle reverted".
 pub async fn simulate_candidate(
     sim_client: &alloy::rpc::client::RpcClient,
     ev: &BackrunFeedEvent,
@@ -1340,16 +1382,26 @@ pub async fn simulate_candidate(
     let backrun_call = crate::bundle::backrun_sim_call(owner, exec, cd, 900_000, 30_000_000_000);
     let params =
         crate::bundle::eth_call_many_bundle_sim_params(&[target_call, backrun_call], "latest");
-    match sim_client
-        .request::<serde_json::Value, serde_json::Value>("eth_callMany", params)
-        .await
-    {
-        Ok(resp) => {
-            let txt = serde_json::to_string(&resp).unwrap_or_default();
-            !txt.contains("error")
+    // params[0] = the bundle object (doc shape); the mev-geth shape wraps
+    // it in the blocks list.
+    let mut blocks_list = params.clone();
+    if let Some(arr) = blocks_list.as_array_mut() {
+        if let Some(first) = arr.first().cloned() {
+            arr[0] = serde_json::json!([first]);
         }
-        Err(_) => false,
     }
+    for attempt in [params, blocks_list] {
+        if let Ok(resp) = sim_client
+            .request::<serde_json::Value, serde_json::Value>("eth_callMany", attempt)
+            .await
+        {
+            let txt = serde_json::to_string(&resp).unwrap_or_default();
+            if !txt.contains("error") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1764,14 +1816,14 @@ pub async fn process_frame(
                         "tx": tx_hex,
                         "profit": best.profit,
                         "input": best.optimal_input,
+                        "calldata": format!("0x{}", alloy::hex::encode(&cd)),
                         "sim": if sim_ok { "passed" } else { "failed" },
                     }),
                 );
                 if sim_ok {
-                    let bid = U256::from(best.profit)
-                        .saturating_mul(U256::from(u64::from(pl.bribe_bips)))
-                        / U256::from(10_000u16);
-                    requested_bid = bid.max(U256::from(1));
+                    // Floor to 1: a sim-passed candidate with a sub-wei
+                    // share must reach decide() as a bid, not as zero_bid.
+                    requested_bid = bid_from_profit(best.profit, pl.bribe_bips).max(U256::from(1));
                     submit_calldata = Some(cd);
                 }
             }
