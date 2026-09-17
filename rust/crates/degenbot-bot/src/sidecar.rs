@@ -139,6 +139,15 @@ pub fn decide(
                     reason: "observe_only",
                 };
             }
+            if requested_bid_wei.is_zero() {
+                // A zero requested bid means NO composed candidate stood
+                // behind this frame -- the only thing that could ever have
+                // been submitted is the executor sweep probe, which pays the
+                // executor's balance straight to the builder (observed live:
+                // tx 0x723c25.. on block 25995965). A Bid must carry a
+                // positive composed profit share.
+                return Decision::Observe { reason: "zero_bid" };
+            }
             let bind = requested_bid_wei.min(cfg.max_bundle_wei);
             if bind > cfg.budget_wei - spent_wei {
                 return Decision::Observe {
@@ -219,6 +228,18 @@ mod tests {
                 reason: "observe_only"
             }
         );
+    }
+
+    #[test]
+    fn zero_requested_bid_cannot_bid() {
+        // A frame with no composed candidate carries requested_bid == 0; the
+        // only artifact that ever simulated green against it was the EXECUTOR
+        // SWEEP PROBE (cmd 0x15, config 2560003: check_mode 3, bribe 100% to
+        // the builder) -- bidding that simply pays the executor's balance to
+        // the block builder. A Bid decision must carry a positive, composed
+        // profit share: zero bids are refuse-only.
+        let d = decide(&cfg(), false, &swap(), true, U256::ZERO, 10, U256::ZERO);
+        assert_eq!(d, Decision::Observe { reason: "zero_bid" },);
     }
 
     #[test]

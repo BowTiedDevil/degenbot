@@ -186,3 +186,74 @@ pub async fn send_request(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_bundle_request_shape_matches_mevblocker_docs() {
+        // docs.mevblocker.io/how-to/searchers/bid: params[0].txs[0] is the
+        // TARGET's hash, txs[1] the signed backrun, blockNumber hex-pinned.
+        let target = B256::repeat_byte(0x42);
+        let raw = alloy::primitives::Bytes::from_static(&[0x02, 0xf8, 0x01]);
+        let bid = BundleBid {
+            target_tx_hash: target,
+            backrun_raw: raw,
+            block_number: 0x018c_aa48,
+            replacement_uuid: String::from("degenbot-018caa48-42424242"),
+        };
+        let v = eth_send_bundle_request(&bid);
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["id"], 1);
+        assert_eq!(v["method"], "eth_sendBundle");
+        assert_eq!(
+            v["params"][0]["txs"][0],
+            "0x4242424242424242424242424242424242424242424242424242424242424242"
+        );
+        assert_eq!(v["params"][0]["txs"][1], "0x02f801");
+        assert_eq!(v["params"][0]["blockNumber"], "0x18caa48");
+        assert_eq!(
+            v["params"][0]["replacementUuid"],
+            "degenbot-018caa48-42424242"
+        );
+        // Exactly two elements: the target reference + our backrun.
+        assert_eq!(v["params"][0]["txs"].as_array().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn cancel_request_only_carries_the_uuid() {
+        let v = eth_cancel_bundle_request("u-1");
+        assert_eq!(v["method"], "eth_cancelBundle");
+        assert_eq!(v["params"][0]["replacementUuid"], "u-1");
+        assert!(v["params"][0].get("txs").is_none());
+
+        // The empty-txs eth_sendBundle cancel (the docs' option 1).
+        let w = eth_send_bundle_cancel_request("u-2");
+        assert_eq!(w["method"], "eth_sendBundle");
+        assert_eq!(w["params"][0]["txs"].as_array().map(Vec::len), Some(0));
+        assert_eq!(w["params"][0]["replacementUuid"], "u-2");
+    }
+
+    #[test]
+    fn replacement_uuid_is_deterministic_and_separates_target_block() {
+        let a = B256::repeat_byte(0x11);
+        let b = B256::repeat_byte(0x22);
+        let u1 = replacement_uuid_for(a, 1);
+        let u1_again = replacement_uuid_for(a, 1);
+        assert_eq!(
+            u1, u1_again,
+            "retry on the same (target, block) reuses the uuid — idempotent replace"
+        );
+        assert_ne!(
+            replacement_uuid_for(a, 2),
+            u1,
+            "a new block is a new bid slot"
+        );
+        assert_ne!(
+            replacement_uuid_for(b, 1),
+            u1,
+            "a new target is a new auction"
+        );
+    }
+}

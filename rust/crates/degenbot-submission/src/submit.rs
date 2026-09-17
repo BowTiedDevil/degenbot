@@ -95,6 +95,27 @@ pub struct SubmitCandidate {
     pub path_pools: HashSet<PoolKey>,
 }
 
+/// Per-candidate `MEVBlocker` bundle context (the `GSUF22` bid wiring).
+///
+/// docs.mevblocker.io/how-to/searchers/bid: the backrun leaves ONLY via
+/// `eth_sendBundle` on `wss://searchers.mevblocker.io`, carrying the pending
+/// target's hash as `txs[0]` and the signed backrun as `txs[1]`, pinned to
+/// the target's block. When this context is present the public mempool and
+/// any other relay are BYPASSED — single-destination auction entry.
+#[derive(Debug, Clone)]
+pub struct BundleTarget {
+    /// The searcher WS endpoint (the same socket the feed subscribes on).
+    pub stream_url: String,
+    /// The pending target transaction's hash (the feed frame's `hash`).
+    pub target_tx_hash: B256,
+    /// The block the bundle is valid for (dispatch head + 1).
+    pub block_number: u64,
+}
+
+/// The bundle relay round-trip budget. One-shot per bid; a dropped bid is a
+/// no-cost miss under the revert shield, never a hang.
+const BUNDLE_RELAY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
+
 // ─────────────────────────────────────────────────────────────────────────
 // The submit outcome (N6)
 // ─────────────────────────────────────────────────────────────────────────
@@ -259,6 +280,9 @@ pub async fn dispatch_and_submit(
     dry_run: bool,
     inject_code: bool,
     extra_broadcast: &[std::sync::Arc<AlloyProvider>],
+    // MEVBlocker bundle context — `Some` routes the bid EXCLUSIVELY through
+    // `eth_sendBundle` on the searcher WS (no public broadcast, no relays).
+    bundle_target: Option<&BundleTarget>,
 ) -> Result<SubmitOutcome, crate::SubmissionError> {
     // RMHQAR  + ZHVXW2: one Jaeger node per dispatch batch
     // (degenbot.bundle.dispatch).
@@ -414,11 +438,73 @@ pub async fn dispatch_and_submit(
         // 2g. Sign (L2647). Synchronous ECDSA — no .await, no lock.
         let raw_signed = signer.sign_eip1559(&tx_params)?;
 
-        // 2h. Broadcast (L2648–L2654). Lock-free — pure provider call.
-        // Fan-out: the SAME signed bytes go to every relay in
-        // `extra_broadcast` (the read provider is NOT broadcast to unless the
-        // list is empty — the legacy single-endpoint behavior). First
-        // acceptance defines the tracked hash; total failure = the typed skip.
+        // 2h. Broadcast (L2648–L2654).
+        //
+        // MEVBlocker bid channel (the sidecar's bid mode): `eth_sendBundle`
+        // over the searcher WS, `txs = [targetHash, signed backrun]`, pinned
+        // to the target's block with a deterministic replacementUuid. The
+        // signed bytes NEVER touch the public mempool or another relay on
+        // this path — the auction entry is single-destination (doc
+        // how-to/searchers/bid). The executor's coinbase bribe (packed
+        // config, recipient 0) is the fee_recipient payment the docs require.
+        if let Some(bt) = bundle_target {
+            let bid = crate::bundle::BundleBid {
+                target_tx_hash: bt.target_tx_hash,
+                backrun_raw: raw_signed.clone(),
+                block_number: bt.block_number,
+                replacement_uuid: crate::bundle::replacement_uuid_for(
+                    bt.target_tx_hash,
+                    bt.block_number,
+                ),
+            };
+            match crate::bundle::send_request(
+                &bt.stream_url,
+                crate::bundle::eth_send_bundle_request(&bid),
+                BUNDLE_RELAY_TIMEOUT,
+            )
+            .await
+            {
+                Ok(resp) => {
+                    let raw = resp
+                        .get("result")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    let hash = alloy::hex::FromHex::from_hex(raw)
+                        .unwrap_or_else(|_| alloy::primitives::keccak256(&raw_signed));
+                    if let Some(p) = degenbot_bot::instruments::pipeline() {
+                        p.count_submit_outcome("bundle_accepted");
+                    }
+                    outcome.records.push(SubmitRecord::Submitted {
+                        path_id: candidate.path_id,
+                        tx_hash: hash,
+                        nonce,
+                    });
+                    continue;
+                }
+                Err(e) => {
+                    degenbot_bot::telemetry::record_exception(
+                        degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+                        format_args!("path {} mevblocker bundle rejected: {e}", candidate.path_id),
+                    );
+                    if let Some(p) = degenbot_bot::instruments::pipeline() {
+                        p.count_submit_outcome("skipped_broadcast_failed");
+                        p.add_profit_missed(candidate_net_wei(&candidate));
+                    }
+                    outcome.records.push(SubmitRecord::Skipped {
+                        path_id: candidate.path_id,
+                        reason: SkipReason::BroadcastFailed(format!(
+                            "mevblocker bundle rejected: {e}"
+                        )),
+                    });
+                    continue;
+                }
+            }
+        }
+        // Legacy raw fan-out (all other callers): the SAME signed bytes go
+        // to every relay in `extra_broadcast` (the read provider is NOT
+        // broadcast to unless the list is empty — the legacy single-endpoint
+        // behavior). First acceptance defines the tracked hash; total
+        // failure = the typed skip.
         let mut accepted_hash: Option<B256> = None;
         let broadcast_targets: Vec<&AlloyProvider> = if extra_broadcast.is_empty() {
             vec![provider]
@@ -668,6 +754,10 @@ fn build_transaction_request(params: &TxParams) -> TransactionRequest {
 
 #[expect(clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "tests: fixtures use expect for loud, precise failures"
+)]
 mod tests {
     use super::*;
     use crate::dispatcher::Dispatcher;
@@ -751,6 +841,7 @@ mod tests {
             true, // dry_run
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -800,6 +891,7 @@ mod tests {
             true, // dry_run — A commits POOL_A, B is blocked
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -839,6 +931,7 @@ mod tests {
             false,
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -874,6 +967,7 @@ mod tests {
             true, // dry_run
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -901,6 +995,7 @@ mod tests {
             false,
             true, // inject_code
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -945,6 +1040,7 @@ mod tests {
             false,
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -997,6 +1093,7 @@ mod tests {
             false,
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1048,6 +1145,7 @@ mod tests {
             false,
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1187,6 +1285,7 @@ mod tests {
             true, // dry_run
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1250,6 +1349,7 @@ mod tests {
             true,
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -1268,5 +1368,148 @@ mod tests {
             spans_for_block, 0,
             "an empty-candidate batch must not export a dispatch span"
         );
+    }
+
+    // ── MEVBlocker bundle channel (GSUF22 wiring, doc how-to/searchers/bid) ──
+
+    /// A one-shot in-process WS relay: accepts one connection, captures the
+    /// first frame, answers with a bundle id, closes.
+    async fn relay_once() -> (String, tokio::task::JoinHandle<serde_json::Value>) {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("relay connection");
+            let mut ws = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("ws handshake");
+            let frame = ws.next().await.expect("relay frame").expect("frame ok");
+            let v: serde_json::Value =
+                serde_json::from_str(frame.to_text().expect("text frame")).expect("json frame");
+            ws.send(Message::text(
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x164d7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41\"}",
+            ))
+            .await
+            .expect("relay reply");
+            let _ = ws.close(None).await;
+            v
+        });
+        (format!("ws://{addr}"), handle)
+    }
+
+    #[tokio::test]
+    async fn bundle_channel_sends_only_to_mevblocker_ws_with_target_hash_pinned() {
+        // The bid leaves EXCLUSIVELY as eth_sendBundle on the searcher WS:
+        // txs[0] = the feed frame's target hash, txs[1] = the signed
+        // backrun, blockNumber pinned to the target's block. The provider
+        // (public mempool) is never asked to broadcast — the ONLY Submitted
+        // record's hash is the RELAY's bundle id.
+        let (url, relay) = relay_once().await;
+        let asserter = Asserter::new();
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+
+        let target = alloy::primitives::B256::repeat_byte(0x42);
+        let bundle = BundleTarget {
+            stream_url: url,
+            target_tx_hash: target,
+            block_number: 4242,
+        };
+        let outcome = dispatch_and_submit(
+            vec![candidate(7, 1_000_000_000u128, &[POOL_A])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            0,
+            4241,
+            false,
+            false,
+            &[],
+            Some(&bundle),
+        )
+        .await
+        .expect("bundle dispatch");
+
+        let req = relay.await.expect("relay task");
+        assert_eq!(req["method"], "eth_sendBundle");
+        let p = &req["params"][0];
+        assert_eq!(
+            p["txs"][0],
+            "0x4242424242424242424242424242424242424242424242424242424242424242"
+        );
+        let raw = p["txs"][1].as_str().expect("raw tx string");
+        assert!(raw.starts_with("0x02"), "signed EIP-1559 bytes: {raw}");
+        assert_eq!(p["blockNumber"], "0x1092"); // 4242 pinned
+        let uuid = p["replacementUuid"].as_str().expect("uuid");
+        assert!(uuid.starts_with("degenbot-"), "deterministic uuid: {uuid}");
+
+        assert_eq!(
+            outcome.records,
+            vec![SubmitRecord::Submitted {
+                path_id: 7,
+                tx_hash: alloy::hex::FromHex::from_hex(
+                    "0x164d7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41f24b7d41"
+                )
+                .unwrap(),
+                nonce: 0,
+            }],
+            "the recorded hash is the RELAY's bundle id — the public provider saw nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn bundle_channel_skips_typed_when_relay_unreachable() {
+        // No relay on the port → a typed BroadcastFailed skip with the
+        // mevblocker attribution, NOT a panic, NOT a public-mempool fallback.
+        let asserter = Asserter::new();
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+
+        // A bound-then-dropped listener guarantees connection-refused.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+
+        let bundle = BundleTarget {
+            stream_url: format!("ws://{addr}"),
+            target_tx_hash: alloy::primitives::B256::repeat_byte(0x43),
+            block_number: 7,
+        };
+        let outcome = dispatch_and_submit(
+            vec![candidate(9, 999_000_000u128, &[POOL_B])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            0,
+            6,
+            false,
+            false,
+            &[],
+            Some(&bundle),
+        )
+        .await
+        .expect("dispatch completes");
+
+        match outcome.records.as_slice() {
+            [SubmitRecord::Skipped {
+                path_id: 9,
+                reason: SkipReason::BroadcastFailed(msg),
+            }] => {
+                assert!(msg.contains("mevblocker bundle"), "attribution: {msg}");
+            }
+            other => panic!("expected typed broadcast-failure skip, got {other:?}"),
+        }
     }
 }

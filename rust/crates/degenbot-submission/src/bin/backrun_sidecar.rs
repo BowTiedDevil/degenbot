@@ -2,14 +2,16 @@
 //!
 //! Loop: `MEVBlocker` feed -> hub classification -> exact-sim oracle
 //! (`eth_simulateV1`) -> [`degenbot_bot::sidecar::decide`] -> bid through the
-//! submission leaf ([`dispatch_and_submit`], with an optional `MEVBlocker`
+//! submission leaf ([`dispatch_and_submit`], bid mode exclusively via the
 //! private-RPC extra broadcast). Observe-only default; all state is local; zero
 //! touches to the live engine block pump (FORK-1).
 //!
 //! Run (observe-only): `SIDECAR_RPC_URL=$RPC cargo run --bin backrun_sidecar`.
 //! Bid mode adds `SIDECAR_BID_MODE=1`, `SIDECAR_BUDGET_WEI=<wei>` and
-//! `SIDECAR_KEY_FILE=<hex path>`; `SIDECAR_MEVBLOCKER_URL=<http>` routes the
-//! raw tx to `MEVBlocker` private broadcast alongside the public mempool.
+//! `SIDECAR_KEY_FILE=<hex path>`. Bids are MEVBlocker-specific per
+//! docs.mevblocker.io/how-to/searchers/bid: `eth_sendBundle` on the
+//! searcher WS with `txs = [targetHash, signed backrun]`, block-pinned.
+//! The signed backrun NEVER touches the public mempool or another relay.
 //! Kill switch: `touch /tmp/degenbot-sidecar-STOP`.
 
 #![expect(
@@ -27,10 +29,11 @@ use degenbot_bot::sidecar::{decide, Decision, SidecarConfig};
 use degenbot_decoders::target_classifier::{classify, PoolProtocol, RouterRegistry, TargetClass};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
-use degenbot_submission::submit::{dispatch_and_submit, SubmitCandidate};
+use degenbot_submission::submit::{dispatch_and_submit, BundleTarget, SubmitCandidate};
 
 // Console subscriber so observe-mode frames are visible; structured (OTel)
 // export stays the operator's layering choice via the bot crate.
@@ -88,19 +91,6 @@ async fn main() {
     let provider = Arc::new(AlloyProvider::from_provider(Arc::new(
         alloy::providers::ProviderBuilder::default().connect_client(client),
     )));
-
-    // `MEVBlocker` private broadcast (the /noreverts route studied in the
-    // journal) is a SECOND transport, not a replacement.
-    let extra_broadcast: Vec<Arc<AlloyProvider>> = match std::env::var("SIDECAR_MEVBLOCKER_URL") {
-        Ok(url) => {
-            let cl = alloy::rpc::client::ClientBuilder::default()
-                .http(url.parse().expect("SIDECAR_MEVBLOCKER_URL valid"));
-            vec![Arc::new(AlloyProvider::from_provider(Arc::new(
-                alloy::providers::ProviderBuilder::default().connect_client(cl),
-            )))]
-        }
-        Err(_) => Vec::new(),
-    };
 
     // Bid mode legality was already decided in `decide`; the signer only
     // loads when the key material exists so observe-only runs need none.
@@ -174,15 +164,9 @@ async fn main() {
 
     // The gate-2 sweep leg (executor sweep = coinbase bid). The overlay solver
     // (S7KG7E) will prepend the backrun target tx; the bid leg is standard.
-    let sweep = {
-        let mut cd = Bytes::from_static(&[0xab, 0x58, 0x98, 0xe8]).to_vec();
-        cd.extend_from_slice(&U256::from(0x40u64).to_be_bytes::<32>());
-        cd.extend_from_slice(&U256::from(2_560_003u64).to_be_bytes::<32>());
-        cd.extend_from_slice(&U256::from(1u64).to_be_bytes::<32>());
-        cd.push(0x15);
-        cd.extend_from_slice(&[0u8; 31]);
-        Bytes::from(cd)
-    };
+    // The sweep probe calldata was removed from the bid path: it is an
+    // exact-sim/cast-debug artifact (see the sim-gate note above), not a
+    // bid-able strategy.
 
     let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(
         provider.get_block_number().await.expect("head block fetch"),
@@ -386,18 +370,22 @@ async fn main() {
                 }
                 None => None,
             };
-            let sim_ok = simulate_sweep(
-                &provider,
-                exec,
-                owner,
-                submit_calldata.clone().unwrap_or_else(|| sweep.clone()),
-            )
-            .await
-            .is_some_and(|blocks| {
-                blocks
-                    .first()
-                    .is_some_and(|b| b.calls.first().is_some_and(|c| c.status))
-            });
+            // Sim gate: ONLY the composed candidate. The bare sweep probe
+            // (cmd 0x15, config 2560003) is never bid -- it carries no
+            // strategy, and as config 3 (no profit assert) + a 100% builder
+            // bribe it would simply transfer the executor's balance to the
+            // block builder (this exact artifact mined as tx 0x723c25.. on
+            // block 25995965 before this guard existed).
+            let sim_ok = match &submit_calldata {
+                Some(cd) => simulate_sweep(&provider, exec, owner, cd.clone())
+                    .await
+                    .is_some_and(|blocks| {
+                        blocks
+                            .first()
+                            .is_some_and(|b| b.calls.first().is_some_and(|c| c.status))
+                    }),
+                None => false,
+            };
 
             let decision = decide(
                 &cfg,
@@ -413,6 +401,16 @@ async fn main() {
                 Decision::Bid { bid_wei } => {
                     let Some(s) = signer.as_ref() else {
                         tracing::warn!("bid decided without a signer loaded - skipping");
+                        continue;
+                    };
+                    // Defense in depth: decide() already refuses zero bids;
+                    // this refusal keeps the sweep probe out of the auction
+                    // even if a future refactor reintroduces the fallback.
+                    let Some(cd) = submit_calldata.clone() else {
+                        tracing::warn!(
+                            tx = %ev.hash,
+                            "bid decided without a composed candidate - refusing sweep-only bid"
+                        );
                         continue;
                     };
                     let head = provider.get_block_number().await.unwrap_or(current_block);
@@ -436,10 +434,22 @@ async fn main() {
                         gas_used: 300_000,
                         priority_fee,
                         base_fee_next,
-                        execute_calldata: submit_calldata.clone().unwrap_or_else(|| sweep.clone()),
+                        execute_calldata: cd,
                         executor_address: exec,
                         access_list: None,
                         path_pools: HashSet::new(),
+                    };
+
+                    // The bid bundle: this frame's target hash (txs[0]), pinned
+                    // to the next block, MEVBlocker searcher WS only.
+                    let bundle_target = BundleTarget {
+                        stream_url: if cfg.stream_url.is_empty() {
+                            String::from(MEVBLOCKER_STREAM_URL)
+                        } else {
+                            cfg.stream_url.clone()
+                        },
+                        target_tx_hash: ev.hash,
+                        block_number: head + 1,
                     };
 
                     match dispatch_and_submit(
@@ -454,7 +464,8 @@ async fn main() {
                         head,
                         std::env::var("SIDECAR_DRY_RUN").is_ok_and(|v| v == "1"),
                         false,
-                        &extra_broadcast,
+                        &[],
+                        Some(&bundle_target),
                     )
                     .await
                     {
@@ -464,6 +475,7 @@ async fn main() {
                             }
                             tracing::info!(
                                 tx = %ev.hash,
+                                target = %ev.hash,
                                 submitted = outcome.submitted_count(),
                                 skipped = outcome.skipped_count(),
                                 "bid dispatched"
