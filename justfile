@@ -599,7 +599,7 @@ crap-ci: crap-coverage crap-gate
 
 # Lint Markdown files
 lint-markdown:
-    npx --yes markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**"
+    npx --yes markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**"
 
 # Lint Python files
 lint-python:
