@@ -1,18 +1,17 @@
 """Dispatch + sim-render helpers for the settlement-arbitrage ``BotRunner``.
 
-Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN, task
-DZTFSJ). Owns the encode→simulate→submit leaf
+Owns the encode→simulate→submit leaf
 (:func:`_dispatch_profitable` — the ``dispatch_profitable`` /
 ``dispatch_and_submit`` Rust seam) and the ``[sim]``/``[profit]``/``[sim-fail]``
 renderers that contextualize ``DispatchOutcome``.
 
 The renderers are display-only (``stays-python``); all sim/submit arithmetic
 runs in the Rust core. Only candidate-list shaping + log rendering happen
-here — NUUJFA closed the last hole: the inline-sim payload arm routes
-through the same Rust sim seam (``merge_payload_results`` → the FFI batch's
+here — the inline-sim payload arm routes through the same Rust sim seam
+(``merge_payload_results`` → the FFI batch's
 ``join_sim_result``/``derive_path_pools`` + the Rust ``MIN_PROFIT_NET``
-gate), so pool-key derivation and threshold categorization no longer
-duplicate in Python.
+gate), so pool-key derivation and threshold categorization are owned once,
+Rust-side, for both entry arms.
 """
 
 from __future__ import annotations
@@ -127,15 +126,15 @@ async def _dispatch_profitable(
 ) -> None:
     """Encode - simulate - submit one batch of profitable results serially.
 
-    The A5 cutover LEAF, kept as the serial composition for the pipeline A/B
-    arm. Production drives :mod:`degenbot.runner._sim_submit_pipeline` (SIMPIPE
-    option A: K-way concurrent sims over the same seam contracts, ordered
-    submit fan-in). All session coordination state is read from the single
-    ``session`` owner (CONTEXT.md: *session state*), never re-passed.
+    The serial composition; production drives
+    :mod:`degenbot.runner._sim_submit_pipeline` (K-way concurrent sims over
+    the same seam contracts, ordered submit fan-in). All session coordination
+    state is read from the single ``session`` owner (CONTEXT.md: *session
+    state*), never re-passed.
 
-    SIMPIPE2 T3: ``payloads`` are the engine's inline-sim results — those
-    entries skip the FFI sim and their submit records are stitched straight
-    into the outcome (per-entry presence decides).
+    ``payloads`` are the engine's inline-sim results — those entries skip the
+    FFI sim and their submit records are stitched straight into the outcome
+    (per-entry presence decides).
     """
     candidates = _build_dispatch_candidates(session, results, payloads=payloads)
     outcome: DispatchOutcome | None = None
@@ -172,7 +171,7 @@ def _build_dispatch_candidates(
     the empty-hop skip (``[sim-none]``). Returns an EMPTY list when nothing is
     dispatchable (the caller skips sim + submit).
 
-    SIMPIPE2 T3: path ids present in ``payloads`` were ALREADY simulated
+    Path ids present in ``payloads`` were ALREADY simulated
     inline in the Rust engine — they never enter the FFI sim batch (the
     payload derives their submit records directly; per-entry presence
     decides, so a mixed batch only degrades the payload-less entries).
@@ -195,7 +194,7 @@ def _build_dispatch_candidates(
                 consumed_inputs=list(ci),
                 solve_block=sb,
                 state_nonces=list(sn),
-                # SMOZG3: the operator's ERC6909 vault-capture toggle - the
+                # The operator's ERC6909 vault-capture toggle - the
                 # Rust seam defaults it to False (custody capture, the
                 # long-standing production behavior); env-gated opt-in.
                 erc6909_profit=session.cfg.erc6909_profit,
@@ -207,12 +206,12 @@ def _build_dispatch_candidates(
 class MergedOutcome:
     """A ``DispatchOutcome``-protocol view: the FFI outcome + payload records.
 
-    SIMPIPE2 T3: entries the engine simulated inline never enter the FFI
-    batch, so the batch outcome alone under-reports. This adapter stitches
+    Entries the engine simulated inline never enter the FFI batch, so the
+    batch outcome alone under-reports. This adapter stitches
     the payload-derived submit candidates/failure records into the base
     outcome's tallies so the renderers and the submit leaf see one
-    attribute-uniform object (the ``[sim]``/``[profit]``/``[sim-fail]``
-    attribute parity the T3 render contract demands). When every entry was
+    attribute-uniform object (the attribute parity the
+    ``[sim]``/``[profit]``/``[sim-fail]`` render contract demands). When every entry was
     payload-served (no FFI batch ran), ``base`` is ``None`` and only the
     payload records surface.
     """
@@ -317,8 +316,8 @@ def _merge_payload_outcome(
 ) -> _SimOutcome | None:
     """Stitch inline-sim payload records into (or over) the FFI batch outcome.
 
-    NUUJFA: the payload arm routes through the SAME sim seam the FFI batch
-    uses (:func:`merge_payload_results`), so the mutual-exclusion pool keys
+    The payload arm routes through the SAME sim seam the FFI batch uses
+    (:func:`merge_payload_results`), so the mutual-exclusion pool keys
     (the Rust `derive_path_pools` walk over the engine's typed hops) and the
     net-profit threshold (the Rust-owned `MIN_PROFIT_NET` constant) are
     evaluated exactly once, Rust-side, for BOTH entry arms. This function
@@ -343,7 +342,7 @@ def _merge_payload_outcome(
         msg = "SimulateContext is required to merge payload records"
         raise RuntimeError(msg)
 
-    # THE SIM SEAM (NUUJFA): the payload records route through the SAME Rust
+    # THE SIM SEAM: the payload records route through the SAME Rust
     # join the FFI batch uses — the mutual-exclusion path_pools derive from
     # the engine's typed hops (derive_path_pools) and the MIN_PROFIT_NET
     # gate applies there, ONCE. The submit rows arrive as PySubmitCandidate
@@ -391,7 +390,7 @@ def _render_outcome(
     outcome: _SimOutcome,
     current_block: int,
 ) -> None:
-    """The display-only renderers over a sim outcome (D4 stays-python)."""
+    """The display-only renderers over a sim outcome (``stays-python``)."""
     _render_sim_summary(outcome)
     _render_sim_failures(outcome, current_block=current_block)
     _render_fot_tokens(session.dispatcher, current_block)
@@ -474,7 +473,7 @@ async def _submit_batch_records(
             )
     else:
         broadcast_providers = None
-    # Forensic capture (R3b fork-replay): record the exact calldata + the
+    # Forensic capture (fork-replay): record the exact calldata + the
     # candidate economics for every gate-clearing candidate BEFORE broadcast,
     # one INFO line, so any later tx can be replayed at its solve block.
     solve_block = session.dispatcher.current_block
