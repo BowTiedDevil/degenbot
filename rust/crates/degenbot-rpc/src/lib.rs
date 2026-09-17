@@ -17,6 +17,7 @@
 //!   and the `pump_*` subscription drivers.
 
 pub mod abi;
+pub mod backrun_feed;
 pub mod contract;
 pub mod fees;
 pub mod multicall3;
