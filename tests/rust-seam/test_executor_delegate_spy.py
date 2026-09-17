@@ -212,16 +212,21 @@ class TestExampleRoutesThroughRust:
         internally by ``dispatch_profitable`` + ``SimulateContext``
         construction. The dispatch route (``degenbot.runner._dispatch``) is
         ``dispatch_profitable`` (simulate) → ``dispatch_and_submit``
-        (submit), both Rust-bound pyfunctions imported via the companion
-        package ``degenbot.dispatch`` (stable re-exports of the FFI symbols —
-        the driver does not import ``degenbot_rs`` directly).
+        (submit): the submit leaf exposes ``submitter``/``relay_providers``
+        DI seams whose defaults are the Rust pyfunctions, so the production
+        path (no injected submitter) stays Rust-bound. Both pyfunctions are
+        imported via the companion package ``degenbot.dispatch`` (stable
+        re-exports of the FFI symbols — the driver does not import
+        ``degenbot_rs`` directly).
         """
         src = (REPO / "src" / "degenbot" / "runner" / "_dispatch.py").read_text()
         assert "dispatch_profitable(" in src, (
             "driver must route simulation through dispatch_profitable (A5)"
         )
-        assert "dispatch_and_submit(" in src, (
-            "driver must route submission through dispatch_and_submit (A5)"
+        assert "submitter if submitter is not None else dispatch_and_submit" in src, (
+            "driver must default the submitter DI seam to dispatch_and_submit "
+            "(the Rust submit pyfunction) — an injected submitter is test-only "
+            "DI and must never replace the production routing"
         )
 
 
