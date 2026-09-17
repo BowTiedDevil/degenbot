@@ -87,3 +87,9 @@ engine loop.
 - Primary: `eth_simulateV1` against the provided RPC (already inside the allowlist — no policy change) for candidate/verify-path sims. Note the node rejects `feeRecipient` overrides on this build (revisit on node upgrades).
 - Secondary: anvil fork-clone for ad-hoc forensic reruns (impersonation + literal balance assertions).
 - `eth_callMany` per MEVBlocker docs: NOT relied upon; journalled as docs drift (the acceptance clause named it — the maps are better than the territory here).
+
+### Probe pinned in-tree (`rust/crates/degenbot-rpc/tests/eth_simulate_v1_probe.rs`)
+- Live-ignored test drives `AlloyProvider::eth_simulate_v1` (the provider's typed method) with the exact gate-2 sweep calldata
+  (`cast calldata execute(bytes,uint256) 0x15 2560003`); asserts `status` + `returnData == 0.0006 ETH` — run with
+  `cargo test -p degenbot-rpc --test eth_simulate_v1_probe -- --ignored` (PASS on the provided node).
+- A parallel drafting of `simulate_v1.rs` (raw-JSON carve) was discarded: the provider method already covers it; keep one oracle.
