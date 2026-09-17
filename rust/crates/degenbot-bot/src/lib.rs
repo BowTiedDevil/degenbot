@@ -225,6 +225,7 @@ pub mod metrics;
 #[cfg(feature = "otel")]
 pub mod otel;
 pub mod profiling;
+pub mod sidecar;
 pub mod telemetry;
 
 // P6YXA6 hard cutover: the process-global rayon pool (`configure_rayon_
