@@ -8,6 +8,7 @@ import hypothesis.strategies
 import pydantic_core
 import pytest
 
+from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions import ContractLogicError
@@ -106,18 +107,20 @@ def _test_pool_exact_input(
         try:
             lp = bot.build_managed_pool(
                 V4_POOL_MANAGER_ADDRESS,
-                pool_id,
-                state_view_address=STATE_VIEW_ADDRESS,
-                tokens=[pool["token0"], pool["token1"]],
-                fee=pool["fee"],
-                tick_spacing=pool["tick_spacing"],
-                hook_address=pool["hooks"],
-                tick_bitmap=snapshot[pool_id]["tick_bitmap"]
-                if snapshot is not None and pool_id in snapshot
-                else None,
-                tick_data=snapshot[pool_id]["tick_data"]
-                if snapshot is not None and pool_id in snapshot
-                else None,
+                BuildManagedPoolRequest(
+                    pool_id=pool_id,
+                    state_view_address=STATE_VIEW_ADDRESS,
+                    tokens=[pool["token0"], pool["token1"]],
+                    fee=pool["fee"],
+                    tick_spacing=pool["tick_spacing"],
+                    hook_address=pool["hooks"],
+                    tick_bitmap=snapshot[pool_id]["tick_bitmap"]
+                    if snapshot is not None and pool_id in snapshot
+                    else None,
+                    tick_data=snapshot[pool_id]["tick_data"]
+                    if snapshot is not None and pool_id in snapshot
+                    else None,
+                ),
             )
         except Exception as exc:
             print(f"Caught exception {exc} building pool id {pool['pool_id']}")
@@ -224,18 +227,20 @@ def _test_pool_exact_output(
         try:
             lp = bot.build_managed_pool(
                 V4_POOL_MANAGER_ADDRESS,
-                pool_id,
-                state_view_address=STATE_VIEW_ADDRESS,
-                tokens=[pool["token0"], pool["token1"]],
-                fee=pool["fee"],
-                tick_spacing=pool["tick_spacing"],
-                hook_address=pool["hooks"],
-                tick_bitmap=snapshot[pool_id]["tick_bitmap"]
-                if snapshot is not None and pool_id in snapshot
-                else None,
-                tick_data=snapshot[pool_id]["tick_data"]
-                if snapshot is not None and pool_id in snapshot
-                else None,
+                BuildManagedPoolRequest(
+                    pool_id=pool_id,
+                    state_view_address=STATE_VIEW_ADDRESS,
+                    tokens=[pool["token0"], pool["token1"]],
+                    fee=pool["fee"],
+                    tick_spacing=pool["tick_spacing"],
+                    hook_address=pool["hooks"],
+                    tick_bitmap=snapshot[pool_id]["tick_bitmap"]
+                    if snapshot is not None and pool_id in snapshot
+                    else None,
+                    tick_data=snapshot[pool_id]["tick_data"]
+                    if snapshot is not None and pool_id in snapshot
+                    else None,
+                ),
             )
         except Exception as exc:
             print(f"Caught exception {exc} building pool id {pool['pool_id']}")

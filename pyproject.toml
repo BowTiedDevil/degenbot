@@ -122,12 +122,6 @@ allow-star-arg-any = true
 "src/degenbot/aerodrome/v2_pool_calc.py" = [
     "PLR0913",  # too-many-arguments
 ]
-"src/degenbot/bot/_bot.py" = [
-    "PLR0904",  # too-many-public-methods
-    "PLR0912",  # too-many-branches
-    "PLR0913",  # too-many-arguments
-    "PLR0914",  # too-many-locals
-]
 "src/degenbot/builders/erc20_builder.py" = [
     "PLR0913",  # too-many-arguments
 ]

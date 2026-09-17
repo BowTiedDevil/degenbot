@@ -31,6 +31,7 @@ from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
     retry_verification_call,
 )
+from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.database.models.pools import (
     UniswapV2PoolTableBase,
     UniswapV3PoolTableBase,
@@ -573,9 +574,8 @@ class PathRegistrationPipeline:
                     pool = self._build_v3_fallback_chain(step.address)
                 else:
                     pool = self.constr_bot.build_managed_pool(
-                        address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                        pool_id=step.hash,
-                        silent=True,
+                        UNISWAP_V4_POOL_MANAGER_ADDRESS,
+                        BuildManagedPoolRequest(pool_id=step.hash, silent=True),
                     )
             except Exception as exc:
                 # Ledger ask: typed stable-vs-transient classification (never

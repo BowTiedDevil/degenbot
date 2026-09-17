@@ -28,6 +28,7 @@ import pytest
 from degenbot._ffi import Bot as _Engine
 from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
+from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.operations import create_new_sqlite_database
@@ -257,12 +258,8 @@ def _build_curve(bot: Bot) -> Any:
 
 
 def _build_balancer_stable(bot: Bot) -> Any:
-    t0 = make_erc20(
-        bot._py_bot, "0x" + "d4" * 20, chain_id=1, name="S0", symbol="S0", decimals=18
-    )
-    t1 = make_erc20(
-        bot._py_bot, "0x" + "e5" * 20, chain_id=1, name="S1", symbol="S1", decimals=18
-    )
+    t0 = make_erc20(bot._py_bot, "0x" + "d4" * 20, chain_id=1, name="S0", symbol="S0", decimals=18)
+    t1 = make_erc20(bot._py_bot, "0x" + "e5" * 20, chain_id=1, name="S1", symbol="S1", decimals=18)
     return make_balancer_stable_pool(
         address="0x" + "07" * 20,
         pool_id=bytes.fromhex("07" * 20 + "0002" + "0" * 20),
@@ -600,12 +597,14 @@ class TestBotBuildV4Pool:
 
         pool = bot.build_managed_pool(
             V4_POOL_MANAGER,
-            V4_POOL_ID,
-            state_view_address=V4_STATE_VIEW,
-            fee=V4_FEE,
-            tick_spacing=V4_TICK_SPACING,
-            hook_address=V4_HOOKS,
-            tokens=[ZERO_ADDRESS, USDC_ADDR],
+            BuildManagedPoolRequest(
+                pool_id=V4_POOL_ID,
+                state_view_address=V4_STATE_VIEW,
+                fee=V4_FEE,
+                tick_spacing=V4_TICK_SPACING,
+                hook_address=V4_HOOKS,
+                tokens=[ZERO_ADDRESS, USDC_ADDR],
+            ),
         )
 
         assert isinstance(pool, UniswapV4Pool)

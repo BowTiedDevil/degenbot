@@ -595,8 +595,8 @@ def test_stable_build_refusal_memoizes_the_pool() -> None:
     """
     build_calls: list[object] = []
 
-    def _build_managed_pool(**kwargs: object) -> None:
-        build_calls.append(kwargs.get("pool_id"))
+    def _build_managed_pool(address: object, request: object) -> None:
+        build_calls.append(getattr(request, "pool_id", None))
         hooked: HookedPoolRejectedError = HookedPoolRejectedError
         raise hooked
 
@@ -815,7 +815,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
     assert pipeline2._ledger.path_rejected(hop_sig), "rejected-path memo"
 
     # Unregistrable-pool concept (a stable V4 admission refusal).
-    def _build_managed_pool(**_kwargs: object) -> None:
+    def _build_managed_pool(_address: object, _request: object) -> None:
         raise HookedPoolRejectedError
 
     bot = SimpleNamespace(

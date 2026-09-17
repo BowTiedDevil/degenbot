@@ -45,6 +45,7 @@ import pytest
 
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
+from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.session_manager import DatabaseSessionManager
@@ -330,12 +331,14 @@ class TestBuildManagedPoolIdentityReturnSurface:
         with pytest.raises(DegenbotValueError):
             bot.build_managed_pool(
                 pm,
-                pool_id_hex,
-                state_block=100,
-                state_view_address="0x" + "bb" * 20,
-                tokens=tokens,
-                fee=5000,
-                tick_spacing=1,
+                BuildManagedPoolRequest(
+                    pool_id=pool_id_hex,
+                    state_block=100,
+                    state_view_address="0x" + "bb" * 20,
+                    tokens=tokens,
+                    fee=5000,
+                    tick_spacing=1,
+                ),
             )
 
 
@@ -365,7 +368,9 @@ class TestBuildManagedPoolResolveErrorMapping:
         with pytest.raises(DegenbotValueError):
             bot.build_managed_pool(
                 pm,
-                pool_id_hex,
-                state_block=100,
-                # No state_view / fee / tick_spacing / tokens -> core rejects.
+                BuildManagedPoolRequest(
+                    pool_id=pool_id_hex,
+                    state_block=100,
+                    # No state_view / fee / tick_spacing / tokens -> core rejects.
+                ),
             )
