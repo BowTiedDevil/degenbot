@@ -38,6 +38,11 @@ tokio = { version = "^1.53", features = ["rt", "sync", "time", "macros"] }
 # `PyErr` (mirrors `degenbot-core`/`degenbot-price`'s `pyo3` feature).
 pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true }
 
+# Backrun bundle submission (GSUF22): WS relay to searchers.mevblocker.io.
+serde_json = { version = "^1.0" }
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+tokio-tungstenite = { version = "^0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+
 [dev-dependencies]
 # `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
 # constructor) so the §4.2 wire-shape tests can drive the submit orchestration
@@ -45,6 +50,8 @@ pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true 
 # enable this feature.
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 serde_json = { version = "^1.0" }
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+tokio-tungstenite = { version = "^0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 proptest = "^1.11"
 # Plain-`tracing` span capture for the OTel tier-1 span tests (RMHQAR).
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry"] }

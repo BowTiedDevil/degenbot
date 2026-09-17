@@ -440,31 +440,28 @@ pub async fn dispatch_and_submit(
                 }
             }
         }
-        let tx_hash = match accepted_hash {
-            Some(hash) => {
-                if let Some(p) = degenbot_bot::instruments::pipeline() {
-                    p.count_submit_outcome("relay_accepted");
-                }
-                hash
+        let tx_hash = if let Some(hash) = accepted_hash {
+            if let Some(p) = degenbot_bot::instruments::pipeline() {
+                p.count_submit_outcome("relay_accepted");
             }
-            None => {
-                // The broadcast failed on EVERY relay — skip with the typed
-                // reason. The claimed nonce + pools are NOT released here
-                // (ports the `continue` on Web3Exception — the nonce is
-                // leaked until a manual cleanup or the dispatcher's reap).
-                // The monitor is NOT spawned (no tx to track).
-                if let Some(p) = degenbot_bot::instruments::pipeline() {
-                    p.count_submit_outcome("skipped_broadcast_failed");
-                    p.add_profit_missed(candidate_net_wei(&candidate));
-                }
-                outcome.records.push(SubmitRecord::Skipped {
-                    path_id: candidate.path_id,
-                    reason: SkipReason::BroadcastFailed(
-                        "all relays rejected the raw transaction".to_string(),
-                    ),
-                });
-                continue;
+            hash
+        } else {
+            // The broadcast failed on EVERY relay — skip with the typed
+            // reason. The claimed nonce + pools are NOT released here
+            // (ports the `continue` on Web3Exception — the nonce is
+            // leaked until a manual cleanup or the dispatcher's reap).
+            // The monitor is NOT spawned (no tx to track).
+            if let Some(p) = degenbot_bot::instruments::pipeline() {
+                p.count_submit_outcome("skipped_broadcast_failed");
+                p.add_profit_missed(candidate_net_wei(&candidate));
             }
+            outcome.records.push(SubmitRecord::Skipped {
+                path_id: candidate.path_id,
+                reason: SkipReason::BroadcastFailed(
+                    "all relays rejected the raw transaction".to_string(),
+                ),
+            });
+            continue;
         };
 
         // 2i. Reserve pools (L2662) + commit to the local set.
