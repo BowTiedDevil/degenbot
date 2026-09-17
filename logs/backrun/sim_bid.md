@@ -67,3 +67,23 @@ engine loop.
 5. Bid: `eth_sendBundle` over `wss://searchers.mevblocker.io` (scripts/backrun/observe_soak.py lineage;
    see /tmp/bid_now.py body for the exact frame shape)
 6. Watch: `eth_getTransactionReceipt` polls for both legs.
+
+
+## Addendum — exact-sim oracle alternatives (operator-directed investigation)
+
+`eth_callMany` is unavailable (see drift note above). Two alternatives verified against the LIVE executor pre-funded with 0.0006 WETH:
+
+### A. `eth_simulateV1` on the provided reth node (ADOPTED as the primary oracle)
+- reth v2.5.2 serves it (`-32602 Invalid params` on empty probe = method EXISTS; the docs-era `eth_callMany` does not).
+- Bundle semantics: one `blockStateCalls` entry = one simulated block; `calls` execute IN ORDER (target then backrun = bundle ordering); multiple entries chain across simulated blocks. Evidence (executor sweep, single + two-block): call `{to: EXEC, data: 0xab5898e8…271003}` -> `status 0x1`, `returnData 0x000221b262dd8000` (= 0.0006 ETH, the exact `bribe_amount` the contract pays `block.coinbase`), plus the WETH `Withdrawal(executor, 0.0006)` log (topic `0x7fcf532c…`); two-block sequence: sweep returns 0.0006 then 0 -> complete accounting, executor drains fully into the coinbase bid, nothing stranded.
+- Caveats: reth's response is logs+returnData+status — no op-level trace of the coinbase CALL (use B when the literal transfer must be observed); `blockOverrides.feeRecipient` was rejected by this build (`invalid string length`) so coinbase is the node default in sims.
+
+### B. anvil fork-clone of the node (second opinion / literal visibility)
+- `anvil 1.7.1 --fork-url $RPC` clone at block 25994168; `anvil_impersonateAccount(operator)`; state-changing sweep executed on the clone.
+- Observed: objective `eth_coinbase` balance delta of **+600,005,811,852,137 wei** (0.0006 bribe + 0.0000000058 gas credit paid to the clone coinbase — on the real bundle path the searcher pays its own gas and the builder receives the bribe); executor WETH -> exactly 0.
+- Uses anvil's lazy-fork (state fetched on demand; not a full cachedb copy — same effect, orders of magnitude cheaper than a physical clone).
+
+### Adoption
+- Primary: `eth_simulateV1` against the provided RPC (already inside the allowlist — no policy change) for candidate/verify-path sims. Note the node rejects `feeRecipient` overrides on this build (revisit on node upgrades).
+- Secondary: anvil fork-clone for ad-hoc forensic reruns (impersonation + literal balance assertions).
+- `eth_callMany` per MEVBlocker docs: NOT relied upon; journalled as docs drift (the acceptance clause named it — the maps are better than the territory here).
