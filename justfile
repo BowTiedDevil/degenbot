@@ -299,6 +299,15 @@ record-golden *args:
 verify-deployments *args:
     DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
+# Re-populate the golden deployment-verification capture (tiers 1/2/4 facts for
+# every factory row on a reachable chain) consumed by the hermetic replay
+# tests tests/registry/test_deployment_golden_verification.py (default suite,
+# fully offline). Requires a reachable RPC per chain (tests.env / env vars);
+# unreachable chains contribute no rows. Tier 4 is asserted live while
+# recording, so a capture is only committed when every recorded row verified.
+record-deployment-golden *args:
+    DEGENBOT_GOLDEN_MODE=record DEGENBOT_VERIFY_DEPLOYMENTS=4 uv run pytest -m online_rpc -q --no-header -p no:randomly -n0 {{ args }} tests/registry/test_deployment_onchain_verification.py
+
 # ========== Tier-3 On-Chain Oracles ==========
 #
 # `just test-tier3 [family]` — build a family's pinned canonical-reference

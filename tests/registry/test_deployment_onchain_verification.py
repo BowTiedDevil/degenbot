@@ -61,12 +61,19 @@ Escalate tiers with the env var (default ``1``)::
 
 Per-chain rows skip individually when their chain's RPC is unreachable (e.g.
 on a machine with only a local Ethereum node, the Base/Arbitrum rows skip).
+
+The tier 1/2/4 read paths run through the injectable
+:class:`tests.registry.deployment_verification.CastHarness` seam, which the
+record driver below binds to fill the committed golden capture replayed —
+fully offline — by ``tests/registry/test_deployment_golden_verification.py``
+in the default suite.
 """
 
 from __future__ import annotations
 
+import json
 import os
-import subprocess  # ruff: ignore[suspicious-subprocess-import]
+import urllib.request
 from functools import cache
 
 import pytest
@@ -76,6 +83,17 @@ from tests.conftest import (
     ARBITRUM_FULL_NODE_HTTP_URI,
     BASE_ARCHIVE_NODE_HTTP_URI,
     ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+)
+from tests.registry.deployment_verification import (
+    EXPECTED_FACTORY_SELECTORS,
+    KNOWN_PAIRS,
+    CastHarness,
+    DeploymentGoldenCapture,
+    FoundryCast,
+    compute_pool_address,
+    is_zero_address,
+    onchain_pool_address,
+    resolve_runtime_create2_fields,
 )
 
 # ---------------------------------------------------------------------------
@@ -108,6 +126,8 @@ _CHAIN_RPC: dict[int, str] = {
     42161: ARBITRUM_FULL_NODE_HTTP_URI,
 }
 
+_CAST: CastHarness = FoundryCast()
+
 
 @cache
 def _rpc_reachable(rpc_url: str) -> bool:
@@ -117,14 +137,8 @@ def _rpc_reachable(rpc_url: str) -> bool:
     check per *chain*, not per row.
     """
     try:
-        subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted binary, no shell
-            ["cast", "block-number", "--rpc-url", rpc_url],  # ruff: ignore[start-process-with-partial-path]
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        _CAST.block_number(rpc_url=rpc_url)
+    except Exception:  # ruff: ignore[blind-except] — unreachable RPC manifests as any of cast's failure modes
         return False
     return True
 
@@ -139,46 +153,11 @@ def _skip_if_unreachable(chain_id: int) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# cast helpers
-# ---------------------------------------------------------------------------
-
-
-def _cast(*args: str, timeout: int = 30) -> str:
-    """Run ``cast`` with the given args, return stdout, raising on failure."""
-    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted binary, args list, no shell
-        ["cast", *args],  # ruff: ignore[start-process-with-partial-path]
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    return result.stdout.strip()
-
-
-def _cast_code(factory: str, rpc_url: str) -> str:
-    """Return the raw bytecode hex (``0x…``) at ``factory`` via ``cast code``."""
-    return _cast("code", factory, "--rpc-url", rpc_url)
-
-
-def _cast_selectors(bytecode: str) -> set[str]:
-    """Return the set of 4-byte selectors embedded in ``bytecode``.
-
-    ``cast selectors`` prints ``<selector>  <offset>`` lines; we keep the
-    selector column and lowercase it.
-    """
-    out = _cast("selectors", bytecode)
-    return {line.split()[0].lower() for line in out.splitlines() if line.strip()}
-
-
 def _etherscan_source_name(chain_id: int, factory: str) -> str | None:
     """Fetch the verified ``ContractName`` from Etherscan, or None if unverified."""
     key = _ETHERSCAN_API_KEY
     if not key:
         pytest.skip("Tier 3 requires ETHERSCAN_API_KEY")  # pragma: no cover
-    import json
-    import urllib.request
-
     url = (
         f"https://api.etherscan.io/v2/api?chainid={chain_id}"
         f"&module=contract&action=getsourcecode&address={factory}&apikey={key}"
@@ -193,167 +172,11 @@ def _etherscan_source_name(chain_id: int, factory: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Tier 4 — CREATE2 init_code_hash verification helpers
+# Tier 3 — expected verified ContractName substring per pool_type
 # ---------------------------------------------------------------------------
-# Known deployed pairs/pools, one per factory we can verify the init_hash
-# against. Keyed by (chain_id, lowercase factory). Each entry is a uniform
-# 4-tuple ``(kind, token0, token1, fee)`` — ``kind`` is "v2" or "v3";
-# ``fee`` is the V3 fee tier in pips (unused for v2, kept 0). The token order
-# doesn't matter (both the in-process generator and the on-chain
-# getPair/getPool sort internally). If getPair/getPool returns the zero address
-# (pair not deployed), the test skips that factory.
-#
-# These are long-lived, high-liquidity, canonical pairs — independent ground
-# truth. Keep this table curated: a stale/no-longer-deployed pair just skips;
-# a wrong pair (returning a real but different address) would fail loudly.
-_WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-_DAI = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
-# Base native WETH + USDC
-_BASE_WETH = "0x4200000000000000000000000000000000000006"
-_BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA20429"
 
-# fee tiers as uint24 (Pip)
-_FEE_500 = 500  # 0.05%
-
-KNOWN_PAIRS: dict[tuple[int, str], tuple[str, str, str, int]] = {
-    # Ethereum mainnet V2 — DAI/WETH (the canonical Uniswap V2 pair) + USDC/WETH.
-    (1, "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"): ("v2", _DAI, _WETH, 0),  # Uniswap V2
-    (1, "0xc0aee478e3658e2610c5f7a4a2e1777ce9e4f2ac"): ("v2", _DAI, _WETH, 0),  # Sushi V2
-    (1, "0x1097053fd2ea711dad45cacc45eff7548fcb362"): ("v2", _USDC, _WETH, 0),  # Pancake V2
-    # Ethereum mainnet V3 — WETH/USDC 0.05%.
-    (1, "0x1f98431c8ad98523631ae4a59f267346ea31f984"): ("v3", _WETH, _USDC, _FEE_500),  # Uniswap V3
-    (1, "0xbaceb8ec6b9355dfc0269c18bac9d6e2bdc29c4f"): ("v3", _WETH, _USDC, _FEE_500),  # Sushi V3
-    (1, "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865"): ("v3", _WETH, _USDC, _FEE_500),  # Pancake V3
-    # Base — WETH/USDC 0.05%.
-    (8453, "0x33128a8fc17869897dce68ed026d694621f6fdfd"): ("v3", _BASE_WETH, _BASE_USDC, _FEE_500),
-    # Arbitrum — Uniswap V3 WETH/USDC 0.05%.
-    (42161, "0x1f98431c8ad98523631ae4a59f267346ea31f984"): ("v3", _WETH, _USDC, _FEE_500),
-}
-
-
-def _is_zero_address(addr: str) -> bool:
-    """True if ``addr`` is the zero address (0x0…0)."""
-    cleaned = addr.lower().removeprefix("0x")
-    return not cleaned or int(cleaned, 16) == 0
-
-
-def _onchain_pool_address(factory: str, known: tuple[str, str, str, int], rpc_url: str) -> str:
-    """Query the factory on-chain for the known pair's address.
-
-    Returns:
-        The ``getPair``/``getPool`` result (checksummed by cast). For V2 the
-        signature is ``getPair(address,address)``; for V3
-        ``getPool(address,address,uint24)``.
-
-    """
-    kind, t0, t1, fee = known
-    if kind == "v2":
-        return _cast(
-            "call",
-            factory,
-            "getPair(address,address)(address)",
-            t0,
-            t1,
-            "--rpc-url",
-            rpc_url,
-        )
-    return _cast(
-        "call",
-        factory,
-        "getPool(address,address,uint24)(address)",
-        t0,
-        t1,
-        str(fee),
-        "--rpc-url",
-        rpc_url,
-    )
-
-
-def _compute_pool_address(deployer: str, init_hash: str, known: tuple[str, str, str, int]) -> str:
-    """Recompute the CREATE2 pool address in-process from deployer + init_hash.
-
-    Uses the codebase's own auditable ``generate_v2/v3_pool_address`` (which
-    builds the salt via native packed encoding + ``create2_address``), so the
-    computation is the same code path production pool discovery uses.
-    """
-    from degenbot.uniswap.v2_functions import generate_v2_pool_address
-    from degenbot.uniswap.v3_functions import generate_v3_pool_address
-
-    kind, t0, t1, fee = known
-    if kind == "v2":
-        return generate_v2_pool_address(deployer, (t0, t1), init_hash)
-    return generate_v3_pool_address(deployer, (t0, t1), fee, init_hash)
-
-
-# ---------------------------------------------------------------------------
-# Expected factory interfaces per pool_type (Tier 2 fingerprints)
-# ---------------------------------------------------------------------------
-# Each value is a set of 4-byte selectors the deployed factory *must* expose.
-# Selectors derived from the canonical deployed factories (queried this session
-# via ``cast selectors`` on the bytecode + ``cast 4byte`` for signatures).
-
-# Uniswap V2 family (ConstantProduct, V2-fork): getPair / createPair /
-# allPairsLength — the canonical pair-factory interface shared by every
-# `pool_type: "uniswap-v2"` deployment (Sushi, Pancake V2, Camelot, SwapBased…).
-_UNISWAP_V2_SELECTORS = {
-    "0xe6a43905",  # getPair(address,address)
-    "0xc9c65396",  # createPair(address,address)
-    "0x574f2ba3",  # allPairsLength()
-}
-
-# Uniswap V3 family (ConcentratedLiquidity, V3-fork): getPool(addr,addr,uint24)
-# + feeAmountTickSpacing(uint24) + enableFeeAmount(uint24,int24) — shared by
-# Uniswap V3 / Pancake V3 / Sushi V3 factories.
-_UNISWAP_V3_SELECTORS = {
-    "0x1698ee82",  # getPool(address,address,uint24)
-    "0x22afcccb",  # feeAmountTickSpacing(uint24)
-    "0x8a7c195f",  # enableFeeAmount(uint24,int24)
-}
-
-# Aerodrome V2 (Solidly-fork): getPool(addr,addr,bool) + createPool(addr,addr,bool)
-# + isPool(addr). Distinct from the V2 pair-factory (bool stable flag).
-_AERODROME_V2_SELECTORS = {
-    "0x79bc57d5",  # getPool(address,address,bool)
-    "0x36bf95a0",  # createPool(address,address,bool)
-    "0x5b16ebb7",  # isPool(address)
-}
-
-# Aerodrome V3: getPool(addr,addr,int24) + createPool(addr,addr,int24,uint160)
-# + isPool(addr). int24 tick-spacing (not uint24 fee) — distinct selector.
-_AERODROME_V3_SELECTORS = {
-    "0x28af8d0b",  # getPool(address,address,int24)
-    "0x232aa5ac",  # createPool(address,address,int24,uint160)
-    "0x5b16ebb7",  # isPool(address)
-}
-
-# Balancer V2 factory interface — universal across all revisions (rev1
-# through rev6). The older rev1 factories (Weighted rev1 / Weighted2Tokens
-# / Stable rev1) predate `getCreationCode()` / `getCreationCodeContracts()`
-# (a rev2+ addition), so the robust cross-revision invariant is
-# `isPoolFromFactory(address)` + `getPauseConfiguration()` — present in every
-# Balancer factory from the original 2021 deployments to the latest rev6.
-_BALANCER_FACTORY_SELECTORS = {
-    "0x6634b753",  # isPoolFromFactory(address)
-    "0x2da47c40",  # getPauseConfiguration()
-}
-
-# pool_type → expected selector set. A deployment's deployed bytecode must
-# contain *all* selectors in its set (subset assertion).
-EXPECTED_FACTORY_SELECTORS: dict[str, set[str]] = {
-    "uniswap-v2": _UNISWAP_V2_SELECTORS,
-    "uniswap-v3": _UNISWAP_V3_SELECTORS,
-    "pancakeswap-v3": _UNISWAP_V3_SELECTORS,
-    "sushiswap-v3": _UNISWAP_V3_SELECTORS,
-    "aerodrome-v2": _AERODROME_V2_SELECTORS,
-    "aerodrome-v3": _AERODROME_V3_SELECTORS,
-    "balancer-weighted": _BALANCER_FACTORY_SELECTORS,
-    "balancer-stable": _BALANCER_FACTORY_SELECTORS,
-}
-
-# Tier 3 — expected verified ContractName substring per pool_type. None entries
-# skip the name assertion (the contract is still asserted deployed via Tiers
-# 1-2). Names verified via Etherscan getsourcecode this session.
+# None entries skip the name assertion (the contract is still asserted
+# deployed via Tiers 1-2). Names verified via Etherscan getsourcecode.
 EXPECTED_CONTRACT_NAME: dict[str, str | None] = {
     "uniswap-v2": "Factory",
     "uniswap-v3": "UniswapV3Factory",
@@ -376,7 +199,11 @@ _RECORDS: list[DeploymentRecord] = load_deployments()
 _RECORD_IDS = [f"{r.chain_id}-{r.factory[:10]}…-{r.name}" for r in _RECORDS]
 
 
-pytestmark = pytest.mark.online_rpc
+@pytest.fixture
+def deployment_capture(request: pytest.FixtureRequest) -> DeploymentGoldenCapture:
+    """The golden capture handle, bound to this run's ``--golden-mode``."""
+    mode: str = request.config.getoption("--golden-mode")
+    return DeploymentGoldenCapture(mode=mode)
 
 
 @pytest.mark.online_rpc
@@ -402,7 +229,7 @@ class TestDeploymentOnchainVerification:
         if skip is not None:
             pytest.skip(skip)
         rpc_url = _CHAIN_RPC[record.chain_id]
-        code = _cast_code(record.factory, rpc_url)
+        code = _CAST.code(record.factory, rpc_url=rpc_url)
         assert len(code) > 2, (
             f"{record.name} ({record.factory}, chain {record.chain_id}) has no "
             f"bytecode — `cast code` returned {code!r}. The address is not a "
@@ -429,7 +256,7 @@ class TestDeploymentOnchainVerification:
         if expected is None:
             pytest.skip(f"no selector fingerprint defined for pool_type={record.pool_type!r}")
         rpc_url = _CHAIN_RPC[record.chain_id]
-        deployed = _cast_selectors(_cast_code(record.factory, rpc_url))
+        deployed = _CAST.selectors(_CAST.code(record.factory, rpc_url=rpc_url))
         missing = expected - deployed
         assert not missing, (
             f"{record.name} ({record.factory}, chain {record.chain_id}, "
@@ -471,9 +298,8 @@ class TestDeploymentOnchainVerification:
         """Tier 4: the stored CREATE2 ``init_code_hash`` reproduces a real pool.
 
         Recomputes the CREATE2 address of a *known deployed* pair/pool
-        in-process (the codebase's auditable ``generate_v2/v3_pool_address``
-        using the JSON's ``init_hash`` + ``deployer``) and asserts it equals the
-        address the on-chain factory reports via ``getPair`` / ``getPool``.
+        in-process and asserts it equals the address the on-chain factory
+        reports via ``getPair`` / ``getPool``.
 
         This is the only tier that exercises ``init_code_hash`` — the field
         silently breakable when wrong (a wrong hash → wrong CREATE2 address →
@@ -493,32 +319,94 @@ class TestDeploymentOnchainVerification:
                 "add one to KNOWN_PAIRS to cover it"
             )
         rpc_url = _CHAIN_RPC[record.chain_id]
-        # Source deployer + init_hash from the Rust resolver — the runtime
-        # value pools consume (Fork A, NSAZ4X). The JSON-sourced values now
-        # live on the pool identity (stored at registration); this tier
-        # verifies THAT runtime value reproduces ground truth. The Python
-        # record is the lookup key only.
-        from degenbot._ffi.deployments import (
-            resolve_deployer,
-            resolve_v2_init_hash,
-            resolve_v3_init_hash,
+        deployer, init_hash = resolve_runtime_create2_fields(
+            record.chain_id,
+            record.factory,
+            record.pool_type,
         )
-
-        deployer = resolve_deployer(record.chain_id, record.factory)
-        if "v3" in record.pool_type:
-            init_hash = resolve_v3_init_hash(record.chain_id, record.factory)
-        else:
-            init_hash = resolve_v2_init_hash(record.chain_id, record.factory)
-        on_chain = _onchain_pool_address(record.factory, known, rpc_url)
-        if _is_zero_address(on_chain):
+        on_chain = onchain_pool_address(_CAST, record.factory, known, rpc_url=rpc_url)
+        if is_zero_address(on_chain):
             pytest.skip(
                 f"{record.name}: getPair/getPool returned zero — "
                 "the known pair is not deployed on this chain/factory"
             )
-        computed = _compute_pool_address(deployer, init_hash, known)
+        computed = compute_pool_address(deployer, init_hash, known)
         assert computed == on_chain, (
             f"{record.name} ({record.factory}, chain {record.chain_id}): "
             f"CREATE2 with runtime-sourced init_hash produced {computed}, but the "
             f"factory reports {on_chain} for the known pair. The stored "
             f"init_code_hash does not reproduce ground truth."
         )
+
+
+@pytest.mark.online_rpc
+class TestRecordDeploymentGoldenCapture:
+    """Record driver: fill the golden capture from the live chains.
+
+    Skipped unless ``--golden-mode=record`` (wired up as
+    ``just record-deployment-golden``). Every row on a reachable chain
+    persists its tier 1/2/4 facts into the committed capture; unreachable
+    chains contribute nothing, and the hermetic replay module
+    (``test_deployment_golden_verification.py``) skips those rows with a
+    reason instead of passing silently.
+    """
+
+    @pytest.mark.parametrize("record", _RECORDS, ids=_RECORD_IDS)
+    def test_capture_deployment_row(
+        self,
+        deployment_capture: DeploymentGoldenCapture,
+        record: DeploymentRecord,
+    ) -> None:
+        """Capture one deployment row's tier 1/2/4 facts from the chain."""
+        skip = _skip_if_unreachable(record.chain_id)
+        if skip is not None:
+            pytest.skip(skip)
+        rpc_url = _CHAIN_RPC[record.chain_id]
+        deployment_capture.bind_chain(record.chain_id, rpc_url)
+        code = _CAST.code(record.factory, rpc_url=rpc_url)
+        deployment_capture.put_row(
+            record.chain_id,
+            record.factory,
+            {
+                "name": record.name,
+                "pool_type": record.pool_type,
+                "bytecode_present": len(code) > 2,
+                "selectors": sorted(_CAST.selectors(code)),
+                "pool": self._capture_pool(record, rpc_url),
+            },
+        )
+
+    @staticmethod
+    def _capture_pool(record: DeploymentRecord, rpc_url: str) -> dict:
+        """Capture the tier-4 pool facts for a row, or its skip reason.
+
+        Mirrors the live tier-4 test's skip semantics: no registered known
+        pair, or a zero address from getPair/getPool, records a ``skip``
+        entry rather than pool data.
+        """
+        known = KNOWN_PAIRS.get((record.chain_id, record.factory.lower()))
+        if known is None:
+            return {"skip": "no known pair registered for this factory"}
+        on_chain = onchain_pool_address(_CAST, record.factory, known, rpc_url=rpc_url)
+        if is_zero_address(on_chain):
+            return {
+                "skip": (
+                    "getPair/getPool returned zero — the known pair is not "
+                    "deployed on this chain/factory"
+                ),
+            }
+        deployer, init_hash = resolve_runtime_create2_fields(
+            record.chain_id,
+            record.factory,
+            record.pool_type,
+        )
+        computed = compute_pool_address(deployer, init_hash, known)
+        return {
+            "kind": known[0],
+            "tokens": [known[1], known[2]],
+            "fee": known[3],
+            "deployer": deployer,
+            "init_hash": init_hash,
+            "on_chain_address": on_chain,
+            "computed_address": computed,
+        }
