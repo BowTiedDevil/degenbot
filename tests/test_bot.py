@@ -1,7 +1,45 @@
-"""Tests for the Bot class (single-chain facade, ADR-006 D5)."""
+"""Tests for the Bot class (single-chain facade, ADR-006 D5).
+
+Design note — public-seam testing. Every double enters Bot through a
+constructor parameter or a public method: no mock/``patch`` of module
+privates, no assignment to ``bot._*`` attributes.
+
+Seams used here (all additive to ``Bot.__init__`` / ``from_config_file``;
+omitted kwargs keep today's production bindings, matching the runner's
+``SimSubmitPipeline`` candidate_builder/simulator/renderer/submitter and
+``_submit_batch_records`` submitter/relay_providers precedents):
+
+- ``from_config_file(config=..., provider=...)`` — a real config + a real
+  ``OfflineProvider`` are handed in, replacing a patch of the private
+  ``_init_config`` / ``get_provider_from_config`` module factories.
+- ``Bot(py_bot=..., io=..., erc20_builder=...)`` — engine / I/O / token-builder
+  doubles for the build-path tests. An injected object skips the
+  construction-time wiring that belongs to the default instance (engine DB
+  snapshot load + ``ConstructionIo`` attach; ``BotIo`` ``ConstructionIo``
+  attach), so the doubles need no spec scaffolding.
+- The V2/V4 parity tests drive the PUBLIC build entries (``build_pool`` /
+  ``build_managed_pool``), which reach the same delegated-build parity guards
+  the direct private calls did.
+
+Rejected alternatives:
+
+- Driving ``_build_delegated`` directly for the V2 parity test was feasible
+  via the constructor seam, but the public ``build_pool`` entry reaches the
+  same guard once the io double satisfies type resolution (no DB row, an
+  unregistered factory, and a probe answer of V2) — the extra choreography is
+  the same public surface the facade itself exercises, so the test covers the
+  dispatch into the delegated path at no assertion cost.
+- Stubbing ``_make_v4_tick_data_fetcher`` proved unnecessary: the real
+  factory is lazy (no I/O at creation) and its closure is never invoked on
+  the parity-mismatch path, so the real one runs untouched.
+- ``MagicMock(spec=AlloyProvider)`` provider doubles: nothing on the paths
+  under test touches the provider beyond ``chain_id``, so the real
+  ``OfflineProvider`` (recorded JSON, no RPC at construction) is both
+  stricter and dependency-free.
+"""
 
 import pathlib
-from unittest.mock import patch
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,11 +48,16 @@ from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.provider import OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from degenbot.types.pool_type import PoolProbe
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+
+# Not in the deployments registry, so the type resolver falls back to probing.
+_UNREGISTERED_FACTORY = "0x" + "f" * 40
 
 
 def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
@@ -31,8 +74,7 @@ def _fake_provider(chain_id: int = 1) -> OfflineProvider:
 
     `Bot.__init__` reads `provider.chain_id` (the recorded chain_id) to enforce
     config/chain alignment; no RPC is issued at construction, so an offline
-    provider over an in-memory Rust transport suffices — no MagicMock double
-    (see O3).
+    provider over an in-memory Rust transport suffices — no mock double.
     """
     return OfflineProvider(
         chain_id=chain_id,
@@ -117,11 +159,13 @@ class TestBotFromConfigFile:
     """Bot.from_config_file() tests."""
 
     def test_from_config_file_creates_bot(self, tmp_path: pathlib.Path) -> None:
-        with patch("degenbot.bot._bot._init_config") as mock_init:
-            mock_init.return_value = _make_test_config(tmp_path)
-            with patch("degenbot.bot._bot.get_provider_from_config") as mock_factory:
-                mock_factory.return_value = _fake_provider(1)
-                bot = Bot.from_config_file()
+        # Real config + real provider through the from_config_file DI seams —
+        # the default-argument path (file discovery + provider factory) is
+        # unchanged production behavior.
+        bot = Bot.from_config_file(
+            config=_make_test_config(tmp_path),
+            provider=_fake_provider(1),
+        )
         assert isinstance(bot, Bot)
 
 
@@ -177,41 +221,34 @@ class TestMultipleBots:
 
 
 class TestBuildDelegatedIdentityReturnSurface:
-    """TF7RZB-S1: build_pool's Rust-delegated V2/V3 path returns a typed
-    identity `(pool_id, token0, token1, address, family)` from the builder and
-    asserts parity against the registered handle (a divergence is a genuine
+    """build_pool's Rust-delegated V2/V3 path returns a typed identity
+    ``(pool_id, token0, token1, address, family)`` from the builder and asserts
+    parity against the registered handle (a divergence is a genuine
     core/driver seam bug and must fail loudly, not silently re-derive)."""
 
-    def test_build_delegated_v2_parity_mismatch_raises(self, tmp_path) -> None:
+    def test_build_delegated_v2_parity_mismatch_raises(self, tmp_path: pathlib.Path) -> None:
         """A V2 builder identity that diverges from the registered handle's
-        tokens raises — the return-surface parity guard."""
-        from types import SimpleNamespace
-        from unittest.mock import MagicMock
-
-        import pytest
-
-        from degenbot.bot import Bot
-        from degenbot.builders.request import BuildPoolRequest
-        from degenbot.config import DatabaseSettings, DegenbotConfig
-        from degenbot.exceptions.base import DegenbotValueError
-        from degenbot.provider import AlloyProvider
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-        from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
-
+        tokens raises — the return-surface parity guard, reached through the
+        public ``build_pool`` entry: the io double routes type resolution to
+        the V2 delegated path (no DB row, unregistered factory, probe says V2).
+        """
         config = DegenbotConfig(
             database=DatabaseSettings(path=str(tmp_path / "t.db")),
             rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
             default_chain_id=1,
         )
-        provider = MagicMock(spec=AlloyProvider)
-        provider.chain_id = 1
-        bot = Bot(config, provider=provider)
+        io = SimpleNamespace(
+            get_block_number=lambda: 100,
+            fetch_factory_address=lambda address: _UNREGISTERED_FACTORY,
+            # BotIo.probe_pool_type returns the 1-based PoolProbe code; V2 = 1.
+            probe_pool_type=lambda address: int(PoolProbe.V2),
+        )
 
-        # Stub the Rust-owned surface: build_v2_pool returns the tuple return
-        # surface (core identity), get_pool returns a handle whose tokens DIFFER
-        # -> the parity guard must raise.
+        # Engine double: build_v2_pool returns the tuple return surface (core
+        # identity), get_pool returns a handle whose tokens DIFFER -> the
+        # parity guard must raise.
         handle = SimpleNamespace(token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40)
-        fake_py = SimpleNamespace(
+        py_bot = SimpleNamespace(
             build_v2_pool=lambda address, block=None: (
                 7,
                 "0x" + "C" * 40,
@@ -221,75 +258,52 @@ class TestBuildDelegatedIdentityReturnSurface:
             ),
             get_pool=lambda pid: handle,
         )
-        bot._py_bot = fake_py  # type: ignore[assignment]
-        bot._io = SimpleNamespace(get_block_number=lambda: 100)  # type: ignore[assignment]
+        bot = Bot(config, provider=_fake_provider(1), py_bot=py_bot, io=io)
 
-        request = BuildPoolRequest()
         with pytest.raises(DegenbotValueError):
-            bot._build_delegated(UniswapV2Pool, "0x" + "e" * 40, 1, request)
+            bot.build_pool("0x" + "e" * 40)
 
 
 class TestBuildManagedPoolIdentityReturnSurface:
-    """TF7RZB-S2/S3: the V4 build path resolves identity core-side via
-    `resolve_v4_identity` (DB two-step else overrides) then echoes it back
-    through `build_v4_pool`; _build_v4_managed verifies the two agree."""
+    """The V4 build path resolves identity core-side via ``resolve_v4_identity``
+    (DB two-step else overrides) then echoes it back through ``build_v4_pool``;
+    the build verifies the two agree."""
 
-    def test_build_v4_parity_mismatch_raises(self, tmp_path) -> None:
+    def test_build_v4_parity_mismatch_raises(self, tmp_path: pathlib.Path) -> None:
         """A builder identity that diverges from the resolver identity raises
         — the return-surface parity guard."""
-        from types import SimpleNamespace
-        from unittest.mock import MagicMock
-
-        import pytest
-
-        from degenbot.bot import Bot
-        from degenbot.config import DatabaseSettings, DegenbotConfig
-        from degenbot.exceptions.base import DegenbotValueError
-        from degenbot.provider import AlloyProvider
-        from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
-
         config = DegenbotConfig(
             database=DatabaseSettings(path=str(tmp_path / "t.db")),
             rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
             default_chain_id=1,
         )
-        provider = MagicMock(spec=AlloyProvider)
-        provider.chain_id = 1
-        bot = Bot(config, provider=provider)
+        io = SimpleNamespace(get_block_number=lambda: 100)
+
+        # Token-builder double: the real Erc20Builder's per-token build needs
+        # DB/RPC reads the io double does not carry.
+        token = SimpleNamespace(address="0x" + "cc" * 20)
+        erc20_builder = SimpleNamespace(
+            build=lambda *a, **k: token,
+            build_many=lambda *a, **k: [token, token],
+        )
 
         pm = "0x" + "aa" * 20
         pool_id_hex = "0x" + "11" * 32
         tokens = ["0x" + "cc" * 20, "0x" + "dd" * 20]  # cc<dd -> cc is currency0
 
-        # Stub the io seam: only the companion scalars read + get_block_number
-        # remain (identity resolution moved core-side).
-        bot._io = SimpleNamespace(  # type: ignore[assignment]
-            get_block_number=lambda: 100,
-            fetch_v4_slot0_liquidity=lambda *a, **k: (1 << 96, 0, 0, 5000, 0),
-            # CDJEPJ-2: batched metadata seam — return None per token so the
-            # metadata path falls back to the stubbed `build` below.
-            fetch_erc20_metadata_batch=lambda *a, **k: [None, None],
-        )
-        bot._erc20_builder.build = lambda *a, **k: SimpleNamespace(  # type: ignore[assignment]
-            address="0x" + "cc" * 20
-        )
-        bot._make_v4_tick_data_fetcher = lambda *a, **k: None  # type: ignore[assignment]
-
-        # Stub the Rust surface: the resolver returns identity A; build_v4_pool
-        # echoes a DIFFERENT currency0 -> parity guard must raise.
-        bot._py_bot = SimpleNamespace(  # type: ignore[assignment]
-            # MTMPQB return surface: (currency0, currency1, fee,
-            # tick_spacing, hook_flags, hook_address, state_view_hex). The
-            # hook address defaults to ZERO (flag mask 0); the state view is
-            # the caller override "0x…bb…".
+        # Engine double: the resolver returns identity A; build_v4_pool echoes
+        # a DIFFERENT currency0 -> parity guard must raise. Return surface:
+        # (pool_id, coverage, currency0, currency1, pool_manager, fee,
+        # tick_spacing, hook_flags, pool_id_hex, protocol_fee, lp_fee).
+        py_bot = SimpleNamespace(
             resolve_v4_identity=lambda **k: (
                 "0x" + "cc" * 20,
                 "0x" + "dd" * 20,
                 5000,
                 1,
-                0,
+                0,  # hook flag mask 0 (hook address defaults to ZERO)
                 "0x" + "00" * 20,
-                "0x" + "bb" * 20,
+                "0x" + "bb" * 20,  # state-view caller override
             ),
             build_v4_pool=lambda **k: (
                 7,
@@ -301,9 +315,16 @@ class TestBuildManagedPoolIdentityReturnSurface:
                 1,
                 0,
                 pool_id_hex,
-                5000,  # protocol_fee (CDJEPJ-1 return surface)
+                5000,  # protocol_fee
                 0,  # lp_fee
             ),
+        )
+        bot = Bot(
+            config,
+            provider=_fake_provider(1),
+            py_bot=py_bot,
+            io=io,
+            erc20_builder=erc20_builder,
         )
 
         with pytest.raises(DegenbotValueError):
@@ -319,43 +340,27 @@ class TestBuildManagedPoolIdentityReturnSurface:
 
 
 class TestBuildManagedPoolResolveErrorMapping:
-    """TF7RZB-S3: a core-identity-resolution failure (MissingIdentity → mapped
-    to PyValueError at the seam) surfaces as DegenbotValueError."""
+    """A core-identity-resolution failure (MissingIdentity -> mapped to
+    PyValueError at the seam) surfaces as DegenbotValueError."""
 
-    def test_resolve_missing_identity_raises_degenbot(self, tmp_path) -> None:
+    def test_resolve_missing_identity_raises_degenbot(self, tmp_path: pathlib.Path) -> None:
         """When resolve_v4_identity raises ValueError (no DB row, no overrides),
-        _build_v4_managed re-raises DegenbotValueError."""
-        from types import SimpleNamespace
-        from unittest.mock import MagicMock
-
-        import pytest
-
-        from degenbot.bot import Bot
-        from degenbot.config import DatabaseSettings, DegenbotConfig
-        from degenbot.exceptions.base import DegenbotValueError
-        from degenbot.provider import AlloyProvider
-        from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
-
+        the V4 build path re-raises DegenbotValueError."""
         config = DegenbotConfig(
             database=DatabaseSettings(path=str(tmp_path / "t.db")),
             rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
             default_chain_id=1,
         )
-        provider = MagicMock(spec=AlloyProvider)
-        provider.chain_id = 1
-        bot = Bot(config, provider=provider)
-
-        pm = "0x" + "aa" * 20
-        pool_id_hex = "0x" + "11" * 32
-
-        bot._io = SimpleNamespace(  # type: ignore[assignment]
-            get_block_number=lambda: 100,
-        )
-        bot._py_bot = SimpleNamespace(  # type: ignore[assignment]
+        io = SimpleNamespace(get_block_number=lambda: 100)
+        py_bot = SimpleNamespace(
             resolve_v4_identity=lambda **k: (_ for _ in ()).throw(
                 ValueError("V4 identity incomplete: pool not in the database")
             ),
         )
+        bot = Bot(config, provider=_fake_provider(1), py_bot=py_bot, io=io)
+
+        pm = "0x" + "aa" * 20
+        pool_id_hex = "0x" + "11" * 32
 
         with pytest.raises(DegenbotValueError):
             bot.build_managed_pool(

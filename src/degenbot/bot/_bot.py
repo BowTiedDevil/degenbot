@@ -177,6 +177,9 @@ class Bot:
         config: DegenbotConfig,
         *,
         provider: AlloyProvider | None = None,
+        py_bot: _Engine | None = None,
+        io: BotIo | None = None,
+        erc20_builder: Erc20Builder | None = None,
     ) -> None:
         """Initialize the single-chain Bot session.
 
@@ -189,6 +192,15 @@ class Bot:
           ``config.default_chain_id`` (fail-fast), use it directly.
         - ``provider`` omitted: build one from ``config.rpc[default_chain_id]``
           via :func:`get_provider_from_config`, which itself enforces the match.
+
+        ``py_bot``/``io``/``erc20_builder`` are DI seams (the
+        runner-pipeline ``SimSubmitPipeline`` constructor-seam pattern):
+        tests inject doubles at construction instead of patching module
+        privates or assigning ``bot._*`` attributes; omitted kwargs keep
+        the production bindings. An injected object skips the
+        construction-time wiring that belongs to the default instance
+        (engine DB snapshot load + ``ConstructionIo`` attach; ``BotIo``
+        ``ConstructionIo`` attach) — the injector owns that wiring.
 
         Raises:
             DegenbotValueError: If ``config.default_chain_id`` is ``None``, or
@@ -221,58 +233,72 @@ class Bot:
         #
         # ADR-006 slice 8b: the facade is single-chain, so the configured
         # ``default_chain_id`` is wired into the Rust ``Bot`` here (D4).
-        self._py_bot = _Engine(self._chain_id)
+        if py_bot is None:
+            self._py_bot = _Engine(self._chain_id)
 
-        # JUCFCB (epic P73ER6): eagerly load the V3+V4 DB snapshot into the
-        # core ``BotState`` at construction time (Shape 2). This makes the DB
-        # a construction-time property of the Bot — correct use is structural:
-        # the Bot is born with its snapshot or born cold-start, nothing in
-        # between. The core ``Bot::load_snapshot_from_db`` streams V3+V4 into
-        # the core ``SnapshotStore`` + records ``S = min(newest_update_block)``.
-        # ``None``/cold-start (no pools) is NOT an error. The file/memory
-        # snapshot path stays non-DB-only (loaded at ``engine_registry.start``
-        # via ``load_*_from_py``).
-        if config.database.path is not None:
-            db_path = config.database.path
-            # The DB file may not exist yet (SQLAlchemy creates it lazily on
-            # the first write). A missing file is a cold-start: no snapshot
-            # pools to load, `S = None`. The store stays empty; pool
-            # registration falls back to sparse. The file will be created by
-            # the first write, at which point a `Bot` restart will load it.
-            if Path(db_path).exists():
-                self._py_bot.load_snapshot_from_db(str(db_path), self._chain_id)
-            else:
-                logger.debug(
-                    "DB file %s does not exist; cold-start (no snapshot loaded).",
-                    db_path,
-                )
+            # JUCFCB (epic P73ER6): eagerly load the V3+V4 DB snapshot into the
+            # core ``BotState`` at construction time (Shape 2). This makes the DB
+            # a construction-time property of the Bot — correct use is structural:
+            # the Bot is born with its snapshot or born cold-start, nothing in
+            # between. The core ``Bot::load_snapshot_from_db`` streams V3+V4 into
+            # the core ``SnapshotStore`` + records ``S = min(newest_update_block)``.
+            # ``None``/cold-start (no pools) is NOT an error. The file/memory
+            # snapshot path stays non-DB-only (loaded at ``engine_registry.start``
+            # via ``load_*_from_py``).
+            if config.database.path is not None:
+                db_path = config.database.path
+                # The DB file may not exist yet (SQLAlchemy creates it lazily on
+                # the first write). A missing file is a cold-start: no snapshot
+                # pools to load, `S = None`. The store stays empty; pool
+                # registration falls back to sparse. The file will be created by
+                # the first write, at which point a `Bot` restart will load it.
+                if Path(db_path).exists():
+                    self._py_bot.load_snapshot_from_db(str(db_path), self._chain_id)
+                else:
+                    logger.debug(
+                        "DB file %s does not exist; cold-start (no snapshot loaded).",
+                        db_path,
+                    )
+        else:
+            # Injection seam (see __init__ docstring): the injector owns
+            # this engine's construction-time wiring (DB snapshot load +
+            # ``ConstructionIo`` attach), which runs for the default
+            # engine only.
+            self._py_bot = py_bot
 
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path),
         )
-        # Architecture review 2025-07-18 / candidate 1: attach the core
-        # `ConstructionIo` handle to the `Bot` engine (built from the extracted
-        # `AlloyProvider` + an optional held `DegenbotDb`). The 7 generic RPC
-        # + 12 DB atomic methods on `BotIo` delegate through this; the 27
-        # choreography wrappers stay on `BotIo` for now (deleted with the
-        # builder-choreography port). Alloy-only — a non-alloy provider raises
-        # `RuntimeError`.
-        self._py_bot.attach_construction_io(
-            provider=self._provider,
-            database_path=str(config.database.path) if config.database.path else None,
-        )
-        # The single I/O seam for this Bot (architecture review candidate #2):
-        # built once here and reused by every build/update/balance method instead
-        # of reconstructing BotIo per call. Swapping the I/O seam (fork tests,
-        # a different executor) changes one site, not eight.
-        self._io = BotIo(
-            provider=self._provider,
-            db=self.db,
-            database_path=str(config.database.path),
-        )
-        # Wire the `ConstructionIo` handle attached above onto `BotIo` so its
-        # 12 DB + 7 generic RPC methods delegate through the core trait objects.
-        self._io.attach_construction_io(self._py_bot)
+        if py_bot is None:
+            # Architecture review 2025-07-18 / candidate 1: attach the core
+            # `ConstructionIo` handle to the `Bot` engine (built from the extracted
+            # `AlloyProvider` + an optional held `DegenbotDb`). The 7 generic RPC
+            # + 12 DB atomic methods on `BotIo` delegate through this; the 27
+            # choreography wrappers stay on `BotIo` for now (deleted with the
+            # builder-choreography port). Alloy-only — a non-alloy provider raises
+            # `RuntimeError`.
+            self._py_bot.attach_construction_io(
+                provider=self._provider,
+                database_path=str(config.database.path) if config.database.path else None,
+            )
+        if io is not None:
+            # Injection seam (see __init__ docstring): the injector owns
+            # this I/O seam's ``ConstructionIo`` attach, which runs for
+            # the default-constructed BotIo only.
+            self._io = io
+        else:
+            # The single I/O seam for this Bot (architecture review candidate #2):
+            # built once here and reused by every build/update/balance method instead
+            # of reconstructing BotIo per call. Swapping the I/O seam (fork tests,
+            # a different executor) changes one site, not eight.
+            self._io = BotIo(
+                provider=self._provider,
+                db=self.db,
+                database_path=str(config.database.path),
+            )
+            # Wire the `ConstructionIo` handle attached above onto `BotIo` so its
+            # 12 DB + 7 generic RPC methods delegate through the core trait objects.
+            self._io.attach_construction_io(self._py_bot)
         self.pools = PoolRegistry(py_bot=self._py_bot)
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
@@ -282,11 +308,15 @@ class Bot:
 
         # Builders own I/O orchestration; Bot hands them its I/O dependencies.
         # Erc20Builder is a leaf — constructed before BuilderContext.
-        self._erc20_builder = Erc20Builder(
-            default_chain_id=self._chain_id,
-            db=self.db,
-            tokens=self.tokens,
-            py_bot=self._py_bot,
+        self._erc20_builder = (
+            erc20_builder
+            if erc20_builder is not None
+            else Erc20Builder(
+                default_chain_id=self._chain_id,
+                db=self.db,
+                tokens=self.tokens,
+                py_bot=self._py_bot,
+            )
         )
         ctx = BuilderContext(
             db=self.db,
@@ -380,18 +410,28 @@ class Bot:
         return self._provider
 
     @classmethod
-    def from_config_file(cls) -> Bot:
+    def from_config_file(
+        cls,
+        config: DegenbotConfig | None = None,
+        *,
+        provider: AlloyProvider | None = None,
+    ) -> Bot:
         """From config file.
 
         Builds a single-chain Bot from the config's ``default_chain_id``
         (ADR-006 D5). The provider is constructed from ``config.rpc`` and its
         ``eth_chainId`` is enforced to match.
 
+        ``config``/``provider`` are the DI seams (the ``Bot.__init__``
+        provider pattern): tests inject an already-built config/provider;
+        omitted arguments keep production behavior (config-file discovery +
+        ``get_provider_from_config``).
+
         Returns:
             An instance wrapping the given config_file.
 
         """
-        return cls(config=_init_config())
+        return cls(config=config if config is not None else _init_config(), provider=provider)
 
     def add_tracker[M: AbstractPoolTracker[Any]](
         self,
