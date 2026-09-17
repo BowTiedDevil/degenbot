@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import time
 from typing import TYPE_CHECKING, Any
 
 from degenbot.runner._render import (
@@ -398,6 +399,17 @@ def _render_outcome(
     _render_profit_logs(outcome)
 
 
+#: Silent-veto smoke detector: a live-armed session whose candidates clear
+#: the sim gates but whose every dispatch batch ends in skips is running a
+#: configuration veto (the class the retired injection-flag divergence was
+#: the sharpest instance of). A streak of fully-vetoed live batches earns one
+#: throttled WARN naming the skip histogram; per-batch detail lines carry the
+#: specifics.
+_STALL_STREAK = 3
+_STALL_WARN_INTERVAL_S = 300.0
+_submission_smoke: dict[str, float] = {"streak": 0.0, "last_warn": 0.0}
+
+
 async def _submit_batch_records(
     session: _SessionState,
     outcome: _SimOutcome,
@@ -465,7 +477,11 @@ async def _submit_batch_records(
         inject_code=session.cfg.inject_executor_code,
         broadcast_providers=broadcast_providers,
     )
+    submitted_count = sum(isinstance(record, SubmittedRecord) for record in records)
+    skip_histogram: dict[str, int] = {}
     for record in records:
+        if isinstance(record, SkippedRecord):
+            skip_histogram[record.reason.name] = skip_histogram.get(record.reason.name, 0) + 1
         match record:
             case SubmittedRecord(path_id=path_id, tx_hash=tx_hash, nonce=nonce):
                 bot_logger.info(f"Submitted path {path_id} hash={tx_hash} nonce={nonce}")
@@ -480,3 +496,24 @@ async def _submit_batch_records(
                 )
             case SkippedRecord(reason=SubmitSkipReason.BROADCAST_FAILED, detail=detail):
                 bot_logger.warning(f"[dispatch] broadcast failed: {detail or 'no detail'}")
+
+    if (
+        session.cfg.dry_run
+        or session.cfg.inject_executor_code
+        or not outcome.gas_profitable
+        or submitted_count > 0
+    ):
+        _submission_smoke["streak"] = 0.0
+    else:
+        _submission_smoke["streak"] += 1
+        now = time.monotonic()
+        if (
+            _submission_smoke["streak"] >= _STALL_STREAK
+            and now - _submission_smoke["last_warn"] >= _STALL_WARN_INTERVAL_S
+        ):
+            _submission_smoke["last_warn"] = now
+            bot_logger.warning(
+                f"[dispatch] live-armed with gate-clearing candidates but no submissions in "
+                f"{int(_submission_smoke['streak'])} consecutive batches; skip reasons "
+                f"{skip_histogram or '{}'} — a configuration-level veto is likely"
+            )

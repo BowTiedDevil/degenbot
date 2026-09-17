@@ -69,11 +69,17 @@ class TestFromEnvFull:
     ) -> None:
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"INJECT_EXECUTOR_CODE": "1"}
-        cfg = ArbitrageConfig.from_env(env, live=True, permutation=None)
+        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
 
         assert cfg.inject_executor_code is True
-        # main() behavior: when INJECT_EXECUTOR_CODE, executor_address = injected_address
+        # injection overrides the executor with the injected address
         assert cfg.executor_address == cfg.injected_address
+
+    def test_live_with_injection_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
+        env = _full_env() | {"INJECT_EXECUTOR_CODE": "1"}
+        with pytest.raises(ValueError, match="inject"):
+            ArbitrageConfig.from_env(env, live=True, permutation=None)
 
 
 class TestInjectExecutorCodeUnifiedResolution:

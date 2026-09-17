@@ -354,6 +354,17 @@ class ArbitrageConfig:
                 "executor's owner gate and the sim's caller both key off this address"
             )
             raise ValueError(msg)
+        if live and inject_executor_code:
+            # Injected bytecode exists only inside the simulator's overlay:
+            # a live dispatch to it targets empty code on-chain. Previously
+            # this combination was carried by a second flag layer whose skip
+            # veto made it *look* like a live run; refuse it at config load.
+            msg = (
+                "live mode requires a deployed executor: the injection stance is active "
+                "(simulation.inject_executor_code / DEGENBOT_INJECT_EXECUTOR_CODE / the "
+                "dotenv INJECT_EXECUTOR_CODE). Set it to 0 and deploy the executor first."
+            )
+            raise ValueError(msg)
         # main() behavior: when INJECT_EXECUTOR_CODE, override executor with injected
         if inject_executor_code:
             executor_address = injected_address
