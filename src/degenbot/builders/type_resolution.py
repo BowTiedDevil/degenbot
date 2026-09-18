@@ -97,33 +97,41 @@ def pool_class_for_descriptor(
 
 def _build_descriptor_from_db_result(
     pool_from_db: LiquidityPoolTable,
-) -> PoolTypeDescriptor | None:
+) -> PoolTypeDescriptor:
     """Map a DB row to a PoolTypeDescriptor.
 
-    Returns None if the kind can't be resolved from the registry.
     Read-only dependency on pool_type_registry.
 
     Returns:
         The computed value.
 
+    Raises:
+        DegenbotValueError: On a kind the registry does not know. A present
+            but unrecognized DB kind is a seed/registry gap; falling through
+            to on-chain probing would silently re-classify the pool.
+
     """
     kind = pool_from_db.kind
     descriptor = pool_type_registry.get_descriptor_by_kind(kind)
-    if descriptor is not None:
-        return PoolTypeDescriptor(
-            family=descriptor.family,
-            variant=descriptor.variant,
-            kind=descriptor.kind,
-            factory=get_checksum_address(pool_from_db.exchange.factory),
+    if descriptor is None:
+        msg = (
+            f"Unrecognized pool kind {kind!r} from the database; "
+            f"pool_type_registry has no descriptor for it."
         )
-    return None
+        raise DegenbotValueError(message=msg)
+    return PoolTypeDescriptor(
+        family=descriptor.family,
+        variant=descriptor.variant,
+        kind=descriptor.kind,
+        factory=get_checksum_address(pool_from_db.exchange.factory),
+    )
 
 
 def _build_descriptor_from_seam_rows(
     *,
     pool_kind: str,
     exchange_factory: str,
-) -> PoolTypeDescriptor | None:
+) -> PoolTypeDescriptor:
     """Map Rust-seam rows to a `PoolTypeDescriptor` (QVMWQC).
 
     The seam version of [`_build_descriptor_from_db_result`]: instead of a
@@ -134,16 +142,25 @@ def _build_descriptor_from_seam_rows(
     Returns:
         The computed value.
 
+    Raises:
+        DegenbotValueError: On a kind the registry does not know. A present
+            but unrecognized DB kind must not fall through to on-chain
+            probing, which would silently re-classify the pool.
+
     """
     descriptor = pool_type_registry.get_descriptor_by_kind(pool_kind)
-    if descriptor is not None:
-        return PoolTypeDescriptor(
-            family=descriptor.family,
-            variant=descriptor.variant,
-            kind=descriptor.kind,
-            factory=get_checksum_address(exchange_factory),
+    if descriptor is None:
+        msg = (
+            f"Unrecognized pool kind {pool_kind!r} from the database; "
+            f"pool_type_registry has no descriptor for it."
         )
-    return None
+        raise DegenbotValueError(message=msg)
+    return PoolTypeDescriptor(
+        family=descriptor.family,
+        variant=descriptor.variant,
+        kind=descriptor.kind,
+        factory=get_checksum_address(exchange_factory),
+    )
 
 
 def _descriptor_from_probing_result(
@@ -305,17 +322,20 @@ def resolve_pool_type(
     # Route through the Rust `BotIo` seam (QVMWQC): `fetch_pool_row`
     # carries `kind` + `exchange_id`; `fetch_exchange` hydrates the factory.
     # The `contextlib.suppress` makes a missing/empty DB a skip, not an error.
+    # Only the fetches are suppressed: a present-but-unrecognized `kind`
+    # raises from `_build_descriptor_from_seam_rows` (outside the suppress)
+    # rather than falling through to on-chain re-classification.
+    pool_row = None
+    exchange_row = None
     with contextlib.suppress(Exception):
         pool_row = io.fetch_pool_row(chain_id=chain_id, address=address)
         if pool_row is not None:
             exchange_row = io.fetch_exchange(exchange_id=pool_row.exchange_id)
-            if exchange_row is not None:
-                descriptor = _build_descriptor_from_seam_rows(
-                    pool_kind=pool_row.kind,
-                    exchange_factory=exchange_row.factory,
-                )
-                if descriptor is not None:
-                    return descriptor
+    if pool_row is not None and exchange_row is not None:
+        return _build_descriptor_from_seam_rows(
+            pool_kind=pool_row.kind,
+            exchange_factory=exchange_row.factory,
+        )
 
     # Step 2: Factory address lookup via PoolTypeRegistry
     factory = fetch_factory_from_chain(address, chain_id=chain_id, io=io)

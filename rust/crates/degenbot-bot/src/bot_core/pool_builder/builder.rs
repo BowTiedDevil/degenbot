@@ -218,57 +218,60 @@ async fn fetch_field_decimals(io: &ConstructionIo, address: Address, prototypes:
 /// Probe a pool contract to identify its family via the canonical read-call
 /// probe order (mirrors `type_resolution.py::probe_pool_type`):
 /// `slot0()` → V3, `getReserves()` → V2, `getPoolId()` → Balancer (weighted vs
-/// stable by `getNormalizedWeights()`), else Curve. Returns a
-/// [`PoolFamily`]; never errors — a probe that reverts is treated as absent.
+/// stable by `getNormalizedWeights()`), else Curve.
+///
+/// An EVM revert means the selector is absent: the next probe runs, and when
+/// every probe reverts the contract is classified [`PoolFamily::Curve`]. A
+/// provider failure that is NOT a revert (transport, timeout, rate limit,
+/// malformed response) propagates as an error — a broken RPC must never
+/// silently degrade a pool to Curve.
+///
+/// # Errors
+///
+/// The [`ProviderError`] from the first probe that failed for a reason other
+/// than [`ProviderError::ExecutionReverted`].
 pub async fn probe_pool_type(
     io: &ConstructionIo,
     address: Address,
     block: Option<u64>,
-) -> PoolFamily {
-    if choreography::eth_call(
-        io,
-        address,
-        choreography::selector(b"slot0()").to_vec(),
-        block,
-    )
-    .await
-    .is_ok()
-    {
-        PoolFamily::V3
-    } else if choreography::eth_call(
-        io,
-        address,
-        choreography::selector(b"getReserves()").to_vec(),
-        block,
-    )
-    .await
-    .is_ok()
-    {
-        PoolFamily::V2
-    } else if choreography::eth_call(
-        io,
-        address,
-        choreography::selector(b"getPoolId()").to_vec(),
-        block,
-    )
-    .await
-    .is_ok()
-    {
-        if choreography::eth_call(
-            io,
-            address,
-            choreography::selector(b"getNormalizedWeights()").to_vec(),
-            block,
+) -> Result<PoolFamily, ProviderError> {
+    if probe_present(io, address, b"slot0()", block).await? {
+        Ok(PoolFamily::V3)
+    } else if probe_present(io, address, b"getReserves()", block).await? {
+        Ok(PoolFamily::V2)
+    } else if probe_present(io, address, b"getPoolId()", block).await? {
+        Ok(
+            if probe_present(io, address, b"getNormalizedWeights()", block).await? {
+                PoolFamily::BalancerWeighted
+            } else {
+                PoolFamily::BalancerStable
+            },
         )
-        .await
-        .is_ok()
-        {
-            PoolFamily::BalancerWeighted
-        } else {
-            PoolFamily::BalancerStable
-        }
     } else {
-        PoolFamily::Curve
+        Ok(PoolFamily::Curve)
+    }
+}
+
+/// `true` when the selector answered, `false` on an EVM revert (selector
+/// absent), `Err` on any other provider failure (mirrors the benign-revert
+/// rule in [`build_balancer_stable`]).
+async fn probe_present(
+    io: &ConstructionIo,
+    address: Address,
+    signature: &[u8],
+    block: Option<u64>,
+) -> Result<bool, ProviderError> {
+    match choreography::eth_call(
+        io,
+        address,
+        choreography::selector(signature).to_vec(),
+        block,
+    )
+    .await
+    {
+        Ok(_) => Ok(true),
+        Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 

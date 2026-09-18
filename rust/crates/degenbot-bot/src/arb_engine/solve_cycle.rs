@@ -477,6 +477,20 @@ fn cl_hop_clamp_margin() -> U256 {
 /// identical logic from its `to_solve`-aligned snapshot. The worker takes
 /// the SAME short core read the merge-site clamp took (MQUKB6-T3 intact:
 /// engine-then-core, short read, no guard across awaits).
+/// The clamp-skip error kind for a hop with no byte-exact twin at the clamp
+/// seam. `None` for the V2/V3/V4 families that DO execute the twin arm.
+pub(crate) fn clamp_skip_kind(hop: HopType) -> Option<&'static str> {
+    match hop {
+        HopType::SolidlyStable => Some(crate::telemetry::error_kind::CLAMP_SKIP_SOLIDLY_STABLE),
+        HopType::BalancerWeighted => {
+            Some(crate::telemetry::error_kind::CLAMP_SKIP_BALANCER_WEIGHTED)
+        }
+        HopType::BalancerStable => Some(crate::telemetry::error_kind::CLAMP_SKIP_BALANCER_STABLE),
+        HopType::CurveStableswap => Some(crate::telemetry::error_kind::CLAMP_SKIP_CURVE_STABLESWAP),
+        HopType::V2 | HopType::V3 | HopType::V4 => None,
+    }
+}
+
 #[expect(clippy::too_many_lines)] // multi-hop CL twin loop + post-clamp profit recompute
 pub(crate) fn clamp_result_with_state(
     core: &BotState,
@@ -613,8 +627,20 @@ pub(crate) fn clamp_result_with_state(
                 (out, None)
             }
             // Curve / Balancer / Solidly — no byte-exact twin at this
-            // seam; their reported outputs stand (see module note).
-            _ => continue,
+            // seam; their reported outputs stand (see module note). Counted
+            // per family so a first live occurrence is visible without
+            // per-hop logging.
+            HopType::SolidlyStable
+            | HopType::BalancerWeighted
+            | HopType::BalancerStable
+            | HopType::CurveStableswap => {
+                if let Some(kind) = clamp_skip_kind(pool_ref.hop_type) {
+                    if let Some(p) = crate::instruments::pipeline() {
+                        p.count_error(kind);
+                    }
+                }
+                continue;
+            }
         };
         // (a) Input clamp: cap this CL hop's committed input at
         // `input_consumed - margin` when over-fed (the empty-march class).

@@ -875,13 +875,13 @@ impl PyBotIo {
         py: Python<'_>,
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
-    ) -> u8 {
+    ) -> PyResult<u8> {
         use degenbot_bot::bot_core::pool_builder::builder::PoolFamily;
 
-        // Non-`PyResult` signature (mirrors the Python `-> str` contract), so
-        // the construction-IO / address / block conversions `expect`: for the
+        // The construction-IO / address / block conversions `expect`: for the
         // alloy-backed Offline/RPC providers the builder dispatches through,
-        // all three succeed.
+        // all three succeed. A provider failure that is not an EVM revert
+        // crosses to Python as an error, never as a Curve classification.
         #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let io = self
             .required_construction_io()
@@ -892,19 +892,27 @@ impl PyBotIo {
         );
         #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let block_num = extract_block_u64(block).expect("probe_pool_type block parse");
-        let family = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::builder::probe_pool_type(&io, addr, block_num)
+        let family = py
+            .detach(|| {
+                get_runtime().block_on(async move {
+                    degenbot_bot::bot_core::pool_builder::builder::probe_pool_type(
+                        &io, addr, block_num,
+                    )
                     .await
+                })
             })
-        });
-        match family {
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "probe_pool_type provider failure: {e}"
+                ))
+            })?;
+        Ok(match family {
             PoolFamily::V2 => 1,               // PoolProbe.V2
             PoolFamily::V3 => 2,               // PoolProbe.V3
             PoolFamily::BalancerWeighted => 3, // PoolProbe.BALANCER_WEIGHTED
             PoolFamily::BalancerStable => 4,   // PoolProbe.BALANCER_STABLE
             PoolFamily::Curve => 5,            // PoolProbe.STABLESWAP
-        }
+        })
     }
 
     /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing

@@ -255,3 +255,25 @@ class TestResolvePoolType:
         )
         assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
         assert result.factory == factory_address
+
+    def test_raises_on_unknown_db_kind_without_probing(self) -> None:
+        """A present DB kind the registry doesn't know raises instead of
+        falling through to on-chain probing (which would re-classify)."""
+        factory_address = "0x1234567890AbCdEf1234567890aBcDeF12345678"
+        pool_row = MagicMock()
+        pool_row.kind = "nonexistent_kind"
+        pool_row.exchange_id = 7
+        exchange_row = MagicMock()
+        exchange_row.factory = factory_address
+        io = FakePyBotIo(
+            factory_address=factory_address,
+            probe_result=PoolProbe.V3,
+            pool_row=pool_row,
+            exchange_row=exchange_row,
+        )
+        with pytest.raises(DegenbotValueError, match="Unrecognized pool kind"):
+            resolve_pool_type(
+                "0xPool",  # type: ignore[arg-type]
+                chain_id=CHAIN_ID,
+                io=io,
+            )

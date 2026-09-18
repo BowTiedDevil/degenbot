@@ -8,6 +8,35 @@ use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
 use alloy::primitives::U256;
 use hashbrown::HashMap;
 use std::sync::Arc;
+
+/// The clamp-skip census must name every non-twin family exactly once, and
+/// leave the CL/V2 families unmapped (they own the twin arm).
+#[test]
+fn clamp_skip_kind_names_every_non_twin_family() {
+    use crate::arb_engine::solve_cycle::clamp_skip_kind;
+    use crate::telemetry::error_kind;
+    use ::degenbot_solvers::mixed::HopType;
+
+    assert_eq!(clamp_skip_kind(HopType::V2), None);
+    assert_eq!(clamp_skip_kind(HopType::V3), None);
+    assert_eq!(clamp_skip_kind(HopType::V4), None);
+    assert_eq!(
+        clamp_skip_kind(HopType::SolidlyStable),
+        Some(error_kind::CLAMP_SKIP_SOLIDLY_STABLE)
+    );
+    assert_eq!(
+        clamp_skip_kind(HopType::BalancerWeighted),
+        Some(error_kind::CLAMP_SKIP_BALANCER_WEIGHTED)
+    );
+    assert_eq!(
+        clamp_skip_kind(HopType::BalancerStable),
+        Some(error_kind::CLAMP_SKIP_BALANCER_STABLE)
+    );
+    assert_eq!(
+        clamp_skip_kind(HopType::CurveStableswap),
+        Some(error_kind::CLAMP_SKIP_CURVE_STABLESWAP)
+    );
+}
 /// Narrow single-position V4 pool (±60 ticks, 1e6 liquidity) + a one-hop
 /// path: the over-fed committed input is the empty-march class. Returns
 /// (engine, `path_id`, the to_solve-aligned pool-ref snapshot).

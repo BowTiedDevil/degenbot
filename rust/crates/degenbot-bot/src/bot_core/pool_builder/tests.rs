@@ -60,6 +60,9 @@ struct FakeRpc {
     // Code returned by `get_code` (non-empty for the ERC-20 “contract present”
     // guard; empty by default so pool-family probes treat it as no-code).
     code: Bytes,
+    // Selector-keyed hard provider failures (transport/timeout), distinct from
+    // the no-response revert: checked before `responses`.
+    errors: HashMap<[u8; 4], ProviderError>,
 }
 
 impl FakeRpc {
@@ -68,6 +71,7 @@ impl FakeRpc {
             responses: HashMap::new(),
             responses_full: HashMap::new(),
             code: Bytes::new(),
+            errors: HashMap::new(),
         }
     }
     fn set(&mut self, sel: [u8; 4], bytes: Vec<u8>) {
@@ -78,6 +82,10 @@ impl FakeRpc {
     }
     fn set_code(&mut self, code: Bytes) {
         self.code = code;
+    }
+
+    fn set_error(&mut self, sel: [u8; 4], error: ProviderError) {
+        self.errors.insert(sel, error);
     }
 }
 
@@ -107,6 +115,11 @@ impl RpcConstruction for FakeRpc {
         data: Bytes,
         _block: Option<u64>,
     ) -> Result<Bytes, ProviderError> {
+        // A configured hard failure wins over any response: this models an
+        // RPC/transport fault, not an EVM revert.
+        if let Some(e) = self.errors.get(&data[..4]) {
+            return Err(e.clone());
+        }
         // Full-calldata match wins (parameterized calls); otherwise fall back
         // to the 4-byte selector.
         if let Some(b) = self.responses_full.get(data.as_ref()) {
@@ -546,7 +559,9 @@ async fn fetch_v4_tick_data_decodes() {
 async fn probe_pool_type_dispatches() {
     // No responses → every probe reverts → Curve.
     assert_eq!(
-        builder::probe_pool_type(&io_with(FakeRpc::new()), TO, None).await,
+        builder::probe_pool_type(&io_with(FakeRpc::new()), TO, None)
+            .await
+            .unwrap(),
         builder::PoolFamily::Curve
     );
 
@@ -557,7 +572,9 @@ async fn probe_pool_type_dispatches() {
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None).await,
+        builder::probe_pool_type(&io_with(f), TO, None)
+            .await
+            .unwrap(),
         builder::PoolFamily::V3
     );
 
@@ -572,7 +589,9 @@ async fn probe_pool_type_dispatches() {
         ])),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None).await,
+        builder::probe_pool_type(&io_with(f), TO, None)
+            .await
+            .unwrap(),
         builder::PoolFamily::V2
     );
 
@@ -580,7 +599,9 @@ async fn probe_pool_type_dispatches() {
     let mut f = FakeRpc::new();
     f.set(choreography::selector(b"getPoolId()"), addr_word(TO));
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None).await,
+        builder::probe_pool_type(&io_with(f), TO, None)
+            .await
+            .unwrap(),
         builder::PoolFamily::BalancerStable
     );
 
@@ -595,9 +616,30 @@ async fn probe_pool_type_dispatches() {
         )])),
     );
     assert_eq!(
-        builder::probe_pool_type(&io_with(f), TO, None).await,
+        builder::probe_pool_type(&io_with(f), TO, None)
+            .await
+            .unwrap(),
         builder::PoolFamily::BalancerWeighted
     );
+}
+
+#[tokio::test]
+async fn probe_pool_type_propagates_transport_failure() {
+    // A probe that fails with a transport/RPC error is NOT an absent selector:
+    // it must surface, never degrade the pool to Curve.
+    let mut f = FakeRpc::new();
+    f.set_error(
+        choreography::selector(b"slot0()"),
+        ProviderError::ConnectionFailed {
+            message: "rpc down".into(),
+        },
+    );
+    match builder::probe_pool_type(&io_with(f), TO, None).await {
+        Err(ProviderError::ConnectionFailed { message }) => {
+            assert_eq!(message, "rpc down");
+        }
+        other => panic!("expected ConnectionFailed, got {other:?}"),
+    }
 }
 
 #[tokio::test]

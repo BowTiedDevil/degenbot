@@ -55,7 +55,7 @@ use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction}
 use degenbot::bot_core::pool_builder::builder::{
     build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_curve_pool,
     build_erc20_metadata, build_v2, build_v3, build_v4, probe_pool_type, resolve_v4_identity,
-    PoolBuilderError, PoolFamily, V4PoolBuildIdentity, V4PoolBuildOverrides,
+    PoolBuilderError, V4PoolBuildIdentity, V4PoolBuildOverrides,
 };
 use degenbot::errors::ProviderError;
 use degenbot::rpc::provider::EthBlock;
@@ -683,8 +683,8 @@ fn in_process_sim_standalone_slice() {
     // 7. Reach the PoolBuilder (T2, 3FVZF4): a `cargo add degenbot` consumer
     //    reaches the probe-dispatched build fns over a `ConstructionIo` with no
     //    pyo3 in the graph. Drive `probe_pool_type` against an always-failing
-    //    RPC stub — every probe reverts, so it resolves `Curve` — and call
-    //    `build_v2`, which must surface a typed `PoolBuilderError` (RPC) rather
+    //    RPC stub — every probe fails with an RPC error, which must surface —
+    //    and call `build_v2`, which must surface a typed `PoolBuilderError` (RPC) rather
     //    than panic. This pins the umbrella path + the error/identity types;
     //    the full on-chain read path is unit-tested in degenbot-bot's FakeRpc
     //    suite.
@@ -692,11 +692,10 @@ fn in_process_sim_standalone_slice() {
         Arc::new(NoDb),
         Arc::new(FailingConstruction),
     ));
-    let family = degenbot::runtime::get_runtime().block_on(probe_pool_type(&io, POOL_B, None));
-    assert_eq!(
-        family,
-        PoolFamily::Curve,
-        "no responses → every probe reverts → Curve"
+    let probe = degenbot::runtime::get_runtime().block_on(probe_pool_type(&io, POOL_B, None));
+    assert!(
+        matches!(probe, Err(ProviderError::RpcError { .. })),
+        "a dead RPC must surface, never classify the pool as Curve: {probe:?}"
     );
     let err = degenbot::runtime::get_runtime().block_on(build_v2(1, POOL_B, &io, None));
     assert!(
@@ -785,7 +784,7 @@ fn in_process_sim_standalone_slice() {
         "build_curve_pool over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
     println!(
-        "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (family={family:?})"
+        "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (probe={probe:?})"
     );
     // 8. Reach the PancakeSwap V3 storage-slot encoders: the fork's
     //    layout diverges from Uniswap V3 (two-word slot0, liquidity@5, ticks@6,

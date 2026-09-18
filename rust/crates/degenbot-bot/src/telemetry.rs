@@ -43,6 +43,14 @@ pub mod error_kind {
     /// event exists so the raw rate stays visible; spikes = an out-of-order
     /// WS feed, not a state-machine problem).
     pub const LATE_LOG: &str = "late_log";
+
+    /// Solver clamp skipped: a non-V2/V3/V4 hop has no byte-exact twin at the
+    /// clamp seam, so its reported output stands unclamped. One kind per
+    /// family so the first live occurrence is visible in the error census.
+    pub const CLAMP_SKIP_SOLIDLY_STABLE: &str = "clamp_skip_solidly_stable";
+    pub const CLAMP_SKIP_BALANCER_WEIGHTED: &str = "clamp_skip_balancer_weighted";
+    pub const CLAMP_SKIP_BALANCER_STABLE: &str = "clamp_skip_balancer_stable";
+    pub const CLAMP_SKIP_CURVE_STABLESWAP: &str = "clamp_skip_curve_stableswap";
 }
 
 /// Closed REASON taxonomy for kinds that discriminate a sub-cause. Values
