@@ -30,8 +30,9 @@ use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_bot::sidecar::{Decision, SidecarConfig};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_submission::backrun_strategy::BackrunStrategy;
 use degenbot_submission::frame_pipeline::{
-    build_block_handle, process_frame, PipelineConfig, StrategyRuntime,
+    build_block_handle, process_frame, MarketContext, PipelineConfig,
 };
 
 const WETH: alloy::primitives::Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
@@ -218,11 +219,7 @@ fn composed_config(cd: &Bytes) -> (u8, u16, u8, U256) {
 
 async fn runtime(
     provider: &Arc<AlloyProvider>,
-) -> (
-    StrategyRuntime,
-    u64,
-    HashMap<alloy::primitives::Address, u64>,
-) {
+) -> (MarketContext, u64, HashMap<alloy::primitives::Address, u64>) {
     let db = live_db();
     let ids: HashMap<alloy::primitives::Address, u64> = db
         .fetch_token_ids_by_address(1, &[WETH, USDC])
@@ -243,7 +240,7 @@ async fn runtime(
         "the canonical USDC/WETH pair must sit in the DB index"
     );
     let head = provider.get_block_number().await.unwrap();
-    let rt = StrategyRuntime::new(1, Some(index), Some(live_db()), 8);
+    let rt = MarketContext::new(1, Some(index), Some(live_db()), 8);
     (rt, head, ids)
 }
 
@@ -264,7 +261,9 @@ async fn frame_pipeline_replay_staging_bids_with_composed_calldata() {
     let ev = dislocating_frame(300, nonce);
     println!("frame hash 0x{}", alloy::hex::encode(ev.hash));
 
+    let mut strategy = BackrunStrategy::new();
     let artifacts = process_frame(
+        &mut strategy,
         &mut rt,
         &provider,
         &sim_client(),
@@ -335,7 +334,9 @@ async fn frame_pipeline_reverted_target_observes_truthfully() {
     let nonce = live_nonce(&provider).await;
     let ev = reverting_frame(nonce);
 
+    let mut strategy = BackrunStrategy::new();
     let artifacts = process_frame(
+        &mut strategy,
         &mut rt,
         &provider,
         &sim_client(),

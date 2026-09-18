@@ -18,9 +18,8 @@ use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_submission::frame_pipeline::{
-    admit_extracted, build_block_handle, solve_dfs_chains, StrategyRuntime, WETH,
-};
+use degenbot_submission::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
+use degenbot_submission::frame_pipeline::{build_block_handle, MarketContext};
 
 const ANCHOR: Address = address!("11b815efb8f581194ae79006d24e0d814b7697f6");
 const MID1: Address = address!("f641eafb5bce9568c4ff1079c58f36a7e8a6cd8d");
@@ -50,7 +49,7 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
     index.set_ranker(Arc::new(
         degenbot_bot::sidecar_paths::OnChainLiquidityRanker::new(Arc::clone(&provider)),
     ));
-    let rt = StrategyRuntime::new(1, Some(index), Some(db), 8);
+    let rt = MarketContext::new(1, Some(index), Some(db), 8);
     let head = provider.get_block_number().await.unwrap();
 
     let anchor = *rt

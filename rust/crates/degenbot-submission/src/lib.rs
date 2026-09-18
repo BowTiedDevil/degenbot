@@ -66,6 +66,7 @@
 //! - The `SubmittedTx` monitor / dispatcher state — sibling tasks in the epic.
 
 pub mod anchored_dfs;
+pub mod backrun_strategy;
 pub mod bundle;
 pub mod dispatcher;
 pub mod error;
@@ -74,8 +75,10 @@ pub mod frame_pipeline;
 pub mod gap_probe;
 pub mod gap_quarantine;
 pub mod gap_quarantine_journal;
+pub mod market_context;
 pub mod monitor;
 pub mod params;
+pub mod pending_tx;
 pub mod signer;
 pub mod submit;
 
@@ -95,8 +98,8 @@ pub use monitor::{
     SubmittedTx, BLOCKS_BEFORE_NONCE_EXPIRES,
 };
 pub use submit::{
-    dispatch_and_submit, fetch_fee_history, SkipReason, SubmitCandidate, SubmitOutcome,
-    SubmitRecord,
+    dispatch_and_submit, fetch_fee_history, SkipReason, SubmissionTarget, SubmitCandidate,
+    SubmitOutcome, SubmitRecord,
 };
 
 // Test-only span capture for the OTel tier-1 span tests (RMHQAR, epic

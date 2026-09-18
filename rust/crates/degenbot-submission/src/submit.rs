@@ -114,6 +114,19 @@ pub struct BundleTarget {
     pub block_number: u64,
 }
 
+/// Where one signed transaction is sent.
+#[derive(Debug, Clone)]
+pub enum SubmissionTarget {
+    /// The `MEVBlocker` bundle channel: `eth_sendBundle` on the searcher WS
+    /// carrying the pending target's hash as `txs[0]` and the signed backrun
+    /// as `txs[1]`, pinned to the target's block. The public mempool and any
+    /// other relay are BYPASSED.
+    Bundle(BundleTarget),
+    /// The public mempool broadcast: the signed bytes fan out to every listed
+    /// relay (the read provider when none is listed).
+    Public,
+}
+
 /// The bundle relay round-trip budget. One-shot per bid; a dropped bid is a
 /// no-cost miss under the revert shield, never a hang.
 const BUNDLE_RELAY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
@@ -282,9 +295,10 @@ pub async fn dispatch_and_submit(
     dry_run: bool,
     inject_code: bool,
     extra_broadcast: &[std::sync::Arc<AlloyProvider>],
-    // MEVBlocker bundle context — `Some` routes the bid EXCLUSIVELY through
-    // `eth_sendBundle` on the searcher WS (no public broadcast, no relays).
-    bundle_target: Option<&BundleTarget>,
+    // The submission channel: a bundle target routes the bid EXCLUSIVELY
+    // through `eth_sendBundle` on the searcher WS (no public broadcast, no
+    // relays); `Public` fans the SAME signed bytes across the relays.
+    target: SubmissionTarget,
 ) -> Result<SubmitOutcome, crate::SubmissionError> {
     // RMHQAR  + ZHVXW2: one Jaeger node per dispatch batch
     // (degenbot.bundle.dispatch).
@@ -449,7 +463,7 @@ pub async fn dispatch_and_submit(
         // this path — the auction entry is single-destination (doc
         // how-to/searchers/bid). The executor's coinbase bribe (packed
         // config, recipient 0) is the fee_recipient payment the docs require.
-        if let Some(bt) = bundle_target {
+        if let SubmissionTarget::Bundle(bt) = &target {
             let bid = crate::bundle::BundleBid {
                 target_tx_hash: bt.target_tx_hash,
                 backrun_raw: raw_signed.clone(),
@@ -852,7 +866,7 @@ mod tests {
             true, // dry_run
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -902,7 +916,7 @@ mod tests {
             true, // dry_run — A commits POOL_A, B is blocked
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -942,7 +956,7 @@ mod tests {
             false,
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -978,7 +992,7 @@ mod tests {
             true, // dry_run
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -1006,7 +1020,7 @@ mod tests {
             false,
             true, // inject_code
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -1051,7 +1065,7 @@ mod tests {
             false,
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -1104,7 +1118,7 @@ mod tests {
             false,
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -1156,7 +1170,7 @@ mod tests {
             false,
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -1296,7 +1310,7 @@ mod tests {
             true, // dry_run
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -1360,7 +1374,7 @@ mod tests {
             true,
             false,
             &[],
-            None,
+            SubmissionTarget::Public,
         )
         .await
         .unwrap();
@@ -1443,7 +1457,7 @@ mod tests {
             false,
             false,
             &[],
-            Some(&bundle),
+            SubmissionTarget::Bundle(bundle),
         )
         .await
         .expect("bundle dispatch");
@@ -1508,7 +1522,7 @@ mod tests {
             false,
             false,
             &[],
-            Some(&bundle),
+            SubmissionTarget::Bundle(bundle),
         )
         .await
         .expect("dispatch completes");

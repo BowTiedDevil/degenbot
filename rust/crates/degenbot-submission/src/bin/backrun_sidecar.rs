@@ -38,11 +38,12 @@ use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use degenbot_simulation::BlockSimHandle;
+use degenbot_submission::backrun_strategy::BackrunStrategy;
 use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::frame_pipeline::{
     build_block_handle, load_fixture_frames, parse_fixture_head, process_frame, trace_jsonl,
-    PipelineConfig, StrategyRuntime,
+    MarketContext, PipelineConfig,
 };
 use degenbot_submission::gap_quarantine::{
     NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
@@ -52,7 +53,9 @@ use degenbot_submission::gap_quarantine_journal::{
 };
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
-use degenbot_submission::submit::{dispatch_and_submit, BundleTarget, SubmitCandidate};
+use degenbot_submission::submit::{
+    dispatch_and_submit, BundleTarget, SubmissionTarget, SubmitCandidate,
+};
 
 /// The gas floor the envelope gate evaluates at (wei) — the composed lane's
 /// standing economics (the env override did not exist upstream either).
@@ -205,7 +208,8 @@ async fn initial_wallet_gas_cost(provider: &AlloyProvider) -> u128 {
 )]
 async fn run_frame(
     ev: &degenbot_rpc::backrun_feed::BackrunFeedEvent,
-    rt: &mut StrategyRuntime,
+    rt: &mut MarketContext,
+    strategy: &mut BackrunStrategy,
     provider: &Arc<AlloyProvider>,
     sim_client: &alloy::rpc::client::RpcClient,
     cfg: &SidecarConfig,
@@ -255,8 +259,10 @@ async fn run_frame(
             "received_unix_ms": ev.received_unix_ms,
         }),
     );
-    let artifacts =
-        process_frame(rt, provider, sim_client, cfg, pl, handle, ev, head, *spent).await;
+    let artifacts = process_frame(
+        strategy, rt, provider, sim_client, cfg, pl, handle, ev, head, *spent,
+    )
+    .await;
     trace_jsonl(
         "stages",
         serde_json::json!({
@@ -411,7 +417,7 @@ async fn run_frame(
             };
             // The bid bundle: this frame's target hash (txs[0]), pinned
             // to the next block, MEVBlocker searcher WS only.
-            let bundle_target = BundleTarget {
+            let target = SubmissionTarget::Bundle(BundleTarget {
                 stream_url: if cfg.stream_url.is_empty() {
                     String::from(MEVBLOCKER_STREAM_URL)
                 } else {
@@ -419,7 +425,7 @@ async fn run_frame(
                 },
                 target_tx_hash: ev.hash,
                 block_number: head + 1,
-            };
+            });
             match dispatch_and_submit(
                 vec![candidate],
                 dispatcher,
@@ -433,7 +439,7 @@ async fn run_frame(
                 std::env::var("SIDECAR_DRY_RUN").is_ok_and(|v| v == "1"),
                 false,
                 &[],
-                Some(&bundle_target),
+                target,
             )
             .await
             {
@@ -753,7 +759,8 @@ async fn main() {
     // The strategy runtime OWNS the frame-surviving caches (index, token
     // joins, warm-code cache); each frame gets a fresh planning Workspace
     // scope (see frame_pipeline's module doc for the split).
-    let mut runtime = StrategyRuntime::new(1, connector_index, connector_db, connector_cap);
+    let mut runtime = MarketContext::new(1, connector_index, connector_db, connector_cap);
+    let mut strategy = BackrunStrategy::new();
 
     let exec: Address = std::env::var("SIDECAR_EXECUTOR")
         .unwrap_or_else(|_| String::from("0x30b28ed8aa581fbc0191c3b532b0697773070e97"))
@@ -841,6 +848,7 @@ async fn main() {
             run_frame(
                 ev,
                 &mut runtime,
+                &mut strategy,
                 &provider,
                 &sim_client,
                 &cfg,
@@ -1135,6 +1143,7 @@ async fn main() {
             run_frame(
                 &ev,
                 &mut runtime,
+                &mut strategy,
                 &provider,
                 &sim_client,
                 &cfg,

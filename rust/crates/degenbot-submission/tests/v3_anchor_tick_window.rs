@@ -17,9 +17,9 @@ use degenbot_pools::TickInfo;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_submission::frame_pipeline::{
-    admit_extracted, solve_dfs_chains, StrategyRuntime, V3TickWindow, WETH,
-};
+use degenbot_submission::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
+use degenbot_submission::frame_pipeline::MarketContext;
+use degenbot_submission::pending_tx::V3TickWindow;
 use hashbrown::HashMap as HbMap;
 
 /// The V3 anchor's tokens (canonical order: TOK0 < WETH).
@@ -67,7 +67,7 @@ impl V3TickWindow for TwoTickWindow {
     }
 }
 
-fn runtime() -> (StrategyRuntime, u64, u64) {
+fn runtime() -> (MarketContext, u64, u64) {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let tok_id = db
         .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
@@ -95,7 +95,7 @@ fn runtime() -> (StrategyRuntime, u64, u64) {
         address: MID,
     });
     (
-        StrategyRuntime::new(1, Some(index), Some(db), 8),
+        MarketContext::new(1, Some(index), Some(db), 8),
         tok_id,
         weth_id,
     )

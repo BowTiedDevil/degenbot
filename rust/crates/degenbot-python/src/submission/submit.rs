@@ -34,8 +34,8 @@ use crate::submission::dispatcher::PyDispatcher;
 use crate::submission::params::parse_access_list;
 use crate::submission::signer::PyTxSigner;
 use degenbot_submission::{
-    dispatch_and_submit, fetch_fee_history, PoolKey, ReceiptProbe, SkipReason, SubmitCandidate,
-    SubmitOutcome, SubmitRecord,
+    dispatch_and_submit, fetch_fee_history, PoolKey, ReceiptProbe, SkipReason, SubmissionTarget,
+    SubmitCandidate, SubmitOutcome, SubmitRecord,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList};
@@ -310,9 +310,9 @@ pub fn dispatch_and_submit_py<'py>(
             dry_run,
             inject_code,
             &extra_broadcast,
-            // No bundle context at the Python seam: the driver submits via
-            // the public mempool path until a Py-side bid target is exposed.
-            None,
+            // The Python seam submits over the public mempool path until a
+            // Py-side bid target is exposed.
+            SubmissionTarget::Public,
         )
         .await
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e:?}")))?;

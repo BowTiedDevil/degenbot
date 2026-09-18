@@ -25,19 +25,23 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::{address, Address, Bytes, U256};
+use alloy::primitives::{address, Address, Bytes, B256, U256};
 use degenbot_pools::slot_layout::{
     cl_liquidity_tracked_word, cl_slot0_tracked_word, decode_tick_word, decode_v2_reserves_word,
     pack_v2_reserves_word, tick_mapping_slot_at_base, tick_word_of, V2ReservesParts,
 };
 use degenbot_pools::v3_storage_slots::decode_v3_slot0;
+use degenbot_pools::v4_storage_slots::{
+    encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
+    v4_slot0_slot, v4_tick_mapping_slot, V4Slot0Parts,
+};
 use degenbot_pools::ClSlotLayout;
 use degenbot_simulation::sim::evm::frame_replay::{
     ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm,
 };
 use degenbot_simulation::sim::evm::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord,
-    TypedPoolPost,
+    TypedPoolPost, V4PoolDescriptor, V4PoolSet,
 };
 use revm::bytecode::Bytecode;
 use revm::database::CacheDB;
@@ -142,6 +146,73 @@ fn tx(nonce: u64, pairs: &[(U256, U256)]) -> ReplayableTx {
         max_priority_fee_per_gas: 0,
         nonce,
     }
+}
+
+/// [`tx`] targeting an explicit contract (the mixed-family relay).
+fn tx_to(to: Address, nonce: u64, pairs: &[(U256, U256)]) -> ReplayableTx {
+    ReplayableTx {
+        to: Some(to),
+        ..tx(nonce, pairs)
+    }
+}
+
+/// A relay contract: forwards the WHOLE calldata to `pool` (one CALL), then
+/// applies the same `(slot, value)` stores to its OWN storage — one frame
+/// that journals two pool-family accounts at once.
+fn relay_code(pool: Address) -> Vec<u8> {
+    let mut code = Vec::new();
+    // mem[0..cdsize] = calldata.
+    code.extend_from_slice(&[0x36, 0x60, 0x00, 0x60, 0x00, 0x37]); // CALLDATASIZE 0 0 CALLDATACOPY
+                                                                   // CALL(gas, pool, 0, 0, cdsize, 0, 0)
+    code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x36, 0x60, 0x00, 0x60, 0x00]);
+    code.push(0x73);
+    code.extend_from_slice(pool.as_slice());
+    code.extend_from_slice(&[0x5a, 0xf1, 0x50]); // GAS CALL POP
+    for k in 0..PAIRS {
+        let s = 32 * k;
+        let v = 32 * (k + PAIRS);
+        code.extend_from_slice(&[
+            0x60,
+            u8::try_from(v).unwrap(),
+            0x35,
+            0x60,
+            u8::try_from(s).unwrap(),
+            0x35,
+            0x55,
+        ]);
+    }
+    code
+}
+
+/// A scratch with a relay target plus the managed contract it forwards to.
+fn scratch_relayed(relay: Address, pool: Address) -> ScratchEvm<TestExt> {
+    let mut db = CacheDB::new(EmptyDB::default());
+    for (addr, code) in [(relay, relay_code(pool)), (pool, multi_store_code())] {
+        db.insert_account_info(
+            addr,
+            AccountInfo {
+                balance: U256::from(1_000_000_000_000_000_000u64),
+                nonce: 0,
+                code: Some(Bytecode::new_raw(Bytes::copy_from_slice(&code))),
+                ..Default::default()
+            },
+        );
+    }
+    db.insert_account_info(
+        SENDER,
+        AccountInfo {
+            balance: U256::from(1_000_000_000_000_000_000u64),
+            nonce: 7,
+            ..Default::default()
+        },
+    );
+    ScratchEvm::new(db, block_env())
+}
+
+/// A known-V4-pool set backed by a leaked slice (the descriptor carries a
+/// `&'static` set; tests build it once per case).
+fn v4_set(pools: Vec<V4PoolDescriptor>) -> V4PoolSet {
+    V4PoolSet::new(Box::leak(pools.into_boxed_slice()))
 }
 
 fn descriptors(
@@ -392,11 +463,13 @@ fn v3_post_tick_anchors_the_preimage_hunt() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// V4: explicit Unsupported; descriptor-less addresses: nothing
+// V4: per-known-poolId decode; explicit Unsupported otherwise
 // ─────────────────────────────────────────────────────────────────────────
 
+/// The descriptor default (empty known set) keeps a V4 `PoolManager` frame
+/// explicitly `Unsupported` — the pre-wiring behavior, never a guess.
 #[test]
-fn v4_poolmanager_frames_return_unsupported_never_a_guess() {
+fn v4_poolmanager_with_no_known_poolids_returns_unsupported() {
     let state_base = U256::from_be_bytes(alloy::primitives::keccak256([2u8; 32]).0);
     let mut scratch = scratch();
     let mut pairs = one_word(state_base, U256::from(1u128) << 96);
@@ -405,14 +478,209 @@ fn v4_poolmanager_frames_return_unsupported_never_a_guess() {
     let out = scratch.replay(&tx(7, &pairs)).expect("frame executes");
     assert!(matches!(out.status, ReplayStatus::Success));
 
-    let states = extract_pool_post_states(&out, &descriptors([(POOL, PoolFamily::V4PoolManager)]));
+    let family = PoolFamily::V4PoolManager {
+        pools: V4PoolSet::default(),
+    };
+    let states = extract_pool_post_states(&out, &descriptors([(POOL, family)]));
     let state = post(&states, POOL);
-    assert_eq!(state.family, PoolFamily::V4PoolManager);
+    assert_eq!(state.family, family);
     assert!(
         matches!(state.kind, PoolPostKind::Unsupported),
         "V4 PoolManager extraction is explicit Unsupported, got {:?}",
         state.kind
     );
+}
+
+/// A KNOWN V4 poolId's journalled `PoolManager` slots decode to the typed
+/// post-state through the pinned layout: slot0 at `S_state`, liquidity at
+/// `S_state+3`, and a tick word recovered from its `S_state+4` preimage —
+/// 0-wei.
+#[test]
+fn v4_known_poolid_slots_decode_to_the_typed_post_state() {
+    let pool_id = B256::new([0x21; 32]);
+    let state_base = v4_pool_state_base_slot(pool_id);
+    let sqrt_price_x96 = U256::from(1u128) << 96;
+    let tick_post = -5010i32;
+    let liquidity: u128 = 0x0000_0000_006b_5d49_e99f_8835;
+    let (gross, net) = (7_000u128, -250i128);
+    let tick = -5040i32;
+    let spacing = 60;
+
+    let word0 = encode_v4_slot0(V4Slot0Parts {
+        sqrt_price_x96,
+        tick: tick_post,
+        protocol_fee: 0,
+        lp_fee: 3000,
+    });
+    let tick_slot = v4_tick_mapping_slot(tick, state_base);
+    let word_tick = U256::from_be_bytes(tick_word_of(gross, net).0);
+
+    let mut scratch = scratch();
+    let mut pairs = one_word(v4_slot0_slot(state_base), word0);
+    pairs.push((
+        v4_liquidity_slot(state_base),
+        encode_v4_liquidity_slot(liquidity),
+    ));
+    pairs.push((tick_slot, word_tick));
+    let out = scratch.replay(&tx(7, &pairs)).expect("frame executes");
+    assert!(matches!(out.status, ReplayStatus::Success));
+
+    let set = v4_set(vec![V4PoolDescriptor {
+        pool_id,
+        tick_spacing: spacing,
+    }]);
+    let family = PoolFamily::V4PoolManager { pools: set };
+    let states = extract_pool_post_states(&out, &descriptors([(POOL, family)]));
+    let state = post(&states, POOL);
+    assert_eq!(state.family, family);
+    match &state.kind {
+        PoolPostKind::Typed(TypedPoolPost::V4 {
+            pool_id: got_id,
+            sqrt_price_x96: sqrt,
+            tick: got_tick,
+            liquidity: liq,
+            touched_ticks,
+        }) => {
+            assert_eq!(*got_id, pool_id, "the decoded pool is the known poolId");
+            assert_eq!(*sqrt, Some(sqrt_price_x96), "slot0 sqrtPriceX96: 0-wei");
+            assert_eq!(*got_tick, Some(tick_post), "slot0 tick decoded");
+            assert_eq!(*liq, Some(liquidity), "liquidity: 0-wei");
+            assert_eq!(
+                touched_ticks,
+                &vec![TouchedTickWord {
+                    tick,
+                    liquidity_gross: gross,
+                    liquidity_net: net,
+                }],
+                "tick index recovered exactly from the S_state+4 preimage"
+            );
+        }
+        other => panic!("expected V4 typed post-state, got {other:?}"),
+    }
+}
+
+/// Slots that match NO known poolId stay `Unsupported`: the extractor never
+/// guesses a pool identity from an unclaimed derived slot.
+#[test]
+fn v4_unknown_poolid_slots_stay_unsupported_never_guessed() {
+    let known = B256::new([0xA1; 32]);
+    let unknown_base = v4_pool_state_base_slot(B256::new([0xB2; 32]));
+    let mut scratch = scratch();
+    let mut pairs = one_word(
+        v4_slot0_slot(unknown_base),
+        encode_v4_slot0(V4Slot0Parts {
+            sqrt_price_x96: U256::from(1u128) << 96,
+            tick: 1234,
+            ..Default::default()
+        }),
+    );
+    pairs.push((
+        v4_liquidity_slot(unknown_base),
+        encode_v4_liquidity_slot(999),
+    ));
+    pairs.push((
+        v4_tick_mapping_slot(1200, unknown_base),
+        U256::from_be_bytes(tick_word_of(1, 2).0),
+    ));
+    let out = scratch.replay(&tx(7, &pairs)).expect("frame executes");
+    assert!(matches!(out.status, ReplayStatus::Success));
+
+    let set = v4_set(vec![V4PoolDescriptor {
+        pool_id: known,
+        tick_spacing: 60,
+    }]);
+    let states = extract_pool_post_states(
+        &out,
+        &descriptors([(POOL, PoolFamily::V4PoolManager { pools: set })]),
+    );
+    let state = post(&states, POOL);
+    assert!(
+        matches!(state.kind, PoolPostKind::Unsupported),
+        "a slot set matching no known poolId must stay Unsupported, got {:?}",
+        state.kind
+    );
+}
+
+/// One frame that journals a V2 pair's reserves and a known V4 pool's
+/// `Pool.State` extracts BOTH typed families — the family arms do not
+/// collapse.
+#[test]
+fn mixed_v2_and_v4_frame_extracts_both_families() {
+    let relay = address!("0x4444444444444444444444444444444444444444");
+    let pool_id = B256::new([0x44; 32]);
+    let state_base = v4_pool_state_base_slot(pool_id);
+    let reserve0 = alloy::primitives::aliases::U112::from(1_500u64);
+    let reserve1 = alloy::primitives::aliases::U112::from(2_500_000u64);
+    let sqrt_price_x96 = U256::from(1u128) << 96;
+    let tick_post = 1234i32;
+    let liquidity: u128 = 42;
+
+    let pairs = vec![
+        (
+            SLOT8,
+            U256::from_be_bytes(pack_v2_reserves_word(reserve0, reserve1).0),
+        ),
+        (
+            v4_slot0_slot(state_base),
+            encode_v4_slot0(V4Slot0Parts {
+                sqrt_price_x96,
+                tick: tick_post,
+                protocol_fee: 0,
+                lp_fee: 3000,
+            }),
+        ),
+        (
+            v4_liquidity_slot(state_base),
+            encode_v4_liquidity_slot(liquidity),
+        ),
+    ];
+    let mut scratch = scratch_relayed(relay, POOL);
+    let out = scratch
+        .replay(&tx_to(relay, 7, &pairs))
+        .expect("frame executes");
+    assert!(matches!(out.status, ReplayStatus::Success));
+
+    let set = v4_set(vec![V4PoolDescriptor {
+        pool_id,
+        tick_spacing: 60,
+    }]);
+    let states = extract_pool_post_states(
+        &out,
+        &descriptors([
+            (relay, PoolFamily::V2Pair),
+            (POOL, PoolFamily::V4PoolManager { pools: set }),
+        ]),
+    );
+
+    match &post(&states, relay).kind {
+        PoolPostKind::Typed(TypedPoolPost::V2 { reserves }) => {
+            assert_eq!(
+                reserves,
+                &V2ReservesParts {
+                    reserve0,
+                    reserve1,
+                    block_timestamp_last: 0,
+                },
+                "the relay's V2 slot decodes 0-wei"
+            );
+        }
+        other => panic!("expected V2 typed for the relay, got {other:?}"),
+    }
+    match &post(&states, POOL).kind {
+        PoolPostKind::Typed(TypedPoolPost::V4 {
+            pool_id: got,
+            sqrt_price_x96: sqrt,
+            tick: got_tick,
+            liquidity: liq,
+            ..
+        }) => {
+            assert_eq!(*got, pool_id);
+            assert_eq!(*sqrt, Some(sqrt_price_x96));
+            assert_eq!(*got_tick, Some(tick_post));
+            assert_eq!(*liq, Some(liquidity));
+        }
+        other => panic!("expected V4 typed for the managed pool, got {other:?}"),
+    }
 }
 
 #[test]

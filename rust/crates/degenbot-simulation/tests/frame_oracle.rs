@@ -1333,7 +1333,7 @@ async fn oracle_parity_for(arch: Archetype) {
                 }
             }
             // Code-id classification never admits a V4 descriptor.
-            PoolFamily::V4PoolManager => unreachable!("no V4 descriptor is admitted"),
+            PoolFamily::V4PoolManager { .. } => unreachable!("no V4 descriptor is admitted"),
         }
     }
 

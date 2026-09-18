@@ -14,10 +14,8 @@ use degenbot_bot::sidecar_engine::{LaneFamily, SidecarHopRef, SidecarSolver, Sid
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout;
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
-use degenbot_submission::frame_pipeline::{
-    admit_extracted, build_descriptors, net_bid, solve_dfs_chains, state_digest, StrategyRuntime,
-    WETH,
-};
+use degenbot_submission::backrun_strategy::{admit_extracted, net_bid, solve_dfs_chains, WETH};
+use degenbot_submission::frame_pipeline::{build_descriptors, state_digest, MarketContext};
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
 // ─────────────────── the golden frame (offline, end to end) ────────────────
@@ -60,7 +58,7 @@ fn golden_replay_outcome() -> ReplayOutcome {
 
 /// The in-memory runtime fixture: seeded DB (TOK/WETH ids) + index edges for
 /// P and Q in canonical (token0 = TOK) order.
-fn runtime_fixture() -> (StrategyRuntime, u64, u64) {
+fn runtime_fixture() -> (MarketContext, u64, u64) {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let tok_id = db
         .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
@@ -83,7 +81,7 @@ fn runtime_fixture() -> (StrategyRuntime, u64, u64) {
     });
     // The pipeline's sidecars quote chains of 1 (mainnet).
     (
-        StrategyRuntime::new(1, Some(index), Some(db), 8),
+        MarketContext::new(1, Some(index), Some(db), 8),
         u64::try_from(tok_id).unwrap(),
         u64::try_from(weth_id).unwrap(),
     )
@@ -305,7 +303,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
             address: addr,
         });
     }
-    let rt = StrategyRuntime::new(1, Some(index), Some(db), 8);
+    let rt = MarketContext::new(1, Some(index), Some(db), 8);
     let outcome = usdc_frame_replay_outcome();
 
     let (descriptors, _) = build_descriptors(rt.index.as_ref(), &outcome.touched);
@@ -421,8 +419,9 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     use alloy::providers::ProviderBuilder;
     use degenbot_bot::bot_core::SimAnchorState;
     use degenbot_bot::sidecar::{Decision, SidecarConfig};
+    use degenbot_submission::backrun_strategy::BackrunStrategy;
     use degenbot_submission::frame_pipeline::{
-        build_block_handle, load_fixture_frames, process_frame, PipelineConfig, StrategyRuntime,
+        build_block_handle, load_fixture_frames, process_frame, MarketContext, PipelineConfig,
     };
 
     // Arm the guard for the WHOLE run (this target never calls classify).
@@ -441,7 +440,8 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     std::env::set_var("SIDECAR_TRACE_JSONL", &trace_path);
 
     // Live mode needs no feed/signer/dispatcher: process frames directly.
-    let mut runtime = StrategyRuntime::new(1, None, None, 8);
+    let mut runtime = MarketContext::new(1, None, None, 8);
+    let mut strategy = BackrunStrategy::new();
     let mut handle = Option::from(
         build_block_handle(
             &provider,
@@ -495,6 +495,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
             .await
             .unwrap_or(ev.nonce);
         let artifacts = process_frame(
+            &mut strategy,
             &mut runtime,
             &provider,
             &sim_client,
@@ -604,7 +605,7 @@ fn walker_three_hop_chain_solves_and_composes() {
     ]];
 
     let stats =
-        degenbot_submission::frame_pipeline::solve_dfs_chains(&mut solver, &chains, U256::ZERO);
+        degenbot_submission::backrun_strategy::solve_dfs_chains(&mut solver, &chains, U256::ZERO);
     assert_eq!(stats.dfs_declared, 1, "the walker chain declares once");
     assert_eq!(stats.dfs_evaluated, 1, "the chain clears the zero floor");
     let best = stats.best.expect("the 3-hop walker chain profits");

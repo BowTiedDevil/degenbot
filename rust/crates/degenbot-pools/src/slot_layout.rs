@@ -178,8 +178,32 @@ pub fn tick_mapping_slot_at_base(tick: i32, base: U256) -> U256 {
     U256::from_be_bytes(keccak256(preimage).0)
 }
 
-/// Recover the tick index whose `ticks(tick)` slot equals `slot` — the
-/// preimage side of [`cl_tick_mapping_slot`].
+/// Recover the tick index whose `ticks(tick)` slot equals `slot` against a
+/// per-layout CL pool's mapping base — the preimage side of
+/// [`cl_tick_mapping_slot`].
+///
+/// Delegates to [`recover_tick_from_slot_at_base`] with the layout's ticks
+/// mapping base (V3 slot 5; Pancake fork slot 6).
+#[must_use]
+pub fn recover_cl_tick_from_slot(
+    slot: U256,
+    layout: ClSlotLayout,
+    tick_spacing: i32,
+    anchors: &[i32],
+    window: i32,
+) -> Option<i32> {
+    recover_tick_from_slot_at_base(
+        slot,
+        U256::from(layout.ticks_mapping_slot()),
+        tick_spacing,
+        anchors,
+        window,
+    )
+}
+
+/// Recover the tick index whose `ticks(tick)` slot equals `slot` against an
+/// explicit mapping base (a V3 layout base, or a V4 pool's `S_state+4`) —
+/// the preimage side of [`tick_mapping_slot_at_base`].
 ///
 /// A journalled tick slot IS a keccak preimage, so the index is recovered by
 /// hashing `tick_spacing`-aligned candidates (initialized ticks are always
@@ -191,14 +215,14 @@ pub fn tick_mapping_slot_at_base(tick: i32, base: U256) -> U256 {
 /// `anchors` are the pool's known current ticks (typically the pre-tx and
 /// post-tx current tick); `window` is a raw-tick half-width.
 #[must_use]
-pub fn recover_cl_tick_from_slot(
+pub fn recover_tick_from_slot_at_base(
     slot: U256,
-    layout: ClSlotLayout,
+    base: U256,
     tick_spacing: i32,
     anchors: &[i32],
     window: i32,
 ) -> Option<i32> {
-    debug_assert!(tick_spacing > 0, "V3 tick_spacing is positive");
+    debug_assert!(tick_spacing > 0, "tick_spacing is positive");
     let spacing = i64::from(tick_spacing.max(1));
     let window = i64::from(window);
     for &anchor in anchors {
@@ -209,7 +233,7 @@ pub fn recover_cl_tick_from_slot(
             let Ok(tick) = i32::try_from(grid * spacing) else {
                 continue;
             };
-            if tick_mapping_slot_at_base(tick, U256::from(layout.ticks_mapping_slot())) == slot {
+            if tick_mapping_slot_at_base(tick, base) == slot {
                 return Some(tick);
             }
         }
