@@ -41,8 +41,8 @@ use degenbot_simulation::BlockSimHandle;
 use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::frame_pipeline::{
-    build_block_handle, load_fixture_frames, process_frame, trace_jsonl, PipelineConfig,
-    StrategyRuntime,
+    build_block_handle, effective_frame_age_ms, load_fixture_frames, parse_fixture_head,
+    process_frame, trace_jsonl, PipelineConfig, StrategyRuntime,
 };
 use degenbot_submission::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
 use degenbot_submission::monitor::ReceiptProbe;
@@ -403,6 +403,15 @@ async fn main() {
         frames
     });
 
+    // The offline fixture's pinned head: with `SIDECAR_FIXTURE_HEAD` set the
+    // dry-run replays captured frames against the chain view they were
+    // pending in (the capture's `stages` records carry it) instead of the
+    // live tip. `None` falls back to the fetched head.
+    let fixture_head = parse_fixture_head(std::env::var("SIDECAR_FIXTURE_HEAD").ok().as_deref());
+    if fixture_head.is_some() {
+        tracing::info!(fixture_head = ?fixture_head, "fixture head pinned");
+    }
+
     // DFYDYI B3: the DB-backed connector index -- ONE startup scan, never a
     // per-frame query. Optional (SIDECAR_DB_PATH): without it the discovery
     // fan stays shut and frames observe (connectors are never guessed).
@@ -479,11 +488,20 @@ async fn main() {
         owner,
         bribe_bips: bribe_bips(),
         gas_floor_wei: U256::from(GAS_FLOOR_WEI),
+        // Historical mode only when the dry-run actually pinned a head: the
+        // live sim gate evaluates at `latest` and would diverge otherwise.
+        fixture_mode: fixture_frames.is_some() && fixture_head.is_some(),
     };
 
-    let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(
-        provider.get_block_number().await.expect("head block fetch"),
-    )));
+    let fetched_head = provider.get_block_number().await.expect("head block fetch");
+    // Fixture mode pins the dispatcher (and, below, the replay handle) to the
+    // capture head so the scratch's reads answer the historical chain view.
+    let replay_head = if fixture_frames.is_some() {
+        fixture_head.unwrap_or(fetched_head)
+    } else {
+        fetched_head
+    };
+    let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(replay_head)));
     let operator_nonce = provider
         .get_transaction_count(
             &signer.as_ref().map(TxSigner::address).unwrap_or_default(),
@@ -528,13 +546,13 @@ async fn main() {
                 tracing::info!("kill switch present - halting dry-run");
                 break;
             }
-            let age_ms = std::time::SystemTime::now()
+            let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| {
-                    d.as_millis()
-                        .saturating_sub(u128::from(ev.received_unix_ms))
-                });
-            let age_ms = u64::try_from(age_ms).unwrap_or(u64::MAX);
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+            // Offline review neutralizes the stale age: a captured frame is
+            // "old" by definition, and the wall-clock delta would drop every
+            // frame before the funnel could run.
+            let age_ms = effective_frame_age_ms(ev.received_unix_ms, now_ms, true);
             run_frame(
                 ev,
                 &mut runtime,

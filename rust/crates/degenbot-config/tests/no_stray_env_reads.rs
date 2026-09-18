@@ -13,6 +13,10 @@ use std::sync::OnceLock;
 /// Files outside degenbot-config where env reads are permitted, with the
 /// exact names allowed per file. A NEW env read in a library file must add
 /// an entry here (with justification) or be migrated onto `BotConfig`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a flat, greppable allowlist table reads better than nested maps"
+)]
 fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
     static MAP: OnceLock<BTreeMap<&'static str, &'static [&'static str]>> = OnceLock::new();
     MAP.get_or_init(|| {
@@ -136,6 +140,9 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
                 "SIDECAR_DRY_RUN",
                 "SIDECAR_DRY_RUN_JSONL",
                 "SIDECAR_EXECUTOR",
+                "SIDECAR_FIXTURE_HEAD",
+                "SIDECAR_HEAD_WS_URL", // live head source
+                "DEGENBOT_RPC_WS_CHAINID_1",
                 "SIDECAR_OPERATOR",
                 "SIDECAR_PRIORITY_FEE_GWEI",
                 "SIDECAR_RANK_EVIDENCE",

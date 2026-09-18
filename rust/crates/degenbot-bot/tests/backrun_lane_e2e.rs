@@ -100,6 +100,7 @@ fn bid_config() -> (SidecarConfig, PipelineConfig) {
         owner: OPERATOR,
         bribe_bips: BRIBE_BIPS,
         gas_floor_wei: U256::from(GAS_FLOOR_WEI),
+        fixture_mode: false,
     };
     (cfg, pl)
 }

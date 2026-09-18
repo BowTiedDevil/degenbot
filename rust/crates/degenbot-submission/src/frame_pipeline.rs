@@ -164,6 +164,33 @@ fn now_unix_ms() -> u64 {
     .unwrap_or_default()
 }
 
+/// Parse the `SIDECAR_FIXTURE_HEAD` operator override: a decimal block
+/// number that pins the offline dry-run's replay handle (and dispatcher) to
+/// capture-time chain state. `None` when unset, blank, or unparseable — the
+/// dry-run then falls back to the fetched head and replays against the live
+/// tip, the behavior this override exists to correct.
+#[must_use]
+pub fn parse_fixture_head(raw: Option<&str>) -> Option<u64> {
+    raw.map(str::trim).filter(|s| !s.is_empty())?.parse().ok()
+}
+
+/// The frame age handed to the decision gate.
+///
+/// Live mode is the wall-clock delta since the feed received the frame; the
+/// stale gate drops a candidate once it exceeds `SidecarConfig::stale_ms`
+/// (bid liveness decays in ~one block). Offline review neutralizes it to
+/// zero: a captured frame is "old" by definition, so the wall-clock delta
+/// would drop every frame before extract/admit/discover/solve could run.
+/// Re-delivery from the gap quarantine already passes zero for the same
+/// reason.
+#[must_use]
+pub fn effective_frame_age_ms(received_unix_ms: u64, now_unix_ms: u64, dry_run: bool) -> u64 {
+    if dry_run {
+        return 0;
+    }
+    now_unix_ms.saturating_sub(received_unix_ms)
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Strategy runtime (frame-surviving caches)
 // ─────────────────────────────────────────────────────────────────────────
@@ -268,6 +295,12 @@ pub struct PipelineConfig {
     pub bribe_bips: u16,
     /// The gas floor the envelope gate evaluates at (wei).
     pub gas_floor_wei: U256,
+    /// Offline fixture mode: the run replays captured frames against a
+    /// pinned historical head, so the live `eth_callMany` sim gate (which
+    /// evaluates at `latest`) would diverge. Set on the dry-run path when a
+    /// fixture head is pinned; the sim stage then records
+    /// `sim_skipped_fixture_mode` and never composes a bid-able artifact.
+    pub fixture_mode: bool,
 }
 
 /// Per-stage wall times (µs) of one processed frame.
@@ -1668,30 +1701,53 @@ pub async fn process_frame(
     // ── stage: compose + `eth_callMany` gate ──────────────────────────────
     let mut requested_bid = U256::ZERO;
     let mut submit_calldata = None;
+    // Set when a candidate composes in fixture mode: the sim is skipped, so
+    // the final decision must report that skip, not `no_candidate`.
+    let mut fixture_composed = false;
     if let Some(best) = aggregate.best.clone() {
         let t = Instant::now();
         let composed = compose_candidate(&best, pl.exec, WETH, pl.bribe_bips);
         stages.compose_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
         match composed {
             Ok(cd) => {
-                let t = Instant::now();
-                let sim_ok = simulate_candidate(sim_client, ev, pl.exec, pl.owner, &cd).await;
-                stages.sim_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
-                trace_jsonl(
-                    "composed",
-                    serde_json::json!({
-                        "tx": tx_hex,
-                        "profit": best.profit,
-                        "input": best.optimal_input,
-                        "calldata": format!("0x{}", alloy::hex::encode(&cd)),
-                        "sim": if sim_ok { "passed" } else { "failed" },
-                    }),
-                );
-                if sim_ok {
-                    // Floor to 1: a sim-passed candidate with a sub-wei
-                    // share must reach decide() as a bid, not as zero_bid.
-                    requested_bid = bid_from_profit(best.profit, pl.bribe_bips).max(U256::from(1));
-                    submit_calldata = Some(cd);
+                if pl.fixture_mode {
+                    fixture_composed = true;
+                    // Historical mode: the composed calldata is still
+                    // evidence, but the live bundle sim evaluates at
+                    // `latest` against state the captured frame was never
+                    // pending in. Skipping it keeps the artifact off the bid
+                    // path (no `submit_calldata` => `composed_any` false) and
+                    // the funnel truthful.
+                    stages.sim_us = 0;
+                    trace_jsonl(
+                        "sim",
+                        serde_json::json!({
+                            "tx": tx_hex,
+                            "status": "skipped",
+                            "reason": "sim_skipped_fixture_mode",
+                        }),
+                    );
+                } else {
+                    let t = Instant::now();
+                    let sim_ok = simulate_candidate(sim_client, ev, pl.exec, pl.owner, &cd).await;
+                    stages.sim_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
+                    trace_jsonl(
+                        "composed",
+                        serde_json::json!({
+                            "tx": tx_hex,
+                            "profit": best.profit,
+                            "input": best.optimal_input,
+                            "calldata": format!("0x{}", alloy::hex::encode(&cd)),
+                            "sim": if sim_ok { "passed" } else { "failed" },
+                        }),
+                    );
+                    if sim_ok {
+                        // Floor to 1: a sim-passed candidate with a sub-wei
+                        // share must reach decide() as a bid, not as zero_bid.
+                        requested_bid =
+                            bid_from_profit(best.profit, pl.bribe_bips).max(U256::from(1));
+                        submit_calldata = Some(cd);
+                    }
                 }
             }
             Err(reject) => {
@@ -1726,6 +1782,12 @@ pub async fn process_frame(
     // candidate must not read as "the sim rejected our work".
     let decision = if composed_any {
         decision
+    } else if fixture_composed {
+        // The frame solved and composed; the only reason it is not a Bid is
+        // that historical mode skipped the live sim. Report that truth.
+        Decision::Observe {
+            reason: "sim_skipped_fixture_mode",
+        }
     } else {
         match decision {
             Decision::Observe {
@@ -1753,5 +1815,31 @@ pub async fn process_frame(
         submit_calldata,
         stages,
         replay_frame_error: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_frame_age_ms, parse_fixture_head};
+
+    #[test]
+    fn fixture_head_parses_decimal_and_rejects_junk() {
+        assert_eq!(parse_fixture_head(Some("26001272")), Some(26_001_272));
+        assert_eq!(parse_fixture_head(Some("  25999417  ")), Some(25_999_417));
+        assert_eq!(parse_fixture_head(Some("")), None);
+        assert_eq!(parse_fixture_head(Some("latest")), None);
+        assert_eq!(parse_fixture_head(Some("-5")), None);
+        assert_eq!(parse_fixture_head(None), None);
+    }
+
+    #[test]
+    fn offline_review_neutralizes_stale_age() {
+        // Wall-clock says the captured frame is hours old; the live stale
+        // gate would drop it. Offline review neutralizes to zero so the
+        // funnel still runs.
+        assert_eq!(effective_frame_age_ms(1_000, 10_000_000, true), 0);
+        // Live mode keeps the true delta and saturates on clock skew.
+        assert_eq!(effective_frame_age_ms(1_000, 1_500, false), 500);
+        assert_eq!(effective_frame_age_ms(5_000, 1_000, false), 0);
     }
 }

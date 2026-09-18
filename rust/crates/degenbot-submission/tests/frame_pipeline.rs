@@ -468,6 +468,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         owner: address!("0x5c603b8a137a40426e0ddfa981ec10c245af080e"),
         bribe_bips: 9_800,
         gas_floor_wei: U256::from(50_000_000_000_000u64),
+        fixture_mode: false,
     };
     // The bundle-sim client points at the SAME node join (read/sim only, and
     // only reached if a candidate ever composes — offline-review without a
