@@ -393,6 +393,8 @@ crate::config_schema! {
                 doc = "Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback.";
             stream_url [string] = String::new(), env = "DEGENBOT_STRATEGY_BACKRUN_STREAM_URL", def = "(empty: the MEVBlocker searcher WS default)",
                 doc = "MEVBlocker searcher WebSocket for the private bundle broadcast. Empty defers to the feed crate's mainnet default so the endpoint lives in one place.";
+            mevblocker_url [opt string] = None, env = "DEGENBOT_STRATEGY_BACKRUN_MEVBLOCKER_URL", def = "(unset: bundle-only bid)",
+                doc = "Private-broadcast RPC for the raw relay fan-out. Set arms the private-broadcast arm: the signed backrun goes raw to this endpoint first, then to the chain node as the public fallback relay. Unset keeps the bundle-only bid and the read-provider broadcast unchanged.";
             rank_evidence [bool] = false, env = "DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE", def = "false",
                 doc = "Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic).";
             connectors [usize] = 8, env = "DEGENBOT_STRATEGY_BACKRUN_CONNECTORS", def = "8",
@@ -653,6 +655,7 @@ mod tests {
                 "operator",
                 "sim_url",
                 "stream_url",
+                "mevblocker_url",
                 "rank_evidence",
                 "connectors",
                 "fixture_head",

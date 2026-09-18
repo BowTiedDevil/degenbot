@@ -34,6 +34,10 @@ fn facet_env() -> BTreeMap<&'static str, &'static str> {
         ),
         ("DEGENBOT_STRATEGY_BACKRUN_SIM_URL", "http://sim.local:8545"),
         ("DEGENBOT_STRATEGY_BACKRUN_STREAM_URL", "wss://stream.local"),
+        (
+            "DEGENBOT_STRATEGY_BACKRUN_MEVBLOCKER_URL",
+            "http://private.local:8545",
+        ),
         ("DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE", "1"),
         ("DEGENBOT_STRATEGY_BACKRUN_CONNECTORS", "5"),
         ("DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD", "26001272"),
@@ -58,6 +62,7 @@ fn backrun_facet_collapses_to_declared_defaults() {
     assert_eq!(b.key_file, None);
     assert_eq!(b.connectors, 8);
     assert_eq!(b.fixture_head, None);
+    assert_eq!(b.mevblocker_url, None);
 }
 
 #[test]
@@ -79,6 +84,10 @@ fn backrun_facet_resolves_from_env() {
     assert_eq!(b.priority_fee_gwei, 7);
     assert_eq!(b.fixture_head, Some(26_001_272));
     assert_eq!(b.stop_file, std::path::PathBuf::from("/tmp/stop"));
+    assert_eq!(
+        b.mevblocker_url.as_deref(),
+        Some("http://private.local:8545")
+    );
 }
 
 #[test]

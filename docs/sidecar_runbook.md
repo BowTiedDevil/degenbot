@@ -37,7 +37,7 @@ node/DB resolvers stay env-only (`DEGENBOT_RPC_HTTP_CHAINID_1`,
 | `strategy.backrun.budget_wei` | Cumulative cap (wei) | Zero => bid mode illegal; spent >= cap => `budget_exhausted` |
 | `strategy.backrun.max_bundle_wei` | Per-bundle cap (wei) | Bid clamped to cap |
 | `strategy.backrun.key_file` | Hex secp256k1 key path | Key never leaves `TxSigner` |
-| `SIDECAR_MEVBLOCKER_URL` (legacy name) | Private-broadcast RPC | Not yet wired — the `extra_broadcast` arm lands separately (ergo 6IESKH) |
+| `strategy.backrun.mevblocker_url` | Private-broadcast RPC | Set engages under the Public fan-out: the signed backrun is broadcast raw to this endpoint first, with the chain node as the public fallback relay (private-first). Inert under the Bundle (auction) arm, whose economics are unchanged |
 | `strategy.backrun.dry_run` | Sign-nothing dispatch | All candidates skip as `DryRun` |
 | `strategy.backrun.bribe_bips` | Bribe ceiling (bips, default 9800) | The wallet gate may compose LOWER bips |
 | `strategy.backrun.bundle_gas_est` | Bundle gas estimate (default 300000) | Prices the net-of-gas bid gate |

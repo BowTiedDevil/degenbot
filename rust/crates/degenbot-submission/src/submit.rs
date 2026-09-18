@@ -1267,6 +1267,64 @@ mod tests {
         assert_eq!(fees.len(), 1);
     }
 
+    #[tokio::test]
+    async fn public_fan_out_reaches_explicit_relay_and_read_provider() {
+        // The private-broadcast arm's call site passes an extra list that
+        // EXPLICITLY contains the read provider (private-first, public
+        // fallback). Both transports must receive the raw signed bytes; the
+        // first acceptance defines the tracked hash.
+        let provider_asserter = Asserter::new();
+        let relay_asserter = Asserter::new();
+        // The read provider serves the access-list RPC and its own raw send.
+        provider_asserter.push_success(&empty_access_list_response());
+        let provider_hash = B256::repeat_byte(0xaa);
+        provider_asserter.push_success(&tx_hash_response(&format!("{provider_hash:?}")));
+        // The relay only sees the raw send.
+        let relay_hash = B256::repeat_byte(0xbb);
+        relay_asserter.push_success(&tx_hash_response(&format!("{relay_hash:?}")));
+
+        let provider = Arc::new(mock_provider(&provider_asserter));
+        let relay = Arc::new(mock_provider(&relay_asserter));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+        let extra: Vec<Arc<AlloyProvider>> = vec![Arc::clone(&relay), Arc::clone(&provider)];
+
+        let outcome = dispatch_and_submit(
+            vec![candidate(1, 5_000_000_000u128, &[POOL_A])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            42,
+            100,
+            false,
+            false,
+            &extra,
+            SubmissionTarget::Public,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.submitted_count(), 1);
+        assert!(
+            relay_asserter.read_q().is_empty(),
+            "the explicit relay must receive the raw broadcast"
+        );
+        assert!(
+            provider_asserter.read_q().is_empty(),
+            "the read provider must receive the raw broadcast too"
+        );
+        let SubmitRecord::Submitted { tx_hash, .. } = &outcome.records[0] else {
+            panic!("expected Submitted, got {:?}", outcome.records[0]);
+        };
+        assert_eq!(
+            *tx_hash, relay_hash,
+            "private-first: the relay's acceptance wins the tracked hash"
+        );
+        dispatcher.lock().unwrap().abort_all_tasks();
+    }
+
     // ── test helpers ──────────────────────────────────────────────────────
 
     /// A `ReceiptProbe` that never confirms (the monitor would poll forever —

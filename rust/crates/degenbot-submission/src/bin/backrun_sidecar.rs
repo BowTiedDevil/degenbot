@@ -56,7 +56,7 @@ use degenbot_submission::gap_quarantine::{
     NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
 };
 use degenbot_submission::gap_quarantine_journal::{
-    self, ParkRecord, QuarantineJournal, Resolution,
+    self, journal_reentry_outcome, ParkRecord, QuarantineJournal, ReentryOutcome, Resolution,
 };
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
@@ -184,6 +184,96 @@ async fn initial_wallet_gas_cost(provider: &AlloyProvider, cfg: &SidecarConfig) 
     wallet_gas_cost_at(provider, head, cfg).await
 }
 
+/// The raw-broadcast relay list for the private-broadcast arm, private-first.
+///
+/// Empty when `strategy.backrun.mevblocker_url` is unset: the submit leaf then
+/// broadcasts to the read provider alone. When set, the configured private
+/// endpoint leads and the read provider follows, so the private path is tried
+/// first and the public provider is the fallback relay. An endpoint that cannot
+/// be constructed degrades to the read-provider-only list.
+async fn build_broadcast_relays(
+    cfg: &SidecarConfig,
+    provider: &Arc<AlloyProvider>,
+) -> Vec<Arc<AlloyProvider>> {
+    let Some(url) = cfg.mevblocker_url.as_deref() else {
+        return Vec::new();
+    };
+    match AlloyProvider::new(url, DEFAULT_MAX_RETRIES).await {
+        Ok(private) => vec![Arc::new(private), Arc::clone(provider)],
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                url,
+                "strategy.backrun.mevblocker_url provider build failed - read provider only"
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// The bid's submission target: this frame's target hash pinned to the next
+/// block, `MEVBlocker` searcher WS only.
+///
+/// Deliberately independent of `strategy.backrun.mevblocker_url`: that key
+/// augments the raw broadcast fan-out (see [`build_broadcast_relays`]) and
+/// never replaces the bundle target. The bundle (auction) arm keeps its own
+/// economics; the private endpoint engages only when the target fans out
+/// under [`SubmissionTarget::Public`].
+fn bid_submission_target(
+    cfg: &SidecarConfig,
+    target_tx_hash: B256,
+    block_number: u64,
+) -> SubmissionTarget {
+    SubmissionTarget::Bundle(BundleTarget {
+        stream_url: if cfg.stream_url.is_empty() {
+            String::from(MEVBLOCKER_STREAM_URL)
+        } else {
+            cfg.stream_url.clone()
+        },
+        target_tx_hash,
+        block_number,
+    })
+}
+
+/// The terminal class of one funnel pass, as the rescue router consumes it.
+///
+/// A rescued frame must survive the boot fold after a transient replay
+/// failure, so the two replay-seam failures are their own arms: they leave
+/// the frame parked for the next frontier pass. Everything else is terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameOutcome {
+    /// A bid was decided; terminal whether or not dispatch landed.
+    Bid,
+    /// The pass re-parked the frame on a fresh nonce gap.
+    GapPending,
+    /// No replay handle served this head (transient).
+    ReplayUnavailable,
+    /// The replay died in an RPC hydrate (transient).
+    ReplayFailed,
+    /// Any other terminal observe/drop, carrying its trace reason.
+    Terminal(&'static str),
+}
+
+/// Collapse a detailed pass outcome to the rescue router's three classes.
+fn reentry_outcome(outcome: FrameOutcome) -> ReentryOutcome {
+    match outcome {
+        FrameOutcome::Bid | FrameOutcome::Terminal(_) => ReentryOutcome::Terminal,
+        FrameOutcome::GapPending => ReentryOutcome::GapPending,
+        FrameOutcome::ReplayUnavailable | FrameOutcome::ReplayFailed => ReentryOutcome::Transient,
+    }
+}
+
+/// Map an `Observe` reason to its outcome class; the replay-seam and
+/// gap-pending reasons are named by [`degenbot_submission::frame_pipeline`].
+fn outcome_for(reason: &'static str) -> FrameOutcome {
+    match reason {
+        "gap_pending" => FrameOutcome::GapPending,
+        "replay_unavailable" => FrameOutcome::ReplayUnavailable,
+        "replay_failed" => FrameOutcome::ReplayFailed,
+        other => FrameOutcome::Terminal(other),
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the frame handler takes the runtime surfaces it needs"
@@ -209,7 +299,7 @@ async fn run_frame(
     gap_probe: &degenbot_submission::gap_probe::GapProbe,
     quarantine: &mut Quarantine,
     journal: Option<&mut QuarantineJournal>,
-) {
+) -> FrameOutcome {
     // Decode-stage reject: a frame whose gas field reads zero can never
     // pass the EVM's pre-checks (`CallGasCostMoreThanGasLimit` fires
     // structurally) — dropping here keeps the pipeline histogram
@@ -223,7 +313,7 @@ async fn run_frame(
             "malformed_transaction",
             serde_json::json!({"tx": format!("0x{:x}", ev.hash), "zero_gas": true}),
         );
-        return;
+        return FrameOutcome::Terminal("malformed_transaction");
     }
 
     // Offline-review capture: the feed wire shape, verbatim in all its
@@ -361,7 +451,7 @@ async fn run_frame(
         Decision::Bid { bid_wei } => {
             let Some(s) = signer else {
                 tracing::warn!("bid decided without a signer loaded - skipping");
-                return;
+                return FrameOutcome::Bid;
             };
             // Defense in depth: decide() already refuses zero bids; this
             // refusal keeps a bare-sweep bid out of the auction even if a
@@ -371,7 +461,7 @@ async fn run_frame(
                     tx = %ev.hash,
                     "bid decided without a composed candidate - refusing"
                 );
-                return;
+                return FrameOutcome::Bid;
             };
             let base_fee_next = provider
                 .get_block(head)
@@ -405,17 +495,14 @@ async fn run_frame(
                 access_list: None,
                 path_pools: HashSet::new(),
             };
-            // The bid bundle: this frame's target hash (txs[0]), pinned
-            // to the next block, MEVBlocker searcher WS only.
-            let target = SubmissionTarget::Bundle(BundleTarget {
-                stream_url: if cfg.stream_url.is_empty() {
-                    String::from(MEVBLOCKER_STREAM_URL)
-                } else {
-                    cfg.stream_url.clone()
-                },
-                target_tx_hash: ev.hash,
-                block_number: head + 1,
-            });
+            // The private-broadcast arm: with `strategy.backrun.mevblocker_url`
+            // set, the signed backrun goes raw to that private endpoint first
+            // and to the chain node as the public fallback relay (the order
+            // `build_broadcast_relays` preserves). The URL augments the
+            // broadcast fan-out only; `bid_submission_target` never reads it,
+            // so the target stays the bundle-only arm regardless.
+            let broadcast_relays = build_broadcast_relays(cfg, provider).await;
+            let target = bid_submission_target(cfg, ev.hash, head + 1);
             match dispatch_and_submit(
                 vec![candidate],
                 dispatcher,
@@ -428,7 +515,7 @@ async fn run_frame(
                 head,
                 cfg.dry_run,
                 false,
-                &[],
+                &broadcast_relays,
                 target,
             )
             .await
@@ -456,12 +543,15 @@ async fn run_frame(
                 }
                 Err(e) => tracing::warn!(tx = %ev.hash, error = %e, "bid dispatch failed"),
             }
+            FrameOutcome::Bid
         }
         Decision::Observe { reason } => {
             tracing::info!(tx = %ev.hash, reason, "observe");
+            outcome_for(reason)
         }
         Decision::Drop { reason } => {
             tracing::debug!(tx = %ev.hash, reason, "drop");
+            FrameOutcome::Terminal(reason)
         }
     }
 }
@@ -1089,25 +1179,12 @@ async fn main() {
                                         "predecessors": predecessors.len(),
                                     }),
                                 );
-                                // Tombstone BEFORE re-entry: if the funnel
-                                // re-parks this hash on a genuinely new gap,
-                                // that fresh park line lands after this
-                                // resolve and survives the fold.
-                                if let Some(journal) = quarantine_journal.as_mut() {
-                                    if let Err(error) = journal.record_resolve(
-                                        frame.hash,
-                                        Resolution::RescueConsumed,
-                                        now_unix_ms(),
-                                    ) {
-                                        tracing::warn!(%error, "quarantine resolve not journaled");
-                                    }
-                                }
                                 // Re-enter the funnel exactly as the feed loop
                                 // does, with the same context. `run_frame`
                                 // owns its own spent/consumption accounting, so
                                 // nothing is double-counted here.
                                 let ev = frame.to_event();
-                                run_frame(
+                                let outcome = run_frame(
                                     &ev,
                                     &mut runtime,
                                     &mut strategy,
@@ -1126,6 +1203,13 @@ async fn main() {
                                     quarantine_journal.as_mut(),
                                 )
                                 .await;
+                                journal_reentry_outcome(
+                                    &frame,
+                                    reentry_outcome(outcome),
+                                    &mut quarantine,
+                                    quarantine_journal.as_mut(),
+                                    now_unix_ms(),
+                                );
                             }
                             QuarantineDecision::StillWaiting { unknown } => {
                                 trace_jsonl(
@@ -1231,8 +1315,14 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{nonce_lane_evidence, strategy_arm_refusal};
+    use super::{
+        bid_submission_target, build_broadcast_relays, nonce_lane_evidence, outcome_for,
+        reentry_outcome, strategy_arm_refusal, FrameOutcome,
+    };
     use alloy::primitives::U256;
+    use degenbot_bot::sidecar::SidecarConfig;
+    use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
+    use std::sync::Arc;
 
     #[test]
     fn backrun_arm_is_own_binary_and_settlement_refused() {
@@ -1243,6 +1333,94 @@ mod tests {
         let refusal = strategy_arm_refusal(Some(StrategyName::Settlement)).expect("refused");
         assert!(refusal.contains("backrun"), "{refusal}");
         assert!(refusal.contains("strategy.name"), "{refusal}");
+    }
+
+    #[tokio::test]
+    async fn broadcast_relays_are_private_first_with_read_provider_fallback() {
+        let provider = Arc::new(
+            AlloyProvider::new("http://node.local:8545", DEFAULT_MAX_RETRIES)
+                .await
+                .expect("lazy http provider"),
+        );
+        let mut cfg =
+            SidecarConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+        assert!(
+            build_broadcast_relays(&cfg, &provider).await.is_empty(),
+            "an unset mevblocker_url must leave the read-provider-only list"
+        );
+        cfg.mevblocker_url = Some("http://private.local:8545".to_string());
+        let relays = build_broadcast_relays(&cfg, &provider).await;
+        assert_eq!(relays.len(), 2, "private endpoint + read provider");
+        assert_eq!(relays[0].rpc_url(), "http://private.local:8545");
+        assert!(
+            Arc::ptr_eq(&relays[1], &provider),
+            "the read provider is the fallback relay"
+        );
+        assert!(
+            !Arc::ptr_eq(&relays[0], &provider),
+            "the private endpoint leads, so it is not the read provider"
+        );
+    }
+
+    #[test]
+    fn mevblocker_url_does_not_alter_the_target() {
+        // Adjudicated policy: augment, never replace. The key only changes the
+        // `extra_broadcast` list content; the target-selection region computes
+        // the same target with and without it set.
+        use degenbot_submission::submit::SubmissionTarget;
+
+        let mut cfg =
+            SidecarConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+        let hash = alloy::primitives::B256::repeat_byte(0x11);
+        let without = bid_submission_target(&cfg, hash, 21_000_001);
+
+        cfg.mevblocker_url = Some("http://private.local:8545".to_string());
+        let with = bid_submission_target(&cfg, hash, 21_000_001);
+
+        let to_bundle = |target: SubmissionTarget| match target {
+            SubmissionTarget::Bundle(b) => Some(b),
+            SubmissionTarget::Public => None,
+        };
+        let a =
+            to_bundle(without).expect("target must be the Bundle arm regardless of mevblocker_url");
+        let b =
+            to_bundle(with).expect("target must be the Bundle arm regardless of mevblocker_url");
+        assert_eq!(a.stream_url, b.stream_url);
+        assert_eq!(a.target_tx_hash, b.target_tx_hash);
+        assert_eq!(a.block_number, b.block_number);
+    }
+
+    #[test]
+    fn rescue_outcome_mapping_routes_transient_gap_and_terminal() {
+        use degenbot_submission::gap_quarantine_journal::ReentryOutcome;
+
+        assert_eq!(
+            reentry_outcome(FrameOutcome::ReplayUnavailable),
+            ReentryOutcome::Transient
+        );
+        assert_eq!(
+            reentry_outcome(FrameOutcome::ReplayFailed),
+            ReentryOutcome::Transient
+        );
+        assert_eq!(
+            reentry_outcome(FrameOutcome::GapPending),
+            ReentryOutcome::GapPending
+        );
+        assert_eq!(reentry_outcome(FrameOutcome::Bid), ReentryOutcome::Terminal);
+        assert_eq!(
+            reentry_outcome(FrameOutcome::Terminal("already_settled")),
+            ReentryOutcome::Terminal
+        );
+        assert_eq!(
+            outcome_for("replay_unavailable"),
+            FrameOutcome::ReplayUnavailable
+        );
+        assert_eq!(outcome_for("replay_failed"), FrameOutcome::ReplayFailed);
+        assert_eq!(outcome_for("gap_pending"), FrameOutcome::GapPending);
+        assert_eq!(
+            outcome_for("already_settled"),
+            FrameOutcome::Terminal("already_settled")
+        );
     }
 
     #[test]

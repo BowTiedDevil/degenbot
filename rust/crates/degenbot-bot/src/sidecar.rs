@@ -52,6 +52,9 @@ pub struct SidecarConfig {
     pub priority_fee_gwei: u64,
     /// Bundle-sim endpoint; unset reuses the chain node.
     pub sim_url: Option<String>,
+    /// Private-broadcast RPC for the raw relay fan-out; unset keeps the
+    /// bundle-only bid and the read-provider broadcast.
+    pub mevblocker_url: Option<String>,
     /// Live deep-pair ranking sanity-probe gate.
     pub rank_evidence: bool,
     /// Discovery fan-out cap (connectors per frame).
@@ -91,6 +94,7 @@ impl SidecarConfig {
             bundle_gas_est: backrun.bundle_gas_est,
             priority_fee_gwei: backrun.priority_fee_gwei,
             sim_url: backrun.sim_url.clone(),
+            mevblocker_url: backrun.mevblocker_url.clone(),
             rank_evidence: backrun.rank_evidence,
             connectors: backrun.connectors,
             fixture_head: backrun.fixture_head,
