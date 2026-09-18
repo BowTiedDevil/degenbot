@@ -128,12 +128,15 @@ impl DegenbotDb {
     /// `managed_pools` polymorphic base, not `pools`); each row's `kind`
     /// discriminator is classified via [`is_v2_kind`] / [`is_v3_kind`] into
     /// [`PoolKind::V2`] / [`PoolKind::V3`]. Only rows whose family is in
-    /// `pool_kinds` are emitted.
+    /// `pool_kinds` are emitted; a row whose `kind` is outside the V2/V3
+    /// vocabulary is refused with [`DbError::UnknownPoolKind`], never
+    /// silently dropped.
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`]
-    /// on a malformed address column.
+    /// Returns [`DbError::Sqlite`] on a query failure, [`DbError::Decode`] on
+    /// a malformed address column, or [`DbError::UnknownPoolKind`] on a
+    /// `pools.kind` the graph cannot represent.
     pub fn fetch_path_graph_edges(
         &self,
         chain_id: i64,
@@ -167,10 +170,10 @@ impl DegenbotDb {
                 } else if is_v3_kind(&kind) {
                     PoolKind::V3
                 } else {
-                    // Skip non-V2/V3 rows (base/unknown kinds) — mirrors the
-                    // Python `_pool_kind_for_type` raise, but a silent skip
-                    // keeps the bulk select resiliente to forward-kind rows.
-                    continue;
+                    // A `pools` row whose family the graph cannot represent:
+                    // refuse instead of dropping it, so a forward-kind row
+                    // cannot silently vanish from every consumer's graph.
+                    return Err(DbError::UnknownPoolKind { kind, pool_id: id });
                 };
 
                 let included = match pool_kind {

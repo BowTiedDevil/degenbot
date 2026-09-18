@@ -190,15 +190,36 @@ impl ResolvedHop {
     }
 }
 
-/// Resolve one walker hop to its index edge; V4 has no index lane and
-/// resolves to `None`.
-#[must_use]
-pub fn resolve_hop(index: &V2ConnectorIndex, key: EdgeKey) -> Option<ResolvedHop> {
+/// A walker hop whose pool family has no connector-index lane (V4 today; any
+/// future `PoolKind` variant).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnsupportedHop {
+    /// The graph-level pool id carried by the walker edge.
+    pub pool_id: u64,
+    /// The family with no index lane.
+    pub kind: PoolKind,
+}
+
+/// Resolve one walker hop to its index edge.
+///
+/// Returns `Ok(None)` when the family has a lane but the pool id is absent
+/// from the index (a data gap), and `Err` when the family has no lane at all.
+///
+/// # Errors
+///
+/// [`UnsupportedHop`] when the hop's family has no connector-index lane:
+/// `PoolKind` is `#[non_exhaustive]`, so a new family must surface as a typed
+/// refusal the caller can count and trace, never a silent `None`.
+pub fn resolve_hop(
+    index: &V2ConnectorIndex,
+    key: EdgeKey,
+) -> Result<Option<ResolvedHop>, UnsupportedHop> {
     match key.1 {
-        PoolKind::V2 => index.pool_edge(key.0).copied().map(ResolvedHop::V2),
-        PoolKind::V3 => index.v3_pool_edge(key.0).copied().map(ResolvedHop::V3),
-        // `PoolKind` is `#[non_exhaustive]`: any future family has no index
-        // lane and resolves to `None` like V4.
-        _ => None,
+        PoolKind::V2 => Ok(index.pool_edge(key.0).copied().map(ResolvedHop::V2)),
+        PoolKind::V3 => Ok(index.v3_pool_edge(key.0).copied().map(ResolvedHop::V3)),
+        _ => Err(UnsupportedHop {
+            pool_id: key.0,
+            kind: key.1,
+        }),
     }
 }

@@ -31,11 +31,9 @@
 //! [`load_active_exchange_specs`] resolves each row's `name` against the
 //! static config map. An unknown name (an exchange the Rust side doesn't yet
 //! know about — e.g. a newly-added DEX whose config hasn't been ported) is
-//! **silently skipped** (forward-compat: the chunk loop updates the exchanges
-//! it can resolve; the unknown ones are left for a future Rust build). A
-//! `log::warn!` would be the ideal diagnostic, but this crate deliberately
-//! has no `log` dependency yet (kept minimal); when the chunk loop wires up
-//! `tracing`, the skip site is the natural warn target.
+//! **refused** with [`degenbot_db::DbError::UnknownExchange`]: the chunk loop
+//! updates the exchanges it can resolve, and a row it cannot resolve halts the
+//! set construction so those pools cannot silently go un-updated.
 
 use alloy::primitives::{Address, B256};
 use degenbot_db::rows::ExchangeRow;
@@ -243,9 +241,12 @@ fn resolve_static_config(name: &str) -> Option<StaticExchangeConfig> {
 }
 
 /// Build an [`ExchangeSpec`] from a DB row + the static config map.
-fn build_spec(row: ExchangeRow) -> Option<ExchangeSpec> {
-    let cfg = resolve_static_config(&row.name)?;
-    Some(ExchangeSpec {
+fn build_spec(row: ExchangeRow) -> Result<ExchangeSpec, degenbot_db::DbError> {
+    let cfg =
+        resolve_static_config(&row.name).ok_or_else(|| degenbot_db::DbError::UnknownExchange {
+            name: row.name.clone(),
+        })?;
+    Ok(ExchangeSpec {
         id: row.id,
         chain_id: row.chain_id,
         name: row.name,
@@ -272,19 +273,20 @@ fn build_spec(row: ExchangeRow) -> Option<ExchangeSpec> {
 /// Python list is threaded through FFI.
 ///
 /// Unknown exchange `name`s (a row whose config hasn't been ported to
-/// [`resolve_static_config`]) are silently skipped (forward-compat — the chunk
-/// loop updates the exchanges it can resolve).
+/// [`resolve_static_config`]) are refused with
+/// [`DbError::UnknownExchange`](degenbot_db::DbError::UnknownExchange) naming
+/// the row.
 ///
 /// # Errors
 ///
-/// Returns [`DbError`](degenbot_db::DbError) on a query failure or a malformed
-/// row column.
+/// Returns [`DbError`](degenbot_db::DbError) on a query failure, a malformed
+/// row column, or an active exchange whose `name` has no static config.
 pub fn load_active_exchange_specs(
     db: &DegenbotDb,
     chain_id: i64,
 ) -> Result<Vec<ExchangeSpec>, degenbot_db::DbError> {
     let rows = db.fetch_active_exchanges_by_chain(chain_id)?;
-    Ok(rows.into_iter().filter_map(build_spec).collect::<Vec<_>>())
+    rows.into_iter().map(build_spec).collect()
 }
 
 #[cfg(test)]
@@ -438,20 +440,25 @@ mod tests {
     }
 
     #[test]
-    fn load_active_exchange_specs_skips_unknown_names_silently() {
+    fn load_active_exchange_specs_refuses_unknown_names() {
         let db = write_db();
         let factory = address!("0x0000000000000000000000000000000000000001");
-        // An exchange whose name isn't in the static config map — forward-compat
-        // skip (no spec produced, but the row is in the table + active).
+        // An exchange whose name isn't in the static config map: set
+        // construction refuses, naming the row, instead of dropping it.
         let unknown = db.upsert_exchange(1, "future_dex", factory, None).unwrap();
         db.set_exchange_active(unknown.id, true).unwrap();
-        // Plus a known one alongside it.
+        // A known one alongside it must NOT mask the unknown row.
         let v3 = db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
         db.set_exchange_active(v3.id, true).unwrap();
 
-        let specs = load_active_exchange_specs(&db, 1).unwrap();
-        assert_eq!(specs.len(), 1, "unknown exchange skipped, known one loaded");
-        assert_eq!(specs[0].name, "uniswap_v3");
+        let err = load_active_exchange_specs(&db, 1).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                degenbot_db::DbError::UnknownExchange { ref name } if name == "future_dex"
+            ),
+            "expected UnknownExchange, got {err:?}"
+        );
     }
 
     #[test]

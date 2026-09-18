@@ -1716,6 +1716,11 @@ impl PyBot {
                     "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
                 ));
             }
+            SwapRead::UnknownPool { pool_id } => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "swap_simulation: pool {pool_id} is not registered"
+                )));
+            }
         };
         let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
@@ -3092,11 +3097,17 @@ impl PyBot {
         // GIL hygiene: read guard acquired inside py.detach (inversion class).
         let result = self.with_state(py, |s| s.encode_swap(pool_id, zero_for_one, amount, recip));
 
-        Ok(result.map(|call| {
-            let to_hex = format!("{:#x}", call.to);
-            let data_hex = format!("0x{}", bytes_to_hex(&call.data));
-            (to_hex, data_hex, call.value.to::<u64>())
-        }))
+        match result {
+            Ok(call) => Ok(Some((
+                format!("{:#x}", call.to),
+                format!("0x{}", bytes_to_hex(&call.data)),
+                call.value.to::<u64>(),
+            ))),
+            Err(degenbot_bot::bot_core::EncodeSwapError::NotRegistered { .. }) => Ok(None),
+            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "encode_swap: {e}"
+            ))),
+        }
     }
 
     /// Get the number of deltas in the reorg journal for a V2 pool.

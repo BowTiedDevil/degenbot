@@ -201,8 +201,12 @@ impl SwapOutcome {
 pub enum SwapRead {
     /// The swap computed; payload per family.
     Computed(SwapOutcome),
-    /// Zero amount, unregistered pool, non-computable arithmetic/invariant,
-    /// or an exact-output request against a constant-product family.
+    /// The `pool_id` is not registered at all — a typed refusal, distinct
+    /// from a real zero-output swap, so a use site cannot mistake an unknown
+    /// pool for a computed zero.
+    UnknownPool { pool_id: u64 },
+    /// Zero amount, non-computable arithmetic/invariant, or an exact-output
+    /// request against a constant-product family.
     NotComputable,
     /// Miss recovery ran but the fetch itself failed for `word`.
     FetchFailed { word: i32 },
@@ -1128,12 +1132,9 @@ impl BotState {
         disarm_fetch: bool,
     ) -> SwapRead {
         if !self.pools.contains_key(&pool_id) {
-            // Unknown pool: return zero (legacy no-raise-on-miss contract).
-            return SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
-                consumed: I256::ZERO,
-                delivered: I256::ZERO,
-                caveats: Caveats::default(),
-            }));
+            // Unknown pool: typed refusal — a fabricated zero would be
+            // indistinguishable from a real zero-output swap.
+            return SwapRead::UnknownPool { pool_id };
         }
         if request.amount_specified.is_zero() {
             // Zero input → zero output (on-chain getAmountOut(0) = 0).
@@ -1671,9 +1672,9 @@ mod tests {
     }
 
     #[test]
-    fn unregistered_pool_and_zero_amount_return_zero() {
+    fn unregistered_pool_is_typed_and_zero_amount_returns_zero() {
         let mut bot = BotState::new();
-        // Unknown pool: legacy no-raise-on-miss → Computed(0).
+        // Unknown pool: typed refusal, never a fabricated zero.
         assert_eq!(
             bot.swap_simulation(
                 0,
@@ -1684,11 +1685,7 @@ mod tests {
                     sqrt_price_limit: None,
                 }
             ),
-            SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
-                consumed: I256::ZERO,
-                delivered: I256::ZERO,
-                caveats: Caveats::default(),
-            }))
+            SwapRead::UnknownPool { pool_id: 999 }
         );
         let pid = register_canonical_v3(&mut bot, PoolTickCoverage::Tracked, true);
         // Zero input → zero output (on-chain getAmountOut(0) = 0).

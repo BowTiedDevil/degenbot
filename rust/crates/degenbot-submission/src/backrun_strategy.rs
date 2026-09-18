@@ -185,6 +185,11 @@ pub fn admit_extracted(
     };
     for st in states {
         let PoolPostKind::Typed(tp) = &st.kind else {
+            // A V4 post-state in a frame that also carried typed states: the
+            // V4 half is observed but not admitted (no V4 lane yet). Record
+            // the skip so a mixed frame is never silently empty-armed on the
+            // V4 side.
+            skip(st.address, "v4-half-unobserved");
             continue;
         };
         match &st.family {
@@ -311,8 +316,11 @@ pub fn admit_extracted(
                     });
                 }
             }
-            // Descriptors guarantee `Unsupported` was filtered upstream.
-            PoolFamily::V4PoolManager { .. } => {}
+            PoolFamily::V4PoolManager { .. } => {
+                // A typed V4 post-state has no admission arm yet; record the
+                // same skip as the `Unsupported` half.
+                skip(st.address, "v4-half-unobserved");
+            }
         }
     }
     out
@@ -759,6 +767,15 @@ pub fn n_hop_refs(
     Some(out)
 }
 
+/// One affected pool's walker outcome: the connectors admitted, the solved
+/// chains, and the cycles dropped because a hop's family has no index lane.
+#[derive(Debug, Default)]
+struct DfsWalk {
+    admitted: usize,
+    chains: Vec<Vec<SidecarHopRef>>,
+    unsupported_hop: usize,
+}
+
 /// Resolve and admit every mid hop of each WETH-entry cycle of ANY depth the
 /// anchored walker produced for this affected pool, returning the solved
 /// chain refs. Cycles whose mid chain re-derivation fails (unresolvable hop,
@@ -778,14 +795,15 @@ async fn dfs_cycle_chains(
     provider: &AlloyProvider,
     head: u64,
     trace_tx: &str,
-) -> (usize, Vec<Vec<SidecarHopRef>>) {
+) -> DfsWalk {
     let mut chains = Vec::new();
     let mut admitted = 0usize;
+    let mut unsupported_hop = 0usize;
     let Some(tok_addr) = rt.token_addr(wq.tok_id) else {
-        return (admitted, chains);
+        return DfsWalk::default();
     };
     let Some(quote_addr) = rt.token_addr(wq.quote_id) else {
-        return (admitted, chains);
+        return DfsWalk::default();
     };
     for cycle in cycles {
         if cycle.entry_token_id != wq.quote_id || cycle.pools.len() < 2 {
@@ -796,9 +814,25 @@ async fn dfs_cycle_chains(
         let mut in_id = wq.tok_id;
         let mut rejected = false;
         for key in &cycle.pools[1..] {
-            let Some(h) = resolve_hop(idx, *key) else {
-                rejected = true;
-                break;
+            let h = match resolve_hop(idx, *key) {
+                Ok(Some(h)) => h,
+                Ok(None) => {
+                    rejected = true;
+                    break;
+                }
+                Err(hop) => {
+                    unsupported_hop += 1;
+                    trace_jsonl(
+                        "unsupported_hop",
+                        serde_json::json!({
+                            "tx": trace_tx,
+                            "pool_id": hop.pool_id,
+                            "kind": format!("{:?}", hop.kind),
+                        }),
+                    );
+                    rejected = true;
+                    break;
+                }
             };
             let Some(out_id) = (if h.token0_id() == in_id {
                 h.token1_id().into()
@@ -833,7 +867,11 @@ async fn dfs_cycle_chains(
             }
         }
     }
-    (admitted, chains)
+    DfsWalk {
+        admitted,
+        chains,
+        unsupported_hop,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -929,6 +967,7 @@ impl PendingTxStrategy for BackrunStrategy {
         let mut dfs_chains: Vec<Vec<SidecarHopRef>> = Vec::new();
         let mut dfs_cycles = 0usize;
         let mut connectors_seen = 0usize;
+        let mut unsupported_hop = 0usize;
         if let Some(graph) = ctx.dfs.as_ref() {
             let budget = DiscoveryBudget::after(FRAME_DISCOVERY_SLICE);
             for a in affected {
@@ -947,12 +986,13 @@ impl PendingTxStrategy for BackrunStrategy {
                 };
                 let cycles = graph.cycles_through_pool(anchor, &budget, ctx.connector_cap.max(1));
                 dfs_cycles += cycles.len();
-                let (admitted, chains) = dfs_cycle_chains(
+                let walk = dfs_cycle_chains(
                     ctx, idx, a, wq, &cycles, scratch, workspace, provider, head, trace_tx,
                 )
                 .await;
-                connectors_seen += admitted;
-                dfs_chains.extend(chains);
+                connectors_seen += walk.admitted;
+                dfs_chains.extend(walk.chains);
+                unsupported_hop += walk.unsupported_hop;
                 if budget.expired() {
                     break;
                 }
@@ -966,6 +1006,7 @@ impl PendingTxStrategy for BackrunStrategy {
                 "cycles_proposed": dfs_cycles,
                 "dfs_cycles": dfs_cycles,
                 "dfs_chains": dfs_chains.len(),
+                "unsupported_hop": unsupported_hop,
                 "affected": affected.len(),
                 "non_base_quote_dropped": non_base_quote_dropped,
             }),

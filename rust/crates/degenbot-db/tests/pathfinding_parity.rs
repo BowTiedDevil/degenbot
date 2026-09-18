@@ -19,7 +19,8 @@ use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
 use serde::Deserialize;
 
-use degenbot_db::{DegenbotDb, SchemaState};
+use degenbot_db::{DbError, DegenbotDb, SchemaState};
+use tempfile::TempDir;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
@@ -244,5 +245,31 @@ fn v4_only_kind_skips_v2v3() {
     assert!(
         data.edges.iter().all(|(_, _, _, k)| *k == PoolKind::V4),
         "non-V4 edges present for V4-only query",
+    );
+}
+
+/// A `pools.kind` outside the V2/V3 vocabulary is refused at the graph
+/// builder, never dropped from the edge list.
+#[test]
+fn unknown_pool_kind_is_refused_not_dropped() {
+    let dir = TempDir::new().unwrap();
+    let dst = dir.path().join("pathfinding.db");
+    std::fs::copy(fixture_db_path(), &dst).unwrap();
+    let (db, _state) = DegenbotDb::open_for_writes(&dst).unwrap();
+    {
+        let conn = db.lock();
+        conn.execute(
+            "UPDATE pools SET kind = 'uniswap_v5' WHERE id = (SELECT MIN(id) FROM pools)",
+            [],
+        )
+        .unwrap();
+    }
+
+    let err = db
+        .fetch_path_graph_edges(8453, &[PoolKind::V2, PoolKind::V3])
+        .unwrap_err();
+    assert!(
+        matches!(err, DbError::UnknownPoolKind { ref kind, .. } if kind == "uniswap_v5"),
+        "expected UnknownPoolKind, got {err:?}"
     );
 }

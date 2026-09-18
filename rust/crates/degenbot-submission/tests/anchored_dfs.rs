@@ -18,7 +18,9 @@ use std::time::{Duration, Instant};
 use alloy::primitives::Address;
 use degenbot_bot::sidecar_paths::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::PoolKind;
-use degenbot_submission::anchored_dfs::{AnchorPool, AnchoredGraph, DfsCycle, DiscoveryBudget};
+use degenbot_submission::anchored_dfs::{
+    resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, DiscoveryBudget, UnsupportedHop,
+};
 use proptest::prelude::*;
 
 const QUOTE_ID: u64 = 20; // the WETH DB id in every fixture
@@ -301,4 +303,25 @@ fn cancel_budget_fires_on_hostile_fixture() {
         assert!(ids.contains(&5000), "soundness holds under cancellation");
         assert!(ids.len() <= 3);
     }
+}
+
+// ─────────────── 5. unsupported-family witness ───────────────
+
+/// A hop whose family has no connector-index lane is a typed `Err`, distinct
+/// from a lane miss (`Ok(None)`) — a new `PoolKind` cannot silently vanish.
+#[test]
+fn resolve_hop_refuses_family_without_index_lane() {
+    let index = V2ConnectorIndex::default();
+
+    let err = resolve_hop(&index, (7, PoolKind::V4)).unwrap_err();
+    assert_eq!(
+        err,
+        UnsupportedHop {
+            pool_id: 7,
+            kind: PoolKind::V4,
+        }
+    );
+
+    // A V2 edge absent from the index is a data gap, not a family gap.
+    assert_eq!(resolve_hop(&index, (8, PoolKind::V2)).unwrap(), None);
 }

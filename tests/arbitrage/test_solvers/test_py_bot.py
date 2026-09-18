@@ -174,11 +174,11 @@ class TestPyBotV2Pool:
         result = core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=0)
         assert result == 0
 
-    def test_unknown_pool_id_returns_zero(self):
-        """Unknown pool ID should return zero (not raise)."""
+    def test_unknown_pool_id_is_a_typed_refusal(self):
+        """An unregistered pool ID at a use site aborts loudly (never a fabricated zero)."""
         core = Bot()
-        result = core.calculate_tokens_out(999, zero_for_one=True, amount_in=100)
-        assert result == 0
+        with pytest.raises(ValueError, match="not registered"):
+            core.calculate_tokens_out(999, zero_for_one=True, amount_in=100)
 
 
 class TestPoolHandle:

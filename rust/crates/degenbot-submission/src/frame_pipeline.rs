@@ -703,12 +703,24 @@ pub async fn process_frame<S: PendingTxStrategy>(
         && extracted
             .iter()
             .all(|s| matches!(s.kind, PoolPostKind::Unsupported));
+    // A mixed frame carries typed state AND an unadmitted V4 half: count it in
+    // the frame evidence so the drop is legible alongside the per-state
+    // `extract_skip` witness `admit_extracted` emits.
+    let v4_half_unobserved = if all_unsupported {
+        0
+    } else {
+        extracted
+            .iter()
+            .filter(|s| matches!(s.kind, PoolPostKind::Unsupported))
+            .count()
+    };
     trace_jsonl(
         "extract",
         serde_json::json!({
             "tx": tx_hex,
             "families": extracted.iter().map(|s| family_label(s.family)).collect::<Vec<_>>(),
             "digests": extracted.iter().map(state_digest).collect::<Vec<_>>(),
+            "v4_half_unobserved": v4_half_unobserved,
         }),
     );
     if all_unsupported || extracted.is_empty() {

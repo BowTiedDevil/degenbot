@@ -24,6 +24,27 @@ pub enum DbError {
     #[error("required row not found: {0}")]
     MissingRow(String),
 
+    /// A `pools.kind` discriminator outside the V2/V3 vocabulary the
+    /// pathfinding graph can represent — a pool family the graph builder
+    /// cannot place. Refused instead of dropped so a forward-kind row cannot
+    /// silently vanish from discovery.
+    #[error("unknown pool kind {kind:?} for pool id {pool_id}")]
+    UnknownPoolKind {
+        /// The unrecognized `kind` discriminator.
+        kind: String,
+        /// The `pools.id` row carrying it.
+        pool_id: i64,
+    },
+
+    /// An active `exchanges.name` with no static config in the pool updater —
+    /// a DEX the updater does not know how to fetch. Refused instead of
+    /// skipped so those pools cannot silently go un-updated.
+    #[error("unknown exchange name {name:?} (not resolvable to an updater config)")]
+    UnknownExchange {
+        /// The unrecognized `exchanges.name`.
+        name: String,
+    },
+
     /// The opened file is neither an Alembic-stamped degenbot DB nor an empty
     /// fresh-standalone file — likely a foreign `SQLite` file passed by mistake.
     #[error(

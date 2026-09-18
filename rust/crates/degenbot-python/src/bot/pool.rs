@@ -785,6 +785,9 @@ impl PyLiquidityPool {
             SwapRead::NotComputable => Err(pyo3::exceptions::PyValueError::new_err(
                 "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
             )),
+            SwapRead::UnknownPool { pool_id } => Err(pyo3::exceptions::PyValueError::new_err(
+                format!("swap_simulation: pool {pool_id} is not registered"),
+            )),
             SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => {
                 let bound = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
                 Ok(bound.unbind())
@@ -1250,11 +1253,20 @@ impl PyLiquidityPool {
             core.encode_swap(self.pool_id, zero_for_one, amount, recip)
         });
 
-        Ok(result.map(|call| {
-            let to_hex = format!("{:#x}", call.to);
-            let data_hex = format!("0x{}", bytes_to_hex(&call.data));
-            (to_hex, data_hex, call.value.to::<u64>())
-        }))
+        match result {
+            Ok(call) => Ok(Some((
+                format!("{:#x}", call.to),
+                format!("0x{}", bytes_to_hex(&call.data)),
+                call.value.to::<u64>(),
+            ))),
+            // The Python handle's own `encode_swap` resolves its pool id at
+            // construction, so an unregistered id keeps the `None` not-found
+            // contract.
+            Err(degenbot_bot::bot_core::EncodeSwapError::NotRegistered { .. }) => Ok(None),
+            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "encode_swap: {e}"
+            ))),
+        }
     }
 
     // --- State read getters (ADR-005 slice 4 step 2) ---

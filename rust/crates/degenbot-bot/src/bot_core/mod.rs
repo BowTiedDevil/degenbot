@@ -233,6 +233,34 @@ pub struct BotState {
     v4_event_horizons: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
 }
 
+/// Why [`BotState::encode_swap`] refused a call.
+#[derive(Debug, thiserror::Error)]
+pub enum EncodeSwapError {
+    /// The pool id is not registered.
+    #[error("pool {pool_id} is not registered")]
+    NotRegistered {
+        /// The requested pool id.
+        pool_id: u64,
+    },
+    /// The pool's family has no swap-call encoder.
+    #[error("pool {pool_id} family {family:?} has no swap encoder")]
+    UnsupportedFamily {
+        /// The requested pool id.
+        pool_id: u64,
+        /// The registered family tag.
+        family: &'static str,
+    },
+    /// The V2 encoder rejected the call.
+    #[error("pool {pool_id} swap call failed to encode")]
+    Encode {
+        /// The requested pool id.
+        pool_id: u64,
+        /// The ABI-level failure.
+        #[source]
+        cause: degenbot_core::errors::AbiDecodeError,
+    },
+}
+
 /// Diagnostic: log every V3 pump-buffer INSERTION. Companion to the
 /// drain-side `[dbg-drain]` logs in `apply_backfill_buffer_v3`/
 /// `apply_pump_buffer_v3` — diffing insertion vs drain logs reveals whether a
@@ -892,28 +920,35 @@ impl BotState {
     /// Produces pre-encoded calldata for `swap(uint256,uint256,address,bytes)`
     /// that is ready for on-chain submission.
     ///
-    /// Returns `None` if the pool ID is not registered.
-    #[must_use]
+    /// # Errors
+    ///
+    /// Returns [`EncodeSwapError::NotRegistered`] for an unknown pool id,
+    /// [`EncodeSwapError::UnsupportedFamily`] for a registered pool whose
+    /// family has no swap encoder, and [`EncodeSwapError::Encode`] when the V2
+    /// encoder rejects the call.
     pub fn encode_swap(
         &self,
         pool_id: u64,
         zero_for_one: bool,
         amount_out: U256,
         recipient: Address,
-    ) -> Option<EncodedCall> {
-        let entry = self.pools.get(&pool_id)?;
+    ) -> Result<EncodedCall, EncodeSwapError> {
+        let entry = self
+            .pools
+            .get(&pool_id)
+            .ok_or(EncodeSwapError::NotRegistered { pool_id })?;
         match entry {
-            PoolEntry::V2(p) => {
-                let call = encode_v2_swap(p.0.address, zero_for_one, amount_out, recipient).ok()?;
-                Some(call)
-            }
-            // V3 encoding is not yet implemented
+            PoolEntry::V2(p) => encode_v2_swap(p.0.address, zero_for_one, amount_out, recipient)
+                .map_err(|cause| EncodeSwapError::Encode { pool_id, cause }),
             PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::AerodromeV2(..) => Err(EncodeSwapError::UnsupportedFamily {
+                pool_id,
+                family: self.pool_family(pool_id),
+            }),
         }
     }
 

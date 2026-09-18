@@ -122,3 +122,46 @@ fn register_v3_on_core(core: &mut BotState, pool_addr: Address, update_block: u6
     })
     .expect("test setup: V3 registration")
 }
+
+// --- typed refusals at the swap-read / encode seams ---
+
+#[test]
+fn swap_simulation_unknown_pool_is_a_typed_refusal() {
+    let mut core = BotState::default();
+    let read = core.swap_simulation(
+        0,
+        999_999,
+        SwapRequest {
+            zero_for_one: true,
+            amount_specified: -I256::try_from(1u64).unwrap(),
+            sqrt_price_limit: None,
+        },
+    );
+    assert_eq!(read, SwapRead::UnknownPool { pool_id: 999_999 });
+}
+
+#[test]
+fn encode_swap_refuses_an_unregistered_pool() {
+    let core = BotState::default();
+    let err = core
+        .encode_swap(999_999, true, U256::from(1u64), Address::ZERO)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        EncodeSwapError::NotRegistered { pool_id: 999_999 }
+    ));
+}
+
+#[test]
+fn encode_swap_refuses_a_family_without_an_encoder() {
+    let mut core = BotState::new();
+    let v3_id = register_v3(&mut core, 0);
+    let err = core
+        .encode_swap(v3_id, true, U256::from(1u64), Address::ZERO)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        EncodeSwapError::UnsupportedFamily { pool_id, family }
+            if pool_id == v3_id && family == "v3"
+    ));
+}
