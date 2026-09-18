@@ -1218,12 +1218,13 @@ class Bot(AccountQueryMixin):
             ``token0, token1`` as built by the ERC-20 builder.
 
         """
-        return self._erc20_builder.build_many(
+        tokens = self._erc20_builder.build_many(
             [identity.currency0_address, identity.currency1_address],
             chain_id=chain_id,
             silent=request.silent,
             io=io,
         )
+        return tokens[0], tokens[1]
 
     def _build_v4_pool_in_core(
         self,
