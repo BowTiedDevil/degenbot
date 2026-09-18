@@ -128,9 +128,7 @@ class DegenbotConfig(BaseSettings):
     # file layer — docs/config-migration.md). Fields default instead: the
     # database to the standard DB_PATH, rpc/ws to empty (the cascade then
     # resolves endpoints from env or the caller).
-    database: DatabaseSettings = Field(
-        default_factory=lambda: DatabaseSettings(path=DB_PATH)
-    )
+    database: DatabaseSettings = Field(default_factory=lambda: DatabaseSettings(path=DB_PATH))
     rpc: dict[
         ChainId,
         HttpUrl | WebsocketUrl | Path,
