@@ -44,7 +44,7 @@ from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
-from degenbot.fork import AnvilFork
+from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.utils.bytes import to_bytes
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
@@ -184,8 +184,10 @@ class _RecordFork(AbstractContextManager):
             self.fork = AnvilFork(
                 fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 fork_block=BALANCER_PARITY_BLOCK,
-                storage_caching=True,
-                anvil_opts=["--accounts=0"],
+                launch=ForkLaunchConfig(
+                    storage_caching=True,
+                    anvil_opts=["--accounts=0"],
+                ),
             )
         return self
 

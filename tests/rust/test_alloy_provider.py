@@ -28,8 +28,8 @@ class TestAlloyProviderInterface:
         """Test that AlloyProvider has required properties."""
         assert hasattr(type(alloy_provider), "chain_id")
         assert hasattr(type(alloy_provider), "block_number")
-        assert isinstance(type(alloy_provider).__dict__["chain_id"], property)
-        assert isinstance(type(alloy_provider).__dict__["block_number"], property)
+        assert isinstance(inspect.getattr_static(type(alloy_provider), "chain_id"), property)
+        assert isinstance(inspect.getattr_static(type(alloy_provider), "block_number"), property)
 
     def test_provider_has_required_methods(self, alloy_provider: AlloyProvider):
         """Test that AlloyProvider has required methods."""
@@ -57,7 +57,7 @@ class TestAlloyProviderInterface:
     def test_provider_has_rpc_url_property(self, alloy_provider: AlloyProvider):
         """Test that rpc_url is exposed as a property."""
         assert hasattr(type(alloy_provider), "rpc_url")
-        assert isinstance(type(alloy_provider).__dict__["rpc_url"], property)
+        assert isinstance(inspect.getattr_static(type(alloy_provider), "rpc_url"), property)
 
 
 class TestAlloyProviderMethodSignatures:

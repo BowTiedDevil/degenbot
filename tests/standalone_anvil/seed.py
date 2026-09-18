@@ -1,6 +1,6 @@
 """Canonical seed catalog for the standalone-anvil test tier (T1).
 
-A non-forking anvil (``AnvilFork(chain_id=31337)``) with **no upstream RPC**
+A non-forking anvil (``ForkLaunchConfig(chain_id=31337)``) with **no upstream RPC**
 can still exercise the provider/contract seams: we write precompiled deployed
 bytecode at fixed addresses via ``AnvilFork.set_code`` and tune constructor
 state via ``AnvilFork.set_storage``, then make real RPC calls against the

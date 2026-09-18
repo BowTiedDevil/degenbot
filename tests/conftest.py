@@ -11,7 +11,7 @@ from _pytest.nodes import Item
 
 from degenbot.bot import Bot
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.fork import AnvilFork
+from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.logging import set_log_level
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.golden.recorded_pool import RecordedPool
@@ -283,7 +283,7 @@ def standalone_anvil() -> Generator[AnvilFork, None, None]:
     # to send a real transaction (e.g. emitting a log) can: anvil unlocks dev
     # accounts server-side, so eth_sendTransaction needs no client-side signing
     # (emitter: tests/standalone_anvil/emit.py).
-    fork = AnvilFork(chain_id=seed_catalog.CHAIN_ID)
+    fork = AnvilFork(launch=ForkLaunchConfig(chain_id=seed_catalog.CHAIN_ID))
     seed_catalog.seed(fork)
     fork.mine()  # advance past genesis so get_block_number() > 0
     yield fork
@@ -295,8 +295,10 @@ def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
     _require_live_node()
     fork = AnvilFork(
         fork_url=ARBITRUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        anvil_opts=["--accounts=0"],
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            anvil_opts=["--accounts=0"],
+        ),
     )
     yield fork
     fork.close()
@@ -317,9 +319,11 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
 
     fork = AnvilFork(
         fork_url=BASE_ARCHIVE_NODE_HTTP_URI,
-        storage_caching=True,
         fork_block=block_number,
-        anvil_opts=["--accounts=0", "--optimism"],
+        launch=ForkLaunchConfig(
+            storage_caching=True,
+            anvil_opts=["--accounts=0", "--optimism"],
+        ),
     )
     yield fork
     fork.close()
@@ -330,8 +334,10 @@ def fork_base_full() -> Generator[AnvilFork, None, None]:
     _require_live_node()
     fork = AnvilFork(
         fork_url=BASE_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        anvil_opts=["--accounts=0", "--optimism"],
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            anvil_opts=["--accounts=0", "--optimism"],
+        ),
     )
     yield fork
     fork.close()
@@ -352,9 +358,11 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
 
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-        storage_caching=True,
         fork_block=block_number,
-        anvil_opts=["--accounts=0"],
+        launch=ForkLaunchConfig(
+            storage_caching=True,
+            anvil_opts=["--accounts=0"],
+        ),
     )
     yield fork
     fork.close()
@@ -365,8 +373,10 @@ def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
     _require_live_node()
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        anvil_opts=["--accounts=0"],
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            anvil_opts=["--accounts=0"],
+        ),
     )
     yield fork
     fork.close()

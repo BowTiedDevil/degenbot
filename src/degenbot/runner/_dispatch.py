@@ -40,6 +40,7 @@ from degenbot.dispatch import (
     DispatchCandidate,
     SkippedRecord,
     SubmitCandidate,
+    SubmitContext,
     SubmitSkipReason,
     SubmittedRecord,
     TxSigner,
@@ -464,12 +465,14 @@ async def _submit_batch_records(
         candidates=outcome.gas_profitable,
         dispatcher=session.dispatcher,
         provider=async_alloy,
-        signer=signer,
-        operator_nonce=operator_nonce,
-        current_block=session.dispatcher.current_block,
-        dry_run=session.cfg.dry_run,
-        inject_code=session.cfg.inject_executor_code,
-        broadcast_providers=broadcast_providers,
+        context=SubmitContext(
+            signer=signer,
+            operator_nonce=operator_nonce,
+            current_block=session.dispatcher.current_block,
+            dry_run=session.cfg.dry_run,
+            inject_code=session.cfg.inject_executor_code,
+            broadcast_providers=broadcast_providers,
+        ),
     )
     submitted_count = sum(isinstance(record, SubmittedRecord) for record in records)
     skip_histogram = _render_submit_records(records)

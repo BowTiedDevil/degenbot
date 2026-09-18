@@ -34,6 +34,7 @@ Example:
 
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Self
 
@@ -94,45 +95,20 @@ class LogFilter:
             raise ValueError(msg)
 
 
-class AlloyProvider:
-    """High-performance Ethereum RPC provider using Alloy.
+class _AlloyBacked:
+    """Structural base for the alloy mixins: the wrapped Rust provider.
 
-    Backs log fetching and basic RPC calls with a Rust HTTP client using
-    connection pooling for optimal performance.
-
-    Args:
-        rpc_url: HTTP/HTTPS endpoint URL
-        max_retries: Maximum retry attempts (default: 10)
-        max_blocks_per_request: Maximum blocks per log request (default: 5000)
-
-    Example:
-        >>> provider = AlloyProvider("https://eth-mainnet.example.com")
-        >>>
-        >>> # Properties
-        >>> chain_id = provider.chain_id
-        >>> block_number = provider.block_number
-        >>>
-        >>> # Methods
-        >>> block = provider.get_block(18_000_000)
-        >>> logs = provider.get_logs(from_block=18_000_000, to_block=18_010_000)
-        >>> code = provider.get_code("0x...")
-        >>> result = provider.call("0x...", calldata)
-
+    ``AlloyProvider`` owns construction and teardown; the mixins reach the
+    Rust pyclass only through these attributes.
     """
 
-    def __init__(
-        self,
-        rpc_url: str,
-        max_retries: int = 10,
-        max_blocks_per_request: int = 5000,
-    ) -> None:
-        """Initialize the instance."""
-        # Initialize Rust provider
-        self._provider = RustAlloyProvider(
-            rpc_url=rpc_url,
-            max_retries=max_retries,
-            max_blocks_per_request=max_blocks_per_request,
-        )
+    _provider: RustAlloyProvider
+    rpc_url: str
+    close: Callable[[], None]
+
+
+class _AlloyEndpointMixin(_AlloyBacked):
+    """Endpoint identity and chain-state scalars for ``AlloyProvider``."""
 
     # =========================================================================
     # Properties
@@ -183,6 +159,10 @@ class AlloyProvider:
 
         """
         return self._provider.get_gas_price()
+
+
+class _AlloyQueryMixin(_AlloyBacked):
+    """Block/log/transaction queries and the submit-seam call helpers."""
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
         """Get a block by number or tag.
@@ -522,6 +502,10 @@ class AlloyProvider:
             raise ValueError(msg)
         return block_data["timestamp"]
 
+
+class _AlloyIntrospectionMixin(_AlloyBacked):
+    """Introspection and context-manager surface for ``AlloyProvider``."""
+
     # --- Introspection ---
 
     def to_alloy_provider(self) -> RustAlloyProvider:
@@ -570,54 +554,62 @@ class AlloyProvider:
         self.close()
 
 
-class AsyncAlloyProvider:
-    """High-performance async Ethereum RPC provider using Alloy.
+class AlloyProvider(
+    _AlloyEndpointMixin,
+    _AlloyQueryMixin,
+    _AlloyIntrospectionMixin,
+):
+    """High-performance Ethereum RPC provider using Alloy.
 
-    A thin Python wrapper around the Rust ``AsyncAlloyProvider`` pyclass.
-    Adds string block-identifier resolution (``'latest'``, ``'earliest'``,
-    ``'pending'``) and exposes the inner Rust pyclass via
-    :meth:`as_async_alloy` for Rust-side call seams.
+    Backs log fetching and basic RPC calls with a Rust HTTP client using
+    connection pooling for optimal performance. The public surface is
+    assembled from the query mixins; this class owns construction and
+    teardown of the wrapped Rust provider.
 
     Args:
-        rust_provider: The underlying Rust ``AsyncAlloyProvider`` pyclass.
+        rpc_url: HTTP/HTTPS endpoint URL
+        max_retries: Maximum retry attempts (default: 10)
+        max_blocks_per_request: Maximum logs per request (default: 5000)
 
-    Prefer :meth:`create` to construct an instance from an RPC URL.
+    Example:
+        >>> provider = AlloyProvider("https://eth-mainnet.example.com")
+        >>>
+        >>> # Properties
+        >>> chain_id = provider.chain_id
+        >>> block_number = provider.block_number
+        >>>
+        >>> # Methods
+        >>> block = provider.get_block(18_000_000)
+        >>> logs = provider.get_logs(from_block=18_000_000, to_block=18_010_000)
+        >>> code = provider.get_code("0x...")
+        >>> result = provider.call("0x...", calldata)
 
     """
 
-    def __init__(self, rust_provider: RustAsyncAlloyProvider) -> None:
-        """Initialize the instance."""
-        self._provider = rust_provider
-
-    @staticmethod
-    async def create(
+    def __init__(
+        self,
         rpc_url: str,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
-        requests_per_second: int | None = None,
-        burst: int | None = None,
-    ) -> "AsyncAlloyProvider":
-        """Create an ``AsyncAlloyProvider`` asynchronously.
-
-        Args:
-            rpc_url: HTTP/HTTPS/WS/IPC endpoint URL.
-            max_retries: Maximum retry attempts.
-            max_blocks_per_request: Maximum blocks per log request.
-            requests_per_second: Optional rate limit.
-            burst: Optional burst size for rate limiting.
-
-        Returns:
-            An ``AsyncAlloyProvider`` instance.
-
-        """
-        rust = await RustAsyncAlloyProvider.create(
-            rpc_url,
-            max_retries,
-            max_blocks_per_request,
-            requests_per_second,
-            burst,
+    ) -> None:
+        """Initialize the instance."""
+        # Initialize Rust provider
+        self._provider = RustAlloyProvider(
+            rpc_url=rpc_url,
+            max_retries=max_retries,
+            max_blocks_per_request=max_blocks_per_request,
         )
-        return AsyncAlloyProvider(rust)
+
+
+class _AsyncAlloyBacked:
+    """Structural base for the async alloy mixins: the wrapped Rust provider."""
+
+    _provider: RustAsyncAlloyProvider
+    rpc_url: str
+
+
+class _AsyncAlloyEndpointMixin(_AsyncAlloyBacked):
+    """Endpoint identity and chain-state scalars for ``AsyncAlloyProvider``."""
 
     # ----- Properties -----
 
@@ -659,6 +651,10 @@ class AsyncAlloyProvider:
 
         """
         return await self._provider.get_gas_price()
+
+
+class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
+    """Async block/log/transaction queries and call helpers."""
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
         """Get a block by number or tag.
@@ -866,6 +862,10 @@ class AsyncAlloyProvider:
         """Close the provider and release resources."""
         self._provider.close()
 
+
+class _AsyncAlloyIntrospectionMixin(_AsyncAlloyBacked):
+    """Introspection surface for ``AsyncAlloyProvider``."""
+
     # ----- Introspection -----
 
     def as_async_alloy(self) -> RustAsyncAlloyProvider:
@@ -888,6 +888,61 @@ class AsyncAlloyProvider:
 
         """
         return f"AsyncAlloyProvider(rpc_url={self.rpc_url!r})"
+
+
+class AsyncAlloyProvider(
+    _AsyncAlloyEndpointMixin,
+    _AsyncAlloyQueryMixin,
+    _AsyncAlloyIntrospectionMixin,
+):
+    """High-performance async Ethereum RPC provider using Alloy.
+
+    A thin Python wrapper around the Rust ``AsyncAlloyProvider`` pyclass.
+    Adds string block-identifier resolution (``'latest'``, ``'earliest'``,
+    ``'pending'``) and exposes the inner Rust pyclass via
+    :meth:`as_async_alloy` for Rust-side call seams. The public surface is
+    assembled from the async query mixins.
+
+    Args:
+        rust_provider: The underlying Rust ``AsyncAlloyProvider`` pyclass.
+
+    Prefer :meth:`create` to construct an instance from an RPC URL.
+
+    """
+
+    def __init__(self, rust_provider: RustAsyncAlloyProvider) -> None:
+        """Initialize the instance."""
+        self._provider = rust_provider
+
+    @staticmethod
+    async def create(
+        rpc_url: str,
+        max_retries: int = 10,
+        max_blocks_per_request: int = 5000,
+        requests_per_second: int | None = None,
+        burst: int | None = None,
+    ) -> "AsyncAlloyProvider":
+        """Create an ``AsyncAlloyProvider`` asynchronously.
+
+        Args:
+            rpc_url: HTTP/HTTPS/WS/IPC endpoint URL.
+            max_retries: Maximum retry attempts.
+            max_blocks_per_request: Maximum blocks per log request.
+            requests_per_second: Optional rate limit.
+            burst: Optional burst size for rate limiting.
+
+        Returns:
+            An ``AsyncAlloyProvider`` instance.
+
+        """
+        rust = await RustAsyncAlloyProvider.create(
+            rpc_url,
+            max_retries,
+            max_blocks_per_request,
+            requests_per_second,
+            burst,
+        )
+        return AsyncAlloyProvider(rust)
 
 
 __all__ = [

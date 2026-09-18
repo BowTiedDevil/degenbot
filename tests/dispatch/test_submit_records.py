@@ -16,6 +16,7 @@ import pytest
 
 from degenbot.dispatch import (
     SkippedRecord,
+    SubmitContext,
     SubmitSkipReason,
     SubmittedRecord,
     dispatch_and_submit,
@@ -102,9 +103,18 @@ class TestDispatchAndSubmitWrapper:
             return _inner()
 
         monkeypatch.setattr(dispatch_mod, "_dispatch_and_submit_py", fake_py)
-        records = await dispatch_and_submit(candidates=[], dry_run=True, inject_code=False,
-                                            operator_nonce=0, current_block=0,
-                                            dispatcher=None, provider=None, signer=None)  # type: ignore[arg-type]
+        records = await dispatch_and_submit(
+            candidates=[],
+            dispatcher=None,
+            provider=None,
+            context=SubmitContext(
+                signer=None,  # type: ignore[arg-type]
+                operator_nonce=0,
+                current_block=0,
+                dry_run=True,
+                inject_code=False,
+            ),
+        )
         assert len(records) == 2
         assert records[0] == SubmittedRecord(path_id=1, tx_hash="0xh", nonce=2)
         assert isinstance(records[1], SkippedRecord)

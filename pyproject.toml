@@ -118,19 +118,6 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
-# complexity baseline — retire per-file (IEECS4)
-"src/degenbot/dispatch/__init__.py" = [
-    "PLR0913",  # too-many-arguments
-]
-"src/degenbot/fork/__init__.py" = [
-    "PLR0913",  # too-many-arguments
-]
-"src/degenbot/provider/__init__.py" = [
-    "PLR0904",  # too-many-public-methods
-]
-"src/degenbot/provider/offline_provider.py" = [
-    "PLR0904",  # too-many-public-methods
-]
 "scripts/aave_replay_diff.py" = [
     "any-type",   # the drive/compare JSON-report dicts are dict[str, Any]
     "unused-function-argument",   # CLI dispatchers take unused `args` for argparse's set_defaults

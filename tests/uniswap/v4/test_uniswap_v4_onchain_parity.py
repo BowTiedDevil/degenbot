@@ -52,7 +52,7 @@ from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions.pool import IncompleteSwap
-from degenbot.fork import AnvilFork
+from degenbot.fork import AnvilFork, ForkLaunchConfig
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
@@ -206,8 +206,10 @@ class _RecordFork(AbstractContextManager):
             self.fork = AnvilFork(
                 fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 fork_block=UNISWAP_V4_PARITY_BLOCK,
-                storage_caching=True,
-                anvil_opts=["--accounts=0"],
+                launch=ForkLaunchConfig(
+                    storage_caching=True,
+                    anvil_opts=["--accounts=0"],
+                ),
             )
         return self
 

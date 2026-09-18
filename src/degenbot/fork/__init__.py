@@ -6,8 +6,8 @@ core (added in epic `NXYVYU` FF2/FF3) owns the spawned anvil subprocess
 (via `alloy::node_bindings::Anvil`) + a connected alloy `DynProvider`
 (over IPC) + the 12 anvil dev-RPC methods. This Python shell:
 
-- preserves the legacy Python-facing constructor config surface (so
-  existing callsites don't need to change which kwargs they pass);
+- carries the anvil launch configuration in :class:`ForkLaunchConfig`
+  (the fork target stays a direct ``fork_url`` / ``fork_block`` argument);
 - re-uses rust-driven dev-method invocations (`mine` / `reset` /
   `set_snapshot` / `return_to_snapshot` / `set_balance` / ...);
 - re-exposes general RPC against the forked node as
@@ -28,6 +28,7 @@ anvil process. Former callers using `fork.w3.eth.X` are migrated to
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import validate_call
@@ -77,17 +78,48 @@ def _coerce_storage_value_to_int(value: HexStr | bytes | int) -> int:
     return int(value, 16) if value.startswith("0x") else int(value)
 
 
+@dataclass(frozen=True, slots=True)
+class ForkLaunchConfig:
+    """Non-target launch knobs for the rust-owned anvil subprocess.
+
+    The fork target (``fork_url`` / ``fork_block``) stays a direct
+    :class:`AnvilFork` argument because nearly every caller names it; this
+    carrier groups the anvil-CLI, mining, and post-spawn state-override
+    families that most callers leave at their defaults. Values forward to the
+    rust core unchanged (``localhost`` becomes its ``host`` key; ``ipc_path``
+    is stringified).
+    """
+
+    localhost: str = "127.0.0.1"
+    fork_transaction_hash: str | None = None
+    mining_mode: Literal["auto", "interval", "none"] = "auto"
+    mining_interval: int | None = None
+    storage_caching: bool = True
+    base_fee: int | None = None
+    ipc_path: pathlib.Path | None = None
+    # Default mnemonic used by Brownie for Ganache forks
+    mnemonic: str = "patient rude simple dog close planet oval animal hunt sketch suspect slim"
+    chain_id: int | None = None
+    balance_overrides: Iterable[tuple[HexAddress, int]] | None = None
+    bytecode_overrides: Iterable[tuple[HexAddress, bytes]] | None = None
+    nonce_overrides: Iterable[tuple[HexAddress, int]] | None = None
+    storage_overrides: Iterable[tuple[HexAddress | bytes, int, HexStr | bytes | int]] | None = None
+    coinbase: HexAddress | None = None
+    anvil_opts: list[str] | None = None
+
+
 class AnvilFork:
     """A rust-owned Anvil fork subprocess + IPC `DynProvider` + dev-RPC surface.
 
     Companion shell (ADR-005 Python layer) over `degenbot._ffi.AnvilFork`
     (the PyO3 seam on `degenbot_fork::AnvilFork`). The rust core owns the
     subprocess lifecycle (drop = kill) + an alloy `DynProvider` (IPC
-    transport) + the 12 anvil dev-RPC methods. The shell preserves the
-    legacy Python-facing constructor config surface + dev-method names,
-    raises the legacy `AnvilError` exception subclass on rust-side
-    RPC failures, and exposes general RPC through the `AlloyProvider`
-    pyclass at :attr:`provider` (replacing the legacy `self.w3` Web3 handle
+    transport) + the 12 anvil dev-RPC methods. The shell carries the
+    legacy constructor knobs in :class:`ForkLaunchConfig`, preserves the
+    legacy dev-method names, raises the legacy `AnvilError` exception
+    subclass on rust-side RPC failures, and exposes general RPC through
+    the `AlloyProvider` pyclass at :attr:`provider` (replacing the legacy
+    `self.w3` Web3 handle
     — that handle is gone; all callers now use
     ``fork.provider.get_block_number()`` etc.; the migration shipped in
     task `ECKJE2`).
@@ -103,7 +135,8 @@ class AnvilFork:
 
     The Python shell keeps:
 
-    - the legacy constructor kwargs + the multi-override queueing
+    - the legacy constructor knobs (grouped in :class:`ForkLaunchConfig`)
+      + the multi-override queueing
       (``balance_overrides`` / ``bytecode_overrides`` / ``nonce_overrides``
       / ``storage_overrides`` / ``coinbase``) — applied post-spawn via the
       dev-method delegations;
@@ -141,28 +174,9 @@ class AnvilFork:
     def __init__(
         self,
         *,
-        localhost: str = "127.0.0.1",
         fork_url: str | None = None,
         fork_block: BlockNumber | None = None,
-        fork_transaction_hash: str | None = None,
-        mining_mode: Literal["auto", "interval", "none"] = "auto",
-        mining_interval: int | None = None,
-        storage_caching: bool = True,
-        base_fee: int | None = None,
-        ipc_path: pathlib.Path | None = None,
-        # Default mnemonic used by Brownie for Ganache forks
-        mnemonic: str = (
-            "patient rude simple dog close planet oval animal hunt sketch suspect slim"
-        ),
-        chain_id: int | None = None,
-        balance_overrides: Iterable[tuple[HexAddress, int]] | None = None,
-        bytecode_overrides: Iterable[tuple[HexAddress, bytes]] | None = None,
-        nonce_overrides: Iterable[tuple[HexAddress, int]] | None = None,
-        storage_overrides: (
-            Iterable[tuple[HexAddress | bytes, int, HexStr | bytes | int]] | None
-        ) = None,
-        coinbase: HexAddress | None = None,
-        anvil_opts: list[str] | None = None,
+        launch: ForkLaunchConfig | None = None,
     ) -> None:
         """Initialize the instance.
 
@@ -178,19 +192,20 @@ class AnvilFork:
         # `reset(transaction_hash=...)` can recreate the subprocess with
         # ALL the original params (the legacy Python `AnvilFork.reset`
         # supported re-spawning to a new fork URL + block + txn hash).
+        launch = launch or ForkLaunchConfig()
         self._init_kwargs: dict[str, object] = {
-            "host": localhost,
+            "host": launch.localhost,
             "fork_url": fork_url,
             "fork_block": fork_block,
-            "fork_transaction_hash": fork_transaction_hash,
-            "mining_mode": mining_mode,
-            "mining_interval": mining_interval,
-            "storage_caching": storage_caching,
-            "base_fee": base_fee,
-            "ipc_path": str(ipc_path) if ipc_path is not None else None,
-            "mnemonic": mnemonic,
-            "chain_id": chain_id,
-            "anvil_opts": tuple(anvil_opts) if anvil_opts else None,
+            "fork_transaction_hash": launch.fork_transaction_hash,
+            "mining_mode": launch.mining_mode,
+            "mining_interval": launch.mining_interval,
+            "storage_caching": launch.storage_caching,
+            "base_fee": launch.base_fee,
+            "ipc_path": str(launch.ipc_path) if launch.ipc_path is not None else None,
+            "mnemonic": launch.mnemonic,
+            "chain_id": launch.chain_id,
+            "anvil_opts": tuple(launch.anvil_opts) if launch.anvil_opts else None,
         }
 
         self._fork_url = fork_url
@@ -217,22 +232,22 @@ class AnvilFork:
         # Post-spawn state overrides — applied via the registered dev
         # methods so the rust `AnvilApi` calls go through the same
         # IPC-bound `DynProvider`. Matches the legacy Python semantics.
-        if balance_overrides is not None:
-            for account, balance in balance_overrides:
+        if launch.balance_overrides is not None:
+            for account, balance in launch.balance_overrides:
                 self.set_balance(account, balance)
-        if bytecode_overrides is not None:
-            for account, bytecode in bytecode_overrides:
+        if launch.bytecode_overrides is not None:
+            for account, bytecode in launch.bytecode_overrides:
                 self.set_code(account, bytecode)
-        if nonce_overrides is not None:
-            for account, nonce in nonce_overrides:
+        if launch.nonce_overrides is not None:
+            for account, nonce in launch.nonce_overrides:
                 self.set_nonce(account, nonce)
-        if storage_overrides is not None:
-            for address, position, value in storage_overrides:
+        if launch.storage_overrides is not None:
+            for address, position, value in launch.storage_overrides:
                 self.set_storage(address=address, position=position, value=value)
-        if coinbase is not None:
-            self.set_coinbase(coinbase)
-        if mining_interval is not None and mining_mode == "interval":
-            self.set_block_timestamp_interval(mining_interval)
+        if launch.coinbase is not None:
+            self.set_coinbase(launch.coinbase)
+        if launch.mining_interval is not None and launch.mining_mode == "interval":
+            self.set_block_timestamp_interval(launch.mining_interval)
 
     # ------------------------------------------------------------------
     # Properties

@@ -39,7 +39,7 @@ import pytest
 from degenbot._ffi import Bot
 from degenbot.aerodrome.pools import AerodromeV3Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.fork import AnvilFork
+from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.uniswap.math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.aerodrome.test_aerodrome_pools import AERODROME_V3_QUOTER_ABI
 from tests.helpers.contract_compat import make_contract
@@ -172,8 +172,10 @@ class _RecordFork(AbstractContextManager):
             self.fork = AnvilFork(
                 fork_url=BASE_RPC_URI,
                 fork_block=AERODROME_V3_PARITY_BLOCK,
-                storage_caching=True,
-                anvil_opts=["--accounts=0", "--optimism"],
+                launch=ForkLaunchConfig(
+                    storage_caching=True,
+                    anvil_opts=["--accounts=0", "--optimism"],
+                ),
             )
         return self
 

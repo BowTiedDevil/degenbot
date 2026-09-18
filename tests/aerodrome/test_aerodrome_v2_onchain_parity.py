@@ -44,7 +44,7 @@ from degenbot._ffi import Bot
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.fork import AnvilFork
+from degenbot.fork import AnvilFork, ForkLaunchConfig
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
@@ -169,8 +169,10 @@ class _RecordFork(AbstractContextManager):
             self.fork = AnvilFork(
                 fork_url=BASE_RPC_URI,
                 fork_block=AERODROME_V2_PARITY_BLOCK,
-                storage_caching=True,
-                anvil_opts=["--accounts=0", "--optimism"],
+                launch=ForkLaunchConfig(
+                    storage_caching=True,
+                    anvil_opts=["--accounts=0", "--optimism"],
+                ),
             )
         return self
 

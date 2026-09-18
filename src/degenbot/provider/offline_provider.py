@@ -38,34 +38,16 @@ if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockData, TxParams
 
 
-class OfflineProvider:
-    """Ethereum provider that serves pre-recorded chain data.
+class _OfflineBacked:
+    """Structural base for the offline provider mixins: recorded-data peers."""
 
-    This class delegates every data-serving RPC (``call``, ``get_code``,
-    ``get_block``, ``get_block_number``, ``get_block_timestamp``) to a real
-    Rust :class:`AlloyProvider` built over an in-memory offline transport, so it is
-    indistinguishable from a live provider to any consumer (including
-    :class:`BotIo`). Recorded-JSON metadata (``chain_id``, ``block_numbers``)
-    is parsed in Python for the convenience accessors.
+    _alloy: RustAlloyProvider
+    _chain_id: int
+    _block_numbers: list[int]
 
-    Attributes:
-        chain_id: The chain ID this provider serves data for
-        blocks: Dictionary of recorded block data keyed by block number string
 
-    Example:
-        >>> offline = OfflineProvider(
-        ...     chain_id=1,
-        ...     blocks={
-        ...         "24945700": {
-        ...             "timestamp": 1776984059,
-        ...             "calls": {"0x...:0x...": "0x..."},
-        ...             "code": {"0x...": "0x..."},
-        ...         }
-        ...     },
-        ... )
-        >>> result = offline.call(to="0x...", data=b"...", block=24945700)
-
-    """
+class _OfflineDataMixin(_OfflineBacked):
+    """Recorded-data RPC surface for ``OfflineProvider``."""
 
     def __init__(
         self,
@@ -98,56 +80,6 @@ class OfflineProvider:
         # `RecordedData` wire format parsed by `OfflineProvider::from_json_bytes`.
         recorded_json = json.dumps({"chain_id": chain_id, "blocks": blocks})
         self._alloy: RustAlloyProvider = RustAlloyProvider.offline_from_json_string(recorded_json)
-
-    @classmethod
-    def from_json_file(cls, path: Path) -> OfflineProvider:
-        """Load recorded data from a JSON file.
-
-        Supports both old multi-block format (with "blocks" key) and new single-block
-        format (with "block_number" key).
-
-        Args:
-            path: Path to the JSON file containing recorded data
-
-        Returns:
-            An OfflineProvider instance loaded from the file.
-
-        """
-        # Build the Rust transport from the raw file (it handles both formats
-        # natively), then parse the JSON again for the Python-side metadata.
-        raw = Path(path).read_text(encoding="utf-8")
-        data = json.loads(raw)
-
-        if "block_number" in data:
-            # Single block format - wrap in blocks dict
-            block_number = str(data["block_number"])
-            return cls(
-                chain_id=data["chain_id"],
-                blocks={block_number: data},
-            )
-
-        # Old multi-block format
-        return cls(
-            chain_id=data["chain_id"],
-            blocks=data["blocks"],
-        )
-
-    @classmethod
-    def from_json_string(cls, json_str: str) -> OfflineProvider:
-        """Load recorded data from a JSON string.
-
-        Args:
-            json_str: JSON string containing recorded data
-
-        Returns:
-            An OfflineProvider instance with the loaded data
-
-        """
-        data = json.loads(json_str)
-        return cls(
-            chain_id=data["chain_id"],
-            blocks=data["blocks"],
-        )
 
     @property
     def chain_id(self) -> int:
@@ -399,6 +331,10 @@ class OfflineProvider:
         msg = f"OfflineProvider does not support make_request (method={method!r})"
         raise NotImplementedError(msg)
 
+
+class _OfflineLifecycleMixin(_OfflineBacked):
+    """Teardown and introspection surface for ``OfflineProvider``."""
+
     def close(self) -> None:  # ruff:ignore[no-self-use]
         """Close the provider — no resources to release."""
         return
@@ -428,6 +364,90 @@ class OfflineProvider:
 
         """
         return f"OfflineProvider(chain_id={self._chain_id}, blocks={len(self._block_numbers)})"
+
+
+class OfflineProvider(
+    _OfflineDataMixin,
+    _OfflineLifecycleMixin,
+):
+    """Ethereum provider that serves pre-recorded chain data.
+
+    Delegates every data-serving RPC (``call``, ``get_code``, ``get_block``,
+    ``get_block_number``, ``get_block_timestamp``) to a real Rust
+    :class:`AlloyProvider` built over an in-memory offline transport, so it is
+    indistinguishable from a live provider to any consumer (including
+    :class:`BotIo`). Recorded-JSON metadata (``chain_id``, ``block_numbers``)
+    is parsed in Python for the convenience accessors; the public surface is
+    assembled from the mixins.
+
+    Attributes:
+        chain_id: The chain ID this provider serves data for
+        blocks: Dictionary of recorded block data keyed by block number string
+
+    Example:
+        >>> offline = OfflineProvider(
+        ...     chain_id=1,
+        ...     blocks={
+        ...         "24945700": {
+        ...             "timestamp": 1776984059,
+        ...             "calls": {"0x...:0x...": "0x..."},
+        ...             "code": {"0x...": "0x..."},
+        ...         }
+        ...     },
+        ... )
+        >>> result = offline.call(to="0x...", data=b"...", block=24945700)
+
+    """
+
+    @classmethod
+    def from_json_file(cls, path: Path) -> OfflineProvider:
+        """Load recorded data from a JSON file.
+
+        Supports both old multi-block format (with "blocks" key) and new single-block
+        format (with "block_number" key).
+
+        Args:
+            path: Path to the JSON file containing recorded data
+
+        Returns:
+            An OfflineProvider instance loaded from the file.
+
+        """
+        # Build the Rust transport from the raw file (it handles both formats
+        # natively), then parse the JSON again for the Python-side metadata.
+        raw = Path(path).read_text(encoding="utf-8")
+        data = json.loads(raw)
+
+        if "block_number" in data:
+            # Single block format - wrap in blocks dict
+            block_number = str(data["block_number"])
+            return cls(
+                chain_id=data["chain_id"],
+                blocks={block_number: data},
+            )
+
+        # Old multi-block format
+        return cls(
+            chain_id=data["chain_id"],
+            blocks=data["blocks"],
+        )
+
+    @classmethod
+    def from_json_string(cls, json_str: str) -> OfflineProvider:
+        """Load recorded data from a JSON string.
+
+        Args:
+            json_str: JSON string containing recorded data
+
+        Returns:
+            An OfflineProvider instance with the loaded data
+
+        """
+        data = json.loads(json_str)
+        return cls(
+            chain_id=data["chain_id"],
+            blocks=data["blocks"],
+        )
 
 
 __all__ = [

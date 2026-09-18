@@ -141,6 +141,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "SimulateContext",
         "SkippedRecord",
         "SubmitCandidate",
+        "SubmitContext",
         "SubmitRecord",
         "SubmitSkipReason",
         "SubmittedRecord",

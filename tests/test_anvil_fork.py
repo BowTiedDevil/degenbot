@@ -3,7 +3,7 @@ from pydantic import ValidationError
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.fork import AnvilFork
+from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.provider import AlloyProvider
 from degenbot.utils.bytes import to_bytes
 
@@ -22,7 +22,7 @@ WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 def test_web3_endpoints():
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
+        launch=ForkLaunchConfig(storage_caching=False),
     )
     assert fork.http_url == f"http://127.0.0.1:{fork.port}"
     assert fork.ws_url == f"ws://127.0.0.1:{fork.port}"
@@ -36,10 +36,12 @@ def test_set_bytecode():
     fake_bytecode = to_bytes("0x42069")
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        bytecode_overrides=[
-            (VITALIK_ADDRESS, fake_bytecode),
-        ],
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            bytecode_overrides=[
+                (VITALIK_ADDRESS, fake_bytecode),
+            ],
+        ),
     )
     assert fork.provider.get_code(VITALIK_ADDRESS) == fake_bytecode
 
@@ -51,7 +53,7 @@ def test_set_storage():
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
+        launch=ForkLaunchConfig(storage_caching=False),
     )
     assert fork.provider.get_storage_at(
         account=WETH_ADDRESS,
@@ -66,8 +68,10 @@ def test_set_storage():
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        storage_overrides=[(WETH_ADDRESS, storage_position, new_storage_value)],
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            storage_overrides=[(WETH_ADDRESS, storage_position, new_storage_value)],
+        ),
     )
     assert fork.provider.get_storage_at(
         account=WETH_ADDRESS,
@@ -105,7 +109,7 @@ def test_rpc_methods(fork_mainnet_full: AnvilFork):
 def test_mine_and_reset():
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
+        launch=ForkLaunchConfig(storage_caching=False),
     )
     starting_block = fork.provider.get_block_number()
     fork.mine()
@@ -119,7 +123,11 @@ def test_mine_and_reset():
 def test_fork_from_transaction_hash():
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-        fork_transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6",
+        launch=ForkLaunchConfig(
+            fork_transaction_hash=(
+                "0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
+            ),
+        ),
     )
     assert fork.provider.block_number == 20987963
 
@@ -137,8 +145,7 @@ def test_set_next_block_base_fee_in_constructor():
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        base_fee=base_fee_override,
+        launch=ForkLaunchConfig(storage_caching=False, base_fee=base_fee_override),
     )
     fork.mine()
     assert fork.provider.get_block("latest")["baseFeePerGas"] == base_fee_override
@@ -147,7 +154,7 @@ def test_set_next_block_base_fee_in_constructor():
 def test_reset_and_set_next_block_base_fee():
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
+        launch=ForkLaunchConfig(storage_caching=False),
     )
     base_fee_override = 69 * 10**9
 
@@ -163,7 +170,7 @@ def test_reset_and_set_next_block_base_fee():
 def test_reset_to_new_endpoint():
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
+        launch=ForkLaunchConfig(storage_caching=False),
     )
     assert fork.provider.chain_id == 1
 
@@ -185,10 +192,8 @@ def test_ipc_kwargs() -> None:
     # IPCProvider type check retired — AnvilFork now uses Rust DynProvider
     # timeout check retired — Rust provider manages its own timeouts
     AnvilFork(
-        localhost="127.0.0.1",
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        ipc_provider_kwargs={"timeout": None},
+        launch=ForkLaunchConfig(localhost="127.0.0.1", storage_caching=False),
     )
 
 
@@ -196,10 +201,12 @@ def test_balance_overrides_in_constructor():
     fake_balance = 100 * 10**18
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        balance_overrides=[
-            (VITALIK_ADDRESS, fake_balance),
-        ],
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            balance_overrides=[
+                (VITALIK_ADDRESS, fake_balance),
+            ],
+        ),
     )
     assert fork.provider.get_balance(VITALIK_ADDRESS) == fake_balance
 
@@ -208,10 +215,12 @@ def test_nonce_overrides_in_constructor():
     fake_nonce = 69
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        nonce_overrides=[
-            (VITALIK_ADDRESS, fake_nonce),
-        ],
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            nonce_overrides=[
+                (VITALIK_ADDRESS, fake_nonce),
+            ],
+        ),
     )
     assert fork.provider.get_transaction_count(VITALIK_ADDRESS) == fake_nonce
 
@@ -222,8 +231,10 @@ def test_bytecode_overrides_in_constructor():
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        bytecode_overrides=[(fake_address, fake_bytecode)],
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            bytecode_overrides=[(fake_address, fake_bytecode)],
+        ),
     )
     assert fork.provider.get_code(fake_address) == fake_bytecode
 
@@ -233,8 +244,7 @@ def test_coinbase_override_in_constructor():
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-        coinbase=fake_coinbase,
+        launch=ForkLaunchConfig(storage_caching=False, coinbase=fake_coinbase),
     )
     fork.mine()
     block = fork.provider.get_block("latest")

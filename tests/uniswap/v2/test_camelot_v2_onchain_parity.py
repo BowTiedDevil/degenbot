@@ -29,7 +29,7 @@ from degenbot._ffi import Bot
 from degenbot._ffi.dex_identity import dex_identity
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.fork import AnvilFork
+from degenbot.fork import AnvilFork, ForkLaunchConfig
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -98,11 +98,15 @@ def _record_get_amount_out() -> int:
     fork = AnvilFork(
         fork_url=ARBITRUM_RPC_URI,
         fork_block=CAMELOT_PARITY_BLOCK,
-        storage_caching=True,
-        anvil_opts=["--accounts=0"],
+        launch=ForkLaunchConfig(
+            storage_caching=True,
+            anvil_opts=["--accounts=0"],
+        ),
     )
     try:
-        contract_compat = make_contract(fork.http_url, CAMELOT_WETH_USDC_LP_ADDRESS, CAMELOT_POOL_ABI)
+        contract_compat = make_contract(
+            fork.http_url, CAMELOT_WETH_USDC_LP_ADDRESS, CAMELOT_POOL_ABI
+        )
         return contract_compat.functions.getAmountOut(
             amountIn=_AMOUNT_IN_USDC,
             tokenIn=_USDC_ADDRESS,

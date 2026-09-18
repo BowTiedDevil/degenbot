@@ -139,8 +139,8 @@ class TestRelayBatchNonceReservations:
         await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
         await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
 
-        assert submitter.calls[0]["broadcast_providers"] is not None
-        assert [call["operator_nonce"] for call in submitter.calls] == [42, 43]
+        assert submitter.calls[0]["context"].broadcast_providers is not None
+        assert [call["context"].operator_nonce for call in submitter.calls] == [42, 43]
 
     async def test_second_batch_accounts_for_multi_tx_pending_first_batch(self) -> None:
         """A 2-candidate relay batch reserves both nonces; the next batch
@@ -154,7 +154,7 @@ class TestRelayBatchNonceReservations:
         )
         await _submit_relay(session, [_candidate(3)], operator_nonce=42, submitter=submitter)
 
-        assert [call["operator_nonce"] for call in submitter.calls] == [42, 44]
+        assert [call["context"].operator_nonce for call in submitter.calls] == [42, 44]
         assert [r.base for r in lane.active_reservations] == [42, 44]
 
     async def test_reservation_released_when_observed_nonce_advances_past_it(self) -> None:
@@ -179,7 +179,7 @@ class TestRelayBatchNonceReservations:
         # range was pruned from the ledger.
         assert [r.base for r in lane.active_reservations] == [44]
         assert all(r.state is ReservationState.RESERVED for r in lane.active_reservations)
-        assert [call["operator_nonce"] for call in submitter.calls] == [42, 44]
+        assert [call["context"].operator_nonce for call in submitter.calls] == [42, 44]
 
     async def test_ttl_expiry_frees_the_base_and_warns(self) -> None:
         """A stale reservation expires after its TTL with a loud WARN naming
@@ -193,13 +193,13 @@ class TestRelayBatchNonceReservations:
         session = _session(lane)
 
         await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
-        assert [call["operator_nonce"] for call in submitter.calls] == [42]
+        assert [call["context"].operator_nonce for call in submitter.calls] == [42]
 
         clock.advance(6.0)
         await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
 
         # The expired slot is vacated: the re-read 42 is broadcast again.
-        assert [call["operator_nonce"] for call in submitter.calls] == [42, 42]
+        assert [call["context"].operator_nonce for call in submitter.calls] == [42, 42]
         assert lane.expired_count == 1
         assert lane.released_count == 0
         assert len(logger.warnings) == 1, logger.warnings
@@ -223,8 +223,8 @@ class TestNoRelayPosture:
         await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
 
         # Identical bases (the caller owns the nonce) + no relay broadcast.
-        assert [call["operator_nonce"] for call in submitter.calls] == [42, 42]
-        assert all(call["broadcast_providers"] is None for call in submitter.calls)
+        assert [call["context"].operator_nonce for call in submitter.calls] == [42, 42]
+        assert all(call["context"].broadcast_providers is None for call in submitter.calls)
         assert lane.active_reservations == ()
         assert lane.released_count == 0
         assert lane.expired_count == 0
