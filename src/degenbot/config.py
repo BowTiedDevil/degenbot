@@ -20,6 +20,11 @@ _WS_ENV_PREFIX = "DEGENBOT_RPC_WS_CHAINID_"
 # degenbot-python/src/lib.rs exits 2), so the Python cascade owns the chain id
 # through this env name instead (docs/config-migration.md replacement table).
 _DEFAULT_CHAIN_ID_ENV_VAR = "DEGENBOT_DEFAULT_CHAIN_ID"
+_STRATEGY_NAME_ENV_VAR = "DEGENBOT_STRATEGY_NAME"
+
+# The typed names the arm selector accepts; mirrors the config_schema enum
+# (StrategyName::Settlement|Backrun). A name must exist in BOTH typescripts.
+_STRATEGY_NAMES = frozenset({"settlement", "backrun"})
 
 
 def _xdg_config_home() -> Path:
@@ -152,6 +157,22 @@ class DegenbotConfig(BaseSettings):
     # carries the table so a config file the Rust side accepts also loads in
     # Python (the RPC cascade reads this file via load_config_from_file).
     failure_policy: dict[str, str | dict[str, str]] = {}
+    # The arm selector (ADR-055). File-layer typed mirror of the Rust schema's
+    # strategy.name; DEGENBOT_STRATEGY_NAME reads run through
+    # strategy_arm_from_env (env layer outranks the file, mirroring the
+    # default_chain_id cascade precedent).
+    strategy_name: str | None = None
+
+    @field_validator("strategy_name", mode="after")
+    def validate_strategy_name(cls, value: str | None) -> str | None:  # ruff:ignore[invalid-first-argument-to-instance-method]
+        """Type-enforce the arm names; an unknown name is a config error."""
+        if value is not None and value.strip() not in _STRATEGY_NAMES:
+            msg = (
+                f"strategy.name={value!r} is not a valid strategy name. "
+                f"Valid names: {sorted(_STRATEGY_NAMES)}."
+            )
+            raise ValueError(msg)
+        return value
 
     @field_validator("rpc", mode="after")
     def validate_paths(
@@ -188,6 +209,31 @@ def _env_http_var(chain_id: ChainId) -> str:
 
 def _env_ws_var(chain_id: ChainId) -> str:
     return f"{_WS_ENV_PREFIX}{chain_id}"
+
+
+def strategy_arm_from_env() -> str | None:
+    """Resolve ``DEGENBOT_STRATEGY_NAME`` (the arm selector's env surface).
+
+    The typed Rust schema is the declaration site (``strategy.name``); this
+    helper is the Python twin that lets driver-shell entry points consult the
+    arm without loading the full config cascade. Returns ``None`` when unset
+    or empty (wiring default), the name when typed.
+
+    Raises:
+        ValueError: When the variable is set to an unknown strategy name.
+
+    """
+    raw = os.environ.get(_STRATEGY_NAME_ENV_VAR)
+    if raw is None or not raw.strip():
+        return None
+    name = raw.strip()
+    if name not in _STRATEGY_NAMES:
+        msg = (
+            f"{_STRATEGY_NAME_ENV_VAR}={raw!r} is not a valid strategy name. "
+            f"Valid names: {sorted(_STRATEGY_NAMES)}."
+        )
+        raise ValueError(msg) from None
+    return name
 
 
 def _env_default_chain_id() -> int | None:
