@@ -228,6 +228,11 @@ impl Quarantine {
     ///   already see (`eth_getTransactionBySenderAndNonce` +
     ///   `txpool_contentFrom` combined)
     ///
+    /// Nonce semantics: `head_nonce` is `eth_getTransactionCount(latest)` -
+    /// the NEXT unconsumed nonce, so a frame's slot is consumed only when
+    /// headNonce > claim. Head ON the claim is the open frontier (the
+    /// frame is pending and its predecessors are all mined): a quiet hold.
+    ///
     /// Returns one decision per TRACKED frame of that sender (in push order).
     /// `Rescue` removes the frame (it leaves the FSM); `NonceConsumed` and
     /// `StillWaiting` keep it parked -- the caller classifies a consumed
@@ -248,7 +253,7 @@ impl Quarantine {
                 keep.push(entry);
                 continue;
             }
-            if head_nonce >= entry.frame.claimed_nonce {
+            if head_nonce > entry.frame.claimed_nonce {
                 out.push((entry.frame.clone(), QuarantineDecision::NonceConsumed));
                 keep.push(entry);
                 continue;
@@ -267,10 +272,11 @@ impl Quarantine {
                 .collect();
             if unknown.is_empty() {
                 if preds.is_empty() {
-                    // The gap is covered and the head has not reached the
-                    // claim -- structurally impossible, but treat it as a
-                    // consumed nonce rather than silently dropping.
-                    out.push((entry.frame.clone(), QuarantineDecision::NonceConsumed));
+                    // The gap is fully mined and the head sits exactly on
+                    // the claim: the frame's slot is the OPEN frontier -
+                    // pending, not consumed. A quiet hold; when someone
+                    // mines the slot the next head's `>` fires consumption
+                    // and classification with real evidence on chain.
                     keep.push(entry);
                 } else {
                     out.push((
@@ -443,7 +449,12 @@ mod tests {
         let f = frame(12, 10);
         let h = f.hash;
         q.push(f);
-        let out = q.poll(SENDER, 12, &[]);
+        let frontier = q.poll(SENDER, 12, &[]);
+        assert!(
+            frontier.is_empty(),
+            "head on the claim is the open frontier, not consumption: {frontier:?}"
+        );
+        let out = q.poll(SENDER, 13, &[]);
         assert_eq!(out[0].1, QuarantineDecision::NonceConsumed);
         assert_eq!(q.state(h), Some(FrameState::Tracked));
         assert!(q.enter_tentative(

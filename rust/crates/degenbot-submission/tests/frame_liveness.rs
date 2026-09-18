@@ -50,12 +50,21 @@ fn gap_range_is_the_explicit_predecessor_order() {
 }
 
 #[test]
-fn consumed_nonce_stays_tracked_until_classified() {
+fn frontier_nonce_is_a_quiet_hold_not_consumption() {
     let mut q = Quarantine::new();
     let f = frame(12, 10);
     let h = f.hash;
     q.push(f);
+    // head == claim: the frame's slot is the OPEN frontier -- pending,
+    // not consumed. No decision, no classification probes, quiet hold.
     let out = q.poll(SENDER, 12, &[]);
+    assert!(
+        out.is_empty(),
+        "frontier pending emits no decision: {out:?}"
+    );
+    assert_eq!(q.state(h), Some(FrameState::Tracked));
+    // head passes the claim: consumption, classification begins.
+    let out = q.poll(SENDER, 13, &[]);
     assert_eq!(out[0].1, QuarantineDecision::NonceConsumed);
     assert_eq!(q.state(h), Some(FrameState::Tracked));
     assert!(q.enter_tentative(
