@@ -150,7 +150,7 @@ pub fn cl_tick_mapping_slot(layout: ClSlotLayout, tick: i32) -> U256 {
 /// (Uniswap V3) or base 7 (Pancake V3 fork).
 #[must_use]
 pub fn cl_tick_bitmap_word_slot(layout: ClSlotLayout, word_pos: i16) -> U256 {
-    tick_bitmap_word_slot_at_base(word_pos, U256::from(layout.ticks_mapping_slot()))
+    tick_bitmap_word_slot_at_base(word_pos, U256::from(layout.tick_bitmap_mapping_slot()))
 }
 
 /// The `tickBitmap` per-word slot against an explicit mapping base

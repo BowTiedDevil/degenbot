@@ -630,6 +630,7 @@ pub fn admit_extracted(
     states: &[PoolPostState],
     seed_block: u64,
     trace_tx: &str,
+    tick_window: Option<&dyn V3TickWindow>,
 ) -> Vec<AffectedPool> {
     let mut out = Vec::new();
     let Some(idx) = rt.index.as_ref() else {
@@ -692,7 +693,11 @@ pub fn admit_extracted(
                     });
                 }
             }
-            PoolFamily::V3 { tick_spacing, .. } => {
+            PoolFamily::V3 {
+                layout,
+                tick_spacing,
+                ..
+            } => {
                 let TypedPoolPost::V3 {
                     sqrt_price_x96,
                     tick,
@@ -731,6 +736,21 @@ pub fn admit_extracted(
                             block: seed_block,
                         },
                     );
+                }
+                // The replayed journal carries only ticks the target CROSSED;
+                // a shallow swap touches none, leaving a map too sparse to
+                // build a solver range sequence (every chain anchored on it
+                // then rejects `unusable_pool_state`, deficits=1). Merge the
+                // in-range initialized-tick window from the same chain view
+                // the frames replay over — swaps never change a tick's stored
+                // net/gross, so the window is valid post-frame. Replayed
+                // touched ticks win (they are the post-frame facts).
+                if let Some(window) = tick_window {
+                    for (tick, info) in
+                        window.tick_window(st.address, *layout, spacing, tk, seed_block)
+                    {
+                        tick_data.entry(tick).or_insert(info);
+                    }
                 }
                 let Some(p_id) = solver.admit_v3_explicit(
                     st.address, token0, token1, edge.fee, spacing, sqrt, liq, tk, tick_data,
@@ -793,9 +813,102 @@ fn view_v2_reserves(
         })
 }
 
+/// Read a V3 pool's in-range tick window through a layered [`DatabaseRef`]
+/// view: the bitmap words at `current_tick` ± 1, then the initialized tick
+/// words those bitmaps select (the same window as the raw-RPC bootstrap
+/// ladder). Swaps never change a tick's stored net/gross, so this window is
+/// valid for both the pre-frame chain view and a replayed post-target tick.
+///
+/// The replayed journal only carries ticks the target CROSSED. A shallow
+/// target swap touches none, leaving a map too sparse to build a solver range
+/// sequence — anchor admission sources the window here instead.
+fn read_v3_tick_window(
+    ext: &ScratchDb<'_>,
+    pool: Address,
+    layout: ClSlotLayout,
+    tick_spacing: i32,
+    current_tick: i32,
+    head: u64,
+) -> HbMap<i32, TickInfo> {
+    let spacing = i64::from(tick_spacing.max(1));
+    let (word_pos, _) = floor_word_pos(current_tick, spacing);
+    let w0 = i64::from(word_pos).saturating_sub(1);
+    let w1 = i64::from(word_pos).saturating_add(1);
+    let mut tick_data = HbMap::default();
+    for w in w0..=w1 {
+        let Ok(word_pos_i16) = i16::try_from(w) else {
+            continue;
+        };
+        let slot = slot_layout::cl_tick_bitmap_word_slot(layout, word_pos_i16);
+        let Some(bitmap) = read_view_word(ext, pool, slot) else {
+            continue;
+        };
+        for bit in 0..256i64 {
+            let Ok(bit_u256) = U256::try_from(bit) else {
+                continue;
+            };
+            if (bitmap >> bit_u256) & U256::ONE != U256::ONE {
+                continue;
+            }
+            let tick = i64::from(word_pos_i16) * 256 + bit;
+            let Some(tick_scaled) = tick.checked_mul(spacing) else {
+                continue;
+            };
+            let Ok(tick_i32) = i32::try_from(tick_scaled) else {
+                continue;
+            };
+            let Some(word) = read_view_word(
+                ext,
+                pool,
+                slot_layout::cl_tick_mapping_slot(layout, tick_i32),
+            ) else {
+                continue;
+            };
+            let (gross, net) = slot_layout::decode_tick_word(word);
+            tick_data.insert(
+                tick_i32,
+                TickInfo {
+                    liquidity_gross: alloy::primitives::aliases::U128::from(gross),
+                    liquidity_net: net,
+                    block: head,
+                },
+            );
+        }
+    }
+    tick_data
+}
+
+/// A V3 tick window source for anchor admission: connector state read from
+/// the same chain view the frames replay over. Implemented for the frame
+/// scratch DB (production) and by test mocks (offline pins).
+pub trait V3TickWindow {
+    /// The in-range initialized ticks around `current_tick`.
+    fn tick_window(
+        &self,
+        pool: Address,
+        layout: ClSlotLayout,
+        tick_spacing: i32,
+        current_tick: i32,
+        head: u64,
+    ) -> HbMap<i32, TickInfo>;
+}
+
+impl V3TickWindow for ScratchDb<'_> {
+    fn tick_window(
+        &self,
+        pool: Address,
+        layout: ClSlotLayout,
+        tick_spacing: i32,
+        current_tick: i32,
+        head: u64,
+    ) -> HbMap<i32, TickInfo> {
+        read_v3_tick_window(self, pool, layout, tick_spacing, current_tick, head)
+    }
+}
+
 /// V3 CL state read through the frame-replay chain view: slot0, liquidity,
-/// and the in-range tick words (current word ± 1 — the same window as the
-/// RPC bootstrap ladder).
+/// and the in-range tick window (the same window as the RPC bootstrap
+/// ladder).
 ///
 /// `None` on a failed read or a zero in-range liquidity (unsolvable CL state
 /// — the raw-RPC ladder decides).
@@ -813,43 +926,8 @@ fn read_v3_view(
     if liquidity == 0 {
         return None;
     }
-    let spacing = i64::from(tick_spacing.max(1));
-    let (word_pos, _) = floor_word_pos(parts.tick, spacing);
-    let w0 = i64::from(word_pos).saturating_sub(1);
-    let w1 = i64::from(word_pos).saturating_add(1);
-    let mut tick_data = HbMap::default();
-    for w in w0..=w1 {
-        let Ok(word_pos_i16) = i16::try_from(w) else {
-            continue;
-        };
-        let slot = slot_layout::cl_tick_bitmap_word_slot(ClSlotLayout::UniswapV3, word_pos_i16);
-        let Some(bitmap) = read_view_word(scratch.ext(), pool, slot) else {
-            continue;
-        };
-        for bit in 0..256i64 {
-            if (bitmap >> U256::try_from(bit).ok()?) & U256::ONE != U256::ONE {
-                continue;
-            }
-            let tick = i64::from(word_pos_i16) * 256 + bit;
-            let tick_i32 = i32::try_from(tick.checked_mul(spacing)?).ok()?;
-            let Some(word) = read_view_word(
-                scratch.ext(),
-                pool,
-                slot_layout::cl_tick_mapping_slot(ClSlotLayout::UniswapV3, tick_i32),
-            ) else {
-                continue;
-            };
-            let (gross, net) = slot_layout::decode_tick_word(word);
-            tick_data.insert(
-                tick_i32,
-                TickInfo {
-                    liquidity_gross: alloy::primitives::aliases::U128::from(gross),
-                    liquidity_net: net,
-                    block: head,
-                },
-            );
-        }
-    }
+    let tick_data =
+        read_v3_tick_window(scratch.ext(), pool, layout, tick_spacing, parts.tick, head);
     Some((parts.sqrt_price_x96, parts.tick, liquidity, tick_data))
 }
 
@@ -975,33 +1053,65 @@ async fn admit_hop_pool(
     provider: &AlloyProvider,
     hop: &ResolvedHop,
     head: u64,
+    trace_tx: &str,
 ) -> Option<u64> {
+    let address = *hop.address();
     match hop {
         ResolvedHop::V2(e) => {
+            // The frame-replay scratch serves a connector the replay already
+            // touched; a cold connector misses to the raw RPC. Both a failed
+            // scratch read AND a failed RPC read are admission failures — the
+            // sub-step that refused is traced so a declined hop is legible.
             let reserves = match view_v2_reserves(scratch, e.address) {
                 Some(r) => r,
                 None => {
                     match degenbot_rpc::abi::fetch_v2_reserves(provider, &e.address, None).await {
-                        Ok((r0, r1)) => Some((u128::try_from(r0).ok()?, u128::try_from(r1).ok()?)),
-                        Err(_) => None,
-                    }?
+                        Ok((r0, r1)) => {
+                            let (Ok(r0), Ok(r1)) = (u128::try_from(r0), u128::try_from(r1)) else {
+                                trace_admit_fail(
+                                    trace_tx,
+                                    address,
+                                    "reserves-rpc-width",
+                                    "reserves exceed u128",
+                                );
+                                return None;
+                            };
+                            (r0, r1)
+                        }
+                        Err(err) => {
+                            trace_admit_fail(trace_tx, address, "reserves-rpc", &err.to_string());
+                            return None;
+                        }
+                    }
                 }
             };
-            let token0 = rt.token_addr(e.token0_id)?;
-            let token1 = rt.token_addr(e.token1_id)?;
-            solver
-                .admit_v2(&SidecarV2Pool {
-                    address: e.address,
-                    token0,
-                    token1,
-                    reserve0: reserves.0,
-                    reserve1: reserves.1,
-                })
-                .ok()
+            let (Some(token0), Some(token1)) =
+                (rt.token_addr(e.token0_id), rt.token_addr(e.token1_id))
+            else {
+                trace_admit_fail(trace_tx, address, "token-join", "V2 token id unresolved");
+                return None;
+            };
+            match solver.admit_v2(&SidecarV2Pool {
+                address: e.address,
+                token0,
+                token1,
+                reserve0: reserves.0,
+                reserve1: reserves.1,
+            }) {
+                Ok(id) => Some(id),
+                Err(reason) => {
+                    trace_admit_fail(trace_tx, address, "admit-v2", &reason);
+                    None
+                }
+            }
         }
         ResolvedHop::V3(e) => {
-            let token0 = rt.token_addr(e.token0_id)?;
-            let token1 = rt.token_addr(e.token1_id)?;
+            let (Some(token0), Some(token1)) =
+                (rt.token_addr(e.token0_id), rt.token_addr(e.token1_id))
+            else {
+                trace_admit_fail(trace_tx, address, "token-join", "V3 token id unresolved");
+                return None;
+            };
             if let Some((sqrt, tk, liq, tick_data)) = read_v3_view(
                 scratch,
                 e.address,
@@ -1022,7 +1132,7 @@ async fn admit_hop_pool(
                     head,
                 )
             } else {
-                solver
+                let admitted = solver
                     .admit_v3_full(
                         provider,
                         e.address,
@@ -1033,10 +1143,29 @@ async fn admit_hop_pool(
                         None,
                         head,
                     )
-                    .await
+                    .await;
+                if admitted.is_none() {
+                    trace_admit_fail(trace_tx, address, "admit-v3", "view + full ladder failed");
+                }
+                admitted
             }
         }
     }
+}
+
+/// One line per failed hop admission: the exact hop pool + the sub-step that
+/// refused it. A declined admission otherwise leaves the chain visibly
+/// undeclared (and the solve 100% `unusable_pool_state`) with no cause.
+fn trace_admit_fail(trace_tx: &str, pool: Address, stage: &str, detail: &str) {
+    trace_jsonl(
+        "admit_hop_fail",
+        serde_json::json!({
+            "tx": trace_tx,
+            "pool": format!("0x{}", alloy::hex::encode(pool)),
+            "stage": stage,
+            "detail": detail,
+        }),
+    );
 }
 
 /// The hop refs of one WETH-entry walker cycle of arbitrary depth >= 2,
@@ -1128,6 +1257,7 @@ async fn dfs_cycle_chains(
     solver: &mut SidecarSolver,
     provider: &AlloyProvider,
     head: u64,
+    trace_tx: &str,
 ) -> (usize, Vec<Vec<SidecarHopRef>>) {
     let mut chains = Vec::new();
     let mut admitted = 0usize;
@@ -1164,7 +1294,8 @@ async fn dfs_cycle_chains(
                 rejected = true;
                 break;
             };
-            let Some(ws) = admit_hop_pool(rt, solver, scratch, provider, &h, head).await else {
+            let Some(ws) = admit_hop_pool(rt, solver, scratch, provider, &h, head, trace_tx).await
+            else {
                 rejected = true;
                 break;
             };
@@ -1393,7 +1524,14 @@ pub async fn process_frame(
     // ── stage: workspace admission (fresh scope; replayed state verbatim) ─
     let t = Instant::now();
     let mut solver = SidecarSolver::new();
-    let affected = admit_extracted(rt, &mut solver, &extracted, head, &tx_hex);
+    let affected = admit_extracted(
+        rt,
+        &mut solver,
+        &extracted,
+        head,
+        &tx_hex,
+        Some(scratch.ext()),
+    );
     stages.admit_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
     if affected.is_empty() {
         return FrameArtifacts::observe("no_candidate", stages);
@@ -1453,6 +1591,7 @@ pub async fn process_frame(
                 &mut solver,
                 provider,
                 head,
+                &tx_hex,
             )
             .await;
             connectors_seen += admitted;
@@ -1512,6 +1651,10 @@ pub async fn process_frame(
                     "evaluated": c.evaluated,
                     "profit_wei": c.profit_wei.map(|p| p.to_string()),
                     "reject": c.reject.map(PathReject::label),
+                    "reject_deficits": match c.reject {
+                        Some(PathReject::UnusablePoolState { deficits }) => Some(deficits),
+                        _ => None,
+                    },
                 }))
                 .collect::<Vec<_>>(),
             "best": aggregate.best.is_some(),

@@ -188,6 +188,17 @@ impl ClSlotLayout {
             Self::PancakeV3 => crate::v3_pancakeswap_storage_slots::PANCAKE_V3_TICKS_MAPPING_SLOT,
         }
     }
+
+    /// The `tickBitmap(int16)` mapping base slot number.
+    #[must_use]
+    pub const fn tick_bitmap_mapping_slot(self) -> u64 {
+        match self {
+            Self::UniswapV3 => crate::v3_storage_slots::V3_TICK_BITMAP_MAPPING_SLOT,
+            Self::PancakeV3 => {
+                crate::v3_pancakeswap_storage_slots::PANCAKE_V3_TICK_BITMAP_MAPPING_SLOT
+            }
+        }
+    }
 }
 
 /// Parameters for registering a V3 pool with `BotState`.

@@ -138,7 +138,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
 
     // admit into THIS frame's fresh workspace scope.
     let mut solver = SidecarSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture");
+    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture", None);
     assert_eq!(affected.len(), 1, "P admits and trades WETH");
     assert_eq!(affected[0].address, P);
     assert_eq!(affected[0].family, LaneFamily::V2);
@@ -315,7 +315,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
     );
     assert_eq!(extracted.len(), 1);
     let mut solver = SidecarSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture");
+    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture", None);
     // The WETH-only admission cut this frame short: `affected` was empty, so
     // no quote-land discovery could ever start for a USDC-quoted pair.
     assert_eq!(

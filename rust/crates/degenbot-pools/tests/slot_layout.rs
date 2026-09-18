@@ -105,18 +105,34 @@ fn cl_mapping_slot_helpers_agree_with_family_forward_fns_and_preimage() {
 }
 
 #[test]
-fn cl_tick_bitmap_word_slot_matches_base_6_and_7() {
-    for (layout, word_pos) in [
-        (ClSlotLayout::UniswapV3, -8i16),
-        (ClSlotLayout::PancakeV3, 33i16),
-    ] {
-        let slot = cl_tick_bitmap_word_slot(layout, word_pos);
-        assert_ne!(slot, U256::ZERO);
-    }
-    // The two families must disagree (bases 6 vs 7).
+fn cl_tick_bitmap_word_slot_pins_bitmap_bases_6_and_7() {
+    // Independent keccak preimage per the `mapping(int16 => uint256)` layout:
+    // the sign-extended word then the mapping base. V3's `_tickBitmap` is
+    // base 6; Pancake's is base 7. Pinning the exact expected slots catches a
+    // wrong base (hashing the ticks base 5 would read a zero slot on-chain).
+    let expected = |word_pos: i16, base: u64| {
+        let mut input = [0u8; 64];
+        if word_pos < 0 {
+            input[..30].fill(0xff);
+            input[30..32].copy_from_slice(&word_pos.to_be_bytes());
+        } else {
+            input[30..32].copy_from_slice(&word_pos.to_be_bytes());
+        }
+        input[32..64].copy_from_slice(&U256::from(base).to_be_bytes::<32>());
+        U256::from_be_bytes(keccak256(input).0)
+    };
+    assert_eq!(
+        cl_tick_bitmap_word_slot(ClSlotLayout::UniswapV3, -8),
+        expected(-8, 6)
+    );
+    assert_eq!(
+        cl_tick_bitmap_word_slot(ClSlotLayout::PancakeV3, 33),
+        expected(33, 7)
+    );
+    // The bitmap mapping is distinct from the ticks mapping (bases 5/6).
     assert_ne!(
         cl_tick_bitmap_word_slot(ClSlotLayout::UniswapV3, 0),
-        cl_tick_bitmap_word_slot(ClSlotLayout::PancakeV3, 0)
+        tick_mapping_slot_at_base(0, U256::from(5))
     );
 }
 
