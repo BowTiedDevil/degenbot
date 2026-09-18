@@ -573,6 +573,17 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = parse_cli(&args)?;
 
+    // Strategy-arm gate (ADR-055): this driver is the settled-block arm.
+    // An explicit `strategy.name = "backrun"` selection must boot the
+    // backrun sidecar, not this runner; the schema is the load source.
+    // A loader failure does not change behavior: the driver's own boot
+    // reads the config again and reports typed errors there.
+    if let Ok(loaded) = degenbot::config::BotConfigLoader::new().load() {
+        if let Some(msg) = strategy_arm_refusal(loaded.config.strategy.name) {
+            return Err(msg);
+        }
+    }
+
     // ── Telemetry boot prelude (Gap G6,) ──
     // The Python driver boots its subscriber / OTLP / metrics stack at `_ffi`
     // import; the standalone parity twin boots the same stack here, before any
@@ -1147,4 +1158,41 @@ fn run() -> Result<(), String> {
         "engine handshake complete"
     );
     Ok(())
+}
+
+/// The arm the driver refuses: anything that names another strategy family.
+///
+/// `None` leaves the wiring default (settlement); an unset strategy is not a
+/// refusal reason. (ADR-055: the typed selector is interim until the Phase C
+/// host owns per-arm enablement.)
+fn strategy_arm_refusal(arm: Option<degenbot::config::StrategyName>) -> Option<String> {
+    match arm {
+        None | Some(degenbot::config::StrategyName::Settlement) => None,
+        Some(degenbot::config::StrategyName::Backrun) => Some(
+            "strategy.name=backrun: this driver is the settled-block arm; the backrun arm boots via the MEVBlocker backrun sidecar binary"
+                .to_string(),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod arm_gate_tests {
+    use super::strategy_arm_refusal;
+    use degenbot::config::StrategyName;
+
+    #[test]
+    fn unset_arm_keeps_wiring_default() {
+        assert!(strategy_arm_refusal(None).is_none());
+    }
+
+    #[test]
+    fn settlement_arm_is_own_driver() {
+        assert!(strategy_arm_refusal(Some(StrategyName::Settlement)).is_none());
+    }
+
+    #[test]
+    fn backrun_arm_refuses_on_the_settlement_driver() {
+        let msg = strategy_arm_refusal(Some(StrategyName::Backrun)).expect("backrun must refuse");
+        assert!(msg.contains("strategy.name=backrun"));
+    }
 }
