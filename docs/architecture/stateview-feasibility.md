@@ -22,7 +22,7 @@
 - Other committed captures: `heavy_mixed_solve_captures.jsonl.zst`, `live_capture_loop13/17.jsonl.zst`, `live_gatebursts_mixed.jsonl`, `cl_capture_offline.jsonl` (same fixture dir).
 - **Tickmap size distribution has no producer-side capture:** the solver captures record precomputed tick-*range* views, not raw map cardinalities. The authoritative size/mix source is therefore the live registry the captures are drawn from: the running bot's pool database (below), read `-readonly` beside the live WAL.
 
-### 1.2 Live pool-family mix and tickmap size distribution (500K-path bot, `~/.config/degenbot/degenbot.db`, 2026-09-07)
+### 1.2 Live pool-family mix and tickmap size distribution (500K-path bot, `~/.local/state/degenbot/db/degenbot.db`, 2026-09-07)
 
 | Family | Pools | Total persisted ticks | Per-pool tick p50 | p90 | p99 | avg | max |
 |---|---|---|---|---|---|---|---|
@@ -182,7 +182,7 @@ cargo build --release --manifest-path rust/Cargo.toml -p degenbot-solvers --exam
 rust/target/release/examples/stateview_feasibility_probe
 
 # 2. Live pool-family mix + tickmap size distribution (read-only beside live WAL)
-sqlite3 -readonly ~/.config/degenbot/degenbot.db "SELECT 'uniswap_v3', COUNT(*) FROM uniswap_v3_pools;"
+sqlite3 -readonly ~/.local/state/degenbot/db/degenbot.db "SELECT 'uniswap_v3', COUNT(*) FROM uniswap_v3_pools;"
 WITH n AS (SELECT p.pool_id pid, COUNT(l.id) cnt FROM uniswap_v3_pools p
            LEFT JOIN liquidity_positions l ON l.pool_id=p.pool_id GROUP BY p.pool_id),
      r AS (SELECT cnt, ROW_NUMBER() OVER (ORDER BY cnt) rn, COUNT(*) OVER () total

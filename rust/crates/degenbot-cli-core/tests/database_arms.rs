@@ -610,7 +610,7 @@ fn cli_context_resolves_override_env_and_default() {
     assert!(default_ctx
         .database_path()
         .value
-        .ends_with(".config/degenbot/degenbot.db"));
+        .ends_with(".local/state/degenbot/db/degenbot.db"));
 }
 
 #[test]

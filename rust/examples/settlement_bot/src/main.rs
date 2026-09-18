@@ -293,12 +293,16 @@ fn parse_f64_env(raw: Option<&String>, default: f64, suffix: &str) -> Result<f64
     }
 }
 
-/// Read the operator config file (`~/.config/degenbot/config.toml`) the way
-/// the Python cascade's `config.toml` layer does; a missing/unparseable file
-/// yields `None` (that layer then simply contributes nothing).
+/// Read the operator config file (`$XDG_CONFIG_HOME` when absolute, else
+/// `$HOME/.config`) `/degenbot/config.toml` the way the Python cascade's
+/// `config.toml` layer does; a missing/unparseable file yields `None` (that
+/// layer then simply contributes nothing).
 fn read_config_toml() -> Option<toml::Table> {
-    let home = std::env::var("HOME").ok()?;
-    let path = PathBuf::from(home).join(".config/degenbot/config.toml");
+    let base = match std::env::var("XDG_CONFIG_HOME") {
+        Ok(xdg) if !xdg.is_empty() && PathBuf::from(&xdg).is_absolute() => PathBuf::from(xdg),
+        _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
+    };
+    let path = base.join("degenbot/config.toml");
     let text = std::fs::read_to_string(path).ok()?;
     toml::from_str(&text).ok()
 }
@@ -346,8 +350,9 @@ fn cascade_rpc_uri(
 }
 
 /// Mirror `_make_arbitrage_config`'s db path: config.toml `database.path`
-/// else `~/.config/degenbot/degenbot.db`. `DEGENBOT_FIXTURE_DB` overrides,
-/// the same CI test seam `standalone_consumer.rs` uses.
+/// else `<state_home>/degenbot/db/degenbot.db` (`$XDG_STATE_HOME` when
+/// absolute, else `$HOME/.local/state`). `DEGENBOT_FIXTURE_DB` overrides, the
+/// same CI test seam `standalone_consumer.rs` uses.
 fn resolve_db_path(config_toml: Option<&toml::Table>) -> PathBuf {
     if let Ok(fixture) = std::env::var("DEGENBOT_FIXTURE_DB") {
         if !fixture.is_empty() {
@@ -359,8 +364,11 @@ fn resolve_db_path(config_toml: Option<&toml::Table>) -> PathBuf {
             return PathBuf::from(v);
         }
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".config/degenbot/degenbot.db")
+    let state_home = match std::env::var("XDG_STATE_HOME") {
+        Ok(xdg) if !xdg.is_empty() && PathBuf::from(&xdg).is_absolute() => PathBuf::from(xdg),
+        _ => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/state"),
+    };
+    state_home.join("degenbot/db/degenbot.db")
 }
 
 impl SettlementBotConfig {

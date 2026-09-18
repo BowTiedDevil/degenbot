@@ -36,12 +36,12 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_RUNS_DIR` | `logging.runs_dir` | `path` | `~/.config/degenbot/logs` | Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. A leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap. |
+| `DEGENBOT_RUNS_DIR` | `logging.runs_dir` | `path` | `~/.local/state/degenbot/logs` | Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap. |
 ## `persistence`
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_STATE_DIR` | `persistence.state_dir` | `path` | `~/.config/degenbot/state` | Root directory for durable, process-lifetime-independent bot state (e.g. the backrun sidecar's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. A leading `~` expands against HOME. |
+| `DEGENBOT_STATE_DIR` | `persistence.state_dir` | `path` | `~/.local/state/degenbot/state` | Root directory for durable, process-lifetime-independent bot state (e.g. the backrun sidecar's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. |
 ## `allocator`
 
 | Env var | TOML key | Type | Default | Description |

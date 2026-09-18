@@ -3,7 +3,7 @@
 //!
 //! Run:
 //! ```text
-//! DEGENBOT_RPC_HTTP_CHAINID_1=... DEGENBOT_DB_PATH=~/.config/degenbot/degenbot.db \
+//! DEGENBOT_RPC_HTTP_CHAINID_1=... DEGENBOT_DB_PATH=~/.local/state/degenbot/db/degenbot.db \
 //!   cargo test -p degenbot-submission --test admit_probe -- --ignored --nocapture
 //! ```
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]

@@ -60,7 +60,7 @@ pub struct Cli {
     pub command: Option<Commands>,
 
     /// Path to the SQLite database (`--database` > `DEGENBOT_DB_PATH` >
-    /// `~/.config/degenbot/degenbot.db`).
+    /// `<state_home>/degenbot/db/degenbot.db`).
     #[arg(long, global = true, value_name = "PATH")]
     pub database: Option<String>,
 

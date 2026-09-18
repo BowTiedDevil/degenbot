@@ -9,7 +9,7 @@
 //!
 //! Live (network + local DB dependent); run:
 //! ```text
-//! DEGENBOT_RPC_HTTP_CHAINID_1=... DEGENBOT_DB_PATH=~/.config/degenbot/degenbot.db \
+//! DEGENBOT_RPC_HTTP_CHAINID_1=... DEGENBOT_DB_PATH=~/.local/state/degenbot/db/degenbot.db \
 //!   cargo test -p degenbot-bot --test backrun_lane_e2e -- --ignored --nocapture
 //! ```
 

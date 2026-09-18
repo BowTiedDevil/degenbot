@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BaseModel, HttpUrl, PlainSerializer, WebsocketUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, PlainSerializer, WebsocketUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from degenbot.database.operations import create_new_sqlite_database
@@ -21,9 +21,45 @@ _WS_ENV_PREFIX = "DEGENBOT_RPC_WS_CHAINID_"
 # through this env name instead (docs/config-migration.md replacement table).
 _DEFAULT_CHAIN_ID_ENV_VAR = "DEGENBOT_DEFAULT_CHAIN_ID"
 
-CONFIG_DIR = Path.home() / ".config" / "degenbot"
+
+def _xdg_config_home() -> Path:
+    """Return ``$XDG_CONFIG_HOME`` (absolute only) or ``$HOME/.config``.
+
+    The XDG Base Directory spec ignores a relative or empty value, so a bogus
+    variable falls back to the home-relative default.
+
+    Returns:
+        The XDG configuration base directory.
+
+    """
+    raw = os.environ.get("XDG_CONFIG_HOME")
+    if raw and Path(raw).is_absolute():
+        return Path(raw)
+    return Path.home() / ".config"
+
+
+def _xdg_state_home() -> Path:
+    """Return ``$XDG_STATE_HOME`` (absolute only) or ``$HOME/.local/state``.
+
+    State-like data (the connector-index database, durable journals) belongs
+    in the XDG state home, never in ``~/.config``. A relative or empty
+    variable is ignored per the XDG spec.
+
+    Returns:
+        The XDG state base directory.
+
+    """
+    raw = os.environ.get("XDG_STATE_HOME")
+    if raw and Path(raw).is_absolute():
+        return Path(raw)
+    return Path.home() / ".local" / "state"
+
+
+CONFIG_DIR = _xdg_config_home() / "degenbot"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
-DB_PATH = CONFIG_DIR / "degenbot.db"
+# The connector-index database is durable state, not configuration: it lives
+# under the XDG state home, not ``~/.config``.
+DB_PATH = _xdg_state_home() / "degenbot" / "db" / "degenbot.db"
 
 
 class DatabaseSettings(BaseModel):
@@ -40,8 +76,8 @@ class DatabaseSettings(BaseModel):
     def _expand_user(cls, path: Path) -> Path:
         """Expand a leading ``~`` to the user's home directory.
 
-        The config file is hand-edited on a user's machine, where ``~/.config/degenbot/degenbot.db``
-        is the natural thing to write. Left as a literal ``~``, ``Path.absolute()`` (used downstream
+        The config file is hand-edited on a user's machine, where a ``~``-prefixed path is
+        the natural thing to write. Left as a literal ``~``, ``Path.absolute()`` (used downstream
         by the SQLite URL builders) resolves it against the process cwd (e.g.
         ``<repo>/~/.config/...``) rather than the home directory, so SQLite emits ``unable to open
         database file``. RPC file-path endpoints already get ``expanduser().absolute()`` in
@@ -92,8 +128,8 @@ class DegenbotConfig(BaseSettings):
     # file layer — docs/config-migration.md). Fields default instead: the
     # database to the standard DB_PATH, rpc/ws to empty (the cascade then
     # resolves endpoints from env or the caller).
-    database: DatabaseSettings = DatabaseSettings(
-        path=DB_PATH,
+    database: DatabaseSettings = Field(
+        default_factory=lambda: DatabaseSettings(path=DB_PATH)
     )
     rpc: dict[
         ChainId,
@@ -444,8 +480,12 @@ def _init_config() -> DegenbotConfig:
     if env_chain_id is not None:
         config.default_chain_id = env_chain_id
 
-    # Skip database creation for in-memory databases
-    if config.database.path.name != ":memory:" and not config.database.path.exists():
-        create_new_sqlite_database(db_path=config.database.path)
+    # Skip database creation for in-memory databases. The DB parent lives
+    # under the XDG state home, which frequently does not exist yet, so create
+    # it before the SQLite file.
+    if config.database.path.name != ":memory:":
+        config.database.path.parent.mkdir(parents=True, exist_ok=True)
+        if not config.database.path.exists():
+            create_new_sqlite_database(db_path=config.database.path)
 
     return config

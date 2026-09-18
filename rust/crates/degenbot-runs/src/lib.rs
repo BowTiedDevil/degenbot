@@ -75,8 +75,8 @@ impl RunDirectory {
     /// Create the session directory under the configured root.
     ///
     /// The root is the installed typed config's `logging.runs_dir`, or (when
-    /// no config is installed) a freshly loaded standard config, expanded
-    /// against `HOME` for a leading `~`.
+    /// no config is installed) a freshly loaded standard config, resolved
+    /// through the XDG state home / `~` expansion.
     ///
     /// # Errors
     ///
@@ -163,7 +163,9 @@ impl RunDirectory {
     }
 }
 
-/// The configured per-session run-artifacts root, expanded against `HOME`.
+/// The configured per-session run-artifacts root. The built-in default is
+/// the XDG state home (`$XDG_STATE_HOME` when absolute, else
+/// `$HOME/.local/state`); a `~`-carrying value is expanded against `HOME`.
 ///
 /// Prefers a config already installed in the typed holder (a real boot), and
 /// otherwise loads the standard file layer + `DEGENBOT_*` env through the
@@ -176,9 +178,10 @@ pub fn resolve_runs_root() -> io::Result<PathBuf> {
     resolve_configured_path(|config| &config.logging.runs_dir)
 }
 
-/// The configured durable-state root (`persistence.state_dir`), expanded
-/// against `HOME`. This root is independent of [`resolve_runs_root`]: state
-/// here outlives a session and is never nested under a per-session directory.
+/// The configured durable-state root (`persistence.state_dir`), resolved
+/// through the same state-home/`~` expansion as [`resolve_runs_root`]. This
+/// root is independent of [`resolve_runs_root`]: state here outlives a
+/// session and is never nested under a per-session directory.
 ///
 /// # Errors
 ///
@@ -187,8 +190,10 @@ pub fn resolve_state_root() -> io::Result<PathBuf> {
     resolve_configured_path(|config| &config.persistence.state_dir)
 }
 
-/// Resolve one `~`-carrying schema path field through the typed config and
-/// expand its leading `~` against `HOME` (read through the config env seam).
+/// Resolve one state-rooted schema path field through the typed config and
+/// expand it through the config env seam: a usable `$XDG_STATE_HOME` rebases
+/// the `~/.local/state` default, and a leading `~` otherwise expands against
+/// `HOME`.
 fn resolve_configured_path(
     pick: impl Fn(&degenbot_config::BotConfig) -> &std::path::PathBuf,
 ) -> io::Result<PathBuf> {
@@ -201,9 +206,17 @@ fn resolve_configured_path(
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
         pick(&loaded.config).clone()
     };
-    Ok(degenbot_config::expand_tilde_path(
-        &configured.to_string_lossy(),
-    ))
+    // Only the built-in default is `$XDG_STATE_HOME`-rooted; an explicit
+    // TOML/env value is the operator's literal and expands as written —
+    // the same rule as the database-path seam's `Source::Default` arm.
+    let is_default = *configured == *pick(&degenbot_config::BotConfig::default());
+    let raw = configured.to_string_lossy().to_string();
+    let expanded = if is_default {
+        degenbot_config::expand_state_path(&raw)
+    } else {
+        degenbot_config::expand_tilde_path(&raw)
+    };
+    Ok(expanded)
 }
 
 /// Validate the engine name as exactly one relative path component (never a

@@ -41,7 +41,7 @@ bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
         rpc={1: "https://your-archive-node"},
-        database={"path": "~/.config/degenbot/degenbot.db"},
+        database={"path": "~/.local/state/degenbot/db/degenbot.db"},
     )
 )
 

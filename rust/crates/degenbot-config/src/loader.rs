@@ -166,25 +166,36 @@ impl std::fmt::Debug for BotConfigLoader {
     }
 }
 
-/// The canonical STANDARD config file path : the
-/// `DEGENBOT_CONFIG` env override when set — even when missing, the
-/// operator asked for it — else `$HOME/.config/degenbot/config.toml` when
-/// it exists, else `None` (an absent user file is contractually defaults).
+/// The standard path resolved against an explicit [`EnvVars`] seam: the
+/// `DEGENBOT_CONFIG` override when set, else
+/// `$XDG_CONFIG_HOME/degenbot/config.toml` (absolute `XDG_CONFIG_HOME` only —
+/// a relative or empty value is ignored per the XDG spec), else
+/// `$HOME/.config/degenbot/config.toml` when that file exists, else `None`.
+/// Tests drive HOME/XDG through a [`MapEnv`] so no test mutates the process
+/// environment.
+#[must_use]
+pub fn standard_file_path_with(env: &dyn EnvVars) -> Option<PathBuf> {
+    if let Some(p) = env.get("DEGENBOT_CONFIG").filter(|s| !s.is_empty()) {
+        return Some(p.into());
+    }
+    let base = crate::resolvers::config_home(env)?;
+    let path = base.join("degenbot").join("config.toml");
+    path.is_file().then_some(path)
+}
+
+/// The canonical STANDARD config file path over the process environment
+/// (the production surface): the `DEGENBOT_CONFIG` env override when set —
+/// even when missing, the operator asked for it — else the XDG config home
+/// (`$XDG_CONFIG_HOME/degenbot/config.toml`, absolute only) else
+/// `$HOME/.config/degenbot/config.toml` when it exists, else `None` (an
+/// absent user file is contractually defaults).
 /// `BotConfigLoader::with_standard_file_paths` selects exactly this value,
 /// and raw-table readers resolve the SAME file through this function so
 /// file discovery stays a single contract. The std env reads live in THIS
 /// crate so they stay confined to degenbot-config.
 #[must_use]
 pub fn standard_file_path() -> Option<PathBuf> {
-    if let Some(p) = ::std::env::var("DEGENBOT_CONFIG")
-        .ok()
-        .filter(|s| !s.is_empty())
-    {
-        return Some(p.into());
-    }
-    let home = ::std::env::var_os("HOME")?;
-    let path = ::std::path::Path::new(&home).join(".config/degenbot/config.toml");
-    path.is_file().then_some(path)
+    standard_file_path_with(&crate::ProcessEnv)
 }
 
 impl BotConfigLoader {
@@ -205,7 +216,8 @@ impl BotConfigLoader {
 
     /// Select the STANDARD file layer: the `DEGENBOT_CONFIG` env override when
     /// set (missing file then fails the load — the operator asked for it),
-    /// else `$HOME/.config/degenbot/config.toml` when it exists, else no file
+    /// else the XDG config home (absolute `$XDG_CONFIG_HOME` else
+    /// `$HOME/.config`) `/degenbot/config.toml` when it exists, else no file
     /// layer (12-factor: an absent user file is contractually defaults). The
     /// env read lives HERE so std env stays confined to this crate.
     #[must_use]

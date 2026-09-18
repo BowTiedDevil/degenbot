@@ -35,7 +35,7 @@ Accepted before **or** after the subcommand (clap `global = true`).
 
 | Option | Resolved value / cascade |
 |---|---|
-| `--database <PATH>` | SQLite database path: `--database` > `DEGENBOT_DB_PATH` > `~/.config/degenbot/degenbot.db` |
+| `--database <PATH>` | SQLite database path: `--database` > `DEGENBOT_DB_PATH` > `~/.local/state/degenbot/db/degenbot.db` (XDG state home) |
 | `--chain-id <CHAIN_ID>` | Session chain id: `--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID` |
 | `--node-http <URI>` | HTTP RPC endpoint: `--node-http` > `DEGENBOT_RPC_HTTP_CHAINID_<id>` |
 | `--node-ws <URI>` | WebSocket RPC endpoint: `--node-ws` > `DEGENBOT_RPC_WS_CHAINID_<id>` |

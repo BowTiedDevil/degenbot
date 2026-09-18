@@ -20,10 +20,15 @@
 //!
 //! | value       | layers                                                    |
 //! |-------------|-----------------------------------------------------------|
-//! | database    | `--database` > `DEGENBOT_DB_PATH` > `~/.config/degenbot/degenbot.db` |
+//! | database    | `--database` > `DEGENBOT_DB_PATH` > state-home default    |
 //! | chain id    | `--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`                |
 //! | HTTP RPC    | `--node-http` > `DEGENBOT_RPC_HTTP_CHAINID_<id>`          |
 //! | WS RPC      | `--node-ws` > `DEGENBOT_RPC_WS_CHAINID_<id>`              |
+//!
+//! The database default lives under the XDG state home: `$XDG_STATE_HOME`
+//! (absolute only) else `$HOME/.local/state`, then `degenbot/db/degenbot.db`.
+//! The state-rooted schema keys (`logging.runs_dir`, `persistence.state_dir`)
+//! share the same base, expanded by [`expand_state_path`].
 //!
 //! [`LoadedConfig`]: crate::LoadedConfig
 
@@ -36,10 +41,23 @@ use crate::loader::{EnvVars, Source};
 /// it; the built-in default applies when both are unset).
 pub const DB_PATH_ENV: &str = "DEGENBOT_DB_PATH";
 
-/// Built-in default database path. The leading `~` is expanded against the
-/// `HOME` env layer at resolution time, mirroring the Python
-/// `DatabaseSettings` validator.
-pub const DB_PATH_DEFAULT: &str = "~/.config/degenbot/degenbot.db";
+/// The XDG Base Directory variable selecting the config home. Honored by
+/// [`standard_file_path`](crate::standard_file_path) and [`config_home`].
+pub const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
+
+/// The XDG Base Directory variable selecting the state home, the base of the
+/// database / run-artifact / durable-state defaults.
+pub const XDG_STATE_HOME_ENV: &str = "XDG_STATE_HOME";
+
+/// Built-in default database path under the state home. The leading `~` is
+/// expanded against the `HOME` env layer at resolution time, and a usable
+/// `$XDG_STATE_HOME` rebases the whole state-home prefix (see
+/// [`expand_state_path`]).
+pub const DB_PATH_DEFAULT: &str = "~/.local/state/degenbot/db/degenbot.db";
+
+/// The state-home prefix carried by the state-rooted schema defaults
+/// (`logging.runs_dir`, `persistence.state_dir`, [`DB_PATH_DEFAULT`]).
+const STATE_HOME_PREFIX: &str = "~/.local/state";
 
 /// Environment variable supplying the session chain id (`--chain-id`
 /// overrides it). This is the name the Python CLI reads today (`config.py`);
@@ -131,12 +149,75 @@ pub fn expand_tilde_path(raw: &str) -> PathBuf {
     expand_tilde(&crate::ProcessEnv, raw)
 }
 
+/// An XDG base-directory variable that is USABLE per the spec: set,
+/// non-empty, and absolute. An empty or relative value is deliberately
+/// ignored (spec: relative paths are invalid and must be skipped).
+fn xdg_base(env: &dyn EnvVars, name: &str) -> Option<PathBuf> {
+    let raw = env.get(name).filter(|v| !v.is_empty())?;
+    let path = PathBuf::from(raw);
+    path.is_absolute().then_some(path)
+}
+
+/// The XDG config home: `$XDG_CONFIG_HOME` (absolute only) else
+/// `$HOME/.config`. `None` when neither a usable variable nor `HOME` exists.
+#[must_use]
+pub fn config_home(env: &dyn EnvVars) -> Option<PathBuf> {
+    if let Some(xdg) = xdg_base(env, XDG_CONFIG_HOME_ENV) {
+        return Some(xdg);
+    }
+    env.get(HOME_ENV)
+        .filter(|home| !home.is_empty())
+        .map(|home| Path::new(&home).join(".config"))
+}
+
+/// The XDG state home: `$XDG_STATE_HOME` (absolute only) else
+/// `$HOME/.local/state`. `None` when neither a usable variable nor `HOME`
+/// exists.
+#[must_use]
+pub fn state_home(env: &dyn EnvVars) -> Option<PathBuf> {
+    if let Some(xdg) = xdg_base(env, XDG_STATE_HOME_ENV) {
+        return Some(xdg);
+    }
+    env.get(HOME_ENV)
+        .filter(|home| !home.is_empty())
+        .map(|home| Path::new(&home).join(".local/state"))
+}
+
+/// Expand a state-rooted schema path through the env seam: a usable
+/// `$XDG_STATE_HOME` rebases a path under the `~/.local/state` prefix, and
+/// every other form falls back to plain leading-`~` expansion against HOME.
+/// Centralized here so the database, run-artifact, and durable-state
+/// defaults share one XDG rule instead of re-deriving it per key.
+#[must_use]
+pub fn expand_state_path_with(env: &dyn EnvVars, raw: &str) -> PathBuf {
+    if let (Some(xdg), Some(rest)) = (
+        xdg_base(env, XDG_STATE_HOME_ENV),
+        raw.strip_prefix(STATE_HOME_PREFIX),
+    ) {
+        // Component-aware match: "~/.local/state" alone or followed by a
+        // `/` rebases; a sibling like "~/.local/stateful" is somebody
+        // else's directory and expands as written.
+        if rest.is_empty() || rest.starts_with('/') {
+            return xdg.join(rest.trim_start_matches('/'));
+        }
+    }
+    expand_tilde(env, raw)
+}
+
+/// [`expand_state_path_with`] over the process environment (the production
+/// convenience for `degenbot-runs`).
+#[must_use]
+pub fn expand_state_path(raw: &str) -> PathBuf {
+    expand_state_path_with(&crate::ProcessEnv, raw)
+}
+
 /// Resolve the database path: `--database` > `DEGENBOT_DB_PATH` >
-/// `~/.config/degenbot/degenbot.db`.
+/// `<state_home>/degenbot/db/degenbot.db`.
 ///
 /// The winning value has a leading `~` expanded against `HOME` (read
-/// through the env seam), so a hand-written `~/.config/...` never resolves
-/// against the process cwd.
+/// through the env seam), so a hand-written `~/.local/state/...` never
+/// resolves against the process cwd. Only the built-in default consults
+/// `$XDG_STATE_HOME`; an explicit CLI/env path is expanded as written.
 #[must_use]
 pub fn resolve_database_path(env: &dyn EnvVars, cli_database: Option<&str>) -> Resolved<PathBuf> {
     let env_value = env.get(DB_PATH_ENV);
@@ -145,7 +226,11 @@ pub fn resolve_database_path(env: &dyn EnvVars, cli_database: Option<&str>) -> R
         (None, Some(envv)) => (envv, Source::Env),
         (None, None) => (DB_PATH_DEFAULT, Source::Default),
     };
-    Resolved::new(expand_tilde(env, raw), source)
+    let value = match source {
+        Source::Default => expand_state_path_with(env, raw),
+        Source::File | Source::Cli | Source::Env => expand_tilde(env, raw),
+    };
+    Resolved::new(value, source)
 }
 
 /// Resolve the session chain id: `--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`.

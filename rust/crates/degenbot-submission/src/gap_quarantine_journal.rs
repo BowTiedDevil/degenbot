@@ -2,7 +2,9 @@
 //!
 //! The quarantine FSM is in-memory, so a process restart loses every parked
 //! frame. This module persists parks and their resolutions as JSON Lines under
-//! the typed `persistence.state_dir` root (default `~/.config/degenbot/state`)
+//! the typed `persistence.state_dir` root (default the XDG state home:
+//! `$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`, then
+//! `degenbot/state`)
 //! — OUTSIDE the per-session run directories, because the journal must outlive
 //! the session that wrote it. On the next boot the still-pending parks re-enter
 //! the live FSM exactly as they left it (tracked or tentative); nothing is

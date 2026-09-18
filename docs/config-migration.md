@@ -4,7 +4,7 @@
 
 ## What changed
 
-The operator file `~/.config/degenbot/config.toml` (or its `DEGENBOT_CONFIG` override) is now the **typed Rust file layer** of `degenbot-config`'s `BotConfigLoader`. Every top-level table must name a declared schema section, and every key must be a declared key — the loader fails closed, aggregating every problem before reporting.
+The operator file `$XDG_CONFIG_HOME/degenbot/config.toml` (else `~/.config/degenbot/config.toml`; or its `DEGENBOT_CONFIG` override) is now the **typed Rust file layer** of `degenbot-config`'s `BotConfigLoader`. Every top-level table must name a declared schema section, and every key must be a declared key — the loader fails closed, aggregating every problem before reporting.
 
 The pre-0.6 file vocabulary (`[rpc]`, `[ws]`, `[database]`, `[otel]`, top-level `default_chain_id`) was Python-driver domain the typed schema never carried. Those items are **retired**: a file containing them is refused at boot with a pointed error naming its replacement.
 

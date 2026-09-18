@@ -68,13 +68,15 @@ pub mod schema_macro;
 
 pub use error::ConfigError;
 pub use loader::{
-    standard_file_path, BotConfigLoader, EnvVars, LoadedConfig, MapEnv, ProcessEnv, Source,
+    standard_file_path, standard_file_path_with, BotConfigLoader, EnvVars, LoadedConfig, MapEnv,
+    ProcessEnv, Source,
 };
 pub use resolvers::{
-    expand_tilde_path, node_http_env_name, node_ws_env_name, resolve_chain_id,
-    resolve_database_path, resolve_node_http_uri, resolve_node_uris, resolve_node_ws_uri, Resolved,
-    ResolvedNodeUris, DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX,
-    RPC_WS_ENV_PREFIX,
+    config_home, expand_state_path, expand_state_path_with, expand_tilde_path, node_http_env_name,
+    node_ws_env_name, resolve_chain_id, resolve_database_path, resolve_node_http_uri,
+    resolve_node_uris, resolve_node_ws_uri, state_home, Resolved, ResolvedNodeUris,
+    DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX, RPC_WS_ENV_PREFIX,
+    XDG_CONFIG_HOME_ENV, XDG_STATE_HOME_ENV,
 };
 pub use schema::{AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyName};
 pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA};

@@ -160,8 +160,8 @@ crate::config_schema! {
     // location is file/env settable like every other runtime path; a leading
     // `~` resolves against HOME at use (degenbot-runs).
     logging LoggingConfig {
-        runs_dir [path] = std::path::PathBuf::from("~/.config/degenbot/logs"), env = "DEGENBOT_RUNS_DIR", def = "~/.config/degenbot/logs",
-            doc = "Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. A leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap.";
+        runs_dir [path] = std::path::PathBuf::from("~/.local/state/degenbot/logs"), env = "DEGENBOT_RUNS_DIR", def = "~/.local/state/degenbot/logs",
+            doc = "Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap.";
     }
 
     // Durable state that OUTLIVES a process lifetime: unlike per-session run
@@ -169,8 +169,8 @@ crate::config_schema! {
     // so the location is file/env settable like every other runtime path; a
     // leading `~` resolves against HOME at use (degenbot-runs).
     persistence PersistenceConfig {
-        state_dir [path] = std::path::PathBuf::from("~/.config/degenbot/state"), env = "DEGENBOT_STATE_DIR", def = "~/.config/degenbot/state",
-            doc = "Root directory for durable, process-lifetime-independent bot state (e.g. the backrun sidecar's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. A leading `~` expands against HOME.";
+        state_dir [path] = std::path::PathBuf::from("~/.local/state/degenbot/state"), env = "DEGENBOT_STATE_DIR", def = "~/.local/state/degenbot/state",
+            doc = "Root directory for durable, process-lifetime-independent bot state (e.g. the backrun sidecar's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME.";
     }
 
     allocator AllocatorConfig {
@@ -517,7 +517,7 @@ mod tests {
         );
         assert_eq!(
             BotConfig::default().logging.runs_dir,
-            std::path::PathBuf::from("~/.config/degenbot/logs")
+            std::path::PathBuf::from("~/.local/state/degenbot/logs")
         );
     }
 
@@ -540,7 +540,7 @@ mod tests {
         );
         assert_eq!(
             BotConfig::default().persistence.state_dir,
-            std::path::PathBuf::from("~/.config/degenbot/state")
+            std::path::PathBuf::from("~/.local/state/degenbot/state")
         );
     }
 

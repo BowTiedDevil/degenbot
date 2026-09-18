@@ -44,8 +44,8 @@ class TestDatabasePathExpansion:
     """A ``~``-prefixed database path in config.toml must be expanded.
 
     The config file is hand-edited (or created via ``degenbot config``) on a
-    user's machine, where the canonical location ``~/.config/degenbot/...`` is
-    the natural thing to write. If the path is left as a literal ``~`` string,
+    user's machine, where a ``~``-prefixed path is the natural thing to write.
+    If the path is left as a literal ``~`` string,
     ``DatabaseSettings.path`` resolves to ``<cwd>/~/.config/...`` rather than the
     home directory — so SQLite emits ``unable to open database file`` (the path
     is treated relative to the process cwd and the bogus ``~`` segment doesn't
@@ -55,12 +55,12 @@ class TestDatabasePathExpansion:
 
     def test_tilde_database_path_is_expanded(self) -> None:
         config = DegenbotConfig(
-            database=DatabaseSettings(path=Path("~/.config/degenbot/degenbot.db")),
+            database=DatabaseSettings(path=Path("~/.local/state/degenbot/db/degenbot.db")),
             rpc={},
         )
         # The ``~`` must be expanded to the user's home directory, not left as
         # a literal segment resolved against the process cwd.
         assert not config.database.path.as_posix().startswith("~")
-        assert config.database.path == Path("~/.config/degenbot/degenbot.db").expanduser()
+        assert config.database.path == Path("~/.local/state/degenbot/db/degenbot.db").expanduser()
         assert str(config.database.path.absolute()).startswith(str(Path.home()))
         assert "~" not in config.database.path.absolute().parts

@@ -117,7 +117,8 @@ and a best-effort `latest` symlink beside it:
 ```
 
 The root is the typed `logging.runs_dir` key (TOML `[logging] runs_dir`, env
-`DEGENBOT_RUNS_DIR`), defaulting to `~/.config/degenbot/logs`; a leading `~`
+`DEGENBOT_RUNS_DIR`), defaulting to the XDG state home (`$XDG_STATE_HOME` when
+absolute, else `$HOME/.local/state`) plus `degenbot/logs`; a leading `~`
 expands against `HOME`.
 
 | Env | Meaning |
@@ -151,8 +152,9 @@ directories so a restart resumes them instead of dropping them.
 ```
 
 `state_dir` is the typed `persistence.state_dir` key (TOML
-`[persistence] state_dir`, env `DEGENBOT_STATE_DIR`), default
-`~/.config/degenbot/state`. It is deliberately separate from `logging.runs_dir`:
+`[persistence] state_dir`, env `DEGENBOT_STATE_DIR`), default the XDG state
+home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`) plus
+`degenbot/state`. It is deliberately separate from `logging.runs_dir`:
 state here **outlives** a session, while run artifacts are per-session. A
 leading `~` expands against `HOME`.
 

@@ -88,6 +88,19 @@ def isolated_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     return cfg
 
 
+@pytest.fixture(autouse=True)
+def isolated_database_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Never touch the real state-home DB default.
+
+    ``_init_config`` mkdirs the ``DB_PATH`` parent and creates the SQLite
+    file; without this fixture those tests would write into the operator's
+    ``$XDG_STATE_HOME``. Every test in this module gets a throwaway path.
+    """
+    db = tmp_path / "degenbot-test.db"
+    monkeypatch.setattr(config_module, "DB_PATH", db)
+    return db
+
+
 def test_env_supplies_default_chain_id_when_file_has_none(
     isolated_config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -103,14 +116,10 @@ def test_env_supplies_default_chain_id_when_file_has_none(
     assert config.default_chain_id == 8453
 
 
-def test_env_overrides_a_retired_file_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_env_overrides_a_retired_file_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The env layer outranks the retired file key (mirrors the Rust cascade)."""
     cfg = tmp_path / "config.toml"
-    cfg.write_text(
-        "default_chain_id = 137\n\n" + MODERN_LAYOUT, encoding="utf-8"
-    )
+    cfg.write_text("default_chain_id = 137\n\n" + MODERN_LAYOUT, encoding="utf-8")
     monkeypatch.setattr(config_module, "CONFIG_FILE", cfg)
     monkeypatch.setenv(_CHAIN_ID_ENV_VAR, "1")
 
@@ -161,6 +170,13 @@ def test_fresh_init_creates_no_config_file(
     config_file = config_dir / "config.toml"
     monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
     monkeypatch.setattr(config_module, "CONFIG_FILE", config_file)
+    # The DB default lives under the state home, NOT under CONFIG_DIR: pin it
+    # into the tmp tree so the bootstrap never touches the real home.
+    monkeypatch.setattr(
+        config_module,
+        "DB_PATH",
+        tmp_path / "state" / "degenbot" / "db" / "degenbot.db",
+    )
     monkeypatch.setattr(
         config_module,
         "create_new_sqlite_database",

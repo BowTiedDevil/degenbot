@@ -99,7 +99,7 @@ bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
         rpc={1: RPC_URL},
-        database={"path": "~/.config/degenbot/degenbot.db"},
+        database={"path": "~/.local/state/degenbot/db/degenbot.db"},
     )
 )
 
@@ -1082,7 +1082,7 @@ bot = degenbot.Bot(
         rpc={
             1: RPC_URL,
         },
-        database={"path": "~/.config/degenbot/degenbot.db"},
+        database={"path": "~/.local/state/degenbot/db/degenbot.db"},
     )
 )
 # The RPC provider is built from the config and its eth_chainId is enforced
@@ -1365,7 +1365,7 @@ DEGENBOT_DEBUG=1 python my_script.py
 
 ### Configuration File
 
-The operator file `~/.config/degenbot/config.toml` (or the `DEGENBOT_CONFIG`
+The operator file `$XDG_CONFIG_HOME/degenbot/config.toml` (else `~/.config/degenbot/config.toml`, or the `DEGENBOT_CONFIG`
 override) is the typed Rust `BotConfig` file layer: its tables must name
 declared schema sections (see
 [docs/rust-config-keys.md](docs/rust-config-keys.md) for the authoritative,
@@ -1392,7 +1392,8 @@ Python-domain settings are supplied through the cascade (CLI flags > OS env):
 - `DEGENBOT_RPC_HTTP_CHAINID_<ID>` / `DEGENBOT_RPC_WS_CHAINID_<ID>` — per-chain
   HTTP/WS RPC endpoints.
 
-The SQLite database defaults to `~/.config/degenbot/degenbot.db`. A surviving
+The SQLite database defaults to the XDG state home — `$XDG_STATE_HOME/degenbot/db/degenbot.db`
+when `$XDG_STATE_HOME` is an absolute path, else `~/.local/state/degenbot/db/degenbot.db`. A surviving
 pre-0.6 vocabulary key (`default_chain_id`, `[rpc]`, `[ws]`, `[database]`,
 `[otel]`) is refused at boot — see
 [docs/config-migration.md](docs/config-migration.md) for the replacement

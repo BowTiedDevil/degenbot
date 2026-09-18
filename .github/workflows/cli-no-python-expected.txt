@@ -12,7 +12,7 @@ Commands:
   path      Steer a live bot over the operator command channel
 
 Options:
-      --database <PATH>      Path to the SQLite database (`--database` > `DEGENBOT_DB_PATH` > `~/.config/degenbot/degenbot.db`)
+      --database <PATH>      Path to the SQLite database (`--database` > `DEGENBOT_DB_PATH` > `<state_home>/degenbot/db/degenbot.db`)
       --chain-id <CHAIN_ID>  Session chain id (`--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`)
       --node-http <URI>      HTTP RPC endpoint (`--node-http` > `DEGENBOT_RPC_HTTP_CHAINID_<id>`)
       --node-ws <URI>        WebSocket RPC endpoint (`--node-ws` > `DEGENBOT_RPC_WS_CHAINID_<id>`)

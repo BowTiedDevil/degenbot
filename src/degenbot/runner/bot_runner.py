@@ -36,7 +36,6 @@ import signal
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Any, Self, cast
 
 from degenbot import Bot
@@ -87,9 +86,10 @@ def _make_arbitrage_config(node_http: str) -> DegenbotConfig:
     equals ``rpc[1]``, so the injection here is consistent rather than a bypass.
     The Bot enforces the connected RPC's ``eth_chainId`` matches at construction.
 
-    The database path is read from the existing user config at
-    ``~/.config/degenbot/config.toml`` (so locally-configured DB paths are
-    honored) and falls back to the default path if no config exists.
+    The database path is read from the existing user config at the standard
+    config file (``$XDG_CONFIG_HOME``/``$HOME/.config`` ``degenbot/config.toml``,
+    so locally-configured DB paths are honored) and falls back to the XDG
+    state-home default if no config exists.
     """
     from degenbot.config import CONFIG_FILE, load_config_from_file
 
@@ -103,8 +103,10 @@ def _make_arbitrage_config(node_http: str) -> DegenbotConfig:
             default_chain_id=1,
         )
 
+    from degenbot.config import DB_PATH
+
     return DegenbotConfig(
-        database=DatabaseSettings(path=Path("~/.config/degenbot/degenbot.db").expanduser()),
+        database=DatabaseSettings(path=DB_PATH),
         rpc={1: cast("Any", node_http)},
         default_chain_id=1,
     )

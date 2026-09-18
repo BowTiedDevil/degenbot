@@ -72,8 +72,8 @@ fn logging_runs_dir_default_and_env_override() {
     let dflt = must_ok(&BotConfigLoader::new().without_env());
     assert_eq!(
         dflt.config.logging.runs_dir,
-        PathBuf::from("~/.config/degenbot/logs"),
-        "default is the HOME-relative run-artifacts root"
+        PathBuf::from("~/.local/state/degenbot/logs"),
+        "default is the state-home-relative run-artifacts root"
     );
     assert_eq!(dflt.source_of("DEGENBOT_RUNS_DIR"), Some(Source::Default));
 

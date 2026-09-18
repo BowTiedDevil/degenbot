@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use degenbot_config::{
-    node_http_env_name, node_ws_env_name, resolve_chain_id, resolve_database_path,
-    resolve_node_http_uri, resolve_node_uris, resolve_node_ws_uri, ConfigError, MapEnv, Source,
-    DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV,
+    expand_state_path_with, node_http_env_name, node_ws_env_name, resolve_chain_id,
+    resolve_database_path, resolve_node_http_uri, resolve_node_uris, resolve_node_ws_uri,
+    BotConfig, ConfigError, MapEnv, Source, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, XDG_STATE_HOME_ENV,
 };
 
 const HOME: &str = "/home/tester";
@@ -42,7 +42,7 @@ fn database_path_precedence_cli_beats_env_beats_default() {
     let dflt = resolve_database_path(&map_env(&[("HOME", HOME)]), None);
     assert_eq!(
         dflt.value,
-        PathBuf::from(format!("{HOME}/.config/degenbot/degenbot.db"))
+        PathBuf::from(format!("{HOME}/.local/state/degenbot/db/degenbot.db"))
     );
     assert_eq!(dflt.source, Source::Default, "absent layers -> default");
 
@@ -80,7 +80,71 @@ fn empty_database_layers_are_indistinguishable_from_absent() {
     assert_eq!(resolved.source, Source::Default);
     assert_eq!(
         resolved.value,
-        PathBuf::from(format!("{HOME}/.config/degenbot/degenbot.db"))
+        PathBuf::from(format!("{HOME}/.local/state/degenbot/db/degenbot.db"))
+    );
+}
+
+#[test]
+fn xdg_state_home_absolute_drives_the_database_default() {
+    let env = map_env(&[("HOME", HOME), (XDG_STATE_HOME_ENV, "/xdg/state")]);
+    let resolved = resolve_database_path(&env, None);
+    assert_eq!(
+        resolved.value,
+        PathBuf::from("/xdg/state/degenbot/db/degenbot.db"),
+        "absolute XDG_STATE_HOME rebases the built-in database default"
+    );
+    assert_eq!(resolved.source, Source::Default);
+
+    // Explicit layers are NOT rebased: only the built-in default consults XDG.
+    let explicit = resolve_database_path(&env, Some("/cli/custom.db"));
+    assert_eq!(explicit.value, PathBuf::from("/cli/custom.db"));
+}
+
+#[test]
+fn empty_or_relative_xdg_state_home_is_ignored() {
+    for xdg in ["", "relative/state"] {
+        let env = map_env(&[("HOME", HOME), (XDG_STATE_HOME_ENV, xdg)]);
+        let resolved = resolve_database_path(&env, None);
+        assert_eq!(
+            resolved.value,
+            PathBuf::from(format!("{HOME}/.local/state/degenbot/db/degenbot.db")),
+            "XDG_STATE_HOME={xdg:?} is not absolute and must be ignored"
+        );
+    }
+}
+
+/// The state-rooted schema keys resolve under the sandboxed state home:
+/// `$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`.
+#[test]
+fn state_rooted_schema_defaults_resolve_under_the_state_home() {
+    let cfg = BotConfig::default();
+    assert_eq!(
+        cfg.logging.runs_dir,
+        PathBuf::from("~/.local/state/degenbot/logs")
+    );
+    assert_eq!(
+        cfg.persistence.state_dir,
+        PathBuf::from("~/.local/state/degenbot/state")
+    );
+
+    let home_env = map_env(&[("HOME", HOME)]);
+    assert_eq!(
+        expand_state_path_with(&home_env, &cfg.logging.runs_dir.to_string_lossy()),
+        PathBuf::from(format!("{HOME}/.local/state/degenbot/logs"))
+    );
+    assert_eq!(
+        expand_state_path_with(&home_env, &cfg.persistence.state_dir.to_string_lossy()),
+        PathBuf::from(format!("{HOME}/.local/state/degenbot/state"))
+    );
+
+    let xdg_env = map_env(&[("HOME", HOME), (XDG_STATE_HOME_ENV, "/xdg/state")]);
+    assert_eq!(
+        expand_state_path_with(&xdg_env, &cfg.logging.runs_dir.to_string_lossy()),
+        PathBuf::from("/xdg/state/degenbot/logs")
+    );
+    assert_eq!(
+        expand_state_path_with(&xdg_env, &cfg.persistence.state_dir.to_string_lossy()),
+        PathBuf::from("/xdg/state/degenbot/state")
     );
 }
 
@@ -211,4 +275,25 @@ fn empty_node_uri_layer_is_absent_not_a_value() {
     ));
     assert_eq!(ws.value, " ");
     assert_eq!(ws.source, Source::Env);
+}
+
+#[test]
+fn expand_state_path_sibling_of_state_home_is_not_rebased() {
+    let xdg_env = map_env(&[("HOME", "/home/tester"), ("XDG_STATE_HOME", "/xdg/state")]);
+
+    // Component-aware prefix: "~/.local/stateful" is not the state home.
+    assert_eq!(
+        expand_state_path_with(&xdg_env, "~/.local/stateful"),
+        PathBuf::from("/home/tester/.local/stateful")
+    );
+    // The state home itself rebases to the XDG root.
+    assert_eq!(
+        expand_state_path_with(&xdg_env, "~/.local/state"),
+        PathBuf::from("/xdg/state")
+    );
+    // Unrelated "~" paths expand plain.
+    assert_eq!(
+        expand_state_path_with(&xdg_env, "~/.cache/foo"),
+        PathBuf::from("/home/tester/.cache/foo")
+    );
 }
