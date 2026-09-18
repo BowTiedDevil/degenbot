@@ -72,7 +72,7 @@ use alloy::primitives::{address, Address, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_bot::sidecar::{decide, Decision, SidecarConfig};
 use degenbot_bot::sidecar_engine::{
-    build_candidate_calldata, LaneCandidate, LaneFamily, SidecarHopRef, SidecarSolver,
+    compose_candidate, LaneCandidate, LaneFamily, PathReject, SidecarHopRef, SidecarSolver,
     SidecarV2Pool,
 };
 use degenbot_bot::sidecar_paths::V2ConnectorIndex;
@@ -879,6 +879,22 @@ fn floor_div_i64(a: i64, b: i64) -> i64 {
 // Discovery + solve
 // ─────────────────────────────────────────────────────────────────────────
 
+/// One declared chain's solve verdict — hop pools + the typed reject — for
+/// the JSONL `solve` event. `evaluated` means the envelope gate let the solve
+/// run and it returned a result (even one below the incumbent); `profit_wei`
+/// then carries that value so sub-incumbent outcomes stay legible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainOutcome {
+    /// The hop pool addresses in traversal order.
+    pub pools: Vec<Address>,
+    /// Whether [`SidecarSolver::evaluate_verdict`] returned `Ok`.
+    pub evaluated: bool,
+    /// The solved profit in wei when evaluated.
+    pub profit_wei: Option<u128>,
+    /// The typed reject when not evaluated.
+    pub reject: Option<PathReject>,
+}
+
 /// Solve stats for the JSONL trace + the composed candidate.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SolveStats {
@@ -891,6 +907,8 @@ pub struct SolveStats {
     /// normalization lane, so its candidates were refused (the frame's
     /// truthful `non_base_quote` observation when nothing else composed).
     pub non_base_quote_dropped: bool,
+    /// The per-chain outcomes behind `dfs_declared` / `dfs_evaluated`.
+    pub chains: Vec<ChainOutcome>,
 }
 
 /// Evaluate the anchored walker's depth-3 chains through the SAME
@@ -905,13 +923,29 @@ pub fn solve_dfs_chains(
 ) -> SolveStats {
     let mut stats = SolveStats::default();
     for chain in chains {
+        let pools: Vec<Address> = chain.iter().map(|h| h.pool).collect();
         let idx = solver.declare_hops(chain);
         stats.dfs_declared += 1;
-        let Some(res) = solver.evaluate(idx, gas_floor_wei) else {
-            continue;
+        let res = match solver.evaluate_verdict(idx, gas_floor_wei) {
+            Ok(res) => res,
+            Err(reject) => {
+                stats.chains.push(ChainOutcome {
+                    pools,
+                    evaluated: false,
+                    profit_wei: None,
+                    reject: Some(reject),
+                });
+                continue;
+            }
         };
         stats.dfs_evaluated += 1;
         let profit = res.profit.to::<u128>();
+        stats.chains.push(ChainOutcome {
+            pools,
+            evaluated: true,
+            profit_wei: Some(profit),
+            reject: None,
+        });
         if stats.best.as_ref().is_some_and(|b| b.profit >= profit) {
             continue;
         }
@@ -1447,7 +1481,7 @@ pub async fn process_frame(
     let mut aggregate = SolveStats::default();
 
     if !dfs_chains.is_empty() {
-        let dfs_stats = solve_dfs_chains(&mut solver, &dfs_chains, pl.gas_floor_wei);
+        let mut dfs_stats = solve_dfs_chains(&mut solver, &dfs_chains, pl.gas_floor_wei);
         aggregate.dfs_declared += dfs_stats.dfs_declared;
         aggregate.dfs_evaluated += dfs_stats.dfs_evaluated;
         if dfs_stats.best.as_ref().is_some_and(|b| {
@@ -1456,21 +1490,47 @@ pub async fn process_frame(
                 .as_ref()
                 .is_none_or(|best| b.profit > best.profit)
         }) {
-            aggregate.best = dfs_stats.best;
+            aggregate.best = dfs_stats.best.take();
         }
+        aggregate.chains.append(&mut dfs_stats.chains);
     }
     aggregate.non_base_quote_dropped |= non_base_quote_dropped;
     stages.solve_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
+    trace_jsonl(
+        "solve",
+        serde_json::json!({
+            "tx": tx_hex,
+            "chains": aggregate
+                .chains
+                .iter()
+                .map(|c| serde_json::json!({
+                    "pools": c
+                        .pools
+                        .iter()
+                        .map(|a| format!("0x{}", alloy::hex::encode(a)))
+                        .collect::<Vec<_>>(),
+                    "evaluated": c.evaluated,
+                    "profit_wei": c.profit_wei.map(|p| p.to_string()),
+                    "reject": c.reject.map(PathReject::label),
+                }))
+                .collect::<Vec<_>>(),
+            "best": aggregate.best.is_some(),
+            "best_profit_wei": aggregate.best.as_ref().map(|b| b.profit.to_string()),
+            "dfs_declared": aggregate.dfs_declared,
+            "dfs_evaluated": aggregate.dfs_evaluated,
+            "non_base_quote_dropped": aggregate.non_base_quote_dropped,
+        }),
+    );
 
     // ── stage: compose + `eth_callMany` gate ──────────────────────────────
     let mut requested_bid = U256::ZERO;
     let mut submit_calldata = None;
     if let Some(best) = aggregate.best.clone() {
         let t = Instant::now();
-        let composed = build_candidate_calldata(&best, pl.exec, WETH, pl.bribe_bips);
+        let composed = compose_candidate(&best, pl.exec, WETH, pl.bribe_bips);
         stages.compose_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
         match composed {
-            Some(cd) => {
+            Ok(cd) => {
                 let t = Instant::now();
                 let sim_ok = simulate_candidate(sim_client, ev, pl.exec, pl.owner, &cd).await;
                 stages.sim_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -1491,10 +1551,14 @@ pub async fn process_frame(
                     submit_calldata = Some(cd);
                 }
             }
-            None => {
+            Err(reject) => {
                 trace_jsonl(
                     "composed",
-                    serde_json::json!({"tx": tx_hex, "composed": false}),
+                    serde_json::json!({
+                        "tx": tx_hex,
+                        "composed": false,
+                        "reason": reject.label(),
+                    }),
                 );
             }
         }

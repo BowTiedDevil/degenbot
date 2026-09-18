@@ -115,6 +115,37 @@ struct DeclaredPath {
     hops: Vec<PlanningHop>,
 }
 
+/// Why [`Workspace::evaluate_verdict`] refused a declared path: the typed
+/// `None` of the envelope-gated solve. The frame pipeline traces this
+/// verbatim, so the per-chain dark half (declared but not solved) is legible
+/// without re-deriving a cause from a string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathReject {
+    /// The declared index is out of range for this scope.
+    NoSuchPath,
+    /// Hop resolution left `deficits` hops unsatisfied: an unadmitted pool id
+    /// or explicit state the projection could not use.
+    UnusablePoolState { deficits: usize },
+    /// The profit-envelope gate skipped the walk: `min_profit` sits above the
+    /// path's rigorous profit bound.
+    NoEnvelopeProfit,
+    /// The solver walked the path and found no profitable input.
+    Unsolved,
+}
+
+impl PathReject {
+    /// The stable JSONL label (the offline-review contract).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NoSuchPath => "no_such_path",
+            Self::UnusablePoolState { .. } => "unusable_pool_state",
+            Self::NoEnvelopeProfit => "no_envelope_profit",
+            Self::Unsolved => "unsolved",
+        }
+    }
+}
+
 /// The evaluate pipeline's verdict shapes, for observability + the gate.
 enum EvalVerbose {
     NoSuchPath,
@@ -254,9 +285,26 @@ impl Workspace {
     /// Envelope-gated solve of a declared path at `min_profit` (the gas
     /// floor + safety margin). `None` = gate skipped or unsolvable.
     pub fn evaluate(&mut self, path_idx: usize, min_profit: U256) -> Option<SolvePathResult> {
+        self.evaluate_verdict(path_idx, min_profit).ok()
+    }
+
+    /// The typed form of [`Workspace::evaluate`]: the reject cause survives
+    /// the `Option` collapse so callers can trace WHY a chain did not solve.
+    ///
+    /// # Errors
+    ///
+    /// [`PathReject`] carrying the `evaluate_verbose` verdict verbatim.
+    pub fn evaluate_verdict(
+        &mut self,
+        path_idx: usize,
+        min_profit: U256,
+    ) -> Result<SolvePathResult, PathReject> {
         match self.evaluate_verbose(path_idx, min_profit) {
-            EvalVerbose::Solved(r) => Some(r),
-            _ => None,
+            EvalVerbose::Solved(r) => Ok(r),
+            EvalVerbose::NoSuchPath => Err(PathReject::NoSuchPath),
+            EvalVerbose::Invalid(deficits) => Err(PathReject::UnusablePoolState { deficits }),
+            EvalVerbose::GateSkipped => Err(PathReject::NoEnvelopeProfit),
+            EvalVerbose::Unsolved => Err(PathReject::Unsolved),
         }
     }
 
@@ -408,6 +456,31 @@ mod tests {
         w.stage_v2_reserves(P, 476_259, 1_050, 2);
         let idx = w.declare(&golden_cycle(p_id, q_id));
         assert!(w.evaluate(idx, U256::from(1_000_000u64)).is_none());
+    }
+
+    /// The typed reject surface: the gate skip and the unresolvable-path
+    /// verdict keep distinct causes for the per-chain trace.
+    #[test]
+    fn evaluate_verdict_names_the_reject_cause() {
+        let mut w = Workspace::new();
+        let p_id = admitted_v2(&mut w, P, 500_000, 1_000);
+        let q_id = admitted_v2(&mut w, Q, 200_000, 900);
+        w.stage_v2_reserves(P, 476_259, 1_050, 2);
+
+        let gated = w.declare(&golden_cycle(p_id, q_id));
+        assert_eq!(
+            w.evaluate_verdict(gated, U256::from(1_000_000u64)).err(),
+            Some(PathReject::NoEnvelopeProfit)
+        );
+
+        // A hop naming an unadmitted pool leaves deficits: usable-state reject.
+        let bad = w.declare(&golden_cycle(p_id, 999));
+        assert_eq!(
+            w.evaluate_verdict(bad, U256::ZERO)
+                .err()
+                .map(PathReject::label),
+            Some("unusable_pool_state")
+        );
     }
 
     /// Isolation: two scopes diverge the SAME pool address (both get pool

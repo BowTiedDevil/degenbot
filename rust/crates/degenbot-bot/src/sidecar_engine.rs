@@ -17,6 +17,8 @@ use degenbot_solvers::mixed::SolvePathResult;
 
 use crate::bot_core::planning::{ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace};
 
+pub use crate::bot_core::planning::PathReject;
+
 /// One admitted V2 pool: identity + the LIVE reserves the caller fetched
 /// (the adapter keeps this narrow; reserves come from `fetch_v2_reserves`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +111,20 @@ impl SidecarSolver {
     /// floor + a safety margin). `None` = gate skipped or unsolvable.
     pub fn evaluate(&mut self, path_idx: usize, min_profit: U256) -> Option<SolvePathResult> {
         self.ws.evaluate(path_idx, min_profit)
+    }
+
+    /// The typed form of [`SidecarSolver::evaluate`]: the reject cause
+    /// survives the `Option` collapse for the per-chain trace.
+    ///
+    /// # Errors
+    ///
+    /// [`PathReject`] carrying the workspace verdict verbatim.
+    pub fn evaluate_verdict(
+        &mut self,
+        path_idx: usize,
+        min_profit: U256,
+    ) -> Result<SolvePathResult, PathReject> {
+        self.ws.evaluate_verdict(path_idx, min_profit)
     }
 
     /// Diagnostic: the full evaluate path for one declared index -- resolve
@@ -304,6 +320,35 @@ impl SidecarSolver {
     }
 }
 
+/// Why [`compose_candidate`] refused a solved candidate: the typed `None` of
+/// the composer. The frame pipeline traces [`ComposeReject::label`] so a
+/// solved-but-uncomposable frame names the exact encoding seam it died at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposeReject {
+    /// Fewer than two hops, or the per-hop amount vectors do not align with
+    /// the hop list.
+    UnsupportedHopShape,
+    /// A `V2_SWAP_COMPACT` amount reaches the uint96 wire width.
+    AmountExceedsUint96,
+    /// The command-stream encoder rejected the path.
+    StreamEncodingFailed,
+    /// The `execute(commands, config)` call could not be ABI-encoded.
+    ExecuteEncodingFailed,
+}
+
+impl ComposeReject {
+    /// The stable JSONL label (the offline-review contract).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::UnsupportedHopShape => "unsupported_hop_shape",
+            Self::AmountExceedsUint96 => "amount_exceeds_uint96",
+            Self::StreamEncodingFailed => "encoding_failed:cmd_stream",
+            Self::ExecuteEncodingFailed => "encoding_failed:execute_call",
+        }
+    }
+}
+
 /// The composed candidate bundle: the executor's `execute(commands, config)`
 /// calldata, ready for the exact-sim oracle + submission (DFYDYI B4).
 ///
@@ -313,15 +358,15 @@ impl SidecarSolver {
 /// profit delta (check mode 1 = WETH+ETH), recipient 0 = coinbase, with
 /// WETH auto-unwrap built into the bribe payout.
 ///
-/// `None` when the composer rejects the shape (unsupported family / uint96
-/// overflow on a hop amount) -- the frame then falls back to observe.
-#[must_use]
-pub fn build_candidate_calldata(
+/// # Errors
+///
+/// [`ComposeReject`] naming the encoding seam that refused the candidate.
+pub fn compose_candidate(
     candidate: &LaneCandidate,
     executor: Address,
     weth: Address,
     bribe_bips: u16,
-) -> Option<alloy::primitives::Bytes> {
+) -> Result<alloy::primitives::Bytes, ComposeReject> {
     use degenbot_executor::composers::{
         encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
         HopInfo, V2HopInfo, V3HopInfo,
@@ -332,7 +377,7 @@ pub fn build_candidate_calldata(
         || candidate.hop_outputs.len() != candidate.hops.len()
         || candidate.consumed_inputs.len() != candidate.hops.len()
     {
-        return None;
+        return Err(ComposeReject::UnsupportedHopShape);
     }
     // V2_SWAP_COMPACT carries uint96 amounts.
     let u96_max = u128::from(u64::MAX) * 0x1_0000_0000 + 0xFFFF_FFFF;
@@ -341,7 +386,7 @@ pub fn build_candidate_calldata(
         || candidate.hop_outputs.iter().any(|&v| too_big(v))
         || candidate.consumed_inputs.iter().any(|&v| too_big(v))
     {
-        return None;
+        return Err(ComposeReject::AmountExceedsUint96);
     }
 
     let hops = candidate
@@ -384,12 +429,23 @@ pub fn build_candidate_calldata(
         alloy::primitives::address!("000000000004444c5dc75cb358380d2e3de08a90"),
         weth,
     );
-    let commands = encode_cmd_stream(&ctx, &req)?;
+    let commands = encode_cmd_stream(&ctx, &req).ok_or(ComposeReject::StreamEncodingFailed)?;
     // check_mode 1 (WETH+ETH true-delta check) + coinbase bribe bips.
     let config = (U256::from(bribe_bips) << 8) | U256::from(1u8);
     encode_execute_call(executor, &commands, config)
-        .ok()
         .map(|call| alloy::primitives::Bytes::from(call.data.clone()))
+        .map_err(|_| ComposeReject::ExecuteEncodingFailed)
+}
+
+/// [`compose_candidate`] as the historical `Option` shape.
+#[must_use]
+pub fn build_candidate_calldata(
+    candidate: &LaneCandidate,
+    executor: Address,
+    weth: Address,
+    bribe_bips: u16,
+) -> Option<alloy::primitives::Bytes> {
+    compose_candidate(candidate, executor, weth, bribe_bips).ok()
 }
 
 #[cfg(test)]
@@ -574,5 +630,41 @@ mod tests {
             profit: 1,
         };
         assert!(build_candidate_calldata(&candidate, P, WETH, 1000).is_none());
+        assert_eq!(
+            compose_candidate(&candidate, P, WETH, 1000),
+            Err(ComposeReject::UnsupportedHopShape)
+        );
+    }
+
+    #[test]
+    fn compose_reject_names_amount_overflow() {
+        let candidate = LaneCandidate {
+            hops: vec![
+                SidecarHopRef {
+                    pool_id: 1,
+                    pool: P,
+                    token0: TOK,
+                    token1: WETH,
+                    zfo: false,
+                    family: LaneFamily::V2,
+                },
+                SidecarHopRef {
+                    pool_id: 2,
+                    pool: Q,
+                    token0: TOK,
+                    token1: WETH,
+                    zfo: true,
+                    family: LaneFamily::V2,
+                },
+            ],
+            optimal_input: u128::MAX,
+            hop_outputs: vec![1, 1],
+            consumed_inputs: vec![1, 1],
+            profit: 1,
+        };
+        assert_eq!(
+            compose_candidate(&candidate, P, WETH, 1000).err(),
+            Some(ComposeReject::AmountExceedsUint96)
+        );
     }
 }

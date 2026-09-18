@@ -173,6 +173,27 @@ async fn run_frame(
             "head": head,
         }),
     );
+    // The decision + its inputs, offline-review readable: the tracing line
+    // alone leaves the funnel's last stage out of the JSONL.
+    let (decision_kind, decision_reason, decision_bid) = match &artifacts.decision {
+        Decision::Bid { bid_wei } => ("bid", None, Some(bid_wei.to_string())),
+        Decision::Observe { reason } => ("observe", Some((*reason).to_string()), None),
+        Decision::Drop { reason } => ("drop", Some((*reason).to_string()), None),
+    };
+    trace_jsonl(
+        "decide",
+        serde_json::json!({
+            "tx": ev.hash.to_string(),
+            "decision": decision_kind,
+            "reason": decision_reason,
+            "bid_wei": decision_bid,
+            "composed_any": artifacts.submit_calldata.is_some(),
+            "requested_bid": artifacts.requested_bid.to_string(),
+            "age_ms": age_ms,
+            "spent": spent.to_string(),
+            "stop_file": cfg.stop_file.exists(),
+        }),
+    );
     if let Some(degenbot_simulation::sim::evm::frame_replay::ReplayFrameError::GapPending {
         claimed,
         expected,

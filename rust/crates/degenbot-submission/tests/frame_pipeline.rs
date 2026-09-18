@@ -609,6 +609,11 @@ fn walker_three_hop_chain_solves_and_composes() {
     assert_eq!(stats.dfs_evaluated, 1, "the chain clears the zero floor");
     let best = stats.best.expect("the 3-hop walker chain profits");
     assert_eq!(best.hops.len(), 3);
+    assert_eq!(stats.chains.len(), 1, "one chain outcome recorded");
+    assert!(stats.chains[0].evaluated);
+    assert_eq!(stats.chains[0].pools, vec![P, C1, C2]);
+    assert_eq!(stats.chains[0].profit_wei, Some(best.profit));
+    assert!(stats.chains[0].reject.is_none());
 
     // Wei honesty: the recorded profit matches the independent CLP-chain
     // optimum (WETH -> TOK -> M -> WETH).
