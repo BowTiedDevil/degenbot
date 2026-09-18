@@ -31,6 +31,17 @@ cargo test -p degenbot-submission --test sidecar_solve_frame -- --ignored
 | `SIDECAR_KEY_FILE` | Hex secp256k1 key path | Key never leaves `TxSigner` |
 | `SIDECAR_MEVBLOCKER_URL` | Private-broadcast RPC | Adds a provider to `extra_broadcast` |
 | `SIDECAR_DRY_RUN=1` | Sign-nothing dispatch | All candidates skip as `DryRun` |
+| `SIDECAR_BRIBE_BIPS` | Bribe ceiling (bips, default 9800) | The wallet gate may compose LOWER bips |
+| `SIDECAR_BUNDLE_GAS_EST` | Bundle gas estimate (default 300000) | Prices the net-of-gas bid gate |
+
+Wallet economics (live defect, receipts 0xd41a1c35 / 0x8603039d): the
+wallet funds ONLY the bundle's gas — the on-chain bribe is drawn from
+flash proceeds (the executor config pays `bribe_bips` of the true
+profit delta to `block.coinbase`) and the residue parks in executor
+custody. A bid exists only when the solved gross profit covers the gas
+burn plus 5%; the bribe then takes the surplus (capped by
+`SIDECAR_BRIBE_BIPS` and `SIDECAR_MAX_BUNDLE_WEI`), and the budget's
+`spent` accumulator tracks the wallet's gas burn, not the bribe.
 
 ```bash
 SIDECAR_RPC_URL="$DEGENBOT_RPC_HTTP_CHAINID_1" \
