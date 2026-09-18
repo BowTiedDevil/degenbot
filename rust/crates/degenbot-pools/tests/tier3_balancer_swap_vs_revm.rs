@@ -101,6 +101,17 @@ struct StableCase {
     amp: U256,
 }
 
+/// A 3-token stable case for the plain 2021 `StablePool` multi-token path,
+/// mirroring `BalancerStablePoolState` with `invariant_version == 2`
+/// (deployed `_calculateInvariant(amp, balances, roundUp=true)`) and no BPT.
+#[derive(Clone, Debug)]
+struct StableCase3 {
+    balances: [U256; 3],
+    scaling_factors: [U256; 3],
+    swap_fee: U256,
+    amp: U256,
+}
+
 /// The engine's weighted output via `simulate_swap`. `None` on `NotComputable`
 /// (an over-MAX_IN_RATIO / overflow the canonical harness would also revert).
 fn engine_weighted_out(case: &WeightedCase, zfo: bool, amount_in: U256) -> Option<U256> {
@@ -447,6 +458,33 @@ fn stable_v2_out_given_in_is_byte_exact_to_onchain_reference() {
     );
 }
 
+/// Plain 2021 `StablePool` multi-token (`INVARIANT_V2`): the deployed
+/// `_calculateInvariant(amp, balances, roundUp=true)` over 3 balances, driven
+/// through the pair surface and pinned byte-exact to the harness's VERBATIM
+/// deployed invariant. The 2-token V2 pin/proptest cannot catch a
+/// token-count-dependent `P_D` accumulation error; this does.
+#[test]
+fn plain_2021_stable_v2_multitoken_is_byte_exact_to_onchain_reference() {
+    let case = StableCase3 {
+        balances: [
+            U256::from(100_000u128 * 10u128.pow(18)),
+            U256::from(100_000u128 * 10u128.pow(6)),
+            U256::from(50_000u128 * 10u128.pow(8)),
+        ],
+        scaling_factors: [ONE, U256::from(10u128.pow(12)), U256::from(10u128.pow(10))],
+        swap_fee: U256::from(1_000_000_000_000_000u64), // 0.1%
+        amp: U256::from(250_000u64),
+    };
+    for frac in [100u64, 10, 4] {
+        // GIVEN_IN: in-balance fractions 1% / 10% / 25%.
+        assert_stable_v2_multitoken_parity(&case, 0, 1, case.balances[0] / U256::from(frac), false);
+        assert_stable_v2_multitoken_parity(&case, 1, 0, case.balances[1] / U256::from(frac), false);
+        // GIVEN_OUT: out-balance fractions 1% / 10% / 25%.
+        assert_stable_v2_multitoken_parity(&case, 0, 1, case.balances[1] / U256::from(frac), true);
+        assert_stable_v2_multitoken_parity(&case, 1, 0, case.balances[0] / U256::from(frac), true);
+    }
+}
+
 /// The engine's weighted `GIVEN_OUT` required-input via the pair surface.
 fn engine_weighted_in_given_out(case: &WeightedCase, zfo: bool, amount_out: U256) -> Option<U256> {
     let (identity, state) = BalancerWeightedPoolState::from_params(
@@ -584,6 +622,154 @@ fn assert_stable_v2_in_given_out_parity(case: &StableCase, zfo: bool, amount_out
         }
         (None, BalancerOutcome::Ok(o)) => {
             panic!("engine [V2] rejected but on-chain produced {o}")
+        }
+        (_, BalancerOutcome::Spurious(l)) => {
+            panic!("spurious/non-modeled on-chain revert: {l}")
+        }
+    }
+}
+
+/// The engine's 3-token stable `invariant_version == 2` output via the pair
+/// surface. The harness's fixed-index `stableOutGivenIn*V2` entries expose
+/// only (0,1)/(1,0), so only those pairs are comparable on-chain.
+fn engine_stable_v2_out3(
+    case: &StableCase3,
+    idx_in: usize,
+    idx_out: usize,
+    amount_in: U256,
+) -> Option<U256> {
+    let (identity, state) = BalancerStablePoolState::from_params(
+        RegisterBalancerStablePoolParams {
+            address: Address::from([0x44u8; 20]),
+            vault: Address::from([0x55u8; 20]),
+            pool_id: [0x44u8; 32],
+            tokens: vec![
+                Address::from([0xAAu8; 20]),
+                Address::from([0xBBu8; 20]),
+                Address::from([0xCCu8; 20]),
+            ],
+            amp: case.amp.to::<u128>(),
+            scaling_factors: case.scaling_factors.to_vec(),
+            swap_fee: case.swap_fee.to::<u128>(),
+            bpt_idx: None,
+            invariant_version: 2,
+            balances: case.balances.to_vec(),
+            update_block: 100,
+            rate_provider: None,
+        },
+        8,
+    );
+    ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair(
+        &identity, &state, idx_in, idx_out, amount_in, None, None,
+    )
+    .ok()
+}
+
+/// The engine's 3-token stable `invariant_version == 2` `GIVEN_OUT` required
+/// input via the pair surface.
+fn engine_stable_v2_in_given_out3(
+    case: &StableCase3,
+    idx_in: usize,
+    idx_out: usize,
+    amount_out: U256,
+) -> Option<U256> {
+    let (identity, state) = BalancerStablePoolState::from_params(
+        RegisterBalancerStablePoolParams {
+            address: Address::from([0x44u8; 20]),
+            vault: Address::from([0x55u8; 20]),
+            pool_id: [0x44u8; 32],
+            tokens: vec![
+                Address::from([0xAAu8; 20]),
+                Address::from([0xBBu8; 20]),
+                Address::from([0xCCu8; 20]),
+            ],
+            amp: case.amp.to::<u128>(),
+            scaling_factors: case.scaling_factors.to_vec(),
+            swap_fee: case.swap_fee.to::<u128>(),
+            bpt_idx: None,
+            invariant_version: 2,
+            balances: case.balances.to_vec(),
+            update_block: 100,
+            rate_provider: None,
+        },
+        8,
+    );
+    ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
+        &identity, &state, idx_in, idx_out, amount_out, None, None,
+    )
+    .ok()
+}
+
+/// Encode a 3-token `stable*V2` call (fixed `uint256[5]` arrays, `tokenCount`
+/// = 3).
+fn stable_call3(sig: &str, case: &StableCase3, amount: U256) -> Vec<u8> {
+    let mut d = selector(sig).to_vec();
+    d.extend_from_slice(&amount.to_be_bytes::<32>());
+    d.extend_from_slice(&case.swap_fee.to_be_bytes::<32>());
+    d.extend_from_slice(&case.amp.to_be_bytes::<32>());
+    for i in 0..MAX_STABLE_TOKENS {
+        d.extend_from_slice(
+            &case
+                .balances
+                .get(i)
+                .copied()
+                .unwrap_or(U256::ZERO)
+                .to_be_bytes::<32>(),
+        );
+    }
+    for i in 0..MAX_STABLE_TOKENS {
+        d.extend_from_slice(
+            &case
+                .scaling_factors
+                .get(i)
+                .copied()
+                .unwrap_or(U256::ZERO)
+                .to_be_bytes::<32>(),
+        );
+    }
+    d.extend_from_slice(&U256::from(3u64).to_be_bytes::<32>());
+    d
+}
+
+/// Assert engine === on-chain for the 3-token `stable*V2` 0/1 pair (the only
+/// pair the fixed-index harness entries expose).
+fn assert_stable_v2_multitoken_parity(
+    case: &StableCase3,
+    idx_in: usize,
+    idx_out: usize,
+    amount: U256,
+    given_out: bool,
+) {
+    let (engine, sig) = if given_out {
+        (
+            engine_stable_v2_in_given_out3(case, idx_in, idx_out, amount),
+            if idx_in == 0 {
+                "stableInGivenOut0to1V2(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+            } else {
+                "stableInGivenOut1to0V2(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+            },
+        )
+    } else {
+        (
+            engine_stable_v2_out3(case, idx_in, idx_out, amount),
+            if idx_in == 0 {
+                "stableOutGivenIn0to1V2(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+            } else {
+                "stableOutGivenIn1to0V2(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+            },
+        )
+    };
+    let onchain = call_onchain(stable_call3(sig, case, amount));
+    match (engine, onchain) {
+        (Some(e), BalancerOutcome::Ok(o)) => {
+            assert_eq!(e, o, "engine [V2 n=3] vs on-chain byte-exact")
+        }
+        (None, BalancerOutcome::GenuineReject(_)) => {}
+        (Some(e), BalancerOutcome::GenuineReject(l)) => {
+            panic!("engine [V2 n=3] produced {e} but on-chain rejected: {l}")
+        }
+        (None, BalancerOutcome::Ok(o)) => {
+            panic!("engine [V2 n=3] rejected but on-chain produced {o}")
         }
         (_, BalancerOutcome::Spurious(l)) => {
             panic!("spurious/non-modeled on-chain revert: {l}")

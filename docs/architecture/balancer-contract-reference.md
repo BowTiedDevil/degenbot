@@ -41,7 +41,7 @@ asserted in
 |----------|------------------------------|-----------|-------------|------------------|
 | `WeightedPool2Tokens` (2021) | mainnet `20210418-weighted-pool` → `WeightedPool2TokensFactory` `0xA5bf2ddF098bb0Ef6d120C98217dD6B141c74EE0`, `WeightedPoolFactory` `0x8E9aa87E45e92bad84D5F8DD1bff34Fb92637dE9` (DEPRECATED) | pow **V1** (FixedPoint without the `TWO`/`FOUR` fast paths) | YES — `PowVersion.V1` | shell over Rust core |
 | `WeightedPool` (current, post-2022) | Base `20230320-weighted-pool-v4` (ACTIVE) → `WeightedPoolFactory` `0x4C32a8a8fDa4E24139B51b456B42290f51d6A1c4`; mainnet `20230206-weighted-pool-v3` / `20230320-weighted-pool-v4` | pow **V2** (LogExpMath fast paths for `y == ONE/TWO/FOUR`) | YES — `PowVersion.V2` | shell over Rust core |
-| `StablePool` (plain, 2021-06) | mainnet `20210624-stable-pool` | pre-`roundUp` invariant revision | NOT exercised by any parity matrix — see gaps | shell over Rust core (unexercised) |
+| `StablePool` (plain, 2021-06) | mainnet `20210624-stable-pool` | `StableMath._calculateInvariant(amp, balances, roundUp=true)` (`P_D` accumulation — the deployed inline revision shared with MetaStable) | YES — `InvariantVersion.V2` | shell over Rust core |
 | `MetaStablePool` | mainnet `20210727-meta-stable-pool` → `MetaStablePoolFactory` `0x67d27634E44793fE63c467035E31ea8635117cd4` (DEPRECATED) | `StableMath._calculateInvariant(amp, balances, roundUp=true)` (`P_D` round up) | YES — `InvariantVersion.V2` | shell over Rust core |
 | `ComposableStablePool` (incl. MetaStable-era V2/V3 and V5/V6 factories) | mainnet `20220906`–`20240223`; Base `20230711-composable-stable-pool-v5` / `20240223-composable-stable-pool-v6` (Base factories listed DEPRECATED — pools live in the V2 vault registry regardless) | `INVARIANT_V1` (round-down `D_P`) + BPT-in-balances | YES — `InvariantVersion.V1` + `bpt_idx` skip | shell over Rust core |
 | **Balancer V3** (the 2024-12 vault + 2026 factories) | Base/mainnet `20241204-v3-vault` + `v3-weighted-pool*` / `v3-stable-pool*` tasks | hook-based, new vault | NOT in scope (V2-vault pools only) | — |
@@ -56,7 +56,11 @@ Shared across chains: the V2 Vault itself (`0xBA12222222228d8Ba445958a75a0704d56
 - **Stable invariant version** — `resolve_invariant_version()`
   (`builders/balancer_builder_base.py`) maps the Vault pool specialization:
   `General = 0` → `ComposableStablePool` → `INVARIANT_V1`;
-  `MinimalSwapInfo = 1` → `MetaStablePool` → `INVARIANT_V2`.
+  `MinimalSwapInfo = 1` → `MetaStablePool` → `INVARIANT_V2`. Plain 2021
+  `StablePool`s are `General` (3+ tokens) or `TwoToken` (2 tokens) with no
+  BPT and also use `INVARIANT_V2`; the heuristic has no branch for them, so
+  builds must pass the `BuildPoolRequest.invariant_version` override (see
+  gaps).
 - **BPT-in-balances** — `detect_bpt_index()` probes the token list; `None`
   marks MetaStable (no BPT token).
 
@@ -76,8 +80,19 @@ Golden-oracle parity (mainnet, block 24,407,242 —
 
 ## Gaps / follow-ups
 
-1. **Plain `StablePool` (2021) unexercised**, and `TwoTokenPool`-specialized
-   stables have no inference branch (only specializations 0 and 1 map).
+1. **Plain `StablePool` (2021) — covered, override still required.** The
+   committed `20210624-stable-pool` build-info (solc 0.7.1) carries the
+   deployed `StableMath._calculateInvariant(amp, balances, roundUp)` `P_D`
+   revision with swaps on `roundUp=true` — exactly the engine's
+   `InvariantVersion.V2` (`calculate_invariant_deployed(..., true)`). The
+   Tier-3 companion gate exercises a 3-token plain-2021 configuration
+   (`INVARIANT_V2`, no BPT) through both companion methods and both
+   directions, and the Rust Tier-3 oracle pins that multi-token path
+   byte-exact to the harness's verbatim deployed invariant. The builder's
+   `resolve_invariant_version` heuristic still maps only specializations 0
+   and 1 (plain 2021 pools are 0 or 2), so production builds of a plain 2021
+   pool must pass the `BuildPoolRequest.invariant_version` override until the
+   heuristic learns the no-BPT/no-rate-provider case.
 2. **BalancerQueries on Base — resolved.** The two addresses are per-chain
    deployments of the same `20220721-balancer-queries` artifact:
    `0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5` has code on Ethereum mainnet

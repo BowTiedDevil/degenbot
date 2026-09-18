@@ -79,8 +79,8 @@ class TestWeightedCompanionVsEngine:
     ) -> None:
         bot = Bot()
         t0, t1 = _token(bot, d0, 1), _token(bot, d1, 2)
-        balances = [10_000 * 10 ** d0, 10_000 * 10 ** d1]
-        weights = [w0 * 10 ** 16, w1 * 10 ** 16]
+        balances = [10_000 * 10**d0, 10_000 * 10**d1]
+        weights = [w0 * 10**16, w1 * 10**16]
         lp = make_balancer_weighted_pool(
             _addr(0xAA01 + pow_version),
             pool_id=bytes([pow_version]) + bytes(range(31)),
@@ -111,8 +111,8 @@ class TestWeightedCompanionVsEngine:
         bot = Bot()
         decs = (18, 6, 8)
         tokens = [_token(bot, d, i + 3) for i, d in enumerate(decs)]
-        balances = [50_000 * 10 ** d for d in decs]
-        weights = [33 * 10 ** 16, 33 * 10 ** 16, 34 * 10 ** 16]
+        balances = [50_000 * 10**d for d in decs]
+        weights = [33 * 10**16, 33 * 10**16, 34 * 10**16]
         lp = make_balancer_weighted_pool(
             _addr(0xAB03),
             pool_id=b"\x03" + bytes(range(31)),
@@ -127,15 +127,16 @@ class TestWeightedCompanionVsEngine:
             for mult in _MULTS:
                 amount = int(balances[i] * mult)
                 engine = lp._py_pool.calculate_tokens_out_for_pair(
-                    index_in=i, index_out=j, amount_in=amount,
+                    index_in=i,
+                    index_out=j,
+                    amount_in=amount,
                 )
                 calc = lp.calculate_tokens_out_from_tokens_in(
-                    token_in=tokens[i], token_out=tokens[j], token_in_quantity=amount,
+                    token_in=tokens[i],
+                    token_out=tokens[j],
+                    token_in_quantity=amount,
                 )
-                assert calc == engine, (
-                    f"pair({i},{j}) mult={mult}: py={calc} engine={engine}"
-                )
-
+                assert calc == engine, f"pair({i},{j}) mult={mult}: py={calc} engine={engine}"
 
     def test_given_out_matches_engine_pair_surface(self) -> None:
         """Given-out: python companion == engine pair surface (both pow versions).
@@ -146,7 +147,7 @@ class TestWeightedCompanionVsEngine:
         bot = Bot()
         d0, d1 = 18, 6
         t0, t1 = _token(bot, d0, 1), _token(bot, d1, 2)
-        balances = [10_000 * 10 ** d0, 10_000 * 10 ** d1]
+        balances = [10_000 * 10**d0, 10_000 * 10**d1]
         for pow_version, fee_frac in ((1, Fraction(0)), (2, Fraction(3, 1000))):
             lp = make_balancer_weighted_pool(
                 _addr(0xCC00 + pow_version),
@@ -155,7 +156,7 @@ class TestWeightedCompanionVsEngine:
                 tokens=[t0, t1],
                 balances=balances,
                 fee=fee_frac,
-                weights=[50 * 10 ** 16, 50 * 10 ** 16],
+                weights=[50 * 10**16, 50 * 10**16],
                 pow_version=pow_version,
             )
             for i, zfo in ((0, True), (1, False)):
@@ -164,7 +165,9 @@ class TestWeightedCompanionVsEngine:
                 for mult in _MULTS:
                     amount_out = int(out_balance * mult)
                     engine = lp._py_pool.calculate_tokens_in_for_pair(
-                        index_in=i, index_out=1 - i, amount_out=amount_out,
+                        index_in=i,
+                        index_out=1 - i,
+                        amount_out=amount_out,
                     )
                     calc = lp.calculate_tokens_in_from_tokens_out(
                         token_in=t_in,
@@ -188,7 +191,7 @@ class TestStableCompanionVsEngine:
             _token(bot, 6, 10),
             make_erc20(bot, _addr(0xBEEF), name="BPT", symbol="BPT", decimals=18, chain_id=31337),
         ]
-        balances = [25_000 * 10 ** 18, 25_000 * 10 ** 6, 12_345 * 10 ** 18]
+        balances = [25_000 * 10**18, 25_000 * 10**6, 12_345 * 10**18]
         lp = make_balancer_stable_pool(
             _addr(0xBB02),
             pool_id=bytes(range(32)),
@@ -224,7 +227,7 @@ class TestStableCompanionVsEngine:
         """MetaStablePool (INVARIANT_V2) with explicit scaling factors."""
         bot = Bot()
         tokens = [_token(bot, 18, 11), _token(bot, 18, 12)]
-        balances = [100_000 * 10 ** 18, 100_000 * 10 ** 18]
+        balances = [100_000 * 10**18, 100_000 * 10**18]
         lp = make_balancer_stable_pool(
             _addr(0xBB03),
             pool_id=bytes(range(32)),
@@ -249,4 +252,60 @@ class TestStableCompanionVsEngine:
                 )
                 assert calc == engine, (
                     f"metastable V2 zfo={zfo} mult={mult}: py={calc} engine={engine}"
+                )
+
+    def test_plain_2021_v2_multitoken_matches_engine(self) -> None:
+        """Plain 2021 StablePool (INVARIANT_V2, no BPT, 3 tokens).
+
+        The deployed 2021-06 StableMath is the roundUp P_D revision
+        (INVARIANT_V2); this drives the multi-token pair surface through both
+        companion methods in both directions.
+        """
+        bot = Bot()
+        decs = (18, 6, 8)
+        tokens = [_token(bot, d, i + 20) for i, d in enumerate(decs)]
+        balances = [100_000 * 10**18, 100_000 * 10**6, 50_000 * 10**8]
+        lp = make_balancer_stable_pool(
+            _addr(0xBB04),
+            pool_id=b"\x04" + bytes(range(31)),
+            vault=_VAULT,
+            tokens=tokens,
+            balances=balances,
+            fee=Fraction(1, 1000),
+            amp=250 * 1000,
+            scaling_factors=[_sf(d) for d in decs],
+            bpt_idx=None,
+            invariant_version=INVARIANT_V2,
+        )
+        for i, j in ((0, 1), (1, 0), (1, 2), (2, 1)):
+            for mult in _MULTS:
+                amount_in = int(balances[i] * mult)
+                engine_out = lp._py_pool.calculate_tokens_out_for_pair(
+                    index_in=i,
+                    index_out=j,
+                    amount_in=amount_in,
+                )
+                calc_out = lp.calculate_tokens_out_from_tokens_in(
+                    token_in=tokens[i],
+                    token_out=tokens[j],
+                    token_in_quantity=amount_in,
+                )
+                assert calc_out == engine_out, (
+                    f"plain 2021 V2 given-in pair({i},{j}) mult={mult}: "
+                    f"py={calc_out} engine={engine_out}"
+                )
+                amount_out = int(balances[j] * mult)
+                engine_in = lp._py_pool.calculate_tokens_in_for_pair(
+                    index_in=i,
+                    index_out=j,
+                    amount_out=amount_out,
+                )
+                calc_in = lp.calculate_tokens_in_from_tokens_out(
+                    token_in=tokens[i],
+                    token_out=tokens[j],
+                    token_out_quantity=amount_out,
+                )
+                assert calc_in == engine_in, (
+                    f"plain 2021 V2 given-out pair({i},{j}) mult={mult}: "
+                    f"py={calc_in} engine={engine_in}"
                 )
