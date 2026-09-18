@@ -37,6 +37,9 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_RUNS_DIR` | `logging.runs_dir` | `path` | `~/.local/state/degenbot/logs` | Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap. |
+| `DEGENBOT_LOG_STDERR` | `logging.log_stderr` | `bool` | `false` | Also mirror the session stdout log to stderr (interactive runs); the file-only posture is the default. A bad value fails the load rather than silently picking a sink. |
+| `DEGENBOT_TRACE_JSONL` | `logging.trace_jsonl` | `Option<path>` | `(unset; the session trace.jsonl under logging.runs_dir)` | Explicit offline-review JSONL capture path. When unset, the trace helpers append to the session's `trace.jsonl` under logging.runs_dir. |
+| `DEGENBOT_DRY_RUN_JSONL` | `logging.dry_run_jsonl` | `Option<path>` | `(unset; live feed)` | Dry-run fixture frames path: a captured frame JSONL replaces the live feed and is processed once, in order. Unset keeps the live feed. |
 ## `persistence`
 
 | Env var | TOML key | Type | Default | Description |
@@ -154,6 +157,26 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_STRATEGY_NAME` | `strategy.name` | `Option<StrategyName(Settlement|Backrun)>` | `(unset; no explicit strategy selection)` | Active strategy arm: `settlement` or `backrun`. Unset leaves strategy selection at the wiring default; the settlement/backrun readers consume this key in a later phase. |
+## `strategy.backrun`
+
+| Env var | TOML key | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `DEGENBOT_STRATEGY_BACKRUN_BID_MODE` | `strategy.backrun.bid_mode` | `bool` | `false` | Explicit bid-mode flag; off is observe-only. Bid mode also requires a non-zero budget_wei (the legality gate reads both). |
+| `DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI` | `strategy.backrun.budget_wei` | `u128 (decimal text)` | `0` | Cumulative bid budget cap in wei (decimal text; TOML: quoted string). Zero makes bid mode illegal; the spent accumulator tracks the wallet's gas burn. |
+| `DEGENBOT_STRATEGY_BACKRUN_MAX_BUNDLE_WEI` | `strategy.backrun.max_bundle_wei` | `u128 (decimal text)` | `1000000000000000` | Hard per-bundle cap in wei (decimal text; TOML: quoted string); a decided bid is clamped to it. |
+| `DEGENBOT_STRATEGY_BACKRUN_BRIBE_BIPS` | `strategy.backrun.bribe_bips` | `u64` | `9800` | The builder's bribe share of true profit in bips of 10_000 — the competitiveness ceiling (clamped at the site to <= 10_000). |
+| `DEGENBOT_STRATEGY_BACKRUN_PRIORITY_FEE_GWEI` | `strategy.backrun.priority_fee_gwei` | `u64` | `2` | The operator's priority fee in gwei, converted to wei when pricing the wallet's gas burn. |
+| `DEGENBOT_STRATEGY_BACKRUN_BUNDLE_GAS_EST` | `strategy.backrun.bundle_gas_est` | `u64` | `300000` | Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it. |
+| `DEGENBOT_STRATEGY_BACKRUN_DRY_RUN` | `strategy.backrun.dry_run` | `bool` | `false` | Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted (the old `SIDECAR_DRY_RUN=1` spelling included). |
+| `DEGENBOT_STRATEGY_BACKRUN_KEY_FILE` | `strategy.backrun.key_file` | `Option<path>` | `(unset)` | Hex secp256k1 operator key file. Unset means no signing material is loaded (observe-only); the key never leaves TxSigner. |
+| `DEGENBOT_STRATEGY_BACKRUN_EXECUTOR` | `strategy.backrun.executor` | `string` | `0x30b28ed8aa581fbc0191c3b532b0697773070e97` | Executor contract address the composed backrun calls; parsed and validated at the sidecar boot. |
+| `DEGENBOT_STRATEGY_BACKRUN_OPERATOR` | `strategy.backrun.operator` | `Option<string>` | `(unset; falls back to EXECUTOR_OWNER_ADDRESS)` | Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the sidecar boot. |
+| `DEGENBOT_STRATEGY_BACKRUN_SIM_URL` | `strategy.backrun.sim_url` | `Option<string>` | `(unset; the chain node)` | Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback. |
+| `DEGENBOT_STRATEGY_BACKRUN_STREAM_URL` | `strategy.backrun.stream_url` | `string` | `(empty: the MEVBlocker searcher WS default)` | MEVBlocker searcher WebSocket for the private bundle broadcast. Empty defers to the feed crate's mainnet default so the endpoint lives in one place. |
+| `DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE` | `strategy.backrun.rank_evidence` | `bool` | `false` | Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic). |
+| `DEGENBOT_STRATEGY_BACKRUN_CONNECTORS` | `strategy.backrun.connectors` | `usize` | `8` | Discovery fan-out cap (connectors per frame). |
+| `DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD` | `strategy.backrun.fixture_head` | `Option<u64>` | `(unset)` | Offline dry-run's pinned head block: replays captured frames against the chain view they were pending in instead of the live tip. Unset falls back to the fetched head. |
+| `DEGENBOT_STRATEGY_BACKRUN_STOP_FILE` | `strategy.backrun.stop_file` | `path` | `/tmp/degenbot-sidecar-STOP` | Kill-switch path: while the file exists the decision layer drops every candidate and the loop halts. Host-lifecycle debt tracked for Phase C; facet-owned until the host owns lifecycle. |
 ## `aave`
 
 | Env var | TOML key | Type | Default | Description |

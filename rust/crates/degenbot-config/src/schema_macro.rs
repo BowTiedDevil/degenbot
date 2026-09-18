@@ -10,22 +10,125 @@
 /// `SCHEMA` registry — all from ONE invocation line per key.
 ///
 /// A section body is a sequence of key declarations and facet declarations
-/// (`name Type {}`). A facet generates a typed sub-struct field on its parent
-/// and a dotted section path (`strategy.settlement`); an empty facet declares
-/// no keys, only the namespace. `SECTION_PATHS` records every section path so
-/// the loader accepts an otherwise-keyless facet table.
+/// (`name Type { ... }`). A facet generates a typed sub-struct field on its
+/// parent and a dotted section path (`strategy.backrun`); a facet body may
+/// itself declare keys, which are flattened to `@fk` leaf markers under the
+/// facet's dotted section path (`strategy.backrun.bid_mode`) and generate a
+/// two-level `assign` arm. `SECTION_PATHS` records every section path so the
+/// loader accepts a keyless facet table and resolves each key of a keyed one.
 ///
-/// The expansion runs as an accumulator muncher because a `macro_rules!`
-/// invocation cannot expand to a struct's field list or to `match` arms; the
-/// muncher accumulates those token lists and emits them from one arm. The
-/// `assign` arms are re-formed in the emitting arm so `self` binds to the
-/// generated method rather than to an earlier expansion.
+/// The expansion first runs [`config_schema_flat!`] to flatten facet keys
+/// (a small, self-contained pass over the DECLARATION), then the accumulator
+/// muncher emits the tree. Splitting the passes matters: the muncher carries
+/// already-generated items/schema entries, so feeding it a nested facet
+/// muncher would re-copy those accumulators through extra expansions and
+/// blow up superlinearly.
 #[macro_export]
 macro_rules! config_schema {
     ( $( $sec:ident $Sec:ident { $($body:tt)* } )+ ) => {
-        $crate::config_schema_impl! {
+        $crate::config_schema_flat! {
             @sections [ $( $sec $Sec { $($body)* } )+ ]
-            @bot [] @botdef [] @items [] @schema [] @arms [] @paths []
+            @out []
+        }
+    };
+}
+
+/// Flatten nested facet key declarations into `@fk <sec> <facet> <key>`
+/// leaf markers, leaving the facet shell (with its body) so the emitter can
+/// build the typed sub-struct. This pass sees only the raw declaration, so
+/// its accumulators stay small.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! config_schema_flat {
+    // All sections flattened: hand the flat declaration to the emitter.
+    ( @sections [] @out [ $( $out:tt )* ] ) => {
+        $crate::config_schema_impl! {
+            @sections [ $( $out )* ]
+            @bot [] @botdef [] @items [] @schema [] @arms [] @arms_facet [] @paths []
+        }
+    };
+
+    // Start flattening one section's body.
+    (
+        @sections [ $sec:ident $Sec:ident { $($body:tt)* } $($rest:tt)* ]
+        @out [ $($out:tt)* ]
+    ) => {
+        $crate::config_schema_flat! {
+            @body [$sec] [$Sec] [ $($body)* ] @fout []
+            @sections [ $($rest)* ] @out [ $($out)* ]
+        }
+    };
+
+    // Section body exhausted: emit the flattened section and continue.
+    (
+        @body [$sec:ident] [$Sec:ident] [] @fout [ $($fout:tt)* ]
+        @sections [ $($rest:tt)* ] @out [ $($out:tt)* ]
+    ) => {
+        $crate::config_schema_flat! {
+            @sections [ $($rest)* ]
+            @out [ $($out)* $sec $Sec { $($fout)* } ]
+        }
+    };
+
+    // A normal key declaration passes through unchanged.
+    (
+        @body [$sec:ident] [$Sec:ident]
+        [ $(#[$m:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
+        @fout [ $($fout:tt)* ]
+        @sections [ $($sr:tt)* ] @out [ $($out:tt)* ]
+    ) => {
+        $crate::config_schema_flat! {
+            @body [$sec] [$Sec] [ $($rest)* ]
+            @fout [ $($fout)* $(#[$m])* $f [ $($kt)+ ] = $def, env = $env, def = $def_repr, doc = $doc; ]
+            @sections [ $($sr)* ] @out [ $($out)* ]
+        }
+    };
+
+    // A facet declaration: keep the shell (with its body, so the emitter can
+    // build the typed sub-struct) and flatten its inner keys to `@fk` leaves.
+    (
+        @body [$sec:ident] [$Sec:ident]
+        [ $sub:ident $Sub:ident { $($inner:tt)* } $($rest:tt)* ]
+        @fout [ $($fout:tt)* ]
+        @sections [ $($sr:tt)* ] @out [ $($out:tt)* ]
+    ) => {
+        $crate::config_schema_flat! {
+            @facet [$sec] [$Sec] [$sub] [ $($inner)* ] @fkeys []
+            @cont_body [ $($rest)* ]
+            @cont_fout [ $($fout)* $sub $Sub { $($inner)* } ]
+            @sections [ $($sr)* ] @out [ $($out)* ]
+        }
+    };
+
+    // Facet inner keys collected: append the leaves and resume the section.
+    (
+        @facet [$sec:ident] [$Sec:ident] [$sub:ident] [] @fkeys [ $($fkeys:tt)* ]
+        @cont_body [ $($rest:tt)* ] @cont_fout [ $($cfout:tt)* ]
+        @sections [ $($sr:tt)* ] @out [ $($out:tt)* ]
+    ) => {
+        $crate::config_schema_flat! {
+            @body [$sec] [$Sec] [ $($rest)* ]
+            @fout [ $($cfout)* $($fkeys)* ]
+            @sections [ $($sr)* ] @out [ $($out)* ]
+        }
+    };
+
+    // One facet inner key becomes an `@fk` leaf marker.
+    (
+        @facet [$sec:ident] [$Sec:ident] [$sub:ident]
+        [ $(#[$m:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
+        @fkeys [ $($fkeys:tt)* ]
+        @cont_body [ $($cb:tt)* ] @cont_fout [ $($cf:tt)* ]
+        @sections [ $($sr:tt)* ] @out [ $($out:tt)* ]
+    ) => {
+        $crate::config_schema_flat! {
+            @facet [$sec] [$Sec] [$sub] [ $($rest)* ]
+            @fkeys [
+                $($fkeys)*
+                @fk $sec $sub $(#[$m])* $f [ $($kt)+ ] = $def, env = $env, def = $def_repr, doc = $doc;
+            ]
+            @cont_body [ $($cb)* ] @cont_fout [ $($cf)* ]
+            @sections [ $($sr)* ] @out [ $($out)* ]
         }
     };
 }
@@ -41,6 +144,7 @@ macro_rules! config_schema_impl {
         @items [$($items:tt)*]
         @schema [$($schema:tt)*]
         @arms [ $([$as:ident, $af:ident, $($akt:tt)+],)* ]
+        @arms_facet [ $([$fs:ident, $fsu:ident, $ff:ident, $($fkt:tt)+],)* ]
         @paths [$($paths:tt)*]
     ) => {
         /// The typed configuration tree. Every field is generated from the
@@ -84,6 +188,22 @@ macro_rules! config_schema_impl {
                             Ok(())
                         }
                     )*
+                    $(
+                        (concat!(stringify!($fs), ".", stringify!($fsu)), stringify!($ff)) => {
+                            self.$fs.$fsu.$ff = $crate::cfg_parse_single!($($fkt)+, raw)
+                                .map_err(|e| {
+                                    format!(
+                                        "{}: {e}",
+                                        concat!(
+                                            stringify!($fs), ".",
+                                            stringify!($fsu), ".",
+                                            stringify!($ff)
+                                        )
+                                    )
+                                })?;
+                            Ok(())
+                        }
+                    )*
                     _ => Ok(()),
                 }
             }
@@ -95,7 +215,8 @@ macro_rules! config_schema_impl {
 
         /// Every declared section path, including empty facet namespaces that
         /// declare no keys (dotted for nested facets). The loader consults
-        /// this so a keyless facet table is valid rather than "unknown".
+        /// this so a keyless facet table is valid rather than "unknown" and a
+        /// keyed one resolves its leaves.
         pub const SECTION_PATHS: &[&str] = &[ $($paths)* ];
     };
 
@@ -107,14 +228,67 @@ macro_rules! config_schema_impl {
         @items [$($items:tt)*]
         @schema [$($schema:tt)*]
         @arms [$($arms:tt)*]
+        @arms_facet [$($arms_facet:tt)*]
         @paths [$($paths:tt)*]
     ) => {
         $crate::config_schema_impl! {
             @body [$sec] [$Sec] [ $($body)* ]
-            @fields [] @defaults [] @aux [] @key_schema [] @key_arms [] @key_paths []
+            @fields [] @defaults [] @aux []
+            @key_schema [] @key_arms [] @key_facet_arms [] @key_paths []
             @rest [ $($rest)* ]
             @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
-            @schema_out [$($schema)*] @arms_out [$($arms)*] @paths_out [$($paths)*]
+            @schema_out [$($schema)*] @arms_out [$($arms)*]
+            @arms_facet_out [$($arms_facet)*] @paths_out [$($paths)*]
+        }
+    };
+
+    // A flattened facet leaf (`@fk <sec> <facet> <key>`): the key lands under
+    // the facet's dotted section path and gets a two-level `assign` arm.
+    (
+        @body [$sec:ident] [$Sec:ident]
+        [ @fk $fsec:ident $fsub:ident $(#[$fmeta:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
+        @fields [$($fields:tt)*]
+        @defaults [$($defaults:tt)*]
+        @aux [$($aux:tt)*]
+        @key_schema [$($key_schema:tt)*]
+        @key_arms [$($key_arms:tt)*]
+        @key_facet_arms [$($key_facet_arms:tt)*]
+        @key_paths [$($key_paths:tt)*]
+        @rest [$($body_rest:tt)*]
+        @bot [$($bot:tt)*]
+        @botdef [$($botdef:tt)*]
+        @items [$($items:tt)*]
+        @schema_out [$($schema_out:tt)*]
+        @arms_out [$($arms_out:tt)*]
+        @arms_facet_out [$($arms_facet_out:tt)*]
+        @paths_out [$($paths_out:tt)*]
+    ) => {
+        $crate::config_schema_impl! {
+            @body [$sec] [$Sec] [ $($rest)* ]
+            @fields [$($fields)*]
+            @defaults [$($defaults)*]
+            @aux [$($aux)*]
+            @key_schema [
+                $($key_schema)*
+                $crate::schema::KeyDecl {
+                    section: concat!(stringify!($fsec), ".", stringify!($fsub)),
+                    field: stringify!($f),
+                    env: $env,
+                    toml_path: concat!(
+                        stringify!($fsec), ".", stringify!($fsub), ".", stringify!($f)
+                    ),
+                    kind: $crate::cfg_kind!($($kt)+),
+                    default_repr: $def_repr,
+                    description: $doc,
+                },
+            ]
+            @key_arms [$($key_arms)*]
+            @key_facet_arms [ $($key_facet_arms)* [$fsec, $fsub, $f, $($kt)+], ]
+            @key_paths [$($key_paths)*]
+            @rest [$($body_rest)*]
+            @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
+            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*]
+            @arms_facet_out [$($arms_facet_out)*] @paths_out [$($paths_out)*]
         }
     };
 
@@ -127,6 +301,7 @@ macro_rules! config_schema_impl {
         @aux [$($aux:tt)*]
         @key_schema [$($key_schema:tt)*]
         @key_arms [$($key_arms:tt)*]
+        @key_facet_arms [$($key_facet_arms:tt)*]
         @key_paths [$($key_paths:tt)*]
         @rest [$($body_rest:tt)*]
         @bot [$($bot:tt)*]
@@ -134,6 +309,7 @@ macro_rules! config_schema_impl {
         @items [$($items:tt)*]
         @schema_out [$($schema_out:tt)*]
         @arms_out [$($arms_out:tt)*]
+        @arms_facet_out [$($arms_facet_out:tt)*]
         @paths_out [$($paths_out:tt)*]
     ) => {
         $crate::config_schema_impl! {
@@ -154,14 +330,18 @@ macro_rules! config_schema_impl {
                 },
             ]
             @key_arms [ $($key_arms)* [$sec, $f, $($kt)+], ]
+            @key_facet_arms [$($key_facet_arms)*]
             @key_paths [$($key_paths)*]
             @rest [$($body_rest)*]
             @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
-            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*] @paths_out [$($paths_out)*]
+            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*]
+            @arms_facet_out [$($arms_facet_out)*] @paths_out [$($paths_out)*]
         }
     };
 
-    // A facet declaration inside a section body.
+    // A facet declaration inside a section body: emit its typed sub-struct
+    // (fields built by the self-contained `config_facet_emit!`) and record
+    // its dotted section path.
     (
         @body [$sec:ident] [$Sec:ident]
         [ $sub:ident $Sub:ident { $($inner:tt)* } $($rest:tt)* ]
@@ -170,6 +350,7 @@ macro_rules! config_schema_impl {
         @aux [$($aux:tt)*]
         @key_schema [$($key_schema:tt)*]
         @key_arms [$($key_arms:tt)*]
+        @key_facet_arms [$($key_facet_arms:tt)*]
         @key_paths [$($key_paths:tt)*]
         @rest [$($body_rest:tt)*]
         @bot [$($bot:tt)*]
@@ -177,6 +358,7 @@ macro_rules! config_schema_impl {
         @items [$($items:tt)*]
         @schema_out [$($schema_out:tt)*]
         @arms_out [$($arms_out:tt)*]
+        @arms_facet_out [$($arms_facet_out:tt)*]
         @paths_out [$($paths_out:tt)*]
     ) => {
         $crate::config_schema_impl! {
@@ -186,13 +368,12 @@ macro_rules! config_schema_impl {
             @aux [$($aux)* $crate::config_facet_emit!($Sub { $($inner)* }); ]
             @key_schema [$($key_schema)*]
             @key_arms [$($key_arms)*]
-            @key_paths [
-                $($key_paths)*
-                concat!(stringify!($sec), ".", stringify!($sub)),
-            ]
+            @key_facet_arms [$($key_facet_arms)*]
+            @key_paths [ $($key_paths)* concat!(stringify!($sec), ".", stringify!($sub)), ]
             @rest [$($body_rest)*]
             @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
-            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*] @paths_out [$($paths_out)*]
+            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*]
+            @arms_facet_out [$($arms_facet_out)*] @paths_out [$($paths_out)*]
         }
     };
 
@@ -205,6 +386,7 @@ macro_rules! config_schema_impl {
         @aux [$($aux:tt)*]
         @key_schema [$($key_schema:tt)*]
         @key_arms [$($key_arms:tt)*]
+        @key_facet_arms [$($key_facet_arms:tt)*]
         @key_paths [$($key_paths:tt)*]
         @rest [$($body_rest:tt)*]
         @bot [$($bot:tt)*]
@@ -212,6 +394,7 @@ macro_rules! config_schema_impl {
         @items [$($items:tt)*]
         @schema_out [$($schema_out:tt)*]
         @arms_out [$($arms_out:tt)*]
+        @arms_facet_out [$($arms_facet_out:tt)*]
         @paths_out [$($paths_out:tt)*]
     ) => {
         $crate::config_schema_impl! {
@@ -233,27 +416,54 @@ macro_rules! config_schema_impl {
             ]
             @schema [$($schema_out)* $($key_schema)* ]
             @arms [$($arms_out)* $($key_arms)* ]
+            @arms_facet [$($arms_facet_out)* $($key_facet_arms)* ]
             @paths [$($paths_out)* stringify!($sec), $($key_paths)* ]
         }
     };
 }
 
-/// Emit one facet's fan-out: a typed sub-struct, its `Default`, and (through
-/// the caller) its `SECTION_PATHS` entry. Empty bodies only: a facet key would
-/// need the loader's dotted-section traversal plus an `assign` path, which the
-/// keyless Phase-A facets do not yet require.
+/// Emit one facet's typed sub-struct and `Default` from its key body. A
+/// self-contained muncher (its accumulators hold only the facet's own
+/// fields) so it can be expanded from inside the emitter without dragging
+/// the parent's generated accumulators along.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! config_facet_emit {
-    ( $Sub:ident { } ) => {
+    ( $Sub:ident { $($inner:tt)* } ) => {
+        $crate::config_facet_emit_impl! {
+            $Sub { $($inner)* } @fields [] @defaults []
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! config_facet_emit_impl {
+    (
+        $Sub:ident { }
+        @fields [ $($fields:tt)* ]
+        @defaults [ $($defaults:tt)* ]
+    ) => {
         #[doc = concat!("Strategy-facet configuration section `", stringify!($Sub), "`.")]
         #[derive(Debug, Clone, PartialEq)]
-        pub struct $Sub {}
+        pub struct $Sub { $($fields)* }
 
         impl ::core::default::Default for $Sub {
             fn default() -> Self {
-                Self {}
+                Self { $($defaults)* }
             }
+        }
+    };
+
+    (
+        $Sub:ident { $(#[$m:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* }
+        @fields [ $($fields:tt)* ]
+        @defaults [ $($defaults:tt)* ]
+    ) => {
+        $crate::config_facet_emit_impl! {
+            $Sub { $($rest)* }
+            @fields [ $($fields)* pub $f: $crate::cfg_ty!($($kt)+), ]
+            @defaults [ $($defaults)* $f: $def, ]
         }
     };
 }

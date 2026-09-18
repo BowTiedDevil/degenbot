@@ -162,6 +162,12 @@ crate::config_schema! {
     logging LoggingConfig {
         runs_dir [path] = std::path::PathBuf::from("~/.local/state/degenbot/logs"), env = "DEGENBOT_RUNS_DIR", def = "~/.local/state/degenbot/logs",
             doc = "Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap.";
+        log_stderr [bool] = false, env = "DEGENBOT_LOG_STDERR", def = "false",
+            doc = "Also mirror the session stdout log to stderr (interactive runs); the file-only posture is the default. A bad value fails the load rather than silently picking a sink.";
+        trace_jsonl [opt path] = None, env = "DEGENBOT_TRACE_JSONL", def = "(unset; the session trace.jsonl under logging.runs_dir)",
+            doc = "Explicit offline-review JSONL capture path. When unset, the trace helpers append to the session's `trace.jsonl` under logging.runs_dir.";
+        dry_run_jsonl [opt path] = None, env = "DEGENBOT_DRY_RUN_JSONL", def = "(unset; live feed)",
+            doc = "Dry-run fixture frames path: a captured frame JSONL replaces the live feed and is processed once, in order. Unset keeps the live feed.";
     }
 
     // Durable state that OUTLIVES a process lifetime: unlike per-session run
@@ -357,12 +363,45 @@ crate::config_schema! {
             doc = "Active strategy arm: `settlement` or `backrun`. Unset leaves strategy selection at the wiring default; the settlement/backrun readers consume this key in a later phase.";
 
         // Per-arm facet namespaces: the typed config home each strategy's own
-        // knobs land in. They are deliberately keyless today — no per-arm value
-        // exists to type yet (the SIDECAR_* backrun surface and the settlement
-        // knobs still live at their use sites), so an empty validated section is
-        // the honest declaration. ADR-055 Phase C adds `.enabled` here.
+        // knobs land in. The backrun sidecar's operator surface is declared
+        // here (single declaration site per key); settlement is still empty
+        // because its knobs have not migrated yet. ADR-055 Phase C adds
+        // `.enabled` to both.
         settlement StrategySettlementConfig {}
-        backrun StrategyBackrunConfig {}
+        backrun StrategyBackrunConfig {
+            bid_mode [bool] = false, env = "DEGENBOT_STRATEGY_BACKRUN_BID_MODE", def = "false",
+                doc = "Explicit bid-mode flag; off is observe-only. Bid mode also requires a non-zero budget_wei (the legality gate reads both).";
+            budget_wei [u128] = 0, env = "DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI", def = "0",
+                doc = "Cumulative bid budget cap in wei (decimal text; TOML: quoted string). Zero makes bid mode illegal; the spent accumulator tracks the wallet's gas burn.";
+            max_bundle_wei [u128] = 1_000_000_000_000_000u128, env = "DEGENBOT_STRATEGY_BACKRUN_MAX_BUNDLE_WEI", def = "1000000000000000",
+                doc = "Hard per-bundle cap in wei (decimal text; TOML: quoted string); a decided bid is clamped to it.";
+            bribe_bips [u64] = 9800, env = "DEGENBOT_STRATEGY_BACKRUN_BRIBE_BIPS", def = "9800",
+                doc = "The builder's bribe share of true profit in bips of 10_000 — the competitiveness ceiling (clamped at the site to <= 10_000).";
+            priority_fee_gwei [u64] = 2, env = "DEGENBOT_STRATEGY_BACKRUN_PRIORITY_FEE_GWEI", def = "2",
+                doc = "The operator's priority fee in gwei, converted to wei when pricing the wallet's gas burn.";
+            bundle_gas_est [u64] = 300_000, env = "DEGENBOT_STRATEGY_BACKRUN_BUNDLE_GAS_EST", def = "300000",
+                doc = "Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it.";
+            dry_run [bool] = false, env = "DEGENBOT_STRATEGY_BACKRUN_DRY_RUN", def = "false",
+                doc = "Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted (the old `SIDECAR_DRY_RUN=1` spelling included).";
+            key_file [opt path] = None, env = "DEGENBOT_STRATEGY_BACKRUN_KEY_FILE", def = "(unset)",
+                doc = "Hex secp256k1 operator key file. Unset means no signing material is loaded (observe-only); the key never leaves TxSigner.";
+            executor [string] = String::from("0x30b28ed8aa581fbc0191c3b532b0697773070e97"), env = "DEGENBOT_STRATEGY_BACKRUN_EXECUTOR", def = "0x30b28ed8aa581fbc0191c3b532b0697773070e97",
+                doc = "Executor contract address the composed backrun calls; parsed and validated at the sidecar boot.";
+            operator [opt string] = None, env = "DEGENBOT_STRATEGY_BACKRUN_OPERATOR", def = "(unset; falls back to EXECUTOR_OWNER_ADDRESS)",
+                doc = "Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the sidecar boot.";
+            sim_url [opt string] = None, env = "DEGENBOT_STRATEGY_BACKRUN_SIM_URL", def = "(unset; the chain node)",
+                doc = "Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback.";
+            stream_url [string] = String::new(), env = "DEGENBOT_STRATEGY_BACKRUN_STREAM_URL", def = "(empty: the MEVBlocker searcher WS default)",
+                doc = "MEVBlocker searcher WebSocket for the private bundle broadcast. Empty defers to the feed crate's mainnet default so the endpoint lives in one place.";
+            rank_evidence [bool] = false, env = "DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE", def = "false",
+                doc = "Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic).";
+            connectors [usize] = 8, env = "DEGENBOT_STRATEGY_BACKRUN_CONNECTORS", def = "8",
+                doc = "Discovery fan-out cap (connectors per frame).";
+            fixture_head [opt u64] = None, env = "DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD", def = "(unset)",
+                doc = "Offline dry-run's pinned head block: replays captured frames against the chain view they were pending in instead of the live tip. Unset falls back to the fetched head.";
+            stop_file [path] = std::path::PathBuf::from("/tmp/degenbot-sidecar-STOP"), env = "DEGENBOT_STRATEGY_BACKRUN_STOP_FILE", def = "/tmp/degenbot-sidecar-STOP",
+                doc = "Kill-switch path: while the file exists the decision layer drops every candidate and the loop halts. Host-lifecycle debt tracked for Phase C; facet-owned until the host owns lifecycle.";
+        }
     }
 
     aave AaveConfig {
@@ -578,10 +617,10 @@ mod tests {
     }
 
     #[test]
-    fn strategy_facets_are_declared_as_keyless_typed_sections() {
+    fn strategy_facets_are_declared_as_typed_sections() {
         // The per-arm facet namespaces exist as typed fields with dotted TOML
-        // section paths; they carry no schema keys yet, so the env inventory
-        // and the generated key doc stay unchanged.
+        // section paths. The backrun surface is declared under the dotted
+        // facet section; settlement remains keyless.
         let config = BotConfig::default();
         assert_eq!(
             config.strategy.settlement,
@@ -591,10 +630,67 @@ mod tests {
         assert!(SECTION_PATHS.contains(&"strategy.settlement"));
         assert!(SECTION_PATHS.contains(&"strategy.backrun"));
         assert!(
-            !SCHEMA
-                .iter()
-                .any(|k| k.section == "strategy.settlement" || k.section == "strategy.backrun"),
-            "the facets declare no keys yet"
+            !SCHEMA.iter().any(|k| k.section == "strategy.settlement"),
+            "the settlement facet declares no keys yet"
+        );
+        let backrun: Vec<&str> = SCHEMA
+            .iter()
+            .filter(|k| k.section == "strategy.backrun")
+            .map(|k| k.field)
+            .collect();
+        assert_eq!(
+            backrun,
+            vec![
+                "bid_mode",
+                "budget_wei",
+                "max_bundle_wei",
+                "bribe_bips",
+                "priority_fee_gwei",
+                "bundle_gas_est",
+                "dry_run",
+                "key_file",
+                "executor",
+                "operator",
+                "sim_url",
+                "stream_url",
+                "rank_evidence",
+                "connectors",
+                "fixture_head",
+                "stop_file",
+            ]
+        );
+        // Every backrun key's dotted TOML path is the facet path + field.
+        for key in SCHEMA.iter().filter(|k| k.section == "strategy.backrun") {
+            assert_eq!(
+                key.toml_path,
+                format!("strategy.backrun.{}", key.field),
+                "facet key toml path drift"
+            );
+            assert!(key.env.starts_with("DEGENBOT_STRATEGY_BACKRUN_"));
+        }
+    }
+
+    #[test]
+    fn backrun_facet_keys_collapse_to_declared_defaults() {
+        let b = BotConfig::default().strategy.backrun;
+        assert!(!b.bid_mode);
+        assert_eq!(b.budget_wei, 0);
+        assert_eq!(b.max_bundle_wei, 1_000_000_000_000_000);
+        assert_eq!(b.bribe_bips, 9_800);
+        assert_eq!(b.priority_fee_gwei, 2);
+        assert_eq!(b.bundle_gas_est, 300_000);
+        assert!(!b.dry_run);
+        assert_eq!(b.key_file, None);
+        assert_eq!(b.executor, "0x30b28ed8aa581fbc0191c3b532b0697773070e97");
+        assert_eq!(b.operator, None);
+        assert_eq!(b.sim_url, None);
+        assert_eq!(b.stream_url, "");
+        assert!(!b.rank_evidence);
+        assert_eq!(b.connectors, 8);
+        assert_eq!(b.fixture_head, None);
+        assert_eq!(
+            b.stop_file,
+            std::path::PathBuf::from("/tmp/degenbot-sidecar-STOP")
         );
     }
 

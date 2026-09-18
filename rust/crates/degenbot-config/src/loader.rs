@@ -395,7 +395,14 @@ impl BotConfigLoader {
                     // and an empty facet is valid.
                     let nested = format!("{section}.{field}");
                     if crate::schema::SECTION_PATHS.contains(&nested.as_str()) {
-                        Self::apply_nested_facet(&nested, field_value, path, problems);
+                        Self::apply_nested_facet(
+                            &nested,
+                            field_value,
+                            config,
+                            provenance,
+                            path,
+                            problems,
+                        );
                     } else {
                         problems.push(format!(
                             "--config {}: unknown key {field} in section [{section}]",
@@ -424,12 +431,15 @@ impl BotConfigLoader {
         }
     }
 
-    /// Validate a known nested facet section (`[strategy.settlement]`). Its
-    /// members must themselves be known facet paths; an empty table is valid
-    /// (the facets declare no keys yet).
+    /// Resolve a known nested facet section (`[strategy.backrun]`). Its
+    /// members are either deeper facet paths or declared leaf keys under the
+    /// dotted section path; an empty table is valid (the settlement facet
+    /// declares no keys yet).
     fn apply_nested_facet(
         section: &str,
         value: &toml::Value,
+        config: &mut BotConfig,
+        provenance: &mut BTreeMap<&'static str, Source>,
         path: &Path,
         problems: &mut Vec<String>,
     ) {
@@ -443,12 +453,25 @@ impl BotConfigLoader {
         for (field, field_value) in table {
             let nested = format!("{section}.{field}");
             if crate::schema::SECTION_PATHS.contains(&nested.as_str()) {
-                Self::apply_nested_facet(&nested, field_value, path, problems);
-            } else {
+                Self::apply_nested_facet(&nested, field_value, config, provenance, path, problems);
+                continue;
+            }
+            let Some(key) = SCHEMA.iter().find(|k| k.toml_path == nested) else {
                 problems.push(format!(
                     "--config {}: unknown key {field} in section [{section}]",
                     path.display()
                 ));
+                continue;
+            };
+            let raw = toml_value_to_raw(field_value, key.toml_path, path, problems);
+            let Some(raw) = raw else {
+                continue;
+            };
+            match config.assign(key.section, key.field, &raw) {
+                Ok(()) => {
+                    provenance.insert(key.env, Source::File);
+                }
+                Err(problem) => problems.push(problem),
             }
         }
     }

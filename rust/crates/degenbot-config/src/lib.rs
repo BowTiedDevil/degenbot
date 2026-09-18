@@ -1,4 +1,4 @@
-#![recursion_limit = "1024"]
+#![recursion_limit = "2048"]
 
 //! Typed `BotConfig` schema + 12-factor loader for degenbot (file + env parity).
 //!

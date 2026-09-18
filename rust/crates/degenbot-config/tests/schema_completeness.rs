@@ -25,6 +25,9 @@ const SWEEP_ARTIFACTS: &[&str] = &[
     // DEGENBOT_RPC_HTTP_CHAINID_<chain_id>).
     "DEGENBOT_RPC_HTTP_CHAINID_",
     "DEGENBOT_V",
+    // the family wildcard in the facet-invariant test's prefix assertion
+    // (the schema owns the concrete DEGENBOT_STRATEGY_BACKRUN_* keys).
+    "DEGENBOT_STRATEGY_BACKRUN_",
     // ADR-051 D8: the family wildcard in the cli-core operator doc comment
     // (the loader owns the four concrete DEGENBOT_FLEET_CORDON_* keys).
     "DEGENBOT_FLEET_CORDON_",
