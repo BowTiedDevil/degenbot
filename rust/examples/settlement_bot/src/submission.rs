@@ -23,7 +23,8 @@ use std::sync::{Arc, Mutex};
 use degenbot::rpc::provider::AlloyProvider;
 use degenbot::submission::{
     dispatch_and_submit, monitor_pending_transaction, Dispatcher, MonitorOutcome, PoolKey,
-    ReceiptProbe, SkipReason, SubmitCandidate, SubmitRecord, SubmittedTx, TxSigner,
+    ReceiptProbe, SkipReason, SubmissionTarget, SubmitCandidate, SubmitRecord, SubmittedTx,
+    TxSigner,
 };
 
 /// The driver's typed submit decision (the RSP-8 diff surface).
@@ -194,7 +195,7 @@ impl SubmissionSeam for LiveSubmissionSeam<'_> {
                 &[],
                 // No MEVBlocker bid target: this example is a public-mempool
                 // submitter, not a target-tx backrunner.
-                None,
+                SubmissionTarget::Public,
             )
             .await
             .map_err(|e| e.to_string())?;
