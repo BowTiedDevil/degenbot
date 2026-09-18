@@ -8,10 +8,11 @@
 //! reads a config file or the environment (the argv facade and the loader do
 //! that).
 //!
-//! The facets are deliberately keyless today — no per-arm value is typed yet
-//! (the backrun `SIDECAR_*` surface and the settlement knobs still live at their
-//! use sites) — so `add`/`set`/`remove` have nothing to mutate and refuse
-//! loudly rather than silently no-op. `list`/`show` are the working verbs.
+//! The facets declare their keys from the schema registry — the migrated
+//! backrun knobs live in the typed `strategy.backrun` facet (settlement is
+//! still empty) — but the console exposes no write path yet, so `add`/`set`/
+//! `remove` refuse loudly rather than silently no-op. `list`/`show` are the
+//! working verbs.
 
 use degenbot_config::SCHEMA;
 
@@ -87,9 +88,11 @@ pub struct StrategyFacetDescriptor {
     pub config_section: &'static str,
     /// The facet's reaction kind.
     pub trigger_kind: &'static str,
-    /// The declared config fields under this facet (empty today).
+    /// The declared config fields under this facet, sourced from the schema
+    /// registry.
     pub fields: Vec<&'static str>,
-    /// The declared `DEGENBOT_*` env names under this facet (empty today).
+    /// The declared `DEGENBOT_*` env names under this facet, sourced from the
+    /// schema registry.
     pub envs: Vec<&'static str>,
 }
 
@@ -130,7 +133,7 @@ pub enum StrategyCommand {
         /// The facet to show.
         facet: StrategyFacet,
     },
-    /// `strategy add <facet> <key> <value>`: refused — the facets are keyless.
+    /// `strategy add <facet> <key> <value>`: refused — no console write path.
     Add {
         /// The facet the key would belong to.
         facet: StrategyFacet,
@@ -139,7 +142,7 @@ pub enum StrategyCommand {
         /// The raw value.
         value: String,
     },
-    /// `strategy set <facet> <key> <value>`: refused — the facets are keyless.
+    /// `strategy set <facet> <key> <value>`: refused — no console write path.
     Set {
         /// The facet the key would belong to.
         facet: StrategyFacet,
@@ -148,7 +151,7 @@ pub enum StrategyCommand {
         /// The raw value.
         value: String,
     },
-    /// `strategy remove <facet> <key>`: refused — the facets are keyless.
+    /// `strategy remove <facet> <key>`: refused — no console write path.
     Remove {
         /// The facet the key would belong to.
         facet: StrategyFacet,
@@ -165,7 +168,7 @@ impl StrategyCommand {
     }
 
     /// The `list`/`show` rendering inputs, or the loud refusal for a mutation
-    /// verb (the facets declare no keys to mutate yet — ADR-055 Phase C).
+    /// verb (the console has no write path — ADR-055 Phase C).
     ///
     /// # Errors
     ///
@@ -180,8 +183,8 @@ impl StrategyCommand {
             }),
             Self::Add { facet, .. } | Self::Set { facet, .. } => {
                 Err(CliError::InvalidArgument(format!(
-                    "strategy {} is not writable: the {} facet declares no config keys yet \
-                     (ADR-055 Phase C adds `enabled`); edit the typed config directly for now",
+                    "strategy {} is not writable: the {} facet has no console write path \
+                     (ADR-055 Phase C); edit the typed config directly for now",
                     if matches!(self, Self::Add { .. }) {
                         "add"
                     } else {
@@ -191,7 +194,7 @@ impl StrategyCommand {
                 )))
             }
             Self::Remove { facet, .. } => Err(CliError::InvalidArgument(format!(
-                "strategy remove is not writable: the {} facet declares no config keys yet \
+                "strategy remove is not writable: the {} facet has no console write path \
                  (ADR-055 Phase C); edit the typed config directly for now",
                 facet.config_section()
             ))),
@@ -245,18 +248,29 @@ mod tests {
     }
 
     #[test]
-    fn facet_descriptors_are_keyless_today() {
+    fn facet_descriptors_mirror_their_schema_keys() {
         // The typed facets carry exactly the schema keys declared under their
-        // dotted section path; today there are none, so this pins the honest
-        // empty state and will need updating when Phase C adds `enabled`.
+        // dotted section path: the migrated backrun knobs are present, and
+        // settlement remains empty until its own migration.
         for descriptor in descriptors() {
-            assert!(
-                descriptor.fields.is_empty(),
-                "{} unexpectedly declares fields",
-                descriptor.config_section
-            );
-            assert!(descriptor.envs.is_empty());
+            let expected_fields: Vec<&str> = SCHEMA
+                .iter()
+                .filter(|key| key.section == descriptor.config_section)
+                .map(|key| key.field)
+                .collect();
+            assert_eq!(descriptor.fields, expected_fields);
+            let expected_envs: Vec<&str> = SCHEMA
+                .iter()
+                .filter(|key| key.section == descriptor.config_section)
+                .map(|key| key.env)
+                .collect();
+            assert_eq!(descriptor.envs, expected_envs);
         }
+        assert!(
+            !descriptor(StrategyFacet::Backrun).fields.is_empty(),
+            "strategy.backrun declares its migrated keys"
+        );
+        assert!(descriptor(StrategyFacet::Settlement).fields.is_empty());
     }
 
     #[test]
@@ -293,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn mutation_verbs_refuse_loudly_while_the_facets_are_keyless() {
+    fn mutation_verbs_refuse_loudly_without_a_write_path() {
         struct NoPrompt;
         impl crate::prompt::Prompter for NoPrompt {
             fn confirm(&self, _message: &str, default: bool) -> bool {

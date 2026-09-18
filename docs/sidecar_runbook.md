@@ -8,8 +8,11 @@ STOP parity with the observer lineage (`observe_soak.py`).
 ## 1. Preflight (observe-only first -- always)
 
 ```bash
-# Node + feed sanity, observe mode (no key file => no signing material loaded)
-SIDECAR_RPC_URL="$DEGENBOT_RPC_HTTP_CHAINID_1" \
+# Node + feed sanity, observe mode (no key file => no signing material loaded).
+# The sidecar loads one typed config (the standard
+# $XDG_CONFIG_HOME/degenbot/config.toml, else $HOME/.config/degenbot/config.toml);
+# the node/DB resolvers stay DEGENBOT_* env keys.
+DEGENBOT_RPC_HTTP_CHAINID_1="$RPC" \
   cargo run -p degenbot-submission --bin backrun_sidecar
 # Expect: observe/drop lines per frame; zero "BID dispatched" lines.
 ```
@@ -23,16 +26,21 @@ cargo test -p degenbot-submission --test sidecar_solve_frame -- --ignored
 
 ## 2. Budget lines (bid mode)
 
-| Env | Meaning | Hard behavior |
+Every knob is a typed `strategy.backrun` key: set it in the config.toml
+`[strategy.backrun]` table (or its `DEGENBOT_STRATEGY_BACKRUN_*` env name). The
+node/DB resolvers stay env-only (`DEGENBOT_RPC_HTTP_CHAINID_1`,
+`DEGENBOT_RPC_WS_CHAINID_1`, `DEGENBOT_DB_PATH`).
+
+| Typed key | Meaning | Hard behavior |
 | --- | --- | --- |
-| `SIDECAR_BID_MODE=1` | Explicit bid flag | Off => `observe_only`, never bids |
-| `SIDECAR_BUDGET_WEI` | Cumulative cap (wei) | Zero => bid mode illegal; spent >= cap => `budget_exhausted` |
-| `SIDECAR_MAX_BUNDLE_WEI` | Per-bundle cap (wei) | Bid clamped to cap |
-| `SIDECAR_KEY_FILE` | Hex secp256k1 key path | Key never leaves `TxSigner` |
-| `SIDECAR_MEVBLOCKER_URL` | Private-broadcast RPC | Adds a provider to `extra_broadcast` |
-| `SIDECAR_DRY_RUN=1` | Sign-nothing dispatch | All candidates skip as `DryRun` |
-| `SIDECAR_BRIBE_BIPS` | Bribe ceiling (bips, default 9800) | The wallet gate may compose LOWER bips |
-| `SIDECAR_BUNDLE_GAS_EST` | Bundle gas estimate (default 300000) | Prices the net-of-gas bid gate |
+| `strategy.backrun.bid_mode` | Explicit bid flag | Off => `observe_only`, never bids |
+| `strategy.backrun.budget_wei` | Cumulative cap (wei) | Zero => bid mode illegal; spent >= cap => `budget_exhausted` |
+| `strategy.backrun.max_bundle_wei` | Per-bundle cap (wei) | Bid clamped to cap |
+| `strategy.backrun.key_file` | Hex secp256k1 key path | Key never leaves `TxSigner` |
+| `SIDECAR_MEVBLOCKER_URL` (legacy name) | Private-broadcast RPC | Not yet wired — the `extra_broadcast` arm lands separately (ergo 6IESKH) |
+| `strategy.backrun.dry_run` | Sign-nothing dispatch | All candidates skip as `DryRun` |
+| `strategy.backrun.bribe_bips` | Bribe ceiling (bips, default 9800) | The wallet gate may compose LOWER bips |
+| `strategy.backrun.bundle_gas_est` | Bundle gas estimate (default 300000) | Prices the net-of-gas bid gate |
 
 Wallet economics (live defect, receipts 0xd41a1c35 / 0x8603039d): the
 wallet funds ONLY the bundle's gas — the on-chain bribe is drawn from
@@ -40,16 +48,22 @@ flash proceeds (the executor config pays `bribe_bips` of the true
 profit delta to `block.coinbase`) and the residue parks in executor
 custody. A bid exists only when the solved gross profit covers the gas
 burn plus 5%; the bribe then takes the surplus (capped by
-`SIDECAR_BRIBE_BIPS` and `SIDECAR_MAX_BUNDLE_WEI`), and the budget's
-`spent` accumulator tracks the wallet's gas burn, not the bribe.
+`strategy.backrun.bribe_bips` and `strategy.backrun.max_bundle_wei`), and
+the budget's `spent` accumulator tracks the wallet's gas burn, not the
+bribe.
+
+```toml
+# $XDG_CONFIG_HOME/degenbot/config.toml (else $HOME/.config/degenbot/config.toml)
+[strategy.backrun]
+bid_mode = true
+budget_wei = "1000000000000000"   # wei values are quoted TOML strings
+max_bundle_wei = "500000000000000"
+priority_fee_gwei = 2
+```
 
 ```bash
-SIDECAR_RPC_URL="$DEGENBOT_RPC_HTTP_CHAINID_1" \
-SIDECAR_BID_MODE=1 SIDECAR_BUDGET_WEI=1000000000000000 \
-SIDECAR_MAX_BUNDLE_WEI=500000000000000 \
-SIDECAR_KEY_FILE="$HOME/.degenbot/operator.key" \
-SIDECAR_MEVBLOCKER_URL="https://rpc.mevblocker.io/noreverts" \
-SIDECAR_PRIORITY_FEE_GWEI=2 \
+DEGENBOT_RPC_HTTP_CHAINID_1="$RPC" \
+DEGENBOT_STRATEGY_BACKRUN_KEY_FILE="$HOME/.degenbot/operator.key" \
   cargo run -p degenbot-submission --bin backrun_sidecar
 ```
 
@@ -121,10 +135,10 @@ The root is the typed `logging.runs_dir` key (TOML `[logging] runs_dir`, env
 absolute, else `$HOME/.local/state`) plus `degenbot/logs`; a leading `~`
 expands against `HOME`.
 
-| Env | Meaning |
+| Typed key | Meaning |
 | --- | --- |
-| `SIDECAR_LOG_STDERR=1` | Also mirror the session log to stderr (interactive runs). File-only otherwise. |
-| `SIDECAR_TRACE_JSONL` | Explicit capture path. When set it wins; when absent the trace helpers append to the session's `trace.jsonl`. |
+| `logging.log_stderr` | Also mirror the session log to stderr (interactive runs). File-only otherwise. |
+| `logging.trace_jsonl` | Explicit capture path. When set it wins; when absent the trace helpers append to the session's `trace.jsonl`. |
 
 There is deliberately **no rotation, compression, or size cap**: run artifacts
 are the forensics surface, and cleanup is the operator's (or an out-of-process
