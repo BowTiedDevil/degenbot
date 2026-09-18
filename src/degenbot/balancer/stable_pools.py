@@ -7,7 +7,7 @@ from itertools import starmap
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
-from degenbot.balancer.math import fixed_point_mul_down as _rs_mul_down
+from degenbot.balancer.math import fixed_point_mul_down
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -353,7 +353,9 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         if rates is None:
             msg = "no Balancer stable rate provider available"
             raise DegenbotValueError(message=msg)
-        return tuple(starmap(_rs_mul_down, zip(self._base_scaling_factors, rates, strict=True)))
+        return tuple(
+            starmap(fixed_point_mul_down, zip(self._base_scaling_factors, rates, strict=True))
+        )
 
     def _should_warn_stale_rates(self) -> bool:
         """Whether a StaleRateResult should wrap the computed result.
