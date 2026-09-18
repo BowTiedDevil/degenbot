@@ -15,11 +15,14 @@
 //! - [`contract`] — `Contract` interface with `FunctionSignature` ABI caching.
 //! - [`subscription`] — double-buffer `SubscriptionHandle`, raw `drain_raw`,
 //!   and the `pump_*` subscription drivers.
+//! - [`head_watch`] — subscription-driven [`HeadWatch`]: publishes the head
+//!   block number on a `watch` channel with the pump's watchdog/reconnect.
 
 pub mod abi;
 pub mod backrun_feed;
 pub mod contract;
 pub mod fees;
+pub mod head_watch;
 pub mod multicall3;
 pub mod offline;
 pub mod provider;
@@ -27,4 +30,5 @@ pub mod subscription;
 pub mod tick_bootstrap;
 
 pub use fees::{fetch_priority_fee_percentiles, BlockPriorityFees};
+pub use head_watch::{HeadWatch, HeadWatchConfig, HeadWatchError};
 pub use tick_bootstrap::AlloyTickBootstrapRpc;

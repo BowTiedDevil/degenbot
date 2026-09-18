@@ -46,14 +46,14 @@ use tokio::time::timeout;
 /// O3JW5S. A silently half-open socket (NAT idle timeout, provider stall with no
 /// close frame) makes `stream.next()` never resolve and never return `None`; this
 /// watchdog bounds that window so the pump reconnects instead of hanging forever.
-const HEADER_WATCHDOG_SECS: u64 = 48;
+pub(crate) const HEADER_WATCHDOG_SECS: u64 = 48;
 
 /// A boxed, `'static`, `Send` stream of Ethereum block headers.
 ///
 /// Both the initial `subscribe_blocks().into_stream()` and every reconnect yield
 /// this same concrete type so [`pump_header_stream`]'s generic `S` unifies across
 /// the initial and re-established streams.
-type HeaderStream = futures_util::stream::BoxStream<'static, alloy::rpc::types::Header>;
+pub(crate) type HeaderStream = futures_util::stream::BoxStream<'static, alloy::rpc::types::Header>;
 
 // ---------------------------------------------------------------------------
 // Double-buffer subscription handle
@@ -212,7 +212,9 @@ pub async fn pump_blocks(provider: Arc<dyn Provider<Ethereum>>, handle: Arc<Subs
 /// cannot re-stall the pump. Retries indefinitely with the shared backoff curve
 /// ([`crate::provider::rpc_retry_policy`]) so a transiently-downed provider
 /// recovers without an operator restart — the bot process stays alive.
-async fn reconnect_new_heads_stream(provider: Arc<dyn Provider<Ethereum>>) -> Option<HeaderStream> {
+pub(crate) async fn reconnect_new_heads_stream(
+    provider: Arc<dyn Provider<Ethereum>>,
+) -> Option<HeaderStream> {
     use crate::provider::rpc_retry_policy;
     // This loop retries indefinitely, so the policy's attempt bound is unused;
     // only its shared curve (base/cap) is consumed.
@@ -247,61 +249,123 @@ async fn reconnect_new_heads_stream(provider: Arc<dyn Provider<Ethereum>>) -> Op
     }
 }
 
-/// Drive a `newHeads` header stream with a header watchdog.
+/// Outcome of [`drive_new_heads`].
+pub(crate) enum HeaderDriveExit {
+    /// The stream closed cleanly (`Ok(None)`) and `on_end` asked to stop
+    /// rather than reconnect.
+    StreamEnded,
+    /// A callback asked to stop (consumer unsubscribed, or the reconnect
+    /// helper gave up).
+    Aborted,
+}
+
+/// Drive a `newHeads` header stream with a header watchdog, delegating what
+/// each event MEANS to the caller's callbacks.
 ///
-/// For each header from `stream`, buffer it via [`buffer_item`]. If no header
-/// arrives within `watchdog`, the subscription is treated as a silently
-/// half-open socket: a [`RawSubItem::Disconnected`] is buffered (so the Python
-/// side sees a clean restart, not a silent gap), the dead stream is dropped,
-/// and `next_stream` is called to re-establish the subscription.
+/// This is the single implementation of the watchdog + reconnect policy shared
+/// by the FFI subscription pump ([`pump_header_stream`], which buffers raw
+/// items for Python) and [`crate::head_watch::HeadWatch`] (which publishes the
+/// head block number on a `tokio::sync::watch` channel). Each callback returns
+/// `false` to stop; a `true` from `on_stall`/`on_end` routes through
+/// `next_stream` to re-establish the subscription.
+///
+/// The watchdog bounds `stream.next()` so a silently-stalled socket (no close
+/// frame, never resolves) is torn down within a bounded window instead of
+/// hanging the driver forever.
+pub(crate) async fn drive_new_heads<S, F, Fut, H, D, E>(
+    mut stream: S,
+    watchdog: Duration,
+    mut next_stream: F,
+    mut on_header: H,
+    mut on_stall: D,
+    mut on_end: E,
+) -> HeaderDriveExit
+where
+    S: futures_util::Stream<Item = alloy::rpc::types::Header> + Unpin + Send + 'static,
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = Option<S>> + Send + 'static,
+    H: FnMut(alloy::rpc::types::Header) -> bool + Send,
+    D: FnMut() -> bool + Send,
+    E: FnMut() -> bool + Send,
+{
+    loop {
+        match timeout(watchdog, stream.next()).await {
+            Ok(Some(header)) => {
+                if !on_header(header) {
+                    return HeaderDriveExit::Aborted;
+                }
+            }
+            Ok(None) => {
+                // Clean subscription end (real close frame): the caller
+                // decides whether that is terminal (buffer `End`, stop) or a
+                // reason to re-subscribe.
+                if !on_end() {
+                    return HeaderDriveExit::StreamEnded;
+                }
+                match next_stream().await {
+                    Some(s) => stream = s,
+                    None => return HeaderDriveExit::Aborted,
+                }
+            }
+            Err(_) => {
+                // Watchdog fired: no header within `watchdog`. The caller
+                // decides the meaning of the gap, then we re-subscribe.
+                if !on_stall() {
+                    return HeaderDriveExit::Aborted;
+                }
+                match next_stream().await {
+                    Some(s) => stream = s,
+                    None => return HeaderDriveExit::Aborted,
+                }
+            }
+        }
+    }
+}
+
+/// Buffer `newHeads` headers into a [`SubscriptionHandle`] via
+/// [`drive_new_heads`]: a header becomes a [`RawSubItem::Header`], a watchdog
+/// fire a [`RawSubItem::Disconnected`] (so Python sees a clean restart, not a
+/// silent gap), and a clean end a [`RawSubItem::End`].
 ///
 /// Separated from [`pump_blocks`] so the watchdog/reconnect decision is unit-
 /// testable with an injected never-yielding stream + a tiny threshold (no live
 /// RPC — see `test_header_watchdog_fires_on_never_yielding_stream`).
 async fn pump_header_stream<S, F, Fut>(
     handle: Arc<SubscriptionHandle>,
-    mut stream: S,
+    stream: S,
     watchdog: Duration,
-    mut next_stream: F,
+    next_stream: F,
 ) where
     S: futures_util::Stream<Item = alloy::rpc::types::Header> + Unpin + Send + 'static,
     F: FnMut() -> Fut + Send + 'static,
     Fut: Future<Output = Option<S>> + Send + 'static,
 {
-    loop {
-        // Watchdog: bound `stream.next()` so a silently-stalled socket (no
-        // close frame, never resolves) is torn down within a bounded window
-        // instead of hanging the pump forever.
-        match timeout(watchdog, stream.next()).await {
-            Ok(Some(header)) => {
-                buffer_item(&handle, RawSubItem::Header(header));
-                if handle.unsubscribed.load(Ordering::Relaxed) {
-                    return;
-                }
-            }
-            Ok(None) => {
-                // Clean subscription end (real close frame). Match the
-                // pre-watchdog behavior: buffer End and stop.
-                buffer_item(&handle, RawSubItem::End);
-                return;
-            }
-            Err(_) => {
-                // Watchdog fired: no header within `watchdog`. Buffer a clean
-                // disconnect marker so Python sees a restart, drop the dead
-                // stream, and re-subscribe via `next_stream`.
-                buffer_item(
-                    &handle,
-                    RawSubItem::Disconnected {
-                        message: "newHeads subscription stall: no header within watchdog window, reconnecting".to_string(),
-                    },
-                );
-                match next_stream().await {
-                    Some(s) => stream = s,
-                    None => return,
-                }
-            }
-        }
-    }
+    let header_handle = Arc::clone(&handle);
+    let stall_handle = Arc::clone(&handle);
+    let end_handle = Arc::clone(&handle);
+    let _ = drive_new_heads(
+        stream,
+        watchdog,
+        next_stream,
+        move |header| {
+            buffer_item(&header_handle, RawSubItem::Header(header));
+            !header_handle.unsubscribed.load(Ordering::Relaxed)
+        },
+        move || {
+            buffer_item(
+                &stall_handle,
+                RawSubItem::Disconnected {
+                    message: "newHeads subscription stall: no header within watchdog window, reconnecting".to_string(),
+                },
+            );
+            true
+        },
+        move || {
+            buffer_item(&end_handle, RawSubItem::End);
+            false
+        },
+    )
+    .await;
 }
 
 /// Pump task for full block subscriptions.

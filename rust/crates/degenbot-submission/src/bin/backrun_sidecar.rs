@@ -35,7 +35,8 @@ use alloy::primitives::{Address, U256};
 use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_bot::sidecar::{Decision, SidecarConfig};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
-use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
+use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use degenbot_simulation::BlockSimHandle;
 use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
 use degenbot_submission::dispatcher::Dispatcher;
@@ -51,6 +52,23 @@ use degenbot_submission::submit::{dispatch_and_submit, BundleTarget, SubmitCandi
 /// The gas floor the envelope gate evaluates at (wei) — the composed lane's
 /// standing economics (the env override did not exist upstream either).
 const GAS_FLOOR_WEI: u64 = 50_000_000_000_000;
+
+/// How long the live loop waits on the head watch before servicing the frame
+/// feed. The watch resolves the instant a header arrives (~12s apart), so a
+/// healthy watch leaves this to time out most iterations; the bound is loop
+/// latency, not head latency.
+const HEAD_WATCH_WAIT: Duration = Duration::from_secs(2);
+
+/// A watch silent this long is treated as dead: the loop polls for that
+/// iteration while the driver task's watchdog reconnects in the background.
+/// Must exceed the chain's block interval — mainnet blocks arrive ~12s apart,
+/// so a threshold at or below that would poll on every block and defeat the
+/// point of the subscription. Kept below the driver's 48s watchdog so the
+/// fallback poll covers the reconnect window.
+const HEAD_WATCH_STALE: Duration = Duration::from_secs(30);
+
+/// The fallback head-poll cadence (the pre-subscription loop's tick).
+const HEAD_POLL_TICK: Duration = Duration::from_millis(200);
 
 // Console subscriber so observe-mode frames are visible; structured (OTel)
 // export stays the operator's layering choice via the bot crate.
@@ -549,15 +567,89 @@ async fn main() {
         },
         ..BackrunFeedConfig::for_mainnet()
     });
+
+    // Head source for the live loop: a `newHeads` subscription over a dedicated
+    // WS endpoint (the MEVBlocker frame feed and the chain node are different
+    // hosts, so the head WS is its own URL). The 200ms `eth_blockNumber` poll
+    // is the FALLBACK, not the primary source: it costs a round-trip per tick
+    // and cannot fire the instant a head lands. Without a WS URL, or when the
+    // subscribe fails, the watch stays absent and the loop polls.
+    let head_ws_url = std::env::var("SIDECAR_HEAD_WS_URL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            std::env::var("DEGENBOT_RPC_WS_CHAINID_1")
+                .ok()
+                .filter(|v| !v.is_empty())
+        });
+    let head_watch: Option<HeadWatch> = if let Some(url) = head_ws_url {
+        match AlloyProvider::new(&url, DEFAULT_MAX_RETRIES).await {
+            Ok(ws_provider) => {
+                match HeadWatch::subscribe(ws_provider.provider_arc(), HeadWatchConfig::default())
+                    .await
+                {
+                    Ok(watch) => Some(watch),
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            "head watch subscribe failed - falling back to 200ms head poll"
+                        );
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "head watch WS connect failed - falling back to 200ms head poll"
+                );
+                None
+            }
+        }
+    } else {
+        tracing::warn!(
+            "no SIDECAR_HEAD_WS_URL / DEGENBOT_RPC_WS_CHAINID_1 set - using 200ms head poll"
+        );
+        None
+    };
+    let mut head_rx = head_watch.as_ref().map(HeadWatch::head_rx);
+
     loop {
         if cfg.stop_file.exists() {
             tracing::info!("kill switch present - halting");
             feed.stop();
             break;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // The watch resolves on a header's arrival; the 2s bound keeps the
+        // frame feed serviced while the head is quiet. On timeout a stale
+        // watch falls back to the poll for this iteration; a receiver with no
+        // sender left is treated the same way (and paced) rather than
+        // busy-spinning on a closed channel.
+        let next_head: Option<u64> =
+            if let (Some(watch), Some(rx)) = (head_watch.as_ref(), head_rx.as_mut()) {
+                match tokio::time::timeout(HEAD_WATCH_WAIT, rx.changed()).await {
+                    Ok(Ok(())) => Some(*rx.borrow_and_update()),
+                    Ok(Err(_)) => {
+                        tracing::warn!("head watch channel closed - polling");
+                        tokio::time::sleep(HEAD_POLL_TICK).await;
+                        provider.get_block_number().await.ok()
+                    }
+                    Err(_) => {
+                        if watch.stale(HEAD_WATCH_STALE) {
+                            tracing::warn!("head watch stale - polling");
+                            tokio::time::sleep(HEAD_POLL_TICK).await;
+                            provider.get_block_number().await.ok()
+                        } else {
+                            None
+                        }
+                    }
+                }
+            } else {
+                tokio::time::sleep(HEAD_POLL_TICK).await;
+                provider.get_block_number().await.ok()
+            };
 
-        if let Ok(head) = provider.get_block_number().await {
+        if let Some(head) = next_head {
             if head > current_block {
                 dispatcher
                     .lock()
