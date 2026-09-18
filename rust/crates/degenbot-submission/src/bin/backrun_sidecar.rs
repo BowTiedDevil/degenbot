@@ -493,6 +493,13 @@ async fn canonical_block_hash(provider: &AlloyProvider, block: u64) -> Option<B2
         .map(|b| b.header.hash)
 }
 
+/// Nonce-lane evidence gate: only a decoded `u64` counts. A transport error
+/// or an oversized value is NO evidence - the caller must skip, never feed
+/// a sentinel that would read as `nonce_consumed` for every tracked frame.
+fn nonce_lane_evidence<E>(read: Result<U256, E>) -> Option<u64> {
+    u64::try_from(read.ok()?).ok()
+}
+
 /// The node's `finalized` tag (ONE read per head advance). Never block-count
 /// arithmetic: the tag tracks the real 2-epoch lag, missed slots and all.
 async fn finalized_block_number(provider: &AlloyProvider) -> Option<u64> {
@@ -507,15 +514,17 @@ async fn finalized_block_number(provider: &AlloyProvider) -> Option<u64> {
 
 /// Classify a consumed nonce with ONE receipt probe on the frame's own hash:
 /// a receipt is `MinedAt`; its absence is `SlotTakenAt`, resolved to the
-/// same-nonce tx's carrying block when the pool view can see it. The observed
-/// head is the fallback block -- never a death, only a later finality check.
-/// `None` means no block evidence could be established; the frame stays
-/// tracked and the next head retries.
+/// same-nonce tx's carrying block when the index can see it. Evidence only:
+/// both the carrying block AND its hash must come from the node's records
+/// of the chain - never the observed head (the D2 adversarial-review find:
+/// a fallback anchored to the live canonical head writes a block/hash the
+/// reorg check then verifies against itself, an unrevivable fabricated
+/// death). `None` means no block evidence could be established; the frame
+/// stays tracked and the next head retries.
 async fn classify_consumption(
     provider: &AlloyProvider,
     client: &alloy::rpc::client::RpcClient,
     frame: &ParkedFrame,
-    head: u64,
 ) -> Option<NonceConsumed> {
     let receipt = provider
         .get_transaction_receipt(&frame.hash.to_string())
@@ -523,14 +532,8 @@ async fn classify_consumption(
         .ok()
         .flatten();
     if let Some(receipt) = receipt {
-        if let Some(block) = receipt.block_number {
-            let block_hash = match receipt.block_hash {
-                Some(hash) => Some(hash),
-                None => canonical_block_hash(provider, block).await,
-            };
-            if let Some(block_hash) = block_hash {
-                return Some(NonceConsumed::MinedAt { block, block_hash });
-            }
+        if let (Some(block), Some(block_hash)) = (receipt.block_number, receipt.block_hash) {
+            return Some(NonceConsumed::MinedAt { block, block_hash });
         }
         return None;
     }
@@ -557,15 +560,7 @@ async fn classify_consumption(
             .and_then(|s| s.parse::<B256>().ok());
         Some((block, block_hash, by))
     });
-    let (block, block_hash, by) = if let Some(resolved) = resolved {
-        resolved
-    } else {
-        // No exact carrying block: anchor to the observed head so the reorg
-        // check has a real hash. The frame can only be finalized a little
-        // later, never earlier.
-        let block_hash = canonical_block_hash(provider, head).await?;
-        (head, block_hash, None)
-    };
+    let (block, block_hash, by) = resolved?;
     Some(NonceConsumed::SlotTakenAt {
         block,
         block_hash,
@@ -991,20 +986,26 @@ async fn main() {
                 //    classification failure leaves the frame tracked for the
                 //    next head.
                 for sender in quarantine.senders() {
-                    let head_nonce: u64 = sim_client
-                        .request::<(Address, &str), U256>(
-                            std::borrow::Cow::from("eth_getTransactionCount"),
-                            (sender, "latest"),
-                        )
-                        .await
-                        .ok()
-                        .map_or(u64::MAX, |v| u64::try_from(v).unwrap_or(u64::MAX));
+                    // Evidence-only nonce lane: u64::MAX as a FAILURE default
+                    // would fabricate consumption for every tracked frame of
+                    // the sender (the D1 adversarial-review find) - a failed
+                    // read skips the tick, holding every frame instead.
+                    let Some(head_nonce) = nonce_lane_evidence(
+                        sim_client
+                            .request::<(Address, &str), U256>(
+                                std::borrow::Cow::from("eth_getTransactionCount"),
+                                (sender, "latest"),
+                            )
+                            .await,
+                    ) else {
+                        tracing::warn!(sender = ?sender, "head-nonce read failed - sender tick skipped");
+                        continue;
+                    };
                     for (frame, decision) in quarantine.poll(sender, head_nonce, &[]) {
                         match decision {
                             QuarantineDecision::NonceConsumed => {
                                 let Some(consumed) =
-                                    classify_consumption(&provider, &sim_client, &frame, head)
-                                        .await
+                                    classify_consumption(&provider, &sim_client, &frame).await
                                 else {
                                     tracing::warn!(
                                         tx = %frame.hash,
@@ -1160,5 +1161,24 @@ async fn main() {
             )
             .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::nonce_lane_evidence;
+    use alloy::primitives::U256;
+
+    #[test]
+    fn nonce_lane_failure_is_no_evidence_never_max() {
+        // D1 pin: a failed read must not fabricate u64::MAX consumption
+        // for every tracked frame of the sender - it is no evidence; the
+        // caller skips the tick and every frame holds.
+        assert!(nonce_lane_evidence::<()>(Err(())).is_none());
+        assert!(nonce_lane_evidence::<()>(Ok(U256::MAX)).is_none());
+        assert_eq!(
+            nonce_lane_evidence::<()>(Ok(U256::from(29_764u64))),
+            Some(29_764)
+        );
     }
 }
