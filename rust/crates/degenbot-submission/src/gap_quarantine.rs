@@ -83,6 +83,16 @@ impl ParkedFrame {
         (self.expected_at_capture..self.claimed_nonce).collect()
     }
 
+    /// Whether this frame lost its wire to a degraded journal migration. A
+    /// degraded frame carries only identity (its hash, nonce, and the sender
+    /// when readable); the zeroed `chain_id`/`gas` distinguish it because a
+    /// real feed frame always carries both. It can never rebuild its event, so
+    /// `poll` never rescues it into the funnel.
+    #[must_use]
+    pub fn is_degraded(&self) -> bool {
+        self.chain_id == 0 && self.gas == 0
+    }
+
     /// Rebuild the feed event a funnel re-entry needs. Infallible: every wire
     /// field is already typed on the frame (the journal read path parses the
     /// hex strings before constructing the frame).
@@ -168,6 +178,9 @@ pub enum FrameState {
 struct Entry {
     frame: ParkedFrame,
     state: FrameState,
+    /// Last head nonce a degraded hold surfaced for, so the quiet hold is
+    /// reported once per head advance instead of once per poll.
+    last_hold_head: Option<u64>,
 }
 
 /// What one poll-cycle says about one tracked frame.
@@ -213,6 +226,7 @@ impl Quarantine {
         self.pending.entry(frame.from).or_default().push(Entry {
             frame,
             state: FrameState::Tracked,
+            last_hold_head: None,
         });
         self.len()
     }
@@ -283,9 +297,35 @@ impl Quarantine {
         };
         let mut out = Vec::with_capacity(frames.len());
         let mut keep = Vec::with_capacity(frames.len());
-        for entry in frames {
+        for mut entry in frames {
             if let FrameState::Tentative(_) = entry.state {
                 keep.push(entry);
+                continue;
+            }
+            if entry.frame.is_degraded() {
+                // A degraded frame has no wire to replay, so it can never
+                // rescue. It stays quietly tracked until the chain proves the
+                // claimed nonce consumed (head past the claim); the hold is
+                // reported once per head advance, never per poll.
+                if head_nonce > entry.frame.claimed_nonce {
+                    out.push((entry.frame.clone(), QuarantineDecision::NonceConsumed));
+                    keep.push(entry);
+                } else if entry.last_hold_head != Some(head_nonce) {
+                    entry.last_hold_head = Some(head_nonce);
+                    let unknown: Vec<u64> = entry
+                        .frame
+                        .gap_range()
+                        .into_iter()
+                        .filter(|n| !pool_known_gap.contains(n) && *n >= head_nonce)
+                        .collect();
+                    out.push((
+                        entry.frame.clone(),
+                        QuarantineDecision::StillWaiting { unknown },
+                    ));
+                    keep.push(entry);
+                } else {
+                    keep.push(entry);
+                }
                 continue;
             }
             if head_nonce > entry.frame.claimed_nonce {
@@ -594,6 +634,35 @@ mod tests {
     fn gap_range_is_the_explicit_predecessor_order() {
         assert_eq!(frame(5, 5).gap_range(), Vec::<u64>::new());
         assert_eq!(frame(8, 5).gap_range(), vec![5, 6, 7]);
+    }
+
+    #[test]
+    fn degraded_frame_never_rescues_and_holds_once_per_head_advance() {
+        let mut q = Quarantine::new();
+        let mut f = frame(14, 12);
+        f.chain_id = 0;
+        f.gas = 0;
+        assert!(f.is_degraded());
+        let h = f.hash;
+        q.push(f);
+        // head 12: one hold surfaces, never a rescue.
+        let first = q.poll(SENDER, 12, &[]);
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            first[0].1,
+            QuarantineDecision::StillWaiting {
+                unknown: vec![12, 13]
+            }
+        );
+        // Same head: quiet, no repeat.
+        assert!(q.poll(SENDER, 12, &[]).is_empty());
+        // Head advance: one more hold.
+        assert_eq!(q.poll(SENDER, 13, &[]).len(), 1);
+        assert!(q.poll(SENDER, 13, &[]).is_empty());
+        assert_eq!(q.state(h), Some(FrameState::Tracked));
+        // Head past the claim: chain proof, not a rescue.
+        let consumed = q.poll(SENDER, 15, &[]);
+        assert_eq!(consumed[0].1, QuarantineDecision::NonceConsumed);
     }
 
     #[test]

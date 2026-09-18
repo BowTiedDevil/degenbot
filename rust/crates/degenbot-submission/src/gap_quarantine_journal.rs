@@ -14,8 +14,8 @@
 //!
 //! Append-on-change with resolution tombstones, compacted once at boot:
 //!
-//! - A park appends `{"kind":"park", ...}` carrying the full feed event plus
-//!   the claimed/expected nonce and the wall clock.
+//! - A park appends `{"v":2,"kind":"park", ...}` carrying the full feed event
+//!   plus the claimed/expected nonce and the wall clock.
 //! - A nonce-consumption classification appends `{"kind":"tentative", ...}`
 //!   naming the frame hash and the carrying block (hash + kind), so a restart
 //!   mid-finality-window reconstructs the tentative set.
@@ -27,13 +27,17 @@
 //!   partial line.
 //! - The loader folds parks and resolves into the pending set (tombstones
 //!   remove their park). Boot then atomically rewrites the file to just the
-//!   still-pending parks — this is the compaction pass, and it also discards a
-//!   corrupt tail.
+//!   still-pending parks — this is the compaction pass.
 //!
-//! A corrupt line is skipped with a warning and counted; the fold continues
-//! with the rest, and the boot compaction heals the file. Losing a park line
-//! this way is safe: the frame was never admitted and the chain probe on the
-//! next park re-derives state.
+//! # Versioning and never-destroy
+//!
+//! Records carry `v` ([`JOURNAL_RECORD_VERSION`]); a line without it is
+//! version 1, the format before versioning. A version this binary does not
+//! fully understand is not a death sentence: a park-shaped line is migrated
+//! into a [`ParkRecord`] and stays tracked (degraded when the wire cannot be
+//! rebuilt), and anything the fold cannot classify is appended verbatim
+//! to a `.corrupt` sidecar before compaction runs — a frame cannot die at boot
+//! for the parser's ignorance, and rejected bytes are never overwritten.
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -48,6 +52,34 @@ use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 
 /// Fixed journal filename under the durable-state root.
 pub const JOURNAL_FILE_NAME: &str = "backrun-quarantine.jsonl";
+
+/// The record schema version this binary writes. A line without an explicit
+/// `v` predates versioning and is read as [`LEGACY_RECORD_VERSION`].
+pub const JOURNAL_RECORD_VERSION: u32 = 2;
+
+/// The implicit version of a line that carries no `v` field.
+const LEGACY_RECORD_VERSION: u32 = 1;
+
+/// How much of a migrated record's wire survived. A degraded park keeps only
+/// identity, so later stages know the feed event cannot be rebuilt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordFidelity {
+    /// The wire shape survives; the feed event can be rebuilt.
+    #[default]
+    Full,
+    /// Only identity survives (hash, nonce, and the sender when readable);
+    /// no event reconstruction is possible.
+    Degraded,
+}
+
+impl RecordFidelity {
+    /// Whether the record can rebuild its feed event.
+    #[must_use]
+    pub const fn is_full(&self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
 
 /// Why a parked frame left the quarantine. Only finalized nonce-consumptions
 /// (and the operational rescue/eviction) write tombstones -- there is no
@@ -233,6 +265,10 @@ pub struct ParkRecord {
     pub parked_at_unix_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tentative: Option<TentativeRecord>,
+    /// Wire survival of a migrated record; a degraded park carries only
+    /// identity and cannot rebuild the feed event.
+    #[serde(default, skip_serializing_if = "RecordFidelity::is_full")]
+    pub fidelity: RecordFidelity,
 }
 
 impl ParkRecord {
@@ -246,6 +282,7 @@ impl ParkRecord {
             expected_nonce,
             parked_at_unix_ms,
             tentative: None,
+            fidelity: RecordFidelity::Full,
         }
     }
 
@@ -266,12 +303,37 @@ impl ParkRecord {
     }
 
     /// Rebuild the FSM frame. No clock rides the frame: liveness is finality,
-    /// so the rebuild is lossless regardless of downtime.
+    /// so the rebuild is lossless regardless of downtime. A degraded record
+    /// rebuilds only its identity and leaves the wire zeroed, so the frame can
+    /// never be rescued into the funnel.
     ///
     /// # Errors
     ///
-    /// [`JournalError`] when a hex field fails to parse.
+    /// [`JournalError`] when the frame hash fails to parse.
     pub fn to_parked_frame(&self) -> Result<ParkedFrame, JournalError> {
+        if self.fidelity == RecordFidelity::Degraded {
+            let hash = self.frame.hash.parse::<B256>()?;
+            return Ok(ParkedFrame {
+                hash,
+                from: self.frame.from.parse::<Address>().unwrap_or(Address::ZERO),
+                to: self
+                    .frame
+                    .to
+                    .as_deref()
+                    .and_then(|raw| raw.parse::<Address>().ok()),
+                value: U256::ZERO,
+                data: Bytes::new(),
+                gas: 0,
+                max_fee_per_gas: 0,
+                max_priority_fee_per_gas: 0,
+                claimed_nonce: self.claimed_nonce,
+                expected_at_capture: self.expected_nonce,
+                chain_id: 0,
+                tx_type: 0,
+                access_list: serde_json::json!([]),
+                received_unix_ms: 0,
+            });
+        }
         let event = self.to_event()?;
         Ok(ParkedFrame {
             hash: event.hash,
@@ -306,10 +368,35 @@ pub struct ResolveRecord {
     pub resolved_at_unix_ms: u64,
 }
 
-/// One journal line.
+/// One journal line: a version tag plus the tagged payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournalRecord {
+    /// The schema version this line was written with. Missing means version 1.
+    #[serde(default = "legacy_record_version", rename = "v")]
+    pub version: u32,
+    #[serde(flatten)]
+    pub payload: JournalRecordPayload,
+}
+
+impl JournalRecord {
+    /// Wrap a payload with the current schema version.
+    #[must_use]
+    pub fn new(payload: JournalRecordPayload) -> Self {
+        Self {
+            version: JOURNAL_RECORD_VERSION,
+            payload,
+        }
+    }
+}
+
+const fn legacy_record_version() -> u32 {
+    LEGACY_RECORD_VERSION
+}
+
+/// The tagged payload of one journal line.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum JournalRecord {
+pub enum JournalRecordPayload {
     Park(Box<ParkRecord>),
     Tentative(Box<TentativeEntryRecord>),
     Resolve(ResolveRecord),
@@ -320,16 +407,48 @@ pub enum JournalRecord {
 pub struct PendingRead {
     /// Still-pending parks, ordered by frame hash.
     pub pending: Vec<ParkRecord>,
-    /// Unparseable lines skipped (each produced a warning at the call site).
+    /// Lines the fold could not classify; each is preserved in the `.corrupt`
+    /// sidecar.
     pub skipped: usize,
+    /// Older- or unknown-version parks folded as tracked frames.
+    pub migrated: usize,
+    /// Migrated parks that kept only identity (hash, nonce, sender when
+    /// readable).
+    pub degraded: usize,
+}
+
+/// One line's classification by the boot fold.
+enum Classified {
+    /// A record this binary understands; fold it semantically.
+    Fold(JournalRecordPayload),
+    /// A park-shaped record (any version or field state) rebuilt as a park,
+    /// degraded when its wire cannot be reconstructed.
+    Migrated {
+        record: Box<ParkRecord>,
+        fidelity: RecordFidelity,
+    },
+    /// Genuinely unparseable; preserve verbatim in the sidecar.
+    Corrupt,
+}
+
+/// The `.corrupt` sibling of `journal_path`. Rejected lines are appended there
+/// verbatim, never overwritten, so a later compaction cannot destroy them.
+#[must_use]
+pub fn corrupt_sidecar_path(journal_path: &Path) -> PathBuf {
+    let mut name = journal_path.as_os_str().to_os_string();
+    name.push(".corrupt");
+    PathBuf::from(name)
 }
 
 /// The still-pending parks after folding the journal at `path`. A missing file
-/// is an empty journal; a corrupt line is counted in `skipped`, never fatal.
+/// is an empty journal; a legacy or future park migrates to a tracked record;
+/// a corrupt line is preserved in the `.corrupt` sidecar and counted in
+/// `skipped`, never fatal.
 ///
 /// # Errors
 ///
-/// I/O errors other than `NotFound`.
+/// I/O errors other than `NotFound`. A failure to preserve a corrupt line is
+/// returned rather than dropped: evidence loss is not silent.
 pub fn read_pending(path: &Path) -> io::Result<PendingRead> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -340,30 +459,254 @@ pub fn read_pending(path: &Path) -> io::Result<PendingRead> {
     };
     let mut pending: BTreeMap<String, ParkRecord> = BTreeMap::new();
     let mut skipped = 0usize;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
+    let mut migrated = 0usize;
+    let mut degraded = 0usize;
+    let sidecar = corrupt_sidecar_path(path);
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
             continue;
         }
-        match serde_json::from_str::<JournalRecord>(line) {
-            Ok(JournalRecord::Park(record)) => {
+        // A UTF-8 BOM is a byte-order artifact, not data: strip it for the
+        // parse only, preserving the raw line byte-for-byte in the sidecar.
+        let parse_line = line.strip_prefix('\u{feff}').unwrap_or(line);
+        match classify_line(parse_line) {
+            Classified::Fold(payload) => apply_fold(&mut pending, payload),
+            Classified::Migrated { record, fidelity } => {
+                migrated += 1;
+                if fidelity == RecordFidelity::Degraded {
+                    degraded += 1;
+                }
                 pending.insert(record.frame.hash.clone(), *record);
             }
-            Ok(JournalRecord::Tentative(record)) => {
-                if let Some(park) = pending.get_mut(&record.frame_hash.to_string()) {
-                    park.tentative = Some(record.consumed);
-                }
+            Classified::Corrupt => {
+                skipped += 1;
+                tracing::warn!(
+                    path = %path.display(),
+                    line = index + 1,
+                    "quarantine journal line unparseable - preserved in .corrupt sidecar"
+                );
+                append_corrupt(&sidecar, line)?;
             }
-            Ok(JournalRecord::Resolve(record)) => {
-                pending.remove(&record.frame_hash.to_string());
-            }
-            Err(_) => skipped += 1,
         }
+    }
+    if migrated > 0 {
+        tracing::info!(
+            path = %path.display(),
+            migrated,
+            degraded,
+            "quarantine journal legacy records migrated as tracked parks"
+        );
     }
     Ok(PendingRead {
         pending: pending.into_values().collect(),
         skipped,
+        migrated,
+        degraded,
     })
+}
+
+/// Classify one journal line by sampled version and shape before any typed
+/// deserialization can reject it.
+fn classify_line(line: &str) -> Classified {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Classified::Corrupt;
+    };
+    if sample_version(&value) <= JOURNAL_RECORD_VERSION {
+        if let Ok(payload) = serde_json::from_value::<JournalRecordPayload>(value.clone()) {
+            return Classified::Fold(payload);
+        }
+    }
+    // A park-shaped line is never junk: whatever the version or field state,
+    // fold it as a park, degrading the wire it cannot rebuild.
+    if park_shaped(&value) {
+        if let Some((record, fidelity)) = migrate_legacy_park(&value) {
+            return Classified::Migrated {
+                record: Box::new(record),
+                fidelity,
+            };
+        }
+    }
+    Classified::Corrupt
+}
+
+/// The record's schema version; a missing `v` is the pre-versioning format.
+fn sample_version(value: &serde_json::Value) -> u32 {
+    match value.get("v") {
+        None => LEGACY_RECORD_VERSION,
+        Some(raw) => raw
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(u32::MAX),
+    }
+}
+
+fn apply_fold(pending: &mut BTreeMap<String, ParkRecord>, payload: JournalRecordPayload) {
+    match payload {
+        JournalRecordPayload::Park(mut record) => {
+            if record.fidelity == RecordFidelity::Full && !wire_is_full(&record.frame) {
+                record.fidelity = RecordFidelity::Degraded;
+            }
+            pending.insert(record.frame.hash.clone(), *record);
+        }
+        JournalRecordPayload::Tentative(record) => {
+            if let Some(park) = pending.get_mut(&record.frame_hash.to_string()) {
+                park.tentative = Some(record.consumed);
+            }
+        }
+        JournalRecordPayload::Resolve(record) => {
+            pending.remove(&record.frame_hash.to_string());
+        }
+    }
+}
+
+/// Whether a value looks like a park even if the current schema rejects it.
+fn park_shaped(value: &serde_json::Value) -> bool {
+    value.get("kind").and_then(serde_json::Value::as_str) == Some("park")
+}
+
+fn append_corrupt(path: &Path, line: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    file.write_all(line.as_bytes())?;
+    file.write_all(b"\n")
+}
+
+/// A park as an unknown-version writer shaped it: every field optional so a
+/// missing one degrades instead of rejecting the line.
+#[derive(Debug, Default, Deserialize)]
+struct LegacyParkRecord {
+    frame: Option<LegacyWireFrame>,
+    sender: Option<Address>,
+    claimed_nonce: Option<u64>,
+    expected_nonce: Option<u64>,
+    parked_at_unix_ms: Option<u64>,
+    hash: Option<B256>,
+    nonce: Option<u64>,
+    tentative: Option<serde_json::Value>,
+}
+
+/// The wire fields a legacy park might carry. All optional: whatever survives
+/// is folded, and hash-plus-nonce alone still yields a degraded tracked park.
+#[derive(Debug, Default, Deserialize)]
+struct LegacyWireFrame {
+    hash: Option<String>,
+    chain_id: Option<u64>,
+    from: Option<String>,
+    to: Option<String>,
+    value: Option<String>,
+    data: Option<String>,
+    gas: Option<u64>,
+    max_fee_per_gas: Option<String>,
+    max_priority_fee_per_gas: Option<String>,
+    nonce: Option<u64>,
+    tx_type: Option<u8>,
+    received_unix_ms: Option<u64>,
+    access_list: Option<serde_json::Value>,
+}
+
+/// Rebuild a tracked park from a park-shaped line the current schema rejects.
+/// The wire is FULL only when every field survives and decodes to a
+/// non-degenerate value; any shortcoming degrades to identity only. Returns
+/// `None` when not even the hash and claimed nonce survive.
+fn migrate_legacy_park(value: &serde_json::Value) -> Option<(ParkRecord, RecordFidelity)> {
+    let legacy: LegacyParkRecord = serde_json::from_value(value.clone()).ok()?;
+    let frame = legacy.frame.unwrap_or_default();
+    let hash = frame
+        .hash
+        .as_deref()
+        .and_then(|raw| raw.parse::<B256>().ok())
+        .or(legacy.hash)?;
+    let claimed_nonce = legacy.claimed_nonce.or(frame.nonce).or(legacy.nonce)?;
+    let sender = legacy
+        .sender
+        .or_else(|| {
+            frame
+                .from
+                .as_deref()
+                .and_then(|raw| raw.parse::<Address>().ok())
+        })
+        .unwrap_or(Address::ZERO);
+    let (wire, fidelity) = match full_wire_candidate(&frame, hash, claimed_nonce) {
+        Some(wire) => (wire, RecordFidelity::Full),
+        None => (
+            degraded_wire(&frame, hash, claimed_nonce),
+            RecordFidelity::Degraded,
+        ),
+    };
+    let tentative = legacy
+        .tentative
+        .and_then(|raw| serde_json::from_value::<TentativeRecord>(raw).ok());
+    Some((
+        ParkRecord {
+            frame: wire,
+            sender,
+            claimed_nonce,
+            expected_nonce: legacy.expected_nonce.unwrap_or(claimed_nonce),
+            parked_at_unix_ms: legacy.parked_at_unix_ms.unwrap_or(0),
+            tentative,
+            fidelity,
+        },
+        fidelity,
+    ))
+}
+
+/// The full wire a legacy park carries, when every field is present and
+/// decodes to a non-degenerate value. `None` on the first shortcoming.
+fn full_wire_candidate(frame: &LegacyWireFrame, hash: B256, nonce: u64) -> Option<WireFrame> {
+    let wire = WireFrame {
+        hash: hash.to_string(),
+        chain_id: frame.chain_id?,
+        from: frame.from.clone()?,
+        to: frame.to.clone(),
+        value: frame.value.clone()?,
+        data: frame.data.clone()?,
+        gas: frame.gas?,
+        max_fee_per_gas: frame.max_fee_per_gas.clone()?,
+        max_priority_fee_per_gas: frame.max_priority_fee_per_gas.clone()?,
+        nonce,
+        tx_type: frame.tx_type?,
+        received_unix_ms: frame.received_unix_ms?,
+        access_list: frame.access_list.clone()?,
+    };
+    wire_is_full(&wire).then_some(wire)
+}
+
+/// A degraded park keeps its identity (hash, nonce, and the sender when
+/// readable); the wire defaults are zeroed so no event can be fabricated.
+fn degraded_wire(frame: &LegacyWireFrame, hash: B256, nonce: u64) -> WireFrame {
+    WireFrame {
+        hash: hash.to_string(),
+        chain_id: 0,
+        from: frame
+            .from
+            .clone()
+            .unwrap_or_else(|| Address::ZERO.to_string()),
+        to: frame.to.clone(),
+        value: String::from("0x0"),
+        data: String::from("0x"),
+        gas: 0,
+        max_fee_per_gas: String::from("0"),
+        max_priority_fee_per_gas: String::from("0"),
+        nonce,
+        tx_type: 0,
+        received_unix_ms: 0,
+        access_list: serde_json::json!([]),
+    }
+}
+
+/// A wire that can rebuild a real feed event: every field decodes and the
+/// identity fields are non-degenerate. A fabricated default is never FULL.
+fn wire_is_full(wire: &WireFrame) -> bool {
+    let Ok(event) = wire.decode() else {
+        return false;
+    };
+    event.hash != B256::ZERO
+        && event.from != Address::ZERO
+        && event.chain_id != 0
+        && event.gas != 0
+        && wire.access_list.is_array()
 }
 
 /// Atomically rewrite `path` to exactly `pending`, creating parent directories.
@@ -379,7 +722,7 @@ pub fn compact(path: &Path, pending: &[ParkRecord]) -> io::Result<()> {
     }
     let mut body = Vec::new();
     for record in pending {
-        let line = JournalRecord::Park(Box::new(record.clone()));
+        let line = JournalRecord::new(JournalRecordPayload::Park(Box::new(record.clone())));
         serde_json::to_writer(&mut body, &line)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         body.push(b'\n');
@@ -440,7 +783,9 @@ impl QuarantineJournal {
     ///
     /// Serialization or I/O failure.
     pub fn record_park(&mut self, record: &ParkRecord) -> io::Result<()> {
-        self.append(&JournalRecord::Park(Box::new(record.clone())))
+        self.append(&JournalRecord::new(JournalRecordPayload::Park(Box::new(
+            record.clone(),
+        ))))
     }
 
     /// Append one resolution tombstone.
@@ -454,11 +799,13 @@ impl QuarantineJournal {
         resolution: Resolution,
         resolved_at_unix_ms: u64,
     ) -> io::Result<()> {
-        self.append(&JournalRecord::Resolve(ResolveRecord {
-            frame_hash,
-            resolution,
-            resolved_at_unix_ms,
-        }))
+        self.append(&JournalRecord::new(JournalRecordPayload::Resolve(
+            ResolveRecord {
+                frame_hash,
+                resolution,
+                resolved_at_unix_ms,
+            },
+        )))
     }
 
     /// Append one tentative classification for an existing park.
@@ -472,11 +819,13 @@ impl QuarantineJournal {
         consumed: NonceConsumed,
         entered_at_unix_ms: u64,
     ) -> io::Result<()> {
-        self.append(&JournalRecord::Tentative(Box::new(TentativeEntryRecord {
-            frame_hash,
-            consumed: TentativeRecord::from_consumed(consumed),
-            entered_at_unix_ms,
-        })))
+        self.append(&JournalRecord::new(JournalRecordPayload::Tentative(
+            Box::new(TentativeEntryRecord {
+                frame_hash,
+                consumed: TentativeRecord::from_consumed(consumed),
+                entered_at_unix_ms,
+            }),
+        )))
     }
 
     fn append(&mut self, record: &JournalRecord) -> io::Result<()> {

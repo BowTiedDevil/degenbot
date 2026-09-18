@@ -1,6 +1,11 @@
 //! Frame-liveness FSM acceptance: finality-only death, reorg revival,
 //! no pool-absence eviction, and the nonce-consumed classification handoff.
 
+#![expect(
+    clippy::expect_used,
+    reason = "integration fixtures and assertions fail loudly"
+)]
+
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_submission::gap_quarantine::{
     FrameState, NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
@@ -219,4 +224,47 @@ fn no_pool_absence_ever_evicts() {
         assert!(matches!(out[0].1, QuarantineDecision::StillWaiting { .. }));
     }
     assert_eq!(q.state(h), Some(FrameState::Tracked));
+}
+
+/// A legacy park migrated into a tracked frame outlives pool absence: the
+/// journal fold keeps it alive and only chain proof ends it.
+#[test]
+fn legacy_migrated_park_reenters_the_fsm_as_tracked() {
+    use degenbot_submission::gap_quarantine_journal::{read_pending, JOURNAL_FILE_NAME};
+
+    let dir = std::env::temp_dir().join(format!(
+        "degenbot-frame-liveness-legacy-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let line = format!(
+        "{{\"kind\":\"park\",\"frame\":{{\"hash\":\"{}\",\"from\":\"{SENDER}\",\"nonce\":45}},\"sender\":\"{SENDER}\",\"claimed_nonce\":45,\"expected_nonce\":44}}",
+        hash(5)
+    );
+    std::fs::write(&path, format!("{line}\n")).expect("write");
+
+    let read = read_pending(&path).expect("read");
+    assert_eq!(read.pending.len(), 1);
+    let mut q = Quarantine::new();
+    let frame = read.pending[0].to_parked_frame().expect("frame");
+    assert!(frame.is_degraded());
+    let frame_hash = frame.hash;
+    q.push(frame);
+    for _ in 0..10 {
+        let out = q.poll(SENDER, 44, &[]);
+        assert!(
+            out.iter()
+                .all(|(_, decision)| !matches!(decision, QuarantineDecision::Rescue { .. })),
+            "a degraded frame never rescues without a wire"
+        );
+    }
+    assert_eq!(
+        q.state(frame_hash),
+        Some(FrameState::Tracked),
+        "a migrated legacy frame never dies without chain proof"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
