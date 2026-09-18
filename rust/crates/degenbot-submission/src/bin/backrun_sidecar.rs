@@ -307,6 +307,10 @@ async fn run_frame(
             max_priority_fee_per_gas: ev.max_priority_fee_per_gas,
             claimed_nonce: ev.nonce,
             expected_at_capture: *expected,
+            chain_id: ev.chain_id,
+            tx_type: ev.tx_type,
+            access_list: ev.access_list.clone(),
+            received_unix_ms: ev.received_unix_ms,
         };
         let parked_count = quarantine.push(parked);
         if let Some(journal) = journal {
@@ -1047,11 +1051,16 @@ async fn main() {
                             QuarantineDecision::Rescue { predecessors } => {
                                 trace_jsonl(
                                     "quarantine",
-                                    serde_json::json!({"action": "rescue_event_unsupported",
+                                    serde_json::json!({
+                                        "action": "rescue_reentered",
                                         "tx": frame.hash.to_string(),
-                                        "predecessors": predecessors,
+                                        "predecessors": predecessors.len(),
                                     }),
                                 );
+                                // Tombstone BEFORE re-entry: if the funnel
+                                // re-parks this hash on a genuinely new gap,
+                                // that fresh park line lands after this
+                                // resolve and survives the fold.
                                 if let Some(journal) = quarantine_journal.as_mut() {
                                     if let Err(error) = journal.record_resolve(
                                         frame.hash,
@@ -1061,6 +1070,30 @@ async fn main() {
                                         tracing::warn!(%error, "quarantine resolve not journaled");
                                     }
                                 }
+                                // Re-enter the funnel exactly as the feed loop
+                                // does, with the same context. `run_frame`
+                                // owns its own spent/consumption accounting, so
+                                // nothing is double-counted here.
+                                let ev = frame.to_event();
+                                run_frame(
+                                    &ev,
+                                    &mut runtime,
+                                    &mut strategy,
+                                    &provider,
+                                    &sim_client,
+                                    &cfg,
+                                    &pl,
+                                    &mut handle,
+                                    current_block,
+                                    &mut spent,
+                                    &dispatcher,
+                                    operator_nonce,
+                                    signer.as_ref(),
+                                    &gap_probe,
+                                    &mut quarantine,
+                                    quarantine_journal.as_mut(),
+                                )
+                                .await;
                             }
                             QuarantineDecision::StillWaiting { unknown } => {
                                 trace_jsonl(

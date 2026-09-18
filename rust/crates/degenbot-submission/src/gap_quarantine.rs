@@ -38,13 +38,16 @@
 //! 3. finality -> [`Quarantine::check_finalized`] tombstones every tentative
 //!    frame at or below the node's finalized tag.
 //! 4. rescue -> `poll` reports the predecessor set the caller's pool view can
-//!    produce; the frame leaves the FSM.
+//!    produce; the frame leaves the FSM into the funnel. At the frontier
+//!    (head == claim) the set is empty: the whole gap is mined, so replaying
+//!    against the current head needs no prefix.
 //! 5. still-waiting -> the gap remains invisible; the frame stays tracked
 //!    with no expiry.
 
 use std::collections::BTreeMap;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
+use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 
 /// A frame parked at its gap boundary, carrying the wire fields a flip-side
 /// replay needs when the gap closes.
@@ -63,6 +66,14 @@ pub struct ParkedFrame {
     /// The head-state account nonce at capture (`expected`); the predecessor
     /// set is `[expected, claimed)`.
     pub expected_at_capture: u64,
+    /// Chain the frame was observed on (funnel re-entry wire field).
+    pub chain_id: u64,
+    /// EIP-2718 transaction type (funnel re-entry wire field).
+    pub tx_type: u8,
+    /// Access list, verbatim (funnel re-entry wire field).
+    pub access_list: serde_json::Value,
+    /// Feed receive time; forensics only, no liveness clock rides the frame.
+    pub received_unix_ms: u64,
 }
 
 impl ParkedFrame {
@@ -70,6 +81,28 @@ impl ParkedFrame {
     #[must_use]
     pub fn gap_range(&self) -> Vec<u64> {
         (self.expected_at_capture..self.claimed_nonce).collect()
+    }
+
+    /// Rebuild the feed event a funnel re-entry needs. Infallible: every wire
+    /// field is already typed on the frame (the journal read path parses the
+    /// hex strings before constructing the frame).
+    #[must_use]
+    pub fn to_event(&self) -> BackrunFeedEvent {
+        BackrunFeedEvent {
+            chain_id: self.chain_id,
+            from: self.from,
+            to: self.to,
+            value: self.value,
+            data: self.data.clone(),
+            gas: self.gas,
+            max_fee_per_gas: self.max_fee_per_gas,
+            max_priority_fee_per_gas: self.max_priority_fee_per_gas,
+            nonce: self.claimed_nonce,
+            hash: self.hash,
+            access_list: self.access_list.clone(),
+            tx_type: self.tx_type,
+            received_unix_ms: self.received_unix_ms,
+        }
     }
 }
 
@@ -230,8 +263,10 @@ impl Quarantine {
     ///
     /// Nonce semantics: `head_nonce` is `eth_getTransactionCount(latest)` -
     /// the NEXT unconsumed nonce, so a frame's slot is consumed only when
-    /// headNonce > claim. Head ON the claim is the open frontier (the
-    /// frame is pending and its predecessors are all mined): a quiet hold.
+    /// headNonce > claim. Head ON the claim is the open frontier: every gap
+    /// nonce is already mined, so `poll` rescues the frame with an EMPTY
+    /// predecessor list (replay against the current head needs no prefix) and
+    /// the frame leaves the FSM.
     ///
     /// Returns one decision per TRACKED frame of that sender (in push order).
     /// `Rescue` removes the frame (it leaves the FSM); `NonceConsumed` and
@@ -271,21 +306,20 @@ impl Quarantine {
                 .filter(|n| *n >= head_nonce)
                 .collect();
             if unknown.is_empty() {
-                if preds.is_empty() {
-                    // The gap is fully mined and the head sits exactly on
-                    // the claim: the frame's slot is the OPEN frontier -
-                    // pending, not consumed. A quiet hold; when someone
-                    // mines the slot the next head's `>` fires consumption
-                    // and classification with real evidence on chain.
-                    keep.push(entry);
-                } else {
-                    out.push((
-                        entry.frame.clone(),
-                        QuarantineDecision::Rescue {
-                            predecessors: preds,
-                        },
-                    ));
-                }
+                // Every gap nonce is fetchable, so the frame leaves the FSM
+                // into the funnel. At the frontier the head sits exactly on
+                // the claim and `preds` is empty: the whole gap is already
+                // mined and replaying against the current head needs no
+                // prefix. A re-park of the same hash can only follow a
+                // genuinely NEW gap captured against a later head - at
+                // count == claim the replay cannot emit NonceTooHigh, so no
+                // same-head rescue/park ping-pong is possible.
+                out.push((
+                    entry.frame.clone(),
+                    QuarantineDecision::Rescue {
+                        predecessors: preds,
+                    },
+                ));
             } else {
                 out.push((
                     entry.frame.clone(),
@@ -386,6 +420,7 @@ mod tests {
     fn frame(nonce: u64, expected: u64) -> ParkedFrame {
         ParkedFrame {
             hash: b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            chain_id: 1,
             from: SENDER,
             to: None,
             value: U256::ZERO,
@@ -395,6 +430,9 @@ mod tests {
             max_priority_fee_per_gas: 1_000_000_000,
             claimed_nonce: nonce,
             expected_at_capture: expected,
+            tx_type: 2,
+            access_list: serde_json::json!([]),
+            received_unix_ms: 1_700_000_000_000,
         }
     }
 
@@ -449,11 +487,7 @@ mod tests {
         let f = frame(12, 10);
         let h = f.hash;
         q.push(f);
-        let frontier = q.poll(SENDER, 12, &[]);
-        assert!(
-            frontier.is_empty(),
-            "head on the claim is the open frontier, not consumption: {frontier:?}"
-        );
+        // Head past the claim: consumption, classification begins.
         let out = q.poll(SENDER, 13, &[]);
         assert_eq!(out[0].1, QuarantineDecision::NonceConsumed);
         assert_eq!(q.state(h), Some(FrameState::Tracked));
@@ -480,7 +514,7 @@ mod tests {
         let f = frame(12, 10);
         let h = f.hash;
         q.push(f);
-        let _ = q.poll(SENDER, 12, &[]);
+        let _ = q.poll(SENDER, 13, &[]);
         q.enter_tentative(
             h,
             NonceConsumed::MinedAt {
@@ -506,7 +540,7 @@ mod tests {
         let f = frame(12, 10);
         let h = f.hash;
         q.push(f);
-        let _ = q.poll(SENDER, 12, &[]);
+        let _ = q.poll(SENDER, 13, &[]);
         q.enter_tentative(
             h,
             NonceConsumed::SlotTakenAt {

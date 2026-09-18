@@ -17,6 +17,7 @@ fn hash(byte: u8) -> B256 {
 fn frame(nonce: u64, expected: u64) -> ParkedFrame {
     ParkedFrame {
         hash: hash(1),
+        chain_id: 1,
         from: SENDER,
         to: None,
         value: U256::ZERO,
@@ -26,6 +27,9 @@ fn frame(nonce: u64, expected: u64) -> ParkedFrame {
         max_priority_fee_per_gas: 1_000_000_000,
         claimed_nonce: nonce,
         expected_at_capture: expected,
+        tx_type: 2,
+        access_list: serde_json::json!([]),
+        received_unix_ms: 1_700_000_000_000,
     }
 }
 
@@ -50,20 +54,34 @@ fn gap_range_is_the_explicit_predecessor_order() {
 }
 
 #[test]
-fn frontier_nonce_is_a_quiet_hold_not_consumption() {
+fn frontier_rescues_with_an_empty_prefix_and_leaves_the_fsm() {
     let mut q = Quarantine::new();
     let f = frame(12, 10);
-    let h = f.hash;
-    q.push(f);
-    // head == claim: the frame's slot is the OPEN frontier -- pending,
-    // not consumed. No decision, no classification probes, quiet hold.
+    q.push(f.clone());
+    // head == claim: every predecessor is already mined, so the whole gap is
+    // replayed against the current head with no prefix. The quiet hold from
+    // 94425a315 is superseded: the frame now LEAVES the FSM into the funnel.
     let out = q.poll(SENDER, 12, &[]);
-    assert!(
-        out.is_empty(),
-        "frontier pending emits no decision: {out:?}"
+    assert_eq!(out.len(), 1, "the frontier emits exactly one decision");
+    assert_eq!(
+        out[0].1,
+        QuarantineDecision::Rescue {
+            predecessors: vec![]
+        },
+        "the frontier is a rescue with an empty prefix, not consumption"
     );
-    assert_eq!(q.state(h), Some(FrameState::Tracked));
-    // head passes the claim: consumption, classification begins.
+    assert!(
+        !matches!(out[0].1, QuarantineDecision::NonceConsumed),
+        "no NonceConsumed AT the claim"
+    );
+    assert!(q.is_empty(), "a frontier rescue removes the frame");
+    assert_eq!(q.state(f.hash), None);
+
+    // A frame whose head LATER passes the claim still classifies as consumed.
+    let mut q = Quarantine::new();
+    let g = frame(12, 10);
+    let h = g.hash;
+    q.push(g);
     let out = q.poll(SENDER, 13, &[]);
     assert_eq!(out[0].1, QuarantineDecision::NonceConsumed);
     assert_eq!(q.state(h), Some(FrameState::Tracked));
@@ -85,12 +103,42 @@ fn frontier_nonce_is_a_quiet_hold_not_consumption() {
 }
 
 #[test]
+fn re_park_after_rescue_requires_a_new_gap() {
+    let mut q = Quarantine::new();
+    q.push(frame(12, 10));
+    let out = q.poll(SENDER, 12, &[]);
+    assert_eq!(
+        out[0].1,
+        QuarantineDecision::Rescue {
+            predecessors: vec![]
+        }
+    );
+    assert!(q.is_empty(), "the rescued frame is gone");
+    // Same head afterwards: nothing left to re-park, so no ping-pong.
+    assert!(q.poll(SENDER, 12, &[]).is_empty());
+
+    // Only a genuinely NEW captured boundary re-parks (a later gap).
+    let mut fresh = frame(15, 12);
+    fresh.hash = hash(2);
+    q.push(fresh);
+    assert_eq!(q.len(), 1);
+    let out = q.poll(SENDER, 12, &[]);
+    assert_eq!(
+        out[0].1,
+        QuarantineDecision::StillWaiting {
+            unknown: vec![12, 13, 14]
+        }
+    );
+    assert_eq!(q.state(hash(2)), Some(FrameState::Tracked));
+}
+
+#[test]
 fn finality_tombstones_only_at_or_below_the_tag() {
     let mut q = Quarantine::new();
     let f = frame(12, 10);
     let h = f.hash;
     q.push(f);
-    let _ = q.poll(SENDER, 12, &[]);
+    let _ = q.poll(SENDER, 13, &[]);
     q.enter_tentative(
         h,
         NonceConsumed::MinedAt {
@@ -114,7 +162,7 @@ fn reorg_revives_on_hash_mismatch_but_not_on_match() {
     let f = frame(12, 10);
     let h = f.hash;
     q.push(f);
-    let _ = q.poll(SENDER, 12, &[]);
+    let _ = q.poll(SENDER, 13, &[]);
     q.enter_tentative(
         h,
         NonceConsumed::SlotTakenAt {

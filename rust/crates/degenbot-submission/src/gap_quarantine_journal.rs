@@ -284,6 +284,10 @@ impl ParkRecord {
             max_priority_fee_per_gas: event.max_priority_fee_per_gas,
             claimed_nonce: self.claimed_nonce,
             expected_at_capture: self.expected_nonce,
+            chain_id: event.chain_id,
+            tx_type: event.tx_type,
+            access_list: event.access_list,
+            received_unix_ms: event.received_unix_ms,
         })
     }
 

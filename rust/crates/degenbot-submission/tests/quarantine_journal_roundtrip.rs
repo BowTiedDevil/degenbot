@@ -157,6 +157,24 @@ fn journal_round_trips_tentative_state_across_a_restart() {
 /// A frame received an arbitrarily long time ago (six hours, or six years) is
 /// never dropped for age: the journal keeps it and the FSM keeps it tracked.
 #[test]
+fn parked_frame_to_event_round_trips_the_full_wire() {
+    let original = event(9, 42, 1_700_000_000_123);
+    let record = ParkRecord::new(&original, 40, now_ms());
+    let frame = record.to_parked_frame().expect("frame");
+    assert_eq!(frame.chain_id, original.chain_id);
+    assert_eq!(frame.tx_type, original.tx_type);
+    assert_eq!(frame.access_list, original.access_list);
+    assert_eq!(frame.received_unix_ms, original.received_unix_ms);
+    assert_eq!(frame.claimed_nonce, original.nonce);
+    assert_eq!(frame.expected_at_capture, 40);
+    assert_eq!(
+        frame.to_event(),
+        original,
+        "to_event is lossless against the source feed event"
+    );
+}
+
+#[test]
 fn a_very_late_frame_is_never_dropped_for_age_or_pool_absence() {
     let dir = scratch("late-frame");
     let path = dir.join(JOURNAL_FILE_NAME);
