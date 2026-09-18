@@ -6,6 +6,11 @@ Landed:
 
 Verified live (session 20260918T174510Z-2440665, bid mode): boot fold reloaded 13 parked + 13 tentative; finality deaths flowing for legacy tentatives (mined=true and mined=false at block <= finalized).
 
-Follow-ups (non-blocking, tracked here):
+Follow-ups (non-blocking, tracked here - now recorded as OPEN ergo tasks, created 2026-09-18 after the done-record hid them from ergo list):
+- KYW2IQ: gap-journal versioned record migration (old schemas fold as Tracked; corruption never destroys evidence)
+- BRV2XI: quarantine rescue funnel re-entry (frontier + pool-pred rescues re-enter the funnel - the rescue_event_unsupported stub violates the regime)
+- WLZNMN: classification retry cadence decay (unresolvable evidence must not probe every head forever; no clocks, no fabricated death)
+- 3S7JR6: by-nonce by-identity backfill when the lane supports it
+Legacy notes preserved below.
 - Journal schema migration cliff: reload skipped 2149 old-schema lines then compacted them away. Regime-correct fold of unknown-schema park records as Tracked needs a versioned record migration.
 - by-nonce identity on lanes without connector-index support.
