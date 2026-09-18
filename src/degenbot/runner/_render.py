@@ -14,6 +14,7 @@ cockpit.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -233,173 +234,155 @@ def _dump_failure_fixture(
 
 def _render_sim_failures(outcome: _SimOutcome, *, current_block: int) -> None:
     """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted / failed
-
     candidate (D3 + AM5AJW). Capped at :data:`_SIM_FAIL_RENDER_CAP` records.
 
-
     If ``DEGENBOT_SIM_EXIT_ON_FAIL=1`` is set, dump the full hop-detail for the
-
     FIRST failing record then ``sys.exit(3)`` — a trap for capturing a mainnet
-
     fixture to pin a RED byte-exact calc test (ergo W2UWZO).
-
     """
-
     failures = outcome.failures
-
     if not failures:
         return
 
     cap = _SIM_FAIL_RENDER_CAP
-
     path_infos = outcome.path_infos
-
     for rec in failures[:cap]:
-        path_id = rec["path_id"]
+        _render_one_failure(rec, path_infos, current_block)
 
-        bucket = rec["bucket"]
-
-        fail_idx = rec["fail_index"]
-
-        revert_hex = rec["revert_data"]
-
-        path_info = path_infos.get(path_id)
-
-        path_type = path_info["path_type"] if path_info is not None else "?"
-
-        hops = (
-            _hop_token_summary(path_info["hops"])
-            if path_info is not None
-            else "(path_info missing)"
-        )
-
-        rf = rec.get("reverting_frame")
-
-        swaps = rec.get("captured_swaps") or []
-
-        if rf is not None:
-            revert_line = (
-                f"revert@depth={rf['depth']} target={rf['target']} "
-                f"sel={rf['selector']} label={rf['label']} kind={rf.get('outcome_kind')} "
-                f"gas={rf.get('gas_used')} "
-                f"swaps_before={len(swaps)} revert={rf['revert_data']}"
-            )
-
-        else:
-            revert_line = f"fail_idx={fail_idx} revert={revert_hex}"
-
-        bot_logger.info(
-            f"[sim-fail] path={path_id} type={path_type} bucket={bucket} {revert_line} hops={hops}",
-        )
-
-        ct = rec.get("call_trace") or []
-
-        if ct:
-            # 2026-08-22 audit: per-failure detail rides at debug; the [sim-fail]
-            # bucket summary above is the operator-grade line.
-            bot_logger.debug(f"[sim-trace] path={path_id} frames={';'.join(str(x) for x in ct)}")
-
-        weth_before = rec.get("weth_before")
-
-        weth_after = rec.get("weth_after")
-
-        if weth_before is not None and weth_after is not None:
-            eb, ea = rec.get("eth_before") or 0, rec.get("eth_after") or 0
-
-            fb, fa = rec.get("erc6909_before") or 0, rec.get("erc6909_after") or 0
-
-            d_w, d_e, d_f = weth_after - weth_before, ea - eb, fa - fb
-
-            bot_logger.debug(
-                f"[sim-bals] path={path_id} weth {weth_before}->{weth_after} (d={d_w:+d}) "
-                f"| eth {eb}->{ea} (d={d_e:+d}) | erc6909 {fb}->{fa} (d={d_f:+d}) "
-                f"| combined d={d_w + d_e + d_f:+d}"
-            )
-
-        if rec.get("log_full_count") is not None:
-            n_swap = len(rec.get("captured_swaps") or [])
-
-            n_rev = len(rec.get("reverted_swaps") or [])
-
-            bot_logger.debug(
-                f"[sim-logfull] path={path_id} log_full={rec.get('log_full_count')} "
-                f"captured={n_swap} reverted={n_rev} "
-                "(dropped if log_full>captured+reverted)"
-            )
-
-        rs = rec.get("reverted_swaps") or []
-
-        if rs:
-            brief = ";".join(
-                f"{s.get('family')}:{str(s.get('emitter'))[0:10]}:a0={s.get('amount0')}:a1={s.get('amount1')}"
-                for s in rs
-            )
-
-            bot_logger.debug(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
-
-        bot_logger.debug(
-            format_sim_diag_line(
-                rec,
-                path_id=path_id,
-                path_type=path_type,
-                solve_block=current_block,
-                block=current_block,
-                age=0,
-            )
-        )
-
-    if os.environ.get("DEGENBOT_SIM_EXIT_ON_FAIL", "1") == "1":
-        # Fail HARD and LOUD: ANY un-ignored failure bucket halts the bot
-
-        # (ADR-021 / ergo W2UWZO — detect/classify/stop loudly, never mask).
-
-        # There is NO default ignore set; the operator OPT-IN dumbs the tripwire
-
-        # down per-bucket via DEGENBOT_SIM_EXIT_IGNORE_BUCKETS.
-
-        ignore = {
-            b.strip()
-            for b in os.environ.get("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "").split(",")
-            if b.strip()
-        }
-
-        trap_failures = [f for f in failures if f.get("bucket") not in ignore]
-
-        if trap_failures:
-            first = trap_failures[0]
-
-            _dump_failure_fixture(first, path_infos.get(first["path_id"]), current_block)
-
-            # ADR-040: the PER-BUCKET policy decides what happens next — the
-            # Rust core owns the closed bucket matrix (single source of truth);
-            # Python only consults it. A sim failure's effective action is the
-            # `sim_failure` bucket's (reason sub-split lands at the sim seam).
-            from degenbot.diagnostics import failure_action as _policy
-
-            action = _policy("sim_failure", None)
-            if action == "exit":
-                bot_logger.error(
-                    f"[sim-trap] exiting on first sim failure at block={current_block} "
-                    f"(failure_policy sim_failure bucket action=exit) "
-                    f"— see [sim-fixture] above",
-                )
-
-                for h in bot_logger.handlers:
-                    h.flush()
-
-                sys.exit(3)
-            else:
-                bot_logger.error(
-                    f"[sim-trap] {len(trap_failures)} sim failure(s) at block={current_block} "
-                    f"(failure_policy sim_failure action={action}) — continuing; "
-                    f"failures surface via OTel (degenbot.errors{{kind=sim_failure}}). "
-                    f"See [sim-fixture] above.",
-                )
+    _enforce_sim_failure_policy(failures, path_infos, current_block)
 
     overflow = len(failures) - cap
-
     if overflow > 0:
         bot_logger.info(f"[sim-fail] … (+{overflow} more)")
+
+
+def _render_one_failure(
+    rec: dict[str, Any],
+    path_infos: dict[int, dict[str, Any]],
+    current_block: int,
+) -> None:
+    """Render the always-on ``[sim-fail]`` + ``[sim-diag]`` pair for one record."""
+    path_id = rec["path_id"]
+    bucket = rec["bucket"]
+    fail_idx = rec["fail_index"]
+    revert_hex = rec["revert_data"]
+    path_info = path_infos.get(path_id)
+    path_type = path_info["path_type"] if path_info is not None else "?"
+    hops = _hop_token_summary(path_info["hops"]) if path_info is not None else "(path_info missing)"
+    rf = rec.get("reverting_frame")
+    swaps = rec.get("captured_swaps") or []
+    if rf is not None:
+        revert_line = (
+            f"revert@depth={rf['depth']} target={rf['target']} "
+            f"sel={rf['selector']} label={rf['label']} kind={rf.get('outcome_kind')} "
+            f"gas={rf.get('gas_used')} "
+            f"swaps_before={len(swaps)} revert={rf['revert_data']}"
+        )
+    else:
+        revert_line = f"fail_idx={fail_idx} revert={revert_hex}"
+    bot_logger.info(
+        f"[sim-fail] path={path_id} type={path_type} bucket={bucket} {revert_line} hops={hops}",
+    )
+    _render_failure_debug(rec, path_id)
+    bot_logger.debug(
+        format_sim_diag_line(
+            rec,
+            path_id=path_id,
+            path_type=path_type,
+            window=SimDiagWindow(solve_block=current_block, block=current_block, age=0),
+        )
+    )
+
+
+def _render_failure_debug(rec: dict[str, Any], path_id: int) -> None:
+    """Render the per-failure debug detail lines (trace, balances, swap counts)."""
+    ct = rec.get("call_trace") or []
+    if ct:
+        # 2026-08-22 audit: per-failure detail rides at debug; the [sim-fail]
+        # bucket summary above is the operator-grade line.
+        bot_logger.debug(f"[sim-trace] path={path_id} frames={';'.join(str(x) for x in ct)}")
+
+    weth_before = rec.get("weth_before")
+    weth_after = rec.get("weth_after")
+    if weth_before is not None and weth_after is not None:
+        eb, ea = rec.get("eth_before") or 0, rec.get("eth_after") or 0
+        fb, fa = rec.get("erc6909_before") or 0, rec.get("erc6909_after") or 0
+        d_w, d_e, d_f = weth_after - weth_before, ea - eb, fa - fb
+        bot_logger.debug(
+            f"[sim-bals] path={path_id} weth {weth_before}->{weth_after} (d={d_w:+d}) "
+            f"| eth {eb}->{ea} (d={d_e:+d}) | erc6909 {fb}->{fa} (d={d_f:+d}) "
+            f"| combined d={d_w + d_e + d_f:+d}"
+        )
+
+    if rec.get("log_full_count") is not None:
+        n_swap = len(rec.get("captured_swaps") or [])
+        n_rev = len(rec.get("reverted_swaps") or [])
+        bot_logger.debug(
+            f"[sim-logfull] path={path_id} log_full={rec.get('log_full_count')} "
+            f"captured={n_swap} reverted={n_rev} "
+            "(dropped if log_full>captured+reverted)"
+        )
+
+    _render_reverted_swaps(rec, path_id)
+
+
+def _render_reverted_swaps(rec: dict[str, Any], path_id: int) -> None:
+    """Render the debug line naming swaps reverted within the simulation."""
+    rs = rec.get("reverted_swaps") or []
+    if not rs:
+        return
+    brief = ";".join(
+        f"{s.get('family')}:{str(s.get('emitter'))[0:10]}:a0={s.get('amount0')}:a1={s.get('amount1')}"
+        for s in rs
+    )
+    bot_logger.debug(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
+
+
+def _enforce_sim_failure_policy(
+    failures: list[dict[str, Any]],
+    path_infos: dict[int, dict[str, Any]],
+    current_block: int,
+) -> None:
+    """Apply the ``DEGENBOT_SIM_EXIT_*`` tripwire over one failure batch."""
+    if os.environ.get("DEGENBOT_SIM_EXIT_ON_FAIL", "1") != "1":
+        return
+    # Fail HARD and LOUD: ANY un-ignored failure bucket halts the bot
+    # (ADR-021 / ergo W2UWZO — detect/classify/stop loudly, never mask).
+    # There is NO default ignore set; the operator OPT-IN dumbs the tripwire
+    # down per-bucket via DEGENBOT_SIM_EXIT_IGNORE_BUCKETS.
+    ignore = {
+        b.strip()
+        for b in os.environ.get("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "").split(",")
+        if b.strip()
+    }
+    trap_failures = [f for f in failures if f.get("bucket") not in ignore]
+    if not trap_failures:
+        return
+    first = trap_failures[0]
+    _dump_failure_fixture(first, path_infos.get(first["path_id"]), current_block)
+    # ADR-040: the PER-BUCKET policy decides what happens next — the
+    # Rust core owns the closed bucket matrix (single source of truth);
+    # Python only consults it. A sim failure's effective action is the
+    # `sim_failure` bucket's (reason sub-split lands at the sim seam).
+    from degenbot.diagnostics import failure_action as _policy
+
+    action = _policy("sim_failure", None)
+    if action == "exit":
+        bot_logger.error(
+            f"[sim-trap] exiting on first sim failure at block={current_block} "
+            f"(failure_policy sim_failure bucket action=exit) "
+            f"— see [sim-fixture] above",
+        )
+        for h in bot_logger.handlers:
+            h.flush()
+        sys.exit(3)
+    else:
+        bot_logger.error(
+            f"[sim-trap] {len(trap_failures)} sim failure(s) at block={current_block} "
+            f"(failure_policy sim_failure action={action}) — continuing; "
+            f"failures surface via OTel (degenbot.errors{{kind=sim_failure}}). "
+            f"See [sim-fixture] above.",
+        )
 
 
 def _render_fot_tokens(dispatcher: Dispatcher, current_block: int) -> None:
@@ -441,14 +424,21 @@ def format_failure_breakdown(buckets: dict[str, int]) -> str:
 # Basis points denominator (10_000 = 100%).
 
 
+@dataclasses.dataclass(frozen=True)
+class SimDiagWindow:
+    """Block-clock context for a ``[sim-diag]`` line."""
+
+    solve_block: int
+    block: int
+    age: int
+
+
 def format_sim_diag_line(
     failure: dict[str, object],
     *,
     path_id: int,
     path_type: str,
-    solve_block: int,
-    block: int,
-    age: int,
+    window: SimDiagWindow,
 ) -> str:
     """Render one always-on ``[sim-diag]`` JSON line per reverted candidate.
 
@@ -499,9 +489,9 @@ def format_sim_diag_line(
     payload = {
         "path_id": path_id,
         "path_type": path_type,
-        "solve_block": solve_block,
-        "block": block,
-        "age": age,
+        "solve_block": window.solve_block,
+        "block": window.block,
+        "age": window.age,
         "revert_info": failure.get("bucket", "") or "",
         "optimal_input": failure.get("optimal_input"),
         "hop_outputs": failure.get("hop_outputs", []),

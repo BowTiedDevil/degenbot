@@ -33,7 +33,7 @@ from degenbot.exceptions import BootRefused
 from degenbot.logging import logger as bot_logger
 from degenbot.runner import BotRunner
 from degenbot.runner.cli import build_arbitrage_arg_parser
-from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 
 async def main() -> None:
@@ -74,8 +74,7 @@ async def main() -> None:
             env,
             live=not dry_run,
             permutation=args.permutation,
-            cli_http=args.node_http,
-            cli_ws=args.node_ws,
+            rpc=RpcCascadeOverrides(cli_http=args.node_http, cli_ws=args.node_ws),
         )
     except ValueError as exc:
         bot_logger.error(str(exc))

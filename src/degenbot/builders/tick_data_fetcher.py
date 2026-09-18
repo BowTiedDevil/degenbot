@@ -38,6 +38,18 @@ class _PoolRef:
     tick_spacing: int
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class _FetchContext:
+    """Per-word fetch state shared by the V3 and V4 tick fetchers."""
+
+    io: BotIo
+    types: TickDataTypes
+    pool_ref: _PoolRef
+    word_position: int
+    block_number: int
+    fetched: dict[int, Any]
+
+
 # The tick-map shape a fetched word carries: ``{tick: (gross, net, block)}``.
 # The Rust ``TickWordFetcher`` seam (and the Python companion's sparse
 # write-back sites after slice 3b) consume this exact shape.
@@ -89,30 +101,24 @@ def make_tick_data_fetcher(
         if pool is None:
             return None
 
-        pool_ref = _PoolRef(address=pool.address, tick_spacing=pool.tick_spacing)
-        fetched: dict[int, Any] = {}
+        ctx = _FetchContext(
+            io=io,
+            types=types,
+            pool_ref=_PoolRef(address=pool.address, tick_spacing=pool.tick_spacing),
+            word_position=word_position,
+            block_number=block_number,
+            fetched={},
+        )
 
         ok: bool
         if is_v4:
             ok = _fetch_v4(
-                io=io,
+                ctx=ctx,
                 state_view_address=cast("str", state_view_address),
                 pool_id=cast("bytes", pool_id),
-                pool_ref=pool_ref,
-                word_position=word_position,
-                block_number=block_number,
-                fetched=fetched,
-                types=types,
             )
         else:
-            ok = _fetch_v3(
-                io=io,
-                pool_ref=pool_ref,
-                word_position=word_position,
-                block_number=block_number,
-                fetched=fetched,
-                types=types,
-            )
+            ok = _fetch_v3(ctx=ctx)
 
         if not ok:
             # Bitmap RPC failed — fetch failure (the Rust loop gives up; a
@@ -127,25 +133,17 @@ def make_tick_data_fetcher(
                 int(info.liquidity_net),
                 int(info.block),
             )
-            for tick, info in fetched.items()
+            for tick, info in ctx.fetched.items()
         }
 
     return fetcher
 
 
-def _fetch_v3(
-    *,
-    io: BotIo,
-    pool_ref: _PoolRef,
-    word_position: int,
-    block_number: int,
-    fetched: dict[int, Any],
-    types: TickDataTypes,
-) -> bool:
-    """Fetch tick bitmap + data for a V3 pool's word; populate ``fetched``.
+def _fetch_v3(*, ctx: _FetchContext) -> bool:
+    """Fetch tick bitmap + data for a V3 pool's word; populate ``ctx.fetched``.
 
     Returns:
-        ``True`` if the bitmap RPC succeeded (``fetched`` holds the word's
+        ``True`` if the bitmap RPC succeeded (``ctx.fetched`` holds the word's
         active ticks — possibly empty for an all-zero bitmap word), ``False``
         if the bitmap RPC failed (the caller treats this as a fetch failure).
 
@@ -154,23 +152,25 @@ def _fetch_v3(
     # ADR-005 slice 14j: delegate tick RPC calls to Rust (BotIo is the only
     # executor; the Python parity-gate fallback is retired).
     try:
-        bitmap_value = io.fetch_tick_bitmap(pool_ref.address, word_position, block=block_number)
+        bitmap_value = ctx.io.fetch_tick_bitmap(
+            ctx.pool_ref.address, ctx.word_position, block=ctx.block_number
+        )
     except Exception:  # ruff:ignore[blind-except]
         return False
 
     if bitmap_value != 0:
         active_ticks = [
-            ((word_position << 8) + i) * pool_ref.tick_spacing
+            ((ctx.word_position << 8) + i) * ctx.pool_ref.tick_spacing
             for i in range(256)
             if bitmap_value & (1 << i) > 0
         ]
 
         for active_tick in active_ticks:
             try:
-                liquidity_gross, liquidity_net = io.fetch_tick_data(
-                    pool_ref.address,
+                liquidity_gross, liquidity_net = ctx.io.fetch_tick_data(
+                    ctx.pool_ref.address,
                     active_tick,
-                    block=block_number,
+                    block=ctx.block_number,
                 )
             except Exception:  # ruff:ignore[blind-except]
                 logger.debug(
@@ -180,26 +180,16 @@ def _fetch_v3(
                 )
                 continue
 
-            fetched[active_tick] = types.liquidity_at_tick(
+            ctx.fetched[active_tick] = ctx.types.liquidity_at_tick(
                 liquidity_net=int(liquidity_net),
                 liquidity_gross=int(liquidity_gross),
-                block=block_number,
+                block=ctx.block_number,
             )
     return True
 
 
-def _fetch_v4(
-    *,
-    io: BotIo,
-    state_view_address: str,
-    pool_id: bytes,
-    pool_ref: _PoolRef,
-    word_position: int,
-    block_number: int,
-    fetched: dict[int, Any],
-    types: TickDataTypes,
-) -> bool:
-    """Fetch tick bitmap + data for a V4 pool's word; populate ``fetched``.
+def _fetch_v4(*, ctx: _FetchContext, state_view_address: str, pool_id: bytes) -> bool:
+    """Fetch tick bitmap + data for a V4 pool's word; populate ``ctx.fetched``.
 
     Returns:
         ``True`` if the bitmap RPC succeeded, ``False`` on failure.
@@ -208,29 +198,29 @@ def _fetch_v4(
     # ADR-005 slice 14k: delegate V4 tick RPCs to Rust (BotIo is the only
     # executor; the Python parity-gate fallback is retired).
     try:
-        bitmap_value = io.fetch_v4_tick_bitmap(
+        bitmap_value = ctx.io.fetch_v4_tick_bitmap(
             state_view_address,
             pool_id,
-            word_position,
-            block=block_number,
+            ctx.word_position,
+            block=ctx.block_number,
         )
     except Exception:  # ruff:ignore[blind-except]
         return False
 
     if bitmap_value != 0:
         active_ticks = [
-            ((word_position << 8) + i) * pool_ref.tick_spacing
+            ((ctx.word_position << 8) + i) * ctx.pool_ref.tick_spacing
             for i in range(256)
             if bitmap_value & (1 << i) > 0
         ]
 
         for active_tick in active_ticks:
             try:
-                liquidity_gross, liquidity_net = io.fetch_v4_tick_data(
+                liquidity_gross, liquidity_net = ctx.io.fetch_v4_tick_data(
                     state_view_address,
                     pool_id,
                     active_tick,
-                    block=block_number,
+                    block=ctx.block_number,
                 )
             except Exception:  # ruff:ignore[blind-except]
                 logger.debug(
@@ -240,9 +230,9 @@ def _fetch_v4(
                 )
                 continue
 
-            fetched[active_tick] = types.liquidity_at_tick(
+            ctx.fetched[active_tick] = ctx.types.liquidity_at_tick(
                 liquidity_net=int(liquidity_net),
                 liquidity_gross=int(liquidity_gross),
-                block=block_number,
+                block=ctx.block_number,
             )
     return True

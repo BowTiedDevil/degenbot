@@ -35,7 +35,7 @@ from degenbot.database.operations import (
     get_scoped_sqlite_session,
 )
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.pathfinding import find_paths, find_paths_async
+from degenbot.pathfinding import PathfindingRequest, find_paths, find_paths_async
 from degenbot.types.chain import ChainId
 
 CHAIN = ChainId.ETH  # value 1; arbitrary but conventional
@@ -143,13 +143,15 @@ class TestPermutationFilterMinDepth:
         """
         paths = list(
             find_paths(
-                db=db,
-                chain_id=CHAIN,
-                start_tokens=[WETH_ADDR],
-                end_tokens=[WETH_ADDR],
-                max_depth=3,
-                pool_types=[UniswapV2PoolTable],
-                pool_type_per_depth=_v2v2v2_filter(),
+                request=PathfindingRequest(
+                    db=db,
+                    chain_id=CHAIN,
+                    start_tokens=[WETH_ADDR],
+                    end_tokens=[WETH_ADDR],
+                    max_depth=3,
+                    pool_types=[UniswapV2PoolTable],
+                    pool_type_per_depth=_v2v2v2_filter(),
+                )
             )
         )
 
@@ -175,13 +177,15 @@ class TestPermutationFilterMinDepth:
         paths = [
             p
             async for p in find_paths_async(
-                db=db,
-                chain_id=CHAIN,
-                start_tokens=[WETH_ADDR],
-                end_tokens=[WETH_ADDR],
-                max_depth=3,
-                pool_types=[UniswapV2PoolTable],
-                pool_type_per_depth=_v2v2v2_filter(),
+                request=PathfindingRequest(
+                    db=db,
+                    chain_id=CHAIN,
+                    start_tokens=[WETH_ADDR],
+                    end_tokens=[WETH_ADDR],
+                    max_depth=3,
+                    pool_types=[UniswapV2PoolTable],
+                    pool_type_per_depth=_v2v2v2_filter(),
+                )
             )
         ]
 

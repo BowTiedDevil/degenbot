@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.registry.pool_type import pool_type_registry
+from degenbot.registry.pool_type import PoolRegistration, pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
@@ -83,10 +83,12 @@ def test_custom_exchange_registration() -> None:
     custom_factory = get_checksum_address(_generate_random_address())
 
     pool_type_registry.register(
-        UniswapV2Pool,
-        chain_id=custom_chain,
-        factory_address=custom_factory,
-        pool_init_hash="0x0420",
+        PoolRegistration(
+            pool_class=UniswapV2Pool,
+            chain_id=custom_chain,
+            factory_address=custom_factory,
+            pool_init_hash="0x0420",
+        )
     )
     assert pool_type_registry.has_registration(custom_chain, custom_factory)
 
@@ -97,10 +99,12 @@ def test_custom_exchange_registration() -> None:
     # Duplicate registration should raise
     with pytest.raises(ValueError, match="already registered"):
         pool_type_registry.register(
-            UniswapV2Pool,
-            chain_id=custom_chain,
-            factory_address=custom_factory,
-            pool_init_hash="0x0420",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=custom_chain,
+                factory_address=custom_factory,
+                pool_init_hash="0x0420",
+            )
         )
 
     # Clean up so the singleton is not polluted for other tests

@@ -13,7 +13,7 @@ classifier infra).
 
 import json
 
-from degenbot.runner._render import format_sim_diag_line
+from degenbot.runner._render import SimDiagWindow, format_sim_diag_line
 
 
 def _failure(**overrides: object) -> dict[str, object]:
@@ -54,9 +54,7 @@ def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> Non
         _failure(),
         path_id=7,
         path_type="V2-V3-V4",
-        solve_block=100,
-        block=103,
-        age=3,
+        window=SimDiagWindow(solve_block=100, block=103, age=3),
     )
     assert line.startswith("[sim-diag] "), "line is prefixed [sim-diag] "
     payload = json.loads(line[len("[sim-diag] ") :])
@@ -81,9 +79,7 @@ def test_format_sim_diag_line_never_raises_on_missing_keys() -> None:
         {},
         path_id=1,
         path_type="V2",
-        solve_block=1,
-        block=1,
-        age=0,
+        window=SimDiagWindow(solve_block=1, block=1, age=0),
     )
     payload = json.loads(line[len("[sim-diag] ") :])
     assert payload["path_id"] == 1
@@ -102,9 +98,7 @@ def test_format_sim_diag_line_omits_retired_recompute_fields() -> None:
         _failure(),
         path_id=1,
         path_type="V2-V3",
-        solve_block=1,
-        block=1,
-        age=0,
+        window=SimDiagWindow(solve_block=1, block=1, age=0),
     )
     payload = json.loads(line[len("[sim-diag] ") :])
     assert "hops" not in payload, "retired per-hop snapshot shape is gone"

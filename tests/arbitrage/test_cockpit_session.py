@@ -19,6 +19,7 @@ import signal
 import pytest
 
 from degenbot.runner import BotRunner
+from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
 from tests.fakes.runner_pipelines import StubPipeline
 
@@ -196,12 +197,14 @@ class TestSessionOwner:
 
         session_runner = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=_FakeEngineRegistry(),
-            async_w3=_FakeAsyncW3(),
-            snapshots=(object(), object(), None, None),
-            path_builder=lambda **kw: _noop(),
-            consumer=capturing_consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=_FakeEngineRegistry(),
+                async_w3=_FakeAsyncW3(),
+                snapshots=(object(), object(), None, None),
+                path_builder=lambda **kw: _noop(),
+                consumer=capturing_consumer,
+            ),
             install_sigint=False,
         )
         async with session_runner:

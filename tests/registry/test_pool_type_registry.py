@@ -13,7 +13,7 @@ import pytest
 
 from degenbot.aerodrome.pools import AerodromeV3Pool
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
-from degenbot.registry.pool_type import PoolTypeRegistry
+from degenbot.registry.pool_type import PoolRegistration, PoolTypeRegistry
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -44,10 +44,12 @@ class TestKindDerivation:
         """No variant → 'uniswap_v2' for CONSTANT_PRODUCT."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=UNI_V2_MAINNET,
-            pool_init_hash=UNI_V2_INIT_HASH,
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=UNI_V2_MAINNET,
+                pool_init_hash=UNI_V2_INIT_HASH,
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=UNI_V2_MAINNET)
         assert desc is not None
@@ -57,9 +59,11 @@ class TestKindDerivation:
         """No variant → 'uniswap_v3' for CONCENTRATED_LIQUIDITY."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV3Pool,
-            chain_id=1,
-            factory_address=UNI_V3_MAINNET,
+            PoolRegistration(
+                pool_class=UniswapV3Pool,
+                chain_id=1,
+                factory_address=UNI_V3_MAINNET,
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=UNI_V3_MAINNET)
         assert desc is not None
@@ -69,11 +73,13 @@ class TestKindDerivation:
         """variant='sushiswap' → kind='sushiswap_v2' (via the override)."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=SUSHI_V2_MAINNET)
         assert desc is not None
@@ -83,10 +89,12 @@ class TestKindDerivation:
         """variant='sushiswap' → kind='sushiswap_v3' (C8b: variant passed explicitly)."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV3Pool,
-            chain_id=1,
-            factory_address=SUSHI_V3_MAINNET,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV3Pool,
+                chain_id=1,
+                factory_address=SUSHI_V3_MAINNET,
+                variant="sushiswap",
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=SUSHI_V3_MAINNET)
         assert desc is not None
@@ -96,9 +104,11 @@ class TestKindDerivation:
         """variant='aerodrome' → kind='aerodrome_v3'."""
         registry = PoolTypeRegistry()
         registry.register(
-            AerodromeV3Pool,
-            chain_id=8453,
-            factory_address=AERO_V3_BASE,
+            PoolRegistration(
+                pool_class=AerodromeV3Pool,
+                chain_id=8453,
+                factory_address=AERO_V3_BASE,
+            )
         )
         desc = registry.get_descriptor(chain_id=8453, factory_address=AERO_V3_BASE)
         assert desc is not None
@@ -115,11 +125,13 @@ class TestInvariantDerivation:
         """UniswapV2Pool (registered with a variant) → CONSTANT_PRODUCT."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=SUSHI_V2_MAINNET)
         assert desc is not None
@@ -128,9 +140,11 @@ class TestInvariantDerivation:
     def test_v3_subclass_is_concentrated_liquidity(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV3Pool,
-            chain_id=1,
-            factory_address=SUSHI_V3_MAINNET,
+            PoolRegistration(
+                pool_class=UniswapV3Pool,
+                chain_id=1,
+                factory_address=SUSHI_V3_MAINNET,
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=SUSHI_V3_MAINNET)
         assert desc is not None
@@ -140,11 +154,13 @@ class TestInvariantDerivation:
         """Camelot (registered as UniswapV2Pool + variant='camelot') → CONSTANT_PRODUCT."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=42161,
-            factory_address=CAMELOT_ARB,
-            pool_init_hash=CAMELOT_INIT_HASH,
-            variant="camelot",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=42161,
+                factory_address=CAMELOT_ARB,
+                pool_init_hash=CAMELOT_INIT_HASH,
+                variant="camelot",
+            )
         )
         desc = registry.get_descriptor(chain_id=42161, factory_address=CAMELOT_ARB)
         assert desc is not None
@@ -161,10 +177,12 @@ class TestVariantFromRegistration:
         """UniswapV2Pool / UniswapV3Pool registered with no variant → variant=None."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=UNI_V2_MAINNET,
-            pool_init_hash=UNI_V2_INIT_HASH,
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=UNI_V2_MAINNET,
+                pool_init_hash=UNI_V2_INIT_HASH,
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=UNI_V2_MAINNET)
         assert desc is not None
@@ -174,11 +192,13 @@ class TestVariantFromRegistration:
         """variant= wins over the class's own (None) variant attribute."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=SUSHI_V2_MAINNET)
         assert desc is not None
@@ -194,9 +214,11 @@ class TestVariantFromRegistration:
         """
         registry = PoolTypeRegistry()
         registry.register(
-            PancakeswapV3Pool,
-            chain_id=1,
-            factory_address=PANCAKE_V3_MAINNET,
+            PoolRegistration(
+                pool_class=PancakeswapV3Pool,
+                chain_id=1,
+                factory_address=PANCAKE_V3_MAINNET,
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=PANCAKE_V3_MAINNET)
         assert desc is not None
@@ -212,11 +234,13 @@ class TestPoolTypeRegistryRegistration:
     def test_register_and_get_class(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         result = registry.get_class(chain_id=1, factory_address=SUSHI_V2_MAINNET)
         assert result is UniswapV2Pool
@@ -224,11 +248,13 @@ class TestPoolTypeRegistryRegistration:
     def test_register_and_get_descriptor(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=SUSHI_V2_MAINNET)
         assert desc is not None
@@ -240,11 +266,13 @@ class TestPoolTypeRegistryRegistration:
     def test_register_and_get_deployment(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         deployment = registry.get_deployment(chain_id=1, factory_address=SUSHI_V2_MAINNET)
         assert deployment is not None
@@ -255,11 +283,13 @@ class TestPoolTypeRegistryRegistration:
         """If deployer is not specified, it defaults to the factory address."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         deployment = registry.get_deployment(chain_id=1, factory_address=SUSHI_V2_MAINNET)
         assert deployment is not None
@@ -268,10 +298,12 @@ class TestPoolTypeRegistryRegistration:
     def test_deployer_override(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV3Pool,
-            chain_id=1,
-            factory_address=UNI_V3_MAINNET,
-            deployer="0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
+            PoolRegistration(
+                pool_class=UniswapV3Pool,
+                chain_id=1,
+                factory_address=UNI_V3_MAINNET,
+                deployer="0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
+            )
         )
         deployment = registry.get_deployment(chain_id=1, factory_address=UNI_V3_MAINNET)
         assert deployment is not None
@@ -281,11 +313,13 @@ class TestPoolTypeRegistryRegistration:
         registry = PoolTypeRegistry()
         assert not registry.has_registration(chain_id=1, factory_address=SUSHI_V2_MAINNET)
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         assert registry.has_registration(chain_id=1, factory_address=SUSHI_V2_MAINNET)
 
@@ -298,19 +332,23 @@ class TestPoolTypeRegistryRegistration:
     def test_register_same_factory_twice_raises(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
-        )
-        with pytest.raises(ValueError, match="already registered"):
-            registry.register(
-                UniswapV2Pool,
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
                 chain_id=1,
                 factory_address=SUSHI_V2_MAINNET,
                 pool_init_hash=SUSHI_V2_INIT_HASH,
                 variant="sushiswap",
+            )
+        )
+        with pytest.raises(ValueError, match="already registered"):
+            registry.register(
+                PoolRegistration(
+                    pool_class=UniswapV2Pool,
+                    chain_id=1,
+                    factory_address=SUSHI_V2_MAINNET,
+                    pool_init_hash=SUSHI_V2_INIT_HASH,
+                    variant="sushiswap",
+                )
             )
 
 
@@ -342,11 +380,13 @@ class TestDescriptorShape:
     def test_descriptor_fields(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=42161,
-            factory_address=CAMELOT_ARB,
-            pool_init_hash=CAMELOT_INIT_HASH,
-            variant="camelot",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=42161,
+                factory_address=CAMELOT_ARB,
+                pool_init_hash=CAMELOT_INIT_HASH,
+                variant="camelot",
+            )
         )
         desc = registry.get_descriptor(chain_id=42161, factory_address=CAMELOT_ARB)
         assert desc is not None
@@ -369,11 +409,13 @@ class TestKindReverseLookup:
     def test_lookup_by_kind_after_registration(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         desc = registry.get_descriptor_by_kind("sushiswap_v2")
         assert desc is not None
@@ -385,19 +427,23 @@ class TestKindReverseLookup:
         """When multiple deployments share a kind, the reverse index returns the last one."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         sushi_base = "0x71524B4f93c58fcbF659783284E38825f0622859"
         registry.register(
-            UniswapV2Pool,
-            chain_id=8453,
-            factory_address=sushi_base,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=8453,
+                factory_address=sushi_base,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         desc = registry.get_descriptor_by_kind("sushiswap_v2")
         assert desc is not None
@@ -411,51 +457,67 @@ class TestKindReverseLookup:
         registry.set_default_v2_class(UniswapV2Pool)
         registry.set_default_v3_class(UniswapV3Pool)
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=UNI_V2_MAINNET,
-            pool_init_hash=UNI_V2_INIT_HASH,
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=UNI_V2_MAINNET,
+                pool_init_hash=UNI_V2_INIT_HASH,
+            )
         )
         registry.register(
-            UniswapV3Pool,
-            chain_id=1,
-            factory_address=UNI_V3_MAINNET,
+            PoolRegistration(
+                pool_class=UniswapV3Pool,
+                chain_id=1,
+                factory_address=UNI_V3_MAINNET,
+            )
         )
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=SUSHI_V2_MAINNET,
-            pool_init_hash=SUSHI_V2_INIT_HASH,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=SUSHI_V2_MAINNET,
+                pool_init_hash=SUSHI_V2_INIT_HASH,
+                variant="sushiswap",
+            )
         )
         registry.register(
-            UniswapV3Pool,
-            chain_id=1,
-            factory_address=SUSHI_V3_MAINNET,
-            variant="sushiswap",
+            PoolRegistration(
+                pool_class=UniswapV3Pool,
+                chain_id=1,
+                factory_address=SUSHI_V3_MAINNET,
+                variant="sushiswap",
+            )
         )
         registry.register(
-            UniswapV2Pool,
-            chain_id=1,
-            factory_address=PANCAKE_V2_MAINNET,
-            variant="pancakeswap",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=1,
+                factory_address=PANCAKE_V2_MAINNET,
+                variant="pancakeswap",
+            )
         )
         registry.register(
-            PancakeswapV3Pool,
-            chain_id=1,
-            factory_address=PANCAKE_V3_MAINNET,
+            PoolRegistration(
+                pool_class=PancakeswapV3Pool,
+                chain_id=1,
+                factory_address=PANCAKE_V3_MAINNET,
+            )
         )
         registry.register(
-            UniswapV2Pool,
-            chain_id=42161,
-            factory_address=CAMELOT_ARB,
-            pool_init_hash=CAMELOT_INIT_HASH,
-            variant="camelot",
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=42161,
+                factory_address=CAMELOT_ARB,
+                pool_init_hash=CAMELOT_INIT_HASH,
+                variant="camelot",
+            )
         )
         registry.register(
-            AerodromeV3Pool,
-            chain_id=8453,
-            factory_address=AERO_V3_BASE,
+            PoolRegistration(
+                pool_class=AerodromeV3Pool,
+                chain_id=8453,
+                factory_address=AERO_V3_BASE,
+            )
         )
 
         for kind in [
@@ -482,9 +544,11 @@ class TestV3Registration:
     def test_register_v3_without_init_hash(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV3Pool,
-            chain_id=1,
-            factory_address=UNI_V3_MAINNET,
+            PoolRegistration(
+                pool_class=UniswapV3Pool,
+                chain_id=1,
+                factory_address=UNI_V3_MAINNET,
+            )
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=UNI_V3_MAINNET)
         assert desc is not None
@@ -494,9 +558,11 @@ class TestV3Registration:
     def test_v3_deployment_has_no_init_hash(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV3Pool,
-            chain_id=1,
-            factory_address=UNI_V3_MAINNET,
+            PoolRegistration(
+                pool_class=UniswapV3Pool,
+                chain_id=1,
+                factory_address=UNI_V3_MAINNET,
+            )
         )
         deployment = registry.get_deployment(chain_id=1, factory_address=UNI_V3_MAINNET)
         assert deployment is not None

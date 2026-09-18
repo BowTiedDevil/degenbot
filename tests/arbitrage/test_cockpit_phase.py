@@ -19,7 +19,7 @@ import signal
 import pytest
 
 from degenbot.runner import BotRunner
-from degenbot.runner.bot_runner import PhaseError
+from degenbot.runner.bot_runner import InjectedActors, PhaseError
 from degenbot.runner.config import ArbitrageConfig
 
 
@@ -115,12 +115,14 @@ class _FakeAsyncW3:
 def _session() -> BotRunner:
     return BotRunner(
         _cfg(),
-        bot=_FakeBot(),
-        engine_registry=_FakeEngineRegistry(),
-        async_w3=_FakeAsyncW3(),
-        snapshots=(object(), object(), None, None),
-        path_builder=lambda **kw: _noop(),
-        consumer=lambda **kw: _noop(),
+        actors=InjectedActors(
+            bot=_FakeBot(),
+            engine_registry=_FakeEngineRegistry(),
+            async_w3=_FakeAsyncW3(),
+            snapshots=(object(), object(), None, None),
+            path_builder=lambda **kw: _noop(),
+            consumer=lambda **kw: _noop(),
+        ),
         install_sigint=False,
     )
 

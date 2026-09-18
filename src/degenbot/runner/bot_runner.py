@@ -200,6 +200,18 @@ class _SessionState:
         self.registration_pipeline = pipeline
 
 
+@dataclass(frozen=True)
+class InjectedActors:
+    """Test/DI actor overrides for :class:`BotRunner` (``None`` = build from cfg)."""
+
+    bot: Bot | None = None
+    engine_registry: EngineRegistry | None = None
+    async_w3: AsyncAlloyProvider | None = None
+    snapshots: tuple[Any, Any, Any, Any] | None = None
+    path_builder: Any = None
+    consumer: Any = None
+
+
 class BotRunner:
     """Orchestrator that collapses the settlement-arbitrage startup ritual behind one facade.
 
@@ -247,16 +259,14 @@ class BotRunner:
         self,
         cfg: ArbitrageConfig,
         *,
-        bot: Bot | None = None,
-        engine_registry: EngineRegistry | None = None,
-        async_w3: AsyncAlloyProvider | None = None,
-        snapshots: tuple[Any, Any, Any, Any] | None = None,
-        path_builder: Any = None,
-        consumer: Any = None,
+        actors: InjectedActors | None = None,
         install_sigint: bool = True,
         background_registration: bool | None = None,
     ) -> None:
         """Store config + injectable test actors; the real actors are built in ``start()``.
+
+        ``actors`` bundles the test actor seams (``bot``/``engine_registry``/
+        ``async_w3``/``snapshots``/``path_builder``/``consumer``).
 
         ``background_registration`` (default ``None`` → auto) controls the
         background-registration seam: when ``True`` ``run()`` spawns discovery+registration as a
@@ -267,12 +277,13 @@ class BotRunner:
         ``build_paths`` (production).
         """
         self.cfg = cfg
-        self._injected_bot = bot
-        self._injected_engine_registry = engine_registry
-        self._injected_async_w3 = async_w3
-        self._injected_snapshots = snapshots
-        self._path_builder = path_builder
-        self._consumer = consumer
+        injected = actors if actors is not None else InjectedActors()
+        self._injected_bot = injected.bot
+        self._injected_engine_registry = injected.engine_registry
+        self._injected_async_w3 = injected.async_w3
+        self._injected_snapshots = injected.snapshots
+        self._path_builder = injected.path_builder
+        self._consumer = injected.consumer
         self._background_registration: bool | None = background_registration
         # The registration-owned construction context (built in run() for
         # the real build_paths; None for injected builders and until run()).
@@ -387,9 +398,7 @@ class BotRunner:
         arm_diagnostics(cfg.diag)
 
         # ── Build the three actors (injected or from cfg) ──
-        bot = self._injected_bot or self._build_bot(cfg)
-        async_w3 = self._injected_async_w3 or await self._build_async_w3(cfg)
-        engine_registry = self._injected_engine_registry or EngineRegistry(bot=bot)
+        bot, async_w3, engine_registry = await self._build_actors(cfg)
 
         # ── Fetch current block (for the dispatcher + backfill comparison) ──
         # Note: main()'s start-phase base_fee_next/operator_nonce fetches are
@@ -409,41 +418,7 @@ class BotRunner:
         # real arbitrage (coarse guard, not an exemption).
         dispatcher.set_fot_verified_non_fot(list(ETH_MAINNET_ALLOWED_TOKENS))
 
-        # ── Simulation seam context — one SimulateContext per session,
-        # held alongside the dispatcher. The runtime-bytecode file-load stays
-        # Python (`stays-python`); the bytes cross here. The
-        # AsyncAlloyProvider handle is taken from the session's provider so
-        # `dispatch_profitable` shares one provider with the rest of the
-        # pipeline.
-        async_alloy = async_w3.as_async_alloy()
-        sim_ctx: SimulateContext | None
-        if async_alloy is None:
-            # Non-Alloy provider (test fakes). Defer the sim context:
-            # production sessions are Alloy-backed + build it eagerly here;
-            # dispatch raises a clear error if reached without one.
-            sim_ctx = None
-        else:
-            runtime_code = _load_executor_runtime_bytecode(cfg)
-            sim_ctx = SimulateContext(
-                provider=async_alloy,
-                executor_owner=cfg.executor_owner,
-                executor_address=cfg.executor_address,
-                weth_address=WETH_ADDRESS,
-                pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                multicall3_address=MULTICALL3_ADDRESS,
-                inject_code=cfg.inject_executor_code,
-                executor_runtime_bytecode=bytes.fromhex(runtime_code[2:]),
-                injected_address=cfg.injected_address if cfg.inject_executor_code else None,
-            )
-            # The inline-sim stance (`DEGENBOT_SOLVE_INLINE_SIM`) needs the
-            # ENGINE hook installed from this session's sim config —
-            # without it stance=1 carries no payloads (harmless but inert).
-            # Cheap Arc-clone wiring; the engine only calls the hook under the
-            # stance, so installing it unconditionally is a no-op when off.
-            engine_registry.engine.install_inline_simulator(
-                sim_ctx,
-                erc6909_profit=cfg.erc6909_profit,
-            )
+        sim_ctx = self._build_sim_ctx(async_w3, cfg, engine_registry)
 
         # ── Snapshots (V3 pool tracker pre-population only; the engine's DB
         # snapshot is loaded eagerly at Bot construction via
@@ -453,17 +428,7 @@ class BotRunner:
         # non-DB (file/memory) — the `_injected` fast path. The production
         # DB path reads the snapshot at construction and `start()` takes no
         # snapshot kwargs.
-        v3_snap: Any = None
-        v4_snap: Any = None
-        start_v3 = None  # snapshots passed to `start()` (non-DB only)
-        start_v4 = None
-        if self._injected_snapshots is not None:
-            v3_snap, v4_snap, _v3_blk, _v4_blk = self._injected_snapshots
-            start_v3, start_v4 = v3_snap, v4_snap
-        else:
-            # Production DB path: snapshot for the V3 pool tracker only
-            # (engine feeds from the core store, set at Bot construction).
-            v3_snap, v4_snap, _v3_blk, _v4_blk = get_snapshots(bot)
+        v3_snap, v4_snap, start_v3, start_v4 = self._start_snapshots(bot)
         self.v3_snapshot = v3_snap
         self.v4_snapshot = v4_snap
 
@@ -503,6 +468,73 @@ class BotRunner:
         self._install_sigint_handler()
         self._phase = _Phase.STARTED
         return self
+
+    async def _build_actors(
+        self, cfg: ArbitrageConfig
+    ) -> tuple[Bot, AsyncAlloyProvider, EngineRegistry]:
+        """Build (or adopt the injected) actor trio for a fresh session."""
+        bot = self._injected_bot or self._build_bot(cfg)
+        async_w3 = self._injected_async_w3 or await self._build_async_w3(cfg)
+        engine_registry = self._injected_engine_registry or EngineRegistry(bot=bot)
+        return bot, async_w3, engine_registry
+
+    @staticmethod
+    def _build_sim_ctx(
+        async_w3: AsyncAlloyProvider,
+        cfg: ArbitrageConfig,
+        engine_registry: EngineRegistry,
+    ) -> SimulateContext | None:
+        """Build the session's sim context (``None`` for non-Alloy providers).
+
+        One SimulateContext per session, held alongside the dispatcher. The
+        runtime-bytecode file-load stays Python (``stays-python``); the bytes
+        cross here. The AsyncAlloyProvider handle is taken from the session's
+        provider so ``dispatch_profitable`` shares one provider with the rest
+        of the pipeline. Inline-sim wiring rides the same call.
+        """
+        async_alloy = async_w3.as_async_alloy()
+        if async_alloy is None:
+            # Non-Alloy provider (test fakes). Defer the sim context:
+            # production sessions are Alloy-backed + build it eagerly here;
+            # dispatch raises a clear error if reached without one.
+            return None
+        runtime_code = _load_executor_runtime_bytecode(cfg)
+        sim_ctx = SimulateContext(
+            provider=async_alloy,
+            executor_owner=cfg.executor_owner,
+            executor_address=cfg.executor_address,
+            weth_address=WETH_ADDRESS,
+            pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+            multicall3_address=MULTICALL3_ADDRESS,
+            inject_code=cfg.inject_executor_code,
+            executor_runtime_bytecode=bytes.fromhex(runtime_code[2:]),
+            injected_address=cfg.injected_address if cfg.inject_executor_code else None,
+        )
+        # The inline-sim stance (`DEGENBOT_SOLVE_INLINE_SIM`) needs the
+        # ENGINE hook installed from this session's sim config —
+        # without it stance=1 carries no payloads (harmless but inert).
+        # Cheap Arc-clone wiring; the engine only calls the hook under the
+        # stance, so installing it unconditionally is a no-op when off.
+        engine_registry.engine.install_inline_simulator(
+            sim_ctx,
+            erc6909_profit=cfg.erc6909_profit,
+        )
+        return sim_ctx
+
+    def _start_snapshots(self, bot: Bot) -> tuple[Any, Any, Any, Any]:
+        """Resolve ``(v3, v4, start_v3, start_v4)`` for the pre-resume ritual.
+
+        Injected snapshots (the ``_injected`` fast path) flow through
+        ``engine_registry.start()``; the production DB path reads them from the
+        bot's store and passes no start kwargs.
+        """
+        if self._injected_snapshots is not None:
+            v3_snap, v4_snap, _v3_blk, _v4_blk = self._injected_snapshots
+            return v3_snap, v4_snap, v3_snap, v4_snap
+        # Production DB path: snapshot for the V3 pool tracker only
+        # (engine feeds from the core store, set at Bot construction).
+        v3_snap, v4_snap, _v3_blk, _v4_blk = get_snapshots(bot)
+        return v3_snap, v4_snap, None, None
 
     # ── Phase B: the rolling-start main loop ──────────────────────────
     async def run(self) -> None:

@@ -22,7 +22,7 @@ from degenbot._ffi import Bot
 from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.registry.pool_type import pool_type_registry
+from degenbot.registry.pool_type import PoolRegistration, pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -70,11 +70,13 @@ class TestRegistryDexIdentity:
         uniswap = dex_identity("uniswap-v2")
         assert uniswap is not None
         pool_type_registry.register(
-            UniswapV2Pool,
-            chain_id=_TEST_CHAIN,
-            factory_address=_TEST_FACTORY,
-            pool_init_hash=UNISWAP_INIT_HASH,
-            dex_identity=uniswap,
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=_TEST_CHAIN,
+                factory_address=_TEST_FACTORY,
+                pool_init_hash=UNISWAP_INIT_HASH,
+                dex_identity=uniswap,
+            )
         )
         try:
             resolved = pool_type_registry.get_v2_identity(_TEST_CHAIN, _TEST_FACTORY)
@@ -88,9 +90,11 @@ class TestRegistryDexIdentity:
     def test_get_v2_identity_returns_none_when_registered_without_preset(self) -> None:
         """A registration without dex_identity → get_v2_identity() returns None."""
         pool_type_registry.register(
-            UniswapV2Pool,
-            chain_id=_TEST_CHAIN,
-            factory_address=_TEST_FACTORY,
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=_TEST_CHAIN,
+                factory_address=_TEST_FACTORY,
+            )
         )
         assert pool_type_registry.get_v2_identity(_TEST_CHAIN, _TEST_FACTORY) is None
 
@@ -107,11 +111,13 @@ class TestRegistryDexIdentity:
         uniswap = dex_identity("uniswap-v2")
         assert uniswap is not None
         pool_type_registry.register(
-            UniswapV2Pool,
-            chain_id=_TEST_CHAIN,
-            factory_address=_TEST_FACTORY,
-            pool_init_hash=UNISWAP_INIT_HASH,
-            dex_identity=uniswap,
+            PoolRegistration(
+                pool_class=UniswapV2Pool,
+                chain_id=_TEST_CHAIN,
+                factory_address=_TEST_FACTORY,
+                pool_init_hash=UNISWAP_INIT_HASH,
+                dex_identity=uniswap,
+            )
         )
         try:
             assert pool_type_registry.get_v2_class(_TEST_CHAIN, _TEST_FACTORY) is UniswapV2Pool

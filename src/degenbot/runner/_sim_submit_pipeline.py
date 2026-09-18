@@ -160,6 +160,16 @@ class SimSubmitPipelineLeafFailure(RuntimeError):
 LEAF_FAILURE_MESSAGE = "[sim-submit-pipeline] leaf task failed - aborting the consumer loudly"
 
 
+@dataclass(frozen=True)
+class PipelineSeams:
+    """Leaf overrides for the pipeline's four stages (``None`` = production leaf)."""
+
+    candidate_builder: _CandidateBuilder | None = None
+    simulator: _Simulator | None = None
+    renderer: _Renderer | None = None
+    submitter: _Submitter | None = None
+
+
 class SimSubmitPipeline:
     """K-way concurrent sims, strictly ordered submits (see module doc)."""
 
@@ -168,17 +178,14 @@ class SimSubmitPipeline:
         session: _SessionState,
         *,
         concurrency: int | None = None,
-        candidate_builder: _CandidateBuilder | None = None,
-        simulator: _Simulator | None = None,
-        renderer: _Renderer | None = None,
-        submitter: _Submitter | None = None,
+        seams: PipelineSeams | None = None,
     ) -> None:
         """Wire the pipeline to ``session``.
 
-        ``candidate_builder``/``simulator``/``renderer``/``submitter`` are DI
-        seams (the ``_submit_batch_records`` submitter/relay_providers
-        pattern): tests inject fakes at construction instead of patching the
-        module; omitted kwargs keep the production bindings unchanged.
+        ``seams`` bundles the four DI leaf overrides (the
+        ``_submit_batch_records`` submitter/relay_providers pattern): tests
+        inject fakes at construction instead of patching the module; omitted
+        leaves keep the production bindings unchanged.
         """
         self._session = session
         self._concurrency = (
@@ -190,12 +197,11 @@ class SimSubmitPipeline:
         self._failure: BaseException | None = None
         self._enqueued = 0
         self._submitted = 0
-        self._candidate_builder = (
-            candidate_builder if candidate_builder is not None else _build_dispatch_candidates
-        )
-        self._simulator = simulator if simulator is not None else dispatch_profitable
-        self._renderer = renderer if renderer is not None else _render_outcome
-        self._submit_leaf = submitter if submitter is not None else _submit_batch_records
+        leaves = seams if seams is not None else PipelineSeams()
+        self._candidate_builder = leaves.candidate_builder or _build_dispatch_candidates
+        self._simulator = leaves.simulator or dispatch_profitable
+        self._renderer = leaves.renderer or _render_outcome
+        self._submit_leaf = leaves.submitter or _submit_batch_records
 
     @property
     def concurrency(self) -> int:

@@ -23,7 +23,7 @@ from degenbot.calculations import next_base_fee
 from degenbot.diagnostics import mark_progress
 from degenbot.dispatch import fetch_fee_history
 from degenbot.logging import logger as bot_logger
-from degenbot.runner._dispatch import _dispatch_profitable
+from degenbot.runner._dispatch import BatchContext, _dispatch_profitable
 from degenbot.runner._driver_constants import FEE_PERCENTILES
 from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
 
@@ -262,11 +262,13 @@ async def _apply_result_if_ready(
             await _dispatch_profitable(
                 session,
                 results,
-                block_timestamp=session.dispatcher.block_timestamp_for(current_block) or 0,
-                base_fee_next=next_base_fee(
-                    parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
-                    parent_gas_used=int(cast("Any", batch["gas_used"])),
-                    parent_gas_limit=int(cast("Any", batch["gas_limit"])),
+                context=BatchContext(
+                    block_timestamp=session.dispatcher.block_timestamp_for(current_block) or 0,
+                    base_fee_next=next_base_fee(
+                        parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
+                        parent_gas_used=int(cast("Any", batch["gas_used"])),
+                        parent_gas_limit=int(cast("Any", batch["gas_limit"])),
+                    ),
                 ),
                 operator_nonce=operator_nonce,
                 payloads=payloads,

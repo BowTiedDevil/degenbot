@@ -7,7 +7,7 @@ plain pools, metapools, lending pools, and crypto pools.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, NamedTuple, Self
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.per_block_cache import PerBlockCache
@@ -154,6 +154,39 @@ class _HandleCurveDataProviderAdapter:
         return v
 
 
+class _CryptoFeeCoefficients(NamedTuple):
+    """Normalized crypto-pool fee coefficients (``None`` ⇔ 0)."""
+
+    fee_gamma: int
+    mid_fee: int
+    offpeg_fee_multiplier: int
+    out_fee: int
+    gamma: int
+
+
+def _read_crypto_fee_coefficients(py_pool: LiquidityPool) -> _CryptoFeeCoefficients:
+    """Normalize the handle's optional crypto-fee tuple (``None`` ⇔ 0).
+
+    Standard stableswap pools store no crypto fees, so those slots come back
+    ``None`` and mean 0. The caller asserts the curve family, so the tuple
+    itself is never ``None`` off the handle in practice.
+
+    Returns:
+        The normalized coefficients.
+
+    """
+    crypto_fees = py_pool.curve_crypto_fees()
+    assert crypto_fees is not None  # pragma: no cover — curve family asserted
+    fee_gamma, mid_fee, offpeg_fee_multiplier, out_fee, gamma = crypto_fees
+    return _CryptoFeeCoefficients(
+        fee_gamma=fee_gamma if fee_gamma is not None else 0,
+        mid_fee=mid_fee if mid_fee is not None else 0,
+        offpeg_fee_multiplier=(offpeg_fee_multiplier if offpeg_fee_multiplier is not None else 0),
+        out_fee=out_fee if out_fee is not None else 0,
+        gamma=gamma if gamma is not None else 0,
+    )
+
+
 class CurveStableswapPool(
     StableswapPoolState,
     AbstractLiquidityPool,
@@ -282,19 +315,16 @@ class CurveStableswapPool(
         self._rate_multipliers = tuple(py_pool.curve_rate_multipliers)
         self._precision_multipliers = tuple(py_pool.curve_precision_multipliers)
 
-        # Crypto-pool fees (None ⇔ 0 for standard stableswap pools). Guard narrows
-        # the tuple[...] | None handle return (family asserted above, so never
-        # None in practice).
-        crypto_fees = py_pool.curve_crypto_fees()
-        assert crypto_fees is not None  # pragma: no cover — curve family asserted
-        fee_gamma, mid_fee, offpeg_fee_multiplier, out_fee, gamma = crypto_fees
-        self._fee_gamma = fee_gamma if fee_gamma is not None else 0
-        self._mid_fee = mid_fee if mid_fee is not None else 0
-        self._offpeg_fee_multiplier = (
-            offpeg_fee_multiplier if offpeg_fee_multiplier is not None else 0
-        )
-        self._out_fee = out_fee if out_fee is not None else 0
-        self._gamma = gamma if gamma is not None else 0
+        # Crypto-pool fees (None ⇔ 0 for standard stableswap pools). The
+        # normalization lives in the cohesive helper; the family is asserted
+        # above, so the tuple itself is never None in practice.
+        (
+            self._fee_gamma,
+            self._mid_fee,
+            self._offpeg_fee_multiplier,
+            self._out_fee,
+            self._gamma,
+        ) = _read_crypto_fee_coefficients(py_pool)
 
         # Strategies — reconstruct from the 7 u8 discriminants stored in Rust.
         # auto()-based enums: .value is forwarded verbatim, so Enum(value)
@@ -700,54 +730,12 @@ class CurveStableswapPool(
                 override_state=override_state,
             )
         if any(tokens_used_this_pool) and any(tokens_used_in_base_pool):
-            if TYPE_CHECKING:
-                assert self.base_pool is not None
-                assert self.tokens_underlying is not None
-
-            # TODO:  # ruff:ignore[line-contains-todo] see if any of these checks are unnecessary (partial zero balance OK?)
-            if any(balance == 0 for balance in self.base_pool.balances):
-                raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
-            if any(balance == 0 for balance in self.balances):
-                raise NoLiquidity(message="One or more of the tokens has a zero balance.")
-
-            token_in_from_metapool = token_in in self._tokens
-            token_out_from_metapool = token_out in self._tokens
-            assert token_in_from_metapool or token_out_from_metapool
-
-            if token_in_from_metapool and self.balances[self._tokens.index(token_in)] == 0:
-                raise NoLiquidity(message=f"{token_in} has a zero balance.")
-            if token_out_from_metapool and self.balances[self._tokens.index(token_out)] == 0:
-                raise NoLiquidity(message=f"{token_out} has a zero balance.")
-
-            token_in_from_basepool = token_in in self.base_pool.tokens
-            token_out_from_basepool = token_out in self.base_pool.tokens
-            assert token_in_from_basepool or token_out_from_basepool
-
-            if (
-                token_in_from_basepool
-                and self.base_pool.balances[self.base_pool.tokens.index(token_in)] == 0
-            ):
-                raise NoLiquidity(message=f"{token_in} has a zero balance.")
-            if (
-                token_out_from_basepool
-                and self.base_pool.balances[self.base_pool.tokens.index(token_out)] == 0
-            ):
-                raise NoLiquidity(message=f"{token_out} has a zero balance.")
-
-            return self._get_dy_underlying(
-                i=(
-                    self._tokens.index(token_in)
-                    if token_in_from_metapool
-                    else self.tokens_underlying.index(token_in)
-                ),
-                j=(
-                    self._tokens.index(token_out)
-                    if token_out_from_metapool
-                    else self.tokens_underlying.index(token_out)
-                ),
-                dx=token_in_quantity,
-                block_identifier=block_number,
-                override_state=override_state,
+            return self._get_dy_metapool_with_base(
+                token_in,
+                token_out,
+                token_in_quantity,
+                block_number,
+                override_state,
             )
         if all(tokens_used_in_base_pool):
             if TYPE_CHECKING:
@@ -767,6 +755,73 @@ class CurveStableswapPool(
         raise DegenbotValueError(
             message="Tokens not held by pool or in underlying base pool",
         )  # pragma: no cover
+
+    def _get_dy_metapool_with_base(
+        self,
+        token_in: Erc20Token,
+        token_out: Erc20Token,
+        token_in_quantity: int,
+        block_number: int,
+        override_state: CurveStableswapPoolState | None,
+    ) -> int:
+        """Resolve a swap that spans this metapool and its underlying base pool.
+
+        Returns:
+            The computed integer value.
+
+        Raises:
+            NoLiquidity: If a token required by the swap has a zero balance.
+
+        """
+        if TYPE_CHECKING:
+            assert self.base_pool is not None
+            assert self.tokens_underlying is not None
+
+        # TODO:  # ruff:ignore[line-contains-todo] see if any of these checks are unnecessary (partial zero balance OK?)
+        if any(balance == 0 for balance in self.base_pool.balances):
+            raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
+        if any(balance == 0 for balance in self.balances):
+            raise NoLiquidity(message="One or more of the tokens has a zero balance.")
+
+        token_in_from_metapool = token_in in self._tokens
+        token_out_from_metapool = token_out in self._tokens
+        assert token_in_from_metapool or token_out_from_metapool
+
+        if token_in_from_metapool and self.balances[self._tokens.index(token_in)] == 0:
+            raise NoLiquidity(message=f"{token_in} has a zero balance.")
+        if token_out_from_metapool and self.balances[self._tokens.index(token_out)] == 0:
+            raise NoLiquidity(message=f"{token_out} has a zero balance.")
+
+        token_in_from_basepool = token_in in self.base_pool.tokens
+        token_out_from_basepool = token_out in self.base_pool.tokens
+        assert token_in_from_basepool or token_out_from_basepool
+
+        if (
+            token_in_from_basepool
+            and self.base_pool.balances[self.base_pool.tokens.index(token_in)] == 0
+        ):
+            raise NoLiquidity(message=f"{token_in} has a zero balance.")
+        if (
+            token_out_from_basepool
+            and self.base_pool.balances[self.base_pool.tokens.index(token_out)] == 0
+        ):
+            raise NoLiquidity(message=f"{token_out} has a zero balance.")
+
+        return self._get_dy_underlying(
+            i=(
+                self._tokens.index(token_in)
+                if token_in_from_metapool
+                else self.tokens_underlying.index(token_in)
+            ),
+            j=(
+                self._tokens.index(token_out)
+                if token_out_from_metapool
+                else self.tokens_underlying.index(token_out)
+            ),
+            dx=token_in_quantity,
+            block_identifier=block_number,
+            override_state=override_state,
+        )
 
 
 class _LazyBasePool:

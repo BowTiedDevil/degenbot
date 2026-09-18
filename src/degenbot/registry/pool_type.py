@@ -76,6 +76,29 @@ def _derive_family(pool_class: type[AbstractLiquidityPool]) -> PoolFamily:
     raise ValueError(msg)
 
 
+@dataclass(frozen=True, kw_only=True)
+class PoolRegistration:
+    """Typed registration request for :meth:`PoolTypeRegistry.register`.
+
+    ``family`` / ``variant`` override the class-derived identity when the class
+    shape misleads :func:`_derive_family` (Balancer) or a collapsed subclass
+    hierarchy needs an explicit DB ``kind`` (ADR-005 slice 7 step 4b).
+    ``dex_identity`` carries the canonical DEX preset when one exists.
+    ``implementation_address`` is the EIP-1167 clone master for factories that
+    use one.
+    """
+
+    pool_class: type[AbstractLiquidityPool]
+    chain_id: ChainId
+    factory_address: str
+    pool_init_hash: str | None = None
+    deployer: str | None = None
+    family: PoolFamily | None = None
+    variant: str | None = None
+    dex_identity: DexIdentity | None = None
+    implementation_address: str | None = None
+
+
 class PoolTypeRegistry:
     """Unified registry mapping (chain_id, factory_address) → pool type identity.
 
@@ -119,10 +142,12 @@ class PoolTypeRegistry:
 
 
         pool_type_registry.register(
-            MyCustomPool,
-            chain_id=1,
-            factory_address="0x...",
-            pool_init_hash="0x...",
+            PoolRegistration(
+                pool_class=MyCustomPool,
+                chain_id=1,
+                factory_address="0x...",
+                pool_init_hash="0x...",
+            )
         )
 
     After registration, ``Bot.build_pool()`` will automatically select
@@ -139,58 +164,24 @@ class PoolTypeRegistry:
 
     # --- Registration ---
 
-    def register(
-        self,
-        pool_class: type[AbstractLiquidityPool],
-        *,
-        chain_id: ChainId,
-        factory_address: str,
-        pool_init_hash: str | None = None,
-        deployer: str | None = None,
-        family: PoolFamily | None = None,
-        variant: str | None = None,
-        dex_identity: DexIdentity | None = None,
-        implementation_address: str | None = None,
-    ) -> None:
+    def register(self, registration: PoolRegistration) -> None:
         """Register a pool class for a specific (chain_id, factory) deployment.
 
-        Identity (family, variant, kind) is auto-derived from the class.
-        Deployment data (chain_id, factory, deployer, init_hash) is stored
-        alongside for lookup.
+        Identity (family, variant, kind) is auto-derived from the class unless
+        overridden on the request. Deployment data (chain_id, factory,
+        deployer, init_hash) is stored alongside for lookup.
 
         Args:
-            pool_class: The concrete pool class.
-            chain_id: The chain ID for this deployment.
-            factory_address: The factory contract address.
-            pool_init_hash: The CREATE2 init code hash (V2 only).
-            deployer: The CREATE2 deployer address (defaults to factory_address).
-            family: Override the auto-derived pool family. Use when the class
-                shape misleads ``_derive_family`` (e.g. BalancerV2Pool has
-                ``tokens`` but not ``fee_token0``, so it would derive as
-                STABLESWAP instead of WEIGHTED).
-            variant: Override the auto-derived variant
-                (``getattr(pool_class, "variant", None)``). Needed for the
-                ADR-005 slice 7 step 4b collapse: when the hollow DEX
-                subclasses (SushiswapV2Pool, etc.) are deleted, the canonical
-                ``UniswapV2Pool`` (variant=None) is registered for each DEX
-                factory WITH ``variant="sushiswap"`` to preserve the DB
-                ``kind`` (``"sushiswap_v2"``) — keeps existing DB rows
-                resolvable while collapsing the class hierarchy.
-            dex_identity: The canonical DexIdentity preset for this DEX (ADR-005
-                slice 7 step 3). Carries the variant tag, reserves ABI shape,
-                canonical-chain factory/init-hash, + default fees. Optional —
-                Aerodrome V2 (deferred, TODO-e30504ed) + non-V2 families omit
-                it. Resolvable via ``get_v2_identity()``.
-            implementation_address: The EIP-1167 master implementation contract
-                Aerodrome factories clone (V2 stable/volatile + V3 Slipstream).
-                ``None`` for V2/V3 rows that use the standard init-hash CREATE2
-                path (ADR-005 Fork A follow-on, S5SJXF/D7VKQX).
-
+            registration: The typed registration request; see
+                :class:`PoolRegistration` for field semantics.
 
         Raises:
             ValueError: If the factory is already registered for the given chain.
 
         """
+        pool_class = registration.pool_class
+        chain_id = registration.chain_id
+        factory_address = registration.factory_address
         checksummed_factory = get_checksum_address(factory_address)
 
         key = (chain_id, factory_address)
@@ -198,8 +189,14 @@ class PoolTypeRegistry:
             msg = f"Factory {factory_address} on chain {chain_id} is already registered."
             raise ValueError(msg)
 
-        family = family if family is not None else _derive_family(pool_class)
-        variant = variant if variant is not None else getattr(pool_class, "variant", None)
+        family = (
+            registration.family if registration.family is not None else _derive_family(pool_class)
+        )
+        variant = (
+            registration.variant
+            if registration.variant is not None
+            else getattr(pool_class, "variant", None)
+        )
         kind = derive_kind(family, variant)
 
         self._entries[key] = _RegistryEntry(
@@ -209,11 +206,13 @@ class PoolTypeRegistry:
             kind=kind,
             deployment=PoolDeploymentData(
                 factory_address=checksummed_factory,
-                deployer=deployer if deployer is not None else factory_address,
-                pool_init_hash=pool_init_hash,
-                implementation_address=implementation_address,
+                deployer=(
+                    registration.deployer if registration.deployer is not None else factory_address
+                ),
+                pool_init_hash=registration.pool_init_hash,
+                implementation_address=registration.implementation_address,
             ),
-            dex_identity=dex_identity,
+            dex_identity=registration.dex_identity,
         )
 
         # Update reverse index: kind → descriptor. When multiple deployments

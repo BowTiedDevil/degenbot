@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 from threading import Lock
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,14 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class DeploymentOverrides:
+    """Optional CREATE2 deployment values that override registry resolution."""
+
+    deployer_address: ChecksummedAddress | str | None = None
+    pool_init_hash: str | None = None
 
 
 class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool]):
@@ -195,9 +204,8 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         factory_address: ChecksummedAddress | str,
         bot: Bot,
         *,
-        deployer_address: ChecksummedAddress | str | None = None,
         chain_id: ChainId | None = None,
-        pool_init_hash: str | None = None,
+        overrides: DeploymentOverrides | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
     ) -> None:
         """Initialize the instance."""
@@ -207,6 +215,10 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
             chain_id = bot.chain_id
 
         factory_address = get_checksum_address(factory_address)
+
+        overrides = overrides if overrides is not None else DeploymentOverrides()
+        deployer_address = overrides.deployer_address
+        pool_init_hash = overrides.pool_init_hash
 
         deployment = pool_type_registry.get_deployment(chain_id, factory_address)
         if deployment is not None:

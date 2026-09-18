@@ -22,7 +22,7 @@ import pytest
 
 from degenbot import config as config_module
 from degenbot.config import RpcNotConfiguredError
-from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 _HTTP_ENV = "DEGENBOT_RPC_HTTP_CHAINID_1"
 _WS_ENV = "DEGENBOT_RPC_WS_CHAINID_1"
@@ -286,8 +286,9 @@ class TestRpcCascade:
             _full_env(),
             live=False,
             permutation=None,
-            cli_http="https://from-cli.example",
-            cli_ws="wss://from-cli.example",
+            rpc=RpcCascadeOverrides(
+                cli_http="https://from-cli.example", cli_ws="wss://from-cli.example"
+            ),
         )
         assert cfg.node_http == "https://from-cli.example"
         assert cfg.node_ws == "wss://from-cli.example"
@@ -298,7 +299,7 @@ class TestRpcCascade:
             _full_env(),
             live=False,
             permutation=None,
-            cli_http="https://from-cli.example",
+            rpc=RpcCascadeOverrides(cli_http="https://from-cli.example"),
         )
         assert cfg.node_http == "https://from-cli.example"
         assert cfg.node_ws == "wss://ws-env.example"

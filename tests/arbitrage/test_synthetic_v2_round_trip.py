@@ -30,7 +30,7 @@ from degenbot.database.operations import (
     get_scoped_sqlite_session,
 )
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.pathfinding import find_paths_async
+from degenbot.pathfinding import PathfindingRequest, find_paths_async
 from degenbot.runner.build_paths import resolve_directions
 from degenbot.types.chain import ChainId
 from tests.helpers.erc20_factory import make_erc20
@@ -159,12 +159,14 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
     discovered = [
         path
         async for path in find_paths_async(
-            db=db,
-            chain_id=CHAIN,
-            start_tokens=[WETH_ADDR],
-            end_tokens=[WETH_ADDR],
-            max_depth=2,
-            pool_types=[UniswapV2PoolTable],
+            request=PathfindingRequest(
+                db=db,
+                chain_id=CHAIN,
+                start_tokens=[WETH_ADDR],
+                end_tokens=[WETH_ADDR],
+                max_depth=2,
+                pool_types=[UniswapV2PoolTable],
+            )
         )
     ]
     assert discovered, "pathfinder found no WETH-A-WETH cycle in the seeded DB"

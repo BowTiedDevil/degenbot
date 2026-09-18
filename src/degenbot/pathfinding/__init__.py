@@ -17,10 +17,11 @@ from degenbot._ffi import (
     find_paths_rust,
 )
 
-from ._pathfinding import PathStep, find_paths, find_paths_async
+from ._pathfinding import PathfindingRequest, PathStep, find_paths, find_paths_async
 
 __all__ = [
     "PathStep",
+    "PathfindingRequest",
     "build_path_graph",
     "call_blocking_on_ambient_runtime",
     "discovery_batch_size",

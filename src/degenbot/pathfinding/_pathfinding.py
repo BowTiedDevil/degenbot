@@ -183,6 +183,33 @@ def _prepare_graph(
     )
 
 
+def _resolve_pool_kinds(pool_types: Sequence[type]) -> set[int]:
+    """Map Python pool-table classes to the Rust ``pool_kind`` u8 set.
+
+    Deduped — e.g. UniswapV2PoolTable + SushiswapV2PoolTable → {0}. The base
+    ``LiquidityPoolTable`` (the default ``pool_types`` entry, used for
+    single-table-inheritance selects that return BOTH V2 + V3 rows) expands to
+    {V2, V3}; a ``LiquidityPoolTable`` subclass that is neither a V2 nor V3
+    base is skipped (matching the old silent skip).
+
+    Returns:
+        The set of pool-kind u8 discriminants present in ``pool_types``.
+
+    """
+    pool_kinds: set[int] = set()
+    for pt in pool_types:
+        if issubclass(pt, LiquidityPoolTable):
+            if issubclass(pt, UniswapV3PoolTableBase):
+                pool_kinds.add(_POOL_KIND_V3)
+            elif issubclass(pt, UniswapV2PoolTableBase):
+                pool_kinds.add(_POOL_KIND_V2)
+            elif pt is LiquidityPoolTable:
+                pool_kinds.update({_POOL_KIND_V2, _POOL_KIND_V3})
+        if issubclass(pt, UniswapV4PoolTable):
+            pool_kinds.add(_POOL_KIND_V4)
+    return pool_kinds
+
+
 def _prepare_graph_rust(
     *,
     chain_id: int,
@@ -205,28 +232,7 @@ def _prepare_graph_rust(
     """
     start = time.perf_counter()
 
-    # Map the Python `pool_types` classes to the Rust `pool_kind` u8 set
-    # (deduped — e.g. UniswapV2PoolTable + SushiswapV2PoolTable → {0}). The
-    # base `LiquidityPoolTable` (the default `pool_types` entry, used for
-    # single-table-inheritance selects that return BOTH V2 + V3 rows) expands
-    # to {V2, V3} — it is neither a V2-base nor V3-base subclass itself, so
-    # `_pool_kind_for_type` would raise on it; expand it explicitly.
-    pool_kinds: set[int] = set()
-    for pt in pool_types:
-        if pt is LiquidityPoolTable or issubclass(pt, LiquidityPoolTable):
-            if issubclass(pt, UniswapV3PoolTableBase):
-                pool_kinds.add(_POOL_KIND_V3)
-            elif issubclass(pt, UniswapV2PoolTableBase):
-                pool_kinds.add(_POOL_KIND_V2)
-            elif pt is LiquidityPoolTable:
-                # The base covers both V2 + V3 (single-table-inheritance).
-                pool_kinds.update({_POOL_KIND_V2, _POOL_KIND_V3})
-            else:
-                # A LiquidityPoolTable subclass that is neither V2 nor V3
-                # base — unknown family; skip (matches the old silent skip).
-                pass
-        if issubclass(pt, UniswapV4PoolTable):
-            pool_kinds.add(_POOL_KIND_V4)
+    pool_kinds = _resolve_pool_kinds(pool_types)
 
     raw = build_path_graph(
         database_path=str(db_path),
@@ -422,18 +428,48 @@ class _Traversal:
     pool_kind_filter: list[set[int] | None] | None
 
 
-def _prepare_traversals(
-    *,
-    chain_id: int,
-    start_tokens: Iterable[ChecksummedAddress | str],
-    end_tokens: Iterable[ChecksummedAddress | str],
-    min_depth: int,
-    max_depth: int | None,
-    pool_types: Sequence[type],
-    db: DatabaseSessionManager,
-    pool_type_per_depth: Sequence[set[type] | None] | None,
-    allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None,
-) -> list[_Traversal]:
+@dataclass(slots=True, frozen=True)
+class PathfindingRequest:
+    """Search parameters shared by `find_paths` and `find_paths_async`.
+
+    Bundles the graph scope and traversal constraints for one discovery
+    sweep, so the sync and async entry points accept an identical request
+    shape and `_prepare_traversals` has a single input contract.
+
+    Fields:
+        chain_id: The chain ID to restrict pool and token queries.
+        start_tokens: Token addresses to use as the start of each path.
+        end_tokens: Token addresses to use as the end of each path.
+        db: The database session manager used to open a read session.
+        min_depth: The minimum number of hops in yielded paths.
+        max_depth: The optional maximum number of hops in yielded paths.
+        pool_types: Database model classes for the pool types to include in the
+            graph (default: ``LiquidityPoolTable`` and ``UniswapV4PoolTable``).
+        pool_type_per_depth: If set, a sequence of allowed pool type sets at
+            each depth. Depth 0 = first hop, depth 1 = second hop, etc. A
+            ``None`` entry allows all pool types at that depth. When provided,
+            edges whose pool_type is not in the allowed set are pruned before
+            recursion.
+        allowed_intermediate_tokens: If set, restrict the graph to only these
+            token addresses as intermediate nodes. Pools connecting any
+            non-whitelisted intermediate token are excluded from the graph.
+            Use this to filter out tax tokens, fee-on-transfer tokens, and
+            low-quality pairs that would waste simulation gas.
+
+    """
+
+    chain_id: int
+    start_tokens: Iterable[ChecksummedAddress | str]
+    end_tokens: Iterable[ChecksummedAddress | str]
+    db: DatabaseSessionManager
+    min_depth: int = 2
+    max_depth: int | None = None
+    pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable)
+    pool_type_per_depth: Sequence[set[type] | None] | None = None
+    allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None
+
+
+def _prepare_traversals(request: PathfindingRequest) -> list[_Traversal]:
     """Build the graph + resolve every traversal-plan entry (shared prep).
 
     The single graph-build path for BOTH `find_paths` (sync) and
@@ -451,39 +487,41 @@ def _prepare_traversals(
     """
     # @dev Liquidity pool lookups using a token ID are implicitly filtered for the chain ID, since
     # token addresses are unique to the chain. WHERE clauses can therefore be omitted from SELECTs.
-    with db() as session:
+    with request.db() as session:
         allowed_token_ids: set[TokenId] | None = None
-        if allowed_intermediate_tokens is not None:
+        if request.allowed_intermediate_tokens is not None:
             allowed_token_ids = set(
                 resolve_token_ids(
-                    chain_id,
-                    (get_checksum_address(tok) for tok in allowed_intermediate_tokens),
+                    request.chain_id,
+                    (get_checksum_address(tok) for tok in request.allowed_intermediate_tokens),
                     session,
                 ).values(),
             )
 
         prepared = _prepare_graph(
-            chain_id=chain_id,
-            pool_types=pool_types,
+            chain_id=request.chain_id,
+            pool_types=request.pool_types,
             session=session,
             allowed_intermediate_tokens=allowed_token_ids,
         )
 
-        rust_filter = _convert_pool_type_filter(pool_type_per_depth)
+        rust_filter = _convert_pool_type_filter(request.pool_type_per_depth)
 
         traversal_plan = _prepare_traversal_plan(
-            start_tokens={get_checksum_address(token) for token in start_tokens},
-            end_tokens={get_checksum_address(token) for token in end_tokens},
+            start_tokens={get_checksum_address(token) for token in request.start_tokens},
+            end_tokens={get_checksum_address(token) for token in request.end_tokens},
         )
 
         traversals: list[_Traversal] = []
         for (start_token, end_token), direction in traversal_plan.items():
-            start_token_id = resolve_token_ids(chain_id, [start_token], session).get(start_token)
+            start_token_id = resolve_token_ids(request.chain_id, [start_token], session).get(
+                start_token
+            )
             if start_token_id is None:
                 msg = f"Start token {start_token} was not found in the database."
                 raise DegenbotValueError(message=msg)
 
-            end_token_id = resolve_token_ids(chain_id, [end_token], session).get(end_token)
+            end_token_id = resolve_token_ids(request.chain_id, [end_token], session).get(end_token)
             if end_token_id is None:
                 msg = f"End token {end_token} was not found in the database."
                 raise DegenbotValueError(message=msg)
@@ -497,12 +535,12 @@ def _prepare_traversals(
             # shorter cycles that merely prefix-match the first N depths
             # (e.g. a 3-depth V3-V3-V2 filter must not leak 2-hop V3-V3).
             effective_min_depth = (
-                min_depth
-                if pool_type_per_depth is None
-                else max(min_depth, len(pool_type_per_depth))
+                request.min_depth
+                if request.pool_type_per_depth is None
+                else max(request.min_depth, len(request.pool_type_per_depth))
             )
 
-            logger.debug(f"Performing generic {max_depth}-pool path search")
+            logger.debug(f"Performing generic {request.max_depth}-pool path search")
 
             traversals.append(
                 _Traversal(
@@ -520,42 +558,16 @@ def _prepare_traversals(
 
 def find_paths(
     *,
-    chain_id: int,
-    start_tokens: Iterable[ChecksummedAddress | str],
-    end_tokens: Iterable[ChecksummedAddress | str],
-    min_depth: int = 2,
-    max_depth: int | None = None,
-    pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable),
-    db: DatabaseSessionManager,
-    pool_type_per_depth: Sequence[set[type] | None] | None = None,
-    allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None,
+    request: PathfindingRequest,
 ) -> Iterator[Sequence[PathStep]]:
     """Find paths from each of the given start tokens to each of the given end tokens.
 
-    Uses a depth-first search strategy. The search will exhaustively discover paths
-    from a minimum depth to an optional maximum.
-
-    Paths may be constrained to a subset of pool types. If not specified, all valid
-    pool types will be included.
+    Uses a depth-first search strategy. The search will exhaustively discover
+    paths from a minimum depth to an optional maximum. Search parameters are
+    carried by ``request``; see `PathfindingRequest` for the field semantics.
 
     Args:
-        chain_id: The chain ID to restrict pool and token queries.
-        start_tokens: Token addresses to use as the start of each path.
-        end_tokens: Token addresses to use as the end of each path.
-        min_depth: The minimum number of hops in yielded paths.
-        max_depth: The optional maximum number of hops in yielded paths.
-        pool_types: Database model classes for the pool types to include in the
-            graph (default: ``LiquidityPoolTable`` and ``UniswapV4PoolTable``).
-        db: The database session manager used to open a read session.
-        pool_type_per_depth: If set, a sequence of allowed pool type sets at each
-            depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
-            allows all pool types at that depth. When provided, edges whose
-            pool_type is not in the allowed set are pruned before recursion.
-        allowed_intermediate_tokens: If set, restrict the graph to only these token
-            addresses as intermediate nodes. Pools connecting any non-whitelisted
-            intermediate token are excluded from the graph. Use this to filter out
-            tax tokens, fee-on-transfer tokens, and low-quality pairs that would
-            waste simulation gas.
+        request: The graph scope + traversal constraints for this search.
 
     Yields:
         Sequence[PathStep]: A valid arbitrage path from a start token to an end token.
@@ -565,17 +577,7 @@ def find_paths(
     # then the lazy Rust DFS per traversal-plan entry.
     start = time.perf_counter()
 
-    traversals = _prepare_traversals(
-        chain_id=chain_id,
-        start_tokens=start_tokens,
-        end_tokens=end_tokens,
-        min_depth=min_depth,
-        max_depth=max_depth,
-        pool_types=pool_types,
-        db=db,
-        pool_type_per_depth=pool_type_per_depth,
-        allowed_intermediate_tokens=allowed_intermediate_tokens,
-    )
+    traversals = _prepare_traversals(request=request)
 
     for traversal in traversals:
         # The Rust DFS returns a lazy iterator — paths are yielded one at
@@ -586,7 +588,7 @@ def find_paths(
             traversal.start_token_id,
             traversal.end_token_id,
             traversal.min_depth,
-            max_depth,
+            request.max_depth,
             traversal.include_reverse,
             traversal.pool_kind_filter,
         )
@@ -600,22 +602,14 @@ def find_paths(
             )
 
         logger.debug(
-            f"Completed structured generic search (max depth {max_depth}) "
+            f"Completed structured generic search (max depth {request.max_depth}) "
             f"at +{time.perf_counter() - start:.1f}s",
         )
 
 
 async def find_paths_async(
     *,
-    chain_id: int,
-    start_tokens: Iterable[ChecksummedAddress | str],
-    end_tokens: Iterable[ChecksummedAddress | str],
-    min_depth: int = 2,
-    max_depth: int | None = None,
-    pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
-    db: DatabaseSessionManager,
-    pool_type_per_depth: Sequence[set[type] | None] | None = None,
-    allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None,
+    request: PathfindingRequest,
     batch_size: int = 1000,
 ) -> AsyncGenerator[Sequence[PathStep], None]:
     """Async version of find_paths.
@@ -640,23 +634,8 @@ async def find_paths_async(
     `__anext__` surface at the consumer after the pending batch drains.
 
     Args:
-        chain_id: The chain ID to restrict pool and token queries.
-        start_tokens: Token addresses to use as the start of each path.
-        end_tokens: Token addresses to use as the end of each path.
-        min_depth: The minimum number of hops in yielded paths.
-        max_depth: The optional maximum number of hops in yielded paths.
-        pool_types: Database model classes for the pool types to include in the
-            graph (default: `LiquidityPoolTable` and `UniswapV4PoolTable`).
-        db: The database session manager used to open a read session.
-        pool_type_per_depth: If set, a sequence of allowed pool type sets at each
-            depth. Depth 0 = first hop, depth 1 = second hop, etc. A None entry
-            allows all pool types at that depth. When provided, edges whose
-            pool_type is not in the allowed set are pruned before recursion.
-        allowed_intermediate_tokens: If set, restrict the graph to only these token
-            addresses as intermediate nodes. Pools connecting any non-whitelisted
-            intermediate token are excluded from the graph. Use this to filter out
-            tax tokens, fee-on-transfer tokens, and low-quality pairs that would
-            waste simulation gas.
+        request: The graph scope + traversal constraints for this search; see
+            `PathfindingRequest` for the field semantics.
         batch_size: Paths per Rust delivery batch (default 1000), clamped to
             `>= 1`.
 
@@ -691,15 +670,7 @@ async def find_paths_async(
     traversals = await call_blocking_on_ambient_runtime(
         partial(
             _prepare_traversals,
-            chain_id=chain_id,
-            start_tokens=start_tokens,
-            end_tokens=end_tokens,
-            min_depth=min_depth,
-            max_depth=max_depth,
-            pool_types=pool_types,
-            db=db,
-            pool_type_per_depth=pool_type_per_depth,
-            allowed_intermediate_tokens=allowed_intermediate_tokens,
+            request=request,
         )
     )
 
@@ -713,7 +684,7 @@ async def find_paths_async(
             traversal.start_token_id,
             traversal.end_token_id,
             traversal.min_depth,
-            max_depth,
+            request.max_depth,
             traversal.include_reverse,
             traversal.pool_kind_filter,
             effective_batch,

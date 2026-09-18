@@ -172,7 +172,7 @@ async def _run(
 
     from degenbot.runner import _consume as _runner_consume
     from degenbot.runner.bot_runner import _SessionState
-    from degenbot.runner.config import ArbitrageConfig
+    from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
     orig = _runner_consume._dispatch_profitable
     orig_pipe = _runner_consume.SimSubmitPipeline
@@ -200,8 +200,7 @@ async def _run(
             },
             live=False,
             permutation=None,
-            cli_http="http://localhost:8545",
-            cli_ws="ws://localhost:8546",
+            rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
         ),
         current_block=dispatcher.current_block,
     )

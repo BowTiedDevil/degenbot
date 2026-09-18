@@ -66,6 +66,7 @@ from typing import TYPE_CHECKING
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import CONFIG_FILE
 from degenbot.logging import logger
+from degenbot.registry.pool_type import PoolRegistration
 from degenbot.types import dex_identity
 from degenbot.types.pool_type import PoolFamily
 
@@ -357,13 +358,15 @@ def register_from_deployments(records: list[DeploymentRecord], registry: PoolTyp
             identity = None
         init_hash = record.init_hash or None
         registry.register(
-            pool_class,
-            chain_id=record.chain_id,
-            factory_address=record.factory,
-            pool_init_hash=init_hash,
-            deployer=record.deployer,
-            family=family,
-            variant=record.variant,
-            dex_identity=identity,
-            implementation_address=record.implementation_address,
+            PoolRegistration(
+                pool_class=pool_class,
+                chain_id=record.chain_id,
+                factory_address=record.factory,
+                pool_init_hash=init_hash,
+                deployer=record.deployer,
+                family=family,
+                variant=record.variant,
+                dex_identity=identity,
+                implementation_address=record.implementation_address,
+            )
         )

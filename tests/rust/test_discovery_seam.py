@@ -31,6 +31,7 @@ from degenbot.updater.pool_updater_configs import (
     update_v2_pools,
     update_v3_pools,
     update_v4_pools,
+    PoolUpdateRequest,
 )
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
@@ -252,13 +253,15 @@ def test_update_v2_pools_shell_routes_through_rust(seeded_db: pathlib.Path) -> N
     _dispose(session)
 
     update_v2_pools(
-        provider=_StubProvider(),  # type: ignore[arg-type]
-        start_block=100,
-        end_block=100,
-        exchange=exchange,
-        database_path=str(seeded_db),
-        config=config,
-        get_events_fn=_events_fn_factory(events),
+        PoolUpdateRequest(
+            provider=_StubProvider(),  # type: ignore[arg-type]
+            start_block=100,
+            end_block=100,
+            exchange=exchange,
+            database_path=str(seeded_db),
+            config=config,
+            get_events_fn=_events_fn_factory(events),
+        )
     )
 
     session = get_scoped_sqlite_session(seeded_db)
@@ -300,13 +303,15 @@ def test_update_v2_aerodrome_stable_flag(seeded_db: pathlib.Path) -> None:
     _dispose(session)
 
     update_v2_pools(
-        provider=_StubProvider(),  # type: ignore[arg-type]
-        start_block=100,
-        end_block=100,
-        exchange=ex,
-        database_path=str(seeded_db),
-        config=config,
-        get_events_fn=_events_fn_factory(events),
+        PoolUpdateRequest(
+            provider=_StubProvider(),  # type: ignore[arg-type]
+            start_block=100,
+            end_block=100,
+            exchange=ex,
+            database_path=str(seeded_db),
+            config=config,
+            get_events_fn=_events_fn_factory(events),
+        )
     )
 
     import sqlite3
@@ -341,13 +346,15 @@ def test_update_v3_pools_shell_routes_through_rust(seeded_db: pathlib.Path) -> N
     _dispose(session)
 
     update_v3_pools(
-        provider=_StubProvider(),  # type: ignore[arg-type]
-        start_block=100,
-        end_block=100,
-        exchange=ex,
-        database_path=str(seeded_db),
-        config=config,
-        get_events_fn=_events_fn_factory(events),
+        PoolUpdateRequest(
+            provider=_StubProvider(),  # type: ignore[arg-type]
+            start_block=100,
+            end_block=100,
+            exchange=ex,
+            database_path=str(seeded_db),
+            config=config,
+            get_events_fn=_events_fn_factory(events),
+        )
     )
 
     import sqlite3
@@ -398,13 +405,15 @@ def test_update_v4_pools_shell_routes_through_rust(seeded_db: pathlib.Path) -> N
     _dispose(session)
 
     update_v4_pools(
-        provider=_StubProvider(),  # type: ignore[arg-type]
-        start_block=100,
-        end_block=100,
-        exchange=ex4,
-        database_path=str(seeded_db),
-        config=config,
-        get_events_fn=_events_fn_factory(events),
+        PoolUpdateRequest(
+            provider=_StubProvider(),  # type: ignore[arg-type]
+            start_block=100,
+            end_block=100,
+            exchange=ex4,
+            database_path=str(seeded_db),
+            config=config,
+            get_events_fn=_events_fn_factory(events),
+        )
     )
 
     session = get_scoped_sqlite_session(seeded_db)

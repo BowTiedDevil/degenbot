@@ -46,8 +46,8 @@ from degenbot.exceptions import (
     VerificationRpcError,
 )
 from degenbot.logging import logger as bot_logger
+from degenbot.pathfinding import PathfindingRequest, find_paths_async
 from degenbot.pathfinding import discovery_batch_size as _rust_discovery_batch_size
-from degenbot.pathfinding import find_paths_async
 from degenbot.runner._driver_constants import (
     ALLOWED_INTERMEDIATE_TOKENS,
     PANCAKESWAP_V3_MAINNET_FACTORY,
@@ -1049,20 +1049,22 @@ class PathRegistrationPipeline:
     def discovery_sweep(self) -> AsyncGenerator[object, None]:
         """A single discovery sweep over the DB subgraph (V2/V3/V4 DFS)."""
         return find_paths_async(
-            chain_id=self.constr_chain_id,
-            start_tokens=[
-                WETH_ADDRESS,
-                NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
-            ],
-            end_tokens=[
-                WETH_ADDRESS,
-                NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
-            ],
-            max_depth=3,
-            pool_types=self.pool_types,
-            db=self.constr_db,
-            pool_type_per_depth=self.pool_type_per_depth,
-            allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
+            request=PathfindingRequest(
+                chain_id=self.constr_chain_id,
+                start_tokens=[
+                    WETH_ADDRESS,
+                    NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
+                ],
+                end_tokens=[
+                    WETH_ADDRESS,
+                    NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
+                ],
+                max_depth=3,
+                pool_types=self.pool_types,
+                db=self.constr_db,
+                pool_type_per_depth=self.pool_type_per_depth,
+                allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
+            ),
             batch_size=_discovery_batch_size(),
         )
 

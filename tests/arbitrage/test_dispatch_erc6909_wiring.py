@@ -17,7 +17,7 @@ import pytest
 from degenbot.dispatch import Dispatcher
 from degenbot.runner import _dispatch as d
 from degenbot.runner.bot_runner import _SessionState
-from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 
 class _RecordingCandidate:
@@ -39,8 +39,7 @@ def test_erc6909_default_is_off() -> None:
         {"INJECT_EXECUTOR_CODE": "0"},
         live=False,
         permutation=None,
-        cli_http="http://localhost:8545",
-        cli_ws="ws://localhost:8546",
+        rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
     )
     assert cfg.erc6909_profit is False
 
@@ -73,8 +72,7 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
             },
             live=False,
             permutation=None,
-            cli_http="http://localhost:8545",
-            cli_ws="ws://localhost:8546",
+            rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
         ),
         current_block=10,
     )
@@ -83,8 +81,7 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
         await d._dispatch_profitable(
             owner,
             results,
-            block_timestamp=1_700_000_000,
-            base_fee_next=1_000_000_000,
+            context=d.BatchContext(block_timestamp=1_700_000_000, base_fee_next=1_000_000_000),
             operator_nonce=0,
         )
 

@@ -22,7 +22,7 @@ import inspect
 import pytest
 
 from degenbot.runner._dispatch import _load_executor_runtime_bytecode
-from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 FILE = "cmd_executor_runtime_bytecode.txt"
 
@@ -44,8 +44,7 @@ def _cfg(env: dict[str, str] | None = None) -> ArbitrageConfig:
         base,
         live=False,
         permutation=None,
-        cli_http="http://localhost:8545",
-        cli_ws="ws://localhost:8546",
+        rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
     )
 
 

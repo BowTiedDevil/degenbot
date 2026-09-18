@@ -12,7 +12,7 @@ from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.database.models.pools import UniswapV2PoolTable, UniswapV3PoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.pathfinding import find_paths, find_paths_async
+from degenbot.pathfinding import PathfindingRequest, find_paths, find_paths_async
 from degenbot.types.chain import ChainId
 
 BASE_CHAIN_ID = ChainId.BASE
@@ -45,13 +45,15 @@ class TestPoolTypePerDepthBounds:
         # This must not raise IndexError
         paths = list(
             find_paths(
-                db=db,
-                chain_id=BASE_CHAIN_ID,
-                start_tokens=[WETH_BASE_ADDRESS],
-                end_tokens=[WETH_BASE_ADDRESS],
-                max_depth=3,  # exceeds pool_type_per_depth length
-                pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
-                pool_type_per_depth=pool_type_per_depth,
+                request=PathfindingRequest(
+                    db=db,
+                    chain_id=BASE_CHAIN_ID,
+                    start_tokens=[WETH_BASE_ADDRESS],
+                    end_tokens=[WETH_BASE_ADDRESS],
+                    max_depth=3,  # exceeds pool_type_per_depth length
+                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_type_per_depth=pool_type_per_depth,
+                )
             )
         )
         # All paths should be exactly 2 hops
@@ -68,13 +70,15 @@ class TestPoolTypePerDepthBounds:
         # pool_type_per_depth should cap it at 2 hops
         paths = list(
             find_paths(
-                db=db,
-                chain_id=BASE_CHAIN_ID,
-                start_tokens=[WETH_BASE_ADDRESS],
-                end_tokens=[WETH_BASE_ADDRESS],
-                max_depth=None,
-                pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
-                pool_type_per_depth=pool_type_per_depth,
+                request=PathfindingRequest(
+                    db=db,
+                    chain_id=BASE_CHAIN_ID,
+                    start_tokens=[WETH_BASE_ADDRESS],
+                    end_tokens=[WETH_BASE_ADDRESS],
+                    max_depth=None,
+                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_type_per_depth=pool_type_per_depth,
+                )
             )
         )
         for path in paths:
@@ -89,13 +93,15 @@ class TestPoolTypePerDepthBounds:
         paths = [
             path
             async for path in find_paths_async(
-                db=db,
-                chain_id=BASE_CHAIN_ID,
-                start_tokens=[WETH_BASE_ADDRESS],
-                end_tokens=[WETH_BASE_ADDRESS],
-                max_depth=3,
-                pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
-                pool_type_per_depth=pool_type_per_depth,
+                request=PathfindingRequest(
+                    db=db,
+                    chain_id=BASE_CHAIN_ID,
+                    start_tokens=[WETH_BASE_ADDRESS],
+                    end_tokens=[WETH_BASE_ADDRESS],
+                    max_depth=3,
+                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_type_per_depth=pool_type_per_depth,
+                )
             )
         ]
         for path in paths:
@@ -110,13 +116,15 @@ class TestPoolTypePerDepthBounds:
         ]
         paths = list(
             find_paths(
-                db=db,
-                chain_id=BASE_CHAIN_ID,
-                start_tokens=[WETH_BASE_ADDRESS],
-                end_tokens=[WETH_BASE_ADDRESS],
-                max_depth=3,
-                pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
-                pool_type_per_depth=pool_type_per_depth,
+                request=PathfindingRequest(
+                    db=db,
+                    chain_id=BASE_CHAIN_ID,
+                    start_tokens=[WETH_BASE_ADDRESS],
+                    end_tokens=[WETH_BASE_ADDRESS],
+                    max_depth=3,
+                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_type_per_depth=pool_type_per_depth,
+                )
             )
         )
         for path in paths:
@@ -130,13 +138,15 @@ class TestPoolTypePerDepthBounds:
         ]
         paths = list(
             find_paths(
-                db=db,
-                chain_id=BASE_CHAIN_ID,
-                start_tokens=[WETH_BASE_ADDRESS],
-                end_tokens=[WETH_BASE_ADDRESS],
-                max_depth=3,
-                pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
-                pool_type_per_depth=pool_type_per_depth,
+                request=PathfindingRequest(
+                    db=db,
+                    chain_id=BASE_CHAIN_ID,
+                    start_tokens=[WETH_BASE_ADDRESS],
+                    end_tokens=[WETH_BASE_ADDRESS],
+                    max_depth=3,
+                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_type_per_depth=pool_type_per_depth,
+                )
             )
         )
         # All paths must be exactly 2 hops (pool_type_per_depth length)

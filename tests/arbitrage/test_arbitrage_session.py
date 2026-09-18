@@ -25,6 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from degenbot.runner import BotRunner
+from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
 
 
@@ -314,12 +315,14 @@ class TestBotRunnerStart:
 
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=async_w3,
-            snapshots=snapshots,
-            path_builder=_Recorder(events, "path_builder"),
-            consumer=_Recorder(events, "consumer"),
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=async_w3,
+                snapshots=snapshots,
+                path_builder=_Recorder(events, "path_builder"),
+                consumer=_Recorder(events, "consumer"),
+            ),
         )
 
         await session.start()
@@ -347,12 +350,14 @@ class TestBotRunnerStart:
 
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=async_w3,
-            snapshots=(None, None, None, None),
-            path_builder=lambda **kw: _noop_coro(),
-            consumer=lambda **kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=async_w3,
+                snapshots=(None, None, None, None),
+                path_builder=lambda **kw: _noop_coro(),
+                consumer=lambda **kw: _noop_coro(),
+            ),
         )
         await session.start()
 
@@ -369,12 +374,14 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=async_w3,
-            snapshots=(v3_snap, v4_snap, None, None),
-            path_builder=_Recorder(events, "path_builder"),
-            consumer=_Recorder(events, "consumer"),
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=async_w3,
+                snapshots=(v3_snap, v4_snap, None, None),
+                path_builder=_Recorder(events, "path_builder"),
+                consumer=_Recorder(events, "consumer"),
+            ),
         )
         await session.start()
         events.clear()  # only observe run()'s sequence
@@ -393,12 +400,14 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=async_w3,
-            snapshots=(None, None, None, None),
-            path_builder=lambda **kw: _noop_coro(),
-            consumer=lambda **kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=async_w3,
+                snapshots=(None, None, None, None),
+                path_builder=lambda **kw: _noop_coro(),
+                consumer=lambda **kw: _noop_coro(),
+            ),
         )
         await session.start()
         await session.run()
@@ -423,12 +432,14 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=async_w3,
-            snapshots=(None, None, None, None),
-            path_builder=raising_path_builder,
-            consumer=hanging_consumer,
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=async_w3,
+                snapshots=(None, None, None, None),
+                path_builder=raising_path_builder,
+                consumer=hanging_consumer,
+            ),
         )
         await session.start()
 
@@ -509,12 +520,14 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
         )
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=registry,  # type: ignore[arg-type]
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=recording_consumer,
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=registry,  # type: ignore[arg-type]
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=recording_consumer,
+            ),
         )
         await session.start()
         await session.run()
@@ -547,12 +560,14 @@ class TestBotRunnerShutdown:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
         )
         await session.start()
 
@@ -570,12 +585,14 @@ class TestBotRunnerShutdown:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
         )
         await session.start()
 
@@ -594,12 +611,14 @@ class TestBotRunnerShutdown:
         engine_registry.engine.stop_raises = RuntimeError("engine torn down")
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
         )
         await session.start()
 
@@ -616,12 +635,14 @@ class TestBotRunnerShutdown:
         # AttributeError). Let a Ctrl-C during startup still exit cleanly.
         session = BotRunner(
             _cfg(),
-            bot=None,
-            engine_registry=None,
-            async_w3=None,
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=None,
+                engine_registry=None,
+                async_w3=None,
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
         )
 
         await session.shutdown()  # must not raise
@@ -641,12 +662,14 @@ class TestBotRunnerShutdown:
 
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=hanging_consumer,
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=hanging_consumer,
+            ),
         )
         await session.start()
 
@@ -681,12 +704,14 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
             install_sigint=True,
         )
         await session.start()
@@ -701,12 +726,14 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
             install_sigint=True,
         )
         await session.start()
@@ -727,12 +754,14 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
             install_sigint=False,
         )
         await session.start()
@@ -751,12 +780,14 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
             install_sigint=True,
         )
         await session.start()
@@ -834,12 +865,14 @@ class TestConstructionContext:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=recording_path_builder,
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=recording_path_builder,
+                consumer=lambda **_kw: _noop_coro(),
+            ),
         )
         asyncio.run(_drive_run(session))
 
@@ -882,12 +915,14 @@ class TestSubBBackgroundRegistration:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=raising_path_builder,
-            consumer=hanging_consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=raising_path_builder,
+                consumer=hanging_consumer,
+            ),
             background_registration=True,
         )
         await session.start()
@@ -907,10 +942,12 @@ class TestSubBBackgroundRegistration:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+            ),
             background_registration=True,
         )
         session.bot = bot  # start()/run() resolve these; call the seam directly
@@ -942,10 +979,12 @@ class TestSubBBackgroundRegistration:
         bot._py_bot = _RecordingPyBot(calls)  # records `close_snapshot_tx`
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=_FakeEngineRegistry(),
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=_FakeEngineRegistry(),
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+            ),
             background_registration=True,
         )
         session.bot = bot
@@ -983,10 +1022,12 @@ class TestSubBBackgroundRegistration:
         bot._py_bot = _RecordingPyBot(calls, raise_on_close=True)
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=_FakeEngineRegistry(),
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=_FakeEngineRegistry(),
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+            ),
             background_registration=True,
         )
         session.bot = bot
@@ -1052,12 +1093,14 @@ class TestSubCBgRegistrationConcurrency:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=forever_path_builder,
-            consumer=consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=forever_path_builder,
+                consumer=consumer,
+            ),
             background_registration=True,
         )
         await session.start()
@@ -1099,12 +1142,14 @@ class TestSubCBgRegistrationConcurrency:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=draining_path_builder,
-            consumer=consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=draining_path_builder,
+                consumer=consumer,
+            ),
             background_registration=True,
         )
         await session.start()
@@ -1136,12 +1181,14 @@ class TestSubCBgRegistrationConcurrency:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=raising_path_builder,
-            consumer=hanging_consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=raising_path_builder,
+                consumer=hanging_consumer,
+            ),
             background_registration=True,
         )
         await session.start()
@@ -1228,12 +1275,14 @@ class TestSubCBgRegistrationConcurrency:
         bot = _FakeBot(blocks=[_block_dict(500)])
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=registry,  # type: ignore[arg-type]
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=forever_path_builder,
-            consumer=recording_consumer,
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=registry,  # type: ignore[arg-type]
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=forever_path_builder,
+                consumer=recording_consumer,
+            ),
             background_registration=True,
         )
         await session.start()
@@ -1275,12 +1324,14 @@ class Test6VZN7HOngoingDiscovery:
 
         session = BotRunner(
             _cfg(),
-            bot=bot,
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=forever_path_builder,
-            consumer=consumer,
+            actors=InjectedActors(
+                bot=bot,
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=forever_path_builder,
+                consumer=consumer,
+            ),
             background_registration=True,
         )
         await session.start()
@@ -1614,12 +1665,14 @@ class TestSessionOperatorSurface:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=lambda **_kw: _noop_coro(),
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=lambda **_kw: _noop_coro(),
+            ),
         )
         await session.start()
         await session.run()
@@ -1666,12 +1719,14 @@ class TestSessionOperatorSurface:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=consumer,
+            ),
         )
         await session.start()
         # A live (fake) pipeline is reachable on the running session —
@@ -1723,12 +1778,14 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=hanging_consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=hanging_consumer,
+            ),
         )
         await session.start()
 
@@ -1776,12 +1833,14 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=engine_registry,
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=hanging_consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=engine_registry,
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=hanging_consumer,
+            ),
         )
         await session.start()
         async with session:
@@ -1799,12 +1858,14 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
-            engine_registry=_FakeEngineRegistry(),
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **_kw: _noop_coro(),
-            consumer=hanging_consumer,
+            actors=InjectedActors(
+                bot=_FakeBot(),
+                engine_registry=_FakeEngineRegistry(),
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=lambda **_kw: _noop_coro(),
+                consumer=hanging_consumer,
+            ),
         )
         await session.start()
         async with session:

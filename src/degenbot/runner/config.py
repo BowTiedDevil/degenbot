@@ -244,6 +244,20 @@ def _checksum_or_empty(addr: str | None) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
+class RpcCascadeOverrides:
+    """The :func:`degenbot.config.resolve_rpc_uris` inputs for :meth:`ArbitrageConfig.from_env`.
+
+    The chain identity and the CLI-layer endpoint overrides travel together:
+    they are exactly the arguments the RPC cascade consumes, so bundling them
+    keeps the factory's keyword surface one concept per parameter.
+    """
+
+    chain_id: int = 1
+    cli_http: str | None = None
+    cli_ws: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class ArbitrageConfig:
     """Unified settlement-arbitrage configuration — one object for the ~20 tunables `main()` reads.
 
@@ -313,9 +327,7 @@ class ArbitrageConfig:
         *,
         live: bool,
         permutation: str | None,
-        chain_id: int = 1,
-        cli_http: str | None = None,
-        cli_ws: str | None = None,
+        rpc: RpcCascadeOverrides | None = None,
     ) -> "ArbitrageConfig":
         """Build a ArbitrageConfig from a dotenv-style env mapping + CLI flags.
 
@@ -342,6 +354,8 @@ class ArbitrageConfig:
                 RPC endpoint is configured for ``chain_id`` in any cascade layer.
 
         """
+        overrides = rpc if rpc is not None else RpcCascadeOverrides()
+
         # ── Operator ──
         operator_address_raw = env.get("OPERATOR_ADDRESS") or ""
         operator_private_key = env.get("OPERATOR_PRIVATE_KEY") or ""
@@ -366,9 +380,9 @@ class ArbitrageConfig:
         # ── Node URLs — delegated to the library cascade (resolve_rpc_uris) ──
 
         node_http, node_ws = resolve_rpc_uris(
-            chain_id,
-            cli_http=cli_http,
-            cli_ws=cli_ws,
+            overrides.chain_id,
+            cli_http=overrides.cli_http,
+            cli_ws=overrides.cli_ws,
         )
 
         # ── Executor ──
@@ -431,7 +445,7 @@ class ArbitrageConfig:
         return cls(
             operator_address=operator_address,
             operator_private_key=operator_private_key,
-            chain_id=chain_id,
+            chain_id=overrides.chain_id,
             node_http=node_http,
             node_ws=node_ws,
             executor_address=executor_address,
@@ -530,34 +544,47 @@ def classify_revert(revert_data: bytes) -> str:
     hexed = revert_data.hex()
     if len(hexed) < _HEX_SELECTOR_LEN:
         return f"short:{hexed}"
-    selector = hexed[:_HEX_SELECTOR_LEN]
+    return _classify_selector(hexed[:_HEX_SELECTOR_LEN], hexed)
+
+
+def _classify_selector(selector: str, hexed: str) -> str:
+    """Label one full revert payload from its leading 4-byte selector."""
     if selector == _PANIC_SELECTOR:
-        # Panic(uint256 code) — code is the first 32-byte arg.
-        code = (
-            int(hexed[_HEX_SELECTOR_LEN:_HEX_PANIC_ARG_END], 16)
-            if len(hexed) >= _HEX_PANIC_ARG_END
-            else 0
-        )
-        return f"Panic(0x{code:x})"
+        return _decode_panic(hexed)
     if selector == _ERROR_STRING_SELECTOR:
-        # Error(string): [sel][offset:32][len:32][data:N]
-        try:
-            str_len = int(hexed[8 + 64 : 8 + 128], 16)
-            str_start = 8 + 64 + 64
-            msg = bytes.fromhex(hexed[str_start : str_start + str_len * 2]).decode(
-                "utf-8", errors="replace"
-            )
-        except (ValueError, IndexError):
-            return "Error(string:undecodable)"
-        return msg or "Error(string:empty)"
-    if selector in _V4_REVERT_SELECTORS:
-        return _V4_REVERT_SELECTORS[selector].split("(", 1)[0]
-    if selector in _EXECUTOR_REVERT_SELECTORS:
-        return _EXECUTOR_REVERT_SELECTORS[selector].split("(", 1)[0]
+        return _decode_error_string(hexed)
+    named = _V4_REVERT_SELECTORS.get(selector) or _EXECUTOR_REVERT_SELECTORS.get(selector)
+    if named is not None:
+        return named.split("(", 1)[0]
     # Bare 32-byte numeric revert (Vyper): 0x00..00<value>
     if len(hexed) >= _HEX_WORD_LEN and hexed[:24] == "0" * 24:
         return "numeric-revert"
     return f"unknown:0x{selector}"
+
+
+def _decode_panic(hexed: str) -> str:
+    """Decode ``Panic(uint256)``'s code (0 when the arg is missing)."""
+    # Panic(uint256 code) — code is the first 32-byte arg.
+    code = (
+        int(hexed[_HEX_SELECTOR_LEN:_HEX_PANIC_ARG_END], 16)
+        if len(hexed) >= _HEX_PANIC_ARG_END
+        else 0
+    )
+    return f"Panic(0x{code:x})"
+
+
+def _decode_error_string(hexed: str) -> str:
+    """Decode ``Error(string)``'s message, best-effort (never raises)."""
+    # Error(string): [sel][offset:32][len:32][data:N]
+    try:
+        str_len = int(hexed[8 + 64 : 8 + 128], 16)
+        str_start = 8 + 64 + 64
+        msg = bytes.fromhex(hexed[str_start : str_start + str_len * 2]).decode(
+            "utf-8", errors="replace"
+        )
+    except (ValueError, IndexError):
+        return "Error(string:undecodable)"
+    return msg or "Error(string:empty)"
 
 
 BPS_DENOM = 10_000

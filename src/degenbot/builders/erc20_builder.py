@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
@@ -20,6 +21,15 @@ if TYPE_CHECKING:
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier
+
+
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
+class _TokenMetadata:
+    """On-chain metadata resolved for a token."""
+
+    name: str
+    symbol: str
+    decimals: int
 
 
 class Erc20Builder:
@@ -140,9 +150,7 @@ class Erc20Builder:
     def _register_from_metadata(
         self,
         address: str,
-        name: str,
-        symbol: str,
-        decimals: int,
+        metadata: _TokenMetadata,
         *,
         chain_id: ChainId,
         silent: bool,
@@ -153,7 +161,9 @@ class Erc20Builder:
             The canonical token instance (35NMBX Guard 1 ``get_or_add`` path).
 
         """
-        py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
+        py_token = self._py_bot.register_token(
+            address, metadata.name, metadata.symbol, metadata.decimals, chain_id
+        )
         token = Erc20Token._from_py_token(py_token)  # ruff:ignore[private-member-access]
         token = self._tokens.get_or_add(token_address=token.address, chain_id=chain_id, token=token)
         if not silent:
@@ -207,9 +217,7 @@ class Erc20Builder:
                 resolved.append(
                     self._register_from_metadata(
                         address,
-                        "Ether Placeholder",
-                        "ETH",
-                        18,
+                        _TokenMetadata(name="Ether Placeholder", symbol="ETH", decimals=18),
                         chain_id=chain_id,
                         silent=silent,
                     )
@@ -228,9 +236,11 @@ class Erc20Builder:
                 resolved.append(
                     self._register_from_metadata(
                         address,
-                        str(token_from_db.name),
-                        str(token_from_db.symbol),
-                        int(token_from_db.decimals),
+                        _TokenMetadata(
+                            name=str(token_from_db.name),
+                            symbol=str(token_from_db.symbol),
+                            decimals=int(token_from_db.decimals),
+                        ),
                         chain_id=chain_id,
                         silent=silent,
                     )
@@ -266,7 +276,10 @@ class Erc20Builder:
                                 decimals=decimals,
                             )
                     resolved[idx] = self._register_from_metadata(
-                        address, name, symbol, int(decimals), chain_id=chain_id, silent=silent
+                        address,
+                        _TokenMetadata(name=name, symbol=symbol, decimals=int(decimals)),
+                        chain_id=chain_id,
+                        silent=silent,
                     )
 
         return [t for t in resolved if t is not None]

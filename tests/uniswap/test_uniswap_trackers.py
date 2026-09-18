@@ -10,7 +10,11 @@ from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
 )
-from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
+from degenbot.uniswap.trackers import (
+    DeploymentOverrides,
+    UniswapV2PoolTracker,
+    UniswapV3PoolTracker,
+)
 from tests.helpers.bot_factory import make_bot_with_provider
 
 pytestmark = pytest.mark.online_rpc
@@ -109,7 +113,7 @@ def test_create_base_chain_trackers(fork_base_full: AnvilFork):
 def test_base_pancake_v3_pool_tracker(fork_base_full: AnvilFork):
     pancakev3_lp_manager = PancakeswapV3PoolTracker(
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
-        deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
+        overrides=DeploymentOverrides(deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS),
     )
 
     v3_pool = pancakev3_lp_manager.get_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)

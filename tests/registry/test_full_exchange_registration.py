@@ -10,7 +10,7 @@ import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
-from degenbot.registry.pool_type import PoolTypeRegistry
+from degenbot.registry.pool_type import PoolRegistration, PoolTypeRegistry
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.deployments import (
     ArbitrumCamelotV2,
@@ -184,12 +184,14 @@ class TestFullRegistration:
 
         for (chain_id, factory), (pool_class, deployment, variant, _) in REGISTRATIONS.items():
             reg.register(
-                pool_class,
-                chain_id=chain_id,
-                factory_address=factory,
-                pool_init_hash=_init_hash(deployment),
-                deployer=_deployer(deployment),
-                variant=variant,
+                PoolRegistration(
+                    pool_class=pool_class,
+                    chain_id=chain_id,
+                    factory_address=factory,
+                    pool_init_hash=_init_hash(deployment),
+                    deployer=_deployer(deployment),
+                    variant=variant,
+                )
             )
         return reg
 
@@ -302,11 +304,13 @@ class TestDeploymentDataMatchesPoolTypeRegistry:
         reg = PoolTypeRegistry()
         for (chain_id, factory), (pool_class, deployment, _, _) in REGISTRATIONS.items():
             reg.register(
-                pool_class,
-                chain_id=chain_id,
-                factory_address=factory,
-                pool_init_hash=_init_hash(deployment),
-                deployer=_deployer(deployment),
+                PoolRegistration(
+                    pool_class=pool_class,
+                    chain_id=chain_id,
+                    factory_address=factory,
+                    pool_init_hash=_init_hash(deployment),
+                    deployer=_deployer(deployment),
+                )
             )
         return reg
 
@@ -376,11 +380,13 @@ class TestDefaultFallback:
         reg.set_default_v3_class(UniswapV3Pool)
         for (chain_id, factory), (pool_class, deployment, _, _) in REGISTRATIONS.items():
             reg.register(
-                pool_class,
-                chain_id=chain_id,
-                factory_address=factory,
-                pool_init_hash=_init_hash(deployment),
-                deployer=_deployer(deployment),
+                PoolRegistration(
+                    pool_class=pool_class,
+                    chain_id=chain_id,
+                    factory_address=factory,
+                    pool_init_hash=_init_hash(deployment),
+                    deployer=_deployer(deployment),
+                )
             )
         return reg
 

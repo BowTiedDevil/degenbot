@@ -16,6 +16,7 @@ Rust-side, for both entry arms.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import pathlib
 import time
@@ -115,12 +116,19 @@ def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
     return code
 
 
+@dataclasses.dataclass(frozen=True)
+class BatchContext:
+    """Per-batch economics carried by the serial dispatch leaf's callers."""
+
+    block_timestamp: int
+    base_fee_next: int
+
+
 async def _dispatch_profitable(
     session: _SessionState,
     results: list[_RawResult],
     *,
-    block_timestamp: int,
-    base_fee_next: int,
+    context: BatchContext,
     operator_nonce: int,
     payloads: dict[int, dict] | None = None,
 ) -> None:
@@ -143,8 +151,8 @@ async def _dispatch_profitable(
         outcome = await _simulate_batch(
             session,
             candidates,
-            block_timestamp=block_timestamp,
-            base_fee_next=base_fee_next,
+            block_timestamp=context.block_timestamp,
+            base_fee_next=context.base_fee_next,
             current_block=current_block,
         )
     merged = _merge_payload_outcome(session, outcome, payloads)
@@ -439,51 +447,18 @@ async def _submit_batch_records(
     nonce_lane = getattr(session, "nonce_lane", None)
     relay_urls = nonce_lane.relay_urls if nonce_lane is not None else relay_urls_from_env()
     if relay_urls and outcome.gas_profitable:
-        if relay_providers is not None:
-            broadcast_providers = [
-                relay_provider.as_async_alloy() for relay_provider in relay_providers
-            ]
-        else:
-            global _RELAY_SUBMIT_PROVIDERS
-            if (
-                _RELAY_SUBMIT_PROVIDERS is None
-                or [u for u, _ in _RELAY_SUBMIT_PROVIDERS] != relay_urls
-            ):
-                from degenbot.provider import AsyncAlloyProvider as _AsyncAlloyProvider
-
-                _RELAY_SUBMIT_PROVIDERS = [
-                    (relay_url, await _AsyncAlloyProvider.create(rpc_url=relay_url))
-                    for relay_url in relay_urls
-                ]
-                endpoints = ",".join(
-                    relay_url.split("//", 1)[1].split("/", 1)[0]
-                    for relay_url, _ in _RELAY_SUBMIT_PROVIDERS
-                )
-                bot_logger.info(f"[submit] relay fan-out: {endpoints}")
-            broadcast_providers = [
-                relay_provider.as_async_alloy() for _, relay_provider in _RELAY_SUBMIT_PROVIDERS
-            ]
-        if nonce_lane is not None:
-            # The local pending read cannot see relay-pending broadcasts: book
-            # this batch's nonce range against the lane so the next relay batch
-            # cannot re-claim it (the exclusive relay branch of _nonce_lane).
-            operator_nonce = nonce_lane.reserve_base(
-                local_nonce=int(operator_nonce),
-                size=len(outcome.gas_profitable),
-            )
+        broadcast_providers, operator_nonce = await _resolve_relay_providers(
+            relay_urls,
+            relay_providers,
+            nonce_lane,
+            operator_nonce,
+            len(outcome.gas_profitable),
+        )
     else:
         broadcast_providers = None
-    # Forensic capture (fork-replay): record the exact calldata + the
-    # candidate economics for every gate-clearing candidate BEFORE broadcast,
-    # one INFO line, so any later tx can be replayed at its solve block.
-    solve_block = session.dispatcher.current_block
-    for c in outcome.gas_profitable:
-        calldata = getattr(c, "execute_calldata", None)
-        bot_logger.info(
-            f"[submit-arm] path={c.path_id} solve_block={solve_block} "
-            f"net_wei={c.net_profit} gas={c.gas_used} "
-            f"calldata={calldata.hex() if calldata else '<unavailable>'}",
-        )
+
+    _log_submit_arm(outcome.gas_profitable, session.dispatcher.current_block)
+
     signer = TxSigner(key=session.cfg.operator_private_key, chain_id=session.cfg.chain_id)
     records = await (submitter if submitter is not None else dispatch_and_submit)(
         candidates=outcome.gas_profitable,
@@ -497,6 +472,67 @@ async def _submit_batch_records(
         broadcast_providers=broadcast_providers,
     )
     submitted_count = sum(isinstance(record, SubmittedRecord) for record in records)
+    skip_histogram = _render_submit_records(records)
+    _track_submission_smoke(session, outcome, submitted_count, skip_histogram)
+
+
+async def _resolve_relay_providers(
+    relay_urls: list[str],
+    relay_providers: Any,
+    nonce_lane: Any,
+    operator_nonce: int,
+    batch_size: int,
+) -> tuple[list[Any], int]:
+    """Resolve this batch's broadcast providers and reserve its nonce range."""
+    if relay_providers is not None:
+        broadcast_providers = [
+            relay_provider.as_async_alloy() for relay_provider in relay_providers
+        ]
+    else:
+        global _RELAY_SUBMIT_PROVIDERS
+        if _RELAY_SUBMIT_PROVIDERS is None or [u for u, _ in _RELAY_SUBMIT_PROVIDERS] != relay_urls:
+            from degenbot.provider import AsyncAlloyProvider as _AsyncAlloyProvider
+
+            _RELAY_SUBMIT_PROVIDERS = [
+                (relay_url, await _AsyncAlloyProvider.create(rpc_url=relay_url))
+                for relay_url in relay_urls
+            ]
+            endpoints = ",".join(
+                relay_url.split("//", 1)[1].split("/", 1)[0]
+                for relay_url, _ in _RELAY_SUBMIT_PROVIDERS
+            )
+            bot_logger.info(f"[submit] relay fan-out: {endpoints}")
+        broadcast_providers = [
+            relay_provider.as_async_alloy() for _, relay_provider in _RELAY_SUBMIT_PROVIDERS
+        ]
+    if nonce_lane is not None:
+        # The local pending read cannot see relay-pending broadcasts: book
+        # this batch's nonce range against the lane so the next relay batch
+        # cannot re-claim it (the exclusive relay branch of _nonce_lane).
+        operator_nonce = nonce_lane.reserve_base(
+            local_nonce=int(operator_nonce),
+            size=batch_size,
+        )
+    return broadcast_providers, operator_nonce
+
+
+def _log_submit_arm(candidates: list[Any], solve_block: int) -> None:
+    """Forensic capture (fork-replay): the exact calldata + candidate economics.
+
+    One INFO line per gate-clearing candidate BEFORE broadcast, so any later tx
+    can be replayed at its solve block.
+    """
+    for c in candidates:
+        calldata = getattr(c, "execute_calldata", None)
+        bot_logger.info(
+            f"[submit-arm] path={c.path_id} solve_block={solve_block} "
+            f"net_wei={c.net_profit} gas={c.gas_used} "
+            f"calldata={calldata.hex() if calldata else '<unavailable>'}",
+        )
+
+
+def _render_submit_records(records: list[Any]) -> dict[str, int]:
+    """Render one log line per submit record; return the skip-reason histogram."""
     skip_histogram: dict[str, int] = {}
     for record in records:
         if isinstance(record, SkippedRecord):
@@ -515,7 +551,16 @@ async def _submit_batch_records(
                 )
             case SkippedRecord(reason=SubmitSkipReason.BROADCAST_FAILED, detail=detail):
                 bot_logger.warning(f"[dispatch] broadcast failed: {detail or 'no detail'}")
+    return skip_histogram
 
+
+def _track_submission_smoke(
+    session: _SessionState,
+    outcome: _SimOutcome,
+    submitted_count: int,
+    skip_histogram: dict[str, int],
+) -> None:
+    """Throttle the silent-veto WARN over a fully-vetoed live-batch streak."""
     if (
         session.cfg.dry_run
         or session.cfg.inject_executor_code
@@ -523,16 +568,16 @@ async def _submit_batch_records(
         or submitted_count > 0
     ):
         _submission_smoke["streak"] = 0.0
-    else:
-        _submission_smoke["streak"] += 1
-        now = time.monotonic()
-        if (
-            _submission_smoke["streak"] >= _STALL_STREAK
-            and now - _submission_smoke["last_warn"] >= _STALL_WARN_INTERVAL_S
-        ):
-            _submission_smoke["last_warn"] = now
-            bot_logger.warning(
-                f"[dispatch] live-armed with gate-clearing candidates but no submissions in "
-                f"{int(_submission_smoke['streak'])} consecutive batches; skip reasons "
-                f"{skip_histogram or '{}'} — a configuration-level veto is likely"
-            )
+        return
+    _submission_smoke["streak"] += 1
+    now = time.monotonic()
+    if (
+        _submission_smoke["streak"] >= _STALL_STREAK
+        and now - _submission_smoke["last_warn"] >= _STALL_WARN_INTERVAL_S
+    ):
+        _submission_smoke["last_warn"] = now
+        bot_logger.warning(
+            f"[dispatch] live-armed with gate-clearing candidates but no submissions in "
+            f"{int(_submission_smoke['streak'])} consecutive batches; skip reasons "
+            f"{skip_histogram or '{}'} — a configuration-level veto is likely"
+        )

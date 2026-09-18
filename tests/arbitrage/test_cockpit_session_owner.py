@@ -23,7 +23,7 @@ import pytest
 
 from degenbot.runner import BotRunner
 from degenbot.runner._consume import consume_result_batches
-from degenbot.runner.bot_runner import PhaseError, _Phase, _SessionState
+from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase, _SessionState
 from degenbot.runner.config import ArbitrageConfig
 from tests.fakes.runner_pipelines import StubPipeline
 
@@ -150,17 +150,19 @@ def _noop():
 
 
 def _runner(**overrides: object) -> BotRunner:
-    kwargs: dict[str, object] = {
+    actors: dict[str, object] = {
         "bot": _FakeBot(),
         "engine_registry": _FakeEngineRegistry(),
         "async_w3": _FakeAsyncW3(),
         "snapshots": (object(), object(), None, None),
         "path_builder": lambda **kw: _noop(),
         "consumer": lambda **kw: _noop(),
-        "install_sigint": False,
     }
-    kwargs.update(overrides)
-    return BotRunner(_cfg(), **kwargs)  # type: ignore[arg-type]
+    install_sigint = overrides.pop("install_sigint", False)
+    actors.update(overrides)
+    return BotRunner(  # type: ignore[arg-type]
+        _cfg(), actors=InjectedActors(**actors), install_sigint=install_sigint
+    )
 
 
 class AsyncOnce:

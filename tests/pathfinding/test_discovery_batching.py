@@ -42,6 +42,7 @@ from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.pathfinding import (
     _pathfinding,
+    PathfindingRequest,
     find_paths,
     find_paths_async,
     find_paths_async_rust,
@@ -60,13 +61,17 @@ TOKEN_A_ADDR = "0x" + "AA" * 20
 POOL_A_ADDR = "0x" + "11" * 20
 POOL_B_ADDR = "0x" + "12" * 20
 
-_BASE_KWARGS: dict[str, object] = {
-    "chain_id": CHAIN,
-    "start_tokens": [WETH_ADDR],
-    "end_tokens": [WETH_ADDR],
-    "max_depth": 2,
-    "pool_types": [UniswapV2PoolTable],
-}
+
+def _base_request(db: DatabaseSessionManager | None) -> PathfindingRequest:
+    """Build the shared two-pool synthetic search request for the parity tests."""
+    return PathfindingRequest(
+        chain_id=CHAIN,
+        start_tokens=[WETH_ADDR],
+        end_tokens=[WETH_ADDR],
+        max_depth=2,
+        pool_types=[UniswapV2PoolTable],
+        db=db,  # type: ignore[arg-type]
+    )
 
 
 def _seed_two_pool_db(db_path: pathlib.Path) -> DatabaseSessionManager:
@@ -75,9 +80,7 @@ def _seed_two_pool_db(db_path: pathlib.Path) -> DatabaseSessionManager:
     scoped = get_scoped_sqlite_session(database_path=db_path)
     session = scoped()
     try:
-        exchange = ExchangeTable(
-            chain_id=CHAIN, name="test", active=True, factory=ZERO_ADDRESS
-        )
+        exchange = ExchangeTable(chain_id=CHAIN, name="test", active=True, factory=ZERO_ADDRESS)
         session.add(exchange)
         session.flush()
         weth = Erc20TokenTable(chain=CHAIN, address=WETH_ADDR, symbol="WETH")
@@ -148,11 +151,11 @@ async def _drain_into(producer: AsyncGenerator[object, None], sink: list[object]
 
 def test_batched_async_matches_sync_stream(db: DatabaseSessionManager) -> None:
     """Content + order parity: 1, small, default, and oversized batches."""
-    expected = list(find_paths(db=db, **_BASE_KWARGS))  # type: ignore[arg-type]
+    expected = list(find_paths(request=_base_request(db)))
     assert expected, "fixture graph produced no paths"
 
     for batch_size in (1, 2, 1000, 10**6):
-        got = asyncio.run(_collect(db=db, batch_size=batch_size, **_BASE_KWARGS))
+        got = asyncio.run(_collect(request=_base_request(db), batch_size=batch_size))
         assert _path_signature(got) == _path_signature(expected), (
             f"batched stream diverged at batch_size={batch_size}"
         )
@@ -311,7 +314,10 @@ def test_adapter_forwards_batch_size_to_rust_seam(monkeypatch: pytest.MonkeyPatc
     _install_fake_rust_seam(monkeypatch, batches=[[[], []]], captured=captured)
 
     got = asyncio.run(
-        _collect(chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=7)
+        _collect(
+            request=PathfindingRequest(chain_id=1, start_tokens=[], end_tokens=[], db=None),
+            batch_size=7,
+        )
     )
     assert got == [[], []]
 
@@ -333,7 +339,8 @@ async def test_producer_exception_reraises_at_consumer(monkeypatch: pytest.Monke
     with pytest.raises(_BoomError, match="producer died"):
         await _drain_into(
             find_paths_async(
-                chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=2
+                request=PathfindingRequest(chain_id=1, start_tokens=[], end_tokens=[], db=None),
+                batch_size=2,
             ),
             got,
         )
@@ -351,7 +358,8 @@ async def test_aclose_releases_the_rust_iterator(monkeypatch: pytest.MonkeyPatch
     )
 
     agen = find_paths_async(
-        chain_id=1, start_tokens=[], end_tokens=[], db=None, batch_size=2
+        request=PathfindingRequest(chain_id=1, start_tokens=[], end_tokens=[], db=None),
+        batch_size=2,
     )
     seen = 0
     async for _path in agen:
@@ -365,7 +373,7 @@ async def test_aclose_releases_the_rust_iterator(monkeypatch: pytest.MonkeyPatch
 
 
 async def _partial_sweep(db: DatabaseSessionManager | None, *, take: int) -> int:
-    agen = find_paths_async(db=db, **_BASE_KWARGS)  # type: ignore[arg-type]
+    agen = find_paths_async(request=_base_request(db))
     seen = 0
     async for _path in agen:
         seen += 1
@@ -441,7 +449,9 @@ async def test_prep_never_blocks_the_event_loop(monkeypatch: pytest.MonkeyPatch)
     )
 
     canary_task = asyncio.ensure_future(canary())
-    agen = find_paths_async(chain_id=1, start_tokens=[], end_tokens=[], db=None)
+    agen = find_paths_async(
+        request=PathfindingRequest(chain_id=1, start_tokens=[], end_tokens=[], db=None)
+    )
     started = time.perf_counter()
     with pytest.raises(StopAsyncIteration):
         await anext(agen)
@@ -463,12 +473,14 @@ async def test_missing_start_token_raises_at_first_next(db: DatabaseSessionManag
     blocking seam.
     """
     agen = find_paths_async(
-        db=db,
-        chain_id=CHAIN,
-        start_tokens=[ZERO_ADDRESS],
-        end_tokens=[WETH_ADDR],
-        max_depth=2,
-        pool_types=[UniswapV2PoolTable],
+        request=PathfindingRequest(
+            db=db,
+            chain_id=CHAIN,
+            start_tokens=[ZERO_ADDRESS],
+            end_tokens=[WETH_ADDR],
+            max_depth=2,
+            pool_types=[UniswapV2PoolTable],
+        )
     )
     with pytest.raises(DegenbotValueError, match="was not found in the database"):
         await anext(agen)

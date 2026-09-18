@@ -21,7 +21,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
-from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
+from degenbot.runner._sim_submit_pipeline import PipelineSeams, SimSubmitPipeline
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -106,7 +106,7 @@ class SimSubmitHarness:
         return SimSubmitPipeline(  # type: ignore[arg-type]
             self.session,
             concurrency=concurrency,
-            **seams,
+            seams=PipelineSeams(**seams),  # type: ignore[arg-type]
         )
 
     def build_candidates(

@@ -10,7 +10,7 @@ from degenbot.database.models.pools import (
 )
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.pathfinding import PathStep, find_paths, find_paths_async
+from degenbot.pathfinding import PathfindingRequest, PathStep, find_paths, find_paths_async
 from degenbot.types.chain import ChainId
 
 BASE_CHAIN_ID = ChainId.BASE
@@ -34,15 +34,17 @@ def db():
 def test_two_pool_pathfinding_cycling_weth(db):
     paths = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=2,
-            pool_types=[
-                UniswapV2PoolTable,
-                UniswapV3PoolTable,
-            ],
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=2,
+                pool_types=[
+                    UniswapV2PoolTable,
+                    UniswapV3PoolTable,
+                ],
+            )
         )
     )
     assert paths
@@ -53,15 +55,17 @@ async def test_two_pool_pathfinding_cycling_weth_async(db):
     paths = [
         path
         async for path in find_paths_async(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=2,
-            pool_types=[
-                UniswapV2PoolTable,
-                UniswapV3PoolTable,
-            ],
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=2,
+                pool_types=[
+                    UniswapV2PoolTable,
+                    UniswapV3PoolTable,
+                ],
+            )
         )
     ]
     assert paths
@@ -77,34 +81,40 @@ def test_generic_algo_multiple_tokens(db):
 
     generic_paths_weth_to_weth = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=depth,
-            pool_types=pool_types,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=depth,
+                pool_types=pool_types,
+            )
         )
     )
     assert generic_paths_weth_to_weth
     generic_paths_weth_to_native = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[ZERO_ADDRESS],
-            max_depth=depth,
-            pool_types=pool_types,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[ZERO_ADDRESS],
+                max_depth=depth,
+                pool_types=pool_types,
+            )
         )
     )
     assert generic_paths_weth_to_native
     generic_paths_weth_to_weth_or_native = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
-            max_depth=depth,
-            pool_types=pool_types,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+                max_depth=depth,
+                pool_types=pool_types,
+            )
         )
     )
     assert generic_paths_weth_to_weth_or_native
@@ -122,34 +132,40 @@ def test_generic_algo_multiple_tokens(db):
 
     generic_paths_native_to_weth = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[ZERO_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=depth,
-            pool_types=pool_types,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[ZERO_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=depth,
+                pool_types=pool_types,
+            )
         )
     )
     assert generic_paths_native_to_weth
     generic_paths_native_to_native = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[ZERO_ADDRESS],
-            end_tokens=[ZERO_ADDRESS],
-            max_depth=depth,
-            pool_types=pool_types,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[ZERO_ADDRESS],
+                end_tokens=[ZERO_ADDRESS],
+                max_depth=depth,
+                pool_types=pool_types,
+            )
         )
     )
     assert generic_paths_native_to_native
     generic_paths_native_to_weth_or_native = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[ZERO_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
-            max_depth=depth,
-            pool_types=pool_types,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[ZERO_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+                max_depth=depth,
+                pool_types=pool_types,
+            )
         )
     )
     assert generic_paths_native_to_weth_or_native
@@ -166,12 +182,14 @@ def test_generic_algo_multiple_tokens(db):
 
     generic_paths_weth_or_native_to_weth_or_native = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
-            max_depth=depth,
-            pool_types=pool_types,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+                max_depth=depth,
+                pool_types=pool_types,
+            )
         )
     )
     assert generic_paths_weth_or_native_to_weth_or_native
@@ -194,13 +212,15 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types(db):
     paths_found = 0
     for i, _ in enumerate(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            pool_types=[UniswapV3PoolTable],
-            min_depth=depth,
-            max_depth=depth,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                pool_types=[UniswapV3PoolTable],
+                min_depth=depth,
+                max_depth=depth,
+            )
         ),
         start=1,
     ):
@@ -217,13 +237,15 @@ def test_three_pool_pathfinding_cycling_weth_native_with_limited_types(db):
     paths_found = 0
     for i, _ in enumerate(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
-            pool_types=[UniswapV4PoolTable],
-            min_depth=depth,
-            max_depth=depth,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
+                pool_types=[UniswapV4PoolTable],
+                min_depth=depth,
+                max_depth=depth,
+            )
         ),
         start=1,
     ):
@@ -235,11 +257,13 @@ def test_three_pool_pathfinding_cycling_weth_native_with_limited_types(db):
 def test_three_pool_pathfinding_cycling_weth(db):
     paths = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=3,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=3,
+            )
         )
     )
     assert paths
@@ -249,16 +273,18 @@ def test_three_pool_pathfinding_cycling_weth(db):
 def test_four_pool_pathfinding_cycling_weth_with_limited_types(db):
     paths = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            pool_types=[
-                SwapbasedV2PoolTable,
-                # SushiswapV2PoolTable,
-                # UniswapV4PoolTable,
-            ],
-            max_depth=4,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                pool_types=[
+                    SwapbasedV2PoolTable,
+                    # SushiswapV2PoolTable,
+                    # UniswapV4PoolTable,
+                ],
+                max_depth=4,
+            )
         )
     )
     assert paths
@@ -270,15 +296,17 @@ def test_whitelist_restricts_intermediate_tokens(db):
     # Without whitelist: should find paths
     all_paths = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=2,
-            pool_types=[
-                UniswapV2PoolTable,
-                UniswapV3PoolTable,
-            ],
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=2,
+                pool_types=[
+                    UniswapV2PoolTable,
+                    UniswapV3PoolTable,
+                ],
+            )
         )
     )
     assert all_paths, "Should find paths without whitelist"
@@ -287,16 +315,18 @@ def test_whitelist_restricts_intermediate_tokens(db):
     # (i.e. pools that are WETH/WETH, which shouldn't exist)
     weth_only_paths = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=2,
-            pool_types=[
-                UniswapV2PoolTable,
-                UniswapV3PoolTable,
-            ],
-            allowed_intermediate_tokens=[WETH_BASE_ADDRESS],
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=2,
+                pool_types=[
+                    UniswapV2PoolTable,
+                    UniswapV3PoolTable,
+                ],
+                allowed_intermediate_tokens=[WETH_BASE_ADDRESS],
+            )
         )
     )
     # WETH-only intermediate means only pools of form WETH/WETH exist,
@@ -311,29 +341,33 @@ def test_whitelist_none_is_same_as_no_whitelist(db):
     """Passing None for allowed_intermediate_tokens should behave identically to omitting it."""
     paths_no_arg = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=2,
-            pool_types=[
-                UniswapV2PoolTable,
-                UniswapV3PoolTable,
-            ],
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=2,
+                pool_types=[
+                    UniswapV2PoolTable,
+                    UniswapV3PoolTable,
+                ],
+            )
         )
     )
     paths_none_arg = list(
         find_paths(
-            db=db,
-            chain_id=BASE_CHAIN_ID,
-            start_tokens=[WETH_BASE_ADDRESS],
-            end_tokens=[WETH_BASE_ADDRESS],
-            max_depth=2,
-            pool_types=[
-                UniswapV2PoolTable,
-                UniswapV3PoolTable,
-            ],
-            allowed_intermediate_tokens=None,
+            request=PathfindingRequest(
+                db=db,
+                chain_id=BASE_CHAIN_ID,
+                start_tokens=[WETH_BASE_ADDRESS],
+                end_tokens=[WETH_BASE_ADDRESS],
+                max_depth=2,
+                pool_types=[
+                    UniswapV2PoolTable,
+                    UniswapV3PoolTable,
+                ],
+                allowed_intermediate_tokens=None,
+            )
         )
     )
     assert len(paths_no_arg) == len(paths_none_arg), (
