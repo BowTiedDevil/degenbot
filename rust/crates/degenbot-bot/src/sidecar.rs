@@ -20,16 +20,21 @@
 use std::path::PathBuf;
 
 use alloy::primitives::U256;
+use degenbot_config::BotConfig;
 use degenbot_decoders::target_class::TargetClass;
 
-/// Env-driven sidecar config (bot.env convention; the key never leaves the
-/// signer - only `key_file` is named here).
+/// Typed sidecar config, built from the loaded [`BotConfig`]'s
+/// `strategy.backrun` facet plus the chain-node join the bin resolves.
+///
+/// The key never leaves the signer - only `key_file` is named here. Every
+/// legacy sidecar knob migrated onto the typed schema lands as a field: the
+/// decision layer reads the first group, the bin reads the rest.
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
     pub stream_url: String,
     pub rpc_url: String,
     pub key_file: Option<PathBuf>,
-    /// Explicit bid-mode flag (`SIDECAR_BID_MODE=1`). Off = observe-only.
+    /// Explicit bid-mode flag. Off = observe-only.
     pub bid_mode: bool,
     /// Cumulative bid budget cap in wei; bid mode REQUIRES non-zero.
     pub budget_wei: U256,
@@ -37,38 +42,61 @@ pub struct SidecarConfig {
     pub max_bundle_wei: U256,
     /// Kill-switch path: if the file exists, bidding halts (then the loop).
     pub stop_file: PathBuf,
+    /// Sign-nothing dispatch (`strategy.backrun.dry_run`).
+    pub dry_run: bool,
+    /// The builder's bribe share in bips, clamped to the `10_000` ceiling.
+    pub bribe_bips: u16,
+    /// Composed-bundle gas estimate priced into the net-of-gas bid gate.
+    pub bundle_gas_est: u64,
+    /// The operator's priority fee in gwei.
+    pub priority_fee_gwei: u64,
+    /// Bundle-sim endpoint; unset reuses the chain node.
+    pub sim_url: Option<String>,
+    /// Live deep-pair ranking sanity-probe gate.
+    pub rank_evidence: bool,
+    /// Discovery fan-out cap (connectors per frame).
+    pub connectors: usize,
+    /// Offline dry-run's pinned head block.
+    pub fixture_head: Option<u64>,
+    /// Executor contract address (validated at the sidecar boot).
+    pub executor: String,
+    /// Executor owner / sim caller; unset falls back to
+    /// `EXECUTOR_OWNER_ADDRESS`, then the built-in default.
+    pub operator: Option<String>,
+    /// Dry-run fixture frames path (`logging.dry_run_jsonl`).
+    pub dry_run_jsonl: Option<PathBuf>,
 }
 
 impl SidecarConfig {
-    ///
-    /// # Panics
-    ///
-    /// Panics if `SIDECAR_RPC_URL` is unset (the node join is required for
-    /// both modes; the feed URL already has a default).
+    /// Build the full sidecar config from the typed `strategy.backrun` facet
+    /// plus the `logging.dry_run_jsonl` artifact knob. `rpc_url` is the
+    /// chain-node join the bin resolves through the
+    /// `DEGENBOT_RPC_HTTP_CHAINID_<id>` cascade - the resolver family owns
+    /// every endpoint, so the facet carries no URL.
     #[must_use]
-    pub fn from_env() -> Self {
+    pub fn from_config(cfg: &BotConfig, rpc_url: String) -> Self {
+        let backrun = &cfg.strategy.backrun;
         Self {
             // Empty default = defer to the feed crate's mainnet default
             // (DEFAULT_STREAM_URL) so the endpoint lives in ONE place.
-            stream_url: std::env::var("SIDECAR_STREAM_URL").ok().unwrap_or_default(),
-            rpc_url: std::env::var("SIDECAR_RPC_URL").ok().unwrap_or_else(|| {
-                tracing::error!("sidecar requires SIDECAR_RPC_URL");
-                std::process::exit(2);
-            }),
-            key_file: std::env::var("SIDECAR_KEY_FILE").ok().map(PathBuf::from),
-            bid_mode: std::env::var("SIDECAR_BID_MODE").ok().as_deref() == Some("1"),
-            budget_wei: std::env::var("SIDECAR_BUDGET_WEI")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or_default(),
-            max_bundle_wei: std::env::var("SIDECAR_MAX_BUNDLE_WEI")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(U256::from(1_000_000_000_000_000u64)),
-            stop_file: std::env::var("SIDECAR_STOP_FILE").ok().map_or_else(
-                || PathBuf::from("/tmp/degenbot-sidecar-STOP"),
-                PathBuf::from,
-            ),
+            stream_url: backrun.stream_url.clone(),
+            rpc_url,
+            key_file: backrun.key_file.clone(),
+            bid_mode: backrun.bid_mode,
+            budget_wei: U256::from(backrun.budget_wei),
+            max_bundle_wei: U256::from(backrun.max_bundle_wei),
+            stop_file: backrun.stop_file.clone(),
+            dry_run: backrun.dry_run,
+            bribe_bips: u16::try_from(backrun.bribe_bips.min(10_000)).unwrap_or(10_000),
+            bundle_gas_est: backrun.bundle_gas_est,
+            priority_fee_gwei: backrun.priority_fee_gwei,
+            sim_url: backrun.sim_url.clone(),
+            rank_evidence: backrun.rank_evidence,
+            connectors: backrun.connectors,
+            fixture_head: backrun.fixture_head,
+            executor: backrun.executor.clone(),
+            operator: backrun.operator.clone(),
+            dry_run_jsonl: cfg.logging.dry_run_jsonl.clone(),
         }
     }
 
@@ -172,15 +200,12 @@ mod tests {
     use degenbot_decoders::target_class::{PoolProtocol, SwapLeg};
 
     fn cfg() -> SidecarConfig {
-        SidecarConfig {
-            stream_url: String::new(),
-            rpc_url: String::new(),
-            key_file: None,
-            bid_mode: true,
-            budget_wei: U256::from(1_000_000_000_000_000u64),
-            max_bundle_wei: U256::from(500_000_000_000_000u64),
-            stop_file: PathBuf::from("/nonexistent"),
-        }
+        let mut c = SidecarConfig::from_config(&BotConfig::default(), String::new());
+        c.bid_mode = true;
+        c.budget_wei = U256::from(1_000_000_000_000_000u64);
+        c.max_bundle_wei = U256::from(500_000_000_000_000u64);
+        c.stop_file = PathBuf::from("/nonexistent");
+        c
     }
 
     fn swap() -> TargetClass {
@@ -340,5 +365,71 @@ mod tests {
                 reason: "inert_target"
             }
         );
+    }
+
+    #[test]
+    #[expect(
+        clippy::expect_used,
+        reason = "test fixtures fail loudly on an unconstructible prerequisite"
+    )]
+    fn from_config_maps_every_migrated_knob() {
+        use std::collections::BTreeMap;
+
+        use degenbot_config::{BotConfigLoader, MapEnv};
+
+        let raw = BTreeMap::from([
+            ("DEGENBOT_STRATEGY_BACKRUN_BID_MODE", "1"),
+            ("DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI", "42"),
+            ("DEGENBOT_STRATEGY_BACKRUN_MAX_BUNDLE_WEI", "99"),
+            ("DEGENBOT_STRATEGY_BACKRUN_BRIBE_BIPS", "9500"),
+            ("DEGENBOT_STRATEGY_BACKRUN_PRIORITY_FEE_GWEI", "7"),
+            ("DEGENBOT_STRATEGY_BACKRUN_BUNDLE_GAS_EST", "333000"),
+            ("DEGENBOT_STRATEGY_BACKRUN_DRY_RUN", "1"),
+            ("DEGENBOT_STRATEGY_BACKRUN_KEY_FILE", "/tmp/k.key"),
+            (
+                "DEGENBOT_STRATEGY_BACKRUN_EXECUTOR",
+                "0x00000000000000000000000000000000000000aa",
+            ),
+            (
+                "DEGENBOT_STRATEGY_BACKRUN_OPERATOR",
+                "0x00000000000000000000000000000000000000bb",
+            ),
+            ("DEGENBOT_STRATEGY_BACKRUN_SIM_URL", "http://sim.local:8545"),
+            ("DEGENBOT_STRATEGY_BACKRUN_STREAM_URL", "wss://stream.local"),
+            ("DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE", "1"),
+            ("DEGENBOT_STRATEGY_BACKRUN_CONNECTORS", "5"),
+            ("DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD", "26001272"),
+            ("DEGENBOT_STRATEGY_BACKRUN_STOP_FILE", "/tmp/stop"),
+            ("DEGENBOT_DRY_RUN_JSONL", "/tmp/f.jsonl"),
+        ])
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let loaded = BotConfigLoader::new()
+            .with_env(Box::new(MapEnv::new(raw)))
+            .load()
+            .expect("typed load");
+        let c = SidecarConfig::from_config(&loaded.config, "http://node.local".to_string());
+        assert_eq!(c.rpc_url, "http://node.local");
+        assert!(c.bid_mode);
+        assert_eq!(c.budget_wei, U256::from(42));
+        assert_eq!(c.max_bundle_wei, U256::from(99));
+        assert_eq!(c.bribe_bips, 9_500);
+        assert_eq!(c.priority_fee_gwei, 7);
+        assert_eq!(c.bundle_gas_est, 333_000);
+        assert!(c.dry_run);
+        assert_eq!(c.key_file, Some(PathBuf::from("/tmp/k.key")));
+        assert_eq!(c.executor, "0x00000000000000000000000000000000000000aa");
+        assert_eq!(
+            c.operator.as_deref(),
+            Some("0x00000000000000000000000000000000000000bb")
+        );
+        assert_eq!(c.sim_url.as_deref(), Some("http://sim.local:8545"));
+        assert_eq!(c.stream_url, "wss://stream.local");
+        assert!(c.rank_evidence);
+        assert_eq!(c.connectors, 5);
+        assert_eq!(c.fixture_head, Some(26_001_272));
+        assert_eq!(c.stop_file, PathBuf::from("/tmp/stop"));
+        assert_eq!(c.dry_run_jsonl, Some(PathBuf::from("/tmp/f.jsonl")));
     }
 }

@@ -80,21 +80,19 @@ fn trace_sink() -> &'static PathBuf {
     SINK.get_or_init(|| {
         let p = std::env::temp_dir().join(format!("frame_e2e_trace_{}.jsonl", std::process::id()));
         std::fs::remove_file(&p).ok();
-        std::env::set_var("SIDECAR_TRACE_JSONL", &p);
+        let mut cfg = degenbot_config::BotConfig::default();
+        cfg.logging.trace_jsonl = Some(p.clone());
+        let _ = degenbot_config::holder::install(std::sync::Arc::new(cfg));
         p
     })
 }
 
 fn bid_config() -> (SidecarConfig, PipelineConfig) {
-    let cfg = SidecarConfig {
-        stream_url: String::new(),
-        rpc_url: String::new(),
-        key_file: None,
-        bid_mode: true,
-        budget_wei: U256::from(10_000_000u128) * U256::from(10u64).pow(U256::from(18u8)),
-        max_bundle_wei: U256::from(1_000_000u128) * U256::from(10u64).pow(U256::from(18u8)),
-        stop_file: PathBuf::from("/nonexistent-frame-e2e-stop"),
-    };
+    let mut cfg = SidecarConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+    cfg.bid_mode = true;
+    cfg.budget_wei = U256::from(10_000_000u128) * U256::from(10u64).pow(U256::from(18u8));
+    cfg.max_bundle_wei = U256::from(1_000_000u128) * U256::from(10u64).pow(U256::from(18u8));
+    cfg.stop_file = PathBuf::from("/nonexistent-frame-e2e-stop");
     let pl = PipelineConfig {
         exec: EXECUTOR,
         owner: OPERATOR,

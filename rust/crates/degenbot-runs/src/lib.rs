@@ -49,8 +49,8 @@ pub fn trace_jsonl_default() -> Option<&'static Path> {
 }
 
 /// Resolve the JSONL trace path with explicit-override precedence: a
-/// non-blank explicit value (`SIDECAR_TRACE_JSONL`) wins; otherwise the
-/// installed [`trace_jsonl_default`]; otherwise `None` (capture disabled).
+/// non-blank explicit value wins; otherwise the installed
+/// [`trace_jsonl_default`]; otherwise `None` (capture disabled).
 ///
 /// Blank/whitespace is treated as absent so an exported-but-empty variable
 /// cannot silently become a path.
@@ -60,6 +60,20 @@ pub fn resolve_trace_jsonl_path(explicit: Option<&str>) -> Option<PathBuf> {
         return Some(PathBuf::from(value));
     }
     trace_jsonl_default().map(Path::to_path_buf)
+}
+
+/// The configured JSONL trace path: the typed `logging.trace_jsonl` override
+/// wins; absent, the installed [`trace_jsonl_default`] (the session's
+/// `trace.jsonl`); absent, capture is disabled. The single source the trace
+/// helpers share — reading the typed config holder, never the environment.
+#[must_use]
+pub fn configured_trace_jsonl_path() -> Option<PathBuf> {
+    let typed = degenbot_config::holder::config()
+        .logging
+        .trace_jsonl
+        .clone()
+        .filter(|p| !p.as_os_str().is_empty());
+    typed.or_else(|| trace_jsonl_default().map(Path::to_path_buf))
 }
 
 /// One session's artifact directory.
@@ -139,7 +153,7 @@ impl RunDirectory {
     }
 
     /// The JSONL trace path (the default for the trace helpers when
-    /// `SIDECAR_TRACE_JSONL` is absent).
+    /// `logging.trace_jsonl` is absent).
     #[must_use]
     pub fn trace_jsonl_path(&self) -> &Path {
         &self.trace_jsonl_path
@@ -155,7 +169,7 @@ impl RunDirectory {
     }
 
     /// Like [`Self::stdout_writer`], additionally mirroring to stderr (the
-    /// interactive `SIDECAR_LOG_STDERR=1` posture).
+    /// interactive `logging.log_stderr = true` posture).
     #[cfg(feature = "tracing")]
     #[must_use]
     pub fn stdout_writer_tee(&self) -> LogWriter {

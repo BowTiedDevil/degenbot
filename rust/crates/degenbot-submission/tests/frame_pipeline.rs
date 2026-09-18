@@ -437,7 +437,9 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     // The trace capture lands in a temp file for in-process assertions.
     let trace_path = std::env::temp_dir().join("wkpzqk-e2e-trace.jsonl");
     let _ = std::fs::remove_file(&trace_path);
-    std::env::set_var("SIDECAR_TRACE_JSONL", &trace_path);
+    let mut boot = degenbot_config::BotConfig::default();
+    boot.logging.trace_jsonl = Some(trace_path.clone());
+    let _ = degenbot_config::holder::install(std::sync::Arc::new(boot));
 
     // Live mode needs no feed/signer/dispatcher: process frames directly.
     let mut runtime = MarketContext::new(1, None, None, 8);
@@ -453,15 +455,9 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         .expect("live replay handle builds"),
     );
 
-    let sidecar = SidecarConfig {
-        stream_url: String::new(),
-        rpc_url: String::new(),
-        key_file: None,
-        bid_mode: false,
-        budget_wei: U256::ZERO,
-        max_bundle_wei: U256::from(1_000_000_000_000_000u64),
-        stop_file: PathBuf::from("/nonexistent-wkpzqk"),
-    };
+    let mut sidecar =
+        SidecarConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+    sidecar.stop_file = PathBuf::from("/nonexistent-wkpzqk");
     let pl = PipelineConfig {
         exec: address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         owner: address!("0x5c603b8a137a40426e0ddfa981ec10c245af080e"),

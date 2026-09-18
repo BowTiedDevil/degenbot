@@ -33,7 +33,7 @@ pub struct MarketContext {
     pub index: Option<V2ConnectorIndex>,
     /// The DB handle the index was loaded from (token id/address joins).
     pub db: Option<DegenbotDb>,
-    /// The discovery fan-out cap (`SIDECAR_CONNECTORS`).
+    /// The discovery fan-out cap (`strategy.backrun.connectors`).
     pub connector_cap: usize,
     /// Cross-block warm bytecode/account cache owner, shared into every
     /// per-block replay handle.

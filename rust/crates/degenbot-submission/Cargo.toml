@@ -15,6 +15,11 @@ workspace = true
 serde = { version = "1", features = ["derive"] }
 alloy = { version = "^2.4", features = ["full", "signer-local", "network"] }
 degenbot-core.workspace = true
+# The typed config schema + 12-factor loader: the sidecar bin sources every
+# migrated knob from the loaded `BotConfig` (strategy.backrun facet +
+# logging artifacts) and resolves the chain-node join through the shared
+# `DEGENBOT_RPC_HTTP_CHAINID_<id>`/`DEGENBOT_DB_PATH` resolvers.
+degenbot-config.workspace = true
 # T4 economics metrics record through the bot crate's instruments module —
 # one-way (bot never depends on submission); default builds get the inert
 # stub twin so this adds no metrics code without the `otel` feature.

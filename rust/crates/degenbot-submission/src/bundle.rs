@@ -167,10 +167,9 @@ pub fn decode_config_word(config: U256) -> (u8, u16, u8, U256) {
 /// failures never disturb submission.
 pub fn trace_wire_jsonl(kind: &str, v: &Json) {
     use std::io::Write;
-    // Explicit `SIDECAR_TRACE_JSONL` wins; absent, the capture defaults to the
-    // session's `trace.jsonl` installed at boot (see degenbot-runs).
-    let explicit = std::env::var("SIDECAR_TRACE_JSONL").ok();
-    let Some(path) = degenbot_runs::resolve_trace_jsonl_path(explicit.as_deref()) else {
+    // The typed `logging.trace_jsonl` key wins; absent, the capture defaults
+    // to the session's `trace.jsonl` installed at boot (see degenbot-runs).
+    let Some(path) = degenbot_runs::configured_trace_jsonl_path() else {
         return;
     };
     let mut line = json!({

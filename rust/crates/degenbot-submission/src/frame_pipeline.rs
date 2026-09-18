@@ -102,14 +102,13 @@ const V4_POOL_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08
 // never disturb the hot loop).
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Append one JSON line to the offline-review capture (`SIDECAR_TRACE_JSONL`,
-/// best-effort).
+/// Append one JSON line to the offline-review capture
+/// (`logging.trace_jsonl`, best-effort).
 pub fn trace_jsonl(kind: &str, mut v: serde_json::Value) {
     use std::io::Write;
-    // Explicit `SIDECAR_TRACE_JSONL` wins; absent, the capture defaults to the
-    // session's `trace.jsonl` installed at boot (see degenbot-runs).
-    let explicit = std::env::var("SIDECAR_TRACE_JSONL").ok();
-    let Some(path) = degenbot_runs::resolve_trace_jsonl_path(explicit.as_deref()) else {
+    // The typed `logging.trace_jsonl` key wins; absent, the capture defaults
+    // to the session's `trace.jsonl` installed at boot (see degenbot-runs).
+    let Some(path) = degenbot_runs::configured_trace_jsonl_path() else {
         return;
     };
     let mut line = serde_json::json!({
@@ -142,16 +141,6 @@ fn now_unix_ms() -> u64 {
             .map_or(0_u128, |d| d.as_millis()),
     )
     .unwrap_or_default()
-}
-
-/// Parse the `SIDECAR_FIXTURE_HEAD` operator override: a decimal block
-/// number that pins the offline dry-run's replay handle (and dispatcher) to
-/// capture-time chain state. `None` when unset, blank, or unparseable — the
-/// dry-run then falls back to the fetched head and replays against the live
-/// tip, the behavior this override exists to correct.
-#[must_use]
-pub fn parse_fixture_head(raw: Option<&str>) -> Option<u64> {
-    raw.map(str::trim).filter(|s| !s.is_empty())?.parse().ok()
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -829,18 +818,7 @@ pub async fn process_frame<S: PendingTxStrategy>(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_fixture_head;
     use crate::backrun_strategy::net_bid;
-
-    #[test]
-    fn fixture_head_parses_decimal_and_rejects_junk() {
-        assert_eq!(parse_fixture_head(Some("26001272")), Some(26_001_272));
-        assert_eq!(parse_fixture_head(Some("  25999417  ")), Some(25_999_417));
-        assert_eq!(parse_fixture_head(Some("")), None);
-        assert_eq!(parse_fixture_head(Some("latest")), None);
-        assert_eq!(parse_fixture_head(Some("-5")), None);
-        assert_eq!(parse_fixture_head(None), None);
-    }
 
     /// The live defect, pinned: the first two landed bids tendered a ~110
     /// gwei gross while the receipts show the wallet burning ~527 gwei of

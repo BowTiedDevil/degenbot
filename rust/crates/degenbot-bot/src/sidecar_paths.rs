@@ -786,7 +786,7 @@ mod ranking_tests {
     #[tokio::test]
     async fn ranked_top_k_beats_row_order() {
         // Insertion age (rows 1, 2, 3) is the INVERSE of the depth table:
-        // with SIDECAR_CONNECTORS=2 the truncation must keep the two deepest
+        // with strategy.backrun.connectors=2 the truncation must keep the two deepest
         // pools, not the two oldest.
         let mut ix = V2ConnectorIndex::default();
         ix.push_edge(edge(1, 20, 10));

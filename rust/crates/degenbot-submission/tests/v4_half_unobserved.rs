@@ -2,8 +2,9 @@
 //! while the typed half still admits. Locks the loud posture for offender
 //! `admit_extracted`'s formerly-empty V4 arms.
 //!
-//! Kept in its own test binary so the process-global `SIDECAR_TRACE_JSONL`
-//! override cannot race another test file's trace assertions.
+//! Kept in its own test binary so the process-global typed
+//! `logging.trace_jsonl` override cannot race another test file's trace
+//! assertions.
 
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
@@ -47,7 +48,9 @@ fn mixed_frame_traces_the_v4_half_instead_of_dropping_it_silently() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let trace = dir.join("trace.jsonl");
-    std::env::set_var("SIDECAR_TRACE_JSONL", &trace);
+    let mut boot = degenbot_config::BotConfig::default();
+    boot.logging.trace_jsonl = Some(trace.clone());
+    let _ = degenbot_config::holder::install(std::sync::Arc::new(boot));
 
     let rt = runtime_fixture();
     let mut solver = SidecarSolver::new();
@@ -82,6 +85,5 @@ fn mixed_frame_traces_the_v4_half_instead_of_dropping_it_silently() {
         "the V4 half must be witnessed in the trace: {text}"
     );
 
-    std::env::remove_var("SIDECAR_TRACE_JSONL");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -13,10 +13,6 @@ use std::sync::OnceLock;
 /// Files outside degenbot-config where env reads are permitted, with the
 /// exact names allowed per file. A NEW env read in a library file must add
 /// an entry here (with justification) or be migrated onto `BotConfig`.
-#[expect(
-    clippy::too_many_lines,
-    reason = "a flat, greppable allowlist table reads better than nested maps"
-)]
 fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
     static MAP: OnceLock<BTreeMap<&'static str, &'static [&'static str]>> = OnceLock::new();
     MAP.get_or_init(|| {
@@ -113,50 +109,13 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             // the repo receipt file itself (a build-time path, not config).
             &["CARGO_MANIFEST_DIR", "DEGENBOT_BUILD_NUMBER_FILE"][..],
         );
-        // Backrun sidecar operator tooling: the standalone test-driving
-        // binary + its support modules take flags by env (its whole
-        // configuration surface is operator knobs; no BotConfig owner
-        // exists for it and none should).
-        m.insert(
-            "crates/degenbot-bot/src/sidecar.rs",
-            &[
-                "SIDECAR_STREAM_URL",
-                "SIDECAR_RPC_URL",
-                "SIDECAR_KEY_FILE",
-                "SIDECAR_BID_MODE",
-                "SIDECAR_BUDGET_WEI",
-                "SIDECAR_MAX_BUNDLE_WEI",
-                "SIDECAR_STOP_FILE",
-            ][..],
-        );
+        // The backrun sidecar's configuration now loads through the typed
+        // `strategy.backrun` facet (X6P5GN Slice B hard cutover); the one
+        // remaining env read is the pre-typed executor-owner fallback the
+        // facet's `operator` key documents.
         m.insert(
             "crates/degenbot-submission/src/bin/backrun_sidecar.rs",
-            &[
-                "EXECUTOR_OWNER_ADDRESS",
-                "SIDECAR_BRIBE_BIPS",
-                "SIDECAR_BUNDLE_GAS_EST",
-                "SIDECAR_CONNECTORS",
-                "SIDECAR_DB_PATH",
-                "SIDECAR_DRY_RUN",
-                "SIDECAR_DRY_RUN_JSONL",
-                "SIDECAR_EXECUTOR",
-                "SIDECAR_FIXTURE_HEAD",
-                "SIDECAR_HEAD_WS_URL", // live head source
-                "SIDECAR_LOG_STDERR",  // interactive fmt mirror
-                "DEGENBOT_RPC_WS_CHAINID_1",
-                "SIDECAR_OPERATOR",
-                "SIDECAR_PRIORITY_FEE_GWEI",
-                "SIDECAR_RANK_EVIDENCE",
-                "SIDECAR_SIM_URL",
-            ][..],
-        );
-        m.insert(
-            "crates/degenbot-submission/src/bundle.rs",
-            &["SIDECAR_TRACE_JSONL"][..],
-        );
-        m.insert(
-            "crates/degenbot-submission/src/frame_pipeline.rs",
-            &["SIDECAR_TRACE_JSONL"][..],
+            &["EXECUTOR_OWNER_ADDRESS"][..],
         );
         m
     })

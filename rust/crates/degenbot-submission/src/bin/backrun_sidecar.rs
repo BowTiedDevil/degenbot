@@ -11,20 +11,27 @@
 //! Frames are shaped by the replay (touched set + journalled words), never
 //! by calldata decoding.
 //!
-//! Run (observe-only): `SIDECAR_RPC_URL=$RPC cargo run --bin backrun_sidecar`.
-//! Bid mode adds `SIDECAR_BID_MODE=1`, `SIDECAR_BUDGET_WEI=<wei>` and
-//! `SIDECAR_KEY_FILE=<hex path>`. Bids are MEVBlocker-specific per
+//! Run (observe-only): set `DEGENBOT_RPC_HTTP_CHAINID_1=$RPC` and boot the
+//! binary; every knob comes from the typed `strategy.backrun` facet (TOML
+//! `[strategy.backrun]` or `DEGENBOT_STRATEGY_BACKRUN_*`). Bid mode adds
+//! `bid_mode = true`, a non-zero `budget_wei`, and `key_file = <hex path>`.
+//! Bids are MEVBlocker-specific per
 //! docs.mevblocker.io/how-to/searchers/bid: `eth_sendBundle` on the
 //! searcher WS with `txs = [targetHash, signed backrun]`, block-pinned.
 //! The signed backrun NEVER touches the public mempool or another relay.
 //! Dry-run (offline-review over a captured frame JSONL):
-//! `SIDECAR_DRY_RUN_JSONL=/tmp/mb_trace.jsonl` replaces the live feed with
+//! `logging.dry_run_jsonl = /tmp/mb_trace.jsonl` replaces the live feed with
 //! the capture's frames, processed once, in order.
-//! Kill switch: `touch /tmp/degenbot-sidecar-STOP`.
+//! Kill switch: the `strategy.backrun.stop_file` facet path (default
+//! `/tmp/degenbot-sidecar-STOP`).
 
 #![expect(
     clippy::expect_used,
     reason = "bin: fatal config failures exit the process loudly"
+)]
+#![expect(
+    clippy::print_stderr,
+    reason = "bin: boot/config failures must reach the operator before tracing is installed"
 )]
 
 use std::collections::HashSet;
@@ -42,8 +49,8 @@ use degenbot_submission::backrun_strategy::BackrunStrategy;
 use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::frame_pipeline::{
-    build_block_handle, load_fixture_frames, parse_fixture_head, process_frame, trace_jsonl,
-    MarketContext, PipelineConfig,
+    build_block_handle, load_fixture_frames, process_frame, trace_jsonl, MarketContext,
+    PipelineConfig,
 };
 use degenbot_submission::gap_quarantine::{
     NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
@@ -60,6 +67,11 @@ use degenbot_submission::submit::{
 /// The gas floor the envelope gate evaluates at (wei) — the composed lane's
 /// standing economics (the env override did not exist upstream either).
 const GAS_FLOOR_WEI: u64 = 50_000_000_000_000;
+
+/// The chain the sidecar operates on (the connector index and the per-chain
+/// `DEGENBOT_RPC_HTTP_CHAINID_<id>` / `DEGENBOT_RPC_WS_CHAINID_<id>`
+/// resolver suffixes both read it).
+const CHAIN_ID: u64 = 1;
 
 /// How long the live loop waits on the head watch before servicing the frame
 /// feed. The watch resolves the instant a header arrives (~12s apart), so a
@@ -80,19 +92,18 @@ const HEAD_POLL_TICK: Duration = Duration::from_millis(200);
 
 // Session telemetry: the fmt subscriber appends to the session's
 // `stdout.log` (file-only by default) so a run's console output survives the
-// process, while `SIDECAR_LOG_STDERR=1` duplicates it to stderr for
+// process, while `logging.log_stderr` duplicates it to stderr for
 // interactive runs. The session's `trace.jsonl` becomes the trace helpers'
-// default capture path; an explicit `SIDECAR_TRACE_JSONL` still wins. A run
+// default capture path; an explicit `logging.trace_jsonl` still wins. A run
 // directory that cannot be created degrades to stderr — capturing logs must
 // never abort the bot. Structured (OTel) export stays the operator's
 // layering choice via the bot crate.
-fn init_tracing() {
+fn init_tracing(mirror_stderr: bool) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     match degenbot_runs::RunDirectory::create("backrun-sidecar") {
         Ok(run) => {
             let _ = degenbot_runs::set_trace_jsonl_default(run.trace_jsonl_path().to_path_buf());
-            let mirror_stderr = std::env::var("SIDECAR_LOG_STDERR").is_ok_and(|v| v == "1");
             let writer = if mirror_stderr {
                 run.stdout_writer_tee()
             } else {
@@ -148,40 +159,15 @@ impl ReceiptProbe for SidecarProbe {
     }
 }
 
-/// The bribe share of TRUE profit paid to the builder (98% default; the
-/// env override steers the competitiveness ladder without a rebuild).
-fn bribe_bips() -> u16 {
-    std::env::var("SIDECAR_BRIBE_BIPS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(9_800)
-        .min(10_000)
-}
-
-/// The composed-bundle gas estimate (receipts: 234k-248k for 3-hop
-/// chains; the submit path inflates by its safety margin). The wallet
-/// economics gate prices bids from this until an exact in-scratch gas
-/// measurement replaces it (see the friction log).
-fn bundle_gas_estimate() -> u64 {
-    std::env::var("SIDECAR_BUNDLE_GAS_EST")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(300_000)
-}
-
-/// The operator's priority fee (gwei -> wei).
-fn priority_fee_wei() -> u128 {
-    std::env::var("SIDECAR_PRIORITY_FEE_GWEI")
-        .ok()
-        .and_then(|v| v.parse::<u128>().ok())
-        .unwrap_or(2)
-        .saturating_mul(1_000_000_000u128)
+/// The operator's priority fee converted from the facet's gwei to wei.
+fn priority_fee_wei(cfg: &SidecarConfig) -> u128 {
+    u128::from(cfg.priority_fee_gwei).saturating_mul(1_000_000_000u128)
 }
 
 /// The wallet's gas burn for one composed bundle at `head`:
 /// estimate x (next base fee x 1.2 + priority). Read on head advances so
 /// the compose gate always prices at a fresh base fee.
-async fn wallet_gas_cost_at(provider: &AlloyProvider, head: u64) -> u128 {
+async fn wallet_gas_cost_at(provider: &AlloyProvider, head: u64, cfg: &SidecarConfig) -> u128 {
     let base_fee_next = provider
         .get_block(head)
         .await
@@ -189,13 +175,13 @@ async fn wallet_gas_cost_at(provider: &AlloyProvider, head: u64) -> u128 {
         .flatten()
         .and_then(|b| b.header.base_fee_per_gas)
         .map_or(30_000_000_000u128, |x| u128::from(x) * 12 / 10);
-    u128::from(bundle_gas_estimate())
-        .saturating_mul(base_fee_next.saturating_add(priority_fee_wei()))
+    u128::from(cfg.bundle_gas_est)
+        .saturating_mul(base_fee_next.saturating_add(priority_fee_wei(cfg)))
 }
 
-async fn initial_wallet_gas_cost(provider: &AlloyProvider) -> u128 {
+async fn initial_wallet_gas_cost(provider: &AlloyProvider, cfg: &SidecarConfig) -> u128 {
     let head = provider.get_block_number().await.unwrap_or(0);
-    wallet_gas_cost_at(provider, head).await
+    wallet_gas_cost_at(provider, head, cfg).await
 }
 
 #[expect(
@@ -394,7 +380,7 @@ async fn run_frame(
                 .flatten()
                 .and_then(|b| b.header.base_fee_per_gas)
                 .map_or(30_000_000_000u128, |x| u128::from(x) * 12 / 10);
-            let priority_fee: u128 = priority_fee_wei();
+            let priority_fee: u128 = priority_fee_wei(cfg);
             // Honest economics per `SubmitCandidate`'s own contract: gross
             // is the solved profit, net subtracts the wallet's gas burn,
             // gas_used is the estimate (never a placeholder).
@@ -411,7 +397,7 @@ async fn run_frame(
                 path_id: u64::from_be_bytes(ev.hash.0[0..8].try_into().expect("8 bytes")),
                 gross_profit,
                 net_profit,
-                gas_used: bundle_gas_estimate(),
+                gas_used: cfg.bundle_gas_est,
                 priority_fee,
                 base_fee_next,
                 execute_calldata: cd,
@@ -440,7 +426,7 @@ async fn run_frame(
                 }),
                 operator_nonce,
                 head,
-                std::env::var("SIDECAR_DRY_RUN").is_ok_and(|v| v == "1"),
+                cfg.dry_run,
                 false,
                 &[],
                 target,
@@ -642,35 +628,74 @@ fn reload_quarantine(quarantine: &mut Quarantine) -> Option<QuarantineJournal> {
     QuarantineJournal::open(&path).ok()
 }
 
+/// The strategy-arm boot gate: this binary is the pending-transaction
+/// backrun arm, so `strategy.name` must be `backrun` or unset. An explicit
+/// `settlement` selection names the wrong invocation and is refused.
+fn strategy_arm_refusal(arm: Option<degenbot_config::StrategyName>) -> Option<String> {
+    match arm {
+        None | Some(degenbot_config::StrategyName::Backrun) => None,
+        Some(degenbot_config::StrategyName::Settlement) => Some(String::from(
+            "strategy.name=settlement: this binary is the pending-transaction backrun sidecar; \
+             boot `backrun_sidecar` itself with a typed config carrying `[strategy] name = \
+             \"backrun\"` (or DEGENBOT_STRATEGY_NAME=backrun), or run the settled-block arm instead",
+        )),
+    }
+}
+
 #[tokio::main]
 #[expect(
     clippy::too_many_lines,
     reason = "bin orchestration loop reads top-to-bottom"
 )]
 async fn main() {
-    init_tracing();
-    let cfg = SidecarConfig::from_env();
+    let loaded = degenbot_config::BotConfigLoader::new()
+        .with_standard_file_paths()
+        .load()
+        .unwrap_or_else(|error| {
+            eprintln!("backrun sidecar config load failed: {error}");
+            std::process::exit(2);
+        });
+    if let Some(refusal) = strategy_arm_refusal(loaded.config.strategy.name) {
+        eprintln!("{refusal}");
+        std::process::exit(2);
+    }
+    let config = std::sync::Arc::new(loaded.config.clone());
+    let _ = degenbot_config::holder::install(std::sync::Arc::clone(&config));
+    init_tracing(config.logging.log_stderr);
+
+    let env = degenbot_config::ProcessEnv;
+    let rpc_url = degenbot_config::resolve_node_http_uri(&env, CHAIN_ID, None)
+        .unwrap_or_else(|error| {
+            eprintln!("{error}");
+            std::process::exit(2);
+        })
+        .value;
+    let cfg = SidecarConfig::from_config(&config, rpc_url);
 
     let client = alloy::rpc::client::ClientBuilder::default().http(
         cfg.rpc_url
             .parse()
-            .expect("SIDECAR_RPC_URL is a valid http url"),
+            .expect("DEGENBOT_RPC_HTTP_CHAINID_1 is a valid http url"),
     );
     let provider = Arc::new(AlloyProvider::from_provider(Arc::new(
         alloy::providers::ProviderBuilder::default().connect_client(client),
     )));
 
-    // The bundle-sim client (`SIDECAR_SIM_URL`, default: the chain node
-    // the frames replay against). READ/SIM ONLY -- `eth_callMany` never
+    // The bundle-sim client (`strategy.backrun.sim_url`, default: the chain
+    // node the frames replay against). READ/SIM ONLY -- `eth_callMany` never
     // broadcasts, and this client is passed nothing else. The sim MUST run
     // on an endpoint that actually serves `eth_callMany`; MEVBlocker's
     // /fast http tier answers method-missing for it, so the node is the
     // fallback and /fast stays available as an explicit override.
     let sim_client = alloy::rpc::client::ClientBuilder::default().http(
-        std::env::var("SIDECAR_SIM_URL")
-            .unwrap_or_else(|_| cfg.rpc_url.clone())
+        config
+            .strategy
+            .backrun
+            .sim_url
+            .clone()
+            .unwrap_or_else(|| cfg.rpc_url.clone())
             .parse()
-            .expect("sim url parses as an http url"),
+            .expect("strategy.backrun.sim_url parses as an http url"),
     );
     // The gap-boundary probe samples the chain node's pending-pool lanes
     // whenever a frame claims a nonce ahead of the parent state.
@@ -680,37 +705,40 @@ async fn main() {
     // loads when the key material exists so observe-only runs need none.
     let signer: Option<TxSigner> = cfg.key_file.as_ref().map(|p| {
         let hex = std::fs::read_to_string(p)
-            .expect("SIDECAR_KEY_FILE readable")
+            .expect("strategy.backrun.key_file readable")
             .trim()
             .to_string();
-        TxSigner::from_key_hex(&hex, 1).expect("SIDECAR_KEY_FILE parses as a secp256k1 key")
+        TxSigner::from_key_hex(&hex, 1)
+            .expect("strategy.backrun.key_file parses as a secp256k1 key")
     });
 
     // Dry-run (offline-review): a captured frame JSONL replaces the live
     // feed — the capture's frames are processed once, in order.
-    let fixture_frames = std::env::var("SIDECAR_DRY_RUN_JSONL").ok().map(|p| {
-        let frames = load_fixture_frames(std::path::Path::new(&p));
-        tracing::info!(frames = frames.len(), path = %p, "dry-run fixture loaded");
+    let fixture_frames = config.logging.dry_run_jsonl.as_ref().map(|p| {
+        let frames = load_fixture_frames(p);
+        tracing::info!(frames = frames.len(), path = %p.display(), "dry-run fixture loaded");
         frames
     });
 
-    // The offline fixture's pinned head: with `SIDECAR_FIXTURE_HEAD` set the
-    // dry-run replays captured frames against the chain view they were
+    // The offline fixture's pinned head: with the `fixture_head` facet set
+    // the dry-run replays captured frames against the chain view they were
     // pending in (the capture's `stages` records carry it) instead of the
     // live tip. `None` falls back to the fetched head.
-    let fixture_head = parse_fixture_head(std::env::var("SIDECAR_FIXTURE_HEAD").ok().as_deref());
+    let fixture_head = config.strategy.backrun.fixture_head;
     if fixture_head.is_some() {
         tracing::info!(fixture_head = ?fixture_head, "fixture head pinned");
     }
 
     // DFYDYI B3: the DB-backed connector index -- ONE startup scan, never a
-    // per-frame query. Optional (SIDECAR_DB_PATH): without it the discovery
-    // fan stays shut and frames observe (connectors are never guessed).
+    // per-frame query. The path comes from the shared `DEGENBOT_DB_PATH`
+    // resolver; a missing file leaves the discovery fan shut and frames
+    // observe (connectors are never guessed).
+    let db_path = degenbot_config::resolve_database_path(&env, None).value;
     let (connector_index, connector_db): (
         Option<degenbot_bot::sidecar_paths::V2ConnectorIndex>,
         Option<degenbot_db::connection::DegenbotDb>,
-    ) = match std::env::var("SIDECAR_DB_PATH") {
-        Ok(path) => match degenbot_db::connection::DegenbotDb::open(std::path::Path::new(&path)) {
+    ) = if db_path.is_file() {
+        match degenbot_db::connection::DegenbotDb::open(&db_path) {
             Ok((db, _)) => match degenbot_bot::sidecar_paths::V2ConnectorIndex::load(&db, 1)
                 .and_then(|mut ix| ix.load_v3(&db, 1).map(|()| ix))
             {
@@ -721,10 +749,11 @@ async fn main() {
                         )),
                     ));
                     tracing::info!(edges = ix.len(), "connector index loaded");
-                    // Evidence mode (SIDECAR_RANK_EVIDENCE=1): a LIVE sanity
-                    // probe before any frame trusts the depth truncation --
-                    // the canonical deep USDC/WETH pair must top the ranking.
-                    if std::env::var("SIDECAR_RANK_EVIDENCE").as_deref() == Ok("1") {
+                    // Evidence mode (`strategy.backrun.rank_evidence`): a LIVE
+                    // sanity probe before any frame trusts the depth
+                    // truncation -- the canonical deep USDC/WETH pair must
+                    // top the ranking.
+                    if config.strategy.backrun.rank_evidence {
                         match degenbot_bot::sidecar_paths::deep_pair_ranking_evidence(&ix, &db)
                             .await
                         {
@@ -744,16 +773,19 @@ async fn main() {
                 }
             },
             Err(e) => {
-                tracing::warn!(error = %e, "SIDECAR_DB_PATH unopenable - lane disabled");
+                tracing::warn!(
+                    error = %e,
+                    path = %db_path.display(),
+                    "DEGENBOT_DB_PATH unopenable - lane disabled"
+                );
                 (None, None)
             }
-        },
-        Err(_) => (None, None),
+        }
+    } else {
+        tracing::debug!(path = %db_path.display(), "connector DB absent - lane disabled");
+        (None, None)
     };
-    let connector_cap: usize = std::env::var("SIDECAR_CONNECTORS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8);
+    let connector_cap: usize = config.strategy.backrun.connectors;
 
     // The strategy runtime OWNS the frame-surviving caches (index, token
     // joins, warm-code cache); each frame gets a fresh planning Workspace
@@ -761,27 +793,33 @@ async fn main() {
     let mut runtime = MarketContext::new(1, connector_index, connector_db, connector_cap);
     let mut strategy = BackrunStrategy::new();
 
-    let exec: Address = std::env::var("SIDECAR_EXECUTOR")
-        .unwrap_or_else(|_| String::from("0x30b28ed8aa581fbc0191c3b532b0697773070e97"))
+    let exec: Address = config
+        .strategy
+        .backrun
+        .executor
         .parse()
-        .expect("SIDECAR_EXECUTOR is a valid address");
+        .expect("strategy.backrun.executor is a valid address");
     // The sim oracle's caller identity: the executor is OWNER-gated
     // (`execute()` asserts msg.sender == OWNER_ADDR), so the simulated
     // call must come from the OPERATOR address -- never the target tx's
     // original sender. The bid tx itself is signed by the operator key,
     // so sim-from == tx-from.
-    let owner: Address = std::env::var("SIDECAR_OPERATOR")
-        .or_else(|_| std::env::var("EXECUTOR_OWNER_ADDRESS"))
-        .unwrap_or_else(|_| String::from("0x5c603b8a137A40426E0dDFA981EC10c245AF080e"))
+    let owner: Address = config
+        .strategy
+        .backrun
+        .operator
+        .clone()
+        .or_else(|| std::env::var("EXECUTOR_OWNER_ADDRESS").ok())
+        .unwrap_or_else(|| String::from("0x5c603b8a137A40426E0dDFA981EC10c245AF080e"))
         .parse()
         .expect("executor owner address parses");
     let wallet_gas_cost_wei = Arc::new(std::sync::atomic::AtomicU64::new(
-        u64::try_from(initial_wallet_gas_cost(&provider).await).unwrap_or(u64::MAX),
+        u64::try_from(initial_wallet_gas_cost(&provider, &cfg).await).unwrap_or(u64::MAX),
     ));
     let pl = PipelineConfig {
         exec,
         owner,
-        bribe_bips: bribe_bips(),
+        bribe_bips: cfg.bribe_bips,
         wallet_gas_cost_wei,
         gas_floor_wei: U256::from(GAS_FLOOR_WEI),
         // Historical mode only when the dry-run actually pinned a head: the
@@ -888,14 +926,9 @@ async fn main() {
     // is the FALLBACK, not the primary source: it costs a round-trip per tick
     // and cannot fire the instant a head lands. Without a WS URL, or when the
     // subscribe fails, the watch stays absent and the loop polls.
-    let head_ws_url = std::env::var("SIDECAR_HEAD_WS_URL")
+    let head_ws_url = degenbot_config::resolve_node_ws_uri(&env, CHAIN_ID, None)
         .ok()
-        .filter(|v| !v.is_empty())
-        .or_else(|| {
-            std::env::var("DEGENBOT_RPC_WS_CHAINID_1")
-                .ok()
-                .filter(|v| !v.is_empty())
-        });
+        .map(|resolved| resolved.value);
     let head_watch: Option<HeadWatch> = if let Some(url) = head_ws_url {
         match AlloyProvider::new(&url, DEFAULT_MAX_RETRIES).await {
             Ok(ws_provider) => {
@@ -921,9 +954,7 @@ async fn main() {
             }
         }
     } else {
-        tracing::warn!(
-            "no SIDECAR_HEAD_WS_URL / DEGENBOT_RPC_WS_CHAINID_1 set - using 200ms head poll"
-        );
+        tracing::warn!("no DEGENBOT_RPC_WS_CHAINID_1 set - using 200ms head poll");
         None
     };
     let mut head_rx = head_watch.as_ref().map(HeadWatch::head_rx);
@@ -971,7 +1002,8 @@ async fn main() {
                     .advance_block(head);
                 current_block = head;
                 pl.wallet_gas_cost_wei.store(
-                    u64::try_from(wallet_gas_cost_at(&provider, head).await).unwrap_or(u64::MAX),
+                    u64::try_from(wallet_gas_cost_at(&provider, head, &cfg).await)
+                        .unwrap_or(u64::MAX),
                     std::sync::atomic::Ordering::Relaxed,
                 );
                 match build_block_handle(&provider, head, &runtime.warm_cache, anchor).await {
@@ -1199,8 +1231,19 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::nonce_lane_evidence;
+    use super::{nonce_lane_evidence, strategy_arm_refusal};
     use alloy::primitives::U256;
+
+    #[test]
+    fn backrun_arm_is_own_binary_and_settlement_refused() {
+        use degenbot_config::StrategyName;
+
+        assert!(strategy_arm_refusal(None).is_none());
+        assert!(strategy_arm_refusal(Some(StrategyName::Backrun)).is_none());
+        let refusal = strategy_arm_refusal(Some(StrategyName::Settlement)).expect("refused");
+        assert!(refusal.contains("backrun"), "{refusal}");
+        assert!(refusal.contains("strategy.name"), "{refusal}");
+    }
 
     #[test]
     fn nonce_lane_failure_is_no_evidence_never_max() {

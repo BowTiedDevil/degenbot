@@ -1,6 +1,11 @@
 //! RED-first pins for the strategy.backrun facet keys (X6P5GN): every key
 //! resolves from TOML, from env, and collapses to its declared default.
 
+#![expect(
+    clippy::expect_used,
+    reason = "test fixtures fail loudly on an unconstructible prerequisite"
+)]
+
 use std::collections::BTreeMap;
 
 use degenbot_config::{BotConfig, BotConfigLoader, MapEnv};
@@ -98,6 +103,21 @@ fn backrun_facet_resolves_from_toml() {
     assert_eq!(b.fixture_head, Some(26_001_272));
     // Untouched keys keep defaults.
     assert_eq!(b.max_bundle_wei, 1_000_000_000_000_000);
+}
+
+#[test]
+fn fixture_head_rejects_junk_at_load() {
+    let env = MapEnv::new(BTreeMap::from([(
+        "DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD".to_string(),
+        "latest".to_string(),
+    )]));
+    assert!(
+        BotConfigLoader::new()
+            .with_env(Box::new(env))
+            .load()
+            .is_err(),
+        "a non-numeric pinned head must fail the load, not silently fall back"
+    );
 }
 
 #[test]
