@@ -60,7 +60,9 @@ _V2_MATH = "degenbot._ffi.v2_math"
 # Each row: companion_module, companion_attr, ffi_module, ffi_attr
 ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     # degenbot.dispatch — simulation seam
+    (_DISPATCH, "CandidateAssembly", _SIM, "CandidateAssembly"),
     (_DISPATCH, "DispatchCandidate", _SIM, "DispatchCandidate"),
+    (_DISPATCH, "assemble_dispatch_candidates", _SIM, "assemble_dispatch_candidates_py"),
     (_DISPATCH, "DispatchOutcome", _SIM, "DispatchOutcome"),
     (_DISPATCH, "SimulateContext", _SIM, "SimulateContext"),
     (_DISPATCH, "PayloadOutcome", _SIM, "PayloadOutcome"),
@@ -133,6 +135,7 @@ def test_dispatch_all_pins_public_surface() -> None:
 
     d = degenbot.dispatch
     expected = {
+        "CandidateAssembly",
         "DispatchCandidate",
         "DispatchOutcome",
         "Dispatcher",
@@ -146,6 +149,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "SubmitSkipReason",
         "SubmittedRecord",
         "TxSigner",
+        "assemble_dispatch_candidates",
         "dispatch_and_submit",
         "dispatch_profitable",
         "fetch_fee_history",

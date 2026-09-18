@@ -94,67 +94,109 @@ impl PyDispatchCandidate {
         erc6909_profit: bool,
         use_v4_batch: bool,
     ) -> PyResult<Self> {
-        let rust_path: PathInfo = engine
-            .borrow(py)
-            .path_info_for_core(py, path_id)
-            .ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "path_id {path_id} is not registered in this engine"
-                ))
-            })
-            .and_then(|r| {
-                r.map_err(|e: PathInfoBuildError| PyValueError::new_err(format!("{e}")))
-            })?;
-        // The solver returns one hop_output per hop; a mismatch is a solver
-        // defect or a stale path_id. Surface as ValueError so the cockpit's
-        // per-candidate try/except can skip (mirrors the pre-flatten Python
-        // `len(hop_outputs) != len(path_info.hops)` guard, now Rust-side).
-        if hop_outputs.len() != rust_path.hops.len() {
-            return Err(PyValueError::new_err(format!(
-                "hop_outputs length ({}) != path {path_id} hops ({})",
-                hop_outputs.len(),
-                rust_path.hops.len()
-            )));
-        }
-        if consumed_inputs.len() != rust_path.hops.len() {
-            return Err(PyValueError::new_err(format!(
-                "consumed_inputs length ({}) != path {path_id} hops ({})",
-                consumed_inputs.len(),
-                rust_path.hops.len()
-            )));
-        }
-        let opts = EncodeOptions {
-            erc6909_profit,
-            use_v4_batch,
-            ..Default::default()
-        };
-        // Merged per-hop rows (allocation continuation): the Python seam
-        // keeps its three-list API (adapted accessors, per the epic guardrail);
-        // the core candidate stores one row per hop.
-        let steps: Vec<degenbot_arbitrage::SolveStep> = hop_outputs
-            .into_iter()
-            .zip(consumed_inputs)
-            .scan(
-                state_nonces.into_iter(),
-                |nonces, (output, consumed_input)| {
-                    Some(degenbot_arbitrage::SolveStep {
-                        output,
-                        consumed_input,
-                        state_nonce: nonces.next().unwrap_or(0),
-                    })
-                },
-            )
-            .collect();
         Ok(Self {
-            inner: DispatchCandidate {
+            inner: build_dispatch_candidate(
+                py,
+                &engine,
                 path_id,
                 optimal_input,
                 engine_profit,
-                steps: steps.into(),
+                hop_outputs,
+                consumed_inputs,
                 solve_block,
-                path_info: rust_path,
-                opts,
-            },
+                state_nonces,
+                erc6909_profit,
+                use_v4_batch,
+            )?,
         })
     }
+}
+
+/// Resolve the registered path's `composers::PathInfo` + build the core
+/// [`DispatchCandidate`] from one engine-result row.
+///
+/// Shared by the single-candidate `#[new]` and the batched assembly seam so
+/// the path resolution, the hop-count guards, and the per-hop row merge have
+/// exactly one home.
+///
+/// # Errors
+/// `ValueError`: `path_id` is not registered in `engine`, or a hop-list
+/// length does not match the resolved path's hop count.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn build_dispatch_candidate(
+    py: Python<'_>,
+    engine: &Py<PyArbEngine>,
+    path_id: u64,
+    optimal_input: u128,
+    engine_profit: u128,
+    hop_outputs: Vec<u128>,
+    consumed_inputs: Vec<u128>,
+    solve_block: u64,
+    state_nonces: Vec<u64>,
+    erc6909_profit: bool,
+    use_v4_batch: bool,
+) -> PyResult<DispatchCandidate> {
+    let rust_path: PathInfo = engine
+        .borrow(py)
+        .path_info_for_core(py, path_id)
+        .ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "path_id {path_id} is not registered in this engine"
+            ))
+        })
+        .and_then(|r| r.map_err(|e: PathInfoBuildError| PyValueError::new_err(format!("{e}"))))?;
+
+    // The solver returns one hop_output per hop; a mismatch is a solver
+    // defect or a stale path_id. Surface as ValueError so the cockpit's
+    // per-candidate try/except can skip (mirrors the pre-flatten Python
+    // `len(hop_outputs) != len(path_info.hops)` guard, now Rust-side).
+    if hop_outputs.len() != rust_path.hops.len() {
+        return Err(PyValueError::new_err(format!(
+            "hop_outputs length ({}) != path {path_id} hops ({})",
+            hop_outputs.len(),
+            rust_path.hops.len()
+        )));
+    }
+
+    if consumed_inputs.len() != rust_path.hops.len() {
+        return Err(PyValueError::new_err(format!(
+            "consumed_inputs length ({}) != path {path_id} hops ({})",
+            consumed_inputs.len(),
+            rust_path.hops.len()
+        )));
+    }
+
+    let opts = EncodeOptions {
+        erc6909_profit,
+        use_v4_batch,
+        ..Default::default()
+    };
+
+    // Merged per-hop rows (allocation continuation): the Python seam
+    // keeps its three-list API (adapted accessors, per the epic guardrail);
+    // the core candidate stores one row per hop.
+    let steps: Vec<degenbot_arbitrage::SolveStep> = hop_outputs
+        .into_iter()
+        .zip(consumed_inputs)
+        .scan(
+            state_nonces.into_iter(),
+            |nonces, (output, consumed_input)| {
+                Some(degenbot_arbitrage::SolveStep {
+                    output,
+                    consumed_input,
+                    state_nonce: nonces.next().unwrap_or(0),
+                })
+            },
+        )
+        .collect();
+
+    Ok(DispatchCandidate {
+        path_id,
+        optimal_input,
+        engine_profit,
+        steps: steps.into(),
+        solve_block,
+        path_info: rust_path,
+        opts,
+    })
 }

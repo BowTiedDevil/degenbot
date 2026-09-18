@@ -44,6 +44,7 @@ from degenbot.dispatch import (
     SubmitSkipReason,
     SubmittedRecord,
     TxSigner,
+    assemble_dispatch_candidates,
     dispatch_and_submit,
     dispatch_profitable,
     merge_payload_results,
@@ -176,40 +177,32 @@ def _build_dispatch_candidates(
     """Shape a batch of raw engine results into Rust-seam candidates.
 
     Shared by the serial leaf (:func:`_dispatch_profitable`) and the concurrent
-    pipeline (``_sim_submit_pipeline``): the GIL-held candidate construction +
-    the empty-hop skip (``[sim-none]``). Returns an EMPTY list when nothing is
-    dispatchable (the caller skips sim + submit).
+    pipeline (``_sim_submit_pipeline``). The whole batch is assembled by the
+    Rust seam in one call: path resolution, per-row field construction, the
+    empty-hop skip, and the payload-served skip all run in the core. Only the
+    display-only ``[sim-none]`` log and the operator policy bools stay Python.
+    Returns an EMPTY list when nothing is dispatchable (the caller skips sim +
+    submit).
 
     Path ids present in ``payloads`` were ALREADY simulated
     inline in the Rust engine — they never enter the FFI sim batch (the
     payload derives their submit records directly; per-entry presence
     decides, so a mixed batch only degrades the payload-less entries).
     """
-    engine_registry = session.engine_registry
-    candidates: list[DispatchCandidate] = []
-    for pid, inp, prof, ho, ci, sb, sn in results:
-        if not ho:
-            bot_logger.debug(f"[sim-none] path={pid}: empty hop_outputs")
-            continue
-        if payloads and pid in payloads:
-            continue
-        candidates.append(
-            DispatchCandidate(
-                engine=engine_registry.engine,
-                path_id=pid,
-                optimal_input=inp,
-                engine_profit=prof,
-                hop_outputs=list(ho),
-                consumed_inputs=list(ci),
-                solve_block=sb,
-                state_nonces=list(sn),
-                # The operator's ERC6909 vault-capture toggle - the
-                # Rust seam defaults it to False (custody capture, the
-                # long-standing production behavior); env-gated opt-in.
-                erc6909_profit=session.cfg.erc6909_profit,
-            ),
-        )
-    return candidates
+    if not results:
+        return []
+    assembly = assemble_dispatch_candidates(
+        engine=session.engine_registry.engine,
+        results=results,
+        # The operator's ERC6909 vault-capture toggle - the Rust seam defaults
+        # it to False (custody capture, the long-standing production behavior);
+        # env-gated opt-in.
+        erc6909_profit=session.cfg.erc6909_profit,
+        skip_path_ids=sorted(payloads) if payloads else None,
+    )
+    for path_id in assembly.empty_hop_path_ids:
+        bot_logger.debug(f"[sim-none] path={path_id}: empty hop_outputs")
+    return list(assembly.candidates)
 
 
 class MergedOutcome:

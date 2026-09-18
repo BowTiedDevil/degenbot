@@ -56,6 +56,19 @@ class DispatchCandidate:
         use_v4_batch: bool = False,
     ) -> None: ...
 
+class CandidateAssembly:
+    """The batched engine-result → ``DispatchCandidate`` assembly result.
+
+    Built by :func:`assemble_dispatch_candidates_py`. ``candidates`` is the
+    sim seam's input list; ``empty_hop_path_ids`` names the rows skipped for
+    empty hop outputs so the driver can log them.
+    """
+
+    @property
+    def candidates(self) -> list[DispatchCandidate]: ...
+    @property
+    def empty_hop_path_ids(self) -> list[int]: ...
+
 class DispatchOutcome:
     """Read-only outcome of a block's profitable-dispatch fan-out."""
 
@@ -98,6 +111,22 @@ def dispatch_profitable_py(
     *,
     engine: ArbitrageEngine | None = None,
 ) -> Coroutine[Any, Any, DispatchOutcome]: ...
+def assemble_dispatch_candidates_py(
+    engine: ArbitrageEngine,
+    results: list[tuple[int, int, int, list[int], list[int], int, list[int]]],
+    *,
+    erc6909_profit: bool = False,
+    use_v4_batch: bool = False,
+    skip_path_ids: list[int] | None = None,
+) -> CandidateAssembly:
+    """Assemble a batch of raw engine-result rows into ``DispatchCandidate``s.
+
+    Skips empty-hop rows (reported via ``CandidateAssembly.empty_hop_path_ids``)
+    and rows whose ``path_id`` is in ``skip_path_ids`` (already simulated
+    inline by the engine). ``ValueError`` if a ``path_id`` is unregistered or a
+    hop-list length mismatches the resolved path.
+    """
+
 def merge_payload_results_py(
     payloads: list[dict[str, Any]],
     engine: ArbitrageEngine,
@@ -166,11 +195,13 @@ def simulate_in_process_success_probe(path_id: int) -> dict[str, Any]:
     """
 
 __all__ = [
+    "CandidateAssembly",
     "DispatchCandidate",
     "DispatchOutcome",
     "PayloadOutcome",
     "PayloadVerdict",
     "SimulateContext",
+    "assemble_dispatch_candidates_py",
     "dispatch_profitable_py",
     "merge_payload_results_py",
     "simulate_in_process_revert_probe",

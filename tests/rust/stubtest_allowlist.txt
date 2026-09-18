@@ -58,6 +58,7 @@ degenbot._ffi.provider.AlloyProvider
 degenbot._ffi.provider.AlloySubscription
 degenbot._ffi.provider.AsyncAlloyProvider
 degenbot._ffi.provider.LogFilter
+degenbot._ffi.simulation.CandidateAssembly
 degenbot._ffi.simulation.DispatchCandidate
 degenbot._ffi.simulation.DispatchOutcome
 degenbot._ffi.simulation.PayloadOutcome

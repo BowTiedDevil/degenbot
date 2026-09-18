@@ -41,6 +41,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
+pub mod assembly;
 pub mod candidate;
 pub mod context;
 pub mod dispatch;
@@ -63,11 +64,16 @@ pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let submod = PyModule::new(py, "degenbot._ffi.simulation")?;
     submod.add_class::<PySimulateContext>()?;
     submod.add_class::<PyDispatchCandidate>()?;
+    submod.add_class::<crate::simulation::assembly::PyCandidateAssembly>()?;
     submod.add_class::<PyDispatchOutcome>()?;
     submod.add_class::<crate::simulation::dispatch::PyPayloadOutcome>()?;
     submod.add_class::<crate::simulation::dispatch::PyPayloadVerdict>()?;
     submod.add_function(wrap_pyfunction!(
         crate::simulation::dispatch::dispatch_profitable_py,
+        &submod
+    )?)?;
+    submod.add_function(wrap_pyfunction!(
+        crate::simulation::assembly::assemble_dispatch_candidates_py,
         &submod
     )?)?;
     submod.add_function(wrap_pyfunction!(

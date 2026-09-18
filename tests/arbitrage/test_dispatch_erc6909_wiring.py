@@ -2,7 +2,7 @@
 
 ``_dispatch_profitable`` must project the driver's
 ``ERC6909_PROFIT`` operator knob (``driver_constants``, env-gated default
-off) into the ``DispatchCandidate(erc6909_profit=...)`` kwarg so the Rust
+off) into the ``assemble_dispatch_candidates(erc6909_profit=...)`` seam so the Rust
 strategy's ``resolve_axes`` / ``config_for_options`` axis chain (→
 ``check_mode=2`` + the pure-V4 ``V4_MINT_COMPACT`` stream) is reachable in
 production. The seam's kwarg acceptance itself is pinned by
@@ -20,11 +20,13 @@ from degenbot.runner.bot_runner import _SessionState
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 
-class _RecordingCandidate:
-    """Stand-in for the FFI ``DispatchCandidate`` — records constructor kwargs."""
+class _FakeAssembly:
+    """Stand-in for the FFI ``CandidateAssembly`` — records seam kwargs."""
 
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
+        self.empty_hop_path_ids: list[int] = []
+        self.candidates = [object()]
 
 
 class _EngineRegistry:
@@ -47,12 +49,12 @@ def test_erc6909_default_is_off() -> None:
 async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
     recorded: list[dict] = []
 
-    class _Rec(_RecordingCandidate):
+    class _Rec(_FakeAssembly):
         def __init__(self, **kwargs) -> None:
             super().__init__(**kwargs)
             recorded.append(kwargs)
 
-    monkeypatch.setattr(d, "DispatchCandidate", _Rec)
+    monkeypatch.setattr(d, "assemble_dispatch_candidates", _Rec)
 
     # One solved result; ``sim_ctx=None`` raises AFTER candidate construction
     # (the RuntimeError is the tripwire that the constructor really ran).
@@ -85,7 +87,7 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
             operator_nonce=0,
         )
 
-    assert len(recorded) == 1, "one candidate must be constructed"
+    assert len(recorded) == 1, "one assembly call must carry the batch"
     assert recorded[0]["erc6909_profit"] is cfg_knob_state, (
-        "the operator knob must be projected into the candidate kwarg"
+        "the operator knob must be projected into the assembly seam"
     )

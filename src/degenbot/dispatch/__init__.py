@@ -27,11 +27,13 @@ unchanged — pyclass identity for candidates/dispatcher/signer is preserved.
 
 Symbol map (FFI name → stable companion name):
 
+- CandidateAssembly → CandidateAssembly
 - DispatchCandidate → DispatchCandidate
 - DispatchOutcome → DispatchOutcome
 - Dispatcher → Dispatcher
 - SimulateContext → SimulateContext
 - TxSigner → TxSigner
+- assemble_dispatch_candidates_py → assemble_dispatch_candidates
 - dispatch_profitable_py → dispatch_profitable
 - merge_payload_results_py → merge_payload_results
 - dispatch_and_submit_py → dispatch_and_submit (wrapper: dict → typed records)
@@ -44,12 +46,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from degenbot._ffi.simulation import (
+    CandidateAssembly,
     DispatchCandidate,
     DispatchOutcome,
     PayloadOutcome,
     PayloadVerdict,
     SimulateContext,
 )
+from degenbot._ffi.simulation import assemble_dispatch_candidates_py as assemble_dispatch_candidates
 from degenbot._ffi.simulation import dispatch_profitable_py as dispatch_profitable
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
 from degenbot._ffi.submission import Dispatcher, SubmitCandidate, TxSigner
@@ -124,6 +128,7 @@ async def dispatch_and_submit(
 
 
 __all__ = [
+    "CandidateAssembly",
     "DispatchCandidate",
     "DispatchOutcome",
     "Dispatcher",
@@ -137,6 +142,7 @@ __all__ = [
     "SubmitSkipReason",
     "SubmittedRecord",
     "TxSigner",
+    "assemble_dispatch_candidates",
     "dispatch_and_submit",
     "dispatch_profitable",
     "fetch_fee_history",
