@@ -213,6 +213,9 @@ fn snapshot_fallback_agrees_with_schema() {
         !sweep.iter().any(|k| k.contains("REGEN_DOCS")),
         "snapshot is self-contaminated; regenerate it with the exclusion glob"
     );
+    // This filter chain must mirror `schema_covers_the_full_key_inventory`
+    // exactly — the two inventory paths (live sweep, committed snapshot) hold
+    // the identical parity contract.
     let mut expected: BTreeSet<String> = sweep
         .iter()
         .filter(|k| {
@@ -221,12 +224,15 @@ fn snapshot_fallback_agrees_with_schema() {
                 && !BUILD_ARTIFACT_KEYS.contains(&k.as_str())
                 && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
                 && !DB_OPEN_KEYS.contains(&k.as_str())
+                && !TEST_HARNESS_KEYS.contains(&k.as_str())
                 && !RETIRED_KEYS.contains(&k.as_str())
         })
         .cloned()
         .collect();
     for expansion in SWEEP_EXPANSIONS {
-        let _ = expected.insert((*expansion).to_string());
+        if SWEEP_ARTIFACTS.iter().any(|a| sweep.contains(*a)) || sweep.contains(*expansion) {
+            let _ = expected.insert((*expansion).to_string());
+        }
     }
     let actual: BTreeSet<String> = SCHEMA.iter().map(|k| k.env.to_string()).collect();
     assert_eq!(actual, expected);
