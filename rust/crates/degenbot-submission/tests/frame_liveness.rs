@@ -56,6 +56,49 @@ fn rescue_lists_every_predecessor_in_order() {
     assert!(q.is_empty(), "a rescued frame leaves the FSM");
 }
 
+/// A gap missing even one predecessor stays parked and NAMES the missing
+/// nonce: the pool view only rescues a COMPLETE prefix.
+#[test]
+fn partial_pool_view_still_waits_and_names_the_unknown_tail() {
+    let mut q = Quarantine::new();
+    q.push(frame(12, 10));
+    let out = q.poll(SENDER, 10, &[11]);
+    assert_eq!(
+        out[0].1,
+        QuarantineDecision::StillWaiting { unknown: vec![10] }
+    );
+    assert_eq!(q.len(), 1, "the incomplete gap keeps the frame parked");
+}
+
+/// An unrelated pool transaction that only moves the count lane is not
+/// evidence: the guard keys on the predecessor list and the frame's captured
+/// boundary, so the identical re-park must not re-fire the rescue.
+#[test]
+fn unrelated_pool_tx_does_not_re_arm_a_futile_rescue() {
+    let mut q = Quarantine::new();
+    q.push(frame(12, 10));
+    let first = q.poll(SENDER, 10, &[10, 11]);
+    assert_eq!(
+        first[0].1,
+        QuarantineDecision::Rescue {
+            predecessors: vec![10, 11]
+        }
+    );
+    assert!(q.is_empty(), "the rescued frame leaves the FSM");
+
+    // The rescue re-parked on the same boundary; the caller records the guard.
+    q.record_repark_guard(frame(12, 10).hash, &[10, 11], 10);
+    q.push(frame(12, 10));
+    assert_eq!(
+        q.poll(SENDER, 10, &[10, 11])[0].1,
+        QuarantineDecision::StillWaiting {
+            unknown: vec![10, 11]
+        },
+        "the count lane moved but the frame's predecessor list did not"
+    );
+    assert_eq!(q.len(), 1);
+}
+
 #[test]
 fn gap_range_is_the_explicit_predecessor_order() {
     assert_eq!(frame(5, 5).gap_range(), Vec::<u64>::new());
@@ -112,7 +155,7 @@ fn frontier_rescues_with_an_empty_prefix_and_leaves_the_fsm() {
 }
 
 #[test]
-fn re_park_after_rescue_requires_a_new_gap() {
+fn same_head_rescue_is_not_refired_but_a_later_boundary_waits() {
     let mut q = Quarantine::new();
     q.push(frame(12, 10));
     let out = q.poll(SENDER, 12, &[]);
@@ -126,7 +169,7 @@ fn re_park_after_rescue_requires_a_new_gap() {
     // Same head afterwards: nothing left to re-park, so no ping-pong.
     assert!(q.poll(SENDER, 12, &[]).is_empty());
 
-    // Only a genuinely NEW captured boundary re-parks (a later gap).
+    // A fresh captured boundary (a later gap) is its own frame.
     let mut fresh = frame(15, 12);
     fresh.hash = hash(2);
     q.push(fresh);
@@ -320,6 +363,43 @@ fn transient_reentry_failure_keeps_the_frame_tracked_and_unresolved() {
     assert_eq!(read.pending.len(), 1, "no resolve tombstone was written");
     assert_eq!(read.pending[0].expected_nonce, 10, "original boundary");
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// P5: a rescue of a non-empty predecessor prefix followed by a transient
+/// hydration failure leaves the frame tracked and un-resolved in the journal
+/// fold -- the pool-pred retry path is a re-park, not a death.
+#[test]
+fn rescue_with_predecessors_then_transient_failure_keeps_the_frame_tracked() {
+    let dir = scratch("rescue-transient");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let mut journal = QuarantineJournal::open(&path).expect("open");
+    let original = ParkRecord::new(&event(61, 12), 10, 1_700_000_000_000);
+    journal.record_park(&original).expect("park");
+
+    let mut q = Quarantine::new();
+    let mut f = frame(12, 10);
+    f.hash = hash(61);
+    q.push(f.clone());
+
+    let rescued = q.poll(f.from, 10, &[10, 11]);
+    assert_eq!(
+        rescued[0].1,
+        QuarantineDecision::Rescue {
+            predecessors: vec![10, 11]
+        },
+        "every predecessor is pool-known, so the frame enters the prefix case"
+    );
+    assert!(q.is_empty(), "a rescue removes the frame pending hydration");
+
+    // The hydration failed transiently: the caller re-parks the ORIGINAL frame
+    // and writes no resolve (the journal router's Transient arm).
+    q.push(f.clone());
+    assert_eq!(q.state(f.hash), Some(FrameState::Tracked));
+
+    let read = read_pending(&path).expect("read");
+    assert_eq!(read.pending.len(), 1, "no resolve tombstone was written");
+    assert_eq!(read.pending[0].expected_nonce, 10, "original boundary");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

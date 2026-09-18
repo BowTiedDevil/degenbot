@@ -38,12 +38,13 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_bot::sidecar::{gate_mined_target, Decision, SidecarConfig};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
+use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
 use degenbot_simulation::BlockSimHandle;
 use degenbot_submission::backrun_strategy::BackrunStrategy;
 use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
@@ -244,7 +245,8 @@ fn bid_submission_target(
 enum FrameOutcome {
     /// A bid was decided; terminal whether or not dispatch landed.
     Bid,
-    /// The pass re-parked the frame on a fresh nonce gap.
+    /// The pass re-parked the frame (the interim pool-pred path can repeat a
+    /// same-boundary re-park; the FSM guard and journal dedup bound it).
     GapPending,
     /// No replay handle served this head (transient).
     ReplayUnavailable,
@@ -283,7 +285,9 @@ fn outcome_for(reason: &'static str) -> FrameOutcome {
 enum ReentryOutcome {
     /// The frame's quarantine life is over (a bid, or a terminal observe/drop).
     Terminal,
-    /// The pass re-parked the frame on a genuinely new gap.
+    /// The pass re-parked the frame. In the interim pool-pred path a re-park
+    /// can repeat the same gap; the FSM guard and the journal dedup bound those
+    /// repeats, so this is not proof of a new boundary.
     GapPending,
     /// A transient replay failure; retry on the next frontier pass.
     Transient,
@@ -319,6 +323,33 @@ fn journal_reentry_outcome(
     }
 }
 
+/// One-slot memo of the last `GapPending` park written through the park path,
+/// keyed `(hash, boundary)`. The fold replaces parks by hash, so a consecutive
+/// identical re-park is invisible and is skipped; a non-consecutive duplicate
+/// still appends.
+type GapParkMemo = Option<(B256, u64)>;
+
+/// Append a `GapPending` park to the journal unless it repeats the immediately
+/// preceding `(hash, boundary)` park. Returns whether the line was written.
+fn record_gap_park(
+    journal: Option<&mut QuarantineJournal>,
+    record: &ParkRecord,
+    hash: B256,
+    boundary: u64,
+    memo: &mut GapParkMemo,
+) -> bool {
+    if *memo == Some((hash, boundary)) {
+        return false;
+    }
+    if let Some(journal) = journal {
+        if let Err(error) = journal.record_park(record) {
+            tracing::warn!(tx = %hash, %error, "quarantine park not journaled");
+        }
+    }
+    *memo = Some((hash, boundary));
+    true
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the frame handler takes the runtime surfaces it needs"
@@ -344,6 +375,7 @@ async fn run_frame(
     gap_probe: &degenbot_submission::gap_probe::GapProbe,
     quarantine: &mut Quarantine,
     journal: Option<&mut QuarantineJournal>,
+    gap_park_memo: &mut GapParkMemo,
 ) -> FrameOutcome {
     // Decode-stage reject: a frame whose gas field reads zero can never
     // pass the EVM's pre-checks (`CallGasCostMoreThanGasLimit` fires
@@ -434,11 +466,16 @@ async fn run_frame(
             received_unix_ms: ev.received_unix_ms,
         };
         let parked_count = quarantine.push(parked);
-        if let Some(journal) = journal {
-            let record = ParkRecord::new(ev, *expected, now_unix_ms());
-            if let Err(error) = journal.record_park(&record) {
-                tracing::warn!(tx = %ev.hash, %error, "quarantine park not journaled");
-            }
+        let record = ParkRecord::new(ev, *expected, now_unix_ms());
+        if !record_gap_park(journal, &record, ev.hash, *expected, gap_park_memo) {
+            trace_jsonl(
+                "quarantine",
+                serde_json::json!({
+                    "action": "park_deduped",
+                    "tx": ev.hash.to_string(),
+                    "expected_nonce": expected,
+                }),
+            );
         }
         trace_jsonl(
             "quarantine",
@@ -623,6 +660,169 @@ async fn canonical_block_hash(provider: &AlloyProvider, block: u64) -> Option<B2
 /// a sentinel that would read as `nonce_consumed` for every tracked frame.
 fn nonce_lane_evidence<E>(read: Result<U256, E>) -> Option<u64> {
     u64::try_from(read.ok()?).ok()
+}
+
+/// The pool-known predecessor set for one sender tick. A failed pending-lane
+/// read is NO evidence: the gap stays empty, so the tick still runs its
+/// latest-lane classification (a mined frontier rescues with an empty prefix
+/// regardless of the pool view).
+fn pool_known_gap_for_tick(
+    quarantine: &Quarantine,
+    sender: Address,
+    head_nonce: u64,
+    pending_count: Option<u64>,
+) -> Vec<u64> {
+    pending_count.map_or_else(Vec::new, |pending| {
+        quarantine.pool_known_gap(sender, head_nonce, pending)
+    })
+}
+
+/// Decode one `eth_getTransactionBySenderAndNonce` result into the replay
+/// shape. A null result (no such tx) and a missing or unparseable field are
+/// both hydration failures: the frame must never replay against a guessed
+/// predecessor.
+fn decode_predecessor(
+    sender: Address,
+    nonce: u64,
+    value: &serde_json::Value,
+) -> Result<ReplayableTx, &'static str> {
+    let obj = value
+        .as_object()
+        .ok_or("predecessor is not a transaction object")?;
+    let get_str = |key: &str| obj.get(key).and_then(serde_json::Value::as_str);
+    let to = match get_str("to") {
+        Some(s) if !s.is_empty() => Some(s.parse::<Address>().map_err(|_| "unparseable to")?),
+        _ => None,
+    };
+    let data_hex = get_str("input")
+        .or_else(|| get_str("data"))
+        .ok_or("missing data")?;
+    let data =
+        alloy::hex::decode(data_hex.trim_start_matches("0x")).map_err(|_| "unparseable data")?;
+    let value_wei = get_str("value")
+        .and_then(|s| U256::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        .ok_or("unparseable value")?;
+    let gas = u64::from_str_radix(
+        get_str("gas")
+            .ok_or("missing gas")?
+            .trim_start_matches("0x"),
+        16,
+    )
+    .map_err(|_| "unparseable gas")?;
+    // A type-0 (legacy) envelope carries a single `gasPrice`; the node may
+    // return that shape for the pending lookup, so accept it for both fee
+    // fields. Missing both is structural: the replay cannot price from nothing.
+    let parse_u128_hex = |raw: &str| u128::from_str_radix(raw.trim_start_matches("0x"), 16).ok();
+    let gas_price = get_str("gasPrice").and_then(parse_u128_hex);
+    let max_fee_per_gas = get_str("maxFeePerGas")
+        .and_then(parse_u128_hex)
+        .or(gas_price)
+        .ok_or("missing maxFeePerGas and gasPrice")?;
+    let max_priority_fee_per_gas = get_str("maxPriorityFeePerGas")
+        .and_then(parse_u128_hex)
+        .or(gas_price)
+        .ok_or("missing maxPriorityFeePerGas and gasPrice")?;
+    let tx_nonce = u64::from_str_radix(
+        get_str("nonce")
+            .ok_or("missing nonce")?
+            .trim_start_matches("0x"),
+        16,
+    )
+    .map_err(|_| "unparseable nonce")?;
+    if tx_nonce != nonce {
+        return Err("predecessor nonce mismatch");
+    }
+    Ok(ReplayableTx {
+        from: sender,
+        to,
+        value: value_wei,
+        data: Bytes::from(data),
+        gas_limit: gas,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        nonce: tx_nonce,
+    })
+}
+
+/// Why a predecessor prefix could not hydrate, split by whether a retry can
+/// ever change the answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HydrationFailure {
+    /// A transport error or a null lookup: endpoint skew, retried.
+    Transient(&'static str),
+    /// The node returned a shape that cannot decode: permanent for the
+    /// pool-pred lane.
+    Structural(&'static str),
+}
+
+/// Hydrate the pool-pred rescue's predecessor prefix, ascending. ONE
+/// `eth_getTransactionBySenderAndNonce` per nonce; any miss or decode failure
+/// fails the whole prefix. The prefix exists to give the frame replay a
+/// fake-mined queue, so a partially hydrated prefix is worse than none.
+async fn hydrate_predecessors(
+    client: &alloy::rpc::client::RpcClient,
+    sender: Address,
+    nonces: &[u64],
+) -> Result<Vec<ReplayableTx>, HydrationFailure> {
+    let mut prefix = Vec::with_capacity(nonces.len());
+    for &nonce in nonces {
+        let nonce_hex = format!("0x{nonce:x}");
+        let value = client
+            .request::<(Address, String), serde_json::Value>(
+                std::borrow::Cow::from("eth_getTransactionBySenderAndNonce"),
+                (sender, nonce_hex),
+            )
+            .await
+            .map_err(|_| HydrationFailure::Transient("predecessor lookup failed"))?;
+        if value.is_null() {
+            return Err(HydrationFailure::Transient("predecessor missing"));
+        }
+        prefix
+            .push(decode_predecessor(sender, nonce, &value).map_err(HydrationFailure::Structural)?);
+    }
+    Ok(prefix)
+}
+
+/// A failed predecessor hydration is the endpoint-skew transient: the frame
+/// survives and retries once the pool view and the replay view agree. No
+/// resolve is written -- the original park record still stands.
+fn route_failed_hydration(
+    frame: &ParkedFrame,
+    quarantine: &mut Quarantine,
+    journal: Option<&mut QuarantineJournal>,
+) {
+    journal_reentry_outcome(frame, ReentryOutcome::Transient, quarantine, journal);
+}
+
+/// A structurally undecodable predecessor permanently disqualifies the
+/// pool-pred lane for this frame: re-requesting the same list returns the same
+/// shape. Keep the frame tracked -- the mined frontier needs no predecessors --
+/// and record the guard so the identical pool-pred rescue is suppressed until
+/// the predecessor set changes.
+fn route_unhydratable_hydration(
+    frame: &ParkedFrame,
+    predecessors: &[u64],
+    reason: &'static str,
+    quarantine: &mut Quarantine,
+    journal: Option<&mut QuarantineJournal>,
+) {
+    quarantine.record_unhydratable_guard(frame.hash, predecessors);
+    journal_reentry_outcome(frame, ReentryOutcome::Transient, quarantine, journal);
+    trace_jsonl(
+        "quarantine",
+        serde_json::json!({
+            "action": "rescue_unhydratable",
+            "tx": frame.hash.to_string(),
+            "predecessor_nonces": predecessors,
+            "reason": reason,
+            "permanent": true,
+        }),
+    );
+    tracing::warn!(
+        tx = %frame.hash,
+        reason,
+        "pool-pred predecessor structurally unhydratable - pool-pred lane suppressed"
+    );
 }
 
 /// The node's `finalized` tag (ONE read per head advance). Never block-count
@@ -1008,6 +1208,8 @@ async fn main() {
 
     let mut quarantine = Quarantine::new();
 
+    let mut gap_park_memo: GapParkMemo = None;
+
     if let Some(frames) = fixture_frames {
         // Dry-run over the capture: every frame processed once, in order.
         for ev in &frames {
@@ -1034,6 +1236,7 @@ async fn main() {
                 &gap_probe,
                 &mut quarantine,
                 None,
+                &mut gap_park_memo,
             )
             .await;
         }
@@ -1172,7 +1375,20 @@ async fn main() {
                         tracing::warn!(sender = ?sender, "head-nonce read failed - sender tick skipped");
                         continue;
                     };
-                    for (frame, decision) in quarantine.poll(sender, head_nonce, &[]) {
+                    // ONE pending-lane read; a failure is NO evidence and
+                    // degrades this tick to the latest-lane behavior rather
+                    // than skipping the sender's frames entirely.
+                    let pending_count = nonce_lane_evidence(
+                        sim_client
+                            .request::<(Address, &str), U256>(
+                                std::borrow::Cow::from("eth_getTransactionCount"),
+                                (sender, "pending"),
+                            )
+                            .await,
+                    );
+                    let pool_known_gap =
+                        pool_known_gap_for_tick(&quarantine, sender, head_nonce, pending_count);
+                    for (frame, decision) in quarantine.poll(sender, head_nonce, &pool_known_gap) {
                         match decision {
                             QuarantineDecision::NonceConsumed => {
                                 let Some(consumed) =
@@ -1222,8 +1438,65 @@ async fn main() {
                                         "action": "rescue_reentered",
                                         "tx": frame.hash.to_string(),
                                         "predecessors": predecessors.len(),
+                                        "predecessor_nonces": predecessors.clone(),
                                     }),
                                 );
+                                // A non-empty prefix is the pool-pred case: the
+                                // gap's txs must all hydrate before the frame
+                                // can advance. A transport error or a null
+                                // lookup is transient; a returned shape that
+                                // cannot decode is permanent for this lane.
+                                if !predecessors.is_empty() {
+                                    match hydrate_predecessors(
+                                        &sim_client,
+                                        frame.from,
+                                        &predecessors,
+                                    )
+                                    .await
+                                    {
+                                        Ok(prefix) => trace_jsonl(
+                                            "quarantine",
+                                            serde_json::json!({
+                                                "action": "rescue_hydrated",
+                                                "tx": frame.hash.to_string(),
+                                                "predecessors": prefix.len(),
+                                            }),
+                                        ),
+                                        Err(HydrationFailure::Transient(reason)) => {
+                                            trace_jsonl(
+                                                "quarantine",
+                                                serde_json::json!({
+                                                    "action": "rescue_hydration_failed",
+                                                    "tx": frame.hash.to_string(),
+                                                    "predecessor_nonces": predecessors.clone(),
+                                                    "reason": reason,
+                                                    "permanent": false,
+                                                }),
+                                            );
+                                            tracing::warn!(
+                                                tx = %frame.hash,
+                                                reason = reason,
+                                                "pool-pred predecessor hydration failed - transient"
+                                            );
+                                            route_failed_hydration(
+                                                &frame,
+                                                &mut quarantine,
+                                                quarantine_journal.as_mut(),
+                                            );
+                                            continue;
+                                        }
+                                        Err(HydrationFailure::Structural(reason)) => {
+                                            route_unhydratable_hydration(
+                                                &frame,
+                                                &predecessors,
+                                                reason,
+                                                &mut quarantine,
+                                                quarantine_journal.as_mut(),
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                }
                                 // Re-enter the funnel exactly as the feed loop
                                 // does, with the same context. `run_frame`
                                 // owns its own spent/consumption accounting, so
@@ -1246,8 +1519,22 @@ async fn main() {
                                     &gap_probe,
                                     &mut quarantine,
                                     quarantine_journal.as_mut(),
+                                    &mut gap_park_memo,
                                 )
                                 .await;
+                                // The caller observed the re-park, so it can key
+                                // the suppression guard on the boundary the
+                                // re-park actually carried.
+                                if outcome == FrameOutcome::GapPending {
+                                    if let Some(boundary) = quarantine.expected_boundary(frame.hash)
+                                    {
+                                        quarantine.record_repark_guard(
+                                            frame.hash,
+                                            &predecessors,
+                                            boundary,
+                                        );
+                                    }
+                                }
                                 journal_reentry_outcome(
                                     &frame,
                                     reentry_outcome(outcome),
@@ -1351,6 +1638,7 @@ async fn main() {
                 &gap_probe,
                 &mut quarantine,
                 quarantine_journal.as_mut(),
+                &mut gap_park_memo,
             )
             .await;
         }
@@ -1360,11 +1648,13 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        bid_submission_target, build_broadcast_relays, journal_reentry_outcome,
-        nonce_lane_evidence, outcome_for, reentry_outcome, strategy_arm_refusal, FrameOutcome,
-        ParkedFrame, Quarantine, QuarantineJournal, ReentryOutcome,
+        bid_submission_target, build_broadcast_relays, decode_predecessor, journal_reentry_outcome,
+        nonce_lane_evidence, outcome_for, pool_known_gap_for_tick, record_gap_park,
+        reentry_outcome, route_failed_hydration, route_unhydratable_hydration, run_frame,
+        strategy_arm_refusal, FrameOutcome, GapParkMemo, ParkRecord, ParkedFrame, Quarantine,
+        QuarantineDecision, QuarantineJournal, ReentryOutcome,
     };
-    use alloy::primitives::U256;
+    use alloy::primitives::{Address, U256};
     use degenbot_bot::sidecar::SidecarConfig;
     use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
     use std::sync::Arc;
@@ -1477,6 +1767,186 @@ mod tests {
             nonce_lane_evidence::<()>(Ok(U256::from(29_764u64))),
             Some(29_764)
         );
+    }
+
+    /// A failed pending-lane read is NO pool evidence: the gap degrades to
+    /// empty, but the tick still runs the latest-lane classification and a
+    /// mined frontier rescues with an empty prefix.
+    #[test]
+    fn failed_pending_read_degrades_to_empty_gap_and_frontier_still_rescues() {
+        let mut q = Quarantine::new();
+        let f = parked(71);
+        q.push(f.clone());
+        let gap = pool_known_gap_for_tick(&q, f.from, f.claimed_nonce, None);
+        assert!(
+            gap.is_empty(),
+            "a failed pending read yields no pool evidence"
+        );
+        let out = q.poll(f.from, f.claimed_nonce, &gap);
+        assert_eq!(
+            out[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![]
+            },
+            "the mined frontier is unaffected by the pending-lane failure"
+        );
+        assert!(q.is_empty());
+    }
+
+    /// A predecessor miss or decode failure hydrates nothing and routes the
+    /// rescue as transient: through the journal fold the original frame is
+    /// re-parked and no resolve is written.
+    #[test]
+    fn predecessor_hydration_failure_routes_transient_through_the_fold() {
+        use degenbot_submission::gap_quarantine::FrameState;
+
+        assert!(decode_predecessor(Address::ZERO, 10, &serde_json::Value::Null).is_err());
+        assert!(decode_predecessor(Address::ZERO, 10, &serde_json::json!({"to": null})).is_err());
+        let good = serde_json::json!({
+            "to": "0x0000000000000000000000000000000000000001",
+            "value": "0x0",
+            "input": "0x",
+            "gas": "0x5208",
+            "maxFeePerGas": "0x1",
+            "maxPriorityFeePerGas": "0x1",
+            "nonce": "0xa",
+        });
+        let decoded = decode_predecessor(Address::ZERO, 10, &good).expect("valid predecessor");
+        assert_eq!(decoded.nonce, 10);
+        assert_eq!(decoded.gas_limit, 21_000);
+
+        let (dir, path) = temp_journal("hydration-failure");
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        let mut q = Quarantine::new();
+        let f = parked(72);
+        route_failed_hydration(&f, &mut q, Some(&mut journal));
+        assert_eq!(q.state(f.hash), Some(FrameState::Tracked));
+        assert_eq!(resolve_count(&path), 0, "a transient writes no resolve");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A type-0 (legacy) predecessor envelope carries `gasPrice` instead of the
+    /// EIP-1559 fee pair; the decode accepts it for both fee fields.
+    #[test]
+    fn legacy_type_zero_predecessor_decodes_via_gas_price() {
+        let legacy = serde_json::json!({
+            "to": "0x0000000000000000000000000000000000000001",
+            "value": "0x0",
+            "input": "0x",
+            "gas": "0x5208",
+            "gasPrice": "0x3b9aca00",
+            "nonce": "0xa",
+            "type": "0x0",
+        });
+        let decoded = decode_predecessor(Address::ZERO, 10, &legacy).expect("legacy envelope");
+        assert_eq!(decoded.max_fee_per_gas, 1_000_000_000);
+        assert_eq!(decoded.max_priority_fee_per_gas, 1_000_000_000);
+    }
+
+    /// An RPC-error (or null) hydration failure records no guard: the next tick
+    /// re-fires the identical rescue instead of sticking the frame.
+    #[test]
+    fn transient_hydration_failure_records_no_guard_and_retries() {
+        let mut q = Quarantine::new();
+        let f = parked(73);
+        q.push(f.clone());
+        assert_eq!(
+            q.poll(f.from, 10, &[10, 11])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            }
+        );
+        route_failed_hydration(&f, &mut q, None);
+        assert_eq!(
+            q.poll(f.from, 10, &[10, 11])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            },
+            "no guard was recorded, so the rescue retries"
+        );
+    }
+
+    /// A structural decode failure suppresses the failed pool-pred list once,
+    /// while the frame still re-enters through the empty mined-frontier rescue.
+    #[test]
+    fn unhydratable_predecessor_suppresses_pool_pred_and_keeps_the_frontier() {
+        let mut q = Quarantine::new();
+        let f = parked(74);
+        q.push(f.clone());
+        assert_eq!(
+            q.poll(f.from, 10, &[10, 11])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            }
+        );
+        route_unhydratable_hydration(&f, &[10, 11], "unparseable value", &mut q, None);
+        assert_eq!(
+            q.poll(f.from, 10, &[10, 11])[0].1,
+            QuarantineDecision::StillWaiting {
+                unknown: vec![10, 11]
+            },
+            "the failed pool-pred list is suppressed"
+        );
+        // Head reaches the claim: the mined frontier needs no predecessors.
+        assert_eq!(
+            q.poll(f.from, 12, &[])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![]
+            },
+            "the empty mined-frontier rescue is a different evidence class"
+        );
+        assert!(q.is_empty());
+    }
+
+    /// Two consecutive identical `(hash, boundary)` re-parks write exactly one
+    /// journal line; the fold still shows the frame parked.
+    #[test]
+    fn consecutive_identical_gap_parks_write_one_journal_line() {
+        let (dir, path) = temp_journal("gap-dedup");
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        let f = parked(75);
+        let record = ParkRecord::new(&f.to_event(), f.expected_at_capture, 1);
+        let mut memo: GapParkMemo = None;
+        assert!(record_gap_park(
+            Some(&mut journal),
+            &record,
+            f.hash,
+            f.expected_at_capture,
+            &mut memo,
+        ));
+        assert!(
+            !record_gap_park(
+                Some(&mut journal),
+                &record,
+                f.hash,
+                f.expected_at_capture,
+                &mut memo,
+            ),
+            "a consecutive identical re-park is folded"
+        );
+        let raw = std::fs::read_to_string(&path).expect("raw");
+        assert_eq!(
+            raw.lines()
+                .filter(|line| line.contains("\"kind\":\"park\""))
+                .count(),
+            1,
+            "exactly one park line"
+        );
+        let read = degenbot_submission::gap_quarantine_journal::read_pending(&path).expect("read");
+        assert_eq!(
+            read.pending.len(),
+            1,
+            "the fold still shows the frame parked"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The feed loop and the quarantine rescue re-entry hand `run_frame` the
+    /// same runtime surfaces: both call sites share one argument list, so a
+    /// signature drift on either side is a compile error.
+    #[test]
+    fn feed_loop_and_rescue_reentry_share_run_frame_surface() {
+        let _ = run_frame;
     }
 
     fn temp_journal(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {

@@ -205,12 +205,38 @@ pub enum QuarantineDecision {
     },
 }
 
+/// Why a pool-pred rescue is known-futile. Recorded only when the caller's
+/// outcome proved it: a `GapPending` re-park (the replay could not consume the
+/// pool-known predecessors) or a structural predecessor-decode failure. The
+/// empty mined-frontier rescue is a different evidence class and is never
+/// covered by an `Unhydratable` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RescueGuard {
+    /// A `GapPending` re-park: suppress a repeat only while the exact
+    /// predecessor list AND the captured boundary are both unchanged.
+    Reparked {
+        predecessors: Vec<u64>,
+        boundary: u64,
+    },
+    /// A predecessor shape that cannot decode: suppress the pool-pred list
+    /// until the predecessor set changes.
+    Unhydratable { predecessors: Vec<u64> },
+}
+
 /// The pure FSM core: per-sender FIFOs of tracked and tentative frames.
 /// `poll` returns one decision per tracked frame of that sender; non-rescued
 /// frames stay parked.
 #[derive(Debug, Default)]
 pub struct Quarantine {
     pending: BTreeMap<Address, Vec<Entry>>,
+    /// Why a rescue for a frame hash is known-futile, recorded by the caller
+    /// AFTER the outcome proved it -- never from the rescue decision itself.
+    /// The key is the exact predecessor list a rescue would hydrate, so an
+    /// unrelated pool transaction that only moves the count lane cannot
+    /// re-arm a futile rescue. A transient hydration failure records nothing
+    /// (an RPC error is retried on the next tick); a fire clears its own
+    /// entry; and every terminal exit drops it.
+    repark_guard: BTreeMap<B256, RescueGuard>,
 }
 
 impl Quarantine {
@@ -246,6 +272,32 @@ impl Quarantine {
     #[must_use]
     pub fn senders(&self) -> Vec<Address> {
         self.pending.keys().copied().collect()
+    }
+
+    /// The pool-known predecessor set for `sender`: every TRACKED frame's gap
+    /// nonce that lies in the caller's pool window `[head_nonce, pending_count)`.
+    /// The gap and the window are intersected directly, so a stale pending
+    /// count (or a huge claimed gap) never materializes the full range.
+    /// Sorted and deduped; degraded frames contribute nothing (they can never
+    /// rescue).
+    #[must_use]
+    pub fn pool_known_gap(&self, sender: Address, head_nonce: u64, pending_count: u64) -> Vec<u64> {
+        let mut nonces: Vec<u64> = Vec::new();
+        if let Some(frames) = self.pending.get(&sender) {
+            for entry in frames {
+                if !matches!(entry.state, FrameState::Tracked) || entry.frame.is_degraded() {
+                    continue;
+                }
+                let start = entry.frame.expected_at_capture.max(head_nonce);
+                let end = entry.frame.claimed_nonce.min(pending_count);
+                if start < end {
+                    nonces.extend(start..end);
+                }
+            }
+        }
+        nonces.sort_unstable();
+        nonces.dedup();
+        nonces
     }
 
     /// The state of the frame with `hash`, if tracked at all.
@@ -285,7 +337,9 @@ impl Quarantine {
     /// Returns one decision per TRACKED frame of that sender (in push order).
     /// `Rescue` removes the frame (it leaves the FSM); `NonceConsumed` and
     /// `StillWaiting` keep it parked -- the caller classifies a consumed
-    /// nonce via [`Self::enter_tentative`].
+    /// nonce via [`Self::enter_tentative`]. A Rescue whose exact predecessor
+    /// list (and, for a re-park, boundary) was already proved futile is
+    /// suppressed to `StillWaiting` (see `repark_guard`).
     pub fn poll(
         &mut self,
         sender: Address,
@@ -346,20 +400,31 @@ impl Quarantine {
                 .filter(|n| *n >= head_nonce)
                 .collect();
             if unknown.is_empty() {
-                // Every gap nonce is fetchable, so the frame leaves the FSM
-                // into the funnel. At the frontier the head sits exactly on
-                // the claim and `preds` is empty: the whole gap is already
-                // mined and replaying against the current head needs no
-                // prefix. A re-park of the same hash can only follow a
-                // genuinely NEW gap captured against a later head - at
-                // count == claim the replay cannot emit NonceTooHigh, so no
-                // same-head rescue/park ping-pong is possible.
-                out.push((
-                    entry.frame.clone(),
-                    QuarantineDecision::Rescue {
-                        predecessors: preds,
-                    },
-                ));
+                if self.rescue_is_guarded(entry.frame.hash, &preds, entry.frame.expected_at_capture)
+                {
+                    // The caller already proved an identical rescue futile
+                    // (a same-boundary re-park, or a structural decode
+                    // failure). Hold the frame until the predecessor list or
+                    // boundary changes.
+                    out.push((
+                        entry.frame.clone(),
+                        QuarantineDecision::StillWaiting { unknown: preds },
+                    ));
+                    keep.push(entry);
+                } else {
+                    // Every gap nonce is fetchable, so the frame leaves the FSM
+                    // into the funnel. At the frontier the head sits exactly on
+                    // the claim and `preds` is empty: the whole gap is already
+                    // mined and replaying against the current head needs no
+                    // prefix.
+                    self.repark_guard.remove(&entry.frame.hash);
+                    out.push((
+                        entry.frame.clone(),
+                        QuarantineDecision::Rescue {
+                            predecessors: preds,
+                        },
+                    ));
+                }
             } else {
                 out.push((
                     entry.frame.clone(),
@@ -374,6 +439,57 @@ impl Quarantine {
         out
     }
 
+    /// Whether an identical rescue for `hash` was already proved futile.
+    fn rescue_is_guarded(&self, hash: B256, predecessors: &[u64], boundary: u64) -> bool {
+        match self.repark_guard.get(&hash) {
+            Some(RescueGuard::Reparked {
+                predecessors: guarded,
+                boundary: guarded_boundary,
+            }) => guarded.as_slice() == predecessors && *guarded_boundary == boundary,
+            Some(RescueGuard::Unhydratable {
+                predecessors: guarded,
+            }) => guarded.as_slice() == predecessors,
+            None => false,
+        }
+    }
+
+    /// Record that a `GapPending` re-park proved a rescue of this exact
+    /// predecessor list against this boundary futile. The caller records this
+    /// only after observing the re-park, never on the rescue decision itself.
+    pub fn record_repark_guard(&mut self, frame_hash: B256, predecessors: &[u64], boundary: u64) {
+        self.repark_guard.insert(
+            frame_hash,
+            RescueGuard::Reparked {
+                predecessors: predecessors.to_vec(),
+                boundary,
+            },
+        );
+    }
+
+    /// Record that a predecessor of this list returned a shape that cannot
+    /// decode. Permanent for the pool-pred lane: re-requesting the same list
+    /// returns the same shape. The empty mined-frontier rescue is a different
+    /// evidence class and stays available.
+    pub fn record_unhydratable_guard(&mut self, frame_hash: B256, predecessors: &[u64]) {
+        self.repark_guard.insert(
+            frame_hash,
+            RescueGuard::Unhydratable {
+                predecessors: predecessors.to_vec(),
+            },
+        );
+    }
+
+    /// The captured boundary of the frame with `hash`; keys a re-park guard on
+    /// the boundary the re-park actually carried.
+    #[must_use]
+    pub fn expected_boundary(&self, frame_hash: B256) -> Option<u64> {
+        self.pending
+            .values()
+            .flatten()
+            .find(|entry| entry.frame.hash == frame_hash)
+            .map(|entry| entry.frame.expected_at_capture)
+    }
+
     /// Move a tracked frame into [`FrameState::Tentative`] with the caller's
     /// classification evidence. Returns `false` when the frame is unknown or
     /// already tentative.
@@ -381,6 +497,7 @@ impl Quarantine {
         for entry in self.pending.values_mut().flatten() {
             if entry.frame.hash == frame_hash && entry.state == FrameState::Tracked {
                 entry.state = FrameState::Tentative(consumed);
+                self.repark_guard.remove(&frame_hash);
                 return true;
             }
         }
@@ -411,6 +528,7 @@ impl Quarantine {
             if let FrameState::Tentative(consumed) = entry.state {
                 if consumed.block() == block && canonical_hash != Some(consumed.block_hash()) {
                     entry.state = FrameState::Tracked;
+                    self.repark_guard.remove(&entry.frame.hash);
                     revived.push(entry.frame.clone());
                 }
             }
@@ -435,18 +553,26 @@ impl Quarantine {
             });
         }
         self.pending.retain(|_, entries| !entries.is_empty());
+        for (frame, _) in &dead {
+            self.repark_guard.remove(&frame.hash);
+        }
         dead
     }
 
     /// Force-remove one sender's frames (operator flush). Returns them in
     /// push order (log-friendly).
     pub fn evict_sender(&mut self, sender: Address) -> Vec<ParkedFrame> {
-        self.pending
+        let frames: Vec<ParkedFrame> = self
+            .pending
             .remove(&sender)
             .unwrap_or_default()
             .into_iter()
             .map(|entry| entry.frame)
-            .collect()
+            .collect();
+        for frame in &frames {
+            self.repark_guard.remove(&frame.hash);
+        }
+        frames
     }
 }
 
@@ -519,6 +645,100 @@ mod tests {
             );
         }
         assert_eq!(q.len(), 1, "no TTL ever evicts a still-waiting frame");
+    }
+
+    /// The guard keys on the exact predecessor list and the frame's captured
+    /// boundary. An unrelated pool transaction that only moves the count lane
+    /// is not evidence, so it must not re-arm a futile rescue.
+    #[test]
+    fn repark_guard_suppresses_only_an_identical_list_and_boundary() {
+        let mut q = Quarantine::new();
+        q.push(frame(12, 10));
+        let first = q.poll(SENDER, 10, &[10, 11]);
+        assert_eq!(
+            first[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            }
+        );
+        assert!(q.is_empty(), "the rescued frame leaves the FSM");
+
+        // The funnel re-parked on the SAME boundary; the caller records the
+        // deterministic-futile signal.
+        q.record_repark_guard(frame(12, 10).hash, &[10, 11], 10);
+        q.push(frame(12, 10));
+        assert_eq!(
+            q.poll(SENDER, 10, &[10, 11])[0].1,
+            QuarantineDecision::StillWaiting {
+                unknown: vec![10, 11]
+            },
+            "identical list and boundary must not re-fire the rescue"
+        );
+        assert_eq!(q.len(), 1, "the suppressed frame stays parked");
+
+        // The head advances: the predecessor list changes, so the guard no
+        // longer covers the rescue and it re-fires.
+        assert_eq!(
+            q.poll(SENDER, 11, &[11])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![11]
+            }
+        );
+        assert!(q.is_empty());
+    }
+
+    /// A transient hydration failure records no guard: without an entry the
+    /// next poll re-fires the identical rescue.
+    #[test]
+    fn no_guard_records_means_the_rescue_re_fires() {
+        let mut q = Quarantine::new();
+        q.push(frame(12, 10));
+        assert!(matches!(
+            q.poll(SENDER, 10, &[10, 11])[0].1,
+            QuarantineDecision::Rescue { .. }
+        ));
+        q.push(frame(12, 10));
+        assert!(matches!(
+            q.poll(SENDER, 10, &[10, 11])[0].1,
+            QuarantineDecision::Rescue { .. }
+        ));
+    }
+
+    /// A structural decode failure suppresses only the failed pool-pred list:
+    /// the empty mined-frontier rescue is a different evidence class and stays
+    /// available.
+    #[test]
+    fn unhydratable_guard_suppresses_the_pool_pred_list_only() {
+        let mut q = Quarantine::new();
+        q.record_unhydratable_guard(frame(12, 10).hash, &[10, 11]);
+        q.push(frame(12, 10));
+        assert_eq!(
+            q.poll(SENDER, 10, &[10, 11])[0].1,
+            QuarantineDecision::StillWaiting {
+                unknown: vec![10, 11]
+            }
+        );
+        // Head reaches the claim: the predecessor prefix is empty and the
+        // frame re-enters the funnel.
+        assert_eq!(
+            q.poll(SENDER, 12, &[])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![]
+            }
+        );
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn pool_known_gap_is_bounded_to_tracked_ranges() {
+        let mut q = Quarantine::new();
+        q.push(frame(12, 10));
+        assert_eq!(q.pool_known_gap(SENDER, 10, 12), vec![10, 11]);
+        // A stale pending count cannot widen the set past the tracked gap.
+        assert_eq!(q.pool_known_gap(SENDER, 10, 1_000_000), vec![10, 11]);
+        // Head advanced into the gap: only the unresolved nonce remains.
+        assert_eq!(q.pool_known_gap(SENDER, 11, 12), vec![11]);
+        assert_eq!(q.pool_known_gap(SENDER, 10, 10), Vec::<u64>::new());
     }
 
     #[test]
