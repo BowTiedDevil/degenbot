@@ -188,6 +188,10 @@ The **Python-only pump ritual** is retired: `PumpState`'s `subscribe`/`resume`/`
 - **ADR-006** (Bot as the per-chain orchestrator) — the pump/engine ownership the session state composes.
 - **ADR-041** (block-epoch pipeline) — the stage machine whose driver surface this completes.
 - **ADR-043** (observability standard) — the telemetry labels the move must preserve.
+- **ADR-055** (pending-transaction strategy seams) — Phase C records the ADR-018
+  engine-family trigger as *pulled by decision* with the dynamic strategy host
+  (parameterized stage payloads, `EngineDriver<S>` over a second settled-block
+  strategy). Scheduled; do not expand the driver shape for a hypothetical strategy.
 - Epic `RGZG4S` (Rust settlement-bot parity), task `OJI4FH` (this ADR), `5XOGRK` (Gap G1), `XFEJUG`, `L4E7RI`, `IUGFLH` (RSP-9), `23DLCY` (the running parity gate), `YFIOSF` (Gap G2), `KPLWUM` (Gap G5).
 - The task chain behind the preserved invariant: epic `5TBT7L`, tasks `2NLZE3` / `3WI4EO` / `RS64JJ` / `5AFSXM` / `RPEBMX` / `MHLURV` / `XURYVA`.
 - `docs/architecture/rust-settlement-bot-parity.md` (the G1 ledger rows), `docs/architecture/rust-owned-bot.md` (the Rust-owned design), `CONTEXT.md` ("Engine seam deepening", "Engine retune", "Driver seam").

@@ -118,4 +118,9 @@ for retired modules.
   retire-by-vocabulary call follows.
 - The `no-pyo3-in-cores` scan — the live-invariant scan the settled policy contrasts
   against.
+- **ADR-055** (pending-transaction strategy seams) — Phase B schedules a scoped
+  `EventHub` (pending-tx/newHeads intake with subscription fan-out to registered
+  strategies). This is NOT the retired bus resurrected: intake-scoped, typed at the
+  subscription site, no generic broadcast surface for cores. The D4 retirement
+  stands.
 - Ergo epic `Y4VMWH` (candidate #3); parent `MROOY7`.
