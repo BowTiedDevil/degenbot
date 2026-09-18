@@ -762,7 +762,7 @@ fn assert_stable_v2_multitoken_parity(
     let onchain = call_onchain(stable_call3(sig, case, amount));
     match (engine, onchain) {
         (Some(e), BalancerOutcome::Ok(o)) => {
-            assert_eq!(e, o, "engine [V2 n=3] vs on-chain byte-exact")
+            assert_eq!(e, o, "engine [V2 n=3] vs on-chain byte-exact");
         }
         (None, BalancerOutcome::GenuineReject(_)) => {}
         (Some(e), BalancerOutcome::GenuineReject(l)) => {
