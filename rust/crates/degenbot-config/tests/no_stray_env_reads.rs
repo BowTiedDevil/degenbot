@@ -127,7 +127,6 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
                 "SIDECAR_BUDGET_WEI",
                 "SIDECAR_MAX_BUNDLE_WEI",
                 "SIDECAR_STOP_FILE",
-                "SIDECAR_STALE_MS",
             ][..],
         );
         m.insert(

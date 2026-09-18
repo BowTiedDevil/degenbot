@@ -1,6 +1,7 @@
-//! Journal round-trip: parks and tombstones survive a reload, pending frames
-//! re-enter the live quarantine FSM, and frames whose gap closed while the
-//! process was down are dropped at boot.
+//! Journal round-trip + frame-liveness convergence: parks and their tentative
+//! classifications survive a reload, a restart mid-finality-window still sees
+//! the frame as tentative, finality writes a tombstone exactly once, and no
+//! frame is ever dropped for age or pool absence.
 
 #![expect(
     clippy::expect_used,
@@ -9,13 +10,16 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
-use degenbot_submission::gap_quarantine::{Quarantine, QuarantineDecision};
+use degenbot_submission::gap_quarantine::{
+    FrameState, NonceConsumed, Quarantine, QuarantineDecision,
+};
 use degenbot_submission::gap_quarantine_journal::{
-    compact, read_pending, ParkRecord, QuarantineJournal, Resolution, JOURNAL_FILE_NAME,
+    compact, read_pending, ParkRecord, QuarantineJournal, Resolution, TentativeRecord,
+    JOURNAL_FILE_NAME,
 };
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -58,84 +62,122 @@ fn event(hash_byte: u8, nonce: u64, received_unix_ms: u64) -> BackrunFeedEvent {
     }
 }
 
-#[test]
-fn journal_round_trips_pending_parks_into_the_live_fsm() {
-    let dir = scratch("roundtrip");
-    let path = dir.join(JOURNAL_FILE_NAME);
+fn hash(byte: u8) -> B256 {
+    let mut raw = [0u8; 32];
+    raw[0] = byte;
+    B256::from(raw)
+}
 
-    // Session 1: two parks, one already resolved by head closure.
+/// Park -> tentative -> restart mid-window -> still tentative -> finalized ->
+/// tombstone written exactly once.
+#[test]
+fn journal_round_trips_tentative_state_across_a_restart() {
+    let dir = scratch("tentative-roundtrip");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let consumed = NonceConsumed::MinedAt {
+        block: 100,
+        block_hash: hash(7),
+    };
+
+    // Session 1: park + classify, and a second park whose tombstone lands in
+    // the same window.
     {
         let mut journal = QuarantineJournal::open(&path).expect("open");
-        let closed = ParkRecord::new(&event(1, 12, 1_000), 10, now_ms());
-        let pending = ParkRecord::new(&event(2, 20, 2_000), 18, now_ms());
-        journal.record_park(&closed).expect("park closed");
-        journal.record_park(&pending).expect("park pending");
+        let frame = ParkRecord::new(&event(1, 12, 1_000), 10, now_ms());
+        journal.record_park(&frame).expect("park");
+        journal
+            .record_tentative(frame.frame.hash.parse().expect("hash"), consumed, now_ms())
+            .expect("tentative");
+
+        let dead = ParkRecord::new(&event(2, 20, 2_000), 18, now_ms());
+        journal.record_park(&dead).expect("park dead");
         journal
             .record_resolve(
-                closed.frame.hash.parse().expect("hash"),
-                Resolution::ClosedByHead,
+                dead.frame.hash.parse().expect("hash"),
+                Resolution::SlotTakenFinalized,
                 now_ms(),
             )
             .expect("resolve");
     }
 
-    // Boot: the tombstone removed the first park; the second is still pending.
+    // Boot mid-finality-window: the fold carries the tentative classification,
+    // and the resolved park is gone.
     let read = read_pending(&path).expect("read");
     assert_eq!(read.skipped, 0);
-    assert_eq!(read.pending.len(), 1, "only the unresolved park remains");
+    assert_eq!(read.pending.len(), 1, "only the tentative park remains");
     let record = &read.pending[0];
-    assert_eq!(record.claimed_nonce, 20);
-    assert_eq!(record.original_received_unix_ms(), 2_000);
-
-    // Compaction on boot keeps exactly the re-parked set.
-    compact(&path, &read.pending).expect("compact");
-    assert_eq!(read_pending(&path).expect("reread").pending.len(), 1);
-
-    // Re-park into the live FSM: head is at 18, so the gap [18, 20) is not yet
-    // closed and the pool view knows both predecessors -> Rescue.
-    let reload = Instant::now();
-    let mut quarantine = Quarantine::new();
-    quarantine.push(record.to_parked_frame(reload).expect("parked frame"));
-    let out = quarantine.poll(SENDER, 18, &[18, 19], Instant::now());
-    assert_eq!(out.len(), 1);
+    assert_eq!(record.claimed_nonce, 12);
     assert_eq!(
-        out[0].1,
-        QuarantineDecision::Rescue {
-            predecessors: vec![18, 19]
-        }
+        record.tentative.map(TentativeRecord::to_consumed),
+        Some(consumed)
     );
-    assert!(quarantine.is_empty(), "a rescued frame leaves the FSM");
+    compact(&path, &read.pending).expect("compact");
+
+    // Reload reconstructs the tentative set exactly -- not reclassified, not
+    // dropped.
+    let mut q = Quarantine::new();
+    let rebuilt = record.to_parked_frame().expect("frame");
+    let frame_hash = rebuilt.hash;
+    q.push(rebuilt);
+    assert!(
+        q.enter_tentative(
+            frame_hash,
+            record.tentative.expect("tentative").to_consumed()
+        ),
+        "reload reclassifies the tentative frame"
+    );
+    assert!(matches!(
+        q.state(frame_hash),
+        Some(FrameState::Tentative(_))
+    ));
+
+    // Finality at the block ends it exactly once.
+    let dead = q.check_finalized(100);
+    assert_eq!(dead.len(), 1);
+    assert!(dead[0].1.mined());
+    assert!(q.check_finalized(200).is_empty(), "never tombstoned twice");
+    assert!(q.is_empty());
+
+    {
+        let mut journal = QuarantineJournal::open(&path).expect("reopen");
+        let resolution = if dead[0].1.mined() {
+            Resolution::MinedFinalized
+        } else {
+            Resolution::SlotTakenFinalized
+        };
+        journal
+            .record_resolve(dead[0].0.hash, resolution, now_ms())
+            .expect("resolve");
+    }
+    assert!(read_pending(&path).expect("final fold").pending.is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A frame received an arbitrarily long time ago (six hours, or six years) is
+/// never dropped for age: the journal keeps it and the FSM keeps it tracked.
 #[test]
-fn reload_drops_frames_whose_gap_closed_while_down() {
-    let dir = scratch("drop");
+fn a_very_late_frame_is_never_dropped_for_age_or_pool_absence() {
+    let dir = scratch("late-frame");
     let path = dir.join(JOURNAL_FILE_NAME);
-
+    // received_unix_ms = 1: an arbitrarily ancient receipt.
+    let ancient = ParkRecord::new(&event(3, 30, 1), 28, now_ms());
     {
         let mut journal = QuarantineJournal::open(&path).expect("open");
-        let settled = ParkRecord::new(&event(3, 30, 3_000), 28, now_ms());
-        journal.record_park(&settled).expect("park");
+        journal.record_park(&ancient).expect("park");
     }
-
     let read = read_pending(&path).expect("read");
-    assert_eq!(read.pending.len(), 1);
+    assert_eq!(read.pending[0].original_received_unix_ms(), 1);
 
-    // Boot probe: the account nonce already reached the claimed nonce.
-    let head_nonce = 30u64;
-    let kept: Vec<ParkRecord> = read
-        .pending
-        .iter()
-        .filter(|record| !record.gap_closed_while_down(head_nonce))
-        .cloned()
-        .collect();
-    assert!(kept.is_empty(), "a settled gap never re-enters the FSM");
-
-    // Compaction records the drop: the journal is empty after boot.
-    compact(&path, &kept).expect("compact");
-    assert!(read_pending(&path).expect("reread").pending.is_empty());
+    let mut q = Quarantine::new();
+    let frame = read.pending[0].to_parked_frame().expect("frame");
+    let frame_hash = frame.hash;
+    q.push(frame);
+    for _ in 0..10 {
+        let out = q.poll(SENDER, 28, &[]);
+        assert!(matches!(out[0].1, QuarantineDecision::StillWaiting { .. }));
+    }
+    assert_eq!(q.state(frame_hash), Some(FrameState::Tracked));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

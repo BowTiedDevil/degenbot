@@ -5,8 +5,8 @@
 //! the typed `persistence.state_dir` root (default `~/.config/degenbot/state`)
 //! — OUTSIDE the per-session run directories, because the journal must outlive
 //! the session that wrote it. On the next boot the still-pending parks re-enter
-//! the live FSM; frames whose nonce gap closed while the process was down are
-//! dropped with a truthful reason.
+//! the live FSM exactly as they left it (tracked or tentative); nothing is
+//! dropped for age.
 //!
 //! # Persistence model
 //!
@@ -14,8 +14,12 @@
 //!
 //! - A park appends `{"kind":"park", ...}` carrying the full feed event plus
 //!   the claimed/expected nonce and the wall clock.
-//! - A resolution (`gap_expired`, `closed_by_head`, `rescue_consumed`,
-//!   `evicted`) appends `{"kind":"resolve", ...}` naming the frame hash.
+//! - A nonce-consumption classification appends `{"kind":"tentative", ...}`
+//!   naming the frame hash and the carrying block (hash + kind), so a restart
+//!   mid-finality-window reconstructs the tentative set.
+//! - A resolution (`mined_finalized`, `slot_taken_finalized`,
+//!   `rescue_consumed`, `evicted`) appends `{"kind":"resolve", ...}` naming
+//!   the frame hash.
 //! - Each record is one [`std::io::Write::write_all`] on the append handle, so
 //!   a crash cannot interleave two records and a torn tail is at most one
 //!   partial line.
@@ -33,29 +37,100 @@ use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::gap_quarantine::ParkedFrame;
+use crate::gap_quarantine::{NonceConsumed, ParkedFrame};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 
 /// Fixed journal filename under the durable-state root.
 pub const JOURNAL_FILE_NAME: &str = "backrun-quarantine.jsonl";
 
-/// Why a parked frame left the quarantine.
+/// Why a parked frame left the quarantine. Only finalized nonce-consumptions
+/// (and the operational rescue/eviction) write tombstones -- there is no
+/// clock and no pool-absence death.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Resolution {
-    /// The park TTL elapsed.
-    GapExpired,
-    /// The head state passed the frame's claimed nonce.
-    ClosedByHead,
+    /// The frame's own tx mined and the carrying block finalized.
+    MinedFinalized,
+    /// A same-nonce tx consumed the slot and the carrying block finalized.
+    SlotTakenFinalized,
     /// The gap closed in the caller's pool view (predecessors replayable).
     RescueConsumed,
     /// A forced eviction (sender flush / operator action).
     Evicted,
+}
+
+/// The consumption taxonomy stored in the journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsumedKind {
+    /// The frame's own tx mined.
+    Mined,
+    /// A same-nonce tx took the slot.
+    SlotTaken,
+}
+
+/// Persisted nonce-consumption evidence: the block + hash for the reorg
+/// check and the kind + optional slot-stealer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TentativeRecord {
+    pub block: u64,
+    pub block_hash: B256,
+    pub kind: ConsumedKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<B256>,
+}
+
+impl TentativeRecord {
+    /// Encode a classification.
+    #[must_use]
+    pub const fn from_consumed(consumed: NonceConsumed) -> Self {
+        match consumed {
+            NonceConsumed::MinedAt { block, block_hash } => Self {
+                block,
+                block_hash,
+                kind: ConsumedKind::Mined,
+                by: None,
+            },
+            NonceConsumed::SlotTakenAt {
+                block,
+                block_hash,
+                by,
+            } => Self {
+                block,
+                block_hash,
+                kind: ConsumedKind::SlotTaken,
+                by,
+            },
+        }
+    }
+
+    /// Decode a classification.
+    #[must_use]
+    pub const fn to_consumed(self) -> NonceConsumed {
+        match self.kind {
+            ConsumedKind::Mined => NonceConsumed::MinedAt {
+                block: self.block,
+                block_hash: self.block_hash,
+            },
+            ConsumedKind::SlotTaken => NonceConsumed::SlotTakenAt {
+                block: self.block,
+                block_hash: self.block_hash,
+                by: self.by,
+            },
+        }
+    }
+}
+
+/// One tentatively-classified park: the frame hash plus its consumption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TentativeEntryRecord {
+    pub frame_hash: B256,
+    pub consumed: TentativeRecord,
+    pub entered_at_unix_ms: u64,
 }
 
 /// The feed event as it round-trips through the journal. The wire fields are
@@ -145,7 +220,8 @@ fn parse_u256(raw: &str) -> Result<U256, JournalError> {
     U256::from_str_radix(hex, 16).map_err(|e| JournalError::Field(e.to_string()))
 }
 
-/// One park: the full feed event plus the gap edges and wall clock.
+/// One park: the full feed event plus the gap edges, wall clock, and optional
+/// tentative classification (present once the nonce consumption is known).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParkRecord {
     pub frame: WireFrame,
@@ -153,6 +229,8 @@ pub struct ParkRecord {
     pub claimed_nonce: u64,
     pub expected_nonce: u64,
     pub parked_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tentative: Option<TentativeRecord>,
 }
 
 impl ParkRecord {
@@ -165,7 +243,15 @@ impl ParkRecord {
             claimed_nonce: event.nonce,
             expected_nonce,
             parked_at_unix_ms,
+            tentative: None,
         }
+    }
+
+    /// Attach a nonce-consumption classification (journal reload).
+    #[must_use]
+    pub const fn with_tentative(mut self, consumed: NonceConsumed) -> Self {
+        self.tentative = Some(TentativeRecord::from_consumed(consumed));
+        self
     }
 
     /// Rebuild the feed event a replay needs.
@@ -177,15 +263,13 @@ impl ParkRecord {
         self.frame.decode()
     }
 
-    /// Rebuild the FSM frame. `arrived_at` is the reload instant: the park TTL
-    /// restarts from reload rather than from the original park (a frame that
-    /// survived a longer-than-TTL downtime would otherwise be dead on
-    /// arrival).
+    /// Rebuild the FSM frame. No clock rides the frame: liveness is finality,
+    /// so the rebuild is lossless regardless of downtime.
     ///
     /// # Errors
     ///
     /// [`JournalError`] when a hex field fails to parse.
-    pub fn to_parked_frame(&self, arrived_at: Instant) -> Result<ParkedFrame, JournalError> {
+    pub fn to_parked_frame(&self) -> Result<ParkedFrame, JournalError> {
         let event = self.to_event()?;
         Ok(ParkedFrame {
             hash: event.hash,
@@ -197,23 +281,14 @@ impl ParkRecord {
             max_fee_per_gas: event.max_fee_per_gas,
             max_priority_fee_per_gas: event.max_priority_fee_per_gas,
             claimed_nonce: self.claimed_nonce,
-            arrived_at,
             expected_at_capture: self.expected_nonce,
         })
     }
 
-    /// The original receive time, preserved for the re-delivery stale age.
+    /// The original receive time, preserved for forensics.
     #[must_use]
     pub fn original_received_unix_ms(&self) -> u64 {
         self.frame.received_unix_ms
-    }
-
-    /// Boot classification: the account nonce has reached or passed the frame's
-    /// claimed nonce, so its gap settled on-chain while the process was down and
-    /// the frame is `already_settled` territory — it must NOT re-enter.
-    #[must_use]
-    pub fn gap_closed_while_down(&self, head_nonce: u64) -> bool {
-        head_nonce >= self.claimed_nonce
     }
 }
 
@@ -230,6 +305,7 @@ pub struct ResolveRecord {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum JournalRecord {
     Park(Box<ParkRecord>),
+    Tentative(Box<TentativeEntryRecord>),
     Resolve(ResolveRecord),
 }
 
@@ -266,6 +342,11 @@ pub fn read_pending(path: &Path) -> io::Result<PendingRead> {
         match serde_json::from_str::<JournalRecord>(line) {
             Ok(JournalRecord::Park(record)) => {
                 pending.insert(record.frame.hash.clone(), *record);
+            }
+            Ok(JournalRecord::Tentative(record)) => {
+                if let Some(park) = pending.get_mut(&record.frame_hash.to_string()) {
+                    park.tentative = Some(record.consumed);
+                }
             }
             Ok(JournalRecord::Resolve(record)) => {
                 pending.remove(&record.frame_hash.to_string());
@@ -372,6 +453,24 @@ impl QuarantineJournal {
             resolution,
             resolved_at_unix_ms,
         }))
+    }
+
+    /// Append one tentative classification for an existing park.
+    ///
+    /// # Errors
+    ///
+    /// Serialization or I/O failure.
+    pub fn record_tentative(
+        &mut self,
+        frame_hash: B256,
+        consumed: NonceConsumed,
+        entered_at_unix_ms: u64,
+    ) -> io::Result<()> {
+        self.append(&JournalRecord::Tentative(Box::new(TentativeEntryRecord {
+            frame_hash,
+            consumed: TentativeRecord::from_consumed(consumed),
+            entered_at_unix_ms,
+        })))
     }
 
     fn append(&mut self, record: &JournalRecord) -> io::Result<()> {
@@ -487,7 +586,7 @@ mod tests {
         journal
             .record_resolve(
                 second.frame.hash.parse().expect("hash"),
-                Resolution::ClosedByHead,
+                Resolution::MinedFinalized,
                 now_ms(),
             )
             .expect("resolve");
@@ -543,12 +642,46 @@ mod tests {
     }
 
     #[test]
-    fn parked_frame_uses_reload_instant_for_the_ttl() {
+    fn parked_frame_rebuild_is_clock_free_and_lossless() {
         let record = ParkRecord::new(&event(5, 50, 7_000), 48, now_ms());
-        let reload = Instant::now();
-        let frame = record.to_parked_frame(reload).expect("parked frame");
-        assert_eq!(frame.arrived_at, reload);
+        let frame = record.to_parked_frame().expect("parked frame");
         assert_eq!(frame.expected_at_capture, 48);
         assert_eq!(frame.claimed_nonce, 50);
+    }
+
+    #[test]
+    fn tentative_record_folds_onto_its_park_and_compacts() {
+        let path = scratch("tentative").join(JOURNAL_FILE_NAME);
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        let record = ParkRecord::new(&event(6, 60, 8_000), 58, now_ms());
+        journal.record_park(&record).expect("park");
+        let consumed = NonceConsumed::SlotTakenAt {
+            block: 21_000_000,
+            block_hash: B256::from([0xab; 32]),
+            by: None,
+        };
+        journal
+            .record_tentative(record.frame.hash.parse().expect("hash"), consumed, now_ms())
+            .expect("tentative");
+
+        let read = read_pending(&path).expect("read");
+        let parked = &read.pending[0];
+        assert_eq!(
+            parked.tentative.map(TentativeRecord::to_consumed),
+            Some(consumed)
+        );
+
+        // Compaction writes the tentative state inline; the fold still reads it.
+        compact(&path, &read.pending).expect("compact");
+        let reread = read_pending(&path).expect("reread");
+        assert_eq!(
+            reread.pending[0]
+                .tentative
+                .map(TentativeRecord::to_consumed),
+            Some(consumed)
+        );
+        assert_eq!(reread.skipped, 0);
+
+        let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
     }
 }

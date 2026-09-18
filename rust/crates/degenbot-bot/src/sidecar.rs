@@ -14,7 +14,8 @@
 //! - no bid without a passing sim (the oracle gate is upstream of `decide`);
 //! - hard per-bundle + cumulative budget caps;
 //! - STOP kill-switch file: existence halts all bidding, then the loop;
-//! - stale candidates dropped (bid liveness decays in ~1 block).
+//! - a target whose tx already mined never dispatches (the bid-path receipt
+//!   probe observes `already_settled`).
 
 use std::path::PathBuf;
 
@@ -36,8 +37,6 @@ pub struct SidecarConfig {
     pub max_bundle_wei: U256,
     /// Kill-switch path: if the file exists, bidding halts (then the loop).
     pub stop_file: PathBuf,
-    /// Age beyond which a candidate is dropped (liveness decays in ~1 block).
-    pub stale_ms: u64,
 }
 
 impl SidecarConfig {
@@ -70,10 +69,6 @@ impl SidecarConfig {
                 || PathBuf::from("/tmp/degenbot-sidecar-STOP"),
                 PathBuf::from,
             ),
-            stale_ms: std::env::var("SIDECAR_STALE_MS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1500),
         }
     }
 
@@ -101,7 +96,6 @@ pub enum Decision {
 ///   decision layer re-checks so a wiring bug cannot bypass the gate).
 /// - Observe-only default (`bid_mode` off -> `Observe`).
 /// - Kill-switch file present -> bid *and* loop must halt ([`Halt::KillSwitch`]).
-/// - Stale candidates (`age_ms > stale_ms`) dropped.
 /// - Cumulative budget caps: spent + binder > budget -> Observe.
 /// - Per-bundle cap: bundle > `max_bundle_wei` -> Observe.
 #[must_use]
@@ -111,17 +105,11 @@ pub fn decide(
     target_class: &TargetClass,
     sim_ok: bool,
     requested_bid_wei: U256,
-    age_ms: u64,
     spent_wei: U256,
 ) -> Decision {
     if stop_file_exists {
         return Decision::Drop {
             reason: "kill_switch",
-        };
-    }
-    if age_ms > cfg.stale_ms {
-        return Decision::Drop {
-            reason: "stale_candidate",
         };
     }
     match target_class {
@@ -161,6 +149,22 @@ pub fn decide(
     }
 }
 
+/// The bid-path liveness gate: a target whose tx already mined cannot be
+/// backrun, so its dispatch is refused with the truthful observe reason. The
+/// receipt probe runs on the bid path (after `decide`, before dispatch); this
+/// pure gate turns its evidence into the final decision. A probe failure
+/// carries no positive evidence, so it must not kill the bid -- the `MEVBlocker`
+/// bundle's block anchoring is the final backstop.
+#[must_use]
+pub fn gate_mined_target(decision: Decision, target_receipt_found: bool) -> Decision {
+    match decision {
+        Decision::Bid { .. } if target_receipt_found => Decision::Observe {
+            reason: "already_settled",
+        },
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,7 +180,6 @@ mod tests {
             budget_wei: U256::from(1_000_000_000_000_000u64),
             max_bundle_wei: U256::from(500_000_000_000_000u64),
             stop_file: PathBuf::from("/nonexistent"),
-            stale_ms: 1500,
         }
     }
 
@@ -197,7 +200,7 @@ mod tests {
 
     #[test]
     fn no_bid_without_sim_pass() {
-        let d = decide(&cfg(), false, &swap(), false, U256::from(1), 10, U256::ZERO);
+        let d = decide(&cfg(), false, &swap(), false, U256::from(1), U256::ZERO);
         assert_eq!(
             d,
             Decision::Observe {
@@ -210,7 +213,7 @@ mod tests {
     fn observe_only_default_when_bid_mode_off() {
         let mut c = cfg();
         c.bid_mode = false;
-        let d = decide(&c, false, &swap(), true, U256::from(1), 10, U256::ZERO);
+        let d = decide(&c, false, &swap(), true, U256::from(1), U256::ZERO);
         assert_eq!(
             d,
             Decision::Observe {
@@ -223,7 +226,7 @@ mod tests {
     fn bid_mode_requires_nonzero_budget() {
         let mut c = cfg();
         c.budget_wei = U256::ZERO;
-        let d = decide(&c, false, &swap(), true, U256::from(1), 10, U256::ZERO);
+        let d = decide(&c, false, &swap(), true, U256::from(1), U256::ZERO);
         assert_eq!(
             d,
             Decision::Observe {
@@ -240,13 +243,13 @@ mod tests {
         // the builder) -- bidding that simply pays the executor's balance to
         // the block builder. A Bid decision must carry a positive, composed
         // profit share: zero bids are refuse-only.
-        let d = decide(&cfg(), false, &swap(), true, U256::ZERO, 10, U256::ZERO);
+        let d = decide(&cfg(), false, &swap(), true, U256::ZERO, U256::ZERO);
         assert_eq!(d, Decision::Observe { reason: "zero_bid" },);
     }
 
     #[test]
     fn kill_switch_halts_bidding() {
-        let d = decide(&cfg(), true, &swap(), true, U256::from(1), 10, U256::ZERO);
+        let d = decide(&cfg(), true, &swap(), true, U256::from(1), U256::ZERO);
         assert_eq!(
             d,
             Decision::Drop {
@@ -256,22 +259,31 @@ mod tests {
     }
 
     #[test]
-    fn stale_candidates_dropped() {
-        let d = decide(
-            &cfg(),
-            false,
-            &swap(),
-            true,
-            U256::from(1),
-            2_000,
-            U256::ZERO,
-        );
+    fn mined_target_gate_observes_already_settled() {
+        // A mined target can never be backrun: the receipt-gated decision is
+        // `already_settled`, not a Bid, so no dispatch can ever see it.
+        let bid = Decision::Bid {
+            bid_wei: U256::from(9),
+        };
         assert_eq!(
-            d,
-            Decision::Drop {
-                reason: "stale_candidate"
+            gate_mined_target(bid, true),
+            Decision::Observe {
+                reason: "already_settled"
             }
         );
+    }
+
+    #[test]
+    fn pending_target_gate_lets_a_net_positive_bid_dispatch() {
+        let bid = Decision::Bid {
+            bid_wei: U256::from(9),
+        };
+        assert_eq!(gate_mined_target(bid, false), bid);
+        // An observe decision is untouched either way.
+        let observe = Decision::Observe {
+            reason: "observe_only",
+        };
+        assert_eq!(gate_mined_target(observe, true), observe);
     }
 
     #[test]
@@ -283,7 +295,6 @@ mod tests {
             &swap(),
             true,
             c.max_bundle_wei,
-            10,
             U256::from(600_000_000_000_000u64),
         );
         assert_eq!(
@@ -303,7 +314,6 @@ mod tests {
             &swap(),
             true,
             U256::from(900_000_000_000_000u64),
-            10,
             U256::ZERO,
         );
         assert_eq!(
@@ -322,7 +332,6 @@ mod tests {
             &TargetClass::Inert,
             true,
             U256::from(1),
-            10,
             U256::ZERO,
         );
         assert_eq!(

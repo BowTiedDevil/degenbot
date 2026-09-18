@@ -180,24 +180,6 @@ pub fn parse_fixture_head(raw: Option<&str>) -> Option<u64> {
     raw.map(str::trim).filter(|s| !s.is_empty())?.parse().ok()
 }
 
-/// The frame age handed to the decision gate.
-///
-/// Live mode is the wall-clock delta since the feed received the frame; the
-/// stale gate drops a candidate once it exceeds `SidecarConfig::stale_ms`
-/// (bid liveness decays in ~one block). Offline review neutralizes it to
-/// zero: a captured frame is "old" by definition, so the wall-clock delta
-/// would drop every frame before extract/admit/discover/solve could run.
-/// In-session quarantine re-delivery passes zero for the same reason (its
-/// receipt is still current); a frame reloaded from the durable journal is
-/// aged from its original receive time instead.
-#[must_use]
-pub fn effective_frame_age_ms(received_unix_ms: u64, now_unix_ms: u64, dry_run: bool) -> u64 {
-    if dry_run {
-        return 0;
-    }
-    now_unix_ms.saturating_sub(received_unix_ms)
-}
-
 // ─────────────────────────────────────────────────────────────────────────
 // Strategy runtime (frame-surviving caches)
 // ─────────────────────────────────────────────────────────────────────────
@@ -1549,7 +1531,6 @@ pub async fn process_frame(
     handle: &mut Option<BlockSimHandle<'static>>,
     ev: &BackrunFeedEvent,
     head: u64,
-    age_ms: u64,
     spent: U256,
 ) -> FrameArtifacts {
     let tx_hex = format!("0x{}", alloy::hex::encode(ev.hash));
@@ -1930,7 +1911,6 @@ pub async fn process_frame(
         &class,
         composed_any,
         requested_bid,
-        age_ms,
         spent,
     );
     // The observe label tells the truth: a frame that never composed a
@@ -1980,7 +1960,7 @@ pub async fn process_frame(
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_frame_age_ms, net_bid, parse_fixture_head};
+    use super::{net_bid, parse_fixture_head};
 
     #[test]
     fn fixture_head_parses_decimal_and_rejects_junk() {
@@ -1990,17 +1970,6 @@ mod tests {
         assert_eq!(parse_fixture_head(Some("latest")), None);
         assert_eq!(parse_fixture_head(Some("-5")), None);
         assert_eq!(parse_fixture_head(None), None);
-    }
-
-    #[test]
-    fn offline_review_neutralizes_stale_age() {
-        // Wall-clock says the captured frame is hours old; the live stale
-        // gate would drop it. Offline review neutralizes to zero so the
-        // funnel still runs.
-        assert_eq!(effective_frame_age_ms(1_000, 10_000_000, true), 0);
-        // Live mode keeps the true delta and saturates on clock skew.
-        assert_eq!(effective_frame_age_ms(1_000, 1_500, false), 500);
-        assert_eq!(effective_frame_age_ms(5_000, 1_000, false), 0);
     }
 
     /// The live defect, pinned: the first two landed bids tendered a ~110

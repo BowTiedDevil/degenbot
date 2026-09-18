@@ -93,7 +93,6 @@ fn bid_config() -> (SidecarConfig, PipelineConfig) {
         budget_wei: U256::from(10_000_000u128) * U256::from(10u64).pow(U256::from(18u8)),
         max_bundle_wei: U256::from(1_000_000u128) * U256::from(10u64).pow(U256::from(18u8)),
         stop_file: PathBuf::from("/nonexistent-frame-e2e-stop"),
-        stale_ms: 60_000,
     };
     let pl = PipelineConfig {
         exec: EXECUTOR,
@@ -274,7 +273,6 @@ async fn frame_pipeline_replay_staging_bids_with_composed_calldata() {
         &mut handle,
         &ev,
         head,
-        0,
         U256::ZERO,
     )
     .await;
@@ -346,7 +344,6 @@ async fn frame_pipeline_reverted_target_observes_truthfully() {
         &mut handle,
         &ev,
         head,
-        0,
         U256::ZERO,
     )
     .await;

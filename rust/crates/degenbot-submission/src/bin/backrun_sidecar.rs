@@ -27,13 +27,13 @@
     reason = "bin: fatal config failures exit the process loudly"
 )]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_bot::bot_core::SimAnchorState;
-use degenbot_bot::sidecar::{Decision, SidecarConfig};
+use degenbot_bot::sidecar::{gate_mined_target, Decision, SidecarConfig};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
@@ -41,10 +41,12 @@ use degenbot_simulation::BlockSimHandle;
 use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::frame_pipeline::{
-    build_block_handle, effective_frame_age_ms, load_fixture_frames, parse_fixture_head,
-    process_frame, trace_jsonl, PipelineConfig, StrategyRuntime,
+    build_block_handle, load_fixture_frames, parse_fixture_head, process_frame, trace_jsonl,
+    PipelineConfig, StrategyRuntime,
 };
-use degenbot_submission::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
+use degenbot_submission::gap_quarantine::{
+    NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
+};
 use degenbot_submission::gap_quarantine_journal::{
     self, ParkRecord, QuarantineJournal, Resolution,
 };
@@ -210,7 +212,6 @@ async fn run_frame(
     pl: &PipelineConfig,
     handle: &mut Option<BlockSimHandle<'static>>,
     head: u64,
-    age_ms: u64,
     spent: &mut U256,
     dispatcher: &Arc<Mutex<Dispatcher>>,
     operator_nonce: u64,
@@ -254,10 +255,8 @@ async fn run_frame(
             "received_unix_ms": ev.received_unix_ms,
         }),
     );
-    let artifacts = process_frame(
-        rt, provider, sim_client, cfg, pl, handle, ev, head, age_ms, *spent,
-    )
-    .await;
+    let artifacts =
+        process_frame(rt, provider, sim_client, cfg, pl, handle, ev, head, *spent).await;
     trace_jsonl(
         "stages",
         serde_json::json!({
@@ -282,7 +281,6 @@ async fn run_frame(
             "bid_wei": decision_bid,
             "composed_any": artifacts.submit_calldata.is_some(),
             "requested_bid": artifacts.requested_bid.to_string(),
-            "age_ms": age_ms,
             "spent": spent.to_string(),
             "stop_file": cfg.stop_file.exists(),
         }),
@@ -302,7 +300,6 @@ async fn run_frame(
             max_fee_per_gas: ev.max_fee_per_gas,
             max_priority_fee_per_gas: ev.max_priority_fee_per_gas,
             claimed_nonce: ev.nonce,
-            arrived_at: std::time::Instant::now(),
             expected_at_capture: *expected,
         };
         let parked_count = quarantine.push(parked);
@@ -340,7 +337,31 @@ async fn run_frame(
             }),
         );
     }
-    match artifacts.decision {
+    // Bid-path liveness: probe the target's receipt before any dispatch. A
+    // mined target can never be backrun -- observe `already_settled`. A probe
+    // failure carries no positive evidence, so it never kills the bid; the
+    // MEVBlocker bundle's block anchoring is the final backstop.
+    let target_mined = if matches!(artifacts.decision, Decision::Bid { .. }) {
+        SidecarProbe {
+            provider: Arc::clone(provider),
+        }
+        .receipt_found(ev.hash)
+        .await
+        .unwrap_or(false)
+    } else {
+        false
+    };
+    if target_mined {
+        trace_jsonl(
+            "bid_gate",
+            serde_json::json!({
+                "tx": ev.hash.to_string(),
+                "target_mined": true,
+                "reason": "already_settled",
+            }),
+        );
+    }
+    match gate_mined_target(artifacts.decision, target_mined) {
         Decision::Bid { bid_wei } => {
             let Some(s) = signer else {
                 tracing::warn!("bid decided without a signer loaded - skipping");
@@ -456,33 +477,118 @@ fn now_unix_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
-/// Reload the durable quarantine journal and re-park the still-pending frames.
+/// One canonical block-hash read (the reorg check's truth).
+async fn canonical_block_hash(provider: &AlloyProvider, block: u64) -> Option<B256> {
+    provider
+        .get_block(block)
+        .await
+        .ok()
+        .flatten()
+        .map(|b| b.header.hash)
+}
+
+/// The node's `finalized` tag (ONE read per head advance). Never block-count
+/// arithmetic: the tag tracks the real 2-epoch lag, missed slots and all.
+async fn finalized_block_number(provider: &AlloyProvider) -> Option<u64> {
+    provider
+        .provider_arc()
+        .get_block_by_number(alloy::eips::BlockNumberOrTag::Finalized)
+        .await
+        .ok()
+        .flatten()
+        .map(|b| b.header.number)
+}
+
+/// Classify a consumed nonce with ONE receipt probe on the frame's own hash:
+/// a receipt is `MinedAt`; its absence is `SlotTakenAt`, resolved to the
+/// same-nonce tx's carrying block when the pool view can see it. The observed
+/// head is the fallback block -- never a death, only a later finality check.
+/// `None` means no block evidence could be established; the frame stays
+/// tracked and the next head retries.
+async fn classify_consumption(
+    provider: &AlloyProvider,
+    client: &alloy::rpc::client::RpcClient,
+    frame: &ParkedFrame,
+    head: u64,
+) -> Option<NonceConsumed> {
+    let receipt = provider
+        .get_transaction_receipt(&frame.hash.to_string())
+        .await
+        .ok()
+        .flatten();
+    if let Some(receipt) = receipt {
+        if let Some(block) = receipt.block_number {
+            let block_hash = match receipt.block_hash {
+                Some(hash) => Some(hash),
+                None => canonical_block_hash(provider, block).await,
+            };
+            if let Some(block_hash) = block_hash {
+                return Some(NonceConsumed::MinedAt { block, block_hash });
+            }
+        }
+        return None;
+    }
+    let nonce_hex = format!("0x{:x}", frame.claimed_nonce);
+    let other = client
+        .request::<(Address, String), serde_json::Value>(
+            std::borrow::Cow::from("eth_getTransactionBySenderAndNonce"),
+            (frame.from, nonce_hex),
+        )
+        .await
+        .ok();
+    let resolved = other.as_ref().and_then(|value| {
+        let block = value
+            .get("blockNumber")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())?;
+        let block_hash = value
+            .get("blockHash")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.parse::<B256>().ok())?;
+        let by = value
+            .get("hash")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.parse::<B256>().ok());
+        Some((block, block_hash, by))
+    });
+    let (block, block_hash, by) = if let Some(resolved) = resolved {
+        resolved
+    } else {
+        // No exact carrying block: anchor to the observed head so the reorg
+        // check has a real hash. The frame can only be finalized a little
+        // later, never earlier.
+        let block_hash = canonical_block_hash(provider, head).await?;
+        (head, block_hash, None)
+    };
+    Some(NonceConsumed::SlotTakenAt {
+        block,
+        block_hash,
+        by,
+    })
+}
+
+/// Reload the durable quarantine journal and re-park the still-pending frames
+/// exactly as they left: a tracked park re-enters tracked, a tentative park
+/// re-enters tentative with its consumption evidence. Nothing is dropped for
+/// age or for a closed nonce -- the head-advance FSM tick classifies closed
+/// nonces (one receipt probe) and waits for finality.
 ///
-/// Returns the append handle (None when persistence is unavailable — a journal
-/// problem must never abort the bot) and the re-parked frame hashes mapped to
-/// their ORIGINAL receive time. That map is the reload-vs-session distinction on
-/// re-delivery: a reloaded frame is aged from its true receipt instant, while an
-/// in-session park re-delivers fresh because its receipt is still current.
-///
-/// A missing journal, an unreadable one, and corrupt lines are all non-fatal.
-/// Frames whose account nonce already reached the claimed nonce settled while
-/// the process was down and are dropped.
-async fn reload_quarantine(
-    provider: &Arc<AlloyProvider>,
-    quarantine: &mut Quarantine,
-) -> (Option<QuarantineJournal>, HashMap<B256, u64>) {
+/// Returns the append handle (None when persistence is unavailable -- a journal
+/// problem must never abort the bot). A missing journal, an unreadable one, and
+/// corrupt lines are all non-fatal.
+fn reload_quarantine(quarantine: &mut Quarantine) -> Option<QuarantineJournal> {
     let path = match degenbot_runs::resolve_state_root() {
         Ok(root) => root.join(gap_quarantine_journal::JOURNAL_FILE_NAME),
         Err(error) => {
             tracing::warn!(%error, "quarantine journal root unavailable - persistence off");
-            return (None, HashMap::new());
+            return None;
         }
     };
     let read = match gap_quarantine_journal::read_pending(&path) {
         Ok(read) => read,
         Err(error) => {
             tracing::warn!(%error, path = %path.display(), "quarantine journal unreadable - starting empty");
-            return (QuarantineJournal::open(&path).ok(), HashMap::new());
+            return QuarantineJournal::open(&path).ok();
         }
     };
     if read.skipped > 0 {
@@ -492,29 +598,18 @@ async fn reload_quarantine(
             "quarantine journal corrupt lines skipped"
         );
     }
-    let reload_at = std::time::Instant::now();
     let mut reparked: Vec<ParkRecord> = Vec::new();
-    let mut reloaded: HashMap<B256, u64> = HashMap::new();
+    let mut tentative = 0usize;
     let mut dropped = 0usize;
     for record in &read.pending {
-        let head_nonce = provider
-            .get_transaction_count(&record.sender, None)
-            .await
-            .unwrap_or(u64::MAX);
-        if record.gap_closed_while_down(head_nonce) {
-            dropped += 1;
-            tracing::info!(
-                tx = %record.frame.hash,
-                claimed_nonce = record.claimed_nonce,
-                head_nonce,
-                "quarantine reload dropped: gap closed while down"
-            );
-            continue;
-        }
-        match record.to_parked_frame(reload_at) {
+        match record.to_parked_frame() {
             Ok(frame) => {
-                reloaded.insert(frame.hash, record.original_received_unix_ms());
+                let hash = frame.hash;
                 quarantine.push(frame);
+                if let Some(consumed) = record.tentative {
+                    quarantine.enter_tentative(hash, consumed.to_consumed());
+                    tentative += 1;
+                }
                 reparked.push(record.clone());
             }
             Err(error) => {
@@ -534,11 +629,12 @@ async fn reload_quarantine(
         journal = %path.display(),
         loaded = read.pending.len(),
         reparked = reparked.len(),
+        tentative,
         dropped,
         skipped = read.skipped,
         "quarantine journal reloaded"
     );
-    (QuarantineJournal::open(&path).ok(), reloaded)
+    QuarantineJournal::open(&path).ok()
 }
 
 #[tokio::main]
@@ -740,13 +836,8 @@ async fn main() {
                 tracing::info!("kill switch present - halting dry-run");
                 break;
             }
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
-            // Offline review neutralizes the stale age: a captured frame is
-            // "old" by definition, and the wall-clock delta would drop every
-            // frame before the funnel could run.
-            let age_ms = effective_frame_age_ms(ev.received_unix_ms, now_ms, true);
+            // No age gate exists: a captured frame (by definition old) runs
+            // the full funnel exactly like a fresh one.
             run_frame(
                 ev,
                 &mut runtime,
@@ -756,7 +847,6 @@ async fn main() {
                 &pl,
                 &mut handle,
                 current_block,
-                age_ms,
                 &mut spent,
                 &dispatcher,
                 operator_nonce,
@@ -773,8 +863,7 @@ async fn main() {
 
     // Reload the durable quarantine before servicing any frame, so a restart
     // resumes the parked set.
-    let (mut quarantine_journal, mut reloaded) =
-        reload_quarantine(&provider, &mut quarantine).await;
+    let mut quarantine_journal = reload_quarantine(&mut quarantine);
 
     // Live mode: MEVBlocker feed.
     let feed = BackrunFeed::spawn(BackrunFeedConfig {
@@ -887,9 +976,12 @@ async fn main() {
                     }
                 }
 
-                // Gap-quarantine FSM tick: on a fresh head every parked sender
-                // re-polls against the new state; frames the state closure
-                // covered rerun through the full frame path.
+                // ── frame-liveness FSM tick ─────────────────────────────
+                // 1. Classify every tracked frame whose sender nonce reached
+                //    the claim: ONE receipt probe on the frame's own hash
+                //    decides MinedAt vs SlotTakenAt. No clock is consulted; a
+                //    classification failure leaves the frame tracked for the
+                //    next head.
                 for sender in quarantine.senders() {
                     let head_nonce: u64 = sim_client
                         .request::<(Address, &str), U256>(
@@ -899,92 +991,51 @@ async fn main() {
                         .await
                         .ok()
                         .map_or(u64::MAX, |v| u64::try_from(v).unwrap_or(u64::MAX));
-                    for (frame, decision) in
-                        quarantine.poll(sender, head_nonce, &[], std::time::Instant::now())
-                    {
+                    for (frame, decision) in quarantine.poll(sender, head_nonce, &[]) {
                         match decision {
-                            QuarantineDecision::ClosedByHead => {
-                                trace_jsonl(
-                                    "quarantine",
-                                    serde_json::json!({"action": "closed_by_head", "tx": frame.hash.to_string()}),
-                                );
-                                let now_ms = now_unix_ms();
-                                if let Some(journal) = quarantine_journal.as_mut() {
-                                    if let Err(error) = journal.record_resolve(
-                                        frame.hash,
-                                        Resolution::ClosedByHead,
-                                        now_ms,
-                                    ) {
-                                        tracing::warn!(%error, "quarantine resolve not journaled");
-                                    }
-                                }
-                                // A reloaded frame keeps its original receipt
-                                // instant, so the stale gate judges the true
-                                // signal age after downtime; an in-session park
-                                // re-delivers fresh because its receipt is
-                                // still current.
-                                let reloaded_received = reloaded.remove(&frame.hash);
-                                let received_unix_ms = reloaded_received.unwrap_or(now_ms);
-                                let age_ms = reloaded_received.map_or(0, |received| {
-                                    effective_frame_age_ms(received, now_ms, false)
-                                });
-                                let ev = degenbot_rpc::backrun_feed::BackrunFeedEvent {
-                                    hash: frame.hash,
-                                    chain_id: 1,
-                                    from: frame.from,
-                                    to: frame.to,
-                                    value: frame.value,
-                                    data: frame.data,
-                                    gas: frame.gas,
-                                    max_fee_per_gas: frame.max_fee_per_gas,
-                                    max_priority_fee_per_gas: frame.max_priority_fee_per_gas,
-                                    nonce: frame.claimed_nonce,
-                                    access_list: serde_json::Value::Null,
-                                    tx_type: 2,
-                                    received_unix_ms,
+                            QuarantineDecision::NonceConsumed => {
+                                let Some(consumed) =
+                                    classify_consumption(&provider, &sim_client, &frame, head)
+                                        .await
+                                else {
+                                    tracing::warn!(
+                                        tx = %frame.hash,
+                                        "nonce-consumption classification failed - frame stays tracked"
+                                    );
+                                    continue;
                                 };
-                                run_frame(
-                                    &ev,
-                                    &mut runtime,
-                                    &provider,
-                                    &sim_client,
-                                    &cfg,
-                                    &pl,
-                                    &mut handle,
-                                    head,
-                                    age_ms,
-                                    &mut spent,
-                                    &dispatcher,
-                                    operator_nonce,
-                                    signer.as_ref(),
-                                    &gap_probe,
-                                    &mut quarantine,
-                                    quarantine_journal.as_mut(),
-                                )
-                                .await;
-                            }
-                            QuarantineDecision::GapExpired => {
-                                reloaded.remove(&frame.hash);
-                                trace_jsonl(
-                                    "quarantine",
-                                    serde_json::json!({"action": "gap_expired", "tx": frame.hash.to_string()}),
-                                );
-                                tracing::info!(
-                                    "observe tx=0x{:x} reason=\"gap_expired\"",
-                                    frame.hash
-                                );
+                                if !quarantine.enter_tentative(frame.hash, consumed) {
+                                    continue;
+                                }
                                 if let Some(journal) = quarantine_journal.as_mut() {
-                                    if let Err(error) = journal.record_resolve(
+                                    if let Err(error) = journal.record_tentative(
                                         frame.hash,
-                                        Resolution::GapExpired,
+                                        consumed,
                                         now_unix_ms(),
                                     ) {
-                                        tracing::warn!(%error, "quarantine resolve not journaled");
+                                        tracing::warn!(%error, "tentative record not journaled");
                                     }
+                                }
+                                trace_jsonl(
+                                    "nonce_consumed",
+                                    serde_json::json!({
+                                        "tx": frame.hash.to_string(),
+                                        "sender": format!("0x{:x}", frame.from),
+                                        "mined": consumed.mined(),
+                                        "block": consumed.block(),
+                                        "block_hash": consumed.block_hash().to_string(),
+                                    }),
+                                );
+                                if consumed.mined() {
+                                    tracing::info!(
+                                        tx = %frame.hash,
+                                        reason = "already_settled",
+                                        block = consumed.block(),
+                                        "observe"
+                                    );
                                 }
                             }
                             QuarantineDecision::Rescue { predecessors } => {
-                                reloaded.remove(&frame.hash);
                                 trace_jsonl(
                                     "quarantine",
                                     serde_json::json!({"action": "rescue_event_unsupported",
@@ -1014,6 +1065,65 @@ async fn main() {
                         }
                     }
                 }
+
+                // 2. Reorg check: one canonical-hash read per DISTINCT
+                //    tentative block; a mismatch (or a vanished block)
+                //    revives its frames back to Tracked.
+                for (block, recorded_hash) in quarantine.tentative_blocks() {
+                    let canonical = canonical_block_hash(&provider, block).await;
+                    for frame in quarantine.check_reorg(block, canonical) {
+                        trace_jsonl(
+                            "reorg_revived",
+                            serde_json::json!({
+                                "tx": frame.hash.to_string(),
+                                "block": block,
+                                "recorded_hash": recorded_hash.to_string(),
+                                "canonical_hash": canonical.map(|h| h.to_string()),
+                            }),
+                        );
+                        tracing::info!(
+                            tx = %frame.hash,
+                            block,
+                            "reorg revived - frame back to tracked"
+                        );
+                    }
+                }
+
+                // 3. Finality: ONE `finalized` tag read per head advance; a
+                //    tentative block at or below the tag is dead for good.
+                if let Some(finalized) = finalized_block_number(&provider).await {
+                    for (frame, consumed) in quarantine.check_finalized(finalized) {
+                        let (resolution, reason) = if consumed.mined() {
+                            (Resolution::MinedFinalized, "mined_finalized")
+                        } else {
+                            (Resolution::SlotTakenFinalized, "slot_taken_finalized")
+                        };
+                        if let Some(journal) = quarantine_journal.as_mut() {
+                            if let Err(error) =
+                                journal.record_resolve(frame.hash, resolution, now_unix_ms())
+                            {
+                                tracing::warn!(%error, "finalized tombstone not journaled");
+                            }
+                        }
+                        trace_jsonl(
+                            "finalized",
+                            serde_json::json!({
+                                "tx": frame.hash.to_string(),
+                                "reason": reason,
+                                "mined": consumed.mined(),
+                                "block": consumed.block(),
+                                "finalized": finalized,
+                            }),
+                        );
+                        tracing::info!(
+                            tx = %frame.hash,
+                            mined = consumed.mined(),
+                            block = consumed.block(),
+                            finalized,
+                            "frame finalized"
+                        );
+                    }
+                }
             }
         }
 
@@ -1022,11 +1132,6 @@ async fn main() {
                 tracing::info!("kill switch present - halting");
                 break;
             }
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis());
-            let age_ms = u64::try_from(now_ms.saturating_sub(u128::from(ev.received_unix_ms)))
-                .unwrap_or(u64::MAX);
             run_frame(
                 &ev,
                 &mut runtime,
@@ -1036,7 +1141,6 @@ async fn main() {
                 &pl,
                 &mut handle,
                 current_block,
-                age_ms,
                 &mut spent,
                 &dispatcher,
                 operator_nonce,

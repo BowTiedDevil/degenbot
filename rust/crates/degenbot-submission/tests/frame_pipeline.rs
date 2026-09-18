@@ -461,7 +461,6 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         budget_wei: U256::ZERO,
         max_bundle_wei: U256::from(1_000_000_000_000_000u64),
         stop_file: PathBuf::from("/nonexistent-wkpzqk"),
-        stale_ms: 1500,
     };
     let pl = PipelineConfig {
         exec: address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
@@ -504,7 +503,6 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
             &mut handle,
             &frame,
             pin,
-            0,
             U256::ZERO,
         )
         .await;
@@ -526,7 +524,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
             }
             Decision::Bid { .. } => panic!("dry-run without index/db cannot bid"),
             Decision::Drop { reason } => {
-                assert_eq!(*reason, "stale_candidate");
+                panic!("a valid dry-run frame must never drop, got {reason}");
             }
         }
     }

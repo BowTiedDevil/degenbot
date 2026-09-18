@@ -96,9 +96,9 @@ append the landing record:
   (`Dispatcher::advance_block` per head); a submission that never lands voids
   its nonce after `blocks_before_nonce_expires` heads.
 - There is NO replacement ladder in the sidecar: one bid per decoded frame.
-  A price-improved target simply reappears as a new frame (stale ms bound
-  keeps the request current) -- replacement storms are a mainloop concern,
-  out of sidecar scope by design.
+  A price-improved target simply reappears as a new frame; the target's own
+  receipt probe on the bid path is what keeps a mined target from dispatching
+  -- replacement storms are a mainloop concern, out of sidecar scope by design.
 
 ## 6. Run artifacts (session logs + JSONL trace)
 
@@ -163,7 +163,8 @@ Append-on-change with resolution tombstones, compacted once at boot:
 | Record | When | Contents |
 | --- | --- | --- |
 | `{"kind":"park", ...}` | `quarantine.push` | full feed event + `sender` + `claimed_nonce` + `expected_nonce` + `parked_at_unix_ms` |
-| `{"kind":"resolve", ...}` | `gap_expired` / `closed_by_head` / `rescue_consumed` / `evicted` | `frame_hash` + `resolution` + `resolved_at_unix_ms` |
+| `{"kind":"tentative", ...}` | the nonce was consumed in a NON-finalized block | `frame_hash` + `block` + `block_hash` + `kind` (`mined`/`slot_taken`) + `entered_at_unix_ms` |
+| `{"kind":"resolve", ...}` | finalized death (`mined_finalized` / `slot_taken_finalized`) or operational `rescue_consumed` / `evicted` | `frame_hash` + `resolution` + `resolved_at_unix_ms` |
 
 Each record is one `write_all` on the append handle, so a crash cannot
 interleave two records. On boot the loader folds parks and tombstones into the
@@ -172,29 +173,59 @@ pending set and atomically rewrites the file to just those still-pending parks
 with a warning and discarded by the same rewrite. The sidecar is a singleton,
 so exactly one process appends at a time.
 
+### Frame-liveness FSM (no clocks, no TTL)
+
+A parked frame is never evicted by a clock or by pool absence. The feed makes
+no timing guarantee, so a late-arriving pending tx is valid; senders submit to
+`MEVBlocker` AND the public mempool independently, builders may include ANY of
+several same-nonce candidates, and a dormant tx can come alive years later.
+The ONLY proof a frame's opportunity is over is a nonce consumption carried in
+a FINALIZED block.
+
+| State | Meaning |
+| --- | --- |
+| `Tracked` | the parked/live/dormant mass; no time limit, no cap, no pool-absence death |
+| `Tentative` | the frame's hash mined (`mined`) or its nonce slot was consumed by another tx (`slot_taken`) in a NON-finalized block; the block + hash are retained for the reorg check |
+| finalized-dead | a tombstone written only when a tentative block is at or below the node's `finalized` tag |
+
+On every head advance (all event-driven):
+
+1. **classify** -- per tracked sender, `eth_getTransactionCount(sender, latest)`
+   reaching the claimed nonce triggers ONE `eth_getTransactionReceipt` probe on
+   the frame's own hash: a receipt is `MinedAt`, its absence is `SlotTakenAt`
+   (resolved to the same-nonce tx's carrying block when visible). The frame
+   moves to `Tentative`. JSONL: `nonce_consumed{mined, block}`; a mined frame
+   also observes `already_settled` (it can never be backrun).
+2. **reorg check** -- one `eth_getBlockByNumber(H).hash` read per DISTINCT
+   tentative block; a mismatch (or a vanished block) revives its frames to
+   `Tracked`. JSONL: `reorg_revived`.
+3. **finality** -- ONE `finalized`-tag read per head advance; every tentative
+   block at or below the tag is tombstoned (`mined_finalized` /
+   `slot_taken_finalized`). JSONL: `finalized`. Bar reorg-beyond-finality by
+   protocol.
+4. **rescue / still-waiting** -- the pool lanes feed the gap rescue only; a
+   frame whose predecessors stay invisible just stays parked (`still_waiting`).
+   No pool lane may ever kill a frame.
+
 ### Reload semantics (restart story)
 
 At boot, before servicing any frame:
 
-1. Read the journal and fold it to the pending set; warn + compact away a
-   corrupt tail.
-2. For every pending record, probe `eth_getTransactionCount(sender, latest)`:
-   - **nonce reached the claimed nonce** → the gap settled while we were down;
-     the frame is `already_settled` territory and is DROPPED with an
-     `info` log naming the tx, claimed nonce, and head nonce. Compaction removes
-     it.
-   - **gap still open** → re-park into the live quarantine. The park TTL
-     restarts from reload time (a frame that survived a longer-than-TTL
-     downtime would otherwise be dead on arrival), while the original
-     `received_unix_ms` is retained: on re-delivery a reloaded frame's stale
-     age derives from its true receipt instant, so the decision gate stays
-     honest about downtime. An in-session park still re-delivers fresh (age 0),
-     because its receipt is still current.
+1. Read the journal and fold it to the pending set (a `tentative` record
+   attaches to its park); warn + compact away a corrupt tail.
+2. Re-park every pending record exactly as it left:
+   - a **tracked** park re-enters `Tracked`;
+   - a **tentative** park re-enters `Tentative` with its block + hash, so a
+     restart mid-finality-window resumes where it left off.
+
+   Nothing is dropped for downtime, age, or a nonce that closed while down:
+   the next head advance classifies a closed nonce (ONE receipt probe) and the
+   finality sweep tombstones only once the carrying block is finalized.
 
 Boot logs one line with the counts:
 
 ```
-quarantine journal reloaded journal=<path> loaded=<n> reparked=<n> dropped=<n> skipped=<n>
+quarantine journal reloaded journal=<path> loaded=<n> reparked=<n> tentative=<n> dropped=<n> skipped=<n>
 ```
 
 A missing journal (first run) reads as empty; an unreadable root or file is
