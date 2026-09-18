@@ -601,8 +601,8 @@ pub fn replay_observe_reason(e: &ReplayFrameError) -> (&'static str, serde_json:
             "already_settled",
             serde_json::json!({"frame_nonce": frame, "parent_nonce": parent}),
         ),
-        ReplayFrameError::EnvelopeArtifact { raw } => {
-            ("envelope_artifact", serde_json::json!({"detail": raw}))
+        ReplayFrameError::MalformedTransaction { raw } => {
+            ("malformed_transaction", serde_json::json!({"detail": raw}))
         }
         ReplayFrameError::Other { .. } => ("replay_failed", serde_json::json!({})),
     }

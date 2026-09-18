@@ -709,11 +709,11 @@ fn replay_reasons_split() {
     assert_eq!(v["parent_nonce"], 30674);
 
     let (r, v) = degenbot_submission::frame_pipeline::replay_observe_reason(
-        &ReplayFrameError::EnvelopeArtifact {
+        &ReplayFrameError::MalformedTransaction {
             raw: "call gas cost (49784) exceeds the gas limit (0)".into(),
         },
     );
-    assert_eq!(r, "envelope_artifact");
+    assert_eq!(r, "malformed_transaction");
     assert_eq!(
         v["detail"],
         "call gas cost (49784) exceeds the gas limit (0)"

@@ -153,10 +153,11 @@ pub enum ReplayFrameError {
     /// boundary race the live feed accumulates. Nothing to rescue; final.
     #[error("already settled: frame nonce {frame} consumed at parent nonce {parent}")]
     AlreadySettled { frame: u64, parent: u64 },
-    /// The envelope itself is unprocessable for replay (zero gas limit,
-    /// malformed chain id, ...) — rejected at decode-downstream.
-    #[error("envelope artifact: {raw}")]
-    EnvelopeArtifact { raw: std::string::String },
+    /// The transaction is structurally unprocessable as sent (zero gas
+    /// limit, intrinsic cost above gas limit, malformed chain id, ...) — no
+    /// chain state could ever admit it.
+    #[error("malformed transaction: {raw}")]
+    MalformedTransaction { raw: std::string::String },
     /// Anything else — RPC hydrate failure, validation, or an
     /// unexpected revm variant.
     #[error("replay failed: {raw}")]
@@ -409,7 +410,7 @@ fn run_frame<Db: Database>(
         EVMError::Transaction(InvalidTransaction::CallGasCostMoreThanGasLimit {
             initial_gas,
             gas_limit,
-        }) => FrameAbort::OtherError(ReplayFrameError::EnvelopeArtifact {
+        }) => FrameAbort::OtherError(ReplayFrameError::MalformedTransaction {
             raw: format!("call gas cost ({initial_gas}) exceeds the gas limit ({gas_limit})"),
         }),
         other => FrameAbort::OtherError(ReplayFrameError::Other {

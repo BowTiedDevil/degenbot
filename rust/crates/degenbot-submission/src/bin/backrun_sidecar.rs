@@ -230,11 +230,11 @@ async fn run_frame(
     // truthful about WHICH class the frame died in.
     if ev.gas == 0 {
         tracing::info!(
-            "observe tx=0x{:x} reason=\"envelope_artifact\" (zero-gas envelope)",
+            "observe tx=0x{:x} reason=\"malformed_transaction\" (zero-gas)",
             ev.hash
         );
         trace_jsonl(
-            "envelope_artifact",
+            "malformed_transaction",
             serde_json::json!({"tx": format!("0x{:x}", ev.hash), "zero_gas": true}),
         );
         return;
