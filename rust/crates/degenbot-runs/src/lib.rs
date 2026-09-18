@@ -163,7 +163,7 @@ impl RunDirectory {
     }
 }
 
-/// The configured run-artifacts root, expanded against `HOME`.
+/// The configured per-session run-artifacts root, expanded against `HOME`.
 ///
 /// Prefers a config already installed in the typed holder (a real boot), and
 /// otherwise loads the standard file layer + `DEGENBOT_*` env through the
@@ -173,17 +173,33 @@ impl RunDirectory {
 ///
 /// [`io::ErrorKind::InvalidInput`] when the loader refuses the configuration.
 pub fn resolve_runs_root() -> io::Result<PathBuf> {
+    resolve_configured_path(|config| &config.logging.runs_dir)
+}
+
+/// The configured durable-state root (`persistence.state_dir`), expanded
+/// against `HOME`. This root is independent of [`resolve_runs_root`]: state
+/// here outlives a session and is never nested under a per-session directory.
+///
+/// # Errors
+///
+/// As [`resolve_runs_root`].
+pub fn resolve_state_root() -> io::Result<PathBuf> {
+    resolve_configured_path(|config| &config.persistence.state_dir)
+}
+
+/// Resolve one `~`-carrying schema path field through the typed config and
+/// expand its leading `~` against `HOME` (read through the config env seam).
+fn resolve_configured_path(
+    pick: impl Fn(&degenbot_config::BotConfig) -> &std::path::PathBuf,
+) -> io::Result<PathBuf> {
     let configured = if degenbot_config::holder::installed() {
-        degenbot_config::holder::config().logging.runs_dir.clone()
+        pick(degenbot_config::holder::config()).clone()
     } else {
-        degenbot_config::BotConfigLoader::new()
+        let loaded = degenbot_config::BotConfigLoader::new()
             .with_standard_file_paths()
             .load()
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?
-            .config
-            .logging
-            .runs_dir
-            .clone()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+        pick(&loaded.config).clone()
     };
     Ok(degenbot_config::expand_tilde_path(
         &configured.to_string_lossy(),

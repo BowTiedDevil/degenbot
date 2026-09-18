@@ -187,8 +187,9 @@ pub fn parse_fixture_head(raw: Option<&str>) -> Option<u64> {
 /// (bid liveness decays in ~one block). Offline review neutralizes it to
 /// zero: a captured frame is "old" by definition, so the wall-clock delta
 /// would drop every frame before extract/admit/discover/solve could run.
-/// Re-delivery from the gap quarantine already passes zero for the same
-/// reason.
+/// In-session quarantine re-delivery passes zero for the same reason (its
+/// receipt is still current); a frame reloaded from the durable journal is
+/// aged from its original receive time instead.
 #[must_use]
 pub fn effective_frame_age_ms(received_unix_ms: u64, now_unix_ms: u64, dry_run: bool) -> u64 {
     if dry_run {

@@ -13,23 +13,36 @@ use std::sync::Arc;
 use degenbot_config::BotConfig;
 
 #[test]
-fn installed_config_supplies_and_expands_the_runs_root() {
+fn installed_config_supplies_and_expands_both_artifact_roots() {
     let mut cfg = BotConfig::default();
     cfg.logging.runs_dir = PathBuf::from("~/degenbot-runs-test");
+    cfg.persistence.state_dir = PathBuf::from("~/degenbot-state-test");
     assert!(
         degenbot_config::holder::install(Arc::new(cfg)),
         "first install wins in this test process"
     );
 
-    let root = degenbot_runs::resolve_runs_root().expect("resolve");
+    let runs = degenbot_runs::resolve_runs_root().expect("resolve runs");
     assert!(
-        !root.to_string_lossy().starts_with('~'),
+        !runs.to_string_lossy().starts_with('~'),
         "leading tilde expanded against HOME: {}",
-        root.display()
+        runs.display()
     );
     assert!(
-        root.ends_with("degenbot-runs-test"),
+        runs.ends_with("degenbot-runs-test"),
         "configured leaf preserved: {}",
-        root.display()
+        runs.display()
+    );
+
+    let state = degenbot_runs::resolve_state_root().expect("resolve state");
+    assert!(
+        !state.to_string_lossy().starts_with('~'),
+        "leading tilde expanded against HOME: {}",
+        state.display()
+    );
+    assert!(
+        state.ends_with("degenbot-state-test"),
+        "configured leaf preserved: {}",
+        state.display()
     );
 }

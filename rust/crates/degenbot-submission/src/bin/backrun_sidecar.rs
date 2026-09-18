@@ -27,11 +27,11 @@
     reason = "bin: fatal config failures exit the process loudly"
 )]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, B256, U256};
 use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_bot::sidecar::{Decision, SidecarConfig};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
@@ -45,6 +45,9 @@ use degenbot_submission::frame_pipeline::{
     process_frame, trace_jsonl, PipelineConfig, StrategyRuntime,
 };
 use degenbot_submission::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
+use degenbot_submission::gap_quarantine_journal::{
+    self, ParkRecord, QuarantineJournal, Resolution,
+};
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submit::{dispatch_and_submit, BundleTarget, SubmitCandidate};
@@ -214,6 +217,7 @@ async fn run_frame(
     signer: Option<&TxSigner>,
     gap_probe: &degenbot_submission::gap_probe::GapProbe,
     quarantine: &mut Quarantine,
+    journal: Option<&mut QuarantineJournal>,
 ) {
     // Decode-stage reject: a frame whose gas field reads zero can never
     // pass the EVM's pre-checks (`CallGasCostMoreThanGasLimit` fires
@@ -302,6 +306,12 @@ async fn run_frame(
             expected_at_capture: *expected,
         };
         let parked_count = quarantine.push(parked);
+        if let Some(journal) = journal {
+            let record = ParkRecord::new(ev, *expected, now_unix_ms());
+            if let Err(error) = journal.record_park(&record) {
+                tracing::warn!(tx = %ev.hash, %error, "quarantine park not journaled");
+            }
+        }
         trace_jsonl(
             "quarantine",
             serde_json::json!({
@@ -437,6 +447,98 @@ async fn run_frame(
             tracing::debug!(tx = %ev.hash, reason, "drop");
         }
     }
+}
+
+/// The current wall clock in unix milliseconds.
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Reload the durable quarantine journal and re-park the still-pending frames.
+///
+/// Returns the append handle (None when persistence is unavailable — a journal
+/// problem must never abort the bot) and the re-parked frame hashes mapped to
+/// their ORIGINAL receive time. That map is the reload-vs-session distinction on
+/// re-delivery: a reloaded frame is aged from its true receipt instant, while an
+/// in-session park re-delivers fresh because its receipt is still current.
+///
+/// A missing journal, an unreadable one, and corrupt lines are all non-fatal.
+/// Frames whose account nonce already reached the claimed nonce settled while
+/// the process was down and are dropped.
+async fn reload_quarantine(
+    provider: &Arc<AlloyProvider>,
+    quarantine: &mut Quarantine,
+) -> (Option<QuarantineJournal>, HashMap<B256, u64>) {
+    let path = match degenbot_runs::resolve_state_root() {
+        Ok(root) => root.join(gap_quarantine_journal::JOURNAL_FILE_NAME),
+        Err(error) => {
+            tracing::warn!(%error, "quarantine journal root unavailable - persistence off");
+            return (None, HashMap::new());
+        }
+    };
+    let read = match gap_quarantine_journal::read_pending(&path) {
+        Ok(read) => read,
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "quarantine journal unreadable - starting empty");
+            return (QuarantineJournal::open(&path).ok(), HashMap::new());
+        }
+    };
+    if read.skipped > 0 {
+        tracing::warn!(
+            skipped = read.skipped,
+            path = %path.display(),
+            "quarantine journal corrupt lines skipped"
+        );
+    }
+    let reload_at = std::time::Instant::now();
+    let mut reparked: Vec<ParkRecord> = Vec::new();
+    let mut reloaded: HashMap<B256, u64> = HashMap::new();
+    let mut dropped = 0usize;
+    for record in &read.pending {
+        let head_nonce = provider
+            .get_transaction_count(&record.sender, None)
+            .await
+            .unwrap_or(u64::MAX);
+        if record.gap_closed_while_down(head_nonce) {
+            dropped += 1;
+            tracing::info!(
+                tx = %record.frame.hash,
+                claimed_nonce = record.claimed_nonce,
+                head_nonce,
+                "quarantine reload dropped: gap closed while down"
+            );
+            continue;
+        }
+        match record.to_parked_frame(reload_at) {
+            Ok(frame) => {
+                reloaded.insert(frame.hash, record.original_received_unix_ms());
+                quarantine.push(frame);
+                reparked.push(record.clone());
+            }
+            Err(error) => {
+                dropped += 1;
+                tracing::warn!(
+                    tx = %record.frame.hash,
+                    %error,
+                    "quarantine reload record undecodable - dropped"
+                );
+            }
+        }
+    }
+    if let Err(error) = gap_quarantine_journal::compact(&path, &reparked) {
+        tracing::warn!(%error, path = %path.display(), "quarantine journal compaction failed");
+    }
+    tracing::info!(
+        journal = %path.display(),
+        loaded = read.pending.len(),
+        reparked = reparked.len(),
+        dropped,
+        skipped = read.skipped,
+        "quarantine journal reloaded"
+    );
+    (QuarantineJournal::open(&path).ok(), reloaded)
 }
 
 #[tokio::main]
@@ -661,12 +763,18 @@ async fn main() {
                 signer.as_ref(),
                 &gap_probe,
                 &mut quarantine,
+                None,
             )
             .await;
         }
         tracing::info!("dry-run fixture complete - halting");
         return;
     }
+
+    // Reload the durable quarantine before servicing any frame, so a restart
+    // resumes the parked set.
+    let (mut quarantine_journal, mut reloaded) =
+        reload_quarantine(&provider, &mut quarantine).await;
 
     // Live mode: MEVBlocker feed.
     let feed = BackrunFeed::spawn(BackrunFeedConfig {
@@ -800,6 +908,26 @@ async fn main() {
                                     "quarantine",
                                     serde_json::json!({"action": "closed_by_head", "tx": frame.hash.to_string()}),
                                 );
+                                let now_ms = now_unix_ms();
+                                if let Some(journal) = quarantine_journal.as_mut() {
+                                    if let Err(error) = journal.record_resolve(
+                                        frame.hash,
+                                        Resolution::ClosedByHead,
+                                        now_ms,
+                                    ) {
+                                        tracing::warn!(%error, "quarantine resolve not journaled");
+                                    }
+                                }
+                                // A reloaded frame keeps its original receipt
+                                // instant, so the stale gate judges the true
+                                // signal age after downtime; an in-session park
+                                // re-delivers fresh because its receipt is
+                                // still current.
+                                let reloaded_received = reloaded.remove(&frame.hash);
+                                let received_unix_ms = reloaded_received.unwrap_or(now_ms);
+                                let age_ms = reloaded_received.map_or(0, |received| {
+                                    effective_frame_age_ms(received, now_ms, false)
+                                });
                                 let ev = degenbot_rpc::backrun_feed::BackrunFeedEvent {
                                     hash: frame.hash,
                                     chain_id: 1,
@@ -813,9 +941,7 @@ async fn main() {
                                     nonce: frame.claimed_nonce,
                                     access_list: serde_json::Value::Null,
                                     tx_type: 2,
-                                    received_unix_ms: std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(0)),
+                                    received_unix_ms,
                                 };
                                 run_frame(
                                     &ev,
@@ -826,17 +952,19 @@ async fn main() {
                                     &pl,
                                     &mut handle,
                                     head,
-                                    0,
+                                    age_ms,
                                     &mut spent,
                                     &dispatcher,
                                     operator_nonce,
                                     signer.as_ref(),
                                     &gap_probe,
                                     &mut quarantine,
+                                    quarantine_journal.as_mut(),
                                 )
                                 .await;
                             }
                             QuarantineDecision::GapExpired => {
+                                reloaded.remove(&frame.hash);
                                 trace_jsonl(
                                     "quarantine",
                                     serde_json::json!({"action": "gap_expired", "tx": frame.hash.to_string()}),
@@ -845,8 +973,18 @@ async fn main() {
                                     "observe tx=0x{:x} reason=\"gap_expired\"",
                                     frame.hash
                                 );
+                                if let Some(journal) = quarantine_journal.as_mut() {
+                                    if let Err(error) = journal.record_resolve(
+                                        frame.hash,
+                                        Resolution::GapExpired,
+                                        now_unix_ms(),
+                                    ) {
+                                        tracing::warn!(%error, "quarantine resolve not journaled");
+                                    }
+                                }
                             }
                             QuarantineDecision::Rescue { predecessors } => {
+                                reloaded.remove(&frame.hash);
                                 trace_jsonl(
                                     "quarantine",
                                     serde_json::json!({"action": "rescue_event_unsupported",
@@ -854,6 +992,15 @@ async fn main() {
                                         "predecessors": predecessors,
                                     }),
                                 );
+                                if let Some(journal) = quarantine_journal.as_mut() {
+                                    if let Err(error) = journal.record_resolve(
+                                        frame.hash,
+                                        Resolution::RescueConsumed,
+                                        now_unix_ms(),
+                                    ) {
+                                        tracing::warn!(%error, "quarantine resolve not journaled");
+                                    }
+                                }
                             }
                             QuarantineDecision::StillWaiting { unknown } => {
                                 trace_jsonl(
@@ -896,6 +1043,7 @@ async fn main() {
                 signer.as_ref(),
                 &gap_probe,
                 &mut quarantine,
+                quarantine_journal.as_mut(),
             )
             .await;
         }

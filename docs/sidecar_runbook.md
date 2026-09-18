@@ -60,8 +60,9 @@ SIDECAR_PRIORITY_FEE_GWEI=2 \
   drains, then the loop halts and the feed pump is stopped.
 - The same STOP-criteria ladder as the soak run applies: manual STOP file,
   cumulative budget exhaustion, and (for the soak harness) wall-clock cap.
-- Remove the file and restart the process to resume (state is not persisted;
-  the budget restarts at zero -- keep the shell history for accounting).
+- Remove the file and restart the process to resume (the budget is not
+  persisted and restarts at zero -- keep the shell history for accounting;
+  quarantine-parked frames ARE persisted, see section 7).
 
 ## 4. Landed-bundle forensics
 
@@ -134,3 +135,68 @@ the sidecar logs to stderr and continues; a `latest` symlink failure is
 swallowed. Dry-run/fixture mode is unchanged: an explicit capture path is
 honored exactly as before, and a fixture run also writes its session
 `trace.jsonl`.
+
+
+## 7. Quarantine persistence + restart reload
+
+Frames parked in the gap quarantine — nonce-pending txs whose predecessors the
+pool view cannot yet see — are the only tracked items whose opportunity can
+survive a process restart. They are journaled outside the per-session run
+directories so a restart resumes them instead of dropping them.
+
+### Where the journal lives
+
+```
+<state_dir>/backrun-quarantine.jsonl
+```
+
+`state_dir` is the typed `persistence.state_dir` key (TOML
+`[persistence] state_dir`, env `DEGENBOT_STATE_DIR`), default
+`~/.config/degenbot/state`. It is deliberately separate from `logging.runs_dir`:
+state here **outlives** a session, while run artifacts are per-session. A
+leading `~` expands against `HOME`.
+
+### Persistence model
+
+Append-on-change with resolution tombstones, compacted once at boot:
+
+| Record | When | Contents |
+| --- | --- | --- |
+| `{"kind":"park", ...}` | `quarantine.push` | full feed event + `sender` + `claimed_nonce` + `expected_nonce` + `parked_at_unix_ms` |
+| `{"kind":"resolve", ...}` | `gap_expired` / `closed_by_head` / `rescue_consumed` / `evicted` | `frame_hash` + `resolution` + `resolved_at_unix_ms` |
+
+Each record is one `write_all` on the append handle, so a crash cannot
+interleave two records. On boot the loader folds parks and tombstones into the
+pending set and atomically rewrites the file to just those still-pending parks
+(this is the compaction pass). A corrupt line — e.g. a torn tail — is skipped
+with a warning and discarded by the same rewrite. The sidecar is a singleton,
+so exactly one process appends at a time.
+
+### Reload semantics (restart story)
+
+At boot, before servicing any frame:
+
+1. Read the journal and fold it to the pending set; warn + compact away a
+   corrupt tail.
+2. For every pending record, probe `eth_getTransactionCount(sender, latest)`:
+   - **nonce reached the claimed nonce** → the gap settled while we were down;
+     the frame is `already_settled` territory and is DROPPED with an
+     `info` log naming the tx, claimed nonce, and head nonce. Compaction removes
+     it.
+   - **gap still open** → re-park into the live quarantine. The park TTL
+     restarts from reload time (a frame that survived a longer-than-TTL
+     downtime would otherwise be dead on arrival), while the original
+     `received_unix_ms` is retained: on re-delivery a reloaded frame's stale
+     age derives from its true receipt instant, so the decision gate stays
+     honest about downtime. An in-session park still re-delivers fresh (age 0),
+     because its receipt is still current.
+
+Boot logs one line with the counts:
+
+```
+quarantine journal reloaded journal=<path> loaded=<n> reparked=<n> dropped=<n> skipped=<n>
+```
+
+A missing journal (first run) reads as empty; an unreadable root or file is
+warned and the sidecar continues persistence-off. The journal never aborts the
+bot.
