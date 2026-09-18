@@ -25,8 +25,8 @@ use std::time::Duration;
 
 use alloy::primitives::{address, Address, Bytes, U256};
 use degenbot_simulation::sim::evm::frame_replay::{
-    BaseFeeSource, CountingFrameDb, FrameRpcCounter, ReplayStatus, ReplayableTx, ScratchBlock,
-    ScratchEvm,
+    read_view_word, BaseFeeSource, CountingFrameDb, FrameRpcCounter, PredStatus, ReplayFrameError,
+    ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm, SequenceReplayError,
 };
 use revm::bytecode::Bytecode;
 use revm::database::CacheDB;
@@ -95,6 +95,52 @@ fn block_env() -> ScratchBlock {
 
 const DUAL: Address = address!("0x5555555555555555555555555555555555555555");
 
+const GATE: Address = address!("0x6666666666666666666666666666666666666666");
+
+/// Sums slots 0 and 1 into slot 2: the frame only produces 0x54 when BOTH
+/// predecessor writes are visible in the sequence overlay.
+const MERGE: Address = address!("0x7777777777777777777777777777777777777777");
+
+/// Unconditionally invalid: a predecessor that HALTS (still occupying its
+/// nonce, still paying gas).
+const HALTER: Address = address!("0x8888888888888888888888888888888888888888");
+
+/// Dual-mode gate/writer: empty calldata stores 0x2A at its own slot 0;
+/// non-empty calldata reads slot 0 and reverts when it is zero. A sequence
+/// that runs the write predecessor first flips the gated frame from
+/// `Reverted` to `Success` — the predecessor state reached the frame.
+const GATE_CODE: &[u8] = &[
+    0x36, 0x60, 0x0A, 0x57, // CALLDATASIZE; PUSH1 0x0A; JUMPI (non-empty -> gate)
+    0x60, 0x2A, 0x60, 0x00, 0x55, 0x00, // write: SSTORE slot 0 = 0x2A; STOP
+    0x5B, // 0x0A JUMPDEST
+    0x60, 0x00, 0x54, 0x15, // SLOAD slot 0; ISZERO
+    0x60, 0x13, 0x57, // PUSH1 0x13; JUMPI (zero -> revert)
+    0x00, // STOP
+    0x5B, // 0x13 JUMPDEST
+    0x60, 0x00, 0x60, 0x00, 0xFD, // PUSH1 0; PUSH1 0; REVERT
+];
+
+/// Dual-mode merge/write: non-empty calldata stores 0x2A at the calldata-named
+/// slot; empty calldata sums slots 0 and 1 into slot 2. The frame only
+/// produces 0x54 when BOTH same-account predecessor writes are visible in the
+/// sequence overlay.
+const MERGE_CODE: &[u8] = &[
+    0x36, 0x60, 0x0F, 0x57, // CALLDATASIZE; PUSH1 0x0F; JUMPI (non-empty -> write)
+    0x60, 0x00, 0x54, // SLOAD slot 0
+    0x60, 0x01, 0x54, // SLOAD slot 1
+    0x01, // ADD
+    0x60, 0x02, 0x55, // SSTORE slot 2 = sum
+    0x00, // STOP
+    0x5B, // 0x0F JUMPDEST (write path)
+    0x60, 0x2A, // PUSH1 0x2A
+    0x60, 0x00, 0x35, // PUSH1 0; CALLDATALOAD (slot)
+    0x55, // SSTORE
+    0x00, // STOP
+];
+
+/// `INVALID`: the predecessor halts.
+const HALTER_CODE: &[u8] = &[0xFE];
+
 type TestExt = CacheDB<CountingFrameDb<CacheDB<EmptyDB>>>;
 
 /// The scratch ext with the counter embedded BELOW its persistent cache (the
@@ -113,6 +159,9 @@ fn scratch() -> ScratchEvm<TestExt> {
         (READER, READER_CODE),
         (REVERTER, REVERTER_CODE),
         (DUAL, DUAL_CODE),
+        (GATE, GATE_CODE),
+        (MERGE, MERGE_CODE),
+        (HALTER, HALTER_CODE),
     ] {
         db.insert_account_info(
             addr,
@@ -395,6 +444,295 @@ fn stale_nonce_frame_is_rejected_not_silently_replayed() {
         scratch.replay(&stale).is_err(),
         "stale nonce must surface as an error"
     );
+}
+
+/// A sequence's predecessor state reaches the frame: the write predecessor
+/// fills the gate's slot 0, so the gated frame settles `Success` over the
+/// accumulated view. Replayed in isolation the frame's nonce is ahead of the
+/// parent state — the structural gap the sequence exists to close.
+#[test]
+fn sequence_prefix_state_reaches_the_frame() {
+    let mut scratch = scratch();
+    let predecessor = tx(GATE, &[], 7);
+    let frame = tx(GATE, &[0x01], 8);
+
+    assert!(matches!(
+        scratch.replay(&frame),
+        Err(ReplayFrameError::GapPending {
+            claimed: 8,
+            expected: 7
+        })
+    ));
+
+    let sequence = scratch
+        .replay_sequence(&[predecessor], &frame)
+        .expect("sequence executes");
+    assert_eq!(sequence.predecessors, vec![PredStatus::Success]);
+    assert!(
+        matches!(sequence.frame.status, ReplayStatus::Success),
+        "the frame reads the accumulated slot: {:?}",
+        sequence.frame.status
+    );
+}
+
+/// The overlay never leaks into the ext: after the sequence the ext still
+/// serves the parent state, so a plain replay of the same frame is still the
+/// structural gap it was before (and the predecessor's storage is absent).
+#[test]
+fn sequence_state_never_leaks_into_the_ext() {
+    let mut scratch = scratch();
+    let predecessor = tx(GATE, &[], 7);
+    let frame = tx(GATE, &[0x01], 8);
+
+    let sequence = scratch
+        .replay_sequence(&[predecessor], &frame)
+        .expect("sequence executes");
+    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+
+    assert_eq!(
+        read_view_word(scratch.ext(), GATE, U256::ZERO),
+        Some(U256::ZERO),
+        "no predecessor storage reached the ext"
+    );
+    assert!(
+        matches!(
+            scratch.replay(&frame),
+            Err(ReplayFrameError::GapPending { .. })
+        ),
+        "no predecessor nonce reached the ext"
+    );
+}
+
+/// A reverted predecessor is not a failure: it still occupies its nonce, so
+/// the frame at nonce+1 replays instead of surfacing a gap.
+#[test]
+fn reverted_predecessor_still_occupies_its_nonce() {
+    let mut scratch = scratch();
+    let predecessor = tx(REVERTER, &[], 7);
+    let frame = tx(WRITER, &slot_word(4), 8);
+
+    let sequence = scratch
+        .replay_sequence(&[predecessor], &frame)
+        .expect("sequence executes");
+    assert_eq!(sequence.predecessors, vec![PredStatus::Reverted]);
+    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+}
+
+/// A predecessor whose nonce the parent state already consumed is skipped as
+/// `AlreadyMined`; its effects are already in the parent state, and the frame
+/// at the parent's next nonce replays.
+#[test]
+fn already_mined_predecessor_is_skipped_and_the_sequence_completes() {
+    let mut scratch = scratch();
+    let stale = tx(WRITER, &slot_word(2), 6);
+    let frame = tx(WRITER, &slot_word(3), 7);
+
+    let sequence = scratch
+        .replay_sequence(&[stale], &frame)
+        .expect("sequence executes");
+    assert_eq!(sequence.predecessors, vec![PredStatus::AlreadyMined]);
+    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+}
+
+/// A multi-step sequence records each predecessor's status in ascending
+/// order and counts the whole sequence's cold reads on the frame outcome.
+#[test]
+fn multi_step_sequence_accumulates_statuses_and_counter() {
+    let mut scratch = scratch();
+    let prefix = [tx(GATE, &[], 7), tx(REVERTER, &[], 8)];
+    let frame = tx(GATE, &[0x01], 9);
+
+    let sequence = scratch
+        .replay_sequence(&prefix, &frame)
+        .expect("sequence executes");
+    assert_eq!(
+        sequence.predecessors,
+        vec![PredStatus::Success, PredStatus::Reverted]
+    );
+    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(
+        sequence.frame.rpc_reads > 0,
+        "the sequence's cold reads are counted on the frame outcome"
+    );
+    assert!(sequence.frame.wall > Duration::ZERO);
+}
+
+/// A predecessor-sourced failure is attributed to the predecessor (with its
+/// nonce) — the frame never ran — while a frame-sourced failure is the
+/// frame's own. The rescue router routes the two differently.
+#[test]
+fn sequence_failure_attribution_splits_predecessor_from_frame() {
+    let mut malformed_pred = tx(WRITER, &slot_word(0), 7);
+    malformed_pred.gas_limit = 0;
+    let frame = tx(MERGE, &[], 8);
+    let mut pred_scratch = scratch();
+    let pred_err = pred_scratch
+        .replay_sequence(&[malformed_pred], &frame)
+        .expect_err("malformed predecessor aborts");
+    assert!(
+        matches!(
+            &pred_err,
+            SequenceReplayError::Predecessor { nonce: 7, source }
+                if matches!(source, ReplayFrameError::MalformedTransaction { .. })
+        ),
+        "attributed to the frame instead of the predecessor: {pred_err:?}"
+    );
+
+    let predecessor = tx(WRITER, &slot_word(0), 7);
+    let mut malformed_frame = tx(MERGE, &[], 8);
+    malformed_frame.gas_limit = 0;
+    let mut frame_scratch = scratch();
+    let frame_err = frame_scratch
+        .replay_sequence(&[predecessor], &malformed_frame)
+        .expect_err("malformed frame aborts");
+    assert!(
+        matches!(
+            &frame_err,
+            SequenceReplayError::Frame(ReplayFrameError::MalformedTransaction { .. })
+        ),
+        "expected a frame-sourced malformed error: {frame_err:?}"
+    );
+}
+
+/// An underpriced predecessor settles via the disabled-base-fee retry (the
+/// same ritual a frame gets); it commits and the sequence proceeds.
+#[test]
+fn underpriced_predecessor_falls_back_and_commits() {
+    let mut underpriced = tx(MERGE, &slot_word(0), 7);
+    underpriced.max_fee_per_gas = BASE_FEE_GWEI / 2;
+    let frame = tx(MERGE, &[], 8);
+    let mut scratch = scratch();
+    let sequence = scratch
+        .replay_sequence(&[underpriced], &frame)
+        .expect("sequence executes");
+    assert_eq!(sequence.predecessors, vec![PredStatus::Success]);
+    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert_eq!(
+        sequence.frame.state.get(&SENDER).map(|acc| acc.info.nonce),
+        Some(9),
+        "the underpriced predecessor consumed its nonce"
+    );
+}
+
+/// The overlay consults the ext through its MUTABLE `Database` path, so a
+/// miss is counted once and a later step's re-read of the SAME word is an
+/// overlay hit (zero forwarded cold reads) — and the ext's read cache is left
+/// warm, exactly like a plain replay.
+#[test]
+fn sequence_overlay_hits_do_not_re_forward_a_cold_read() {
+    // A: the frame reads a DIFFERENT word, so it is another cold miss. B: the
+    // frame reads the SAME word as the first step, so it must hit the overlay.
+    let mut a = scratch();
+    let seq_a = a
+        .replay_sequence(
+            &[tx(READER, &slot_word(3), 7)],
+            &tx(READER, &slot_word(4), 8),
+        )
+        .expect("sequence executes");
+    let mut b = scratch();
+    let seq_b = b
+        .replay_sequence(
+            &[tx(READER, &slot_word(3), 7)],
+            &tx(READER, &slot_word(3), 8),
+        )
+        .expect("sequence executes");
+    assert_eq!(
+        seq_a.frame.rpc_reads,
+        seq_b.frame.rpc_reads + 1,
+        "the later step's same-word read is an overlay hit, not a second cold miss"
+    );
+
+    // The ext cache was warmed by the sequence: a plain replay of the same
+    // word against the parent state forwards nothing cold.
+    let warm = b
+        .replay(&tx(READER, &slot_word(3), 7))
+        .expect("warm replay executes");
+    assert_eq!(
+        warm.rpc_reads, 0,
+        "the sequence's miss warmed the ext's read cache through the mutable Database path"
+    );
+}
+
+/// Two same-account predecessors merge cleanly: nonces advance twice, each
+/// step's storage reaches the frame, and the sender balance deducts exactly
+/// once per step (hand-computed with the per-step gas; no double deduction).
+#[test]
+fn same_account_two_predecessors_merge_nonce_balance_and_storage() {
+    let pred1 = tx(MERGE, &slot_word(0), 7);
+    let pred2 = tx(MERGE, &slot_word(1), 8);
+    let frame = tx(MERGE, &[], 9);
+
+    let mut seq_scratch = scratch();
+    let sequence = seq_scratch
+        .replay_sequence(&[pred1.clone(), pred2.clone()], &frame)
+        .expect("sequence executes");
+    assert_eq!(
+        sequence.predecessors,
+        vec![PredStatus::Success, PredStatus::Success]
+    );
+    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert_eq!(
+        sequence
+            .frame
+            .state
+            .get(&MERGE)
+            .and_then(|account| account.storage.get(&U256::from(2u64)))
+            .map(|slot| slot.present_value),
+        Some(U256::from(0x54)),
+        "the frame sums BOTH predecessor writes: slot0(0x2A) + slot1(0x2A)"
+    );
+    // The frame itself is at nonce 9, so its post-state nonce is 10 — proof
+    // the two predecessors' bumps (7->8->9) were both in the overlay.
+    assert_eq!(
+        sequence.frame.state.get(&SENDER).map(|acc| acc.info.nonce),
+        Some(10),
+        "the sender nonce advanced through both predecessors and the frame"
+    );
+    assert_eq!(sequence.predecessor_gas.len(), 2);
+    assert!(
+        sequence.predecessor_gas.iter().all(|gas| *gas > 0),
+        "both predecessors paid gas"
+    );
+
+    // Balance check on a fresh scratch: a bare 21000-gas transfer frame makes
+    // the expected outflow exact.
+    let price = U256::from(BASE_FEE_GWEI);
+    let initial = U256::from(1_000_000_000_000_000_000u64);
+    let mut scratch2 = scratch();
+    let transfer = tx(SENDER, &[], 9);
+    let sequence2 = scratch2
+        .replay_sequence(&[pred1.clone(), pred2.clone()], &transfer)
+        .expect("sequence executes");
+    let pred_gas: u64 = sequence2.predecessor_gas.iter().sum();
+    assert_eq!(
+        sequence2
+            .frame
+            .state
+            .get(&SENDER)
+            .map(|acc| acc.info.balance),
+        Some(initial - price * U256::from(pred_gas + 21_000)),
+        "balance deducts once per step; the frame is a 21000-gas transfer"
+    );
+}
+
+/// A Halt predecessor is not a failure: it commits its nonce and gas burn,
+/// and the frame at the next nonce replays.
+#[test]
+fn halted_predecessor_commits_and_the_sequence_proceeds() {
+    let mut scratch = scratch();
+    let halt = tx(HALTER, &[], 7);
+    let frame = tx(WRITER, &slot_word(0), 8);
+    let sequence = scratch
+        .replay_sequence(&[halt], &frame)
+        .expect("sequence executes");
+    assert_eq!(sequence.predecessors, vec![PredStatus::Halted]);
+    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert_eq!(
+        sequence.frame.state.get(&SENDER).map(|acc| acc.info.nonce),
+        Some(9),
+        "the halt consumed its nonce and the frame ran at the next one"
+    );
+    assert!(sequence.predecessor_gas[0] > 0, "the halt burned gas");
 }
 
 /// Live wiring: `scratch_evm()` over a real forked node stacks + replays a

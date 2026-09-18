@@ -78,7 +78,9 @@ use degenbot_bot::sidecar_paths::V2ConnectorIndex;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm::frame_replay::{ReplayFrameError, ReplayStatus, ReplayableTx};
+use degenbot_simulation::sim::evm::frame_replay::{
+    ReplayFrameError, ReplayStatus, ReplayableTx, SequenceReplayError,
+};
 use degenbot_simulation::sim::evm::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost, V4PoolSet,
 };
@@ -593,7 +595,26 @@ pub fn replay_observe_reason(e: &ReplayFrameError) -> (&'static str, serde_json:
         ReplayFrameError::MalformedTransaction { raw } => {
             ("malformed_transaction", serde_json::json!({"detail": raw}))
         }
+        ReplayFrameError::Mispriced { raw } => {
+            ("mispriced_transaction", serde_json::json!({"detail": raw}))
+        }
         ReplayFrameError::Other { .. } => ("replay_failed", serde_json::json!({})),
+    }
+}
+
+/// Map a predecessor-sourced sequence failure to the rescue router's observe
+/// reason. A structurally unrunnable predecessor (`MalformedTransaction` as
+/// fetched at this shape) goes to the structural pool-pred lane; every
+/// retryable class — RPC/validation (`Other`), mispricing, gap, stale nonce —
+/// is transient (retried next head, never a permanent guard).
+#[must_use]
+pub fn predecessor_observe_reason(e: &ReplayFrameError) -> &'static str {
+    match e {
+        ReplayFrameError::MalformedTransaction { .. } => "predecessor_malformed",
+        ReplayFrameError::GapPending { .. }
+        | ReplayFrameError::AlreadySettled { .. }
+        | ReplayFrameError::Mispriced { .. }
+        | ReplayFrameError::Other { .. } => "predecessor_replay_failed",
     }
 }
 
@@ -602,10 +623,13 @@ pub fn replay_observe_reason(e: &ReplayFrameError) -> (&'static str, serde_json:
 /// owns dispatch/submit; the returned [`FrameArtifacts::decision`] already
 /// carries the truthful observe reason when nothing composed.
 ///
+/// The feed path replays against the head state with an empty predecessor
+/// prefix — [`process_frame_with_prefix`] is the rescue path that executes a
+/// hydrated unmined queue first.
+///
 /// `handle` may be `None` when the per-block replay stack failed to build
 /// (no ambient multi-threaded runtime, RPC outage) — the frame observes
 /// `replay_unavailable` rather than being classified or silently dropped.
-#[expect(clippy::too_many_lines, reason = "one frame reads top-to-bottom")]
 #[expect(
     clippy::too_many_arguments,
     reason = "the frame takes the runtime surfaces it needs"
@@ -619,6 +643,45 @@ pub async fn process_frame<S: PendingTxStrategy>(
     pl: &PipelineConfig,
     handle: &mut Option<BlockSimHandle<'static>>,
     ev: &BackrunFeedEvent,
+    head: u64,
+    spent: U256,
+) -> FrameArtifacts {
+    process_frame_with_prefix(
+        strategy,
+        ctx,
+        provider,
+        sim_client,
+        sidecar,
+        pl,
+        handle,
+        ev,
+        &[],
+        head,
+        spent,
+    )
+    .await
+}
+
+/// As [`process_frame`], with a hydrated unmined predecessor prefix. A
+/// non-empty prefix runs each predecessor through the frame-replay pipeline
+/// first (committing its settled state into a local overlay), so the frame
+/// replays over the end state of its fake-mined ancestors; an empty prefix is
+/// exactly [`process_frame`]'s feed path.
+#[expect(clippy::too_many_lines, reason = "one frame reads top-to-bottom")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the frame takes the runtime surfaces it needs"
+)]
+pub async fn process_frame_with_prefix<S: PendingTxStrategy>(
+    strategy: &mut S,
+    ctx: &mut MarketContext,
+    provider: &AlloyProvider,
+    sim_client: &alloy::rpc::client::RpcClient,
+    sidecar: &SidecarConfig,
+    pl: &PipelineConfig,
+    handle: &mut Option<BlockSimHandle<'static>>,
+    ev: &BackrunFeedEvent,
+    prefix: &[ReplayableTx],
     head: u64,
     spent: U256,
 ) -> FrameArtifacts {
@@ -643,21 +706,46 @@ pub async fn process_frame<S: PendingTxStrategy>(
         max_priority_fee_per_gas: ev.max_priority_fee_per_gas,
         nonce: ev.nonce,
     };
-    let outcome = match scratch.replay(&replayable) {
-        Ok(o) => o,
+    let replayed = if prefix.is_empty() {
+        scratch
+            .replay(&replayable)
+            .map(|outcome| (outcome, Vec::new()))
+            .map_err(SequenceReplayError::Frame)
+    } else {
+        scratch
+            .replay_sequence(prefix, &replayable)
+            .map(|sequence| (sequence.frame, sequence.predecessors))
+    };
+    let (outcome, predecessor_statuses) = match replayed {
+        Ok(replayed) => replayed,
         Err(e) => {
             stages.replay_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
-            let (reason, extra) = replay_observe_reason(&e);
-            let mut evidence = extra;
+            // A predecessor's failure is never the frame's: the frame never
+            // ran, so its quarantine life cannot be resolved on this evidence
+            // (no `replay_frame_error`, hence no inline park). The observe
+            // reason carries the class the rescue router owns.
+            let (reason, mut evidence, frame_error) = match &e {
+                SequenceReplayError::Frame(frame_error) => {
+                    let (reason, extra) = replay_observe_reason(frame_error);
+                    (reason, extra, Some(frame_error.clone()))
+                }
+                SequenceReplayError::Predecessor { nonce, source } => (
+                    predecessor_observe_reason(source),
+                    serde_json::json!({
+                        "predecessor_nonce": nonce,
+                        "detail": source.to_string(),
+                    }),
+                    None,
+                ),
+            };
             evidence["error"] = serde_json::Value::String(e.to_string());
-            let mut payload = serde_json::json!({"tx": tx_hex});
+            let mut payload = serde_json::json!({"tx": tx_hex, "prefix_len": prefix.len()});
             if let (Some(dst), Some(src)) = (payload.as_object_mut(), evidence.as_object_mut()) {
                 dst.append(src);
             }
             payload["observe_reason"] = serde_json::Value::String(reason.to_string());
             trace_jsonl("replay", payload);
-            let err = e.clone();
-            return FrameArtifacts::observe_with_replay_error(reason, stages, Some(err));
+            return FrameArtifacts::observe_with_replay_error(reason, stages, frame_error);
         }
     };
     stages.replay_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -668,6 +756,11 @@ pub async fn process_frame<S: PendingTxStrategy>(
             "wall_us": u64::try_from(outcome.wall.as_micros()).unwrap_or(u64::MAX),
             "rpc_reads": outcome.rpc_reads,
             "touched": outcome.touched.len(),
+            "prefix_len": prefix.len(),
+            "predecessor_statuses": predecessor_statuses
+                .iter()
+                .map(|status| status.label())
+                .collect::<Vec<_>>(),
             "base_fee": match outcome.base_fee_source {
                 degenbot_simulation::sim::evm::frame_replay::BaseFeeSource::Projected => "projected",
                 degenbot_simulation::sim::evm::frame_replay::BaseFeeSource::DisabledFallback => "disabled_fallback",

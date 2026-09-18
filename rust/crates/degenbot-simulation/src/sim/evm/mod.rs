@@ -128,8 +128,9 @@ pub mod warm_code_cache;
 pub use access_list::{emit_access_list_from_state, AccessListCollector};
 pub use bot_state_db::BotStateDb;
 pub use frame_replay::{
-    read_view_word, BaseFeeSource, CountingFrameDb, FrameRpcCounter, ReplayFrameError,
-    ReplayOutcome, ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm,
+    read_view_word, BaseFeeSource, CountingFrameDb, FrameRpcCounter, PredStatus, ReplayFrameError,
+    ReplayOutcome, ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm, SequenceOutcome,
+    SequenceReplayError,
 };
 /// Re-export the diagnostic inspectors + captured structs (engine-generic,
 /// ADR-019 D7 — the PyO3 wrapper surfaces them as `#[pyclass]` thin shells).

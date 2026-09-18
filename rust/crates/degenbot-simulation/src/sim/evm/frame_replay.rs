@@ -37,6 +37,21 @@
 //! and a reverted frame surfaces zero partial state in
 //! `ReplayOutcome::state` (revm rolled the journal back) — pinned by tests.
 //!
+//! # Sequences (the commit-accumulating overlay)
+//!
+//! A frame whose parent state has unmined predecessors cannot replay against
+//! that parent ([`ReplayFrameError::GapPending`]): the predecessors sit
+//! between the snapshot and the frame. [`ScratchEvm::replay_sequence`] runs
+//! each hydrated predecessor through the SAME pipeline as a plain frame, over
+//! a local overlay DB (`SequenceDb`) that reads through to the ext and merges
+//! each step's `ResultAndState` into itself; the frame then replays over the
+//! accumulated view. The overlay is the ONLY writer — the ext receives reads,
+//! never writes — so the isolation contract above holds unchanged and the
+//! overlay (with everything it accumulated) drops when the call returns. A
+//! predecessor failure surfaces as [`SequenceReplayError::Predecessor`] (the
+//! frame never ran, so its quarantine life cannot be resolved on that
+//! evidence); only the frame's own failure is [`SequenceReplayError::Frame`].
+//!
 //! # Cold-read accounting
 //!
 //! [`FrameRpcCounter`] lives INSIDE the scratch stack, below the persistent
@@ -69,18 +84,21 @@
 // are ubiquitous — match the degenbot-simulation convention.
 #![expect(clippy::doc_markdown)]
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alloy::primitives::{Address, Bytes, B256, U256};
+use revm::bytecode::Bytecode;
 use revm::context::TxEnv;
 use revm::context_interface::result::{
     EVMError, ExecutionResult, InvalidTransaction, ResultAndState,
 };
-use revm::database_interface::{Database, DatabaseRef};
+use revm::database::CacheDB;
+use revm::database_interface::{Database, DatabaseCommit, DatabaseRef};
 use revm::primitives::TxKind;
-use revm::state::EvmState;
+use revm::state::{AccountInfo, EvmState};
 use revm::{ExecuteEvm, MainBuilder, MainContext};
 
 /// One externally-received signed transaction, recovered-signer-as-data.
@@ -107,6 +125,42 @@ pub enum ReplayStatus {
     Success,
     Reverted,
     Halted,
+}
+
+/// How one predecessor in a sequence settled. A predecessor occupies its
+/// nonce even when it reverted or halted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredStatus {
+    Success,
+    Reverted,
+    Halted,
+    /// The parent state had already consumed the nonce — stale pool evidence.
+    /// The predecessor's effects are already in the parent state, so it
+    /// commits nothing and the sequence continues.
+    AlreadyMined,
+}
+
+impl PredStatus {
+    /// The trace label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Reverted => "reverted",
+            Self::Halted => "halted",
+            Self::AlreadyMined => "already_mined",
+        }
+    }
+}
+
+impl From<ReplayStatus> for PredStatus {
+    fn from(status: ReplayStatus) -> Self {
+        match status {
+            ReplayStatus::Success => Self::Success,
+            ReplayStatus::Reverted => Self::Reverted,
+            ReplayStatus::Halted => Self::Halted,
+        }
+    }
 }
 
 /// Which base-fee path validated the frame (see the module doc).
@@ -139,6 +193,18 @@ pub struct ReplayOutcome {
     pub base_fee_source: BaseFeeSource,
 }
 
+/// The settled outcome of a sequence replay: each predecessor's status in
+/// ascending prefix order, plus the frame's typed outcome over the
+/// accumulated view.
+#[derive(Debug)]
+pub struct SequenceOutcome {
+    pub predecessors: Vec<PredStatus>,
+    /// Each predecessor's transaction gas used, in ascending prefix order.
+    /// `AlreadyMined` predecessors commit nothing and read as `0`.
+    pub predecessor_gas: Vec<u64>,
+    pub frame: ReplayOutcome,
+}
+
 /// A frame that could not be replayed against the layered view. The
 /// variants carry the reconstructable nonce/saturation evidence, so every
 /// observe label downstream is truthful about WHICH class it belonged to.
@@ -162,6 +228,33 @@ pub enum ReplayFrameError {
     /// unexpected revm variant.
     #[error("replay failed: {raw}")]
     Other { raw: std::string::String },
+    /// The projected base fee rejected the tx AND the disabled-base-fee
+    /// retry rejected it too: no chain state admits this gas price now, but
+    /// the owner may replace it with a repriced tx — transient, never
+    /// malformed-terminal and never structural-permanent.
+    #[error("mispriced transaction: {raw}")]
+    Mispriced { raw: std::string::String },
+}
+
+/// A sequence replay's typed failure, split by which side of the sequence
+/// aborted. The rescue router must never mistake a predecessor's death for
+/// the frame's: a predecessor that cannot run as fetched is pool-pred lane
+/// evidence (the owner may replace it), not proof the frame is dead.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SequenceReplayError {
+    /// A prefix predecessor failed before the frame ran. The frame is
+    /// untouched — its quarantine life cannot be resolved on this evidence.
+    #[error("sequence predecessor at nonce {nonce} failed: {source}")]
+    Predecessor {
+        /// The offending predecessor's claimed nonce.
+        nonce: u64,
+        /// The predecessor's typed failure class.
+        #[source]
+        source: ReplayFrameError,
+    },
+    /// The frame itself failed after the prefix settled cleanly.
+    #[error("frame: {0}")]
+    Frame(ReplayFrameError),
 }
 
 /// The projected block env a scratch frame executes under. `base_fee_next`
@@ -253,34 +346,76 @@ impl<Db: Database> ScratchEvm<Db> {
     pub fn replay(&mut self, tx: &ReplayableTx) -> Result<ReplayOutcome, ReplayFrameError> {
         let started = Instant::now();
         let reads_before = self.counter.reads();
-        let tx_env = tx.tx_env();
+        let (settled, base_fee_source) =
+            run_frame_with_fallback(&mut self.ext, &self.block, &tx.tx_env())?;
+        Ok(outcome(
+            settled,
+            self.counter.reads().saturating_sub(reads_before),
+            started.elapsed(),
+            base_fee_source,
+        ))
+    }
 
-        match run_frame(&mut self.ext, &self.block, &tx_env, false) {
-            Ok(settled) => Ok(outcome(
+    /// Replay a hydrated predecessor prefix, ascending, then `frame` over the
+    /// accumulated view (see the module doc's sequence section).
+    ///
+    /// Each predecessor runs through the SAME pipeline and error taxonomy as
+    /// [`Self::replay`]. A reverted or halted predecessor is not a failure:
+    /// it occupies its nonce, so its settled state is committed and the
+    /// sequence continues. A predecessor whose nonce the parent state already
+    /// consumed ([`ReplayFrameError::AlreadySettled`]) is
+    /// [`PredStatus::AlreadyMined`] — its effects are already in the parent
+    /// state and it commits nothing. Every other predecessor error surfaces as
+    /// [`SequenceReplayError::Predecessor`] with the offending nonce, so the
+    /// caller routes it without ever resolving the frame.
+    ///
+    /// # Errors
+    ///
+    /// [`SequenceReplayError::Predecessor`] aborts the sequence before the
+    /// frame runs; [`SequenceReplayError::Frame`] is the frame's own failure
+    /// over the accumulated view.
+    pub fn replay_sequence(
+        &mut self,
+        prefix: &[ReplayableTx],
+        frame: &ReplayableTx,
+    ) -> Result<SequenceOutcome, SequenceReplayError> {
+        let started = Instant::now();
+        let reads_before = self.counter.reads();
+        let mut overlay = SequenceDb::new(&mut self.ext);
+        let mut predecessors = Vec::with_capacity(prefix.len());
+        let mut predecessor_gas = Vec::with_capacity(prefix.len());
+        for predecessor in prefix {
+            match run_frame_with_fallback(&mut overlay, &self.block, &predecessor.tx_env()) {
+                Ok((settled, _source)) => {
+                    predecessors.push(execution_status(&settled.result).into());
+                    predecessor_gas.push(settled.result.tx_gas_used());
+                    overlay.commit(settled.state);
+                }
+                Err(ReplayFrameError::AlreadySettled { .. }) => {
+                    predecessors.push(PredStatus::AlreadyMined);
+                    predecessor_gas.push(0);
+                }
+                Err(source) => {
+                    return Err(SequenceReplayError::Predecessor {
+                        nonce: predecessor.nonce,
+                        source,
+                    });
+                }
+            }
+        }
+        let (settled, base_fee_source) =
+            run_frame_with_fallback(&mut overlay, &self.block, &frame.tx_env())
+                .map_err(SequenceReplayError::Frame)?;
+        Ok(SequenceOutcome {
+            predecessors,
+            predecessor_gas,
+            frame: outcome(
                 settled,
                 self.counter.reads().saturating_sub(reads_before),
                 started.elapsed(),
-                BaseFeeSource::Projected,
-            )),
-            Err(FrameAbort::BaseFeeRejected) => {
-                run_frame(&mut self.ext, &self.block, &tx_env, true)
-                    .map(|settled| {
-                        outcome(
-                            settled,
-                            self.counter.reads().saturating_sub(reads_before),
-                            started.elapsed(),
-                            BaseFeeSource::DisabledFallback,
-                        )
-                    })
-                    .map_err(|abort| match abort {
-                        FrameAbort::OtherError(e) => e,
-                        FrameAbort::BaseFeeRejected => ReplayFrameError::Other {
-                            raw: abort.to_string(),
-                        },
-                    })
-            }
-            Err(FrameAbort::OtherError(e)) => Err(e),
-        }
+                base_fee_source,
+            ),
+        })
     }
 }
 
@@ -367,6 +502,91 @@ impl<ExtDb: DatabaseRef> DatabaseRef for CountingFrameDb<ExtDb> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// The sequence overlay (commit-accumulating; see the module doc)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// The commit-accumulating overlay of a [`ScratchEvm::replay_sequence`]: a
+/// read-through [`CacheDB`] layered over the scratch ext. Reads consult the
+/// overlay and, on a miss, fall through [`WarmingExt`] to the ext's MUTABLE
+/// [`Database`] path — the SAME cold path a plain frame warms — so the
+/// ext's per-block read-caches accumulate during a sequence exactly as they
+/// do for a plain frame and [`FrameRpcCounter`] counts the same misses. A
+/// step's `ResultAndState` is merged into the overlay between steps. The ext
+/// receives reads only — never a write — and the overlay drops when the call
+/// returns.
+struct SequenceDb<'a, Db> {
+    overlay: CacheDB<WarmingExt<'a, Db>>,
+}
+
+impl<'a, Db: Database> SequenceDb<'a, Db> {
+    fn new(ext: &'a mut Db) -> Self {
+        Self {
+            overlay: CacheDB::new(WarmingExt {
+                ext: RefCell::new(ext),
+            }),
+        }
+    }
+
+    /// Merge one step's settled state into the overlay. `CacheDB`'s commit
+    /// applies the whole touched `Account` entry (replace nonce/balance/code,
+    /// merge storage, clear on create/selfdestruct) — the post-journal
+    /// snapshot revm already derived, never re-derived here.
+    fn commit(&mut self, state: EvmState) {
+        self.overlay.commit(state);
+    }
+}
+
+impl<Db: Database> Database for SequenceDb<'_, Db> {
+    type Error = Db::Error;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.overlay.basic(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.overlay.code_by_hash(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.overlay.storage(address, index)
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        self.overlay.block_hash(number)
+    }
+}
+
+/// The overlay's inner ext as a [`DatabaseRef`] that forwards every miss to
+/// the ext's MUTABLE [`Database`] methods. `CacheDB` only ever calls the
+/// `*_ref` methods on its inner, and the `&mut Db` blanket `DatabaseRef` impl
+/// forwards straight to `Db::*_ref`, which skips the cache inserts; interior
+/// mutability is what lets a sequence miss warm the same read-caches a plain
+/// replay does.
+struct WarmingExt<'a, Db> {
+    ext: RefCell<&'a mut Db>,
+}
+
+impl<Db: Database> DatabaseRef for WarmingExt<'_, Db> {
+    type Error = Db::Error;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.ext.borrow_mut().basic(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.ext.borrow_mut().code_by_hash(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.ext.borrow_mut().storage(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        self.ext.borrow_mut().block_hash(number)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // The per-frame layer + execution
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -435,6 +655,37 @@ impl std::fmt::Display for FrameAbort {
     }
 }
 
+/// Run one tx through [`run_frame`] with the seam's projection ritual: the
+/// projected base fee first, the `disable_base_fee` retry once on a
+/// `GasPriceLessThanBasefee` rejection. Returns which path settled.
+fn run_frame_with_fallback<Db: Database>(
+    db: &mut Db,
+    block: &ScratchBlock,
+    tx_env: &TxEnv,
+) -> Result<(ResultAndState, BaseFeeSource), ReplayFrameError> {
+    match run_frame(db, block, tx_env, false) {
+        Ok(settled) => Ok((settled, BaseFeeSource::Projected)),
+        Err(FrameAbort::BaseFeeRejected) => run_frame(db, block, tx_env, true)
+            .map(|settled| (settled, BaseFeeSource::DisabledFallback))
+            .map_err(|abort| match abort {
+                FrameAbort::OtherError(e) => e,
+                FrameAbort::BaseFeeRejected => ReplayFrameError::Mispriced {
+                    raw: abort.to_string(),
+                },
+            }),
+        Err(FrameAbort::OtherError(e)) => Err(e),
+    }
+}
+
+/// The seam's execution-status taxonomy for a settled result.
+fn execution_status(result: &ExecutionResult) -> ReplayStatus {
+    match result {
+        ExecutionResult::Success { .. } => ReplayStatus::Success,
+        ExecutionResult::Revert { .. } => ReplayStatus::Reverted,
+        ExecutionResult::Halt { .. } => ReplayStatus::Halted,
+    }
+}
+
 /// Settle a `ResultAndState` into the typed [`ReplayOutcome`] (status,
 /// touched-filtered state, deterministic touched-slot set).
 fn outcome(
@@ -443,11 +694,7 @@ fn outcome(
     wall: Duration,
     base_fee_source: BaseFeeSource,
 ) -> ReplayOutcome {
-    let status = match settled.result {
-        ExecutionResult::Success { .. } => ReplayStatus::Success,
-        ExecutionResult::Revert { .. } => ReplayStatus::Reverted,
-        ExecutionResult::Halt { .. } => ReplayStatus::Halted,
-    };
+    let status = execution_status(&settled.result);
     let state: EvmState = settled
         .state
         .into_iter()

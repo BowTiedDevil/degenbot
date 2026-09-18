@@ -50,7 +50,7 @@ use degenbot_submission::backrun_strategy::BackrunStrategy;
 use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::frame_pipeline::{
-    build_block_handle, load_fixture_frames, process_frame, trace_jsonl, MarketContext,
+    build_block_handle, load_fixture_frames, process_frame_with_prefix, trace_jsonl, MarketContext,
     PipelineConfig,
 };
 use degenbot_submission::gap_quarantine::{
@@ -252,6 +252,10 @@ enum FrameOutcome {
     ReplayUnavailable,
     /// The replay died in an RPC hydrate (transient).
     ReplayFailed,
+    /// A sequence predecessor failed structurally (unrunnable as fetched):
+    /// the structural pool-pred lane owns it — record the guard WITH content,
+    /// keep the frame parked, never resolve it.
+    PredecessorMalformed,
     /// Any other terminal observe/drop, carrying its trace reason.
     Terminal(&'static str),
 }
@@ -261,7 +265,11 @@ fn reentry_outcome(outcome: FrameOutcome) -> ReentryOutcome {
     match outcome {
         FrameOutcome::Bid | FrameOutcome::Terminal(_) => ReentryOutcome::Terminal,
         FrameOutcome::GapPending => ReentryOutcome::GapPending,
-        FrameOutcome::ReplayUnavailable | FrameOutcome::ReplayFailed => ReentryOutcome::Transient,
+        // `PredecessorMalformed` is routed to the structural lane before this
+        // router; when reached, its fallback is the same transient re-park.
+        FrameOutcome::ReplayUnavailable
+        | FrameOutcome::ReplayFailed
+        | FrameOutcome::PredecessorMalformed => ReentryOutcome::Transient,
     }
 }
 
@@ -271,7 +279,13 @@ fn outcome_for(reason: &'static str) -> FrameOutcome {
     match reason {
         "gap_pending" => FrameOutcome::GapPending,
         "replay_unavailable" => FrameOutcome::ReplayUnavailable,
-        "replay_failed" => FrameOutcome::ReplayFailed,
+        // `mispriced_transaction` (base fee rejected even after the disabled
+        // retry) and a predecessor's retryable failure are transient: never
+        // terminal and never guarded.
+        "replay_failed" | "mispriced_transaction" | "predecessor_replay_failed" => {
+            FrameOutcome::ReplayFailed
+        }
+        "predecessor_malformed" => FrameOutcome::PredecessorMalformed,
         other => FrameOutcome::Terminal(other),
     }
 }
@@ -329,6 +343,11 @@ fn journal_reentry_outcome(
 /// still appends.
 type GapParkMemo = Option<(B256, u64)>;
 
+/// The feed path's predecessor prefix: always empty. The quarantine rescue arm
+/// is the only caller that supplies a hydrated prefix; a feed frame replays
+/// against the head state.
+const FEED_PREFIX: &[ReplayableTx] = &[];
+
 /// Append a `GapPending` park to the journal unless it repeats the immediately
 /// preceding `(hash, boundary)` park. Returns whether the line was written.
 fn record_gap_park(
@@ -360,6 +379,7 @@ fn record_gap_park(
 )]
 async fn run_frame(
     ev: &degenbot_rpc::backrun_feed::BackrunFeedEvent,
+    prefix: &[ReplayableTx],
     rt: &mut MarketContext,
     strategy: &mut BackrunStrategy,
     provider: &Arc<AlloyProvider>,
@@ -412,8 +432,8 @@ async fn run_frame(
             "received_unix_ms": ev.received_unix_ms,
         }),
     );
-    let artifacts = process_frame(
-        strategy, rt, provider, sim_client, cfg, pl, handle, ev, head, *spent,
+    let artifacts = process_frame_with_prefix(
+        strategy, rt, provider, sim_client, cfg, pl, handle, ev, prefix, head, *spent,
     )
     .await;
     trace_jsonl(
@@ -746,13 +766,51 @@ fn decode_predecessor(
 
 /// Why a predecessor prefix could not hydrate, split by whether a retry can
 /// ever change the answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum HydrationFailure {
     /// A transport error or a null lookup: endpoint skew, retried.
     Transient(&'static str),
-    /// The node returned a shape that cannot decode: permanent for the
-    /// pool-pred lane.
-    Structural(&'static str),
+    /// The node returned a shape that cannot decode (or a tx object without a
+    /// usable hash): permanent for the pool-pred lane. Carries the tx hashes
+    /// lifted from the returned shapes (including the failing one) so the
+    /// structural guard can tell a replaced predecessor from the same one.
+    Structural {
+        reason: &'static str,
+        hashes: Vec<B256>,
+    },
+}
+
+/// One hydrated predecessor prefix: the replayable txs plus their tx hashes
+/// (the guard's content identity). The hash is lifted from the same node JSON
+/// independently of the tx decode; a missing or zero hash is a broken shape
+/// and fails the hydration `Structural`.
+#[derive(Debug)]
+struct HydratedPredecessors {
+    txs: Vec<ReplayableTx>,
+    hashes: Vec<B256>,
+}
+
+impl HydratedPredecessors {
+    /// The `(nonce, hash)` content identity the re-park guard compares.
+    fn content(&self) -> Vec<(u64, B256)> {
+        self.txs
+            .iter()
+            .map(|tx| tx.nonce)
+            .zip(self.hashes.iter().copied())
+            .collect()
+    }
+}
+
+/// Lift a predecessor's tx hash from its node JSON. A shape without a usable
+/// (non-zero) hash is broken: the guard's content identity would be a lie, and
+/// `B256::ZERO` could silently equal a later `B256::ZERO` and never re-arm,
+/// so the caller fails the hydration `Structural` rather than zero-filling.
+fn predecessor_hash(value: &serde_json::Value) -> Option<B256> {
+    value
+        .get("hash")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| raw.trim_start_matches("0x").parse::<B256>().ok())
+        .filter(|hash| !hash.is_zero())
 }
 
 /// Hydrate the pool-pred rescue's predecessor prefix, ascending. ONE
@@ -763,8 +821,11 @@ async fn hydrate_predecessors(
     client: &alloy::rpc::client::RpcClient,
     sender: Address,
     nonces: &[u64],
-) -> Result<Vec<ReplayableTx>, HydrationFailure> {
-    let mut prefix = Vec::with_capacity(nonces.len());
+) -> Result<HydratedPredecessors, HydrationFailure> {
+    let mut prefix = HydratedPredecessors {
+        txs: Vec::with_capacity(nonces.len()),
+        hashes: Vec::with_capacity(nonces.len()),
+    };
     for &nonce in nonces {
         let nonce_hex = format!("0x{nonce:x}");
         let value = client
@@ -777,8 +838,22 @@ async fn hydrate_predecessors(
         if value.is_null() {
             return Err(HydrationFailure::Transient("predecessor missing"));
         }
-        prefix
-            .push(decode_predecessor(sender, nonce, &value).map_err(HydrationFailure::Structural)?);
+        // Lift the content identity first: the node returns the hash even when
+        // the tx shape fails to decode, and the structural guard needs it.
+        let Some(hash) = predecessor_hash(&value) else {
+            return Err(HydrationFailure::Structural {
+                reason: "predecessor missing hash",
+                hashes: prefix.hashes,
+            });
+        };
+        prefix.hashes.push(hash);
+        let decoded = decode_predecessor(sender, nonce, &value).map_err(|reason| {
+            HydrationFailure::Structural {
+                reason,
+                hashes: prefix.hashes.clone(),
+            }
+        })?;
+        prefix.txs.push(decoded);
     }
     Ok(prefix)
 }
@@ -802,11 +877,12 @@ fn route_failed_hydration(
 fn route_unhydratable_hydration(
     frame: &ParkedFrame,
     predecessors: &[u64],
+    content: &[B256],
     reason: &'static str,
     quarantine: &mut Quarantine,
     journal: Option<&mut QuarantineJournal>,
 ) {
-    quarantine.record_unhydratable_guard(frame.hash, predecessors);
+    quarantine.record_unhydratable_guard_with_content(frame.hash, predecessors, content);
     journal_reentry_outcome(frame, ReentryOutcome::Transient, quarantine, journal);
     trace_jsonl(
         "quarantine",
@@ -1221,6 +1297,7 @@ async fn main() {
             // the full funnel exactly like a fresh one.
             run_frame(
                 ev,
+                FEED_PREFIX,
                 &mut runtime,
                 &mut strategy,
                 &provider,
@@ -1388,7 +1465,25 @@ async fn main() {
                     );
                     let pool_known_gap =
                         pool_known_gap_for_tick(&quarantine, sender, head_nonce, pending_count);
-                    for (frame, decision) in quarantine.poll(sender, head_nonce, &pool_known_gap) {
+                    // With a guard recorded for this sender, fetch the
+                    // pool-known predecessors' content identity so a same-nonce
+                    // replacement re-arms instead of suppressing. A failed
+                    // prefetch is no content evidence: the guard falls back to
+                    // the nonce + boundary comparison.
+                    let predecessor_content =
+                        if !pool_known_gap.is_empty() && quarantine.has_guard_for_sender(sender) {
+                            hydrate_predecessors(&sim_client, sender, &pool_known_gap)
+                                .await
+                                .map_or_else(|_| Vec::new(), |prefix| prefix.content())
+                        } else {
+                            Vec::new()
+                        };
+                    for (frame, decision) in quarantine.poll_with_content(
+                        sender,
+                        head_nonce,
+                        &pool_known_gap,
+                        &predecessor_content,
+                    ) {
                         match decision {
                             QuarantineDecision::NonceConsumed => {
                                 let Some(consumed) =
@@ -1446,6 +1541,8 @@ async fn main() {
                                 // can advance. A transport error or a null
                                 // lookup is transient; a returned shape that
                                 // cannot decode is permanent for this lane.
+                                let mut prefix_txs: Vec<ReplayableTx> = Vec::new();
+                                let mut prefix_hashes: Vec<B256> = Vec::new();
                                 if !predecessors.is_empty() {
                                     match hydrate_predecessors(
                                         &sim_client,
@@ -1454,14 +1551,18 @@ async fn main() {
                                     )
                                     .await
                                     {
-                                        Ok(prefix) => trace_jsonl(
-                                            "quarantine",
-                                            serde_json::json!({
-                                                "action": "rescue_hydrated",
-                                                "tx": frame.hash.to_string(),
-                                                "predecessors": prefix.len(),
-                                            }),
-                                        ),
+                                        Ok(hydrated) => {
+                                            trace_jsonl(
+                                                "quarantine",
+                                                serde_json::json!({
+                                                    "action": "rescue_hydrated",
+                                                    "tx": frame.hash.to_string(),
+                                                    "predecessors": hydrated.txs.len(),
+                                                }),
+                                            );
+                                            prefix_txs = hydrated.txs;
+                                            prefix_hashes = hydrated.hashes;
+                                        }
                                         Err(HydrationFailure::Transient(reason)) => {
                                             trace_jsonl(
                                                 "quarantine",
@@ -1485,10 +1586,11 @@ async fn main() {
                                             );
                                             continue;
                                         }
-                                        Err(HydrationFailure::Structural(reason)) => {
+                                        Err(HydrationFailure::Structural { reason, hashes }) => {
                                             route_unhydratable_hydration(
                                                 &frame,
                                                 &predecessors,
+                                                &hashes,
                                                 reason,
                                                 &mut quarantine,
                                                 quarantine_journal.as_mut(),
@@ -1504,6 +1606,7 @@ async fn main() {
                                 let ev = frame.to_event();
                                 let outcome = run_frame(
                                     &ev,
+                                    &prefix_txs,
                                     &mut runtime,
                                     &mut strategy,
                                     &provider,
@@ -1528,19 +1631,37 @@ async fn main() {
                                 if outcome == FrameOutcome::GapPending {
                                     if let Some(boundary) = quarantine.expected_boundary(frame.hash)
                                     {
-                                        quarantine.record_repark_guard(
+                                        quarantine.record_repark_guard_with_content(
                                             frame.hash,
                                             &predecessors,
+                                            &prefix_hashes,
                                             boundary,
                                         );
                                     }
                                 }
-                                journal_reentry_outcome(
-                                    &frame,
-                                    reentry_outcome(outcome),
-                                    &mut quarantine,
-                                    quarantine_journal.as_mut(),
-                                );
+                                if outcome == FrameOutcome::PredecessorMalformed {
+                                    // A predecessor that cannot run as fetched
+                                    // blocks the pool-pred lane, not the frame:
+                                    // record the structural guard WITH content so
+                                    // a replaced predecessor re-arms, and keep
+                                    // the frame parked (Transient). The frame's
+                                    // quarantine life is never resolved.
+                                    route_unhydratable_hydration(
+                                        &frame,
+                                        &predecessors,
+                                        &prefix_hashes,
+                                        "malformed_predecessor",
+                                        &mut quarantine,
+                                        quarantine_journal.as_mut(),
+                                    );
+                                } else {
+                                    journal_reentry_outcome(
+                                        &frame,
+                                        reentry_outcome(outcome),
+                                        &mut quarantine,
+                                        quarantine_journal.as_mut(),
+                                    );
+                                }
                             }
                             QuarantineDecision::StillWaiting { unknown } => {
                                 trace_jsonl(
@@ -1623,6 +1744,7 @@ async fn main() {
             }
             run_frame(
                 &ev,
+                FEED_PREFIX,
                 &mut runtime,
                 &mut strategy,
                 &provider,
@@ -1649,14 +1771,15 @@ async fn main() {
 mod tests {
     use super::{
         bid_submission_target, build_broadcast_relays, decode_predecessor, journal_reentry_outcome,
-        nonce_lane_evidence, outcome_for, pool_known_gap_for_tick, record_gap_park,
-        reentry_outcome, route_failed_hydration, route_unhydratable_hydration, run_frame,
-        strategy_arm_refusal, FrameOutcome, GapParkMemo, ParkRecord, ParkedFrame, Quarantine,
-        QuarantineDecision, QuarantineJournal, ReentryOutcome,
+        nonce_lane_evidence, outcome_for, pool_known_gap_for_tick, predecessor_hash,
+        record_gap_park, reentry_outcome, route_failed_hydration, route_unhydratable_hydration,
+        run_frame, strategy_arm_refusal, FrameOutcome, GapParkMemo, ParkRecord, ParkedFrame,
+        Quarantine, QuarantineDecision, QuarantineJournal, ReentryOutcome, FEED_PREFIX,
     };
-    use alloy::primitives::{Address, U256};
+    use alloy::primitives::{Address, B256, U256};
     use degenbot_bot::sidecar::SidecarConfig;
     use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
+    use degenbot_submission::frame_pipeline::predecessor_observe_reason;
     use std::sync::Arc;
 
     #[test]
@@ -1754,6 +1877,181 @@ mod tests {
             outcome_for("already_settled"),
             FrameOutcome::Terminal("already_settled")
         );
+    }
+
+    /// The predecessor-vs-frame split: a predecessor's structural death owns
+    /// the pool-pred structural lane; every retryable predecessor class is
+    /// transient; only the FRAME's own malformed death is terminal.
+    #[test]
+    fn predecessor_failure_classes_route_by_evidence_not_by_death() {
+        use degenbot_simulation::sim::evm::frame_replay::ReplayFrameError;
+
+        // Structurally unrunnable as fetched -> the structural lane (guarded
+        // with content by the rescue arm).
+        assert_eq!(
+            predecessor_observe_reason(&ReplayFrameError::MalformedTransaction {
+                raw: "bad shape".into(),
+            }),
+            "predecessor_malformed"
+        );
+        assert_eq!(
+            outcome_for("predecessor_malformed"),
+            FrameOutcome::PredecessorMalformed
+        );
+
+        // RPC/validation class -> transient, no guard.
+        assert_eq!(
+            predecessor_observe_reason(&ReplayFrameError::Other {
+                raw: "rpc timeout".into(),
+            }),
+            "predecessor_replay_failed"
+        );
+        assert_eq!(
+            outcome_for("predecessor_replay_failed"),
+            FrameOutcome::ReplayFailed
+        );
+        assert_eq!(
+            reentry_outcome(outcome_for("predecessor_replay_failed")),
+            ReentryOutcome::Transient
+        );
+
+        // A predecessor that is itself ahead of the parent (a pool/RPC skew)
+        // is also retryable, not structural.
+        assert_eq!(
+            predecessor_observe_reason(&ReplayFrameError::GapPending {
+                claimed: 12,
+                expected: 10,
+            }),
+            "predecessor_replay_failed"
+        );
+
+        // Mispriced-for-now (base fee rejected even after the disabled retry)
+        // -> transient, no guard: the owner may replace it.
+        assert_eq!(
+            predecessor_observe_reason(&ReplayFrameError::Mispriced {
+                raw: "base fee rejected after retry".into(),
+            }),
+            "predecessor_replay_failed"
+        );
+        assert_eq!(
+            reentry_outcome(outcome_for("mispriced_transaction")),
+            ReentryOutcome::Transient
+        );
+
+        // The FRAME's own malformed death keeps chunk-A terminal semantics.
+        let (reason, _) = degenbot_submission::frame_pipeline::replay_observe_reason(
+            &ReplayFrameError::MalformedTransaction {
+                raw: "call gas cost exceeds the gas limit".into(),
+            },
+        );
+        assert_eq!(reason, "malformed_transaction");
+        assert_eq!(
+            outcome_for(reason),
+            FrameOutcome::Terminal("malformed_transaction")
+        );
+        assert_eq!(
+            reentry_outcome(outcome_for(reason)),
+            ReentryOutcome::Terminal
+        );
+
+        // A transient predecessor pass records NO guard: the identical rescue
+        // re-fires on the next head.
+        let mut q = Quarantine::new();
+        let f = parked(77);
+        q.push(f.clone());
+        assert_eq!(
+            q.poll_with_content(f.from, f.expected_at_capture, &[10, 11], &[])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            }
+        );
+        journal_reentry_outcome(&f, ReentryOutcome::Transient, &mut q, None);
+        assert_eq!(
+            q.poll_with_content(
+                f.from,
+                f.expected_at_capture,
+                &[10, 11],
+                &[(10, B256::repeat_byte(0x01)), (11, B256::repeat_byte(0x02))]
+            )[0]
+            .1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            },
+            "a transient predecessor failure records no guard, so the rescue re-fires"
+        );
+    }
+
+    /// A predecessor-malformed route records the guard WITH content, keeps the
+    /// frame parked and unresolved, suppresses the identical pool-pred rescue,
+    /// and re-arms on a same-nonce replacement.
+    #[test]
+    fn predecessor_malformed_parks_with_guard_content_and_rearms_on_replacement() {
+        use degenbot_submission::gap_quarantine::FrameState;
+
+        let (dir, path) = temp_journal("predecessor-malformed");
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        let mut q = Quarantine::new();
+        let f = parked(76);
+        let content = [B256::repeat_byte(0xa1), B256::repeat_byte(0xa2)];
+        route_unhydratable_hydration(
+            &f,
+            &[10, 11],
+            &content,
+            "malformed_predecessor",
+            &mut q,
+            Some(&mut journal),
+        );
+        assert_eq!(
+            q.state(f.hash),
+            Some(FrameState::Tracked),
+            "the frame stays parked (un-resolved)"
+        );
+        assert_eq!(
+            resolve_count(&path),
+            0,
+            "no resolve on predecessor evidence"
+        );
+
+        let unchanged = [(10, content[0]), (11, content[1])];
+        assert_eq!(
+            q.poll_with_content(f.from, 10, &[10, 11], &unchanged)[0].1,
+            QuarantineDecision::StillWaiting {
+                unknown: vec![10, 11]
+            },
+            "identical content is suppressed"
+        );
+
+        let replaced = [(10, B256::repeat_byte(0xb1)), (11, content[1])];
+        assert_eq!(
+            q.poll_with_content(f.from, 10, &[10, 11], &replaced)[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            },
+            "a replaced predecessor re-arms"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A hashless (or zero-hash) node tx object is a broken shape: no hash is
+    /// lifted, so no `B256::ZERO` can ever enter guard content.
+    #[test]
+    fn hashless_predecessor_never_enters_guard_content() {
+        assert_eq!(predecessor_hash(&serde_json::json!({})), None);
+        assert_eq!(
+            predecessor_hash(&serde_json::json!({"hash": "nothex"})),
+            None
+        );
+        assert_eq!(
+            predecessor_hash(&serde_json::json!({
+                "hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+            })),
+            None
+        );
+        let usable = predecessor_hash(&serde_json::json!({
+            "hash": "0x00000000000000000000000000000000000000000000000000000000000000ab"
+        }))
+        .expect("usable hash");
+        assert!(!usable.is_zero());
     }
 
     #[test]
@@ -1879,13 +2177,14 @@ mod tests {
                 predecessors: vec![10, 11]
             }
         );
-        route_unhydratable_hydration(&f, &[10, 11], "unparseable value", &mut q, None);
+        let content = [B256::repeat_byte(0xa1), B256::repeat_byte(0xa2)];
+        route_unhydratable_hydration(&f, &[10, 11], &content, "unparseable value", &mut q, None);
         assert_eq!(
-            q.poll(f.from, 10, &[10, 11])[0].1,
+            q.poll_with_content(f.from, 10, &[10, 11], &[(10, content[0]), (11, content[1])])[0].1,
             QuarantineDecision::StillWaiting {
                 unknown: vec![10, 11]
             },
-            "the failed pool-pred list is suppressed"
+            "the failed pool-pred list is suppressed while its content is unchanged"
         );
         // Head reaches the claim: the mined frontier needs no predecessors.
         assert_eq!(
@@ -1947,6 +2246,10 @@ mod tests {
     #[test]
     fn feed_loop_and_rescue_reentry_share_run_frame_surface() {
         let _ = run_frame;
+        assert!(
+            FEED_PREFIX.is_empty(),
+            "the feed path replays with an empty predecessor prefix"
+        );
     }
 
     fn temp_journal(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {

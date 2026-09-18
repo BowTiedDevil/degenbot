@@ -164,6 +164,31 @@ impl NonceConsumed {
     }
 }
 
+/// Whether a guard's recorded content identity still matches the current
+/// pool-known predecessors. Matching requires content on BOTH sides: an empty
+/// stored or incoming content vec cannot prove a change, and a false
+/// suppression is a lost rescue (a replayed retry only costs one replay), so
+/// either empty side re-arms. Guards are in-memory-only — never reloaded from
+/// disk — so no legacy empty-content guard exists to preserve.
+fn content_matches(
+    guarded: &[B256],
+    predecessors: &[u64],
+    current: Option<&[(u64, B256)]>,
+) -> bool {
+    let Some(current) = current else {
+        return false;
+    };
+    if guarded.is_empty() || current.is_empty() {
+        return false;
+    }
+    predecessors.iter().zip(guarded).all(|(nonce, hash)| {
+        current
+            .iter()
+            .find(|(n, _)| n == nonce)
+            .is_some_and(|(_, current_hash)| current_hash == hash)
+    })
+}
+
 /// One tracked frame's state. `Tracked` is the default; `Tentative` carries
 /// the consumption evidence until finality or revival.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,14 +238,23 @@ pub enum QuarantineDecision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RescueGuard {
     /// A `GapPending` re-park: suppress a repeat only while the exact
-    /// predecessor list AND the captured boundary are both unchanged.
+    /// predecessor list, content identity, AND captured boundary are all
+    /// unchanged.
     Reparked {
         predecessors: Vec<u64>,
+        /// The hydrated predecessors' tx hashes, in nonce order. A content
+        /// replacement at the same nonces re-arms the rescue; an empty vec
+        /// (or an empty incoming vec) can never suppress.
+        content: Vec<B256>,
         boundary: u64,
     },
-    /// A predecessor shape that cannot decode: suppress the pool-pred list
-    /// until the predecessor set changes.
-    Unhydratable { predecessors: Vec<u64> },
+    /// A predecessor shape that cannot decode (or a predecessor that cannot
+    /// run as fetched): suppress the pool-pred list until the predecessor
+    /// content changes.
+    Unhydratable {
+        predecessors: Vec<u64>,
+        content: Vec<B256>,
+    },
 }
 
 /// The pure FSM core: per-sender FIFOs of tracked and tentative frames.
@@ -346,6 +380,33 @@ impl Quarantine {
         head_nonce: u64,
         pool_known_gap: &[u64],
     ) -> Vec<(ParkedFrame, QuarantineDecision)> {
+        self.poll_inner(sender, head_nonce, pool_known_gap, None)
+    }
+
+    /// As [`Self::poll`], with the pool-known predecessors' content identity
+    /// (`(nonce, tx hash)`) so a guard recorded for the same nonce list but
+    /// REPLACED predecessor content re-arms instead of suppressing.
+    ///
+    /// An empty `content` slice is no content evidence: the guard falls back
+    /// to the nonce + boundary comparison, so a transient hydrate failure
+    /// cannot re-fire a proved-futile rescue on every tick.
+    pub fn poll_with_content(
+        &mut self,
+        sender: Address,
+        head_nonce: u64,
+        pool_known_gap: &[u64],
+        content: &[(u64, B256)],
+    ) -> Vec<(ParkedFrame, QuarantineDecision)> {
+        self.poll_inner(sender, head_nonce, pool_known_gap, Some(content))
+    }
+
+    fn poll_inner(
+        &mut self,
+        sender: Address,
+        head_nonce: u64,
+        pool_known_gap: &[u64],
+        content: Option<&[(u64, B256)]>,
+    ) -> Vec<(ParkedFrame, QuarantineDecision)> {
         let Some(frames) = self.pending.remove(&sender) else {
             return Vec::new();
         };
@@ -400,8 +461,12 @@ impl Quarantine {
                 .filter(|n| *n >= head_nonce)
                 .collect();
             if unknown.is_empty() {
-                if self.rescue_is_guarded(entry.frame.hash, &preds, entry.frame.expected_at_capture)
-                {
+                if self.rescue_is_guarded(
+                    entry.frame.hash,
+                    &preds,
+                    entry.frame.expected_at_capture,
+                    content,
+                ) {
                     // The caller already proved an identical rescue futile
                     // (a same-boundary re-park, or a structural decode
                     // failure). Hold the frame until the predecessor list or
@@ -440,15 +505,30 @@ impl Quarantine {
     }
 
     /// Whether an identical rescue for `hash` was already proved futile.
-    fn rescue_is_guarded(&self, hash: B256, predecessors: &[u64], boundary: u64) -> bool {
+    fn rescue_is_guarded(
+        &self,
+        hash: B256,
+        predecessors: &[u64],
+        boundary: u64,
+        content: Option<&[(u64, B256)]>,
+    ) -> bool {
         match self.repark_guard.get(&hash) {
             Some(RescueGuard::Reparked {
                 predecessors: guarded,
+                content: guarded_content,
                 boundary: guarded_boundary,
-            }) => guarded.as_slice() == predecessors && *guarded_boundary == boundary,
+            }) => {
+                guarded.as_slice() == predecessors
+                    && *guarded_boundary == boundary
+                    && content_matches(guarded_content, predecessors, content)
+            }
             Some(RescueGuard::Unhydratable {
                 predecessors: guarded,
-            }) => guarded.as_slice() == predecessors,
+                content: guarded_content,
+            }) => {
+                guarded.as_slice() == predecessors
+                    && content_matches(guarded_content, predecessors, content)
+            }
             None => false,
         }
     }
@@ -456,11 +536,21 @@ impl Quarantine {
     /// Record that a `GapPending` re-park proved a rescue of this exact
     /// predecessor list against this boundary futile. The caller records this
     /// only after observing the re-park, never on the rescue decision itself.
-    pub fn record_repark_guard(&mut self, frame_hash: B256, predecessors: &[u64], boundary: u64) {
+    /// Record the predecessors' content identity alongside the predecessor
+    /// list and boundary, so a later poll can tell a replaced predecessor
+    /// (same nonces, new hashes) from the same futile queue.
+    pub fn record_repark_guard_with_content(
+        &mut self,
+        frame_hash: B256,
+        predecessors: &[u64],
+        content: &[B256],
+        boundary: u64,
+    ) {
         self.repark_guard.insert(
             frame_hash,
             RescueGuard::Reparked {
                 predecessors: predecessors.to_vec(),
+                content: content.to_vec(),
                 boundary,
             },
         );
@@ -470,13 +560,34 @@ impl Quarantine {
     /// decode. Permanent for the pool-pred lane: re-requesting the same list
     /// returns the same shape. The empty mined-frontier rescue is a different
     /// evidence class and stays available.
-    pub fn record_unhydratable_guard(&mut self, frame_hash: B256, predecessors: &[u64]) {
+    /// Record whatever content identity the hydration could lift before it
+    /// failed. An empty vec is recorded as-is and can never suppress (see
+    /// [`content_matches`]).
+    pub fn record_unhydratable_guard_with_content(
+        &mut self,
+        frame_hash: B256,
+        predecessors: &[u64],
+        content: &[B256],
+    ) {
         self.repark_guard.insert(
             frame_hash,
             RescueGuard::Unhydratable {
                 predecessors: predecessors.to_vec(),
+                content: content.to_vec(),
             },
         );
+    }
+
+    /// Whether any tracked frame of `sender` carries a recorded rescue guard.
+    /// The caller's signal to fetch the pool-known predecessors' content
+    /// before polling, so a content-replaced predecessor can re-arm.
+    #[must_use]
+    pub fn has_guard_for_sender(&self, sender: Address) -> bool {
+        self.pending.get(&sender).is_some_and(|frames| {
+            frames
+                .iter()
+                .any(|entry| self.repark_guard.contains_key(&entry.frame.hash))
+        })
     }
 
     /// The captured boundary of the frame with `hash`; keys a re-park guard on
@@ -664,27 +775,77 @@ mod tests {
         assert!(q.is_empty(), "the rescued frame leaves the FSM");
 
         // The funnel re-parked on the SAME boundary; the caller records the
-        // deterministic-futile signal.
-        q.record_repark_guard(frame(12, 10).hash, &[10, 11], 10);
+        // deterministic-futile signal plus the predecessors' content identity.
+        let content = [(10, hash(0xa1)), (11, hash(0xa2))];
+        q.record_repark_guard_with_content(
+            frame(12, 10).hash,
+            &[10, 11],
+            &[content[0].1, content[1].1],
+            10,
+        );
         q.push(frame(12, 10));
         assert_eq!(
-            q.poll(SENDER, 10, &[10, 11])[0].1,
+            q.poll_with_content(SENDER, 10, &[10, 11], &content)[0].1,
             QuarantineDecision::StillWaiting {
                 unknown: vec![10, 11]
             },
-            "identical list and boundary must not re-fire the rescue"
+            "identical list, content, and boundary must not re-fire the rescue"
         );
         assert_eq!(q.len(), 1, "the suppressed frame stays parked");
 
         // The head advances: the predecessor list changes, so the guard no
         // longer covers the rescue and it re-fires.
         assert_eq!(
-            q.poll(SENDER, 11, &[11])[0].1,
+            q.poll_with_content(SENDER, 11, &[11], &[(11, hash(0xa2))])[0].1,
             QuarantineDecision::Rescue {
                 predecessors: vec![11]
             }
         );
         assert!(q.is_empty());
+    }
+
+    /// A guard needs content on BOTH sides: an empty stored or incoming
+    /// content vec cannot prove the predecessors are unchanged, and a false
+    /// suppression is a lost rescue, so the rescue re-arms.
+    #[test]
+    fn empty_content_on_either_side_never_suppresses() {
+        let h10 = hash(0xa1);
+        let h11 = hash(0xa2);
+
+        // Stored content empty: the incoming content cannot make it match.
+        let mut q = Quarantine::new();
+        q.record_unhydratable_guard_with_content(frame(12, 10).hash, &[10, 11], &[]);
+        q.push(frame(12, 10));
+        assert_eq!(
+            q.poll_with_content(SENDER, 10, &[10, 11], &[(10, h10), (11, h11)])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            },
+            "empty stored content re-arms"
+        );
+
+        // Incoming content empty (or absent): the stored content cannot match.
+        let mut q = Quarantine::new();
+        q.record_unhydratable_guard_with_content(frame(12, 10).hash, &[10, 11], &[h10, h11]);
+        q.push(frame(12, 10));
+        assert_eq!(
+            q.poll_with_content(SENDER, 10, &[10, 11], &[])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            },
+            "empty incoming content re-arms"
+        );
+
+        let mut q = Quarantine::new();
+        q.record_unhydratable_guard_with_content(frame(12, 10).hash, &[10, 11], &[h10, h11]);
+        q.push(frame(12, 10));
+        assert_eq!(
+            q.poll(SENDER, 10, &[10, 11])[0].1,
+            QuarantineDecision::Rescue {
+                predecessors: vec![10, 11]
+            },
+            "no content evidence at all re-arms"
+        );
     }
 
     /// A transient hydration failure records no guard: without an entry the
@@ -710,10 +871,15 @@ mod tests {
     #[test]
     fn unhydratable_guard_suppresses_the_pool_pred_list_only() {
         let mut q = Quarantine::new();
-        q.record_unhydratable_guard(frame(12, 10).hash, &[10, 11]);
+        let content = [(10, hash(0xa1)), (11, hash(0xa2))];
+        q.record_unhydratable_guard_with_content(
+            frame(12, 10).hash,
+            &[10, 11],
+            &[content[0].1, content[1].1],
+        );
         q.push(frame(12, 10));
         assert_eq!(
-            q.poll(SENDER, 10, &[10, 11])[0].1,
+            q.poll_with_content(SENDER, 10, &[10, 11], &content)[0].1,
             QuarantineDecision::StillWaiting {
                 unknown: vec![10, 11]
             }

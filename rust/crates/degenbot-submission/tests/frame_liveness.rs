@@ -6,14 +6,21 @@
     reason = "integration fixtures and assertions fail loudly"
 )]
 
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{address, Address, Bytes, B256, U256};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+use degenbot_simulation::sim::evm::frame_replay::{
+    PredStatus, ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm,
+};
 use degenbot_submission::gap_quarantine::{
     FrameState, NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
 };
 use degenbot_submission::gap_quarantine_journal::{
     read_pending, ParkRecord, QuarantineJournal, Resolution, JOURNAL_FILE_NAME,
 };
+use revm::bytecode::Bytecode;
+use revm::database::CacheDB;
+use revm::database_interface::EmptyDB;
+use revm::state::AccountInfo;
 
 const SENDER: Address = Address::ZERO;
 
@@ -86,11 +93,18 @@ fn unrelated_pool_tx_does_not_re_arm_a_futile_rescue() {
     );
     assert!(q.is_empty(), "the rescued frame leaves the FSM");
 
-    // The rescue re-parked on the same boundary; the caller records the guard.
-    q.record_repark_guard(frame(12, 10).hash, &[10, 11], 10);
+    // The rescue re-parked on the same boundary; the caller records the guard
+    // with the predecessors' content identity.
+    let content = [(10, hash(0xa1)), (11, hash(0xa2))];
+    q.record_repark_guard_with_content(
+        frame(12, 10).hash,
+        &[10, 11],
+        &[content[0].1, content[1].1],
+        10,
+    );
     q.push(frame(12, 10));
     assert_eq!(
-        q.poll(SENDER, 10, &[10, 11])[0].1,
+        q.poll_with_content(SENDER, 10, &[10, 11], &content)[0].1,
         QuarantineDecision::StillWaiting {
             unknown: vec![10, 11]
         },
@@ -490,4 +504,129 @@ fn park_resolve_park_folds_alive_with_the_new_boundary() {
     assert_eq!(read.pending[0].claimed_nonce, 15);
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ─────────────────── the sequence seam over a fabricated queue ───────────────
+
+const SEQ_ADDR: Address = address!("0x6666666666666666666666666666666666666666");
+
+/// Dual-mode sequence contract: empty calldata stores 0x2A at its own slot 0;
+/// non-empty calldata mirrors slot 0 into slot 1.
+const SEQ_CODE: &[u8] = &[
+    0x36, 0x60, 0x0A, 0x57, // CALLDATASIZE; PUSH1 0x0A; JUMPI (non-empty -> mirror)
+    0x60, 0x2A, 0x60, 0x00, 0x55, 0x00, // write slot 0 = 0x2A; STOP
+    0x5B, // 0x0A JUMPDEST
+    0x60, 0x00, 0x54, 0x60, 0x01, 0x55, 0x00, // slot 1 = slot 0; STOP
+];
+
+fn sequence_scratch() -> ScratchEvm<CacheDB<EmptyDB>> {
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(
+        SENDER,
+        AccountInfo {
+            balance: U256::from(1_000_000_000_000_000_000u64),
+            nonce: 10,
+            ..Default::default()
+        },
+    );
+    db.insert_account_info(
+        SEQ_ADDR,
+        AccountInfo {
+            code: Some(Bytecode::new_raw(Bytes::copy_from_slice(SEQ_CODE))),
+            ..Default::default()
+        },
+    );
+    ScratchEvm::new(
+        db,
+        ScratchBlock {
+            number: 2050,
+            timestamp: 1_780_000_000,
+            base_fee_next: 1_000_000_000,
+        },
+    )
+}
+
+fn replay_tx(to: Address, data: &[u8], nonce: u64) -> ReplayableTx {
+    ReplayableTx {
+        from: SENDER,
+        to: Some(to),
+        value: U256::ZERO,
+        data: Bytes::copy_from_slice(data),
+        gas_limit: 100_000,
+        max_fee_per_gas: 1_000_000_000,
+        max_priority_fee_per_gas: 0,
+        nonce,
+    }
+}
+
+/// A two-predecessor pool-known queue rescues through the FSM, the fabricated
+/// queue executes ascending over the sequence overlay, and the frame's settled
+/// state reflects the composed view (the first predecessor's slot-0 write is
+/// mirrored by the frame).
+#[test]
+fn two_predecessor_rescue_executes_ascending_before_the_frame() {
+    let mut q = Quarantine::new();
+    q.push(frame(12, 10));
+    let rescued = q.poll(SENDER, 10, &[10, 11]);
+    assert_eq!(
+        rescued[0].1,
+        QuarantineDecision::Rescue {
+            predecessors: vec![10, 11]
+        }
+    );
+    assert!(q.is_empty(), "the rescue leaves the FSM");
+
+    let mut scratch = sequence_scratch();
+    let prefix = [replay_tx(SEQ_ADDR, &[], 10), replay_tx(SENDER, &[], 11)];
+    let frame_tx = replay_tx(SEQ_ADDR, &[0x02], 12);
+    let sequence = scratch
+        .replay_sequence(&prefix, &frame_tx)
+        .expect("sequence executes");
+    assert_eq!(
+        sequence.predecessors,
+        vec![PredStatus::Success, PredStatus::Success],
+        "both predecessors settle, ascending"
+    );
+    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert_eq!(
+        sequence
+            .frame
+            .state
+            .get(&SEQ_ADDR)
+            .and_then(|account| account.storage.get(&U256::from(1u64)))
+            .map(|slot| slot.present_value),
+        Some(U256::from(0x2A)),
+        "the frame mirrors the accumulated slot-0 write"
+    );
+}
+
+/// Same predecessor nonces, a replaced predecessor hash: the content identity
+/// in the guard key re-arms the pool-pred rescue after a futile pass, while
+/// identical content keeps it suppressed.
+#[test]
+fn content_replaced_predecessor_re_arms_a_guarded_rescue() {
+    let mut q = Quarantine::new();
+    q.record_repark_guard_with_content(hash(1), &[10, 11], &[hash(0xa1), hash(0xa2)], 10);
+    q.push(frame(12, 10));
+
+    let same = q.poll_with_content(SENDER, 10, &[10, 11], &[(10, hash(0xa1)), (11, hash(0xa2))]);
+    assert_eq!(
+        same[0].1,
+        QuarantineDecision::StillWaiting {
+            unknown: vec![10, 11]
+        },
+        "identical nonces + hashes + boundary stay suppressed"
+    );
+    assert_eq!(q.len(), 1);
+
+    let replaced =
+        q.poll_with_content(SENDER, 10, &[10, 11], &[(10, hash(0xb1)), (11, hash(0xa2))]);
+    assert_eq!(
+        replaced[0].1,
+        QuarantineDecision::Rescue {
+            predecessors: vec![10, 11]
+        },
+        "a replaced predecessor hash re-arms the rescue"
+    );
+    assert!(q.is_empty(), "the re-armed rescue leaves the FSM");
 }
