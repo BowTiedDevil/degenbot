@@ -1,17 +1,16 @@
-"""PyO3 seam tests for the Balancer V2 FixedPoint arithmetic leaf (C8d).
+"""PyO3 seam tests for the Balancer V2 FixedPoint arithmetic leaf.
 
-C8d routes `scaling_helpers.py` off the pure-Python `fixed_point.py` port
-to the Rust `degenbot-balancer-math` core (`fixed_point.rs`), exposed via
-the `degenbot._ffi.balancer_math` seam. This module is the seam-
-level gate (exposure + boundary error-mapping + basic parity); the math
-itself is cross-checked by the frozen `degenbot-balancer-math` Rust
-`#[cfg(test)]` corpus + the `oracle_crosscheck.rs` snapshot.
+The Rust `degenbot-balancer-math` core (`fixed_point.rs`) is exposed via
+the `degenbot._ffi.balancer_math` seam and re-exported as
+`degenbot.balancer.math`; the stable companion's rate scaling is its
+in-tree consumer. This module is the seam-level gate (exposure + boundary
+error-mapping + basic parity); the math itself is cross-checked by the
+frozen `degenbot-balancer-math` Rust `#[cfg(test)]` corpus + the
+`oracle_crosscheck.rs` snapshot.
 
-Error contract (grilled, mirrors `bal_err` / the `eb01239a` precedent):
-`ZERO_DIVISION` / `DIV_INTERNAL` raise `OverflowError`/`ValueError` with
-the Solidity revert tag — NOT `EVMRevertError`. Every routed balancer fn
-shares this story; the onchain-parity `except (EVMRevertError, ...)`
-catches are widened if a scaling-step revert reaches them.
+Error contract (mirrors `bal_err`): `ZERO_DIVISION` / `DIV_INTERNAL` raise
+`OverflowError`/`ValueError` with the Solidity revert tag — NOT
+`EVMRevertError`.
 """
 
 from __future__ import annotations

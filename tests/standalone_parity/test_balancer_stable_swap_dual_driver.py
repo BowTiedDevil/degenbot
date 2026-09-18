@@ -2,23 +2,16 @@
 
 The behavioral companion to `rust/crates/degenbot/tests/
 parity_balancer_stable_swap.rs`. Proves the **same** canonical fixture
-driven through the **Python consumer** path (the pure-Python
-`BalancerV2StablePool` companion, which does its OWN marshalling and only
-shares the invariant pure-math leaf with Rust via `_rs_calculate_invariant`)
-produces the **same** `amount_out` as the Rust core path
+produces the **same** `amount_out` through both consumers: the Python
+companion path (`BalancerV2StablePool.calculate_tokens_out_from_tokens_in`,
+a thin shell delegating to `LiquidityPool.calculate_tokens_out_for_pair`
+→ `simulate_balancer_stable_swap_pair`) and the Rust core path
 (`BotState::calculate_tokens_out_miss_aware` → `simulate_swap` →
 `simulate_balancer_stable_swap` → `skip_bpt`).
 
-This is the "independent-marshalling oracle" parity shape the existing
-MetaStable (`bpt_idx = None`) fixture in
-`rust/crates/degenbot-pools/tests/pool_handle_balance_vector.rs` already uses
-("cross-checked against the independent pure-Python `BalancerV2StablePool`
-companion"). It is weaker than the strict ADR-005 "both consumers hit the
-SAME Rust core" dual-driver (the V2/V3/V4 parity tests) because the Python
-companion's `calculate_tokens_out_from_tokens_in` marshals indices + scaling
-itself rather than calling `BotState::calculate_tokens_out_miss_aware`; a
-true same-core dual-driver for BalancerStable is blocked on the multi-token
-`simulate_swap` API extension (sibling to VQ4OHX tasks `7D34LW` / `U2K6FN`).
+The MetaStable (`bpt_idx = None`) counterpart in
+`rust/crates/degenbot-pools/tests/pool_handle_balance_vector.rs` records the
+same oracle value.
 
 ## The BPT-drop equivalence (the oracle)
 
@@ -34,18 +27,12 @@ BPT, the invariant would run over three balances and the output would
 diverge. The Rust parity test re-derives the SAME `989` through the
 BPT-drop path, so a fixture edit that drifts one side breaks BOTH tests.
 
-## Known gap to the full RPSW4Z scenario
+## Index-past-BPT coverage
 
-The task body's exact scenario — `bpt_idx = 1` (BPT in the MIDDLE) with a
-`token0 → token2` swap (one index PAST the BPT) — is not reachable here
-because it requires the `token0 → token2` pair, which the Python companion
-DOES support (it resolves arbitrary `token_in`/`token_out` indices), but
-the Rust `simulate_swap` dispatch does NOT (it is `zero_for_one`-based and
-hardcodes token-list positions `0 ↔ 1`). So the dual-driver fixture uses
-`bpt_idx = 2` (BPT at the end, swap between the two non-BPT positions
-`0 ↔ 1`) to exercise the BPT-drop path end-to-end on BOTH sides. The
-"index PAST the BPT" rebase branch of `skip_bpt` / `_skip_bpt_index` is
-covered by a direct unit test on `skip_bpt` in
+The `bpt_idx = 1` (BPT in the MIDDLE) `token0 → token2` case — one index
+PAST the BPT — is not exercised here: this fixture keeps the BPT at the END
+so the swap runs `0 ↔ 1` on both paths. The "index PAST the BPT" rebase
+branch of `skip_bpt` is covered by a direct unit test in
 `rust/crates/degenbot-pools/src/simulate_swap.rs`.
 """
 
