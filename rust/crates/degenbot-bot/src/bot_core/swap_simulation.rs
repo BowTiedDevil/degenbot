@@ -205,6 +205,16 @@ pub enum SwapRead {
     /// from a real zero-output swap, so a use site cannot mistake an unknown
     /// pool for a computed zero.
     UnknownPool { pool_id: u64 },
+    /// The pool is registered under a family whose requested operation has no
+    /// implementation — a typed family gap (e.g. exact-output against a
+    /// Curve/Balancer/Aerodrome invariant), distinct from `NotComputable`
+    /// (arithmetic/invariant failure).
+    UnsupportedFamily {
+        /// The requested pool id.
+        pool_id: u64,
+        /// The registered family tag.
+        family: &'static str,
+    },
     /// Zero amount, non-computable arithmetic/invariant, or an exact-output
     /// request against a constant-product family.
     NotComputable,
@@ -213,6 +223,19 @@ pub enum SwapRead {
     /// Miss recovery was impossible or exhausted for `word` (no fetcher
     /// registered, or the same word missed twice after a merge).
     FetchExhausted { word: i32 },
+}
+
+/// A non-CL pool was asked for an override (hypothetical CL) simulation.
+///
+/// The override seam builds a transient V3/V4 state from override scalars; a
+/// registered non-CL family has no such state, so the request is a typed
+/// refusal instead of a bare `None` indistinguishable from a compute miss.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnsupportedOverrideFamily {
+    /// The requested pool id.
+    pub pool_id: u64,
+    /// The registered family tag.
+    pub family: &'static str,
 }
 
 /// Which engine a mapped `amountSpecified` feeds (sign-convention table).
@@ -861,20 +884,21 @@ impl BotState {
     /// INVARIANT: fetched words merge into the TRANSIENT state only — the
     /// override is a hypothetical that cannot pollute registered `BotState`.
     ///
-    /// Legacy note: returns `Option<V3SwapOutcome>` (None on any failure)
-    /// to keep the `PyO3` seam byte-stable; the typed outcome arrives when the
-    /// driver layer adopts it.
-    #[must_use]
-    /// the override sim with miss recovery DISARMED - a
-    /// missing word surfaces as None (the legacy Option contract) instead of
-    /// an inline fetch under the caller read guard. The pooled caller
-    /// pre-stages through [`Self::override_missing_words`] + the lock-free
-    /// fetch choreography before entering.
+    /// The override sim with miss recovery DISARMED - a missing word
+    /// surfaces as `Ok(None)` (the legacy Option contract) instead of an
+    /// inline fetch under the caller read guard. The pooled caller pre-stages
+    /// through [`Self::override_missing_words`] + the lock-free fetch
+    /// choreography before entering.
+    ///
+    /// # Errors
+    ///
+    /// [`UnsupportedOverrideFamily`] when the pool is registered under a
+    /// non-CL family (no transient CL state to build).
     pub fn simulate_override_disarmed(
         &self,
         over: &OverrideSwap,
         block: u64,
-    ) -> Option<V3SwapOutcome> {
+    ) -> Result<Option<V3SwapOutcome>, UnsupportedOverrideFamily> {
         self.simulate_override_ext(over, block, true)
     }
 
@@ -982,22 +1006,34 @@ impl BotState {
         }
     }
 
-    #[must_use]
-    pub fn simulate_override(&self, over: &OverrideSwap, block: u64) -> Option<V3SwapOutcome> {
+    /// # Errors
+    ///
+    /// [`UnsupportedOverrideFamily`] when the pool is registered under a
+    /// non-CL family (no transient CL state to build).
+    pub fn simulate_override(
+        &self,
+        over: &OverrideSwap,
+        block: u64,
+    ) -> Result<Option<V3SwapOutcome>, UnsupportedOverrideFamily> {
         self.simulate_override_ext(over, block, false)
     }
 
+    #[expect(clippy::too_many_lines)]
     fn simulate_override_ext(
         &self,
         over: &OverrideSwap,
         block: u64,
         disarm_fetch: bool,
-    ) -> Option<V3SwapOutcome> {
+    ) -> Result<Option<V3SwapOutcome>, UnsupportedOverrideFamily> {
         if over.request.amount_specified.is_zero() {
-            return None;
+            return Ok(None);
         }
-        let entry = self.pools.get(&over.pool_id)?;
-        let spec = I256::try_from(over.request.amount_specified).ok()?;
+        let Some(entry) = self.pools.get(&over.pool_id) else {
+            return Ok(None);
+        };
+        let Some(spec) = I256::try_from(over.request.amount_specified).ok() else {
+            return Ok(None);
+        };
         // Clone the stored fetcher off the registered state (the override
         // state is a transient copy — the fetcher itself is shared via Arc).
         let fetcher: Option<Arc<dyn TickWordFetcher>> = match entry {
@@ -1014,7 +1050,12 @@ impl BotState {
             match entry {
                 PoolEntry::V3(..) => EngineFamily::V3Engine,
                 PoolEntry::V4(..) => EngineFamily::V4Engine,
-                _ => return None,
+                _ => {
+                    return Err(UnsupportedOverrideFamily {
+                        pool_id: over.pool_id,
+                        family: super::entry_family(entry),
+                    });
+                }
             },
         );
 
@@ -1074,7 +1115,12 @@ impl BotState {
                     inner: TransientInner::V4(Box::new(st)),
                 }
             }
-            _ => return None,
+            _ => {
+                return Err(UnsupportedOverrideFamily {
+                    pool_id: over.pool_id,
+                    family: super::entry_family(entry),
+                });
+            }
         };
 
         let mut sim = OverrideSim {
@@ -1086,12 +1132,12 @@ impl BotState {
             pool_id: over.pool_id,
             disarm_fetch,
         };
-        match drive(&mut sim, block) {
+        Ok(match drive(&mut sim, block) {
             PolicyAttempt::Computed(outcome, _) => Some(outcome),
             PolicyAttempt::NotComputable
             | PolicyAttempt::FetchFailed(..)
             | PolicyAttempt::FetchExhausted(..) => None,
-        }
+        })
     }
 }
 
@@ -1195,9 +1241,14 @@ impl BotState {
                         None => SwapRead::NotComputable,
                     }
                 }
-                // Curve/Balancer/Aerodrome: math not ported (see the former
-                // calculate_tokens_in arm); NotComputable as before.
-                (true, _) => SwapRead::NotComputable,
+                // Curve/Balancer/Aerodrome exact-output: the family is
+                // registered and requested, but its exact-out math is not
+                // ported — a typed family gap, never the generic
+                // `NotComputable` that reads as an arithmetic failure.
+                (true, _) => SwapRead::UnsupportedFamily {
+                    pool_id,
+                    family: super::entry_family(entry),
+                },
             },
             PoolEntry::V3(p) => {
                 let (_, v3_state) = (&p.0, &p.1);
@@ -1723,5 +1774,100 @@ mod tests {
             },
         );
         assert!(matches!(read, SwapRead::FetchExhausted { word } if word != i32::MIN));
+    }
+
+    /// Exact-output against a family whose exact-out math is not ported is a
+    /// typed family gap, not the generic `NotComputable` (which means
+    /// arithmetic/invariant failure).
+    #[test]
+    fn exact_output_on_curve_is_a_typed_family_gap() {
+        let mut bot = BotState::new();
+        let pid = register_curve_for_swap(&mut bot);
+        let read = bot.swap_simulation(
+            0,
+            pid,
+            SwapRequest {
+                zero_for_one: true,
+                amount_specified: I256::try_from(1_000_000u64).unwrap(),
+                sqrt_price_limit: None,
+            },
+        );
+        assert_eq!(
+            read,
+            SwapRead::UnsupportedFamily {
+                pool_id: pid,
+                family: "curve"
+            }
+        );
+    }
+
+    /// An override (hypothetical CL) request against a non-CL family is a
+    /// typed refusal, not a bare `None` an override miss could produce.
+    #[test]
+    fn override_simulation_on_a_non_cl_family_is_typed() {
+        let mut bot = BotState::new();
+        let pid = register_curve_for_swap(&mut bot);
+        let over = OverrideSwap {
+            pool_id: pid,
+            request: SwapRequest {
+                zero_for_one: true,
+                amount_specified: -I256::try_from(1u64).unwrap(),
+                sqrt_price_limit: None,
+            },
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+        };
+        let err = bot.simulate_override_disarmed(&over, 0).unwrap_err();
+        assert_eq!(
+            err,
+            UnsupportedOverrideFamily {
+                pool_id: pid,
+                family: "curve"
+            }
+        );
+    }
+
+    fn register_curve_for_swap(bot: &mut BotState) -> u64 {
+        use crate::bot_core::RegisterCurvePoolParams;
+        const E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+        bot.register_curve_pool(&RegisterCurvePoolParams {
+            address: alloy::primitives::Address::from([0xccu8; 20]),
+            tokens: vec![
+                alloy::primitives::Address::ZERO,
+                alloy::primitives::Address::from([1u8; 20]),
+            ],
+            a_coefficient: 100,
+            a_precision: 100,
+            fee: 500_000,
+            admin_fee: 0,
+            rate_multipliers: vec![E18, E18],
+            balances: vec![E18, E18],
+            update_block: 0,
+            swap_style: 1,
+            lending_rate_style: 1,
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 1,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: Vec::new(),
+            precision_multipliers: vec![E18, E18],
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
+            data_provider: None,
+        })
     }
 }

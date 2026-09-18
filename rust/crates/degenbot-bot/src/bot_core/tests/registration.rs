@@ -59,8 +59,8 @@ fn pool_family_dispatches_v2_and_unknown() {
     let pool_id = core
         .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
         .expect("test setup: V2 registration");
-    assert_eq!(core.pool_family(pool_id), "v2");
-    assert_eq!(core.pool_family(999_999), "");
+    assert_eq!(core.pool_family(pool_id), Some("v2"));
+    assert_eq!(core.pool_family(999_999), None);
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn pool_family_dispatches_every_registered_family() {
 
     // V3
     let v3_id = register_v3(&mut core, 0);
-    assert_eq!(core.pool_family(v3_id), "v3");
+    assert_eq!(core.pool_family(v3_id), Some("v3"));
 
     // V4
     let pool_manager = Address::from([0x44u8; 20]);
@@ -169,7 +169,7 @@ fn pool_family_dispatches_every_registered_family() {
             fetcher: None,
         })
         .expect("V4 registration");
-    assert_eq!(core.pool_family(v4_id), "v4");
+    assert_eq!(core.pool_family(v4_id), Some("v4"));
 
     // Curve (2-token plain pool)
     let curve_id = core.register_curve_pool(&RegisterCurvePoolParams {
@@ -206,7 +206,7 @@ fn pool_family_dispatches_every_registered_family() {
         metapool_underlying_style: 1,
         data_provider: None,
     });
-    assert_eq!(core.pool_family(curve_id), "curve");
+    assert_eq!(core.pool_family(curve_id), Some("curve"));
 
     // Balancer weighted (2-token)
     let bal_weighted_id =
@@ -225,7 +225,7 @@ fn pool_family_dispatches_every_registered_family() {
             balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
             update_block: 0,
         });
-    assert_eq!(core.pool_family(bal_weighted_id), "balancer-weighted");
+    assert_eq!(core.pool_family(bal_weighted_id), Some("balancer-weighted"));
 
     // Balancer stable (2-token, MetaStable — bpt_idx=None)
     let bal_stable_id = core.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
@@ -242,7 +242,7 @@ fn pool_family_dispatches_every_registered_family() {
         update_block: 0,
         rate_provider: None,
     });
-    assert_eq!(core.pool_family(bal_stable_id), "balancer-stable");
+    assert_eq!(core.pool_family(bal_stable_id), Some("balancer-stable"));
 
     // Suppress unused-import warning for TickInfo/U128 when the V4 tick_data
     // map is empty — kept for parity with sibling V4 tests.
@@ -267,7 +267,7 @@ fn pool_family_dispatches_every_registered_family() {
         reserve1: U112::from(2_000_000u64),
         update_block: 0,
     });
-    assert_eq!(core.pool_family(aero_id), "aerodrome-v2");
+    assert_eq!(core.pool_family(aero_id), Some("aerodrome-v2"));
 }
 
 /// Plan 102, slice 2: `BotState::register_v4_pool` returns a typed

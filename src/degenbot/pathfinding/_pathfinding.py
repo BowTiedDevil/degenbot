@@ -189,24 +189,34 @@ def _resolve_pool_kinds(pool_types: Sequence[type]) -> set[int]:
     Deduped — e.g. UniswapV2PoolTable + SushiswapV2PoolTable → {0}. The base
     ``LiquidityPoolTable`` (the default ``pool_types`` entry, used for
     single-table-inheritance selects that return BOTH V2 + V3 rows) expands to
-    {V2, V3}; a ``LiquidityPoolTable`` subclass that is neither a V2 nor V3
-    base is skipped (matching the old silent skip).
+    {V2, V3}.
+
+    Any declared class that cannot be mapped to a known pool kind raises — at
+    a use site an unknown family is an infrastructure gap, never a silent
+    omission (ADR-055 D4).
 
     Returns:
         The set of pool-kind u8 discriminants present in ``pool_types``.
 
+    Raises:
+        ValueError: a declared pool type has no known pool-kind mapping.
+
     """
     pool_kinds: set[int] = set()
     for pt in pool_types:
-        if issubclass(pt, LiquidityPoolTable):
-            if issubclass(pt, UniswapV3PoolTableBase):
-                pool_kinds.add(_POOL_KIND_V3)
-            elif issubclass(pt, UniswapV2PoolTableBase):
-                pool_kinds.add(_POOL_KIND_V2)
-            elif pt is LiquidityPoolTable:
-                pool_kinds.update({_POOL_KIND_V2, _POOL_KIND_V3})
-        if issubclass(pt, UniswapV4PoolTable):
+        if pt is LiquidityPoolTable:
+            pool_kinds.update({_POOL_KIND_V2, _POOL_KIND_V3})
+        elif issubclass(pt, UniswapV4PoolTable):
             pool_kinds.add(_POOL_KIND_V4)
+        elif issubclass(pt, UniswapV3PoolTableBase):
+            pool_kinds.add(_POOL_KIND_V3)
+        elif issubclass(pt, UniswapV2PoolTableBase):
+            pool_kinds.add(_POOL_KIND_V2)
+        else:
+            raise ValueError(
+                f"_resolve_pool_kinds cannot serve pool type {pt.__name__!r}: "
+                "no known pool-kind mapping"
+            )
     return pool_kinds
 
 

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
@@ -413,13 +415,15 @@ class TestSharedStateTopologyV3:
         )
         v2_handle = core.get_pool(v2_pool_id)
         assert v2_handle is not None
-        bad = v2_handle.apply_liquidity_update(
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity_delta=delta,
-            block_number=4,
-        )
-        assert bad is False
+        # A non-CL family has no tick state: the CL-only write is refused
+        # loudly (a V2 pool receiving a CL liquidity update is a misuse).
+        with pytest.raises(ValueError, match="has no concentrated-liquidity"):
+            v2_handle.apply_liquidity_update(
+                tick_lower=tick_lower,
+                tick_upper=tick_upper,
+                liquidity_delta=delta,
+                block_number=4,
+            )
 
     def test_v3_handle_update_tick_data_replaces_tick_map(self) -> None:
         """A V3 ``update_tick_data`` full-sync replaces the pool's tick_data map.

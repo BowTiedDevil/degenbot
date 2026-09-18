@@ -291,16 +291,33 @@ impl V2ConnectorIndex {
     ///
     /// # Errors
     ///
-    /// DB failures propagate (`DbError`).
+    /// DB failures propagate (`DbError`), including
+    /// [`DbError::UnknownPoolKind`] if the V2-only edge query ever yields a
+    /// non-V2 edge.
     pub fn load(db: &DegenbotDb, chain_id: i64) -> Result<Self, DbError> {
         let data = db.fetch_path_graph_edges(chain_id, &[PoolKind::V2])?;
+        Self::from_graph_data(&data)
+    }
+
+    /// Build the V2 index from an already-fetched graph snapshot (the body of
+    /// [`Self::load`], split so the V2-only admission runs without a DB).
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::UnknownPoolKind`] when the snapshot carries a non-V2 edge:
+    /// the `[PoolKind::V2]` query makes this impossible, so a violation means
+    /// the edge source and this loader disagree — refused, never dropped.
+    fn from_graph_data(data: &degenbot_db::pathfinding::PathGraphData) -> Result<Self, DbError> {
         let mut index = Self::default();
         index.edges.reserve(data.edges.len());
         // PathEdge is (token0_id, token1_id, pool_id, kind) -- the pool id
         // rides THIRD (see fetch_path_graph_edges' push order).
         for (t0, t1, pool_id, kind) in &data.edges {
             if *kind != PoolKind::V2 {
-                continue;
+                return Err(DbError::UnknownPoolKind {
+                    kind: format!("{kind:?}"),
+                    pool_id: i64::try_from(*pool_id).unwrap_or(i64::MAX),
+                });
             }
             let Some(&address) = data.v2v3_addresses.get(pool_id) else {
                 continue;
@@ -696,6 +713,21 @@ mod tests {
         assert_eq!(ix.edge_degree(30, 10), 0);
         assert_eq!(ix.v3_edge_degree(20, 10), 1);
         assert_eq!(ix.v3_edge_degree(20, 30), 0);
+    }
+
+    /// A non-V2 edge in a V2-only snapshot is refused, not silently filtered.
+    #[test]
+    fn non_v2_edge_from_a_v2_query_is_refused() {
+        let mut data = degenbot_db::pathfinding::PathGraphData::default();
+        data.edges.push((10, 20, 1, PoolKind::V3));
+        data.v2v3_addresses.insert(1, Address::ZERO);
+        assert!(
+            matches!(
+                V2ConnectorIndex::from_graph_data(&data),
+                Err(DbError::UnknownPoolKind { ref kind, pool_id: 1 }) if kind == "V3"
+            ),
+            "a non-V2 edge must be refused with UnknownPoolKind(V3)"
+        );
     }
 }
 

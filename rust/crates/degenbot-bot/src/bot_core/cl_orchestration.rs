@@ -2426,7 +2426,7 @@ mod known_word_dispatcher_tests {
         // A Mint initializing a tick in word 1 (compressed 256 -> tick 15360).
         assert!(core
             .apply_liquidity_update_by_pool_id(pool_id, 15360, 15420, 1, 5)
-            .is_some());
+            .is_ok());
         let state = core.get_v3_pool(pool_id).expect("registered");
         assert!(
             state.tick_data.contains_key(&15360),

@@ -553,6 +553,21 @@ impl PyLiquidityPool {
         })
     }
 
+    /// The registered family tag for this handle's pool id.
+    ///
+    /// Raises `ValueError` when the id is not registered: a handle is built
+    /// from a registered pool, so an unknown id is a family gap, never an
+    /// `""` sentinel a caller could mistake for a missing field.
+    fn family_of(&self, py: Python<'_>) -> PyResult<&'static str> {
+        self.with_state(py, |core| core.pool_family(self.pool_id))
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "pool {} is not registered",
+                    self.pool_id
+                ))
+            })
+    }
+
     /// Clone-out the stored `CurveDataProvider` (if any) for this handle's
     /// Curve state, releasing the read guard before a (potentially
     /// re-entrant) provider call.
@@ -712,7 +727,15 @@ impl PyLiquidityPool {
             }
         }
         let outcome = self.with_state(py, |core| core.simulate_override_disarmed(&over, block));
-        Ok(outcome)
+        match outcome {
+            Ok(o) => Ok(o),
+            // A non-CL family has no transient CL state to simulate — a typed
+            // refusal, never a bare `None` an override miss could produce.
+            Err(u) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "simulate_override: pool {} family {:?} has no concentrated-liquidity override state",
+                u.pool_id, u.family
+            ))),
+        }
     }
 
     /// The pool ID this handle references.
@@ -788,6 +811,11 @@ impl PyLiquidityPool {
             SwapRead::UnknownPool { pool_id } => Err(pyo3::exceptions::PyValueError::new_err(
                 format!("swap_simulation: pool {pool_id} is not registered"),
             )),
+            SwapRead::UnsupportedFamily { pool_id, family } => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "swap_simulation: pool {pool_id} family {family} is not supported for this operation"
+                )))
+            }
             SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => {
                 let bound = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
                 Ok(bound.unbind())
@@ -948,16 +976,24 @@ impl PyLiquidityPool {
         // DISARMED — miss recovery cannot run (no-raise-on-miss).
         // NotComputable (V2 mul overflow) is a distinct class, NOT a miss:
         // documented legacy contract (silent-0 preserved per ADR-037).
-        let result = self.with_state_mut(py, |core| {
-            match core.swap_simulation_disarmed(0, self.pool_id, &request) {
-                SwapRead::Computed(outcome) => (-match &outcome {
-                    SwapOutcome::V2(o) => o.consumed,
-                    SwapOutcome::V3(o) | SwapOutcome::V4(o) => o.consumed,
-                })
-                .into_raw(),
-                _ => U256::ZERO,
-            }
+        let read = self.with_state_mut(py, |core| {
+            core.swap_simulation_disarmed(0, self.pool_id, &request)
         });
+        let result = match read {
+            SwapRead::Computed(outcome) => (-match &outcome {
+                SwapOutcome::V2(o) => o.consumed,
+                SwapOutcome::V3(o) | SwapOutcome::V4(o) => o.consumed,
+            })
+            .into_raw(),
+            // A registered family with no exact-output path is a typed gap,
+            // not the legacy silent-0 contract.
+            SwapRead::UnsupportedFamily { pool_id, family } => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "calculate_tokens_in: pool {pool_id} family {family} has no exact-output path"
+                )));
+            }
+            _ => U256::ZERO,
+        };
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
@@ -1124,8 +1160,16 @@ impl PyLiquidityPool {
         let read = self.with_state_mut(py, |core| {
             core.swap_simulation_disarmed(block, self.pool_id, &request)
         });
-        let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
-            return Ok(None);
+        let payload = match read {
+            SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) => payload,
+            // A non-CL family cannot produce the CL 5-tuple this exact-output
+            // seam promises: a typed gap, never a bare `None`.
+            SwapRead::UnsupportedFamily { pool_id, family } => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "simulate_exact_output_swap_with_fetch: pool {pool_id} family {family} has no exact-output path"
+                )));
+            }
+            _ => return Ok(None),
         };
         // ADR-037: an amount-modifying hook may have invalidated the
         // standard-math result — surface the archived exception (approximate
@@ -1380,12 +1424,14 @@ impl PyLiquidityPool {
     // what V2PoolState already holds; the descriptor (variant/stable_swap/
     // fee_denominator) + resolved DexIdentity preset are new in this slice.
 
-    /// Pool contract address (EIP-55 checksummed hex). Empty string if not a
-    /// V2/V3 pool.
+    /// Pool contract address (EIP-55 checksummed hex). Empty string when the
+    /// registered family has no address field; raises if the id is not
+    /// registered.
     #[getter]
-    fn address(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            let addr = match core.pool_family(self.pool_id) {
+    fn address(&self, py: Python<'_>) -> PyResult<String> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| {
+            let addr = match family {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.address),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.address),
                 "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.address),
@@ -1394,15 +1440,17 @@ impl PyLiquidityPool {
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
                 .unwrap_or_default()
-        })
+        }))
     }
 
-    /// Token0 contract address (EIP-55 checksummed hex). Empty string if not
-    /// a V2/V3/V4 pool.
+    /// Token0 contract address (EIP-55 checksummed hex). Empty string when the
+    /// registered family has no token0 field; raises if the id is not
+    /// registered.
     #[getter]
-    fn token0_address(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            let addr = match core.pool_family(self.pool_id) {
+    fn token0_address(&self, py: Python<'_>) -> PyResult<String> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| {
+            let addr = match family {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
                 "v4" => core
@@ -1413,15 +1461,17 @@ impl PyLiquidityPool {
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
                 .unwrap_or_default()
-        })
+        }))
     }
 
-    /// Token1 contract address (EIP-55 checksummed hex). Empty string if not
-    /// a V2/V3/V4 pool.
+    /// Token1 contract address (EIP-55 checksummed hex). Empty string when the
+    /// registered family has no token1 field; raises if the id is not
+    /// registered.
     #[getter]
-    fn token1_address(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            let addr = match core.pool_family(self.pool_id) {
+    fn token1_address(&self, py: Python<'_>) -> PyResult<String> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| {
+            let addr = match family {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
                 "v4" => core
@@ -1432,15 +1482,17 @@ impl PyLiquidityPool {
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
                 .unwrap_or_default()
-        })
+        }))
     }
 
-    /// Factory contract address (EIP-55 checksummed hex). Empty string if not a
-    /// V2/V3 pool.
+    /// Factory contract address (EIP-55 checksummed hex). Empty string when the
+    /// registered family has no factory field; raises if the id is not
+    /// registered.
     #[getter]
-    fn factory(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            let addr = match core.pool_family(self.pool_id) {
+    fn factory(&self, py: Python<'_>) -> PyResult<String> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| {
+            let addr = match family {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.factory),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.factory),
                 "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.factory),
@@ -1448,40 +1500,43 @@ impl PyLiquidityPool {
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
                 .unwrap_or_default()
-        })
+        }))
     }
 
     /// The CREATE2 deployer this pool's address was verified against (Fork A).
     /// The JSON row's `deployer` (or the factory for ``null``), resolved at
-    /// registration. V2 and V3 pools carry this; other pool families return an
-    /// empty string.
+    /// registration. V2 and V3 pools carry this; other registered families
+    /// return an empty string; raises if the id is not registered.
     #[getter]
-    fn deployer(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            let addr = match core.pool_family(self.pool_id) {
+    fn deployer(&self, py: Python<'_>) -> PyResult<String> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| {
+            let addr = match family {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.deployer),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.deployer),
                 _ => None,
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
                 .unwrap_or_default()
-        })
+        }))
     }
 
     /// The CREATE2 init code hash this pool's address was verified against
     /// (Fork A). The JSON row's `init_hash` when shipped, else the Uniswap
     /// mainnet fallback (V2 or V3 const). V2 and V3 pools carry this; other
-    /// pool families return an empty string.
+    /// registered families return an empty string; raises if the id is not
+    /// registered.
     #[getter]
-    fn init_hash(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            let h = match core.pool_family(self.pool_id) {
+    fn init_hash(&self, py: Python<'_>) -> PyResult<String> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| {
+            let h = match family {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.init_hash),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.init_hash),
                 _ => None,
             };
             h.map(|b| format!("{b:#x}")).unwrap_or_default()
-        })
+        }))
     }
 
     /// `token0→token1` fee parameters: `(gamma_numer, fee_denom)` — the
@@ -1508,10 +1563,13 @@ impl PyLiquidityPool {
     }
 
     /// The DEX+variant discriminator as a kebab-case string (e.g.
-    /// `"uniswap-v2"`, `"camelot-v2-stable"`). Empty string if not a V2 pool.
+    /// `"uniswap-v2"`, `"camelot-v2-stable"`). Empty string when the
+    /// registered family has no variant field; raises if the id is not
+    /// registered.
     #[getter]
-    fn variant(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| match core.pool_family(self.pool_id) {
+    fn variant(&self, py: Python<'_>) -> PyResult<String> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| match family {
             "v2" => core
                 .get_v2_identity(self.pool_id)
                 .map(|d| d.variant.as_str().to_string())
@@ -1521,7 +1579,7 @@ impl PyLiquidityPool {
                 .map(|d| d.variant.as_str().to_string())
                 .unwrap_or_default(),
             _ => String::new(),
-        })
+        }))
     }
 
     /// Camelot solidly-stable strategy flag. `false` for all non-Camelot V2
@@ -1536,15 +1594,16 @@ impl PyLiquidityPool {
 
     /// The pool-family tag for this handle's registered pool (`"v2"`,
     /// `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
-    /// `"balancer-stable"`). Empty string if unregistered.
+    /// `"balancer-stable"`). Raises if unregistered — a handle always
+    /// references a registered pool, so the `""` sentinel is retired.
     ///
     /// This is the uniform family-guard primitive every `_from_py_pool`
     /// seam asserts against — dispatches on the `PoolEntry` variant
     /// directly, so it is correct for every registered family (unlike
     /// `variant`, which is V2-only and returns `""` for non-V2).
     #[getter]
-    fn pool_family(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| core.pool_family(self.pool_id).to_string())
+    fn pool_family(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(self.family_of(py)?.to_string())
     }
 
     /// Camelot integer fee scaling. `None` for non-Camelot V2 / non-V2.
@@ -1588,9 +1647,10 @@ impl PyLiquidityPool {
 
     /// `PyErc20Token` handle for token0, or `None` if not registered in the
     /// shared `BotState`.
-    fn get_token0(&self, py: Python<'_>) -> Option<PyErc20Token> {
-        self.with_state(py, |core| {
-            let token_addr = match core.pool_family(self.pool_id) {
+    fn get_token0(&self, py: Python<'_>) -> PyResult<Option<PyErc20Token>> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| {
+            let token_addr = match family {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
                 "v4" => core
@@ -1604,14 +1664,15 @@ impl PyLiquidityPool {
             } else {
                 None
             }
-        })
+        }))
     }
 
     /// `PyErc20Token` handle for token1, or `None` if not registered in the
     /// shared `BotState`.
-    fn get_token1(&self, py: Python<'_>) -> Option<PyErc20Token> {
-        self.with_state(py, |core| {
-            let token_addr = match core.pool_family(self.pool_id) {
+    fn get_token1(&self, py: Python<'_>) -> PyResult<Option<PyErc20Token>> {
+        let family = self.family_of(py)?;
+        Ok(self.with_state(py, |core| {
+            let token_addr = match family {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
                 "v4" => core
@@ -1625,7 +1686,7 @@ impl PyLiquidityPool {
             } else {
                 None
             }
-        })
+        }))
     }
 
     fn get_balancer_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
@@ -2192,13 +2253,18 @@ impl PyLiquidityPool {
     /// `before == after` reorg-journal delta at `block_number` WITHOUT
     /// advancing either clock, so a split-seed (price at HEAD, tick map at the
     /// DB block) pool keeps a non-empty journal for mid-window reorg restore.
-    /// Returns `True` on a registered V3/V4 pool, `False` otherwise.
+    /// Returns `True` on a registered V3/V4 pool; raises `ValueError` for a
+    /// registered non-CL family (no CL journal to seed) or an unregistered id.
     #[pyo3(signature = (block_number))]
-    fn seed_genesis(&self, py: Python<'_>, block_number: u64) -> bool {
-        self.with_state_mut(py, |s| {
+    fn seed_genesis(&self, py: Python<'_>, block_number: u64) -> PyResult<bool> {
+        match self.with_state_mut(py, |s| {
             s.seed_genesis_by_pool_id(self.pool_id, block_number)
-                .is_some()
-        })
+        }) {
+            Ok(_) => Ok(true),
+            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "seed_genesis: {e}"
+            ))),
+        }
     }
 
     /// Apply a V3 Mint/Burn event (liquidity update) via the handle.
@@ -2211,9 +2277,9 @@ impl PyLiquidityPool {
     /// applied by the engine's own path; this handle method is the raw
     /// `tick_data` mutation.
     ///
-    /// Returns `True` if the update applied to a registered V3 pool, `False`
-    /// if this `pool_id` is not a V3 pool (silent no-op — don't corrupt a V2
-    /// pool).
+    /// Returns `True` when the update applied to a registered V3/V4 pool;
+    /// raises `ValueError` for a registered non-CL family (no CL tick state to
+    /// mutate) or an unregistered id.
     #[pyo3(signature = (tick_lower, tick_upper, liquidity_delta, block_number))]
     fn apply_liquidity_update(
         &self,
@@ -2241,7 +2307,12 @@ impl PyLiquidityPool {
                 block_number,
             )
         });
-        Ok(applied.is_some())
+        match applied {
+            Ok(_) => Ok(true),
+            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "apply_liquidity_update: {e}"
+            ))),
+        }
     }
 
     /// Backfill an unknown tick-bitmap word for this pool (T2 FBJTUM — the

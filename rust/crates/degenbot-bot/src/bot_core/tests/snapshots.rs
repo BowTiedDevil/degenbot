@@ -166,10 +166,7 @@ fn seed_genesis_anchors_journal_without_advancing_clocks() {
     // Empty journal → not restorable (would be a graceful too-deep shutdown).
     assert!(!core.has_state_prior_to(pool_id, 100));
     // Seed genesis at the DB floor anchor.
-    assert_eq!(
-        core.seed_genesis_by_pool_id(pool_id, db_block),
-        Some(pool_id)
-    );
+    assert_eq!(core.seed_genesis_by_pool_id(pool_id, db_block), Ok(pool_id));
     assert!(core.has_state_prior_to(pool_id, 100), "non-empty journal");
     // The anchor advances NO clock.
     assert_eq!(core.pool_update_block(pool_id), head);
@@ -179,7 +176,10 @@ fn seed_genesis_anchors_journal_without_advancing_clocks() {
     assert!(restored.unwrap().is_ok());
     assert_eq!(core.pool_update_block(pool_id), head);
     assert_eq!(core.pool_tick_data_block(pool_id), db_block);
-    assert_eq!(core.seed_genesis_by_pool_id(999_999, 1), None);
+    assert!(matches!(
+        core.seed_genesis_by_pool_id(999_999, 1),
+        Err(crate::bot_core::ClApplyError::NotRegistered { pool_id: 999_999 })
+    ));
 }
 
 /// the snapshot seed must be retained separately from the live

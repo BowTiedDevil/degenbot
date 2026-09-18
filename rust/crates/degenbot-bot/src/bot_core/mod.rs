@@ -261,6 +261,54 @@ pub enum EncodeSwapError {
     },
 }
 
+/// Why a concentrated-liquidity state write refused a pool.
+///
+/// Genesis seeding and liquidity updates only exist for CL families: a
+/// registered non-CL pool has no CL state to mutate. The typed refusal keeps
+/// the family dispatch from silently routing such a pool into the V3 path.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ClApplyError {
+    /// The pool id is not registered.
+    #[error("pool {pool_id} is not registered")]
+    NotRegistered {
+        /// The requested pool id.
+        pool_id: u64,
+    },
+    /// The pool's family has no concentrated-liquidity state.
+    #[error("pool {pool_id} family {family:?} has no concentrated-liquidity {op}")]
+    UnsupportedFamily {
+        /// The requested pool id.
+        pool_id: u64,
+        /// The registered family tag.
+        family: &'static str,
+        /// The refused operation, named for the operator.
+        op: &'static str,
+    },
+}
+
+/// The family tag for a registered entry — the single family-name source so
+/// [`BotState::pool_family`] and the typed dispatchers cannot drift.
+const fn entry_family(entry: &PoolEntry) -> &'static str {
+    match entry {
+        PoolEntry::V2(..) => "v2",
+        PoolEntry::V3(..) => "v3",
+        PoolEntry::V4(..) => "v4",
+        PoolEntry::Curve(..) => "curve",
+        PoolEntry::BalancerWeighted(..) => "balancer-weighted",
+        PoolEntry::BalancerStable(..) => "balancer-stable",
+        PoolEntry::AerodromeV2(..) => "aerodrome-v2",
+    }
+}
+
+/// Concentrated-liquidity dispatch bucket for a registered pool, computed as
+/// a value so the caller's lookup borrow ends before it mutates state.
+enum ClKind {
+    V3,
+    V4,
+    NonCl(&'static str),
+    Missing,
+}
+
 /// Diagnostic: log every V3 pump-buffer INSERTION. Companion to the
 /// drain-side `[dbg-drain]` logs in `apply_backfill_buffer_v3`/
 /// `apply_pump_buffer_v3` — diffing insertion vs drain logs reveals whether a
@@ -533,24 +581,17 @@ impl BotState {
 
     /// Return the pool-family tag for `pool_id` as a kebab-case string
     /// (`"v2"`, `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
-    /// `"balancer-stable"`). Returns `""` for an unregistered `pool_id`.
+    /// `"balancer-stable"`), or `None` for an unregistered `pool_id`.
     ///
     /// This is the uniform family-guard primitive every `_from_py_pool`
     /// seam asserts against — dispatches on the `PoolEntry` variant directly,
     /// so it is correct for every registered family (unlike the V2-only
     /// `variant` getter on `PyLiquidityPool`, which returns `""` for non-V2).
+    /// `None` is explicit so a caller cannot mistake an unregistered pool for
+    /// a family gap via an `""` sentinel.
     #[must_use]
-    pub fn pool_family(&self, pool_id: u64) -> &'static str {
-        match self.pools.get(&pool_id) {
-            Some(PoolEntry::V2(..)) => "v2",
-            Some(PoolEntry::V3(..)) => "v3",
-            Some(PoolEntry::V4(..)) => "v4",
-            Some(PoolEntry::Curve(..)) => "curve",
-            Some(PoolEntry::BalancerWeighted(..)) => "balancer-weighted",
-            Some(PoolEntry::BalancerStable(..)) => "balancer-stable",
-            Some(PoolEntry::AerodromeV2(..)) => "aerodrome-v2",
-            None => "",
-        }
+    pub fn pool_family(&self, pool_id: u64) -> Option<&'static str> {
+        self.pools.get(&pool_id).map(entry_family)
     }
 
     /// Set the maximum age (in blocks) for buffered V3 pump events.
@@ -947,7 +988,7 @@ impl BotState {
             | PoolEntry::BalancerStable(..)
             | PoolEntry::AerodromeV2(..) => Err(EncodeSwapError::UnsupportedFamily {
                 pool_id,
-                family: self.pool_family(pool_id),
+                family: entry_family(entry),
             }),
         }
     }
@@ -1004,25 +1045,63 @@ impl BotState {
     /// either clock. The split-seed replacement for the builder's old
     /// `apply_swap` genesis, which would backward-panic `update_block` (price
     /// seeded at HEAD past the DB map block) and falsely advance
-    /// `tick_data_block`. V2/unregistered → `None`.
-    pub fn seed_genesis_by_pool_id(&mut self, pool_id: u64, block: u64) -> Option<u64> {
-        match self.pools.get_mut(&pool_id) {
-            Some(PoolEntry::V3(p)) => {
+    /// `tick_data_block`. A non-CL family has no CL journal to seed and is
+    /// refused with [`ClApplyError::UnsupportedFamily`].
+    ///
+    /// # Errors
+    ///
+    /// [`ClApplyError::NotRegistered`] for an unknown pool id, or
+    /// [`ClApplyError::UnsupportedFamily`] for a registered non-CL family.
+    pub fn seed_genesis_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<u64, ClApplyError> {
+        match self.cl_kind(pool_id) {
+            ClKind::V3 => {
+                let Some(PoolEntry::V3(p)) = self.pools.get_mut(&pool_id) else {
+                    return Err(ClApplyError::NotRegistered { pool_id });
+                };
                 p.1.seed_genesis(block);
-                Some(pool_id)
+                Ok(pool_id)
             }
-            Some(PoolEntry::V4(p)) => {
+            ClKind::V4 => {
+                let Some(PoolEntry::V4(p)) = self.pools.get_mut(&pool_id) else {
+                    return Err(ClApplyError::NotRegistered { pool_id });
+                };
                 p.1.seed_genesis(block);
-                Some(pool_id)
+                Ok(pool_id)
             }
-            _ => None,
+            ClKind::Missing => Err(ClApplyError::NotRegistered { pool_id }),
+            ClKind::NonCl(family) => Err(ClApplyError::UnsupportedFamily {
+                pool_id,
+                family,
+                op: "genesis seed",
+            }),
+        }
+    }
+
+    /// The CL dispatch bucket for `pool_id` — see [`ClKind`].
+    fn cl_kind(&self, pool_id: u64) -> ClKind {
+        match self.pools.get(&pool_id) {
+            Some(PoolEntry::V3(..)) => ClKind::V3,
+            Some(PoolEntry::V4(..)) => ClKind::V4,
+            Some(entry) => ClKind::NonCl(entry_family(entry)),
+            None => ClKind::Missing,
         }
     }
 
     /// Family-dispatching liquidity update. The single entry point
     /// `PyLiquidityPool.apply_liquidity_update` calls — routes V3 to
     /// `apply_v3_liquidity_update_by_pool_id` and V4 to
-    /// `apply_v4_liquidity_update_by_pool_id`. V2/unregistered → `None`.
+    /// `apply_v4_liquidity_update_by_pool_id`. A non-CL family is refused
+    /// with [`ClApplyError::UnsupportedFamily`] instead of falling into the
+    /// V3 path.
+    ///
+    /// # Errors
+    ///
+    /// [`ClApplyError::NotRegistered`] for an unknown pool id, or
+    /// [`ClApplyError::UnsupportedFamily`] for a registered non-CL family.
     pub fn apply_liquidity_update_by_pool_id(
         &mut self,
         pool_id: u64,
@@ -1030,23 +1109,32 @@ impl BotState {
         tick_upper: i32,
         liquidity_delta: i128,
         block_number: u64,
-    ) -> Option<u64> {
-        if matches!(self.pools.get(&pool_id), Some(PoolEntry::V4(..))) {
-            self.apply_v4_liquidity_update_by_pool_id(
+    ) -> Result<u64, ClApplyError> {
+        match self.cl_kind(pool_id) {
+            ClKind::V3 => self
+                .apply_v3_liquidity_update_by_pool_id(
+                    pool_id,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                )
+                .ok_or(ClApplyError::NotRegistered { pool_id }),
+            ClKind::V4 => self
+                .apply_v4_liquidity_update_by_pool_id(
+                    pool_id,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                )
+                .ok_or(ClApplyError::NotRegistered { pool_id }),
+            ClKind::Missing => Err(ClApplyError::NotRegistered { pool_id }),
+            ClKind::NonCl(family) => Err(ClApplyError::UnsupportedFamily {
                 pool_id,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            )
-        } else {
-            self.apply_v3_liquidity_update_by_pool_id(
-                pool_id,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            )
+                family,
+                op: "liquidity update",
+            }),
         }
     }
 

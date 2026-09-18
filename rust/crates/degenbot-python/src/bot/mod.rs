@@ -1721,6 +1721,11 @@ impl PyBot {
                     "swap_simulation: pool {pool_id} is not registered"
                 )));
             }
+            SwapRead::UnsupportedFamily { pool_id, family } => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "swap_simulation: pool {pool_id} family {family} is not supported for this operation"
+                )));
+            }
         };
         let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
@@ -1808,13 +1813,21 @@ impl PyBot {
             sqrt_price_limit: None,
         };
         // GIL hygiene: write guard acquired inside py.detach (inversion class).
-        let result = self.with_state_mut(py, |s| match s.swap_simulation(0, pool_id, request) {
+        let read = self.with_state_mut(py, |s| s.swap_simulation(0, pool_id, request));
+        let result = match read {
             SwapRead::Computed(outcome) => match &outcome {
                 SwapOutcome::V2(o) => (-o.consumed).into_raw(),
                 SwapOutcome::V3(o) | SwapOutcome::V4(o) => (-o.consumed).into_raw(),
             },
+            // A registered family with no exact-output path is a typed gap,
+            // not the legacy silent-0 contract.
+            SwapRead::UnsupportedFamily { pool_id, family } => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "calculate_tokens_in: pool {pool_id} family {family} has no exact-output path"
+                )));
+            }
             _ => alloy::primitives::U256::ZERO,
-        });
+        };
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }

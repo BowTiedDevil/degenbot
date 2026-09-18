@@ -153,6 +153,42 @@ fn encode_swap_refuses_an_unregistered_pool() {
 }
 
 #[test]
+fn seed_genesis_refuses_a_non_cl_family() {
+    let mut core = BotState::new();
+    let v2_id = core
+        .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
+        .expect("test setup: V2 registration");
+    let err = core.seed_genesis_by_pool_id(v2_id, 5).unwrap_err();
+    assert_eq!(
+        err,
+        ClApplyError::UnsupportedFamily {
+            pool_id: v2_id,
+            family: "v2",
+            op: "genesis seed"
+        }
+    );
+}
+
+#[test]
+fn apply_liquidity_update_refuses_a_non_cl_family() {
+    let mut core = BotState::new();
+    let v2_id = core
+        .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
+        .expect("test setup: V2 registration");
+    let err = core
+        .apply_liquidity_update_by_pool_id(v2_id, 60, 120, 500, 5)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        ClApplyError::UnsupportedFamily {
+            pool_id: v2_id,
+            family: "v2",
+            op: "liquidity update"
+        }
+    );
+}
+
+#[test]
 fn encode_swap_refuses_a_family_without_an_encoder() {
     let mut core = BotState::new();
     let v3_id = register_v3(&mut core, 0);

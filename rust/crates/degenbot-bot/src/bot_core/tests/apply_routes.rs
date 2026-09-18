@@ -833,7 +833,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
     // Before the fix this no-op'd on A. Assert it now applies.
     assert_eq!(
         core_a.apply_liquidity_update_by_pool_id(id_a, 60, 120, 500, block_b),
-        Some(id_a),
+        Ok(id_a),
         "dispatcher must report an applied V4 liquidity update"
     );
     let s_a = core_a.get_v4_pool(id_a).expect("registered A");
