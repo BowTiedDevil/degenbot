@@ -24,6 +24,46 @@ The searcher's own transaction encoding, profit detection, and operator policy, 
 at runtime over the tools the core exposes and out of scope for the core.
 _Avoid_: wedging a strategy into the simulation/solve engine.
 
+## Strategy reaction kinds (ADR-055)
+
+**Settled-block strategy**:
+A strategy reacting to *sealed* blocks (settlement arbitrage today). Drives the block
+pump/`StageHandlers` seam; its product types are deliberately settlement-shaped until the
+ADR-018-named generalization (ADR-055 Phase C).
+
+**Pending-transaction strategy**:
+A strategy reacting to *observed mempool transactions*, implementing `PendingTxStrategy`
+(`degenbot-submission/src/pending_tx.rs`): `admit` → `discover` → `evaluate` → `compose`
+→ `decide`, threaded by the strategy-neutral artifacts `ComposedIntent` and `Decided`.
+Backrun is the reference implementation.
+_Avoid_: "lane", "frame pipeline" as the strategy unit.
+
+**Pending-transaction driver**:
+The `degenbot-submission` driver owning the strategy-neutral loop around a strategy's
+stages: pending-tx replay (ADR-054 seam 1), journal extraction (seam 2), the bundle-sim
+gate, timings/tracing, liveness, and submission.
+
+**MarketContext**:
+The process-lifetime shared caches for pending-transaction strategies — the connector
+index + DFS graph, token id/address joins, and the warm code cache
+(`degenbot-submission/src/market_context.rs`). Substrate, never strategy identity.
+_Avoid_: "StrategyRuntime" (retired).
+
+**SubmissionTarget**:
+The typed channel vocabulary at `dispatch_and_submit`: `Bundle(BundleTarget)` (exclusive
+single-destination auction entry) or `Public` (relay fan-out with read-provider
+fallback). Strategy bid/observe policy stays with the strategy; nonce/fee/sign/monitor
+machinery stays with the channel.
+
+**Strategy facet**:
+One typed per-strategy config section at the schema's single declaration site;
+`strategy.name` (`StrategyName::Settlement|Backrun`, optional) is the arm selector.
+_Avoid_: strategy-scoped ad-hoc env reads outside the schema.
+
+**Loud-abort rule**:
+At a use site, an unknown/unsupported pool *family* aborts loudly (typed fatal), never a
+silent skip; transient RPC/timing/fetch failures keep their skip semantics. ADR-055 D4.
+
 ## System layers
 
 **Rust core**:
@@ -125,13 +165,13 @@ tripwire.
 Cleanup releasing pools that were built but whose paths never registered. Never a
 productivity dependency.
 
-## Solver-state tripwire
+## Solver-state tripwire (retired)
 
 **Solver-state tripwire**:
-The solve-time accuracy gate that diffs, per hop of a published block's change set, the
-solver's stored scalar state against canonical on-chain state and returns one typed
-verdict. On divergence the bot stops loudly; it never heals. Distinct from the
-registration **State tripwire** — one gates publish, the other gates registration.
+RETIRED (ADR-021 era): in-process chain-vs-solver-state verification is retired with the
+stage-separated data plane — the desync it gated on is unrepresentable. The surviving
+solve-time gate is the solve-anchor future-hop rule. Distinct from the registration
+**State tripwire**, which remains live. Do not revive this term for new gates.
 
 **Tripwire class**:
 The defect class a tripwire verdict names (`MissedLog`, `StorageMutated`,
