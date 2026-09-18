@@ -8,41 +8,54 @@
 /// The declarative schema expansion: generates the typed `BotConfig` tree,
 /// section `Default` impls, the path-addressed `assign` setter, and the
 /// `SCHEMA` registry — all from ONE invocation line per key.
+///
+/// A section body is a sequence of key declarations and facet declarations
+/// (`name Type {}`). A facet generates a typed sub-struct field on its parent
+/// and a dotted section path (`strategy.settlement`); an empty facet declares
+/// no keys, only the namespace. `SECTION_PATHS` records every section path so
+/// the loader accepts an otherwise-keyless facet table.
+///
+/// The expansion runs as an accumulator muncher because a `macro_rules!`
+/// invocation cannot expand to a struct's field list or to `match` arms; the
+/// muncher accumulates those token lists and emits them from one arm. The
+/// `assign` arms are re-formed in the emitting arm so `self` binds to the
+/// generated method rather than to an earlier expansion.
 #[macro_export]
 macro_rules! config_schema {
-    ( $( $sec:ident $Sec:ident {
-        $( $(#[$fmeta:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr ,
-           env = $env:literal , def = $def_repr:literal , doc = $doc:literal ;
-        )+
-    } )+ ) => {
+    ( $( $sec:ident $Sec:ident { $($body:tt)* } )+ ) => {
+        $crate::config_schema_impl! {
+            @sections [ $( $sec $Sec { $($body)* } )+ ]
+            @bot [] @botdef [] @items [] @schema [] @arms [] @paths []
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! config_schema_impl {
+    // No sections left: emit the whole tree.
+    (
+        @sections []
+        @bot [$($bot:tt)*]
+        @botdef [$($botdef:tt)*]
+        @items [$($items:tt)*]
+        @schema [$($schema:tt)*]
+        @arms [ $([$as:ident, $af:ident, $($akt:tt)+],)* ]
+        @paths [$($paths:tt)*]
+    ) => {
         /// The typed configuration tree. Every field is generated from the
         /// same declaration that produced `SCHEMA` — one site per key
         /// (see the crate docs for the parity + precedence contract).
         #[derive(Debug, Clone, PartialEq)]
-        pub struct BotConfig { $( pub $sec: $Sec, )+ }
+        pub struct BotConfig { $($bot)* }
 
-        $(
-            #[doc = concat!("Configuration section `", stringify!($sec), "`.")]
-            #[derive(Debug, Clone, PartialEq)]
-            pub struct $Sec {
-                $( pub $f: $crate::cfg_ty!( $($kt)+ ), )+
-            }
-
-            impl ::core::default::Default for $Sec {
-                fn default() -> Self {
-                    Self { $( $f: $def, )+ }
-                }
-            }
-        )+
+        $($items)*
 
         impl ::core::default::Default for BotConfig {
             fn default() -> Self {
-                Self { $( $sec: $Sec::default(), )+ }
+                Self { $($botdef)* }
             }
         }
-
-        // Enum kinds declare their generated enum types alongside the keys.
-        $( $( $crate::cfg_enum!( $($kt)+ ); )+ )+
 
         impl BotConfig {
             /// Assign ONE declared key from a raw string. The label in errors
@@ -60,21 +73,17 @@ macro_rules! config_schema {
             ) -> Result<(), String> {
                 match (section, field) {
                     $(
-                        $(
-                            (::core::stringify!($sec), ::core::stringify!($f)) => {
-                                {
-                        self.$sec.$f = $crate::cfg_parse_single!($($kt)+, raw)
-                            .map_err(|e| {
-                                format!(
-                                    "{}: {e}",
-                                    concat!(stringify!($sec), ".", stringify!($f))
-                                )
-                            })?;
-                        Ok(())
-                    }
-                            }
-                        )+
-                    )+
+                        (stringify!($as), stringify!($af)) => {
+                            self.$as.$af = $crate::cfg_parse_single!($($akt)+, raw)
+                                .map_err(|e| {
+                                    format!(
+                                        "{}: {e}",
+                                        concat!(stringify!($as), ".", stringify!($af))
+                                    )
+                                })?;
+                            Ok(())
+                        }
+                    )*
                     _ => Ok(()),
                 }
             }
@@ -82,25 +91,173 @@ macro_rules! config_schema {
 
         /// The self-describing key registry: one entry per declared key, in
         /// declaration order (which fixes doc + loader iteration order).
-        pub const SCHEMA: &[$crate::schema::KeyDecl] = &[
-            $(
-                $(
-                    $crate::schema::KeyDecl {
-                        section: ::core::stringify!($sec),
-                        field: ::core::stringify!($f),
-                        env: $env,
-                        toml_path: concat!(::core::stringify!($sec), ".", ::core::stringify!($f)),
-                        kind: $crate::cfg_kind!( $($kt)+ ),
-                        default_repr: $def_repr,
-                        description: $doc,
-                    },
-                )+
-            )+
-        ];
-    }
+        pub const SCHEMA: &[$crate::schema::KeyDecl] = &[ $($schema)* ];
+
+        /// Every declared section path, including empty facet namespaces that
+        /// declare no keys (dotted for nested facets). The loader consults
+        /// this so a keyless facet table is valid rather than "unknown".
+        pub const SECTION_PATHS: &[&str] = &[ $($paths)* ];
+    };
+
+    // Start scanning one section's body.
+    (
+        @sections [ $sec:ident $Sec:ident { $($body:tt)* } $($rest:tt)* ]
+        @bot [$($bot:tt)*]
+        @botdef [$($botdef:tt)*]
+        @items [$($items:tt)*]
+        @schema [$($schema:tt)*]
+        @arms [$($arms:tt)*]
+        @paths [$($paths:tt)*]
+    ) => {
+        $crate::config_schema_impl! {
+            @body [$sec] [$Sec] [ $($body)* ]
+            @fields [] @defaults [] @aux [] @key_schema [] @key_arms [] @key_paths []
+            @rest [ $($rest)* ]
+            @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
+            @schema_out [$($schema)*] @arms_out [$($arms)*] @paths_out [$($paths)*]
+        }
+    };
+
+    // A key declaration inside a section body.
+    (
+        @body [$sec:ident] [$Sec:ident]
+        [ $(#[$fmeta:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
+        @fields [$($fields:tt)*]
+        @defaults [$($defaults:tt)*]
+        @aux [$($aux:tt)*]
+        @key_schema [$($key_schema:tt)*]
+        @key_arms [$($key_arms:tt)*]
+        @key_paths [$($key_paths:tt)*]
+        @rest [$($body_rest:tt)*]
+        @bot [$($bot:tt)*]
+        @botdef [$($botdef:tt)*]
+        @items [$($items:tt)*]
+        @schema_out [$($schema_out:tt)*]
+        @arms_out [$($arms_out:tt)*]
+        @paths_out [$($paths_out:tt)*]
+    ) => {
+        $crate::config_schema_impl! {
+            @body [$sec] [$Sec] [ $($rest)* ]
+            @fields [$($fields)* pub $f: $crate::cfg_ty!($($kt)+), ]
+            @defaults [$($defaults)* $f: $def, ]
+            @aux [$($aux)* $crate::cfg_enum!($($kt)+); ]
+            @key_schema [
+                $($key_schema)*
+                $crate::schema::KeyDecl {
+                    section: stringify!($sec),
+                    field: stringify!($f),
+                    env: $env,
+                    toml_path: concat!(stringify!($sec), ".", stringify!($f)),
+                    kind: $crate::cfg_kind!($($kt)+),
+                    default_repr: $def_repr,
+                    description: $doc,
+                },
+            ]
+            @key_arms [ $($key_arms)* [$sec, $f, $($kt)+], ]
+            @key_paths [$($key_paths)*]
+            @rest [$($body_rest)*]
+            @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
+            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*] @paths_out [$($paths_out)*]
+        }
+    };
+
+    // A facet declaration inside a section body.
+    (
+        @body [$sec:ident] [$Sec:ident]
+        [ $sub:ident $Sub:ident { $($inner:tt)* } $($rest:tt)* ]
+        @fields [$($fields:tt)*]
+        @defaults [$($defaults:tt)*]
+        @aux [$($aux:tt)*]
+        @key_schema [$($key_schema:tt)*]
+        @key_arms [$($key_arms:tt)*]
+        @key_paths [$($key_paths:tt)*]
+        @rest [$($body_rest:tt)*]
+        @bot [$($bot:tt)*]
+        @botdef [$($botdef:tt)*]
+        @items [$($items:tt)*]
+        @schema_out [$($schema_out:tt)*]
+        @arms_out [$($arms_out:tt)*]
+        @paths_out [$($paths_out:tt)*]
+    ) => {
+        $crate::config_schema_impl! {
+            @body [$sec] [$Sec] [ $($rest)* ]
+            @fields [$($fields)* pub $sub: $Sub, ]
+            @defaults [$($defaults)* $sub: $Sub::default(), ]
+            @aux [$($aux)* $crate::config_facet_emit!($Sub { $($inner)* }); ]
+            @key_schema [$($key_schema)*]
+            @key_arms [$($key_arms)*]
+            @key_paths [
+                $($key_paths)*
+                concat!(stringify!($sec), ".", stringify!($sub)),
+            ]
+            @rest [$($body_rest)*]
+            @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
+            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*] @paths_out [$($paths_out)*]
+        }
+    };
+
+    // Section body exhausted: emit the section struct + Default into @items and
+    // continue with the next section.
+    (
+        @body [$sec:ident] [$Sec:ident] []
+        @fields [$($fields:tt)*]
+        @defaults [$($defaults:tt)*]
+        @aux [$($aux:tt)*]
+        @key_schema [$($key_schema:tt)*]
+        @key_arms [$($key_arms:tt)*]
+        @key_paths [$($key_paths:tt)*]
+        @rest [$($body_rest:tt)*]
+        @bot [$($bot:tt)*]
+        @botdef [$($botdef:tt)*]
+        @items [$($items:tt)*]
+        @schema_out [$($schema_out:tt)*]
+        @arms_out [$($arms_out:tt)*]
+        @paths_out [$($paths_out:tt)*]
+    ) => {
+        $crate::config_schema_impl! {
+            @sections [ $($body_rest)* ]
+            @bot [$($bot)* pub $sec: $Sec, ]
+            @botdef [$($botdef)* $sec: $Sec::default(), ]
+            @items [
+                $($items)*
+                $($aux)*
+                #[doc = concat!("Configuration section `", stringify!($sec), "`.")]
+                #[derive(Debug, Clone, PartialEq)]
+                pub struct $Sec { $($fields)* }
+
+                impl ::core::default::Default for $Sec {
+                    fn default() -> Self {
+                        Self { $($defaults)* }
+                    }
+                }
+            ]
+            @schema [$($schema_out)* $($key_schema)* ]
+            @arms [$($arms_out)* $($key_arms)* ]
+            @paths [$($paths_out)* stringify!($sec), $($key_paths)* ]
+        }
+    };
 }
 
-/// Field type from a kind token sequence.
+/// Emit one facet's fan-out: a typed sub-struct, its `Default`, and (through
+/// the caller) its `SECTION_PATHS` entry. Empty bodies only: a facet key would
+/// need the loader's dotted-section traversal plus an `assign` path, which the
+/// keyless Phase-A facets do not yet require.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! config_facet_emit {
+    ( $Sub:ident { } ) => {
+        #[doc = concat!("Strategy-facet configuration section `", stringify!($Sub), "`.")]
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct $Sub {}
+
+        impl ::core::default::Default for $Sub {
+            fn default() -> Self {
+                Self {}
+            }
+        }
+    };
+}
+
 /// Field type from a kind token sequence.
 #[doc(hidden)]
 #[macro_export]
@@ -138,6 +295,7 @@ macro_rules! cfg_enum {
     (opt enum $e:ident $( $v:ident $( = $alias:literal )? )+) => {
         $crate::cfg_enum!(enum $e $( $v $( = $alias )? )+);
     };
+
     (enum $e:ident $( $v:ident $( = $alias:literal )? )+) => {
         #[doc = concat!("Enum-valued config key generated at its declaration site (`", stringify!($e), "`).")]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

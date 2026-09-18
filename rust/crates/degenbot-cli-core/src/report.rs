@@ -9,6 +9,7 @@ use degenbot_db::SchemaState;
 
 use crate::error::{CliError, ExitCode};
 use crate::pool::PoolFamily;
+use crate::strategy::StrategyFacetDescriptor;
 
 /// The typed result of one command execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +26,8 @@ pub enum CommandReport {
     Fleet(FleetReport),
     /// A `path` command report.
     Path(PathReport),
+    /// A `strategy` command report (ADR-055 facets).
+    Strategy(StrategyReport),
 }
 
 impl CommandReport {
@@ -38,6 +41,7 @@ impl CommandReport {
             Self::Aave(report) => report.render_lines(),
             Self::Fleet(report) => report.render_lines(),
             Self::Path(report) => report.render_lines(),
+            Self::Strategy(report) => report.render_lines(),
         }
     }
 }
@@ -383,6 +387,57 @@ impl PathReport {
     pub fn render_lines(&self) -> Vec<String> {
         match self {
             Self::Added { detail } | Self::Discovered { detail } => vec![detail.clone()],
+        }
+    }
+}
+
+/// The typed result of a `strategy` command (ADR-055 facets).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StrategyReport {
+    /// `strategy list`: every declared facet.
+    Listed {
+        /// One descriptor per facet, in declaration order.
+        rows: Vec<StrategyFacetDescriptor>,
+    },
+    /// `strategy show`: one facet's descriptor.
+    Shown {
+        /// The facet descriptor.
+        descriptor: StrategyFacetDescriptor,
+    },
+}
+
+impl StrategyReport {
+    /// The operator-facing lines for this report.
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        match self {
+            Self::Listed { rows } => rows
+                .iter()
+                .map(|descriptor| {
+                    format!(
+                        "{} ({}) -> {} [{} declared key(s)]",
+                        descriptor.facet.as_str(),
+                        descriptor.trigger_kind,
+                        descriptor.config_section,
+                        descriptor.fields.len()
+                    )
+                })
+                .collect(),
+            Self::Shown { descriptor } => {
+                let mut lines = vec![format!(
+                    "{}: {} strategy",
+                    descriptor.config_section, descriptor.trigger_kind
+                )];
+                lines.push(format!("  selector: {}", descriptor.facet.as_str()));
+                if descriptor.fields.is_empty() {
+                    lines.push("  declared keys: (none yet)".to_string());
+                } else {
+                    for (field, env) in descriptor.fields.iter().zip(&descriptor.envs) {
+                        lines.push(format!("  {field} ({env})"));
+                    }
+                }
+                lines
+            }
         }
     }
 }

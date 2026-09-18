@@ -53,6 +53,7 @@ pub mod path;
 pub mod pool;
 pub mod prompt;
 pub mod report;
+pub mod strategy;
 
 pub use aave::{resolve_aave_deployment, AaveCommand, AaveDeployment, AAVE_DEPLOYMENTS};
 pub use block::{
@@ -82,6 +83,10 @@ pub use report::{
     schema_state_label, AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome,
     ActivateOutcome, CommandOutcome, CommandReport, CutoverOutcome, DatabaseReport,
     DeactivateOutcome, DryRunKind, ExchangeReport, FleetReport, PathReport, PoolReport,
+    StrategyReport,
+};
+pub use strategy::{
+    descriptor, descriptors, StrategyCommand, StrategyFacet, StrategyFacetDescriptor,
 };
 
 /// The ONE execution entry: run `command` against `ctx`, asking `prompter` when

@@ -1,3 +1,5 @@
+#![recursion_limit = "1024"]
+
 //! Typed `BotConfig` schema + 12-factor loader for degenbot (file + env parity).
 //!
 //! # One declaration site per key
@@ -78,8 +80,11 @@ pub use resolvers::{
     DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX, RPC_WS_ENV_PREFIX,
     XDG_CONFIG_HOME_ENV, XDG_STATE_HOME_ENV,
 };
-pub use schema::{AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyName};
-pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA};
+pub use schema::{
+    AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyBackrunConfig,
+    StrategyName, StrategySettlementConfig,
+};
+pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA, SECTION_PATHS};
 
 /// The closed set of observability domains (ADR-043 section 3). A
 /// `TelemetryConfig::diag` entry naming anything else is a boot error, so a

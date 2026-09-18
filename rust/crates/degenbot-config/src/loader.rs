@@ -390,10 +390,18 @@ impl BotConfigLoader {
             };
             for (field, field_value) in section_table {
                 let Some(key) = members.iter().copied().find(|k| k.field == field.as_str()) else {
-                    problems.push(format!(
-                        "--config {}: unknown key {field} in section [{section}]",
-                        path.display()
-                    ));
+                    // A nested facet section (e.g. `[strategy.settlement]`):
+                    // its own keys are declared under the dotted section path,
+                    // and an empty facet is valid.
+                    let nested = format!("{section}.{field}");
+                    if crate::schema::SECTION_PATHS.contains(&nested.as_str()) {
+                        Self::apply_nested_facet(&nested, field_value, path, problems);
+                    } else {
+                        problems.push(format!(
+                            "--config {}: unknown key {field} in section [{section}]",
+                            path.display()
+                        ));
+                    }
                     continue;
                 };
                 // Map-kind keys accept the nested table form (the primary
@@ -412,6 +420,35 @@ impl BotConfigLoader {
                     }
                     Err(problem) => problems.push(problem),
                 }
+            }
+        }
+    }
+
+    /// Validate a known nested facet section (`[strategy.settlement]`). Its
+    /// members must themselves be known facet paths; an empty table is valid
+    /// (the facets declare no keys yet).
+    fn apply_nested_facet(
+        section: &str,
+        value: &toml::Value,
+        path: &Path,
+        problems: &mut Vec<String>,
+    ) {
+        let Some(table) = value.as_table() else {
+            problems.push(format!(
+                "--config {}: section [{section}] must be a table",
+                path.display()
+            ));
+            return;
+        };
+        for (field, field_value) in table {
+            let nested = format!("{section}.{field}");
+            if crate::schema::SECTION_PATHS.contains(&nested.as_str()) {
+                Self::apply_nested_facet(&nested, field_value, path, problems);
+            } else {
+                problems.push(format!(
+                    "--config {}: unknown key {field} in section [{section}]",
+                    path.display()
+                ));
             }
         }
     }

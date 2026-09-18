@@ -10,8 +10,8 @@ use clap::Parser as _;
 use degenbot_cli::argv::{resolve_with_env, Cli};
 use degenbot_cli_core::{
     AaveCommand, CliError, Command, DatabaseCommand, ExchangeCommand, FleetCommand, PathCommand,
-    PathDirection, PoolCommand, PoolFamily, PosturePatchEntry, PosturePatchValue,
-    DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
+    PathDirection, PoolCommand, PoolFamily, PosturePatchEntry, PosturePatchValue, StrategyCommand,
+    StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
 };
 use degenbot_config::MapEnv;
 
@@ -335,11 +335,42 @@ fn path_arms_round_trip() {
 }
 
 #[test]
+fn strategy_arms_round_trip() {
+    assert_eq!(
+        resolve(&["degenbot", "strategy", "list"]),
+        Command::Strategy(StrategyCommand::List)
+    );
+    assert_eq!(
+        resolve(&["degenbot", "strategy", "show", "backrun"]),
+        Command::Strategy(StrategyCommand::Show {
+            facet: StrategyFacet::Backrun,
+        })
+    );
+    assert_eq!(
+        resolve(&["degenbot", "strategy", "set", "settlement", "enabled", "1"]),
+        Command::Strategy(StrategyCommand::Set {
+            facet: StrategyFacet::Settlement,
+            key: "enabled".to_string(),
+            value: "1".to_string(),
+        })
+    );
+    assert_eq!(
+        resolve(&["degenbot", "strategy", "remove", "backrun", "enabled"]),
+        Command::Strategy(StrategyCommand::Remove {
+            facet: StrategyFacet::Backrun,
+            key: "enabled".to_string(),
+        })
+    );
+}
+
+#[test]
 fn root_help_lists_every_group() {
     let help = <Cli as clap::CommandFactory>::command()
         .render_help()
         .to_string();
-    for group in ["database", "exchange", "pool", "aave", "fleet", "path"] {
+    for group in [
+        "database", "exchange", "pool", "aave", "fleet", "path", "strategy",
+    ] {
         assert!(help.contains(group), "missing {group} in:\n{help}");
     }
     for flag in [
@@ -372,6 +403,7 @@ fn group_help_renders_the_leaf_commands() {
         ("aave", vec!["activate", "deactivate", "update", "position"]),
         ("fleet", vec!["posture"]),
         ("path", vec!["add", "discover"]),
+        ("strategy", vec!["list", "show", "add", "set", "remove"]),
     ] {
         let sub = command.find_subcommand(group).expect("group present");
         let help = sub.clone().render_help().to_string();

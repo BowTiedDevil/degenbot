@@ -14,6 +14,7 @@ use crate::path::{self, PathCommand};
 use crate::pool::{self, PoolCommand};
 use crate::prompt::{PromptPlan, Prompter};
 use crate::report::CommandReport;
+use crate::strategy::{self, StrategyCommand};
 
 /// A console command.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +31,8 @@ pub enum Command {
     Fleet(FleetCommand),
     /// The `path` command group (ADR-051 D6).
     Path(PathCommand),
+    /// The `strategy` command group (ADR-055 facets).
+    Strategy(StrategyCommand),
 }
 
 impl Command {
@@ -43,6 +46,7 @@ impl Command {
             Self::Aave(command) => command.prompt_plan(ctx),
             Self::Fleet(command) => command.prompt_plan(ctx),
             Self::Path(command) => command.prompt_plan(ctx),
+            Self::Strategy(command) => command.prompt_plan(ctx),
         }
     }
 
@@ -91,6 +95,9 @@ impl Command {
             }
             Self::Fleet(command) => fleet::execute(command, ctx).map(CommandReport::Fleet),
             Self::Path(command) => path::execute(command, ctx).map(CommandReport::Path),
+            Self::Strategy(command) => {
+                strategy::execute(command, ctx, prompter).map(CommandReport::Strategy)
+            }
         }
     }
 }

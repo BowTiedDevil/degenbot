@@ -6,12 +6,21 @@
 #
 # One launcher, two drivers (RSP-16 / ergo V6SUQO):
 #
-#   ./run_bot.sh [--python|--rust] [start|stop|status|foreground|print-cmd] [-- args...]
+#   ./run_bot.sh [--python|--rust] [--strategy settlement|backrun] [start|stop|status|foreground|print-cmd] [-- args...]
 #
 #   --python (default)    the Python driver over the PyO3-bound Rust core —
 #                         legacy command/env, byte-identical
 #   --rust                the pure-Rust parity driver
 #                         (rust/examples/settlement_bot), built on demand
+#
+#   --strategy NAME       strategy arm selector (settlement|backrun). Omitted
+#                         means settlement: the launcher then behaves exactly as
+#                         before and exports nothing. `settlement` exports the
+#                         typed selector key DEGENBOT_STRATEGY_NAME (inert until
+#                         the arm readers migrate onto it, ADR-055). `backrun`
+#                         has no runner in this launcher — backrun runs via the
+#                         sidecar — so it refuses with a pointer instead of
+#                         pretending. Ignored by stop/status.
 #
 #   ./run_bot.sh            # foreground (output -> console + log)
 #   ./run_bot.sh start      # detached (setsid), pid -> logs/bot_run.pid
@@ -180,10 +189,12 @@ DRIVER_NAME_PATTERNS=(eth_settlement_arbitrage_v2_v3_v4 degenbot-settlement-bot-
 DRIVER=python
 DRIVER_SET=0
 ACTION=""
+STRATEGY=""
+STRATEGY_SET=0
 PASSTHROUGH=()
 
 usage() {
-    echo "usage: $0 [--python|--rust] {start|stop|status|foreground|print-cmd} [-- extra bot args]" >&2
+    echo "usage: $0 [--python|--rust] [--strategy settlement|backrun] {start|stop|status|foreground|print-cmd} [-- extra bot args]" >&2
 }
 
 while [ $# -gt 0 ]; do
@@ -196,6 +207,29 @@ while [ $# -gt 0 ]; do
             fi
             DRIVER="${1#--}"
             DRIVER_SET=1
+            ;;
+        --strategy)
+            if [ "$STRATEGY_SET" = 1 ]; then
+                echo "error: --strategy given more than once" >&2
+                usage
+                exit 2
+            fi
+            if [ $# -lt 2 ]; then
+                echo "error: --strategy requires an argument (settlement|backrun)" >&2
+                usage
+                exit 2
+            fi
+            case "$2" in
+                settlement|backrun) STRATEGY="$2" ;;
+                *)
+                    echo "error: unknown --strategy '$2' (expected settlement|backrun)" >&2
+                    usage
+                    exit 2
+                    ;;
+            esac
+            STRATEGY_SET=1
+            # Consume the value; the loop's trailing shift consumes the flag.
+            shift
             ;;
         --)
             # Everything after `--` is the driver's own argv, verbatim. The
@@ -219,6 +253,24 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+# Strategy selector (ADR-055): additive and inert by default. An explicit
+# `settlement` exports the typed selector key (a valid enum value the config
+# loader accepts; no arm reader consumes it yet). `backrun` has no in-launcher
+# runner, so it refuses with a pointer rather than pretending; stop/status
+# ignore the selector entirely so a running bot stays stoppable.
+case "${ACTION:-foreground}" in
+    start|foreground|print-cmd)
+        case "$STRATEGY" in
+            "") : ;;
+            settlement) export DEGENBOT_STRATEGY_NAME=settlement ;;
+            backrun)
+                echo "error: --strategy backrun has no runner in this launcher; backrun runs via the sidecar (rust/crates/degenbot-submission/src/bin/backrun_sidecar.rs) — see docs/sidecar_runbook.md" >&2
+                exit 2
+                ;;
+        esac
+        ;;
+esac
 
 if [ "$DRIVER" = rust ]; then
     BOT_CMD=("$RUST_BIN" "${PASSTHROUGH[@]}")
@@ -400,6 +452,10 @@ foreground() {
 print_cmd() {
     local line ws
     echo "[runner] driver=$DRIVER"
+    echo "[runner] strategy=${STRATEGY:-settlement(default; no export)}"
+    if [ "$STRATEGY" = settlement ]; then
+        echo "[runner] export DEGENBOT_STRATEGY_NAME=settlement"
+    fi
     if [ "$DRIVER" = rust ]; then
         echo "[runner] rust-profile=$RUST_PROFILE"
         echo "[runner] rust-binary=$RUST_BIN"

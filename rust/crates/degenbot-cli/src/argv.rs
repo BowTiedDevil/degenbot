@@ -38,8 +38,8 @@ use std::io::Write as _;
 use clap::{ArgAction, Args, CommandFactory as _, Parser, Subcommand, ValueEnum};
 use degenbot_cli_core::{
     AaveCommand, CliContext, CliError, Command, DatabaseCommand, ExchangeCommand, FleetCommand,
-    PathCommand, PathDirection, PoolCommand, PoolFamily, PosturePatchEntry, DEFAULT_CHUNK_SIZE,
-    DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
+    PathCommand, PathDirection, PoolCommand, PoolFamily, PosturePatchEntry, StrategyCommand,
+    StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
 };
 use degenbot_config::{EnvVars, ProcessEnv, DEFAULT_CHAIN_ID_ENV};
 
@@ -115,6 +115,12 @@ pub enum Commands {
         /// The path command.
         #[command(subcommand)]
         command: PathSub,
+    },
+    /// Inspect the typed strategy facets (ADR-055).
+    Strategy {
+        /// The strategy command.
+        #[command(subcommand)]
+        command: StrategySub,
     },
 }
 
@@ -484,6 +490,57 @@ pub enum DirectionArg {
     Ozf,
 }
 
+/// The `strategy` command group (ADR-055 facets).
+#[derive(Debug, Subcommand)]
+pub enum StrategySub {
+    /// List the declared strategy facets.
+    List,
+    /// Show one strategy facet's descriptor and declared config keys.
+    Show {
+        /// The facet to show.
+        #[arg(value_enum)]
+        facet: FacetArg,
+    },
+    /// Add a config key to a facet (refused while the facets declare no keys).
+    Add {
+        /// The facet to mutate.
+        #[arg(value_enum)]
+        facet: FacetArg,
+        /// The config key name.
+        key: String,
+        /// The raw value.
+        value: String,
+    },
+    /// Set a config key on a facet (refused while the facets declare no keys).
+    Set {
+        /// The facet to mutate.
+        #[arg(value_enum)]
+        facet: FacetArg,
+        /// The config key name.
+        key: String,
+        /// The raw value.
+        value: String,
+    },
+    /// Remove a config key from a facet (refused while the facets declare no
+    /// keys).
+    Remove {
+        /// The facet to mutate.
+        #[arg(value_enum)]
+        facet: FacetArg,
+        /// The config key name.
+        key: String,
+    },
+}
+
+/// The strategy facet selector.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum FacetArg {
+    /// The settled-block strategy.
+    Settlement,
+    /// The pending-transaction strategy.
+    Backrun,
+}
+
 /// The [`CliContext`] the argv overrides describe (ADR-051 D8).
 #[must_use]
 pub fn context<'a>(cli: &Cli, env: &'a dyn EnvVars) -> CliContext<'a> {
@@ -538,6 +595,7 @@ pub fn resolve_with_env(cli: &Cli, env: &dyn EnvVars) -> Result<Command, CliErro
         Commands::Aave { command } => Ok(Command::Aave(aave(command, cli, &ctx)?)),
         Commands::Fleet { command } => Ok(Command::Fleet(fleet(command)?)),
         Commands::Path { command } => Ok(Command::Path(path(command))),
+        Commands::Strategy { command } => Ok(Command::Strategy(strategy(command))),
     }
 }
 
@@ -719,6 +777,36 @@ fn path(command: &PathSub) -> PathCommand {
             socket: socket.clone(),
             bound: *bound,
         },
+    }
+}
+
+fn strategy(command: &StrategySub) -> StrategyCommand {
+    match command {
+        StrategySub::List => StrategyCommand::List,
+        StrategySub::Show { facet } => StrategyCommand::Show {
+            facet: facet_of(*facet),
+        },
+        StrategySub::Add { facet, key, value } => StrategyCommand::Add {
+            facet: facet_of(*facet),
+            key: key.clone(),
+            value: value.clone(),
+        },
+        StrategySub::Set { facet, key, value } => StrategyCommand::Set {
+            facet: facet_of(*facet),
+            key: key.clone(),
+            value: value.clone(),
+        },
+        StrategySub::Remove { facet, key } => StrategyCommand::Remove {
+            facet: facet_of(*facet),
+            key: key.clone(),
+        },
+    }
+}
+
+fn facet_of(arg: FacetArg) -> StrategyFacet {
+    match arg {
+        FacetArg::Settlement => StrategyFacet::Settlement,
+        FacetArg::Backrun => StrategyFacet::Backrun,
     }
 }
 

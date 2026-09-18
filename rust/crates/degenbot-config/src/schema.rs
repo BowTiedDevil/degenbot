@@ -349,12 +349,20 @@ crate::config_schema! {
             doc = "Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery.";
     }
 
-    // The typed strategy selector: which strategy arm the bot runs. One
+    // The typed strategy selector plus the per-arm facet namespaces. One
     // declaration site for the operator-facing choice; the settlement and
     // backrun readers migrate onto this key separately.
     strategy StrategyConfig {
         name [opt enum StrategyName Settlement Backrun] = None, env = "DEGENBOT_STRATEGY_NAME", def = "(unset; no explicit strategy selection)",
             doc = "Active strategy arm: `settlement` or `backrun`. Unset leaves strategy selection at the wiring default; the settlement/backrun readers consume this key in a later phase.";
+
+        // Per-arm facet namespaces: the typed config home each strategy's own
+        // knobs land in. They are deliberately keyless today — no per-arm value
+        // exists to type yet (the SIDECAR_* backrun surface and the settlement
+        // knobs still live at their use sites), so an empty validated section is
+        // the honest declaration. ADR-055 Phase C adds `.enabled` here.
+        settlement StrategySettlementConfig {}
+        backrun StrategyBackrunConfig {}
     }
 
     aave AaveConfig {
@@ -567,6 +575,27 @@ mod tests {
         assert!(config.assign("strategy", "name", "Backrun").is_ok());
         assert_eq!(config.strategy.name, Some(StrategyName::Backrun));
         assert!(config.assign("strategy", "name", "sandwich").is_err());
+    }
+
+    #[test]
+    fn strategy_facets_are_declared_as_keyless_typed_sections() {
+        // The per-arm facet namespaces exist as typed fields with dotted TOML
+        // section paths; they carry no schema keys yet, so the env inventory
+        // and the generated key doc stay unchanged.
+        let config = BotConfig::default();
+        assert_eq!(
+            config.strategy.settlement,
+            StrategySettlementConfig::default()
+        );
+        assert_eq!(config.strategy.backrun, StrategyBackrunConfig::default());
+        assert!(SECTION_PATHS.contains(&"strategy.settlement"));
+        assert!(SECTION_PATHS.contains(&"strategy.backrun"));
+        assert!(
+            !SCHEMA
+                .iter()
+                .any(|k| k.section == "strategy.settlement" || k.section == "strategy.backrun"),
+            "the facets declare no keys yet"
+        );
     }
 
     #[test]
