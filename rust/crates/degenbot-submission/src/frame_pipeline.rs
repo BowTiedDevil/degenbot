@@ -56,12 +56,15 @@
 //!    profit. The residual we keep after the bribe (`P − B`, the 2% of the
 //!    98% ladder) funds nothing further — the executor's non-zero
 //!    check-mode seatbelts the landed tx's worst case to gas.
-//! 2. **Bid ladder** `B = floor(P × bribe_bips / 10_000)` (98% default).
-//!    The builder's share enters the decision AT MOST ONCE, at
-//!    [`bid_from_profit`] — the only site that computes the bid from
-//!    profit. [`crate::bundle`]'s composed executor config echoes the SAME
-//!    `bribe_bips` for the on-chain coinbase payout (one share decision,
-//!    not a second gate), and [`decide`] only caps `B` against the
+//! 2. **Wallet economics + bid ladder** — the wallet funds ONLY the gas:
+//!    the on-chain bribe is drawn from flash proceeds (the executor's
+//!    config word takes `bribe_bips` of the TRUE profit delta to
+//!    `block.coinbase`) and the residue parks in executor custody.
+//!    [`net_bid`] sizes the bribe from the surplus over the gas burn
+//!    (`gross − gas×1.05`, capped by the `bribe_bips` ceiling and the
+//!    per-bundle cap) and rejects candidates whose gross cannot cover the
+//!    gas; the recomposed config word speaks the SAME bips (one share
+//!    decision), and [`decide`] only caps the bid against the
 //!    budget/bundle ceilings.
 
 use std::collections::HashMap;
@@ -287,12 +290,20 @@ impl StrategyRuntime {
 
 /// The per-frame strategy configuration the bin owns (executor/owner
 /// identity + economics).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PipelineConfig {
     pub exec: Address,
     pub owner: Address,
-    /// The builder's bribe share of TRUE profit (bips of `10_000`).
+    /// The builder's bribe share of TRUE profit (bips of `10_000`) — the
+    /// COMPETITIVENESS CEILING; the wallet gate can compose lower bips.
     pub bribe_bips: u16,
+    /// The wallet's gas burn for one composed bundle (`gas_estimate x
+    /// effective_gas_price`, wei) — what the wallet actually pays per bid
+    /// (the on-chain bribe is drawn from flash proceeds). The bin refreshes
+    /// it on head advances; the compose gate reads it atomically. Stable
+    /// atomics top out at u64: saturating far above any real gas burn
+    /// (`u64::MAX` wei = 18.4 ETH of gas for one bundle).
+    pub wallet_gas_cost_wei: Arc<std::sync::atomic::AtomicU64>,
     /// The gas floor the envelope gate evaluates at (wei).
     pub gas_floor_wei: U256,
     /// Offline fixture mode: the run replays captured frames against a
@@ -301,6 +312,33 @@ pub struct PipelineConfig {
     /// fixture head is pinned; the sim stage then records
     /// `sim_skipped_fixture_mode` and never composes a bid-able artifact.
     pub fixture_mode: bool,
+}
+
+impl PipelineConfig {
+    /// The wallet's current gas burn for one composed bundle (wei).
+    #[must_use]
+    pub fn wallet_gas_cost(&self) -> u128 {
+        u128::from(
+            self.wallet_gas_cost_wei
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+}
+
+/// A bid's wallet economics, carried to the bin's submit path so
+/// `SubmitCandidate` reports gross/net/gas HONESTLY (the struct's own doc
+/// contract; the sidecar used to fill both profit fields with the bid and
+/// a hardcoded 300k gas).
+#[derive(Debug, Clone)]
+pub struct BidEconomics {
+    /// The solved gross on-chain profit (wei).
+    pub gross_profit_wei: u128,
+    /// The wallet's gas estimate for this bundle (wei).
+    pub wallet_gas_cost_wei: u128,
+    /// The bips the recomposed config word speaks.
+    pub bribe_bips: u16,
+    /// The on-chain bribe (wei), `bribe_bips` of gross.
+    pub bid_wei: U256,
 }
 
 /// Per-stage wall times (µs) of one processed frame.
@@ -339,6 +377,9 @@ pub struct FrameArtifacts {
     pub decision: Decision,
     pub requested_bid: U256,
     pub submit_calldata: Option<Bytes>,
+    /// The bid's wallet economics, present only when a sim-passed candidate
+    /// cleared the net-of-gas gate and composed a bid-able artifact.
+    pub economics: Option<BidEconomics>,
     pub stages: StageTimings,
     /// The typed replay failure when the frame died at the replay seam
     /// (`Decision::Observe { reason }` mirrors `replay_observe_reason`).
@@ -361,20 +402,64 @@ impl FrameArtifacts {
             decision: Decision::Observe { reason },
             requested_bid: U256::ZERO,
             submit_calldata: None,
+            economics: None,
             stages,
             replay_frame_error,
         }
     }
 }
 
-/// The bid ladder, at the ONE site that turns profit into a bid: the
-/// builder's truncated share of the exact-solve profit. The envelope gate
-/// above consumed TRUE profit against the gas floor BEFORE this; the
-/// composed executor config echoes the same `bribe_bips` for the on-chain
-/// payout (one share decision — no second site scales profit again).
+/// The composed bundle's bid economics: what the builder gets and the bips
+/// the on-chain config word speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetBid {
+    /// The executor config's bribe bips for THIS bundle: bips of the true
+    /// profit delta paid on-chain to the block builder (0 = keep all).
+    pub bribe_bips: u16,
+    /// The resulting on-chain bribe, `bribe_bips` of gross.
+    pub bid_wei: U256,
+    /// What lands in executor custody if the bundle lands.
+    pub keep_wei: U256,
+}
+
+/// The wallet's keep over the gas burn: gas plus 5% margin.
+fn wallet_keep(wallet_gas_cost_wei: u128) -> u128 {
+    wallet_gas_cost_wei.saturating_mul(105) / 100
+}
+
+/// Bid sizing from the wallet's truth: the wallet funds ONLY the bundle's
+/// gas — the on-chain bribe is drawn from flash proceeds inside the tx and
+/// the un-bribed remainder parks in executor custody (the owner recovers
+/// it). Viable only when the solved gross covers `wallet_gas_cost_wei`
+/// plus margin; the bribe then takes everything the wallet does not need
+/// to keep, capped by `max_bribe_bips` (competitiveness ceiling) and
+/// `bid_cap_wei` (per-bundle cap). `None` = the wallet cannot break even —
+/// no bid.
+///
+/// # Panics
+///
+/// Never: the bips cap keeps the `u16` conversion in range.
 #[must_use]
-pub fn bid_from_profit(profit: u128, bribe_bips: u16) -> U256 {
-    U256::from(profit).saturating_mul(U256::from(u64::from(bribe_bips))) / U256::from(10_000u16)
+pub fn net_bid(
+    gross: u128,
+    wallet_gas_cost_wei: u128,
+    max_bribe_bips: u16,
+    bid_cap_wei: u128,
+) -> Option<NetBid> {
+    let keep_needed = wallet_keep(wallet_gas_cost_wei);
+    if gross <= keep_needed {
+        return None;
+    }
+    let bid_target = (gross - keep_needed).min(bid_cap_wei);
+    let bips_cap = u128::from(max_bribe_bips.min(10_000));
+    let raw_bips = bid_target.checked_mul(10_000)? / gross;
+    let bips = u16::try_from(raw_bips.min(bips_cap)).unwrap_or(u16::MAX);
+    let bid_wei = U256::from(bips) * U256::from(gross) / U256::from(10_000u16);
+    Some(NetBid {
+        bribe_bips: bips,
+        bid_wei,
+        keep_wei: U256::from(gross) - bid_wei,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1701,9 +1786,13 @@ pub async fn process_frame(
     // ── stage: compose + `eth_callMany` gate ──────────────────────────────
     let mut requested_bid = U256::ZERO;
     let mut submit_calldata = None;
+    // Set when the wallet economics gate rejected a sim-passed candidate:
+    // the decision must report the net truth, not `no_candidate`.
+    let mut net_gated = false;
     // Set when a candidate composes in fixture mode: the sim is skipped, so
     // the final decision must report that skip, not `no_candidate`.
     let mut fixture_composed = false;
+    let mut economics: Option<BidEconomics> = None;
     if let Some(best) = aggregate.best.clone() {
         let t = Instant::now();
         let composed = compose_candidate(&best, pl.exec, WETH, pl.bribe_bips);
@@ -1711,13 +1800,25 @@ pub async fn process_frame(
         match composed {
             Ok(cd) => {
                 if pl.fixture_mode {
-                    fixture_composed = true;
                     // Historical mode: the composed calldata is still
                     // evidence, but the live bundle sim evaluates at
                     // `latest` against state the captured frame was never
                     // pending in. Skipping it keeps the artifact off the bid
                     // path (no `submit_calldata` => `composed_any` false) and
-                    // the funnel truthful.
+                    // the funnel truthful. The wallet gate still runs:
+                    // whether the frame WOULD have bid is part of the
+                    // historical answer.
+                    if net_bid(
+                        best.profit,
+                        pl.wallet_gas_cost(),
+                        pl.bribe_bips,
+                        u128::try_from(sidecar.max_bundle_wei).unwrap_or(u128::MAX),
+                    )
+                    .is_none()
+                    {
+                        net_gated = true;
+                    }
+                    fixture_composed = true;
                     stages.sim_us = 0;
                     trace_jsonl(
                         "sim",
@@ -1742,11 +1843,61 @@ pub async fn process_frame(
                         }),
                     );
                     if sim_ok {
-                        // Floor to 1: a sim-passed candidate with a sub-wei
-                        // share must reach decide() as a bid, not as zero_bid.
-                        requested_bid =
-                            bid_from_profit(best.profit, pl.bribe_bips).max(U256::from(1));
-                        submit_calldata = Some(cd);
+                        // The wallet economics gate: the wallet funds only
+                        // the gas (the bribe is drawn from flash proceeds
+                        // on-chain). A solved gross that cannot cover the
+                        // gas burn is a CERTAIN net loss - the observed
+                        // live defect (tx 0xd41a1c35 / 0x8603039d).
+                        let wallet_gas_cost = pl.wallet_gas_cost();
+                        let bid_cap_wei =
+                            u128::try_from(sidecar.max_bundle_wei).unwrap_or(u128::MAX);
+                        if let Some(nb) =
+                            net_bid(best.profit, wallet_gas_cost, pl.bribe_bips, bid_cap_wei)
+                        {
+                            // Re-compose the config word with the
+                            // wallet-true bips. The recomposed bips are
+                            // only LOWER than the ceiling the sim passed:
+                            // a smaller bribe strictly eases the executor
+                            // on-chain profit check, so the passed sim
+                            // stays valid.
+                            match compose_candidate(&best, pl.exec, WETH, nb.bribe_bips) {
+                                Ok(cd_net) => {
+                                    // Floor to 1: a sim-passed candidate
+                                    // with a sub-wei share must reach
+                                    // decide() as a bid, not as zero_bid.
+                                    requested_bid = nb.bid_wei.max(U256::from(1));
+                                    submit_calldata = Some(cd_net);
+                                    economics = Some(BidEconomics {
+                                        gross_profit_wei: best.profit,
+                                        wallet_gas_cost_wei: wallet_gas_cost,
+                                        bribe_bips: nb.bribe_bips,
+                                        bid_wei: nb.bid_wei,
+                                    });
+                                }
+                                Err(reject) => {
+                                    trace_jsonl(
+                                        "composed",
+                                        serde_json::json!({
+                                            "tx": tx_hex,
+                                            "composed": false,
+                                            "reason": reject.label(),
+                                        }),
+                                    );
+                                }
+                            }
+                        } else {
+                            net_gated = true;
+                            trace_jsonl(
+                                "composed",
+                                serde_json::json!({
+                                    "tx": tx_hex,
+                                    "composed": false,
+                                    "reason": "net_after_gas_unprofitable",
+                                    "gross_profit_wei": best.profit,
+                                    "wallet_gas_cost_wei": wallet_gas_cost,
+                                }),
+                            );
+                        }
                     }
                 }
             }
@@ -1782,6 +1933,10 @@ pub async fn process_frame(
     // candidate must not read as "the sim rejected our work".
     let decision = if composed_any {
         decision
+    } else if net_gated {
+        Decision::Observe {
+            reason: "net_after_gas_unprofitable",
+        }
     } else if fixture_composed {
         // The frame solved and composed; the only reason it is not a Bid is
         // that historical mode skipped the live sim. Report that truth.
@@ -1813,6 +1968,7 @@ pub async fn process_frame(
         decision,
         requested_bid,
         submit_calldata,
+        economics,
         stages,
         replay_frame_error: None,
     }
@@ -1820,7 +1976,7 @@ pub async fn process_frame(
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_frame_age_ms, parse_fixture_head};
+    use super::{effective_frame_age_ms, net_bid, parse_fixture_head};
 
     #[test]
     fn fixture_head_parses_decimal_and_rejects_junk() {
@@ -1841,5 +1997,64 @@ mod tests {
         // Live mode keeps the true delta and saturates on clock skew.
         assert_eq!(effective_frame_age_ms(1_000, 1_500, false), 500);
         assert_eq!(effective_frame_age_ms(5_000, 1_000, false), 0);
+    }
+
+    /// The live defect, pinned: the first two landed bids tendered a ~110
+    /// gwei gross while the receipts show the wallet burning ~527 gwei of
+    /// gas (tx 0xd41a1c35 / 0x8603039d). Gross below gas must never bid.
+    #[test]
+    fn net_bid_rejects_gross_below_wallet_gas() {
+        let receipt_gas_cost = 248_213u128 * 2_125_376_207u128;
+        assert!(net_bid(110_065_920_704, receipt_gas_cost, 9_800, u128::MAX).is_none());
+        // Even a generous gross of exactly the keep threshold does not bid.
+        assert!(net_bid(receipt_gas_cost, receipt_gas_cost, 9_800, u128::MAX).is_none());
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "literals are the spec")]
+    fn net_bid_sizes_bribe_from_wallet_surplus() {
+        let gas_cost = 600_000_000_000u128; // 600 gwei of wallet gas
+                                            // Gross 10x the gas burn: the bribe takes everything above the
+                                            // keep (gas + 5%), so the wallet recovers custody worth ~5% of
+                                            // nothing and the builder gets the rest.
+        let nb = net_bid(6_000_000_000_000, gas_cost, 9_800, u128::MAX).expect("viable");
+        // keep = 630 gwei (gas + 5%), bid takes the remaining 5_370 gwei.
+        assert_eq!(nb.bribe_bips, 8_950);
+        assert_eq!(
+            nb.bid_wei,
+            alloy::primitives::U256::from(5_370_000_000_000u128)
+        );
+        assert_eq!(
+            nb.keep_wei,
+            alloy::primitives::U256::from(630_000_000_000u128)
+        );
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "literals are the spec")]
+    fn net_bid_caps_bips_at_competitiveness_ceiling() {
+        // Gross far above gas: without the 9800 bips ceiling the bribe
+        // would consume everything; the ceiling keeps 2% in custody.
+        let nb =
+            net_bid(1_000_000_000_000_000_000, 1_000_000_000, 9_800, u128::MAX).expect("viable");
+        assert_eq!(nb.bribe_bips, 9_800);
+        assert_eq!(
+            nb.keep_wei,
+            alloy::primitives::U256::from(20_000_000_000_000_000u128)
+        );
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "literals are the spec")]
+    fn net_bid_caps_bid_at_bundle_cap() {
+        let nb = net_bid(
+            1_000_000_000_000_000_000,
+            1_000_000_000,
+            10_000,
+            500_000_000_000_000,
+        )
+        .expect("viable at 10000 bips");
+        // Floor to U256 arithmetic: bid_wei must never exceed the cap.
+        assert!(nb.bid_wei <= alloy::primitives::U256::from(500_000_000_000_000u128));
     }
 }

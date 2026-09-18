@@ -15,8 +15,8 @@ use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout;
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
 use degenbot_submission::frame_pipeline::{
-    admit_extracted, bid_from_profit, build_descriptors, solve_dfs_chains, state_digest,
-    StrategyRuntime, WETH,
+    admit_extracted, build_descriptors, net_bid, solve_dfs_chains, state_digest, StrategyRuntime,
+    WETH,
 };
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
@@ -467,6 +467,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         exec: address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         owner: address!("0x5c603b8a137a40426e0ddfa981ec10c245af080e"),
         bribe_bips: 9_800,
+        wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(1_000_000_000_000)),
         gas_floor_wei: U256::from(50_000_000_000_000u64),
         fixture_mode: false,
     };
@@ -655,17 +656,32 @@ fn bid_ladder_is_floor_of_bribe_share() {
     // application of the share. Expected values are worked literals, not
     // recomputed by the code under test.
     assert_eq!(
-        bid_from_profit(55_000_000_000_000_000_000u128, 9_800),
+        net_bid(
+            55_000_000_000_000_000_000u128,
+            1_000_000_000_000,
+            9_800,
+            u128::MAX
+        )
+        .expect("viable")
+        .bid_wei,
         53_900_000_000_000_000_000u128
     );
-    // Truncation: 123 wei at 98% floors to 120 wei, never rounds up.
-    assert_eq!(bid_from_profit(123, 9_800), 120);
-    // Sub-wei share floors to zero at the formula (the caller refuses a
-    // zero bid through the decision layer's `zero_bid` vocabulary after
-    // flooring to 1 when a candidate DID compose and sim-pass).
-    assert_eq!(bid_from_profit(5, 9_800), 4);
-    // A different ladder share moves the bid with it.
-    assert_eq!(bid_from_profit(10_000, 9_000), 9_000);
+    // Truncation: at a negligible gas cost the ladder floors (123 wei at a
+    // 9902-bips floored share = 120), never rounds up.
+    assert_eq!(
+        net_bid(123, 0, 9_800, u128::MAX).expect("viable").bid_wei,
+        U256::from(120u64)
+    );
+    // A different ceiling moves the bid with it.
+    assert_eq!(
+        net_bid(10_000, 0, 9_000, u128::MAX)
+            .expect("viable")
+            .bid_wei,
+        U256::from(9_000u64)
+    );
+    // A gas burn above the gross refuses the bid entirely: 5 wei of gross
+    // cannot fund any wallet-positive bundle.
+    assert!(net_bid(5, 9_800, 9_800, u128::MAX).is_none());
 }
 
 /// The observe-reason histogram split: every typed `ReplayFrameError` maps to

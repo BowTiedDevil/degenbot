@@ -119,6 +119,46 @@ fn bribe_bips() -> u16 {
         .min(10_000)
 }
 
+/// The composed-bundle gas estimate (receipts: 234k-248k for 3-hop
+/// chains; the submit path inflates by its safety margin). The wallet
+/// economics gate prices bids from this until an exact in-scratch gas
+/// measurement replaces it (see the friction log).
+fn bundle_gas_estimate() -> u64 {
+    std::env::var("SIDECAR_BUNDLE_GAS_EST")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300_000)
+}
+
+/// The operator's priority fee (gwei -> wei).
+fn priority_fee_wei() -> u128 {
+    std::env::var("SIDECAR_PRIORITY_FEE_GWEI")
+        .ok()
+        .and_then(|v| v.parse::<u128>().ok())
+        .unwrap_or(2)
+        .saturating_mul(1_000_000_000u128)
+}
+
+/// The wallet's gas burn for one composed bundle at `head`:
+/// estimate x (next base fee x 1.2 + priority). Read on head advances so
+/// the compose gate always prices at a fresh base fee.
+async fn wallet_gas_cost_at(provider: &AlloyProvider, head: u64) -> u128 {
+    let base_fee_next = provider
+        .get_block(head)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|b| b.header.base_fee_per_gas)
+        .map_or(30_000_000_000u128, |x| u128::from(x) * 12 / 10);
+    u128::from(bundle_gas_estimate())
+        .saturating_mul(base_fee_next.saturating_add(priority_fee_wei()))
+}
+
+async fn initial_wallet_gas_cost(provider: &AlloyProvider) -> u128 {
+    let head = provider.get_block_number().await.unwrap_or(0);
+    wallet_gas_cost_at(provider, head).await
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the frame handler takes the runtime surfaces it needs"
@@ -282,16 +322,24 @@ async fn run_frame(
                 .flatten()
                 .and_then(|b| b.header.base_fee_per_gas)
                 .map_or(30_000_000_000u128, |x| u128::from(x) * 12 / 10);
-            let priority_fee: u128 = std::env::var("SIDECAR_PRIORITY_FEE_GWEI")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(2)
-                * 1_000_000_000;
+            let priority_fee: u128 = priority_fee_wei();
+            // Honest economics per `SubmitCandidate`'s own contract: gross
+            // is the solved profit, net subtracts the wallet's gas burn,
+            // gas_used is the estimate (never a placeholder).
+            let gross_profit = U256::from(
+                artifacts
+                    .economics
+                    .as_ref()
+                    .map_or(0u128, |e| e.gross_profit_wei),
+            );
+            let net_profit = U256::from(artifacts.economics.as_ref().map_or(0u128, |e| {
+                e.gross_profit_wei.saturating_sub(e.wallet_gas_cost_wei)
+            }));
             let candidate = SubmitCandidate {
                 path_id: u64::from_be_bytes(ev.hash.0[0..8].try_into().expect("8 bytes")),
-                gross_profit: bid_wei,
-                net_profit: bid_wei,
-                gas_used: 300_000,
+                gross_profit,
+                net_profit,
+                gas_used: bundle_gas_estimate(),
                 priority_fee,
                 base_fee_next,
                 execute_calldata: cd,
@@ -329,11 +377,20 @@ async fn run_frame(
             {
                 Ok(outcome) => {
                     if outcome.submitted_count() > 0 {
-                        *spent += bid_wei;
+                        // The wallet's true outflow per dispatched bid is
+                        // the GAS (the bribe comes from flash proceeds); the
+                        // budget tracks what the bank can actually lose.
+                        *spent += U256::from(
+                            artifacts
+                                .economics
+                                .as_ref()
+                                .map_or(0u128, |e| e.wallet_gas_cost_wei),
+                        );
                     }
                     tracing::info!(
                         tx = %ev.hash,
                         target = %ev.hash,
+                        bid_wei = %bid_wei,
                         submitted = outcome.submitted_count(),
                         skipped = outcome.skipped_count(),
                         "bid dispatched"
@@ -483,10 +540,14 @@ async fn main() {
         .unwrap_or_else(|_| String::from("0x5c603b8a137A40426E0dDFA981EC10c245AF080e"))
         .parse()
         .expect("executor owner address parses");
+    let wallet_gas_cost_wei = Arc::new(std::sync::atomic::AtomicU64::new(
+        u64::try_from(initial_wallet_gas_cost(&provider).await).unwrap_or(u64::MAX),
+    ));
     let pl = PipelineConfig {
         exec,
         owner,
         bribe_bips: bribe_bips(),
+        wallet_gas_cost_wei,
         gas_floor_wei: U256::from(GAS_FLOOR_WEI),
         // Historical mode only when the dry-run actually pinned a head: the
         // live sim gate evaluates at `latest` and would diverge otherwise.
@@ -674,6 +735,10 @@ async fn main() {
                     .expect("dispatcher mutex poisoned")
                     .advance_block(head);
                 current_block = head;
+                pl.wallet_gas_cost_wei.store(
+                    u64::try_from(wallet_gas_cost_at(&provider, head).await).unwrap_or(u64::MAX),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 match build_block_handle(&provider, head, &runtime.warm_cache, anchor).await {
                     Some(h) => handle = Some(h),
                     None => {

@@ -99,6 +99,11 @@ fn bid_config() -> (SidecarConfig, PipelineConfig) {
         exec: EXECUTOR,
         owner: OPERATOR,
         bribe_bips: BRIBE_BIPS,
+        wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(
+            // Live-scale wallet gas burn so the e2e path exercises the
+            // net-of-gas gate exactly as the sidecar prices it.
+            600_000_000_000,
+        )),
         gas_floor_wei: U256::from(GAS_FLOOR_WEI),
         fixture_mode: false,
     };
