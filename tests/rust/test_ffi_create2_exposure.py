@@ -36,9 +36,7 @@ def test_v3_derivation_exposed_on_ffi_matches_golden() -> None:
     got = _ffi.generate_v3_pool_address(V3_FACTORY, usdc, weth, 500, V3_INIT)
     assert got == V3_USDC_WETH_005
     assert _ffi.generate_v3_pool_address(V3_FACTORY, weth, usdc, 500, V3_INIT) == got
-    assert (
-        _ffi.generate_v3_pool_address(V3_FACTORY, usdc, weth, 3000, V3_INIT) == V3_USDC_WETH_03
-    )
+    assert _ffi.generate_v3_pool_address(V3_FACTORY, usdc, weth, 3000, V3_INIT) == V3_USDC_WETH_03
 
 
 def test_generic_create2_exposed_on_ffi() -> None:

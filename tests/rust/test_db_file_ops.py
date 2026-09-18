@@ -48,9 +48,7 @@ def _tables(db_path: pathlib.Path) -> set[str]:
         with engine.connect() as conn:
             return {
                 r[0]
-                for r in conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'")
-                )
+                for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
             }
     finally:
         engine.dispose()
@@ -69,9 +67,7 @@ def _rust_stamp(db_path: pathlib.Path) -> int:
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         with engine.connect() as conn:
-            return conn.execute(
-                text(f"SELECT schema_version FROM {RUST_STAMP_TABLE}")
-            ).scalar()
+            return conn.execute(text(f"SELECT schema_version FROM {RUST_STAMP_TABLE}")).scalar()
     finally:
         engine.dispose()
 
@@ -82,12 +78,8 @@ def _mark_legacy(db_path: pathlib.Path) -> None:
     try:
         with engine.begin() as conn:
             conn.execute(text(f"DROP TABLE {RUST_STAMP_TABLE};"))
-            conn.execute(
-                text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);")
-            )
-            conn.execute(
-                text("INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');")
-            )
+            conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);"))
+            conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');"))
     finally:
         engine.dispose()
 
@@ -205,9 +197,7 @@ def test_upgrade_on_legacy_marker_heals(tmp_path: pathlib.Path):
     assert _rust_stamp(db_path) == 1
 
 
-def test_heal_round_trips_through_seam(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_heal_round_trips_through_seam(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
     """`db_heal_database` (ADR-011) round-trips through the PyO3 seam.
 
     Pin the `DEGENBOT_DB_AUTO_HEAL=0` killswitch for THIS test only: the write

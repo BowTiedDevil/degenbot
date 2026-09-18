@@ -81,26 +81,44 @@ def mixed_engine_and_paths() -> tuple[ArbitrageEngine, int, int, set[str], set[s
     """
     py_bot = Bot()
     weth = make_erc20(
-        py_bot, "0xC02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2", chain_id=1,
-        name="Wrapped Ether", symbol="WETH", decimals=18,
+        py_bot,
+        "0xC02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2",
+        chain_id=1,
+        name="Wrapped Ether",
+        symbol="WETH",
+        decimals=18,
     )
     usdc = make_erc20(
-        py_bot, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", chain_id=1,
-        name="USD Coin", symbol="USDC", decimals=6,
+        py_bot,
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        chain_id=1,
+        name="USD Coin",
+        symbol="USDC",
+        decimals=6,
     )
     pool_a = make_v2_pool(
-        address=V2_POOL_A, token0=weth, token1=usdc,
+        address=V2_POOL_A,
+        token0=weth,
+        token1=usdc,
         factory="0x0000000000000000000000000000000000000000",
-        fee_token0=Fraction(3, 1000), fee_token1=Fraction(3, 1000),
-        reserves_token0=800 * 10**18, reserves_token1=1_600_000 * 10**6,
-        state_block=18_000_000, py_bot=py_bot,
+        fee_token0=Fraction(3, 1000),
+        fee_token1=Fraction(3, 1000),
+        reserves_token0=800 * 10**18,
+        reserves_token1=1_600_000 * 10**6,
+        state_block=18_000_000,
+        py_bot=py_bot,
     )
     pool_b = make_v2_pool(
-        address=V2_POOL_B, token0=usdc, token1=weth,
+        address=V2_POOL_B,
+        token0=usdc,
+        token1=weth,
         factory="0x0000000000000000000000000000000000000000",
-        fee_token0=Fraction(3, 1000), fee_token1=Fraction(3, 1000),
-        reserves_token0=1_500_000 * 10**6, reserves_token1=800 * 10**18,
-        state_block=18_000_000, py_bot=py_bot,
+        fee_token0=Fraction(3, 1000),
+        fee_token1=Fraction(3, 1000),
+        reserves_token0=1_500_000 * 10**6,
+        reserves_token1=800 * 10**18,
+        state_block=18_000_000,
+        py_bot=py_bot,
     )
     registry = EngineRegistry(bot=None, engine=ArbitrageEngine(py_bot=py_bot))
     registry.register_v2_pool(pool_a)
@@ -108,13 +126,21 @@ def mixed_engine_and_paths() -> tuple[ArbitrageEngine, int, int, set[str], set[s
     v2_pid, _created = registry.register_path([(pool_a, True), (pool_b, False)])
 
     v4 = make_v4_pool(
-        pool_id=V4_POOL_ID, pool_manager_address=V4_POOL_MANAGER, token0=usdc,
-        token1=weth, fee=500, tick_spacing=10,
+        pool_id=V4_POOL_ID,
+        pool_manager_address=V4_POOL_MANAGER,
+        token0=usdc,
+        token1=weth,
+        fee=500,
+        tick_spacing=10,
         hook_address="0x0000000000000000000000000000000000000000",
-        sqrt_price_x96=2_198_666_895_605_149_686_863, tick=-76020,
-        liquidity=9876543210, protocol_fee_zero_for_one=0,
-        protocol_fee_one_for_zero=0, lp_fee=500000,
-        state_block=18_000_000, py_bot=py_bot,
+        sqrt_price_x96=2_198_666_895_605_149_686_863,
+        tick=-76020,
+        liquidity=9876543210,
+        protocol_fee_zero_for_one=0,
+        protocol_fee_one_for_zero=0,
+        lp_fee=500000,
+        state_block=18_000_000,
+        py_bot=py_bot,
     )
     asyncio.run(registry.register_v4_pool(v4))
     v4v2_pid, _created2 = registry.register_path([(v4, True), (pool_a, False)])

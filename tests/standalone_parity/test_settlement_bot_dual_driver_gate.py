@@ -33,9 +33,9 @@ def test_permitted_divergence_hides_a_real_documented_split() -> None:
     fixture = dual_driver_gate.load_decisions_fixture()
     permitted_keys = {entry["key"] for entry in fixture["permitted_divergence"]}
     assert "graph.candidate_tokens" in permitted_keys
-    assert (
-        dual_driver_gate.diff_decisions(fixture["python"], fixture["rust"], []) != []
-    ), "the permitted key must actually differ, or the allowlist is dead weight"
+    assert dual_driver_gate.diff_decisions(fixture["python"], fixture["rust"], []) != [], (
+        "the permitted key must actually differ, or the allowlist is dead weight"
+    )
 
 
 def test_recorded_comparator_has_teeth() -> None:

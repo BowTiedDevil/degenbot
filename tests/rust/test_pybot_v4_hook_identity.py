@@ -57,20 +57,21 @@ def _pool_id_for_key(
     hooks: str,
 ) -> str:
     """keccak(abi.encode(poolKey)) — v4-core PoolId derivation."""
-    return "0x" + keccak256(
-        encode(
-            types=["address", "address", "uint24", "int24", "address"],
-            args=[currency0, currency1, fee, tick_spacing, hooks],
-        ),
-    ).hex()
+    return (
+        "0x"
+        + keccak256(
+            encode(
+                types=["address", "address", "uint24", "int24", "address"],
+                args=[currency0, currency1, fee, tick_spacing, hooks],
+            ),
+        ).hex()
+    )
 
 
 def test_incident_pool_key_hashes_to_recorded_id() -> None:
     """The incident DB key derivation reproduces the onchain Initialize ID."""
     assert (
-        _pool_id_for_key(
-            _CURRENCY0, _CURRENCY1, _FEE, _TICK_SPACING, _HOOKS_CHECKSUMMED
-        )
+        _pool_id_for_key(_CURRENCY0, _CURRENCY1, _FEE, _TICK_SPACING, _HOOKS_CHECKSUMMED)
         == _INCIDENT_POOL_ID
     ), "incident vector changed — the recorded identity must stay pinned"
 

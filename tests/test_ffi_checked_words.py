@@ -38,8 +38,7 @@ def _register_sparse_v3(bot: Bot, *, tick_data_fetcher=None) -> int:
 def _snapshot(pool: object) -> dict[int, tuple[int, int]]:
     """Normalize a `tick_bitmap_snapshot()` dict to plain python ints."""
     return {
-        int(word): (int(row[0]), int(row[1]))
-        for word, row in pool.tick_bitmap_snapshot().items()
+        int(word): (int(row[0]), int(row[1])) for word, row in pool.tick_bitmap_snapshot().items()
     }
 
 
@@ -114,12 +113,15 @@ def test_v4_sparse_checked_zero_word_survives_in_snapshot() -> None:
 
     c0, c1 = _TOKEN1_ADDRESS, "0x" + "22" * 20
     pool_manager = "0x" + "33" * 20
-    pool_id_hex = "0x" + keccak256(
-        encode(
-            types=["address", "address", "uint24", "int24", "address"],
-            args=[c0, c1, 3000, 60, _ZERO_ADDRESS],
-        )
-    ).hex()
+    pool_id_hex = (
+        "0x"
+        + keccak256(
+            encode(
+                types=["address", "address", "uint24", "int24", "address"],
+                args=[c0, c1, 3000, 60, _ZERO_ADDRESS],
+            )
+        ).hex()
+    )
     token0 = make_erc20(Bot(), c0, name="a", symbol="A", decimals=18, chain_id=1)
     token1 = make_erc20(Bot(), c1, name="b", symbol="B", decimals=18, chain_id=1)
     pool = make_v4_pool(
@@ -195,8 +197,7 @@ def test_assemble_v3_inconsistent_tracked_snapshot_rejected_at_intake(tmp_path):
             "VALUES (1, 1, 20, '100', '100')",
         )
         conn.execute(
-            "INSERT INTO initialization_maps (id, pool_id, word, bitmap) "
-            "VALUES (1, 1, 0, '2')",
+            "INSERT INTO initialization_maps (id, pool_id, word, bitmap) VALUES (1, 1, 0, '2')",
         )
         conn.commit()
     finally:
@@ -205,9 +206,7 @@ def test_assemble_v3_inconsistent_tracked_snapshot_rejected_at_intake(tmp_path):
     bot = Bot(1)
     bot.load_snapshot_from_db(db_path, 1)
 
-    with pytest.raises(
-        ValueError, match=r"Tracked tick map inconsistent at intake"
-    ) as excinfo:
+    with pytest.raises(ValueError, match=r"Tracked tick map inconsistent at intake") as excinfo:
         bot.assemble_v3_tick_map(pool_addr, tick_spacing=10)
     message = str(excinfo.value)
     # The error must name the conflicting position and show both sides of

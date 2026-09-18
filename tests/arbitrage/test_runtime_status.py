@@ -154,7 +154,8 @@ print("STATUS-OK " + s["binding"])
 def test_runtime_status_reports_the_plan_budget_and_census(profile: str) -> None:
     """The status dict: profile, tier binding, budget, census (per leg)."""
     child = (
-        _CHILD.replace("@PROFILE@", repr(profile))
+        _CHILD
+        .replace("@PROFILE@", repr(profile))
         .replace("@SET_PROFILE@", repr(None if profile == "auto" else profile))
         .replace("@QUOTA@", repr(_fractional_quota_cpus()))
     )
@@ -166,9 +167,7 @@ def test_runtime_status_reports_the_plan_budget_and_census(profile: str) -> None
         timeout=120,
         check=False,
     )
-    assert "STATUS-OK" in proc.stdout, (
-        f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"
-    )
+    assert "STATUS-OK" in proc.stdout, f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"
 
 
 def test_runtime_status_before_any_engine_is_the_default_projection() -> None:
@@ -193,6 +192,4 @@ print("PRE-OK")
         timeout=120,
         check=False,
     )
-    assert "PRE-OK" in proc.stdout, (
-        f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"
-    )
+    assert "PRE-OK" in proc.stdout, f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"

@@ -50,13 +50,19 @@ def _cgroup_v2_quota() -> float | None:
     except OSError:
         return None
     rel = next(
-        (line.removeprefix("0::").strip() for line in cgroup_text.splitlines()
-         if line.startswith("0::")),
+        (
+            line.removeprefix("0::").strip()
+            for line in cgroup_text.splitlines()
+            if line.startswith("0::")
+        ),
         None,
     )
     root = next(
-        (line.split()[1] for line in mounts_text.splitlines()
-         if len(line.split()) > 2 and line.split()[2] == "cgroup2"),
+        (
+            line.split()[1]
+            for line in mounts_text.splitlines()
+            if len(line.split()) > 2 and line.split()[2] == "cgroup2"
+        ),
         None,
     )
     if rel is None or root is None:
@@ -113,6 +119,7 @@ def _pinned_floor_refused() -> bool:
     ambient = max(1, (quota_floor - reserve) // 4)
     base = reserve + ambient + 1 + 1
     return base + 2 > quota_floor
+
 
 _FLEET_DRIVER = """
 import threading
@@ -238,9 +245,7 @@ def test_legacy_stance_keeps_the_incumbent_pool() -> None:
         timeout=120,
         check=False,
     )
-    assert "LEGACY-OK" in proc.stdout, (
-        f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"
-    )
+    assert "LEGACY-OK" in proc.stdout, f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"
 
 
 def test_legacy_stance_pipeline_construction_refuses() -> None:
@@ -256,6 +261,4 @@ def test_legacy_stance_pipeline_construction_refuses() -> None:
         timeout=120,
         check=False,
     )
-    assert "LEGACY-OK" in proc.stdout, (
-        f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"
-    )
+    assert "LEGACY-OK" in proc.stdout, f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"

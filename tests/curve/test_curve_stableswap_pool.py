@@ -396,9 +396,7 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
     )
     pool_count = stableswap_factory.functions.pool_count().call()
 
-    pool_addresses = [
-        stableswap_factory.functions.pool_list(i).call() for i in range(pool_count)
-    ]
+    pool_addresses = [stableswap_factory.functions.pool_list(i).call() for i in range(pool_count)]
 
     for i, pool_address in enumerate(pool_addresses, start=1):
         print(f"Testing factory pool {i}/{pool_count} @ {pool_address}")
@@ -428,9 +426,7 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
     )
     pool_count = registry.functions.pool_count().call()
 
-    pool_addresses = [
-        registry.functions.pool_list(i).call() for i in range(pool_count)
-    ]
+    pool_addresses = [registry.functions.pool_list(i).call() for i in range(pool_count)]
 
     for i, pool_address in enumerate(pool_addresses, start=1):
         print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")

@@ -95,9 +95,7 @@ def diff_decisions(
                 f"{key}: python={python_by_key.get(key)!r} rust={rust_by_key.get(key)!r}"
             )
         elif python_by_key[key] != rust_by_key[key]:
-            divergences.append(
-                f"{key}: python={python_by_key[key]!r} rust={rust_by_key[key]!r}"
-            )
+            divergences.append(f"{key}: python={python_by_key[key]!r} rust={rust_by_key[key]!r}")
     return divergences
 
 
@@ -162,8 +160,7 @@ def run_recorded() -> int:
             print(f"  {divergence}")
         return 1
     print(
-        "dual-driver gate ok: {} python / {} rust decisions agree "
-        "(permitted: {})".format(
+        "dual-driver gate ok: {} python / {} rust decisions agree (permitted: {})".format(
             len(fixture["python"]),
             len(fixture["rust"]),
             ", ".join(entry["key"] for entry in fixture["permitted_divergence"]),
@@ -176,14 +173,19 @@ def _wait_for_rpc(port: int, timeout: float = 30.0) -> None:
     """Poll anvil's HTTP endpoint until it answers."""
     import urllib.request
 
-    payload = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []}
-    ).encode()
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_blockNumber",
+        "params": [],
+    }).encode()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             request = urllib.request.Request(
-                f"http://127.0.0.1:{port}", data=payload, headers={"Content-Type": "application/json"}
+                f"http://127.0.0.1:{port}",
+                data=payload,
+                headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(request, timeout=1):  # noqa: S310
                 return
@@ -279,7 +281,12 @@ def run_live(fork_rpc: str, fork_block: int) -> int:
             {**os.environ, **runtime_env, STREAM_ENV: str(rust_stream)},
         )
         _run_driver(
-            ["uv", "run", "python", str(_REPO / "examples/eth_settlement_arbitrage_v2_v3_v4_rust.py")],
+            [
+                "uv",
+                "run",
+                "python",
+                str(_REPO / "examples/eth_settlement_arbitrage_v2_v3_v4_rust.py"),
+            ],
             {**os.environ, **runtime_env, STREAM_ENV: str(python_stream)},
         )
         python_decisions = _read_decision_stream(python_stream)
@@ -289,15 +296,15 @@ def run_live(fork_rpc: str, fork_block: int) -> int:
         anvil.wait(timeout=10)
 
     fixture = load_decisions_fixture()
-    divergences = diff_decisions(
-        python_decisions, rust_decisions, fixture["permitted_divergence"]
-    )
+    divergences = diff_decisions(python_decisions, rust_decisions, fixture["permitted_divergence"])
     if divergences:
         print("live dual-driver gate FAILED:")
         for divergence in divergences:
             print(f"  {divergence}")
         return 1
-    print(f"live dual-driver gate ok: {len(python_decisions)} / {len(rust_decisions)} decisions agree")
+    print(
+        f"live dual-driver gate ok: {len(python_decisions)} / {len(rust_decisions)} decisions agree"
+    )
     return 0
 
 
@@ -305,7 +312,9 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--recorded", action="store_true", help="replay the recorded fixture (default)")
+    mode.add_argument(
+        "--recorded", action="store_true", help="replay the recorded fixture (default)"
+    )
     mode.add_argument("--record", action="store_true", help="regenerate the recorded fixture")
     mode.add_argument("--live", action="store_true", help="run both drivers against an anvil fork")
     parser.add_argument("--fork-rpc", default=os.environ.get(FORK_ENV, ""))
