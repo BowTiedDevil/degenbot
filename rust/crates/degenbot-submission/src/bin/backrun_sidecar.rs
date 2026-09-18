@@ -56,7 +56,7 @@ use degenbot_submission::gap_quarantine::{
     NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
 };
 use degenbot_submission::gap_quarantine_journal::{
-    self, journal_reentry_outcome, ParkRecord, QuarantineJournal, ReentryOutcome, Resolution,
+    self, ParkRecord, QuarantineJournal, Resolution,
 };
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
@@ -271,6 +271,51 @@ fn outcome_for(reason: &'static str) -> FrameOutcome {
         "replay_unavailable" => FrameOutcome::ReplayUnavailable,
         "replay_failed" => FrameOutcome::ReplayFailed,
         other => FrameOutcome::Terminal(other),
+    }
+}
+
+/// How a rescued frame's re-entry ended, for journal routing.
+///
+/// A resolve is written only for a terminal pass; a transient replay failure
+/// keeps the original park record alive and re-parks the frame so the next
+/// frontier pass retries, and a fresh gap-pending park is its own truth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReentryOutcome {
+    /// The frame's quarantine life is over (a bid, or a terminal observe/drop).
+    Terminal,
+    /// The pass re-parked the frame on a genuinely new gap.
+    GapPending,
+    /// A transient replay failure; retry on the next frontier pass.
+    Transient,
+}
+
+/// Apply one rescue re-entry's outcome to the journal and quarantine.
+///
+/// Terminal resolves after the pass (a dispatched bid or a terminal observe);
+/// a gap-pending pass wrote its own fresh park record, which is the truth the
+/// fold reads; a transient replay failure re-parks the ORIGINAL frame, whose
+/// park record still stands. Terminal and gap-pending passes are disjoint, so
+/// no resolve ever races a fresh park for the same hash.
+fn journal_reentry_outcome(
+    frame: &ParkedFrame,
+    outcome: ReentryOutcome,
+    quarantine: &mut Quarantine,
+    journal: Option<&mut QuarantineJournal>,
+) {
+    match outcome {
+        ReentryOutcome::Transient => {
+            quarantine.push(frame.clone());
+        }
+        ReentryOutcome::GapPending => {}
+        ReentryOutcome::Terminal => {
+            if let Some(journal) = journal {
+                if let Err(error) =
+                    journal.record_resolve(frame.hash, Resolution::RescueConsumed, now_unix_ms())
+                {
+                    tracing::warn!(%error, "quarantine resolve not journaled");
+                }
+            }
+        }
     }
 }
 
@@ -1208,7 +1253,6 @@ async fn main() {
                                     reentry_outcome(outcome),
                                     &mut quarantine,
                                     quarantine_journal.as_mut(),
-                                    now_unix_ms(),
                                 );
                             }
                             QuarantineDecision::StillWaiting { unknown } => {
@@ -1316,8 +1360,9 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        bid_submission_target, build_broadcast_relays, nonce_lane_evidence, outcome_for,
-        reentry_outcome, strategy_arm_refusal, FrameOutcome,
+        bid_submission_target, build_broadcast_relays, journal_reentry_outcome,
+        nonce_lane_evidence, outcome_for, reentry_outcome, strategy_arm_refusal, FrameOutcome,
+        ParkedFrame, Quarantine, QuarantineJournal, ReentryOutcome,
     };
     use alloy::primitives::U256;
     use degenbot_bot::sidecar::SidecarConfig;
@@ -1392,8 +1437,6 @@ mod tests {
 
     #[test]
     fn rescue_outcome_mapping_routes_transient_gap_and_terminal() {
-        use degenbot_submission::gap_quarantine_journal::ReentryOutcome;
-
         assert_eq!(
             reentry_outcome(FrameOutcome::ReplayUnavailable),
             ReentryOutcome::Transient
@@ -1434,5 +1477,100 @@ mod tests {
             nonce_lane_evidence::<()>(Ok(U256::from(29_764u64))),
             Some(29_764)
         );
+    }
+
+    fn temp_journal(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "degenbot-sidecar-reentry-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(degenbot_submission::gap_quarantine_journal::JOURNAL_FILE_NAME);
+        (dir, path)
+    }
+
+    fn resolve_count(path: &std::path::Path) -> usize {
+        std::fs::read_to_string(path).map_or(0, |raw| {
+            raw.lines()
+                .filter(|line| line.contains("\"kind\":\"resolve\""))
+                .count()
+        })
+    }
+
+    fn parked(hash_byte: u8) -> ParkedFrame {
+        use alloy::primitives::{Address, Bytes, B256, U256};
+        let mut raw = [0u8; 32];
+        raw[0] = hash_byte;
+        ParkedFrame {
+            hash: B256::from(raw),
+            chain_id: 1,
+            from: Address::with_last_byte(7),
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas: 300_000,
+            max_fee_per_gas: 514_684_409,
+            max_priority_fee_per_gas: 1_000_000_000,
+            claimed_nonce: 12,
+            expected_at_capture: 10,
+            tx_type: 2,
+            access_list: serde_json::json!([]),
+            received_unix_ms: 1_700_000_000_000,
+        }
+    }
+
+    /// P1: a transient re-entry failure re-parks the ORIGINAL frame and writes
+    /// no resolve, so the boot fold reloads it alive.
+    #[test]
+    fn transient_reentry_failure_reparks_and_leaves_no_resolve() {
+        let (dir, path) = temp_journal("transient");
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        let mut q = Quarantine::new();
+        let f = parked(61);
+        journal_reentry_outcome(&f, ReentryOutcome::Transient, &mut q, Some(&mut journal));
+
+        assert_eq!(
+            q.state(f.hash),
+            Some(degenbot_submission::gap_quarantine::FrameState::Tracked),
+            "the original frame is back in quarantine"
+        );
+        assert_eq!(
+            resolve_count(&path),
+            0,
+            "a transient failure writes no resolve"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P2: a gap-pending re-entry already re-parked the frame and wrote the
+    /// fresh park; the router adds no resolve and no duplicate.
+    #[test]
+    fn gap_pending_reentry_does_not_resolve_or_duplicate() {
+        let (dir, path) = temp_journal("gap-pending");
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        let mut q = Quarantine::new();
+        let f = parked(62);
+        journal_reentry_outcome(&f, ReentryOutcome::GapPending, &mut q, Some(&mut journal));
+
+        assert_eq!(q.len(), 0, "run_frame already re-parked; no duplicate");
+        assert_eq!(resolve_count(&path), 0, "the fresh park is its own truth");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P3: a terminal re-entry writes exactly one resolve and never re-parks.
+    #[test]
+    fn terminal_reentry_writes_exactly_one_resolve() {
+        let (dir, path) = temp_journal("terminal");
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        let mut q = Quarantine::new();
+        let f = parked(63);
+        journal_reentry_outcome(&f, ReentryOutcome::Terminal, &mut q, Some(&mut journal));
+
+        assert_eq!(q.len(), 0, "a terminal outcome never re-parks");
+        assert_eq!(resolve_count(&path), 1, "exactly one resolve");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -7,8 +7,12 @@
 )]
 
 use alloy::primitives::{Address, Bytes, B256, U256};
+use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_submission::gap_quarantine::{
     FrameState, NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
+};
+use degenbot_submission::gap_quarantine_journal::{
+    read_pending, ParkRecord, QuarantineJournal, Resolution, JOURNAL_FILE_NAME,
 };
 
 const SENDER: Address = Address::ZERO;
@@ -230,8 +234,6 @@ fn no_pool_absence_ever_evicts() {
 /// journal fold keeps it alive and only chain proof ends it.
 #[test]
 fn legacy_migrated_park_reenters_the_fsm_as_tracked() {
-    use degenbot_submission::gap_quarantine_journal::{read_pending, JOURNAL_FILE_NAME};
-
     let dir = std::env::temp_dir().join(format!(
         "degenbot-frame-liveness-legacy-{}",
         std::process::id()
@@ -265,6 +267,147 @@ fn legacy_migrated_park_reenters_the_fsm_as_tracked() {
         Some(FrameState::Tracked),
         "a migrated legacy frame never dies without chain proof"
     );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn scratch(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "degenbot-frame-liveness-{}-{tag}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+fn event(hash_byte: u8, nonce: u64) -> BackrunFeedEvent {
+    BackrunFeedEvent {
+        chain_id: 1,
+        from: Address::with_last_byte(7),
+        to: Some(Address::with_last_byte(9)),
+        value: U256::from(123u64),
+        data: Bytes::from(vec![0xab, 0xcd]),
+        gas: 300_000,
+        max_fee_per_gas: 514_684_409,
+        max_priority_fee_per_gas: 1_000_000_000,
+        nonce,
+        hash: hash(hash_byte),
+        access_list: serde_json::json!([]),
+        tx_type: 2,
+        received_unix_ms: 1_700_000_000_000,
+    }
+}
+
+/// P1: a transient re-entry failure (`replay_unavailable`/`replay_failed`)
+/// must not resolve the frame. The original park record stands and the frame is
+/// back in the FSM, so a boot fold reloads it alive with its ORIGINAL boundary.
+/// The bin unit tests pin the routing that produces this state.
+#[test]
+fn transient_reentry_failure_keeps_the_frame_tracked_and_unresolved() {
+    let dir = scratch("transient");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let mut journal = QuarantineJournal::open(&path).expect("open");
+    let original = ParkRecord::new(&event(21, 12), 10, 1_700_000_000_000);
+    journal.record_park(&original).expect("park");
+
+    let mut q = Quarantine::new();
+    let mut f = frame(12, 10);
+    f.hash = hash(21);
+    q.push(f.clone());
+
+    assert_eq!(q.state(f.hash), Some(FrameState::Tracked));
+    let read = read_pending(&path).expect("read");
+    assert_eq!(read.pending.len(), 1, "no resolve tombstone was written");
+    assert_eq!(read.pending[0].expected_nonce, 10, "original boundary");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// P2: a gap-pending re-entry already re-parked the frame and journaled the
+/// fresh park in the same pass; the router adds no resolve and no duplicate.
+/// The bin unit tests pin the routing that produces this state.
+#[test]
+fn gap_pending_reentry_leaves_only_the_fresh_park() {
+    let dir = scratch("gap-pending");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let mut journal = QuarantineJournal::open(&path).expect("open");
+    let fresh = ParkRecord::new(&event(31, 15), 12, 1_700_000_000_000);
+    journal.record_park(&fresh).expect("fresh park");
+
+    let mut q = Quarantine::new();
+    let mut re_parked = frame(15, 12);
+    re_parked.hash = hash(31);
+    q.push(re_parked);
+
+    let read = read_pending(&path).expect("read");
+    assert_eq!(read.pending.len(), 1, "the fresh park is the only record");
+    assert_eq!(read.pending[0].expected_nonce, 12, "the fresh boundary");
+    assert_eq!(read.pending[0].claimed_nonce, 15);
+    assert_eq!(q.len(), 1, "no duplicate re-park");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// P3: a terminal re-entry writes exactly one resolve, after any funnel
+/// records the same pass produced; the boot fold drops the hash. The bin unit
+/// tests pin the routing that produces this state.
+#[test]
+fn terminal_reentry_writes_one_resolve_and_the_hash_folds_dead() {
+    let dir = scratch("terminal");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let mut journal = QuarantineJournal::open(&path).expect("open");
+    let original = ParkRecord::new(&event(41, 12), 10, 1_700_000_000_000);
+    journal.record_park(&original).expect("park");
+    journal
+        .record_tentative(
+            hash(41),
+            NonceConsumed::SlotTakenAt {
+                block: 21_000_000,
+                block_hash: hash(7),
+                by: None,
+            },
+            1_700_000_000_001,
+        )
+        .expect("tentative");
+    journal
+        .record_resolve(hash(41), Resolution::RescueConsumed, 1_700_000_000_002)
+        .expect("resolve");
+
+    let raw = std::fs::read_to_string(&path).expect("raw");
+    assert_eq!(
+        raw.lines()
+            .filter(|line| line.contains("\"kind\":\"resolve\""))
+            .count(),
+        1,
+        "exactly one resolve"
+    );
+    assert!(
+        read_pending(&path).expect("read").pending.is_empty(),
+        "the hash folds dead"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// P4: the fold is line-ordered. A park, its resolve, then a fresh park for the
+/// same hash reloads ALIVE with the NEW boundary.
+#[test]
+fn park_resolve_park_folds_alive_with_the_new_boundary() {
+    let dir = scratch("fold-order");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let mut journal = QuarantineJournal::open(&path).expect("open");
+    let old = ParkRecord::new(&event(51, 12), 10, 1_700_000_000_000);
+    journal.record_park(&old).expect("old park");
+    journal
+        .record_resolve(hash(51), Resolution::RescueConsumed, 1_700_000_000_001)
+        .expect("resolve");
+    let new = ParkRecord::new(&event(51, 15), 12, 1_700_000_000_002);
+    journal.record_park(&new).expect("new park");
+
+    let read = read_pending(&path).expect("read");
+    assert_eq!(read.pending.len(), 1);
+    assert_eq!(read.pending[0].expected_nonce, 12, "new boundary");
+    assert_eq!(read.pending[0].claimed_nonce, 15);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
