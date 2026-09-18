@@ -30,8 +30,10 @@
 //! for identical state are one verdict.
 
 use alloy::primitives::{aliases::U112, Address, U256};
+use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_pools::TickInfo;
 use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
 use degenbot_solvers::profit_envelope::GateDeps;
@@ -75,6 +77,28 @@ pub enum ExplicitPoolState {
         tick_data: hashbrown::HashMap<i32, TickInfo>,
         coverage: PoolTickCoverage,
     },
+    /// V4 CL state with its manager-keyed identity: the shared
+    /// [`PlanningPoolParams`] carries the generic `address` + token pair,
+    /// which map to the `PoolManager` and `currency0`/`currency1`; the bytes32
+    /// `pool_id` and the key's fee/spacing/hooks are V4-only and ride here.
+    /// `pool_key.hooks` and `hook_flags` are the caller's verbatim values, not
+    /// re-derived.
+    V4 {
+        pool_id: V4PoolId,
+        fee: u32,
+        tick_spacing: i32,
+        hooks: Address,
+        hook_flags: u16,
+        protocol_fee: u32,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: hashbrown::HashMap<i32, TickInfo>,
+        coverage: PoolTickCoverage,
+        /// The liquidity-clock seed. `None` falls back to the scope-stamped
+        /// `update_block` (see [`RegisterV4PoolParams::tick_data_block`]).
+        tick_data_block: Option<u64>,
+    },
 }
 
 /// Why an explicit-state admission was refused. The variants carry the
@@ -85,6 +109,7 @@ pub enum ExplicitPoolState {
 pub enum PlanningAdmissionError {
     V2(::degenbot_pools::v2_state::RegisterV2PoolError),
     V3(::degenbot_pools::v3_state::RegisterV3PoolError),
+    V4(::degenbot_pools::v4_state::RegisterV4PoolError),
 }
 
 /// One declared hop: the family-tagged solver key of a cycle step. Cycle
@@ -238,6 +263,43 @@ impl Workspace {
                     ..RegisterV3PoolParams::default()
                 })
                 .map_err(PlanningAdmissionError::V3),
+            ExplicitPoolState::V4 {
+                pool_id,
+                fee,
+                tick_spacing,
+                hooks,
+                hook_flags,
+                protocol_fee,
+                sqrt_price_x96,
+                liquidity,
+                tick,
+                tick_data,
+                coverage,
+                tick_data_block,
+            } => self
+                .state
+                .register_v4_pool(&RegisterV4PoolParams {
+                    pool_manager: params.address,
+                    pool_id,
+                    pool_key: V4PoolKey {
+                        currency0: params.token0,
+                        currency1: params.token1,
+                        fee,
+                        tick_spacing,
+                        hooks,
+                    },
+                    hook_flags,
+                    protocol_fee,
+                    sqrt_price_x96,
+                    liquidity,
+                    tick,
+                    tick_data,
+                    update_block: seed_block,
+                    tick_data_block,
+                    coverage,
+                    fetcher: None,
+                })
+                .map_err(PlanningAdmissionError::V4),
         }
     }
 
@@ -380,7 +442,7 @@ impl Default for Workspace {
 )]
 mod tests {
     use super::*;
-    use alloy::primitives::address;
+    use alloy::primitives::{address, U128};
 
     const TOK: Address = address!("0000000000000000000000000000000000000aa1");
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
@@ -388,6 +450,9 @@ mod tests {
     const P: Address = address!("000000000000000000000000000000000000b001");
     /// Q: the external connector pool (cheaper TOK than staged P).
     const Q: Address = address!("000000000000000000000000000000000000b002");
+    /// The V4 `PoolManager` (the V4 "pool address") + its bytes32 pool id.
+    const PM: Address = address!("000000000000000000000000000000000000c001");
+    const V4_POOL_ID: [u8; 32] = [0xab; 32];
     const SEED: u64 = 1;
 
     fn admitted_v2(w: &mut Workspace, addr: Address, r0: u128, r1: u128) -> u64 {
@@ -402,6 +467,57 @@ mod tests {
                 reserve1: U112::from(r1),
                 fee_token0: (997, 1000),
                 fee_token1: (997, 1000),
+            },
+            SEED,
+        )
+        .expect("admits")
+    }
+
+    /// Two initialized ticks straddling the current tick — enough for a
+    /// non-empty walk in either direction.
+    fn v4_ticks() -> hashbrown::HashMap<i32, TickInfo> {
+        let mut t = hashbrown::HashMap::new();
+        t.insert(
+            120,
+            TickInfo {
+                liquidity_gross: U128::from(10_000),
+                liquidity_net: 5_000i128,
+                block: 0,
+            },
+        );
+        t.insert(
+            -120,
+            TickInfo {
+                liquidity_gross: U128::from(8_000),
+                liquidity_net: -4_000i128,
+                block: 0,
+            },
+        );
+        t
+    }
+
+    /// Admit a V4 pool at tick 0 with caller-supplied tick data (the sandbox
+    /// fetches nothing: `Sparse` coverage carries exactly this map).
+    fn admitted_v4(w: &mut Workspace, liquidity: u128, protocol_fee: u32) -> u64 {
+        w.register_with_state(
+            PlanningPoolParams {
+                address: PM,
+                token0: TOK,
+                token1: WETH,
+            },
+            ExplicitPoolState::V4 {
+                pool_id: V4_POOL_ID,
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+                hook_flags: 0,
+                protocol_fee,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity,
+                tick: 0,
+                tick_data: v4_ticks(),
+                coverage: PoolTickCoverage::Sparse,
+                tick_data_block: None,
             },
             SEED,
         )
@@ -580,6 +696,71 @@ mod tests {
             canonical.v2_snapshot(canonical_id),
             canonical_before,
             "canonical state untouched"
+        );
+    }
+
+    /// V4 admission is explicit-state: the caller's tick map, coverage,
+    /// protocol fee, and hook flags land verbatim; the planning clock stamps
+    /// the scalar block and the liquidity clock defaults to it.
+    #[test]
+    fn workspace_admits_v4_pool_with_explicit_state() {
+        let mut w = Workspace::new();
+        let id = admitted_v4(&mut w, 1_000_000_000, 1_234);
+        let pool = w.state.get_v4_pool(id).expect("V4 state admitted");
+        assert_eq!(pool.sqrt_price_x96, U256::from(1u128) << 96);
+        assert_eq!(pool.liquidity, 1_000_000_000);
+        assert_eq!(pool.tick, 0);
+        assert_eq!(pool.protocol_fee, 1_234, "protocol fee carried verbatim");
+        assert_eq!(pool.coverage, PoolTickCoverage::Sparse);
+        assert_eq!(
+            pool.update_block, SEED,
+            "the planning clock stamps admission"
+        );
+        assert_eq!(
+            pool.tick_data_block, SEED,
+            "tick_data_block defaults to the seed block"
+        );
+        assert_eq!(
+            pool.tick_data.len(),
+            2,
+            "the caller's tick map, nothing more"
+        );
+
+        let identity = w.state.get_v4_identity(id).expect("V4 identity");
+        assert_eq!(identity.pool_manager, PM);
+        assert_eq!(identity.pool_id, V4_POOL_ID);
+        assert_eq!(identity.pool_key.tick_spacing, 10);
+        assert_eq!(identity.pool_key.fee, 500);
+        assert_eq!(identity.pool_key.hooks, Address::ZERO);
+    }
+
+    /// A declared V4 + V2 cycle must reach the solver: admission and V4
+    /// projection both succeed, so the verdict is a solve or an economics
+    /// miss — never an unusable-pool-state reject.
+    #[test]
+    fn workspace_v4_cycle_reaches_the_solver() {
+        let mut w = Workspace::new();
+        let v4_id = admitted_v4(&mut w, 1_000_000_000, 0);
+        let p_id = admitted_v2(&mut w, P, 500_000, 1_000);
+        let idx = w.declare(&[
+            PlanningHop {
+                pool_id: v4_id,
+                hop_type: HopType::V4,
+                zero_for_one: true,
+            },
+            PlanningHop::v2(p_id, false),
+        ]);
+        // The golden V4 + V2 cycle solves through the sandbox: a V4 admission
+        // or projection failure would surface as `UnusablePoolState`, so an
+        // exact solved result is the anti-regression pin for both.
+        let solved = w
+            .evaluate_verdict(idx, U256::ZERO)
+            .expect("V4 admission + projection reach the solver");
+        assert_eq!(solved.optimal_input, U256::from(21_394u64));
+        assert_eq!(solved.profit, U256::from(456_202u64));
+        assert_eq!(
+            solved.hop_outputs,
+            vec![U256::from(21_382u64), U256::from(477_596u64)]
         );
     }
 }

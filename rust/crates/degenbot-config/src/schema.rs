@@ -161,7 +161,7 @@ crate::config_schema! {
     // `~` resolves against HOME at use (degenbot-runs).
     logging LoggingConfig {
         runs_dir [path] = std::path::PathBuf::from("~/.config/degenbot/logs"), env = "DEGENBOT_RUNS_DIR", def = "~/.config/degenbot/logs",
-            doc = "Root directory for per-session run artifacts: each session lands in <runs_dir>/<engine>/<UTC-stamp>-<pid>/ holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. A leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap.";
+            doc = "Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. A leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap.";
     }
 
     // Durable state that OUTLIVES a process lifetime: unlike per-session run
@@ -349,6 +349,14 @@ crate::config_schema! {
             doc = "Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery.";
     }
 
+    // The typed strategy selector: which strategy arm the bot runs. One
+    // declaration site for the operator-facing choice; the settlement and
+    // backrun readers migrate onto this key separately.
+    strategy StrategyConfig {
+        name [opt enum StrategyName Settlement Backrun] = None, env = "DEGENBOT_STRATEGY_NAME", def = "(unset; no explicit strategy selection)",
+            doc = "Active strategy arm: `settlement` or `backrun`. Unset leaves strategy selection at the wiring default; the settlement/backrun readers consume this key in a later phase.";
+    }
+
     aave AaveConfig {
         bridge_probe [bool] = false, env = "DEGENBOT_BRIDGE_PROBE", def = "false",
             doc = "In-tree bridge-probe observation surface in the arbitrage simulator (presence gates).";
@@ -534,6 +542,31 @@ mod tests {
             BotConfig::default().persistence.state_dir,
             std::path::PathBuf::from("~/.config/degenbot/state")
         );
+    }
+
+    #[test]
+    fn strategy_name_is_declared_as_optional_enum() {
+        let key = SCHEMA.iter().find(|k| k.toml_path == "strategy.name");
+        assert!(key.is_some(), "strategy.name must be declared exactly once");
+        assert_eq!(key.map(|k| k.env), Some("DEGENBOT_STRATEGY_NAME"));
+        assert_eq!(
+            key.map(|k| k.kind),
+            Some(ValueKind {
+                base: BaseKind::Enum("StrategyName", &["Settlement", "Backrun"]),
+                optional: true,
+            })
+        );
+        assert_eq!(BotConfig::default().strategy.name, None);
+    }
+
+    #[test]
+    fn strategy_name_parses_its_variants_case_insensitively() {
+        let mut config = BotConfig::default();
+        assert!(config.assign("strategy", "name", "settlement").is_ok());
+        assert_eq!(config.strategy.name, Some(StrategyName::Settlement));
+        assert!(config.assign("strategy", "name", "Backrun").is_ok());
+        assert_eq!(config.strategy.name, Some(StrategyName::Backrun));
+        assert!(config.assign("strategy", "name", "sandwich").is_err());
     }
 
     #[test]

@@ -76,7 +76,7 @@ pub use resolvers::{
     ResolvedNodeUris, DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX,
     RPC_WS_ENV_PREFIX,
 };
-pub use schema::{AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode};
+pub use schema::{AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyName};
 pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA};
 
 /// The closed set of observability domains (ADR-043 section 3). A

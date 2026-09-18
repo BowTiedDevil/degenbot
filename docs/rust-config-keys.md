@@ -36,7 +36,7 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_RUNS_DIR` | `logging.runs_dir` | `path` | `~/.config/degenbot/logs` | Root directory for per-session run artifacts: each session lands in <runs_dir>/<engine>/<UTC-stamp>-<pid>/ holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. A leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap. |
+| `DEGENBOT_RUNS_DIR` | `logging.runs_dir` | `path` | `~/.config/degenbot/logs` | Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. A leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap. |
 ## `persistence`
 
 | Env var | TOML key | Type | Default | Description |
@@ -149,6 +149,11 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery. |
+## `strategy`
+
+| Env var | TOML key | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `DEGENBOT_STRATEGY_NAME` | `strategy.name` | `Option<StrategyName(Settlement|Backrun)>` | `(unset; no explicit strategy selection)` | Active strategy arm: `settlement` or `backrun`. Unset leaves strategy selection at the wiring default; the settlement/backrun readers consume this key in a later phase. |
 ## `aave`
 
 | Env var | TOML key | Type | Default | Description |
