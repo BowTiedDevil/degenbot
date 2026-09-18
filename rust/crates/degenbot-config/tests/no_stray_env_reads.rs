@@ -135,6 +135,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &[
                 "EXECUTOR_OWNER_ADDRESS",
                 "SIDECAR_BRIBE_BIPS",
+                "SIDECAR_BUNDLE_GAS_EST",
                 "SIDECAR_CONNECTORS",
                 "SIDECAR_DB_PATH",
                 "SIDECAR_DRY_RUN",
@@ -142,6 +143,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
                 "SIDECAR_EXECUTOR",
                 "SIDECAR_FIXTURE_HEAD",
                 "SIDECAR_HEAD_WS_URL", // live head source
+                "SIDECAR_LOG_STDERR",  // interactive fmt mirror
                 "DEGENBOT_RPC_WS_CHAINID_1",
                 "SIDECAR_OPERATOR",
                 "SIDECAR_PRIORITY_FEE_GWEI",

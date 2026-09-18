@@ -155,6 +155,15 @@ crate::config_schema! {
             doc = "Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint).";
     }
 
+    // Per-session run artifacts: one directory per process lifetime holding
+    // the captured stdout log and JSONL trace. The root is a typed key so the
+    // location is file/env settable like every other runtime path; a leading
+    // `~` resolves against HOME at use (degenbot-runs).
+    logging LoggingConfig {
+        runs_dir [path] = std::path::PathBuf::from("~/.config/degenbot/logs"), env = "DEGENBOT_RUNS_DIR", def = "~/.config/degenbot/logs",
+            doc = "Root directory for per-session run artifacts: each session lands in <runs_dir>/<engine>/<UTC-stamp>-<pid>/ holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. A leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap.";
+    }
+
     allocator AllocatorConfig {
         mimalloc_purge_delay_ms [opt i64] = None, env = "DEGENBOT_MIMALLOC_PURGE_DELAY_MS", def = "(unset)",
             doc = "Fixed mimalloc purge delay in ms overriding cadence discovery entirely (clamped 1_000..=600_000).";
@@ -472,6 +481,27 @@ mod tests {
         assert!(key.is_some(), "4IOEVT key must be declared exactly once");
         assert_eq!(key.map(|k| k.env), Some("DEGENBOT_DISCOVERY_BATCH_SIZE"));
         assert_eq!(BotConfig::default().pathfinding.discovery_batch_size, 1000);
+    }
+
+    #[test]
+    fn logging_runs_dir_is_declared_with_default_under_home() {
+        let key = SCHEMA.iter().find(|k| k.toml_path == "logging.runs_dir");
+        assert!(
+            key.is_some(),
+            "logging.runs_dir must be declared exactly once"
+        );
+        assert_eq!(key.map(|k| k.env), Some("DEGENBOT_RUNS_DIR"));
+        assert_eq!(
+            key.map(|k| k.kind),
+            Some(ValueKind {
+                base: BaseKind::Path,
+                optional: false,
+            })
+        );
+        assert_eq!(
+            BotConfig::default().logging.runs_dir,
+            std::path::PathBuf::from("~/.config/degenbot/logs")
+        );
     }
 
     #[test]

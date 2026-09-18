@@ -2208,6 +2208,7 @@ dependencies = [
  "degenbot-pools",
  "degenbot-price",
  "degenbot-rpc",
+ "degenbot-runs",
  "degenbot-simulation",
  "degenbot-solvers",
  "degenbot-submission",
@@ -2562,6 +2563,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-runs"
+version = "0.6.0-alpha.11"
+dependencies = [
+ "degenbot-config",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "degenbot-settlement-bot-example"
 version = "0.6.0-alpha.11"
 dependencies = [
@@ -2640,6 +2649,7 @@ dependencies = [
  "degenbot-pathfinding",
  "degenbot-pools",
  "degenbot-rpc",
+ "degenbot-runs",
  "degenbot-simulation",
  "degenbot-uniswap",
  "futures-util",

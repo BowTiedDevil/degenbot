@@ -1,0 +1,30 @@
+[package]
+name = "degenbot-runs"
+description = "Per-session run-artifact directories (stdout log + trace JSONL) for degenbot engines"
+keywords = ["mev", "logging", "artifacts", "runs"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The typed `logging.runs_dir` root + the sanctioned `~` expander. No other
+# runtime dependency: this crate is synchronous and owns no tokio/async.
+degenbot-config.workspace = true
+
+# Optional: the `MakeWriter` bridge for `tracing_subscriber::fmt`. A consumer
+# that installs its own subscriber (or forwards logs elsewhere) never needs
+# it, so the dependency stays behind the `tracing` feature and pure consumers
+# keep a two-crate graph.
+tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt"], optional = true }
+
+[features]
+default = []
+# Enables `RunDirectory::stdout_writer` / `stdout_writer_tee` and the
+# `LogWriter` `MakeWriter`. Enabled by the sidecar bin; never by the umbrella's
+# default build.
+tracing = ["dep:tracing-subscriber"]

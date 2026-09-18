@@ -65,6 +65,28 @@ fn inject_executor_code_env_parity() {
     );
 }
 
+/// The per-session run-artifact root: typed schema default under HOME,
+/// overridable through the standard `DEGENBOT_RUNS_DIR` env layer.
+#[test]
+fn logging_runs_dir_default_and_env_override() {
+    let dflt = must_ok(&BotConfigLoader::new().without_env());
+    assert_eq!(
+        dflt.config.logging.runs_dir,
+        PathBuf::from("~/.config/degenbot/logs"),
+        "default is the HOME-relative run-artifacts root"
+    );
+    assert_eq!(dflt.source_of("DEGENBOT_RUNS_DIR"), Some(Source::Default));
+
+    let env = must_ok(
+        &BotConfigLoader::new().with_env(map_env(&[("DEGENBOT_RUNS_DIR", "/srv/degenbot/runs")])),
+    );
+    assert_eq!(
+        env.config.logging.runs_dir,
+        PathBuf::from("/srv/degenbot/runs")
+    );
+    assert_eq!(env.source_of("DEGENBOT_RUNS_DIR"), Some(Source::Env));
+}
+
 /// Load that MUST succeed; panics with the config error otherwise.
 fn must_ok(loader: &BotConfigLoader) -> degenbot_config::LoadedConfig {
     match loader.load() {

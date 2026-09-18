@@ -90,6 +90,7 @@ degenbot-pool-updater = { version = "0.6.0-alpha.11", path = "crates/degenbot-po
 degenbot-pools = { version = "0.6.0-alpha.11", path = "crates/degenbot-pools" }
 degenbot-price = { version = "0.6.0-alpha.11", path = "crates/degenbot-price" }
 degenbot-rpc = { version = "0.6.0-alpha.11", path = "crates/degenbot-rpc" }
+degenbot-runs = { version = "0.6.0-alpha.11", path = "crates/degenbot-runs" }
 degenbot-simulation = { version = "0.6.0-alpha.11", path = "crates/degenbot-simulation" }
 degenbot-solvers = { version = "0.6.0-alpha.11", path = "crates/degenbot-solvers" }
 degenbot-submission = { version = "0.6.0-alpha.11", path = "crates/degenbot-submission" }
@@ -137,6 +138,7 @@ members = [
     "crates/degenbot-price",
     "crates/degenbot-python",
     "crates/degenbot-rpc",
+    "crates/degenbot-runs",
     "crates/degenbot-simulation",
     "crates/degenbot-arbitrage",
     "crates/degenbot-solvers",

@@ -132,7 +132,10 @@ const FRAME_DISCOVERY_SLICE: Duration = Duration::from_millis(2);
 /// best-effort).
 pub fn trace_jsonl(kind: &str, mut v: serde_json::Value) {
     use std::io::Write;
-    let Ok(path) = std::env::var("SIDECAR_TRACE_JSONL") else {
+    // Explicit `SIDECAR_TRACE_JSONL` wins; absent, the capture defaults to the
+    // session's `trace.jsonl` installed at boot (see degenbot-runs).
+    let explicit = std::env::var("SIDECAR_TRACE_JSONL").ok();
+    let Some(path) = degenbot_runs::resolve_trace_jsonl_path(explicit.as_deref()) else {
         return;
     };
     let mut line = serde_json::json!({

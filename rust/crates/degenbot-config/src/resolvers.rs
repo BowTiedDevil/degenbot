@@ -121,6 +121,16 @@ fn expand_tilde(env: &dyn EnvVars, raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
+/// Expand a leading `~` against `HOME` for a `~`-carrying schema default
+/// (the `logging.runs_dir` key uses the same convention as
+/// [`DB_PATH_DEFAULT`]). Reads `HOME` through the [`EnvVars`] seam so
+/// degenbot-config stays the only env-reading crate; with no `HOME` the
+/// text is returned unchanged.
+#[must_use]
+pub fn expand_tilde_path(raw: &str) -> PathBuf {
+    expand_tilde(&crate::ProcessEnv, raw)
+}
+
 /// Resolve the database path: `--database` > `DEGENBOT_DB_PATH` >
 /// `~/.config/degenbot/degenbot.db`.
 ///

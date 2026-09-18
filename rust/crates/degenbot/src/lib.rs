@@ -78,6 +78,10 @@ pub use degenbot_abi as abi;
 /// optional feature the umbrella never enables).
 pub use degenbot_rpc as rpc;
 
+/// Per-session run-artifact directories (stdout log + trace JSONL): a
+/// std-only, synchronous facility over the typed `logging.runs_dir` root.
+pub use degenbot_runs as runs;
+
 /// feature).
 pub use degenbot_db as db;
 

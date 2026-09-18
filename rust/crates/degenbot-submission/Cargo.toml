@@ -23,6 +23,9 @@ degenbot-bot.workspace = true
 # `eth_createAccessList` surfaces the N6 submit orchestration consumes —
 # ZUZANP typed, no `make_request` escape hatch).
 degenbot-rpc.workspace = true
+# Per-session run artifacts: the sidecar's stdout fmt sink and the default
+# JSONL trace path. The `tracing` feature supplies the MakeWriter bridge.
+degenbot-runs = { workspace = true, features = ["tracing"] }
 # The frame pipeline (WKPZQK): frame-replay seam + journal-pool extraction
 # (degenbot-simulation) over the bot crate's workspace/planning scope.
 degenbot-simulation.workspace = true

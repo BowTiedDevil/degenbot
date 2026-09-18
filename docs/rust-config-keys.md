@@ -32,6 +32,11 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_METRICS_ADDR` | `telemetry.metrics_addr` | `string` | `127.0.0.1:9464` | Prometheus scrape endpoint bind address (only active when otel is on). |
 | `DEGENBOT_JAEGER_ENDPOINT` | `telemetry.jaeger_endpoint` | `string` | `http://127.0.0.1:4318` | OTLP endpoint used by the opt-in Jaeger E2E test. |
 | `DEGENBOT_JAEGER_E2E` | `telemetry.jaeger_e2e` | `bool` | `false` | Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint). |
+## `logging`
+
+| Env var | TOML key | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `DEGENBOT_RUNS_DIR` | `logging.runs_dir` | `path` | `~/.config/degenbot/logs` | Root directory for per-session run artifacts: each session lands in <runs_dir>/<engine>/<UTC-stamp>-<pid>/ holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. A leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap. |
 ## `allocator`
 
 | Env var | TOML key | Type | Default | Description |

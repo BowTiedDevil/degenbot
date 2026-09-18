@@ -98,3 +98,39 @@ append the landing record:
   A price-improved target simply reappears as a new frame (stale ms bound
   keeps the request current) -- replacement storms are a mainloop concern,
   out of sidecar scope by design.
+
+## 6. Run artifacts (session logs + JSONL trace)
+
+Every sidecar process is one session. At boot it creates
+
+```
+<runs_dir>/backrun-sidecar/<yyyymmddTHHMMSSZ>-<pid>/
+    stdout.log     # every fmt record (INFO and above by default)
+    trace.jsonl    # the offline-review JSONL capture
+```
+
+and a best-effort `latest` symlink beside it:
+
+```
+<runs_dir>/backrun-sidecar/latest -> <yyyymmddTHHMMSSZ>-<pid>
+```
+
+The root is the typed `logging.runs_dir` key (TOML `[logging] runs_dir`, env
+`DEGENBOT_RUNS_DIR`), defaulting to `~/.config/degenbot/logs`; a leading `~`
+expands against `HOME`.
+
+| Env | Meaning |
+| --- | --- |
+| `SIDECAR_LOG_STDERR=1` | Also mirror the session log to stderr (interactive runs). File-only otherwise. |
+| `SIDECAR_TRACE_JSONL` | Explicit capture path. When set it wins; when absent the trace helpers append to the session's `trace.jsonl`. |
+
+There is deliberately **no rotation, compression, or size cap**: run artifacts
+are the forensics surface, and cleanup is the operator's (or an out-of-process
+job's) call. `latest` exists precisely so scripts never need to scan the
+engine directory.
+
+If the run directory cannot be created (bad `DEGENBOT_RUNS_DIR`, permissions),
+the sidecar logs to stderr and continues; a `latest` symlink failure is
+swallowed. Dry-run/fixture mode is unchanged: an explicit capture path is
+honored exactly as before, and a fixture run also writes its session
+`trace.jsonl`.

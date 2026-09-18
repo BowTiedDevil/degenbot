@@ -70,15 +70,46 @@ const HEAD_WATCH_STALE: Duration = Duration::from_secs(30);
 /// The fallback head-poll cadence (the pre-subscription loop's tick).
 const HEAD_POLL_TICK: Duration = Duration::from_millis(200);
 
-// Console subscriber so observe-mode frames are visible; structured (OTel)
-// export stays the operator's layering choice via the bot crate.
+// Session telemetry: the fmt subscriber appends to the session's
+// `stdout.log` (file-only by default) so a run's console output survives the
+// process, while `SIDECAR_LOG_STDERR=1` duplicates it to stderr for
+// interactive runs. The session's `trace.jsonl` becomes the trace helpers'
+// default capture path; an explicit `SIDECAR_TRACE_JSONL` still wins. A run
+// directory that cannot be created degrades to stderr — capturing logs must
+// never abort the bot. Structured (OTel) export stays the operator's
+// layering choice via the bot crate.
 fn init_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .try_init();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    match degenbot_runs::RunDirectory::create("backrun-sidecar") {
+        Ok(run) => {
+            let _ = degenbot_runs::set_trace_jsonl_default(run.trace_jsonl_path().to_path_buf());
+            let mirror_stderr = std::env::var("SIDECAR_LOG_STDERR").is_ok_and(|v| v == "1");
+            let writer = if mirror_stderr {
+                run.stdout_writer_tee()
+            } else {
+                run.stdout_writer()
+            };
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_ansi(mirror_stderr)
+                .with_writer(writer)
+                .try_init();
+            tracing::info!(
+                session_dir = %run.session_dir().display(),
+                stdout = %run.stdout_path().display(),
+                trace_jsonl = %run.trace_jsonl_path().display(),
+                "sidecar run artifacts"
+            );
+        }
+        Err(error) => {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_writer(std::io::stderr)
+                .try_init();
+            tracing::warn!(error = %error, "run directory unavailable - logging to stderr");
+        }
+    }
 }
 
 /// Provider-backed receipt probe (the sidecar's own node join; the `PyReceiptProbe`
