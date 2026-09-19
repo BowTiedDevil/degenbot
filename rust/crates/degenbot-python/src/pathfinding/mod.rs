@@ -526,9 +526,7 @@ impl PathIterator {
         let list = PyList::empty(py);
         for i in start..self.buffer.len() {
             let idx = self.buffer[i];
-            if (idx as usize) >= self.pool_keys.len()
-                || self.pool_keys[idx as usize].is_none()
-            {
+            if (idx as usize) >= self.pool_keys.len() || self.pool_keys[idx as usize].is_none() {
                 self.materialize_pool_key(py, idx)?;
             }
             if let Some(key) = &self.pool_keys[idx as usize] {
