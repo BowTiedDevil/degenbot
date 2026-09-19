@@ -66,6 +66,7 @@
 //! - The `SubmittedTx` monitor / dispatcher state — sibling tasks in the epic.
 
 pub mod anchored_dfs;
+pub mod backrun_driver;
 pub mod backrun_strategy;
 pub mod bundle;
 pub mod dispatcher;

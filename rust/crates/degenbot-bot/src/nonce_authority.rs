@@ -113,14 +113,58 @@ impl NonceLease {
     }
 }
 
+/// One live lease a rewind revoked. The named strategy should re-lease at the
+/// recovered head: the lease handle it held no longer names an outstanding
+/// reservation, so re-stamping it declines `UnknownLease`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReorgAdvisory {
+    strategy: StrategyId,
+    nonce: u64,
+}
+
+impl ReorgAdvisory {
+    /// The strategy whose lease was revoked.
+    #[must_use]
+    pub fn strategy(&self) -> &StrategyId {
+        &self.strategy
+    }
+
+    /// The nonce the revoked lease had reserved.
+    #[must_use]
+    pub fn nonce(&self) -> u64 {
+        self.nonce
+    }
+}
+
 #[derive(Debug, Default)]
 struct NonceState {
     confirmed: u64,
     leases: BTreeMap<StrategyId, u64>,
     broadcasts: BTreeMap<u64, StrategyId>,
+    /// Broadcasts the chain had confirmed below the tracked nonce, retained so
+    /// a rewind can restore them: a reorged transaction returns to the wire
+    /// and its nonce must not be re-issued out of the landed range.
+    landed: BTreeMap<u64, StrategyId>,
 }
 
 impl NonceState {
+    /// Move every broadcast strictly below `confirmed` out of the outstanding
+    /// set and into the landed index. Shared by the monotonic and reorg head
+    /// paths so they cannot drift.
+    fn land_below(&mut self, confirmed: u64) {
+        let landed: Vec<u64> = self
+            .broadcasts
+            .keys()
+            .copied()
+            .filter(|nonce| *nonce < confirmed)
+            .collect();
+        for nonce in landed {
+            if let Some(owner) = self.broadcasts.remove(&nonce) {
+                self.landed.insert(nonce, owner);
+            }
+        }
+    }
+
     fn is_outstanding(&self, nonce: u64) -> bool {
         self.broadcasts.contains_key(&nonce) || self.leases.values().any(|held| *held == nonce)
     }
@@ -160,16 +204,81 @@ impl NonceAuthority {
         self.state.lock().confirmed
     }
 
-    /// Replace the confirmed chain nonce with the chain's authoritative value.
+    /// Advance the confirmed chain nonce to the chain's authoritative value.
     ///
     /// Broadcasts strictly below the new value are confirmed on-chain and leave
-    /// the tracked set; a strategy lease is deliberately not pruned here, so a
-    /// reservation the chain has passed still declines at the next sign instead
-    /// of silently becoming reusable.
+    /// the outstanding set; they are retained in the landed index (not
+    /// discarded) so [`set_confirmed_reorg`](Self::set_confirmed_reorg) can
+    /// restore them if a reorg un-confirms that range. A strategy lease is
+    /// deliberately not pruned here, so a reservation the chain has passed
+    /// still declines at the next sign instead of silently becoming reusable.
+    ///
+    /// This is the monotonic path: it defines only the advancing case. A head
+    /// update that may move backward must go through
+    /// [`set_confirmed_reorg`](Self::set_confirmed_reorg).
     pub fn set_confirmed(&self, confirmed: u64) {
         let mut state = self.state.lock();
         state.confirmed = confirmed;
-        state.broadcasts.retain(|nonce, _| *nonce >= confirmed);
+        state.land_below(confirmed);
+    }
+
+    /// Reconcile the confirmed chain nonce after a head update that may rewind,
+    /// returning one [`ReorgAdvisory`] per lease the rewind voids.
+    ///
+    /// A forward move is the ordinary confirmation path and behaves exactly
+    /// like [`set_confirmed`](Self::set_confirmed). A backward move is a reorg
+    /// rewind: every broadcast the old head had confirmed inside the rewound
+    /// window is restored to the outstanding set (its transaction may be back
+    /// on the wire, so its nonce must not be re-issued), and every live lease
+    /// reserved inside that window is released with an advisory so the owning
+    /// strategy re-leases at the recovered head. Leases at or above the old
+    /// nonce are untouched.
+    ///
+    /// Advisories are returned in strategy-name order, then ascending nonce.
+    /// The call is idempotent for a repeated same-value rewind. Revived
+    /// broadcasts are not returned: a caller that needs them diffs
+    /// [`outstanding_nonces`](Self::outstanding_nonces) across the call, and
+    /// the per-head policy owns deciding whether a revived broadcast is still
+    /// alive or must be released.
+    #[must_use]
+    pub fn set_confirmed_reorg(&self, confirmed: u64) -> Vec<ReorgAdvisory> {
+        let mut state = self.state.lock();
+        let old = state.confirmed;
+        if confirmed >= old {
+            state.confirmed = confirmed;
+            state.land_below(confirmed);
+            return Vec::new();
+        }
+        state.confirmed = confirmed;
+
+        // Restore the broadcasts the old head confirmed inside the rewound
+        // window. This is the re-issue fix: without it the forward prune would
+        // leave an in-flight nonce looking free.
+        let revived: Vec<u64> = state
+            .landed
+            .range(confirmed..old)
+            .map(|(nonce, _)| *nonce)
+            .collect();
+        for nonce in revived {
+            if let Some(owner) = state.landed.remove(&nonce) {
+                state.broadcasts.insert(nonce, owner);
+            }
+        }
+
+        // A lease reserved in the rewound window was stamped against a head
+        // that is no longer canonical: release it and advise its owner.
+        let revoked: Vec<(StrategyId, u64)> = state
+            .leases
+            .iter()
+            .filter(|(_, nonce)| **nonce >= confirmed && **nonce < old)
+            .map(|(strategy, nonce)| (strategy.clone(), *nonce))
+            .collect();
+        let mut advisories = Vec::with_capacity(revoked.len());
+        for (strategy, nonce) in revoked {
+            state.leases.remove(&strategy);
+            advisories.push(ReorgAdvisory { strategy, nonce });
+        }
+        advisories
     }
 
     /// Reserve the lowest nonce at or above the confirmed chain nonce that no
@@ -425,6 +534,121 @@ mod tests {
         let authority = NonceAuthority::new(10);
         assert!(authority.release_strategy(&sid("ghost")).is_empty());
         assert!(authority.outstanding_nonces().is_empty());
+    }
+
+    /// The re-issue hazard the forward prune created: a broadcast confirmed by
+    /// an advance, then un-confirmed by a rewind, must be revived so its nonce
+    /// is not handed back out while the transaction may be back on the wire.
+    #[test]
+    fn a_rewind_revives_landed_broadcasts_and_blocks_reissue() {
+        let authority = NonceAuthority::new(10);
+        let lease = authority.lease(&sid("a")).expect("lease");
+        authority.record_broadcast(&lease).expect("broadcast");
+        authority.set_confirmed(11);
+        assert!(authority.outstanding_nonces().is_empty());
+
+        let advisories = authority.set_confirmed_reorg(10);
+        assert!(advisories.is_empty(), "no lease was inside the window");
+        assert_eq!(
+            authority.outstanding_nonces(),
+            vec![10],
+            "the rewind restores the broadcast as outstanding"
+        );
+        assert_eq!(
+            authority.lease(&sid("b")).expect("b").nonce(),
+            11,
+            "the in-flight nonce is not re-issued"
+        );
+    }
+
+    /// A lease reserved inside the rewound window was stamped against a head
+    /// that is no longer canonical: it is released with an advisory.
+    #[test]
+    fn a_rewind_revokes_leases_in_the_rewound_window_with_advisories() {
+        let authority = NonceAuthority::new(10);
+        let lease = authority.lease(&sid("a")).expect("a");
+        assert_eq!(lease.nonce(), 10);
+        // The advance leaves the lease in place (below the confirmed nonce);
+        // the rewind then finds it inside the rewound window [10, 11).
+        authority.set_confirmed(11);
+
+        let advisories = authority.set_confirmed_reorg(10);
+        assert_eq!(advisories.len(), 1);
+        assert_eq!(advisories[0].strategy(), &sid("a"));
+        assert_eq!(advisories[0].nonce(), 10);
+        assert!(authority.lease_of(&sid("a")).is_none());
+        // Issuance recovers at the rewound head; the released lease no longer
+        // blocks the sign path with BelowChainNonce.
+        assert_eq!(authority.lease(&sid("b")).expect("b").nonce(), 10);
+    }
+
+    /// A lease above the rewound window was not stamped against the rewound
+    /// head: it survives the rewind untouched.
+    #[test]
+    fn a_rewind_keeps_leases_above_the_rewound_window() {
+        let authority = NonceAuthority::new(10);
+        let a0 = authority.lease(&sid("a")).expect("a0");
+        authority.record_broadcast(&a0).expect("broadcast a0");
+        let b1 = authority.lease(&sid("b")).expect("b1");
+        assert_eq!(b1.nonce(), 11);
+        authority.set_confirmed(11);
+
+        let advisories = authority.set_confirmed_reorg(10);
+        assert!(
+            advisories.is_empty(),
+            "b's lease 11 is at the old confirmed nonce, above the window [10, 11)"
+        );
+        assert_eq!(authority.lease_of(&sid("b")).expect("b").nonce(), 11);
+        assert_eq!(authority.outstanding_nonces(), vec![10, 11]);
+    }
+
+    /// A forward `set_confirmed_reorg` behaves exactly like the monotonic
+    /// path: it reconciles landed broadcasts and returns no advisories.
+    #[test]
+    fn a_forward_reorg_move_reconciles_like_set_confirmed() {
+        let authority = NonceAuthority::new(10);
+        let lease = authority.lease(&sid("a")).expect("lease");
+        authority.record_broadcast(&lease).expect("broadcast");
+
+        let advisories = authority.set_confirmed_reorg(11);
+        assert!(advisories.is_empty());
+        assert_eq!(authority.confirmed(), 11);
+        assert!(authority.outstanding_nonces().is_empty());
+    }
+
+    /// A same-value rewind is a no-op: no advisory, no reservation change.
+    #[test]
+    fn a_same_value_reorg_move_is_a_noop() {
+        let authority = NonceAuthority::new(10);
+        let lease = authority.lease(&sid("a")).expect("lease");
+        assert_eq!(lease.nonce(), 10);
+
+        let advisories = authority.set_confirmed_reorg(10);
+        assert!(advisories.is_empty());
+        assert_eq!(
+            authority.lease_of(&sid("a")).expect("live lease").nonce(),
+            10
+        );
+    }
+
+    /// Re-confirming a revived broadcast lands it again, and a second rewind
+    /// restores it again: the landed index is the durable evidence.
+    #[test]
+    fn a_revived_broadcast_relands_and_rewinds_again() {
+        let authority = NonceAuthority::new(10);
+        let lease = authority.lease(&sid("a")).expect("lease");
+        authority.record_broadcast(&lease).expect("broadcast");
+        authority.set_confirmed(11);
+        let _ = authority.set_confirmed_reorg(10);
+        assert_eq!(authority.outstanding_nonces(), vec![10]);
+
+        authority.set_confirmed(11);
+        assert!(
+            authority.outstanding_nonces().is_empty(),
+            "re-confirmation lands the revived broadcast again"
+        );
+        let _ = authority.set_confirmed_reorg(10);
+        assert_eq!(authority.outstanding_nonces(), vec![10]);
     }
 
     use proptest::prelude::*;
