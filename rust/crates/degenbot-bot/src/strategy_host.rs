@@ -193,6 +193,33 @@ pub struct StrategyHost {
     drivers: IndexMap<StrategyId, DriverRecord>,
 }
 
+/// A host-minted hub paired with the source-channel handles registered during
+/// its exclusive construction window.
+///
+/// [`StrategyHost::mint`] builds the pair together; the driver consumes both,
+/// so the hub and its channels travel as one value. The host cannot inspect a
+/// caller's mint closure, so the pairing rests on that closure being the
+/// channel set's sole registrar (for the settlement engine,
+/// `EngineChannelHandles::register_on`).
+pub struct HostHub<T> {
+    hub: Arc<Hub>,
+    attachment: T,
+}
+
+impl<T> HostHub<T> {
+    /// The hub half of the pair.
+    #[must_use]
+    pub fn hub(&self) -> &Arc<Hub> {
+        &self.hub
+    }
+
+    /// Split the pair into its hub and the caller's registered handles.
+    #[must_use]
+    pub fn into_parts(self) -> (Arc<Hub>, T) {
+        (self.hub, self.attachment)
+    }
+}
+
 impl StrategyHost {
     /// A host owning the shared handles and no registered drivers.
     #[must_use]
@@ -203,6 +230,33 @@ impl StrategyHost {
             nonce,
             drivers: IndexMap::new(),
         }
+    }
+
+    /// Mint the process hub with caller-registered source channels, then own
+    /// it.
+    ///
+    /// Named source channels are minted through `&mut Hub`, so registration
+    /// must finish before the hub is shared; this constructor is the
+    /// host-owned window that provides the exclusive `&mut`. `register` returns
+    /// whatever channel handles the caller needs (for the settlement engine,
+    /// its producers); the host itself stays generic and never names them. The
+    /// returned [`HostHub`] carries the hub and those handles as one pair, so
+    /// a driver consumes them together. `register` must register onto the hub
+    /// it is handed — it is the sole registrar for that channel set, since the
+    /// host cannot inspect what the closure did.
+    #[must_use]
+    pub fn mint<T>(
+        registry: Arc<RouteRegistry>,
+        nonce: Arc<NonceAuthority>,
+        register: impl FnOnce(&mut Hub) -> T,
+    ) -> (Self, HostHub<T>) {
+        let mut hub = Hub::new();
+        let attachment = register(&mut hub);
+        let hub = Arc::new(hub);
+        (
+            Self::new(Arc::clone(&hub), registry, nonce),
+            HostHub { hub, attachment },
+        )
     }
 
     /// The host's shared event hub.

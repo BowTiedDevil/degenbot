@@ -68,6 +68,7 @@ use crate::bot_core::registration_lifecycle::RegistrationLifecycleError;
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::state_lock::{LockSite, StateLock};
 use crate::bot_core::{Bot, BotState, PumpControl, StageHandlers};
+use crate::strategy_host::HostHub;
 use alloy::primitives::Address;
 use degenbot_core::{diag, op_error, op_info, op_warn};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
@@ -93,6 +94,37 @@ pub const RESULT_CHANNEL_NAME: &str = "engine_result_batch";
 /// Hub registration name for the engine's block-clock source channel. Named
 /// for the same reason as [`RESULT_CHANNEL_NAME`].
 pub const BLOCK_CHANNEL_NAME: &str = "engine_block_notification";
+
+/// The engine's two named source-channel producers, minted together.
+///
+/// A hub owns one channel per name; the engine registers its `ResultBatch` +
+/// `BlockNotification` channels once on the hub it is attaching to and keeps
+/// the producer ends here until the driver installs them on the stage seam.
+/// The consumer ends stay hub-held for the once-only `take_*_receiver`
+/// hand-off, exactly as on [`EngineDriver::from_stages`].
+pub struct EngineChannelHandles {
+    result: tokio::sync::mpsc::UnboundedSender<ResultBatch>,
+    block: tokio::sync::mpsc::UnboundedSender<BlockNotification>,
+}
+
+impl EngineChannelHandles {
+    /// Register the engine's two named source channels on `hub` and return
+    /// their producer ends.
+    ///
+    /// Taking `&mut Hub` is the point: a named channel is minted into the
+    /// hub's map, so registration must complete before the hub is shared as an
+    /// `Arc` and handed to a driver.
+    #[must_use]
+    pub fn register_on(hub: &mut Hub) -> Self {
+        let result = hub
+            .add_named_unbounded_source::<ResultBatch>(RESULT_CHANNEL_NAME)
+            .into_inner();
+        let block = hub
+            .add_named_unbounded_source::<BlockNotification>(BLOCK_CHANNEL_NAME)
+            .into_inner();
+        Self { result, block }
+    }
+}
 
 /// A typed engine-phase violation raised at the driver boundary.
 ///
@@ -229,27 +261,48 @@ impl EngineDriver {
     }
 
     /// Adapter adoption: the caller already built the stage seam (the `PyO3`
-    /// wrapper path). The driver creates + installs the result/block channels
-    /// and the reorg coordinator, then composes.
+    /// wrapper path). The driver mints a private hub for the engine's two
+    /// named source channels and composes; a host-minted hub uses
+    /// [`Self::from_stages_with_hub`].
     #[must_use]
     pub fn from_stages(bot: Arc<Bot>, stages: Arc<EngineStages>) -> Self {
-        // The engine host owns ONE process-lifetime hub. The two
-        // delivery channels are registered as named, typed source channels
-        // (`OverflowPolicy::UnboundedFlagged` — lossless by request, flagged
-        // for audit); the hub holds the consumer ends, the stages hold the
-        // sole producers. The raw `tokio::sync::mpsc` pair is unchanged, so
-        // recv/order/close semantics stay byte-identical to the pre-hub
-        // channels.
         let mut hub = Hub::new();
-        let result_tx = hub
-            .add_named_unbounded_source::<ResultBatch>(RESULT_CHANNEL_NAME)
-            .into_inner();
-        stages.set_result_channel(result_tx);
-        let block_tx = hub
-            .add_named_unbounded_source::<BlockNotification>(BLOCK_CHANNEL_NAME)
-            .into_inner();
-        stages.set_block_channel(block_tx);
-        let hub = Arc::new(hub);
+        let channels = EngineChannelHandles::register_on(&mut hub);
+        Self::assemble(bot, stages, Arc::new(hub), channels)
+    }
+
+    /// Adapter adoption against a host-minted hub.
+    ///
+    /// `attached` is the pair `StrategyHost::mint` produces: the shared hub
+    /// and the engine's two named source channels registered on it by the mint
+    /// closure (for the engine, [`EngineChannelHandles::register_on`]). The
+    /// driver installs the producers on the stages and keeps the shared hub
+    /// for the once-only receiver handoff. A named channel is keyed by name
+    /// per hub, so a hub backs at most one engine driver — a second
+    /// `take_*_receiver` returns `None`. The delivery channels stay
+    /// [`degenbot_eventhub::OverflowPolicy::UnboundedFlagged`] (lossless by
+    /// request, flagged for audit), and the raw `tokio::sync::mpsc` pair is
+    /// unchanged, so recv/order/close semantics stay byte-identical to
+    /// [`Self::from_stages`].
+    #[must_use]
+    pub fn from_stages_with_hub(
+        bot: Arc<Bot>,
+        stages: Arc<EngineStages>,
+        attached: HostHub<EngineChannelHandles>,
+    ) -> Self {
+        let (hub, channels) = attached.into_parts();
+        Self::assemble(bot, stages, hub, channels)
+    }
+
+    /// Compose a driver over an already-bound hub and channel producers.
+    fn assemble(
+        bot: Arc<Bot>,
+        stages: Arc<EngineStages>,
+        hub: Arc<Hub>,
+        channels: EngineChannelHandles,
+    ) -> Self {
+        stages.set_result_channel(channels.result);
+        stages.set_block_channel(channels.block);
         let (pump_finished_tx, pump_finished_rx) = watch::channel(false);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         Self {
@@ -930,6 +983,53 @@ mod tests {
             driver.hub().unbounded_flagged_count(),
             2,
             "both engine channels are the deliberate unbounded audit posture"
+        );
+    }
+
+    #[test]
+    fn a_host_minted_hub_wires_one_driver() {
+        use crate::bot_core::route_registry::RouteRegistry;
+        use crate::nonce_authority::NonceAuthority;
+        use crate::sidecar_paths::V2ConnectorIndex;
+        use crate::strategy_host::StrategyHost;
+
+        let (host, attached) = StrategyHost::mint(
+            Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
+            Arc::new(NonceAuthority::new(7)),
+            EngineChannelHandles::register_on,
+        );
+
+        let bot = Arc::new(Bot::new(1));
+        let stages = Arc::new(EngineStages::with_core(bot.state_arc(), bot.active_delta()));
+        let driver = EngineDriver::from_stages_with_hub(bot, stages, attached);
+
+        assert!(
+            Arc::ptr_eq(host.hub(), driver.hub()),
+            "the driver attached to the host-minted hub, not a private one"
+        );
+        for name in [RESULT_CHANNEL_NAME, BLOCK_CHANNEL_NAME] {
+            assert_eq!(
+                host.hub().named_policy(name),
+                Some(OverflowPolicy::UnboundedFlagged { name }),
+                "the host-minted hub carries {name}"
+            );
+        }
+
+        assert!(driver.take_block_receiver().is_some());
+        // The receiver the driver hands out must have the stages' live
+        // producer behind it: an orphaned receiver (its sender dropped)
+        // resolves `recv` immediately, while a wired one stays pending until
+        // `stop` drops the sender.
+        let mut rx = driver.take_result_receiver().unwrap();
+        assert!(
+            futures_util::FutureExt::now_or_never(rx.recv()).is_none(),
+            "the host-minted receiver has a live producer wired to it"
+        );
+        driver.stop().expect("stop");
+        let end = degenbot_core::runtime::get_runtime().block_on(async { rx.recv().await });
+        assert!(
+            end.is_none(),
+            "the host-minted result stream closes with its driver"
         );
     }
 
