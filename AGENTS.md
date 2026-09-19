@@ -46,7 +46,12 @@ Workflow after any Rust edit — verify, don't guess:
 
 Do not trust a silent "successful" rebuild — verify it. Every compile of
 `degenbot_rs` runs `rust/crates/degenbot-python/build.rs`, which fingerprints
-the crate's sources and writes `<count> <fingerprint>` to a receipt file
+the crate's sources **plus every sibling crate under `rust/crates` and the
+workspace manifests / repo-root `.cargo` config that its build could link**
+(via the shared `build_scan.rs` scanner, with per-file+per-tree
+`cargo:rerun-if-changed` re-triggering — the pre-63a362961 build emitted
+no rerun triggers, so dep-only edits never advanced the receipt and a
+stale wheel could pass). It writes `<count> <fingerprint>` to a receipt file
 (`.build-number`, gitignored, at the repo root), embedding both values in the
 compiled library. The counter advances only when the fingerprint (source
 content) changes, so test/feature-variant rebuilds never false-positive.
