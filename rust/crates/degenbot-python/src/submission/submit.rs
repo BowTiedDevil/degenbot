@@ -34,8 +34,8 @@ use crate::submission::dispatcher::PyDispatcher;
 use crate::submission::params::parse_access_list;
 use crate::submission::signer::PyTxSigner;
 use degenbot_submission::{
-    dispatch_and_submit, fetch_fee_history, NonceLane, NonceSource, PoolKey, ReceiptProbe,
-    SkipReason, SubmissionTarget, SubmitCandidate, SubmitOutcome, SubmitRecord,
+    dispatch_and_submit, fetch_fee_history, NonceLane, PoolKey, ReceiptProbe, SkipReason,
+    SubmissionTarget, SubmitCandidate, SubmitOutcome, SubmitRecord,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList};
@@ -224,23 +224,59 @@ pub(crate) fn settlement_lane() -> Option<Arc<NonceLane>> {
     SETTLEMENT_LANE.lock().clone()
 }
 
-/// The settlement nonce source for one submission: the hosted authority lane
-/// when the process boots with a host, the legacy dispatcher table otherwise.
+/// The process-local settlement lane for a host-less process.
+static LOCAL_SETTLEMENT_LANE: std::sync::OnceLock<Arc<NonceLane>> = std::sync::OnceLock::new();
+
+/// The settlement nonce lane for one submission, seeded from the
+/// submission-time chain read so its first stamp never re-issues a nonce the
+/// chain has already consumed.
 ///
-/// The lane is seeded from the submission-time chain read so its first stamp
-/// never re-issues a nonce the chain has already consumed.
+/// The hosted process uses the lane its boot installed. A process with no host
+/// is the legacy standalone settlement seam: it warns loudly and mints a
+/// process-local lane over its own authority, so every signing path still
+/// issues through the authority contract instead of a private reservation
+/// table.
+/// The process-local lane a host-less process mints once and shares.
+fn local_settlement_lane() -> Arc<NonceLane> {
+    Arc::clone(LOCAL_SETTLEMENT_LANE.get_or_init(|| {
+        Arc::new(NonceLane::new(
+            Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(0)),
+            Arc::new(degenbot_submission::SubmissionLedger::new()),
+            "settlement",
+        ))
+    }))
+}
+
+/// Resolve the settlement lane from the installed boot lane (or the legacy
+/// process-local fallback), then seed it from the submission-time chain read so
+/// its first stamp never re-issues a nonce the chain has already consumed.
+///
+/// Split from [`settlement_nonce_lane`] so the fallback choice is testable
+/// without the process-global install slot.
 #[must_use]
-pub(crate) fn nonce_source_for_settlement(
-    lane: Option<Arc<NonceLane>>,
+pub(crate) fn settlement_lane_for(
+    installed: Option<Arc<NonceLane>>,
     operator_nonce: u64,
-) -> NonceSource {
-    match lane {
-        Some(lane) => {
-            lane.observe_chain_nonce(operator_nonce);
-            NonceSource::authority(lane)
-        }
-        None => NonceSource::dispatcher(operator_nonce),
-    }
+) -> Arc<NonceLane> {
+    let lane = if let Some(lane) = installed {
+        lane
+    } else {
+        tracing::warn!(
+            target: "degenbot.strategy.nonce",
+            "settlement submitted with no strategy host boot: routing through a process-local \
+             authority (legacy path); boot the strategy host to share the operator-account lane"
+        );
+        local_settlement_lane()
+    };
+    lane.observe_chain_nonce(operator_nonce);
+    lane
+}
+
+/// The settlement lane for one submission: the host-installed lane when the
+/// process booted a strategy host, a process-local fallback otherwise.
+#[must_use]
+pub(crate) fn settlement_nonce_lane(operator_nonce: u64) -> Arc<NonceLane> {
+    settlement_lane_for(settlement_lane(), operator_nonce)
 }
 
 impl ReceiptProbe for PyReceiptProbe {
@@ -339,9 +375,10 @@ pub fn dispatch_and_submit_py<'py>(
 
     // The settlement seam is the Python-driven arm of the one hosted process:
     // when the strategy host boot installed its lane, every settlement
-    // submission stamps through the shared authority; a legacy process with no
-    // host keeps the private dispatcher reservation table.
-    let nonce_source = nonce_source_for_settlement(settlement_lane(), operator_nonce);
+    // submission stamps through the shared authority. A legacy process with no
+    // host mints a process-local lane (with a loud deprecation) rather than a
+    // second reservation table.
+    let nonce_lane = settlement_nonce_lane(operator_nonce);
     // ── GIL release across the RPC submits ──
     future_into_py(py, async move {
         let outcome: SubmitOutcome = dispatch_and_submit(
@@ -350,7 +387,7 @@ pub fn dispatch_and_submit_py<'py>(
             &provider_arc,
             &signer,
             probe as Arc<dyn ReceiptProbe + Send + Sync>,
-            nonce_source,
+            &nonce_lane,
             current_block,
             dry_run,
             inject_code,
@@ -465,8 +502,8 @@ fn skip_reason_to_py(reason: &SkipReason) -> (&'static str, Option<String>) {
 }
 
 #[cfg(all(test, feature = "bot"))]
-#[expect(clippy::panic, reason = "test assertions fail loudly")]
-mod settlement_nonce_source_tests {
+#[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+mod settlement_nonce_lane_tests {
     use super::*;
     use degenbot_bot::nonce_authority::NonceAuthority;
     use degenbot_submission::SubmissionLedger;
@@ -479,29 +516,33 @@ mod settlement_nonce_source_tests {
         ))
     }
 
+    /// A host-less process still issues through an authority: it mints a
+    /// process-local lane rather than falling back to a private reservation
+    /// table, and the submission-time chain read seeds it.
     #[test]
-    fn without_a_host_the_settlement_seam_keeps_the_dispatcher_table() {
-        match nonce_source_for_settlement(None, 7) {
-            NonceSource::Dispatcher { start } => assert_eq!(start, 7),
-            NonceSource::Authority(_) => {
-                panic!("an unhosted process must keep the dispatcher reservation table")
-            }
-        }
+    fn without_a_host_the_seam_mints_a_seeded_local_lane() {
+        let local = settlement_lane_for(None, 7);
+        assert_eq!(local.strategy().as_str(), "settlement");
+        assert_eq!(
+            local.authority().confirmed(),
+            7,
+            "the submission-time chain read seeds the local authority"
+        );
+        let lease = local.stamp().expect("local lane stamps");
+        assert_eq!(lease.nonce(), 7);
     }
 
+    /// A hosted process uses the installed lane and seeds it forward-only.
     #[test]
-    fn with_a_host_the_settlement_seam_routes_through_the_authority() {
-        let lane = lane();
-        match nonce_source_for_settlement(Some(Arc::clone(&lane)), 7) {
-            NonceSource::Authority(source) => {
-                assert!(Arc::ptr_eq(&source, &lane), "the installed lane is used");
-            }
-            NonceSource::Dispatcher { .. } => {
-                panic!("a hosted process must route settlement through the authority")
-            }
-        }
+    fn with_a_host_the_seam_reuses_the_installed_lane() {
+        let installed = lane();
+        let resolved = settlement_lane_for(Some(Arc::clone(&installed)), 7);
+        assert!(
+            Arc::ptr_eq(&resolved, &installed),
+            "the installed lane is used, not a fallback"
+        );
         assert_eq!(
-            lane.authority().confirmed(),
+            installed.authority().confirmed(),
             7,
             "the submission-time chain read seeds the authority"
         );

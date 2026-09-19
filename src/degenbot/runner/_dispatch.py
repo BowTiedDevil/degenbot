@@ -421,9 +421,9 @@ async def _submit_batch_records(
     """Submit gas-profitable candidates via the Rust submit leaf + render records.
 
     Shared by the serial leaf and the pipeline's ordered submitter. Expects
-    the operator nonce fetched AT submit time (serialized consumers only);
-    under a relay posture the session's :class:`NonceLane` overlays still-
-    pending private-lane nonces onto that read before broadcast.
+    the operator nonce fetched AT submit time (serialized consumers only) and
+    forwards it unchanged: the Rust authority seeds from that chain read and
+    leases the sign-time nonce, so no nonce is computed Python-side.
 
     ``submitter``/``relay_providers`` are the DI seams (tests inject a
     recording submitter + opaque providers; production runs the default
@@ -437,17 +437,12 @@ async def _submit_batch_records(
     # broadcast URL, revert-protecting private builder endpoints instead of
     # the public mempool. The POSTURE is owned by the session's NonceLane
     # (built once from the relay env at session start — see _nonce_lane);
-    # sessions without one (bare test fakes) fall back to the env read.
+    # sessions without one (bare test fakes) fall back to the env read. The
+    # operator nonce is forwarded unchanged: the Rust authority issues it.
     nonce_lane = getattr(session, "nonce_lane", None)
     relay_urls = nonce_lane.relay_urls if nonce_lane is not None else relay_urls_from_env()
     if relay_urls and outcome.gas_profitable:
-        broadcast_providers, operator_nonce = await _resolve_relay_providers(
-            relay_urls,
-            relay_providers,
-            nonce_lane,
-            operator_nonce,
-            len(outcome.gas_profitable),
-        )
+        broadcast_providers = await _resolve_relay_providers(relay_urls, relay_providers)
     else:
         broadcast_providers = None
 
@@ -475,11 +470,8 @@ async def _submit_batch_records(
 async def _resolve_relay_providers(
     relay_urls: list[str],
     relay_providers: Any,
-    nonce_lane: Any,
-    operator_nonce: int,
-    batch_size: int,
-) -> tuple[list[Any], int]:
-    """Resolve this batch's broadcast providers and reserve its nonce range."""
+) -> list[Any]:
+    """Resolve this batch's relay broadcast providers."""
     if relay_providers is not None:
         broadcast_providers = [
             relay_provider.as_async_alloy() for relay_provider in relay_providers
@@ -501,15 +493,7 @@ async def _resolve_relay_providers(
         broadcast_providers = [
             relay_provider.as_async_alloy() for _, relay_provider in _RELAY_SUBMIT_PROVIDERS
         ]
-    if nonce_lane is not None:
-        # The local pending read cannot see relay-pending broadcasts: book
-        # this batch's nonce range against the lane so the next relay batch
-        # cannot re-claim it (the exclusive relay branch of _nonce_lane).
-        operator_nonce = nonce_lane.reserve_base(
-            local_nonce=int(operator_nonce),
-            size=batch_size,
-        )
-    return broadcast_providers, operator_nonce
+    return broadcast_providers
 
 
 def _log_submit_arm(candidates: list[Any], solve_block: int) -> None:

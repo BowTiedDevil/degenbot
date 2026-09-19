@@ -104,8 +104,8 @@ pub use submission_ledger::{
     RepackageRequest, ShadowPosture, SubmissionLedger, SubmissionRecord, SubmissionState, TargetId,
 };
 pub use submit::{
-    dispatch_and_submit, fetch_fee_history, NonceSource, SkipReason, SubmissionTarget,
-    SubmitCandidate, SubmitOutcome, SubmitRecord,
+    dispatch_and_submit, fetch_fee_history, SkipReason, SubmissionTarget, SubmitCandidate,
+    SubmitOutcome, SubmitRecord,
 };
 
 /// The configured durable-state root, or `None` when it cannot be resolved.

@@ -181,7 +181,7 @@ pub(crate) fn boot_host() -> BootedHost {
                 Arc::clone(degenbot_config::holder::config_arc()),
                 hub,
                 Some(registry),
-                Some(Arc::clone(&backrun_lane)),
+                Arc::clone(&backrun_lane),
             ),
         )
         .expect("fresh host registers the backrun spawn");

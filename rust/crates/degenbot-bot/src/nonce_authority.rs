@@ -75,6 +75,8 @@ pub enum DeclineKind {
     BelowChainNonce,
     /// The named lease is not the strategy's current outstanding reservation.
     UnknownLease,
+    /// The named broadcast is not outstanding for the strategy.
+    UnknownBroadcast,
     /// No nonce remains at or above the confirmed chain nonce.
     Exhausted,
 }
@@ -85,6 +87,7 @@ impl fmt::Display for DeclineKind {
             Self::StrategyLeaseOutstanding => "strategy already holds an outstanding lease",
             Self::BelowChainNonce => "a tracked reservation is below the confirmed chain nonce",
             Self::UnknownLease => "lease is not outstanding for the named strategy",
+            Self::UnknownBroadcast => "broadcast is not outstanding for the named strategy",
             Self::Exhausted => "no nonce remains at or above the confirmed chain nonce",
         };
         f.write_str(text)
@@ -377,6 +380,34 @@ impl NonceAuthority {
         freed
     }
 
+    /// Release one broadcast the strategy owns, returning the freed nonce.
+    ///
+    /// This is the expiry escape hatch: a broadcast that never lands would
+    /// otherwise stay outstanding forever, wedging the account's nonce prefix
+    /// (no successor may consume an outstanding slot, and an account that
+    /// never advances has no head event to reconcile it away). The caller
+    /// asserts the transaction will never land; releasing a broadcast that is
+    /// still on the wire is the double-issuance hazard the authority otherwise
+    /// refuses, so this entry point exists only for a monitor's expiry verdict.
+    ///
+    /// The landed index is untouched: a nonce that already confirmed is not a
+    /// broadcast and declines here.
+    ///
+    /// # Errors
+    ///
+    /// [`DeclineKind::UnknownBroadcast`] if `nonce` is not a broadcast owned
+    /// by `strategy`.
+    pub fn release_broadcast(&self, strategy: &StrategyId, nonce: u64) -> Result<u64, DeclineKind> {
+        let mut state = self.state.lock();
+        match state.broadcasts.get(&nonce) {
+            Some(owner) if owner == strategy => {
+                state.broadcasts.remove(&nonce);
+                Ok(nonce)
+            }
+            _ => Err(DeclineKind::UnknownBroadcast),
+        }
+    }
+
     /// The strategy's outstanding lease, if it holds one.
     #[must_use]
     pub fn lease_of(&self, strategy: &StrategyId) -> Option<NonceLease> {
@@ -602,6 +633,58 @@ mod tests {
         let authority = NonceAuthority::new(10);
         assert!(authority.release_strategy(&sid("ghost")).is_empty());
         assert!(authority.outstanding_nonces().is_empty());
+    }
+
+    #[test]
+    fn releasing_a_broadcast_frees_only_that_nonce() {
+        let authority = NonceAuthority::new(10);
+        let a = authority.lease(&sid("a")).expect("a");
+        authority.record_broadcast(&a).expect("broadcast a");
+        let b = authority.lease(&sid("b")).expect("b");
+        authority.record_broadcast(&b).expect("broadcast b");
+        assert_eq!(authority.outstanding_nonces(), vec![10, 11]);
+
+        assert_eq!(authority.release_broadcast(&sid("a"), 10), Ok(10));
+        assert_eq!(
+            authority.outstanding_nonces(),
+            vec![11],
+            "the sibling broadcast is untouched"
+        );
+    }
+
+    #[test]
+    fn releasing_a_broadcast_owned_by_another_strategy_declines() {
+        let authority = NonceAuthority::new(10);
+        let a = authority.lease(&sid("a")).expect("a");
+        authority.record_broadcast(&a).expect("broadcast a");
+        assert_eq!(
+            authority.release_broadcast(&sid("b"), a.nonce()),
+            Err(DeclineKind::UnknownBroadcast)
+        );
+        assert_eq!(authority.outstanding_nonces(), vec![10]);
+    }
+
+    /// The expiry escape hatch: a broadcast the caller declares dead is freed,
+    /// and the next lease refills the slot rather than leaping over a phantom
+    /// reservation. Releasing a lease instead declines: expiry acts on a
+    /// broadcast.
+    #[test]
+    fn an_expired_broadcast_reopens_its_slot_for_the_next_lease() {
+        let authority = NonceAuthority::new(10);
+        let lease = authority.lease(&sid("a")).expect("lease");
+        authority.record_broadcast(&lease).expect("broadcast");
+        assert_eq!(
+            authority.release_lease(&lease),
+            Err(DeclineKind::UnknownLease)
+        );
+
+        assert_eq!(authority.release_broadcast(&sid("a"), 10), Ok(10));
+        assert!(!authority.has_outstanding());
+        assert_eq!(
+            authority.lease(&sid("a")).expect("refill").nonce(),
+            10,
+            "the vacated slot is refilled, not skipped"
+        );
     }
 
     #[test]

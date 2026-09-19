@@ -6,16 +6,18 @@
 //! and `monitor_pending_transaction` (L1624–L1652). A typed pending-tx
 //! coordination view with an async loop that waits on real head events and
 //! probes `get_transaction_receipt` once per event. On receipt
-//! (`confirmed`) the monitor releases nonce and pools via
+//! (`confirmed`) the monitor releases the tx's pools via
 //! [`Dispatcher::release_tx`]; on `blocks_before_nonce_expires` blocks
-//! without inclusion it voids the nonce, releases the pools, and returns
-//! `Expired`.
+//! without inclusion it releases the pools and returns `Expired`. Nonce
+//! lifecycle — land, release, tombstone — belongs to the `NonceAuthority`:
+//! the owning lane lands a confirmed broadcast at the next head and releases
+//! an expired one through the authority's expiry entry point.
 //!
 //! # Dispatcher sharing
 //!
-//! [`Dispatcher`] (N3 `M756BN`) holds its coordination state behind `&mut
-//! self` methods; the monitor shares it across tokio tasks via the standard
-//! `Arc<Mutex<Dispatcher>>`. The monitor:
+//! [`Dispatcher`] (N3 `M756BN`) holds its pool/task coordination state behind
+//! `&mut self` methods; the monitor shares it across tokio tasks via the
+//! standard `Arc<Mutex<Dispatcher>>`. The monitor:
 //! - waits on the head-event broadcast [`Dispatcher::block_events`] (a
 //!   `tokio::sync::watch<u64>` fed by [`Dispatcher::advance_block`]) so the
 //!   loop is event-driven, not a fixed-interval sleep. The `watch` channel
@@ -26,8 +28,8 @@
 //!   loop — the `Arc<Mutex<u64>>`, N3 M756BN). This avoids acquiring the
 //!   outer mutex on every event (matches the Python `current_block_ref[0]`
 //!   read-by-reference pattern).
-//! - locks the outer `Mutex<Dispatcher>` only for the rare `release_tx` on
-//!   confirm/expire. No outer mutex guard is held across an `.await` (the
+//! - locks the outer `Mutex<Dispatcher>` only for the rare pool `release_tx`
+//!   on confirm/expire. No outer mutex guard is held across an `.await` (the
 //!   release path is synchronous).
 //!
 //! # Receipt fetch (the `TransactionNotFound` → "not yet included" branch)
@@ -86,13 +88,17 @@ pub const BLOCKS_BEFORE_NONCE_EXPIRES: u64 = 5;
 /// (V4 `pool_id_hex` / V2–V3 pool address) locked by the tx — typed as
 /// [`PoolKey`] (the dispatcher's pool-key newtype, M756BN) so the
 /// [`Dispatcher::release_tx`] path is type-consistent. The Python `set[str]`
-/// maps 1:1 to `HashSet<PoolKey>` via [`PoolKey::from`].
+/// maps 1:1 to `HashSet<PoolKey>` via [`PoolKey::from`]. `nonce` names the
+/// authority slot the tx was signed against; the monitor carries it for
+/// tracing and surfaces it to the owning lane, which releases an expired
+/// broadcast through the authority.
 #[derive(Debug, Clone)]
 pub struct SubmittedTx {
     /// The submitted transaction's hash (`tx_hash`)
     pub tx_hash: B256,
-    /// The account nonce the tx was submitted with (held in the dispatcher's
-    /// `pending_nonces` until release).
+    /// The account nonce the tx was submitted with. The dispatcher no longer
+    /// holds it — nonce lifecycle is the `NonceAuthority`'s — but the monitor
+    /// carries it for tracing and for the owning lane's expiry release.
     pub nonce: u64,
     /// The pool keys locked by the tx (held in `pending_pools` until release).
     pub pools: HashSet<PoolKey>,
@@ -113,11 +119,11 @@ impl SubmittedTx {
         }
     }
 
-    /// Project this pending-tx view onto the dispatcher's release record
+    /// Project this pending-tx view onto the dispatcher's pool-release record
     /// (the [`CommittedTx`] consumed by [`Dispatcher::release_tx`]).
     #[must_use]
     pub fn to_committed(&self) -> CommittedTx {
-        CommittedTx::new(self.nonce, self.pools.iter().cloned().collect())
+        CommittedTx::new(self.pools.iter().cloned().collect())
     }
 }
 
@@ -192,10 +198,12 @@ pub trait ReceiptProbe: Send + Sync {
 /// then once per real head event — awaited via [`Dispatcher::block_events`]
 /// (a `tokio::sync::watch<u64>` fed by [`Dispatcher::advance_block`]) — so the
 /// monitor reacts at head granularity, not at a fixed timer interval. On
-/// receipt → release nonce + pools via [`Dispatcher::release_tx`] + return
+/// receipt → release pools via [`Dispatcher::release_tx`] + return
 /// [`MonitorOutcome::Confirmed`]; on `blocks_waited > blocks_before_nonce_expires`
-/// without inclusion → void the nonce + release pools + return
-/// [`MonitorOutcome::Expired`]. The numeric policy is unchanged.
+/// without inclusion → release pools + return
+/// [`MonitorOutcome::Expired`]. The numeric policy is unchanged. Nonce release
+/// is the authority's: a confirmed broadcast lands at the next head, and the
+/// owning lane releases an expired one.
 ///
 /// Reads the current block after each head event via the by-reference clock
 /// handle [`Dispatcher::current_block_handle`] (the `Arc<Mutex<u64>>` from N3
@@ -451,15 +459,14 @@ mod tests {
         )
     }
 
-    /// Pre-reserve the tx's nonce + pools (mirrors what the N6 submit
-    /// orchestration does before spawning the monitor).
+    /// Pre-reserve the tx's pools (mirrors what the N6 submit orchestration
+    /// does before spawning the monitor).
     fn reserve_tx_state(dispatcher: &mut Dispatcher, tx: &SubmittedTx) {
         dispatcher.reserve_pools(tx.pools.iter().cloned());
-        dispatcher.claim_nonce(tx.nonce); // reserves exactly tx.nonce
     }
 
     #[tokio::test]
-    async fn confirm_on_first_probe_releases_nonce_and_pools() {
+    async fn confirm_on_first_probe_releases_pools() {
         let mut dispatcher = Dispatcher::for_block(100);
         let tx = sample_tx(100);
         reserve_tx_state(&mut dispatcher, &tx);
@@ -478,7 +485,6 @@ mod tests {
             }
         );
         assert_eq!(probe.calls(), 1);
-        assert_eq!(dispatcher.lock().unwrap().pending_nonce_count(), 0);
         assert!(!dispatcher
             .lock()
             .unwrap()
@@ -502,7 +508,6 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, MonitorOutcome::Confirmed { .. }));
         assert_eq!(probe.calls(), 3);
-        assert_eq!(dispatcher.lock().unwrap().pending_nonce_count(), 0);
         assert!(!dispatcher
             .lock()
             .unwrap()
@@ -510,7 +515,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn expire_after_threshold_voids_nonce_and_releases_pools() {
+    async fn expire_after_threshold_releases_pools() {
         // The chain advances one block per head event; the tx never confirms.
         let mut dispatcher = Dispatcher::for_block(100);
         let tx = sample_tx(100);
@@ -531,7 +536,6 @@ mod tests {
             }
             other @ MonitorOutcome::Confirmed { .. } => panic!("expected Expired, got {other:?}"),
         }
-        assert_eq!(dispatcher.lock().unwrap().pending_nonce_count(), 0);
         assert!(!dispatcher
             .lock()
             .unwrap()
@@ -544,8 +548,8 @@ mod tests {
 
     #[tokio::test]
     async fn release_on_both_paths_no_leak() {
-        // Regression: neither path may leak a nonce or pool. Both Confirmed
-        // and Expired must call release_tx exactly once.
+        // Regression: neither path may leak a pool. Both Confirmed and
+        // Expired must call release_tx exactly once.
         // (confirm_at, expect_confirm)
         let cases = [(1u64, true), (u64::MAX, false)];
         for (confirm_at, expect_confirm) in cases {
@@ -558,11 +562,6 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(outcome.is_confirmed(), expect_confirm);
-            assert_eq!(
-                dispatcher.lock().unwrap().pending_nonce_count(),
-                0,
-                "nonce leaked"
-            );
             assert!(
                 !dispatcher
                     .lock()
@@ -617,7 +616,6 @@ mod tests {
             }
         );
         assert_eq!(probe.calls(), 2, "one receipt probe per head event");
-        assert_eq!(dispatcher.lock().unwrap().pending_nonce_count(), 0);
         assert!(!dispatcher
             .lock()
             .unwrap()
@@ -629,8 +627,8 @@ mod tests {
     proptest! {
         /// For any threshold T in 1..30 and a probe that confirms on call
         /// `confirm_at` (1..40), the outcome is Confirmed iff the confirm call
-        /// wins the race against the expiry call; either way the nonce + pool
-        /// are released exactly once (no leak).
+        /// wins the race against the expiry call; either way the pools are
+        /// released exactly once (no leak).
         #[test]
         fn prop_lifecycle_state_machine(
             threshold in 1u64..30,
@@ -686,7 +684,7 @@ mod tests {
             }
         }
 
-        /// `to_committed` round-trips: nonce + pool set preserved.
+        /// `to_committed` round-trips the pool set.
         #[test]
         fn prop_to_committed_roundtrip(
             nonce in 0u64..1_000_000,
@@ -698,7 +696,6 @@ mod tests {
                 .collect();
             let tx = SubmittedTx::new(B256::ZERO, nonce, pools.clone(), 100);
             let committed = tx.to_committed();
-            prop_assert_eq!(committed.nonce, nonce);
             let committed_set: HashSet<&PoolKey> = committed.pools.iter().collect();
             let expected: HashSet<&PoolKey> = pools.iter().collect();
             prop_assert_eq!(committed_set, expected);

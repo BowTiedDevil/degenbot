@@ -451,6 +451,18 @@ impl NonceLane {
         self.authority.release_lease(lease)
     }
 
+    /// Release a broadcast the lane's strategy owns after a monitor declared
+    /// the transaction expired (it will never land). Frees the authority slot
+    /// so the account's nonce prefix cannot wedge on a dropped transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`DeclineKind::UnknownBroadcast`] when the nonce is not a broadcast
+    /// owned by this lane's strategy.
+    pub fn release_broadcast(&self, nonce: u64) -> Result<u64, DeclineKind> {
+        self.authority.release_broadcast(&self.strategy, nonce)
+    }
+
     /// Seed or advance the authority's confirmed chain nonce from a head read,
     /// never rewinding it.
     ///
@@ -1165,6 +1177,49 @@ mod tests {
         let restamped = lane.stamp().expect("repackage");
         assert_eq!(restamped.nonce(), 11);
         assert_eq!(authority.lease_of(&sid("a")).expect("lease").nonce(), 11);
+    }
+
+    /// Cross-driver probe: two lanes over one shared authority, each holding
+    /// one outstanding lease, never share a nonce. The second lane's stamp
+    /// must skip the first lane's held value rather than issue it again.
+    #[test]
+    fn two_lanes_one_outstanding_each_never_share_a_nonce() {
+        let authority = Arc::new(NonceAuthority::new(50));
+        let ledger = Arc::new(SubmissionLedger::new());
+        let a = NonceLane::new(Arc::clone(&authority), Arc::clone(&ledger), sid("a"));
+        let b = NonceLane::new(Arc::clone(&authority), Arc::clone(&ledger), sid("b"));
+
+        let lease_a = a.stamp().expect("a stamp");
+        let lease_b = b.stamp().expect("b stamp");
+        assert_eq!((lease_a.nonce(), lease_b.nonce()), (50, 51));
+        assert_ne!(
+            lease_a.nonce(),
+            lease_b.nonce(),
+            "the second lane never re-issues the first lane's held value"
+        );
+        // Both reservations are live and distinct in the authority.
+        assert_eq!(authority.outstanding_nonces(), vec![50, 51]);
+    }
+
+    /// The expiry escape hatch at the lane level: releasing a broadcast frees
+    /// exactly that nonce and the next stamp refills it, keeping the prefix
+    /// contiguous.
+    #[test]
+    fn a_lane_releases_an_expired_broadcast_and_refills_the_slot() {
+        let authority = Arc::new(NonceAuthority::new(50));
+        let ledger = Arc::new(SubmissionLedger::new());
+        let lane = NonceLane::new(Arc::clone(&authority), Arc::clone(&ledger), sid("a"));
+        let lease = lane.stamp().expect("stamp");
+        authority.record_broadcast(&lease).expect("broadcast");
+        assert_eq!(authority.outstanding_nonces(), vec![50]);
+
+        assert_eq!(lane.release_broadcast(50), Ok(50));
+        assert_eq!(lane.stamp().expect("refill").nonce(), 50);
+        assert_eq!(
+            lane.release_broadcast(50),
+            Err(DeclineKind::UnknownBroadcast),
+            "the lease is not a broadcast"
+        );
     }
 
     #[test]

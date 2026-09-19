@@ -29,8 +29,7 @@
 
 use crate::prelude::*;
 use degenbot_arbitrage::{FeeOnTransferRegistry, PoolDivergence, PoolDivergenceKey};
-use degenbot_submission::{CommittedTx, Dispatcher, PathSuppression, PoolKey};
-use pyo3::types::PyTuple;
+use degenbot_submission::{Dispatcher, PathSuppression, PoolKey};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -190,23 +189,6 @@ impl PyDispatcher {
         }
     }
 
-    // ── nonce coordination ────────────────────────────────────────
-    /// Return the first `int >= start` not already pending, and reserve it.
-    fn claim_nonce(&self, start: u64) -> u64 {
-        self.inner
-            .lock()
-            .expect("dispatcher mutex poisoned")
-            .claim_nonce(start)
-    }
-
-    /// Release a nonce back to the free pool (tx confirmed or voided).
-    fn release_nonce(&self, nonce: u64) {
-        self.inner
-            .lock()
-            .expect("dispatcher mutex poisoned")
-            .release_nonce(nonce);
-    }
-
     // ── pool mutual exclusion ────────────────────────────────────
     /// Mark Rust pool keys as locked by an in-flight tx.
     fn reserve_pools(&self, path_pools: HashSet<String>) {
@@ -238,23 +220,6 @@ impl PyDispatcher {
             .lock()
             .expect("dispatcher mutex poisoned")
             .is_path_blocked(&path, &committed)
-    }
-
-    /// Release both the nonce and pools held by a completed/expired tx.
-    ///
-    /// Args:
-    ///     `tx`: A `(nonce, pools)` tuple — the minimal committed-tx view.
-    ///              (`PySubmittedTx` round-trips to this; the dispatch
-    ///              orchestration builds it from the Rust `CommittedTx`.)
-    fn release_tx(&self, tx: &Bound<'_, PyTuple>) -> PyResult<()> {
-        let nonce: u64 = tx.get_item(0)?.extract()?;
-        let pools: HashSet<String> = tx.get_item(1)?.extract()?;
-        let committed = CommittedTx::new(nonce, pools.into_iter().map(PoolKey::from).collect());
-        self.inner
-            .lock()
-            .expect("dispatcher mutex poisoned")
-            .release_tx(&committed);
-        Ok(())
     }
 
     // ── task tracking ─────────────────────────────────────────────
@@ -526,14 +491,6 @@ impl PyDispatcher {
     }
 
     // ── introspection (the [dispatch]/[sim] summary reads) ────────
-    /// Count of nonces claimed but not yet released.
-    fn pending_nonce_count(&self) -> usize {
-        self.inner
-            .lock()
-            .expect("dispatcher mutex poisoned")
-            .pending_nonce_count()
-    }
-
     /// Count of pool keys reserved but not yet released.
     fn pending_pool_count(&self) -> usize {
         self.inner

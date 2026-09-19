@@ -55,9 +55,7 @@ use crate::gap_quarantine_journal::{
 use crate::monitor::ReceiptProbe;
 use crate::signer::TxSigner;
 use crate::submission_ledger::NonceLane;
-use crate::submit::{
-    dispatch_and_submit, BundleTarget, NonceSource, SubmissionTarget, SubmitCandidate,
-};
+use crate::submit::{dispatch_and_submit, BundleTarget, SubmissionTarget, SubmitCandidate};
 
 /// The chain the driver operates on; the connector index and the per-chain
 /// `DEGENBOT_RPC_HTTP_CHAINID_<id>` / `DEGENBOT_RPC_WS_CHAINID_<id>` resolver
@@ -346,8 +344,7 @@ async fn run_frame(
     head: u64,
     spent: &mut U256,
     dispatcher: &Arc<Mutex<Dispatcher>>,
-    operator_nonce: u64,
-    nonce_lane: Option<&Arc<NonceLane>>,
+    nonce_lane: &Arc<NonceLane>,
     signer: Option<&TxSigner>,
     gap_probe: &crate::gap_probe::GapProbe,
     quarantine: &mut Quarantine,
@@ -562,10 +559,6 @@ async fn run_frame(
             // so the target stays the bundle-only arm regardless.
             let broadcast_relays = build_broadcast_relays(cfg, provider).await;
             let target = bid_submission_target(cfg, ev.hash, head + 1);
-            let nonce_source = match nonce_lane {
-                Some(lane) => NonceSource::authority(Arc::clone(lane)),
-                None => NonceSource::dispatcher(operator_nonce),
-            };
             match dispatch_and_submit(
                 vec![candidate],
                 dispatcher,
@@ -574,7 +567,7 @@ async fn run_frame(
                 Arc::new(SidecarProbe {
                     provider: Arc::clone(provider),
                 }),
-                nonce_source,
+                nonce_lane,
                 head,
                 cfg.dry_run,
                 false,
@@ -1029,10 +1022,10 @@ pub struct BackrunContext {
     /// the process-global state root for the standalone single-strategy
     /// sidecar (strict parity).
     pub lane_root: Option<PathBuf>,
-    /// The host-minted sign-time nonce seam. `Some` routes every bid's nonce
-    /// through the process-wide authority (the hosted two-strategy path);
-    /// `None` keeps the standalone dispatcher reservation table.
-    pub nonce_lane: Option<Arc<NonceLane>>,
+    /// The sign-time nonce seam: the one issuer every runtime shape stamps
+    /// through. The standalone sidecar mints a host of size one around its
+    /// own authority; a hosted lane receives the host's shared lane.
+    pub nonce_lane: Arc<NonceLane>,
 }
 
 /// Why a backrun lane could not be booted.
@@ -1216,7 +1209,7 @@ pub fn backrun_boot(
     route_registry: Option<Arc<RouteRegistry>>,
     connector_db: Option<DegenbotDb>,
     lane_root: Option<PathBuf>,
-    nonce_lane: Option<Arc<NonceLane>>,
+    nonce_lane: Arc<NonceLane>,
 ) -> BackrunBoot {
     let cfg = SidecarConfig::from_config(config, join.rpc_url);
     let head_ws_url =
@@ -1250,7 +1243,7 @@ pub fn backrun_spawn_factory(
     config: Arc<degenbot_config::BotConfig>,
     hub: Arc<Hub>,
     route_registry: Option<Arc<RouteRegistry>>,
-    nonce_lane: Option<Arc<NonceLane>>,
+    nonce_lane: Arc<NonceLane>,
 ) -> DriverSpawnFactory {
     Box::new(move |lane| {
         Box::pin(async move {
@@ -1440,8 +1433,7 @@ struct LaneBoot {
     strategy: BackrunStrategy,
     pl: PipelineConfig,
     dispatcher: Arc<Mutex<Dispatcher>>,
-    operator_nonce: u64,
-    nonce_lane: Option<Arc<NonceLane>>,
+    nonce_lane: Arc<NonceLane>,
     signer: Option<TxSigner>,
     gap_probe: crate::gap_probe::GapProbe,
     sim_client: alloy::rpc::client::RpcClient,
@@ -1571,6 +1563,9 @@ impl BackrunDriver {
             fetched_head
         };
         let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(replay_head)));
+        // Seed the authority from the chain's next nonce for the operator
+        // account: the lane's first stamp must never re-issue a nonce the
+        // chain has already consumed.
         let operator_nonce = provider
             .get_transaction_count(
                 &signer.as_ref().map(TxSigner::address).unwrap_or_default(),
@@ -1578,6 +1573,7 @@ impl BackrunDriver {
             )
             .await
             .unwrap_or_default();
+        nonce_lane.observe_chain_nonce(operator_nonce);
 
         tracing::info!(
             bid_mode = cfg.bid_mode_legal(),
@@ -1592,7 +1588,6 @@ impl BackrunDriver {
             strategy,
             pl,
             dispatcher,
-            operator_nonce,
             nonce_lane,
             signer,
             gap_probe,
@@ -1620,7 +1615,6 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
         mut strategy,
         pl,
         dispatcher,
-        operator_nonce,
         nonce_lane,
         signer,
         gap_probe,
@@ -1682,8 +1676,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
                 current_block,
                 &mut spent,
                 &dispatcher,
-                operator_nonce,
-                nonce_lane.as_ref(),
+                &nonce_lane,
                 signer.as_ref(),
                 &gap_probe,
                 &mut quarantine,
@@ -1809,6 +1802,28 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
                     .expect("dispatcher mutex poisoned")
                     .advance_block(head);
                 current_block = head;
+                // Refresh the shared nonce authority from the chain's
+                // operator-account nonce: a confirmed broadcast leaves the
+                // outstanding set, and a rewind restores a broadcast the old
+                // head had confirmed. Guarded on outstanding work so an idle
+                // lane pays no per-head chain read.
+                if nonce_lane.authority().has_outstanding() {
+                    if let Some(operator) = signer.as_ref().map(TxSigner::address) {
+                        match provider.get_transaction_count(&operator, None).await {
+                            Ok(confirmed) => {
+                                let _ = nonce_lane.authority().set_confirmed_reorg(confirmed);
+                                let outstanding = nonce_lane.authority().outstanding_nonces();
+                                let _ = nonce_lane.ledger().reconcile(confirmed, &outstanding);
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    %error,
+                                    "head nonce read failed - authority reconcile deferred"
+                                );
+                            }
+                        }
+                    }
+                }
                 pl.wallet_gas_cost_wei.store(
                     u64::try_from(wallet_gas_cost_at(&provider, head, &cfg).await)
                         .unwrap_or(u64::MAX),
@@ -2010,8 +2025,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
                                     current_block,
                                     &mut spent,
                                     &dispatcher,
-                                    operator_nonce,
-                                    nonce_lane.as_ref(),
+                                    &nonce_lane,
                                     signer.as_ref(),
                                     &gap_probe,
                                     &mut quarantine,
@@ -2160,8 +2174,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
                 current_block,
                 &mut spent,
                 &dispatcher,
-                operator_nonce,
-                nonce_lane.as_ref(),
+                &nonce_lane,
                 signer.as_ref(),
                 &gap_probe,
                 &mut quarantine,

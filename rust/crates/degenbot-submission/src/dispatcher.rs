@@ -13,15 +13,19 @@
 //!
 //! A standalone `cargo add degenbot` consumer driving the dispatch loop
 //! reaches this coordination state via the umbrella `pub use
-//! degenbot_submission::dispatcher` and can claim nonces, reserve pools,
-//! track submission tasks, advance the block clock, record fee history, and
-//! apply path suppression — with **zero Python, zero `pyo3`**.
+//! degenbot_submission::dispatcher` and can reserve pools, track submission
+//! tasks, advance the block clock, record fee history, and apply path
+//! suppression — with **zero Python, zero `pyo3`**.
+//!
+//! Nonce coordination does **not** live here. Issuance and release are owned
+//! by the process-wide `degenbot_bot::nonce_authority::NonceAuthority`, and a
+//! sign path obtains its nonce from the strategy's `NonceLane`. The dispatcher
+//! coordinates the pool mutual-exclusion set and the monitor task set only.
 //!
 //! # Parity (ADR-005 §4.2)
 //!
 //! The §4.2 oracle is the Python `Dispatcher`/`PathSuppression` shapes.
 //! Property tests pin the behavioral parity:
-//! - nonce dedup (claim never returns a pending nonce),
 //! - pool mutual exclusion (`is_path_blocked` true iff any path pool overlaps
 //!   pending ∪ committed),
 //! - ring prune at `FEE_HISTORY_WINDOW` (oldest block popped on overflow),
@@ -98,29 +102,27 @@ impl std::fmt::Display for PoolKey {
 }
 
 /// The minimal view of a confirmed/expired in-flight transaction the
-/// dispatcher needs to release its held coordination state (nonce + pools).
+/// dispatcher needs to release its held pool coordination state.
 ///
 /// Matches the `SubmittedTx` fields consumed by the Python
-/// `Dispatcher.release_tx(tx)` — `tx.nonce` + `set(tx.pools)` (the
-/// `tx_hash`/`submission_block` fields are monitor-only and not dispatcher
-/// state). Owned by the N6 submit-orchestration sibling; this crate consumes
-/// only the release-coordination projection (ADR-005 — compose the producer's
-/// record, don't duplicate it).
+/// `Dispatcher.release_tx(tx)` — `set(tx.pools)` (the `tx_hash`/`nonce`/
+/// `submission_block` fields are monitor-only and not dispatcher state).
+/// Nonce release belongs to the `NonceAuthority`, not the dispatcher. Owned by
+/// the N6 submit-orchestration sibling; this crate consumes only the
+/// release-coordination projection (ADR-005 — compose the producer's record,
+/// don't duplicate it).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedTx {
-    /// The account nonce this tx was submitted with (held in
-    /// `pending_nonces` until release).
-    pub nonce: u64,
     /// The pool keys locked by this tx (held in `pending_pools` until
     /// release).
     pub pools: Vec<PoolKey>,
 }
 
 impl CommittedTx {
-    /// Construct a committed-tx view from its coordination fields.
+    /// Construct a committed-tx view from its pool coordination fields.
     #[must_use]
-    pub fn new(nonce: u64, pools: Vec<PoolKey>) -> Self {
-        Self { nonce, pools }
+    pub fn new(pools: Vec<PoolKey>) -> Self {
+        Self { pools }
     }
 }
 
@@ -244,11 +246,6 @@ impl PathSuppression {
 /// object.
 #[derive(Debug)]
 pub struct Dispatcher {
-    /// Nonces currently claimed by an in-flight tx (the free-pool exclusion
-    /// set). `claim_nonce(start)` scans from `start` for the first non-member
-    /// (matches the Python `next(n for n in itertools.count(start)...)`
-    /// linear scan) and reserves it.
-    pending_nonces: HashSet<u64>,
     /// Pool keys locked by an in-flight tx (mutual exclusion across the
     /// dispatch batch).
     pending_pools: HashSet<PoolKey>,
@@ -279,7 +276,6 @@ pub struct Dispatcher {
 impl Default for Dispatcher {
     fn default() -> Self {
         Self {
-            pending_nonces: HashSet::new(),
             pending_pools: HashSet::new(),
             active_tasks: JoinSet::new(),
             current_block: Arc::new(Mutex::new(0)),
@@ -301,26 +297,6 @@ impl Dispatcher {
             block_events: watch::channel(current_block).0,
             ..Self::default()
         }
-    }
-
-    // ── nonce coordination ───────────────────────────────────────────────
-
-    /// Return the first int >= `start` not already pending, and reserve it.
-    ///
-    /// Linear scan upward from `start` skipping members of `pending_nonces`
-    /// (matches `next(n for n in itertools.count(start) if n not in
-    /// pending_nonces)`).
-    pub fn claim_nonce(&mut self, start: u64) -> u64 {
-        let mut nonce = start;
-        while !self.pending_nonces.insert(nonce) {
-            nonce += 1;
-        }
-        nonce
-    }
-
-    /// Release a nonce back to the free pool (tx confirmed or voided).
-    pub fn release_nonce(&mut self, nonce: u64) {
-        self.pending_nonces.remove(&nonce);
     }
 
     // ── pool mutual exclusion ────────────────────────────────────────────
@@ -361,9 +337,11 @@ impl Dispatcher {
             .any(|p| self.pending_pools.contains(p) || committed_pools.contains(p))
     }
 
-    /// Release both the nonce and pools held by a completed/expired tx.
+    /// Release the pools held by a completed/expired tx.
+    ///
+    /// Nonce lifecycle (land, release, tombstone) is the `NonceAuthority`'s;
+    /// the dispatcher releases only the pool mutual-exclusion set here.
     pub fn release_tx(&mut self, tx: &CommittedTx) {
-        self.release_nonce(tx.nonce);
         let pools: Vec<PoolKey> = tx.pools.clone();
         self.release_pools(pools);
     }
@@ -532,12 +510,6 @@ impl Dispatcher {
 
     // ── inspection (test + monitor parity) ──────────────────────────────
 
-    /// Number of currently-pending nonces.
-    #[must_use]
-    pub fn pending_nonce_count(&self) -> usize {
-        self.pending_nonces.len()
-    }
-
     /// Number of currently-pending (locked) pools.
     #[must_use]
     pub fn pending_pool_count(&self) -> usize {
@@ -568,46 +540,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    // §4.2 property: claim_nonce never returns a pending nonce, and the
-    // returned nonce is immediately reserved (a subsequent claim from the
-    // same start skips it).
-    #[test]
-    fn claim_nonce_reserves_and_dedups() {
-        let mut d = Dispatcher::default();
-        let n0 = d.claim_nonce(10);
-        assert_eq!(n0, 10);
-        // same start skips the now-pending 10
-        let n1 = d.claim_nonce(10);
-        assert_eq!(n1, 11);
-        // explicit release frees 10 again
-        d.release_nonce(10);
-        let n2 = d.claim_nonce(10);
-        assert_eq!(n2, 10);
-        assert_eq!(d.pending_nonce_count(), 2); // 10 + 11
-    }
-
     proptest! {
-        /// Claiming `k` nonces from `start` over a set with some pre-seeded pending
-        /// nonces always yields distinct values not in the pending set, and each is
-        /// reserved afterward.
-        #[test]
-        fn prop_claim_nonce_dedup(
-            start in 0u64..1_000,
-            seeds in proptest::collection::hash_set(0u64..2_000, 0..50),
-            k in 1usize..100,
-        ) {
-            let mut d = Dispatcher::default();
-            for s in &seeds {
-                d.pending_nonces_raw_insert(*s);
-            }
-            let mut seen = HashSet::new();
-            for _ in 0..k {
-                let n = d.claim_nonce(start);
-                proptest::prop_assert!(!seeds.contains(&n), "claimed a pending nonce");
-                proptest::prop_assert!(seen.insert(n), "claimed a duplicate nonce");
-            }
-        }
-
         /// `is_path_blocked` is true iff at least one path pool overlaps pending ∪
         /// committed; empty path pool sets are never blocked.
         #[test]
@@ -728,17 +661,15 @@ mod tests {
     }
 
     #[test]
-    fn release_tx_releases_nonce_and_pools() {
+    fn release_tx_releases_pools() {
         let mut d = Dispatcher::default();
         d.reserve_pools(vec![PoolKey::new("poolA"), PoolKey::new("poolB")]);
-        let _ = d.claim_nonce(7);
         assert!(d.is_pool_pending(&PoolKey::new("poolA")));
-        assert_eq!(d.pending_nonce_count(), 1);
 
-        let tx = CommittedTx::new(7, vec![PoolKey::new("poolA"), PoolKey::new("poolB")]);
+        let tx = CommittedTx::new(vec![PoolKey::new("poolA"), PoolKey::new("poolB")]);
         d.release_tx(&tx);
         assert!(!d.is_pool_pending(&PoolKey::new("poolA")));
-        assert_eq!(d.pending_nonce_count(), 0);
+        assert_eq!(d.pending_pool_count(), 0);
     }
 
     #[test]
@@ -787,11 +718,8 @@ mod tests {
         assert_eq!(d.active_task_count(), 0);
     }
 
-    // ── test-only seam to seed pending nonces for property tests ──────────
+    // ── test-only seam ────────────────────────────────────────────────────
     impl Dispatcher {
-        fn pending_nonces_raw_insert(&mut self, n: u64) {
-            self.pending_nonces.insert(n);
-        }
         fn block_priority_fees_len(&self) -> usize {
             self.block_priority_fees.len()
         }

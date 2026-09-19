@@ -122,12 +122,31 @@ async fn main() {
     // The hub is the host's, not the lane's; the lane registers its feed on it.
     let hub = Arc::new(Hub::new());
 
+    // ONE nonce issuer for the standalone process: this bin is a host of size
+    // one, so it mints its own authority, ledger, and lane rather than keeping
+    // a private dispatcher reservation table. The driver seeds the authority
+    // from the operator account's chain nonce at its own boot and reconciles
+    // it per head.
+    let nonce_lane = Arc::new(degenbot_submission::NonceLane::new(
+        Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(0)),
+        Arc::new(degenbot_submission::SubmissionLedger::new()),
+        degenbot_bot::nonce_authority::StrategyId::new("backrun"),
+    ));
+
     // ONE boot path, shared with a multi-strategy host: `backrun_boot`
     // manufactures the lane's config, head source, and context, and
     // `into_driver_future` starts the lane. The standalone sidecar keeps the
     // process-global state root (`lane_root: None`) and polls the future
     // inline, so a lane panic still unwinds the process.
-    let boot = backrun_boot(&config, join, hub, route_registry, connector_db, None, None);
+    let boot = backrun_boot(
+        &config,
+        join,
+        hub,
+        route_registry,
+        connector_db,
+        None,
+        nonce_lane,
+    );
     boot.into_driver_future().await;
 }
 

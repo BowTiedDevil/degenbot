@@ -204,6 +204,45 @@ file vocabulary.
   (`has_hosted_activity`) short-circuiting a settlement-only boot so it pays no
   new RPC.
 
+## Supplement — the authority is the sole nonce issuer
+
+The `NonceAuthority` is not merely the host's preferred nonce source; it is the
+only one. Every signing path in every runtime shape obtains its nonce from a
+`NonceLane` bound to the process `NonceAuthority`, and no second reservation
+table exists to disagree with it:
+
+- The dispatcher (`degenbot-submission/src/dispatcher.rs`) coordinates the pool
+  mutual-exclusion set and the monitor task set only. Its former
+  `pending_nonces` table, `claim_nonce` scan, `release_nonce`, and
+  `pending_nonce_count` are deleted; nothing in the dispatch loop answers
+  "which nonce is reserved?" from local state.
+- `dispatch_and_submit` takes an `Arc<NonceLane>` and stamps through
+  `NonceLane::stamp` (`submission_ledger.rs`). The `NonceSource` switch that
+  once chose between a private dispatcher table and the authority is gone, so a
+  call site cannot be wired to the weaker owner and still compile.
+- The standalone sidecar is a host of size one: `bin/backrun_sidecar.rs` mints
+  its own authority, ledger, and lane and hands the lane through
+  `BackrunContext`. The lane seeds the authority from the operator account's
+  chain nonce at boot and refreshes it per head (`backrun_driver.rs`), exactly
+  as the hosted boot does.
+- The Python settlement seam no longer computes a nonce. It forwards the
+  submission-time chain read and resolves its lane from the host boot; a
+  host-less process mints a process-local lane with a loud deprecation rather
+  than a parallel reservation table (`degenbot-python/src/submission/submit.rs`).
+
+Issuance, broadcast promotion, landing, tombstone, and the reorg rewind are all
+authority writes. The one deliberate counterweight is the monitor's expiry
+release: a broadcast that never lands would otherwise hold its slot forever and
+wedge the account's contiguous prefix, so `NonceAuthority::release_broadcast`
+frees exactly that nonce when a monitor returns `Expired`. It is the only entry
+point that can re-open an outstanding broadcast, and its doc states the
+caller's assertion (the transaction will never land).
+
+Reconciliation keeps the authority's confirmed nonce current: a hosted head feed
+drives `StrategyHost::on_head`, and the standalone lane performs the same
+`set_confirmed_reorg` + ledger reconcile on each head, guarded on outstanding
+work so an idle lane pays no per-head chain read.
+
 ## Related
 
 - **ADR-055** — pending-transaction strategy seams; D5 named this host as
