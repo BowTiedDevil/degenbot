@@ -19,6 +19,7 @@ dashmap = { version = "^6.2" }
 degenbot-abi.workspace = true
 degenbot-math.workspace = true
 degenbot-core.workspace = true
+degenbot-eventhub.workspace = true
 degenbot-pools.workspace = true
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 parking_lot = { version = "^0.12" }

@@ -5,7 +5,7 @@
 //! wire behavior: the subscribe handshake, typed event parse, chain-id gate,
 //! reconnect-on-drop, silent-socket watchdog, ring eviction, parse resilience.
 
-#![expect(clippy::unwrap_used, clippy::panic)]
+#![expect(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -78,6 +78,12 @@ fn cfg_with(port: u16, watchdog: Duration, ring: usize) -> BackrunFeedConfig {
         reconnect_backoff: Duration::from_millis(20),
         ..BackrunFeedConfig::for_mainnet()
     }
+}
+
+/// Spawn a feed on a fresh per-test hub (one source per hub).
+fn spawn_feed(cfg: BackrunFeedConfig) -> BackrunFeed {
+    let hub = degenbot_eventhub::Hub::new();
+    BackrunFeed::spawn_on_hub(&hub, cfg).expect("fresh hub registers the pending feed")
 }
 
 struct MockServer {
@@ -200,7 +206,7 @@ async fn t01_subscribe_handshake_requests_named_subscription_and_drains_typed_ev
         Step::Push(sample_event("0x1")),
     ]])
     .await;
-    let feed = BackrunFeed::spawn(cfg(server.addr.port()));
+    let feed = spawn_feed(cfg(server.addr.port()));
     let evs = drain_until(&feed, 1, Duration::from_secs(5)).await;
     let st = feed.status();
     // Wire: handshake requested the named subscription with mirror-id.
@@ -257,7 +263,7 @@ async fn t02_non_mainnet_chain_id_event_is_rejected_and_counted() {
         Step::Push(sample_event("0x1")),
     ]])
     .await;
-    let feed = BackrunFeed::spawn(cfg(server.addr.port()));
+    let feed = spawn_feed(cfg(server.addr.port()));
     let evs = drain_until(&feed, 1, Duration::from_secs(5)).await;
     assert_eq!(evs.len(), 1, "only the mainnet event drains");
     assert_eq!(evs[0].chain_id, 1);
@@ -283,7 +289,7 @@ async fn t03_server_drop_triggers_reconnect_and_resubscribe() {
         ],
     ])
     .await;
-    let feed = BackrunFeed::spawn(cfg_with(server.addr.port(), Duration::from_secs(30), 64));
+    let feed = spawn_feed(cfg_with(server.addr.port(), Duration::from_secs(30), 64));
     let evs = drain_until(&feed, 2, Duration::from_secs(10)).await;
     assert_eq!(
         evs[0].hash.to_string(),
@@ -310,7 +316,7 @@ async fn t04_silent_socket_within_watchdog_is_torn_down_and_reconnected() {
     ])
     .await;
     // 200ms watchdog: a silent socket is reaped quickly.
-    let feed = BackrunFeed::spawn(cfg_with(server.addr.port(), Duration::from_millis(200), 64));
+    let feed = spawn_feed(cfg_with(server.addr.port(), Duration::from_millis(200), 64));
     let evs = drain_until(&feed, 1, Duration::from_secs(10)).await;
     assert_eq!(evs.len(), 1);
     let st = feed.status();
@@ -326,7 +332,7 @@ async fn t05_ring_capacity_evicts_oldest_and_counts_drops() {
         steps.push(Step::Push(sample_tx("0x1", i, &h)));
     }
     let server = start_server(vec![steps]).await;
-    let feed = BackrunFeed::spawn(cfg_with(server.addr.port(), Duration::from_secs(30), 8));
+    let feed = spawn_feed(cfg_with(server.addr.port(), Duration::from_secs(30), 8));
     let evs = drain_until(&feed, 8, Duration::from_secs(5)).await;
     assert_eq!(evs.len(), 8);
     // Newest 8 (nonces 4..=11), in order.
@@ -344,7 +350,7 @@ async fn t05_ring_capacity_evicts_oldest_and_counts_drops() {
 #[tokio::test]
 #[ignore = "live network: connects to wss://searchers.mevblocker.io"]
 async fn live_stream_probe_delivers_real_events() {
-    let feed = BackrunFeed::spawn(BackrunFeedConfig {
+    let feed = spawn_feed(BackrunFeedConfig {
         // Backrunnable flow arrives in bursts; wait patiently for one burst.
         watchdog: Duration::from_secs(30),
         ..BackrunFeedConfig::for_mainnet()
@@ -380,7 +386,7 @@ async fn t06_malformed_notification_is_counted_not_fatal() {
         Step::Push(sample_event("0x1")),
     ]])
     .await;
-    let feed = BackrunFeed::spawn(cfg(server.addr.port()));
+    let feed = spawn_feed(cfg(server.addr.port()));
     // Both malformed pushes are counted; the last valid event still drains,
     // proving the connection survived.
     let evs = drain_until(&feed, 1, Duration::from_secs(5)).await;
@@ -388,4 +394,30 @@ async fn t06_malformed_notification_is_counted_not_fatal() {
     let st = feed.status();
     assert_eq!(st.rejected_parse, 2);
     assert_eq!(st.accepted, 1);
+}
+
+#[tokio::test]
+async fn t07_drain_returns_unbatched_frames_oldest_first() {
+    // Characterization (Phase B1): with the ring under capacity, `drain()`
+    // returns every frame in arrival order, oldest first, as one atomic take.
+    let mut steps = vec![Step::ExpectSubscribe, Step::Ack];
+    let mut hashes = Vec::new();
+    for nonce in 0u64..5 {
+        let hash = format!("0x{:064x}", 0xabc0u64 + nonce);
+        hashes.push(hash.clone());
+        steps.push(Step::Push(sample_tx("0x1", nonce, &hash)));
+    }
+    let server = start_server(vec![steps]).await;
+    // `for_mainnet` capacity is 4096 and only five frames arrive: no eviction.
+    let feed = spawn_feed(cfg(server.addr.port()));
+    let evs = drain_until(&feed, 5, Duration::from_secs(5)).await;
+    assert_eq!(evs.len(), 5, "unbatched frames are all retained");
+    for (i, ev) in evs.iter().enumerate() {
+        assert_eq!(ev.nonce, i as u64, "frames drain in arrival order");
+        assert_eq!(ev.hash.to_string(), hashes[i], "oldest frame is first");
+    }
+    let st = feed.status();
+    assert_eq!(st.dropped_ring, 0, "under capacity, nothing evicted");
+    assert_eq!(st.accepted, 5);
+    assert!(feed.drain().is_empty(), "drain is an atomic take");
 }

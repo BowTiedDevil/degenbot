@@ -2408,6 +2408,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-eventhub"
+version = "0.6.0-alpha.11"
+dependencies = [
+ "alloy",
+ "parking_lot",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "degenbot-execution"
 version = "0.6.0-alpha.11"
 dependencies = [
@@ -2546,6 +2556,7 @@ dependencies = [
  "dashmap",
  "degenbot-abi",
  "degenbot-core",
+ "degenbot-eventhub",
  "degenbot-math",
  "degenbot-pools",
  "futures-util",
@@ -2646,6 +2657,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-db",
  "degenbot-decoders",
+ "degenbot-eventhub",
  "degenbot-executor",
  "degenbot-pathfinding",
  "degenbot-pools",

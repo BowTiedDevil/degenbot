@@ -1,0 +1,18 @@
+[package]
+name = "degenbot-eventhub"
+description = "Per-process event hub: transport-pure event vocabulary plus named overflow policies for intake fan-out."
+keywords = ["mev", "event", "hub", "fanout"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy = { version = "^2.4" }
+parking_lot = { version = "^0.12" }
+serde_json = { version = "^1.0" }
+thiserror = { version = "^2.0" }

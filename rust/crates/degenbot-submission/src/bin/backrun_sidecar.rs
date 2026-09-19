@@ -40,6 +40,7 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_bot::sidecar::{gate_mined_target, Decision, SidecarConfig};
+use degenbot_eventhub::Hub;
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
@@ -1343,15 +1344,22 @@ async fn main() {
     // resumes the parked set.
     let mut quarantine_journal = reload_quarantine(&mut quarantine);
 
-    // Live mode: MEVBlocker feed.
-    let feed = BackrunFeed::spawn(BackrunFeedConfig {
-        url: if cfg.stream_url.is_empty() {
-            BackrunFeedConfig::for_mainnet().url
-        } else {
-            cfg.stream_url.clone()
+    // Live mode: MEVBlocker feed. The hub owns the process-lifetime event
+    // channels; the feed registers its PendingTx drop-oldest ring on it and
+    // drains through the hub's typed receiver.
+    let event_hub = Hub::new();
+    let feed = BackrunFeed::spawn_on_hub(
+        &event_hub,
+        BackrunFeedConfig {
+            url: if cfg.stream_url.is_empty() {
+                BackrunFeedConfig::for_mainnet().url
+            } else {
+                cfg.stream_url.clone()
+            },
+            ..BackrunFeedConfig::for_mainnet()
         },
-        ..BackrunFeedConfig::for_mainnet()
-    });
+    )
+    .expect("fresh hub registers the pending-tx feed");
 
     // Head source for the live loop: a `newHeads` subscription over a dedicated
     // WS endpoint (the MEVBlocker frame feed and the chain node are different
