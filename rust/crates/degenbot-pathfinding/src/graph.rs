@@ -15,7 +15,8 @@
 //! hashing on every edge explored. Each `CompactEdge` is 8 bytes (two `u32`)
 //! versus the 24-byte `Edge`, improving cache density for the hot DFS loop.
 
-use std::collections::HashMap;
+use std::borrow::Borrow;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -147,6 +148,41 @@ pub struct PathGraph {
     token_index: HashMap<u64, u32, U64BuildHasher>,
     /// Compact pool index → `(pool_id, PoolKind)` for yielding results.
     pools: Vec<(u64, PoolKind)>,
+    /// Bundle layer, computed once at construction: parallel pools between
+    /// the same unordered token pair collapse into one bundle. Bundle ids
+    /// follow first-appearance order in the edge list (deterministic; ties
+    /// in per-token sorts resolve back to edge order). Pools of bundle `b`
+    /// are `bundle_pools_flat[bundle_offsets[b] .. bundle_offsets[b + 1]]`
+    /// in ascending pool index — CSR, so no per-bundle allocations.
+    bundle_offsets: Vec<u32>,
+    bundle_pools_flat: Vec<u32>,
+    /// Per bundle: the unordered compact token pair it spans.
+    bundle_pairs: Vec<(u32, u32)>,
+    /// Per bundle: bitmask of `PoolKind`s present among its pools.
+    bundle_kinds: Vec<u32>,
+}
+
+/// Admissible prune data for ONE bounded search (start, end, budget).
+///
+/// `to_end[x]` is the fewest hops from `x` to the target — a lower bound on
+/// the trail hops still needed once `x` is reached, so a step onto `x` is
+/// cut only when no within-budget trail can close through it.
+///
+/// A start-side/ball mask (`d_start + d_end > budget` exclusion) would be
+/// redundant here: the DFS only ever reaches `start`-reachable nodes, and a
+/// node arrived at length `len` passes the cutoff only when
+/// `d_end[x] <= emd - len - 1 <= emd - d_start[x] - 1` — exactly the ball
+/// condition, enforced en route at zero extra cost.
+struct SearchPrune {
+    to_end: Vec<u32>,
+}
+
+impl SearchPrune {
+    fn build(graph: &PathGraph, end: u32) -> Self {
+        Self {
+            to_end: graph.hop_distances(&[end]),
+        }
+    }
 }
 
 impl PathGraph {
@@ -158,9 +194,82 @@ impl PathGraph {
         &self.adj_flat[start..end]
     }
 
+    /// Multi-source BFS hop distances to the target node set (undirected).
+    /// `u32::MAX` marks unreachable. On the token multigraph this is a LOWER
+    /// bound on the trail-hop count between any two nodes, so it is an
+    /// admissible quantity for search cutoffs: skipping a step can only
+    /// discard trails that provably exceed the budget.
+    #[must_use]
+    pub(crate) fn hop_distances(&self, sources: &[u32]) -> Vec<u32> {
+        let n = self.nodes();
+        let mut dist: Vec<u32> = vec![u32::MAX; n];
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for &s in sources {
+            if (s as usize) < n {
+                dist[s as usize] = 0;
+                queue.push_back(s);
+            }
+        }
+        while let Some(x) = queue.pop_front() {
+            let next = dist[x as usize].saturating_add(1);
+            for edge in self.adj_of(x) {
+                if dist[edge.neighbor as usize] > next {
+                    dist[edge.neighbor as usize] = next;
+                    queue.push_back(edge.neighbor);
+                }
+            }
+        }
+        dist
+    }
+
     /// Compact node count (=`adj_offsets.len() - 1`).
     fn nodes(&self) -> usize {
         self.adj_offsets.len() - 1
+    }
+
+    /// Member pools of bundle `b` (ascending pool index).
+    #[must_use]
+    pub(crate) fn bundle_pools(&self, b: u32) -> &[u32] {
+        let start = self.bundle_offsets[b as usize] as usize;
+        let end = self.bundle_offsets[b as usize + 1] as usize;
+        &self.bundle_pools_flat[start..end]
+    }
+
+    /// Kind bitmask of bundle `b`.
+    #[must_use]
+    pub(crate) fn bundle_kind_mask(&self, b: u32) -> u32 {
+        self.bundle_kinds[b as usize]
+    }
+
+    /// Per-token bundle incidence as CSR: `(other token, bundle)` pairs, in
+    /// bundle first-appearance order. The search clones the flat array
+    /// (memcpy) and stable-sorts each token's slice by prune distance — the
+    /// only search-dependent ordering.
+    #[must_use]
+    pub(crate) fn token_bundles_csr(&self) -> (Vec<u32>, Vec<(u32, u32)>) {
+        let n = self.nodes();
+        let mut offsets = vec![0u32; n + 1];
+        for &(a, t) in &self.bundle_pairs {
+            offsets[a as usize + 1] += 1;
+            if t != a {
+                offsets[t as usize + 1] += 1;
+            }
+        }
+        for w in 1..=n {
+            offsets[w] += offsets[w - 1];
+        }
+        let mut flat = vec![(0u32, 0u32); offsets[n] as usize];
+        let mut cursor: Vec<u32> = offsets[..n].to_vec();
+        for (b, &(a, t)) in self.bundle_pairs.iter().enumerate() {
+            let bundle = u32::try_from(b).unwrap_or(u32::MAX);
+            flat[cursor[a as usize] as usize] = (t, bundle);
+            cursor[a as usize] += 1;
+            if t != a {
+                flat[cursor[t as usize] as usize] = (a, bundle);
+                cursor[t as usize] += 1;
+            }
+        }
+        (offsets, flat)
     }
 
     /// Build from a flat list of `(token0, token1, pool_id, pool_kind)` edges.
@@ -188,14 +297,35 @@ impl PathGraph {
         let mut token_index: HashMap<u64, u32, U64BuildHasher> =
             HashMap::with_capacity_and_hasher(n * 2, U64BuildHasher::default());
         let mut pools: Vec<(u64, PoolKind)> = Vec::with_capacity(n);
-        // Pass 1: intern endpoints; arena keeps (compactnode0, node1) per edge.
+        // Pass 1: intern endpoints; arena keeps (compactnode0, node1) per
+        // edge, and parallel pools intern into one bundle in first-
+        // appearance order (packed-pair keys keep lookups off SipHash).
         let mut arena: Vec<(u32, u32)> = Vec::with_capacity(n);
+        let mut bundle_id: HashMap<u64, u32, U64BuildHasher> =
+            HashMap::with_capacity_and_hasher(n, U64BuildHasher::default());
+        let mut bundle_pairs: Vec<(u32, u32)> = Vec::with_capacity(n);
+        let mut bundle_kinds: Vec<u32> = Vec::with_capacity(n);
+        let mut pool_bundle: Vec<u32> = Vec::with_capacity(n);
 
         for (token0, token1, pool_id, pool_kind) in edges {
             pools.push((pool_id, pool_kind));
 
             let idx0 = Self::intern_token(&mut token_index, token0);
             let idx1 = Self::intern_token(&mut token_index, token1);
+
+            let packed = pack_token_pair(idx0, idx1);
+            let kind_bit = 1u32 << pool_kind.as_u8();
+            let bundle = if let Some(&b) = bundle_id.get(&packed) {
+                bundle_kinds[b as usize] |= kind_bit;
+                b
+            } else {
+                let b = u32::try_from(bundle_pairs.len()).unwrap_or(u32::MAX);
+                bundle_id.insert(packed, b);
+                bundle_pairs.push((idx0.min(idx1), idx0.max(idx1)));
+                bundle_kinds.push(kind_bit);
+                b
+            };
+            pool_bundle.push(bundle);
 
             arena.push((idx0, idx1));
         }
@@ -242,11 +372,35 @@ impl PathGraph {
             *cb += 1;
         }
 
+        // Bundle pools as CSR (count + cursor fill): pools land grouped by
+        // bundle, ascending in pool index within a bundle, with zero
+        // per-bundle allocations.
+        let bundle_count = bundle_pairs.len();
+        let mut bundle_offsets: Vec<u32> = vec![0; bundle_count + 1];
+        for &b in &pool_bundle {
+            bundle_offsets[b as usize + 1] += 1;
+        }
+        for w in 1..=bundle_count {
+            bundle_offsets[w] += bundle_offsets[w - 1];
+        }
+        let mut bundle_pools_flat: Vec<u32> = vec![0; pool_bundle.len()];
+        let mut bcursor: Vec<u32> = bundle_offsets[..bundle_count].to_vec();
+        for (pool_idx_usize, &b) in pool_bundle.iter().enumerate() {
+            #[expect(clippy::expect_used)]
+            let pool_idx = u32::try_from(pool_idx_usize).expect("pool index exceeds u32::MAX");
+            bundle_pools_flat[bcursor[b as usize] as usize] = pool_idx;
+            bcursor[b as usize] += 1;
+        }
+
         Self {
             adj_offsets,
             adj_flat,
             token_index,
             pools,
+            bundle_offsets,
+            bundle_pools_flat,
+            bundle_pairs,
+            bundle_kinds,
         }
     }
 
@@ -407,224 +561,144 @@ impl PathGraph {
     }
 }
 
-/// A lazy, stateful depth-first search iterator over valid cycles.
+/// Minimum elapsed wall-clock between discovery heartbeat emissions.
 ///
-/// This struct holds the DFS stack, working path, and visited set,
-/// yielding one path at a time via [`PathFinder::next_path`]. This avoids
-/// collecting all results into memory at once — essential for large
-/// graphs that produce millions of paths.
-///
-/// Created by [`PathGraph::find_paths_iter`].
-pub struct PathFinder<'a> {
-    graph: &'a PathGraph,
-    end: u32,
-    min_depth: usize,
-    effective_max_depth: Option<usize>,
-    include_reverse: bool,
-    pool_type_per_depth: Option<&'a [Option<Vec<PoolKind>>]>,
-    node_valid_depths: Option<&'a [Vec<bool>]>,
-    filter_len: usize,
-    stack: Vec<(u32, usize, bool)>,
-    working_path: Vec<u32>,
-    visited: Vec<bool>,
-    pending_reverse: Option<Vec<EdgeKey>>,
-    done: bool,
-    /// Cooperative cancellation flag, shared with [`OwnedPathFinder`] via the
-    /// same `with_cancel` contract: once set, the search exhausts at its next
-    /// loop iteration instead of grinding to a natural end.
-    cancel: Option<Arc<AtomicBool>>,
+/// ~10s keeps a long search quiet but surfaces a hang within the ~5-min
+/// bounded-time target. Tuned so small synthetic test fixtures
+/// (which complete in µs) never emit.
+const DISCOVERY_HEARTBEAT: Duration = Duration::from_secs(10);
+
+/// Check the heartbeat clock every this many stack-frame iterations (amortizes
+/// `Instant::now` out of the hot per-edge DFS loop). Power-of-two so the modulo
+/// is a bitmask.
+const HEARTBEAT_CHECK_EVERY: u64 = 4096;
+
+/// One pending yield's expansion state: the walk's per-step candidate pool
+/// lists (kind-filtered), an odometer over those lists, and same-bundle
+/// injectivity validation. Each valid odometer state is one concrete pool
+/// assignment of the walk — the bundle-level equivalent of the per-pool
+/// DFS branching the old engine performed eagerly.
+struct WalkExpansion {
+    /// Step `i` of the walk used `slot_bundle[i]`'s bundle: assignments must
+    /// choose distinct pools across all slots of one bundle (the trail's
+    /// pools are distinct; different bundles share no pool by construction).
+    slot_bundle: Vec<u32>,
+    /// Per step: candidate pool indices, limited to pools whose kind passes
+    /// the depth's filter (full bundle list when unfiltered).
+    slots: Vec<Vec<u32>>,
+    /// Odometer position per slot; `chosen[i] = slots[i][cursor[i]]`.
+    cursor: Vec<usize>,
+    chosen: Vec<u32>,
+    started: bool,
+    finished: bool,
 }
 
-impl PathFinder<'_> {
-    /// Attach a cooperative cancellation flag checked on every DFS advance —
-    /// the same contract as [`OwnedPathFinder::with_cancel`]. A caller burning
-    /// a per-frame time budget flips the flag between yields; the search
-    /// reports exhaustion at its next loop iteration.
-    #[must_use]
-    pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
-        self.cancel = Some(cancel);
-        self
-    }
-
-    /// Whether the attached cancellation flag has been set.
-    #[must_use]
-    fn cancelled(&self) -> bool {
-        self.cancel
-            .as_ref()
-            .is_some_and(|c| c.load(Ordering::Relaxed))
-    }
-
-    /// Advance the DFS and return the next complete path, or `None` if
-    /// the search is exhausted.
-    ///
-    /// If `include_reverse` is set, each found cycle yields the forward path
-    /// first, then the reversed path on the next call.
-    #[must_use]
-    pub fn next_path(&mut self) -> Option<Vec<EdgeKey>> {
-        if self.done || self.cancelled() {
-            self.done = true;
-            return None;
+impl WalkExpansion {
+    /// Advance to the next concrete assignment (mixed-radix over the slot
+    /// candidate lists, skimming invalid same-bundle duplicates). On success
+    /// the step-ordered pool list is written into `out` (reusing its
+    /// capacity — the hot path allocates nothing per assignment).
+    fn next_assignment_into(&mut self, out: &mut Vec<u32>) -> bool {
+        let n = self.slots.len();
+        if n == 0 {
+            // An empty walk (min_depth == 0) has exactly one assignment.
+            if self.started {
+                return false;
+            }
+            self.started = true;
+            out.clear();
+            return true;
         }
-
-        // If a reversed path is pending from the last yield, emit it now.
-        if let Some(rev) = self.pending_reverse.take() {
-            return Some(rev);
-        }
-
-        while let Some(frame) = self.stack.last_mut() {
-            // Cooperative cancellation (borrowed walker): a set flag stops the
-            // search at the next loop iteration. Field access mirrors
-            // OwnedPathFinder::advance's in-loop check; the direct field read
-            // keeps the `frame` borrow disjoint.
-            if self
-                .cancel
-                .as_ref()
-                .is_some_and(|c| c.load(Ordering::Relaxed))
-            {
-                self.done = true;
-                break;
+        loop {
+            if self.finished {
+                return false;
             }
-            let (node, edge_idx, yield_checked) = frame;
-
-            // Check yield condition (once per frame arrival).
-            if !*yield_checked {
-                *yield_checked = true;
-                if *node == self.end && self.working_path.len() >= self.min_depth {
-                    let path = self.path_to_edge_keys();
-                    if self.include_reverse {
-                        let rev = self.reversed_path_to_edge_keys();
-                        self.pending_reverse = Some(rev);
+            if self.started {
+                // Increment the odometer from the last slot, carrying left;
+                // on a carry, higher slots reset to their first candidate.
+                let mut j = n;
+                loop {
+                    if j == 0 {
+                        self.finished = true;
+                        return false;
                     }
-                    return Some(path);
-                }
-            }
-
-            // Stop recursion if the working path has reached the maximum depth.
-            if let Some(emd) = self.effective_max_depth {
-                if self.working_path.len() >= emd {
-                    // Backtrack.
-                    self.stack.pop();
-                    if let Some(popped) = self.working_path.pop() {
-                        self.visited[popped as usize] = false;
-                    }
-                    continue;
-                }
-            }
-
-            // Find the next valid edge to explore from this node.
-            let neighbors: &[CompactEdge] = self.graph.adj_of(*node);
-
-            // If the next hop reaches the maximum depth, only edges that close
-            // the cycle (reach `end`) can possibly yield — skip the rest
-            // without pushing a dead frame that would just backtrack. This is
-            // the single biggest DFS cost saver: at the closing depth, every
-            // non-`end` neighbor is pure waste.
-            let final_hop = matches!(
-                self.effective_max_depth,
-                Some(emd) if self.working_path.len() + 1 == emd
-            );
-
-            let mut found_edge = false;
-            while *edge_idx < neighbors.len() {
-                let edge = &neighbors[*edge_idx];
-                *edge_idx += 1;
-                let pool_idx = edge.pool_idx;
-
-                // Cycle detection: skip pools already on the working path.
-                if self.visited[pool_idx as usize] {
-                    continue;
-                }
-
-                // Final-hop restriction: the closing hop must reach `end`.
-                if final_hop && edge.neighbor != self.end {
-                    continue;
-                }
-
-                // Per-depth pool-type filter.
-                if let Some(filter) = self.pool_type_per_depth {
-                    let depth = self.working_path.len();
-                    // depth < filter_len is guaranteed by effective_max_depth,
-                    // but guard defensively.
-                    if depth >= self.filter_len {
-                        continue;
-                    }
-                    if let Some(allowed_kinds) = &filter[depth] {
-                        let kind = self.graph.pools[pool_idx as usize].1;
-                        if !allowed_kinds.contains(&kind) {
-                            continue;
+                    j -= 1;
+                    self.cursor[j] += 1;
+                    if self.cursor[j] < self.slots[j].len() {
+                        self.chosen[j] = self.slots[j][self.cursor[j]];
+                        for k in j + 1..n {
+                            self.cursor[k] = 0;
+                            self.chosen[k] = self.slots[k][0];
                         }
-                    }
-
-                    // Lookahead pruning: skip if the neighbor can't continue
-                    // at the next depth.
-                    let next_depth = depth + 1;
-                    if next_depth < self.filter_len {
-                        if let Some(nvd) = self.node_valid_depths {
-                            if let Some(valid) = nvd.get(edge.neighbor as usize) {
-                                if !valid[next_depth] {
-                                    continue;
-                                }
-                            }
-                        }
+                        break;
                     }
                 }
-
-                // Found a valid edge — extend the path and push the neighbor.
-                self.working_path.push(pool_idx);
-                self.visited[pool_idx as usize] = true;
-                self.stack.push((edge.neighbor, 0, false));
-                found_edge = true;
-                break;
+            } else {
+                self.started = true;
+                for i in 0..n {
+                    self.cursor[i] = 0;
+                    self.chosen[i] = self.slots[i][0];
+                }
             }
+            if self.same_bundle_distinct() {
+                out.clear();
+                out.extend_from_slice(&self.chosen);
+                return true;
+            }
+            // Invalid (two slots of one bundle chose the same pool): keep
+            // advancing. The walk-level kind check only proved a necessary
+            // condition; this is where exact feasibility is decided.
+        }
+    }
 
-            if !found_edge {
-                // No more edges to explore from this node — backtrack.
-                self.stack.pop();
-                if let Some(popped) = self.working_path.pop() {
-                    self.visited[popped as usize] = false;
+    fn same_bundle_distinct(&self) -> bool {
+        for i in 0..self.slots.len() {
+            for j in i + 1..self.slots.len() {
+                if self.slot_bundle[i] == self.slot_bundle[j] && self.chosen[i] == self.chosen[j] {
+                    return false;
                 }
             }
         }
-
-        // Search exhausted.
-        self.done = true;
-        None
-    }
-
-    /// Convert the current working path (pool indices) to `EdgeKey`s for yielding.
-    fn path_to_edge_keys(&self) -> Vec<EdgeKey> {
-        self.working_path
-            .iter()
-            .map(|&idx| self.graph.pools[idx as usize])
-            .collect()
-    }
-
-    /// Convert the reversed working path to `EdgeKey`s.
-    fn reversed_path_to_edge_keys(&self) -> Vec<EdgeKey> {
-        self.working_path
-            .iter()
-            .rev()
-            .map(|&idx| self.graph.pools[idx as usize])
-            .collect()
+        true
     }
 }
 
-impl Iterator for PathFinder<'_> {
-    type Item = Vec<EdgeKey>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.next_path()
-    }
+/// Outcome of one DFS advance: which path form (if any) is ready to yield.
+#[derive(PartialEq, Eq)]
+enum AdvanceOutcome {
+    /// The search is exhausted; no more paths.
+    Exhausted,
+    /// A complete walk expansion is ready (pools in `emitted`).
+    Forward,
+    /// The reversed form of the previous yield is ready.
+    Reversed,
 }
 
-/// An owning, lazy DFS iterator that owns the graph and filter data.
+/// Depth-first trail search over the **bundle graph**: all pools between the
+/// same unordered token pair form one bundle with multiplicity `m`, and the
+/// DFS walks token-pair BUNDLES (a per-bundle use counter instead of a
+/// per-pool visited mask), expanding each walk to its concrete pool
+/// assignments lazily at yield time.
 ///
-/// This is the PyO3-friendly version of [`PathFinder`] — it has no lifetime
-/// parameters, so it can be stored in a `#[pyclass]` and iterated from
-/// Python one path at a time. The graph, filter, and node-valid-depths are
-/// all owned, eliminating self-referential borrow issues.
-pub struct OwnedPathFinder {
-    graph: PathGraph,
+/// Why: a hub token with `m` parallel pools to the same neighbor used to
+/// branch the entire remaining DFS subtree `m` times — the subtrees are
+/// token-wise identical, differing only in which pool each step consumed.
+/// The bundled walk explores the token shape once and enumerates the
+/// `m·(m-1)·…·(m-u+1)` ordered distinct-pool assignments (`u` = visits of
+/// that bundle) during expansion: exactly the multiset the per-pool DFS
+/// produced, in deterministic lexicographic pool order.
+///
+/// Correctness invariants (differential parity tests against the naive
+/// reference enumerator):
+/// - a trail's constraint is DISTINCT POOLS, not distinct tokens or
+///   bundles: a walk may revisit the same pair, consuming another pool;
+/// - the walk-level kind/nvd checks are necessary conditions only; exact
+///   per-step pool-kind feasibility is decided in the expansion;
+/// - hop-distance cutoffs, the sorted prefix break, `min_depth`, the
+///   `include_reverse` interleave, cancellation, and the discovery
+///   heartbeat all behave as before.
+pub struct BundledSearch<B: Borrow<PathGraph>> {
+    graph: B,
     end: u32,
     min_depth: usize,
     effective_max_depth: Option<usize>,
@@ -632,21 +706,34 @@ pub struct OwnedPathFinder {
     pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
     node_valid_depths: Option<Vec<Vec<bool>>>,
     filter_len: usize,
-    /// Per-node list of pool indices whose edge reaches `end` (the cycle's
-    /// closing token). Built once per search in [`OwnedPathFinder::new`]: the
-    /// closing hop can only traverse an edge to `end`, so iterating this
-    /// compact list instead of the full adjacency avoids scanning (and
-    /// skipping) every non-`end` neighbor of each penultimate node.
-    end_edges: Vec<Vec<u32>>,
+    /// Per-depth allowed-kind bitmask (a depth with no qualifying pool kind
+    /// prunes every step into it). Empty when no filter was supplied.
+    allowed_masks: Vec<u32>,
+    /// Bundle incidence per token — CSR over `(other token, bundle)` pairs,
+    /// stable-sorted by hop distance to `end` so the stop-admissible cutoff
+    /// is a prefix break. Member pools and kind masks live on the graph's
+    /// bundle layer (see `PathGraph::bundle_pools`).
+    tok_bundle_offsets: Vec<u32>,
+    tok_bundle_flat: Vec<(u32, u32)>,
+    /// Admissible cutoff data for the bounded search (None when unbounded).
+    prune: Option<SearchPrune>,
     stack: Vec<(u32, usize, bool)>,
-    working_path: Vec<u32>,
-    visited: Vec<bool>,
-    /// Whether the reversed form of the most recently yielded cycle is still
-    /// pending emission (used only when `include_reverse` is set). A flag
-    /// rather than an owned `Vec<EdgeKey>` because the working path is still
-    /// intact between yielding a cycle and emitting its reverse — the reversed
-    /// path can be read directly from `working_path` on demand.
+    /// Bundle chosen at each walk step, parallel to the DFS path.
+    walk_bundles: Vec<u32>,
+    /// Active-walk use count per bundle: the `u`-th visit of a bundle
+    /// consumes the `(u+1)`-th distinct member pool, so a visit is only
+    /// possible while `use < multiplicity`.
+    bundle_use: Vec<u32>,
+    /// Flat per-bundle multiplicity (member pool count), copied from the
+    /// graph's bundle offsets so the hot capacity check is two flat reads.
+    bundle_mult: Vec<u32>,
+    /// Live expansion of the walk currently parked at the `end` token.
+    expansion: Option<WalkExpansion>,
+    /// Whether the reversed form of the most recent yield is still pending
+    /// emission (used only when `include_reverse` is set).
     pending_reverse: bool,
+    /// Concrete pool indices of the most recent yield, in walk order.
+    emitted: Vec<u32>,
     done: bool,
     /// Cooperative cancellation flag (4IOEVT). When set, [`Self::advance`]
     /// stops the search at its next loop iteration and reports exhaustion.
@@ -671,51 +758,27 @@ pub struct OwnedPathFinder {
     max_stack_depth: usize,
 }
 
-/// Minimum elapsed wall-clock between discovery heartbeat emissions.
-///
-/// ~10s keeps a long search quiet but surfaces a hang within the ~5-min
-/// bounded-time target. Tuned so small synthetic test fixtures
-/// (which complete in µs) never emit.
-const DISCOVERY_HEARTBEAT: Duration = Duration::from_secs(10);
-
-/// Check the heartbeat clock every this many stack-frame iterations (amortizes
-/// `Instant::now` out of the hot per-edge DFS loop). Power-of-two so the modulo
-/// is a bitmask.
-const HEARTBEAT_CHECK_EVERY: u64 = 4096;
-
-// Discovery-heartbeat output interpretation on a live hang (NY4EFN root-cause
-// mapping):
-// - `paths_yielded` climbing slowly → graph-size variance (cause c);
-//   discovery is progressing, just slow.
-// - `paths_yielded` frozen at 0 with `advances_since_yield` climbing + low
-//   `max_stack_depth` → DFS not yielding a first valid cycle (cause a: an
-//   ordering/pruning gap, or no valid cycle exists for this filter).
-// - `paths_yielded` climbing while the example's `[build_paths]` registered
-//   count stays flat → the stall is per-path `build_pool` in the example
-//   (cause b), NOT the DFS.
-
-/// Outcome of one DFS advance: which path form (if any) is ready to yield.
-#[derive(PartialEq, Eq)]
-enum AdvanceOutcome {
-    /// The search is exhausted; no more paths.
-    Exhausted,
-    /// The current `working_path` is a complete cycle ready to yield forward.
-    Forward,
-    /// A pending reverse of the previous cycle is ready to yield.
-    Reversed,
+/// Unordered compact token pair packed into one u64 (identity-hashed keys).
+#[inline]
+fn pack_token_pair(a: u32, b: u32) -> u64 {
+    (u64::from(a.min(b)) << 32) | u64::from(a.max(b))
 }
 
-impl OwnedPathFinder {
-    /// Create from owned graph + search parameters.
-    #[must_use]
-    pub fn new(
-        graph: PathGraph,
+impl<B: Borrow<PathGraph>> BundledSearch<B> {
+    /// Assemble from explicit parameters (both public constructors funnel
+    /// here). The filter's `node_valid_depths` lookahead table is passed in
+    /// precomputed so the borrowing and owning constructors can differ in
+    /// where it comes from.
+    #[expect(clippy::too_many_arguments)]
+    fn with_params(
+        graph: B,
         start: u64,
         end: u64,
         min_depth: usize,
         max_depth: Option<usize>,
         include_reverse: bool,
         pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
+        node_valid_depths: Option<Vec<Vec<bool>>>,
     ) -> Self {
         let effective_max_depth: Option<usize> = match &pool_type_per_depth {
             Some(filter) => {
@@ -730,42 +793,66 @@ impl OwnedPathFinder {
 
         let filter_len = pool_type_per_depth.as_ref().map_or(0, Vec::len);
 
-        let node_valid_depths = pool_type_per_depth
-            .as_ref()
-            .map(|filter| graph.compute_node_valid_depths(filter));
+        let src = graph.borrow();
 
         // Remap external start/end token IDs to compact indices. If EITHER
-        // boundary token is absent from the (filtered) graph, no start->end path
-        // exists - yield nothing. `end` must NOT fall back to a synthetic index:
+        // boundary token is absent from the graph, no start->end path exists
+        // - yield nothing. `end` must NOT fall back to a synthetic index:
         // remapping an absent end to compact index 0 made the DFS search for
-        // cycles ending at an unrelated token (compact 0), yielding non-closing
-        // paths that tripped the direction-resolution fail-stop.
-        let start_idx = graph.compact_index(start);
-        let end_idx = graph.compact_index(end);
-
-        let (stack, done) = match (start_idx, end_idx) {
-            (Some(s), Some(_e)) => (vec![(s, 0, false)], false),
-            _ => (Vec::new(), true),
-        };
+        // cycles ending at an unrelated token (compact 0), yielding
+        // non-closing paths that tripped the direction-resolution fail-stop.
+        let start_idx = src.compact_index(start);
+        let end_idx = src.compact_index(end);
+        let boundaries_present = matches!((start_idx, end_idx), (Some(_), Some(_)));
         let end_idx = end_idx.unwrap_or(0);
-        let n_pools = graph.pools.len();
 
-        // Precompute, per node, the pool indices of edges that reach `end`.
-        // The closing hop only traverses `end`-reaching edges, so iterating
-        // this compact list avoids scanning/skipping every non-`end` neighbor
-        // of each penultimate node. Insertion order is preserved so traversal
-        // order (hence enumeration order) is unchanged.
-        let mut end_edges: Vec<Vec<u32>> = vec![Vec::new(); graph.nodes()];
-        for (node_idx, e_list) in graph.adj_offsets.windows(2).enumerate() {
-            let seg = &graph.adj_flat[e_list[0] as usize..e_list[1] as usize];
-            for e in seg {
-                if e.neighbor == end_idx {
-                    end_edges[node_idx].push(e.pool_idx);
-                }
+        // Admissible prune data (single BFS distance table). Only meaningful
+        // for a bounded search; an unbounded one has no budget to cut against.
+        let prune = match effective_max_depth {
+            Some(_) if boundaries_present => Some(SearchPrune::build(src, end_idx)),
+            _ => None,
+        };
+
+        // Per-depth allowed-kind bitmasks (0 bits = no pool qualifies there).
+        let allowed_masks: Vec<u32> = pool_type_per_depth
+            .as_ref()
+            .map(|filter| {
+                filter
+                    .iter()
+                    .map(|allowed| match allowed {
+                        None => u32::MAX,
+                        Some(kinds) => kinds.iter().fold(0u32, |acc, k| acc | (1u32 << k.as_u8())),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Per-token bundle incidence, stable-sorted by hop distance to the
+        // target (ties keep bundle first-appearance order), so the
+        // stop-admissible cutoff reduces to a prefix break: at a hub with
+        // 10^4+ parallel pools and 1 hop of budget left, the scan stops
+        // after the handful of target-adjacent bundles. The CSR comes from
+        // the graph (built once at construction); only the memcpy'd flat
+        // array gets re-ordered per search.
+        let (tok_bundle_offsets, mut tok_bundle_flat) = src.token_bundles_csr();
+        if let Some(prune_data) = prune.as_ref() {
+            for w in 0..src.nodes() {
+                let start = tok_bundle_offsets[w] as usize;
+                let stop = tok_bundle_offsets[w + 1] as usize;
+                tok_bundle_flat[start..stop]
+                    .sort_by_key(|(nbr, _)| prune_data.to_end[*nbr as usize]);
             }
         }
 
+        let n_bundles = src.bundle_pairs.len();
+        let bundle_mult: Vec<u32> = src.bundle_offsets.windows(2).map(|w| w[1] - w[0]).collect();
         let now = Instant::now();
+        let (stack, done) = if boundaries_present {
+            (vec![(start_idx.unwrap_or(0), 0, false)], false)
+        } else {
+            (Vec::new(), true)
+        };
+
         Self {
             graph,
             end: end_idx,
@@ -775,11 +862,17 @@ impl OwnedPathFinder {
             pool_type_per_depth,
             node_valid_depths,
             filter_len,
-            end_edges,
+            allowed_masks,
+            tok_bundle_offsets,
+            tok_bundle_flat,
+            prune,
             stack,
-            working_path: Vec::with_capacity(16),
-            visited: vec![false; n_pools],
+            walk_bundles: Vec::with_capacity(16),
+            bundle_mult,
+            bundle_use: vec![0; n_bundles],
+            expansion: None,
             pending_reverse: false,
+            emitted: Vec::new(),
             done,
             cancel: None,
             search_started: now,
@@ -812,12 +905,11 @@ impl OwnedPathFinder {
     /// Advance the DFS by one yield without materializing the path.
     ///
     /// Returns [`AdvanceOutcome::Forward`] when a complete cycle is ready
-    /// (read it from `working_path`), [`AdvanceOutcome::Reversed`] when a
-    /// pending reverse of the previous cycle is ready (read reversed
-    /// `working_path`), or [`AdvanceOutcome::Exhausted`] when the search is
-    /// done. This is the shared DFS core — both [`Self::next_path`] (which
-    /// materializes `EdgeKey`s) and [`Self::next_path_indices_into`] (which
-    /// appends pool indices, avoiding allocation) dispatch through it.
+    /// (read it from `emitted`), [`AdvanceOutcome::Reversed`] when the
+    /// pending reverse of the previous yield is ready, or
+    /// [`AdvanceOutcome::Exhausted`] when the search is done. Shared DFS
+    /// core: `next_path` (materializing `EdgeKey`s) and
+    /// `next_path_indices_into` (appending pool indices) dispatch through it.
     #[expect(clippy::too_many_lines)]
     fn advance(&mut self) -> AdvanceOutcome {
         if self.done || self.cancelled() {
@@ -825,244 +917,251 @@ impl OwnedPathFinder {
             return AdvanceOutcome::Exhausted;
         }
 
-        // Emit a pending reversed cycle before doing any further DFS work.
-        if self.pending_reverse {
-            self.pending_reverse = false;
-            self.paths_yielded += 1;
-            self.advances_since_yield = 0;
-            return AdvanceOutcome::Reversed;
-        }
-
         let filter_slice = self.pool_type_per_depth.as_deref();
         let nvd_ref = self.node_valid_depths.as_deref();
+        let masks: &[u32] = &self.allowed_masks;
+        let prune_ref = self.prune.as_ref();
+        let src: &PathGraph = self.graph.borrow();
 
         loop {
-            if self.cancelled() {
-                self.done = true;
-                break;
-            }
-            let stack_len = self.stack.len();
-            if stack_len == 0 {
-                break;
-            }
-            // Discovery heartbeat: amortized (checked every `HEARTBEAT_CHECK_EVERY`
-            // stack-frame iterations, not per edge) — `Instant::now` is ~10ns
-            // but the hot DFS loop runs millions of iterations, so the modulo
-            // keeps it out of the inner per-edge path. Fires a GIL-free stderr
-            // line every `DISCOVERY_HEARTBEAT` while grinding, so a zero-yield
-            // hang surfaces immediately. Touches only disjoint
-            // heartbeat fields + the `stack_len` copy, so it cannot borrow
-            // `self.stack` while the mutable `frame` below is live.
-            self.advances_since_yield = self.advances_since_yield.wrapping_add(1);
-            if stack_len > self.max_stack_depth {
-                self.max_stack_depth = stack_len;
-            }
-            if self
-                .advances_since_yield
-                .is_multiple_of(HEARTBEAT_CHECK_EVERY)
-            {
-                // Inlined (not a `&mut self` method) so the heartbeat touches
-                // only disjoint fields — `pool_type_per_depth` is borrowed
-                // immutably for the whole loop body via `filter_slice`.
-                let now = Instant::now();
-                if now.duration_since(self.last_heartbeat) >= DISCOVERY_HEARTBEAT {
-                    self.last_heartbeat = now;
-                    let elapsed = now.duration_since(self.search_started);
-                    // Low-frequency stderr diagnostic on a zero-dependency leaf; no
-                    // logging crate is available and this runs off the hot path.
-                    #[expect(clippy::print_stderr)]
-                    {
-                        eprintln!(
-                            "discovery heartbeat: elapsed={elapsed:?} \
-                             paths_yielded={} advances_since_yield={} max_stack_depth={}",
-                            self.paths_yielded, self.advances_since_yield, self.max_stack_depth
-                        );
-                    }
+            // 1. Emit from a live expansion before doing any further DFS
+            //    work: forward and reversed assignments of the parked walk
+            //    interleave exactly as the old per-pool engine interleaved
+            //    forwards and reverses.
+            if self.expansion.is_some() {
+                if self.pending_reverse {
+                    self.pending_reverse = false;
+                    self.paths_yielded += 1;
+                    self.advances_since_yield = 0;
+                    return AdvanceOutcome::Reversed;
                 }
-            }
-            let frame = &mut self.stack[stack_len - 1];
-            let (node, edge_idx, yield_checked) = frame;
-
-            // Check yield condition (once per frame arrival).
-            if !*yield_checked {
-                *yield_checked = true;
-                if *node == self.end && self.working_path.len() >= self.min_depth {
-                    if self.include_reverse {
-                        // working_path stays intact until the reverse is
-                        // emitted on the next advance(), so we only need a
-                        // flag — no owned Vec to carry over.
-                        self.pending_reverse = true;
-                    }
+                let next_ready = match self.expansion.as_mut() {
+                    Some(exp) => exp.next_assignment_into(&mut self.emitted),
+                    None => false,
+                };
+                if next_ready {
+                    self.pending_reverse = self.include_reverse;
                     self.paths_yielded += 1;
                     self.advances_since_yield = 0;
                     return AdvanceOutcome::Forward;
                 }
+                // Expansion exhausted: resume walking from the end frame
+                // (its yield flag is consumed; scanning continues).
+                self.expansion = None;
             }
 
-            // Stop recursion if the working path has reached the maximum depth.
-            if let Some(emd) = self.effective_max_depth {
-                if self.working_path.len() >= emd {
-                    // Backtrack.
-                    self.stack.pop();
-                    if let Some(popped) = self.working_path.pop() {
-                        self.visited[popped as usize] = false;
-                    }
-                    continue;
+            // 2. Walk the bundle DFS until the next expansion begins.
+            loop {
+                // Cooperative cancellation: a set flag stops the search at
+                // the next loop iteration.
+                if self
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(Ordering::Relaxed))
+                {
+                    break;
                 }
-            }
 
-            // If the next hop reaches the maximum depth, only edges that close
-            // the cycle (reach `end`) can possibly yield — skip the rest
-            // without pushing a dead frame that would just backtrack. This is
-            // the single biggest DFS cost saver: at the closing depth, every
-            // non-`end` neighbor is pure waste.
-            let final_hop = matches!(
-                self.effective_max_depth,
-                Some(emd) if self.working_path.len() + 1 == emd
-            );
-            // Penultimate hop (next iteration after this push is the closing
-            // one). Loop-invariant within the inner edge-scan loop below —
-            // working_path.len() only changes on push-after-break — so hoist
-            // the depth comparison out of the per-edge loop.
-            let penultimate_hop = matches!(
-                self.effective_max_depth,
-                Some(emd) if self.working_path.len() + 2 == emd
-            );
+                let stack_len = self.stack.len();
+                if stack_len == 0 {
+                    break;
+                }
 
-            let mut found_edge = false;
+                // Discovery heartbeat: amortized (checked every
+                // `HEARTBEAT_CHECK_EVERY` stack-frame iterations, not per
+                // edge) so `Instant::now` stays out of the hot inner loop.
+                self.advances_since_yield = self.advances_since_yield.wrapping_add(1);
+                if stack_len > self.max_stack_depth {
+                    self.max_stack_depth = stack_len;
+                }
+                if self
+                    .advances_since_yield
+                    .is_multiple_of(HEARTBEAT_CHECK_EVERY)
+                {
+                    let now = Instant::now();
+                    if now.duration_since(self.last_heartbeat) >= DISCOVERY_HEARTBEAT {
+                        self.last_heartbeat = now;
+                        let elapsed = now.duration_since(self.search_started);
+                        // Low-frequency stderr diagnostic on a zero-dependency
+                        // leaf; no logging crate is available and this runs
+                        // off the hot path.
+                        #[expect(clippy::print_stderr)]
+                        {
+                            eprintln!(
+                                "discovery heartbeat: elapsed={elapsed:?} \
+                                 paths_yielded={} advances_since_yield={} max_stack_depth={}",
+                                self.paths_yielded, self.advances_since_yield, self.max_stack_depth
+                            );
+                        }
+                    }
+                }
 
-            if final_hop {
-                // Closing hop: only `end`-reaching edges can complete the
-                // cycle. Iterate the precomputed compact end-edge list
-                // (instead of scanning + skipping the full adjacency) — this
-                // avoids touching every non-`end` neighbor of each penultimate
-                // node. All edges here reach `end`, so the pushed neighbor is
-                // always `end` and the final-hop skip check is unnecessary.
-                let end_list: &[u32] = self
-                    .end_edges
-                    .get(*node as usize)
-                    .map_or([].as_slice(), Vec::as_slice);
-                while *edge_idx < end_list.len() {
-                    let pool_idx = end_list[*edge_idx];
+                let frame = &mut self.stack[stack_len - 1];
+                let (node, edge_idx, yield_checked) = frame;
+
+                // Check yield condition (once per frame arrival): the walk
+                // reached the end token with enough pools. The expansion
+                // emits canonical forward assignment(s) — one concrete path
+                // per call — starting on the next outer-loop iteration.
+                if !*yield_checked {
+                    *yield_checked = true;
+                    if *node == self.end && self.walk_bundles.len() >= self.min_depth {
+                        let expansion = self.build_expansion();
+                        self.expansion = Some(expansion);
+                        break;
+                    }
+                }
+
+                // Stop recursion if the walk has reached the maximum depth.
+                if let Some(emd) = self.effective_max_depth {
+                    if self.walk_bundles.len() >= emd {
+                        // Backtrack.
+                        self.stack.pop();
+                        if let Some(bundle) = self.walk_bundles.pop() {
+                            self.bundle_use[bundle as usize] -= 1;
+                        }
+                        continue;
+                    }
+                }
+
+                // Remaining hop budget for the step chosen at THIS node
+                // visit. A trail extended by one bundle must still reach the
+                // target within `emd - len - 1` hops; the BFS hop distance is
+                // a lower bound on how many hops that takes, so the cutoff
+                // never discards a yieldable trail. Len < emd is guaranteed
+                // by the max-depth backtrack above, so the subtraction cannot
+                // underflow. (At the closing depth the remaining budget is 0,
+                // and since `end` is the unique token at hop distance 0, the
+                // prefix break admits only target-adjacent bundles — the
+                // old engine's separate final-hop end-edge list is implicit.)
+                let remaining_budget = self.effective_max_depth.map(|emd| {
+                    u32::try_from(emd - self.walk_bundles.len() - 1).unwrap_or(u32::MAX)
+                });
+                let entry_base = self.tok_bundle_offsets[*node as usize] as usize;
+                let entries_len = self.tok_bundle_offsets[*node as usize + 1] as usize - entry_base;
+                let mut found_bundle = false;
+                while *edge_idx < entries_len {
+                    let (nbr, bundle) = self.tok_bundle_flat[entry_base + *edge_idx];
+
+                    // Sorted-prefix break: adjacency is ordered by hop
+                    // distance, so the first neighbor beyond the remaining
+                    // budget terminates the scan: every later neighbor is at
+                    // least as far, and none of them can be on a yieldable
+                    // trail.
+                    if let Some(prune_data) = prune_ref {
+                        if prune_data.to_end[nbr as usize] > remaining_budget.unwrap_or(u32::MAX) {
+                            break;
+                        }
+                    }
+
                     *edge_idx += 1;
 
-                    // Cycle detection: skip pools already on the working path.
-                    if self.visited[pool_idx as usize] {
+                    // Capacity: the `u`-th visit of a bundle consumes another
+                    // distinct member pool, so a visit is only possible while
+                    // the count is below the multiplicity.
+                    if self.bundle_use[bundle as usize] >= self.bundle_mult[bundle as usize] {
                         continue;
                     }
 
-                    // Per-depth pool-type filter (lookahead never applies at
-                    // the closing hop: next_depth == effective_max_depth is
-                    // never < filter_len).
-                    if let Some(filter) = filter_slice {
-                        let depth = self.working_path.len();
-                        if depth < self.filter_len {
-                            if let Some(allowed_kinds) = &filter[depth] {
-                                let kind = self.graph.pools[pool_idx as usize].1;
-                                if !allowed_kinds.contains(&kind) {
+                    // Per-depth pool-type filter (walk-level necessary
+                    // condition; the expansion enforces the exact sets).
+                    if filter_slice.is_some() {
+                        let depth = self.walk_bundles.len();
+                        if depth >= self.filter_len {
+                            continue;
+                        }
+                        if src.bundle_kind_mask(bundle) & masks.get(depth).copied().unwrap_or(0)
+                            == 0
+                        {
+                            continue;
+                        }
+
+                        // Lookahead pruning: skip if the neighbor token
+                        // can't continue at the next depth.
+                        let next_depth = depth + 1;
+                        if next_depth < self.filter_len {
+                            if let Some(valid) = nvd_ref.and_then(|nvd| nvd.get(nbr as usize)) {
+                                if !valid[next_depth] {
                                     continue;
                                 }
                             }
                         }
                     }
 
-                    self.working_path.push(pool_idx);
-                    self.visited[pool_idx as usize] = true;
-                    self.stack.push((self.end, 0, false));
-                    found_edge = true;
+                    // Found a bundle — extend the walk and descend.
+                    self.stack.push((nbr, 0, false));
+                    self.walk_bundles.push(bundle);
+                    self.bundle_use[bundle as usize] += 1;
+                    found_bundle = true;
                     break;
                 }
-            } else {
-                // Find the next valid edge to explore from this node.
-                let neighbors: &[CompactEdge] = self.graph.adj_of(*node);
 
-                while *edge_idx < neighbors.len() {
-                    let edge = &neighbors[*edge_idx];
-                    *edge_idx += 1;
-                    let pool_idx = edge.pool_idx;
-
-                    // Cycle detection: skip pools already on the working path.
-                    if self.visited[pool_idx as usize] {
-                        continue;
+                if !found_bundle {
+                    // No more bundles to explore from this token — backtrack.
+                    self.stack.pop();
+                    if let Some(bundle) = self.walk_bundles.pop() {
+                        self.bundle_use[bundle as usize] -= 1;
                     }
-
-                    // Penultimate-hop reachability prune (analog of the
-                    // final-hop restriction, one level up): the hop being
-                    // chosen now leads to a node that must make the closing
-                    // hop on the next iteration. If that neighbor has no
-                    // edge to `end`, no cycle through it can close, so skip
-                    // it without pushing a dead frame. Sound (never skips a
-                    // valid cycle); conservative (a node whose only end-edges
-                    // are visited still passes this check and is pruned only
-                    // when the closing loop finds nothing).
-                    if penultimate_hop {
-                        let neighbor_can_close = self
-                            .end_edges
-                            .get(edge.neighbor as usize)
-                            .is_some_and(|l| !l.is_empty());
-                        if !neighbor_can_close {
-                            continue;
-                        }
-                    }
-
-                    // Per-depth pool-type filter.
-                    if let Some(filter) = filter_slice {
-                        let depth = self.working_path.len();
-                        if depth >= self.filter_len {
-                            continue;
-                        }
-                        if let Some(allowed_kinds) = &filter[depth] {
-                            let kind = self.graph.pools[pool_idx as usize].1;
-                            if !allowed_kinds.contains(&kind) {
-                                continue;
-                            }
-                        }
-
-                        // Lookahead pruning.
-                        let next_depth = depth + 1;
-                        if next_depth < self.filter_len {
-                            if let Some(nvd) = nvd_ref {
-                                if let Some(valid) = nvd.get(edge.neighbor as usize) {
-                                    if !valid[next_depth] {
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Found a valid edge — extend the path and push the neighbor.
-                    self.working_path.push(pool_idx);
-                    self.visited[pool_idx as usize] = true;
-                    self.stack.push((edge.neighbor, 0, false));
-                    found_edge = true;
-                    break;
                 }
             }
 
-            if !found_edge {
-                // No more edges to explore from this node — backtrack.
-                self.stack.pop();
-                if let Some(popped) = self.working_path.pop() {
-                    self.visited[popped as usize] = false;
-                }
+            // A yield fired mid-walk and parked an expansion on the finder:
+            // return to the emission dispatcher at the top of the outer loop
+            // instead of exhausting.
+            if self.expansion.is_some() {
+                continue;
             }
+
+            // Search exhausted (or cancelled) — emit the final status line.
+            self.emit_discovery_complete();
+            self.done = true;
+            return AdvanceOutcome::Exhausted;
         }
+    }
 
-        // Search exhausted — emit a final heartbeat so the operator sees
-        // the total when discovery completes (even if it ran fast).
-        self.emit_discovery_complete();
-        self.done = true;
-        AdvanceOutcome::Exhausted
+    /// Build the expansion for a walk parked at `end`: per-step candidate
+    /// pools limited to the depth's allowed kinds (the full bundle when
+    /// unfiltered).
+    fn build_expansion(&self) -> WalkExpansion {
+        let graph = self.graph.borrow();
+        let filtered = self.pool_type_per_depth.is_some();
+        let slots: Vec<Vec<u32>> = self
+            .walk_bundles
+            .iter()
+            .enumerate()
+            .map(|(depth, &bundle)| {
+                if !filtered {
+                    return graph.bundle_pools(bundle).to_vec();
+                }
+                let mask = self.allowed_masks.get(depth).copied().unwrap_or(0);
+                graph
+                    .bundle_pools(bundle)
+                    .iter()
+                    .copied()
+                    .filter(|&pool_idx| {
+                        (1u32 << graph.pools[pool_idx as usize].1.as_u8()) & mask != 0
+                    })
+                    .collect()
+            })
+            .collect();
+        let n = slots.len();
+        WalkExpansion {
+            slot_bundle: self.walk_bundles.clone(),
+            slots,
+            cursor: vec![0; n],
+            chosen: vec![0; n],
+            started: false,
+            finished: false,
+        }
     }
 
     /// Emit a final discovery-complete line so the operator sees the total at
-    /// search end (cheap; covers the common fast-search case that never tripped
-    /// the throttled heartbeat).
+    /// search end (cheap; covers the common fast-search case that never
+    /// tripped the throttled heartbeat).
     fn emit_discovery_complete(&self) {
         let elapsed = self.search_started.elapsed();
-        // Low-frequency stderr diagnostic on a zero-dependency leaf (no logging
-        // crate available); one line at discovery completion.
+        // Low-frequency stderr diagnostic on a zero-dependency leaf (no
+        // logging crate available); one line at discovery completion.
         #[expect(clippy::print_stderr)]
         {
             eprintln!(
@@ -1072,8 +1171,8 @@ impl OwnedPathFinder {
         }
     }
 
-    /// Advance the DFS and return the next complete path, or `None` if
-    /// the search is exhausted.
+    /// Advance the DFS and return the next complete path, or `None` if the
+    /// search is exhausted.
     ///
     /// If `include_reverse` is set, each found cycle yields the forward path
     /// first, then the reversed path on the next call.
@@ -1081,32 +1180,43 @@ impl OwnedPathFinder {
     pub fn next_path(&mut self) -> Option<Vec<EdgeKey>> {
         match self.advance() {
             AdvanceOutcome::Exhausted => None,
-            AdvanceOutcome::Forward => Some(self.path_to_edge_keys()),
-            AdvanceOutcome::Reversed => Some(self.reversed_path_to_edge_keys()),
+            AdvanceOutcome::Forward => Some(
+                self.emitted
+                    .iter()
+                    .map(|&idx| self.graph.borrow().pools[idx as usize])
+                    .collect(),
+            ),
+            AdvanceOutcome::Reversed => Some(
+                self.emitted
+                    .iter()
+                    .rev()
+                    .map(|&idx| self.graph.borrow().pools[idx as usize])
+                    .collect(),
+            ),
         }
     }
 
-    /// Advance the DFS and append the next path's **pool indices** into `out`,
-    /// returning the number of indices appended (the path length), or `None`
-    /// if the search is exhausted.
+    /// Advance the DFS and append the next path's **pool indices** into
+    /// `out`, returning the number of indices appended (the path length), or
+    /// `None` if the search is exhausted.
     ///
-    /// This is the allocation-free hot path used by the `PyO3` iterator: instead
-    /// of materializing a `Vec<EdgeKey>` per yielded path (96k small
-    /// allocations for a typical search), it appends the compact `u32` pool
-    /// indices into a caller-owned flat buffer. The FFI layer converts
-    /// indices → `(pool_id, kind_u8)` lazily while building Python objects.
+    /// This is the allocation-free hot path used by the `PyO3` iterator:
+    /// instead of materializing a `Vec<EdgeKey>` per yielded path, it
+    /// appends the compact `u32` pool indices into a caller-owned flat
+    /// buffer. The FFI layer converts indices → `(pool_id, kind_u8)` lazily
+    /// while building Python objects.
     #[must_use]
     pub fn next_path_indices_into(&mut self, out: &mut Vec<u32>) -> Option<usize> {
         match self.advance() {
             AdvanceOutcome::Exhausted => None,
             AdvanceOutcome::Forward => {
-                let len = self.working_path.len();
-                out.extend(self.working_path.iter().copied());
+                let len = self.emitted.len();
+                out.extend(self.emitted.iter().copied());
                 Some(len)
             }
             AdvanceOutcome::Reversed => {
-                let len = self.working_path.len();
-                out.extend(self.working_path.iter().rev().copied());
+                let len = self.emitted.len();
+                out.extend(self.emitted.iter().rev().copied());
                 Some(len)
             }
         }
@@ -1118,28 +1228,11 @@ impl OwnedPathFinder {
     /// without exposing the graph's internal `pools` field.
     #[must_use]
     pub fn pool_edge_key(&self, pool_idx: u32) -> EdgeKey {
-        self.graph.pools[pool_idx as usize]
-    }
-
-    /// Convert the current working path (pool indices) to `EdgeKey`s for yielding.
-    fn path_to_edge_keys(&self) -> Vec<EdgeKey> {
-        self.working_path
-            .iter()
-            .map(|&idx| self.graph.pools[idx as usize])
-            .collect()
-    }
-
-    /// Convert the reversed working path to `EdgeKey`s.
-    fn reversed_path_to_edge_keys(&self) -> Vec<EdgeKey> {
-        self.working_path
-            .iter()
-            .rev()
-            .map(|&idx| self.graph.pools[idx as usize])
-            .collect()
+        self.graph.borrow().pools[pool_idx as usize]
     }
 }
 
-impl Iterator for OwnedPathFinder {
+impl<B: Borrow<PathGraph>> Iterator for BundledSearch<B> {
     type Item = Vec<EdgeKey>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1147,6 +1240,43 @@ impl Iterator for OwnedPathFinder {
     }
 }
 
+/// Borrowing lazy DFS over a shared [`PathGraph`] (the bundled core; see
+/// [`BundledSearch`] for the invariants and the bundling rationale).
+pub type PathFinder<'a> = BundledSearch<&'a PathGraph>;
+
+/// Owning lazy DFS — the PyO3-friendly form (no lifetime parameters, so it
+/// can be stored in a `#[pyclass]` and iterated from Python one path at a
+/// time). The graph, filter, and node-valid-depths are owned by the finder.
+pub type OwnedPathFinder = BundledSearch<Box<PathGraph>>;
+
+impl BundledSearch<Box<PathGraph>> {
+    /// Create from an owned graph plus search parameters. Computes the
+    /// lookahead `node_valid_depths` table from the filter.
+    #[must_use]
+    pub fn new(
+        graph: PathGraph,
+        start: u64,
+        end: u64,
+        min_depth: usize,
+        max_depth: Option<usize>,
+        include_reverse: bool,
+        pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
+    ) -> Self {
+        let node_valid_depths = pool_type_per_depth
+            .as_ref()
+            .map(|filter| graph.compute_node_valid_depths(filter));
+        Self::with_params(
+            Box::new(graph),
+            start,
+            end,
+            min_depth,
+            max_depth,
+            include_reverse,
+            pool_type_per_depth,
+            node_valid_depths,
+        )
+    }
+}
 impl PathGraph {
     /// Create a lazy iterator over all valid paths from `start` back to `end`.
     ///
@@ -1166,46 +1296,18 @@ impl PathGraph {
         pool_type_per_depth: Option<&'a [Option<Vec<PoolKind>>]>,
         node_valid_depths: Option<&'a [Vec<bool>]>,
     ) -> PathFinder<'a> {
-        let effective_max_depth: Option<usize> = match pool_type_per_depth {
-            Some(filter) => {
-                let filter_len = filter.len();
-                match max_depth {
-                    Some(md) => Some(md.min(filter_len)),
-                    None => Some(filter_len),
-                }
-            }
-            None => max_depth,
-        };
-
-        let filter_len = pool_type_per_depth.map_or(0, <[Option<Vec<PoolKind>>]>::len);
-
-        let start_idx = self.compact_index(start);
-        let end_idx = self.compact_index(end);
-
-        // Match OwnedPathFinder::new: a boundary token absent from the graph
-        // must yield NO paths (no `end` fallback to a synthetic index 0).
-        let (stack, done) = match (start_idx, end_idx) {
-            (Some(s), Some(_e)) => (vec![(s, 0, false)], false),
-            _ => (Vec::new(), true),
-        };
-        let end_idx = end_idx.unwrap_or(0);
-
-        PathFinder {
-            graph: self,
-            end: end_idx,
+        let filter = pool_type_per_depth.map(<[Option<Vec<PoolKind>>]>::to_vec);
+        let nvd = node_valid_depths.map(<[Vec<bool>]>::to_vec);
+        BundledSearch::with_params(
+            self,
+            start,
+            end,
             min_depth,
-            effective_max_depth,
+            max_depth,
             include_reverse,
-            pool_type_per_depth,
-            node_valid_depths,
-            filter_len,
-            stack,
-            working_path: Vec::with_capacity(16),
-            visited: vec![false; self.pools.len()],
-            pending_reverse: None,
-            done,
-            cancel: None,
-        }
+            filter,
+            nvd,
+        )
     }
 
     /// Depth-first search for all valid paths from `start` back to `end`.
@@ -1256,7 +1358,7 @@ impl PathGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -1672,5 +1774,486 @@ mod tests {
             run_one, run_two,
             "enumeration must be stable + unaffected by heartbeat wiring"
         );
+    }
+
+    /// Token id -> compact index (tests live in-module, so the private
+    /// `compact_index` seam is directly reachable).
+    #[expect(clippy::expect_used)]
+    fn graph_compact(graph: &PathGraph, token: u64) -> u32 {
+        graph
+            .compact_index(token)
+            .expect("test fixture token is interned")
+    }
+
+    /// Token id -> compact index for hand-built graphs without fixtures.
+    #[expect(clippy::cast_possible_truncation)]
+    fn intern_ref(map: &mut HashMap<u64, u32>, adj: &mut Vec<Vec<(u32, u32)>>, t: u64) -> u32 {
+        if let Some(&i) = map.get(&t) {
+            i
+        } else {
+            let i = map.len() as u32;
+            map.insert(t, i);
+            adj.push(Vec::new());
+            i
+        }
+    }
+
+    /// A big parallel bundle on A<->B plus single-pool B<->C, C<->A: forces
+    /// walks that traverse the SAME bundle two and four times, and 3-hop
+    /// triangles closing before the max budget.
+    fn battery_parallel_hub_trio() -> Vec<(u64, u64, u64, PoolKind)> {
+        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::new();
+        for i in 0..40u64 {
+            edges.push((1, 2, 700_000 + i, PoolKind::V2));
+        }
+        edges.push((2, 3, 799_001, PoolKind::V2));
+        edges.push((3, 1, 799_002, PoolKind::V2));
+        edges
+    }
+
+    /// Reference enumerator: ALL edge-trails from `start` to `end` with
+    /// `min_depth <= len <= max_depth`, by naive full backtracking. This is
+    /// the independent oracle every pruned search must reproduce.
+    fn reference_trails(
+        edges: &[(u64, u64, u64, PoolKind)],
+        start: u64,
+        end: u64,
+        min_depth: usize,
+        max_depth: Option<usize>,
+    ) -> BTreeSet<Vec<u64>> {
+        let mut token_index: HashMap<u64, u32> = HashMap::new();
+        let mut adj: Vec<Vec<(u32, u32)>> = Vec::new();
+        let mut pool_ids: Vec<u64> = Vec::new();
+        for (t0, t1, pid, _kind) in edges {
+            let a = intern_ref(&mut token_index, &mut adj, *t0);
+            let b = intern_ref(&mut token_index, &mut adj, *t1);
+            let fresh_pool = u32::try_from(pool_ids.len()).unwrap_or(u32::MAX);
+            pool_ids.push(*pid);
+            adj[a as usize].push((b, fresh_pool));
+            adj[b as usize].push((a, fresh_pool));
+        }
+        let s = intern_ref(&mut token_index, &mut adj, start);
+
+        let mut out: BTreeSet<Vec<u64>> = BTreeSet::new();
+        let mut visited: Vec<bool> = vec![false; pool_ids.len()];
+        let mut path: Vec<u32> = Vec::new();
+
+        #[expect(clippy::too_many_arguments, clippy::items_after_statements)]
+        fn dfs(
+            node: u32,
+            end: u32,
+            min_depth: usize,
+            max_depth: Option<usize>,
+            adj: &[Vec<(u32, u32)>],
+            pool_ids: &[u64],
+            visited: &mut [bool],
+            path: &mut Vec<u32>,
+            out: &mut BTreeSet<Vec<u64>>,
+        ) {
+            if node == end && path.len() >= min_depth {
+                out.insert(path.iter().map(|&i| pool_ids[i as usize]).collect());
+            }
+            if max_depth.is_some_and(|md| path.len() >= md) {
+                return;
+            }
+            for (nbr, pool_idx) in &adj[node as usize] {
+                if visited[*pool_idx as usize] {
+                    continue;
+                }
+                visited[*pool_idx as usize] = true;
+                path.push(*pool_idx);
+                dfs(
+                    *nbr, end, min_depth, max_depth, adj, pool_ids, visited, path, out,
+                );
+                path.pop();
+                visited[*pool_idx as usize] = false;
+            }
+        }
+        dfs(
+            s,
+            intern_ref(&mut token_index, &mut adj, end),
+            min_depth,
+            max_depth,
+            &adj,
+            &pool_ids,
+            &mut visited,
+            &mut path,
+            &mut out,
+        );
+        out
+    }
+
+    /// A cycle that must walk AWAY from the target before closing, plus the
+    /// shortcut 2-cycle, dead-end chains, a chain-through tail, and a pendant
+    /// far tail. Classic trap for overly tight admissible cutoffs.
+    fn battery_go_around() -> Vec<(u64, u64, u64, PoolKind)> {
+        vec![
+            (1, 2, 101, PoolKind::V2),   // WETH-A (2-cycle shortcut)
+            (1, 2, 102, PoolKind::V2),   // parallel
+            (2, 3, 103, PoolKind::V2),   // A-B
+            (3, 4, 104, PoolKind::V2),   // B-C
+            (4, 1, 105, PoolKind::V2),   // C-WETH closes the 4-cycle
+            (2, 99, 106, PoolKind::V2),  // dead-end chain A-X
+            (99, 98, 107, PoolKind::V2), // X chain-through, no other exit
+            (1, 5, 108, PoolKind::V2),   // pendant far tail WETH-E
+            (5, 6, 109, PoolKind::V2),   // E-F
+        ]
+    }
+
+    /// Two triangles sharing the hub WETH, joined by a single-pool bridge
+    /// (A-C) that sits inside the 2-core, with parallel bundles.
+    fn battery_bridge_in_2core() -> Vec<(u64, u64, u64, PoolKind)> {
+        vec![
+            (1, 2, 201, PoolKind::V2),
+            (1, 2, 202, PoolKind::V3),
+            (2, 3, 203, PoolKind::V2),
+            (3, 1, 204, PoolKind::V2),
+            (1, 4, 205, PoolKind::V2),
+            (4, 5, 206, PoolKind::V2),
+            (5, 1, 207, PoolKind::V3),
+            (2, 4, 208, PoolKind::V2), // the bridge between the triangles
+        ]
+    }
+
+    fn hub_node(s: u64) -> u64 {
+        100 * s + s
+    }
+
+    /// Hub WETH with 2 parallel pools to each of 5 spokes, plus a spoke ring.
+    /// The multiplicity bundle a per-step cutoff must survive.
+    fn battery_hub_parallel() -> Vec<(u64, u64, u64, PoolKind)> {
+        let mut edges = Vec::new();
+        let mut pid = 300u64;
+        for spoke in 11..16u64 {
+            for _ in 0..2 {
+                pid += 1;
+                edges.push((1, hub_node(spoke), pid, PoolKind::V2));
+            }
+        }
+        for s in 11..15u64 {
+            pid += 1;
+            edges.push((hub_node(s), hub_node(s + 1), pid, PoolKind::V2));
+        }
+        edges
+    }
+
+    fn assert_search_parity(
+        edges: &[(u64, u64, u64, PoolKind)],
+        start: u64,
+        end: u64,
+        label: &str,
+    ) {
+        for min_depth in [1usize, 2, 3] {
+            for max_depth in [Some(min_depth), Some(min_depth + 1), Some(min_depth + 2)] {
+                let mut found: BTreeSet<Vec<u64>> = BTreeSet::new();
+                let mut finder = OwnedPathFinder::new(
+                    PathGraph::from_edges(edges.to_vec()),
+                    start,
+                    end,
+                    min_depth,
+                    max_depth,
+                    false,
+                    None,
+                );
+                while let Some(path) = finder.next_path() {
+                    found.insert(path.into_iter().map(|(pid, _)| pid).collect());
+                }
+                let reference = reference_trails(edges, start, end, min_depth, max_depth);
+                assert_eq!(
+                    found, reference,
+                    "{label} min={min_depth} max={max_depth:?}: pruned search diverged"
+                );
+            }
+        }
+    }
+
+    /// Core DFS throughput (no FFI/yield conversion): 2-connected grid with
+    /// yields only near the start, so dead-branch churn dominates.
+    /// `#[ignore]`d — run explicitly with
+    /// `cargo test -p degenbot-pathfinding --release perf_core -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "manual perf harness: cargo test -p degenbot-pathfinding --release perf_core -- --ignored --nocapture"]
+    #[expect(clippy::print_stderr)]
+    fn perf_core_grid_search() {
+        let w = 60usize;
+        let gid = |r: usize, c: usize| 500_000u64 + (r * w + c) as u64;
+        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::new();
+        let mut pid = 900_000u64;
+        for r in 0..w {
+            for c in 0..w {
+                if c + 1 < w {
+                    pid += 1;
+                    edges.push((gid(r, c), gid(r, c + 1), pid, PoolKind::V2));
+                }
+                if r + 1 < w {
+                    pid += 1;
+                    edges.push((gid(r, c), gid(r + 1, c), pid, PoolKind::V2));
+                }
+                if r + 1 < w && c + 1 < w {
+                    pid += 1;
+                    edges.push((gid(r, c + 1), gid(r + 1, c), pid, PoolKind::V2));
+                }
+            }
+        }
+        let n_runs = 20;
+        let mut best = f64::MAX;
+        let mut best_build = f64::MAX;
+        for _ in 0..n_runs {
+            let d_start = std::time::Instant::now();
+            let graph = PathGraph::from_edges(edges.clone());
+            let build_start = std::time::Instant::now();
+            let mut finder = OwnedPathFinder::new(graph, 500_000, 500_000, 3, Some(5), false, None);
+            let build_dt = build_start.elapsed().as_secs_f64() * 1e3;
+            let mut count = 0u64;
+            while finder.next_path().is_some() {
+                count += 1;
+            }
+            let dt = d_start.elapsed().as_secs_f64() * 1e3;
+            if dt < best {
+                best = dt;
+            }
+            if build_dt < best_build {
+                best_build = build_dt;
+            }
+            assert_eq!(count, 8); // 8 unique cycles, forward only here
+        }
+        eprintln!("perf_core_grid_search best={best:.3} ms (finder build best={best_build:.3} ms)");
+    }
+
+    /// Bundle-heavy core throughput: one big parallel bundle on A<->B plus
+    /// single-pool B<->C, C<->A. Depth-4 sweeps force the walk to traverse
+    /// the bundle four times (40P4 concrete expansions). The per-pool engine
+    /// multiplies the whole subtree by the multiplicity at each level; the
+    /// bundled walk enumerates the token shape once.
+    #[test]
+    #[ignore = "manual perf harness: cargo test -p degenbot-pathfinding --release perf_core -- --ignored --nocapture"]
+    #[expect(clippy::print_stderr)]
+    fn perf_core_parallel_hub() {
+        let m = 40u64;
+        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::new();
+        for i in 0..m {
+            edges.push((1, 2, 700_000 + i, PoolKind::V2));
+        }
+        edges.push((2, 3, 799_001, PoolKind::V2));
+        edges.push((3, 1, 799_002, PoolKind::V2));
+
+        let n_runs = 5;
+        let mut best = f64::MAX;
+        for _ in 0..n_runs {
+            let d_start = std::time::Instant::now();
+            let graph = PathGraph::from_edges(edges.clone());
+            let mut finder = OwnedPathFinder::new(graph, 1, 1, 2, Some(4), false, None);
+            let mut count = 0u64;
+            while finder.next_path().is_some() {
+                count += 1;
+            }
+            let dt = d_start.elapsed().as_secs_f64() * 1e3;
+            if dt < best {
+                best = dt;
+            }
+            // len-2: 40P2; len-3 via C (both directions): 2m;
+            // len-4 (two round trips): 40P4.
+            let p2 = m * (m - 1);
+            let p4 = p2 * (m - 2) * (m - 3);
+            assert_eq!(
+                count,
+                p2 + 2 * m + p4,
+                "falling-factorial expansion contract"
+            );
+        }
+        eprintln!("perf_core_parallel_hub best={best:.3} ms");
+    }
+
+    #[test]
+    fn test_hop_distances_basics() {
+        let graph = build_fixture_graph();
+        // Fixture: WETH-A (2 parallel pools), A-B, B-WETH — B connects to
+        // WETH directly, so every fixture node sits within 1 hop of WETH.
+        let d = graph.hop_distances(&[graph_compact(&graph, WETH)]);
+        assert_eq!(d[graph_compact(&graph, WETH) as usize], 0);
+        assert_eq!(d[graph_compact(&graph, A) as usize], 1);
+        assert_eq!(d[graph_compact(&graph, B) as usize], 1);
+        let d_from_b = graph.hop_distances(&[graph_compact(&graph, B)]);
+        assert_eq!(d_from_b[graph_compact(&graph, WETH) as usize], 1);
+        assert_eq!(d_from_b[graph_compact(&graph, A) as usize], 1);
+    }
+
+    #[test]
+    fn test_hop_distances_unreachable_is_max() {
+        let graph = PathGraph::from_edges(vec![
+            (1, 2, 1, PoolKind::V2),
+            (8, 9, 2, PoolKind::V2), // separate component
+        ]);
+        let d = graph.hop_distances(&[graph_compact(&graph, 1)]);
+        for token in [8, 9] {
+            assert_eq!(
+                d[graph_compact(&graph, token) as usize],
+                u32::MAX,
+                "token {token} unreachable"
+            );
+        }
+    }
+
+    /// Trails that close on the target EARLIER than the max budget must
+    /// still be yielded whenever `min_depth` allows them. Regression: the
+    /// former penultimate-hop reachability prune checked
+    /// `end_edges[neighbor]` on the closing step's predecessor — but when the
+    /// neighbor IS the target, `end_edges[end]` is empty (no self-loops), so
+    /// every shorter-than-budget close was silently amputated (a depth-3
+    /// sweep yielded no 2-pool cycles at all; 360/360 parallel-pool 2-hop
+    /// cycles vanished on the 60-spoke hub fixture). The hop-distance cutoff
+    /// admits the target itself (`d_end[end] = 0 <= remaining`), restoring
+    /// them. The differential parity batteries also cover this, but this
+    /// test names the exact shape.
+    #[test]
+    fn test_regress_trail_closing_earlier_than_budget_is_yielded() {
+        // 3 parallel hubs pools WETH<->A, nothing else.
+        let edges = {
+            let mut e = Vec::new();
+            for pool in 100..103u64 {
+                e.push((1u64, 2u64, pool, PoolKind::V2));
+            }
+            e
+        };
+        // min_depth=2, max_depth=3 (production's floor/limit relationship):
+        // the 2-hop cycles are within budget and must be yielded.
+        let mut two_hop: Vec<Vec<u64>> = Vec::new();
+        let mut finder = OwnedPathFinder::new(
+            PathGraph::from_edges(edges.clone()),
+            1,
+            1,
+            2,
+            Some(3),
+            false,
+            None,
+        );
+        while let Some(path) = finder.next_path() {
+            if path.len() == 2 {
+                two_hop.push(path.iter().map(|(pid, _)| *pid).collect());
+            }
+        }
+        // 6 distinct directed trails (3 pools * 2 orderings, distinct pools
+        // per trail). Zero would be the regression shape.
+        assert_eq!(
+            two_hop.len(),
+            6,
+            "2-pool cycles closing before the max budget must be yielded: {two_hop:?}"
+        );
+    }
+
+    #[test]
+    fn pruned_search_parity_go_around() {
+        assert_search_parity(&battery_go_around(), 1, 1, "go_around");
+    }
+
+    #[test]
+    fn pruned_search_parity_bridge_in_2core() {
+        assert_search_parity(&battery_bridge_in_2core(), 1, 1, "bridge_in_2core");
+    }
+
+    #[test]
+    fn pruned_search_parity_hub_parallel() {
+        assert_search_parity(&battery_hub_parallel(), 1, 1, "hub_parallel");
+    }
+
+    #[test]
+    fn pruned_search_parity_parallel_hub_trio() {
+        assert_search_parity(&battery_parallel_hub_trio(), 1, 1, "parallel_hub_trio");
+    }
+
+    #[test]
+    fn pruned_search_parity_open_paths() {
+        // start != end: the pruned DFS must serve open traversals too.
+        assert_search_parity(&battery_go_around(), 1, 5, "go_around_open");
+        assert_search_parity(&battery_bridge_in_2core(), 1, 4, "bridge_open");
+    }
+
+    /// A token walk may traverse the SAME unordered pool pair more than
+    /// once, consuming a DISTINCT pool per visit. Counting contract for the
+    /// bundled engine: `u` visits of a bundle with multiplicity `m` expand
+    /// to the ordered selections `m·(m-1)·...·(m-u+1)`.
+    ///
+    /// Shape: 4 parallel pools WETH<->A, nothing else. Walks from WETH back
+    /// to WETH with `min=2, max=4`: len-2 cycles use the bundle twice
+    /// (4·3 = 12) and len-4 cycles use it four times (4·3·2·1 = 24).
+    #[test]
+    fn test_parity_parallel_bundle_revisited_pair() {
+        let mut edges = Vec::new();
+        for pool in 400..404u64 {
+            edges.push((1u64, 2u64, pool, PoolKind::V2));
+        }
+        let mut finder = OwnedPathFinder::new(
+            PathGraph::from_edges(edges.clone()),
+            1,
+            1,
+            2,
+            Some(4),
+            false,
+            None,
+        );
+        let mut count = 0;
+        while finder.next_path().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 12 + 24, "falling-factorial expansion: {count}");
+        assert_search_parity(&edges, 1, 1, "revisit_pair");
+    }
+
+    /// Mixed-kind parallel bundle + per-depth kind filter: the walk-level
+    /// kind check is a NECESSARY condition (any kind-allowed pool exists);
+    /// the expansion enforces the exact per-step kind sets and the
+    /// same-bundle distinctness across the walk's visits.
+    ///
+    /// Bundle WETH<->A: p1=V2, p2=V3, p3=V2. 2-hop cycles WETH-A-WETH.
+    #[test]
+    fn test_parity_mixed_kinds_parallel_bundle_with_filter() {
+        fn collect(
+            edges: &[(u64, u64, u64, PoolKind)],
+            filter: Option<Vec<Option<Vec<PoolKind>>>>,
+        ) -> BTreeSet<Vec<u64>> {
+            let mut finder = OwnedPathFinder::new(
+                PathGraph::from_edges(edges.to_vec()),
+                1,
+                1,
+                2,
+                Some(2),
+                false,
+                filter,
+            );
+            let mut out = BTreeSet::new();
+            while let Some(path) = finder.next_path() {
+                out.insert(path.into_iter().map(|(pid, _)| pid).collect());
+            }
+            out
+        }
+
+        let edges = vec![
+            (1u64, 2u64, 500, PoolKind::V2),
+            (1, 2, 501, PoolKind::V3),
+            (1, 2, 502, PoolKind::V2),
+        ];
+
+        // No filter: ordered pairs over the full bundle: 3·2 = 6.
+        let out = collect(&edges, None);
+        assert_eq!(out.len(), 6, "unfiltered parallel bundle: {out:?}");
+
+        // [V3, None]: slot 0 must be p(501); slot 1 any other pool: 2 paths.
+        let out = collect(&edges, Some(vec![Some(vec![PoolKind::V3]), None]));
+        let expected: BTreeSet<Vec<u64>> = BTreeSet::from([vec![501, 500], vec![501, 502]]);
+        assert_eq!(out, expected, "V3-first filter expansion: {out:?}");
+
+        // [V3, V3]: both slots need p(501) — impossible (distinct pools):
+        // the walk passes the kind-necessity check but expansion yields 0.
+        let out = collect(
+            &edges,
+            Some(vec![Some(vec![PoolKind::V3]), Some(vec![PoolKind::V3])]),
+        );
+        assert!(
+            out.is_empty(),
+            "kind-infeasible re-visit must yield nothing: {out:?}"
+        );
+
+        // Oracle parity on the same shape with reverse doubling.
+        assert_search_parity(&edges, 1, 1, "mixed_kinds_bundle");
     }
 }

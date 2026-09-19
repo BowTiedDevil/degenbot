@@ -2389,6 +2389,7 @@ name = "degenbot-db"
 version = "0.6.0-alpha.11"
 dependencies = [
  "alloy",
+ "criterion",
  "degenbot-core",
  "degenbot-math",
  "degenbot-pathfinding",
@@ -2503,6 +2504,9 @@ dependencies = [
 [[package]]
 name = "degenbot-pathfinding"
 version = "0.6.0-alpha.11"
+dependencies = [
+ "criterion",
+]
 
 [[package]]
 name = "degenbot-pool-updater"

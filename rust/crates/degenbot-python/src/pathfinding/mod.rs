@@ -25,7 +25,7 @@ use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind};
 use pyo3::exceptions::{PyStopAsyncIteration, PyValueError};
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use pyo3::types::PyDict;
-use pyo3::types::PyList;
+use pyo3::types::{PyList, PyTuple};
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use std::collections::HashSet;
 #[cfg(all(feature = "pathfinding", feature = "db"))]
@@ -92,6 +92,7 @@ pub fn find_paths_rust(
         )?,
         buffer: Vec::new(),
         batch_lens: Vec::new(),
+        pool_keys: Vec::new(),
     })
 }
 
@@ -477,6 +478,11 @@ pub struct PathIterator {
     /// Path lengths within `buffer`, in insert order; the back entry is the
     /// next path to serve.
     batch_lens: Vec<usize>,
+    /// Lazily built, per-pool `(pool_id, kind_u8)` tuples. Tuples are
+    /// immutable, so sharing one object across every path that traverses the
+    /// pool is semantics-preserving and turns the per-hop conversion from a
+    /// fresh tuple allocation into a reference bump.
+    pool_keys: Vec<Option<Py<PyTuple>>>,
 }
 
 /// Number of paths to fetch per GIL-released span. Tuned so a batch is large
@@ -516,15 +522,51 @@ impl PathIterator {
             return Ok(None);
         };
         let start = self.buffer.len() - len;
-        // Resolve indices → (pool_id, kind_u8) via the finder's pools table.
+        // Resolve indices → shared cached (pool_id, kind_u8) tuples.
         let list = PyList::empty(py);
         for i in start..self.buffer.len() {
-            let (pool_id, pool_kind) = self.finder.pool_edge_key(self.buffer[i]);
-            list.append((pool_id, pool_kind.as_u8()))?;
+            let idx = self.buffer[i];
+            if (idx as usize) >= self.pool_keys.len()
+                || self.pool_keys[idx as usize].is_none()
+            {
+                self.materialize_pool_key(py, idx)?;
+            }
+            if let Some(key) = &self.pool_keys[idx as usize] {
+                list.append(key.bind(py))?;
+            }
         }
         self.buffer.truncate(start);
         Ok(Some(list))
     }
+}
+
+impl PathIterator {
+    /// Materialize the cached tuple for `idx`, filling any gap below it.
+    /// Amortized: only pools that appear on yielded paths cost a tuple.
+    fn materialize_pool_key(&mut self, py: Python<'_>, idx: u32) -> PyResult<()> {
+        materialize_pool_keys(&self.finder, py, &mut self.pool_keys, idx)
+    }
+}
+
+/// Fill the shared per-pool tuple cache up to `idx`: only pools that appear
+/// on yielded paths ever allocate their tuple.
+fn materialize_pool_keys(
+    finder: &OwnedPathFinder,
+    py: Python<'_>,
+    cache: &mut Vec<Option<Py<PyTuple>>>,
+    idx: u32,
+) -> PyResult<()> {
+    let new_len = (idx as usize) + 1;
+    cache.resize_with(new_len, || None);
+    for (i, slot) in cache.iter_mut().enumerate() {
+        if slot.is_none() {
+            let pool_idx = u32::try_from(i).unwrap_or(u32::MAX);
+            let (pool_id, pool_kind) = finder.pool_edge_key(pool_idx);
+            let tuple = PyTuple::new(py, [pool_id, u64::from(pool_kind.as_u8())])?;
+            *slot = Some(tuple.unbind());
+        }
+    }
+    Ok(())
 }
 
 /// Mutable state carried across `__anext__` calls.
@@ -536,6 +578,8 @@ struct AsyncPathState {
     buffer: Vec<u32>,
     /// Path lengths within `buffer`, in insert order.
     batch_lens: Vec<usize>,
+    /// Lazily built shared `(pool_id, kind_u8)` tuples (see `PathIterator`).
+    pool_keys: Vec<Option<Py<PyTuple>>>,
 }
 
 /// A batched **async** iterator over the lazy DFS (4IOEVT).
@@ -566,6 +610,7 @@ impl PathBatchIterator {
                 finder,
                 buffer: Vec::new(),
                 batch_lens: Vec::new(),
+                pool_keys: Vec::new(),
             }))),
             cancel,
             batch_size: batch_size.max(1),
@@ -631,7 +676,9 @@ impl PathBatchIterator {
                 ));
             }
 
-            // Build the batch under the GIL (indices -> (pool_id, kind_u8)).
+            // Build the batch under the GIL (indices -> shared cached
+            // `(pool_id, kind_u8)` tuples; tuples are immutable, so sharing
+            // one per pool is semantics-preserving).
             let finder = &taken.finder;
             let buffer = &mut taken.buffer;
             let batch_lens = &mut taken.batch_lens;
@@ -645,8 +692,14 @@ impl PathBatchIterator {
                     let start = buffer.len() - len;
                     let path = PyList::empty(py);
                     for &idx in &buffer[start..] {
-                        let (pool_id, pool_kind) = finder.pool_edge_key(idx);
-                        path.append((pool_id, pool_kind.as_u8()))?;
+                        if (idx as usize) >= taken.pool_keys.len()
+                            || taken.pool_keys[idx as usize].is_none()
+                        {
+                            materialize_pool_keys(finder, py, &mut taken.pool_keys, idx)?;
+                        }
+                        if let Some(key) = &taken.pool_keys[idx as usize] {
+                            path.append(key.bind(py))?;
+                        }
                     }
                     buffer.truncate(start);
                     out.append(path)?;
