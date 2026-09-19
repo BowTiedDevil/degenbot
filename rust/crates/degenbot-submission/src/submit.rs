@@ -171,6 +171,11 @@ pub enum SubmitRecord {
 /// The dispatch+submit outcome — the per-candidate records (ports the loop's
 /// accumulated `submitted`/`skipped` tallies the Python logs as the
 /// `[dispatch]` summary).
+///
+/// `records` is the single result channel: [`Self::submitted_count`] and
+/// [`Self::skipped_count`] derive from it. The `instruments::pipeline()`
+/// counters written alongside in `dispatch_and_submit` are a telemetry
+/// projection of the same events, not a second result store.
 #[derive(Debug, Default)]
 pub struct SubmitOutcome {
     /// The per-candidate records, in submit order (profit-descending).
@@ -948,6 +953,33 @@ mod tests {
                 path_id: 1,
                 reason: SkipReason::DryRun
             }
+        );
+    }
+
+    /// The per-candidate records are the single result channel: the summary
+    /// counts are derived from them, so a caller reads one store.
+    #[test]
+    fn submit_outcome_records_are_the_single_result_channel() {
+        let outcome = SubmitOutcome {
+            records: vec![
+                SubmitRecord::Submitted {
+                    path_id: 1,
+                    tx_hash: B256::ZERO,
+                    nonce: 7,
+                },
+                SubmitRecord::Skipped {
+                    path_id: 2,
+                    reason: SkipReason::DryRun,
+                },
+            ],
+        };
+
+        assert_eq!(outcome.submitted_count(), 1);
+        assert_eq!(outcome.skipped_count(), 1);
+        assert_eq!(
+            outcome.submitted_count() + outcome.skipped_count(),
+            outcome.records.len(),
+            "the counts partition the records; there is no second store to diverge"
         );
     }
 

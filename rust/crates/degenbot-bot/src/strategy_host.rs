@@ -558,6 +558,11 @@ impl StrategyHost {
     /// rewound window, while a forward move lands confirmed broadcasts. The
     /// returned notices are the same values delivered to the sinks, so an
     /// in-process caller can act without subscribing.
+    ///
+    /// One writer, two consumers: the authority writes every nonce-lifespan
+    /// fact, this method is the sole construction and delivery site for head
+    /// notices, and the return value and the per-strategy sinks carry the
+    /// identical values.
     #[must_use]
     pub fn on_head(&self, confirmed: u64) -> Vec<HeadNotice> {
         let advisories = self.nonce.set_confirmed_reorg(confirmed);
@@ -1331,6 +1336,36 @@ mod tests {
         assert!(
             backrun_rx.try_recv().is_err(),
             "the other strategy receives nothing"
+        );
+    }
+
+    /// The `mint` contract is a caller convention (the host cannot inspect the
+    /// closure), so pin it the only way it is observable: the channels the
+    /// closure registers on the hub it is handed must be the channels carried
+    /// by the hub the host ends up owning. A closure that registered on a
+    /// foreign hub would leave `host.hub()` empty.
+    #[test]
+    fn the_mint_closure_registers_on_the_host_hub() {
+        use crate::arb_engine::EngineChannelHandles;
+        use degenbot_eventhub::OverflowPolicy;
+
+        let (host, _handles) = StrategyHost::mint(
+            Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
+            Arc::new(NonceAuthority::new(7)),
+            EngineChannelHandles::register_on,
+        );
+
+        assert_eq!(
+            host.hub().unbounded_flagged_count(),
+            2,
+            "the mint closure's two engine channels are registered on the host's hub"
+        );
+        assert_eq!(
+            host.hub().named_policy("engine_result_batch"),
+            Some(OverflowPolicy::UnboundedFlagged {
+                name: "engine_result_batch"
+            }),
+            "the host hub carries the registration the closure made"
         );
     }
 

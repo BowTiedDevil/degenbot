@@ -142,12 +142,13 @@ closed FSM `Signed → Broadcast → {Landed, Stale, Orphaned}` (terminal).
   `Restamped { nonce }` on `Orphaned` / `LeaseRevoked`, `Reevaluate` on `Stale`
   (the lane's decide stage re-bids or drops), `Retired` on `Landed`. The re-bid
   — economics re-check and fresh sign — stays with the caller.
-- **One nonce seam for both submission paths.** `NonceSource` is the explicit
-  switch in `dispatch_and_submit`: `Dispatcher { start }` keeps a standalone
-  driver's private reservation table, `Authority(lane)` stamps through the host
-  authority and records the signed / broadcast transitions. `NonceLane` binds a
-  strategy to the authority and ledger, and `stamp()` is its sign-time entry,
-  with the default repackage-on-decline loop.
+- **One nonce seam for both submission paths (superseded).** v1 landed with a
+  `NonceSource` switch in `dispatch_and_submit`: `Dispatcher { start }` kept a
+  standalone driver's private reservation table, `Authority(lane)` stamped
+  through the host authority. The post-acceptance hardening deleted the
+  switch: `dispatch_and_submit` now takes one `Arc<NonceLane>`, and `stamp()`
+  is the only sign-time entry, with the default repackage-on-decline loop — see
+  the authority supplement below.
 
 ### D6 — A driver's run artifacts live under its own namespace
 
@@ -242,6 +243,43 @@ Reconciliation keeps the authority's confirmed nonce current: a hosted head feed
 drives `StrategyHost::on_head`, and the standalone lane performs the same
 `set_confirmed_reorg` + ledger reconcile on each head, guarded on outstanding
 work so an idle lane pays no per-head chain read.
+
+## Supplement — the result and delivery plane has one writer per fact
+
+The post-Phase-C survey found several facts advertised through two channels.
+The single-writer ruling, applied without changing runtime behavior, is: the
+authority writes nonce lifespan; result and notice channels are consumed by
+their callers, never written by a second site.
+
+- **Nonce lifespan (authority).** Issuance (`lease`), promotion
+  (`record_broadcast`), tombstone (`release_strategy`), the monitor's expiry
+  escape (`release_broadcast`), and the head refresh (`set_confirmed_reorg`)
+  are the only mutations. Everything else reads `outstanding_nonces` /
+  `lease_of` / `has_outstanding`. The submission-time chain seed no longer
+  writes `confirmed` directly: `NonceLane::observe_chain_nonce` routes through
+  `set_confirmed_reorg`, so there is exactly one head entry.
+- **Head notices (host).** `StrategyHost::on_head` is the only site that
+  constructs and delivers `HeadNotice`s, and the value it returns is the same
+  value it sends to each owning strategy's sink. Two consumption channels
+  (in-process return, driver sink subscription), one writer and one value; a
+  future subscriber receives exactly what the fold does, never a duplicate of
+  a different fact.
+- **Submission results (`SubmitOutcome`).** `records` is the result store and
+  `submitted_count` / `skipped_count` derive from it. The
+  `instruments::pipeline()` counters emitted in the same branches are a
+  telemetry projection of the same events, not a second result store; dry-run
+  is counted but not profit-summed by construction.
+- **The Python settlement lane (`SETTLEMENT_LANE`).** The process-global slot
+  is written exactly once at host boot (`install_settlement_lane`) and read by
+  the settlement submit path; a host-less process mints a process-local lane
+  with a loud deprecation instead. One installation per process, justified by
+  the settlement arm being the Python-driven half of that single process.
+- **`HostHub<T>` / `mint`.** The hub-and-channels pair keeps the naive
+  cross-hub attach inexpressible; the closure's
+  register-on-the-hub-it-was-handed guarantee stays a documented convention
+  (typed enforcement is overkill for a single engine family), pinned by
+  `a_host_minted_hub_wires_one_driver` and
+  `the_mint_closure_registers_on_the_host_hub`.
 
 ## Related
 
