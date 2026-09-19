@@ -860,15 +860,22 @@ impl PyBotIo {
     /// - `PoolProbe.V3` (2) — V3 concentrated-liquidity pool.
     /// - `PoolProbe.BALANCER_WEIGHTED` (3) — Balancer weighted pool.
     /// - `PoolProbe.BALANCER_STABLE` (4) — Balancer stable pool.
-    /// - `PoolProbe.STABLESWAP` (5) — Curve fallback (all probes reverted).
+    /// - `PoolProbe.STABLESWAP` (5) — Curve: `coins(uint256)` answered.
     ///
     /// Keep the `match` below in lock-step with `PoolProbe`'s member order —
     /// a new `PoolFamily` variant fails this match to compile until its wire
     /// code is assigned on both sides.
     ///
-    /// Each probe is a fire-and-forget `call` — the result is not decoded, only
-    /// whether the call succeeded or reverted matters. Reverts (any `PyErr`)
-    /// are caught and the next probe is tried.
+    /// Each probe is a fire-and-forget `call` — only whether it succeeded,
+    /// reverted, or (for `coins`) returned a decodable address matters. A
+    /// revert advances to the next probe; a garbage `coins` return is not
+    /// Curve.
+    ///
+    /// Errors:
+    /// - `PyValueError` — no identity selector answered
+    ///   (`PoolBuilderError::UnknownPoolIdentity`); the Python caller wraps
+    ///   this as `DegenbotValueError`.
+    /// - `PyRuntimeError` — a non-revert provider failure.
     #[pyo3(signature = (address, block=None))]
     fn probe_pool_type(
         &self,
@@ -876,7 +883,7 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<u8> {
-        use degenbot_bot::bot_core::pool_builder::builder::PoolFamily;
+        use degenbot_bot::bot_core::pool_builder::builder::{PoolBuilderError, PoolFamily};
 
         // The construction-IO / address / block conversions `expect`: for the
         // alloy-backed Offline/RPC providers the builder dispatches through,
@@ -901,10 +908,18 @@ impl PyBotIo {
                     .await
                 })
             })
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "probe_pool_type provider failure: {e}"
-                ))
+            .map_err(|e| match e {
+                // An unmatched identity is a classification failure, not a
+                // provider fault: surface it as ValueError so the Python
+                // caller can re-wrap as DegenbotValueError.
+                PoolBuilderError::UnknownPoolIdentity { address } => {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "unknown pool identity at {address}: no identity selector answered"
+                    ))
+                }
+                other => pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "probe_pool_type provider failure: {other}"
+                )),
             })?;
         Ok(match family {
             PoolFamily::V2 => 1,               // PoolProbe.V2

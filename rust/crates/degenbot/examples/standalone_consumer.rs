@@ -62,7 +62,8 @@ use degenbot::rpc::provider::EthBlock;
 
 /// A construction RPC that always fails (no RPC wired in the standalone
 /// no-network example) — proves the trait-object seam compiles + runs
-/// without a backend, and that `probe_pool_type` degrades to `Curve`.
+/// without a backend, and that `probe_pool_type` surfaces the RPC fault
+/// rather than classifying the pool.
 struct FailingConstruction;
 #[async_trait::async_trait]
 impl RpcConstruction for FailingConstruction {
@@ -694,7 +695,10 @@ fn in_process_sim_standalone_slice() {
     ));
     let probe = degenbot::runtime::get_runtime().block_on(probe_pool_type(&io, POOL_B, None));
     assert!(
-        matches!(probe, Err(ProviderError::RpcError { .. })),
+        matches!(
+            probe,
+            Err(PoolBuilderError::Rpc(ProviderError::RpcError { .. }))
+        ),
         "a dead RPC must surface, never classify the pool as Curve: {probe:?}"
     );
     let err = degenbot::runtime::get_runtime().block_on(build_v2(1, POOL_B, &io, None));

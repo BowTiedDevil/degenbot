@@ -557,13 +557,29 @@ async fn fetch_v4_tick_data_decodes() {
 
 #[tokio::test]
 async fn probe_pool_type_dispatches() {
-    // No responses → every probe reverts → Curve.
+    // No responses → every probe reverts → unknown identity, never Curve.
+    assert!(matches!(
+        builder::probe_pool_type(&io_with(FakeRpc::new()), TO, None).await,
+        Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
+    ));
+
+    // coins(0) answers with an address → Curve.
+    let mut f = FakeRpc::new();
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(TO));
     assert_eq!(
-        builder::probe_pool_type(&io_with(FakeRpc::new()), TO, None)
+        builder::probe_pool_type(&io_with(f), TO, None)
             .await
             .unwrap(),
         builder::PoolFamily::Curve
     );
+
+    // coins(0) answers with garbage → unknown identity, not Curve.
+    let mut f = FakeRpc::new();
+    f.set_full(abi::encode_curve_coins_uint(0), vec![0u8; 1]);
+    assert!(matches!(
+        builder::probe_pool_type(&io_with(f), TO, None).await,
+        Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
+    ));
 
     // slot0() present → V3.
     let mut f = FakeRpc::new();
@@ -635,7 +651,7 @@ async fn probe_pool_type_propagates_transport_failure() {
         },
     );
     match builder::probe_pool_type(&io_with(f), TO, None).await {
-        Err(ProviderError::ConnectionFailed { message }) => {
+        Err(builder::PoolBuilderError::Rpc(ProviderError::ConnectionFailed { message })) => {
             assert_eq!(message, "rpc down");
         }
         other => panic!("expected ConnectionFailed, got {other:?}"),

@@ -388,6 +388,11 @@ pub(crate) fn map_builder_err(
         } => pyo3::exceptions::PyRuntimeError::new_err(format!(
             "pool build unknown factory {factory} — no built-in DEX variant preset"
         )),
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::UnknownPoolIdentity {
+            address,
+        } => pyo3::exceptions::PyValueError::new_err(format!(
+            "pool build unknown identity at {address}: no identity selector answered"
+        )),
         degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Spec => {
             pyo3::exceptions::PyRuntimeError::new_err("pool build out-of-spec V2 reserve")
         }

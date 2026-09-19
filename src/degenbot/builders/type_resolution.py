@@ -173,23 +173,27 @@ def _descriptor_from_probing_result(
 
     If the factory is registered in pool_type_registry, uses the registry
     descriptor. Otherwise derives a default descriptor from the probe.
-    ``None`` (no probe answered — read before this call) returns STABLESWAP.
+
+    ``None`` (no probe succeeded) raises — an unverified contract is not a
+    Curve pool. The Rust probe reports the unknown identity instead of
+    returning a Curve fallback.
 
     Returns:
         The computed value.
 
     Raises:
-        DegenbotValueError: On a probe result outside the PoolProbe space —
-            seam drift, never silently classified.
+        DegenbotValueError: On ``None`` or a probe result outside the
+            PoolProbe space — an unverified/unknown probe must never be
+            silently classified.
 
     """
     if succeeded is None:
-        return PoolTypeDescriptor(
-            family=PoolFamily.STABLESWAP,
-            variant=None,
-            kind=derive_kind(PoolFamily.STABLESWAP, None),
-            factory=factory,
+        msg = (
+            "No pool probe succeeded; refusing to classify an unverified "
+            "contract as STABLESWAP. The Rust probe raises UnknownPoolIdentity "
+            "instead of returning a Curve fallback."
         )
+        raise DegenbotValueError(message=msg)
 
     registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
     if registry_descriptor is not None:
@@ -240,22 +244,33 @@ def resolve_pool_type_by_probing(
     """Determine pool type by probing the contract on-chain.
 
     Tries V3 first (slot0), then V2 (getReserves), then Balancer
-    (getPoolId + getNormalizedWeights); when all probes revert, the Rust
-    probe returns the Curve fallback. Descriptor construction goes through
-    _descriptor_from_probing_result.
+    (getPoolId + getNormalizedWeights), then Curve (coins(uint256)). When
+    no probe answers, the Rust probe raises UnknownPoolIdentity, which this
+    function surfaces as DegenbotValueError — an unverified contract is not
+    silently classified as Curve.
 
     Returns:
         The computed value.
 
     Raises:
-        DegenbotValueError: On a probe code outside the PoolProbe space —
+        DegenbotValueError: When the seam reports no identity selector
+            answered, or on a probe code outside the PoolProbe space —
             Rust/Python wire-order drift, never silently classified.
 
     """
-    # ADR-005 slice 14i: delegate the 4-call probing choreography to Rust
+    # ADR-005 slice 14i: delegate the probing choreography to Rust
     # (``BotIo.probe_pool_type``). BotIo is the only executor; the
     # Python slot0/getReserves/getPoolId probing fallback is retired.
-    result = io.probe_pool_type(address)
+    try:
+        result = io.probe_pool_type(address)
+    except ValueError as e:
+        # Rust signals "no identity selector answered" as PyValueError (the
+        # DegenbotValueError parent class); re-raise as the package exception.
+        msg = (
+            f"Cannot determine pool type for address {address} on chain "
+            f"{chain_id}: no identity selector answered."
+        )
+        raise DegenbotValueError(message=msg) from e
     try:
         probe = PoolProbe(result)
     except ValueError as e:
@@ -289,9 +304,13 @@ def resolve_pool_type_by_probing(
                 factory=factory,
             )
         case PoolProbe.STABLESWAP:
-            return _descriptor_from_probing_result(
-                succeeded=None,
-                chain_id=chain_id,
+            # Positive Curve identity: coins(uint256) answered. This is the
+            # generic Curve descriptor the old ``succeeded=None`` fallback
+            # produced; it deliberately bypasses the registry.
+            return PoolTypeDescriptor(
+                family=PoolFamily.STABLESWAP,
+                variant=None,
+                kind=derive_kind(PoolFamily.STABLESWAP, None),
                 factory=factory,
             )
 

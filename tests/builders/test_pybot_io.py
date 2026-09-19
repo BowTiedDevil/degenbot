@@ -245,17 +245,30 @@ class _StringFieldProvider:
         return to_bytes(self._response)
 
 
-def _probe_offline_provider(succeed: set[str]) -> RustAlloyProvider:
-    """An `OfflineProvider` cassette answering only the given selector hexes.
+def _probe_offline_provider(
+    succeed: set[str],
+    *,
+    coins_answers: bool = False,
+) -> RustAlloyProvider:
+    """An `OfflineProvider` cassette modelling a probe contract.
 
-    Calls not recorded surface as `RpcError` (non-revert), which the probe's
-    fire-and-forget dispatch treats as "reverted" → tries the next probe. No
-    Python double (O3).
+    Every identity selector is recorded explicitly: a `None` value (the
+    recorded-revert shape, mirroring a live selector-absent revert) unless it
+    is named in `succeed`. `coins(0)` needs its index word in the calldata, so
+    it is keyed by full calldata and recorded as a revert unless
+    `coins_answers`. No Python double (O3).
     """
     import json
 
     pool_addr = "aa" * 20
-    calls = {f"0x{pool_addr}:0x{sel}": "00" * 32 for sel in succeed}
+    calls: dict[str, str | None] = {
+        f"0x{pool_addr}:0x{sel}": None for sel in _PROBE_SELECTORS
+    }
+    for sel in succeed:
+        calls[f"0x{pool_addr}:0x{sel}"] = "00" * 32
+    calls[f"0x{pool_addr}:0x{_COINS_UINT_CALLDATA}"] = (
+        "00" * 12 + "11" * 20 if coins_answers else None
+    )
     return RustAlloyProvider.offline_from_json_string(
         json.dumps({
             "chain_id": 1,
@@ -271,6 +284,12 @@ _SLOT0 = function_selector("slot0()").hex()
 _GET_RESERVES = function_selector("getReserves()").hex()
 _GET_POOL_ID = function_selector("getPoolId()").hex()
 _GET_NORMALIZED_WEIGHTS = function_selector("getNormalizedWeights()").hex()
+
+_PROBE_SELECTORS = (_SLOT0, _GET_RESERVES, _GET_POOL_ID, _GET_NORMALIZED_WEIGHTS)
+# coins(uint256) with index 0 — the ABI decoder rejects a bare selector.
+_COINS_UINT_CALLDATA = (
+    function_selector("coins(uint256)") + (0).to_bytes(32, "big")
+).hex()
 
 
 def test_pybot_io_probe_pool_type_returns_slot0_for_v3():
@@ -297,9 +316,16 @@ def test_pybot_io_probe_pool_type_returns_balancer_stable():
     assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.BALANCER_STABLE
 
 
-def test_pybot_io_probe_pool_type_returns_stableswap_fallback():
-    """When all probes revert, probe returns the Curve fallback code."""
+def test_pybot_io_probe_pool_type_raises_for_unknown_identity():
+    """When no identity selector answers, probe raises (never a Curve tag)."""
     io = BotIo(provider=_probe_offline_provider(set()))
+    with pytest.raises(ValueError, match="unknown pool identity"):
+        io.probe_pool_type("0x" + "aa" * 20)
+
+
+def test_pybot_io_probe_pool_type_returns_stableswap_when_coins_answers():
+    """coins(uint256) answering with an address → the positive Curve tag."""
+    io = BotIo(provider=_probe_offline_provider(set(), coins_answers=True))
     assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
 
 

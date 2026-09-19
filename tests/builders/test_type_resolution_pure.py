@@ -83,14 +83,14 @@ class TestDescriptorFromProbingResult:
         )
         assert result.family == PoolFamily.CONSTANT_PRODUCT
 
-    def test_no_probe_succeeds_yields_stableswap(self) -> None:
-        """All probing calls fail (Curve fallback) → STABLESWAP."""
-        result = _descriptor_from_probing_result(
-            succeeded=None,
-            chain_id=CHAIN_ID,
-            factory=UNKNOWN_FACTORY,  # type: ignore[arg-type]
-        )
-        assert result.family == PoolFamily.STABLESWAP
+    def test_no_probe_succeeds_raises(self) -> None:
+        """No probe answered → unverified, not STABLESWAP: raise."""
+        with pytest.raises(DegenbotValueError, match="No pool probe succeeded"):
+            _descriptor_from_probing_result(
+                succeeded=None,
+                chain_id=CHAIN_ID,
+                factory=UNKNOWN_FACTORY,  # type: ignore[arg-type]
+            )
 
     def test_registered_factory_prefers_registry_descriptor(self) -> None:
         """When the factory is registered, registry descriptor takes precedence."""
@@ -115,12 +115,11 @@ class TestDescriptorFromProbingResult:
         )
         assert result.factory == UNKNOWN_FACTORY
 
-    def test_stableswap_fallback_carries_factory(self) -> None:
-        """The STABLESWAP fallback descriptor also carries the factory."""
-        result = _descriptor_from_probing_result(
-            succeeded=None,
-            chain_id=CHAIN_ID,
-            factory=UNKNOWN_FACTORY,  # type: ignore[arg-type]
-        )
-        assert result.factory == UNKNOWN_FACTORY
-        assert result.family == PoolFamily.STABLESWAP
+    def test_none_probe_carries_no_descriptor(self) -> None:
+        """``None`` is an unverified identity: it must never produce a descriptor."""
+        with pytest.raises(DegenbotValueError, match="No pool probe succeeded"):
+            _descriptor_from_probing_result(
+                succeeded=None,
+                chain_id=CHAIN_ID,
+                factory=UNKNOWN_FACTORY,  # type: ignore[arg-type]
+            )

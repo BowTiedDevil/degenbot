@@ -93,11 +93,13 @@ class FakePyBotIo:
         probe_result: int = 0,
         pool_row: object | None = None,
         exchange_row: object | None = None,
+        probe_exception: Exception | None = None,
     ) -> None:
         self._factory_address = factory_address
         self._probe_result = probe_result
         self._pool_row = pool_row
         self._exchange_row = exchange_row
+        self._probe_exception = probe_exception
 
     def get_block_number(self) -> int:
         return 18_000_000
@@ -106,6 +108,8 @@ class FakePyBotIo:
         return self._factory_address
 
     def probe_pool_type(self, _address: str) -> int:
+        if self._probe_exception is not None:
+            raise self._probe_exception
         return self._probe_result
 
     def fetch_pool_row(self, chain_id: int, address: str) -> object | None:
@@ -184,8 +188,8 @@ class TestResolvePoolTypeByProbing:
         assert result.family == PoolFamily.STABLESWAP
         assert result.variant == "balancer_stable"
 
-    def test_curve_fallback_returns_stableswap(self) -> None:
-        """All probes reverted (Curve fallback tag) → STABLESWAP."""
+    def test_curve_probe_returns_stableswap(self) -> None:
+        """coins(uint256) answered (verified Curve tag) → STABLESWAP."""
         io = FakePyBotIo(probe_result=PoolProbe.STABLESWAP)
         result = resolve_pool_type_by_probing(
             "0xPool",  # type: ignore[arg-type]
@@ -194,6 +198,18 @@ class TestResolvePoolTypeByProbing:
             io=io,
         )
         assert result.family == PoolFamily.STABLESWAP
+        assert result.variant is None
+
+    def test_unknown_identity_probe_raises(self) -> None:
+        """The Rust seam raises for an unmatched identity; wrap as DegenbotValueError."""
+        io = FakePyBotIo(probe_exception=ValueError("unknown pool identity"))
+        with pytest.raises(DegenbotValueError, match="no identity selector answered"):
+            resolve_pool_type_by_probing(
+                "0xPool",  # type: ignore[arg-type]
+                chain_id=CHAIN_ID,
+                factory="0xFactory",  # type: ignore[arg-type]
+                io=io,
+            )
 
     def test_unknown_probe_code_raises(self) -> None:
         """An unrecognized probe code is seam drift — it must raise, never

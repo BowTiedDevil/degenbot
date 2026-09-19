@@ -59,6 +59,8 @@ pub enum PoolBuilderError {
     Rpc(#[from] ProviderError),
     #[error("unknown factory {factory} — no built-in DEX variant preset")]
     UnknownVariant { factory: Address },
+    #[error("unknown pool identity at {address}: no identity selector answered")]
+    UnknownPoolIdentity { address: Address },
     #[error("out-of-spec V2 reserve")]
     Spec,
     #[error("decode failure: {message}")]
@@ -218,23 +220,27 @@ async fn fetch_field_decimals(io: &ConstructionIo, address: Address, prototypes:
 /// Probe a pool contract to identify its family via the canonical read-call
 /// probe order (mirrors `type_resolution.py::probe_pool_type`):
 /// `slot0()` → V3, `getReserves()` → V2, `getPoolId()` → Balancer (weighted vs
-/// stable by `getNormalizedWeights()`), else Curve.
+/// stable by `getNormalizedWeights()`), `coins(0)` → Curve.
 ///
-/// An EVM revert means the selector is absent: the next probe runs, and when
-/// every probe reverts the contract is classified [`PoolFamily::Curve`]. A
+/// An EVM revert means the selector is absent: the next probe runs. When no
+/// probe answers — every selector reverts, or `coins(0)` returns an
+/// undecodable word — the contract has no recognized identity and this
+/// returns [`PoolBuilderError::UnknownPoolIdentity`], never
+/// [`PoolFamily::Curve`]: an unverified contract is not a Curve pool. A
 /// provider failure that is NOT a revert (transport, timeout, rate limit,
-/// malformed response) propagates as an error — a broken RPC must never
-/// silently degrade a pool to Curve.
+/// malformed response) likewise propagates as an error — a broken RPC must
+/// never silently degrade a pool to Curve.
 ///
 /// # Errors
 ///
-/// The [`ProviderError`] from the first probe that failed for a reason other
-/// than [`ProviderError::ExecutionReverted`].
+/// [`PoolBuilderError::Rpc`] from the first probe that failed for a reason
+/// other than [`ProviderError::ExecutionReverted`], or
+/// [`PoolBuilderError::UnknownPoolIdentity`] when no probe answered.
 pub async fn probe_pool_type(
     io: &ConstructionIo,
     address: Address,
     block: Option<u64>,
-) -> Result<PoolFamily, ProviderError> {
+) -> Result<PoolFamily, PoolBuilderError> {
     if probe_present(io, address, b"slot0()", block).await? {
         Ok(PoolFamily::V3)
     } else if probe_present(io, address, b"getReserves()", block).await? {
@@ -247,8 +253,10 @@ pub async fn probe_pool_type(
                 PoolFamily::BalancerStable
             },
         )
-    } else {
+    } else if probe_curve(io, address, block).await? {
         Ok(PoolFamily::Curve)
+    } else {
+        Err(PoolBuilderError::UnknownPoolIdentity { address })
     }
 }
 
@@ -270,6 +278,28 @@ async fn probe_present(
     .await
     {
         Ok(_) => Ok(true),
+        Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// `true` when `coins(0)` answers with a decodable address.
+///
+/// `coins(uint256)` is exposed by every supported Curve family
+/// (stable/metapools/two/tricrypto) — it is the positive identity signal. A
+/// revert means the selector is absent and a garbage return means the call
+/// site is not a Curve coin getter: both are "not Curve". A provider failure
+/// that is not a revert propagates.
+///
+/// `coins(0)` needs the index word in the calldata (the ABI decoder rejects a
+/// bare selector), so this cannot reuse [`probe_present`].
+async fn probe_curve(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<bool, ProviderError> {
+    match choreography::eth_call(io, address, abi::encode_curve_coins_uint(0), block).await {
+        Ok(bytes) => Ok(abi::decode_curve_coins(&bytes).is_ok()),
         Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
         Err(e) => Err(e),
     }
