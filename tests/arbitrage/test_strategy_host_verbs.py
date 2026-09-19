@@ -7,6 +7,9 @@ offline, and the verbs touch only the host's in-process records.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from degenbot._ffi import (
@@ -68,3 +71,44 @@ def test_errors_share_the_strategy_host_base(engine: ArbitrageEngine) -> None:
     assert issubclass(UnknownStrategyError, StrategyHostError)
     assert issubclass(UnconfiguredStrategyError, StrategyHostError)
     assert issubclass(StrategyHostError, RuntimeError)
+
+
+# The host FSM's state vocabulary lives ONCE in Rust. These helpers read the
+# two Rust sources as text so the parity test binds the Python-facing names to
+# the Rust enum rather than re-encoding them as a second hardcoded literal.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_STRATEGY_HOST_RS = _REPO_ROOT / "rust/crates/degenbot-bot/src/strategy_host.rs"
+_PY_STRATEGY_RS = _REPO_ROOT / "rust/crates/degenbot-python/src/bot/engine/strategy.rs"
+
+
+def _rust_driver_state_variants() -> set[str]:
+    source = _STRATEGY_HOST_RS.read_text()
+    block = source.split("pub enum DriverState {", 1)[1].split("}", 1)[0]
+    return set(re.findall(r"^\s*([A-Z][A-Za-z0-9]*),", block, flags=re.MULTILINE))
+
+
+def _python_state_names() -> dict[str, str]:
+    source = _PY_STRATEGY_RS.read_text()
+    block = source.split("fn state_name(", 1)[1].split("}", 1)[0]
+    return dict(re.findall(r'DriverState::([A-Za-z0-9]+)\s*=>\s*"([a-z]+)"', block))
+
+
+def test_python_state_vocabulary_binds_to_the_rust_driver_state_enum() -> None:
+    """The Python state names are derived from the Rust FSM, not duplicated.
+
+    The host FSM transition table and its state vocabulary are pinned once in
+    ``strategy_host.rs``. This test reads that enum and the Python translation
+    in ``strategy.rs`` so a rename or an added state cannot desynchronize while
+    both suites stay green.
+    """
+    rust_variants = _rust_driver_state_variants()
+    python_names = _python_state_names()
+    assert rust_variants, "the Rust DriverState enum must be source-readable"
+    assert set(python_names) == rust_variants, (
+        f"the Python state_name map must cover exactly the Rust DriverState "
+        f"variants: python={sorted(python_names)} rust={sorted(rust_variants)}"
+    )
+    assert len(set(python_names.values())) == len(python_names), (
+        "each Rust driver state needs a distinct Python name"
+    )
+    assert all(name.islower() for name in python_names.values())

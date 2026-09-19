@@ -25,6 +25,7 @@ fn state_name(state: degenbot_bot::strategy_host::DriverState) -> &'static str {
         DriverState::Registered => "registered",
         DriverState::Enabled => "enabled",
         DriverState::Running => "running",
+        DriverState::Stopped => "stopped",
         DriverState::Halted => "halted",
         DriverState::Disabled => "disabled",
     }

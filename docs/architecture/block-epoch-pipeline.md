@@ -19,8 +19,9 @@ There are two orthogonal axes:
    → Resumed. It never interleaves with per-epoch work; see its table below.
 2. **The block-epoch stage machine** — the per-epoch stages of one block, below.
 
-The existing `EnginePhase` enum (`Created`/`Subscribed`/`SnapshotLoaded`/
-`Backfilled`/`Resumed`) is remapped in full onto axis 1: its role —
+The existing `PumpPhase` enum (formerly `EnginePhase`;
+`Created`/`Subscribed`/`SnapshotLoaded`/`Backfilled`/`Resumed`) is remapped in
+full onto axis 1: its role —
 registration/snapshot/backfill ordering — is runtime-level, not per-epoch, so
 it contributes no sub-state to the `Solved`/`Simulated` stage rows.
 

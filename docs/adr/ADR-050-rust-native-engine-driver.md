@@ -111,9 +111,11 @@ pub fn run_v4_registration_lifecycle_sync(&self, pool_manager: &str, pool_id_hex
 - **Lifecycles.** The `run_v3/v4_registration_lifecycle` + `_sync` bodies move **down** from `PumpState` (D7). The core owns the quarantine → seed-verify → drain+pin → post-drain-verify → `set_live` choreography (ADR-022 D1); the async/blocking twin is the async form + a runtime `block_on`, replacing the PyO3 `future_into_py` shape. `VerifyError` (mismatch = fatal; RPC = retryable) is the typed Rust error. The **retry policy is not lifted** here: the values and the retry-with-backoff loop stay consumer-side (RSP-9 `IUGFLH` row).
 - **inline sim.** The core member is `set_inline_simulator(Arc<dyn InlineSimulator>)` (already on `EngineStages`). The Python `install_inline_simulator` stays in `degenbot-python`: it builds the `InlineSimHook` from the session's `PySimulateContext` and registers the escalation port, then calls the core member. A pure-Rust consumer builds its own `InlineSimulator` and calls it directly.
 
-### D5 — `EnginePhase` is reused; `Stopped` is a driver terminal latch; phase violations are typed
+### D5 — `PumpPhase` (formerly `EnginePhase`) is the pump-protocol phase; `Stopped` is a driver terminal latch; phase violations are typed
 
-The engine-lifecycle truth stays the existing `EnginePhase` FSM (`Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`); the driver reproduces today's transitions exactly (`after_subscribe` landing at `SnapshotLoaded`; `resume` landing at `Resumed`). No new discriminant is added to `EnginePhase`.
+The engine-session protocol truth stays the existing FSM (`Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`); the driver reproduces today's transitions exactly (`after_subscribe` landing at `SnapshotLoaded`; `resume` landing at `Resumed`). No new discriminant is added to it.
+
+**Pump-protocol naming.** The enum is now `PumpPhase`: it is a protocol-phase machine for `subscribe`/`load_snapshot`/`backfill`/`resume` ordering, NOT the operator-facing lifecycle. The one operator lifecycle (`Registered → Enabled → Running → Stopped | Halted | Disabled`) is owned by `strategy_host::StrategyHost`; a consumer reads the pump machinery read-only through `EngineDriver::snapshot() -> DriverSnapshot { phase, is_stopped, pump_handle_armed }` and never derives operator legality from it.
 
 The driver adds a **terminal stopped latch** (`stopped: AtomicBool`), because the engine enum cannot express teardown. Every driver member except `stop()` rejects once stopped. `stop()` is deliberately any-phase and idempotent — the `BotRunner.shutdown` contract (the SIGINT/partial-startup teardown depends on it).
 

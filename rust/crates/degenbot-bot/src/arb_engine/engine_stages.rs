@@ -35,8 +35,8 @@
 //! StateLock-mediated core locking — this type adds NO lock layer.
 use super::solve_cycle::CycleOutcome;
 use super::ArbitrageEngine;
-use super::EnginePhase;
 use super::EngineRetune;
+use super::PumpPhase;
 use crate::bot_core::stage_handlers::StageHandlers;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
@@ -190,15 +190,17 @@ impl EngineStages {
         Arc::clone(self.engine.lock().core())
     }
 
-    /// Read the current engine lifecycle phase (ZU7RAF core-owned truth).
+    /// Read the current pump-protocol phase (ZU7RAF core-owned truth): the
+    /// engine session's read-only sub-state. Operator legality lives in the
+    /// [`crate::strategy_host::StrategyHost`] FSM, not here.
     #[must_use]
-    pub fn current_phase(&self) -> EnginePhase {
+    pub fn current_phase(&self) -> PumpPhase {
         self.engine.lock().current_phase()
     }
 
     /// Advance to `phase` with NO ordering check (callers validate via the
-    /// `EnginePhase` gates).
-    pub fn set_phase(&self, phase: EnginePhase) {
+    /// `PumpPhase` gates).
+    pub fn set_phase(&self, phase: PumpPhase) {
         self.engine.lock().set_phase(phase);
     }
 

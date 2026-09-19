@@ -136,7 +136,7 @@ mod tests;
 pub use diagnostic::{
     compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
 };
-pub use driver::{DriverError, EngineChannelHandles, EngineDriver, PhaseError};
+pub use driver::{DriverError, DriverSnapshot, EngineChannelHandles, EngineDriver, PhaseError};
 pub use engine_stages::EngineStages;
 pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
@@ -149,8 +149,15 @@ pub use retune::EngineRetune;
 // ---------------------------------------------------------------------------
 // Engine phase state machine (Plan 098)
 // ---------------------------------------------------------------------------
-/// Lifecycle phase of the engine, enforcing correct ordering of
+/// The engine session's pump-protocol phase: the ordering machine for
 /// `subscribe()`, `load_snapshot()`, `backfill()`, and `resume()`.
+///
+/// This is a protocol-phase machine, NOT the operator-facing lifecycle. The
+/// one operator lifecycle (`Registered -> Enabled -> Running -> Stopped |
+/// Halted | Disabled`) is owned by [`crate::strategy_host::StrategyHost`];
+/// an engine's pump phase is a private sub-state a consumer reads read-only
+/// through [`driver::DriverSnapshot`], never a peer authority answering
+/// "may this strategy run?".
 ///
 /// Transitions:
 /// ```text
@@ -161,7 +168,7 @@ pub use retune::EngineRetune;
 /// Construction-time-load path: snapshot loaded at `Bot`
 /// construction BEFORE subscribe. The snapshot lives in the shared core
 /// `BotState` and never advances the engine phase, so `subscribe()` uses
-/// `EnginePhase::after_subscribe(current, core_has_snapshot)` to reflect
+/// `PumpPhase::after_subscribe(current, core_has_snapshot)` to reflect
 /// reality — landing at `SnapshotLoaded` (not `Subscribed`) so `resume()`
 /// (which requires `>= SnapshotLoaded`) is reachable:
 /// Created ──load_snapshot_from_db()──[core has snapshot]──► subscribe()
@@ -169,7 +176,7 @@ pub use retune::EngineRetune;
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
-pub enum EnginePhase {
+pub enum PumpPhase {
     /// Engine just created, no connections.
     Created = 0,
     /// WS `subscribe()` completed, first block observed.
@@ -181,7 +188,7 @@ pub enum EnginePhase {
     /// Pump processing live blocks.
     Resumed = 4,
 }
-impl EnginePhase {
+impl PumpPhase {
     /// Reconstruct a phase from its `u8` discriminant (the inverse of the
     /// `#[repr(u8)]` representation). Used by `PumpState` (ADR-006 D4) to read
     /// the phase atomically across PyBot/PyArbitrageEngine wrappers.
@@ -553,7 +560,7 @@ impl ArbitrageEngine {
             },
             delivery: DeliveryPolicy::default(),
             fleet_boot_stamp,
-            phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
+            phase: std::sync::atomic::AtomicU8::new(PumpPhase::Created as u8),
             event_buffer_expiry_enabled: false,
         };
         // apply the config-derived retune ONCE at construction
@@ -618,14 +625,14 @@ impl ArbitrageEngine {
     /// an unknown discriminant falls back to `Created` (the safest default —
     /// any phase-gated method re-validates via `require`/`require_before`).
     #[must_use]
-    pub fn current_phase(&self) -> EnginePhase {
-        EnginePhase::from_u8(self.phase.load(std::sync::atomic::Ordering::Relaxed))
+    pub fn current_phase(&self) -> PumpPhase {
+        PumpPhase::from_u8(self.phase.load(std::sync::atomic::Ordering::Relaxed))
     }
     /// Advance to `phase` with NO ordering check — the caller validates against
     /// the gated helpers [`Self::require_phase`] / [`Self::require_phase_before`]
-    /// (or `EnginePhase::allow_subscribe` / `after_subscribe`). Core-owned
+    /// (or `PumpPhase::allow_subscribe` / `after_subscribe`). Core-owned
     /// source of truth.
-    pub fn set_phase(&self, phase: EnginePhase) {
+    pub fn set_phase(&self, phase: PumpPhase) {
         self.phase
             .store(phase as u8, std::sync::atomic::Ordering::Relaxed);
     }
@@ -637,7 +644,7 @@ impl ArbitrageEngine {
     /// Returns `Err(String)` describing the invalid transition when the phase
     /// is below `required`.
     #[cfg_attr(not(test), expect(dead_code))]
-    pub fn require_phase(&self, required: EnginePhase, method_name: &str) -> Result<(), String> {
+    pub fn require_phase(&self, required: PumpPhase, method_name: &str) -> Result<(), String> {
         self.current_phase().require(required, method_name)
     }
     /// Gate a lifecycle-ordered method: succeed only when the current phase is
@@ -647,11 +654,7 @@ impl ArbitrageEngine {
     ///
     /// Returns `Err(String)` when the engine has already reached `phase`.
     #[cfg_attr(not(test), expect(dead_code))]
-    pub fn require_phase_before(
-        &self,
-        phase: EnginePhase,
-        method_name: &str,
-    ) -> Result<(), String> {
+    pub fn require_phase_before(&self, phase: PumpPhase, method_name: &str) -> Result<(), String> {
         self.current_phase().require_before(phase, method_name)
     }
     // Test-only registration helpers (ADR-006 D3).

@@ -12,10 +12,14 @@
     clippy::print_stderr,
     reason = "bin: boot/config failures must reach the operator before tracing is installed"
 )]
+#![expect(
+    clippy::expect_used,
+    reason = "bin boot: the fresh host's own register/enable/start/drive verbs cannot fail, and a failure must abort before the lane runs"
+)]
 
 use std::sync::Arc;
 
-use degenbot_eventhub::Hub;
+use degenbot_bot::strategy_host::{FacetStatus, StrategyHost};
 use degenbot_submission::backrun_driver::{backrun_boot, resolve_backrun_node_join};
 
 // Session telemetry: the fmt subscriber appends to the session's
@@ -119,35 +123,66 @@ async fn main() {
         None => (None, None),
     };
 
-    // The hub is the host's, not the lane's; the lane registers its feed on it.
-    let hub = Arc::new(Hub::new());
-
-    // ONE nonce issuer for the standalone process: this bin is a host of size
-    // one, so it mints its own authority, ledger, and lane rather than keeping
-    // a private dispatcher reservation table. The driver seeds the authority
-    // from the operator account's chain nonce at its own boot and reconciles
-    // it per head.
-    let nonce_lane = Arc::new(degenbot_submission::NonceLane::new(
+    // The host's hub and handles: this bin is a host of size one, so it mints
+    // the SAME `StrategyHost` a multi-strategy boot mints rather than a
+    // lane-only shim. The host owns the one operator-facing lifecycle and the
+    // shared hub/registry/authority; the lane is registered as its single
+    // driver and driven through the host FSM.
+    let (mut host, _attached) = StrategyHost::mint(
+        route_registry.unwrap_or_else(|| {
+            Arc::new(degenbot_bot::bot_core::RouteRegistry::new(
+                degenbot_bot::sidecar_paths::V2ConnectorIndex::default(),
+            ))
+        }),
         Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(0)),
+        |_hub| (),
+    );
+    let backrun_id = degenbot_bot::nonce_authority::StrategyId::new("backrun");
+    host.register(backrun_id.clone(), FacetStatus::Configured)
+        .expect("fresh host registers backrun");
+
+    // ONE nonce issuer for the standalone process: the host's authority backs
+    // the lane, so the standalone shape and a hosted lane stamp through the
+    // same contract. The driver seeds the authority from the operator
+    // account's chain nonce at its own boot and reconciles it per head.
+    let nonce_lane = Arc::new(degenbot_submission::NonceLane::new(
+        Arc::clone(host.nonce()),
         Arc::new(degenbot_submission::SubmissionLedger::new()),
-        degenbot_bot::nonce_authority::StrategyId::new("backrun"),
+        backrun_id.clone(),
     ));
 
     // ONE boot path, shared with a multi-strategy host: `backrun_boot`
-    // manufactures the lane's config, head source, and context, and
-    // `into_driver_future` starts the lane. The standalone sidecar keeps the
-    // process-global state root (`lane_root: None`) and polls the future
-    // inline, so a lane panic still unwinds the process.
+    // manufactures the lane's config, head source, and context. The standalone
+    // sidecar keeps the process-global state root (`lane_root: None`); the
+    // host's spawn factory is handed that scope at the driving edge.
     let boot = backrun_boot(
         &config,
         join,
-        hub,
-        route_registry,
+        Arc::clone(host.hub()),
+        Some(Arc::clone(host.registry())),
         connector_db,
         None,
         nonce_lane,
     );
-    boot.into_driver_future().await;
+    host.attach_spawn(
+        &backrun_id,
+        Box::new(move |_lane| boot.into_driver_future()),
+    )
+    .expect("fresh host attaches the backrun spawn");
+    host.enable(&backrun_id).expect("backrun is configured");
+
+    // Drive the one registered driver through the host's lifecycle: the host
+    // starts the lane, and the host FSM folds its terminal exit, so a clean
+    // stop is `Stopped` and a self-halt is a `Halted` tombstone - never a
+    // stale `Running`.
+    let tasks = host
+        .start_driving()
+        .expect("the host starts its one configured driver");
+    for task in tasks {
+        host.drive_and_fold(task)
+            .await
+            .expect("the host owns the driver-exit fold");
+    }
 }
 
 #[cfg(test)]

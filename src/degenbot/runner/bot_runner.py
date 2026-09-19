@@ -282,7 +282,7 @@ class BotRunner:
         # An explicit backrun selection must boot the sidecar binary; booting
         # it through the settlement runner is a half-configured run.
         arm = strategy_arm_from_env()
-        if arm not in (None, "settlement"):
+        if arm not in {None, "settlement"}:
             msg = (
                 f"settlement runner refuses DEGENBOT_STRATEGY_NAME={arm!r}: "
                 "the backrun arm boots via the sidecar binary "

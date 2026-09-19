@@ -213,10 +213,11 @@ def _resolve_pool_kinds(pool_types: Sequence[type]) -> set[int]:
         elif issubclass(pt, UniswapV2PoolTableBase):
             pool_kinds.add(_POOL_KIND_V2)
         else:
-            raise ValueError(
+            msg = (
                 f"_resolve_pool_kinds cannot serve pool type {pt.__name__!r}: "
                 "no known pool-kind mapping"
             )
+            raise ValueError(msg)
     return pool_kinds
 
 

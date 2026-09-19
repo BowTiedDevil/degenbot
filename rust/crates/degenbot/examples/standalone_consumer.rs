@@ -202,7 +202,7 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
 fn main() {
     // 2b reaches EngineStages — the ONE external seam a standalone consumer
     // crosses (the engine type is crate-private machinery).
-    use degenbot::bot::arb_engine::{EnginePhase, EngineStages};
+    use degenbot::bot::arb_engine::{EngineStages, PumpPhase};
 
     // 1. Construct the Rust-owned per-chain bot state (no Python).
     let mut bot = BotState::new();
@@ -242,7 +242,7 @@ fn main() {
     assert_eq!(pool_id, 1, "first registered pool gets id 1");
 
     // 2b. Standalone stage-surface lifecycle: the seam owns
-    //    EnginePhase — a cargo-add degenbot consumer observes + guards it.
+    //    PumpPhase — a cargo-add degenbot consumer observes + guards it.
     let lifecycle_core = Arc::new(degenbot::bot_core::state_lock::StateLock::new(
         BotState::new(),
     ));
@@ -250,10 +250,10 @@ fn main() {
         lifecycle_core,
         Arc::new(degenbot::bot_core::EpochDelta::new(0u64)),
     );
-    assert_eq!(stages.current_phase(), EnginePhase::Created);
+    assert_eq!(stages.current_phase(), PumpPhase::Created);
     assert!(stages.current_phase().allow_subscribe("subscribe").is_ok());
-    stages.set_phase(EnginePhase::Subscribed);
-    assert_eq!(stages.current_phase(), EnginePhase::Subscribed);
+    stages.set_phase(PumpPhase::Subscribed);
+    assert_eq!(stages.current_phase(), PumpPhase::Subscribed);
 
     // 3. Run a swap calc through the Rust core (the `degenbot-v2-math`
     //    `IntHopState` constant-product path). The same code path the PyO3 binding ships to

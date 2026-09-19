@@ -2,8 +2,8 @@
 //! registry, one nonce authority, and the registered strategy drivers.
 //!
 //! A strategy is admitted to the host as a *driver FSM instance*: a named
-//! record whose lifecycle is `Registered -> Enabled -> Running -> {Halted,
-//! Disabled}`. The lifecycle is a total transition function — an operator verb
+//! record whose lifecycle is `Registered -> Enabled -> Running -> {Stopped,
+//! Halted, Disabled}`. The lifecycle is a total transition function — an operator verb
 //! that would move a driver out of turn returns a typed decline rather than
 //! panicking. `Halted` and `Disabled` are terminal: a halt is a frozen
 //! tombstone the operator can query but never restart, and only a fresh
@@ -43,6 +43,9 @@ pub enum DriverState {
     Enabled,
     /// The driver's loop is running.
     Running,
+    /// The driver's loop returned cleanly: the lane is gone, but the record is
+    /// not a tombstone. The operator may still disable it.
+    Stopped,
     /// Terminal tombstone: the driver halted on its own local violation.
     Halted,
     /// Terminal: the operator disabled the driver.
@@ -70,6 +73,9 @@ pub enum FsmDecline {
     /// `halt` is only legal from [`DriverState::Running`].
     #[error("halt requires the Running state")]
     HaltRequiresRunning,
+    /// `stop` is only legal from [`DriverState::Running`].
+    #[error("stop requires the Running state")]
+    StopRequiresRunning,
     /// `disable` refuses the terminal states: a tombstone is frozen.
     #[error("disable rejects terminal states (Halted/Disabled are frozen)")]
     DisableRejectsTerminal,
@@ -112,6 +118,20 @@ impl DriverState {
             Ok(Self::Halted)
         } else {
             Err(FsmDecline::HaltRequiresRunning)
+        }
+    }
+
+    /// The driver's own clean-stop move: [`DriverState::Running`] ->
+    /// [`DriverState::Stopped`].
+    ///
+    /// # Errors
+    ///
+    /// [`FsmDecline::StopRequiresRunning`] from any other state.
+    pub fn on_stop(self) -> Result<Self, FsmDecline> {
+        if self == Self::Running {
+            Ok(Self::Stopped)
+        } else {
+            Err(FsmDecline::StopRequiresRunning)
         }
     }
 
@@ -783,8 +803,9 @@ impl StrategyHost {
     }
 
     /// Fold a started driver's terminal exit into the FSM: a self-halt is a
-    /// tombstone carrying the cause; a clean stop leaves the move to the
-    /// operator's disable verb.
+    /// tombstone carrying the cause; a clean stop moves the record to
+    /// [`DriverState::Stopped`] so a dead loop is never reported as
+    /// [`DriverState::Running`].
     ///
     /// # Errors
     ///
@@ -798,12 +819,34 @@ impl StrategyHost {
         match exit {
             DriverExit::Halted(detail) => self.halt(id, detail),
             DriverExit::Stopped => {
-                if self.record(id).is_none() {
-                    return Err(HostError::UnknownStrategy(id.clone()));
-                }
+                let record = self.record_mut(id)?;
+                record.state = record
+                    .state
+                    .on_stop()
+                    .map_err(|decline| HostError::Transition {
+                        id: id.clone(),
+                        decline,
+                    })?;
                 Ok(())
             }
         }
+    }
+
+    /// Await one started driver's terminal exit and fold it into the FSM.
+    ///
+    /// This is the host's supervision edge: a caller that booted [`Self::start_driving`]
+    /// hands each returned [`DriverTask`] here instead of re-implementing the
+    /// await-then-[`Self::record_driver_exit`] ritual. The fold stays host-owned,
+    /// so a clean stop is [`DriverState::Stopped`] and a self-halt is a tombstone.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::UnknownStrategy`] / [`HostError::Transition`] from the
+    /// resulting lifecycle move.
+    pub async fn drive_and_fold(&mut self, task: DriverTask) -> Result<(), HostError> {
+        let id = task.id().clone();
+        let exit = task.wait().await;
+        self.record_driver_exit(&id, exit)
     }
 
     /// Every registered driver, in registration order.
@@ -874,6 +917,7 @@ mod tests {
             DriverState::Registered,
             DriverState::Enabled,
             DriverState::Running,
+            DriverState::Stopped,
             DriverState::Halted,
             DriverState::Disabled,
         ];
@@ -892,8 +936,10 @@ mod tests {
 
             if state == DriverState::Running {
                 assert_eq!(state.on_halt(), Ok(DriverState::Halted));
+                assert_eq!(state.on_stop(), Ok(DriverState::Stopped));
             } else {
                 assert_eq!(state.on_halt(), Err(FsmDecline::HaltRequiresRunning));
+                assert_eq!(state.on_stop(), Err(FsmDecline::StopRequiresRunning));
             }
 
             if state.is_terminal() {
@@ -1199,6 +1245,34 @@ mod tests {
             Some(RuntimeFlavor::MultiThread),
             "a hosted lane must run under the multi-thread ambient runtime"
         );
+    }
+
+    #[tokio::test]
+    async fn a_clean_driver_exit_moves_running_to_stopped() {
+        let mut host = host();
+        let id = register(&mut host, "backrun");
+        host.attach_spawn(
+            &id,
+            Box::new(|_lane| Box::pin(async { DriverExit::Stopped })),
+        )
+        .expect("attach spawn");
+        host.enable(&id).expect("enable");
+
+        let tasks = host.start_driving().expect("start driving");
+        assert_eq!(host.state_of(&id), Some(DriverState::Running));
+        let task = tasks.into_iter().next().expect("task");
+        host.drive_and_fold(task)
+            .await
+            .expect("the host owns the fold");
+
+        assert_eq!(
+            host.state_of(&id),
+            Some(DriverState::Stopped),
+            "a loop that returned is never reported as Running"
+        );
+        host.disable(&id)
+            .expect("a stopped record is still disableable");
+        assert_eq!(host.state_of(&id), Some(DriverState::Disabled));
     }
 
     #[test]

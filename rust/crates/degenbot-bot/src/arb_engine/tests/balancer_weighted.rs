@@ -382,47 +382,43 @@ fn balancer_weighted_rejects_mixed_with_cl() {
 fn core_engine_owns_and_guards_the_lifecycle_phase() {
     let engine = ArbitrageEngine::new();
     // Fresh engine → Created.
-    assert_eq!(engine.current_phase(), EnginePhase::Created);
+    assert_eq!(engine.current_phase(), PumpPhase::Created);
     // Gate: require_phase(SnapshotLoaded) fails from Created.
     assert!(engine
-        .require_phase(EnginePhase::SnapshotLoaded, "resume")
+        .require_phase(PumpPhase::SnapshotLoaded, "resume")
         .is_err());
     // require_phase_before(Subscribed) succeeds while Created.
     assert!(engine
-        .require_phase_before(EnginePhase::Subscribed, "subscribe")
+        .require_phase_before(PumpPhase::Subscribed, "subscribe")
         .is_ok());
     // subscribe is allowed from Created, advances to Subscribed.
     assert!(engine.current_phase().allow_subscribe("subscribe").is_ok());
-    engine.set_phase(EnginePhase::Subscribed);
-    assert_eq!(engine.current_phase(), EnginePhase::Subscribed);
+    engine.set_phase(PumpPhase::Subscribed);
+    assert_eq!(engine.current_phase(), PumpPhase::Subscribed);
     // Advance through the full ordering.
-    engine.set_phase(EnginePhase::SnapshotLoaded);
-    engine.set_phase(EnginePhase::Backfilled);
-    engine.set_phase(EnginePhase::Resumed);
-    assert_eq!(engine.current_phase(), EnginePhase::Resumed);
+    engine.set_phase(PumpPhase::SnapshotLoaded);
+    engine.set_phase(PumpPhase::Backfilled);
+    engine.set_phase(PumpPhase::Resumed);
+    assert_eq!(engine.current_phase(), PumpPhase::Resumed);
     // Once Resumed, require_phase_before(Resumed) fails (already past),
     // and require_phase(Resumed) is satisfied.
     assert!(engine
-        .require_phase_before(EnginePhase::Resumed, "resume")
+        .require_phase_before(PumpPhase::Resumed, "resume")
         .is_err());
-    assert!(engine.require_phase(EnginePhase::Resumed, "solve").is_ok());
+    assert!(engine.require_phase(PumpPhase::Resumed, "solve").is_ok());
 }
 /// `allow_subscribe` accepts `Created` (legacy subscribe-first path)
 /// AND `SnapshotLoaded` (construction-time-load path: load snapshot, then
 /// subscribe). Rejects `Subscribed`/`Backfilled`/`Resumed`.
 #[test]
 fn allow_subscribe_accepts_created_and_snapshot_loaded() {
-    assert!(EnginePhase::Created.allow_subscribe("subscribe").is_ok());
-    assert!(EnginePhase::SnapshotLoaded
+    assert!(PumpPhase::Created.allow_subscribe("subscribe").is_ok());
+    assert!(PumpPhase::SnapshotLoaded
         .allow_subscribe("subscribe")
         .is_ok());
-    assert!(EnginePhase::Subscribed
-        .allow_subscribe("subscribe")
-        .is_err());
-    assert!(EnginePhase::Backfilled
-        .allow_subscribe("subscribe")
-        .is_err());
-    assert!(EnginePhase::Resumed.allow_subscribe("subscribe").is_err());
+    assert!(PumpPhase::Subscribed.allow_subscribe("subscribe").is_err());
+    assert!(PumpPhase::Backfilled.allow_subscribe("subscribe").is_err());
+    assert!(PumpPhase::Resumed.allow_subscribe("subscribe").is_err());
 }
 /// J3FMDO regression: `subscribe()` must not regress the phase below
 /// `SnapshotLoaded` when the core already has a snapshot loaded (the
@@ -443,16 +439,16 @@ fn after_subscribe_advances_to_snapshot_loaded_when_core_has_snapshot() {
     // Legacy path (no core snapshot; snapshot loaded AFTER subscribe via
     // `load_*_snapshot_from_py`): Created → subscribe → Subscribed.
     assert_eq!(
-        EnginePhase::after_subscribe(EnginePhase::Created, false),
-        EnginePhase::Subscribed,
+        PumpPhase::after_subscribe(PumpPhase::Created, false),
+        PumpPhase::Subscribed,
         "legacy path: no core snapshot → Subscribed after subscribe"
     );
     // Construction-time-load path: core has a snapshot (loaded at `Bot`
     // construction via `load_snapshot_from_db`). subscribe from Created →
     // SnapshotLoaded (NOT Subscribed — that was the crash).
     assert_eq!(
-        EnginePhase::after_subscribe(EnginePhase::Created, true),
-        EnginePhase::SnapshotLoaded,
+        PumpPhase::after_subscribe(PumpPhase::Created, true),
+        PumpPhase::SnapshotLoaded,
         "construction-load path: core has snapshot → SnapshotLoaded after subscribe"
     );
     // Legacy pre-subscribe load: snapshot already loaded into the engine
@@ -460,14 +456,14 @@ fn after_subscribe_advances_to_snapshot_loaded_when_core_has_snapshot() {
     // regress the phase back to Subscribed (the old `set_phase(Subscribed)`
     // was a regression here too).
     assert_eq!(
-        EnginePhase::after_subscribe(EnginePhase::SnapshotLoaded, false),
-        EnginePhase::SnapshotLoaded,
+        PumpPhase::after_subscribe(PumpPhase::SnapshotLoaded, false),
+        PumpPhase::SnapshotLoaded,
         "pre-subscribe load: subscribe must not regress SnapshotLoaded → Subscribed"
     );
     // Pre-subscribe load AND core has snapshot — still SnapshotLoaded.
     assert_eq!(
-        EnginePhase::after_subscribe(EnginePhase::SnapshotLoaded, true),
-        EnginePhase::SnapshotLoaded,
+        PumpPhase::after_subscribe(PumpPhase::SnapshotLoaded, true),
+        PumpPhase::SnapshotLoaded,
         "SnapshotLoaded + core snapshot → SnapshotLoaded (no regression)"
     );
 }
