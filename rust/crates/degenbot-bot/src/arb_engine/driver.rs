@@ -71,6 +71,7 @@ use crate::bot_core::{Bot, BotState, PumpControl, StageHandlers};
 use alloy::primitives::Address;
 use degenbot_core::{diag, op_error, op_info, op_warn};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
+use degenbot_eventhub::Hub;
 use degenbot_executor::composers::PathInfo;
 use degenbot_ingestion::IngestEvent as WsEvent;
 use degenbot_rpc::provider::AlloyProvider;
@@ -79,8 +80,19 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::watch;
 use tracing::Instrument as _;
+
+/// Hub registration name for the engine's result-batch source channel.
+///
+/// A named source channel ([`degenbot_eventhub::NamedSender`]) rather than a
+/// [`degenbot_eventhub::HubEvent`] variant: `ResultBatch` is an engine-owned
+/// downstream type the hub vocabulary deliberately does not name.
+pub const RESULT_CHANNEL_NAME: &str = "engine_result_batch";
+
+/// Hub registration name for the engine's block-clock source channel. Named
+/// for the same reason as [`RESULT_CHANNEL_NAME`].
+pub const BLOCK_CHANNEL_NAME: &str = "engine_block_notification";
 
 /// A typed engine-phase violation raised at the driver boundary.
 ///
@@ -193,10 +205,11 @@ pub struct EngineDriver {
     verify_provider: Mutex<Option<AlloyProvider>>,
     /// The optional V4 `StateView` contract address for verification.
     verify_state_view: Mutex<Option<Address>>,
-    /// The result-batch receiver (handed out once via `take_result_receiver`).
-    result_rx: Mutex<Option<mpsc::UnboundedReceiver<ResultBatch>>>,
-    /// The block-clock receiver (handed out once via `take_block_receiver`).
-    block_rx: Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>,
+    /// The engine host's process-lifetime event hub. The engine's
+    /// `ResultBatch` + `BlockNotification` source channels are registered on
+    /// it as named, typed `UnboundedFlagged` channels; the hub holds each
+    /// channel's consumer end until the once-only `take_*_receiver` handoff.
+    hub: Arc<Hub>,
     /// The terminal stopped latch (ADR-050 D5) — `EnginePhase` cannot express
     /// teardown, so the driver owns it.
     stopped: AtomicBool,
@@ -220,10 +233,23 @@ impl EngineDriver {
     /// and the reorg coordinator, then composes.
     #[must_use]
     pub fn from_stages(bot: Arc<Bot>, stages: Arc<EngineStages>) -> Self {
-        let (result_tx, result_rx) = mpsc::unbounded_channel();
+        // The engine host owns ONE process-lifetime hub. The two
+        // delivery channels are registered as named, typed source channels
+        // (`OverflowPolicy::UnboundedFlagged` — lossless by request, flagged
+        // for audit); the hub holds the consumer ends, the stages hold the
+        // sole producers. The raw `tokio::sync::mpsc` pair is unchanged, so
+        // recv/order/close semantics stay byte-identical to the pre-hub
+        // channels.
+        let mut hub = Hub::new();
+        let result_tx = hub
+            .add_named_unbounded_source::<ResultBatch>(RESULT_CHANNEL_NAME)
+            .into_inner();
         stages.set_result_channel(result_tx);
-        let (block_tx, block_rx) = mpsc::unbounded_channel();
+        let block_tx = hub
+            .add_named_unbounded_source::<BlockNotification>(BLOCK_CHANNEL_NAME)
+            .into_inner();
         stages.set_block_channel(block_tx);
+        let hub = Arc::new(hub);
         let (pump_finished_tx, pump_finished_rx) = watch::channel(false);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         Self {
@@ -238,8 +264,7 @@ impl EngineDriver {
             verify_rpc_url: Mutex::new(None),
             verify_provider: Mutex::new(None),
             verify_state_view: Mutex::new(None),
-            result_rx: Mutex::new(Some(result_rx)),
-            block_rx: Mutex::new(Some(block_rx)),
+            hub,
             stopped: AtomicBool::new(false),
         }
     }
@@ -309,16 +334,60 @@ impl EngineDriver {
         }
     }
 
-    /// Take the result-batch receiver — once only, **before** `resume()`.
+    /// The engine host's process-lifetime hub.
+    ///
+    /// The engine's `ResultBatch` and `BlockNotification` source channels are
+    /// registered here as named, typed `UnboundedFlagged` channels.
     #[must_use]
-    pub fn take_result_receiver(&self) -> Option<mpsc::UnboundedReceiver<ResultBatch>> {
-        self.result_rx.lock().take()
+    pub fn hub(&self) -> &Arc<Hub> {
+        &self.hub
+    }
+
+    /// Take the result-batch receiver — once only, **before** `resume()`.
+    ///
+    /// The receiver is the hub-held consumer end of the engine's result
+    /// source channel — the counting hand-off so hub-side growth
+    /// (`Hub::named_pending`) reflects live depth instead of reading zero.
+    #[must_use]
+    pub fn take_result_receiver(&self) -> Option<degenbot_eventhub::NamedReceiver<ResultBatch>> {
+        match self
+            .hub
+            .take_named_counting_receiver::<ResultBatch>(RESULT_CHANNEL_NAME)
+        {
+            Ok(rx) => rx,
+            Err(e) => {
+                op_error!(
+                    domain = pump,
+                    %e,
+                    "EngineDriver: result source channel missing from the hub"
+                );
+                None
+            }
+        }
     }
 
     /// Take the block-clock receiver — once only.
+    ///
+    /// The receiver is the hub-held consumer end of the engine's block source
+    /// channel — counting hand-off (see `take_result_receiver`).
     #[must_use]
-    pub fn take_block_receiver(&self) -> Option<mpsc::UnboundedReceiver<BlockNotification>> {
-        self.block_rx.lock().take()
+    pub fn take_block_receiver(
+        &self,
+    ) -> Option<degenbot_eventhub::NamedReceiver<BlockNotification>> {
+        match self
+            .hub
+            .take_named_counting_receiver::<BlockNotification>(BLOCK_CHANNEL_NAME)
+        {
+            Ok(rx) => rx,
+            Err(e) => {
+                op_error!(
+                    domain = pump,
+                    %e,
+                    "EngineDriver: block source channel missing from the hub"
+                );
+                None
+            }
+        }
     }
 
     /// The snapshot seed block `S` — read from the shared core.
@@ -796,6 +865,7 @@ impl Drop for EngineDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use degenbot_eventhub::OverflowPolicy;
     use futures_util::StreamExt;
 
     /// Build an offline driver over a fresh `Bot` + `EngineStages`.
@@ -839,6 +909,28 @@ mod tests {
         let driver = driver_for_test();
         assert!(driver.take_block_receiver().is_some());
         assert!(driver.take_block_receiver().is_none());
+    }
+
+    #[test]
+    fn engine_channels_are_audited_unbounded_on_the_driver_hub() {
+        let driver = driver_for_test();
+        assert_eq!(
+            driver.hub().named_policy(RESULT_CHANNEL_NAME),
+            Some(OverflowPolicy::UnboundedFlagged {
+                name: RESULT_CHANNEL_NAME
+            })
+        );
+        assert_eq!(
+            driver.hub().named_policy(BLOCK_CHANNEL_NAME),
+            Some(OverflowPolicy::UnboundedFlagged {
+                name: BLOCK_CHANNEL_NAME
+            })
+        );
+        assert_eq!(
+            driver.hub().unbounded_flagged_count(),
+            2,
+            "both engine channels are the deliberate unbounded audit posture"
+        );
     }
 
     #[test]

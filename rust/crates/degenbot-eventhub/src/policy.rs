@@ -57,4 +57,11 @@ pub enum HubError {
         /// The handle kind the caller asked for.
         expected: &'static str,
     },
+    /// No named source channel is registered under this name.
+    #[error("named hub channel {0} is not registered on this hub")]
+    NamedNotRegistered(&'static str),
+    /// The requested payload type does not match the named channel's
+    /// registration.
+    #[error("named hub channel {0} carries a different payload type")]
+    NamedTypeMismatch(&'static str),
 }

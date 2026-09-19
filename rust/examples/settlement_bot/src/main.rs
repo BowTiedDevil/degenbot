@@ -891,8 +891,12 @@ fn run() -> Result<(), String> {
     // Attach the result consumer BEFORE resume — the BotRunner ordering
     // invariant (`BotRunner.run`: create the consumer, THEN resume). The
     // receiver is handed to the G4 consumer task (row 7 + row 16).
+    // The wrapper's receiver tally exists for the hub-side depth diagnostic
+    // (`Hub::named_pending`); the sample's own consume loop does not poll it,
+    // so hand it the raw channel end.
     let result_rx = driver
         .take_result_receiver()
+        .map(degenbot_eventhub::NamedReceiver::into_inner)
         .ok_or_else(|| "EngineDriver result receiver already taken".to_string())?;
     let runtime = degenbot::runtime::get_runtime();
     let outcome = runtime.block_on(async {

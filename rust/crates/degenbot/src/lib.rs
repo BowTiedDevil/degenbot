@@ -24,6 +24,9 @@ pub use degenbot_bot as bot;
 pub use degenbot_bot::arb_engine::{DriverError, EngineDriver, PhaseError};
 /// `BotState` state-owner surface, re-exported alongside [`crate::bot`].
 pub use degenbot_bot::bot_core;
+/// Hub — per-process intake fan-out with declared overflow discipline
+/// (the strategy-subscription surface; strategies never own intake).
+pub use degenbot_eventhub as eventhub;
 /// WS ingestion (subscriptions, topic filter, backfill fetch, watchdog
 /// windows) emitting `PoolEvent` into the runtime — the standalone-Rust
 /// consumer subscribes to its event stream without Python.

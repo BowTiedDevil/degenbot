@@ -13,9 +13,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use tokio::sync::mpsc;
 
 use crate::event::{HubClass, HubEvent};
 use crate::head::{HeadSender, HeadSubscription};
+use crate::named::{NamedChannel, NamedCounters, NamedReceiver, NamedSender};
 use crate::policy::{HubError, OverflowPolicy};
 
 /// Bounded drop-oldest ring, counted on eviction.
@@ -319,6 +321,10 @@ struct SourceEntry {
 #[derive(Default)]
 pub struct Hub {
     sources: Mutex<HashMap<HubClass, SourceEntry>>,
+    /// Named typed source channels, keyed by registration name. Always
+    /// [`OverflowPolicy::UnboundedFlagged`]; the hub holds each channel's
+    /// consumer end until [`Self::take_named_receiver`] hands it out once.
+    named: Mutex<HashMap<&'static str, NamedChannel>>,
 }
 
 impl Hub {
@@ -456,6 +462,124 @@ impl Hub {
         }
     }
 
+    /// Mint + register a named, typed source channel while constructing the
+    /// hub.
+    ///
+    /// The channel carries a domain payload the vocabulary does not name; its
+    /// strictness is always [`OverflowPolicy::UnboundedFlagged`]. Taking
+    /// `&mut self` makes registration infallible: a caller holding the only
+    /// handle during construction cannot race another registrant. The hub
+    /// keeps the consumer end, handed out once by
+    /// [`Self::take_named_receiver`].
+    #[must_use]
+    pub fn add_named_unbounded_source<T: Send + 'static>(
+        &mut self,
+        name: &'static str,
+    ) -> NamedSender<T> {
+        let (tx, rx) = mpsc::unbounded_channel::<T>();
+        let counters = Arc::new(NamedCounters::new());
+        let previous = self
+            .named
+            .get_mut()
+            .insert(name, NamedChannel::new(rx, Arc::clone(&counters)));
+        debug_assert!(previous.is_none(), "named hub channel registered twice");
+        NamedSender::new(name, tx, counters)
+    }
+
+    /// Take the consumer end of a named source channel — once only.
+    ///
+    /// # Errors
+    ///
+    /// [`HubError::NamedNotRegistered`] when no channel is registered under
+    /// `name`; [`HubError::NamedTypeMismatch`] when `T` is not the payload the
+    /// channel was minted with.
+    pub fn take_named_receiver<T: Send + 'static>(
+        &self,
+        name: &'static str,
+    ) -> Result<Option<mpsc::UnboundedReceiver<T>>, HubError> {
+        let mut named = self.named.lock();
+        let entry = named
+            .get_mut(name)
+            .ok_or(HubError::NamedNotRegistered(name))?;
+        let Some(boxed) = entry.receiver.get_mut().take() else {
+            return Ok(None);
+        };
+        match boxed.downcast::<NamedReceiver<T>>() {
+            Ok(rx) => Ok(Some(rx.into_inner())),
+            Err(other) => {
+                *entry.receiver.get_mut() = Some(other);
+                Err(HubError::NamedTypeMismatch(name))
+            }
+        }
+    }
+
+    /// Take the consumer end of a named source channel as a depth-tallying
+    /// [`NamedReceiver`] — once only.
+    ///
+    /// The companion of [`Self::take_named_receiver`]: that handoff keeps the
+    /// raw [`mpsc::UnboundedReceiver`] shape for existing consumers, while
+    /// this one returns the wrapper whose `recv` / `try_recv` feed
+    /// [`Self::named_pending`]. A channel can be handed out by exactly one of
+    /// the two.
+    ///
+    /// # Errors
+    ///
+    /// [`HubError::NamedNotRegistered`] when no channel is registered under
+    /// `name`; [`HubError::NamedTypeMismatch`] when `T` is not the payload the
+    /// channel was minted with.
+    pub fn take_named_counting_receiver<T: Send + 'static>(
+        &self,
+        name: &'static str,
+    ) -> Result<Option<NamedReceiver<T>>, HubError> {
+        let mut named = self.named.lock();
+        let entry = named
+            .get_mut(name)
+            .ok_or(HubError::NamedNotRegistered(name))?;
+        let Some(boxed) = entry.receiver.get_mut().take() else {
+            return Ok(None);
+        };
+        match boxed.downcast::<NamedReceiver<T>>() {
+            Ok(rx) => Ok(Some(*rx)),
+            Err(other) => {
+                *entry.receiver.get_mut() = Some(other);
+                Err(HubError::NamedTypeMismatch(name))
+            }
+        }
+    }
+
+    /// Approximate in-flight depth of the named channel `name` — values sent
+    /// but not yet received.
+    ///
+    /// `None` when no channel is registered under `name`; `Some(0)` for a
+    /// registered channel with no in-flight values.
+    ///
+    /// # Approximation — in-flight tolerance
+    ///
+    /// The depth is a send/receive tally maintained by [`NamedSender::send`]
+    /// and [`NamedReceiver::recv`] / [`NamedReceiver::try_recv`], not a mirror
+    /// of tokio's internal queue. Each side records a completed operation, so
+    /// a value can be received before the matching send is tallied (or the
+    /// reverse); the reported depth may therefore trail or lead the exact
+    /// queue length by the number of values in flight, and saturates at zero
+    /// rather than underflowing. The raw escape hatches
+    /// ([`NamedSender::into_inner`] / [`Self::take_named_receiver`]) move
+    /// values without touching the tally.
+    #[must_use]
+    pub fn named_pending(&self, name: &'static str) -> Option<u64> {
+        self.named.lock().get(name).map(NamedChannel::pending)
+    }
+
+    /// The fixed policy of a named source channel, if registered.
+    ///
+    /// Named channels are always [`OverflowPolicy::UnboundedFlagged`].
+    #[must_use]
+    pub fn named_policy(&self, name: &'static str) -> Option<OverflowPolicy> {
+        self.named
+            .lock()
+            .contains_key(name)
+            .then_some(OverflowPolicy::UnboundedFlagged { name })
+    }
+
     /// The policy declared for `class`, if registered.
     #[must_use]
     pub fn policy_of(&self, class: HubClass) -> Option<OverflowPolicy> {
@@ -468,14 +592,18 @@ impl Hub {
         self.sources.lock().keys().copied().collect()
     }
 
-    /// Count of registrations using the deliberate unbounded audit posture.
+    /// Count of registrations using the deliberate unbounded audit posture —
+    /// the flagged `HubClass` sources plus every named source channel.
     #[must_use]
     pub fn unbounded_flagged_count(&self) -> usize {
-        self.sources
+        let named = self.named.lock().len();
+        let classes = self
+            .sources
             .lock()
             .values()
             .filter(|entry| entry.policy.is_unbounded_flagged())
-            .count()
+            .count();
+        named + classes
     }
 }
 
@@ -491,6 +619,8 @@ mod tests {
 
     use super::*;
     use crate::event::PendingTx;
+
+    const NAMED_TEST_CHANNEL: &str = "test_named_channel";
 
     fn tx(nonce: u64) -> PendingTx {
         PendingTx {
@@ -690,5 +820,172 @@ mod tests {
         assert_eq!(nonces, (0..100).collect::<Vec<_>>());
         assert_eq!(receiver.name(), "engine_results");
         assert!(receiver.drain().is_empty());
+    }
+
+    #[test]
+    fn named_source_is_unbounded_flagged_and_drops_nothing_across_bursts() {
+        const BURSTS: u64 = 4;
+        const PER_BURST: u64 = 300;
+        let mut hub = Hub::new();
+        let tx = hub
+            .add_named_unbounded_source::<u64>(NAMED_TEST_CHANNEL)
+            .into_inner();
+        assert_eq!(
+            hub.named_policy(NAMED_TEST_CHANNEL),
+            Some(OverflowPolicy::UnboundedFlagged {
+                name: NAMED_TEST_CHANNEL
+            })
+        );
+        assert!(
+            hub.named_policy(NAMED_TEST_CHANNEL)
+                .expect("registered")
+                .is_unbounded_flagged(),
+            "a named source is the deliberate unbounded audit posture"
+        );
+        assert_eq!(hub.unbounded_flagged_count(), 1);
+        let mut rx = hub
+            .take_named_receiver::<u64>(NAMED_TEST_CHANNEL)
+            .expect("registered")
+            .expect("fresh channel");
+        for burst in 0..BURSTS {
+            for i in 0..PER_BURST {
+                let _ = tx.send(burst * PER_BURST + i);
+            }
+        }
+        let mut seen = Vec::new();
+        while let Ok(value) = rx.try_recv() {
+            seen.push(value);
+        }
+        assert_eq!(seen, (0..BURSTS * PER_BURST).collect::<Vec<u64>>());
+        assert_eq!(hub.unbounded_flagged_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn named_channel_round_trip_matches_raw_mpsc() {
+        const BURSTS: u64 = 8;
+        const PER_BURST: u64 = 500;
+        // Pre shape: the bare unbounded mpsc the engine used before the hub.
+        let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<u64>();
+        // Post shape: the same primitive registered as a named hub source.
+        let mut hub = Hub::new();
+        let hub_tx = hub
+            .add_named_unbounded_source::<u64>(NAMED_TEST_CHANNEL)
+            .into_inner();
+        let mut hub_rx = hub
+            .take_named_receiver::<u64>(NAMED_TEST_CHANNEL)
+            .expect("registered")
+            .expect("fresh channel");
+        for burst in 0..BURSTS {
+            for i in 0..PER_BURST {
+                let value = burst * PER_BURST + i;
+                assert!(raw_tx.send(value).is_ok());
+                assert!(hub_tx.send(value).is_ok());
+            }
+        }
+        let mut raw_seen = Vec::new();
+        while let Ok(value) = raw_rx.try_recv() {
+            raw_seen.push(value);
+        }
+        let mut hub_seen = Vec::new();
+        while let Ok(value) = hub_rx.try_recv() {
+            hub_seen.push(value);
+        }
+        assert_eq!(
+            raw_seen.len(),
+            usize::try_from(BURSTS * PER_BURST).expect("fits in usize")
+        );
+        assert_eq!(hub_seen, raw_seen);
+    }
+
+    #[test]
+    fn named_receiver_is_handed_out_once_and_typed() {
+        let mut hub = Hub::new();
+        let _tx = hub.add_named_unbounded_source::<u64>(NAMED_TEST_CHANNEL);
+        assert!(matches!(
+            hub.take_named_receiver::<String>(NAMED_TEST_CHANNEL),
+            Err(HubError::NamedTypeMismatch(NAMED_TEST_CHANNEL))
+        ));
+        assert!(hub
+            .take_named_receiver::<u64>(NAMED_TEST_CHANNEL)
+            .expect("registered")
+            .is_some());
+        assert!(hub
+            .take_named_receiver::<u64>(NAMED_TEST_CHANNEL)
+            .expect("registered")
+            .is_none());
+        assert!(matches!(
+            hub.take_named_receiver::<u64>("missing_channel"),
+            Err(HubError::NamedNotRegistered("missing_channel"))
+        ));
+    }
+
+    #[test]
+    fn named_pending_counts_sends_before_any_receive() {
+        const NAME: &str = "pending_no_recv";
+        let mut hub = Hub::new();
+        let tx = hub.add_named_unbounded_source::<u64>(NAME);
+        assert_eq!(hub.named_pending(NAME), Some(0), "fresh channel is empty");
+        for i in 0..7 {
+            tx.send(i).expect("sends");
+        }
+        assert_eq!(
+            hub.named_pending(NAME),
+            Some(7),
+            "no receiver has drained the queue, so growth is visible"
+        );
+        assert_eq!(tx.pending(), 7);
+    }
+
+    #[test]
+    fn named_pending_returns_to_zero_after_an_ordered_drain() {
+        const NAME: &str = "pending_drain";
+        let mut hub = Hub::new();
+        let tx = hub.add_named_unbounded_source::<u64>(NAME);
+        for i in 0..5 {
+            tx.send(i).expect("sends");
+        }
+        let mut rx = hub
+            .take_named_counting_receiver::<u64>(NAME)
+            .expect("registered")
+            .expect("fresh channel");
+        assert_eq!(hub.named_pending(NAME), Some(5));
+        let mut seen = Vec::new();
+        while let Ok(value) = rx.try_recv() {
+            seen.push(value);
+        }
+        assert_eq!(seen, vec![0, 1, 2, 3, 4], "FIFO drain preserved");
+        assert_eq!(hub.named_pending(NAME), Some(0));
+        assert_eq!(rx.pending(), 0);
+
+        for i in 5..9 {
+            tx.send(i).expect("sends");
+        }
+        assert_eq!(hub.named_pending(NAME), Some(4));
+        assert_eq!(rx.try_recv(), Ok(5), "value shape unchanged");
+        assert_eq!(hub.named_pending(NAME), Some(3));
+    }
+
+    #[test]
+    fn named_pending_is_zero_with_no_traffic_and_none_when_unregistered() {
+        const NAME: &str = "pending_zeros";
+        let mut hub = Hub::new();
+        let _tx = hub.add_named_unbounded_source::<u64>(NAME);
+        assert_eq!(hub.named_pending(NAME), Some(0));
+        assert_eq!(hub.named_pending("missing_pending_channel"), None);
+    }
+
+    #[tokio::test]
+    async fn named_receiver_recv_tallies_the_take() {
+        const NAME: &str = "pending_async_recv";
+        let mut hub = Hub::new();
+        let tx = hub.add_named_unbounded_source::<u64>(NAME);
+        let mut rx = hub
+            .take_named_counting_receiver::<u64>(NAME)
+            .expect("registered")
+            .expect("fresh channel");
+        tx.send(11).expect("sends");
+        assert_eq!(hub.named_pending(NAME), Some(1));
+        assert_eq!(rx.recv().await, Some(11));
+        assert_eq!(hub.named_pending(NAME), Some(0));
     }
 }

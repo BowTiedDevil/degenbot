@@ -38,6 +38,7 @@
 pub mod event;
 pub mod head;
 pub mod hub;
+pub mod named;
 pub mod policy;
 
 pub use event::{HubClass, HubEvent, PendingTx};
@@ -46,4 +47,5 @@ pub use hub::{
     DropOldestReceiver, DropOldestSender, Hub, LatestReceiver, LatestSender, SourceHandle,
     Subscription, UnboundedReceiver, UnboundedSender,
 };
+pub use named::{NamedReceiver, NamedSender};
 pub use policy::{HubError, OverflowPolicy};

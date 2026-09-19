@@ -40,7 +40,6 @@ pub(crate) use std::sync::Arc;
 pub(crate) use alloy::primitives::{Address, U256};
 pub(crate) use pyo3::exceptions::PyStopAsyncIteration;
 pub(crate) use pyo3::types::{PyDict, PyList};
-pub(crate) use tokio::sync::mpsc;
 
 pub(crate) use crate::bot::PyBot;
 pub(crate) use degenbot_bot::bot_core::{Bot, V4StateSync};
@@ -74,7 +73,7 @@ pub struct PyArbEngine {
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.
-    result_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<ResultBatch>>>>,
+    result_rx: Arc<parking_lot::Mutex<Option<degenbot_eventhub::NamedReceiver<ResultBatch>>>>,
     // The block-notification receiver is NOT here any more (ADR-027
     // completion): the block-clock pipe is driver-owned, and its receiver
     // lives on the shared EngineDriver — `PyBot::block_stream` hands it to

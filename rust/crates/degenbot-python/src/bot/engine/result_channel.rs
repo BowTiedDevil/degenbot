@@ -6,7 +6,7 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    mpsc, Address, Arc, BlockNotification, EngineStages, HopType, PyArbEngine, PyDict, PyList,
+    Address, Arc, BlockNotification, EngineStages, HopType, PyArbEngine, PyDict, PyList,
     PyStopAsyncIteration, ResultBatch, SolvePathResult, U256,
 };
 use crate::conversion::alloy::{PyI256, PyU256};
@@ -544,13 +544,13 @@ pub struct BlockStream {
     /// The block-notification receiver. `Option` + `put-back` mirrors
     /// `PyArbEngine::result_rx` so the coroutine can re-share the
     /// receiver across `__anext__` calls.
-    block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
+    block_rx: Arc<parking_lot::Mutex<Option<degenbot_eventhub::NamedReceiver<BlockNotification>>>>,
 }
 
 impl BlockStream {
     /// Construct from the receiver handed out by `PyArbEngine::block_stream`.
     #[must_use]
-    pub fn new(block_rx: mpsc::UnboundedReceiver<BlockNotification>) -> Self {
+    pub fn new(block_rx: degenbot_eventhub::NamedReceiver<BlockNotification>) -> Self {
         Self {
             block_rx: Arc::new(parking_lot::Mutex::new(Some(block_rx))),
         }
