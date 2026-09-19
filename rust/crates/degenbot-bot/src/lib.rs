@@ -222,12 +222,14 @@ pub mod failure_policy;
 pub mod instruments;
 #[cfg(feature = "otel")]
 pub mod metrics;
+pub mod nonce_authority;
 #[cfg(feature = "otel")]
 pub mod otel;
 pub mod profiling;
 pub mod sidecar;
 pub mod sidecar_engine;
 pub mod sidecar_paths;
+pub mod strategy_host;
 pub mod telemetry;
 
 // P6YXA6 hard cutover: the process-global rayon pool (`configure_rayon_
