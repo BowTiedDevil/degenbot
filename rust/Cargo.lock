@@ -2681,6 +2681,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-tungstenite",

@@ -72,13 +72,49 @@ pub(crate) struct BootedHost {
     pub(crate) head_lanes: HeadLanes,
 }
 
+/// The route registry a hosted boot mints the strategy host over.
+///
+/// Delegates to the shared submission resolver, so a hosted backrun lane
+/// discovers over the same DB-backed snapshot the standalone sidecar builds.
+/// A process with no connector DB (or no resolvable node join) mints an empty
+/// snapshot; the lane then observes with discovery shut rather than guessing
+/// connectors.
+#[cfg(feature = "submission")]
+fn hosted_route_registry() -> Arc<RouteRegistry> {
+    let config = degenbot_config::holder::config();
+    let db_path = degenbot_config::resolve_database_path(&degenbot_config::ProcessEnv, None).value;
+    match degenbot_submission::backrun_driver::resolve_backrun_node_join() {
+        Ok(join) => degenbot_core::runtime::get_runtime().block_on(
+            degenbot_submission::backrun_driver::resolve_backrun_host_registry(
+                config,
+                &db_path,
+                &join.provider,
+            ),
+        ),
+        Err(error) => {
+            tracing::debug!(
+                %error,
+                "backrun node join unresolved - hosted registry discovery shut"
+            );
+            Arc::new(RouteRegistry::new(V2ConnectorIndex::default()))
+        }
+    }
+}
+
+/// The registry a build without the submission feature mints: no hosted
+/// pending-transaction lane exists, so an empty snapshot answers membership.
+#[cfg(not(feature = "submission"))]
+fn hosted_route_registry() -> Arc<RouteRegistry> {
+    Arc::new(RouteRegistry::new(V2ConnectorIndex::default()))
+}
+
 #[expect(
     clippy::expect_used,
     reason = "a freshly minted host has no registered strategies, so both registers are infallible"
 )]
 pub(crate) fn boot_host() -> BootedHost {
     let (mut host, attached) = StrategyHost::mint(
-        Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
+        hosted_route_registry(),
         Arc::new(NonceAuthority::new(0)),
         EngineChannelHandles::register_on,
     );

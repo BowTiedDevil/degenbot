@@ -91,6 +91,9 @@ degenbot-rpc = { workspace = true, features = ["test-utils"] }
 # The frame-pipeline fixture test hand-builds `ReplayOutcome` journals
 # (revm state) to drive replay→extract→admit→solve end-to-end offline.
 revm = { version = "^43.0", default-features = false, features = ["std"] }
+# The registry-resolver fixture seeds a throwaway connector DB on disk (the
+# resolver opens the path, so an in-memory handle cannot stand in).
+tempfile = { version = "^3.27" }
 serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }

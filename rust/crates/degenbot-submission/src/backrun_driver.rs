@@ -30,6 +30,7 @@ use std::time::Duration;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::sidecar::{gate_mined_target, Decision, SidecarConfig};
+use degenbot_bot::sidecar_paths::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_eventhub::{HeadSubscription, Hub};
@@ -1108,6 +1109,78 @@ impl BackrunBoot {
     }
 }
 
+/// Resolve the boot route registry every backrun runtime discovers over, and
+/// the opened connector DB the lane's token joins borrow.
+///
+/// This is the ONE registry-construction seam: the standalone sidecar (a host
+/// of size one) and a hosted lane both hand it the resolved DB path and the
+/// lane's node join, so the two runtime shapes cannot drift apart. It opens
+/// `db_path` once, loads the V2 connector scan plus its V3 additions, attaches
+/// the on-chain ranker, freezes the [`RouteRegistry`], and runs the live
+/// rank-evidence probe last when the operator asked for it. A missing or
+/// unopenable DB, or a failed index load, answers `None` — the discovery fan
+/// stays shut and frames observe, because connectors are never guessed.
+#[must_use]
+pub async fn resolve_backrun_registry(
+    config: &degenbot_config::BotConfig,
+    db_path: &Path,
+    provider: &Arc<AlloyProvider>,
+) -> Option<(Arc<RouteRegistry>, DegenbotDb)> {
+    if !db_path.is_file() {
+        tracing::debug!(path = %db_path.display(), "connector DB absent - lane disabled");
+        return None;
+    }
+    let (db, _) = match DegenbotDb::open(db_path) {
+        Ok(db) => db,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                path = %db_path.display(),
+                "DEGENBOT_DB_PATH unopenable - lane disabled"
+            );
+            return None;
+        }
+    };
+    let mut ix =
+        match V2ConnectorIndex::load(&db, 1).and_then(|mut ix| ix.load_v3(&db, 1).map(|()| ix)) {
+            Ok(ix) => ix,
+            Err(error) => {
+                tracing::warn!(error = %error, "connector index load failed - lane disabled");
+                return None;
+            }
+        };
+    ix.set_ranker(Arc::new(OnChainLiquidityRanker::new(Arc::clone(provider))));
+    let registry = Arc::new(RouteRegistry::new(ix));
+    tracing::info!(edges = registry.index().len(), "connector index loaded");
+    if config.strategy.backrun.rank_evidence {
+        match degenbot_bot::sidecar_paths::deep_pair_ranking_evidence(registry.index(), &db).await {
+            Ok(()) => tracing::info!("rank evidence: deep USDC/WETH pair tops the ranking"),
+            Err(e) => tracing::warn!(evidence = %e, "rank evidence FAILED"),
+        }
+    }
+    Some((registry, db))
+}
+
+/// The route registry a hosted boot mints the strategy host over.
+///
+/// Delegates to [`resolve_backrun_registry`], so a hosted lane discovers over
+/// the same DB-backed snapshot the standalone sidecar builds. A process with
+/// no connector DB mints an empty snapshot instead; the lane then observes
+/// with discovery shut rather than guessing connectors.
+#[must_use]
+pub async fn resolve_backrun_host_registry(
+    config: &degenbot_config::BotConfig,
+    db_path: &Path,
+    provider: &Arc<AlloyProvider>,
+) -> Arc<RouteRegistry> {
+    resolve_backrun_registry(config, db_path, provider)
+        .await
+        .map_or_else(
+            || Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
+            |(registry, _db)| registry,
+        )
+}
+
 /// Open the connector DB behind the registry's token joins, exactly as the
 /// standalone sidecar does. A missing file leaves the discovery fan shut and
 /// frames observe — connectors are never guessed.
@@ -2118,6 +2191,97 @@ mod tests {
     use std::sync::Arc;
 
     use super::{DriverHandle, DriverLifecycle, LifecycleDecline, LifecycleShared};
+
+    /// The boot registry has ONE construction seam: the standalone sidecar's
+    /// boot and the hosted boot both hand it a DB path and the lane's node
+    /// join, and both read the same populated snapshot back. The fixture seeds
+    /// the canonical USDC/WETH V2 connector plus a V3 connector, pinning the
+    /// order -- the V2 scan, then its V3 additions, then the ranker and the
+    /// frozen registry.
+    #[tokio::test]
+    async fn the_boot_registry_resolver_populates_both_boot_paths() {
+        use alloy::primitives::address;
+        use degenbot_db::{V2PoolRowInput, V3PoolRowInput};
+
+        const USDC_WETH_V2: Address = address!("b4e16d0168e52d35cacd2c6185b44281ec28c9dc");
+        const USDC_WETH_V3: Address = address!("8ad599c3a0ff1de082011efddc58f1908eb6e6d8");
+        const USDC: Address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+        const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("connectors.db");
+        {
+            let (db, _) = degenbot_db::DegenbotDb::open_for_writes(&db_path).expect("seed db");
+            db.lock()
+                .execute(
+                    "INSERT INTO exchanges (id, chain_id, name, active, last_update_block, \
+                     factory, deployer) VALUES (1, 1, 'uniswap_v2', 1, NULL, \
+                     '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f', NULL)",
+                    (),
+                )
+                .expect("seed exchange");
+            db.upsert_v2_pools(
+                1,
+                "uniswap_v2",
+                1,
+                10_000,
+                &[V2PoolRowInput {
+                    address: USDC_WETH_V2,
+                    token0_address: USDC,
+                    token1_address: WETH,
+                    fee_token0: 300,
+                    fee_token1: 300,
+                    stable: None,
+                }],
+            )
+            .expect("seed v2 connector");
+            db.upsert_v3_pools(
+                1,
+                "uniswap_v3",
+                1,
+                1_000_000,
+                &[V3PoolRowInput {
+                    address: USDC_WETH_V3,
+                    token0_address: USDC,
+                    token1_address: WETH,
+                    fee: 3_000,
+                    tick_spacing: 60,
+                }],
+            )
+            .expect("seed v3 connector");
+        }
+        let provider = Arc::new(
+            AlloyProvider::new("http://127.0.0.1:1", DEFAULT_MAX_RETRIES)
+                .await
+                .expect("provider builds without a node"),
+        );
+        let config = degenbot_config::BotConfig::default();
+
+        let (registry, _db) = super::resolve_backrun_registry(&config, &db_path, &provider)
+            .await
+            .expect("the resolver yields a populated registry");
+        assert!(
+            registry.is_registered_pool(&USDC_WETH_V2),
+            "V2 connector landed"
+        );
+        assert!(
+            registry.is_registered_pool(&USDC_WETH_V3),
+            "V3 additions landed"
+        );
+        assert_eq!(
+            registry.registered_pool_count(),
+            2,
+            "both connector families landed"
+        );
+
+        let hosted = super::resolve_backrun_host_registry(&config, &db_path, &provider).await;
+        assert_eq!(
+            hosted.registered_pool_count(),
+            registry.registered_pool_count(),
+            "the hosted boot reaches the same resolver"
+        );
+        assert!(hosted.is_registered_pool(&USDC_WETH_V2));
+    }
 
     /// The lifecycle FSM is total and closed: every state answers every verb
     /// with a next state or a typed decline.

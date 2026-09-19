@@ -196,8 +196,11 @@ file vocabulary.
   observably unchanged.
 - Residuals recorded with the landings: the Python boot still hands the host an
   empty route registry (the hosted driver's discovery fan waits on boot-DB
-  wiring), and the live per-head feed drives `on_head` from the Python
-  settlement consumer's accepted-header clock, with the guard
+  wiring) — **status: resolved** (post-acceptance hardening): the hosted boot
+  now builds its registry through the shared `degenbot-submission` resolver, so
+  both runtime shapes discover over one boot snapshot. The live per-head feed drives
+  `on_head` from the Python settlement consumer's accepted-header clock, with
+  the guard
   (`has_hosted_activity`) short-circuiting a settlement-only boot so it pays no
   new RPC.
 

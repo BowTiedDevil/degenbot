@@ -101,65 +101,22 @@ async fn main() {
     });
     let provider = Arc::clone(&join.provider);
 
-    // The DB-backed connector index -- ONE startup scan, never a
-    // per-frame query. The path comes from the shared `DEGENBOT_DB_PATH`
-    // resolver; a missing file leaves the discovery fan shut and frames
-    // observe (connectors are never guessed).
+    // The DB-backed connector registry: ONE startup scan, never a per-frame
+    // query, assembled by the resolver a hosted boot shares so both runtime
+    // shapes discover over the same snapshot. The path comes from the shared
+    // `DEGENBOT_DB_PATH` resolver; a missing file leaves the discovery fan
+    // shut and frames observe (connectors are never guessed).
     let db_path = degenbot_config::resolve_database_path(&env, None).value;
     let (route_registry, connector_db): (
-        Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+        Option<Arc<degenbot_bot::bot_core::RouteRegistry>>,
         Option<degenbot_db::connection::DegenbotDb>,
-    ) = if db_path.is_file() {
-        match degenbot_db::connection::DegenbotDb::open(&db_path) {
-            Ok((db, _)) => match degenbot_bot::sidecar_paths::V2ConnectorIndex::load(&db, 1)
-                .and_then(|mut ix| ix.load_v3(&db, 1).map(|()| ix))
-            {
-                Ok(mut ix) => {
-                    ix.set_ranker(Arc::new(
-                        degenbot_bot::sidecar_paths::OnChainLiquidityRanker::new(Arc::clone(
-                            &provider,
-                        )),
-                    ));
-                    let registry = Arc::new(degenbot_bot::bot_core::RouteRegistry::new(ix));
-                    tracing::info!(edges = registry.index().len(), "connector index loaded");
-                    // Evidence mode (`strategy.backrun.rank_evidence`): a LIVE
-                    // sanity probe before any frame trusts the depth
-                    // truncation -- the canonical deep USDC/WETH pair must
-                    // top the ranking.
-                    if config.strategy.backrun.rank_evidence {
-                        match degenbot_bot::sidecar_paths::deep_pair_ranking_evidence(
-                            registry.index(),
-                            &db,
-                        )
-                        .await
-                        {
-                            Ok(()) => {
-                                tracing::info!(
-                                    "rank evidence: deep USDC/WETH pair tops the ranking"
-                                );
-                            }
-                            Err(e) => tracing::warn!(evidence = %e, "rank evidence FAILED"),
-                        }
-                    }
-                    (Some(registry), Some(db))
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "connector index load failed - lane disabled");
-                    (None, None)
-                }
-            },
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    path = %db_path.display(),
-                    "DEGENBOT_DB_PATH unopenable - lane disabled"
-                );
-                (None, None)
-            }
-        }
-    } else {
-        tracing::debug!(path = %db_path.display(), "connector DB absent - lane disabled");
-        (None, None)
+    ) = match degenbot_submission::backrun_driver::resolve_backrun_registry(
+        &config, &db_path, &provider,
+    )
+    .await
+    {
+        Some((registry, db)) => (Some(registry), Some(db)),
+        None => (None, None),
     };
 
     // The hub is the host's, not the lane's; the lane registers its feed on it.
