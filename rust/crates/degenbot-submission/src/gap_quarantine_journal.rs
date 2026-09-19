@@ -53,6 +53,17 @@ use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 /// Fixed journal filename under the durable-state root.
 pub const JOURNAL_FILE_NAME: &str = "backrun-quarantine.jsonl";
 
+/// Fixed resolution-archive filename under the durable-state root, sibling of
+/// [`JOURNAL_FILE_NAME`]. Unlike the journal this file is append-only: never
+/// compacted, never rewritten, so every resolved outcome survives every
+/// restart.
+pub const RESOLVED_ARCHIVE_FILE_NAME: &str = "backrun-quarantine-resolved.jsonl";
+
+/// The resolution-archive record schema version. Independent of
+/// [`JOURNAL_RECORD_VERSION`]: the archive is a separate surface that never
+/// migrates or compacts.
+pub const RESOLVED_ARCHIVE_RECORD_VERSION: u32 = 1;
+
 /// The record schema version this binary writes. A line without an explicit
 /// `v` predates versioning and is read as [`LEGACY_RECORD_VERSION`].
 pub const JOURNAL_RECORD_VERSION: u32 = 2;
@@ -366,6 +377,99 @@ pub struct ResolveRecord {
     pub frame_hash: B256,
     pub resolution: Resolution,
     pub resolved_at_unix_ms: u64,
+}
+
+/// How a frame left the pending set, as the archive records it. The journal's
+/// [`Resolution`] names the trigger (finalized vs not); the archive records the
+/// outcome itself, because the carrying block and finality tag ride alongside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchivedResolution {
+    /// The frame's own tx mined.
+    Mined,
+    /// A same-nonce tx consumed the slot.
+    SlotTaken,
+    /// The gap closed in the caller's pool view (predecessors replayable).
+    RescueConsumed,
+    /// A forced eviction (sender flush / operator action).
+    Evicted,
+}
+
+impl ArchivedResolution {
+    /// Map a journal tombstone cause to its archived outcome.
+    #[must_use]
+    pub const fn from_journal(resolution: Resolution) -> Self {
+        match resolution {
+            Resolution::MinedFinalized => Self::Mined,
+            Resolution::SlotTakenFinalized => Self::SlotTaken,
+            Resolution::RescueConsumed => Self::RescueConsumed,
+            Resolution::Evicted => Self::Evicted,
+        }
+    }
+}
+
+/// One archived outcome: frame identity, how it left, any chain evidence, and
+/// the wall clock.
+///
+/// `block`, `block_hash`, and `by` are set together from a nonce-consumption
+/// classification (see [`Self::with_consumption`]), or omitted together for an
+/// operational resolution. `finalized_block` is present only when finality
+/// triggered the resolution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResolutionArchiveRecord {
+    #[serde(rename = "v")]
+    pub version: u32,
+    pub frame_hash: B256,
+    pub sender: Address,
+    pub claimed_nonce: u64,
+    pub resolution: ArchivedResolution,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_hash: Option<B256>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<B256>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalized_block: Option<u64>,
+    pub resolved_unix_ms: u64,
+}
+
+impl ResolutionArchiveRecord {
+    /// An outcome with no chain evidence (an operational resolution).
+    #[must_use]
+    pub fn new(frame: &ParkedFrame, resolution: ArchivedResolution, resolved_unix_ms: u64) -> Self {
+        Self {
+            version: RESOLVED_ARCHIVE_RECORD_VERSION,
+            frame_hash: frame.hash,
+            sender: frame.from,
+            claimed_nonce: frame.claimed_nonce,
+            resolution,
+            block: None,
+            block_hash: None,
+            by: None,
+            finalized_block: None,
+            resolved_unix_ms,
+        }
+    }
+
+    /// Attach the nonce-consumption evidence that classified the frame.
+    #[must_use]
+    pub const fn with_consumption(mut self, consumed: NonceConsumed) -> Self {
+        self.block = Some(consumed.block());
+        self.block_hash = Some(consumed.block_hash());
+        self.by = match consumed {
+            NonceConsumed::MinedAt { .. } => None,
+            NonceConsumed::SlotTakenAt { by, .. } => by,
+        };
+        self
+    }
+
+    /// Attach the finalized block whose finality triggered the resolution.
+    #[must_use]
+    pub const fn with_finalized_block(mut self, finalized_block: u64) -> Self {
+        self.finalized_block = Some(finalized_block);
+        self
+    }
 }
 
 /// One journal line: a version tag plus the tagged payload.
@@ -742,6 +846,8 @@ pub fn compact(path: &Path, pending: &[ParkRecord]) -> io::Result<()> {
 pub struct QuarantineJournal {
     file: File,
     path: PathBuf,
+    archive: Option<File>,
+    archive_path: PathBuf,
 }
 
 impl QuarantineJournal {
@@ -755,9 +861,29 @@ impl QuarantineJournal {
             std::fs::create_dir_all(parent)?;
         }
         let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let archive_path = path.with_file_name(RESOLVED_ARCHIVE_FILE_NAME);
+        // The archive shares the journal's never-abort posture: an archive that
+        // cannot be opened degrades to no archiving, it never fails the journal.
+        let archive = match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&archive_path)
+        {
+            Ok(archive) => Some(archive),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    path = %archive_path.display(),
+                    "resolution archive unavailable - outcomes not archived"
+                );
+                None
+            }
+        };
         Ok(Self {
             file,
             path: path.to_path_buf(),
+            archive,
+            archive_path,
         })
     }
 
@@ -775,6 +901,30 @@ impl QuarantineJournal {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The resolution-archive file path (sibling of the journal).
+    #[must_use]
+    pub fn resolution_archive_path(&self) -> &Path {
+        &self.archive_path
+    }
+
+    /// Append one outcome to the resolution archive. Unlike
+    /// [`Self::record_resolve`], this line is never compacted away. A journal
+    /// whose archive failed to open drops the outcome; that failure was warned
+    /// once at open.
+    ///
+    /// # Errors
+    ///
+    /// Serialization or I/O failure.
+    pub fn record_resolution(&mut self, record: &ResolutionArchiveRecord) -> io::Result<()> {
+        let Some(archive) = self.archive.as_mut() else {
+            return Ok(());
+        };
+        let mut line = serde_json::to_vec(record)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        line.push(b'\n');
+        archive.write_all(&line)
     }
 
     /// Append one park.

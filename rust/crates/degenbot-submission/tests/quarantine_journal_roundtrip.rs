@@ -19,8 +19,9 @@ use degenbot_submission::gap_quarantine::{
     FrameState, NonceConsumed, Quarantine, QuarantineDecision,
 };
 use degenbot_submission::gap_quarantine_journal::{
-    compact, corrupt_sidecar_path, read_pending, ParkRecord, QuarantineJournal, RecordFidelity,
-    Resolution, TentativeRecord, JOURNAL_FILE_NAME,
+    compact, corrupt_sidecar_path, read_pending, ArchivedResolution, ParkRecord, QuarantineJournal,
+    RecordFidelity, Resolution, ResolutionArchiveRecord, TentativeRecord, JOURNAL_FILE_NAME,
+    RESOLVED_ARCHIVE_FILE_NAME,
 };
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -597,6 +598,203 @@ fn leading_bom_is_stripped_before_parsing() {
     assert_eq!(read.pending.len(), 1);
     assert_eq!(read.pending[0].claimed_nonce, 52);
     assert!(!corrupt_sidecar_path(&path).exists());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A resolved outcome leaves the pending journal at compaction but survives,
+/// byte-identical, in the never-compacted resolution archive.
+#[test]
+fn resolved_outcome_survives_compaction_in_the_archive() {
+    let dir = scratch("archive-survives-compact");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let frame = ParkRecord::new(&event(1, 12, 1_000), 10, now_ms());
+    let consumed = NonceConsumed::MinedAt {
+        block: 100,
+        block_hash: hash(7),
+    };
+    let resolved_unix_ms = 1_700_000_000_000;
+    {
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        journal.record_park(&frame).expect("park");
+        journal
+            .record_tentative(frame.frame.hash.parse().expect("hash"), consumed, now_ms())
+            .expect("tentative");
+        journal
+            .record_resolve(
+                frame.frame.hash.parse().expect("hash"),
+                Resolution::MinedFinalized,
+                resolved_unix_ms,
+            )
+            .expect("resolve");
+        let archived = ResolutionArchiveRecord::new(
+            &frame.to_parked_frame().expect("frame"),
+            ArchivedResolution::Mined,
+            resolved_unix_ms,
+        )
+        .with_consumption(consumed)
+        .with_finalized_block(100);
+        journal.record_resolution(&archived).expect("archive");
+    }
+
+    let archive_path = path.with_file_name(RESOLVED_ARCHIVE_FILE_NAME);
+    let first = std::fs::read(&archive_path).expect("archive bytes");
+    let text = std::str::from_utf8(&first).expect("utf8");
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert_eq!(lines.len(), 1, "exactly one archive line");
+    let value: serde_json::Value = serde_json::from_str(lines[0]).expect("archive json");
+    assert_eq!(value.get("v").and_then(serde_json::Value::as_u64), Some(1));
+    assert_eq!(
+        value.get("resolution").and_then(serde_json::Value::as_str),
+        Some("mined")
+    );
+    assert_eq!(
+        value
+            .get("claimed_nonce")
+            .and_then(serde_json::Value::as_u64),
+        Some(12)
+    );
+    assert_eq!(
+        value
+            .get("finalized_block")
+            .and_then(serde_json::Value::as_u64),
+        Some(100)
+    );
+    assert_eq!(
+        value.get("block_hash").and_then(serde_json::Value::as_str),
+        Some(hash(7).to_string().as_str())
+    );
+
+    let read = read_pending(&path).expect("read");
+    assert!(read.pending.is_empty(), "the tombstone removed the park");
+
+    compact(&path, &read.pending).expect("compact 1");
+    assert_eq!(
+        std::fs::read(&archive_path).expect("after compact 1"),
+        first,
+        "compaction rewrites the journal, never the archive"
+    );
+    compact(&path, &read.pending).expect("compact 2");
+    assert_eq!(
+        std::fs::read(&archive_path).expect("after compact 2"),
+        first,
+        "repeated compaction leaves the archive byte-identical"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A slot-taken outcome archives the consuming tx's identity, and a mined
+/// outcome omits it: the `by` field is exactly the evidence the classification
+/// found, never fabricated.
+#[test]
+fn slot_taken_archive_by_round_trips() {
+    let dir = scratch("archive-slot-taken-by");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let frame = ParkRecord::new(&event(1, 12, 1_000), 10, now_ms());
+    let consumed = NonceConsumed::SlotTakenAt {
+        block: 200,
+        block_hash: hash(5),
+        by: Some(hash(9)),
+    };
+    {
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        journal.record_park(&frame).expect("park");
+        let slot_taken = ResolutionArchiveRecord::new(
+            &frame.to_parked_frame().expect("frame"),
+            ArchivedResolution::SlotTaken,
+            now_ms(),
+        )
+        .with_consumption(consumed);
+        journal.record_resolution(&slot_taken).expect("archive");
+
+        let reloaded: ResolutionArchiveRecord = serde_json::from_slice(
+            &std::fs::read(path.with_file_name(RESOLVED_ARCHIVE_FILE_NAME)).expect("archive bytes"),
+        )
+        .expect("archive round trip");
+        assert_eq!(reloaded.by, Some(hash(9)), "the slot-stealer survives");
+        assert_eq!(reloaded.block, Some(200));
+        assert!(
+            reloaded.finalized_block.is_none(),
+            "no finality rode this record"
+        );
+
+        let mined = ResolutionArchiveRecord::new(
+            &frame.to_parked_frame().expect("frame"),
+            ArchivedResolution::Mined,
+            now_ms(),
+        )
+        .with_consumption(NonceConsumed::MinedAt {
+            block: 201,
+            block_hash: hash(6),
+        });
+        let mined_json = serde_json::to_value(&mined).expect("serialize");
+        assert!(mined_json.get("by").is_none(), "mined carries no stealer");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A torn final archive line is inert: complete lines still parse, the torn
+/// line is skipped, and the pending journal is unaffected.
+#[test]
+fn torn_final_archive_line_is_tolerated_by_readers() {
+    let dir = scratch("archive-torn-tail");
+    let path = dir.join(JOURNAL_FILE_NAME);
+    let frame = ParkRecord::new(&event(1, 12, 1_000), 10, now_ms());
+    {
+        let mut journal = QuarantineJournal::open(&path).expect("open");
+        journal.record_park(&frame).expect("park");
+        journal
+            .record_resolve(
+                frame.frame.hash.parse().expect("hash"),
+                Resolution::MinedFinalized,
+                now_ms(),
+            )
+            .expect("resolve");
+        let archived = ResolutionArchiveRecord::new(
+            &frame.to_parked_frame().expect("frame"),
+            ArchivedResolution::Mined,
+            now_ms(),
+        )
+        .with_consumption(NonceConsumed::MinedAt {
+            block: 100,
+            block_hash: hash(7),
+        });
+        journal.record_resolution(&archived).expect("archive");
+    }
+    let archive_path = path.with_file_name(RESOLVED_ARCHIVE_FILE_NAME);
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&archive_path)
+        .expect("reopen archive")
+        .write_all(b"{\"v\":1,\"frame_hash\":\"0x")
+        .expect("torn tail");
+
+    let bytes = std::fs::read(&archive_path).expect("archive bytes");
+    let text = std::str::from_utf8(&bytes).expect("utf8");
+    let mut parsed = 0usize;
+    let mut torn = 0usize;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(_) => parsed += 1,
+            Err(_) => torn += 1,
+        }
+    }
+    assert_eq!(parsed, 1, "the complete line parses");
+    assert_eq!(
+        torn, 1,
+        "the torn tail is a skipped line, not a read failure"
+    );
+
+    let read = read_pending(&path).expect("read");
+    assert!(
+        read.pending.is_empty(),
+        "the archive never disturbs the journal"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

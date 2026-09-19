@@ -57,7 +57,7 @@ use degenbot_submission::gap_quarantine::{
     NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
 };
 use degenbot_submission::gap_quarantine_journal::{
-    self, ParkRecord, QuarantineJournal, Resolution,
+    self, ArchivedResolution, ParkRecord, QuarantineJournal, Resolution, ResolutionArchiveRecord,
 };
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
@@ -327,10 +327,19 @@ fn journal_reentry_outcome(
         ReentryOutcome::GapPending => {}
         ReentryOutcome::Terminal => {
             if let Some(journal) = journal {
+                let resolved_unix_ms = now_unix_ms();
                 if let Err(error) =
-                    journal.record_resolve(frame.hash, Resolution::RescueConsumed, now_unix_ms())
+                    journal.record_resolve(frame.hash, Resolution::RescueConsumed, resolved_unix_ms)
                 {
                     tracing::warn!(%error, "quarantine resolve not journaled");
+                }
+                let archived = ResolutionArchiveRecord::new(
+                    frame,
+                    ArchivedResolution::RescueConsumed,
+                    resolved_unix_ms,
+                );
+                if let Err(error) = journal.record_resolution(&archived) {
+                    tracing::warn!(%error, "quarantine resolution not archived");
                 }
             }
         }
@@ -1176,7 +1185,7 @@ async fn main() {
                             Err(e) => tracing::warn!(evidence = %e, "rank evidence FAILED"),
                         }
                     }
-                    (Some(ix), Some(db))
+                    (Some(registry), Some(db))
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "connector index load failed - lane disabled");
@@ -1709,10 +1718,21 @@ async fn main() {
                             (Resolution::SlotTakenFinalized, "slot_taken_finalized")
                         };
                         if let Some(journal) = quarantine_journal.as_mut() {
+                            let resolved_unix_ms = now_unix_ms();
                             if let Err(error) =
-                                journal.record_resolve(frame.hash, resolution, now_unix_ms())
+                                journal.record_resolve(frame.hash, resolution, resolved_unix_ms)
                             {
                                 tracing::warn!(%error, "finalized tombstone not journaled");
+                            }
+                            let archived = ResolutionArchiveRecord::new(
+                                &frame,
+                                ArchivedResolution::from_journal(resolution),
+                                resolved_unix_ms,
+                            )
+                            .with_consumption(consumed)
+                            .with_finalized_block(finalized);
+                            if let Err(error) = journal.record_resolution(&archived) {
+                                tracing::warn!(%error, "finalized resolution not archived");
                             }
                         }
                         trace_jsonl(

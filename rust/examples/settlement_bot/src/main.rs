@@ -1191,6 +1191,10 @@ mod arm_gate_tests {
     }
 
     #[test]
+    #[expect(
+        clippy::expect_used,
+        reason = "the assertion proves the settlement driver refused the backrun arm with a message"
+    )]
     fn backrun_arm_refuses_on_the_settlement_driver() {
         let msg = strategy_arm_refusal(Some(StrategyName::Backrun)).expect("backrun must refuse");
         assert!(msg.contains("strategy.name=backrun"));
