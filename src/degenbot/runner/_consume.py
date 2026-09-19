@@ -166,6 +166,19 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
             last_block=block_number,
             reward_percentiles=[float(p) for p in FEE_PERCENTILES],
         )
+        # The same head tick drives the hosted per-head reconciliation: refresh
+        # the confirmed chain nonce, close outstanding submission records out,
+        # and fold the typed notices into the owning strategy's policy. The
+        # guard (any lease or non-terminal record) and the single chain-nonce
+        # read live in Rust, so a settlement-only boot with no hosted activity
+        # pays no new RPC. `getattr` keeps the fake-engine test doubles working.
+        engine = getattr(session.engine_registry, "engine", None)
+        reconcile = getattr(engine, "reconcile_hosted_head", None)
+        if reconcile is not None:
+            await reconcile(
+                provider=async_alloy,
+                operator_address=session.cfg.operator_address,
+            )
 
     dispatcher.record_block_time(block_number, block_timestamp)
     if dispatcher.block_time_count() >= 2:

@@ -49,6 +49,7 @@ use crate::fee::finalize_fees;
 use crate::monitor::{monitor_pending_transaction_default, ReceiptProbe, SubmittedTx};
 use crate::params::TxParams;
 use crate::signer::TxSigner;
+use crate::submission_ledger::{NonceLane, TargetId};
 
 // ─────────────────────────────────────────────────────────────────────────
 // The submit candidate (decoupled from the Simulation `SimResult`)
@@ -200,6 +201,40 @@ impl SubmitOutcome {
 // The submit orchestration (N6)
 // ─────────────────────────────────────────────────────────────────────────
 
+/// How a submission path obtains its sign-time nonce.
+///
+/// The operator account is shared, so a nonce is a process-wide resource. A
+/// standalone sidecar owns the account alone and can keep using its dispatcher
+/// reservation table; a hosted lane shares the account with other strategies
+/// and must route through the authority.
+#[derive(Clone)]
+pub enum NonceSource {
+    /// Standalone parity: the dispatcher's private per-process reservation
+    /// table, scanning upward from `start`.
+    Dispatcher {
+        /// The account nonce baseline the scan starts at.
+        start: u64,
+    },
+    /// Hosted: the host-minted authority through the strategy's
+    /// [`NonceLane`], which also records the signed submission in the
+    /// per-head ledger.
+    Authority(Arc<NonceLane>),
+}
+
+impl NonceSource {
+    /// The standalone dispatcher reservation path.
+    #[must_use]
+    pub fn dispatcher(start: u64) -> Self {
+        Self::Dispatcher { start }
+    }
+
+    /// The hosted sign-time authority path.
+    #[must_use]
+    pub fn authority(lane: Arc<NonceLane>) -> Self {
+        Self::Authority(lane)
+    }
+}
+
 /// The 1.5× gas safety margin (`tx_params["gas"] = int(gas_used * 1.5)`,
 /// `examples/eth_backrun_v2_v3_v4_rust.py` L2419). Applied to the simulate's
 /// `gasUsed` when building the `TxParams`.
@@ -290,7 +325,7 @@ pub async fn dispatch_and_submit(
     provider: &AlloyProvider,
     signer: &TxSigner,
     probe: Arc<dyn ReceiptProbe + Send + Sync>,
-    operator_nonce: u64,
+    nonce_source: NonceSource,
     current_block: u64,
     dry_run: bool,
     inject_code: bool,
@@ -399,11 +434,29 @@ pub async fn dispatch_and_submit(
             continue;
         }
 
-        // 2d. Claim nonce (L2636). Lock briefly — no .await.
-        let nonce = {
-            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
-            let mut d = dispatcher.lock().expect("dispatcher mutex poisoned");
-            d.claim_nonce(operator_nonce)
+        // 2d. Obtain the sign-time nonce. Standalone parity uses the
+        //     dispatcher's private reservation table; a hosted lane stamps
+        //     through the host-minted authority, whose default policy
+        //     repackages past a stale reservation. Lock briefly — no .await.
+        let (nonce, lease) = match &nonce_source {
+            NonceSource::Dispatcher { start } => {
+                let nonce = {
+                    #[expect(clippy::expect_used)]
+                    // poisoned sync-guard = process bug; panic loudly
+                    let mut d = dispatcher.lock().expect("dispatcher mutex poisoned");
+                    d.claim_nonce(*start)
+                };
+                (nonce, None)
+            }
+            NonceSource::Authority(lane) => {
+                let Ok(lease) = lane.stamp() else {
+                    // No nonce is available for this lane (exhausted, or a
+                    // non-stale reservation still in the way): stop the batch
+                    // rather than sign against a nonce the authority refused.
+                    break;
+                };
+                (lease.nonce(), Some(lease))
+            }
         };
 
         // 2e. Build the TxParams + finalize fees (L2637–L2639).
@@ -454,6 +507,19 @@ pub async fn dispatch_and_submit(
         // 2g. Sign (L2647). Synchronous ECDSA — no .await, no lock.
         let raw_signed = signer.sign_eip1559(&tx_params)?;
 
+        // 2g-bis. Hosted only: record the freshly signed submission in the
+        //     per-head ledger against the authority-granted nonce, so the head
+        //     feed can reconcile exactly what was built.
+        if let (NonceSource::Authority(lane), Some(lease)) = (&nonce_source, lease.as_ref()) {
+            let signed_hash = alloy::primitives::keccak256(&raw_signed);
+            let target_id = match &target {
+                SubmissionTarget::Bundle(bt) => TargetId::new(bt.target_tx_hash),
+                SubmissionTarget::Public => TargetId::new(signed_hash),
+            };
+            lane.record_signed(lease, target_id, signed_hash, current_block)
+                .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+        }
+
         // 2h. Broadcast (L2648–L2654).
         //
         // MEVBlocker bid channel (the sidecar's bid mode): `eth_sendBundle`
@@ -490,6 +556,16 @@ pub async fn dispatch_and_submit(
                     if let Some(p) = degenbot_bot::instruments::pipeline() {
                         p.count_submit_outcome("bundle_accepted");
                     }
+                    if let (NonceSource::Authority(lane), Some(lease)) =
+                        (&nonce_source, lease.as_ref())
+                    {
+                        lane.authority()
+                            .record_broadcast(lease)
+                            .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+                        lane.ledger()
+                            .record_broadcast(lane.strategy(), lease.nonce())
+                            .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+                    }
                     outcome.records.push(SubmitRecord::Submitted {
                         path_id: candidate.path_id,
                         tx_hash: hash,
@@ -515,6 +591,13 @@ pub async fn dispatch_and_submit(
                             "error": format!("{e}"),
                         }),
                     );
+                    if let (NonceSource::Authority(lane), Some(lease)) =
+                        (&nonce_source, lease.as_ref())
+                    {
+                        // The bundle never reached the auction: free the
+                        // lease so the next candidate can stamp.
+                        let _ = lane.release(lease);
+                    }
                     outcome.records.push(SubmitRecord::Skipped {
                         path_id: candidate.path_id,
                         reason: SkipReason::BroadcastFailed(format!(
@@ -555,6 +638,14 @@ pub async fn dispatch_and_submit(
             if let Some(p) = degenbot_bot::instruments::pipeline() {
                 p.count_submit_outcome("relay_accepted");
             }
+            if let (NonceSource::Authority(lane), Some(lease)) = (&nonce_source, lease.as_ref()) {
+                lane.authority()
+                    .record_broadcast(lease)
+                    .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+                lane.ledger()
+                    .record_broadcast(lane.strategy(), lease.nonce())
+                    .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+            }
             hash
         } else {
             // The broadcast failed on EVERY relay — skip with the typed
@@ -565,6 +656,11 @@ pub async fn dispatch_and_submit(
             if let Some(p) = degenbot_bot::instruments::pipeline() {
                 p.count_submit_outcome("skipped_broadcast_failed");
                 p.add_profit_missed(candidate_net_wei(&candidate));
+            }
+            if let (NonceSource::Authority(lane), Some(lease)) = (&nonce_source, lease.as_ref()) {
+                // Every relay rejected the raw transaction: free the lease so
+                // the next candidate can stamp.
+                let _ = lane.release(lease);
             }
             outcome.records.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
@@ -861,7 +957,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             100,
             true, // dry_run
             false,
@@ -911,7 +1007,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             100,
             true, // dry_run — A commits POOL_A, B is blocked
             false,
@@ -951,7 +1047,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             100,
             false,
             false,
@@ -987,7 +1083,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             100,
             true, // dry_run
             false,
@@ -1015,7 +1111,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             100,
             false,
             true, // inject_code
@@ -1060,7 +1156,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            42, // operator_nonce
+            NonceSource::dispatcher(42), // operator_nonce
             100,
             false,
             false,
@@ -1113,7 +1209,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            7,
+            NonceSource::dispatcher(7),
             100,
             false,
             false,
@@ -1165,7 +1261,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            42,
+            NonceSource::dispatcher(42),
             100,
             false,
             false,
@@ -1185,6 +1281,76 @@ mod tests {
             })
             .collect();
         assert_eq!(nonces, vec![42, 43]);
+        dispatcher.lock().unwrap().abort_all_tasks();
+    }
+
+    #[tokio::test]
+    async fn a_hosted_submission_stamps_through_the_authority_and_records_the_ledger() {
+        // The hosted (two-strategy) path: nonces come from the process-wide
+        // authority rather than the dispatcher's private reservation table,
+        // and each signed submission is recorded in the per-head ledger.
+        use crate::submission_ledger::{NonceLane, SubmissionLedger, SubmissionState};
+        use degenbot_bot::nonce_authority::StrategyId;
+
+        let asserter = Asserter::new();
+        asserter.push_success(&empty_access_list_response());
+        let hash_a = B256::repeat_byte(0xa1);
+        asserter.push_success(&tx_hash_response(&format!("{hash_a:?}")));
+        asserter.push_success(&empty_access_list_response());
+        let hash_b = B256::repeat_byte(0xb2);
+        asserter.push_success(&tx_hash_response(&format!("{hash_b:?}")));
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+
+        let strategy = StrategyId::new("settlement");
+        let authority = Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(42));
+        let ledger = Arc::new(SubmissionLedger::new());
+        let lane = Arc::new(NonceLane::new(
+            Arc::clone(&authority),
+            Arc::clone(&ledger),
+            strategy.clone(),
+        ));
+
+        let outcome = dispatch_and_submit(
+            vec![
+                candidate(1, 5_000_000_000u128, &[POOL_A]),
+                candidate(2, 4_000_000_000u128, &[POOL_B]),
+            ],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            NonceSource::authority(Arc::clone(&lane)),
+            100,
+            false,
+            false,
+            &[],
+            SubmissionTarget::Public,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.submitted_count(), 2);
+        assert_eq!(
+            authority.outstanding_nonces(),
+            vec![42, 43],
+            "the authority owns both outstanding broadcast nonces"
+        );
+        assert_eq!(
+            ledger.state_of(&strategy, 42),
+            Some(SubmissionState::Broadcast)
+        );
+        assert_eq!(
+            ledger.state_of(&strategy, 43),
+            Some(SubmissionState::Broadcast)
+        );
+        assert_eq!(
+            dispatcher.lock().unwrap().pending_nonce_count(),
+            0,
+            "the hosted path keeps no private dispatcher reservation"
+        );
         dispatcher.lock().unwrap().abort_all_tasks();
     }
 
@@ -1296,7 +1462,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            42,
+            NonceSource::dispatcher(42),
             100,
             false,
             false,
@@ -1363,7 +1529,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             MY_BLOCK,
             true, // dry_run
             false,
@@ -1427,7 +1593,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             MY_BLOCK,
             true,
             false,
@@ -1510,7 +1676,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             4241,
             false,
             false,
@@ -1575,7 +1741,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            0,
+            NonceSource::dispatcher(0),
             6,
             false,
             false,

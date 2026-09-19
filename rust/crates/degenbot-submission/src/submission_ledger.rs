@@ -30,9 +30,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
 use alloy::primitives::B256;
-use degenbot_bot::nonce_authority::StrategyId;
+use degenbot_bot::nonce_authority::{DeclineKind, NonceAuthority, NonceLease, StrategyId};
+use degenbot_bot::strategy_host::{HeadNotice, HeadReconciler, StrategyNotice};
 use parking_lot::Mutex;
 
 /// The identity of the transaction a submitted record was built to follow.
@@ -326,6 +328,230 @@ impl RepackageRequest {
     }
 }
 
+/// The v1 wire-level shadow posture.
+///
+/// Reconciliation is nonce-level: a strategy can be told its nonce landed
+/// even when its exact bytes did not (another account transaction consumed the
+/// slot, or the authority handed the nonce to a successor). The ledger records
+/// that divergence in the record's own fate; it never acts on the shadow. The
+/// accept-the-shadow choice is deliberately deferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShadowPosture {
+    /// The shadow is observable in the record's nonce-level outcome but the
+    /// submission path makes no decision from it.
+    ObservedNotActedOn,
+}
+
+/// The host-minted sign-time nonce seam for one strategy.
+///
+/// Both submission paths obtain their nonce here at TX-build/sign time: the
+/// lane's [`stamp`](Self::stamp) is the only issuance entry, and every signed
+/// submission is recorded in the same ledger the host reconciles per head. A
+/// lane therefore keeps no private nonce reservation table — the shared
+/// authority arbitrates the operator account's nonces across strategies.
+#[derive(Debug)]
+pub struct NonceLane {
+    authority: Arc<NonceAuthority>,
+    ledger: Arc<SubmissionLedger>,
+    strategy: StrategyId,
+}
+
+impl NonceLane {
+    /// Bind a strategy to the shared authority and ledger.
+    #[must_use]
+    pub fn new(
+        authority: Arc<NonceAuthority>,
+        ledger: Arc<SubmissionLedger>,
+        strategy: impl Into<StrategyId>,
+    ) -> Self {
+        Self {
+            authority,
+            ledger,
+            strategy: strategy.into(),
+        }
+    }
+
+    /// The lane's strategy identity.
+    #[must_use]
+    pub fn strategy(&self) -> &StrategyId {
+        &self.strategy
+    }
+
+    /// The shared nonce authority.
+    #[must_use]
+    pub fn authority(&self) -> &Arc<NonceAuthority> {
+        &self.authority
+    }
+
+    /// The shared per-strategy ledger.
+    #[must_use]
+    pub fn ledger(&self) -> &Arc<SubmissionLedger> {
+        &self.ledger
+    }
+
+    /// Sign-time stamp: obtain the lowest-free nonce from the authority.
+    ///
+    /// The default v1 repackage policy runs here: when the authority declines
+    /// because the lane's own stale reservation is in the way
+    /// ([`DeclineKind::StrategyLeaseOutstanding`] or
+    /// [`DeclineKind::BelowChainNonce`]), the lane releases that lease and
+    /// re-stamps once at the next available nonce. A non-stale decline
+    /// (exhausted space, no lease to relinquish) propagates unchanged.
+    ///
+    /// # Errors
+    ///
+    /// The authority's [`DeclineKind`] once no stale lease can be relinquished.
+    pub fn stamp(&self) -> Result<NonceLease, DeclineKind> {
+        let mut relinquished = false;
+        loop {
+            match self.authority.lease(&self.strategy) {
+                Ok(lease) => return Ok(lease),
+                Err(decline) => {
+                    if relinquished {
+                        return Err(decline);
+                    }
+                    let Some(existing) = self.authority.lease_of(&self.strategy) else {
+                        return Err(decline);
+                    };
+                    self.authority.release_lease(&existing)?;
+                    relinquished = true;
+                }
+            }
+        }
+    }
+
+    /// Record a freshly signed submission against the stamped lease's nonce.
+    ///
+    /// # Errors
+    ///
+    /// [`LedgerDecline`] when the nonce already carries an outstanding record.
+    pub fn record_signed(
+        &self,
+        lease: &NonceLease,
+        target: TargetId,
+        bundle_hash: B256,
+        built_at_head: u64,
+    ) -> Result<(), LedgerDecline> {
+        self.ledger.record_signed(
+            &self.strategy,
+            lease.nonce(),
+            target,
+            bundle_hash,
+            built_at_head,
+        )
+    }
+
+    /// Release a lease whose transaction never reached the wire, freeing the
+    /// nonce without clearing the lane's outstanding broadcasts.
+    ///
+    /// # Errors
+    ///
+    /// [`DeclineKind::UnknownLease`] when the lease is no longer outstanding.
+    pub fn release(&self, lease: &NonceLease) -> Result<u64, DeclineKind> {
+        self.authority.release_lease(lease)
+    }
+
+    /// Seed or advance the authority's confirmed chain nonce from a head read,
+    /// never rewinding it.
+    ///
+    /// A submission path that already fetched the account's next nonce seeds
+    /// the authority before its first stamp so the lane cannot issue a nonce
+    /// the chain has consumed. A later head read that reports a lower value (an
+    /// RPC race) must not revoke a live lease, so only a forward move is
+    /// applied; the reorg-safe rewind stays the head feed's call.
+    pub fn observe_chain_nonce(&self, confirmed: u64) {
+        if confirmed > self.authority.confirmed() {
+            let _ = self.authority.set_confirmed_reorg(confirmed);
+        }
+    }
+}
+
+/// What the default lane policy did with a typed head notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyAction {
+    /// Re-stamped at the authority's lowest-free nonce: the vacated
+    /// predecessor for an orphan fill, the recovered head for a revoked
+    /// lease.
+    Restamped {
+        /// The nonce the fresh stamp obtained.
+        nonce: u64,
+    },
+    /// The lane's decide stage re-evaluates the frame fresh and re-bids or
+    /// drops.
+    Reevaluate,
+    /// The submission landed; nothing to do.
+    Retired,
+}
+
+/// The default v1 driver policy over typed head notices.
+///
+/// A driver feeds its own notices here: an orphan or a revoked lease re-stamps
+/// through the authority (the re-bid itself — the economics re-check and the
+/// fresh sign — stays with the caller); a stale outcome defers to the lane's
+/// decide stage; a landed outcome retires.
+#[derive(Debug)]
+pub struct HeadPolicy {
+    lane: Arc<NonceLane>,
+}
+
+impl HeadPolicy {
+    /// Bind the policy to a lane.
+    #[must_use]
+    pub fn new(lane: Arc<NonceLane>) -> Self {
+        Self { lane }
+    }
+
+    /// The lane the policy stamps through.
+    #[must_use]
+    pub fn lane(&self) -> &Arc<NonceLane> {
+        &self.lane
+    }
+
+    /// Apply the default policy to one typed head notice.
+    ///
+    /// # Errors
+    ///
+    /// The authority's [`DeclineKind`] when a re-stamp cannot obtain a nonce.
+    pub fn on_notice(&self, notice: &HeadNotice) -> Result<PolicyAction, DeclineKind> {
+        match notice.notice() {
+            StrategyNotice::Orphaned { .. } | StrategyNotice::LeaseRevoked { .. } => {
+                let lease = self.lane.stamp()?;
+                Ok(PolicyAction::Restamped {
+                    nonce: lease.nonce(),
+                })
+            }
+            StrategyNotice::Stale => Ok(PolicyAction::Reevaluate),
+            StrategyNotice::Landed => Ok(PolicyAction::Retired),
+        }
+    }
+}
+
+impl HeadReconciler for SubmissionLedger {
+    fn reconcile_head(&self, confirmed: u64, outstanding: &[u64]) -> Vec<HeadNotice> {
+        self.reconcile(confirmed, outstanding)
+            .into_iter()
+            .map(|notification| {
+                let notice = match notification.kind() {
+                    NotificationKind::Landed => StrategyNotice::Landed,
+                    NotificationKind::Stale => StrategyNotice::Stale,
+                    NotificationKind::Orphaned { fillable_nonce } => {
+                        StrategyNotice::Orphaned { fillable_nonce }
+                    }
+                };
+                HeadNotice::new(
+                    notification.strategy().clone(),
+                    notification.nonce(),
+                    notice,
+                )
+            })
+            .collect()
+    }
+
+    fn has_outstanding(&self) -> bool {
+        SubmissionLedger::has_outstanding(self)
+    }
+}
+
 #[derive(Debug, Default)]
 struct LedgerState {
     /// Records grouped per strategy, each keyed by account nonce ascending.
@@ -344,6 +570,9 @@ impl SubmissionLedger {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// The v1 wire-level shadow posture: observed, not acted on.
+    pub const SHADOW_POSTURE: ShadowPosture = ShadowPosture::ObservedNotActedOn;
 
     /// Record a freshly signed submission.
     ///
@@ -537,6 +766,20 @@ impl SubmissionLedger {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Whether any record is still non-terminal.
+    ///
+    /// The head feed's reconcile guard reads this together with the authority's
+    /// outstanding set: a ledger with only terminal records has nothing left to
+    /// reconcile.
+    #[must_use]
+    pub fn has_outstanding(&self) -> bool {
+        self.state
+            .lock()
+            .by_strategy
+            .values()
+            .any(|records| records.values().any(|record| !record.state.is_terminal()))
     }
 }
 
@@ -857,6 +1100,211 @@ mod tests {
 
     /// The independent oracle: what each record's outcome must be, derived
     /// directly from the reconciliation definition — no ledger code.
+    #[test]
+    fn the_ledger_maps_reconcile_outcomes_to_host_notices() {
+        let ledger = SubmissionLedger::new();
+        sign(&ledger, "settlement", 10, 100);
+        sign(&ledger, "settlement", 11, 100);
+        let notices = ledger.reconcile_head(10, &[11]);
+        assert_eq!(notices.len(), 2);
+        assert_eq!(notices[0].strategy(), &sid("settlement"));
+        assert_eq!(notices[0].notice(), &StrategyNotice::Stale);
+        assert_eq!(notices[1].nonce(), 11);
+        assert_eq!(
+            notices[1].notice(),
+            &StrategyNotice::Orphaned { fillable_nonce: 10 }
+        );
+    }
+
+    #[test]
+    fn has_outstanding_tracks_non_terminal_records() {
+        let ledger = SubmissionLedger::new();
+        assert!(!ledger.has_outstanding());
+        sign(&ledger, "settlement", 10, 100);
+        assert!(ledger.has_outstanding());
+        ledger
+            .record_broadcast(&sid("settlement"), 10)
+            .expect("broadcast");
+        assert!(ledger.has_outstanding());
+        let _ = ledger.reconcile(11, &[]);
+        assert!(!ledger.has_outstanding(), "a landed record is terminal");
+    }
+
+    #[test]
+    fn observe_chain_nonce_advances_without_rewinding() {
+        let authority = Arc::new(NonceAuthority::new(10));
+        let ledger = Arc::new(SubmissionLedger::new());
+        let lane = NonceLane::new(Arc::clone(&authority), ledger, sid("a"));
+        lane.observe_chain_nonce(12);
+        assert_eq!(authority.confirmed(), 12);
+        lane.observe_chain_nonce(11);
+        assert_eq!(
+            authority.confirmed(),
+            12,
+            "a stale head read never rewinds the confirmed nonce"
+        );
+    }
+
+    #[test]
+    fn the_wire_level_shadow_posture_is_observed_only() {
+        assert_eq!(
+            SubmissionLedger::SHADOW_POSTURE,
+            ShadowPosture::ObservedNotActedOn
+        );
+    }
+
+    #[test]
+    fn a_lane_stamp_repackages_past_a_stale_lease() {
+        let authority = Arc::new(NonceAuthority::new(10));
+        let ledger = Arc::new(SubmissionLedger::new());
+        let lane = NonceLane::new(Arc::clone(&authority), Arc::clone(&ledger), sid("a"));
+        let lease = lane.stamp().expect("first stamp");
+        assert_eq!(lease.nonce(), 10);
+        // The chain passes the lease; the next sign repackages at 11.
+        authority.set_confirmed(11);
+        let restamped = lane.stamp().expect("repackage");
+        assert_eq!(restamped.nonce(), 11);
+        assert_eq!(authority.lease_of(&sid("a")).expect("lease").nonce(), 11);
+    }
+
+    #[test]
+    fn the_default_policy_restamps_an_orphan_and_defers_stale() {
+        let authority = Arc::new(NonceAuthority::new(5));
+        let ledger = Arc::new(SubmissionLedger::new());
+        let lane = Arc::new(NonceLane::new(
+            Arc::clone(&authority),
+            Arc::clone(&ledger),
+            sid("a"),
+        ));
+        let policy = HeadPolicy::new(Arc::clone(&lane));
+        let orphan = HeadNotice::new(sid("a"), 6, StrategyNotice::Orphaned { fillable_nonce: 5 });
+        assert_eq!(
+            policy.on_notice(&orphan).expect("restamp"),
+            PolicyAction::Restamped { nonce: 5 }
+        );
+        assert_eq!(
+            policy
+                .on_notice(&HeadNotice::new(sid("a"), 5, StrategyNotice::Stale))
+                .expect("stale"),
+            PolicyAction::Reevaluate
+        );
+    }
+
+    /// The in-process two-strategy integration: the real authority, ledger, and
+    /// `StrategyHost` head feed drive the lowest-free issuance policy, a
+    /// repackage-on-decline round, and an orphan fill through the notification
+    /// policy.
+    #[test]
+    fn two_strategies_drive_lowest_free_repackage_and_orphan_fill() {
+        use degenbot_bot::bot_core::route_registry::RouteRegistry;
+        use degenbot_bot::sidecar_paths::V2ConnectorIndex;
+        use degenbot_bot::strategy_host::{FacetStatus, StrategyHost};
+        use degenbot_eventhub::Hub;
+        use tokio::sync::mpsc::unbounded_channel;
+
+        let authority = Arc::new(NonceAuthority::new(0));
+        let ledger = Arc::new(SubmissionLedger::new());
+        let mut host = StrategyHost::new(
+            Arc::new(Hub::new()),
+            Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
+            Arc::clone(&authority),
+        );
+        let settlement = sid("settlement");
+        let backrun = sid("backrun");
+        for id in [&settlement, &backrun] {
+            host.register(id.clone(), FacetStatus::Configured)
+                .expect("register");
+            host.enable(id).expect("enable");
+        }
+        let reconciler: Arc<dyn HeadReconciler> = ledger.clone();
+        host.attach_reconciler(reconciler);
+        let (settlement_tx, mut settlement_rx) = unbounded_channel();
+        host.subscribe_head(&settlement, settlement_tx)
+            .expect("subscribe");
+
+        let settlement_lane = Arc::new(NonceLane::new(
+            Arc::clone(&authority),
+            Arc::clone(&ledger),
+            settlement.clone(),
+        ));
+        let backrun_lane = Arc::new(NonceLane::new(
+            Arc::clone(&authority),
+            Arc::clone(&ledger),
+            backrun.clone(),
+        ));
+        let settlement_policy = HeadPolicy::new(Arc::clone(&settlement_lane));
+
+        // (i) Lowest-free issuance under a pending prior nonce: settlement's
+        // broadcast holds 0, so backrun stamps 1.
+        let settlement0 = settlement_lane.stamp().expect("settlement stamp");
+        assert_eq!(settlement0.nonce(), 0);
+        settlement_lane
+            .record_signed(&settlement0, target(0), hash(0), 0)
+            .expect("record signed");
+        authority.record_broadcast(&settlement0).expect("broadcast");
+        ledger
+            .record_broadcast(&settlement, 0)
+            .expect("ledger broadcast");
+        let backrun1 = backrun_lane.stamp().expect("backrun stamp");
+        assert_eq!(backrun1.nonce(), 1, "the pending 0 is skipped");
+        backrun_lane
+            .record_signed(&backrun1, target(1), hash(1), 0)
+            .expect("record signed");
+
+        // (ii) Repackage-on-decline round: the chain advances past backrun's
+        // lease, so the default stamp policy releases it and re-stamps.
+        let landed = host.on_head(1);
+        assert_eq!(landed.len(), 1);
+        assert_eq!(landed[0].strategy(), &settlement);
+        assert_eq!(landed[0].notice(), &StrategyNotice::Landed);
+        assert_eq!(
+            settlement_rx.try_recv().expect("landed delivered").notice(),
+            &StrategyNotice::Landed
+        );
+        let advanced = host.on_head(2);
+        assert!(advanced
+            .iter()
+            .any(|notice| notice.strategy() == &backrun
+                && notice.notice() == &StrategyNotice::Landed));
+        let backrun2 = backrun_lane.stamp().expect("repackage");
+        assert_eq!(backrun2.nonce(), 2);
+
+        // (iii) Orphan fill via the notification policy: backrun's broadcast
+        // at 2 is vacated, leaving settlement's outstanding 3 above a gap.
+        backrun_lane
+            .record_signed(&backrun2, target(2), hash(2), 2)
+            .expect("record signed");
+        authority.record_broadcast(&backrun2).expect("broadcast");
+        ledger
+            .record_broadcast(&backrun, 2)
+            .expect("ledger broadcast");
+        let settlement3 = settlement_lane.stamp().expect("settlement stamp");
+        assert_eq!(settlement3.nonce(), 3);
+        settlement_lane
+            .record_signed(&settlement3, target(3), hash(3), 2)
+            .expect("record signed");
+        authority.release_strategy(&backrun);
+
+        let final_notices = host.on_head(2);
+        let orphan = final_notices
+            .iter()
+            .find(|notice| notice.strategy() == &settlement)
+            .expect("orphan notice");
+        assert_eq!(
+            orphan.notice(),
+            &StrategyNotice::Orphaned { fillable_nonce: 2 }
+        );
+        let delivered = settlement_rx.try_recv().expect("orphan delivered");
+        assert_eq!(delivered.notice(), orphan.notice());
+        assert_eq!(
+            settlement_policy
+                .on_notice(&delivered)
+                .expect("orphan fill"),
+            PolicyAction::Restamped { nonce: 2 },
+            "the default policy re-stamps at the vacated predecessor"
+        );
+    }
+
     fn oracle(
         before: SubmissionState,
         nonce: u64,

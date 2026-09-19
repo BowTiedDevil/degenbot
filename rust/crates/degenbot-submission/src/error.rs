@@ -27,7 +27,9 @@ pub enum SubmissionError {
     /// priority_fee` exceeded `u128`. Only reachable for absurd
     /// (>~10^38 wei) `base_fee_next` values — never on mainnet — but the
     /// integer path is fallible so it does not silently wrap.
-    #[error("fee computation overflowed u128 (base_fee_next={base_fee_next}, priority_fee={priority_fee})")]
+    #[error(
+        "fee computation overflowed u128 (base_fee_next={base_fee_next}, priority_fee={priority_fee})"
+    )]
     FeeOverflow {
         base_fee_next: u128,
         priority_fee: u128,
@@ -39,6 +41,12 @@ pub enum SubmissionError {
     /// propagated — this variant is the typed home for that propagation.
     #[error("monitor receipt-probe RPC failure: {0}")]
     MonitorProbe(String),
+
+    /// The sign-time nonce authority or the submission ledger refused the
+    /// hosted submission path. Only the authority-routed (two-strategy) path
+    /// raises this; the standalone dispatcher reservation path never does.
+    #[error("sign-time nonce wiring failed: {0}")]
+    Nonce(String),
 }
 
 /// Convenience alias used throughout the crate.
@@ -52,9 +60,9 @@ impl From<SubmissionError> for pyo3::PyErr {
             SubmissionError::Sign(_)
             | SubmissionError::Recovery(_)
             | SubmissionError::Decode(_) => PyValueError::new_err(err.to_string()),
-            SubmissionError::FeeOverflow { .. } | SubmissionError::MonitorProbe(_) => {
-                PyRuntimeError::new_err(err.to_string())
-            }
+            SubmissionError::FeeOverflow { .. }
+            | SubmissionError::MonitorProbe(_)
+            | SubmissionError::Nonce(_) => PyRuntimeError::new_err(err.to_string()),
         }
     }
 }

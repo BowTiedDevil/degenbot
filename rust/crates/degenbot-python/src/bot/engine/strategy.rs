@@ -57,11 +57,26 @@ pub(crate) fn map_host_error(error: HostError) -> pyo3::PyErr {
 /// so enabling it fails loudly instead of starting a lane with no operator
 /// intent behind it. The factory resolves the lane's node join only when the
 /// lane actually starts.
+/// The per-strategy sign-time lanes the hosted head feed folds notices
+/// through, keyed by the owning strategy.
+#[cfg(feature = "submission")]
+pub(crate) type HeadLanes =
+    std::collections::HashMap<StrategyId, Arc<degenbot_submission::NonceLane>>;
+
+/// The host boot's product: the host, the hub/attachment pair, and (when the
+/// submission feature is on) the per-strategy nonce lanes.
+pub(crate) struct BootedHost {
+    pub(crate) host: StrategyHost,
+    pub(crate) attached: HostHub<EngineChannelHandles>,
+    #[cfg(feature = "submission")]
+    pub(crate) head_lanes: HeadLanes,
+}
+
 #[expect(
     clippy::expect_used,
     reason = "a freshly minted host has no registered strategies, so both registers are infallible"
 )]
-pub(crate) fn boot_host() -> (StrategyHost, HostHub<EngineChannelHandles>) {
+pub(crate) fn boot_host() -> BootedHost {
     let (mut host, attached) = StrategyHost::mint(
         Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
         Arc::new(NonceAuthority::new(0)),
@@ -86,7 +101,7 @@ pub(crate) fn boot_host() -> (StrategyHost, HostHub<EngineChannelHandles>) {
     .expect("fresh host registers backrun");
 
     #[cfg(feature = "submission")]
-    {
+    let head_lanes = {
         // A hosted lane scopes its run-artifacts under the host state root; a
         // boot with no resolvable root leaves `lane_root` unset, so the lane
         // keeps its process-global path.
@@ -95,20 +110,58 @@ pub(crate) fn boot_host() -> (StrategyHost, HostHub<EngineChannelHandles>) {
                 host.set_state_root(root);
             }
         }
+        // The per-strategy submission ledger is the head feed's
+        // submission-truth arm: the host refreshes the authority per head and
+        // asks this ledger to close outstanding records out, delivering the
+        // typed notices to the owning strategy. Both lanes stamp through the
+        // same authority and record into the same ledger.
+        let ledger = Arc::new(degenbot_submission::SubmissionLedger::new());
+        host.attach_reconciler(
+            Arc::clone(&ledger) as Arc<dyn degenbot_bot::strategy_host::HeadReconciler>
+        );
+
+        let settlement_id = StrategyId::new("settlement");
+        let backrun_id = StrategyId::new("backrun");
+        let settlement_lane = Arc::new(degenbot_submission::NonceLane::new(
+            Arc::clone(host.nonce()),
+            Arc::clone(&ledger),
+            settlement_id.clone(),
+        ));
+        // The settlement seam is the Python-driven arm of this one hosted
+        // process, so its lane is process-global: every settlement submission
+        // stamps through the shared authority once the boot installs it.
+        crate::submission::submit::install_settlement_lane(Arc::clone(&settlement_lane));
+
+        let backrun_lane = Arc::new(degenbot_submission::NonceLane::new(
+            Arc::clone(host.nonce()),
+            Arc::clone(&ledger),
+            backrun_id.clone(),
+        ));
         let hub = Arc::clone(host.hub());
         let registry = Arc::clone(host.registry());
         host.attach_spawn(
-            &StrategyId::new("backrun"),
+            &backrun_id,
             degenbot_submission::backrun_driver::backrun_spawn_factory(
                 Arc::clone(degenbot_config::holder::config_arc()),
                 hub,
                 Some(registry),
+                Some(Arc::clone(&backrun_lane)),
             ),
         )
         .expect("fresh host registers the backrun spawn");
-    }
 
-    (host, attached)
+        let mut lanes = HeadLanes::new();
+        lanes.insert(settlement_id, settlement_lane);
+        lanes.insert(backrun_id, backrun_lane);
+        lanes
+    };
+
+    BootedHost {
+        host,
+        attached,
+        #[cfg(feature = "submission")]
+        head_lanes,
+    }
 }
 
 impl PyArbEngine {
@@ -177,6 +230,85 @@ impl PyArbEngine {
         let id = StrategyId::new(name);
         self.with_host(py, |host| host.disable(&id))
             .map_err(map_host_error)
+    }
+
+    /// Drive the host's per-head reconciliation from the engine's head feed.
+    ///
+    /// The head feed calls this once per accepted header. When any strategy
+    /// holds a nonce reservation or any submission record is still
+    /// non-terminal, the host refreshes the confirmed chain nonce, reconciles
+    /// outstanding submission records, and folds each typed notice into the
+    /// owning strategy's default policy. A boot with no hosted activity
+    /// short-circuits before the chain read, so the settlement-only default
+    /// boot pays no new RPC.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` for an unparseable operator address. A chain-read failure
+    /// is logged and tolerated: the next head retries.
+    #[cfg(feature = "submission")]
+    #[pyo3(signature = (provider, operator_address))]
+    fn reconcile_hosted_head<'py>(
+        &self,
+        py: Python<'py>,
+        provider: &crate::rpc::async_provider::PyAsyncAlloyProvider,
+        operator_address: &str,
+    ) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+        let provider_arc = provider.provider_arc();
+        let address = crate::address_utils::parse_address(operator_address).map_err(|error| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid operator address: {error}"))
+        })?;
+        let host = Arc::clone(&self.host);
+        let lanes = Arc::clone(&self.head_lanes);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            if !host.lock().has_hosted_activity() {
+                return Ok(0u64);
+            }
+            let confirmed = match provider_arc.get_transaction_count(&address, None).await {
+                Ok(nonce) => nonce,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "degenbot.strategy.head",
+                        %error,
+                        "per-head chain nonce read failed; reconciliation deferred"
+                    );
+                    return Ok(0u64);
+                }
+            };
+            let notices = host.lock().on_head(confirmed);
+            let mut folded = 0u64;
+            {
+                let lanes = lanes.lock();
+                for notice in &notices {
+                    let Some(lane) = lanes.get(notice.strategy()) else {
+                        continue;
+                    };
+                    let policy = degenbot_submission::HeadPolicy::new(Arc::clone(lane));
+                    match policy.on_notice(notice) {
+                        Ok(action) => {
+                            folded += 1;
+                            tracing::info!(
+                                target: "degenbot.strategy.head",
+                                strategy = %notice.strategy(),
+                                nonce = notice.nonce(),
+                                action = ?action,
+                                "hosted head notice folded into the strategy policy"
+                            );
+                        }
+                        Err(decline) => {
+                            tracing::warn!(
+                                target: "degenbot.strategy.head",
+                                strategy = %notice.strategy(),
+                                nonce = notice.nonce(),
+                                %decline,
+                                "head policy could not re-stamp"
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(folded)
+        })
     }
 
     /// Every registered strategy as `(name, state, halt_reason)`, in
@@ -261,6 +393,35 @@ mod tests {
                     "halted".to_string(),
                     Some("lane-local violation".to_string())
                 )
+            );
+        });
+    }
+
+    /// The engine boot wires the head feed's per-strategy lanes and leaves the
+    /// reconcile guard closed, so a settlement-only boot pays no per-head work.
+    #[test]
+    fn the_boot_installs_head_lanes_and_starts_with_the_guard_closed() {
+        Python::attach(|py| {
+            let engine = PyArbEngine::new(py, None);
+            assert!(
+                !engine.host.lock().has_hosted_activity(),
+                "a fresh boot has no lease and no record, so the head feed short-circuits"
+            );
+            let lanes = engine.head_lanes.lock();
+            let settlement_lane = lanes
+                .get(&StrategyId::new("settlement"))
+                .cloned()
+                .expect("the boot installs the settlement head lane");
+            assert!(
+                lanes.contains_key(&StrategyId::new("backrun")),
+                "the boot installs the backrun head lane"
+            );
+            drop(lanes);
+
+            settlement_lane.stamp().expect("settlement lane stamps");
+            assert!(
+                engine.host.lock().has_hosted_activity(),
+                "a live lease opens the reconcile guard"
             );
         });
     }

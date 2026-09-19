@@ -82,6 +82,19 @@ pub struct PyArbEngine {
     /// the terminal exit into the host FSM (a self-halt becomes a tombstone).
     pub(crate) driver_supervision: Arc<parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 
+    /// The per-strategy sign-time lanes the hosted head feed folds notices
+    /// through (`settlement` and `backrun`). Populated at boot when the
+    /// submission feature is on.
+    #[cfg(feature = "submission")]
+    pub(crate) head_lanes: Arc<
+        parking_lot::Mutex<
+            std::collections::HashMap<
+                degenbot_bot::nonce_authority::StrategyId,
+                Arc<degenbot_submission::NonceLane>,
+            >,
+        >,
+    >,
+
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.

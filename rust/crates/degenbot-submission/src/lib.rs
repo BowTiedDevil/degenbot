@@ -99,9 +99,13 @@ pub use monitor::{
     monitor_pending_transaction, monitor_pending_transaction_default, MonitorOutcome, ReceiptProbe,
     SubmittedTx, BLOCKS_BEFORE_NONCE_EXPIRES,
 };
+pub use submission_ledger::{
+    HeadPolicy, LedgerDecline, NonceLane, Notification, NotificationKind, PolicyAction,
+    RepackageRequest, ShadowPosture, SubmissionLedger, SubmissionRecord, SubmissionState, TargetId,
+};
 pub use submit::{
-    dispatch_and_submit, fetch_fee_history, SkipReason, SubmissionTarget, SubmitCandidate,
-    SubmitOutcome, SubmitRecord,
+    dispatch_and_submit, fetch_fee_history, NonceSource, SkipReason, SubmissionTarget,
+    SubmitCandidate, SubmitOutcome, SubmitRecord,
 };
 
 /// The configured durable-state root, or `None` when it cannot be resolved.

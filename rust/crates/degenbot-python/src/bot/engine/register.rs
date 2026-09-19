@@ -57,7 +57,11 @@ impl PyArbEngine {
         // `StrategyHost` owns the hub, the frozen route registry, and the
         // nonce authority. For a settlement-only boot the host is otherwise
         // inert: no driver is enabled and no lane namespace is named.
-        let (host, attached) = super::strategy::boot_host();
+        let booted = super::strategy::boot_host();
+        let host = booted.host;
+        let attached = booted.attached;
+        #[cfg(feature = "submission")]
+        let head_lanes = booted.head_lanes;
         let driver = Arc::new(
             degenbot_bot::arb_engine::EngineDriver::from_stages_with_hub(
                 Arc::clone(&bot),
@@ -80,6 +84,8 @@ impl PyArbEngine {
             driver,
             host: Arc::new(parking_lot::Mutex::new(host)),
             driver_supervision: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            #[cfg(feature = "submission")]
+            head_lanes: Arc::new(parking_lot::Mutex::new(head_lanes)),
             result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),
             warm_code_cache,
         }

@@ -332,6 +332,30 @@ impl NonceAuthority {
         Ok(())
     }
 
+    /// Release one strategy's outstanding lease without touching the
+    /// broadcasts it still owns, returning the freed nonce.
+    ///
+    /// A sign path that built against a lease but never got the transaction
+    /// onto the wire frees only that reservation: the nonce is reusable, while
+    /// an in-flight broadcast at an earlier nonce stays outstanding and is not
+    /// re-issued. [`release_strategy`](Self::release_strategy) remains the
+    /// tombstone path that clears both.
+    ///
+    /// # Errors
+    ///
+    /// [`DeclineKind::UnknownLease`] if `lease` is not the strategy's current
+    /// outstanding reservation.
+    pub fn release_lease(&self, lease: &NonceLease) -> Result<u64, DeclineKind> {
+        let mut state = self.state.lock();
+        match state.leases.get(lease.strategy()) {
+            Some(nonce) if *nonce == lease.nonce() => {
+                state.leases.remove(lease.strategy());
+                Ok(lease.nonce())
+            }
+            _ => Err(DeclineKind::UnknownLease),
+        }
+    }
+
     /// Release every reservation a strategy owns — its lease and its
     /// broadcasts — and return the freed nonces, ascending. Idempotent: a
     /// strategy with nothing outstanding frees nothing.
@@ -361,6 +385,16 @@ impl NonceAuthority {
             strategy: strategy.clone(),
             nonce: *nonce,
         })
+    }
+
+    /// Whether any lease or broadcast is currently outstanding.
+    ///
+    /// The per-head reconcile guard reads this to skip the chain-nonce refresh
+    /// when no strategy has signed anything since boot.
+    #[must_use]
+    pub fn has_outstanding(&self) -> bool {
+        let state = self.state.lock();
+        !state.leases.is_empty() || !state.broadcasts.is_empty()
     }
 
     /// Every outstanding nonce — leases and broadcasts — ascending, with no
@@ -508,6 +542,40 @@ mod tests {
     }
 
     #[test]
+    fn releasing_a_lease_keeps_the_strategys_broadcasts_outstanding() {
+        let authority = NonceAuthority::new(10);
+        let broadcast = authority.lease(&sid("a")).expect("broadcast");
+        authority.record_broadcast(&broadcast).expect("broadcast");
+        let stale_lease = authority.lease(&sid("a")).expect("lease");
+        assert_eq!(authority.outstanding_nonces(), vec![10, 11]);
+        assert_eq!(
+            authority
+                .release_lease(&stale_lease)
+                .expect("release lease"),
+            11
+        );
+        assert_eq!(
+            authority.outstanding_nonces(),
+            vec![10],
+            "the in-flight broadcast at 10 is not freed with the lease"
+        );
+        assert!(authority.lease_of(&sid("a")).is_none());
+    }
+
+    #[test]
+    fn releasing_a_lease_that_is_not_outstanding_declines() {
+        let authority = NonceAuthority::new(10);
+        let lease = authority.lease(&sid("a")).expect("lease");
+        authority.record_broadcast(&lease).expect("broadcast");
+        assert_eq!(
+            authority.release_lease(&lease),
+            Err(DeclineKind::UnknownLease),
+            "the lease was consumed into a broadcast"
+        );
+        assert_eq!(authority.outstanding_nonces(), vec![10]);
+    }
+
+    #[test]
     fn a_released_gap_is_refilled_by_the_next_lease() {
         let authority = NonceAuthority::new(10);
         let a0 = authority.lease(&sid("a")).expect("a");
@@ -534,6 +602,21 @@ mod tests {
         let authority = NonceAuthority::new(10);
         assert!(authority.release_strategy(&sid("ghost")).is_empty());
         assert!(authority.outstanding_nonces().is_empty());
+    }
+
+    #[test]
+    fn has_outstanding_tracks_leases_and_broadcasts() {
+        let authority = NonceAuthority::new(10);
+        assert!(!authority.has_outstanding());
+        let lease = authority.lease(&sid("a")).expect("lease");
+        assert!(authority.has_outstanding());
+        authority.record_broadcast(&lease).expect("broadcast");
+        assert!(authority.has_outstanding());
+        authority.set_confirmed(11);
+        assert!(
+            !authority.has_outstanding(),
+            "a confirmed broadcast leaves the outstanding set"
+        );
     }
 
     /// The re-issue hazard the forward prune created: a broadcast confirmed by

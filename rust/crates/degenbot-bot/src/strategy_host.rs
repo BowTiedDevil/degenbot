@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use degenbot_eventhub::Hub;
 use indexmap::IndexMap;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::bot_core::route_registry::RouteRegistry;
 use crate::nonce_authority::{NonceAuthority, StrategyId};
@@ -257,6 +258,96 @@ pub enum DriverExit {
 /// `Send` so it can travel to that thread.
 pub type DriverFuture = Pin<Box<dyn Future<Output = DriverExit> + 'static>>;
 
+/// The typed fate of one submission, addressed to the strategy that owns it.
+///
+/// This is the host's notice vocabulary for a head update. It mirrors the
+/// submission ledger's reconcile outcomes and adds the reorg rewind's lease
+/// revocation, so a driver receives every way its signed nonce can stop being
+/// its own without reading the ledger or authority directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StrategyNotice {
+    /// The chain's next nonce passed the submission's nonce: the slot was
+    /// consumed on-chain.
+    Landed,
+    /// The nonce left the authority's outstanding set without landing: the
+    /// reservation was released or replaced before the chain confirmed it.
+    Stale,
+    /// A gap opened immediately below the submission: the strategy's natural
+    /// fill is the vacated predecessor.
+    Orphaned {
+        /// The vacated predecessor nonce the strategy may re-stamp at.
+        fillable_nonce: u64,
+    },
+    /// A reorg rewind revoked the strategy's live lease for `nonce`; the lease
+    /// must be re-obtained at the recovered head.
+    LeaseRevoked {
+        /// The revoked lease's nonce.
+        nonce: u64,
+    },
+}
+
+/// One typed notice addressed to the strategy that owns the affected nonce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadNotice {
+    strategy: StrategyId,
+    nonce: u64,
+    notice: StrategyNotice,
+}
+
+impl HeadNotice {
+    /// Build a notice for the owning strategy.
+    #[must_use]
+    pub fn new(strategy: StrategyId, nonce: u64, notice: StrategyNotice) -> Self {
+        Self {
+            strategy,
+            nonce,
+            notice,
+        }
+    }
+
+    /// The strategy that owns the affected submission.
+    #[must_use]
+    pub fn strategy(&self) -> &StrategyId {
+        &self.strategy
+    }
+
+    /// The account nonce whose fate changed.
+    #[must_use]
+    pub const fn nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    /// What happened to the submission.
+    #[must_use]
+    pub const fn notice(&self) -> &StrategyNotice {
+        &self.notice
+    }
+}
+
+/// The head feed's submission-truth arm.
+///
+/// The per-strategy submission ledger lives in the submission crate, which
+/// depends on this one, so the host cannot name it. The host instead drives a
+/// trait object: its head update refreshes the authority (reorg-safe) and then
+/// asks the reconciler to close outstanding records out against that snapshot.
+/// The submission ledger implements this trait, and its notices travel in the
+/// host's [`StrategyNotice`] vocabulary, so delivery stays host-owned.
+pub trait HeadReconciler: Send + Sync {
+    /// Reconcile every outstanding submission record against the chain's
+    /// confirmed nonce and the authority's outstanding set, returning one
+    /// notice per state change.
+    fn reconcile_head(&self, confirmed: u64, outstanding: &[u64]) -> Vec<HeadNotice>;
+
+    /// Whether any submission record is still non-terminal.
+    ///
+    /// The host's per-head feed reads this with the authority's outstanding set
+    /// to decide whether a head update has anything to reconcile: a boot with
+    /// no hosted activity must not pay for a chain-nonce refresh.
+    fn has_outstanding(&self) -> bool {
+        false
+    }
+}
+
 /// The once-only factory that boots a driver's loop.
 ///
 /// The host hands the factory the lane namespace for the driver it is starting
@@ -297,6 +388,14 @@ pub struct StrategyHost {
     drivers: IndexMap<StrategyId, DriverRecord>,
     spawns: IndexMap<StrategyId, DriverSpawnFactory>,
     state_root: Option<PathBuf>,
+    /// The submission-truth arm of the head feed, installed by the boot that
+    /// owns the per-strategy ledger. `None` until the submission crate's
+    /// reconciler is attached, which keeps the host usable by pure-bot
+    /// consumers that never submit.
+    reconciler: Option<Arc<dyn HeadReconciler>>,
+    /// Per-strategy notice sinks. A head update delivers each notice only to
+    /// the strategy that owns the affected record.
+    head_sinks: parking_lot::Mutex<IndexMap<StrategyId, UnboundedSender<HeadNotice>>>,
 }
 
 /// A host-minted hub paired with the source-channel handles registered during
@@ -337,6 +436,8 @@ impl StrategyHost {
             drivers: IndexMap::new(),
             spawns: IndexMap::new(),
             state_root: None,
+            reconciler: None,
+            head_sinks: parking_lot::Mutex::new(IndexMap::new()),
         }
     }
 
@@ -383,6 +484,85 @@ impl StrategyHost {
     #[must_use]
     pub fn nonce(&self) -> &Arc<NonceAuthority> {
         &self.nonce
+    }
+
+    /// Install the submission-truth arm the head feed reconciles against.
+    ///
+    /// Called once at boot by the layer that owns the per-strategy ledger. A
+    /// host without one still refreshes the authority on every head; it simply
+    /// has no submission records to close out.
+    pub fn attach_reconciler(&mut self, reconciler: Arc<dyn HeadReconciler>) {
+        self.reconciler = Some(reconciler);
+    }
+
+    /// Subscribe a registered strategy to its head notices.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::UnknownStrategy`] for a name the host never registered.
+    pub fn subscribe_head(
+        &self,
+        id: &StrategyId,
+        sink: UnboundedSender<HeadNotice>,
+    ) -> Result<(), HostError> {
+        if !self.drivers.contains_key(id) {
+            return Err(HostError::UnknownStrategy(id.clone()));
+        }
+        self.head_sinks.lock().insert(id.clone(), sink);
+        Ok(())
+    }
+
+    /// Whether any strategy holds a lease/broadcast or any reconciled
+    /// submission record is still non-terminal.
+    ///
+    /// The per-head feed gates its one chain-nonce read on this, so a
+    /// settlement-only boot with no hosted activity stays byte-identical.
+    #[must_use]
+    pub fn has_hosted_activity(&self) -> bool {
+        self.nonce.has_outstanding()
+            || self
+                .reconciler
+                .as_ref()
+                .is_some_and(|reconciler| reconciler.has_outstanding())
+    }
+
+    /// Apply one head update: refresh the confirmed chain nonce reorg-safely,
+    /// reconcile submission truth against the authority snapshot, and deliver
+    /// every typed notice to the strategy that owns it.
+    ///
+    /// The reorg-safe refresh is the only head entry point: a backward move
+    /// restores reorged broadcasts and revokes leases stamped inside the
+    /// rewound window, while a forward move lands confirmed broadcasts. The
+    /// returned notices are the same values delivered to the sinks, so an
+    /// in-process caller can act without subscribing.
+    #[must_use]
+    pub fn on_head(&self, confirmed: u64) -> Vec<HeadNotice> {
+        let advisories = self.nonce.set_confirmed_reorg(confirmed);
+        let outstanding = self.nonce.outstanding_nonces();
+        let mut notices: Vec<HeadNotice> = advisories
+            .into_iter()
+            .map(|advisory| {
+                HeadNotice::new(
+                    advisory.strategy().clone(),
+                    advisory.nonce(),
+                    StrategyNotice::LeaseRevoked {
+                        nonce: advisory.nonce(),
+                    },
+                )
+            })
+            .collect();
+        if let Some(reconciler) = &self.reconciler {
+            notices.extend(reconciler.reconcile_head(confirmed, &outstanding));
+        }
+        {
+            let sinks = self.head_sinks.lock();
+            for notice in &notices {
+                if let Some(sink) = sinks.get(&notice.strategy) {
+                    let _ = sink.send(notice.clone());
+                }
+            }
+        }
+        notices
     }
 
     /// Admit a strategy as a driver FSM instance in [`DriverState::Registered`].
@@ -995,5 +1175,123 @@ mod tests {
         let tasks = host.start_driving().expect("start driving");
         assert!(tasks.is_empty());
         assert_eq!(host.state_of(&id), Some(DriverState::Enabled));
+    }
+
+    /// A reconciler that reports a fixed notice set, so the host's delivery
+    /// path can be exercised without the submission crate.
+    struct FakeReconciler {
+        notices: Vec<HeadNotice>,
+        outstanding: bool,
+    }
+
+    impl HeadReconciler for FakeReconciler {
+        fn reconcile_head(&self, _confirmed: u64, _outstanding: &[u64]) -> Vec<HeadNotice> {
+            self.notices.clone()
+        }
+
+        fn has_outstanding(&self) -> bool {
+            self.outstanding
+        }
+    }
+
+    #[test]
+    fn a_head_update_delivers_each_notice_only_to_its_owner() {
+        let mut host = host();
+        let settlement = register(&mut host, "settlement");
+        let backrun = register(&mut host, "backrun");
+        let (settlement_tx, mut settlement_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (backrun_tx, mut backrun_rx) = tokio::sync::mpsc::unbounded_channel();
+        host.subscribe_head(&settlement, settlement_tx)
+            .expect("subscribe settlement");
+        host.subscribe_head(&backrun, backrun_tx)
+            .expect("subscribe backrun");
+        host.attach_reconciler(Arc::new(FakeReconciler {
+            notices: vec![HeadNotice::new(
+                settlement.clone(),
+                7,
+                StrategyNotice::Orphaned { fillable_nonce: 6 },
+            )],
+            outstanding: false,
+        }));
+
+        let notices = host.on_head(7);
+
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].strategy(), &settlement);
+        let delivered = settlement_rx.try_recv().expect("settlement notice");
+        assert_eq!(delivered, notices[0]);
+        assert!(
+            backrun_rx.try_recv().is_err(),
+            "the other strategy receives nothing"
+        );
+    }
+
+    #[test]
+    fn a_head_update_refreshes_the_authority_reorg_safely() {
+        let mut host = host();
+        let id = register(&mut host, "backrun");
+        host.enable(&id).expect("enable");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        host.subscribe_head(&id, tx).expect("subscribe");
+
+        let lease = host.nonce().lease(&id).expect("lease");
+        assert_eq!(lease.nonce(), 7);
+        assert!(host.on_head(8).is_empty(), "a forward head lands nothing");
+
+        let notices = host.on_head(7);
+
+        assert_eq!(
+            notices,
+            vec![HeadNotice::new(
+                id.clone(),
+                7,
+                StrategyNotice::LeaseRevoked { nonce: 7 },
+            )]
+        );
+        assert!(
+            host.nonce().lease_of(&id).is_none(),
+            "the rewind revoked the lease stamped inside the rewound window"
+        );
+        assert_eq!(rx.try_recv().expect("delivered"), notices[0]);
+    }
+
+    #[test]
+    fn hosted_activity_is_false_until_a_lease_or_record_exists() {
+        let mut host = host();
+        assert!(!host.has_hosted_activity(), "a fresh host has no activity");
+        let id = register(&mut host, "settlement");
+        host.enable(&id).expect("enable");
+        assert!(
+            !host.has_hosted_activity(),
+            "registration alone is not hosted activity"
+        );
+        let lease = host.nonce().lease(&id).expect("lease");
+        assert!(host.has_hosted_activity(), "a lease is hosted activity");
+        host.nonce().record_broadcast(&lease).expect("broadcast");
+        assert!(host.has_hosted_activity(), "a broadcast is hosted activity");
+    }
+
+    #[test]
+    fn hosted_activity_sees_a_reconciler_with_non_terminal_records() {
+        let mut host = host();
+        assert!(!host.has_hosted_activity());
+        host.attach_reconciler(Arc::new(FakeReconciler {
+            notices: Vec::new(),
+            outstanding: true,
+        }));
+        assert!(
+            host.has_hosted_activity(),
+            "a non-terminal submission record is hosted activity"
+        );
+    }
+
+    #[test]
+    fn subscribing_an_unknown_strategy_is_refused() {
+        let host = host();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        assert_eq!(
+            host.subscribe_head(&sid("ghost"), tx),
+            Err(HostError::UnknownStrategy(sid("ghost")))
+        );
     }
 }

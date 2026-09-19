@@ -53,7 +53,10 @@ use crate::gap_quarantine_journal::{
 };
 use crate::monitor::ReceiptProbe;
 use crate::signer::TxSigner;
-use crate::submit::{dispatch_and_submit, BundleTarget, SubmissionTarget, SubmitCandidate};
+use crate::submission_ledger::NonceLane;
+use crate::submit::{
+    dispatch_and_submit, BundleTarget, NonceSource, SubmissionTarget, SubmitCandidate,
+};
 
 /// The chain the driver operates on; the connector index and the per-chain
 /// `DEGENBOT_RPC_HTTP_CHAINID_<id>` / `DEGENBOT_RPC_WS_CHAINID_<id>` resolver
@@ -343,6 +346,7 @@ async fn run_frame(
     spent: &mut U256,
     dispatcher: &Arc<Mutex<Dispatcher>>,
     operator_nonce: u64,
+    nonce_lane: Option<&Arc<NonceLane>>,
     signer: Option<&TxSigner>,
     gap_probe: &crate::gap_probe::GapProbe,
     quarantine: &mut Quarantine,
@@ -557,6 +561,10 @@ async fn run_frame(
             // so the target stays the bundle-only arm regardless.
             let broadcast_relays = build_broadcast_relays(cfg, provider).await;
             let target = bid_submission_target(cfg, ev.hash, head + 1);
+            let nonce_source = match nonce_lane {
+                Some(lane) => NonceSource::authority(Arc::clone(lane)),
+                None => NonceSource::dispatcher(operator_nonce),
+            };
             match dispatch_and_submit(
                 vec![candidate],
                 dispatcher,
@@ -565,7 +573,7 @@ async fn run_frame(
                 Arc::new(SidecarProbe {
                     provider: Arc::clone(provider),
                 }),
-                operator_nonce,
+                nonce_source,
                 head,
                 cfg.dry_run,
                 false,
@@ -1020,6 +1028,10 @@ pub struct BackrunContext {
     /// the process-global state root for the standalone single-strategy
     /// sidecar (strict parity).
     pub lane_root: Option<PathBuf>,
+    /// The host-minted sign-time nonce seam. `Some` routes every bid's nonce
+    /// through the process-wide authority (the hosted two-strategy path);
+    /// `None` keeps the standalone dispatcher reservation table.
+    pub nonce_lane: Option<Arc<NonceLane>>,
 }
 
 /// Why a backrun lane could not be booted.
@@ -1131,6 +1143,7 @@ pub fn backrun_boot(
     route_registry: Option<Arc<RouteRegistry>>,
     connector_db: Option<DegenbotDb>,
     lane_root: Option<PathBuf>,
+    nonce_lane: Option<Arc<NonceLane>>,
 ) -> BackrunBoot {
     let cfg = SidecarConfig::from_config(config, join.rpc_url);
     let head_ws_url =
@@ -1142,6 +1155,7 @@ pub fn backrun_boot(
         head_ws_url,
         provider: join.provider,
         lane_root,
+        nonce_lane,
     };
     BackrunBoot {
         cfg,
@@ -1163,6 +1177,7 @@ pub fn backrun_spawn_factory(
     config: Arc<degenbot_config::BotConfig>,
     hub: Arc<Hub>,
     route_registry: Option<Arc<RouteRegistry>>,
+    nonce_lane: Option<Arc<NonceLane>>,
 ) -> DriverSpawnFactory {
     Box::new(move |lane| {
         Box::pin(async move {
@@ -1176,6 +1191,7 @@ pub fn backrun_spawn_factory(
                         route_registry,
                         resolve_backrun_connector_db(),
                         lane_root,
+                        nonce_lane,
                     )
                     .into_driver_future()
                     .await
@@ -1352,6 +1368,7 @@ struct LaneBoot {
     pl: PipelineConfig,
     dispatcher: Arc<Mutex<Dispatcher>>,
     operator_nonce: u64,
+    nonce_lane: Option<Arc<NonceLane>>,
     signer: Option<TxSigner>,
     gap_probe: crate::gap_probe::GapProbe,
     sim_client: alloy::rpc::client::RpcClient,
@@ -1389,6 +1406,7 @@ impl BackrunDriver {
             head_ws_url,
             provider,
             lane_root,
+            nonce_lane,
         } = ctx;
         // The bundle-sim client (`strategy.backrun.sim_url`, default: the chain
         // node the frames replay against). READ/SIM ONLY -- `eth_callMany` never
@@ -1502,6 +1520,7 @@ impl BackrunDriver {
             pl,
             dispatcher,
             operator_nonce,
+            nonce_lane,
             signer,
             gap_probe,
             sim_client,
@@ -1529,6 +1548,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
         pl,
         dispatcher,
         operator_nonce,
+        nonce_lane,
         signer,
         gap_probe,
         sim_client,
@@ -1590,6 +1610,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
                 &mut spent,
                 &dispatcher,
                 operator_nonce,
+                nonce_lane.as_ref(),
                 signer.as_ref(),
                 &gap_probe,
                 &mut quarantine,
@@ -1917,6 +1938,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
                                     &mut spent,
                                     &dispatcher,
                                     operator_nonce,
+                                    nonce_lane.as_ref(),
                                     signer.as_ref(),
                                     &gap_probe,
                                     &mut quarantine,
@@ -2066,6 +2088,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
                 &mut spent,
                 &dispatcher,
                 operator_nonce,
+                nonce_lane.as_ref(),
                 signer.as_ref(),
                 &gap_probe,
                 &mut quarantine,

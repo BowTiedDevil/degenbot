@@ -170,7 +170,7 @@ async fn main() {
     // `into_driver_future` starts the lane. The standalone sidecar keeps the
     // process-global state root (`lane_root: None`) and polls the future
     // inline, so a lane panic still unwinds the process.
-    let boot = backrun_boot(&config, join, hub, route_registry, connector_db, None);
+    let boot = backrun_boot(&config, join, hub, route_registry, connector_db, None, None);
     boot.into_driver_future().await;
 }
 
