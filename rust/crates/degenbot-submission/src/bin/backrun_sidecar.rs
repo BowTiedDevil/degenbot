@@ -1154,8 +1154,8 @@ async fn main() {
     // resolver; a missing file leaves the discovery fan shut and frames
     // observe (connectors are never guessed).
     let db_path = degenbot_config::resolve_database_path(&env, None).value;
-    let (connector_index, connector_db): (
-        Option<degenbot_bot::sidecar_paths::V2ConnectorIndex>,
+    let (route_registry, connector_db): (
+        Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
         Option<degenbot_db::connection::DegenbotDb>,
     ) = if db_path.is_file() {
         match degenbot_db::connection::DegenbotDb::open(&db_path) {
@@ -1168,14 +1168,18 @@ async fn main() {
                             &provider,
                         )),
                     ));
-                    tracing::info!(edges = ix.len(), "connector index loaded");
+                    let registry = Arc::new(degenbot_bot::bot_core::RouteRegistry::new(ix));
+                    tracing::info!(edges = registry.index().len(), "connector index loaded");
                     // Evidence mode (`strategy.backrun.rank_evidence`): a LIVE
                     // sanity probe before any frame trusts the depth
                     // truncation -- the canonical deep USDC/WETH pair must
                     // top the ranking.
                     if config.strategy.backrun.rank_evidence {
-                        match degenbot_bot::sidecar_paths::deep_pair_ranking_evidence(&ix, &db)
-                            .await
+                        match degenbot_bot::sidecar_paths::deep_pair_ranking_evidence(
+                            registry.index(),
+                            &db,
+                        )
+                        .await
                         {
                             Ok(()) => {
                                 tracing::info!(
@@ -1210,7 +1214,7 @@ async fn main() {
     // The strategy runtime OWNS the frame-surviving caches (index, token
     // joins, warm-code cache); each frame gets a fresh planning Workspace
     // scope (see frame_pipeline's module doc for the split).
-    let mut runtime = MarketContext::new(1, connector_index, connector_db, connector_cap);
+    let mut runtime = MarketContext::new(1, route_registry, connector_db, connector_cap);
     let mut strategy = BackrunStrategy::new();
 
     let exec: Address = config
