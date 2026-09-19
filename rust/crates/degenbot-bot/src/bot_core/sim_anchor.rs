@@ -1,5 +1,6 @@
-//! `SimAnchorState` — the owned anchor snapshot the sim fan-out reads
-//! (ULUWNI, incident 2026-08-20 #1 root fix).
+//! `SimAnchorState` — the engine's owned snapshot of what the sim consults
+//! (ULUWNI, incident 2026-08-20 #1 root fix) — plus the [`SimAnchorOracle`]
+//! seam the sim DB is generic over.
 //!
 //! Before this type, `BlockSimHandle::build` borrowed `&BotState` for the
 //! whole serial sim loop — every cold-miss fetch went over RPC while the
@@ -8,21 +9,31 @@
 //! read, snapshots what the sim actually consults, and drops the guard
 //! before any provider I/O.
 //!
+//! # The gated serving seam retired; the observation path stayed
+//!
+//! The env-gated serving seam read these words to override
+//! `BotStateDb::storage_ref`; its premise (stale engine state) was already
+//! refuted and production ran gate-off, and the seam is now DELETED (see
+//! `docs/adr/ADR-056-retire-gated-serving-seam.md`). What
+//! survives is the always-live divergence observer, which is also a consumer
+//! of `probe_tracked_storage_slot`. So the words stay — but the sim DB no
+//! longer depends on this concrete type: it takes a [`SimAnchorOracle`].
+//! Pool membership (the `basic_ref` code-less tripwire's question) is answered
+//! by the boot-snapshot [`RouteRegistry`](super::RouteRegistry) in the sidecar,
+//! and by this snapshot in the Python engine (which has no connector index).
+//!
 //! What the sim consults through [`super::BotState`] (the complete surface —
 //! verified by the ULUWNI audit):
 //!
 //! 1. `pool_id_by_address` — the `basic_ref` code-less tripwire's tracked-
-//!    pool lookup. Snapshotted verbatim (`tracked_pools`).
-//! 2. `probe_tracked_storage_slot` — BOTH env-gated diagnostics (divergence
-//!    probe + serving seam, default off). Snapshotted for the SCALAR anchor
-//!    slots: V2 reserves (slot 8), V3 `slot0`/`liquidity`, V4
-//!    `S_state`/`S_state+3`. Per-tick slots are NOT snapshotted (tick data
-//!    is unbounded per pool; cloning it per fan-out would defeat the
-//!    purpose) — tick-slot probes fall through to RPC in snapshot mode,
-//!    i.e. divergence observation for tick slots is suspended. Both
-//!    diagnostics are default-off investigation tools whose stale-state
-//!    premise was refuted (see `bot_state_db` module docs); scalar coverage
-//!    preserves their re-probe value at O(pools) snapshot cost.
+//!    pool lookup. Snapshotted verbatim (`tracked_pools`) and exposed through
+//!    [`SimAnchorOracle::is_registered_pool`].
+//! 2. `probe_tracked_storage_slot` — the divergence observer's engine words.
+//!    Snapshotted for the SCALAR anchor slots: V2 reserves (slot 8), V3
+//!    `slot0`/`liquidity`, V4 `S_state`/`S_state+3`. Per-tick slots are NOT
+//!    snapshotted (tick data is unbounded per pool; cloning it per fan-out
+//!    would defeat the purpose) — tick-slot probes fall through to RPC in
+//!    snapshot mode, i.e. divergence observation for tick slots is suspended.
 
 use hashbrown::HashMap;
 
@@ -30,6 +41,48 @@ use alloy::primitives::{Address, U256};
 
 use super::divergence_probe::TrackedSlotProbe;
 use super::BotState;
+
+/// The view `BotStateDb`/`BlockSimHandle` consult for pool membership and,
+/// when it carries engine state, for the divergence observer's words.
+///
+/// Two implementations back the seam: [`RouteRegistry`](super::RouteRegistry)
+/// (the boot-snapshot pool set; state-less, so probes answer `None`) and
+/// [`SimAnchorState`] (the engine's per-block scalar snapshot). This replaces
+/// the concrete `&SimAnchorState` field the retired serving seam required, so
+/// the sim DB can take a registry handle without deleting the observation
+/// path.
+pub trait SimAnchorOracle: Send + Sync {
+    /// Is `address` one of the tracked pools this view knows about? Backs the
+    /// `basic_ref` code-less tripwire.
+    fn is_registered_pool(&self, address: &Address) -> bool;
+
+    /// The on-chain-packed engine word for a tracked scalar slot, if this view
+    /// carries state. State-less views (the registry) return `None`, leaving
+    /// the divergence observer inert — the same behavior as the retired empty
+    /// sidecar anchor.
+    fn probe_tracked_storage_slot(
+        &self,
+        address: Address,
+        index: U256,
+    ) -> Option<TrackedSlotProbe> {
+        let _ = (address, index);
+        None
+    }
+}
+
+/// The state-less oracle: no membership, no words. Used by a host whose boot
+/// registry load failed (the sidecar's discovery lane disabled).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoSimAnchor;
+
+impl SimAnchorOracle for NoSimAnchor {
+    fn is_registered_pool(&self, _address: &Address) -> bool {
+        false
+    }
+}
+
+/// Shared static so callers can pass `&NO_SIM_ANCHOR` without a local.
+pub static NO_SIM_ANCHOR: NoSimAnchor = NoSimAnchor;
 
 /// Owned snapshot of what the sim fan-out consults on [`BotState`] — see
 /// the module docs for the surface audit + the tick-slot degradation note.
@@ -76,10 +129,25 @@ impl SimAnchorState {
     }
 }
 
+impl SimAnchorOracle for SimAnchorState {
+    fn is_registered_pool(&self, address: &Address) -> bool {
+        self.pool_id_by_address(address).is_some()
+    }
+
+    fn probe_tracked_storage_slot(
+        &self,
+        address: Address,
+        index: U256,
+    ) -> Option<TrackedSlotProbe> {
+        self.probe_tracked_storage_slot(address, index)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot_core::{RegisterV2PoolParams, RegisterV3PoolParams};
+    use crate::bot_core::{RegisterV2PoolParams, RegisterV3PoolParams, RouteRegistry};
+    use crate::sidecar_paths::{V2ConnectorIndex, V2Edge, V3Edge};
     use alloy::primitives::aliases::U112;
     use alloy::primitives::Address;
     use degenbot_uniswap::dex_identity::DexVariant;
@@ -362,5 +430,83 @@ mod tests {
         assert!(anchor
             .probe_tracked_storage_slot(POOL, U256::ZERO)
             .is_some());
+    }
+
+    /// The membership question is oracle-agnostic: over the fixed V2/V3 address
+    /// set both views share, the boot registry and the engine snapshot answer
+    /// identically. (V4 is address-key-less in both, so it is out of scope by
+    /// construction.)
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn membership_parity_registry_vs_anchor_over_fixed_pool_set() {
+        const V2: Address = Address::new([0x11; 20]);
+        const V3: Address = Address::new([0x22; 20]);
+        const ABSENT: Address = Address::new([0x33; 20]);
+
+        let mut core = BotState::new();
+        core.register_v2_pool(&RegisterV2PoolParams {
+            address: V2,
+            token0: Address::new([0xbb; 20]),
+            token1: Address::new([0xcc; 20]),
+            reserve0: U112::from(1000),
+            reserve1: U112::from(2000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::new([0xdd; 20]),
+            update_block: 42,
+            variant: DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
+            ..Default::default()
+        })
+        .expect("V2 registration");
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: V3,
+            token0: Address::ZERO,
+            token1: Address::new([0xa0; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000,
+            tick: 0,
+            tick_data: hashbrown::HashMap::new(),
+            update_block: 18_000_000,
+            coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("V3 registration");
+        let anchor = SimAnchorState::snapshot(&core);
+
+        let mut index = V2ConnectorIndex::default();
+        index.push_edge(V2Edge {
+            pool_id: 1,
+            token0_id: 10,
+            token1_id: 20,
+            address: V2,
+        });
+        index.push_v3_edge(V3Edge {
+            pool_id: 2,
+            token0_id: 10,
+            token1_id: 20,
+            address: V3,
+            fee: 3000,
+            tick_spacing: 60,
+        });
+        let registry = RouteRegistry::new(index);
+
+        let anchor_oracle: &dyn SimAnchorOracle = &anchor;
+        let registry_oracle: &dyn SimAnchorOracle = &registry;
+        for addr in [V2, V3, ABSENT] {
+            assert_eq!(
+                anchor_oracle.is_registered_pool(&addr),
+                registry_oracle.is_registered_pool(&addr),
+                "membership parity for {addr}"
+            );
+        }
+        assert!(anchor_oracle.is_registered_pool(&V2));
+        assert!(registry_oracle.is_registered_pool(&V3));
+        assert!(!registry_oracle.is_registered_pool(&ABSENT));
     }
 }

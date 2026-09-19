@@ -458,15 +458,11 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     // Live mode needs no feed/signer/dispatcher: process frames directly.
     let mut runtime = MarketContext::new(1, None, None, 8);
     let mut strategy = BackrunStrategy::new();
+    let anchor_state = SimAnchorState::default();
     let mut handle = Option::from(
-        build_block_handle(
-            &provider,
-            pin,
-            &runtime.warm_cache,
-            Box::leak(Box::new(SimAnchorState::default())),
-        )
-        .await
-        .expect("live replay handle builds"),
+        build_block_handle(&provider, pin, &runtime.warm_cache, &anchor_state)
+            .await
+            .expect("live replay handle builds"),
     );
 
     let mut sidecar =

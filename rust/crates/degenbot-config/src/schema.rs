@@ -336,8 +336,6 @@ crate::config_schema! {
             doc = "Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture).";
         sim_exit_on_fail [bool] = false, env = "DEGENBOT_SIM_EXIT_ON_FAIL", def = "false",
             doc = "Abort the process when a sim fails (the live trap used to capture V3-hop fixtures).";
-        sim_serve_engine_state [bool] = false, env = "DEGENBOT_SIM_SERVE_ENGINE_STATE", def = "false",
-            doc = "Serve engine state to the sim/evm layer (`1` enables; behavior change, default off).";
         probe_fixture [opt path] = None, env = "DEGENBOT_PROBE_FIXTURE", def = "(unset)",
             doc = "Corpus fixture for the offline executor A/B probe (ignore-listed test).";
         probe_ns [string] = String::from("1,2,4,8,16"), env = "DEGENBOT_PROBE_NS", def = "1,2,4,8,16",

@@ -50,7 +50,7 @@ use alloy::eips::BlockId;
 use alloy::network::Ethereum;
 use alloy::primitives::U256;
 use alloy::providers::{Provider, RootProvider};
-use degenbot_bot::bot_core::SimAnchorState;
+use degenbot_bot::bot_core::SimAnchorOracle;
 use parking_lot::RwLock;
 use revm::database::CacheDB;
 use revm::database_interface::WrapDatabaseAsync;
@@ -169,7 +169,7 @@ pub struct BlockSimHandle<'a> {
     base_fee_next: u128,
     current_block: u64,
     block_timestamp: u64,
-    anchor: &'a SimAnchorState,
+    oracle: &'a dyn SimAnchorOracle,
     warm_cache: Arc<RwLock<super::WarmCodeCacheInner>>,
     storage_memo: Option<std::sync::Arc<super::StorageMemo>>,
     verify_divergence: bool,
@@ -215,7 +215,7 @@ impl<'a> BlockSimHandle<'a> {
         current_block: u64,
         block_timestamp: u64,
         override_params: &SimulationOverrideParams,
-        anchor: &'a SimAnchorState,
+        oracle: &'a dyn SimAnchorOracle,
         warm_cache: &Arc<RwLock<super::WarmCodeCacheInner>>,
         storage_memo: Option<&std::sync::Arc<super::StorageMemo>>,
         verify_divergence: bool,
@@ -229,7 +229,7 @@ impl<'a> BlockSimHandle<'a> {
                 current_block,
                 block_timestamp,
                 override_params,
-                anchor,
+                oracle,
                 warm_cache,
                 storage_memo,
                 verify_divergence,
@@ -247,7 +247,7 @@ impl<'a> BlockSimHandle<'a> {
         current_block: u64,
         block_timestamp: u64,
         override_params: &SimulationOverrideParams,
-        anchor: &'a SimAnchorState,
+        oracle: &'a dyn SimAnchorOracle,
         warm_cache: &Arc<RwLock<super::WarmCodeCacheInner>>,
         storage_memo: Option<&std::sync::Arc<super::StorageMemo>>,
         verify_divergence: bool,
@@ -268,7 +268,7 @@ impl<'a> BlockSimHandle<'a> {
             return None;
         };
         let bot_state_db = super::BotStateDb::new_with_code_probe(
-            anchor,
+            oracle,
             wrap_db,
             provider.rpc_url(),
             current_block,
@@ -318,7 +318,7 @@ impl<'a> BlockSimHandle<'a> {
             base_fee_next,
             current_block,
             block_timestamp,
-            anchor,
+            oracle,
             warm_cache: Arc::clone(warm_cache),
             storage_memo: storage_memo.cloned(),
             verify_divergence,
@@ -362,7 +362,7 @@ impl<'a> BlockSimHandle<'a> {
             let counter = std::sync::Arc::new(super::frame_replay::FrameRpcCounter::default());
             self.scratch = WrapDatabaseAsync::new(alloy_db).map(|wrap_db| {
                 let bot_state_db = super::BotStateDb::new_with_code_probe(
-                    self.anchor,
+                    self.oracle,
                     wrap_db,
                     &self.rpc_url,
                     self.current_block,

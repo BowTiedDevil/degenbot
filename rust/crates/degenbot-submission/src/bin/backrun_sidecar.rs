@@ -39,7 +39,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
-use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_bot::sidecar::{gate_mined_target, Decision, SidecarConfig};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
@@ -395,7 +394,7 @@ async fn run_frame(
     sim_client: &alloy::rpc::client::RpcClient,
     cfg: &SidecarConfig,
     pl: &PipelineConfig,
-    handle: &mut Option<BlockSimHandle<'static>>,
+    handle: &mut Option<BlockSimHandle<'_>>,
     head: u64,
     spent: &mut U256,
     dispatcher: &Arc<Mutex<Dispatcher>>,
@@ -1277,16 +1276,22 @@ async fn main() {
 
     // The per-block replay handle: rebuilt whenever the observed head
     // advances (the scratch stack pins `BlockId::Number(head)` and frames
-    // run in the NEXT block's env). The anchor is an EMPTY leaked snapshot
-    // — the sidecar tracks no canonical-registry pools; the shared warm
-    // cache carries the cross-block bytecode/account caches across rebuilds.
-    let anchor: &'static SimAnchorState = Box::leak(Box::new(SimAnchorState::default()));
+    // run in the NEXT block's env). The sim DB's membership view is the boot
+    // registry (or a state-less no-op when the discovery lane is shut); the
+    // sidecar carries no engine state, so the divergence observer is inert.
+    // The shared warm cache carries the cross-block bytecode/account caches
+    // across rebuilds.
+    let oracle_holder = runtime.registry.clone();
+    let oracle: &dyn degenbot_bot::bot_core::SimAnchorOracle = match oracle_holder.as_deref() {
+        Some(registry) => registry,
+        None => &degenbot_bot::bot_core::NO_SIM_ANCHOR,
+    };
     let mut current_block = dispatcher
         .lock()
         .expect("dispatcher mutex poisoned")
         .current_block();
-    let mut handle: Option<BlockSimHandle<'static>> =
-        build_block_handle(&provider, current_block, &runtime.warm_cache, anchor).await;
+    let mut handle: Option<BlockSimHandle<'_>> =
+        build_block_handle(&provider, current_block, &runtime.warm_cache, oracle).await;
     if handle.is_none() {
         tracing::warn!(
             "replay handle build failed - frames observe replay_unavailable until it recovers"
@@ -1434,7 +1439,7 @@ async fn main() {
                         .unwrap_or(u64::MAX),
                     std::sync::atomic::Ordering::Relaxed,
                 );
-                match build_block_handle(&provider, head, &runtime.warm_cache, anchor).await {
+                match build_block_handle(&provider, head, &runtime.warm_cache, oracle).await {
                     Some(h) => handle = Some(h),
                     None => {
                         tracing::warn!(

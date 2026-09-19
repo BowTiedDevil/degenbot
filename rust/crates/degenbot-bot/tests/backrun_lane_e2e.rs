@@ -253,9 +253,9 @@ async fn frame_pipeline_replay_staging_bids_with_composed_calldata() {
     let _ = trace_sink(); // arm the pipeline's trace sink before any frame
     let provider = live_provider();
     let (mut rt, head, _ids) = runtime(&provider).await;
-    let anchor: &'static SimAnchorState = Box::leak(Box::new(SimAnchorState::default()));
+    let anchor = SimAnchorState::default();
     let mut handle = Some(
-        build_block_handle(&provider, head, &rt.warm_cache, anchor)
+        build_block_handle(&provider, head, &rt.warm_cache, &anchor)
             .await
             .expect("the per-block replay handle builds against the live chain"),
     );
@@ -327,9 +327,9 @@ async fn frame_pipeline_reverted_target_observes_truthfully() {
     let _ = trace_sink(); // arm the pipeline's trace sink before any frame
     let provider = live_provider();
     let (mut rt, head, _ids) = runtime(&provider).await;
-    let anchor: &'static SimAnchorState = Box::leak(Box::new(SimAnchorState::default()));
+    let anchor = SimAnchorState::default();
     let mut handle = Some(
-        build_block_handle(&provider, head, &rt.warm_cache, anchor)
+        build_block_handle(&provider, head, &rt.warm_cache, &anchor)
             .await
             .expect("the per-block replay handle builds against the live chain"),
     );

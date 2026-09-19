@@ -1,36 +1,31 @@
 //! `BotStateDb` — a thin `revm::DatabaseRef` wrapper over the RPC fallback
-//! with an env-gated serving seam + divergence probe.
+//! with the always-on divergence observer + the code-less membership tripwire.
 //!
 //! ## What this is today
 //!
 //! `storage_ref` forwards to the `fallback` (`WrapDatabaseAsync<AlloyDB>` in
-//! production) and, between the fallback read and the return, runs two
-//! DEFAULT-OFF env-gated diagnostics on tracked pool slots:
+//! production) and, between the fallback read and the return, runs the
+//! divergence observer (`super::divergence_probe`) on tracked pool slots: pure
+//! observation — it compares the engine's packed typed state against the
+//! just-fetched RPC value, logs a `[sim-divergence]` line on mismatch, and
+//! accumulates the tally. It never changes what the sim reads.
 //!
-//! - Divergence probe (`super::divergence_probe`): pure observation — compares
-//!   the engine's packed typed state against the just-fetched RPC value, logs
-//!   a `[sim-divergence]` line on mismatch, accumulates the tally. Never
-//!   changes what the sim reads.
-//! - Serving seam (`super::serving`): behavior change — for tracked slots the
-//!   engine carries authoritatively, returns the engine's packed word instead
-//!   of the RPC value. Gated OFF by default; enabling requires the engine to
-//!   carry the FULL slot set the pool's `swap()` callback reads, or a partial
-//!   serve reintroduces the documented K-invariant / `LOK` reverts (the engine
-//!   doesn't carry `feeGrowthGlobal`/`tickBitmap`/per-pair balances that the
-//!   same `swap()` callback reads).
+//! The env-gated serving seam that once overrode `storage_ref` with the
+//! engine's packed word is DELETED (ADR-056). Its premise ("stale engine state
+//! causes `CurrencyNotSettled`") was REFUTED by mainnet data — V3 hops matched
+//! the actual swap output exactly (engine state is correct) while only the V4
+//! swap diverged by 1-8 units (a solver calc rounding divergence, not stale
+//! state). Production always ran gate-off, so deleting it changes nothing:
+//! the fallback's value is the sim's value.
 //!
-//! The serving seam is a POC retained for the divergence investigation. Its
-//! premise ("stale engine state causes `CurrencyNotSettled`") was REFUTED by
-//! mainnet data — V3 hops matched the actual swap output exactly (engine state
-//! is correct) while only the V4 swap diverged by 1-8 units (a solver calc
-//! rounding divergence, not stale state; the sim_v4_swap_step_rounding.md
-//! diagnosis was removed in the stale-docs cleanup `71ec78b2`). The seam stays gated off
-//! in production; it is a dead switch kept for future re-probing.
+//! The membership the `basic_ref` tripwire asks (is this a tracked pool?) is
+//! delegated to a [`SimAnchorOracle`] — the boot-snapshot `RouteRegistry` in
+//! the sidecar, the engine's `SimAnchorState` snapshot in the Python path.
 //!
 //! The wrapper persists because the live `BlockSimHandle` chain
 //! (`simulator.rs`) references it as the `CacheDB` backing; collapsing it to
-//! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope
-//! , not this module's cleanup.
+//! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope,
+//! not this module's cleanup.
 //!
 //! ## Historical note — the retired slot encoders
 //!
@@ -39,20 +34,20 @@
 //! `encode_v3_tick_info_slot`, `tick_mapping_slot`, `sign_extend_*`) plus
 //! `read_v2_slot`/`read_v3_slot`/`read_tracked_storage`/`SnapshotError`. These
 //! are deleted (no consumer; the `read_*_slot` paths returned `None` so
-//! `storage_ref` always fell through). Re-derivation (if a serving path is
-//! re-pursued) starts from the Solidity storage layout — the old
+//! `storage_ref` always fell through). Re-derivation (if a tracked-slot encode
+//! is ever needed again) starts from the Solidity storage layout — the old
 //! `parity_diagnostic_encoding.rs` tests that pinned them are also gone.
 //!
 //! ## Composition
 //!
 //! ```text
 //! EVM transact -> CacheDB (sim-scoped overrides)
-//!                 -> BotStateDb (forwarding wrapper + serving seam)
+//!                 -> BotStateDb (RPC forwarding + divergence observer + membership tripwire)
 //!                 -> WrapDatabaseAsync<AlloyDB> (RPC fallback)
 //! ```
 
 use alloy::primitives::Address;
-use degenbot_bot::bot_core::SimAnchorState;
+use degenbot_bot::bot_core::SimAnchorOracle;
 use degenbot_core::op_warn;
 use revm::database_interface::DatabaseRef;
 use revm::primitives::{StorageKey, StorageValue, B256, KECCAK_EMPTY};
@@ -60,20 +55,19 @@ use revm::state::AccountInfo;
 
 /// A thin `DatabaseRef` wrapper that forwards every read to the `fallback`.
 ///
-/// Forwards to the fallback, with env-gated serving + divergence-probe
-/// diagnostics layered onto tracked pool slots (see the module docs). The
-/// `bot_state` borrow backs both diagnostics. Whether this wrapper persists
+/// Forwards to the fallback, with the divergence observer + membership
+/// tripwire layered on the `oracle` (see the module docs). Whether this wrapper persists
 /// or collapses to bare `WrapDatabaseAsync<AlloyDB>` is decided by the
 /// Tier 1 refactor .
 pub struct BotStateDb<'bot, ExtDb>
 where
     ExtDb: DatabaseRef,
 {
-    /// The build-time anchor snapshot backing the serving seam + divergence
-    /// probe (both env-gated, default off). ULUWNI: an OWNED snapshot taken
-    /// under a short read — no `BotState` guard is held across the RPC
-    /// fetches this wrapper performs.
-    pub anchor: &'bot SimAnchorState,
+    /// The typed oracle backing the code-less tripwire (membership) and the
+    /// divergence observer's engine words. ULUWNI: the engine's snapshot is
+    /// OWNED, taken under a short read — no `BotState` guard is held across
+    /// the RPC fetches this wrapper performs.
+    pub oracle: &'bot dyn SimAnchorOracle,
     /// The RPC cold-miss fallback (`WrapDatabaseAsync<AlloyDB>` in production).
     pub fallback: ExtDb,
     /// False-empty provenance probe (DEGENBOT false-empty capture): an
@@ -103,12 +97,12 @@ impl<'bot, ExtDb> BotStateDb<'bot, ExtDb>
 where
     ExtDb: DatabaseRef,
 {
-    /// Wrap the cold-miss fallback `DatabaseRef`. The `bot_state` borrow backs
-    /// the env-gated serving seam + divergence probe.
+    /// Wrap the cold-miss fallback `DatabaseRef`. The `oracle` borrow backs
+    /// the code-less tripwire + divergence observer.
     #[must_use]
-    pub fn new(anchor: &'bot SimAnchorState, fallback: ExtDb) -> Self {
+    pub fn new(oracle: &'bot dyn SimAnchorOracle, fallback: ExtDb) -> Self {
         Self {
-            anchor,
+            oracle,
             fallback,
             code_probe_rpc: None,
             code_probe_block: None,
@@ -151,13 +145,13 @@ where
     /// false-empty reads.
     #[must_use]
     pub fn new_with_code_probe(
-        anchor: &'bot SimAnchorState,
+        oracle: &'bot dyn SimAnchorOracle,
         fallback: ExtDb,
         rpc_url: &str,
         sim_block: u64,
     ) -> Self {
         Self {
-            anchor,
+            oracle,
             fallback,
             code_probe_rpc: Some(rpc_url.to_string()),
             code_probe_block: Some(sim_block),
@@ -239,7 +233,7 @@ where
         // this is the value-origin point (the warm cache only caches what this
         // returns), the poisoned `None`/empty can never reach the warm cache
         // to be served on a later block's hit.
-        if self.anchor.pool_id_by_address(&address).is_some() {
+        if self.oracle.is_registered_pool(&address) {
             let invalid = match &info {
                 None => true,
                 Some(acc) => acc.code_hash == KECCAK_EMPTY,
@@ -265,30 +259,21 @@ where
         Ok(info)
     }
 
-    /// Serve tracked-pool storage from the engine's typed state, falling
-    /// through to the RPC for everything else.
+    /// Forward storage reads to the RPC fallback, with the always-on
+    /// divergence observer layered between the fetch and the return.
     ///
-    /// Two env-gated diagnostics run here, both DEFAULT OFF so production
-    /// behavior is unchanged (single atomic load each — zero per-SLOAD work):
+    /// - [`super::divergence_probe`]: pure observation — compares the engine's
+    ///   packed typed state against the RPC value, logs a `[sim-divergence]`
+    ///   line on mismatch, accumulates the tally. Never changes what the sim
+    ///   reads. The on-demand arm (`self.divergence_probe`) skips the env gate.
     ///
-    /// - `arm the sim-divergence probe` ([`super::divergence_probe`]): pure
-    ///   observation — compares the engine's packed typed state against the
-    ///   RPC value, logs a `[sim-divergence]` line on mismatch, accumulates
-    ///   the tally. Never changes what the sim reads.
-    /// - `DEGENBOT_SIM_SERVE_ENGINE_STATE=1` ([`super::serving`]): the serving
-    ///   seam — returns the engine's packed word for tracked slots
-    ///   (V2 reserves / V3/V4 `slot0`/`liquidity`/`ticks(tick)`) instead of
-    ///   the RPC value. Premise (stale state) was REFUTED; the seam stays
-    ///   gated off in production (a partial serve reintroduces the documented
-    ///   K-invariant / `LOK` reverts (the engine doesn't carry
-    ///   `feeGrowthGlobal`/`tickBitmap`/per-pair balances the same swap
-    ///   callback reads).
+    /// The env-gated serving seam that once returned the engine's packed word
+    /// for tracked slots is DELETED (ADR-056); the fallback's value is the
+    /// sim's value, exactly as production ran gate-off.
     ///
     /// # Errors
     ///
-    /// Returns the fallback's error if the RPC fetch fails (the RPC value is
-    /// always fetched even when serving is on, so it can be logged as the
-    /// delta baseline).
+    /// Returns the fallback's error if the RPC fetch fails.
     fn storage_ref(
         &self,
         address: Address,
@@ -307,31 +292,21 @@ where
         if let Some(memo) = self.storage_memo.as_ref() {
             memo.put(address, index, rpc_value);
         }
-        // Observation first (compares engine vs RPC, logs divergence, never
-        // changes what the sim reads). Two gates: the env-default (off) or
-        // the per-sim on-demand arm (VERIFY2 T2 - sim-failure re-verify or a
-        // random spot-check). Independent of the serving gate below.
+        // Observation (compares engine vs RPC, logs divergence, never changes
+        // what the sim reads). The per-sim on-demand arm (VERIFY2 T2 -
+        // sim-failure re-verify or a random spot-check) skips the env gate.
         if self.divergence_probe {
             super::divergence_probe::observe_storage_read_forced(
-                self.anchor,
+                self.oracle,
                 address,
                 index,
                 rpc_value,
             );
         } else {
-            super::divergence_probe::observe_storage_read(self.anchor, address, index, rpc_value);
+            super::divergence_probe::observe_storage_read(self.oracle, address, index, rpc_value);
         }
-        // Serving seam (env-gated, DEFAULT OFF): if `(address, index)` maps
-        // to a tracked pool slot the engine carries authoritatively, return
-        // the engine's packed word instead of the RPC value (the sim's swap
-        // callback reads the engine's state, matching what the solver read).
-        // Premise (stale engine state) was REFUTED — V3 hops matched exactly
-        // while V4 diverged by 1-8 units (solver calc rounding, not state).
-        // The seam stays gated off in production; a partial serve (slot0/
-        // liquidity WITHOUT feeGrowth/bitmap) reintroduces the documented
-        // K-invariant / LOK reverts.
-        let served = super::serving::serve_tracked_slot(self.anchor, address, index, rpc_value);
-        Ok(served.unwrap_or(rpc_value))
+        // Serving retired (ADR-056): the fallback's own answer is the sim's.
+        Ok(rpc_value)
     }
 
     /// Forward to the fallback. `code_by_hash` is **never invoked** if
@@ -389,7 +364,8 @@ mod tests {
     use super::*;
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U256};
-    use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams};
+    use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams, RouteRegistry, SimAnchorState};
+    use degenbot_bot::sidecar_paths::{V2ConnectorIndex, V2Edge};
     use degenbot_uniswap::dex_identity::DexVariant;
     use revm::bytecode::Bytecode;
     use revm::primitives::B256;
@@ -421,6 +397,18 @@ mod tests {
         })
         .expect("test setup: V2 registration");
         core
+    }
+
+    /// A boot registry whose frozen set contains exactly [`POOL`].
+    fn registry_with_pool() -> RouteRegistry {
+        let mut index = V2ConnectorIndex::default();
+        index.push_edge(V2Edge {
+            pool_id: 1,
+            token0_id: 10,
+            token1_id: 20,
+            address: POOL,
+        });
+        RouteRegistry::new(index)
     }
 
     /// A minimal `DatabaseRef` fallback whose `basic_ref` returns the test's
@@ -517,6 +505,77 @@ mod tests {
         let bsd = BotStateDb::new(&anchor, db);
         // EOA is not a pool: `None` is a legitimate EOA read, forwarded no-panic.
         assert!(bsd.basic_ref(EOA).unwrap().is_none());
+    }
+
+    /// The serving-retirement equivalence pin: the deleted serving seam is gone, so a tracked
+    /// slot's read is the fallback's own value — the gate-off behavior
+    /// production always had. The observer still compares, unchanged.
+    #[test]
+    fn serving_retired_storage_ref_forwards_rpc_for_tracked_slot() {
+        let _tally = crate::sim::evm::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap();
+        let core = bot_state_with_pool();
+        let anchor = SimAnchorState::snapshot(&core);
+        let db = ScriptedDb {
+            result: None,
+            calls: Cell::new(0),
+        };
+        let bsd = BotStateDb::new(&anchor, db);
+        let got = bsd.storage_ref(POOL, U256::from(8u64)).unwrap();
+        assert_eq!(
+            got,
+            StorageValue::ZERO,
+            "retired serving: the fallback's value is the sim's value"
+        );
+    }
+
+    /// The serving-retirement equivalence pin: swapping the engine snapshot for the boot registry
+    /// oracle changes no sim read — the serving path that consumed the words
+    /// is gone, and the observer is inert on a state-less view.
+    #[test]
+    fn oracle_choice_does_not_change_sim_storage_reads() {
+        let _tally = crate::sim::evm::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap();
+        let core = bot_state_with_pool();
+        let anchor = SimAnchorState::snapshot(&core);
+        let registry = registry_with_pool();
+        let anchor_db = BotStateDb::new(
+            &anchor,
+            ScriptedDb {
+                result: None,
+                calls: Cell::new(0),
+            },
+        );
+        let registry_db = BotStateDb::new(
+            &registry,
+            ScriptedDb {
+                result: None,
+                calls: Cell::new(0),
+            },
+        );
+        for slot in [U256::from(8u64), U256::ZERO, U256::from(6u64)] {
+            assert_eq!(
+                anchor_db.storage_ref(POOL, slot).unwrap(),
+                registry_db.storage_ref(POOL, slot).unwrap(),
+                "oracle choice must not change the read at {slot}"
+            );
+        }
+    }
+
+    /// The membership question now routes through the registry oracle: a
+    /// registry member resolving code-less still trips the invariant.
+    #[test]
+    #[should_panic(expected = "Sim DB invariant")]
+    fn code_less_registry_member_panics() {
+        let registry = registry_with_pool();
+        let db = ScriptedDb {
+            result: Some(codeless_info()),
+            calls: Cell::new(0),
+        };
+        let bsd = BotStateDb::new(&registry, db);
+        let _ = bsd.basic_ref(POOL).unwrap();
     }
 
     // ── The false-empty provenance probe (alloy LRU vs node) ────────────

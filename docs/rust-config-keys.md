@@ -143,7 +143,6 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_SIM_EXECUTE_GAS` | `simulation.sim_execute_gas` | `Option<u64>` | `(unset; EIP-7825 TX_GAS_LIMIT_CAP)` | Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating). |
 | `DEGENBOT_INJECT_EXECUTOR_CODE` | `simulation.inject_executor_code` | `bool` | `false` | Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture). |
 | `DEGENBOT_SIM_EXIT_ON_FAIL` | `simulation.sim_exit_on_fail` | `bool` | `false` | Abort the process when a sim fails (the live trap used to capture V3-hop fixtures). |
-| `DEGENBOT_SIM_SERVE_ENGINE_STATE` | `simulation.sim_serve_engine_state` | `bool` | `false` | Serve engine state to the sim/evm layer (`1` enables; behavior change, default off). |
 | `DEGENBOT_PROBE_FIXTURE` | `simulation.probe_fixture` | `Option<path>` | `(unset)` | Corpus fixture for the offline executor A/B probe (ignore-listed test). |
 | `DEGENBOT_PROBE_NS` | `simulation.probe_ns` | `string` | `1,2,4,8,16` | Comma-separated thread-count arms for the offline executor A/B probe. |
 | `DEGENBOT_PROBE_PASSES` | `simulation.probe_passes` | `usize` | `3` | Passes per arm for the offline executor A/B probe. |

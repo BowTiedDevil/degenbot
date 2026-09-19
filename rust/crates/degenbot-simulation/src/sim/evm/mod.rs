@@ -11,16 +11,17 @@
 //! ## Architecture (option B seam — forwarding today)
 //!
 //! [`bot_state_db::BotStateDb`] is a thin `revm::DatabaseRef` wrapper that
-//! currently **forwards every read** to the `WrapDatabaseAsync<AlloyDB>`
-//! fallback. The typed-state serving path (V2 reserves / V3 `slot0`/
-//! `liquidity`/`ticks` ABI-encoded to EVM slots on demand) was deliberately
-//! NOT wired — serving the snapshot's reserves/`slot0` against the on-chain
-//! slots the pool's own `swap()` reads (fee growth, tick bitmap,
-//! `IERC20.balanceOf`) produced K-invariant / `LOK` reverts from
-//! stale-vs-fresh state divergence. The wrapper persists as the option B
-//! seam the live `BlockSimHandle` chain references; collapsing it to
-//! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope. See [`bot_state_db`] for the historical note on the
-//! retired slot encoders.
+//! **forwards every read** to the `WrapDatabaseAsync<AlloyDB>` fallback. The
+//! typed-state serving path (V2 reserves / V3 `slot0`/`liquidity`/`ticks`
+//! ABI-encoded to EVM slots on demand) was deliberately NOT wired — serving
+//! the snapshot's reserves/`slot0` against the on-chain slots the pool's own
+//! `swap()` reads (fee growth, tick bitmap, `IERC20.balanceOf`) produced
+//! K-invariant / `LOK` reverts from stale-vs-fresh state divergence; the
+//! env-gated seam that re-probed it is deleted (ADR-056). The wrapper persists
+//! as the divergence-observer + membership-tripwire seam the live
+//! `BlockSimHandle` chain references; collapsing it to bare
+//! `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope. See
+//! [`bot_state_db`] for the historical note on the retired slot encoders.
 //!
 //! ```text
 //! EVM transact → CacheDB (sim-scoped overrides)
@@ -70,8 +71,9 @@ pub mod simulator;
 pub mod state_override;
 
 /// `BotStateDb` — a thin `revm::DatabaseRef` wrapper that forwards every read
-/// to the `WrapDatabaseAsync<AlloyDB>` fallback. Currently a pass-through;
-/// the typed-state serving path (option B) is not wired. See the module's
+/// to the `WrapDatabaseAsync<AlloyDB>` fallback, with the always-on divergence
+/// observer and the code-less tripwire layered on a [`SimAnchorOracle`](degenbot_bot::bot_core::SimAnchorOracle).
+/// The typed-state serving path (option B) is not wired; see the module's
 /// historical note on the retired slot encoders.
 pub mod bot_state_db;
 
@@ -79,7 +81,6 @@ pub mod bot_state_db;
 /// `BotStateDb::storage_ref` runs to log + tally the engine-vs-RPC tracked-slot
 /// gap (the spike-checkpoint answer that picks fix path A/B/C).
 pub mod divergence_probe;
-pub mod serving;
 mod storage_memo;
 
 /// LAB (SIMPIPE T1): cold-fetch + handle-build counters — see the module doc.

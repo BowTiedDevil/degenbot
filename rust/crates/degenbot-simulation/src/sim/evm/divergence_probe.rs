@@ -53,7 +53,7 @@ use std::sync::{Mutex, OnceLock};
 
 use alloy::primitives::{Address, B256, U256};
 
-use degenbot_bot::bot_core::{divergence_probe::TrackedSlotProbe, SimAnchorState};
+use degenbot_bot::bot_core::{divergence_probe::TrackedSlotProbe, SimAnchorOracle};
 
 /// The `[sim-divergence]` log prefix — verbatim so log greps return here.
 const SIM_DIVERGENCE_LOG_PREFIX: &str = "[sim-divergence]";
@@ -124,7 +124,7 @@ pub fn divergence_tally_snapshot() -> DivergenceTally {
 /// Serializes every lib-binary test that can bump the process-global
 /// divergence tally. `observe_storage_read` is reached by ANY
 /// `BotStateDb::storage_ref` read of a tracked slot — this module's probe tests
-/// and the sibling `serving.rs` V2-serving tests alike — so the absolute
+/// and the `BotStateDb` tripwire/observer tests alike — so the absolute
 /// `slots_compared` pins can only hold while no other read interleaves. (The
 /// guard used to live inside this module's test module, which could not
 /// exclude the sibling-module readers.)
@@ -151,12 +151,12 @@ fn tracked_fields_match(probe: &TrackedSlotProbe, rpc_word: U256) -> bool {
 /// `index` + `rpc_value` are `revm` `StorageKey`/`StorageValue` (both `U256`
 /// type-aliases) — taken as `U256` to bridge the `alloy` umbrella cleanly.
 pub fn observe_storage_read(
-    anchor: &SimAnchorState,
+    oracle: &dyn SimAnchorOracle,
     address: Address,
     index: U256,
     rpc_value: U256,
 ) {
-    observe_storage_read_forced(anchor, address, index, rpc_value);
+    observe_storage_read_forced(oracle, address, index, rpc_value);
 }
 
 /// VERIFY2 T2: on-demand form - skips the env gate so a caller can arm the
@@ -165,15 +165,16 @@ pub fn observe_storage_read(
 /// contract as `observe_storage_read` (the RPC value is returned unchanged
 /// by the caller).
 pub fn observe_storage_read_forced(
-    anchor: &SimAnchorState,
+    oracle: &dyn SimAnchorOracle,
     address: Address,
     index: U256,
     rpc_value: U256,
 ) {
-    // ULUWNI: the anchor is the build-time SNAPSHOT — scalar slots compare
-    // against the engine-at-build words; tick slots are not snapshotted and
-    // fall through (see `SimAnchorState` module docs).
-    let Some(probe) = anchor.probe_tracked_storage_slot(address, index) else {
+    // ULUWNI: the engine's oracle is the build-time SNAPSHOT — scalar slots
+    // compare against the engine-at-build words; tick slots are not
+    // snapshotted and fall through. A state-less view (the boot registry)
+    // answers `None`, leaving the observer inert.
+    let Some(probe) = oracle.probe_tracked_storage_slot(address, index) else {
         // Not a tracked-pool scalar slot (non-pool contract, a V3/V4
         // fee-growth / tick-bitmap slot the engine doesn't carry, etc.) —
         // no comparison, no tally increment.
@@ -243,7 +244,8 @@ mod tests {
     use crate::sim::evm::BotStateDb;
     use alloy::primitives::{address, Address, B256, U256};
     use degenbot_bot::bot_core::{
-        divergence_probe::TrackedSlotProbe, BotState, RegisterV3PoolParams, TrackedSlotKind,
+        divergence_probe::TrackedSlotProbe, BotState, RegisterV3PoolParams, SimAnchorState,
+        TrackedSlotKind,
     };
     use hashbrown::HashMap;
     use revm::database_interface::DatabaseRef;

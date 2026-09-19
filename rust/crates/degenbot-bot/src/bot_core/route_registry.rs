@@ -22,6 +22,8 @@ use degenbot_pathfinding::PoolKind;
 
 use crate::sidecar_paths::V2ConnectorIndex;
 
+use super::sim_anchor::SimAnchorOracle;
+
 /// The pool families the host's Uniswap decoder table covers, mirrored from
 /// [`LogDispatcher::with_uniswap_decoders`](crate::bot_core::log_dispatcher::LogDispatcher::with_uniswap_decoders)
 /// (V2 `Sync`; V3 canonical/Pancake `Swap` + `Mint`/`Burn`; V4 `Swap` +
@@ -79,6 +81,15 @@ impl RouteRegistry {
     #[must_use]
     pub fn decoder_pool_kinds(&self) -> &'static [PoolKind] {
         &DECODER_POOL_KINDS
+    }
+}
+
+impl SimAnchorOracle for RouteRegistry {
+    /// The frozen index answers membership; the registry carries no engine
+    /// state, so the divergence-probe default (`None`) applies.
+    fn is_registered_pool(&self, address: &Address) -> bool {
+        self.index.edge_by_address(*address).is_some()
+            || self.index.v3_edge_by_address(*address).is_some()
     }
 }
 

@@ -71,7 +71,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use alloy::primitives::{address, Address, Bytes, U256};
-use degenbot_bot::bot_core::SimAnchorState;
+use degenbot_bot::bot_core::SimAnchorOracle;
 use degenbot_bot::sidecar::{Decision, SidecarConfig};
 use degenbot_bot::sidecar_engine::SidecarSolver;
 use degenbot_bot::sidecar_paths::V2ConnectorIndex;
@@ -276,17 +276,20 @@ impl FrameArtifacts {
 /// stack reads `BlockId::Number(head)` and its frames run in the NEXT
 /// block's env. State overrides are the ZERO set — a foreign frame must
 /// execute against chain state, not the strategy's simulated funding.
-/// `anchor` is typically a leaked empty [`SimAnchorState`] (the sidecar
-/// tracks no canonical-registry pools); the shared `warm_cache` carries the
-/// cross-block bytecode/account caches across handle rebuilds.
+/// `oracle` is the sim DB's membership/observation view — the boot
+/// [`RouteRegistry`](degenbot_bot::bot_core::RouteRegistry) (the sidecar
+/// carries no engine state, so the divergence observer is inert) or a
+/// state-less [`NoSimAnchor`](degenbot_bot::bot_core::NoSimAnchor) when the
+/// registry load failed; the shared `warm_cache` carries the cross-block
+/// bytecode/account caches across handle rebuilds.
 /// `None` when the head block fetch or the handle build fails (no ambient
 /// multi-threaded runtime for `WrapDatabaseAsync` included).
-pub async fn build_block_handle(
+pub async fn build_block_handle<'a>(
     provider: &AlloyProvider,
     head: u64,
     warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
-    anchor: &'static SimAnchorState,
-) -> Option<BlockSimHandle<'static>> {
+    oracle: &'a dyn SimAnchorOracle,
+) -> Option<BlockSimHandle<'a>> {
     let block = provider.get_block(head).await.ok().flatten()?;
     let timestamp = block.header.timestamp;
     let base_fee = u128::from(block.header.base_fee_per_gas.unwrap_or(0));
@@ -309,7 +312,7 @@ pub async fn build_block_handle(
         head,
         timestamp,
         &override_params,
-        anchor,
+        oracle,
         warm_cache,
         None,
         false,
@@ -641,7 +644,7 @@ pub async fn process_frame<S: PendingTxStrategy>(
     sim_client: &alloy::rpc::client::RpcClient,
     sidecar: &SidecarConfig,
     pl: &PipelineConfig,
-    handle: &mut Option<BlockSimHandle<'static>>,
+    handle: &mut Option<BlockSimHandle<'_>>,
     ev: &BackrunFeedEvent,
     head: u64,
     spent: U256,
@@ -679,7 +682,7 @@ pub async fn process_frame_with_prefix<S: PendingTxStrategy>(
     sim_client: &alloy::rpc::client::RpcClient,
     sidecar: &SidecarConfig,
     pl: &PipelineConfig,
-    handle: &mut Option<BlockSimHandle<'static>>,
+    handle: &mut Option<BlockSimHandle<'_>>,
     ev: &BackrunFeedEvent,
     prefix: &[ReplayableTx],
     head: u64,

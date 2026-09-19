@@ -99,7 +99,7 @@ pub use registration_lifecycle::{
     run_v4_registration_lifecycle, RegistrationLifecycleError,
 };
 pub use route_registry::RouteRegistry;
-pub use sim_anchor::SimAnchorState;
+pub use sim_anchor::{NoSimAnchor, SimAnchorOracle, SimAnchorState, NO_SIM_ANCHOR};
 pub use stage_handlers::{
     AffectedPaths, CandidateId, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish,
     PublishOutcome, QuiesceOutcome, QuiesceVerdict, Resolve, Rewind, RewindOutcome, Simulate,

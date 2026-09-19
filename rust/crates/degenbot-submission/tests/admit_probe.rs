@@ -66,8 +66,8 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
     let tick = i32::try_from(tick).unwrap();
 
     // The anchor's frame-replay scratch: the same chain view the frames use.
-    let anchor_state: &'static SimAnchorState = Box::leak(Box::new(SimAnchorState::default()));
-    let mut handle = build_block_handle(&provider, head, &rt.warm_cache, anchor_state)
+    let anchor_state = SimAnchorState::default();
+    let mut handle = build_block_handle(&provider, head, &rt.warm_cache, &anchor_state)
         .await
         .expect("replay handle builds");
     let scratch = handle.scratch_evm().expect("scratch EVM");

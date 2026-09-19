@@ -70,6 +70,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [051](ADR-051-rust-owned-console.md) | The degenbot console is a Rust binary — one command model, an argv passthrough for Python | accepted |
 | [052](ADR-052-db-auto-upgrade-alembic-retirement.md) | The database upgrades itself at open — Alembic retires in-tree ahead of 0.7 | accepted |
 | [055](ADR-055-pending-tx-strategy-seams.md) | Pending-transaction strategy seams — MarketContext, PendingTxStrategy, SubmissionTarget, V4 substrate closure | accepted |
+| [056](ADR-056-retire-gated-serving-seam.md) | Retire the gated serving seam — refuted premise, membership to the boot registry | accepted |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 
