@@ -11,68 +11,13 @@ risk of unbounded backlog or stale-batch dispatch.
 from __future__ import annotations
 
 import degenbot.arbitrage.engine_registry as runner
-
-
-class FakeEngine:
-    """Records Layer A lifecycle calls in order; never resumes.
-
-    Stubs the narrow surface `start()` touches: subscribe, the stream fn's
-    non-DB fallback (`load_v3_snapshot_from_py`), backfill, and the verify
-    setters. `resume()` is intentionally a recordable call so tests can assert
-    it was NOT invoked.
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.backfill_args: list[tuple[str, int]] = []
-        # JUCFCB: the DB path reads `snapshot_seed_block` from the engine.
-        # FakeEngine defaults to None (cold-start → no backfill) unless a test
-        # sets it.
-        self._snapshot_seed_block: int | None = None
-        # 2SM4Y7: the non-DB path now records S via `set_snapshot_seed_block`
-        # (the pyo3 `backfill_from_snapshot` retired); the FakeEngine records
-        # the call so tests can assert the non-DB path drives the seed-set.
-        self.seed_args: list[int | None] = []
-
-    @property
-    def snapshot_seed_block(self) -> int | None:
-        return self._snapshot_seed_block
-
-    @snapshot_seed_block.setter
-    def snapshot_seed_block(self, value: int | None) -> None:
-        self.calls.append("set_snapshot_seed_block")
-        self.seed_args.append(value)
-        self._snapshot_seed_block = value
-
-    def subscribe(self, ws: str) -> int:
-        self.calls.append("subscribe")
-        return 18_000_000  # backfill_target
-
-    def load_v3_snapshot_from_py(self, snapshot: object) -> None:
-        self.calls.append("stream_v3")
-
-    def load_v4_snapshot_from_py(self, snapshot: object) -> None:
-        self.calls.append("stream_v4")
-
-    def backfill_from_snapshot(self, rpc: str, snapshot_block: int) -> int:
-        self.calls.append("backfill")
-        self.backfill_args.append((rpc, snapshot_block))
-        return 0
-
-    def set_verify_rpc_url(self, rpc: str) -> None:
-        self.calls.append("set_verify_rpc_url")
-
-    def set_verify_state_view(self, addr: str) -> None:
-        self.calls.append("set_verify_state_view")
-
-    def resume(self) -> None:
-        self.calls.append("resume")
+from tests.fakes.engine import FakeEngine
 
 
 def test_start_no_snapshots_calls_subscribe_then_verify_never_resume() -> None:
     """Tracer: with no snapshots, start() subscribes + sets verify config in
     order and never calls resume(). Skip stream/backfill (no snapshots)."""
-    fake = FakeEngine()
+    fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     backfill_target = registry.start(
@@ -108,7 +53,7 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     `_verify_snapshot_block`, and configures verify in the documented order —
     not the stream fns themselves.
     """
-    fake = FakeEngine()
+    fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     # XEANMB: `start()` no longer ingests snapshot dicts (the
@@ -125,9 +70,6 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
         v4_snapshot=v4_snap,
     )
 
-    # J3FMDO: start() no longer calls backfill_from_snapshot — resume() drives
-    # it via the core auto-backfill. So backfill_args stays empty.
-    assert fake.backfill_args == []
     # XEANMB: the snapshot seed block is set BEFORE subscribe (so the engine
     # phase advances to SnapshotLoaded via after_subscribe), then
     # verify-config. No stream/load_*_from_py calls remain.
@@ -145,7 +87,7 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
 
 def test_start_passes_verify_state_view_when_supplied() -> None:
     """verify_state_view is set on the engine only when supplied."""
-    fake = FakeEngine()
+    fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)
     state_view = "0x0000000000000000000000000000000000000abc"
 
@@ -160,7 +102,7 @@ def test_start_passes_verify_state_view_when_supplied() -> None:
 
 def test_start_skips_set_verify_state_view_when_none() -> None:
     """When verify_state_view is None, set_verify_state_view is not called."""
-    fake = FakeEngine()
+    fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     registry.start("http://localhost:8545", "ws://localhost:8546")
@@ -232,7 +174,7 @@ def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypa
     closures without re-deriving. These are NOT wired into engine.set_verify_*
     (that dead path is deleted in T5) — they live on the registry for T6 to read.
     No behavior change yet beyond setting the fields (T6 reads them)."""
-    fake = FakeEngine()
+    fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     v3_snap = _FakeSnapshot(newest_block=18_000_100)
@@ -258,7 +200,7 @@ def test_start_stashes_None_blocks_when_no_snapshots() -> None:
     applied, so the snapshot block stash is None (T6 will guard on None ==
     verify not applicable for this pool). The registry no longer stashes a
     backfill_block — step-2 pins its own block."""
-    fake = FakeEngine()
+    fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     registry.start("http://localhost:8545", "ws://localhost:8546")

@@ -1,16 +1,18 @@
-"""Settled-block arm gate: a settlement runner may never boot under strategy.name=backrun (ADR-055, X6P5GN).
+"""Strategy admission is host-owned (ADR-057).
 
-``strategy.name`` selects exactly one arm (ADR-055 D5: per-strategy .enabled
-and runtime registration belong to the Phase C host). Python's settlement
-runner consuming DEGENBOT_STRATEGY_NAME loudly when it selects the backrun
-arm is the interim refusal behavior — the operator must boot the sidecar
-instead.
+``strategy.name`` selects exactly one arm (ADR-055 D5: per-strategy ``.enabled``
+and runtime registration belong to the Phase C host). The settlement runner
+carries no Python-side arm gate: the host boot registers each configured facet
+and ``enable_strategy`` surfaces the typed refusal, so there is one admission
+authority. These tests pin the config-layer env accessor and the host's typed
+refusal; the runner itself is deliberately silent on the arm.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from degenbot._ffi import ArbitrageEngine, Bot, UnconfiguredStrategyError
 from degenbot.config import DegenbotConfig, strategy_arm_from_env
 from degenbot.runner.bot_runner import BotRunner
 
@@ -50,10 +52,18 @@ class TestStrategyArmField:
 
 
 @pytest.mark.usefixtures("monkeypatch")
-class TestSettlementRunnerGate:
-    def test_settlement_runner_refuses_backrun_env(self, monkeypatch):
+class TestAdmissionIsHostOwned:
+    def test_runner_carries_no_python_arm_gate(self, monkeypatch):
+        """The runner constructs under the backrun env; admission is the host's.
+
+        A placeholder cfg is honest here — construction never touches it and no
+        runner-side env check runs.
+        """
         monkeypatch.setenv(STRATEGY_ENV, "backrun")
-        # The arm gate fires before any cfg attribute access, so a placeholder
-        # is honest here; a real ArbitrageConfig is heavy and irrelevant.
-        with pytest.raises(ValueError, match="settlement runner refuses"):
-            BotRunner(None)  # type: ignore[arg-type]
+        assert BotRunner(None) is not None  # type: ignore[arg-type]
+
+    def test_host_refuses_unconfigured_backrun(self):
+        """The host's typed refusal is the one admission surface."""
+        engine = ArbitrageEngine(py_bot=Bot(1))
+        with pytest.raises(UnconfiguredStrategyError):
+            engine.enable_strategy("backrun")

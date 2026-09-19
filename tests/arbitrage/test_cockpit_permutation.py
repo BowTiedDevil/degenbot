@@ -17,30 +17,9 @@ from degenbot.runner.build_paths import (
     _pool_types_from_filter,
     build_paths,
 )
+from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
 
 EXAMPLE = "examples/eth_settlement_arbitrage_v2_v3_v4_rust.py"
-
-
-class _FakeEngine:
-    def v2_pool_count(self) -> int:
-        return 0
-
-    def v3_pool_count(self) -> int:
-        return 0
-
-    def v4_pool_count(self) -> int:
-        return 0
-
-    def path_count(self) -> int:
-        return 0
-
-    def release_all_v3_v4_quarantined(self) -> None:
-        pass
-
-
-class _FakeEngineRegistry:
-    def __init__(self) -> None:
-        self.engine = _FakeEngine()
 
 
 class _FakePipeline:

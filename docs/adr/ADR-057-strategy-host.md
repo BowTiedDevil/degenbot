@@ -281,6 +281,39 @@ their callers, never written by a second site.
   `a_host_minted_hub_wires_one_driver` and
   `the_mint_closure_registers_on_the_host_hub`.
 
+## Supplement — test doubles hold the seam contract
+
+The Python driver shell is a driver, not a co-implementation: it calls a narrow
+slice of the engine surface and translates the result. Its tests therefore hold
+one contract double for that slice, and the double is bound to reality rather
+than hand-maintained in parallel.
+
+- **One engine double.** `tests/fakes/engine.py` owns the single `FakeEngine` /
+  `FakeEngineRegistry` used by the runner and registry suites. A private copy
+  per module was the drift mechanism: a surface change had to be applied in
+  five places, and the copies that lagged were exactly the ones a `getattr`
+  fallback in the production path silently tolerated.
+- **The interface is declared, not duck-typed.** The engine methods the driver
+  shell depends on are listed once. The production seam calls them directly
+  through the typed stub — there is no `getattr(engine, "method", None)` soft
+  seam that lets a double opt out of the contract.
+- **The double is parity-checked.** A parity test reflects the fake against the
+  real pyclass and the stub: the fake implements every seam member, the real
+  engine exposes every seam member, the stub declares every seam member, and the
+  fake defines none of the retired surface. Where a behavioural path exists
+  (default registration order, the enable/disable vocabulary) the fake is driven
+  against the real engine and the outcomes compared.
+- **Fixtures assert only real postures.** A double never advertises a surface
+  the real engine removed, and no test asserts a posture the real surface cannot
+  reach. A fake that is larger than reality is the same defect as one that is
+  smaller.
+
+The same discipline governs decision ownership: a Python fixture must not pin a
+decision the Rust owner makes. Admission, configured-ness, the driver transition
+table, and the reconcile guard live in the host and are exercised through the
+host's typed verbs; Python-side branches that re-derive them are removed rather
+than tested.
+
 ## Related
 
 - **ADR-055** — pending-transaction strategy seams; D5 named this host as

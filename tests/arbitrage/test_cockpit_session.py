@@ -21,6 +21,7 @@ import pytest
 from degenbot.runner import BotRunner
 from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
+from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
 
 
@@ -47,45 +48,6 @@ def _cfg() -> ArbitrageConfig:
         live=True,
         permutation=None,
     )
-
-
-class _FakeEngine:
-    def resume(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
-
-    def v2_pool_count(self) -> int:
-        return 0
-
-    def v3_pool_count(self) -> int:
-        return 0
-
-    def v4_pool_count(self) -> int:
-        return 0
-
-    def path_count(self) -> int:
-        return 0
-
-    async def pump_finished_future(self) -> None:
-        # Injected engines have no real pump: the awaitable contract is a
-        # future that never resolves (the real pre-finish consumer shape).
-        await asyncio.Event().wait()
-
-    async def block_stream(self):
-        return
-        yield  # pragma: no cover - async generator marker
-
-
-class _FakeEngineRegistry:
-    def __init__(self) -> None:
-        self.engine = _FakeEngine()
-        self.start_calls = 0
-
-    def start(self, node_http, node_ws, *, v3_snapshot, v4_snapshot, verify_state_view) -> int:
-        self.start_calls += 1
-        return 12_000
 
 
 class _FakeBot:

@@ -24,89 +24,9 @@ import pytest
 import degenbot.arbitrage.engine_registry as runner
 from degenbot.exceptions import VerificationMismatchError
 from degenbot.utils.bytes import to_0x_hex
+from tests.fakes.engine import FakeEngine as _RecordingVerifyEngine
 
 _V4_POOL_ID_HEX = to_0x_hex(b"V4POOLID")
-
-
-class _RecordingVerifyEngine:
-    """Fake engine that records the core-owned lifecycle delegation call.
-
-    Mirrors the `PyArbitrageEngine.run_v3/v4_registration_lifecycle` pyo3
-    seam (async, via future_into_py — the registry `await`s it standing in for
-    a coroutine). The step ordering inside the core lifecycle is NOT observable
-    here; those invariants are asserted by the Rust `registration_lifecycle`
-    unit tests.
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.run_calls: list[dict] = []
-        self.fail_next: str | None = None
-        self._last_processed_block: int | None = 18_000_042
-        # JUCFCB: the DB path reads `snapshot_seed_block` from the engine.
-        self._snapshot_seed_block: int | None = None
-
-    @property
-    def snapshot_seed_block(self) -> int | None:
-        return self._snapshot_seed_block
-
-    @snapshot_seed_block.setter
-    def snapshot_seed_block(self, value: int | None) -> None:
-        self.calls.append("set_snapshot_seed_block")
-        self._snapshot_seed_block = value
-
-    # lifecycle (subscribe/backfill) — minimal, record-only
-    def subscribe(self, ws: str) -> int:
-        self.calls.append("subscribe")
-        return 18_000_000
-
-    def backfill_from_snapshot(self, rpc: str, snapshot_block: int) -> int:
-        self.calls.append("backfill")
-        return 0
-
-    def load_v3_snapshot_from_py(self, py_data: object) -> None:
-        self.calls.append("load_v3_snapshot_from_py")
-
-    def load_v4_snapshot_from_py(self, py_data: object) -> None:
-        self.calls.append("load_v4_snapshot_from_py")
-
-    def set_verify_rpc_url(self, rpc: str) -> None:
-        self.calls.append("set_verify_rpc_url")
-
-    def set_verify_state_view(self, addr: str) -> None:
-        self.calls.append("set_verify_state_view")
-
-    def last_processed_block(self) -> int | None:
-        return self._last_processed_block
-
-    # IKGQ6F / ADR-022 D1: the single core-owned lifecycle entry point. A
-    # mismatch (fail_next set) surfaces as VerificationMismatchError — the
-    # tripwire propagates from build_paths without auto-repair.
-    async def run_v3_registration_lifecycle(self, address: str, snapshot_block: int | None) -> None:
-        self.run_calls.append({
-            "family": "v3",
-            "address": address,
-            "snapshot_block": snapshot_block,
-        })
-        if self.fail_next == "v3":
-            msg = "synthetic V3 seed tick mismatch"
-            raise VerificationMismatchError(msg)
-
-    async def run_v4_registration_lifecycle(
-        self,
-        pool_manager_address: str,
-        pool_id_hex: str,
-        snapshot_block: int | None,
-    ) -> None:
-        self.run_calls.append({
-            "family": "v4",
-            "address": pool_manager_address,
-            "pool_id": pool_id_hex,
-            "snapshot_block": snapshot_block,
-        })
-        if self.fail_next == "v4":
-            msg = "synthetic V4 seed tick mismatch"
-            raise VerificationMismatchError(msg)
 
 
 class _FakeSnapshot:

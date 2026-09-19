@@ -27,6 +27,7 @@ import pytest
 from degenbot.runner import BotRunner
 from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
+from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -67,79 +68,6 @@ def _cfg(**overrides) -> ArbitrageConfig:
     }
     base.update(overrides)
     return ArbitrageConfig.from_env(base, live=True, permutation=None)
-
-
-class _FakeEngine:
-    def __init__(self, events: list[str] | None = None) -> None:
-        self.resumed = False
-        self._events = events
-        self.stop_calls = 0
-        self.stop_raises: Exception | None = None
-
-    def resume(self) -> None:
-        self.resumed = True
-        if self._events is not None:
-            self._events.append("resume")
-
-    def stop(self) -> None:
-        self.stop_calls += 1
-        if self._events is not None:
-            self._events.append("stop")
-        if self.stop_raises is not None:
-            raise self.stop_raises
-
-    async def pump_finished_future(self) -> None:
-        # Injected engines have no real pump: satisfy the awaitable contract
-        # with a future that never resolves, so the watchdog stays parked
-        # until the session ends on its own (the real pre-finish shape).
-        await asyncio.Event().wait()
-
-    def last_processed_block(self) -> int | None:
-        return 12_345
-
-    def v2_pool_count(self) -> int:
-        return 0
-
-    def v3_pool_count(self) -> int:
-        return 0
-
-    def v4_pool_count(self) -> int:
-        return 0
-
-    def path_count(self) -> int:
-        return 0
-
-    async def block_stream(self):
-        # T7: the hot loop spawns a recurring-verify task consuming
-        # engine.block_stream(). Test engines never advance blocks, so yield
-        # nothing — the recurring verify task stays idle until cancelled.
-        return
-        yield  # pragma: no cover - makes this an async generator
-
-
-class _FakeEngineRegistry:
-    def __init__(self, *, backfill_target: int = 12_000, events: list[str] | None = None) -> None:
-        self.engine = _FakeEngine(events=events)
-        self.start_calls: list[dict] = []
-        self._backfill_target = backfill_target
-
-    def start(
-        self,
-        node_http,
-        node_ws,
-        *,
-        v3_snapshot,
-        v4_snapshot,
-        verify_state_view,
-    ) -> int:
-        self.start_calls.append({
-            "node_http": node_http,
-            "node_ws": node_ws,
-            "v3_snapshot": v3_snapshot,
-            "v4_snapshot": v4_snapshot,
-            "verify_state_view": verify_state_view,
-        })
-        return self._backfill_target
 
 
 class _FakeBot:
@@ -470,36 +398,9 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
     ) -> None:
         seen_by_consumer: list[int] = []
 
-        class _OnceOnlyEngine:
-            def __init__(self) -> None:
-                self.resumed = False
-
-            def resume(self) -> None:
-                self.resumed = True
-
-            def last_processed_block(self) -> int | None:
-                return 12_345
-
-            def v2_pool_count(self) -> int:
-                return 0
-
-            def v3_pool_count(self) -> int:
-                return 0
-
-            def v4_pool_count(self) -> int:
-                return 0
-
-            def path_count(self) -> int:
-                return 0
-
-            async def pump_finished_future(self) -> None:
-                # Once-only engine double: satisfy the awaitable contract with
-                # a future that never resolves.
-                await asyncio.Event().wait()
-
         class _Registry:
             def __init__(self) -> None:
-                self.engine = _OnceOnlyEngine()
+                self.engine = _FakeEngine()
 
             def start(
                 self, node_http, node_ws, *, v3_snapshot, v4_snapshot, verify_state_view
@@ -1210,49 +1111,9 @@ class TestSubCBgRegistrationConcurrency:
         registration/main-loop concurrency contract remains)."""
         climbed = -1
 
-        class _Engine:
-            """Once-only block_stream + minimal engine surface."""
-
-            def __init__(self) -> None:
-                self.block_stream_calls = 0
-                self.resumed = False
-
-            def resume(self) -> None:
-                self.resumed = True
-
-            def last_processed_block(self) -> int | None:
-                return 12_345
-
-            def v2_pool_count(self) -> int:
-                return 0
-
-            def v3_pool_count(self) -> int:
-                return 0
-
-            def v4_pool_count(self) -> int:
-                return 0
-
-            def path_count(self) -> int:
-                return 0
-
-            async def pump_finished_future(self) -> None:
-                # Minimal engine double: satisfy the awaitable contract with a
-                # future that never resolves.
-                await asyncio.Event().wait()
-
-            def block_stream(self):
-                self.block_stream_calls += 1
-                if self.block_stream_calls > 1:
-                    boom = "block_stream() can only be called once"
-                    raise RuntimeError(boom)
-                # Every block divisible by RECURRING_VERIFY_INTERVAL (50).
-                return _BlocksStream(
-                    [_block_dict(500), _block_dict(550), _block_dict(600)],
-                )
-
         class _Registry:
             def __init__(self) -> None:
-                self.engine = _Engine()
+                self.engine = _FakeEngine()
 
             def start(self, *_a, **_kw) -> int:
                 return 0  # no backfill beyond current_block — main-loop entry

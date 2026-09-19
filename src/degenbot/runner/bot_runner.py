@@ -43,7 +43,7 @@ from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
 )
-from degenbot.config import DatabaseSettings, DegenbotConfig, strategy_arm_from_env
+from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.dispatch import Dispatcher, SimulateContext
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
@@ -278,17 +278,12 @@ class BotRunner:
         ``False`` for injected ``path_builder`` (tests) and ``True`` for the real
         ``build_paths`` (production).
         """
-        # Strategy-arm gate (ADR-055): this runner is the settled-block arm.
-        # An explicit backrun selection must boot the sidecar binary; booting
-        # it through the settlement runner is a half-configured run.
-        arm = strategy_arm_from_env()
-        if arm not in {None, "settlement"}:
-            msg = (
-                f"settlement runner refuses DEGENBOT_STRATEGY_NAME={arm!r}: "
-                "the backrun arm boots via the sidecar binary "
-                "(rust/crates/degenbot-submission/src/bin/backrun_sidecar.rs)."
-            )
-            raise ValueError(msg)
+        # Strategy admission is host-owned (ADR-057): the runner carries no
+        # Python-side arm gate. The host boot registers each configured facet
+        # and `enable_strategy` surfaces the typed refusal
+        # (`UnknownStrategyError` / `UnconfiguredStrategyError`), so there is
+        # one admission authority and no env check that can disagree with the
+        # host's configured-ness.
         self.cfg = cfg
         injected = actors if actors is not None else InjectedActors()
         self._injected_bot = injected.bot
