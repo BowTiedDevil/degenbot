@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>degenbot — Phase B architecture: seams &amp; reuse</title>
+<style>
+  :root { --ink:#1a202c; --mute:#5a6272; --line:#c9ced8; --paper:#fbfbfd; }
+  body { font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; margin: 2rem auto; max-width: 1280px; color: var(--ink); background: var(--paper); line-height: 1.45; }
+  h1 { font-size: 1.35rem; margin-bottom: .25rem; }
+  h2 { font-size: 1.05rem; margin-top: 2rem; }
+  .sub { color: var(--mute); font-size: .9rem; margin-bottom: 1.5rem; }
+  figure { background:#fff; border:1px solid var(--line); border-radius:10px; padding: 1rem; overflow-x: auto; }
+  svg text { font-family: inherit; }
+  table { border-collapse: collapse; width: 100%; font-size: .86rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background:#f2f4f8; }
+  code { background:#eef1f6; padding: .1em .35em; border-radius: 4px; font-size: .82em; }
+  .legend span { display:inline-block; padding:.3rem .55rem; border-radius:6px; margin:.15rem .3rem .15rem 0; font-size:.8rem; border:1px solid var(--line); }
+  .lg-intake{background:#eaf3ff;} .lg-hub{background:#fff3e0;} .lg-registry{background:#eef9e9;} .lg-strategy{background:#f3eefe;} .lg-engine{background:#fdeeee;} .lg-out{background:#e9fbf4;} .lg-py{background:#f4f4f4;} .lg-future{border:1px dashed #9a8fc9; background:#faf9ff; color:#5a4fa3;}
+  ul.tight li { margin: .3rem 0; font-size: .9rem; }
+</style>
+</head>
+<body>
+<h1>degenbot — post-Phase-B architecture</h1>
+<p class="sub">Per-process hub fan-out, boot-snapshot registry, and the seams where pending-transaction strategies hook in.
+Existing strategy family (MEVBlocker backrun) is a lane of this shape; the dashed box is where a <em>second family</em> lands.
+Deeper record: ADR-054/055/056, <code>docs/architecture/strategy-seams.md</code>.</p>
+
+<div class="legend">
+  <span class="lg-intake">Intake / transport</span>
+  <span class="lg-hub">EventHub (fan-out + overflow discipline)</span>
+  <span class="lg-registry">Boot snapshot (read-once at registration)</span>
+  <span class="lg-strategy">Strategy seam</span>
+  <span class="lg-engine">Engine core</span>
+  <span class="lg-out">Submission</span>
+  <span class="lg-py">Python driver shell</span>
+  <span class="lg-future">Future family</span>
+</div>
+
+<figure>
+<svg width="1240" height="780" viewBox="0 0 1240 780">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#67707f"/>
+    </marker>
+    <style>
+      .b { stroke:#4a5261; stroke-width:1.2; rx:8; }
+      .t { font-size:12.5px; fill:#1a202c; font-weight:600; }
+      .d { font-size:10.5px; fill:#5a6272; }
+      .s { font-size:10px; fill:#7a8291; }
+      .crate { font-size:9.5px; fill:#948106; font-style:italic; }
+      .arr { stroke:#67707f; stroke-width:1.3; fill:none; marker-end:url(#arr); }
+      .arrD { stroke:#9a8fc9; stroke-width:1.3; fill:none; marker-end:url(#arr); stroke-dasharray:5 4; }
+      .lbl { font-size:10px; fill:#4a5261; }
+    </style>
+  </defs>
+
+  <!-- INTAKES -->
+  <g>
+    <rect class="b" x="30" y="30" width="210" height="70" fill="#eaf3ff" rx="8"/>
+    <text class="t" x="135" y="50" text-anchor="middle">Chain WebSocket</text>
+    <text class="d" x="135" y="66" text-anchor="middle">one socket: newHeads + unfiltered logs</text>
+    <text class="s" x="135" y="80" text-anchor="middle">fair-interleaved</text>
+
+    <rect class="b" x="30" y="140" width="210" height="70" fill="#eaf3ff" rx="8"/>
+    <text class="t" x="135" y="160" text-anchor="middle">MEVBlocker feed (WS)</text>
+    <text class="d" x="135" y="176" text-anchor="middle">native pending-tx notifications</text>
+    <text class="s" x="135" y="190" text-anchor="middle">watchdog + reconnect</text>
+
+    <rect class="b" x="30" y="250" width="210" height="70" fill="#eef9e9" rx="8"/>
+    <text class="t" x="135" y="270" text-anchor="middle">DB snapshot load</text>
+    <text class="d" x="135" y="286" text-anchor="middle">connector index + pool tables</text>
+    <text class="s" x="135" y="300" text-anchor="middle">once, at boot</text>
+
+    <rect class="b" x="270" y="30" width="210" height="70" fill="#eaf3ff" rx="8"/>
+    <text class="t" x="375" y="50" text-anchor="middle">degenbot-ingestion</text>
+    <text class="d" x="375" y="66" text-anchor="middle">WsIngestor — transport-only</text>
+    <text class="s" x="375" y="80" text-anchor="middle">topic filter in Rust</text>
+
+    <rect class="b" x="270" y="140" width="210" height="70" fill="#eaf3ff" rx="8"/>
+    <text class="t" x="375" y="160" text-anchor="middle">backrun feed</text>
+    <text class="d" x="375" y="176" text-anchor="middle">degenbot-rpc — adapter parsing</text>
+    <text class="s" x="375" y="190" text-anchor="middle">mevblocker-specific shape local here</text>
+
+    <rect class="b" x="270" y="250" width="210" height="70" fill="#eef9e9" rx="8"/>
+    <text class="t" x="375" y="270" text-anchor="middle">degenbot-db / sidecar_paths</text>
+    <text class="d" x="375" y="286" text-anchor="middle">once-load choreography</text>
+    <text class="s" x="375" y="300" text-anchor="middle">lane-disabled-on-failure</text>
+  </g>
+
+  <!-- HUB -->
+  <g>
+    <rect class="b" x="560" y="160" width="230" height="210" fill="#fff3e0" stroke-width="2" rx="10"/>
+    <text class="t" x="675" y="180" text-anchor="middle">degenbot-eventhub</text>
+    <text class="d" x="675" y="196" text-anchor="middle">per-host intake fan-out</text>
+
+    <rect class="b" x="575" y="210" width="200" height="62" fill="#fffdf8" rx="6"/>
+    <text class="d" x="675" y="228" text-anchor="middle" font-weight="600">Sources register with a DECLARED policy</text>
+    <text class="s" x="675" y="244" text-anchor="middle">DropOldestCounted{name} · LatestOnly</text>
+    <text class="s" x="675" y="258" text-anchor="middle">UnboundedFlagged{name} (audited)</text>
+
+    <rect class="b" x="575" y="286" width="200" height="70" fill="#fffdf8" rx="6"/>
+    <text class="d" x="675" y="304" text-anchor="middle" font-weight="600">Subscribers get typed events</text>
+    <text class="s" x="675" y="320" text-anchor="middle">PendingTx · NewHead · PoolEvent</text>
+    <text class="s" x="675" y="334" text-anchor="middle">+ named channels (engine-owned payloads)</text>
+    <text class="s" x="675" y="348" text-anchor="middle">Hub::named_pending = live depth (observable)</text>
+  </g>
+
+  <!-- REGISTRY -->
+  <g>
+    <rect class="b" x="560" y="430" width="230" height="120" fill="#eef9e9" rx="8"/>
+    <text class="t" x="675" y="450" text-anchor="middle">RouteRegistry</text>
+    <text class="d" x="675" y="466" text-anchor="middle">boot snapshot by handle</text>
+    <text class="s" x="675" y="486" text-anchor="middle">connector index · decoder mirror</text>
+    <text class="s" x="675" y="500" text-anchor="middle">pool membership (is_registered_pool)</text>
+    <text class="s" x="675" y="514" text-anchor="middle">world frozen at strategy registration</text>
+    <text class="s" x="675" y="528" text-anchor="middle">hot reload explicitly deferred</text>
+  </g>
+
+  <!-- ENGINE LANE (settled) -->
+  <g>
+    <rect class="b" x="870" y="30" width="200" height="70" fill="#fdeeee" rx="8"/>
+    <text class="t" x="970" y="50" text-anchor="middle">EngineDriver / stages</text>
+    <text class="d" x="970" y="66" text-anchor="middle">settled-block arb pipeline</text>
+    <text class="crate" x="970" y="80" text-anchor="middle">degenbot-bot · arb_engine</text>
+
+    <rect class="b" x="1105" y="30" width="120" height="70" fill="#f4f4f4" rx="8"/>
+    <text class="t" x="1165" y="50" text-anchor="middle">Python driver</text>
+    <text class="d" x="1165" y="66" text-anchor="middle">_consume.py loop</text>
+    <text class="crate" x="1165" y="80" text-anchor="middle">degenbot-python (PyO3)</text>
+  </g>
+
+  <!-- BACKRUN LANE -->
+  <g>
+    <rect class="b" x="870" y="160" width="200" height="72" fill="#f3eefe" rx="8"/>
+    <text class="t" x="970" y="180" text-anchor="middle">BackrunStrategy</text>
+    <text class="c" x="970" y="196" text-anchor="middle" font-size="11.5px" fill="#3a3f4d">implements PendingTxStrategy</text>
+    <text class="crate" x="970" y="210" text-anchor="middle">degenbot-submission</text>
+    <text class="s" x="970" y="224" text-anchor="middle">MEVBlocker adapter lives at the edges only</text>
+
+    <rect class="b" x="870" y="258" width="200" height="60" fill="#fdeeee" rx="8"/>
+    <text class="t" x="970" y="276" text-anchor="middle">frame pipeline</text>
+    <text class="d" x="970" y="292" text-anchor="middle">SimAnchorOracle (membership)</text>
+    <text class="s" x="970" y="306" text-anchor="middle">+ BlockSimHandle (CacheDb + StorageMemo)</text>
+
+    <rect class="b" x="1105" y="258" width="120" height="60" fill="#e9fbf4" rx="8"/>
+    <text class="t" x="1165" y="276" text-anchor="middle">submission</text>
+    <text class="d" x="1165" y="292" text-anchor="middle">SubmissionTarget</text>
+    <text class="s" x="1165" y="306" text-anchor="middle">Bundle · Public-fanout</text>
+  </g>
+
+  <!-- FUTURE FAMILY (dashed) -->
+  <g>
+    <rect x="870" y="400" width="200" height="90" fill="#faf9ff" stroke="#9a8fc9" stroke-width="1.4" stroke-dasharray="6 4" rx="8"/>
+    <text class="t" x="970" y="422" text-anchor="middle" fill="#5a4fa3">Second pending-TX family</text>
+    <text class="d" x="970" y="440" text-anchor="middle">implement PendingTxStrategy;</text>
+    <text class="d" x="970" y="456" text-anchor="middle">subscribe to hub classes;</text>
+    <text class="d" x="970" y="472" text-anchor="middle">no intake wiring</text>
+  </g>
+
+  <!-- DELETED REMNANTS -->
+  <g>
+    <rect x="270" y="430" width="210" height="80" fill="#fdf2f2" stroke="#c58f8f" stroke-width="1" stroke-dasharray="4 3" rx="8"/>
+    <text class="t" x="375" y="450" text-anchor="middle" fill="#8a3a3a">Retired (B4)</text>
+    <text class="s" x="375" y="467" text-anchor="middle">SimAnchorState serving seam — refuted POC</text>
+    <text class="s" x="375" y="481" text-anchor="middle">env gate deleted; Box::leak anchor gone</text>
+    <text class="s" x="375" y="495" text-anchor="middle">membership question now asks the registry</text>
+  </g>
+
+  <!-- ARROWS -->
+  <!-- WS -> ingestion -->
+  <path class="arr" d="M240 65 H270"/>
+  <!-- WS -> hub (newHeads+logs) at head source -->
+  <path class="arr" d="M480 65 C 530 65 530 190 560 205"/>
+  <text class="lbl" x="505" y="100"> PoolEvent</text>
+  <text class="lbl" x="505" y="114"> + NewHead</text>
+
+  <!-- feed socket -> adapter -->
+  <path class="arr" d="M240 175 H270"/>
+  <path class="arr" d="M480 175 C 530 175 525 215 573 230"/>
+  <text class="lbl" x="500" y="195"> PendingTx (drop-oldest ring, counter kept)</text>
+
+  <!-- db -> loaders -> registry -->
+  <path class="arr" d="M240 285 H270"/>
+  <path class="arr" d="M480 285 C 530 285 525 472 560 478"/>
+
+  <!-- registry -> lanes -->
+  <path class="arrD" d="M790 480 C 830 480 820 200 868 192" />
+  <text class="lbl" x="820" y="430"> registry handle</text>
+  <path class="arrD" d="M790 470 C 840 470 820 60 868 57" />
+
+  <!-- hub -> engine -->
+  <path class="arr" d="M675 160 V118 H900" transform="translate(0,0)" opacity="0"/>
+  <path class="arr" d="M790 213 C 830 213 820 68 870 65"/>
+  <text class="lbl" x="810" y="205"> newHead + pool events</text>
+
+  <!-- hub -> backrun strategy -->
+  <path class="arr" d="M790 240 H870"/>
+  <text class="lbl" x="800" y="232"> PendingTx</text>
+
+  <!-- engine -> python driver -->
+  <path class="arr" d="M1070 65 H1105"/>
+  <text class="lbl" x="1060" y="56"> ResultBatch · BlockNotification (UnboundedFlagged, depth-observed)</text>
+
+  <!-- strategy -> pipeline -->
+  <path class="arr" d="M970 232 V258"/>
+  <!-- pipeline -> submission -->
+  <path class="arr" d="M1070 288 H1105"/>
+  <text class="lbl" x="1030" y="280"> composed bundle</text>
+
+  <!-- python driver -> submission (executor) arrow bent -->
+  <path class="arr" d="M1165 100 V240" stroke-dasharray="3 3"/>
+  <text class="lbl" x="1170" y="150" transform="rotate(90 1170 150)"> driver steers the same submission module</text>
+
+  <!-- future -->
+  <path class="arrD" d="M790 300 C 830 300 820 440 868 445"/>
+  <text class="lbl" x="805" y="360"> PendingTx · NewHead · PoolEvent subscriptions</text>
+
+  <!-- retired: sim anchor to engine/pipeline -->
+  <path class="arr" d="M480 470 C 700 500 830 330 868 296" stroke-dasharray="3 3" opacity=".5"/>
+  <text class="lbl" x="520" y="500" opacity=".7"> (was: per-strategy leakage; now: oracle by handle)</text>
+
+</svg>
+</figure>
+
+<h2>The seams (where strategies hook in)</h2>
+<table>
+  <tr><th>Seam</th><th>Lifestyle type</th><th>Where</th><th>Hook for a strategy</th></tr>
+  <tr><td>Intake vocabulary</td><td><code>HubEvent</code> enum</td><td><code>degenbot-eventhub/src/event.rs</code></td><td>subscribe to a CLASS (PendingTx / NewHead / PoolEvent); never own a transport</td></tr>
+  <tr><td>Overflow discipline</td><td><code>OverflowPolicy</code> enum</td><td><code>degenbot-eventhub/src/policy.rs</code></td><td>declared at registration; <code>DropOldestCounted{name}</code> · <code>LatestOnly</code> · <code>UnboundedFlagged{name}</code></td></tr>
+  <tr><td>Named sink channels</td><td><code>NamedSender/NamedReceiver</code></td><td><code>degenbot-eventhub/src/named.rs</code></td><td>engine-shaped payloads (ResultBatch etc.) without inventing vocabulary; depth readable via <code>Hub::named_pending</code></td></tr>
+  <tr><td>Head source</td><td><code>HeadSender/HeadSubscription</code></td><td><code>degenbot-eventhub/src/head.rs</code></td><td>latest-head + staleness (LatestOnly); the 200ms poll fallback stays driver-side</td></tr>
+  <tr><td>World snapshot</td><td><code>RouteRegistry</code></td><td><code>degenbot-bot/src/bot_core/route_registry.rs</code></td><td>frozen at registration: connector index, decoder mirror, membership</td></tr>
+  <tr><td>Pool-membership oracle</td><td><code>SimAnchorOracle</code></td><td><code>degenbot-bot/src/bot_core/sim_anchor.rs</code></td><td>engine answers from driver snapshots; backrun lane answers from the registry</td></tr>
+  <tr><td>Strategy trait</td><td><code>PendingTxStrategy</code></td><td><code>degenbot-submission/src/pending_tx.rs</code></td><td>survives frame restarts; converts an event into a submission unit</td></tr>
+  <tr><td>Frame artifacts</td><td><code>MarketContext</code></td><td><code>degenbot-submission/src/market_context.rs</code></td><td>frame-surviving caches handed into the strategy</td></tr>
+  <tr><td>Submission routing</td><td><code>SubmissionTarget</code> enum</td><td><code>degenbot-submission</code></td><td>Bundle (auction) / Public fan-out; strategy declares intent, never the wire</td></tr>
+  <tr><td>Python drive</td><td>PyO3 register/result channels</td><td><code>degenbot-python</code></td><td>thin shell: attach the driver, consume, dispatch</td></tr>
+  <tr><td>Standalone Rust</td><td><code>degenbot</code> umbrella</td><td><code>rust/crates/degenbot</code></td><td>every crate re-exported (reachability-gated); example proves the path</td></tr>
+</table>
+
+<h2>Reused across lanes</h2>
+<ul class="tight">
+  <li><b>One chain socket per host</b> — <code>WsIngestor</code> fair-interleaves head + unfiltered logs and the Rust-side topic filter keeps both lanes on the same transport.</li>
+  <li><b>One hub per process</b> — both the feed ring and the head watch became source registrations; drop-oldest + counter semantics preserved at name level (<code>dropped_ring</code>).</li>
+  <li><b>One world snapshot</b> — boot load happens once; register/enable a strategy means handing it a handle.</li>
+  <li><b>One submission core</b> — Bundle and Public routing are the same machinery with a target selection; the MEVBlocker URL merely puts the private endpoint ahead of the read provider in the public fan-out.</li>
+  <li><b>One sim stack</b> — CacheDb + WriteCache + per-block StorageMemo own caching; the strategy never touches chain slots.</li>
+</ul>
+
+</body>
+</html>
