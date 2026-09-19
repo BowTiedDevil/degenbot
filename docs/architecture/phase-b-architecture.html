@@ -17,7 +17,7 @@
   th { background:#f2f4f8; }
   code { background:#eef1f6; padding: .1em .35em; border-radius: 4px; font-size: .82em; }
   .legend span { display:inline-block; padding:.3rem .55rem; border-radius:6px; margin:.15rem .3rem .15rem 0; font-size:.8rem; border:1px solid var(--line); }
-  .lg-intake{background:#eaf3ff;} .lg-hub{background:#fff3e0;} .lg-registry{background:#eef9e9;} .lg-strategy{background:#f3eefe;} .lg-engine{background:#fdeeee;} .lg-out{background:#e9fbf4;} .lg-py{background:#f4f4f4;} .lg-future{border:1px dashed #9a8fc9; background:#faf9ff; color:#5a4fa3;}
+  .lg-intake{background:#eaf3ff;} .lg-hub{background:#fff3e0;} .lg-registry{background:#eef9e9;} .lg-strategy{background:#f3eefe;} .lg-engine{background:#fdeeee;} .lg-out{background:#e9fbf4;} .lg-py{background:#f4f4f4;} .lg-future{border:1px dashed #9a8fc9; background:#faf9ff; color:#5a4fa3;} .lg-host{border:1px solid #e0c56b; background:#fff8e1;}
   ul.tight li { margin: .3rem 0; font-size: .9rem; }
 </style>
 </head>
@@ -25,7 +25,7 @@
 <h1>degenbot — post-Phase-B architecture</h1>
 <p class="sub">Per-process hub fan-out, boot-snapshot registry, and the seams where pending-transaction strategies hook in.
 Existing strategy family (MEVBlocker backrun) is a lane of this shape; the dashed box is where a <em>second family</em> lands.
-Deeper record: ADR-054/055/056, <code>docs/architecture/strategy-seams.md</code>.</p>
+Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</code>.</p>
 
 <div class="legend">
   <span class="lg-intake">Intake / transport</span>
@@ -36,6 +36,7 @@ Deeper record: ADR-054/055/056, <code>docs/architecture/strategy-seams.md</code>
   <span class="lg-out">Submission</span>
   <span class="lg-py">Python driver shell</span>
   <span class="lg-future">Future family</span>
+  <span class="lg-host">Strategy host (Phase C)</span>
 </div>
 
 <figure>
@@ -241,6 +242,18 @@ Deeper record: ADR-054/055/056, <code>docs/architecture/strategy-seams.md</code>
   <tr><td>Submission routing</td><td><code>SubmissionTarget</code> enum</td><td><code>degenbot-submission</code></td><td>Bundle (auction) / Public fan-out; strategy declares intent, never the wire</td></tr>
   <tr><td>Python drive</td><td>PyO3 register/result channels</td><td><code>degenbot-python</code></td><td>thin shell: attach the driver, consume, dispatch</td></tr>
   <tr><td>Standalone Rust</td><td><code>degenbot</code> umbrella</td><td><code>rust/crates/degenbot</code></td><td>every crate re-exported (reachability-gated); example proves the path</td></tr>
+</table>
+
+<h2>Phase C overlay — the strategy host</h2>
+<p class="sub">One process, many drivers, one operator account. The host owns the shared services; each driver attaches. ADR-057, <code>rust/crates/degenbot-bot/src/strategy_host.rs</code>.</p>
+<table>
+  <tr><th>Component</th><th>Owner</th><th>Driver-facing contract</th></tr>
+  <tr><td>Event hub</td><td>host (<code>StrategyHost::mint</code> → <code>HostHub&lt;T&gt;</code>)</td><td>engine named channels are registered before the hub is shared; drivers subscribe by class. One driver per hub.</td></tr>
+  <tr><td><code>RouteRegistry</code></td><td>host</td><td>boot snapshot loaned read-only by handle.</td></tr>
+  <tr><td><code>NonceAuthority</code></td><td>host</td><td>sign-time lease of the lowest free nonce, contiguous above the confirmed chain nonce; typed declines, never a panic.</td></tr>
+  <tr><td>Driver FSM / tombstones</td><td>host</td><td><code>Registered → Enabled → Running → {Halted, Disabled}</code>; terminal states never restart.</td></tr>
+  <tr><td><code>LaneNamespace</code></td><td>host computes</td><td>a driver's run artifacts live under <code>&lt;state_root&gt;/&lt;strategy&gt;</code>.</td></tr>
+  <tr><td><code>SubmissionLedger</code> + <code>HeadPolicy</code></td><td><code>degenbot-submission</code></td><td>the host reconciles per head; typed notices reach only the owning driver.</td></tr>
 </table>
 
 <h2>Reused across lanes</h2>

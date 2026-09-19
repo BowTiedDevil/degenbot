@@ -64,6 +64,39 @@ _Avoid_: strategy-scoped ad-hoc env reads outside the schema.
 At a use site, an unknown/unsupported pool *family* aborts loudly (typed fatal), never a
 silent skip; transient RPC/timing/fetch failures keep their skip semantics. ADR-055 D4.
 
+## Strategy host (ADR-057)
+
+**StrategyHost**:
+The per-process owner of the shared strategy services — the event hub, the boot-snapshot
+route registry, and the nonce authority — that registers strategies and drives their
+lifecycle FSM. A strategy driver attaches to the host; the host never names a strategy
+family.
+_Avoid_: "sidecar" (the standalone two-process deployment), "orchestrator", "manager".
+
+**NonceAuthority**:
+The host's single owner of the operator account's nonce space, leased at sign time: a
+strategy receives the lowest free nonce at or above the confirmed chain nonce, so leases
+and broadcasts form a contiguous prefix above it.
+_Avoid_: "nonce manager", "nonce lane", "nonce pool".
+
+**Lane namespace**:
+A driver's run-artifact root (`<state_root>/<strategy>`, with `session/` and
+`quarantine/` subdirectories) that keeps two drivers on one host from colliding on a
+shared path.
+_Avoid_: "lane root", "strategy directory", "sandbox".
+
+**Submission ledger**:
+The per-strategy record of every signed submission — nonce, followed target, bundle hash,
+built-at head, and state `Signed → Broadcast → Landed | Stale | Orphaned` — whose
+reconcile outcomes are nonce-level facts, not byte-level ones.
+_Avoid_: "submission table", "tx log", "journal".
+
+**HeadPolicy**:
+The default per-driver reaction to a typed head notice: re-stamp on an orphaned
+submission or a revoked lease, re-evaluate at the decide stage on a stale one, retire on
+a landed one.
+_Avoid_: "retry policy", "rebroadcast policy".
+
 ## System layers
 
 **Rust core**:
