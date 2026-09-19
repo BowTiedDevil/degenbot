@@ -1405,6 +1405,14 @@ class ArbitrageEngine:
     # unknown path id.
     def payload_path_info(self, path_id: int) -> dict[str, Any] | None: ...
 
+    # ── Strategy-host operator verbs (Phase C slice C4) ──
+    # The engine attaches to a host-minted hub; these verbs drive the host's
+    # driver FSM. A refusal is a typed exception (UnknownStrategyError /
+    # UnconfiguredStrategyError / StrategyHostError), never a string match.
+    def enable_strategy(self, name: str) -> str: ...
+    def disable_strategy(self, name: str) -> None: ...
+    def strategies(self) -> list[tuple[str, str, str | None]]: ...
+
 class BlockStream:
     """Async iterator over `newHeads` block notifications from the pump.
 
@@ -1472,6 +1480,21 @@ class FleetIntakeFaultedError(RuntimeError):
     error instead. Sticky until a fresh process; subclasses
     ``RuntimeError`` so broad handlers keep working.
     """
+
+class StrategyHostError(RuntimeError):
+    """A strategy-host operator verb was refused.
+
+    The host's driver FSM declined a lifecycle move (for example enabling an
+    already-running strategy, or disabling a halted tombstone). Subclasses
+    ``RuntimeError``; the two named subclasses cover the operator's admission
+    mistakes.
+    """
+
+class UnknownStrategyError(StrategyHostError):
+    """The named strategy is not registered on the host."""
+
+class UnconfiguredStrategyError(StrategyHostError):
+    """The named strategy is registered but its config facet was not booted."""
 
 class PathRegistryFullError(ValueError):
     """The engine path registry is at its configured registered-path cap.
@@ -1698,6 +1721,9 @@ __all__ = [
     "ReservePairView",
     "RetryPolicyDefaults",
     "SpecViolationError",
+    "StrategyHostError",
+    "UnconfiguredStrategyError",
+    "UnknownStrategyError",
     "VerificationMismatchError",
     "VerificationRpcError",
     "aave",

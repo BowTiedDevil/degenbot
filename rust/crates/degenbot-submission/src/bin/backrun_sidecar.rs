@@ -9,20 +9,14 @@
 //! unchanged.
 
 #![expect(
-    clippy::expect_used,
-    reason = "bin: fatal config failures exit the process loudly"
-)]
-#![expect(
     clippy::print_stderr,
     reason = "bin: boot/config failures must reach the operator before tracing is installed"
 )]
 
 use std::sync::Arc;
 
-use degenbot_bot::sidecar::SidecarConfig;
 use degenbot_eventhub::Hub;
-use degenbot_rpc::provider::AlloyProvider;
-use degenbot_submission::backrun_driver::{BackrunContext, BackrunDriver, CHAIN_ID};
+use degenbot_submission::backrun_driver::{backrun_boot, resolve_backrun_node_join};
 
 // Session telemetry: the fmt subscriber appends to the session's
 // `stdout.log` (file-only by default) so a run's console output survives the
@@ -97,24 +91,15 @@ async fn main() {
     init_tracing(config.logging.log_stderr);
 
     let env = degenbot_config::ProcessEnv;
-    let rpc_url = degenbot_config::resolve_node_http_uri(&env, CHAIN_ID, None)
-        .unwrap_or_else(|error| {
-            eprintln!("{error}");
-            std::process::exit(2);
-        })
-        .value;
-    let cfg = SidecarConfig::from_config(&config, rpc_url);
 
-    // The host's node join: built once here so the boot ranker and the lane
-    // share one connection pool.
-    let client = alloy::rpc::client::ClientBuilder::default().http(
-        cfg.rpc_url
-            .parse()
-            .expect("DEGENBOT_RPC_HTTP_CHAINID_1 is a valid http url"),
-    );
-    let provider = Arc::new(AlloyProvider::from_provider(Arc::new(
-        alloy::providers::ProviderBuilder::default().connect_client(client),
-    )));
+    // The host's node join: resolved once here so the boot ranker and the lane
+    // share one connection pool. A hosted lane resolves the same join through
+    // the shared boot path.
+    let join = resolve_backrun_node_join().unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(2);
+    });
+    let provider = Arc::clone(&join.provider);
 
     // The DB-backed connector index -- ONE startup scan, never a
     // per-frame query. The path comes from the shared `DEGENBOT_DB_PATH`
@@ -177,27 +162,20 @@ async fn main() {
         (None, None)
     };
 
-    // Head source for the live loop: a `newHeads` subscription over a dedicated
-    // WS endpoint (the MEVBlocker frame feed and the chain node are different
-    // hosts, so the head WS is its own URL). The hub owns the latest head and
-    // its staleness; `HeadWatch` only performs the subscribe + reconnect and
-    // publishes into the hub. The 200ms `eth_blockNumber` poll is the FALLBACK,
-    // not the primary source.
-    let head_ws_url = degenbot_config::resolve_node_ws_uri(&env, CHAIN_ID, None)
-        .ok()
-        .map(|resolved| resolved.value);
-
+    // The hub is the host's, not the lane's; the lane registers its feed on it.
     let hub = Arc::new(Hub::new());
-    let ctx = BackrunContext {
-        connector_db,
-        head_ws_url,
-        provider,
-    };
-    let driver = BackrunDriver::start(cfg, hub, route_registry, ctx).await;
-    driver.wait().await;
+
+    // ONE boot path, shared with a multi-strategy host: `backrun_boot`
+    // manufactures the lane's config, head source, and context, and
+    // `into_driver_future` starts the lane. The standalone sidecar keeps the
+    // process-global state root (`lane_root: None`) and polls the future
+    // inline, so a lane panic still unwinds the process.
+    let boot = backrun_boot(&config, join, hub, route_registry, connector_db, None);
+    boot.into_driver_future().await;
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test assertions fail loudly")]
 mod tests {
     use super::strategy_arm_refusal;
 

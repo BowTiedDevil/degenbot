@@ -13,8 +13,18 @@
 //! no driver loop in this module, so the host's only job is admission and
 //! lifecycle. Enabling a name the host never registered, or a name registered
 //! without a configured facet, fails loudly.
+//!
+//! A driver that owns process-lifetime artifacts is lent a [`LaneNamespace`]
+//! under the host state root, and a driver that runs a loop registers a spawn
+//! factory the host boots at [`StrategyHost::start_driving`]. The host itself
+//! never boots a loop inline. A strategy whose loop is already driven by the
+//! engine's own pump (the settlement arm) registers no factory: it is not
+//! host-driven, so `start_driving` skips it rather than failing it.
 
 use std::fmt;
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use degenbot_eventhub::Hub;
@@ -182,6 +192,100 @@ pub enum HostError {
         /// The refused move's typed reason.
         decline: FsmDecline,
     },
+    /// `lane_namespace` named a driver that has never been enabled (or was
+    /// disabled): no lane resources exist to name.
+    #[error("strategy \"{0}\" has no enabled lane namespace")]
+    StrategyNotEnabled(StrategyId),
+    /// `lane_namespace` was called before the host learned its state root.
+    #[error("the host has no state root installed")]
+    StateRootUnset,
+}
+
+/// A lane's run-artifact namespace under the host state root.
+///
+/// A strategy that owns process-lifetime artifacts writes them under its own
+/// name so two drivers on one host cannot collide on a shared path. The value
+/// carries only the root; each consumer appends its own file names, so the
+/// host stays free of the submission crate's file vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneNamespace {
+    root: PathBuf,
+}
+
+impl LaneNamespace {
+    /// The namespace `<state_root>/<id>`.
+    #[must_use]
+    pub fn under(state_root: impl Into<PathBuf>, id: &StrategyId) -> Self {
+        Self {
+            root: state_root.into().join(id.as_str()),
+        }
+    }
+
+    /// The lane's root directory.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The lane's session directory.
+    #[must_use]
+    pub fn session_dir(&self) -> PathBuf {
+        self.root.join("session")
+    }
+
+    /// The lane's quarantine directory.
+    #[must_use]
+    pub fn quarantine_dir(&self) -> PathBuf {
+        self.root.join("quarantine")
+    }
+}
+
+/// Why a driver's loop returned, in the host's vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriverExit {
+    /// The loop stopped on request; no tombstone.
+    Stopped,
+    /// The loop halted itself; the cause becomes the tombstone detail.
+    Halted(String),
+}
+
+/// A driver's loop future, minted by its spawn factory.
+///
+/// Not required to be `Send`: a lane whose replay stack is single-threaded (the
+/// backrun lane's `Rc`-backed buffers) is booted on a dedicated single-thread
+/// runtime by [`StrategyHost::start_driving`], while the factory itself must be
+/// `Send` so it can travel to that thread.
+pub type DriverFuture = Pin<Box<dyn Future<Output = DriverExit> + 'static>>;
+
+/// The once-only factory that boots a driver's loop.
+///
+/// The host hands the factory the lane namespace for the driver it is starting
+/// (`None` when no state root is installed), so a lane that writes
+/// run-artifacts under its own name learns its scope at the driving edge and a
+/// lane that keeps the process-global root is told so explicitly.
+pub type DriverSpawnFactory = Box<dyn FnOnce(Option<LaneNamespace>) -> DriverFuture + Send>;
+
+/// A driver loop the host started, awaiting its terminal exit.
+pub struct DriverTask {
+    id: StrategyId,
+    handle: tokio::task::JoinHandle<DriverExit>,
+}
+
+impl DriverTask {
+    /// The driver the task runs.
+    #[must_use]
+    pub fn id(&self) -> &StrategyId {
+        &self.id
+    }
+
+    /// Await the loop's terminal exit. A panicked task is a self-halt: the
+    /// lane boundary turns the unwinding panic into a tombstone instead of
+    /// letting it reach the host process.
+    pub async fn wait(self) -> DriverExit {
+        self.handle
+            .await
+            .unwrap_or_else(|error| DriverExit::Halted(format!("driver task failed: {error}")))
+    }
 }
 
 /// The process-wide host: one hub, one route registry, one nonce authority,
@@ -191,6 +295,8 @@ pub struct StrategyHost {
     registry: Arc<RouteRegistry>,
     nonce: Arc<NonceAuthority>,
     drivers: IndexMap<StrategyId, DriverRecord>,
+    spawns: IndexMap<StrategyId, DriverSpawnFactory>,
+    state_root: Option<PathBuf>,
 }
 
 /// A host-minted hub paired with the source-channel handles registered during
@@ -229,6 +335,8 @@ impl StrategyHost {
             registry,
             nonce,
             drivers: IndexMap::new(),
+            spawns: IndexMap::new(),
+            state_root: None,
         }
     }
 
@@ -384,6 +492,141 @@ impl StrategyHost {
         }
         self.nonce.release_strategy(id);
         Ok(())
+    }
+
+    /// Install the state root lane namespaces resolve under.
+    pub fn set_state_root(&mut self, root: impl Into<PathBuf>) {
+        self.state_root = Some(root.into());
+    }
+
+    /// The lane namespace for a driver that has been enabled.
+    ///
+    /// A registered-but-never-enabled driver (or a disabled one) owns no lane
+    /// resources, so naming a namespace for it is refused. A halted tombstone
+    /// still names its namespace: the artifacts outlive the tombstone and the
+    /// operator may need to inspect them.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::UnknownStrategy`] for an unregistered name;
+    /// [`HostError::StrategyNotEnabled`] for a driver owning no lane;
+    /// [`HostError::StateRootUnset`] when no state root was installed.
+    pub fn lane_namespace(&self, id: &StrategyId) -> Result<LaneNamespace, HostError> {
+        let record = self
+            .drivers
+            .get(id)
+            .ok_or_else(|| HostError::UnknownStrategy(id.clone()))?;
+        if matches!(
+            record.state,
+            DriverState::Registered | DriverState::Disabled
+        ) {
+            return Err(HostError::StrategyNotEnabled(id.clone()));
+        }
+        let root = self.state_root.clone().ok_or(HostError::StateRootUnset)?;
+        Ok(LaneNamespace::under(root, id))
+    }
+
+    /// Attach the once-only spawn factory a driver's loop is booted from.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::UnknownStrategy`] for an unregistered name.
+    pub fn attach_spawn(
+        &mut self,
+        id: &StrategyId,
+        spawn: DriverSpawnFactory,
+    ) -> Result<(), HostError> {
+        self.record_mut(id)?;
+        self.spawns.insert(id.clone(), spawn);
+        Ok(())
+    }
+
+    /// Whether a driver has a spawn factory attached. A facet the engine's own
+    /// pump drives (the settlement arm) deliberately has none.
+    #[must_use]
+    pub fn has_spawn(&self, id: &StrategyId) -> bool {
+        self.spawns.contains_key(id)
+    }
+
+    /// Boot every enabled driver that registered a spawn factory, on the
+    /// shared runtime, and move it to [`DriverState::Running`].
+    ///
+    /// This is the host's driving edge: the settlement pump arms on its own
+    /// `resume`, while a host-managed driver's loop starts here. Each returned
+    /// [`DriverTask`] is the lane boundary — the caller awaits it and feeds the
+    /// exit back through [`Self::record_driver_exit`], so a lane panic becomes
+    /// a tombstone rather than a host unwind.
+    ///
+    /// An enabled driver with no registered factory is skipped, not failed: the
+    /// settlement facet registers none because the engine's pump arm already
+    /// drives it, so only strategies that own a loop the host must start
+    /// advance to [`DriverState::Running`] here.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::Transition`] if the FSM refuses a driver's start.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a driver's dedicated single-thread runtime cannot be built —
+    /// process infrastructure whose failure is fatal, not recoverable.
+    #[expect(
+        clippy::expect_used,
+        reason = "a driver's dedicated single-thread runtime is process infrastructure: failing to build it is fatal"
+    )]
+    pub fn start_driving(&mut self) -> Result<Vec<DriverTask>, HostError> {
+        let runtime = degenbot_core::runtime::get_runtime();
+        let ids: Vec<StrategyId> = self
+            .drivers
+            .iter()
+            .filter(|(_, record)| record.state == DriverState::Enabled)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut tasks = Vec::new();
+        for id in ids {
+            let Some(spawn) = self.spawns.shift_remove(&id) else {
+                continue;
+            };
+            let lane = self.lane_namespace(&id).ok();
+            // A lane's replay stack is single-threaded, so its loop runs on a
+            // dedicated current-thread runtime off a blocking thread — the
+            // future is minted and polled on that thread and never travels.
+            let handle = runtime.spawn_blocking(move || {
+                let future = spawn(lane);
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("driver lane runtime")
+                    .block_on(future)
+            });
+            self.start(&id)?;
+            tasks.push(DriverTask { id, handle });
+        }
+        Ok(tasks)
+    }
+
+    /// Fold a started driver's terminal exit into the FSM: a self-halt is a
+    /// tombstone carrying the cause; a clean stop leaves the move to the
+    /// operator's disable verb.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::UnknownStrategy`] / [`HostError::Transition`] from the
+    /// resulting lifecycle move.
+    pub fn record_driver_exit(
+        &mut self,
+        id: &StrategyId,
+        exit: DriverExit,
+    ) -> Result<(), HostError> {
+        match exit {
+            DriverExit::Halted(detail) => self.halt(id, detail),
+            DriverExit::Stopped => {
+                if self.record(id).is_none() {
+                    return Err(HostError::UnknownStrategy(id.clone()));
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Every registered driver, in registration order.
@@ -644,5 +887,113 @@ mod tests {
             .list()
             .iter()
             .all(|r| r.state() == DriverState::Registered));
+    }
+
+    #[test]
+    fn lane_namespace_is_refused_until_the_driver_is_enabled() {
+        let mut host = host();
+        host.set_state_root("/var/state");
+        let id = register(&mut host, "backrun");
+        assert_eq!(
+            host.lane_namespace(&id),
+            Err(HostError::StrategyNotEnabled(id.clone())),
+            "a registered-but-never-enabled driver owns no lane"
+        );
+        host.enable(&id).expect("enable");
+        let lane = host.lane_namespace(&id).expect("lane");
+        assert_eq!(lane.root(), Path::new("/var/state/backrun"));
+        assert_eq!(
+            lane.session_dir(),
+            PathBuf::from("/var/state/backrun/session")
+        );
+        assert_eq!(
+            lane.quarantine_dir(),
+            PathBuf::from("/var/state/backrun/quarantine")
+        );
+    }
+
+    #[test]
+    fn lane_namespace_needs_an_installed_state_root() {
+        let mut host = host();
+        let id = register(&mut host, "backrun");
+        host.enable(&id).expect("enable");
+        assert_eq!(host.lane_namespace(&id), Err(HostError::StateRootUnset));
+    }
+
+    #[test]
+    fn a_disabled_driver_owns_no_lane() {
+        let mut host = host();
+        host.set_state_root("/var/state");
+        let id = register(&mut host, "backrun");
+        host.enable(&id).expect("enable");
+        host.disable(&id).expect("disable");
+        assert_eq!(
+            host.lane_namespace(&id),
+            Err(HostError::StrategyNotEnabled(id))
+        );
+    }
+
+    #[tokio::test]
+    async fn start_driving_boots_enabled_spawns_and_tombstones_a_halt() {
+        let mut host = host();
+        let id = register(&mut host, "backrun");
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<DriverExit>();
+        let spawn: DriverSpawnFactory = Box::new(move |_lane| {
+            Box::pin(async move { exit_rx.await.unwrap_or(DriverExit::Stopped) })
+        });
+        host.attach_spawn(&id, spawn).expect("attach spawn");
+        host.enable(&id).expect("enable");
+
+        let tasks = host.start_driving().expect("start driving");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(host.state_of(&id), Some(DriverState::Running));
+
+        exit_tx
+            .send(DriverExit::Halted("lane-local violation".to_string()))
+            .expect("send exit");
+        let task = tasks.into_iter().next().expect("task");
+        assert_eq!(task.id(), &id);
+        let exit = task.wait().await;
+        host.record_driver_exit(&id, exit).expect("record exit");
+        let record = host.record(&id).expect("record");
+        assert_eq!(record.state(), DriverState::Halted);
+        assert_eq!(record.halt_detail(), Some("lane-local violation"));
+        assert!(host.enable(&id).is_err(), "a tombstone never restarts");
+    }
+
+    #[tokio::test]
+    async fn start_driving_hands_the_lane_namespace_to_the_factory() {
+        let mut host = host();
+        host.set_state_root("/var/state");
+        let id = register(&mut host, "backrun");
+        let seen: Arc<std::sync::Mutex<Option<PathBuf>>> = Arc::new(std::sync::Mutex::new(None));
+        let writer = Arc::clone(&seen);
+        let spawn: DriverSpawnFactory = Box::new(move |lane| {
+            *writer.lock().expect("lane slot") =
+                lane.map(|namespace| namespace.root().to_path_buf());
+            Box::pin(async { DriverExit::Stopped })
+        });
+        host.attach_spawn(&id, spawn).expect("attach spawn");
+        host.enable(&id).expect("enable");
+
+        let tasks = host.start_driving().expect("start driving");
+        assert_eq!(tasks.len(), 1);
+        let task = tasks.into_iter().next().expect("task");
+        assert_eq!(task.wait().await, DriverExit::Stopped);
+        assert_eq!(
+            seen.lock().expect("lane slot").as_deref(),
+            Some(Path::new("/var/state/backrun")),
+            "the factory is handed the driver's lane namespace"
+        );
+    }
+
+    #[test]
+    fn start_driving_leaves_a_driver_without_a_spawn_registered() {
+        let mut host = host();
+        let id = register(&mut host, "backrun");
+        host.enable(&id).expect("enable");
+        let tasks = host.start_driving().expect("start driving");
+        assert!(tasks.is_empty());
+        assert_eq!(host.state_of(&id), Some(DriverState::Enabled));
     }
 }

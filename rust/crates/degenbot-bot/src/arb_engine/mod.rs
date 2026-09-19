@@ -136,7 +136,7 @@ mod tests;
 pub use diagnostic::{
     compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
 };
-pub use driver::{DriverError, EngineDriver, PhaseError};
+pub use driver::{DriverError, EngineChannelHandles, EngineDriver, PhaseError};
 pub use engine_stages::EngineStages;
 pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,

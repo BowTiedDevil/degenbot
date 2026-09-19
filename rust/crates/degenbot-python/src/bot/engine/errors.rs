@@ -188,16 +188,16 @@ pub(crate) fn boot_refused(err: degenbot_workers::dispatcher::BootError) -> PyEr
                 "fleet boot refused: detected CPU budget {quota:.2} cores is below the pinned-role floor of {required} cores — give the host at least {required} usable cores (cgroup quota / CPU affinity); the serial binding for 2-5-core hosts is pending (FF-T4, FLEETFLOOR)"
             ))
         }
-        BootError::Budget(BudgetError::Oversubscribed { quota, floor, declared }) => {
-            BootRefused::new_err(format!(
-                "fleet boot refused: declared peak shares {declared} cores exceed floor(quota {quota:.2}) = {floor} — lower the fleet.* share overrides; oversubscription is a configuration bug, refused at boot"
-            ))
-        }
-        BootError::Budget(BudgetError::BelowHostFloor { quota }) => BootRefused::new_err(
-            format!(
-                "fleet boot refused: detected CPU budget {quota:.2} cores is below the 2-core host floor (one core for I/O work, one core for solve work) — no binding can host the fleet there; give the host at least 2 usable cores (cgroup quota / CPU affinity)"
-            ),
-        ),
+        BootError::Budget(BudgetError::Oversubscribed {
+            quota,
+            floor,
+            declared,
+        }) => BootRefused::new_err(format!(
+            "fleet boot refused: declared peak shares {declared} cores exceed floor(quota {quota:.2}) = {floor} — lower the fleet.* share overrides; oversubscription is a configuration bug, refused at boot"
+        )),
+        BootError::Budget(BudgetError::BelowHostFloor { quota }) => BootRefused::new_err(format!(
+            "fleet boot refused: detected CPU budget {quota:.2} cores is below the 2-core host floor (one core for I/O work, one core for solve work) — no binding can host the fleet there; give the host at least 2 usable cores (cgroup quota / CPU affinity)"
+        )),
         BootError::Budget(BudgetError::IoWorkersOutOfBounds { requested, binding }) => {
             BootRefused::new_err(format!(
                 "fleet boot refused: runtime.io_workers override {requested} is out of bounds for the {binding} binding (pinned: A >= 1, the ambient floor; serial: exactly one ambient I/O lane) — fix or drop the override, never a silent clamp"
@@ -213,3 +213,28 @@ pub(crate) fn boot_refused(err: degenbot_workers::dispatcher::BootError) -> PyEr
         )),
     }
 }
+
+// Strategy-host operator refusals. The host's FSM declines are typed; these
+// exceptions make them classifiable by type on the Python side instead of by
+// message. `StrategyHostError` is the base (a lifecycle transition refusal);
+// the two named subclasses cover the operator's two admission mistakes — a
+// name the host never registered, and a registered name whose config facet
+// carried none of its required keys.
+create_exception!(
+    degenbot._ffi,
+    StrategyHostError,
+    pyo3::exceptions::PyRuntimeError,
+    "A strategy-host operator verb was refused (a lifecycle transition the FSM does not allow)."
+);
+create_exception!(
+    degenbot._ffi,
+    UnknownStrategyError,
+    crate::bot::engine::StrategyHostError,
+    "The named strategy is not registered on the host: the operator named a driver the host never admitted."
+);
+create_exception!(
+    degenbot._ffi,
+    UnconfiguredStrategyError,
+    crate::bot::engine::StrategyHostError,
+    "The named strategy is registered but unconfigured: no config facet with its required keys was booted, so it cannot be enabled."
+);

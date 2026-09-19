@@ -321,6 +321,26 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
             .get_type::<crate::bot::engine::PathRegistryFullError>(),
     )?;
 
+    // Strategy-host operator refusals: typed so an unknown or unconfigured
+    // strategy is classifiable by type, not message. (feature = "bot")
+    #[cfg(feature = "bot")]
+    m.add(
+        "StrategyHostError",
+        m.py().get_type::<crate::bot::engine::StrategyHostError>(),
+    )?;
+    #[cfg(feature = "bot")]
+    m.add(
+        "UnknownStrategyError",
+        m.py()
+            .get_type::<crate::bot::engine::UnknownStrategyError>(),
+    )?;
+    #[cfg(feature = "bot")]
+    m.add(
+        "UnconfiguredStrategyError",
+        m.py()
+            .get_type::<crate::bot::engine::UnconfiguredStrategyError>(),
+    )?;
+
     // Bot — Rust-owned state (feature = "bot")
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::PyBot>()?;

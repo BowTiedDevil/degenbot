@@ -18,7 +18,7 @@ impl PyArbEngine {
     #[new]
     #[pyo3(signature = (py_bot=None))]
     #[expect(clippy::needless_pass_by_value)]
-    fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
+    pub(crate) fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
         let py_bot_ref = py_bot.as_ref();
         // ADR-006 D1+D4: if a `PyBot` is supplied, adopt its shared
         // `Arc<RwLock<BotState>>` so the engine reads/writes the SAME core that
@@ -51,10 +51,20 @@ impl PyArbEngine {
         // state, verify provider); the PyO3 wrapper is a second adapter onto
         // it, exactly like a pure-Rust consumer. The block-clock receiver is
         // taken by `PyBot::block_stream` through the shared `PumpState`.
-        let driver = Arc::new(degenbot_bot::arb_engine::EngineDriver::from_stages(
-            Arc::clone(&bot),
-            Arc::clone(&stages),
-        ));
+        //
+        // C4: the driver attaches to a host-minted hub (the C2 attach
+        // signature) rather than minting a private one, so ONE process-wide
+        // `StrategyHost` owns the hub, the frozen route registry, and the
+        // nonce authority. For a settlement-only boot the host is otherwise
+        // inert: no driver is enabled and no lane namespace is named.
+        let (host, attached) = super::strategy::boot_host();
+        let driver = Arc::new(
+            degenbot_bot::arb_engine::EngineDriver::from_stages_with_hub(
+                Arc::clone(&bot),
+                Arc::clone(&stages),
+                attached,
+            ),
+        );
         let result_rx = driver.take_result_receiver();
         // Both wrappers share the driver itself.
         if let Some(parent) = py_bot_ref {
@@ -68,6 +78,8 @@ impl PyArbEngine {
         Self {
             stages,
             driver,
+            host: Arc::new(parking_lot::Mutex::new(host)),
+            driver_supervision: Arc::new(parking_lot::Mutex::new(Vec::new())),
             result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),
             warm_code_cache,
         }
@@ -226,8 +238,15 @@ impl PyArbEngine {
     /// via `wait_for_block()`.
     ///
     /// Raises `RuntimeError` if `subscribe()` has not been called first.
+    ///
+    /// Resuming the pump is the engine's start flow: it also boots every
+    /// strategy the operator enabled that owns a hosted loop (the backrun
+    /// lane), retaining a supervisor per driver so a self-halt is queryable.
     fn resume(&self, py: Python<'_>) -> PyResult<()> {
-        crate::bot::pump::resume(py, &self.driver)
+        crate::bot::pump::resume(py, &self.driver)?;
+        self.start_hosted_strategies()
+            .map_err(super::strategy::map_host_error)?;
+        Ok(())
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).

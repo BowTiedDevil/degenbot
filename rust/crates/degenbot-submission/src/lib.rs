@@ -104,6 +104,15 @@ pub use submit::{
     SubmitOutcome, SubmitRecord,
 };
 
+/// The configured durable-state root, or `None` when it cannot be resolved.
+///
+/// A hosted strategy scopes its lane artifacts under this root; the standalone
+/// single-strategy sidecar ignores it and keeps its process-global paths.
+#[must_use]
+pub fn resolve_state_root() -> Option<std::path::PathBuf> {
+    degenbot_runs::resolve_state_root().ok()
+}
+
 // Test-only span capture for the OTel tier-1 span tests (RMHQAR, epic
 // 2LXPPV). One global subscriber per test process: async tests cross
 // tasks, where scoped `with_default` guards would be unsafe (MQUKB6

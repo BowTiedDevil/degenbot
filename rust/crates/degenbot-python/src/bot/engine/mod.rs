@@ -22,6 +22,7 @@ mod register;
 mod result_channel;
 mod snapshot;
 mod solve;
+mod strategy;
 mod verify;
 
 pub(crate) use register::{
@@ -70,6 +71,17 @@ pub struct PyArbEngine {
     /// co-owned with `PyBot`; the `PyO3` layer crosses the driver seam
     /// directly.
     driver: Arc<degenbot_bot::arb_engine::EngineDriver>,
+
+    /// The process-wide strategy host this engine booted (hub, route registry,
+    /// nonce authority, and the driver FSM records). The shared hub is the one
+    /// `driver` attached to; the operator strategy verbs cross this host.
+    pub(crate) host: Arc<parking_lot::Mutex<degenbot_bot::strategy_host::StrategyHost>>,
+
+    /// The supervision tasks for the hosted drivers this engine started at its
+    /// start flow. Each owns one driver's `DriverTask` lane boundary and folds
+    /// the terminal exit into the host FSM (a self-halt becomes a tombstone).
+    pub(crate) driver_supervision: Arc<parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.

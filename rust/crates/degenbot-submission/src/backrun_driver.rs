@@ -21,6 +21,7 @@
 
 use std::collections::HashSet;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,6 +30,7 @@ use std::time::Duration;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::sidecar::{gate_mined_target, Decision, SidecarConfig};
+use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
@@ -928,9 +930,23 @@ async fn classify_consumption(
 /// Returns the append handle (None when persistence is unavailable -- a journal
 /// problem must never abort the bot). A missing journal, an unreadable one, and
 /// corrupt lines are all non-fatal.
-fn reload_quarantine(quarantine: &mut Quarantine) -> Option<QuarantineJournal> {
-    let path = match degenbot_runs::resolve_state_root() {
-        Ok(root) => root.join(gap_quarantine_journal::JOURNAL_FILE_NAME),
+/// Resolve the quarantine journal path: the lane namespace when this driver
+/// is hosted (another strategy may share the process), the process-global
+/// state root for the standalone single-strategy sidecar.
+fn quarantine_journal_path(lane_root: Option<&Path>) -> std::io::Result<PathBuf> {
+    match lane_root {
+        Some(root) => Ok(root.join(gap_quarantine_journal::JOURNAL_FILE_NAME)),
+        None => degenbot_runs::resolve_state_root()
+            .map(|root| root.join(gap_quarantine_journal::JOURNAL_FILE_NAME)),
+    }
+}
+
+fn reload_quarantine(
+    quarantine: &mut Quarantine,
+    lane_root: Option<&Path>,
+) -> Option<QuarantineJournal> {
+    let path = match quarantine_journal_path(lane_root) {
+        Ok(path) => path,
         Err(error) => {
             tracing::warn!(%error, "quarantine journal root unavailable - persistence off");
             return None;
@@ -999,6 +1015,175 @@ pub struct BackrunContext {
     /// The host's node join, shared so the boot ranker and the lane read one
     /// connection pool.
     pub provider: Arc<AlloyProvider>,
+    /// The lane's run-artifact root inside a multi-strategy host, so this
+    /// driver's journal never collides with another strategy's. `None` keeps
+    /// the process-global state root for the standalone single-strategy
+    /// sidecar (strict parity).
+    pub lane_root: Option<PathBuf>,
+}
+
+/// Why a backrun lane could not be booted.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BackrunBootError {
+    /// The chain-node HTTP endpoint did not resolve from the process
+    /// environment.
+    #[error("backrun lane node join unresolved: {0}")]
+    NodeJoin(String),
+}
+
+/// The lane's node join: the resolved chain-node HTTP endpoint and the provider
+/// built over it. The standalone sidecar and a hosted lane resolve this the same
+/// way, so the boot ranker and the lane read one connection pool.
+pub struct BackrunNodeJoin {
+    /// The `DEGENBOT_RPC_HTTP_CHAINID_<id>` endpoint the lane signs against.
+    pub rpc_url: String,
+    /// The shared node join.
+    pub provider: Arc<AlloyProvider>,
+}
+
+/// Resolve the lane's node join from the process environment.
+///
+/// # Errors
+///
+/// [`BackrunBootError::NodeJoin`] when the chain-node HTTP endpoint has no
+/// layer; the message is the resolver's, which names every layer consulted.
+pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> {
+    let rpc_url =
+        degenbot_config::resolve_node_http_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
+            .map_err(|error| BackrunBootError::NodeJoin(error.to_string()))?
+            .value;
+    let url = rpc_url
+        .parse()
+        .map_err(|error| BackrunBootError::NodeJoin(format!("{error}")))?;
+    let client = alloy::rpc::client::ClientBuilder::default().http(url);
+    let provider = Arc::new(AlloyProvider::from_provider(Arc::new(
+        alloy::providers::ProviderBuilder::default().connect_client(client),
+    )));
+    Ok(BackrunNodeJoin { rpc_url, provider })
+}
+
+/// The lane's boot recipe: the process config, the host-owned hub and route
+/// registry, and the lane's run-artifact scope.
+///
+/// The lane has exactly ONE boot path — [`Self::into_driver_future`]. The
+/// standalone sidecar polls it inline (a lane panic still unwinds the process)
+/// and a `StrategyHost` spawns it as a driver task (a panic becomes a tombstone
+/// at the task boundary), so a hosted lane and a standalone sidecar cannot
+/// drift apart.
+pub struct BackrunBoot {
+    cfg: SidecarConfig,
+    hub: Arc<Hub>,
+    route_registry: Option<Arc<RouteRegistry>>,
+    context: BackrunContext,
+}
+
+impl BackrunBoot {
+    /// The lane's loop future: it drives [`BackrunDriver::start`] to its
+    /// terminal return and reports a clean stop to the host.
+    #[must_use]
+    pub fn into_driver_future(self) -> DriverFuture {
+        let Self {
+            cfg,
+            hub,
+            route_registry,
+            context,
+        } = self;
+        Box::pin(async move {
+            let handle = BackrunDriver::start(cfg, hub, route_registry, context).await;
+            handle.wait().await;
+            DriverExit::Stopped
+        })
+    }
+}
+
+/// Open the connector DB behind the registry's token joins, exactly as the
+/// standalone sidecar does. A missing file leaves the discovery fan shut and
+/// frames observe — connectors are never guessed.
+#[must_use]
+pub fn resolve_backrun_connector_db() -> Option<DegenbotDb> {
+    let db_path = degenbot_config::resolve_database_path(&degenbot_config::ProcessEnv, None).value;
+    if !db_path.is_file() {
+        tracing::debug!(path = %db_path.display(), "connector DB absent - lane discovery shut");
+        return None;
+    }
+    match DegenbotDb::open(&db_path) {
+        Ok((db, _)) => Some(db),
+        Err(error) => {
+            tracing::warn!(%error, path = %db_path.display(), "connector DB unopenable - lane discovery shut");
+            None
+        }
+    }
+}
+
+/// Assemble a lane's boot from an already-resolved node join.
+///
+/// Both the standalone sidecar (which builds its DB-backed registry over the
+/// join) and a hosted lane call this, so the lane's config derivation and
+/// context shape have one definition. The chain node's `newHeads` WS endpoint
+/// (the fallback when absent) resolves here. `lane_root` scopes the lane's
+/// run-artifacts under a multi-strategy host's state root; `None` keeps the
+/// process-global root (standalone parity).
+#[must_use]
+pub fn backrun_boot(
+    config: &degenbot_config::BotConfig,
+    join: BackrunNodeJoin,
+    hub: Arc<Hub>,
+    route_registry: Option<Arc<RouteRegistry>>,
+    connector_db: Option<DegenbotDb>,
+    lane_root: Option<PathBuf>,
+) -> BackrunBoot {
+    let cfg = SidecarConfig::from_config(config, join.rpc_url);
+    let head_ws_url =
+        degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
+            .ok()
+            .map(|resolved| resolved.value);
+    let context = BackrunContext {
+        connector_db,
+        head_ws_url,
+        provider: join.provider,
+        lane_root,
+    };
+    BackrunBoot {
+        cfg,
+        hub,
+        route_registry,
+        context,
+    }
+}
+
+/// The spawn factory a `StrategyHost` registers for the backrun lane.
+///
+/// The lane resolves its node join and connector DB when the host drives the
+/// lane, not when the factory is attached, so a boot that never enables backrun
+/// pays for no node connection or DB handle. A join that cannot resolve becomes
+/// a `Halted` tombstone naming the missing layer rather than a host unwind; the
+/// host-computed lane namespace scopes the lane's artifacts.
+#[must_use]
+pub fn backrun_spawn_factory(
+    config: Arc<degenbot_config::BotConfig>,
+    hub: Arc<Hub>,
+    route_registry: Option<Arc<RouteRegistry>>,
+) -> DriverSpawnFactory {
+    Box::new(move |lane| {
+        Box::pin(async move {
+            match resolve_backrun_node_join() {
+                Ok(join) => {
+                    let lane_root = lane.map(|namespace| namespace.root().to_path_buf());
+                    backrun_boot(
+                        &config,
+                        join,
+                        hub,
+                        route_registry,
+                        resolve_backrun_connector_db(),
+                        lane_root,
+                    )
+                    .into_driver_future()
+                    .await
+                }
+                Err(error) => DriverExit::Halted(format!("backrun lane boot refused: {error}")),
+            }
+        })
+    })
 }
 
 /// The lifecycle FSM a running driver walks. `Stopped` is terminal.
@@ -1119,7 +1304,9 @@ impl LifecycleShared {
 }
 
 /// The loop future the handle drives. Boxed so the handle owns it without the
-/// bin naming the lane's generic stack.
+/// bin naming the lane's generic stack. Deliberately NOT `Send`: the lane's
+/// replay stack holds `Rc`-backed buffers, so a host drives it on a dedicated
+/// single-thread runtime (the standalone sidecar polls it inline).
 type RunFuture = Pin<Box<dyn Future<Output = ()> + 'static>>;
 
 /// A started driver lane. [`wait`](Self::wait) drives it to completion;
@@ -1170,6 +1357,7 @@ struct LaneBoot {
     sim_client: alloy::rpc::client::RpcClient,
     fixture_frames: Option<Vec<degenbot_rpc::backrun_feed::BackrunFeedEvent>>,
     head_ws_url: Option<String>,
+    lane_root: Option<PathBuf>,
 }
 
 /// The backrun driver entry point.
@@ -1200,6 +1388,7 @@ impl BackrunDriver {
             connector_db,
             head_ws_url,
             provider,
+            lane_root,
         } = ctx;
         // The bundle-sim client (`strategy.backrun.sim_url`, default: the chain
         // node the frames replay against). READ/SIM ONLY -- `eth_callMany` never
@@ -1318,6 +1507,7 @@ impl BackrunDriver {
             sim_client,
             fixture_frames,
             head_ws_url,
+            lane_root,
         };
         let shared = Arc::new(LifecycleShared::new());
         let run = Box::pin(drive(cfg, hub, boot, Arc::clone(&shared)));
@@ -1344,6 +1534,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
         sim_client,
         fixture_frames,
         head_ws_url,
+        lane_root,
     } = boot;
     shared.begin_running();
     // The per-block replay handle: rebuilt whenever the observed head
@@ -1414,7 +1605,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
 
     // Reload the durable quarantine before servicing any frame, so a restart
     // resumes the parked set.
-    let mut quarantine_journal = reload_quarantine(&mut quarantine);
+    let mut quarantine_journal = reload_quarantine(&mut quarantine, lane_root.as_deref());
 
     // Live mode: MEVBlocker feed. The hub owns the process-lifetime event
     // channels; the feed registers its PendingTx drop-oldest ring on it and
@@ -1892,9 +2083,10 @@ mod tests {
     use super::{
         bid_submission_target, build_broadcast_relays, decode_predecessor, journal_reentry_outcome,
         nonce_lane_evidence, outcome_for, pool_known_gap_for_tick, predecessor_hash,
-        record_gap_park, reentry_outcome, route_failed_hydration, route_unhydratable_hydration,
-        run_frame, FrameOutcome, GapParkMemo, ParkRecord, ParkedFrame, Quarantine,
-        QuarantineDecision, QuarantineJournal, ReentryOutcome, FEED_PREFIX,
+        quarantine_journal_path, record_gap_park, reentry_outcome, route_failed_hydration,
+        route_unhydratable_hydration, run_frame, FrameOutcome, GapParkMemo, ParkRecord,
+        ParkedFrame, Quarantine, QuarantineDecision, QuarantineJournal, ReentryOutcome,
+        FEED_PREFIX,
     };
     use crate::frame_pipeline::predecessor_observe_reason;
     use alloy::primitives::{Address, B256, U256};
@@ -2526,5 +2718,27 @@ mod tests {
         assert_eq!(resolve_count(&path), 1, "exactly one resolve");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A hosted lane's journal lands under its namespace; the standalone
+    /// single-strategy sidecar keeps the process-global root (strict parity).
+    #[test]
+    fn lane_root_scopes_the_quarantine_journal() {
+        let lane = std::path::PathBuf::from("/var/state/backrun");
+        let hosted = quarantine_journal_path(Some(&lane)).expect("lane journal path");
+        assert_eq!(
+            hosted,
+            lane.join(crate::gap_quarantine_journal::JOURNAL_FILE_NAME)
+        );
+
+        let global = quarantine_journal_path(None).expect("global journal path");
+        assert!(
+            global.ends_with(crate::gap_quarantine_journal::JOURNAL_FILE_NAME),
+            "the unscoped path keeps the process-global journal file"
+        );
+        assert!(
+            !global.starts_with(&lane),
+            "an unscoped driver never writes into a lane namespace"
+        );
     }
 }
