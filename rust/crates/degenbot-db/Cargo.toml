@@ -41,6 +41,11 @@ thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 
 [dev-dependencies]
+criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 tempfile = { version = "^3.27" }
+
+[[bench]]
+name = "sweep_snapshot"
+harness = false
