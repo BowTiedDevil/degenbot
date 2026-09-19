@@ -10,10 +10,12 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
 use crate::event::{HubClass, HubEvent};
+use crate::head::{HeadSender, HeadSubscription};
 use crate::policy::{HubError, OverflowPolicy};
 
 /// Bounded drop-oldest ring, counted on eviction.
@@ -48,24 +50,46 @@ impl DropOldestChannel {
     }
 }
 
-/// Latest-value slot; each push supersedes the previous value.
+/// Latest-value slot; each push supersedes the previous value and wakes
+/// every awaiting consumer.
+///
+/// A `watch` channel supplies both the latest-value semantics and the async
+/// wakeup; `last_seen` is the hub-owned staleness clock (set at registration
+/// and refreshed on every push).
 struct LatestChannel {
-    slot: Mutex<Option<HubEvent>>,
+    tx: tokio::sync::watch::Sender<Option<HubEvent>>,
+    last_seen: Mutex<Option<Instant>>,
 }
 
 impl LatestChannel {
     fn new() -> Self {
+        let (tx, _rx) = tokio::sync::watch::channel(None);
         Self {
-            slot: Mutex::new(None),
+            tx,
+            // A just-registered source is not immediately stale (matching
+            // the transport's "fresh at subscribe" contract).
+            last_seen: Mutex::new(Some(Instant::now())),
         }
     }
 
     fn push(&self, event: HubEvent) {
-        *self.slot.lock() = Some(event);
+        self.tx.send_replace(Some(event));
+        *self.last_seen.lock() = Some(Instant::now());
     }
 
     fn latest(&self) -> Option<HubEvent> {
-        self.slot.lock().clone()
+        self.tx.borrow().clone()
+    }
+
+    fn last_seen_age(&self) -> Option<Duration> {
+        self.last_seen.lock().map(|at| at.elapsed())
+    }
+
+    fn stale(&self, threshold: Duration) -> bool {
+        match self.last_seen_age() {
+            Some(age) => age > threshold,
+            None => true,
+        }
     }
 }
 
@@ -162,12 +186,25 @@ impl LatestSender {
     pub fn push(&self, event: HubEvent) {
         self.inner.push(event);
     }
+
+    /// Time since the last publish, or `None` if none was ever made.
+    #[must_use]
+    pub fn last_seen_age(&self) -> Option<Duration> {
+        self.inner.last_seen_age()
+    }
+
+    /// Whether no value has arrived for at least `threshold`.
+    #[must_use]
+    pub fn stale(&self, threshold: Duration) -> bool {
+        self.inner.stale(threshold)
+    }
 }
 
 /// The consumer side of a [`OverflowPolicy::LatestOnly`] channel.
 #[derive(Clone)]
 pub struct LatestReceiver {
     inner: Arc<LatestChannel>,
+    rx: tokio::sync::watch::Receiver<Option<HubEvent>>,
 }
 
 impl LatestReceiver {
@@ -175,6 +212,34 @@ impl LatestReceiver {
     #[must_use]
     pub fn latest(&self) -> Option<HubEvent> {
         self.inner.latest()
+    }
+
+    /// The most recent value, marking it seen for the next [`Self::changed`].
+    #[must_use]
+    pub fn latest_and_update(&mut self) -> Option<HubEvent> {
+        self.rx.borrow_and_update().clone()
+    }
+
+    /// Wait until a newer value is published.
+    ///
+    /// # Errors
+    ///
+    /// Fails once every sender clone has dropped and no newer value will
+    /// arrive.
+    pub async fn changed(&mut self) -> Result<(), tokio::sync::watch::error::RecvError> {
+        self.rx.changed().await
+    }
+
+    /// Time since the last publish, or `None` if none was ever made.
+    #[must_use]
+    pub fn last_seen_age(&self) -> Option<Duration> {
+        self.inner.last_seen_age()
+    }
+
+    /// Whether no value has arrived for at least `threshold`.
+    #[must_use]
+    pub fn stale(&self, threshold: Duration) -> bool {
+        self.inner.stale(threshold)
     }
 }
 
@@ -346,6 +411,7 @@ impl Hub {
             }
             Channel::LatestOnly(channel) => Subscription::LatestOnly(LatestReceiver {
                 inner: Arc::clone(channel),
+                rx: channel.tx.subscribe(),
             }),
             Channel::UnboundedFlagged(channel) => {
                 Subscription::UnboundedFlagged(UnboundedReceiver {
@@ -353,6 +419,41 @@ impl Hub {
                 })
             }
         })
+    }
+
+    /// Register the process's one head source as a `NewHead` /
+    /// [`OverflowPolicy::LatestOnly`] channel.
+    ///
+    /// The hub owns the latest head and its staleness clock; the transport
+    /// (e.g. `degenbot_rpc::head_watch`) publishes every observed header and
+    /// keeps no head state of its own.
+    ///
+    /// # Errors
+    ///
+    /// [`HubError::AlreadyRegistered`] if a `NewHead` source already exists on
+    /// this hub.
+    pub fn register_head_source(&self) -> Result<HeadSender, HubError> {
+        match self.register_source(HubClass::NewHead, OverflowPolicy::LatestOnly, 0)? {
+            SourceHandle::LatestOnly(sender) => Ok(HeadSender::new(sender)),
+            _ => Err(HubError::PolicyMismatch {
+                expected: "LatestOnly",
+            }),
+        }
+    }
+
+    /// Subscribe to the hub head source.
+    ///
+    /// # Errors
+    ///
+    /// [`HubError::NotRegistered`] if [`Self::register_head_source`] has not
+    /// run on this hub.
+    pub fn subscribe_head(&self) -> Result<HeadSubscription, HubError> {
+        match self.subscribe(HubClass::NewHead)? {
+            Subscription::LatestOnly(receiver) => Ok(HeadSubscription::new(receiver)),
+            _ => Err(HubError::PolicyMismatch {
+                expected: "LatestOnly",
+            }),
+        }
     }
 
     /// The policy declared for `class`, if registered.
@@ -477,6 +578,63 @@ mod tests {
         let nonces: Vec<u64> = receiver.drain().into_iter().filter_map(nonce_of).collect();
         assert_eq!(nonces, vec![2, 3, 4, 5], "oldest evicted, order preserved");
         assert!(receiver.drain().is_empty(), "drain is an atomic take");
+    }
+
+    fn new_head(number: u64) -> HubEvent {
+        HubEvent::NewHead {
+            number,
+            timestamp: 0,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn head_advance_and_stale_falls_back_to_poll() {
+        use std::time::Duration;
+
+        let hub = Hub::new();
+        let sender = hub.register_head_source().expect("registers");
+        assert_eq!(
+            hub.policy_of(HubClass::NewHead),
+            Some(OverflowPolicy::LatestOnly),
+            "the head source declares the LatestOnly policy"
+        );
+        let mut head = hub.subscribe_head().expect("subscribed");
+        assert_eq!(head.head(), None, "a fresh head source has no head");
+        assert!(
+            !head.stale(Duration::from_secs(30)),
+            "a just-registered source is not stale"
+        );
+
+        // LatestOnly: only the newest head survives.
+        sender.publish(new_head(10));
+        sender.publish(new_head(11));
+        assert_eq!(
+            head.borrow_and_update(),
+            Some(11),
+            "superseded heads are dropped"
+        );
+
+        // The consumer awaits the next advance, then reads it.
+        let waiter = tokio::spawn(async move {
+            head.changed().await.expect("sender stays alive");
+            head.borrow_and_update()
+        });
+        sender.publish(new_head(12));
+        assert_eq!(waiter.await.expect("join"), Some(12));
+
+        // The stale->poll-fallback predicate: a quiet source past the
+        // threshold reports stale, which is exactly what makes the live loop
+        // poll `eth_blockNumber` for one iteration.
+        let probe = hub.subscribe_head().expect("subscribed");
+        assert!(!probe.stale(Duration::from_secs(30)), "just published");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            probe.stale(Duration::from_millis(10)),
+            "quiet past the threshold is stale"
+        );
     }
 
     #[test]

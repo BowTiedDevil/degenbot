@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_bot::sidecar::{gate_mined_target, Decision, SidecarConfig};
-use degenbot_eventhub::Hub;
+use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
@@ -1363,20 +1363,35 @@ async fn main() {
 
     // Head source for the live loop: a `newHeads` subscription over a dedicated
     // WS endpoint (the MEVBlocker frame feed and the chain node are different
-    // hosts, so the head WS is its own URL). The 200ms `eth_blockNumber` poll
-    // is the FALLBACK, not the primary source: it costs a round-trip per tick
-    // and cannot fire the instant a head lands. Without a WS URL, or when the
-    // subscribe fails, the watch stays absent and the loop polls.
+    // hosts, so the head WS is its own URL). The hub owns the latest head and
+    // its staleness; `HeadWatch` only performs the subscribe + reconnect and
+    // publishes into the hub. The 200ms `eth_blockNumber` poll is the FALLBACK,
+    // not the primary source: it costs a round-trip per tick and cannot fire the
+    // instant a head lands. Without a WS URL, or when the subscribe fails, no
+    // head source is registered and the loop polls.
     let head_ws_url = degenbot_config::resolve_node_ws_uri(&env, CHAIN_ID, None)
         .ok()
         .map(|resolved| resolved.value);
-    let head_watch: Option<HeadWatch> = if let Some(url) = head_ws_url {
+    let mut head_source: Option<HeadSubscription> = if let Some(url) = head_ws_url {
         match AlloyProvider::new(&url, DEFAULT_MAX_RETRIES).await {
             Ok(ws_provider) => {
-                match HeadWatch::subscribe(ws_provider.provider_arc(), HeadWatchConfig::default())
-                    .await
+                match HeadWatch::subscribe(
+                    &event_hub,
+                    ws_provider.provider_arc(),
+                    HeadWatchConfig::default(),
+                )
+                .await
                 {
-                    Ok(watch) => Some(watch),
+                    Ok(_transport) => match event_hub.subscribe_head() {
+                        Ok(head) => Some(head),
+                        Err(e) => {
+                            tracing::error!(
+                                error = %e,
+                                "head source subscribe failed - falling back to 200ms head poll"
+                            );
+                            None
+                        }
+                    },
                     Err(e) => {
                         tracing::error!(
                             error = %e,
@@ -1398,7 +1413,6 @@ async fn main() {
         tracing::warn!("no DEGENBOT_RPC_WS_CHAINID_1 set - using 200ms head poll");
         None
     };
-    let mut head_rx = head_watch.as_ref().map(HeadWatch::head_rx);
 
     loop {
         if cfg.stop_file.exists() {
@@ -1406,34 +1420,33 @@ async fn main() {
             feed.stop();
             break;
         }
-        // The watch resolves on a header's arrival; the 2s bound keeps the
-        // frame feed serviced while the head is quiet. On timeout a stale
-        // watch falls back to the poll for this iteration; a receiver with no
+        // The head source resolves on a header's arrival; the 2s bound keeps
+        // the frame feed serviced while the head is quiet. On timeout a stale
+        // source falls back to the poll for this iteration; a receiver with no
         // sender left is treated the same way (and paced) rather than
         // busy-spinning on a closed channel.
-        let next_head: Option<u64> =
-            if let (Some(watch), Some(rx)) = (head_watch.as_ref(), head_rx.as_mut()) {
-                match tokio::time::timeout(HEAD_WATCH_WAIT, rx.changed()).await {
-                    Ok(Ok(())) => Some(*rx.borrow_and_update()),
-                    Ok(Err(_)) => {
-                        tracing::warn!("head watch channel closed - polling");
+        let next_head: Option<u64> = if let Some(head) = head_source.as_mut() {
+            match tokio::time::timeout(HEAD_WATCH_WAIT, head.changed()).await {
+                Ok(Ok(())) => head.borrow_and_update(),
+                Ok(Err(_)) => {
+                    tracing::warn!("head source closed - polling");
+                    tokio::time::sleep(HEAD_POLL_TICK).await;
+                    provider.get_block_number().await.ok()
+                }
+                Err(_) => {
+                    if head.stale(HEAD_WATCH_STALE) {
+                        tracing::warn!("head source stale - polling");
                         tokio::time::sleep(HEAD_POLL_TICK).await;
                         provider.get_block_number().await.ok()
-                    }
-                    Err(_) => {
-                        if watch.stale(HEAD_WATCH_STALE) {
-                            tracing::warn!("head watch stale - polling");
-                            tokio::time::sleep(HEAD_POLL_TICK).await;
-                            provider.get_block_number().await.ok()
-                        } else {
-                            None
-                        }
+                    } else {
+                        None
                     }
                 }
-            } else {
-                tokio::time::sleep(HEAD_POLL_TICK).await;
-                provider.get_block_number().await.ok()
-            };
+            }
+        } else {
+            tokio::time::sleep(HEAD_POLL_TICK).await;
+            provider.get_block_number().await.ok()
+        };
 
         if let Some(head) = next_head {
             if head > current_block {

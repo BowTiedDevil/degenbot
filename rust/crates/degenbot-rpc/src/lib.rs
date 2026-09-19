@@ -15,8 +15,9 @@
 //! - [`contract`] — `Contract` interface with `FunctionSignature` ABI caching.
 //! - [`subscription`] — double-buffer `SubscriptionHandle`, raw `drain_raw`,
 //!   and the `pump_*` subscription drivers.
-//! - [`head_watch`] — subscription-driven [`HeadWatch`]: publishes the head
-//!   block number on a `watch` channel with the pump's watchdog/reconnect.
+//! - [`head_watch`] — subscription-driven [`HeadWatch`]: the transport half of
+//!   the process hub's head source, publishing `newHeads` headers into the hub
+//!   with the pump's watchdog/reconnect.
 
 pub mod abi;
 pub mod backrun_feed;

@@ -2415,6 +2415,7 @@ dependencies = [
  "parking_lot",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

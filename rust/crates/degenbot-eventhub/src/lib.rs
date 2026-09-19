@@ -13,6 +13,9 @@
 //!   source can emit ([`HubClass::NewHead`], [`HubClass::PoolEvent`],
 //!   [`HubClass::PendingTx`]) and carries exactly the fields today's sources
 //!   carry; it is not a raw WS/log passthrough and no field is invented.
+//! - **The head clock lives here.** The hub owns the latest head and its
+//!   staleness ([`head::HeadSender`] / [`head::HeadSubscription`]); the
+//!   transport only subscribes and publishes ([`HeadSubscription::stale`]).
 //! - **Registration declares strictness.** Every source names its
 //!   [`OverflowPolicy`] when it registers (once per class per process). A
 //!   second registration of the same class is refused; subscribing to an
@@ -33,10 +36,12 @@
 //! policy is visible via [`Hub::policy_of`] and [`Hub::unbounded_flagged_count`].
 
 pub mod event;
+pub mod head;
 pub mod hub;
 pub mod policy;
 
 pub use event::{HubClass, HubEvent, PendingTx};
+pub use head::{HeadSender, HeadSubscription};
 pub use hub::{
     DropOldestReceiver, DropOldestSender, Hub, LatestReceiver, LatestSender, SourceHandle,
     Subscription, UnboundedReceiver, UnboundedSender,
