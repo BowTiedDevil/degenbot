@@ -253,9 +253,12 @@ pub enum DriverExit {
 /// A driver's loop future, minted by its spawn factory.
 ///
 /// Not required to be `Send`: a lane whose replay stack is single-threaded (the
-/// backrun lane's `Rc`-backed buffers) is booted on a dedicated single-thread
-/// runtime by [`StrategyHost::start_driving`], while the factory itself must be
-/// `Send` so it can travel to that thread.
+/// backrun lane's `Rc`-backed buffers) is polled inline on one blocking thread
+/// using the ambient multi-thread runtime by [`StrategyHost::start_driving`],
+/// while the factory itself must be `Send` so it can travel to that thread.
+/// The ambient multi-thread runtime is what `revm`'s `WrapDatabaseAsync::new`
+/// requires; a dedicated current-thread runtime captures no handle and forbids
+/// block-in-place, failing every `BlockSimHandle::build`.
 pub type DriverFuture = Pin<Box<dyn Future<Output = DriverExit> + 'static>>;
 
 /// The typed fate of one submission, addressed to the strategy that owns it.
@@ -745,15 +748,6 @@ impl StrategyHost {
     /// # Errors
     ///
     /// [`HostError::Transition`] if the FSM refuses a driver's start.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a driver's dedicated single-thread runtime cannot be built —
-    /// process infrastructure whose failure is fatal, not recoverable.
-    #[expect(
-        clippy::expect_used,
-        reason = "a driver's dedicated single-thread runtime is process infrastructure: failing to build it is fatal"
-    )]
     pub fn start_driving(&mut self) -> Result<Vec<DriverTask>, HostError> {
         let runtime = degenbot_core::runtime::get_runtime();
         let ids: Vec<StrategyId> = self
@@ -768,16 +762,19 @@ impl StrategyHost {
                 continue;
             };
             let lane = self.lane_namespace(&id).ok();
-            // A lane's replay stack is single-threaded, so its loop runs on a
-            // dedicated current-thread runtime off a blocking thread — the
-            // future is minted and polled on that thread and never travels.
+            // A lane's replay stack is single-threaded, so the loop future is
+            // `!Send` and must be polled inline on one thread, never spawned.
+            // Drive it under the AMBIENT multi-thread runtime (via `block_on`
+            // from a blocking thread) so the lane sees the same runtime
+            // ambience as the standalone sidecar: `revm`'s
+            // `WrapDatabaseAsync::new` captures the current handle only when
+            // that runtime is multi-threaded, and its layer reads then use
+            // `block_in_place`. A dedicated current-thread runtime captures no
+            // handle and forbids block-in-place, so every
+            // `BlockSimHandle::build` would fail.
             let handle = runtime.spawn_blocking(move || {
                 let future = spawn(lane);
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("driver lane runtime")
-                    .block_on(future)
+                runtime.block_on(future)
             });
             self.start(&id)?;
             tasks.push(DriverTask { id, handle });
@@ -1164,6 +1161,43 @@ mod tests {
             seen.lock().expect("lane slot").as_deref(),
             Some(Path::new("/var/state/backrun")),
             "the factory is handed the driver's lane namespace"
+        );
+    }
+
+    /// A hosted lane must observe the multi-thread ambient runtime the
+    /// standalone sidecar provides: `revm`'s `WrapDatabaseAsync::new` (the
+    /// layer `BlockSimHandle::build` stacks) returns `None` under a
+    /// current-thread runtime, so a dedicated current-thread lane runtime
+    /// leaves every frame with `replay_unavailable`.
+    #[tokio::test]
+    async fn start_driving_boots_the_lane_under_the_multi_thread_ambient_runtime() {
+        use tokio::runtime::RuntimeFlavor;
+
+        let mut host = host();
+        let id = register(&mut host, "backrun");
+        let seen: Arc<std::sync::Mutex<Option<RuntimeFlavor>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let writer = Arc::clone(&seen);
+        let spawn: DriverSpawnFactory = Box::new(move |_lane| {
+            Box::pin(async move {
+                *writer.lock().expect("flavor slot") = Some(
+                    tokio::runtime::Handle::try_current()
+                        .expect("lane runtime")
+                        .runtime_flavor(),
+                );
+                DriverExit::Stopped
+            })
+        });
+        host.attach_spawn(&id, spawn).expect("attach spawn");
+        host.enable(&id).expect("enable");
+
+        let tasks = host.start_driving().expect("start driving");
+        let task = tasks.into_iter().next().expect("task");
+        assert_eq!(task.wait().await, DriverExit::Stopped);
+        assert_eq!(
+            *seen.lock().expect("flavor slot"),
+            Some(RuntimeFlavor::MultiThread),
+            "a hosted lane must run under the multi-thread ambient runtime"
         );
     }
 
