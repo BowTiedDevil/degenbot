@@ -189,6 +189,12 @@ cython_debug/
 # per-released-revision injury fixtures the auto_heal_matrix sweeps (ADR-052 D5,
 # ergo V4CDHP) — same rule, explicitly extended to the subdirectory.
 !rust/crates/degenbot-db/tests/fixtures/*.db
+# Python-pathfinding parity snapshot — built by
+# tests/pathfinding/fixtures/generate_mainnet_snapshot.py and intentionally
+# checked in (see that script's docstring): the generator is deterministic, so
+# a fresh clone can rebuild it, but committing it keeps the lossless baselines
+# runnable without the ~600k-pool live operator DB.
+!tests/pathfinding/fixtures/mainnet_snapshot.db
 !rust/crates/degenbot-db/tests/fixtures/alembic_revs/*.db
 
 # Foundry build artifacts (Aave test contracts)

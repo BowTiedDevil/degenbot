@@ -139,6 +139,18 @@ allow-star-arg-any = true
     "raise-within-try",   # re-raising the worker-thread error from within the try is intentional
     "print",     # the CLI prints its summary to stdout by design
 ]
+"tests/pathfinding/fixtures/generate_mainnet_snapshot.py" = [
+    # The snapshot generator copies rows verbatim out of the live operator DB
+    # with raw sql (ATTACH + INSERT SELECT): SQLAlchemy ORM re-inserts would
+    # re-derive values and lose fidelity, and the selection queries
+    # deliberately mirror the shapes of `degenbot_db::pathfinding`'s SQL so a
+    # schema drift surfaces here first. All identifiers are internal ints /
+    # fixed table names — no user input reaches a query.
+    "hardcoded-sql-expression",
+    "print",     # the generator prints its summary to stdout by design
+    "unspecified-encoding",  # fixture file writes use utf-8 implicitly
+    "shebang-not-executable",  # invoked as `uv run python ...`, not directly
+]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "ARG",
