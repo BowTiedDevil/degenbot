@@ -170,7 +170,7 @@ pub fn admit_extracted(
     tick_window: Option<&dyn V3TickWindow>,
 ) -> Vec<AffectedPool> {
     let mut out = Vec::new();
-    let Some(idx) = rt.index.as_ref() else {
+    let Some(idx) = rt.index() else {
         return out;
     };
     let skip = |pool: Address, stage: &'static str| {
@@ -954,7 +954,7 @@ impl PendingTxStrategy for BackrunStrategy {
         head: u64,
         trace_tx: &str,
     ) -> Self::Intents {
-        let Some(idx) = ctx.index.as_ref() else {
+        let Some(idx) = ctx.index() else {
             return BackrunIntents::bailed();
         };
         if ctx.token_id(WETH).is_none() {

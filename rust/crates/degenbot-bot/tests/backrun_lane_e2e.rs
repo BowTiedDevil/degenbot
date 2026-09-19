@@ -238,7 +238,12 @@ async fn runtime(
         "the canonical USDC/WETH pair must sit in the DB index"
     );
     let head = provider.get_block_number().await.unwrap();
-    let rt = MarketContext::new(1, Some(index), Some(live_db()), 8);
+    let rt = MarketContext::new(
+        1,
+        Some(Arc::new(degenbot_bot::bot_core::RouteRegistry::new(index))),
+        Some(live_db()),
+        8,
+    );
     (rt, head, ids)
 }
 

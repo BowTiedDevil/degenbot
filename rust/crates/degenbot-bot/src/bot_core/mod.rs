@@ -39,6 +39,7 @@ pub mod registration_lifecycle;
 pub mod reorg_coordinator;
 pub mod reserve_pair_orchestration;
 pub(crate) mod resolve;
+pub mod route_registry;
 pub mod sim_anchor;
 pub mod snapshot_verify;
 pub(crate) mod solve_anchor;
@@ -97,6 +98,7 @@ pub use registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
     run_v4_registration_lifecycle, RegistrationLifecycleError,
 };
+pub use route_registry::RouteRegistry;
 pub use sim_anchor::SimAnchorState;
 pub use stage_handlers::{
     AffectedPaths, CandidateId, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish,

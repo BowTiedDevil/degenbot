@@ -39,7 +39,14 @@ fn runtime_fixture() -> MarketContext {
         token1_id: u64::try_from(weth_id).unwrap(),
         address: P,
     });
-    MarketContext::new(1, Some(index), Some(db), 8)
+    MarketContext::new(
+        1,
+        Some(std::sync::Arc::new(
+            degenbot_bot::bot_core::RouteRegistry::new(index),
+        )),
+        Some(db),
+        8,
+    )
 }
 
 #[test]

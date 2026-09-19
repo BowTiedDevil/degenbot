@@ -95,7 +95,14 @@ fn runtime() -> (MarketContext, u64, u64) {
         address: MID,
     });
     (
-        MarketContext::new(1, Some(index), Some(db), 8),
+        MarketContext::new(
+            1,
+            Some(std::sync::Arc::new(
+                degenbot_bot::bot_core::RouteRegistry::new(index),
+            )),
+            Some(db),
+            8,
+        ),
         tok_id,
         weth_id,
     )

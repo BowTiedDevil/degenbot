@@ -1,12 +1,13 @@
 //! Process-lifetime shared caches for pending-transaction strategies.
 //!
 //! A [`MarketContext`] owns the services every pending-transaction strategy
-//! reads but none owns: the DB-backed connector index, the DB handle behind
-//! the token id/address joins, the cross-block warm bytecode/account cache,
-//! and the startup discovery graph built from the connector index. Each is
-//! expensive to rebuild per transaction and safe to share process-wide; a
-//! per-frame refill would re-pay a DB query per pool and forfeit the index's
-//! memoized depth rankings.
+//! reads but none owns: the boot-time [`RouteRegistry`] handle (whose frozen
+//! connector index backs the token joins and the discovery graph), the DB
+//! handle behind the token id/address joins, the cross-block warm
+//! bytecode/account cache, and the startup discovery graph built from that
+//! index. Each is expensive to rebuild per transaction and safe to share
+//! process-wide; a per-frame refill would re-pay a DB query per pool and
+//! forfeit the index's memoized depth rankings.
 //!
 //! This is NOT strategy identity. A strategy's identity (which pools it
 //! reacts to, how it selects candidates, how it prices them) lives in the
@@ -16,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use alloy::primitives::Address;
+use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::sidecar_paths::V2ConnectorIndex;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_simulation::WarmCodeCacheInner;
@@ -27,10 +29,10 @@ use crate::anchored_dfs::AnchoredGraph;
 pub struct MarketContext {
     /// The chain the connector index + DB id joins are keyed on.
     pub chain_id: i64,
-    /// DB-backed connector index (V2 + V3 edges, depth-ranked). `None`
-    /// keeps the discovery fan shut (frames observe; connectors are never
-    /// guessed).
-    pub index: Option<V2ConnectorIndex>,
+    /// The boot-time pool world-view (connector index + frozen pool set +
+    /// decoder mirror), shared by handle. `None` keeps the discovery fan shut
+    /// (frames observe; connectors are never guessed).
+    pub registry: Option<Arc<RouteRegistry>>,
     /// The DB handle the index was loaded from (token id/address joins).
     pub db: Option<DegenbotDb>,
     /// The discovery fan-out cap (`strategy.backrun.connectors`).
@@ -50,21 +52,31 @@ impl MarketContext {
     #[must_use]
     pub fn new(
         chain_id: i64,
-        index: Option<V2ConnectorIndex>,
+        registry: Option<Arc<RouteRegistry>>,
         db: Option<DegenbotDb>,
         connector_cap: usize,
     ) -> Self {
         Self {
             chain_id,
-            // Built from the index BEFORE it moves: one startup graph pass.
-            dfs: index.as_ref().map(AnchoredGraph::from_connector_index),
-            index,
+            // Built from the registry's index BEFORE the handle moves in: one
+            // startup graph pass.
+            dfs: registry
+                .as_ref()
+                .map(|r| AnchoredGraph::from_connector_index(r.index())),
+            registry,
             db,
             connector_cap,
             warm_cache: WarmCodeCacheInner::shared_default(),
             token_ids: Mutex::new(HashMap::new()),
             token_addrs: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The frozen connector index behind the registry handle (`None` when the
+    /// boot load failed or the DB was absent).
+    #[must_use]
+    pub fn index(&self) -> Option<&V2ConnectorIndex> {
+        self.registry.as_ref().map(|r| r.index())
     }
 
     /// DB id for a token address (memoized across frames). `None` when the

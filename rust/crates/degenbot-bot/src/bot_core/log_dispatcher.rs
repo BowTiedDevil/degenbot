@@ -532,6 +532,13 @@ impl LogDispatcher {
         d
     }
 
+    /// The size of the frozen decoder registration table. The route
+    /// registry's per-kind mirror is pinned against this count.
+    #[must_use]
+    pub fn decoder_count(&self) -> usize {
+        self.decoders.len()
+    }
+
     /// Register a decoder. Decoders are tried in registration order.
     pub fn register_decoder(&mut self, decoder: Box<dyn LogDecoder>) {
         self.decoders.push(decoder);

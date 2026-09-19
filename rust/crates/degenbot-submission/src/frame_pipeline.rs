@@ -778,7 +778,7 @@ pub async fn process_frame_with_prefix<S: PendingTxStrategy>(
 
     // ── stage: extract (journal post-states; descriptors from the index) ──
     let t = Instant::now();
-    let (descriptors, hit_v4) = build_descriptors(ctx.index.as_ref(), &outcome.touched);
+    let (descriptors, hit_v4) = build_descriptors(ctx.index(), &outcome.touched);
     let extracted = extract_pool_post_states(&outcome, &descriptors);
     stages.extract_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
     let all_unsupported = !extracted.is_empty()

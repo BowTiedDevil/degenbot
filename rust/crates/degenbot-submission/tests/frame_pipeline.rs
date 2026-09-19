@@ -81,7 +81,14 @@ fn runtime_fixture() -> (MarketContext, u64, u64) {
     });
     // The pipeline's sidecars quote chains of 1 (mainnet).
     (
-        MarketContext::new(1, Some(index), Some(db), 8),
+        MarketContext::new(
+            1,
+            Some(std::sync::Arc::new(
+                degenbot_bot::bot_core::RouteRegistry::new(index),
+            )),
+            Some(db),
+            8,
+        ),
         u64::try_from(tok_id).unwrap(),
         u64::try_from(weth_id).unwrap(),
     )
@@ -97,7 +104,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     let outcome = golden_replay_outcome();
 
     // descriptors: projected from the connector index (the tracked registry).
-    let (descriptors, hit_v4) = build_descriptors(rt.index.as_ref(), &outcome.touched);
+    let (descriptors, hit_v4) = build_descriptors(rt.index(), &outcome.touched);
     assert!(!hit_v4, "an all-V2 frame touches no PoolManager");
     assert_eq!(
         descriptors.len(),
@@ -303,10 +310,17 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
             address: addr,
         });
     }
-    let rt = MarketContext::new(1, Some(index), Some(db), 8);
+    let rt = MarketContext::new(
+        1,
+        Some(std::sync::Arc::new(
+            degenbot_bot::bot_core::RouteRegistry::new(index),
+        )),
+        Some(db),
+        8,
+    );
     let outcome = usdc_frame_replay_outcome();
 
-    let (descriptors, _) = build_descriptors(rt.index.as_ref(), &outcome.touched);
+    let (descriptors, _) = build_descriptors(rt.index(), &outcome.touched);
     let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
         &outcome,
         &descriptors,

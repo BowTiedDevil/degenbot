@@ -49,15 +49,17 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
     index.set_ranker(Arc::new(
         degenbot_bot::sidecar_paths::OnChainLiquidityRanker::new(Arc::clone(&provider)),
     ));
-    let rt = MarketContext::new(1, Some(index), Some(db), 8);
+    let rt = MarketContext::new(
+        1,
+        Some(std::sync::Arc::new(
+            degenbot_bot::bot_core::RouteRegistry::new(index),
+        )),
+        Some(db),
+        8,
+    );
     let head = provider.get_block_number().await.unwrap();
 
-    let anchor = *rt
-        .index
-        .as_ref()
-        .unwrap()
-        .v3_edge_by_address(ANCHOR)
-        .unwrap();
+    let anchor = *rt.index().unwrap().v3_edge_by_address(ANCHOR).unwrap();
     let (sqrt, tick, liq) = degenbot_rpc::abi::fetch_v3_slot0_liquidity(&provider, &ANCHOR, None)
         .await
         .unwrap();
@@ -113,7 +115,7 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
         rt.token_id(a.token0).unwrap()
     };
     for mid in [MID1, MID2] {
-        let edge = *rt.index.as_ref().unwrap().edge_by_address(mid).unwrap();
+        let edge = *rt.index().unwrap().edge_by_address(mid).unwrap();
         let m0 = rt.token_addr(edge.token0_id).unwrap();
         let m1 = rt.token_addr(edge.token1_id).unwrap();
         let (r0, r1) = degenbot_rpc::abi::fetch_v2_reserves(&provider, &mid, None)
