@@ -1,18 +1,18 @@
 #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
-//! A hosted lane must see the same multi-thread runtime ambience the
+//! A hosted driver must see the same multi-thread runtime ambience the
 //! standalone `backrun_sidecar` gets from `#[tokio::main]`.
 //!
-//! The live two-lane run failed every `BlockSimHandle::build` with "no ambient
+//! The live two-driver run failed every `BlockSimHandle::build` with "no ambient
 //! multi-threaded tokio runtime" because `StrategyHost::start_driving` booted
-//! the !Send lane future on a dedicated current-thread runtime; the standalone
+//! the !Send driver future on a dedicated current-thread runtime; the standalone
 //! sidecar polls the same future directly on a multi-thread runtime. `revm`'s
 //! `WrapDatabaseAsync::new` (the layer `BlockSimHandle::build_inner` stacks
 //! over `AlloyDB`) returns `None` unless the current handle is multi-threaded,
 //! and its reads block on that handle through `block_in_place`.
 //!
 //! This test boots a driver through the real host edge and asserts both halves
-//! of the callsite contract inside the lane's own future: construction returns
+//! of the callsite contract inside the driver's own future: construction returns
 //! `Some`, and a read completes (the `block_in_place` path) without panicking.
 //! No chain is needed.
 
@@ -67,7 +67,7 @@ impl DatabaseAsyncRef for ReadyDb {
 }
 
 #[tokio::test]
-async fn hosted_lane_builds_wrap_database_async() {
+async fn hosted_driver_builds_wrap_database_async() {
     let mut host = StrategyHost::new(
         Arc::new(Hub::new()),
         Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
@@ -78,17 +78,17 @@ async fn hosted_lane_builds_wrap_database_async() {
         .expect("register");
 
     let (contract_tx, contract_rx) = tokio::sync::oneshot::channel::<bool>();
-    let spawn: DriverSpawnFactory = Box::new(move |_lane| {
+    let spawn: DriverSpawnFactory = Box::new(move |_namespace| {
         Box::pin(async move {
             // The exact `BlockSimHandle::build_inner` construction contract.
             let built = WrapDatabaseAsync::new(ReadyDb);
             // The layer-read contract: `WrapDatabaseAsync`'s `DatabaseRef`
             // impl blocks on the captured handle, which must be reachable via
-            // `block_in_place` from the lane's runtime context.
+            // `block_in_place` from the driver's runtime context.
             let read_ok = built
                 .as_ref()
                 .is_some_and(|db| DatabaseRef::basic_ref(db, Address::ZERO).is_ok());
-            contract_tx.send(read_ok).expect("lane contract receiver");
+            contract_tx.send(read_ok).expect("driver contract receiver");
             DriverExit::Stopped
         })
     });
@@ -101,7 +101,7 @@ async fn hosted_lane_builds_wrap_database_async() {
     assert!(
         contract_rx
             .await
-            .expect("lane reported the callsite verdict"),
-        "hosted lane must expose a multi-thread runtime to WrapDatabaseAsync"
+            .expect("driver reported the callsite verdict"),
+        "hosted driver must expose a multi-thread runtime to WrapDatabaseAsync"
     );
 }

@@ -73,6 +73,13 @@ lifecycle FSM. A strategy driver attaches to the host; the host never names a st
 family.
 _Avoid_: "sidecar" (the standalone two-process deployment), "orchestrator", "manager".
 
+**Strategy driver**:
+The host's unit of strategy admission: a named runnable loop registered as a `DriverState`
+instance and attached to the host's shared services. `BackrunDriver` is the reference; the
+settlement pump arm registers none because the engine's pump already drives it.
+_Avoid_: using bare "driver" for the engine session (**Driver seam**) or the Python session
+(**Driver cockpit**).
+
 **NonceAuthority**:
 The host's single owner of the operator account's nonce space, leased at sign time: a
 strategy receives the lowest free nonce at or above the confirmed chain nonce, so leases
@@ -474,9 +481,11 @@ The single dirt ledger recording pool-state changes, with exactly one owner.
 _Avoid_: the retired subscriber bus (`PoolStateSubscriber`, `notify_pool_state_changed`).
 
 **Driver seam**:
-The arb engine's one external interface — the stage surface both the block pump and the
-Python driver cross. Everything else is internal machinery.
-_Avoid_: "engine facade" (a facade fronts another surface; there is no second door).
+The arb engine's one external interface (`EngineDriver`) — the stage surface both the block
+pump and the Python companion cross. Everything else is internal machinery. Distinct from
+the host's **Strategy driver** and the submission crate's **Pending-transaction driver**.
+_Avoid_: "engine facade" (a facade fronts another surface; there is no second door); using
+bare "driver" where a strategy loop, the Python cockpit, or the settlement arm is meant.
 
 **Engine retune**:
 The typed operator re-parameterization applied at construction and at runtime.

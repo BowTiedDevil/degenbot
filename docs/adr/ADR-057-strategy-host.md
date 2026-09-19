@@ -192,7 +192,7 @@ file vocabulary.
   (`UnknownStrategyError`, `UnconfiguredStrategyError`, base
   `StrategyHostError`).
 - The standalone sidecar deployment is not removed and stays green:
-  `from_stages` still mints a private hub, `BackrunContext.lane_root = None`
+  `from_stages` still mints a private hub, `BackrunContext.namespace_root = None`
   keeps the process-global root, and the settlement-only Python boot is
   observably unchanged.
 - Residuals recorded with the landings: the Python boot still hands the host an

@@ -1,4 +1,4 @@
-//! The backrun strategy driver: the lane half of the standalone sidecar,
+//! The backrun strategy driver: the loop half of the standalone sidecar,
 //! lifted out of the binary so a host can register it.
 //!
 //! A driver owns everything the loop touches: the frame feed subscription,
@@ -8,15 +8,15 @@
 //! stays with the host; this module is handed the already-minted hub,
 //! registry, and node join and does not own them.
 //!
-//! [`BackrunDriver::start`] performs the lane boot, then returns a
+//! [`BackrunDriver::start`] performs the driver boot, then returns a
 //! [`DriverHandle`] whose [`wait`](DriverHandle::wait) drives the loop. The
-//! bin polls the returned future inline, so a lane panic still unwinds the
+//! bin polls the returned future inline, so a driver panic still unwinds the
 //! process exactly as a bin panic did; the handle's stop flag is the seam a
-//! multi-lane host will drive the same loop through.
+//! multi-strategy host will drive the same loop through.
 
 #![expect(
     clippy::expect_used,
-    reason = "lane boot: fatal config failures exit the process loudly"
+    reason = "driver boot: fatal config failures exit the process loudly"
 )]
 
 use std::collections::HashSet;
@@ -62,7 +62,7 @@ use crate::submit::{dispatch_and_submit, BundleTarget, SubmissionTarget, SubmitC
 /// suffixes both read it.
 pub const CHAIN_ID: u64 = 1;
 
-/// The gas floor the envelope gate evaluates at (wei) - the composed lane's
+/// The gas floor the envelope gate evaluates at (wei) - the composed strategy's
 /// standing economics (the env override did not exist upstream either).
 const GAS_FLOOR_WEI: u64 = 50_000_000_000_000;
 
@@ -935,8 +935,8 @@ async fn classify_consumption(
 /// Resolve the quarantine journal path: the lane namespace when this driver
 /// is hosted (another strategy may share the process), the process-global
 /// state root for the standalone single-strategy sidecar.
-fn quarantine_journal_path(lane_root: Option<&Path>) -> std::io::Result<PathBuf> {
-    match lane_root {
+fn quarantine_journal_path(namespace_root: Option<&Path>) -> std::io::Result<PathBuf> {
+    match namespace_root {
         Some(root) => Ok(root.join(gap_quarantine_journal::JOURNAL_FILE_NAME)),
         None => degenbot_runs::resolve_state_root()
             .map(|root| root.join(gap_quarantine_journal::JOURNAL_FILE_NAME)),
@@ -945,9 +945,9 @@ fn quarantine_journal_path(lane_root: Option<&Path>) -> std::io::Result<PathBuf>
 
 fn reload_quarantine(
     quarantine: &mut Quarantine,
-    lane_root: Option<&Path>,
+    namespace_root: Option<&Path>,
 ) -> Option<QuarantineJournal> {
-    let path = match quarantine_journal_path(lane_root) {
+    let path = match quarantine_journal_path(namespace_root) {
         Ok(path) => path,
         Err(error) => {
             tracing::warn!(%error, "quarantine journal root unavailable - persistence off");
@@ -1007,47 +1007,47 @@ fn reload_quarantine(
     QuarantineJournal::open(&path).ok()
 }
 
-/// The host-shared handles a lane start needs beyond its own config.
+/// The host-shared handles a driver start needs beyond its own config.
 pub struct BackrunContext {
     /// The boot DB handle behind the registry's token joins; `None` leaves
     /// the discovery lane shut.
     pub connector_db: Option<DegenbotDb>,
     /// The chain node's `newHeads` WS endpoint; `None` polls.
     pub head_ws_url: Option<String>,
-    /// The host's node join, shared so the boot ranker and the lane read one
+    /// The host's node join, shared so the boot ranker and the driver read one
     /// connection pool.
     pub provider: Arc<AlloyProvider>,
-    /// The lane's run-artifact root inside a multi-strategy host, so this
+    /// The driver's run-artifact root inside a multi-strategy host, so this
     /// driver's journal never collides with another strategy's. `None` keeps
     /// the process-global state root for the standalone single-strategy
     /// sidecar (strict parity).
-    pub lane_root: Option<PathBuf>,
+    pub namespace_root: Option<PathBuf>,
     /// The sign-time nonce seam: the one issuer every runtime shape stamps
     /// through. The standalone sidecar mints a host of size one around its
-    /// own authority; a hosted lane receives the host's shared lane.
+    /// own authority; a hosted driver receives the host's shared nonce lane.
     pub nonce_lane: Arc<NonceLane>,
 }
 
-/// Why a backrun lane could not be booted.
+/// Why a backrun driver could not be booted.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BackrunBootError {
     /// The chain-node HTTP endpoint did not resolve from the process
     /// environment.
-    #[error("backrun lane node join unresolved: {0}")]
+    #[error("backrun node join unresolved: {0}")]
     NodeJoin(String),
 }
 
-/// The lane's node join: the resolved chain-node HTTP endpoint and the provider
-/// built over it. The standalone sidecar and a hosted lane resolve this the same
-/// way, so the boot ranker and the lane read one connection pool.
+/// The driver's node join: the resolved chain-node HTTP endpoint and the provider
+/// built over it. The standalone sidecar and a hosted driver resolve this the same
+/// way, so the boot ranker and the driver read one connection pool.
 pub struct BackrunNodeJoin {
-    /// The `DEGENBOT_RPC_HTTP_CHAINID_<id>` endpoint the lane signs against.
+    /// The `DEGENBOT_RPC_HTTP_CHAINID_<id>` endpoint the driver signs against.
     pub rpc_url: String,
     /// The shared node join.
     pub provider: Arc<AlloyProvider>,
 }
 
-/// Resolve the lane's node join from the process environment.
+/// Resolve the driver's node join from the process environment.
 ///
 /// # Errors
 ///
@@ -1068,13 +1068,13 @@ pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> 
     Ok(BackrunNodeJoin { rpc_url, provider })
 }
 
-/// The lane's boot recipe: the process config, the host-owned hub and route
-/// registry, and the lane's run-artifact scope.
+/// The driver's boot recipe: the process config, the host-owned hub and route
+/// registry, and the driver's run-artifact scope.
 ///
-/// The lane has exactly ONE boot path — [`Self::into_driver_future`]. The
-/// standalone sidecar polls it inline (a lane panic still unwinds the process)
+/// The driver has exactly ONE boot path — [`Self::into_driver_future`]. The
+/// standalone sidecar polls it inline (a driver panic still unwinds the process)
 /// and a `StrategyHost` spawns it as a driver task (a panic becomes a tombstone
-/// at the task boundary), so a hosted lane and a standalone sidecar cannot
+/// at the task boundary), so a hosted driver and a standalone sidecar cannot
 /// drift apart.
 pub struct BackrunBoot {
     cfg: SidecarConfig,
@@ -1084,7 +1084,7 @@ pub struct BackrunBoot {
 }
 
 impl BackrunBoot {
-    /// The lane's loop future: it drives [`BackrunDriver::start`] to its
+    /// The driver's loop future: it drives [`BackrunDriver::start`] to its
     /// terminal return and reports a clean stop to the host.
     #[must_use]
     pub fn into_driver_future(self) -> DriverFuture {
@@ -1103,11 +1103,11 @@ impl BackrunBoot {
 }
 
 /// Resolve the boot route registry every backrun runtime discovers over, and
-/// the opened connector DB the lane's token joins borrow.
+/// the opened connector DB the driver's token joins borrow.
 ///
 /// This is the ONE registry-construction seam: the standalone sidecar (a host
-/// of size one) and a hosted lane both hand it the resolved DB path and the
-/// lane's node join, so the two runtime shapes cannot drift apart. It opens
+/// of size one) and a hosted driver both hand it the resolved DB path and the
+/// driver's node join, so the two runtime shapes cannot drift apart. It opens
 /// `db_path` once, loads the V2 connector scan plus its V3 additions, attaches
 /// the on-chain ranker, freezes the [`RouteRegistry`], and runs the live
 /// rank-evidence probe last when the operator asked for it. A missing or
@@ -1156,9 +1156,9 @@ pub async fn resolve_backrun_registry(
 
 /// The route registry a hosted boot mints the strategy host over.
 ///
-/// Delegates to [`resolve_backrun_registry`], so a hosted lane discovers over
+/// Delegates to [`resolve_backrun_registry`], so a hosted driver discovers over
 /// the same DB-backed snapshot the standalone sidecar builds. A process with
-/// no connector DB mints an empty snapshot instead; the lane then observes
+/// no connector DB mints an empty snapshot instead; the driver then observes
 /// with discovery shut rather than guessing connectors.
 #[must_use]
 pub async fn resolve_backrun_host_registry(
@@ -1193,12 +1193,12 @@ pub fn resolve_backrun_connector_db() -> Option<DegenbotDb> {
     }
 }
 
-/// Assemble a lane's boot from an already-resolved node join.
+/// Assemble a driver's boot from an already-resolved node join.
 ///
 /// Both the standalone sidecar (which builds its DB-backed registry over the
-/// join) and a hosted lane call this, so the lane's config derivation and
+/// join) and a hosted driver call this, so the driver's config derivation and
 /// context shape have one definition. The chain node's `newHeads` WS endpoint
-/// (the fallback when absent) resolves here. `lane_root` scopes the lane's
+/// (the fallback when absent) resolves here. `namespace_root` scopes the driver's
 /// run-artifacts under a multi-strategy host's state root; `None` keeps the
 /// process-global root (standalone parity).
 #[must_use]
@@ -1208,7 +1208,7 @@ pub fn backrun_boot(
     hub: Arc<Hub>,
     route_registry: Option<Arc<RouteRegistry>>,
     connector_db: Option<DegenbotDb>,
-    lane_root: Option<PathBuf>,
+    namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
 ) -> BackrunBoot {
     let cfg = SidecarConfig::from_config(config, join.rpc_url);
@@ -1220,7 +1220,7 @@ pub fn backrun_boot(
         connector_db,
         head_ws_url,
         provider: join.provider,
-        lane_root,
+        namespace_root,
         nonce_lane,
     };
     BackrunBoot {
@@ -1231,13 +1231,13 @@ pub fn backrun_boot(
     }
 }
 
-/// The spawn factory a `StrategyHost` registers for the backrun lane.
+/// The spawn factory a `StrategyHost` registers for the backrun driver.
 ///
-/// The lane resolves its node join and connector DB when the host drives the
-/// lane, not when the factory is attached, so a boot that never enables backrun
+/// The driver resolves its node join and connector DB when the host drives the
+/// driver, not when the factory is attached, so a boot that never enables backrun
 /// pays for no node connection or DB handle. A join that cannot resolve becomes
 /// a `Halted` tombstone naming the missing layer rather than a host unwind; the
-/// host-computed lane namespace scopes the lane's artifacts.
+/// host-computed lane namespace scopes the driver's artifacts.
 #[must_use]
 pub fn backrun_spawn_factory(
     config: Arc<degenbot_config::BotConfig>,
@@ -1245,24 +1245,24 @@ pub fn backrun_spawn_factory(
     route_registry: Option<Arc<RouteRegistry>>,
     nonce_lane: Arc<NonceLane>,
 ) -> DriverSpawnFactory {
-    Box::new(move |lane| {
+    Box::new(move |namespace| {
         Box::pin(async move {
             match resolve_backrun_node_join() {
                 Ok(join) => {
-                    let lane_root = lane.map(|namespace| namespace.root().to_path_buf());
+                    let namespace_root = namespace.map(|ns| ns.root().to_path_buf());
                     backrun_boot(
                         &config,
                         join,
                         hub,
                         route_registry,
                         resolve_backrun_connector_db(),
-                        lane_root,
+                        namespace_root,
                         nonce_lane,
                     )
                     .into_driver_future()
                     .await
                 }
-                Err(error) => DriverExit::Halted(format!("backrun lane boot refused: {error}")),
+                Err(error) => DriverExit::Halted(format!("backrun driver boot refused: {error}")),
             }
         })
     })
@@ -1270,7 +1270,7 @@ pub fn backrun_spawn_factory(
 
 /// The lifecycle FSM a running driver walks. `Stopped` is terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DriverLifecycle {
+pub enum LoopLifecycle {
     /// Boot is in flight; the loop has not been polled.
     Starting,
     /// The loop is polling.
@@ -1281,7 +1281,7 @@ pub enum DriverLifecycle {
     Stopped,
 }
 
-impl DriverLifecycle {
+impl LoopLifecycle {
     /// Whether the driver has returned and can never run again.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
@@ -1292,12 +1292,12 @@ impl DriverLifecycle {
     ///
     /// # Errors
     ///
-    /// [`LifecycleDecline::StartRequiresStarting`] from any other state.
-    pub const fn on_running(self) -> Result<Self, LifecycleDecline> {
+    /// [`LoopDecline::StartRequiresStarting`] from any other state.
+    pub const fn on_running(self) -> Result<Self, LoopDecline> {
         if matches!(self, Self::Starting) {
             Ok(Self::Running)
         } else {
-            Err(LifecycleDecline::StartRequiresStarting)
+            Err(LoopDecline::StartRequiresStarting)
         }
     }
 
@@ -1305,12 +1305,12 @@ impl DriverLifecycle {
     ///
     /// # Errors
     ///
-    /// [`LifecycleDecline::StopRequiresLive`] from a stopping or stopped driver.
-    pub const fn on_stop(self) -> Result<Self, LifecycleDecline> {
+    /// [`LoopDecline::StopRequiresLive`] from a stopping or stopped driver.
+    pub const fn on_stop(self) -> Result<Self, LoopDecline> {
         if matches!(self, Self::Starting | Self::Running) {
             Ok(Self::Stopping)
         } else {
-            Err(LifecycleDecline::StopRequiresLive)
+            Err(LoopDecline::StopRequiresLive)
         }
     }
 
@@ -1318,10 +1318,10 @@ impl DriverLifecycle {
     ///
     /// # Errors
     ///
-    /// [`LifecycleDecline::StoppedRequiresLive`] from a stopped driver.
-    pub const fn on_stopped(self) -> Result<Self, LifecycleDecline> {
+    /// [`LoopDecline::StoppedRequiresLive`] from a stopped driver.
+    pub const fn on_stopped(self) -> Result<Self, LoopDecline> {
         if self.is_terminal() {
-            Err(LifecycleDecline::StoppedRequiresLive)
+            Err(LoopDecline::StoppedRequiresLive)
         } else {
             Ok(Self::Stopped)
         }
@@ -1330,8 +1330,8 @@ impl DriverLifecycle {
 
 /// Why a lifecycle move was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum LifecycleDecline {
-    /// `running` is only legal from [`DriverLifecycle::Starting`].
+pub enum LoopDecline {
+    /// `running` is only legal from [`LoopLifecycle::Starting`].
     #[error("running requires the Starting state")]
     StartRequiresStarting,
     /// `stop` is only legal from a live state.
@@ -1343,15 +1343,15 @@ pub enum LifecycleDecline {
 }
 
 #[derive(Debug)]
-struct LifecycleShared {
-    state: ParkingMutex<DriverLifecycle>,
+struct LoopShared {
+    state: ParkingMutex<LoopLifecycle>,
     stop: AtomicBool,
 }
 
-impl LifecycleShared {
+impl LoopShared {
     fn new() -> Self {
         Self {
-            state: ParkingMutex::new(DriverLifecycle::Starting),
+            state: ParkingMutex::new(LoopLifecycle::Starting),
             stop: AtomicBool::new(false),
         }
     }
@@ -1365,7 +1365,7 @@ impl LifecycleShared {
         }
     }
 
-    fn request_stop(&self) -> Result<DriverLifecycle, LifecycleDecline> {
+    fn request_stop(&self) -> Result<LoopLifecycle, LoopDecline> {
         let mut state = self.state.lock();
         let next = state.on_stop()?;
         *state = next;
@@ -1386,22 +1386,22 @@ impl LifecycleShared {
 }
 
 /// The loop future the handle drives. Boxed so the handle owns it without the
-/// bin naming the lane's generic stack. Deliberately NOT `Send`: the lane's
+/// bin naming the driver's generic stack. Deliberately NOT `Send`: the loop's
 /// replay stack holds `Rc`-backed buffers, so a host drives it on a dedicated
 /// single-thread runtime (the standalone sidecar polls it inline).
 type RunFuture = Pin<Box<dyn Future<Output = ()> + 'static>>;
 
-/// A started driver lane. [`wait`](Self::wait) drives it to completion;
+/// A started driver loop. [`wait`](Self::wait) drives it to completion;
 /// [`stop`](Self::stop) requests an early exit.
 pub struct DriverHandle {
-    shared: Arc<LifecycleShared>,
+    shared: Arc<LoopShared>,
     run: Option<RunFuture>,
 }
 
 impl DriverHandle {
     /// The driver's current lifecycle state.
     #[must_use]
-    pub fn state(&self) -> DriverLifecycle {
+    pub fn state(&self) -> LoopLifecycle {
         *self.shared.state.lock()
     }
 
@@ -1410,13 +1410,13 @@ impl DriverHandle {
     ///
     /// # Errors
     ///
-    /// [`LifecycleDecline::StopRequiresLive`] once the driver is already
+    /// [`LoopDecline::StopRequiresLive`] once the driver is already
     /// stopping or stopped.
-    pub fn stop(&self) -> Result<DriverLifecycle, LifecycleDecline> {
+    pub fn stop(&self) -> Result<LoopLifecycle, LoopDecline> {
         self.shared.request_stop()
     }
 
-    /// Drive the lane loop to completion. Polled inline by the bin, so a lane
+    /// Drive the driver loop to completion. Polled inline by the bin, so a driver
     /// panic unwinds the caller rather than being swallowed by a task boundary.
     pub async fn wait(mut self) {
         if let Some(run) = self.run.take() {
@@ -1426,8 +1426,8 @@ impl DriverHandle {
 }
 
 /// The owned boot products the loop needs; grouping them keeps the loop
-/// signature readable and keeps the boot/lane split explicit.
-struct LaneBoot {
+/// signature readable and keeps the boot/loop split explicit.
+struct LoopBoot {
     provider: Arc<AlloyProvider>,
     runtime: MarketContext,
     strategy: BackrunStrategy,
@@ -1439,26 +1439,26 @@ struct LaneBoot {
     sim_client: alloy::rpc::client::RpcClient,
     fixture_frames: Option<Vec<degenbot_rpc::backrun_feed::BackrunFeedEvent>>,
     head_ws_url: Option<String>,
-    lane_root: Option<PathBuf>,
+    namespace_root: Option<PathBuf>,
 }
 
 /// The backrun driver entry point.
 pub struct BackrunDriver;
 
 impl BackrunDriver {
-    /// Boot the lane and return a handle whose [`DriverHandle::wait`] runs it.
+    /// Boot the driver and return a handle whose [`DriverHandle::wait`] runs it.
     ///
     /// The hub, registry, and node join are host-minted and only borrowed for
-    /// the lane's lifetime; boot failures panic exactly as the single-lane bin
+    /// the driver's lifetime; boot failures panic exactly as the single-driver bin
     /// did, so the caller's panic behavior is unchanged. Only one driver may
     /// attach to a given hub: the feed registration panics on a second `start`
     /// sharing the same hub.
     ///
     /// # Panics
     ///
-    /// The lane boot panics on a malformed config (an unparseable sim URL, an
+    /// The driver boot panics on a malformed config (an unparseable sim URL, an
     /// unreadable or malformed key file, an unparseable executor/owner
-    /// address, or a failed head fetch), preserving the single-lane bin's
+    /// address, or a failed head fetch), preserving the single-driver bin's
     /// loud-failure behavior.
     pub async fn start(
         cfg: SidecarConfig,
@@ -1470,7 +1470,7 @@ impl BackrunDriver {
             connector_db,
             head_ws_url,
             provider,
-            lane_root,
+            namespace_root,
             nonce_lane,
         } = ctx;
         // The bundle-sim client (`strategy.backrun.sim_url`, default: the chain
@@ -1564,7 +1564,7 @@ impl BackrunDriver {
         };
         let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(replay_head)));
         // Seed the authority from the chain's next nonce for the operator
-        // account: the lane's first stamp must never re-issue a nonce the
+        // account: the driver's first stamp must never re-issue a nonce the
         // chain has already consumed.
         let operator_nonce = provider
             .get_transaction_count(
@@ -1582,7 +1582,7 @@ impl BackrunDriver {
             "sidecar starting"
         );
 
-        let boot = LaneBoot {
+        let boot = LoopBoot {
             provider,
             runtime,
             strategy,
@@ -1594,9 +1594,9 @@ impl BackrunDriver {
             sim_client,
             fixture_frames,
             head_ws_url,
-            lane_root,
+            namespace_root,
         };
-        let shared = Arc::new(LifecycleShared::new());
+        let shared = Arc::new(LoopShared::new());
         let run = Box::pin(drive(cfg, hub, boot, Arc::clone(&shared)));
         DriverHandle {
             shared,
@@ -1605,11 +1605,11 @@ impl BackrunDriver {
     }
 }
 
-/// The lane loop. Everything here is lane-local: the replay handle borrows
-/// only the lane's own runtime, never a host handle.
-#[expect(clippy::too_many_lines, reason = "the lane loop reads top-to-bottom")]
-async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<LifecycleShared>) {
-    let LaneBoot {
+/// The driver loop. Everything here is loop-local: the replay handle borrows
+/// only the loop's own runtime, never a host handle.
+#[expect(clippy::too_many_lines, reason = "the driver loop reads top-to-bottom")]
+async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<LoopShared>) {
+    let LoopBoot {
         provider,
         mut runtime,
         mut strategy,
@@ -1621,7 +1621,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
         sim_client,
         fixture_frames,
         head_ws_url,
-        lane_root,
+        namespace_root,
     } = boot;
     shared.begin_running();
     // The per-block replay handle: rebuilt whenever the observed head
@@ -1692,7 +1692,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
 
     // Reload the durable quarantine before servicing any frame, so a restart
     // resumes the parked set.
-    let mut quarantine_journal = reload_quarantine(&mut quarantine, lane_root.as_deref());
+    let mut quarantine_journal = reload_quarantine(&mut quarantine, namespace_root.as_deref());
 
     // Live mode: MEVBlocker feed. The hub owns the process-lifetime event
     // channels; the feed registers its PendingTx drop-oldest ring on it and
@@ -1806,7 +1806,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LaneBoot, shared: Arc<Li
                 // operator-account nonce: a confirmed broadcast leaves the
                 // outstanding set, and a rewind restores a broadcast the old
                 // head had confirmed. Guarded on outstanding work so an idle
-                // lane pays no per-head chain read.
+                // driver pays no per-head chain read.
                 if nonce_lane.authority().has_outstanding() {
                     if let Some(operator) = signer.as_ref().map(TxSigner::address) {
                         match provider.get_transaction_count(&operator, None).await {
@@ -2203,7 +2203,7 @@ mod tests {
     use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
     use std::sync::Arc;
 
-    use super::{DriverHandle, DriverLifecycle, LifecycleDecline, LifecycleShared};
+    use super::{DriverHandle, LoopDecline, LoopLifecycle, LoopShared};
 
     /// The boot registry has ONE construction seam: the standalone sidecar's
     /// boot and the hosted boot both hand it a DB path and the lane's node
@@ -2301,33 +2301,27 @@ mod tests {
     #[test]
     fn lifecycle_transition_table_is_total_and_closed() {
         for state in [
-            DriverLifecycle::Starting,
-            DriverLifecycle::Running,
-            DriverLifecycle::Stopping,
-            DriverLifecycle::Stopped,
+            LoopLifecycle::Starting,
+            LoopLifecycle::Running,
+            LoopLifecycle::Stopping,
+            LoopLifecycle::Stopped,
         ] {
-            if state == DriverLifecycle::Starting {
-                assert_eq!(state.on_running(), Ok(DriverLifecycle::Running));
+            if state == LoopLifecycle::Starting {
+                assert_eq!(state.on_running(), Ok(LoopLifecycle::Running));
             } else {
-                assert_eq!(
-                    state.on_running(),
-                    Err(LifecycleDecline::StartRequiresStarting)
-                );
+                assert_eq!(state.on_running(), Err(LoopDecline::StartRequiresStarting));
             }
 
-            if matches!(state, DriverLifecycle::Starting | DriverLifecycle::Running) {
-                assert_eq!(state.on_stop(), Ok(DriverLifecycle::Stopping));
+            if matches!(state, LoopLifecycle::Starting | LoopLifecycle::Running) {
+                assert_eq!(state.on_stop(), Ok(LoopLifecycle::Stopping));
             } else {
-                assert_eq!(state.on_stop(), Err(LifecycleDecline::StopRequiresLive));
+                assert_eq!(state.on_stop(), Err(LoopDecline::StopRequiresLive));
             }
 
-            if state == DriverLifecycle::Stopped {
-                assert_eq!(
-                    state.on_stopped(),
-                    Err(LifecycleDecline::StoppedRequiresLive)
-                );
+            if state == LoopLifecycle::Stopped {
+                assert_eq!(state.on_stopped(), Err(LoopDecline::StoppedRequiresLive));
             } else {
-                assert_eq!(state.on_stopped(), Ok(DriverLifecycle::Stopped));
+                assert_eq!(state.on_stopped(), Ok(LoopLifecycle::Stopped));
             }
         }
     }
@@ -2336,21 +2330,21 @@ mod tests {
     /// flag; a second request declines, and the loop's return lands `Stopped`.
     #[tokio::test]
     async fn stop_walks_a_live_handle_to_stopping_and_is_idempotent() {
-        let shared = Arc::new(LifecycleShared::new());
+        let shared = Arc::new(LoopShared::new());
         let handle = DriverHandle {
             shared: Arc::clone(&shared),
             run: Some(Box::pin(async {})),
         };
-        assert_eq!(handle.state(), DriverLifecycle::Starting);
-        assert_eq!(handle.stop(), Ok(DriverLifecycle::Stopping));
+        assert_eq!(handle.state(), LoopLifecycle::Starting);
+        assert_eq!(handle.stop(), Ok(LoopLifecycle::Stopping));
         assert!(shared.stop_requested());
         assert_eq!(
             handle.stop(),
-            Err(LifecycleDecline::StopRequiresLive),
+            Err(LoopDecline::StopRequiresLive),
             "a stopping driver refuses a second stop"
         );
         shared.mark_stopped();
-        assert_eq!(handle.state(), DriverLifecycle::Stopped);
+        assert_eq!(handle.state(), LoopLifecycle::Stopped);
         assert!(handle.state().is_terminal());
     }
 
@@ -2358,13 +2352,13 @@ mod tests {
     /// `begin_running`: the loop sees the armed flag and drains.
     #[tokio::test]
     async fn begin_running_does_not_resurrect_a_requested_stop() {
-        let shared = LifecycleShared::new();
-        assert_eq!(shared.request_stop(), Ok(DriverLifecycle::Stopping));
+        let shared = LoopShared::new();
+        assert_eq!(shared.request_stop(), Ok(LoopLifecycle::Stopping));
         shared.begin_running();
-        assert_eq!(*shared.state.lock(), DriverLifecycle::Stopping);
+        assert_eq!(*shared.state.lock(), LoopLifecycle::Stopping);
         assert!(shared.stop_requested());
         shared.mark_stopped();
-        assert_eq!(*shared.state.lock(), DriverLifecycle::Stopped);
+        assert_eq!(*shared.state.lock(), LoopLifecycle::Stopped);
     }
 
     #[tokio::test]

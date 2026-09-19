@@ -2,7 +2,7 @@
 //!
 //! A thin single-driver host: it owns the process boot (config load, the arm
 //! gate, tracing, the shared node join, the connector registry, and one hub)
-//! and hands the lane to [`BackrunDriver`]. Everything frame-bound — the
+//! and hands the driver loop to [`BackrunDriver`]. Everything frame-bound — the
 //! feed, the head watch, the replay runtime, the quarantine FSM, and the loop
 //! — lives in the driver module. The external behavior (config reading,
 //! journal root, systemd unit, liveness conventions, kill-switch path) is
@@ -14,7 +14,7 @@
 )]
 #![expect(
     clippy::expect_used,
-    reason = "bin boot: the fresh host's own register/enable/start/drive verbs cannot fail, and a failure must abort before the lane runs"
+    reason = "bin boot: the fresh host's own register/enable/start/drive verbs cannot fail, and a failure must abort before the driver runs"
 )]
 
 use std::sync::Arc;
@@ -96,8 +96,8 @@ async fn main() {
 
     let env = degenbot_config::ProcessEnv;
 
-    // The host's node join: resolved once here so the boot ranker and the lane
-    // share one connection pool. A hosted lane resolves the same join through
+    // The host's node join: resolved once here so the boot ranker and the driver
+    // share one connection pool. A hosted driver resolves the same join through
     // the shared boot path.
     let join = resolve_backrun_node_join().unwrap_or_else(|error| {
         eprintln!("{error}");
@@ -124,10 +124,10 @@ async fn main() {
     };
 
     // The host's hub and handles: this bin is a host of size one, so it mints
-    // the SAME `StrategyHost` a multi-strategy boot mints rather than a
-    // lane-only shim. The host owns the one operator-facing lifecycle and the
-    // shared hub/registry/authority; the lane is registered as its single
-    // driver and driven through the host FSM.
+    // the SAME `StrategyHost` a multi-strategy boot mints. The host owns the
+    // one operator-facing lifecycle and the shared hub/registry/authority; the
+    // backrun driver is registered as its single strategy and driven through
+    // the host FSM.
     let (mut host, _attached) = StrategyHost::mint(
         route_registry.unwrap_or_else(|| {
             Arc::new(degenbot_bot::bot_core::RouteRegistry::new(
@@ -142,7 +142,7 @@ async fn main() {
         .expect("fresh host registers backrun");
 
     // ONE nonce issuer for the standalone process: the host's authority backs
-    // the lane, so the standalone shape and a hosted lane stamp through the
+    // the driver, so the standalone shape and a hosted driver stamp through the
     // same contract. The driver seeds the authority from the operator
     // account's chain nonce at its own boot and reconciles it per head.
     let nonce_lane = Arc::new(degenbot_submission::NonceLane::new(
@@ -152,8 +152,8 @@ async fn main() {
     ));
 
     // ONE boot path, shared with a multi-strategy host: `backrun_boot`
-    // manufactures the lane's config, head source, and context. The standalone
-    // sidecar keeps the process-global state root (`lane_root: None`); the
+    // manufactures the driver's config, head source, and context. The standalone
+    // sidecar keeps the process-global state root (`namespace_root: None`); the
     // host's spawn factory is handed that scope at the driving edge.
     let boot = backrun_boot(
         &config,
@@ -166,13 +166,13 @@ async fn main() {
     );
     host.attach_spawn(
         &backrun_id,
-        Box::new(move |_lane| boot.into_driver_future()),
+        Box::new(move |_namespace| boot.into_driver_future()),
     )
     .expect("fresh host attaches the backrun spawn");
     host.enable(&backrun_id).expect("backrun is configured");
 
     // Drive the one registered driver through the host's lifecycle: the host
-    // starts the lane, and the host FSM folds its terminal exit, so a clean
+    // starts the driver, and the host FSM folds its terminal exit, so a clean
     // stop is `Stopped` and a self-halt is a `Halted` tombstone - never a
     // stale `Running`.
     let tasks = host

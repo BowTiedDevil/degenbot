@@ -139,9 +139,9 @@ pub(crate) fn boot_host() -> BootedHost {
 
     #[cfg(feature = "submission")]
     let head_lanes = {
-        // A hosted lane scopes its run-artifacts under the host state root; a
-        // boot with no resolvable root leaves `lane_root` unset, so the lane
-        // keeps its process-global path.
+        // A hosted driver scopes its run-artifacts under the host state root; a
+        // boot with no resolvable root leaves `namespace_root` unset, so the
+        // driver keeps its process-global path.
         if degenbot_config::holder::installed() {
             if let Some(root) = degenbot_submission::resolve_state_root() {
                 host.set_state_root(root);
