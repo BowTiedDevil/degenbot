@@ -80,6 +80,7 @@ pub mod monitor;
 pub mod params;
 pub mod pending_tx;
 pub mod signer;
+pub mod submission_ledger;
 pub mod submit;
 
 // ---- Convenience top-level re-exports (mirrors the umbrella convention) ----
