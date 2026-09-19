@@ -64,6 +64,16 @@ ADR-018-named extraction runs: parameterized stage payloads, a generic
 `EngineDriver`, per-family fleet globals. Don't pre-build it for a
 hypothetical strategy; Phase B/C track the real path to it.
 
+**Phase B landed (2026-09-19):** `degenbot-eventhub` owns per-process intake
+fan-out with declared overflow policies (`OverflowPolicy`); the backrun feed
+ring and head watch subscribe through it (B1/B2), both engine→driver channels
+are hub-registered `UnboundedFlagged` sources with observable depth via
+`Hub::named_pending` (B3), the gated serving seam was retired (B4, ADR-056),
+and the boot-snapshot `RouteRegistry` answers pool membership for strategies
+(B5). A second pending transaction strategy now implements
+`PendingTxStrategy` and subscribes; no intake wiring. Phase C (runtime host)
+remains deferred until a second family demands it.
+
 ## Where the seams are (exact owners)
 
 | Seam | Lives at |
