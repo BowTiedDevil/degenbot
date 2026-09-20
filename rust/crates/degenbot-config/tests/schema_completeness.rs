@@ -87,6 +87,10 @@ const DB_OPEN_KEYS: &[&str] = &["DEGENBOT_DB_AUTO_HEAL"];
 /// classifier panic-guard — they change which STATIC inputs a test sees,
 /// never runtime configuration, so they are deliberately NOT schema keys.
 const TEST_HARNESS_KEYS: &[&str] = &[
+    // The pathfinding snapshot bench's fixture-path override
+    // (`degenbot-db/benches/sweep_snapshot.rs`): selects which static DB the
+    // bench opens, the same class as the offline parity-fixture dirs.
+    "DEGENBOT_SNAPSHOT_DB",
     "DEGENBOT_CLASSIFIER_GUARD",
     "DEGENBOT_FRAME_ORACLE_CAPTURE",
     "DEGENBOT_ORACLE_",
