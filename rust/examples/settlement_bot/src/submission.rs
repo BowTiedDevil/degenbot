@@ -14,17 +14,26 @@
 //!
 //! RPC-gated: [`LiveSubmissionSeam`] needs an `AlloyProvider` + `TxSigner` +
 //! `ReceiptProbe`; only the live arm (`SMOKE_RPC_URL` + `--live`) constructs it.
+//!
+//! Post-T1 the authority is the only nonce issuer: `dispatch_and_submit` takes
+//! an `&Arc<NonceLane>`, never a caller-supplied `u64`. This exercise builds no
+//! strategy host, so [`LiveSubmissionSeam::new`] mints the host's one-account
+//! `NonceAuthority` + `SubmissionLedger` directly (the standalone sidecar's
+//! host-of-size-one shape) and the lane stamps every operator nonce. The
+//! driver's `operator_nonce` is retained only as the submission-time chain seed
+//! (`NonceLane::observe_chain_nonce`), never as a private reservation.
 
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use degenbot::bot::nonce_authority::NonceAuthority;
 use degenbot::rpc::provider::AlloyProvider;
 use degenbot::submission::{
-    dispatch_and_submit, monitor_pending_transaction, Dispatcher, MonitorOutcome, PoolKey,
-    ReceiptProbe, SkipReason, SubmissionTarget, SubmitCandidate, SubmitRecord, SubmittedTx,
-    TxSigner,
+    dispatch_and_submit, monitor_pending_transaction, Dispatcher, MonitorOutcome, NonceLane,
+    PoolKey, ReceiptProbe, SkipReason, SubmissionLedger, SubmissionTarget, SubmitCandidate,
+    SubmitRecord, SubmittedTx, TxSigner,
 };
 
 /// The driver's typed submit decision (the RSP-8 diff surface).
@@ -158,6 +167,12 @@ pub async fn submit_batch(
 }
 
 /// The live signing seam: delegates to `degenbot::submission::dispatch_and_submit`.
+///
+/// Post-T1 the authority is the only nonce issuer, so the seam carries a
+/// [`NonceLane`] rather than issuing a caller-controlled `u64`. The exercise
+/// builds no strategy host: [`Self::new`] mints the host's one-account
+/// authority + ledger directly, the standalone sidecar's host-of-size-one
+/// shape, and every submission stamps through that lane.
 pub struct LiveSubmissionSeam<'a> {
     /// The shared dispatcher (nonce + pool claims + monitor tasks).
     pub dispatcher: &'a Arc<Mutex<Dispatcher>>,
@@ -169,6 +184,40 @@ pub struct LiveSubmissionSeam<'a> {
     pub probe: Arc<dyn ReceiptProbe + Send + Sync>,
     /// Whether executor code is injected (unsafe to broadcast).
     pub inject_code: bool,
+    /// The sign-time nonce seam: the exercise's standalone one-account
+    /// authority, shared by every candidate this seam submits.
+    pub nonce_lane: Arc<NonceLane>,
+}
+
+impl<'a> LiveSubmissionSeam<'a> {
+    /// Bind the live seam to a fresh standalone settlement lane.
+    ///
+    /// The standalone bin mints a host of size one around its own authority;
+    /// this exercise has no strategy host, so it mints the same genesis
+    /// (`NonceAuthority::new(0)`) plus a `SubmissionLedger` for the `settlement`
+    /// strategy. [`SubmissionSeam::dispatch_one`] seeds the authority from the
+    /// driver's submission-time chain read before the lane stamps.
+    #[must_use]
+    pub fn new(
+        dispatcher: &'a Arc<Mutex<Dispatcher>>,
+        provider: &'a AlloyProvider,
+        signer: &'a TxSigner,
+        probe: Arc<dyn ReceiptProbe + Send + Sync>,
+        inject_code: bool,
+    ) -> Self {
+        Self {
+            dispatcher,
+            provider,
+            signer,
+            probe,
+            inject_code,
+            nonce_lane: Arc::new(NonceLane::new(
+                Arc::new(NonceAuthority::new(0)),
+                Arc::new(SubmissionLedger::new()),
+                "settlement",
+            )),
+        }
+    }
 }
 
 impl SubmissionSeam for LiveSubmissionSeam<'_> {
@@ -178,6 +227,10 @@ impl SubmissionSeam for LiveSubmissionSeam<'_> {
         operator_nonce: u64,
         current_block: u64,
     ) -> SeamFuture<'_> {
+        // The driver's `operator_nonce` is the submission-time chain read, not
+        // a reservation: seed the authority so the lane's first stamp cannot
+        // re-issue a nonce the chain already consumed.
+        self.nonce_lane.observe_chain_nonce(operator_nonce);
         Box::pin(async move {
             let outcome = dispatch_and_submit(
                 vec![candidate],
@@ -185,7 +238,7 @@ impl SubmissionSeam for LiveSubmissionSeam<'_> {
                 self.provider,
                 self.signer,
                 Arc::clone(&self.probe),
-                operator_nonce,
+                &self.nonce_lane,
                 current_block,
                 false,
                 self.inject_code,
