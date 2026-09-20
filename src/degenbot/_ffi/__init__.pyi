@@ -219,6 +219,15 @@ def runtime_status() -> dict[str, Any]:
     dict per resource, with the lane-to-thread ``binding`` per row).
     """
 
+def session_phase_next(current: str, operation: str) -> str | None:
+    """The cockpit session-phase table (`strategy_host::SessionPhase`).
+
+    `current` is `new`/`started`/`running`/`closed`; `operation` is
+    `start`/`run`/`query`/`shutdown`. Returns the next phase name, or `None`
+    when the host refuses the move. The Python `_Phase` translates this
+    verdict and never authors the legal-state matrix.
+    """
+
 def build_path_graph(
     database_path: str,
     chain_id: int,
@@ -1770,6 +1779,7 @@ __all__ = [
     "price",
     "provider",
     "runtime_status",
+    "session_phase_next",
     "shutdown_log_drainer",
     "simulation",
     "solady",

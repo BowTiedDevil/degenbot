@@ -149,6 +149,110 @@ impl DriverState {
     }
 }
 
+/// The cockpit session's operator-facing lifecycle: the four-pose shell the
+/// Python `BotRunner` presents over the host-owned engine.
+///
+/// The host owns one operator lifecycle per driver ([`DriverState`]); the
+/// cockpit session is the settlement engine's shell, so its phase table lives
+/// here beside the driver FSM rather than being authored a second time in
+/// Python. The Python `_Phase` translates these verdicts and never decides
+/// legality — the Rust table is the single authority.
+///
+/// ```text
+/// New ──start()──► Started ──run()──► Running
+///  │                  │                  │
+///  └──── shutdown() ──┴─ shutdown() ─────┴──► Closed
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionPhase {
+    /// Constructed; no actors built.
+    New,
+    /// Actors built; the pump has not resumed.
+    Started,
+    /// The main loop owns the session.
+    Running,
+    /// Terminal: teardown ran (idempotent from any phase).
+    Closed,
+}
+
+/// Why a cockpit session-phase move was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SessionDecline {
+    /// `start` is only legal from [`SessionPhase::New`]; `Started` re-entry is
+    /// a deliberate idempotent no-op.
+    #[error("session can only start from New")]
+    StartRequiresNew,
+    /// `run` is only legal from [`SessionPhase::Started`].
+    #[error("run requires the Started phase")]
+    RunRequiresStarted,
+    /// The operator add-a-path/discovery verbs are only legal while
+    /// [`SessionPhase::Running`].
+    #[error("query requires the Running phase")]
+    QueryRequiresRunning,
+}
+
+impl SessionPhase {
+    /// The operator startup move: `New -> Started`. `Started` re-entry is an
+    /// idempotent no-op; `Running`/`Closed` decline.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionDecline::StartRequiresNew`] from `Running`/`Closed`.
+    pub fn on_start(self) -> Result<Self, SessionDecline> {
+        match self {
+            Self::New | Self::Started => Ok(Self::Started),
+            Self::Running | Self::Closed => Err(SessionDecline::StartRequiresNew),
+        }
+    }
+
+    /// The main-loop entry move: `Started -> Running`.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionDecline::RunRequiresStarted`] from any other phase.
+    pub fn on_run(self) -> Result<Self, SessionDecline> {
+        if self == Self::Started {
+            Ok(Self::Running)
+        } else {
+            Err(SessionDecline::RunRequiresStarted)
+        }
+    }
+
+    /// The operator add-a-path/discovery move: legal only while `Running` (the
+    /// phase is unchanged).
+    ///
+    /// # Errors
+    ///
+    /// [`SessionDecline::QueryRequiresRunning`] from any other phase.
+    pub fn on_query(self) -> Result<Self, SessionDecline> {
+        if self == Self::Running {
+            Ok(Self::Running)
+        } else {
+            Err(SessionDecline::QueryRequiresRunning)
+        }
+    }
+
+    /// The teardown move: every phase reaches [`SessionPhase::Closed`];
+    /// idempotent, so it can never decline.
+    #[must_use]
+    pub const fn on_shutdown(self) -> Self {
+        match self {
+            Self::New | Self::Started | Self::Running | Self::Closed => Self::Closed,
+        }
+    }
+
+    /// The Python-facing lower-case name of this phase.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Started => "started",
+            Self::Running => "running",
+            Self::Closed => "closed",
+        }
+    }
+}
+
 /// Whether a registered driver has a usable config facet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FacetStatus {
@@ -953,6 +1057,45 @@ mod tests {
                 assert_eq!(state.on_disable(), Ok(DriverState::Disabled));
             }
         }
+    }
+
+    #[test]
+    fn the_session_phase_table_is_total_and_closed() {
+        let phases = [
+            SessionPhase::New,
+            SessionPhase::Started,
+            SessionPhase::Running,
+            SessionPhase::Closed,
+        ];
+        for phase in phases {
+            if matches!(phase, SessionPhase::New | SessionPhase::Started) {
+                assert_eq!(phase.on_start(), Ok(SessionPhase::Started));
+            } else {
+                assert_eq!(phase.on_start(), Err(SessionDecline::StartRequiresNew));
+            }
+
+            if phase == SessionPhase::Started {
+                assert_eq!(phase.on_run(), Ok(SessionPhase::Running));
+            } else {
+                assert_eq!(phase.on_run(), Err(SessionDecline::RunRequiresStarted));
+            }
+
+            if phase == SessionPhase::Running {
+                assert_eq!(phase.on_query(), Ok(SessionPhase::Running));
+            } else {
+                assert_eq!(phase.on_query(), Err(SessionDecline::QueryRequiresRunning));
+            }
+
+            assert_eq!(phase.on_shutdown(), SessionPhase::Closed);
+        }
+    }
+
+    #[test]
+    fn the_session_phase_names_are_the_python_facing_vocabulary() {
+        assert_eq!(SessionPhase::New.as_str(), "new");
+        assert_eq!(SessionPhase::Started.as_str(), "started");
+        assert_eq!(SessionPhase::Running.as_str(), "running");
+        assert_eq!(SessionPhase::Closed.as_str(), "closed");
     }
 
     #[test]

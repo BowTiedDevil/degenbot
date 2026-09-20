@@ -44,6 +44,47 @@ pub(crate) fn map_host_error(error: HostError) -> pyo3::PyErr {
     }
 }
 
+/// The cockpit session-phase table, exposed so the Python `_Phase` translates
+/// the host's verdict instead of authoring legality.
+///
+/// `current` is one of `new`/`started`/`running`/`closed`; `operation` is one
+/// of `start`/`run`/`query`/`shutdown`. Returns the next phase name, or `None`
+/// when the host refuses the move. The Python `_Phase` maps `None` onto its
+/// `PhaseError`.
+///
+/// # Errors
+///
+/// `ValueError` for a phase or operation the host table does not name.
+#[pyfunction]
+pub(crate) fn session_phase_next(current: &str, operation: &str) -> PyResult<Option<&'static str>> {
+    use degenbot_bot::strategy_host::SessionPhase;
+
+    let phase = match current {
+        "new" => SessionPhase::New,
+        "started" => SessionPhase::Started,
+        "running" => SessionPhase::Running,
+        "closed" => SessionPhase::Closed,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown cockpit session phase {other:?}"
+            )));
+        }
+    };
+
+    let next = match operation {
+        "start" => phase.on_start(),
+        "run" => phase.on_run(),
+        "query" => phase.on_query(),
+        "shutdown" => Ok(phase.on_shutdown()),
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown cockpit session operation {other:?}"
+            )));
+        }
+    };
+    Ok(next.ok().map(SessionPhase::as_str))
+}
+
 /// Boot the process-wide strategy host: mint the hub with the engine's two
 /// named source channels, the frozen route registry, and the nonce authority,
 /// register the two strategy facets this process configures, install the state

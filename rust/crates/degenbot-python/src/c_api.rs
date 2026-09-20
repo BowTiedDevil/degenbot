@@ -229,6 +229,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::engine::BlockStream>()?;
 
+    // The cockpit session-phase table (`strategy_host::SessionPhase`),
+    // exposed so the Python `_Phase` translates the host's verdict instead of
+    // authoring the legal-state matrix.
+    #[cfg(feature = "bot")]
+    m.add_function(wrap_pyfunction!(crate::bot::engine::session_phase_next, m)?)?;
+
     // Typed verification exceptions (TODO-53b7453b): distinct `RuntimeError`
     // subclasses so `build_paths` can classify verification failures by type
     // instead of fragile string matching. (feature = "bot")

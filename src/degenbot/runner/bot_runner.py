@@ -39,6 +39,7 @@ from enum import Enum
 from typing import Any, Self, cast
 
 from degenbot import Bot
+from degenbot._ffi import session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
@@ -129,16 +130,62 @@ class PhaseError(RuntimeError):
     ``Started``; ``enqueue_path`` / ``trigger_discovery`` require ``Running``;
     ``shutdown()`` stays deliberately any-phase and idempotent (the SIGINT
     teardown ordering depends on it).
+
+    The transition table itself is the Rust host's ``SessionPhase``
+    (``strategy_host.rs``), read through ``degenbot._ffi.session_phase_next``;
+    this exception is the Python surface of its refusals.
     """
 
 
 class _Phase(Enum):
-    """Cockpit session phase (private; the public signal is :class:`PhaseError`)."""
+    """Cockpit session phase (private; the public signal is :class:`PhaseError`).
+
+    Legality is the Rust host's ``SessionPhase`` table (``strategy_host.rs``),
+    read through ``degenbot._ffi.session_phase_next``; the enum translates that
+    verdict into :class:`PhaseError` and never authors the transition matrix.
+    """
 
     NEW = "new"
     STARTED = "started"
     RUNNING = "running"
     CLOSED = "closed"
+
+    def _next(self, operation: str) -> _Phase | None:
+        """The host's verdict for ``operation`` (``None`` = refused)."""
+        next_name = session_phase_next(self.value, operation)
+        return None if next_name is None else _Phase(next_name)
+
+    def on_start(self) -> _Phase:
+        """The operator startup move; the host admits it from New/Started."""
+        next_phase = self._next("start")
+        if next_phase is None:
+            msg = f"start() in phase {self.value!r} - session can only start from New"
+            raise PhaseError(msg)
+        return next_phase
+
+    def on_run(self) -> _Phase:
+        """The main-loop entry move; the host admits it from Started."""
+        next_phase = self._next("run")
+        if next_phase is None:
+            msg = f"run() requires phase 'started' (session phase is {self.value!r})"
+            raise PhaseError(msg)
+        return next_phase
+
+    def on_query(self, method: str) -> _Phase:
+        """The add-a-path/discovery gate; the host admits it while Running."""
+        next_phase = self._next("query")
+        if next_phase is None:
+            msg = f"{method}() needs 'running' (phase is {self.value!r})"
+            raise PhaseError(msg)
+        return next_phase
+
+    def on_shutdown(self) -> _Phase:
+        """The teardown move; the host admits it from every phase."""
+        next_phase = self._next("shutdown")
+        if next_phase is None:  # pragma: no cover - the host table is total
+            msg = f"shutdown() refused in phase {self.value!r}"
+            raise PhaseError(msg)
+        return next_phase
 
 
 @dataclass
@@ -393,9 +440,7 @@ class BotRunner:
         """
         if self._phase is _Phase.STARTED:
             return self
-        if self._phase is _Phase.RUNNING or self._phase is _Phase.CLOSED:
-            msg = f"start() in phase {self._phase.value!r} - session can only start from New"
-            raise PhaseError(msg)
+        next_phase = self._phase.on_start()
 
         cfg = self.cfg
 
@@ -474,7 +519,7 @@ class BotRunner:
             nonce_lane=NonceLane(relay_urls=relay_urls_from_env()),
         )
         self._install_sigint_handler()
-        self._phase = _Phase.STARTED
+        self._phase = next_phase
         return self
 
     async def _build_actors(
@@ -555,10 +600,7 @@ class BotRunner:
         4. ``bot.release_python_state()`` + drop the bot (hot loop keeps only engine + async_w3)
         5. await the session watch over the main loop (indefinite)
         """
-        if self._phase is not _Phase.STARTED:
-            msg = f"run() requires phase 'started' (session phase is {self._phase.value!r})"
-            raise PhaseError(msg)
-        self._phase = _Phase.RUNNING
+        self._phase = self._phase.on_run()
         # The session's construction answers the actor asserts: the actors
         # are real on the owner the moment start() built it.
         session = self._session
@@ -715,9 +757,7 @@ class BotRunner:
             RuntimeError: if no live pipeline exists (injected fake builders
                 have no construction surface, or ``run()`` has not run).
         """
-        if self._phase is not _Phase.RUNNING:
-            msg = f"enqueue_path() needs 'running' (phase is {self._phase.value!r})"
-            raise PhaseError(msg)
+        self._phase = self._phase.on_query("enqueue_path")
         session = self._session
         assert session is not None
         if session.registration_pipeline is None:
@@ -734,9 +774,7 @@ class BotRunner:
             RuntimeError: if no live pipeline exists (injected fake builders,
                 or ``run()`` has not run).
         """
-        if self._phase is not _Phase.RUNNING:
-            msg = f"trigger_discovery() needs 'running' (phase is {self._phase.value!r})"
-            raise PhaseError(msg)
+        self._phase = self._phase.on_query("trigger_discovery")
         session = self._session
         assert session is not None
         if session.registration_pipeline is None:
@@ -966,18 +1004,35 @@ class BotRunner:
             # __aexit__'s shutdown() alone.
             return
 
-        def _on_sigint(_signum: int, _frame: object) -> None:
-            # Stop the pump first — fires even while the main thread is
-            # blocked in find_paths (Rust DFS released the GIL). Wrapped
-            # because the engine may have been torn down concurrently.
-            with contextlib.suppress(Exception):
-                engine.stop()
-            # Re-raise KeyboardInterrupt so the awaiting coroutine unwinds
-            # through __aexit__ → shutdown() (idempotent) + consumer cancel.
-            raise KeyboardInterrupt
-
-        signal.signal(signal.SIGINT, _on_sigint)
+        signal.signal(signal.SIGINT, self._handle_sigint)
         self._sigint_installed = True
+
+    def _stop_engine(self) -> None:
+        """The ONE engine-stop entrypoint (``shutdown()`` + SIGINT funnel here).
+
+        Mirrors the Rust ``stop()`` contract: idempotent, sets the shutdown
+        flag, and aborts the pump task. Best-effort — a torn-down engine during
+        a partial startup must not mask the in-flight exception.
+        """
+        registry = self.engine_registry
+        engine = registry.engine if registry is not None else None
+        if engine is None:
+            return
+        try:
+            engine.stop()
+        except Exception as exc:
+            bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
+
+    def _handle_sigint(self, _signum: int, _frame: object) -> None:
+        """Stop the pump through the one funnel the instant SIGINT arrives.
+
+        Bound (not a closure) so the funnel is a named, testable seam. Fires
+        even while the main thread is blocked in ``find_paths`` (the Rust DFS
+        releases the GIL), then re-raises ``KeyboardInterrupt`` so the awaiting
+        coroutine unwinds through ``__aexit__`` → ``shutdown()`` (idempotent).
+        """
+        self._stop_engine()
+        raise KeyboardInterrupt
 
     def _restore_sigint_handler(self) -> None:
         if not self._sigint_installed:
@@ -1031,15 +1086,10 @@ class BotRunner:
         until the OS closed the socket.
         """
         # Closed from ANY phase: teardown (SIGINT, partial startup, post-run)
-        # may reach here at any point; idempotent by design.
-        self._phase = _Phase.CLOSED
-        registry = getattr(self, "engine_registry", None)
-        engine = getattr(registry, "engine", None) if registry is not None else None
-        if engine is not None:
-            try:
-                engine.stop()
-            except Exception as exc:
-                bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
+        # may reach here at any point; idempotent by design, and the Rust
+        # host's SessionPhase table owns the verdict.
+        self._phase = self._phase.on_shutdown()
+        self._stop_engine()
         # ADR-043 §6: flush the telemetry providers BEFORE this runner — and
         # the Rust core's tokio runtime behind it — is torn down. An OTLP batch
         # flushed after runtime teardown exports nothing, so the tail of a run

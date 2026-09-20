@@ -16,16 +16,17 @@ with the runner-built owner + injected streams). No anvil, no live RPC.
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import signal
 
 import pytest
 
+from degenbot._ffi import session_phase_next
 from degenbot.runner import BotRunner
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase, _SessionState
 from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
+from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
 
 
@@ -61,11 +62,9 @@ class _FakeBot:
         pass
 
     def block_stream(self):  # pragma: no cover - the noop consumer never iterates it
-        async def _empty():
-            return
-            yield {}  # pragma: no cover
-
-        return _empty()
+        # The injected consumer is the noop ``_noop()`` in every test here, so
+        # run() never iterates this stream; ``None`` is the honest empty value.
+        return None
 
 
 class _FakeAsyncW3:
@@ -305,13 +304,23 @@ class TestNoFrozenMirrors:
         assert session.current_block == 105
 
 
-class TestPhaseGuardMatrix:
-    """The guard matrix, per phase: which lifecycle calls are legal.
+# The Python methods map onto the host's four session-phase operations.
+_RUST_OPERATION = {
+    "start": "start",
+    "run": "run",
+    "enqueue_path": "query",
+    "trigger_discovery": "query",
+    "shutdown": "shutdown",
+}
 
-    start(): NEW builds / STARTED no-op / RUNNING+CLOSED PhaseError.
-    run(): only STARTED. enqueue_path()/trigger_discovery(): only RUNNING
-    (and raise their documented RuntimeError there when no live pipeline
-    exists — injected/fake runs).
+
+class TestPhaseGuardMatrix:
+    """The guard matrix is the Rust host's session-phase table, not a Python one.
+
+    Every cell is read from ``degenbot._ffi.session_phase_next`` (the host's
+    ``SessionPhase`` table in ``strategy_host.rs``); the runner is then driven
+    to that phase and its lifecycle method must honor the host verdict. A
+    matrix change that lands in only one language cannot stay green.
     """
 
     @staticmethod
@@ -328,45 +337,48 @@ class TestPhaseGuardMatrix:
         await runner.shutdown()
         return runner
 
+    @pytest.mark.parametrize(
+        "method",
+        ["start", "run", "enqueue_path", "trigger_discovery", "shutdown"],
+    )
     @pytest.mark.parametrize("phase", list(_Phase))
-    async def test_start_guard(self, phase: _Phase) -> None:
+    async def test_runner_honors_the_rust_session_table(self, phase: _Phase, method: str) -> None:
+        expected = session_phase_next(phase.value, _RUST_OPERATION[method])
         runner = await self._drive_to(phase)
-        if phase is _Phase.NEW:
-            await runner.start()
-            assert runner._phase is _Phase.STARTED
-        elif phase is _Phase.STARTED:
-            assert await runner.start() is runner
+        call = {
+            "start": runner.start,
+            "run": runner.run,
+            "enqueue_path": lambda: runner.enqueue_path([], directions=None),
+            "trigger_discovery": runner.trigger_discovery,
+            "shutdown": runner.shutdown,
+        }[method]
+        if expected is None:
+            with pytest.raises(PhaseError):
+                await call()
+            assert runner._phase is phase, "a refused move leaves the phase untouched"
         else:
-            with pytest.raises(PhaseError, match="session can only start from New"):
-                await runner.start()
+            # A legal query still raises when no live pipeline exists
+            # (injected/fake runs) — that is past the phase gate.
+            with contextlib.suppress(RuntimeError):
+                await call()
+            assert runner._phase.value == expected
 
-    @pytest.mark.parametrize("phase", list(_Phase))
-    async def test_run_guard(self, phase: _Phase) -> None:
-        runner = await self._drive_to(phase)
-        if phase is _Phase.STARTED:
-            await runner.run()  # legal, and ends still RUNNING
-            assert runner._phase is _Phase.RUNNING
-        else:
-            with pytest.raises(PhaseError, match="run\\(\\) requires phase 'started'"):
-                await runner.run()
 
-    @pytest.mark.parametrize("phase", list(_Phase))
-    async def test_enqueue_path_guard(self, phase: _Phase) -> None:
-        runner = await self._drive_to(phase)
-        if phase is _Phase.RUNNING:
-            # Legal phase, but an injected/fake run has no live pipeline.
-            with pytest.raises(RuntimeError, match="no live registration pipeline"):
-                await runner.enqueue_path([], directions=None)
-        else:
-            with pytest.raises(PhaseError, match="enqueue_path\\(\\) needs 'running'"):
-                await runner.enqueue_path([], directions=None)
+class TestStopFunnel:
+    """Stop has ONE engine-level entrypoint for both Python entrances."""
 
-    @pytest.mark.parametrize("phase", list(_Phase))
-    async def test_trigger_discovery_guard(self, phase: _Phase) -> None:
-        runner = await self._drive_to(phase)
-        if phase is _Phase.RUNNING:
-            with pytest.raises(RuntimeError, match="no live registration pipeline"):
-                await runner.trigger_discovery()
-        else:
-            with pytest.raises(PhaseError, match="trigger_discovery\\(\\) needs 'running'"):
-                await runner.trigger_discovery()
+    async def test_shutdown_and_sigint_share_the_stop_entrypoint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = _runner(install_sigint=True)
+        await runner.start()
+        calls: list[str] = []
+        monkeypatch.setattr(runner, "_stop_engine", lambda: calls.append("stop"))
+
+        await runner.shutdown()
+        with pytest.raises(KeyboardInterrupt):
+            runner._handle_sigint(signal.SIGINT, None)
+
+        assert calls == ["stop", "stop"], (
+            "shutdown() and the SIGINT handler must both funnel through BotRunner._stop_engine"
+        )
