@@ -10,6 +10,9 @@ const SUBMIT_RS: &str = include_str!("../src/submit.rs");
 const DISPATCHER_RS: &str = include_str!("../src/dispatcher.rs");
 const SUBMISSION_LEDGER_RS: &str = include_str!("../src/submission_ledger.rs");
 const BACKRUN_DRIVER_RS: &str = include_str!("../src/backrun_driver.rs");
+const BACKRUN_DRIVER_BOOT_RS: &str = include_str!("../src/backrun_driver/driver_boot.rs");
+const BACKRUN_DRIVER_LOOP_RS: &str = include_str!("../src/backrun_driver/driver_loop.rs");
+const BACKRUN_DRIVER_POLICY_RS: &str = include_str!("../src/backrun_driver/driver_policy.rs");
 const BACKRUN_SIDECAR_RS: &str = include_str!("../src/bin/backrun_sidecar.rs");
 
 /// The sign path names exactly one nonce source: a `NonceLane` over the
@@ -22,6 +25,9 @@ fn the_nonce_source_switch_is_gone() {
         ("dispatcher.rs", DISPATCHER_RS),
         ("submission_ledger.rs", SUBMISSION_LEDGER_RS),
         ("backrun_driver.rs", BACKRUN_DRIVER_RS),
+        ("backrun_driver/driver_boot.rs", BACKRUN_DRIVER_BOOT_RS),
+        ("backrun_driver/driver_loop.rs", BACKRUN_DRIVER_LOOP_RS),
+        ("backrun_driver/driver_policy.rs", BACKRUN_DRIVER_POLICY_RS),
         ("bin/backrun_sidecar.rs", BACKRUN_SIDECAR_RS),
     ] {
         assert!(
@@ -59,5 +65,6 @@ fn every_signing_path_stamps_through_a_nonce_lane() {
     assert!(SUBMIT_RS.contains("Arc<NonceLane>"));
     assert!(SUBMIT_RS.contains("nonce_lane.stamp()"));
     assert!(BACKRUN_SIDECAR_RS.contains("NonceLane::new"));
-    assert!(BACKRUN_DRIVER_RS.contains("nonce_lane: Arc<NonceLane>"));
+    assert!(BACKRUN_DRIVER_BOOT_RS.contains("nonce_lane: Arc<NonceLane>"));
+    assert!(BACKRUN_DRIVER_LOOP_RS.contains("nonce_lane: Arc<NonceLane>"));
 }
