@@ -114,7 +114,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
         // remaining env read is the pre-typed executor-owner fallback the
         // facet's `operator` key documents.
         m.insert(
-            "crates/degenbot-submission/src/bin/backrun_sidecar.rs",
+            "crates/degenbot-submission/src/backrun_driver/driver_loop.rs",
             &["EXECUTOR_OWNER_ADDRESS"][..],
         );
         m
@@ -231,15 +231,19 @@ fn no_stray_env_reads_outside_the_config_loader() {
         if rel.starts_with("crates/degenbot-config/") {
             continue;
         }
-        // Test-only stances: every tests/ and examples/ directory file,
-        // wherever it sits in the tree - a crate-nested `crates/*/tests/`
-        // path OR a workspace-level `examples/`/`tests/` leading component
-        // (e.g. `examples/settlement_bot/`). Matching on path components
-        // rather than a `/tests/` substring keeps the leading-component
-        // case from slipping through.
-        let is_test_or_example = Path::new(rel.as_str())
-            .components()
-            .any(|c| matches!(c.as_os_str().to_str(), Some("tests" | "examples")));
+        // Test-only stances: every tests/, examples/, and benches/
+        // directory file, wherever it sits in the tree - a crate-nested
+        // `crates/*/tests/` path OR a workspace-level
+        // `examples/`/`tests/` leading component (e.g.
+        // `examples/settlement_bot/`). Matching on path components rather
+        // than a `/tests/` substring keeps the leading-component case from
+        // slipping through.
+        let is_test_or_example = Path::new(rel.as_str()).components().any(|c| {
+            matches!(
+                c.as_os_str().to_str(),
+                Some("tests" | "examples" | "benches")
+            )
+        });
         if is_test_or_example {
             continue;
         }
