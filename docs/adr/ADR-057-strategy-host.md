@@ -349,6 +349,38 @@ host-owned `Live` sub-state (R-4) — is deliberately not part of this closure:
 it rewrites `EngineDriver` subscribe/resume/stop ownership and every engine
 consumer, and the read-only naming half already landed.
 
+## Supplement — the strategy-addition proof gate
+
+An integrator can add a strategy family using the landed seams alone. The proof
+is a mock third family integration test
+(`rust/crates/degenbot-submission/tests/mock_third_family.rs`) that registers,
+enables, runs, and stops through the real host/seam paths without touching
+production code.
+
+What the gate pins:
+
+- **Admission** through `StrategyHost::register` + `enable`, including typed
+  declines for an unknown name, an unconfigured facet, a duplicate
+  registration, and a twice-enabled driver.
+- **Lane consumption** through a `NonceLane` over the one `NonceAuthority`,
+  with lowest-free contiguity across two strategies and a released-gap refill.
+- **Ledger attach and classification** through `attach_reconciler`: `Stale` (a
+  formative terminal miss), `Orphaned` (an observed record's event, carrying
+  `fillable_nonce`), and `Landed`.
+- **The hub head tick** firing while no `PendingTx` source is registered — the
+  typed reaction is the hub class plus its declared overflow policy, and the
+  per-poll await is `HeadSubscription::changed`.
+- **The stop funnel**: the clean-stop fold `drive_and_fold` ->
+  `DriverPose::Stopped`, and the `SessionPhase` table the Python cockpit
+  translates.
+- **A deformed-seam attempt**: enabling twice and disabling a terminal driver
+  each decline with a typed error.
+
+The complementary runbook is
+`docs/architecture/adding-a-strategy.md`, which documents the same seams with
+their signatures and file anchors. No production edit was needed to make the
+mock possible; that absence is the gate.
+
 ## Related
 
 - **ADR-055** — pending-transaction strategy seams; D5 named this host as

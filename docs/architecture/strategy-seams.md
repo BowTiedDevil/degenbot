@@ -5,6 +5,13 @@ strategy seams), ADR-019 (strategy-vs-engine), ADR-025 (execution strategy),
 ADR-018 (engine-family trigger, pulled by decision at ADR-055 Phase C), and
 ADR-057 (the strategy host).
 
+## The runbook
+
+The step-by-step companion to this map is
+[adding-a-strategy.md](adding-a-strategy.md): it carries the real
+signatures, the admission/lane/ledger/hub wiring, the driver
+partitions, the config-facet additions, and the test-surface pattern.
+
 ## The shared substrate
 
 | Layer | Owner | Notes |

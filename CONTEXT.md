@@ -66,6 +66,10 @@ silent skip; transient RPC/timing/fetch failures keep their skip semantics. ADR-
 
 ## Strategy host (ADR-057)
 
+The runbook for adding a family over these seams is
+[docs/architecture/adding-a-strategy.md](docs/architecture/adding-a-strategy.md)
+(the seam map is [docs/architecture/strategy-seams.md](docs/architecture/strategy-seams.md)).
+
 **StrategyHost**:
 The per-process owner of the shared strategy services — the event hub, the boot-snapshot
 route registry, and the nonce authority — that registers strategies and drives their
