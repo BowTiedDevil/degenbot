@@ -78,10 +78,11 @@ pub struct PyArbEngine {
     /// `driver` attached to; the operator strategy verbs cross this host.
     pub(crate) host: Arc<parking_lot::Mutex<degenbot_bot::strategy_host::StrategyHost>>,
 
-    /// The supervision tasks for the hosted drivers this engine started at its
-    /// start flow. Each owns one driver's `DriverTask` lane boundary and folds
-    /// the terminal exit into the host FSM (a self-halt becomes a tombstone).
-    pub(crate) driver_supervision: Arc<parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    /// The host-owned supervisor for the drivers this engine started at its
+    /// start flow. It owns each driver's `DriverTask` lane boundary and folds
+    /// the terminal exit through the host FSM (a self-halt becomes a tombstone)
+    /// without exposing the fold to a second caller.
+    pub(crate) supervisor: degenbot_bot::strategy_host::HostSupervisor,
 
     /// The per-strategy sign-time lanes the hosted head feed folds notices
     /// through (`settlement` and `backrun`). Populated at boot when the

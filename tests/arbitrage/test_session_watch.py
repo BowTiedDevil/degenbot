@@ -16,12 +16,18 @@ Pure asyncio — no engine, no RPC (ADR-019: the watch stays inside
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Coroutine
 from typing import Any
 
 import pytest
 
-from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
+from degenbot.runner._session_watch import (
+    SessionEndVerdict,
+    SessionWatch,
+    _WatchKind,
+    _WatchSet,
+)
 
 
 async def _quick_consumer(ticks: int = 1) -> None:
@@ -235,6 +241,47 @@ class TestWatchSetMatrix:
 
         assert await watch.wait() is SessionEndVerdict.PumpEnded
         assert consumer.done() and not consumer.cancelled()
+
+
+class TestWatchSetTransitions:
+    """The typed task-set record's one-batch decision (R3)."""
+
+    async def test_fail_fast_outranks_watchdog_in_one_batch(self) -> None:
+        consumer = asyncio.create_task(_hanging_consumer())
+        boom = ValueError("reg boom")
+
+        async def failing() -> None:
+            raise boom
+
+        registration = asyncio.create_task(failing())
+        watchdog = asyncio.create_task(_quick_consumer(ticks=0))
+        await asyncio.sleep(0)
+        assert registration.done()
+        assert watchdog.done()
+
+        step = _WatchSet(consumer, watchdog, registration).on_task_done({registration, watchdog})
+        assert step.kind is _WatchKind.REGISTRATION_FAILED
+        assert step.error is boom
+
+        consumer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await consumer
+
+    async def test_clean_registration_is_dropped_from_the_set(self) -> None:
+        consumer = asyncio.create_task(_hanging_consumer())
+        registration = asyncio.create_task(_quick_consumer(ticks=0))
+        watchdog = asyncio.create_task(_quick_consumer(ticks=0))
+        await asyncio.sleep(0)
+
+        step = _WatchSet(consumer, watchdog, registration).on_task_done({registration})
+        assert step.kind is _WatchKind.CONTINUE
+        assert step.watch.registration is None
+        assert step.watch.consumer is consumer
+        assert step.watch.watchdog is watchdog
+
+        consumer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await consumer
 
 
 class TestTeardown:

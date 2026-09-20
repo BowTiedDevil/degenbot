@@ -17,7 +17,7 @@ import types
 import warnings
 from typing import Any
 
-from degenbot.runner._dispatch import _submit_batch_records
+from degenbot.runner._dispatch import SubmissionSmoke, _submit_batch_records
 from degenbot.runner._nonce_lane import NonceLane
 
 
@@ -49,6 +49,7 @@ def _session(nonce_lane: NonceLane | None) -> Any:
         ),
         dispatcher=types.SimpleNamespace(current_block=100),
         nonce_lane=nonce_lane,
+        submission_smoke=SubmissionSmoke(),
     )
 
 

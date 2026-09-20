@@ -20,6 +20,8 @@ import dataclasses
 import os
 import pathlib
 import time
+from dataclasses import dataclass
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
 from degenbot.runner._nonce_lane import relay_urls_from_env
@@ -407,7 +409,39 @@ def _render_outcome(
 #: specifics.
 _STALL_STREAK = 3
 _STALL_WARN_INTERVAL_S = 300.0
-_submission_smoke: dict[str, float] = {"streak": 0.0, "last_warn": 0.0}
+
+
+class SubmissionSmokeVerdict(Enum):
+    """The silent-veto smoke FSM's typed observe result."""
+
+    QUIET = auto()
+    STREAK = auto()
+    WARN = auto()
+
+
+@dataclass
+class SubmissionSmoke:
+    """Per-session silent-veto smoke FSM (``Quiet | Streak | Warn``).
+
+    Owned by the session state, so a streak never leaks across sessions and
+    the throttle clock resets with the session. :meth:`observe` returns the
+    typed verdict; the dispatch leaf owns the display-only WARN render, so the
+    decision and its rendering stay separable.
+    """
+
+    streak: int = 0
+    last_warn: float = 0.0
+
+    def observe(self, *, vetoed: bool, now: float) -> SubmissionSmokeVerdict:
+        """Advance the smoke FSM by one batch and return the typed verdict."""
+        if not vetoed:
+            self.streak = 0
+            return SubmissionSmokeVerdict.QUIET
+        self.streak += 1
+        if self.streak >= _STALL_STREAK and now - self.last_warn >= _STALL_WARN_INTERVAL_S:
+            self.last_warn = now
+            return SubmissionSmokeVerdict.WARN
+        return SubmissionSmokeVerdict.STREAK
 
 
 async def _submit_batch_records(
@@ -540,24 +574,22 @@ def _track_submission_smoke(
     submitted_count: int,
     skip_histogram: dict[str, int],
 ) -> None:
-    """Throttle the silent-veto WARN over a fully-vetoed live-batch streak."""
-    if (
-        session.cfg.dry_run
-        or session.cfg.inject_executor_code
-        or not outcome.gas_profitable
-        or submitted_count > 0
-    ):
-        _submission_smoke["streak"] = 0.0
-        return
-    _submission_smoke["streak"] += 1
-    now = time.monotonic()
-    if (
-        _submission_smoke["streak"] >= _STALL_STREAK
-        and now - _submission_smoke["last_warn"] >= _STALL_WARN_INTERVAL_S
-    ):
-        _submission_smoke["last_warn"] = now
+    """Throttle the silent-veto WARN over a fully-vetoed live-batch streak.
+
+    The streak/clock decision is the session's :class:`SubmissionSmoke` FSM; this
+    leaf only composes the veto predicate and renders the typed ``WARN``.
+    """
+    vetoed = (
+        not session.cfg.dry_run
+        and not session.cfg.inject_executor_code
+        and bool(outcome.gas_profitable)
+        and submitted_count == 0
+    )
+    smoke = session.submission_smoke
+    verdict = smoke.observe(vetoed=vetoed, now=time.monotonic())
+    if verdict is SubmissionSmokeVerdict.WARN:
         bot_logger.warning(
             f"[dispatch] live-armed with gate-clearing candidates but no submissions in "
-            f"{int(_submission_smoke['streak'])} consecutive batches; skip reasons "
+            f"{smoke.streak} consecutive batches; skip reasons "
             f"{skip_histogram or '{}'} — a configuration-level veto is likely"
         )

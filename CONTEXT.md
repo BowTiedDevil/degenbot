@@ -145,8 +145,8 @@ current block, provider, credentials).
 _Avoid_: "session dict", "cockpit config".
 
 **Session watch**:
-The cockpit's one owner of a session's end-state: watch-set assembly, end-verdict
-ranking, and teardown.
+The cockpit's one owner of a session's end-state: the typed watch-set transitions
+(``_WatchSet`` / ``on_task_done``), the end-verdict ranking, and teardown.
 _Avoid_: "await loop", "fail-fast wrapper".
 
 ## Pool registration lifecycle

@@ -56,6 +56,7 @@ async def test_broadcast_failure_renders_at_warning(monkeypatch: pytest.MonkeyPa
             inject_executor_code=False,
         ),
         dispatcher=types.SimpleNamespace(current_block=1),
+        submission_smoke=dispatch_module.SubmissionSmoke(),
     )
     candidate = types.SimpleNamespace(
         path_id=7,
@@ -85,6 +86,7 @@ def _live_session(cfg_overrides: dict) -> types.SimpleNamespace:
         async_w3=types.SimpleNamespace(as_async_alloy=lambda: object()),
         cfg=cfg,
         dispatcher=types.SimpleNamespace(current_block=1),
+        submission_smoke=dispatch_module.SubmissionSmoke(),
     )
 
 
@@ -100,7 +102,6 @@ async def test_silent_veto_streak_warns_once(monkeypatch: pytest.MonkeyPatch) ->
     must produce exactly one throttled WARN naming the skip reasons."""
     captured = _CapturingLogger()
     monkeypatch.setattr(dispatch_module, "bot_logger", captured)
-    monkeypatch.setattr(dispatch_module, "_submission_smoke", {"streak": 0, "last_warn": 0.0})
 
     skip = dispatch_module.SkippedRecord(
         path_id=7, reason=dispatch_module.SubmitSkipReason.POOLS_CLAIMED
@@ -126,4 +127,28 @@ async def test_silent_veto_streak_warns_once(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(dispatch_module, "dispatch_and_submit", one_submitted)
     await dispatch_module._submit_batch_records(session, outcome, operator_nonce=3)
-    assert dispatch_module._submission_smoke["streak"] == 0
+    assert session.submission_smoke.streak == 0
+
+
+class TestSubmissionSmokeFsm:
+    """The per-session smoke FSM's `Quiet | Streak | Warn` transitions."""
+
+    def test_quiet_streak_warn_and_throttle(self) -> None:
+        smoke = dispatch_module.SubmissionSmoke()
+        verdict = dispatch_module.SubmissionSmokeVerdict
+
+        # A realistic monotonic clock: the first WARN fires on the third
+        # consecutive veto because `last_warn` starts at 0.0 (never warned).
+        assert smoke.observe(vetoed=False, now=10_000.0) is verdict.QUIET
+        assert smoke.streak == 0
+        assert smoke.observe(vetoed=True, now=10_000.0) is verdict.STREAK
+        assert smoke.observe(vetoed=True, now=10_000.0) is verdict.STREAK
+        assert smoke.observe(vetoed=True, now=10_000.0) is verdict.WARN
+        assert smoke.streak == 3
+        # A second veto inside the throttle window stays STREAK.
+        assert smoke.observe(vetoed=True, now=10_001.0) is verdict.STREAK
+        # Re-arms once the window elapses.
+        assert smoke.observe(vetoed=True, now=10_301.0) is verdict.WARN
+        # A batch that submits (not vetoed) resets the FSM to Quiet.
+        assert smoke.observe(vetoed=False, now=10_302.0) is verdict.QUIET
+        assert smoke.streak == 0

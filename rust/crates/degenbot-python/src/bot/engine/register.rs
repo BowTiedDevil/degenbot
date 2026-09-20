@@ -79,11 +79,13 @@ impl PyArbEngine {
         // cloned into each per-block `BlockSimHandle::build`. Empty at
         // construction; warmed lazily by the first block's cold RPCs.
         let warm_code_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+        let host = Arc::new(parking_lot::Mutex::new(host));
+        let supervisor = degenbot_bot::strategy_host::HostSupervisor::new(Arc::clone(&host));
         Self {
             stages,
             driver,
-            host: Arc::new(parking_lot::Mutex::new(host)),
-            driver_supervision: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            host,
+            supervisor,
             #[cfg(feature = "submission")]
             head_lanes: Arc::new(parking_lot::Mutex::new(head_lanes)),
             result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),

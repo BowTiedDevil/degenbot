@@ -314,6 +314,41 @@ table, and the reconcile guard live in the host and are exercised through the
 host's typed verbs; Python-side branches that re-derive them are removed rather
 than tested.
 
+## Supplement — the residual closure set (T2 / R-NEW-1)
+
+The T2 consolidation left five residuals blocked on peer-owned files or a
+follow-up pass. They are now closed; this records the closure so the set is not
+re-opened by a later survey:
+
+- **Cockpit session-phase legality is Rust-authored.** `SessionPhase` and its
+  total `on_start` / `on_run` / `on_query` / `on_shutdown` table live in
+  `degenbot-bot/src/strategy_host.rs`, and the Python `_Phase` reads the
+  verdict through `degenbot._ffi.session_phase_next`. Python translates the
+  refusal into `PhaseError`; it never authors the transition matrix. A parity
+  test derives the expected vocabulary from the Rust source, so a matrix change
+  in one language cannot stay green.
+- **The driver-exit fold is host-internal.** `StrategyHost::record_driver_exit`
+  is private; the two reachable folds are `drive_and_fold` (the standalone
+  sidecar) and `HostSupervisor` (the hosted/Python boot). No external caller
+  can re-implement the await-then-fold ritual or bypass the tombstone rule.
+- **The session watch's task set is typed.** `degenbot.runner._session_watch`
+  models the watch-set as a `_WatchSet` record whose `on_task_done` owns the
+  same-batch ranking (a fatal registration outranks a watchdog trip); the await
+  loop applies the returned transition instead of holding mutable locals.
+- **The silent-veto smoke FSM is per-session Python-owned state.**
+  `_SessionState.submission_smoke` (`SubmissionSmoke`) carries the
+  `Quiet | Streak | Warn` streak and throttle clock, so the observer never
+  leaks across sessions. It is display-only telemetry (`stays-python`), not a
+  legality decision, so it stays out of the Rust host.
+- **The engine-session projection naming pass** landed earlier: `PumpPhase` is
+  the pump-protocol phase machine and `DriverPose` the operator lifecycle; the
+  two are not conflated (ADR-050's convergence note).
+
+The remaining T2 structural residual — folding the engine session into a
+host-owned `Live` sub-state (R-4) — is deliberately not part of this closure:
+it rewrites `EngineDriver` subscribe/resume/stop ownership and every engine
+consumer, and the read-only naming half already landed.
+
 ## Related
 
 - **ADR-055** — pending-transaction strategy seams; D5 named this host as

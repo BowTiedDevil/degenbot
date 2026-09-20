@@ -34,7 +34,7 @@ import contextlib
 import gc
 import signal
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Self, cast
 
@@ -49,7 +49,7 @@ from degenbot.dispatch import Dispatcher, SimulateContext
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner._consume import consume_result_batches
-from degenbot.runner._dispatch import _load_executor_runtime_bytecode
+from degenbot.runner._dispatch import SubmissionSmoke, _load_executor_runtime_bytecode
 from degenbot.runner._driver_constants import (
     ETH_MAINNET_ALLOWED_TOKENS,
     MULTICALL3_ADDRESS,
@@ -235,6 +235,9 @@ class _SessionState:
     #: relay env; ``None`` only for injected sessions constructed directly,
     #: which the submit seam then treats as no-relay posture.
     nonce_lane: NonceLane | None = None
+    #: The per-session silent-veto smoke FSM (streak + throttle clock). Built
+    #: with the session, so a streak can never leak into the next session.
+    submission_smoke: SubmissionSmoke = field(default_factory=SubmissionSmoke)
 
     def advance_block(self, block_number: int) -> None:
         """Advance the session's block clock (the consumer's one mutation)."""

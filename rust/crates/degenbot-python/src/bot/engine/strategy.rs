@@ -252,10 +252,10 @@ impl PyArbEngine {
         py.detach(|| f(&mut self.host.lock()))
     }
 
-    /// Boot every enabled strategy that registered a spawn factory and retain
-    /// one supervision task per driver. Each supervisor awaits its driver's
-    /// lane boundary and folds the terminal exit into the host FSM, so a
-    /// self-halt becomes a tombstone `strategies()` reports.
+    /// Boot every enabled strategy that registered a spawn factory. The
+    /// host-owned supervisor owns one supervision task per driver; each awaits
+    /// its driver's lane boundary and folds the terminal exit through the host
+    /// FSM, so a self-halt becomes a tombstone `strategies()` reports.
     ///
     /// A facet with no factory is skipped by the host: the settlement engine's
     /// pump arm already drives it, so it is not a hosted loop.
@@ -266,22 +266,7 @@ impl PyArbEngine {
     pub(crate) fn start_hosted_strategies(&self) -> Result<usize, HostError> {
         let tasks = self.host.lock().start_driving()?;
         let count = tasks.len();
-        let runtime = degenbot_core::runtime::get_runtime();
-        for task in tasks {
-            let id = task.id().clone();
-            let host = Arc::clone(&self.host);
-            let supervision = runtime.spawn(async move {
-                let exit = task.wait().await;
-                if let Err(error) = host.lock().record_driver_exit(&id, exit) {
-                    tracing::warn!(
-                        strategy = %id,
-                        %error,
-                        "driver exit not folded into the strategy FSM"
-                    );
-                }
-            });
-            self.driver_supervision.lock().push(supervision);
-        }
+        self.supervisor.supervise(tasks);
         Ok(count)
     }
 }

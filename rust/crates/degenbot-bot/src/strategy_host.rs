@@ -915,15 +915,15 @@ impl StrategyHost {
     /// [`DriverPose::Stopped`] so a dead loop is never reported as
     /// [`DriverPose::Running`].
     ///
+    /// Host-internal: the fold is reachable only through [`Self::drive_and_fold`]
+    /// (the standalone consumer) or [`HostSupervisor`] (the hosted consumers),
+    /// so no external caller can re-implement or bypass it.
+    ///
     /// # Errors
     ///
     /// [`HostError::UnknownStrategy`] / [`HostError::Transition`] from the
     /// resulting lifecycle move.
-    pub fn record_driver_exit(
-        &mut self,
-        id: &StrategyId,
-        exit: DriverExit,
-    ) -> Result<(), HostError> {
+    fn record_driver_exit(&mut self, id: &StrategyId, exit: DriverExit) -> Result<(), HostError> {
         match exit {
             DriverExit::Halted(detail) => self.halt(id, detail),
             DriverExit::Stopped => {
@@ -979,6 +979,58 @@ impl StrategyHost {
         self.drivers
             .get_mut(id)
             .ok_or_else(|| HostError::UnknownStrategy(id.clone()))
+    }
+}
+
+/// The host's driver supervisor: owns the supervision tasks for every driver
+/// the host started, and folds each terminal exit through the host FSM.
+///
+/// This composes the await-then-fold ritual inside the host crate, so
+/// [`StrategyHost::record_driver_exit`] stays private and no external caller
+/// can re-implement — or bypass — the fold. A self-halt becomes a tombstone; a
+/// clean stop lands [`DriverPose::Stopped`]; neither is ever reported as
+/// [`DriverPose::Running`].
+pub struct HostSupervisor {
+    host: Arc<parking_lot::Mutex<StrategyHost>>,
+    tasks: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+}
+
+impl HostSupervisor {
+    /// A supervisor over the shared host handle. The supervisor holds its own
+    /// `Arc` clone; the host stays the single owner of the FSM records.
+    #[must_use]
+    pub fn new(host: Arc<parking_lot::Mutex<StrategyHost>>) -> Self {
+        Self {
+            host,
+            tasks: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Spawn one supervision task per started driver. Each awaits its driver's
+    /// lane boundary and folds the terminal exit through the host FSM.
+    pub fn supervise(&self, tasks: Vec<DriverTask>) {
+        let runtime = degenbot_core::runtime::get_runtime();
+        for task in tasks {
+            let id = task.id().clone();
+            let host = Arc::clone(&self.host);
+            let supervision = runtime.spawn(async move {
+                let exit = task.wait().await;
+                if let Err(error) = host.lock().record_driver_exit(&id, exit) {
+                    tracing::warn!(
+                        strategy = %id,
+                        %error,
+                        "driver exit not folded into the strategy FSM"
+                    );
+                }
+            });
+            self.tasks.lock().push(supervision);
+        }
+    }
+
+    /// The number of supervision tasks the supervisor owns.
+    #[must_use]
+    pub fn live_count(&self) -> usize {
+        self.tasks.lock().len()
     }
 }
 
@@ -1420,6 +1472,42 @@ mod tests {
         host.disable(&id)
             .expect("a stopped record is still disableable");
         assert_eq!(host.state_of(&id), Some(DriverPose::Disabled));
+    }
+
+    #[tokio::test]
+    async fn the_supervisor_folds_a_clean_exit_through_the_host() {
+        let shared = Arc::new(parking_lot::Mutex::new(host()));
+        let id = {
+            let mut guard = shared.lock();
+            let id = register(&mut guard, "backrun");
+            guard
+                .attach_spawn(
+                    &id,
+                    Box::new(|_lane| Box::pin(async { DriverExit::Stopped })),
+                )
+                .expect("attach spawn");
+            guard.enable(&id).expect("enable");
+            id
+        };
+
+        let tasks = shared.lock().start_driving().expect("start driving");
+        let supervisor = HostSupervisor::new(Arc::clone(&shared));
+        supervisor.supervise(tasks);
+        assert_eq!(supervisor.live_count(), 1);
+
+        let mut state = shared.lock().state_of(&id);
+        for _ in 0..1_000 {
+            if state == Some(DriverPose::Stopped) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            state = shared.lock().state_of(&id);
+        }
+        assert_eq!(
+            state,
+            Some(DriverPose::Stopped),
+            "the supervisor folds the clean exit; the record is never left Running"
+        );
     }
 
     #[test]
