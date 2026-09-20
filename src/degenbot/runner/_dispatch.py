@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-from degenbot.runner._nonce_lane import relay_urls_from_env
+from degenbot.runner._relay_posture import relay_urls_from_env
 from degenbot.runner._render import (
     _render_fot_tokens,
     _render_profit_logs,
@@ -469,12 +469,12 @@ async def _submit_batch_records(
         return
     # Relay submission seam (ADR-025 companion): same signed bytes, dedicated
     # broadcast URL, revert-protecting private builder endpoints instead of
-    # the public mempool. The POSTURE is owned by the session's NonceLane
-    # (built once from the relay env at session start — see _nonce_lane);
+    # the public mempool. The POSTURE is owned by the session's RelayPosture
+    # (built once from the relay env at session start — see _relay_posture);
     # sessions without one (bare test fakes) fall back to the env read. The
     # operator nonce is forwarded unchanged: the Rust authority issues it.
-    nonce_lane = getattr(session, "nonce_lane", None)
-    relay_urls = nonce_lane.relay_urls if nonce_lane is not None else relay_urls_from_env()
+    relay_posture = getattr(session, "relay_posture", None)
+    relay_urls = relay_posture.relay_urls if relay_posture is not None else relay_urls_from_env()
     if relay_urls and outcome.gas_profitable:
         broadcast_providers = await _resolve_relay_providers(relay_urls, relay_providers)
     else:

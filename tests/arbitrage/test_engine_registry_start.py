@@ -1,7 +1,7 @@
 """Integration tests for EngineRegistry.start — the two-phase Layer A facade.
 
 `start(...)` runs the pre-pump startup ritual (subscribe → stream snapshots →
-backfill → verify config) and stops at `EnginePhase::Backfilled`, BEFORE
+backfill → verify config) and stops at `PumpPhase::Backfilled`, BEFORE
 `resume()`. This is the consumer-safety invariant: between subscribe and
 resume (including stream/backfill/verify) zero result batches are emitted,
 so the caller can attach its consumer any time before `resume()` without

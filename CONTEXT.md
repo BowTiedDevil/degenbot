@@ -84,7 +84,20 @@ _Avoid_: using bare "driver" for the engine session (**Driver seam**) or the Pyt
 The host's single owner of the operator account's nonce space, leased at sign time: a
 strategy receives the lowest free nonce at or above the confirmed chain nonce, so leases
 and broadcasts form a contiguous prefix above it.
-_Avoid_: "nonce manager", "nonce lane", "nonce pool".
+_Avoid_: "nonce manager", "nonce pool".
+
+**NonceLane**:
+The nonce-flighting seam the NonceAuthority exposes to one strategy: a host-minted binding
+to the shared authority and the strategy's submission ledger, whose `stamp()` is the only
+issuance entry.
+_Avoid_: a private reservation table; using "lane" for the fleet's **Lane** (thread
+ownership) or for the authority itself.
+
+**Relay posture**:
+The session's choice of broadcast destination for signed bytes: configured private relay
+URLs fan the same bytes out instead of the public mempool. A posture holder, never a nonce
+issuer.
+_Avoid_: "nonce lane", "private-lane reservation".
 
 **Lane namespace**:
 A driver's run-artifact root (`<state_root>/<strategy>`, with `session/` and

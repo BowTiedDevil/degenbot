@@ -31,9 +31,9 @@ _CHILD = """
 import os
 import sys
 
-# The stance holder is first-wins at module init: drop any inherited stance
-# env before importing degenbot (the delenv-fixture discipline, applied at
-# the child seam).
+# The fleet-posture holder is first-wins at module init: drop any inherited
+# fleet env before importing degenbot (the delenv-fixture discipline, applied
+# at the child seam).
 os.environ.pop("DEGENBOT_FLEET", None)
 
 # Simulate a sub-SERIAL-floor host (FF-T4, Z6XTDX): the 2-5-core tier
@@ -48,7 +48,7 @@ try:
     ArbitrageEngine(py_bot=pre)  # engine construction installs the intake boot
     probe = Bot(1)
     if not probe.registration_fleet_hosted():
-        print("STANCE-NOT-INSTALLED", file=sys.stderr)
+        print("RETUNE-NOT-INSTALLED", file=sys.stderr)
         sys.exit(4)
     # The registration intake station boots lazily: the first submit runs
     # the fleet budget check — the sub-floor refusal fires here.

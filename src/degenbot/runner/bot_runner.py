@@ -56,7 +56,7 @@ from degenbot.runner._driver_constants import (
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
 )
-from degenbot.runner._nonce_lane import NonceLane, relay_urls_from_env
+from degenbot.runner._relay_posture import RelayPosture, relay_urls_from_env
 from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
 from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
 from degenbot.runner.build_paths import (
@@ -230,11 +230,11 @@ class _SessionState:
     #: kept reachable for the session's lifetime; ``None`` for injected/fake
     #: runs.
     registration_pipeline: Any = None
-    #: Private-lane nonce reservations (the relay posture's overlay over the
-    #: local pending read — see ``_nonce_lane``). Built once here from the
-    #: relay env; ``None`` only for injected sessions constructed directly,
-    #: which the submit seam then treats as no-relay posture.
-    nonce_lane: NonceLane | None = None
+    #: The session's relay posture (where signed bytes broadcast — see
+    #: ``_relay_posture``). Built once here from the relay env; ``None`` only
+    #: for injected sessions constructed directly, which the submit seam then
+    #: treats as no-relay posture. Nonce issuance is the Rust authority's.
+    relay_posture: RelayPosture | None = None
     #: The per-session silent-veto smoke FSM (streak + throttle clock). Built
     #: with the session, so a streak can never leak into the next session.
     submission_smoke: SubmissionSmoke = field(default_factory=SubmissionSmoke)
@@ -519,7 +519,7 @@ class BotRunner:
             cfg=cfg,
             current_block=current_block,
             bot=bot,
-            nonce_lane=NonceLane(relay_urls=relay_urls_from_env()),
+            relay_posture=RelayPosture(relay_urls=relay_urls_from_env()),
         )
         self._install_sigint_handler()
         self._phase = next_phase

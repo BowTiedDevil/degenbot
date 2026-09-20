@@ -10,8 +10,8 @@ one issuer for every signing path, and the settlement seam seeds it from the
 submission-time chain read before stamping. The Python-side reservation ledger
 that once overlaid relay-pending nonces was retired: it was a second
 reservation table with a different algorithm, exactly the divergence the
-authority exists to prevent. ``NonceLane.reserve_base`` remains only as a loud
-deprecation shim for out-of-tree callers; it performs no reservation.
+authority exists to prevent. ``RelayPosture.reserve_base`` remains only as a
+loud deprecation shim for out-of-tree callers; it performs no reservation.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def relay_urls_from_env() -> list[str]:
     return []
 
 
-class NonceLane:
+class RelayPosture:
     """The session's relay posture.
 
     Constructed once per session from the configured relay URLs; an empty list
@@ -67,7 +67,7 @@ class NonceLane:
         """
         del size  # the reservation range no longer exists
         warnings.warn(
-            "NonceLane.reserve_base is retired: nonce issuance moved to the Rust "
+            "RelayPosture.reserve_base is retired: nonce issuance moved to the Rust "
             "NonceAuthority; the relay posture no longer keeps a Python reservation "
             "table. The caller's nonce is returned unchanged.",
             DeprecationWarning,
