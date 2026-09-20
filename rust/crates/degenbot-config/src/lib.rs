@@ -63,7 +63,9 @@ pub mod error;
 /// [`holder::config`] instead. A plain VALUE holder — zero env access.
 pub mod holder;
 pub mod loader;
+pub mod readiness;
 pub mod resolvers;
+pub mod writer;
 pub mod schema;
 #[doc(hidden)]
 pub mod schema_macro;
@@ -82,7 +84,11 @@ pub use resolvers::{
 };
 pub use schema::{
     AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyBackrunConfig,
-    StrategyName, StrategySettlementConfig,
+    StrategySettlementConfig,
+};
+pub use readiness::{
+    strategy_readiness, Arm, StrategyReadiness, StrategyReadinessError,
+    DEFAULT_BACKRUN_STREAM_URL, SETTLEMENT_DEFAULT_ENDPOINTS,
 };
 pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA, SECTION_PATHS};
 

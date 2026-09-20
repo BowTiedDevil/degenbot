@@ -2366,6 +2366,7 @@ name = "degenbot-config"
 version = "0.6.0-alpha.11"
 dependencies = [
  "toml",
+ "toml_edit",
 ]
 
 [[package]]
@@ -2562,6 +2563,7 @@ dependencies = [
  "alloy",
  "dashmap",
  "degenbot-abi",
+ "degenbot-config",
  "degenbot-core",
  "degenbot-eventhub",
  "degenbot-math",
@@ -6424,6 +6426,7 @@ dependencies = [
  "indexmap 2.14.2",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

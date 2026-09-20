@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-from degenbot.runner._relay_posture import relay_urls_from_env
 from degenbot.runner._render import (
     _render_fot_tokens,
     _render_profit_logs,
@@ -470,15 +469,24 @@ async def _submit_batch_records(
     # Relay submission seam (ADR-025 companion): same signed bytes, dedicated
     # broadcast URL, revert-protecting private builder endpoints instead of
     # the public mempool. The POSTURE is owned by the session's RelayPosture
-    # (built once from the relay env at session start — see _relay_posture);
+    # (resolved once from the typed config at session start — see
+    # _relay_posture);
     # sessions without one (bare test fakes) fall back to the env read. The
     # operator nonce is forwarded unchanged: the Rust authority issues it.
     relay_posture = getattr(session, "relay_posture", None)
-    relay_urls = relay_posture.relay_urls if relay_posture is not None else relay_urls_from_env()
-    if relay_urls and outcome.gas_profitable:
-        broadcast_providers = await _resolve_relay_providers(relay_urls, relay_providers)
-    else:
+    if relay_posture is None or not relay_posture.relay_urls:
+        if outcome.gas_profitable and not session.cfg.dry_run:
+            # Unreachable past the boot gate; kept as the loudly-impossible
+            # state guard rather than any fallthrough to a raw broadcast.
+            bot_logger.error(
+                "[dispatch] no relay posture on a live session: refusing submission"
+            )
+            return
         broadcast_providers = None
+    else:
+        broadcast_providers = await _resolve_relay_providers(
+            relay_posture.relay_urls, relay_providers
+        )
 
     _log_submit_arm(outcome.gas_profitable, session.dispatcher.current_block)
 

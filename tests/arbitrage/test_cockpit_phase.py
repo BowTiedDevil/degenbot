@@ -13,15 +13,16 @@ seam pattern as ``test_arbitrage_session.py``); no anvil, no live RPC.
 
 from __future__ import annotations
 
-import asyncio
 import signal
 
 import pytest
 
 from degenbot.runner import BotRunner
+from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors, PhaseError
 from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
+from tests.fakes.engine import FakeEngine as _FakeEngine
+from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +85,7 @@ def _session() -> BotRunner:
             snapshots=(object(), object(), None, None),
             path_builder=lambda **kw: _noop(),
             consumer=lambda **kw: _noop(),
+            relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
         ),
         install_sigint=False,
     )

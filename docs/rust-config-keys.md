@@ -151,15 +151,17 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery. |
-## `strategy`
+## `strategy.settlement`
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_STRATEGY_NAME` | `strategy.name` | `Option<StrategyName(Settlement|Backrun)>` | `(unset; no explicit strategy selection)` | Active strategy arm: `settlement` or `backrun`. Unset leaves strategy selection at the wiring default; the settlement/backrun readers consume this key in a later phase. |
+| `DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE` | `strategy.settlement.active` | `bool` | `false` | Activate the settled-block settlement arm in this process; inactive leaves the facet dormant. |
+| `DEGENBOT_STRATEGY_SETTLEMENT_ENDPOINTS` | `strategy.settlement.endpoints` | `Option<string>` | `(unset; required when settlement is active)` | Comma-separated broadcast endpoints for settlement submissions. Restricted to the pinned revert-protecting relay allowlist (docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md). |
 ## `strategy.backrun`
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
+| `DEGENBOT_STRATEGY_BACKRUN_ACTIVE` | `strategy.backrun.active` | `bool` | `false` | Activate the pending-transaction backrun arm in this process; inactive leaves the facet dormant. |
 | `DEGENBOT_STRATEGY_BACKRUN_BID_MODE` | `strategy.backrun.bid_mode` | `bool` | `false` | Explicit bid-mode flag; off is observe-only. Bid mode also requires a non-zero budget_wei (the legality gate reads both). |
 | `DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI` | `strategy.backrun.budget_wei` | `u128 (decimal text)` | `0` | Cumulative bid budget cap in wei (decimal text; TOML: quoted string). Zero makes bid mode illegal; the spent accumulator tracks the wallet's gas burn. |
 | `DEGENBOT_STRATEGY_BACKRUN_MAX_BUNDLE_WEI` | `strategy.backrun.max_bundle_wei` | `u128 (decimal text)` | `1000000000000000` | Hard per-bundle cap in wei (decimal text; TOML: quoted string); a decided bid is clamped to it. |
@@ -171,7 +173,7 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_STRATEGY_BACKRUN_EXECUTOR` | `strategy.backrun.executor` | `string` | `0x30b28ed8aa581fbc0191c3b532b0697773070e97` | Executor contract address the composed backrun calls; parsed and validated at the sidecar boot. |
 | `DEGENBOT_STRATEGY_BACKRUN_OPERATOR` | `strategy.backrun.operator` | `Option<string>` | `(unset; falls back to EXECUTOR_OWNER_ADDRESS)` | Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the sidecar boot. |
 | `DEGENBOT_STRATEGY_BACKRUN_SIM_URL` | `strategy.backrun.sim_url` | `Option<string>` | `(unset; the chain node)` | Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback. |
-| `DEGENBOT_STRATEGY_BACKRUN_STREAM_URL` | `strategy.backrun.stream_url` | `string` | `(empty: the MEVBlocker searcher WS default)` | MEVBlocker searcher WebSocket for the private bundle broadcast. Empty defers to the feed crate's mainnet default so the endpoint lives in one place. |
+| `DEGENBOT_STRATEGY_BACKRUN_ENDPOINTS` | `strategy.backrun.endpoints` | `Option<string>` | `(unset; required when backrun is active)` | MEVBlocker searcher WebSocket for the private bundle broadcast (single URL). |
 | `DEGENBOT_STRATEGY_BACKRUN_MEVBLOCKER_URL` | `strategy.backrun.mevblocker_url` | `Option<string>` | `(unset: bundle-only bid)` | Private-broadcast RPC for the raw relay fan-out. Set arms the private-broadcast arm: the signed backrun goes raw to this endpoint first, then to the chain node as the public fallback relay. Unset keeps the bundle-only bid and the read-provider broadcast unchanged. |
 | `DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE` | `strategy.backrun.rank_evidence` | `bool` | `false` | Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic). |
 | `DEGENBOT_STRATEGY_BACKRUN_CONNECTORS` | `strategy.backrun.connectors` | `usize` | `8` | Discovery fan-out cap (connectors per frame). |

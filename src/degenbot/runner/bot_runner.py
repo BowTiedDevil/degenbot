@@ -56,7 +56,7 @@ from degenbot.runner._driver_constants import (
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
 )
-from degenbot.runner._relay_posture import RelayPosture, relay_urls_from_env
+from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
 from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
 from degenbot.runner.build_paths import (
@@ -231,7 +231,7 @@ class _SessionState:
     #: runs.
     registration_pipeline: Any = None
     #: The session's relay posture (where signed bytes broadcast — see
-    #: ``_relay_posture``). Built once here from the relay env; ``None`` only
+    #: ``_relay_posture``). Resolved once here from the typed config; ``None``
     #: for injected sessions constructed directly, which the submit seam then
     #: treats as no-relay posture. Nonce issuance is the Rust authority's.
     relay_posture: RelayPosture | None = None
@@ -262,6 +262,11 @@ class InjectedActors:
     snapshots: tuple[Any, Any, Any, Any] | None = None
     path_builder: Any = None
     consumer: Any = None
+    #: Offline seam for the live activation gate: when set, the session's
+    #: relay posture is this injected value (lifecycle tests pin a stub;
+    #: production leaves it unset so the Rust readiness resolution owns the
+    #: posture and the gate refuses an unsettled live boot).
+    relay_posture: RelayPosture | None = None
 
 
 class BotRunner:
@@ -342,6 +347,7 @@ class BotRunner:
         self._injected_snapshots = injected.snapshots
         self._path_builder = injected.path_builder
         self._consumer = injected.consumer
+        self._injected_relay_posture = injected.relay_posture
         self._background_registration: bool | None = background_registration
         # The registration-owned construction context (built in run() for
         # the real build_paths; None for injected builders and until run()).
@@ -519,7 +525,11 @@ class BotRunner:
             cfg=cfg,
             current_block=current_block,
             bot=bot,
-            relay_posture=RelayPosture(relay_urls=relay_urls_from_env()),
+            relay_posture=(
+                self._injected_relay_posture
+                if self._injected_relay_posture is not None
+                else self._resolve_relay_posture(live=not cfg.dry_run)
+            ),
         )
         self._install_sigint_handler()
         self._phase = next_phase
@@ -533,6 +543,37 @@ class BotRunner:
         async_w3 = self._injected_async_w3 or await self._build_async_w3(cfg)
         engine_registry = self._injected_engine_registry or EngineRegistry(bot=bot)
         return bot, async_w3, engine_registry
+
+    @staticmethod
+    def _resolve_relay_posture(*, live: bool) -> RelayPosture | None:
+        """The settlement broadcast posture from the resolved typed config.
+
+        In live mode this is the fail-closed boot gate: the Rust readiness
+        resolution refuses an activated facet with an unsettled endpoint set
+        (naming the `degenbot strategy activate` remedies), and the hosted
+        runner IS the settlement arm, so an inactive settlement facet is a
+        refusal too — both abort the session instead of degrading a live
+        broadcast to the public mempool. Dry-run sessions keep no posture:
+        nothing is signed, so no fan-out matters and offline boots stay
+        env-free."""
+
+        from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
+
+        try:
+            validate_strategy_readiness()
+        except ValueError as refusal:
+            if live:
+                raise RuntimeError(
+                    f"activation gate refused: {refusal}"
+                ) from refusal
+            return None
+        if not live:
+            return None
+        try:
+            relay_urls = settlement_broadcast_endpoints()
+        except ValueError as refusal:
+            raise RuntimeError(f"settlement arm gate refused: {refusal}") from refusal
+        return RelayPosture(relay_urls=relay_urls)
 
     @staticmethod
     def _build_sim_ctx(

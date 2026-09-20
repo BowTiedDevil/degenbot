@@ -574,12 +574,12 @@ fn run() -> Result<(), String> {
     let cli = parse_cli(&args)?;
 
     // Strategy-arm gate (ADR-055): this driver is the settled-block arm.
-    // An explicit `strategy.name = "backrun"` selection must boot the
-    // backrun sidecar, not this runner; the schema is the load source.
-    // A loader failure does not change behavior: the driver's own boot
-    // reads the config again and reports typed errors there.
+    // An activated backrun facet must boot via the MEVBlocker backrun
+    // sidecar (or the hosted process), not this runner; the schema is the
+    // load source. A loader failure does not change behavior: the driver's
+    // own boot reads the config again and reports typed errors there.
     if let Ok(loaded) = degenbot::config::BotConfigLoader::new().load() {
-        if let Some(msg) = strategy_arm_refusal(loaded.config.strategy.name) {
+        if let Some(msg) = strategy_arm_refusal(loaded.config.strategy.backrun.active) {
             return Err(msg);
         }
     }
@@ -1164,43 +1164,26 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// The arm the driver refuses: anything that names another strategy family.
-///
-/// `None` leaves the wiring default (settlement); an unset strategy is not a
-/// refusal reason. (ADR-055: the typed selector is interim until the Phase C
-/// host owns per-arm enablement.)
-fn strategy_arm_refusal(arm: Option<degenbot::config::StrategyName>) -> Option<String> {
-    match arm {
-        None | Some(degenbot::config::StrategyName::Settlement) => None,
-        Some(degenbot::config::StrategyName::Backrun) => Some(
-            "strategy.name=backrun: this driver is the settled-block arm; the backrun arm boots via the MEVBlocker backrun sidecar binary"
-                .to_string(),
-        ),
-    }
+/// The arm the driver refuses: an explicitly activated pending-transaction
+/// facet belongs to its own binary or the hosted process, not this runner.
+fn strategy_arm_refusal(backrun_active: bool) -> Option<String> {
+    backrun_active.then(|| {
+        "strategy.backrun.active: this driver is the settled-block arm; the backrun arm boots via the MEVBlocker backrun sidecar binary".to_string()
+    })
 }
 
 #[cfg(test)]
 mod arm_gate_tests {
     use super::strategy_arm_refusal;
-    use degenbot::config::StrategyName;
 
     #[test]
     fn unset_arm_keeps_wiring_default() {
-        assert!(strategy_arm_refusal(None).is_none());
+        assert!(strategy_arm_refusal(false).is_none());
     }
 
     #[test]
-    fn settlement_arm_is_own_driver() {
-        assert!(strategy_arm_refusal(Some(StrategyName::Settlement)).is_none());
-    }
-
-    #[test]
-    #[expect(
-        clippy::expect_used,
-        reason = "the assertion proves the settlement driver refused the backrun arm with a message"
-    )]
     fn backrun_arm_refuses_on_the_settlement_driver() {
-        let msg = strategy_arm_refusal(Some(StrategyName::Backrun)).expect("backrun must refuse");
-        assert!(msg.contains("strategy.name=backrun"));
+        let msg = strategy_arm_refusal(true).expect("backrun must refuse");
+        assert!(msg.contains("strategy.backrun.active"));
     }
 }

@@ -80,9 +80,18 @@ impl SidecarConfig {
     pub fn from_config(cfg: &BotConfig, rpc_url: String) -> Self {
         let backrun = &cfg.strategy.backrun;
         Self {
-            // Empty default = defer to the feed crate's mainnet default
-            // (DEFAULT_STREAM_URL) so the endpoint lives in ONE place.
-            stream_url: backrun.stream_url.clone(),
+            // The bundle channel URL (searcher WS) from the strategy
+            // readiness: the persisted `endpoints` list (the
+            // `--endpoints-default` activation stamps the pinned searcher
+            // WS into it), or empty when the facet is inactive/unsettled (the
+            // boots refuse that state before the driver runs).
+            stream_url: degenbot_config::strategy_readiness(cfg)
+                .ok()
+                .and_then(|readiness| match &readiness.backrun {
+                    degenbot_config::Arm::Active(urls) => urls.first().cloned(),
+                    degenbot_config::Arm::Inactive => None,
+                })
+                .unwrap_or_default(),
             rpc_url,
             key_file: backrun.key_file.clone(),
             bid_mode: backrun.bid_mode,
@@ -382,6 +391,7 @@ mod tests {
         use degenbot_config::{BotConfigLoader, MapEnv};
 
         let raw = BTreeMap::from([
+            ("DEGENBOT_STRATEGY_BACKRUN_ACTIVE", "1"),
             ("DEGENBOT_STRATEGY_BACKRUN_BID_MODE", "1"),
             ("DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI", "42"),
             ("DEGENBOT_STRATEGY_BACKRUN_MAX_BUNDLE_WEI", "99"),
@@ -399,7 +409,7 @@ mod tests {
                 "0x00000000000000000000000000000000000000bb",
             ),
             ("DEGENBOT_STRATEGY_BACKRUN_SIM_URL", "http://sim.local:8545"),
-            ("DEGENBOT_STRATEGY_BACKRUN_STREAM_URL", "wss://stream.local"),
+            ("DEGENBOT_STRATEGY_BACKRUN_ENDPOINTS", "wss://stream.local"),
             ("DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE", "1"),
             ("DEGENBOT_STRATEGY_BACKRUN_CONNECTORS", "5"),
             ("DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD", "26001272"),

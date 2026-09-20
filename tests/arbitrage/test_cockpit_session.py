@@ -19,6 +19,7 @@ import signal
 import pytest
 
 from degenbot.runner import BotRunner
+from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
 from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
@@ -166,6 +167,7 @@ class TestSessionOwner:
                 snapshots=(object(), object(), None, None),
                 path_builder=lambda **kw: _noop(),
                 consumer=capturing_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             install_sigint=False,
         )

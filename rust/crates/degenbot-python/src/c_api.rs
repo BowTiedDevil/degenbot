@@ -56,6 +56,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The Python discovery pipeline reads it and forwards it to
     // `find_paths_async`.
     m.add_function(wrap_pyfunction!(crate::config::discovery_batch_size, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::config::validate_strategy_readiness, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::config::settlement_broadcast_endpoints, m)?)?;
 
     // 6LC4JB: the shared core verification-retry policy defaults, so the
     // Python driver shell reads them from the one Rust-owned declaration site.

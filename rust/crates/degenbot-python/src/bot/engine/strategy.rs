@@ -162,9 +162,7 @@ pub(crate) fn boot_host() -> BootedHost {
     );
 
     let cfg = degenbot_config::holder::config();
-    let backrun_configured = cfg.strategy.name == Some(degenbot_config::StrategyName::Backrun)
-        || cfg.strategy.backrun.bid_mode
-        || cfg.strategy.backrun.key_file.is_some();
+    let backrun_configured = cfg.strategy.backrun.active;
 
     host.register(StrategyId::new("settlement"), FacetStatus::Configured)
         .expect("fresh host registers settlement");

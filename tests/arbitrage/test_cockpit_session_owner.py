@@ -24,6 +24,8 @@ import pytest
 from degenbot._ffi import session_phase_next
 from degenbot.runner import BotRunner
 from degenbot.runner._consume import consume_result_batches
+from degenbot.runner._relay_posture import RelayPosture
+from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase, _SessionState
 from degenbot.runner.config import ArbitrageConfig
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
@@ -118,6 +120,7 @@ def _runner(**overrides: object) -> BotRunner:
         "snapshots": (object(), object(), None, None),
         "path_builder": lambda **kw: _noop(),
         "consumer": lambda **kw: _noop(),
+        "relay_posture": RelayPosture(relay_urls=["http://offline-test.relay"]),
     }
     install_sigint = overrides.pop("install_sigint", False)
     actors.update(overrides)

@@ -466,8 +466,10 @@ rebuild-tier3-artifacts:
 #   1. It measures the RUST suite only. pytest drives the same core through the
 #      PyO3 seam and contributes no coverage here, so the binding layer
 #      (`degenbot_rs`, ~60% of the findings) and the Python-driven updaters
-#      score as untested even though pytest exercises them. Merging pytest
-#      coverage (instrumented cdylib + LLVM_PROFILE_FILE) is not built yet.
+#      score as untested even though pytest exercises them. `just coverage`
+#      builds the pytest-driven arm (instrumented cdylib + LLVM_PROFILE_FILE)
+#      — point CRAP_LCOV at its combined LCOV to score the union:
+#        CRAP_LCOV=target/coverage/coverage.lcov just crap
 #   2. `?` counts as a decision point, so `?`-chained plumbing — module
 #      registration, Py-dict conversion — scores far above its real branching.
 #      The CC-141 outlier of the first run was such a function.
@@ -603,6 +605,34 @@ crap-regression *args:
 
 # CI entrypoint: fresh coverage + the threshold gate in one command.
 crap-ci: crap-coverage crap-gate
+
+# ========== Code Coverage ==========
+#
+# `scripts/coverage.sh` runs three arms over LLVM instrumentation, all writing
+# HTML (for humans) + `coverage.json` (llvm-cov export format, agents) under
+# `rust/target/coverage/`:
+#
+#   just coverage-rust        # cargo workspace suite (cargo-llvm-cov)
+#   just coverage-pyo3        # pytest driving an instrumented degenbot._ffi cdylib
+#   just coverage             # both, merged into one report + coverage.lcov
+#
+# The merged report is also the highest-fidelity LCOV available (cargo suite
+# ∪ pytest-driven binding coverage):
+#   CRAP_LCOV=target/coverage/coverage.lcov just crap
+#
+# Slow (full instrumented rebuilds, ~10-20 min cold) — on-demand, not wired
+# into pre-push/CI. Scoped runs keep the rebuild narrow:
+#   COV_PACKAGES="-p degenbot-config" just coverage-rust
+# Args pass to the pytest arm: just coverage-pyo3 tests/abi -q
+
+coverage-rust *args:
+    scripts/coverage.sh rust {{ args }}
+
+coverage-pyo3 *args:
+    scripts/coverage.sh pyo3 {{ args }}
+
+coverage *args:
+    scripts/coverage.sh all {{ args }}
 
 # ========== Code Quality ==========
 

@@ -17,8 +17,11 @@ import types
 import warnings
 from typing import Any
 
+import pytest
+
 from degenbot.runner._dispatch import SubmissionSmoke, _submit_batch_records
 from degenbot.runner._relay_posture import RelayPosture
+from degenbot.runner.bot_runner import BotRunner
 
 
 class _RecordingSubmitter:
@@ -91,10 +94,11 @@ class TestRelayPosture:
         assert posture.enabled
         assert posture.relay_urls == ["http://relay-a"]
 
-    def test_disabled_posture_is_empty(self) -> None:
-        posture = RelayPosture(relay_urls=[])
-        assert not posture.enabled
-        assert posture.relay_urls == []
+    def test_an_empty_posture_cannot_be_constructed(self) -> None:
+        """Fail-closed holder: the empty posture (the public-mempool footgun)
+        cannot exist; the boot gate owns the refusal."""
+        with pytest.raises(RuntimeError, match="settled settlement endpoints"):
+            RelayPosture(relay_urls=[])
 
     def test_reserve_base_is_a_loud_passthrough(self) -> None:
         """Nonce issuance lives in Rust; the shim warns and returns the
@@ -143,15 +147,56 @@ class TestSubmitSeamForwardsTheCallersNonce:
 
 
 class TestNoRelayPosture:
-    """No-relay posture keeps public-mempool semantics."""
+    """A live session without a settled posture refuses submission."""
 
-    async def test_no_relay_posture_sends_no_broadcast_providers(self) -> None:
-        posture = RelayPosture(relay_urls=[])
+    async def test_a_live_session_without_a_posture_refuses_submission(self) -> None:
+        """Unreachable past the boot gate, but if it ever happens the seam
+        refuses rather than falling back to a raw public mempool broadcast."""
+        submitter = _RecordingSubmitter()
+        session = _session(None)
+
+        await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
+
+        assert submitter.calls == [], "no submit may leave without a posture"
+
+    async def test_a_dry_run_session_without_a_posture_submits_nothing(self) -> None:
+        posture = RelayPosture(relay_urls=["http://relay-a"])
         submitter = _RecordingSubmitter()
         session = _session(posture)
+        session.cfg.dry_run = True
 
         await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
-        await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
 
-        assert all(call["context"].broadcast_providers is None for call in submitter.calls)
-        assert [call["context"].operator_nonce for call in submitter.calls] == [42, 42]
+        # The dry-run skip is guarded downstream (the Rust leaf skips the
+        # candidates); the seam itself still resolves theproviders.
+        assert len(submitter.calls) == 1
+
+
+class TestBootGate:
+    """The runner's live-mode activation gate over the ambient unset config."""
+
+    def test_a_live_boot_either_refuses_or_settles_the_allowlist(self) -> None:
+        """Fail-closed over whatever the ambient holder config holds: an
+        unset settlement posture refuses with the remediation, and a settled
+        one resolves to a non-empty, on-allowlist URL set — never a silent
+        public-mempool default."""
+        pinned = {
+            "https://rpc.flashbots.net?hint=hash",
+            "https://rpc.mevblocker.io/noreverts",
+            "https://rpc.mevblocker.io/fullprivacy",
+        }
+        try:
+            posture = BotRunner._resolve_relay_posture(live=True)
+        except RuntimeError as refusal:
+            message = str(refusal)
+            assert "settlement" in message
+            assert "degenbot strategy activate" in message
+        else:
+            assert posture is not None
+            assert posture.relay_urls, "a settled live posture is never empty"
+            assert set(posture.relay_urls) <= pinned, (
+                "live posture is restricted to the pinned allowlist"
+            )
+
+    def test_a_dry_run_boot_needs_no_activation(self) -> None:
+        assert BotRunner._resolve_relay_posture(live=False) is None

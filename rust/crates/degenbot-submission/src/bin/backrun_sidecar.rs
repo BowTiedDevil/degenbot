@@ -64,17 +64,17 @@ fn init_tracing(mirror_stderr: bool) {
 }
 
 /// The strategy-arm boot gate: this binary is the pending-transaction
-/// backrun arm, so `strategy.name` must be `backrun` or unset. An explicit
-/// `settlement` selection names the wrong invocation and is refused.
-fn strategy_arm_refusal(arm: Option<degenbot_config::StrategyName>) -> Option<String> {
-    match arm {
-        None | Some(degenbot_config::StrategyName::Backrun) => None,
-        Some(degenbot_config::StrategyName::Settlement) => Some(String::from(
-            "strategy.name=settlement: this binary is the pending-transaction backrun sidecar; \
-             boot `backrun_sidecar` itself with a typed config carrying `[strategy] name = \
-             \"backrun\"` (or DEGENBOT_STRATEGY_NAME=backrun), or run the settled-block arm instead",
-        )),
-    }
+/// backrun arm, so the settled-block facet must not be activated here — a
+/// `strategy.settlement.active` selection names the wrong invocation and is
+/// refused.
+fn strategy_arm_refusal(settlement_active: bool) -> Option<String> {
+    settlement_active.then(|| {
+        String::from(
+            "strategy.settlement.active: this binary is the pending-transaction backrun sidecar; \
+             the hosted process or an explicit `degenbot strategy deactivate settlement` owns the \
+             settled-block arm",
+        )
+    })
 }
 
 #[tokio::main]
@@ -86,7 +86,24 @@ async fn main() {
             eprintln!("backrun sidecar config load failed: {error}");
             std::process::exit(2);
         });
-    if let Some(refusal) = strategy_arm_refusal(loaded.config.strategy.name) {
+    if let Some(refusal) = strategy_arm_refusal(loaded.config.strategy.settlement.active) {
+        eprintln!("{refusal}");
+        std::process::exit(2);
+    }
+    // The activation gate: this binary IS the backrun arm, so the facet must
+    // be explicitly activated (observe-only boots included).
+    if !loaded.config.strategy.backrun.active {
+        eprintln!(
+            "strategy backrun is not active: activate it first \
+             (degenbot strategy activate backrun --endpoints-default), or run the hosted \
+             process instead"
+        );
+        std::process::exit(2);
+    }
+    // The readiness gate: an activated backrun facet with an unset or
+    // off-allowlist endpoint set refuses HERE, before any feed connection
+    // or signing material is loaded.
+    if let Err(refusal) = degenbot_config::strategy_readiness(&loaded.config) {
         eprintln!("{refusal}");
         std::process::exit(2);
     }
@@ -192,12 +209,9 @@ mod tests {
 
     #[test]
     fn backrun_arm_is_own_binary_and_settlement_refused() {
-        use degenbot_config::StrategyName;
-
-        assert!(strategy_arm_refusal(None).is_none());
-        assert!(strategy_arm_refusal(Some(StrategyName::Backrun)).is_none());
-        let refusal = strategy_arm_refusal(Some(StrategyName::Settlement)).expect("refused");
+        assert!(strategy_arm_refusal(false).is_none());
+        let refusal = strategy_arm_refusal(true).expect("refused");
         assert!(refusal.contains("backrun"), "{refusal}");
-        assert!(refusal.contains("strategy.name"), "{refusal}");
+        assert!(refusal.contains("strategy.settlement.active"), "{refusal}");
     }
 }

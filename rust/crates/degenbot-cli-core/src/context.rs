@@ -19,6 +19,7 @@ pub struct CliContext<'a> {
     chain_id: Option<String>,
     node_http: Option<String>,
     node_ws: Option<String>,
+    config: Option<String>,
 }
 
 impl<'a> CliContext<'a> {
@@ -31,6 +32,7 @@ impl<'a> CliContext<'a> {
             chain_id: None,
             node_http: None,
             node_ws: None,
+            config: None,
         }
     }
 
@@ -59,6 +61,14 @@ impl<'a> CliContext<'a> {
     #[must_use]
     pub fn with_node_ws(mut self, uri: impl Into<String>) -> Self {
         self.node_ws = Some(uri.into());
+        self
+    }
+
+    /// Set the `--config` override (the typed config file the strategy
+    /// verbs read and write).
+    #[must_use]
+    pub fn with_config(mut self, path: impl Into<String>) -> Self {
+        self.config = Some(path.into());
         self
     }
 
@@ -133,4 +143,70 @@ impl<'a> CliContext<'a> {
             self.node_ws.as_deref(),
         )
     }
+
+    /// Resolve the config file the strategy verbs write to: the `--config`
+    /// override, else the `DEGENBOT_CONFIG` env var (honored even when the
+    /// file is absent — the operator asked for it), else the XDG config home
+    /// (a write there creates the file). No home and no override is a typed
+    /// refusal, never a silent skip.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Config`]-carrying [`crate::error::CliError`] when no
+    /// config location resolves at all.
+    pub fn resolve_config_file(&self) -> Result<std::path::PathBuf, crate::error::CliError> {
+        use crate::error::CliError;
+
+        if let Some(path) = &self.config {
+            return Ok(std::path::PathBuf::from(path));
+        }
+        if let Some(path) = degenbot_config::standard_file_path_with(self.env) {
+            return Ok(path);
+        }
+        if let Some(home) = degenbot_config::config_home(self.env) {
+            return Ok(home.join("degenbot").join("config.toml"));
+        }
+        Err(CliError::InvalidArgument(
+            "no config file location: pass --config or set DEGENBOT_CONFIG".to_string(),
+        ))
+    }
+
+    /// Load the typed config over this context's env + the resolved file.
+    ///
+    /// # Errors
+    ///
+    /// The loader's fail-closed [`degenbot_config::ConfigError`] wrapped in
+    /// [`crate::error::CliError::InvalidArgument`].
+    pub fn load_bot_config(
+        &self,
+    ) -> Result<degenbot_config::LoadedConfig, crate::error::CliError> {
+        let file = self.resolve_config_file()?;
+        self.load_bot_config_at(&file)
+    }
+
+    /// Load the typed config over this context's env + an explicit file.
+    /// An absent file is the empty default config (a first write creates it);
+    /// an existing-but-unreadable file surfaces the loader's refusal.
+    ///
+    /// # Errors
+    ///
+    /// The loader's fail-closed [`degenbot_config::ConfigError`] wrapped in
+    /// [`crate::error::CliError::InvalidArgument`].
+    pub fn load_bot_config_at(
+        &self,
+        file: &std::path::Path,
+    ) -> Result<degenbot_config::LoadedConfig, crate::error::CliError> {
+        if !file.exists() {
+            return degenbot_config::BotConfigLoader::new()
+                .with_env_ref(self.env)
+                .load()
+                .map_err(|error| crate::error::CliError::InvalidArgument(error.to_string()));
+        }
+        degenbot_config::BotConfigLoader::new()
+            .with_config_path(file)
+            .with_env_ref(self.env)
+            .load()
+            .map_err(|error| crate::error::CliError::InvalidArgument(error.to_string()))
+    }
 }
+

@@ -39,7 +39,9 @@ use degenbot_eventhub::{
     SourceHandle, Subscription,
 };
 
-pub const DEFAULT_STREAM_URL: &str = "wss://searchers.mevblocker.io";
+/// The default searcher WS; re-exported so the readiness resolution and
+/// this crate share one constant.
+pub use degenbot_config::DEFAULT_BACKRUN_STREAM_URL as DEFAULT_STREAM_URL;
 pub const BACKRUN_SUBSCRIPTION_METHOD: &str = "mevblocker_partialPendingTransactions";
 /// The hub `DropOldestCounted` counter label the feed registers under; the
 /// same string is exposed as [`BackrunFeedStatus::dropped_ring`].

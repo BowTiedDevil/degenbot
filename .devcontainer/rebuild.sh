@@ -41,6 +41,14 @@ if fuser -k 6772/tcp 9464/tcp 2>/dev/null; then
   sleep 1
 fi
 
+# Mount sources must exist before `podman run` — a missing host dir
+# (e.g. ~/.local/state/degenbot on a fresh checkout) fails the create with
+# "statfs ...: no such file or directory". Mirror every localEnv:HOME mount
+# from devcontainer.json here.
+for d in .agents .config/degenbot .local/state/degenbot .foundry .pi; do
+  mkdir -p "$HOME/$d"
+done
+
 echo ">>> rebuilding container via devcontainer CLI + podman"
 devcontainer up --workspace-folder "$WORKSPACE" --docker-path podman \
   --remove-existing-container

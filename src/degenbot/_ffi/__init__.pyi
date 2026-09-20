@@ -182,6 +182,35 @@ def discovery_batch_size() -> int:
     `find_paths_async`.
     """
 
+class StrategyReadinessView:
+    """The resolved strategy readiness of the installed typed config."""
+
+    settlement_active: bool
+    settlement_endpoints: list[str]
+    backrun_active: bool
+    backrun_endpoints: list[str]
+
+def validate_strategy_readiness() -> StrategyReadinessView:
+    """Resolve the strategy readiness of the installed typed config.
+
+    Raises:
+        ValueError: a typed refusal carrying the remediation message (an
+            activated facet with an unsettled endpoint set names both the
+            `degenbot strategy activate` remedies).
+
+    """
+
+def settlement_broadcast_endpoints() -> list[str]:
+    """The resolved settlement broadcast endpoints (this process's arm).
+
+    Raises:
+        ValueError: when the settlement facet is inactive or its endpoints
+            are unsettled — a hosted runner IS the settlement arm, so its
+            broadcast posture is never optional.
+
+    """
+
+
 class RetryPolicyDefaults:
     """Self-describing verification-retry policy defaults.
 
@@ -1763,6 +1792,8 @@ __all__ = [
     "dex_identity",
     "diagnostics",
     "discovery_batch_size",
+    "validate_strategy_readiness",
+    "settlement_broadcast_endpoints",
     "eip_1559",
     "event_topic",
     "execution",

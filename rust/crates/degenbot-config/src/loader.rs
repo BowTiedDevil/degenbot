@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::ConfigError;
-use crate::schema::{BotConfig, SCHEMA};
+use crate::schema::{BotConfig, SCHEMA, SECTION_PATHS};
 
 /// Which layer supplied a key's value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -129,13 +129,22 @@ impl LoadedConfig {
 /// environment (12-factor: env > file > defaults; tests replace it via
 /// [`Self::with_env`] with a [`MapEnv`] or disable it via
 /// [`Self::without_env`]).
-pub struct BotConfigLoader {
+pub struct BotConfigLoader<'a> {
     file: Option<PathBuf>,
     cli: Vec<(String, String)>,
-    env: Option<Box<dyn EnvVars>>,
+    env: Option<Box<dyn EnvVars + 'a>>,
 }
 
-impl Default for BotConfigLoader {
+/// The borrowing env adapter behind [`BotConfigLoader::with_env_ref`].
+struct EnvRef<'a>(&'a dyn EnvVars);
+
+impl EnvVars for EnvRef<'_> {
+    fn get(&self, name: &str) -> Option<String> {
+        self.0.get(name)
+    }
+}
+
+impl Default for BotConfigLoader<'_> {
     /// Defaults + process environment (no file, no CLI) — the documented
     /// production surface. A `#[derive(Default)]` here silently produced a
     /// no-env loader (K7-config gap: production boots ignored every
@@ -149,7 +158,7 @@ impl Default for BotConfigLoader {
     }
 }
 
-impl std::fmt::Debug for BotConfigLoader {
+impl std::fmt::Debug for BotConfigLoader<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BotConfigLoader")
             .field("file", &self.file)
@@ -198,7 +207,7 @@ pub fn standard_file_path() -> Option<PathBuf> {
     standard_file_path_with(&crate::ProcessEnv)
 }
 
-impl BotConfigLoader {
+impl<'a> BotConfigLoader<'a> {
     /// Empty loader: defaults only (no env, no file, no CLI) until a layer
     /// is attached with the `with_*` builders.
     #[must_use]
@@ -256,9 +265,16 @@ impl BotConfigLoader {
     /// Replace the environment source (tests pass a [`MapEnv`]; production
     /// keeps the default [`ProcessEnv`]).
     #[must_use]
-    pub fn with_env(mut self, env: Box<dyn EnvVars>) -> Self {
+    pub fn with_env(mut self, env: Box<dyn EnvVars + 'a>) -> Self {
         self.env = Some(env);
         self
+    }
+
+    /// Replace the environment source with a borrowed seam (an embedding
+    /// host that already holds an `&dyn EnvVars` — the CLI context).
+    #[must_use]
+    pub fn with_env_ref(self, env: &'a dyn EnvVars) -> Self {
+        self.with_env(Box::new(EnvRef(env)))
     }
 
     /// Drop the environment layer entirely (file-vs-default tests).
@@ -374,13 +390,6 @@ impl BotConfigLoader {
                 .iter()
                 .filter(|k| k.section == section.as_str())
                 .collect();
-            if members.is_empty() {
-                problems.push(format!(
-                    "--config {}: unknown section [{section}]",
-                    path.display()
-                ));
-                continue;
-            }
             let Some(section_table) = section_value.as_table() else {
                 problems.push(format!(
                     "--config {}: section [{section}] must be a table",
@@ -388,6 +397,23 @@ impl BotConfigLoader {
                 ));
                 continue;
             };
+            // A section whose declared keys all live under nested facets
+            // (e.g. `[strategy]` with no direct keys left) is a grouping
+            // table: every entry must name a declared facet, else it stays
+            // unknown. The per-field loop routes each facet table.
+            if members.is_empty() {
+                let only_facets = !section_table.is_empty()
+                    && section_table.keys().all(|field| {
+                        SECTION_PATHS.contains(&format!("{section}.{field}").as_str())
+                    });
+                if !only_facets {
+                    problems.push(format!(
+                        "--config {}: unknown section [{section}]",
+                        path.display()
+                    ));
+                    continue;
+                }
+            }
             for (field, field_value) in section_table {
                 let Some(key) = members.iter().copied().find(|k| k.field == field.as_str()) else {
                     // A nested facet section (e.g. `[strategy.settlement]`):

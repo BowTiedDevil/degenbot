@@ -13,6 +13,7 @@ use degenbot_config::{BotConfig, BotConfigLoader, MapEnv};
 /// The complete backrun facet surface (env name -> (toml leaf, raw env value)).
 fn facet_env() -> BTreeMap<&'static str, &'static str> {
     BTreeMap::from([
+        ("DEGENBOT_STRATEGY_BACKRUN_ACTIVE", "1"),
         ("DEGENBOT_STRATEGY_BACKRUN_BID_MODE", "1"),
         (
             "DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI",
@@ -33,7 +34,10 @@ fn facet_env() -> BTreeMap<&'static str, &'static str> {
             "0x00000000000000000000000000000000000000bb",
         ),
         ("DEGENBOT_STRATEGY_BACKRUN_SIM_URL", "http://sim.local:8545"),
-        ("DEGENBOT_STRATEGY_BACKRUN_STREAM_URL", "wss://stream.local"),
+        (
+            "DEGENBOT_STRATEGY_BACKRUN_ENDPOINTS",
+            "wss://stream.local",
+        ),
         (
             "DEGENBOT_STRATEGY_BACKRUN_MEVBLOCKER_URL",
             "http://private.local:8545",
@@ -88,6 +92,8 @@ fn backrun_facet_resolves_from_env() {
         b.mevblocker_url.as_deref(),
         Some("http://private.local:8545")
     );
+    assert!(b.active);
+    assert_eq!(b.endpoints.as_deref(), Some("wss://stream.local"));
 }
 
 #[test]

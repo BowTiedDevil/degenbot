@@ -353,20 +353,21 @@ crate::config_schema! {
             doc = "Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery.";
     }
 
-    // The typed strategy selector plus the per-arm facet namespaces. One
-    // declaration site for the operator-facing choice; the settlement and
-    // backrun readers migrate onto this key separately.
+    // The per-arm facet namespaces: the typed config home each strategy's own
+    // knobs land in. Activation is per-facet and explicit — a strategy runs
+    // when its facet sets `active`, and an activated facet must carry a
+    // non-empty `endpoints` set (the readiness validation refuses an
+    // unsettled activation).
     strategy StrategyConfig {
-        name [opt enum StrategyName Settlement Backrun] = None, env = "DEGENBOT_STRATEGY_NAME", def = "(unset; no explicit strategy selection)",
-            doc = "Active strategy arm: `settlement` or `backrun`. Unset leaves strategy selection at the wiring default; the settlement/backrun readers consume this key in a later phase.";
-
-        // Per-arm facet namespaces: the typed config home each strategy's own
-        // knobs land in. The backrun sidecar's operator surface is declared
-        // here (single declaration site per key); settlement is still empty
-        // because its knobs have not migrated yet. ADR-055 Phase C adds
-        // `.enabled` to both.
-        settlement StrategySettlementConfig {}
+        settlement StrategySettlementConfig {
+            active [bool] = false, env = "DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE", def = "false",
+                doc = "Activate the settled-block settlement arm in this process; inactive leaves the facet dormant.";
+            endpoints [opt string] = None, env = "DEGENBOT_STRATEGY_SETTLEMENT_ENDPOINTS", def = "(unset; required when settlement is active)",
+                doc = "Comma-separated broadcast endpoints for settlement submissions. Restricted to the pinned revert-protecting relay allowlist (docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md).";
+        }
         backrun StrategyBackrunConfig {
+            active [bool] = false, env = "DEGENBOT_STRATEGY_BACKRUN_ACTIVE", def = "false",
+                doc = "Activate the pending-transaction backrun arm in this process; inactive leaves the facet dormant.";
             bid_mode [bool] = false, env = "DEGENBOT_STRATEGY_BACKRUN_BID_MODE", def = "false",
                 doc = "Explicit bid-mode flag; off is observe-only. Bid mode also requires a non-zero budget_wei (the legality gate reads both).";
             budget_wei [u128] = 0, env = "DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI", def = "0",
@@ -389,8 +390,8 @@ crate::config_schema! {
                 doc = "Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the sidecar boot.";
             sim_url [opt string] = None, env = "DEGENBOT_STRATEGY_BACKRUN_SIM_URL", def = "(unset; the chain node)",
                 doc = "Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback.";
-            stream_url [string] = String::new(), env = "DEGENBOT_STRATEGY_BACKRUN_STREAM_URL", def = "(empty: the MEVBlocker searcher WS default)",
-                doc = "MEVBlocker searcher WebSocket for the private bundle broadcast. Empty defers to the feed crate's mainnet default so the endpoint lives in one place.";
+            endpoints [opt string] = None, env = "DEGENBOT_STRATEGY_BACKRUN_ENDPOINTS", def = "(unset; required when backrun is active)",
+                doc = "MEVBlocker searcher WebSocket for the private bundle broadcast (single URL).";
             mevblocker_url [opt string] = None, env = "DEGENBOT_STRATEGY_BACKRUN_MEVBLOCKER_URL", def = "(unset: bundle-only bid)",
                 doc = "Private-broadcast RPC for the raw relay fan-out. Set arms the private-broadcast arm: the signed backrun goes raw to this endpoint first, then to the chain node as the public fallback relay. Unset keeps the bundle-only bid and the read-provider broadcast unchanged.";
             rank_evidence [bool] = false, env = "DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE", def = "false",
@@ -592,28 +593,61 @@ mod tests {
     }
 
     #[test]
-    fn strategy_name_is_declared_as_optional_enum() {
-        let key = SCHEMA.iter().find(|k| k.toml_path == "strategy.name");
-        assert!(key.is_some(), "strategy.name must be declared exactly once");
-        assert_eq!(key.map(|k| k.env), Some("DEGENBOT_STRATEGY_NAME"));
-        assert_eq!(
-            key.map(|k| k.kind),
-            Some(ValueKind {
-                base: BaseKind::Enum("StrategyName", &["Settlement", "Backrun"]),
-                optional: true,
-            })
+    fn strategy_arm_selector_is_retired() {
+        // A single-arm selector cannot express a two-strategy host; the
+        // per-facet `active` keys own activation now, so every retired
+        // selector spelling must stay undeclared (fail-closed at the load).
+        assert!(
+            !SCHEMA
+                .iter()
+                .any(|k| k.toml_path == "strategy.name" || k.env == std::concat!("DEGENBOT_", "STRATEGY_NAME")),
+            "the retired single-arm selector must stay undeclared"
         );
-        assert_eq!(BotConfig::default().strategy.name, None);
     }
 
     #[test]
-    fn strategy_name_parses_its_variants_case_insensitively() {
+    fn strategy_activation_keys_parse_and_collapse_to_defaults() {
         let mut config = BotConfig::default();
-        assert!(config.assign("strategy", "name", "settlement").is_ok());
-        assert_eq!(config.strategy.name, Some(StrategyName::Settlement));
-        assert!(config.assign("strategy", "name", "Backrun").is_ok());
-        assert_eq!(config.strategy.name, Some(StrategyName::Backrun));
-        assert!(config.assign("strategy", "name", "sandwich").is_err());
+        let defaults = &config.strategy;
+        assert!(!defaults.settlement.active);
+        assert_eq!(defaults.settlement.endpoints, None);
+        assert!(!defaults.backrun.active);
+        assert_eq!(defaults.backrun.endpoints, None);
+
+        assert!(config.assign("strategy.settlement", "active", "true").is_ok());
+        assert!(
+            config
+                .assign(
+                    "strategy.settlement",
+                    "endpoints",
+                    "https://rpc.flashbots.net?hint=hash,https://rpc.mevblocker.io/noreverts"
+                )
+                .is_ok()
+        );
+        assert!(config.assign("strategy.backrun", "active", "1").is_ok());
+        assert!(
+            config
+                .assign("strategy.backrun", "endpoints", "wss://searchers.example")
+                .is_ok()
+        );
+        assert!(
+            config.assign("strategy.settlement", "active", "maybe").is_err(),
+            "junk activation fails the assign, not a later gate"
+        );
+
+        let c = &config.strategy;
+        assert!(c.settlement.active);
+        assert_eq!(
+            c.settlement.endpoints.as_deref(),
+            Some("https://rpc.flashbots.net?hint=hash,https://rpc.mevblocker.io/noreverts")
+        );
+
+        assert!(c.backrun.active);
+        assert_eq!(
+            c.backrun.endpoints.as_deref(),
+            Some("wss://searchers.example")
+        );
+
     }
 
     #[test]
@@ -629,10 +663,15 @@ mod tests {
         assert_eq!(config.strategy.backrun, StrategyBackrunConfig::default());
         assert!(SECTION_PATHS.contains(&"strategy.settlement"));
         assert!(SECTION_PATHS.contains(&"strategy.backrun"));
-        assert!(
-            !SCHEMA.iter().any(|k| k.section == "strategy.settlement"),
-            "the settlement facet declares no keys yet"
-        );
+        let settlement: Vec<&str> = SCHEMA
+            .iter()
+            .filter(|k| k.section == "strategy.settlement")
+            .map(|k| k.field)
+            .collect();
+        assert_eq!(settlement, vec!["active", "endpoints"]);
+        for key in SCHEMA.iter().filter(|k| k.section == "strategy.settlement") {
+            assert!(key.env.starts_with(std::concat!("DEGENBOT_", "STRATEGY_SETTLEMENT_")));
+        }
         let backrun: Vec<&str> = SCHEMA
             .iter()
             .filter(|k| k.section == "strategy.backrun")
@@ -641,6 +680,7 @@ mod tests {
         assert_eq!(
             backrun,
             vec![
+                "active",
                 "bid_mode",
                 "budget_wei",
                 "max_bundle_wei",
@@ -652,7 +692,7 @@ mod tests {
                 "executor",
                 "operator",
                 "sim_url",
-                "stream_url",
+                "endpoints",
                 "mevblocker_url",
                 "rank_evidence",
                 "connectors",
@@ -685,7 +725,8 @@ mod tests {
         assert_eq!(b.executor, "0x30b28ed8aa581fbc0191c3b532b0697773070e97");
         assert_eq!(b.operator, None);
         assert_eq!(b.sim_url, None);
-        assert_eq!(b.stream_url, "");
+        assert_eq!(b.endpoints, None);
+        assert!(!b.active);
         assert!(!b.rank_evidence);
         assert_eq!(b.connectors, 8);
         assert_eq!(b.fixture_head, None);

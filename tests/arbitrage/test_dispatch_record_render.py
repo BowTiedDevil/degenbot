@@ -12,6 +12,7 @@ import types
 import pytest
 
 from degenbot.runner import _dispatch as dispatch_module
+from degenbot.runner._relay_posture import RelayPosture
 
 
 class _CapturingLogger:
@@ -29,6 +30,9 @@ class _CapturingLogger:
 
     def debug(self, msg: str) -> None:
         self._cap("debug", msg)
+
+    def error(self, msg: str) -> None:
+        self._cap("error", msg)
 
 
 @pytest.mark.asyncio
@@ -56,6 +60,7 @@ async def test_broadcast_failure_renders_at_warning(monkeypatch: pytest.MonkeyPa
             inject_executor_code=False,
         ),
         dispatcher=types.SimpleNamespace(current_block=1),
+        relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
         submission_smoke=dispatch_module.SubmissionSmoke(),
     )
     candidate = types.SimpleNamespace(
@@ -86,6 +91,7 @@ def _live_session(cfg_overrides: dict) -> types.SimpleNamespace:
         async_w3=types.SimpleNamespace(as_async_alloy=lambda: object()),
         cfg=cfg,
         dispatcher=types.SimpleNamespace(current_block=1),
+        relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
         submission_smoke=dispatch_module.SubmissionSmoke(),
     )
 

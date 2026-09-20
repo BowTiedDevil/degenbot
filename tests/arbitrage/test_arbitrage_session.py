@@ -25,9 +25,11 @@ from types import SimpleNamespace
 import pytest
 
 from degenbot.runner import BotRunner
+from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
+from tests.fakes.engine import FakeEngine as _FakeEngine
+from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -250,6 +252,7 @@ class TestBotRunnerStart:
                 snapshots=snapshots,
                 path_builder=_Recorder(events, "path_builder"),
                 consumer=_Recorder(events, "consumer"),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
 
@@ -285,6 +288,7 @@ class TestBotRunnerStart:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **kw: _noop_coro(),
                 consumer=lambda **kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -309,6 +313,7 @@ class TestBotRunnerRun:
                 snapshots=(v3_snap, v4_snap, None, None),
                 path_builder=_Recorder(events, "path_builder"),
                 consumer=_Recorder(events, "consumer"),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -335,6 +340,7 @@ class TestBotRunnerRun:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **kw: _noop_coro(),
                 consumer=lambda **kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -367,6 +373,7 @@ class TestBotRunnerRun:
                 snapshots=(None, None, None, None),
                 path_builder=raising_path_builder,
                 consumer=hanging_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -428,6 +435,7 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=recording_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -468,6 +476,7 @@ class TestBotRunnerShutdown:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -493,6 +502,7 @@ class TestBotRunnerShutdown:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -519,6 +529,7 @@ class TestBotRunnerShutdown:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -543,6 +554,7 @@ class TestBotRunnerShutdown:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
 
@@ -570,6 +582,7 @@ class TestBotRunnerShutdown:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=hanging_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -612,6 +625,7 @@ class TestBotRunnerSigintHandler:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             install_sigint=True,
         )
@@ -634,6 +648,7 @@ class TestBotRunnerSigintHandler:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             install_sigint=True,
         )
@@ -662,6 +677,7 @@ class TestBotRunnerSigintHandler:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             install_sigint=False,
         )
@@ -688,6 +704,7 @@ class TestBotRunnerSigintHandler:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             install_sigint=True,
         )
@@ -773,6 +790,7 @@ class TestConstructionContext:
                 snapshots=(None, None, None, None),
                 path_builder=recording_path_builder,
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         asyncio.run(_drive_run(session))
@@ -823,6 +841,7 @@ class TestSubBBackgroundRegistration:
                 snapshots=(None, None, None, None),
                 path_builder=raising_path_builder,
                 consumer=hanging_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             background_registration=True,
         )
@@ -1001,6 +1020,7 @@ class TestSubCBgRegistrationConcurrency:
                 snapshots=(None, None, None, None),
                 path_builder=forever_path_builder,
                 consumer=consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             background_registration=True,
         )
@@ -1050,6 +1070,7 @@ class TestSubCBgRegistrationConcurrency:
                 snapshots=(None, None, None, None),
                 path_builder=draining_path_builder,
                 consumer=consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             background_registration=True,
         )
@@ -1089,6 +1110,7 @@ class TestSubCBgRegistrationConcurrency:
                 snapshots=(None, None, None, None),
                 path_builder=raising_path_builder,
                 consumer=hanging_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             background_registration=True,
         )
@@ -1143,6 +1165,7 @@ class TestSubCBgRegistrationConcurrency:
                 snapshots=(None, None, None, None),
                 path_builder=forever_path_builder,
                 consumer=recording_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             background_registration=True,
         )
@@ -1192,6 +1215,7 @@ class Test6VZN7HOngoingDiscovery:
                 snapshots=(None, None, None, None),
                 path_builder=forever_path_builder,
                 consumer=consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
             background_registration=True,
         )
@@ -1533,6 +1557,7 @@ class TestSessionOperatorSurface:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -1587,6 +1612,7 @@ class TestSessionOperatorSurface:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -1646,6 +1672,7 @@ class TestPumpFinishedWatchdog:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=hanging_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -1701,6 +1728,7 @@ class TestPumpFinishedWatchdog:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=hanging_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
@@ -1726,6 +1754,7 @@ class TestPumpFinishedWatchdog:
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=hanging_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
         )
         await session.start()
