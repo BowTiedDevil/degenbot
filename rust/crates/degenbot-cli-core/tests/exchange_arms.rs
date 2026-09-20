@@ -288,6 +288,109 @@ fn activate_uniswap_v4_also_upserts_the_pool_manager() {
 }
 
 #[test]
+fn list_on_a_fresh_database_reports_every_supported_pair() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    let (outcome, prompter) = run_exchange(ExchangeCommand::List { chain: None }, &db);
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    assert_eq!(*prompter.calls.borrow(), 0, "list never prompts");
+    let Some(CommandReport::Exchange(ExchangeReport::Listed { rows })) = outcome.report() else {
+        panic!("expected an ExchangeReport::Listed");
+    };
+    assert_eq!(rows.len(), RETIRED_EXCHANGES.len());
+    // Declaration order: Base before Ethereum, all rows "not in database".
+    assert_eq!(rows[0].chain_id, 8453);
+    assert_eq!(rows[0].dex_slug, "aerodrome_v2");
+    assert_eq!(rows.last().unwrap().dex_slug, "uniswap_v4");
+    let lines = outcome.report().unwrap().render_lines();
+    assert_eq!(lines.len(), 17);
+    assert!(lines[0].starts_with("Aerodrome V2 on Base (chain ID 8453): not in database"));
+    let active_lines = lines
+        .iter()
+        .filter(|l| l.contains(": active"))
+        .count();
+    assert_eq!(active_lines, 0);
+}
+
+#[test]
+fn list_reflects_activation_state_and_honors_the_chain_filter() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    for (chain, name) in [
+        ("base", "aerodrome_v2"),
+        ("ethereum", "uniswap_v2"),
+    ] {
+        let (outcome, _) = run_exchange(
+            ExchangeCommand::Activate {
+                chain: chain.to_string(),
+                name: name.to_string(),
+            },
+            &db,
+        );
+        assert_eq!(outcome.exit_code, ExitCode::Success);
+    }
+
+    let (outcome, _) = run_exchange(ExchangeCommand::List { chain: None }, &db);
+    let lines = outcome.report().unwrap().render_lines();
+    assert_eq!(lines.len(), 17);
+    assert!(lines.iter().any(|l| l == "Aerodrome V2 on Base (chain ID 8453): active"));
+    assert!(lines.iter().any(|l| l == "Uniswap V2 on Ethereum (chain ID 1): active"));
+
+    // The chain filter narrows to one chain's pairs only.
+    let (filtered, _) = run_exchange(
+        ExchangeCommand::List {
+            chain: Some("ethereum".to_string()),
+        },
+        &db,
+    );
+    let Some(CommandReport::Exchange(ExchangeReport::Listed { rows })) = filtered.report() else {
+        panic!("expected an ExchangeReport::Listed");
+    };
+    assert_eq!(rows.len(), 7);
+    assert!(rows.iter().all(|row| row.chain_id == 1));
+    let active = rows
+        .iter()
+        .filter(|row| row.state == degenbot_cli_core::ExchangeActiveState::Active)
+        .count();
+    assert_eq!(active, 1);
+    let filtered_lines = filtered.report().unwrap().render_lines();
+    assert!(filtered_lines.iter().all(|l| l.contains("(chain ID 1)")));
+    assert!(filtered_lines.iter().any(|l| l
+        == "Pancakeswap V2 on Ethereum (chain ID 1): not in database"));
+
+    // A deactivation shows as inactive, not absent.
+    let (deactivated, _) = run_exchange(
+        ExchangeCommand::Deactivate {
+            chain: "ethereum".to_string(),
+            name: "uniswap_v2".to_string(),
+        },
+        &db,
+    );
+    assert_eq!(deactivated.exit_code, ExitCode::Success);
+    let (after, _) = run_exchange(ExchangeCommand::List { chain: None }, &db);
+    assert!(after
+        .report()
+        .unwrap()
+        .render_lines()
+        .iter()
+        .any(|l| l == "Uniswap V2 on Ethereum (chain ID 1): inactive"));
+}
+
+#[test]
+fn list_with_an_unknown_chain_filter_is_a_typed_failure() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    let (outcome, _) = run_exchange(
+        ExchangeCommand::List {
+            chain: Some("dogechain".to_string()),
+        },
+        &db,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Failure);
+    assert!(matches!(outcome.error(), Some(CliError::UnknownChain { .. })));
+}
+
+#[test]
 fn unknown_deployment_is_a_typed_failure() {
     let dir = TempDir::new().unwrap();
     let db = write_db(dir.path());

@@ -81,6 +81,43 @@ pub(crate) fn activate_aave_market_on_conn(
             "UPDATE aave_v3_markets SET active = 1 WHERE id = ?1",
             rusqlite::params![id],
         )?;
+
+        // COMPLETE the row: the auto-registration seam
+        // (`DegenbotDb::register_aave_market`) adds supported markets as
+        // inactive BARE rows (no contract/GHO substrate, NULL stamp), so the
+        // re-activation path must ensure the same substrate the fresh-seed
+        // path writes — else an activated bare row reaches the chunk loop
+        // without its FK parents and with a NULL bootstrap stamp
+        // (`NeedsBootstrap`).
+        DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            conn,
+            id,
+            "POOL_ADDRESS_PROVIDER",
+            pool_address_provider,
+            None,
+        )?;
+        let _gho_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
+            conn,
+            chain_id,
+            gho_token_address,
+            gho_name,
+            gho_symbol,
+            gho_decimals,
+        )?;
+        DegenbotDb::get_or_create_gho_token_on_conn(conn, chain_id, gho_token_address)?;
+
+        // Stamp the bootstrap block ONLY when the row is still bare — an
+        // already-bootstrapped market keeps its committed cursor (re-running
+        // `aave activate` must never rewind `last_update_block`).
+        let stamp: Option<i64> = conn
+            .query_row(
+                "SELECT last_update_block FROM aave_v3_markets WHERE id = ?1",
+                rusqlite::params![id],
+                |row| row.get::<_, Option<i64>>(0),
+            )?;
+        if stamp.is_none() {
+            DegenbotDb::set_market_last_update_block_on_conn(conn, id, bootstrap_block)?;
+        }
         Ok(id)
     } else {
         conn.execute(
@@ -355,6 +392,80 @@ mod tests {
     /// activation path seeds it from scratch).
     fn fresh_db_empty() -> DegenbotDb {
         DegenbotDb::open_in_memory_for_writes().unwrap().0
+    }
+
+    #[test]
+    fn activate_completes_a_bare_pre_registered_market() {
+        // The auto-registration seam (`register_aave_market`) adds supported
+        // markets as INACTIVE, BARE rows (no contract/GHO substrate, NULL
+        // stamp). Activation must COMPLETE such a row: flip it active, ensure
+        // the POOL_ADDRESS_PROVIDER + GHO rows, and — the critical part —
+        // stamp the bootstrap block only when the row has none (a row that an
+        // earlier bootstrap already stamped keeps its stamp; re-running
+        // activate must never rewind `last_update_block`).
+        let db = fresh_db_empty();
+        let pool_ap = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e";
+        let gho_addr = "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f";
+
+        // The bare pre-registered row (the auto-registration shape).
+        let market_id = db
+            .register_aave_market(1, "Aave Ethereum Market")
+            .unwrap()
+            .0;
+
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let id = activate_aave_market_on_conn(
+                &tx,
+                1,
+                "Aave Ethereum Market",
+                pool_ap,
+                gho_addr,
+                Some("GHO Token"),
+                Some("GHO"),
+                Some(18),
+                16_291_070,
+            )
+            .unwrap();
+            assert_eq!(id, market_id, "activation reuses the registered row");
+            tx.commit().unwrap();
+        }
+
+        let conn = db.lock();
+        let (active, stamp): (bool, Option<i64>) = conn
+            .query_row(
+                "SELECT active, last_update_block FROM aave_v3_markets WHERE id = ?1",
+                params![market_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(active);
+        assert_eq!(
+            stamp,
+            Some(16_291_070),
+            "a bare row gains its bootstrap stamp on activation"
+        );
+
+        // The substrate the bare row lacked is now in place.
+        let n_contracts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM aave_v3_contracts \
+                 WHERE market_id = ?1 AND name = 'POOL_ADDRESS_PROVIDER' AND address = ?2",
+                params![market_id, pool_ap],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_contracts, 1);
+        let n_gho: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM aave_gho_tokens \
+                 WHERE token_id IN (SELECT id FROM erc20_tokens WHERE address = ?1)",
+                params![gho_addr],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_gho, 1);
     }
 
     #[test]

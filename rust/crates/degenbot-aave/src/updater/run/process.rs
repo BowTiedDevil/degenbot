@@ -340,10 +340,14 @@ pub(super) async fn process_chunk_on_conn(
         }
     }
 
-    // (g) Stamp `last_update_block` as the LAST write (end-of-chunk). The
-    //     per-tx applies above are durable only when the caller's
-    //     `Transaction` commits; on rollback the whole chunk (events + stamp)
+    // (g) End-of-chunk zero-balance cleanup, then the `last_update_block`
+    //     stamp as the LAST write (end-of-chunk). The cleanup deletes the
+    //     burned-down collateral + debt rows the chunk zeroed (the ported
+    //     Python `cleanup_zero_balance_positions`); the per-tx applies above +
+    //     the cleanup are durable only when the caller's `Transaction`
+    //     commits; on rollback the whole chunk (events + cleanup + stamp)
     //     reverts (§3.4 restart-invariant).
+    DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;
 
@@ -388,6 +392,113 @@ mod tests {
             transaction_index: None,
             log_index: Some(log_index),
             removed: false,
+        }
+    }
+
+    #[test]
+    fn process_chunk_clears_zero_balance_positions_at_end_of_chunk() {
+        // The live chunk path's end-of-chunk zero-balance cleanup (the ported
+        // Python cleanup_zero_balance_positions) - the same substrate call the
+        // batched entrypoint makes, riding the chunk's uncommitted transaction
+        // so a rollback reverts it too. With an EMPTY chunk (no logs) the only
+        // observable writes are the cleanup + the stamp.
+        let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'mainnet', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, '0xu1')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (1, 1, 1, 1, 1, 1, 1, '0', '0', '1', '0')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_users \
+                    (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
+                 VALUES (1, 1, '0xuser1', 0, 0, NULL, NULL, '0')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_users \
+                    (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
+                 VALUES (2, 1, '0xuser2', 0, 0, NULL, NULL, '0')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_collateral_positions \
+                    (id, user_id, asset_id, balance, last_index) VALUES (1, 1, 1, '0', NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_collateral_positions \
+                    (id, user_id, asset_id, balance, last_index) VALUES (2, 2, 1, '42', NULL)",
+                [],
+            )
+            .unwrap();
+        }
+
+        // A dead-URL provider: the empty chunk never RPCs (mirrors the
+        // dummy-provider precedent in config_dispatch.rs).
+        let provider = degenbot_core::runtime::get_runtime()
+            .block_on(AlloyProvider::new("http://127.0.0.1:1", 1))
+            .expect("a dead-URL provider constructs without contact");
+
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            degenbot_core::runtime::get_runtime()
+                .block_on(process_chunk_on_conn(
+                    &tx,
+                    &provider,
+                    1,
+                    1,
+                    Address::ZERO,
+                    None,
+                    &[],
+                    3_000,
+                ))
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        {
+            let conn = db.lock();
+            let count = |pid: i64| -> i64 {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM aave_v3_collateral_positions WHERE id = ?1",
+                    rusqlite::params![pid],
+                    |r| r.get(0),
+                )
+                .unwrap()
+            };
+            assert_eq!(count(1), 0, "the zero-balance position is cleared");
+            assert_eq!(count(2), 1, "the nonzero position stays");
+            let stamp: Option<i64> = conn
+                .query_row(
+                    "SELECT last_update_block FROM aave_v3_markets WHERE id = 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(stamp, Some(3_000), "the chunk stamp still advances");
         }
     }
 

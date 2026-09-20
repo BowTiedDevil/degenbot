@@ -36,6 +36,10 @@ pub struct AaveDeployment {
     pub chain_id: u64,
     /// The human chain label.
     pub chain_label: &'static str,
+    /// The on-chain `getMarketId()` return — the name the auto-registration
+    /// seam keys the bare inactive row on (and `aave activate` resolves via
+    /// RPC; the two must match for the completion path to reuse the row).
+    pub market_name: &'static str,
     /// The `PoolAddressProvider` contract.
     pub pool_address_provider: Address,
     /// The chain's GHO token.
@@ -46,6 +50,11 @@ pub struct AaveDeployment {
 pub const AAVE_DEPLOYMENTS: &[AaveDeployment] = &[AaveDeployment {
     chain_id: 1,
     chain_label: "Ethereum",
+    // The on-chain `getMarketId()` return — the static name the auto-
+    // registration seam keys the bare inactive row on (the RPC-fetched name
+    // `aave activate` resolves must match for the completion path to reuse
+    // the row instead of creating a second one).
+    market_name: "Aave Ethereum Market",
     pool_address_provider: address!("2f39d218133AFaB8F2B819B1066c7E434Ad94E9e"),
     gho_token_address: address!("40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f"),
 }];
@@ -260,6 +269,10 @@ fn update(
     args: &UpdateArgs<'_>,
 ) -> Result<AaveReport, CliError> {
     let database_path = ctx.database_path().value;
+    // Self-serve registration: every supported Aave market not found in the
+    // DB registers inactive (a bare row awaiting `aave activate`), so the
+    // update never depends on prior CREATEs.
+    crate::registrations::ensure_supported_registrations(&database_path)?;
     let markets = {
         let db = (DegenbotDb::open(&database_path)?).0;
         db.fetch_active_aave_markets()?

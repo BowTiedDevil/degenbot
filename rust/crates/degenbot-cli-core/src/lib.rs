@@ -52,6 +52,7 @@ pub mod operator;
 pub mod path;
 pub mod pool;
 pub mod prompt;
+pub mod registrations;
 pub mod report;
 pub mod strategy;
 
@@ -79,14 +80,16 @@ pub use operator::{
 pub use path::PathCommand;
 pub use pool::{PoolCommand, PoolFamily};
 pub use prompt::{PromptPlan, Prompter};
+pub use registrations::{ensure_supported_registrations, RegistrationReport};
 pub use report::{
     schema_state_label, AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome,
     ActivateOutcome, CommandOutcome, CommandReport, CutoverOutcome, DatabaseReport,
-    DeactivateOutcome, DryRunKind, ExchangeReport, FleetReport, PathReport, PoolReport,
-    StrategyReport,
+    DeactivateOutcome, DryRunKind, ExchangeActiveState, ExchangeListRow, ExchangeReport,
+    FleetReport, PathReport, PoolReport, StrategyReport,
 };
 pub use strategy::{
-    descriptor, descriptors, StrategyCommand, StrategyFacet, StrategyFacetDescriptor,
+    descriptor, descriptors, EndpointSummary, MutationOutcome, StrategyCommand, StrategyFacet,
+    StrategyFacetDescriptor,
 };
 
 /// The ONE execution entry: run `command` against `ctx`, asking `prompter` when

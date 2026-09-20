@@ -2426,6 +2426,90 @@ impl DegenbotDb {
         Ok(())
     }
 
+    /// Register a supported Aave V3 market that is not found in the DB as an
+    /// INACTIVE, BARE row (`active = 0`, `last_update_block = NULL`). The
+    /// auto-registration seam the console's write arms run (fresh `database
+    /// reset` + the `pool update` / `aave update` arms): the operator then
+    /// flips it active with `aave activate`, which COMPLETES the row (the
+    /// contract/GHO substrate + the bootstrap stamp) in
+    /// `degenbot_aave::activate_aave_market_on_conn`.
+    ///
+    /// Returns `(market_id, created)` — `created` is `false` when the row
+    /// pre-existed (idempotent no-op).
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::Sqlite`] on a query failure.
+    #[expect(clippy::missing_errors_doc)]
+    pub fn register_aave_market(
+        &self,
+        chain_id: i64,
+        market_name: &str,
+    ) -> Result<(i64, bool), DbError> {
+        let conn = self.lock();
+        Self::register_aave_market_on_conn(&conn, chain_id, market_name)
+    }
+
+    /// The `&Connection`-bound variant of [`Self::register_aave_market`].
+    #[expect(clippy::missing_errors_doc)]
+    pub fn register_aave_market_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+        market_name: &str,
+    ) -> Result<(i64, bool), DbError> {
+        use rusqlite::OptionalExtension;
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM aave_v3_markets WHERE chain_id = ?1 AND name = ?2",
+                rusqlite::params![chain_id, market_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = existing {
+            return Ok((id, false));
+        }
+        conn.execute(
+            "INSERT INTO aave_v3_markets (chain_id, name, active, last_update_block) \
+             VALUES (?1, ?2, 0, NULL)",
+            rusqlite::params![chain_id, market_name],
+        )?;
+        Ok((conn.last_insert_rowid(), true))
+    }
+
+    /// Delete every zero-balance collateral + debt position owned by the
+    /// market's users (the ported Python `cleanup_zero_balance_positions`
+    /// from `cli/aave/verification.py`). The aave updater runs this at the
+    /// END of each chunk's transaction, before the `last_update_block` stamp,
+    /// so burned-down positions do not accumulate as permanent `'0'` rows.
+    /// The table names are compile-time literals (the same two tables every
+    /// position fn above names) - no injection surface.
+    ///
+    /// Returns the number of rows deleted (collateral + debt combined).
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::Sqlite`] on a DELETE failure.
+    #[expect(clippy::missing_errors_doc)]
+    pub fn delete_zero_balance_positions_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+    ) -> Result<usize, DbError> {
+        let mut deleted = 0;
+        for table in ["aave_v3_collateral_positions", "aave_v3_debt_positions"] {
+            let sql = format!(
+                "DELETE FROM {table} \
+                 WHERE id IN ( \
+                     SELECT p.id FROM {table} p \
+                     JOIN aave_v3_users u ON u.id = p.user_id \
+                     WHERE u.market_id = ?1 \
+                       AND (p.balance = '0' OR p.balance = 0) \
+                 )"
+            );
+            deleted += conn.execute(&sql, params![market_id])?;
+        }
+        Ok(deleted)
+    }
+
     /// Reset a debt position's balance to 0 + advance `last_index` (the
     /// bad-debt liquidation path — C3). Mirrors the Python's
     /// `debt_position.balance = 0` + `if index > current_index: last_index =
@@ -3604,6 +3688,135 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, DbError::MissingRow(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn delete_zero_balance_positions_clears_only_this_markets_zero_rows() {
+        // The ported Python cleanup_zero_balance_positions: zero-balance
+        // collateral + debt rows are deleted, scoped to the given market's
+        // users; nonzero balances + other markets' rows stay.
+        let db = write_db_with_market();
+        seed_asset(&db);
+        // A second market as the cross-market control.
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (2, 1, 'other', 1, NULL)",
+                [],
+            )
+            .unwrap();
+        }
+        let user_m1 = seed_user(&db, "0xm1user");
+        // A second market-1 user (the (user_id, asset_id) unique index allows
+        // one position per user+asset).
+        let user_m1b = seed_user(&db, "0xm1userb");
+        let user_m2 = {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_users \
+                    (market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
+                 VALUES (2, '0xm2user', 0, 0, NULL, NULL, '0')",
+                [],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let conn = db.conn.lock();
+        let insert = |table: &str, user_id: i64, balance: &str| -> i64 {
+            conn.execute(
+                &format!(
+                    "INSERT INTO {table} (user_id, asset_id, balance, last_index) \
+                     VALUES (?1, 1, ?2, NULL)"
+                ),
+                params![user_id, balance],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let m1_zero_col = insert("aave_v3_collateral_positions", user_m1, "0");
+        let m1_nonzero_col = insert("aave_v3_collateral_positions", user_m1b, "5000");
+        let m1_zero_debt = insert("aave_v3_debt_positions", user_m1, "0");
+        let m1_nonzero_debt = insert("aave_v3_debt_positions", user_m1b, "2500");
+        let m2_zero_col = insert("aave_v3_collateral_positions", user_m2, "0");
+        let m2_zero_debt = insert("aave_v3_debt_positions", user_m2, "0");
+        drop(conn);
+
+        let deleted = {
+            let conn = db.conn.lock();
+            DegenbotDb::delete_zero_balance_positions_on_conn(&conn, 1).unwrap()
+        };
+        assert_eq!(
+            deleted, 2,
+            "one zero collateral + one zero debt row for market 1"
+        );
+        let conn = db.conn.lock();
+        let exists = |pid: i64, table: &str| -> bool {
+            conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE id = ?1"),
+                params![pid],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+                > 0
+        };
+        assert!(!exists(m1_zero_col, "aave_v3_collateral_positions"));
+        assert!(exists(m1_nonzero_col, "aave_v3_collateral_positions"));
+        assert!(!exists(m1_zero_debt, "aave_v3_debt_positions"));
+        assert!(exists(m1_nonzero_debt, "aave_v3_debt_positions"));
+        assert!(
+            exists(m2_zero_col, "aave_v3_collateral_positions"),
+            "the other market's zero rows are untouched"
+        );
+        assert!(
+            exists(m2_zero_debt, "aave_v3_debt_positions"),
+            "the other market's zero rows are untouched"
+        );
+    }
+
+    #[test]
+    fn register_aave_market_creates_inactive_row_and_is_idempotent() {
+        // The auto-registration substrate: a supported market not found in the
+        // DB registers as an INACTIVE row with a NULL stamp (the bootstrap
+        // stamp arrives with `aave activate`); a re-registration is a no-op
+        // returning the same id.
+        let db = write_db_with_market();
+        assert!(
+            db.fetch_aave_market_by_name(1, "Aave Ethereum Market")
+                .unwrap()
+                .is_none()
+        );
+
+        let (id, created) = db
+            .register_aave_market(1, "Aave Ethereum Market")
+            .unwrap();
+        assert!(created, "first registration creates");
+
+        let row = db
+            .fetch_aave_market_by_name(1, "Aave Ethereum Market")
+            .unwrap()
+            .expect("registered row");
+        assert_eq!(row.id, id);
+        assert!(!row.active, "registered inactive");
+        assert_eq!(row.last_update_block, None, "bare registration, no stamp");
+
+        let (id2, created2) = db
+            .register_aave_market(1, "Aave Ethereum Market")
+            .unwrap();
+        assert_eq!(id2, id, "idempotent: same row");
+        assert!(!created2, "idempotent: nothing created");
+
+        let count: i64 = {
+            let conn = db.conn.lock();
+            conn.query_row(
+                "SELECT COUNT(*) FROM aave_v3_markets WHERE chain_id = 1 AND name = 'Aave Ethereum Market'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(count, 1, "no duplicate rows");
     }
 
     #[test]

@@ -110,6 +110,16 @@ fn exchange_arms_round_trip() {
             name: "uniswap_v4".to_string(),
         })
     );
+    assert_eq!(
+        resolve(&["degenbot", "exchange", "list"]),
+        Command::Exchange(ExchangeCommand::List { chain: None })
+    );
+    assert_eq!(
+        resolve(&["degenbot", "exchange", "list", "--chain", "ethereum"]),
+        Command::Exchange(ExchangeCommand::List {
+            chain: Some("ethereum".to_string()),
+        })
+    );
 }
 
 #[test]
@@ -403,7 +413,10 @@ fn group_help_renders_the_leaf_commands() {
         ("aave", vec!["activate", "deactivate", "update", "position"]),
         ("fleet", vec!["posture"]),
         ("path", vec!["add", "discover"]),
-        ("strategy", vec!["list", "show", "add", "set", "remove"]),
+        (
+            "strategy",
+            vec!["list", "show", "activate", "deactivate", "set", "default", "remove"],
+        ),
     ] {
         let sub = command.find_subcommand(group).expect("group present");
         let help = sub.clone().render_help().to_string();

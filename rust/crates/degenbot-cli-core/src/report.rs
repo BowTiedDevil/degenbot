@@ -206,6 +206,46 @@ pub enum DeactivateOutcome {
     NoEntry,
 }
 
+/// Whether an `exchange list` row's DB entry exists, and its active state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExchangeActiveState {
+    /// The DB row exists with `active = true`.
+    Active,
+    /// The DB row exists with `active = false`.
+    Inactive,
+    /// The DB has no row for the pair (never activated).
+    NoEntry,
+}
+
+impl ExchangeActiveState {
+    /// The operator-facing state word in the `exchange list` lines.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+            Self::NoEntry => "not in database",
+        }
+    }
+}
+
+/// One `exchange list` row: a supported `(chain, DEX)` pair and its DB state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExchangeListRow {
+    /// The chain id.
+    pub chain_id: u64,
+    /// The human chain label.
+    pub chain_label: &'static str,
+    /// The human DEX label.
+    pub display_name: &'static str,
+    /// The DEX name slug.
+    pub dex_slug: &'static str,
+    /// The exchange factory (V4: the `PoolManager`), checksummed.
+    pub factory: String,
+    /// The DB active state.
+    pub state: ExchangeActiveState,
+}
+
 /// The typed result of an `exchange` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExchangeReport {
@@ -234,6 +274,11 @@ pub enum ExchangeReport {
         dex_slug: &'static str,
         /// The deactivation outcome.
         outcome: DeactivateOutcome,
+    },
+    /// `exchange list`.
+    Listed {
+        /// One row per supported `(chain, DEX)` pair, in declaration order.
+        rows: Vec<ExchangeListRow>,
     },
 }
 
@@ -274,6 +319,18 @@ impl ExchangeReport {
                      (chain ID {chain_id})."
                 )],
             },
+            Self::Listed { rows } => rows
+                .iter()
+                .map(|row| {
+                    format!(
+                        "{} on {} (chain ID {}): {}",
+                        row.display_name,
+                        row.chain_label,
+                        row.chain_id,
+                        row.state.as_str()
+                    )
+                })
+                .collect(),
         }
     }
 }
@@ -391,7 +448,7 @@ impl PathReport {
     }
 }
 
-/// The typed result of a `strategy` command (ADR-055 facets).
+/// The typed result of a `strategy` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StrategyReport {
     /// `strategy list`: every declared facet.
@@ -399,10 +456,46 @@ pub enum StrategyReport {
         /// One descriptor per facet, in declaration order.
         rows: Vec<StrategyFacetDescriptor>,
     },
-    /// `strategy show`: one facet's descriptor.
+    /// `strategy show`: one facet's descriptor plus its activation posture.
     Shown {
         /// The facet descriptor.
         descriptor: StrategyFacetDescriptor,
+        /// The facet's activation + endpoint posture (`None` when no config
+        /// file could be read).
+        activation: Option<crate::strategy::EndpointSummary>,
+    },
+    /// `strategy activate`: the facet was activated with the settled posture.
+    Activated {
+        /// The activated facet.
+        facet: crate::strategy::StrategyFacet,
+        /// The settled endpoint posture.
+        summary: crate::strategy::EndpointSummary,
+        /// Whether the write applies or an env var shadows it.
+        outcome: crate::strategy::MutationOutcome,
+    },
+    /// `strategy deactivate`: the facet was deactivated.
+    Deactivated {
+        /// The deactivated facet.
+        facet: crate::strategy::StrategyFacet,
+        /// Whether the write applies or an env var shadows it.
+        outcome: crate::strategy::MutationOutcome,
+    },
+    /// `strategy set`: a facet key's override was written.
+    Set {
+        /// The mutated facet.
+        facet: crate::strategy::StrategyFacet,
+        /// The written key's field name.
+        key: &'static str,
+        /// Whether the write applies or an env var shadows it.
+        outcome: crate::strategy::MutationOutcome,
+    },
+    /// `strategy default` / `strategy remove`: the override was dropped so the
+    /// schema default applies again.
+    Defaulted {
+        /// The mutated facet.
+        facet: crate::strategy::StrategyFacet,
+        /// The restored key's field name.
+        key: &'static str,
     },
 }
 
@@ -423,12 +516,18 @@ impl StrategyReport {
                     )
                 })
                 .collect(),
-            Self::Shown { descriptor } => {
+            Self::Shown {
+                descriptor,
+                activation,
+            } => {
                 let mut lines = vec![format!(
                     "{}: {} strategy",
                     descriptor.config_section, descriptor.trigger_kind
                 )];
                 lines.push(format!("  selector: {}", descriptor.facet.as_str()));
+                if let Some(summary) = activation {
+                    lines.push(format!("  posture: {}", posture_line(summary)));
+                }
                 if descriptor.fields.is_empty() {
                     lines.push("  declared keys: (none yet)".to_string());
                 } else {
@@ -438,7 +537,57 @@ impl StrategyReport {
                 }
                 lines
             }
+            Self::Activated {
+                facet,
+                summary,
+                outcome,
+            } => vec![
+                format!("activated strategy {}", facet.as_str()),
+                format!("  endpoints: {}", posture_line(summary)),
+                shadow_line(outcome),
+            ],
+            Self::Deactivated { facet, outcome } => vec![
+                format!("deactivated strategy {} (recorded endpoints kept)", facet.as_str()),
+                shadow_line(outcome),
+            ],
+            Self::Set {
+                facet,
+                key,
+                outcome,
+            } => vec![
+                format!("set {}.{}", facet.config_section(), key),
+                shadow_line(outcome),
+            ],
+            Self::Defaulted { facet, key } => vec![format!(
+                "restored {}.{} to its declared default",
+                facet.config_section(),
+                key
+            )],
         }
+    }
+}
+
+/// One line describing a facet's settled endpoint posture.
+fn posture_line(summary: &crate::strategy::EndpointSummary) -> String {
+    match summary {
+        crate::strategy::EndpointSummary::Inactive => "inactive".to_string(),
+        crate::strategy::EndpointSummary::Unset => {
+            "UNSET (activation requires --endpoints or --endpoints-default)".to_string()
+        }
+        crate::strategy::EndpointSummary::Default(urls) => {
+            format!("default ({})", urls.join(", "))
+        }
+        crate::strategy::EndpointSummary::Explicit(urls) => urls.join(", "),
+    }
+}
+
+/// The loud line when the env layer shadows a written key.
+fn shadow_line(outcome: &crate::strategy::MutationOutcome) -> String {
+    match outcome {
+        crate::strategy::MutationOutcome::Applied => "  applies at load time".to_string(),
+        crate::strategy::MutationOutcome::Shadowed { env } => format!(
+            "  WARNING: {env} is set in the environment and will shadow this write"
+        ),
     }
 }
 

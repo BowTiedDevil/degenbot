@@ -82,8 +82,14 @@ fn reset(
     if plan.asks(force) && !prompter.confirm(&reset_prompt(path), false) {
         return Err(CliError::Aborted);
     }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
     remove_file_if_exists(path)?;
     ops::create_new_database(path)?;
+    // A fresh DB is born fully registered: every supported (chain, DEX) pair
+    // + Aave market exists inactive, so activation is a pure flag flip.
+    crate::registrations::ensure_supported_registrations(path)?;
     tracing::info!(path = %path.display(), "initialized new SQLite database");
     Ok(DatabaseReport::Reset {
         path: path.to_path_buf(),

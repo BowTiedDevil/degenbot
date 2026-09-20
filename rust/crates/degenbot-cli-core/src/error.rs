@@ -59,6 +59,9 @@ pub enum CliError {
     DatabaseNothingToDo,
     /// Any other database failure (I/O, integrity, heal verification).
     Database(DbError),
+    /// A filesystem failure outside the database (e.g. `database reset`
+    /// bootstrapping a missing state-home directory chain).
+    Io(std::io::Error),
     /// Driver-domain config resolution failed (ADR-051 D8).
     Config(ConfigError),
     /// An unknown chain selector (`--chain foo`): the console names chain slugs
@@ -135,6 +138,7 @@ impl CliError {
                 "The database has no legacy history; there is nothing to cut over.".to_string()
             }
             Self::Database(err) => err.to_string(),
+            Self::Io(err) => err.to_string(),
             Self::Config(err) => err.to_string(),
             Self::UnknownChain { chain } => format!(
                 "Unknown chain {chain:?}: expected a chain slug (base, ethereum) or a numeric \
@@ -168,6 +172,7 @@ impl std::error::Error for CliError {
             Self::Config(err) => Some(err),
             Self::PoolUpdate(err) => Some(err),
             Self::AaveUpdate(err) => Some(err),
+            Self::Io(err) => Some(err),
             _ => None,
         }
     }
@@ -204,6 +209,7 @@ impl From<&CliError> for ExitCode {
             | CliError::DatabaseForeign
             | CliError::DatabaseNothingToDo
             | CliError::Database(_)
+            | CliError::Io(_)
             | CliError::Config(_)
             | CliError::UnknownChain { .. }
             | CliError::UnknownDeployment { .. }

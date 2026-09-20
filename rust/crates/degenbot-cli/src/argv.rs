@@ -75,6 +75,11 @@ pub struct Cli {
     /// WebSocket RPC endpoint (`--node-ws` > `DEGENBOT_RPC_WS_CHAINID_<id>`).
     #[arg(long, global = true, value_name = "URI")]
     pub node_ws: Option<String>,
+
+    /// Typed config file the `strategy` verbs read and write (`--config` >
+    /// `DEGENBOT_CONFIG` > the XDG config home).
+    #[arg(long, global = true, value_name = "PATH")]
+    pub config: Option<String>,
 }
 
 /// The command groups.
@@ -192,6 +197,12 @@ pub enum ExchangeSub {
         /// The DEX name slug stored in the database.
         #[arg(long, value_name = "NAME")]
         name: String,
+    },
+    /// List the supported exchanges and their activation state.
+    List {
+        /// Restrict the list to one chain (a chain slug or numeric id).
+        #[arg(long, value_name = "CHAIN")]
+        chain: Option<String>,
     },
 }
 
@@ -490,28 +501,40 @@ pub enum DirectionArg {
     Ozf,
 }
 
-/// The `strategy` command group (ADR-055 facets).
+/// The `strategy` command group (ADR-055 facets): the strategy activation
+/// and parameter surface over the typed config.
 #[derive(Debug, Subcommand)]
 pub enum StrategySub {
     /// List the declared strategy facets.
     List,
-    /// Show one strategy facet's descriptor and declared config keys.
+    /// Show one strategy facet: declared keys, activation, and the settled
+    /// endpoint posture.
     Show {
         /// The facet to show.
         #[arg(value_enum)]
         facet: FacetArg,
     },
-    /// Add a config key to a facet (refused while the facets declare no keys).
-    Add {
-        /// The facet to mutate.
+    /// Activate a strategy and settle its endpoint posture. Exactly one of
+    /// `--endpoints` / `--endpoints-default` unless the facet already carries
+    /// a settled choice.
+    Activate {
+        /// The facet to activate.
         #[arg(value_enum)]
         facet: FacetArg,
-        /// The config key name.
-        key: String,
-        /// The raw value.
-        value: String,
+        /// The explicit endpoint set (comma-separated URLs).
+        #[arg(long = "endpoints", value_name = "URLS", conflicts_with = "endpoints_default")]
+        endpoints: Option<String>,
+        /// Adopt the documented default endpoint set.
+        #[arg(long = "endpoints-default")]
+        endpoints_default: bool,
     },
-    /// Set a config key on a facet (refused while the facets declare no keys).
+    /// Deactivate a strategy (its recorded endpoint choice is kept).
+    Deactivate {
+        /// The facet to deactivate.
+        #[arg(value_enum)]
+        facet: FacetArg,
+    },
+    /// Set one declared facet key.
     Set {
         /// The facet to mutate.
         #[arg(value_enum)]
@@ -521,8 +544,16 @@ pub enum StrategySub {
         /// The raw value.
         value: String,
     },
-    /// Remove a config key from a facet (refused while the facets declare no
-    /// keys).
+    /// Drop one key's override so the declared default applies again
+    /// ("set the default if you have no preference").
+    Default {
+        /// The facet to mutate.
+        #[arg(value_enum)]
+        facet: FacetArg,
+        /// The config key name.
+        key: String,
+    },
+    /// The `default` verb's traditional spelling.
     Remove {
         /// The facet to mutate.
         #[arg(value_enum)]
@@ -556,6 +587,9 @@ pub fn context<'a>(cli: &Cli, env: &'a dyn EnvVars) -> CliContext<'a> {
     }
     if let Some(node_ws) = &cli.node_ws {
         ctx = ctx.with_node_ws(node_ws.clone());
+    }
+    if let Some(config) = &cli.config {
+        ctx = ctx.with_config(config.clone());
     }
     ctx
 }
@@ -636,6 +670,9 @@ fn exchange(command: &ExchangeSub) -> ExchangeCommand {
         ExchangeSub::Deactivate { chain, name } => ExchangeCommand::Deactivate {
             chain: chain.clone(),
             name: name.clone(),
+        },
+        ExchangeSub::List { chain } => ExchangeCommand::List {
+            chain: chain.clone(),
         },
     }
 }
@@ -786,15 +823,26 @@ fn strategy(command: &StrategySub) -> StrategyCommand {
         StrategySub::Show { facet } => StrategyCommand::Show {
             facet: facet_of(*facet),
         },
-        StrategySub::Add { facet, key, value } => StrategyCommand::Add {
+        StrategySub::Activate {
+            facet,
+            endpoints,
+            endpoints_default,
+        } => StrategyCommand::Activate {
             facet: facet_of(*facet),
-            key: key.clone(),
-            value: value.clone(),
+            endpoints: endpoints.clone(),
+            endpoints_default: *endpoints_default,
+        },
+        StrategySub::Deactivate { facet } => StrategyCommand::Deactivate {
+            facet: facet_of(*facet),
         },
         StrategySub::Set { facet, key, value } => StrategyCommand::Set {
             facet: facet_of(*facet),
             key: key.clone(),
             value: value.clone(),
+        },
+        StrategySub::Default { facet, key } => StrategyCommand::Default {
+            facet: facet_of(*facet),
+            key: key.clone(),
         },
         StrategySub::Remove { facet, key } => StrategyCommand::Remove {
             facet: facet_of(*facet),

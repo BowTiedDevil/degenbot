@@ -392,6 +392,9 @@ pub struct AaveChunkWriteReport {
     pub contract_revision_updated: usize,
     pub pool_data_provider_updated: usize,
     pub contract_inserted: usize,
+    /// Zero-balance collateral + debt rows deleted by the end-of-chunk
+    /// cleanup (`delete_zero_balance_positions_on_conn`).
+    pub zero_balances_cleared: usize,
     /// The `chunk_end_block` stamped onto `aave_v3_markets.last_update_block`
     /// as the LAST write in the transaction. `None` if `events` was empty (no
     /// stamp written — mirrors the precedent's "no events ⇒ no stamp" guard
@@ -793,6 +796,17 @@ pub fn apply_aave_chunk_writes_on_conn(
 ) -> Result<AaveChunkWriteReport, degenbot_db::DbError> {
     let mut report = apply_chunk_events_on_conn(conn, market_id, events)?;
 
+    // End-of-chunk zero-balance cleanup (the ported Python
+    // `cleanup_zero_balance_positions`): the chunk's apply may have zeroed
+    // scaled-token balances (full withdrawals / repays / bad-debt resets);
+    // delete those rows BEFORE the stamp so they do not accumulate as
+    // permanent '0' rows. Inside the chunk's transaction — a rollback reverts
+    // it with the chunk (§3.4 restart-invariant).
+    report.zero_balances_cleared = DegenbotDb::delete_zero_balance_positions_on_conn(
+        conn,
+        market_id,
+    )?;
+
     // Stamp `last_update_block` as the LAST write (§3.4 restart-invariant:
     // on rollback the stamp does NOT advance, so a restart re-processes the
     // chunk clean).
@@ -900,6 +914,101 @@ mod tests {
     }
 
     // ── §3.4 atomicity: rollback path writes NOTHING + stamp unchanged ─────
+
+    #[test]
+    fn apply_aave_chunk_writes_clears_zero_balance_positions_at_end_of_chunk() {
+        // The end-of-chunk zero-balance cleanup (the ported Python
+        // cleanup_zero_balance_positions): zero-balance collateral + debt rows
+        // are deleted inside the chunk's transaction, BEFORE the stamp (the
+        // §3.4 stamp stays the last write); nonzero balances stay.
+        let db = fresh_db();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, '0xu1')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (1, 1, 1, 1, 1, 1, 1, '0', '0', '1', '0')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_users \
+                    (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
+                 VALUES (1, 1, '0xuser1', 0, 0, NULL, NULL, '0')",
+                [],
+            )
+            .unwrap();
+            // A second user for the nonzero row (the (user_id, asset_id)
+            // unique index allows one position per user+asset).
+            conn.execute(
+                "INSERT INTO aave_v3_users \
+                    (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
+                 VALUES (2, 1, '0xuser2', 0, 0, NULL, NULL, '0')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_collateral_positions \
+                    (id, user_id, asset_id, balance, last_index) VALUES (1, 1, 1, '0', NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_collateral_positions \
+                    (id, user_id, asset_id, balance, last_index) VALUES (2, 2, 1, '777', NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_debt_positions \
+                    (id, user_id, asset_id, balance, last_index) VALUES (3, 1, 1, '0', NULL)",
+                [],
+            )
+            .unwrap();
+        }
+
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &[], 2_000).unwrap();
+            assert_eq!(report.stamped_block, Some(2_000));
+            tx.commit().unwrap();
+        }
+
+        {
+            let conn = db.lock();
+            let count = |table: &str, pid: i64| -> i64 {
+                conn.query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE id = ?1"),
+                    params![pid],
+                    |r| r.get(0),
+                )
+                .unwrap()
+            };
+            assert_eq!(
+                count("aave_v3_collateral_positions", 1),
+                0,
+                "the zero-balance collateral row is cleared"
+            );
+            assert_eq!(
+                count("aave_v3_collateral_positions", 2),
+                1,
+                "the nonzero collateral row stays"
+            );
+            assert_eq!(count("aave_v3_debt_positions", 3), 0, "the zero-balance debt row is cleared");
+        }
+        assert_eq!(market_stamp(&db), Some(2_000));
+    }
 
     #[test]
     fn apply_aave_chunk_writes_on_conn_rolls_back_on_injected_failure() {

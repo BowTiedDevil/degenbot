@@ -163,6 +163,9 @@ fn update(
     let database_path = ctx.database_path().value;
     let chain_id = ctx.chain_id()?.value;
     let rpc_url = ctx.node_http_uri()?.value;
+    // Self-serve registration: every supported exchange pair not found in the
+    // DB registers inactive, so the update never depends on prior CREATEs.
+    crate::registrations::ensure_supported_registrations(&database_path)?;
     let resolved = resolve_to_block(parse_to_block(to_block)?, &rpc_url)?;
     let chain = i64::try_from(chain_id)
         .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;

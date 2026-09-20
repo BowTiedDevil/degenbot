@@ -25,7 +25,9 @@ use degenbot_uniswap::deployments;
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::prompt::{PromptPlan, Prompter};
-use crate::report::{ActivateOutcome, DeactivateOutcome, ExchangeReport};
+use crate::report::{
+    ActivateOutcome, DeactivateOutcome, ExchangeActiveState, ExchangeListRow, ExchangeReport,
+};
 
 /// The `exchange` command group.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +46,11 @@ pub enum ExchangeCommand {
         /// The DEX name slug.
         name: String,
     },
+    /// List every supported `(chain, DEX)` pair and its DB activation state.
+    List {
+        /// The optional chain filter (a chain slug or numeric id).
+        chain: Option<String>,
+    },
 }
 
 impl ExchangeCommand {
@@ -53,11 +60,13 @@ impl ExchangeCommand {
         PromptPlan::None
     }
 
-    /// The `(chain, name)` pair the command addresses.
+    /// The `(chain, name)` pair the command addresses (`None` for the filterless
+    /// `List` arm).
     #[must_use]
-    pub fn selector(&self) -> (&str, &str) {
+    pub fn selector(&self) -> Option<(&str, &str)> {
         match self {
-            Self::Activate { chain, name } | Self::Deactivate { chain, name } => (chain, name),
+            Self::Activate { chain, name } | Self::Deactivate { chain, name } => Some((chain, name)),
+            Self::List { .. } => None,
         }
     }
 }
@@ -366,14 +375,58 @@ pub(crate) fn execute(
     ctx: &CliContext<'_>,
     _prompter: &dyn Prompter,
 ) -> Result<ExchangeReport, CliError> {
-    let (chain_selector, name) = command.selector();
-    let chain_id = crate::block::resolve_chain_selector(chain_selector)?;
-    let deployment = resolve_deployment(chain_id, name)?;
     let path = ctx.database_path().value;
     match command {
-        ExchangeCommand::Activate { .. } => activate(&deployment, &path),
-        ExchangeCommand::Deactivate { .. } => deactivate(&deployment, &path),
+        ExchangeCommand::Activate { chain, name } => {
+            activate(&deployment_for(chain, name)?, &path)
+        }
+        ExchangeCommand::Deactivate { chain, name } => {
+            deactivate(&deployment_for(chain, name)?, &path)
+        }
+        ExchangeCommand::List { chain } => list(chain.as_deref(), &path),
     }
+}
+
+/// Resolve an activate/deactivate arm's `(chain, name)` pair to its deployment.
+fn deployment_for(chain: &str, name: &str) -> Result<ExchangeDeployment, CliError> {
+    let chain_id = crate::block::resolve_chain_selector(chain)?;
+    resolve_deployment(chain_id, name)
+}
+
+/// List every supported `(chain, DEX)` pair (optionally one chain's), joined
+/// with its DB activation state.
+fn list(
+    chain_filter: Option<&str>,
+    path: &std::path::Path,
+) -> Result<ExchangeReport, CliError> {
+    let chain_id = chain_filter.map(crate::block::resolve_chain_selector).transpose()?;
+    let (db, _state) = DegenbotDb::open(path)?;
+    let mut rows = Vec::new();
+    for entry in RETIRED_EXCHANGES {
+        if chain_id.is_some_and(|filtered| filtered != entry.chain_id) {
+            continue;
+        }
+        let row = db.fetch_exchange_by_name(
+            i64::try_from(entry.chain_id).map_err(|_| {
+                CliError::InvalidArgument(format!("chain id {} is out of range", entry.chain_id))
+            })?,
+            entry.dex_slug,
+        )?;
+        let state = match row {
+            Some(row) if row.active => ExchangeActiveState::Active,
+            Some(_) => ExchangeActiveState::Inactive,
+            None => ExchangeActiveState::NoEntry,
+        };
+        rows.push(ExchangeListRow {
+            chain_id: entry.chain_id,
+            chain_label: entry.chain_label,
+            display_name: entry.display_name,
+            dex_slug: entry.dex_slug,
+            factory: resolve_deployment(entry.chain_id, entry.dex_slug)?.factory.to_string(),
+            state,
+        });
+    }
+    Ok(ExchangeReport::Listed { rows })
 }
 
 /// Activate (get-or-create the row, flip active true, upsert the V4 manager).

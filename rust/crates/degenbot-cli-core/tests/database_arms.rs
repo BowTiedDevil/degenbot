@@ -191,6 +191,25 @@ fn reset_prompts_unless_force() {
     assert!(matches!(inspect(&db), SchemaState::RustOwned { .. }));
 }
 
+#[test]
+fn reset_creates_missing_parent_directories() {
+    // The default DB state home (~/.local/state/degenbot/db/) does not exist
+    // on a fresh install; reset must bootstrap the chain, not fail on the
+    // open. (A rogue-session recovery ran into exactly this.)
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("missing/nested/dir/degenbot.db");
+
+    let outcome = run_db(
+        DatabaseCommand::Reset { force: true },
+        &db,
+        &RecordingPrompter::new(false),
+        &env(),
+    );
+
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    assert!(matches!(inspect(&db), SchemaState::RustOwned { .. }));
+}
+
 // ── compact ───────────────────────────────────────────────────────────────
 
 #[test]
