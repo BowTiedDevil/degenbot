@@ -39,7 +39,7 @@ from enum import Enum
 from typing import Any, Self, cast
 
 from degenbot import Bot
-from degenbot._ffi import session_phase_next
+from degenbot.arbitrage import session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
