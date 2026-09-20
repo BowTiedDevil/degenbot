@@ -136,7 +136,7 @@ mod tests;
 pub use diagnostic::{
     compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
 };
-pub use driver::{DriverError, DriverSnapshot, EngineChannelHandles, EngineDriver, PhaseError};
+pub use driver::{DriverError, EngineChannelHandles, EngineDriver, PhaseError};
 pub use engine_stages::EngineStages;
 pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
@@ -155,9 +155,9 @@ pub use retune::EngineRetune;
 /// This is a protocol-phase machine, NOT the operator-facing lifecycle. The
 /// one operator lifecycle (`Registered -> Enabled -> Running -> Stopped |
 /// Halted | Disabled`) is owned by [`crate::strategy_host::StrategyHost`];
-/// an engine's pump phase is a private sub-state a consumer reads read-only
-/// through [`driver::DriverSnapshot`], never a peer authority answering
-/// "may this strategy run?".
+/// an engine's pump phase is a private protocol sub-state a consumer reads
+/// through [`driver::EngineDriver::current_phase`] and its sibling accessors,
+/// never a peer authority answering "may this strategy run?".
 ///
 /// Transitions:
 /// ```text

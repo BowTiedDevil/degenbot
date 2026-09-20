@@ -34,9 +34,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::bot_core::route_registry::RouteRegistry;
 use crate::nonce_authority::{NonceAuthority, StrategyId};
 
-/// The lifecycle state of one registered driver.
+/// The operator pose of one registered strategy driver: the host's
+/// authoritative lifecycle. It is distinct from the driver loop's own
+/// protocol run phase, which the host folds in on the driver's exit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DriverState {
+pub enum DriverPose {
     /// Named to the host; not yet enabled by the operator.
     Registered,
     /// Enabled by the operator; the driver's loop has not started.
@@ -52,7 +54,7 @@ pub enum DriverState {
     Disabled,
 }
 
-impl DriverState {
+impl DriverPose {
     /// Whether no further transition is possible. A terminal state is a frozen
     /// record, never a restart candidate.
     #[must_use]
@@ -64,16 +66,16 @@ impl DriverState {
 /// Why a lifecycle move was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FsmDecline {
-    /// `enable` is only legal from [`DriverState::Registered`].
+    /// `enable` is only legal from [`DriverPose::Registered`].
     #[error("enable requires the Registered state")]
     EnableRequiresRegistered,
-    /// `start` is only legal from [`DriverState::Enabled`].
+    /// `start` is only legal from [`DriverPose::Enabled`].
     #[error("running requires the Enabled state")]
     RunningRequiresEnabled,
-    /// `halt` is only legal from [`DriverState::Running`].
+    /// `halt` is only legal from [`DriverPose::Running`].
     #[error("halt requires the Running state")]
     HaltRequiresRunning,
-    /// `stop` is only legal from [`DriverState::Running`].
+    /// `stop` is only legal from [`DriverPose::Running`].
     #[error("stop requires the Running state")]
     StopRequiresRunning,
     /// `disable` refuses the terminal states: a tombstone is frozen.
@@ -81,8 +83,8 @@ pub enum FsmDecline {
     DisableRejectsTerminal,
 }
 
-impl DriverState {
-    /// The operator enable move: [`DriverState::Registered`] -> [`DriverState::Enabled`].
+impl DriverPose {
+    /// The operator enable move: [`DriverPose::Registered`] -> [`DriverPose::Enabled`].
     ///
     /// # Errors
     ///
@@ -95,7 +97,7 @@ impl DriverState {
         }
     }
 
-    /// The driver's own start move: [`DriverState::Enabled`] -> [`DriverState::Running`].
+    /// The driver's own start move: [`DriverPose::Enabled`] -> [`DriverPose::Running`].
     ///
     /// # Errors
     ///
@@ -108,7 +110,7 @@ impl DriverState {
         }
     }
 
-    /// The driver's own halt move: [`DriverState::Running`] -> [`DriverState::Halted`].
+    /// The driver's own halt move: [`DriverPose::Running`] -> [`DriverPose::Halted`].
     ///
     /// # Errors
     ///
@@ -121,8 +123,8 @@ impl DriverState {
         }
     }
 
-    /// The driver's own clean-stop move: [`DriverState::Running`] ->
-    /// [`DriverState::Stopped`].
+    /// The driver's own clean-stop move: [`DriverPose::Running`] ->
+    /// [`DriverPose::Stopped`].
     ///
     /// # Errors
     ///
@@ -135,7 +137,7 @@ impl DriverState {
         }
     }
 
-    /// The operator disable move: any non-terminal state -> [`DriverState::Disabled`].
+    /// The operator disable move: any non-terminal state -> [`DriverPose::Disabled`].
     ///
     /// # Errors
     ///
@@ -152,7 +154,7 @@ impl DriverState {
 /// The cockpit session's operator-facing lifecycle: the four-pose shell the
 /// Python `BotRunner` presents over the host-owned engine.
 ///
-/// The host owns one operator lifecycle per driver ([`DriverState`]); the
+/// The host owns one operator lifecycle per driver ([`DriverPose`]); the
 /// cockpit session is the settlement engine's shell, so its phase table lives
 /// here beside the driver FSM rather than being authored a second time in
 /// Python. The Python `_Phase` translates these verdicts and never decides
@@ -267,7 +269,7 @@ pub enum FacetStatus {
 pub struct DriverRecord {
     id: StrategyId,
     facet: FacetStatus,
-    state: DriverState,
+    state: DriverPose,
     halt_detail: Option<String>,
 }
 
@@ -286,7 +288,7 @@ impl DriverRecord {
 
     /// The driver's current lifecycle state.
     #[must_use]
-    pub fn state(&self) -> DriverState {
+    pub fn state(&self) -> DriverPose {
         self.state
     }
 
@@ -697,7 +699,7 @@ impl StrategyHost {
         notices
     }
 
-    /// Admit a strategy as a driver FSM instance in [`DriverState::Registered`].
+    /// Admit a strategy as a driver FSM instance in [`DriverPose::Registered`].
     ///
     /// # Errors
     ///
@@ -716,7 +718,7 @@ impl StrategyHost {
             DriverRecord {
                 id,
                 facet,
-                state: DriverState::Registered,
+                state: DriverPose::Registered,
                 halt_detail: None,
             },
         );
@@ -730,7 +732,7 @@ impl StrategyHost {
     /// [`HostError::UnknownStrategy`] if the name is not registered;
     /// [`HostError::UnconfiguredStrategy`] if no facet was booted;
     /// [`HostError::Transition`] if the lifecycle refuses the move.
-    pub fn enable(&mut self, id: &StrategyId) -> Result<DriverState, HostError> {
+    pub fn enable(&mut self, id: &StrategyId) -> Result<DriverPose, HostError> {
         let record = self.record_mut(id)?;
         if record.facet == FacetStatus::Unconfigured {
             return Err(HostError::UnconfiguredStrategy(id.clone()));
@@ -751,7 +753,7 @@ impl StrategyHost {
     /// # Errors
     ///
     /// [`HostError::UnknownStrategy`] / [`HostError::Transition`].
-    pub fn start(&mut self, id: &StrategyId) -> Result<DriverState, HostError> {
+    pub fn start(&mut self, id: &StrategyId) -> Result<DriverPose, HostError> {
         let record = self.record_mut(id)?;
         record.state = record
             .state
@@ -828,10 +830,7 @@ impl StrategyHost {
             .drivers
             .get(id)
             .ok_or_else(|| HostError::UnknownStrategy(id.clone()))?;
-        if matches!(
-            record.state,
-            DriverState::Registered | DriverState::Disabled
-        ) {
+        if matches!(record.state, DriverPose::Registered | DriverPose::Disabled) {
             return Err(HostError::StrategyNotEnabled(id.clone()));
         }
         let root = self.state_root.clone().ok_or(HostError::StateRootUnset)?;
@@ -861,7 +860,7 @@ impl StrategyHost {
     }
 
     /// Boot every enabled driver that registered a spawn factory, on the
-    /// shared runtime, and move it to [`DriverState::Running`].
+    /// shared runtime, and move it to [`DriverPose::Running`].
     ///
     /// This is the host's driving edge: the settlement pump arms on its own
     /// `resume`, while a host-managed driver's loop starts here. Each returned
@@ -872,7 +871,7 @@ impl StrategyHost {
     /// An enabled driver with no registered factory is skipped, not failed: the
     /// settlement facet registers none because the engine's pump arm already
     /// drives it, so only strategies that own a loop the host must start
-    /// advance to [`DriverState::Running`] here.
+    /// advance to [`DriverPose::Running`] here.
     ///
     /// # Errors
     ///
@@ -882,7 +881,7 @@ impl StrategyHost {
         let ids: Vec<StrategyId> = self
             .drivers
             .iter()
-            .filter(|(_, record)| record.state == DriverState::Enabled)
+            .filter(|(_, record)| record.state == DriverPose::Enabled)
             .map(|(id, _)| id.clone())
             .collect();
         let mut tasks = Vec::new();
@@ -913,8 +912,8 @@ impl StrategyHost {
 
     /// Fold a started driver's terminal exit into the FSM: a self-halt is a
     /// tombstone carrying the cause; a clean stop moves the record to
-    /// [`DriverState::Stopped`] so a dead loop is never reported as
-    /// [`DriverState::Running`].
+    /// [`DriverPose::Stopped`] so a dead loop is never reported as
+    /// [`DriverPose::Running`].
     ///
     /// # Errors
     ///
@@ -946,7 +945,7 @@ impl StrategyHost {
     /// This is the host's supervision edge: a caller that booted [`Self::start_driving`]
     /// hands each returned [`DriverTask`] here instead of re-implementing the
     /// await-then-[`Self::record_driver_exit`] ritual. The fold stays host-owned,
-    /// so a clean stop is [`DriverState::Stopped`] and a self-halt is a tombstone.
+    /// so a clean stop is [`DriverPose::Stopped`] and a self-halt is a tombstone.
     ///
     /// # Errors
     ///
@@ -972,7 +971,7 @@ impl StrategyHost {
 
     /// One driver's lifecycle state, or `None` if the name is unknown.
     #[must_use]
-    pub fn state_of(&self, id: &StrategyId) -> Option<DriverState> {
+    pub fn state_of(&self, id: &StrategyId) -> Option<DriverPose> {
         self.drivers.get(id).map(DriverRecord::state)
     }
 
@@ -1023,29 +1022,29 @@ mod tests {
     #[test]
     fn the_fsm_transition_table_is_total_and_closed() {
         let states = [
-            DriverState::Registered,
-            DriverState::Enabled,
-            DriverState::Running,
-            DriverState::Stopped,
-            DriverState::Halted,
-            DriverState::Disabled,
+            DriverPose::Registered,
+            DriverPose::Enabled,
+            DriverPose::Running,
+            DriverPose::Stopped,
+            DriverPose::Halted,
+            DriverPose::Disabled,
         ];
         for state in states {
-            if state == DriverState::Registered {
-                assert_eq!(state.on_enable(), Ok(DriverState::Enabled));
+            if state == DriverPose::Registered {
+                assert_eq!(state.on_enable(), Ok(DriverPose::Enabled));
             } else {
                 assert_eq!(state.on_enable(), Err(FsmDecline::EnableRequiresRegistered));
             }
 
-            if state == DriverState::Enabled {
-                assert_eq!(state.on_start(), Ok(DriverState::Running));
+            if state == DriverPose::Enabled {
+                assert_eq!(state.on_start(), Ok(DriverPose::Running));
             } else {
                 assert_eq!(state.on_start(), Err(FsmDecline::RunningRequiresEnabled));
             }
 
-            if state == DriverState::Running {
-                assert_eq!(state.on_halt(), Ok(DriverState::Halted));
-                assert_eq!(state.on_stop(), Ok(DriverState::Stopped));
+            if state == DriverPose::Running {
+                assert_eq!(state.on_halt(), Ok(DriverPose::Halted));
+                assert_eq!(state.on_stop(), Ok(DriverPose::Stopped));
             } else {
                 assert_eq!(state.on_halt(), Err(FsmDecline::HaltRequiresRunning));
                 assert_eq!(state.on_stop(), Err(FsmDecline::StopRequiresRunning));
@@ -1054,7 +1053,7 @@ mod tests {
             if state.is_terminal() {
                 assert_eq!(state.on_disable(), Err(FsmDecline::DisableRejectsTerminal));
             } else {
-                assert_eq!(state.on_disable(), Ok(DriverState::Disabled));
+                assert_eq!(state.on_disable(), Ok(DriverPose::Disabled));
             }
         }
     }
@@ -1102,9 +1101,9 @@ mod tests {
     fn a_driver_walks_registered_enabled_running() {
         let mut host = host();
         let id = register(&mut host, "backrun");
-        assert_eq!(host.state_of(&id), Some(DriverState::Registered));
-        assert_eq!(host.enable(&id), Ok(DriverState::Enabled));
-        assert_eq!(host.start(&id), Ok(DriverState::Running));
+        assert_eq!(host.state_of(&id), Some(DriverPose::Registered));
+        assert_eq!(host.enable(&id), Ok(DriverPose::Enabled));
+        assert_eq!(host.start(&id), Ok(DriverPose::Running));
     }
 
     #[test]
@@ -1174,7 +1173,7 @@ mod tests {
         host.enable(&id).expect("enable");
         host.start(&id).expect("start");
         host.halt(&id, "solver invariant").expect("halt");
-        assert_eq!(host.state_of(&id), Some(DriverState::Halted));
+        assert_eq!(host.state_of(&id), Some(DriverPose::Halted));
         let record = host.record(&id).expect("record");
         assert_eq!(record.halt_detail(), Some("solver invariant"));
         // A tombstone never restarts and never disables.
@@ -1199,7 +1198,7 @@ mod tests {
         let mut host = host();
         let id = register(&mut host, "backrun");
         host.disable(&id).expect("disable");
-        assert_eq!(host.state_of(&id), Some(DriverState::Disabled));
+        assert_eq!(host.state_of(&id), Some(DriverPose::Disabled));
         assert_eq!(
             host.disable(&id),
             Err(HostError::Transition {
@@ -1257,7 +1256,7 @@ mod tests {
         assert!(host
             .list()
             .iter()
-            .all(|r| r.state() == DriverState::Registered));
+            .all(|r| r.state() == DriverPose::Registered));
     }
 
     #[test]
@@ -1317,7 +1316,7 @@ mod tests {
 
         let tasks = host.start_driving().expect("start driving");
         assert_eq!(tasks.len(), 1);
-        assert_eq!(host.state_of(&id), Some(DriverState::Running));
+        assert_eq!(host.state_of(&id), Some(DriverPose::Running));
 
         exit_tx
             .send(DriverExit::Halted("lane-local violation".to_string()))
@@ -1327,7 +1326,7 @@ mod tests {
         let exit = task.wait().await;
         host.record_driver_exit(&id, exit).expect("record exit");
         let record = host.record(&id).expect("record");
-        assert_eq!(record.state(), DriverState::Halted);
+        assert_eq!(record.state(), DriverPose::Halted);
         assert_eq!(record.halt_detail(), Some("lane-local violation"));
         assert!(host.enable(&id).is_err(), "a tombstone never restarts");
     }
@@ -1407,7 +1406,7 @@ mod tests {
         host.enable(&id).expect("enable");
 
         let tasks = host.start_driving().expect("start driving");
-        assert_eq!(host.state_of(&id), Some(DriverState::Running));
+        assert_eq!(host.state_of(&id), Some(DriverPose::Running));
         let task = tasks.into_iter().next().expect("task");
         host.drive_and_fold(task)
             .await
@@ -1415,12 +1414,12 @@ mod tests {
 
         assert_eq!(
             host.state_of(&id),
-            Some(DriverState::Stopped),
+            Some(DriverPose::Stopped),
             "a loop that returned is never reported as Running"
         );
         host.disable(&id)
             .expect("a stopped record is still disableable");
-        assert_eq!(host.state_of(&id), Some(DriverState::Disabled));
+        assert_eq!(host.state_of(&id), Some(DriverPose::Disabled));
     }
 
     #[test]
@@ -1430,7 +1429,7 @@ mod tests {
         host.enable(&id).expect("enable");
         let tasks = host.start_driving().expect("start driving");
         assert!(tasks.is_empty());
-        assert_eq!(host.state_of(&id), Some(DriverState::Enabled));
+        assert_eq!(host.state_of(&id), Some(DriverPose::Enabled));
     }
 
     /// A reconciler that reports a fixed notice set, so the host's delivery

@@ -74,7 +74,7 @@ family.
 _Avoid_: "sidecar" (the standalone two-process deployment), "orchestrator", "manager".
 
 **Strategy driver**:
-The host's unit of strategy admission: a named runnable loop registered as a `DriverState`
+The host's unit of strategy admission: a named runnable loop registered as a `DriverPose`
 instance and attached to the host's shared services. `BackrunDriver` is the reference; the
 settlement pump arm registers none because the engine's pump already drives it.
 _Avoid_: using bare "driver" for the engine session (**Driver seam**) or the Python session

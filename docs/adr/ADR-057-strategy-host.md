@@ -45,7 +45,7 @@ out by `Arc`, registers drivers by name, and drives their lifecycle. A
 
 ### D2 — The driver lifecycle is a frozen-tombstone FSM
 
-`DriverState`: `Registered → Enabled → Running → {Halted, Disabled}`. Operator
+`DriverPose`: `Registered → Enabled → Running → {Stopped, Halted, Disabled}`. Operator
 verbs are `register`, `enable`, `disable`, `list`; driver-originated moves are
 `start` and `halt`. `Halted` (a self-halt) and `Disabled` (operator) are
 terminal tombstones with no exit edge — no auto-restart. Every illegal move

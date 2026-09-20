@@ -3,8 +3,8 @@
 //!
 //! Invariant surface: the loop is the only writer of the quarantine FSM and
 //! the per-frame funnel's spent budget. It consumes the host-minted hub,
-//! registry, and node join without owning them, and `LoopLifecycle` is the
-//! loop's own truth, driven through `DriverHandle`. The frame feed and the
+//! registry, and node join without owning them, and `LoopPhase` is the
+//! loop's own protocol run state, driven through `DriverHandle`. The frame feed and the
 //! quarantine rescue re-enter through the same `run_frame` argument list, so
 //! a signature drift on either call site is a compile error.
 
@@ -918,9 +918,10 @@ fn reload_quarantine(
     QuarantineJournal::open(&path).ok()
 }
 
-/// The lifecycle FSM a running driver walks. `Stopped` is terminal.
+/// The protocol run phase a running driver loop walks. `Stopped` is
+/// terminal; the operator-facing pose lives on the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoopLifecycle {
+pub enum LoopPhase {
     /// Boot is in flight; the loop has not been polled.
     Starting,
     /// The loop is polling.
@@ -931,7 +932,7 @@ pub enum LoopLifecycle {
     Stopped,
 }
 
-impl LoopLifecycle {
+impl LoopPhase {
     /// Whether the driver has returned and can never run again.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
@@ -981,7 +982,7 @@ impl LoopLifecycle {
 /// Why a lifecycle move was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LoopDecline {
-    /// `running` is only legal from [`LoopLifecycle::Starting`].
+    /// `running` is only legal from [`LoopPhase::Starting`].
     #[error("running requires the Starting state")]
     StartRequiresStarting,
     /// `stop` is only legal from a live state.
@@ -994,14 +995,14 @@ pub enum LoopDecline {
 
 #[derive(Debug)]
 pub(super) struct LoopShared {
-    pub(super) state: ParkingMutex<LoopLifecycle>,
+    pub(super) state: ParkingMutex<LoopPhase>,
     pub(super) stop: AtomicBool,
 }
 
 impl LoopShared {
     pub(super) fn new() -> Self {
         Self {
-            state: ParkingMutex::new(LoopLifecycle::Starting),
+            state: ParkingMutex::new(LoopPhase::Starting),
             stop: AtomicBool::new(false),
         }
     }
@@ -1015,7 +1016,7 @@ impl LoopShared {
         }
     }
 
-    pub(super) fn request_stop(&self) -> Result<LoopLifecycle, LoopDecline> {
+    pub(super) fn request_stop(&self) -> Result<LoopPhase, LoopDecline> {
         let mut state = self.state.lock();
         let next = state.on_stop()?;
         *state = next;
@@ -1051,7 +1052,7 @@ pub struct DriverHandle {
 impl DriverHandle {
     /// The driver's current lifecycle state.
     #[must_use]
-    pub fn state(&self) -> LoopLifecycle {
+    pub fn state(&self) -> LoopPhase {
         *self.shared.state.lock()
     }
 
@@ -1062,7 +1063,7 @@ impl DriverHandle {
     ///
     /// [`LoopDecline::StopRequiresLive`] once the driver is already
     /// stopping or stopped.
-    pub fn stop(&self) -> Result<LoopLifecycle, LoopDecline> {
+    pub fn stop(&self) -> Result<LoopPhase, LoopDecline> {
         self.shared.request_stop()
     }
 

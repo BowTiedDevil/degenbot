@@ -39,4 +39,4 @@ pub use driver_boot::{
     resolve_backrun_host_registry, resolve_backrun_node_join, resolve_backrun_registry,
     BackrunBoot, BackrunBootError, BackrunContext, BackrunNodeJoin, CHAIN_ID,
 };
-pub use driver_loop::{BackrunDriver, DriverHandle, LoopDecline, LoopLifecycle};
+pub use driver_loop::{BackrunDriver, DriverHandle, LoopDecline, LoopPhase};

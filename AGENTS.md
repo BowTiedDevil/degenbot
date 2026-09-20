@@ -26,6 +26,12 @@ Comments carry the *why* only if it outlives its lookup: no task/epic IDs (commi
 ## Commands
 See the justfile.
 
+## Rust test scope
+
+Prefer the full-suite gate (`just test-rust`, or `cargo test --workspace --manifest-path rust/Cargo.toml`) to validate changes. Per-crate `cargo test -p <crate>` is fine inside a tight red-green loop, but re-run the workspace suite before declaring work done.
+
+Why: resolver v3 unifies features for `--workspace`, so its artifacts are the one warm, canonical set in `rust/target`. A `-p <crate>` selection unifies features differently (core crates lose the `pyo3` feature the binding layer enables; dep features like tokio's shrink), so cargo stores a second rlib set under different metadata hashes — alternating between the two rebuilds shared dependencies on every shared edit (measured: `-p degenbot-simulation` recompiled 6 just-built crates in ~1m; a leaf crate pays nothing). The workspace run also executes every crate's suite, catching cross-crate fallout (signature changes rippling into dependents, e.g. examples/settlement_bot) that a scoped run never sees.
+
 ## Rebuilding the Rust `.so` after edits
 `uv run maturin develop` and even `cargo clean -p <crate>` do **not** reliably force a from-source recompile of the PyO3 `.so` — maturin uses cached artifacts across different feature-flag hash variants and `uv sync` installs a pre-built wheel in milliseconds. An apparently successful rebuild (~0.3–6s compile, no errors) silently ships a **stale `.so`** that doesn't contain the changes. This has bitten multiple sessions.
 

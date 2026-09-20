@@ -81,19 +81,19 @@ _STRATEGY_HOST_RS = _REPO_ROOT / "rust/crates/degenbot-bot/src/strategy_host.rs"
 _PY_STRATEGY_RS = _REPO_ROOT / "rust/crates/degenbot-python/src/bot/engine/strategy.rs"
 
 
-def _rust_driver_state_variants() -> set[str]:
+def _rust_driver_pose_variants() -> set[str]:
     source = _STRATEGY_HOST_RS.read_text()
-    block = source.split("pub enum DriverState {", 1)[1].split("}", 1)[0]
+    block = source.split("pub enum DriverPose {", 1)[1].split("}", 1)[0]
     return set(re.findall(r"^\s*([A-Z][A-Za-z0-9]*),", block, flags=re.MULTILINE))
 
 
 def _python_state_names() -> dict[str, str]:
     source = _PY_STRATEGY_RS.read_text()
     block = source.split("fn state_name(", 1)[1].split("}", 1)[0]
-    return dict(re.findall(r'DriverState::([A-Za-z0-9]+)\s*=>\s*"([a-z]+)"', block))
+    return dict(re.findall(r'DriverPose::([A-Za-z0-9]+)\s*=>\s*"([a-z]+)"', block))
 
 
-def test_python_state_vocabulary_binds_to_the_rust_driver_state_enum() -> None:
+def test_python_state_vocabulary_binds_to_the_rust_driver_pose_enum() -> None:
     """The Python state names are derived from the Rust FSM, not duplicated.
 
     The host FSM transition table and its state vocabulary are pinned once in
@@ -101,11 +101,11 @@ def test_python_state_vocabulary_binds_to_the_rust_driver_state_enum() -> None:
     in ``strategy.rs`` so a rename or an added state cannot desynchronize while
     both suites stay green.
     """
-    rust_variants = _rust_driver_state_variants()
+    rust_variants = _rust_driver_pose_variants()
     python_names = _python_state_names()
-    assert rust_variants, "the Rust DriverState enum must be source-readable"
+    assert rust_variants, "the Rust DriverPose enum must be source-readable"
     assert set(python_names) == rust_variants, (
-        f"the Python state_name map must cover exactly the Rust DriverState "
+        f"the Python state_name map must cover exactly the Rust DriverPose "
         f"variants: python={sorted(python_names)} rust={sorted(rust_variants)}"
     )
     assert len(set(python_names.values())) == len(python_names), (

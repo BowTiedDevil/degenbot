@@ -16,7 +16,7 @@ use super::driver_loop::{
     decode_predecessor, journal_reentry_outcome, nonce_lane_evidence, outcome_for,
     pool_known_gap_for_tick, predecessor_hash, quarantine_journal_path, record_gap_park,
     reentry_outcome, route_failed_hydration, route_unhydratable_hydration, run_frame, DriverHandle,
-    FrameOutcome, GapParkMemo, LoopDecline, LoopLifecycle, LoopShared, ReentryOutcome, FEED_PREFIX,
+    FrameOutcome, GapParkMemo, LoopDecline, LoopPhase, LoopShared, ReentryOutcome, FEED_PREFIX,
 };
 use super::driver_policy::{bid_submission_target, build_broadcast_relays};
 
@@ -116,27 +116,27 @@ async fn the_boot_registry_resolver_populates_both_boot_paths() {
 #[test]
 fn lifecycle_transition_table_is_total_and_closed() {
     for state in [
-        LoopLifecycle::Starting,
-        LoopLifecycle::Running,
-        LoopLifecycle::Stopping,
-        LoopLifecycle::Stopped,
+        LoopPhase::Starting,
+        LoopPhase::Running,
+        LoopPhase::Stopping,
+        LoopPhase::Stopped,
     ] {
-        if state == LoopLifecycle::Starting {
-            assert_eq!(state.on_running(), Ok(LoopLifecycle::Running));
+        if state == LoopPhase::Starting {
+            assert_eq!(state.on_running(), Ok(LoopPhase::Running));
         } else {
             assert_eq!(state.on_running(), Err(LoopDecline::StartRequiresStarting));
         }
 
-        if matches!(state, LoopLifecycle::Starting | LoopLifecycle::Running) {
-            assert_eq!(state.on_stop(), Ok(LoopLifecycle::Stopping));
+        if matches!(state, LoopPhase::Starting | LoopPhase::Running) {
+            assert_eq!(state.on_stop(), Ok(LoopPhase::Stopping));
         } else {
             assert_eq!(state.on_stop(), Err(LoopDecline::StopRequiresLive));
         }
 
-        if state == LoopLifecycle::Stopped {
+        if state == LoopPhase::Stopped {
             assert_eq!(state.on_stopped(), Err(LoopDecline::StoppedRequiresLive));
         } else {
-            assert_eq!(state.on_stopped(), Ok(LoopLifecycle::Stopped));
+            assert_eq!(state.on_stopped(), Ok(LoopPhase::Stopped));
         }
     }
 }
@@ -150,8 +150,8 @@ async fn stop_walks_a_live_handle_to_stopping_and_is_idempotent() {
         shared: Arc::clone(&shared),
         run: Some(Box::pin(async {})),
     };
-    assert_eq!(handle.state(), LoopLifecycle::Starting);
-    assert_eq!(handle.stop(), Ok(LoopLifecycle::Stopping));
+    assert_eq!(handle.state(), LoopPhase::Starting);
+    assert_eq!(handle.stop(), Ok(LoopPhase::Stopping));
     assert!(shared.stop_requested());
     assert_eq!(
         handle.stop(),
@@ -159,7 +159,7 @@ async fn stop_walks_a_live_handle_to_stopping_and_is_idempotent() {
         "a stopping driver refuses a second stop"
     );
     shared.mark_stopped();
-    assert_eq!(handle.state(), LoopLifecycle::Stopped);
+    assert_eq!(handle.state(), LoopPhase::Stopped);
     assert!(handle.state().is_terminal());
 }
 
@@ -168,12 +168,12 @@ async fn stop_walks_a_live_handle_to_stopping_and_is_idempotent() {
 #[tokio::test]
 async fn begin_running_does_not_resurrect_a_requested_stop() {
     let shared = LoopShared::new();
-    assert_eq!(shared.request_stop(), Ok(LoopLifecycle::Stopping));
+    assert_eq!(shared.request_stop(), Ok(LoopPhase::Stopping));
     shared.begin_running();
-    assert_eq!(*shared.state.lock(), LoopLifecycle::Stopping);
+    assert_eq!(*shared.state.lock(), LoopPhase::Stopping);
     assert!(shared.stop_requested());
     shared.mark_stopped();
-    assert_eq!(*shared.state.lock(), LoopLifecycle::Stopped);
+    assert_eq!(*shared.state.lock(), LoopPhase::Stopped);
 }
 
 #[tokio::test]

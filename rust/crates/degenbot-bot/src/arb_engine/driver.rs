@@ -247,41 +247,6 @@ pub struct EngineDriver {
     stopped: AtomicBool,
 }
 
-/// A read-only snapshot of the engine session's pump-protocol machinery: the
-/// protocol phase, the terminal stop latch, and whether a live pump task is
-/// armed.
-///
-/// This is a *consult* record, not a lifecycle authority. The one operator
-/// lifecycle lives in [`crate::strategy_host::StrategyHost`]; a driver's pump
-/// phase is its own protocol sub-state, so a consumer reads it through this
-/// snapshot instead of deriving operator legality from it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DriverSnapshot {
-    phase: PumpPhase,
-    stopped: bool,
-    pump_handle_armed: bool,
-}
-
-impl DriverSnapshot {
-    /// The engine session's current pump-protocol phase.
-    #[must_use]
-    pub const fn phase(&self) -> PumpPhase {
-        self.phase
-    }
-
-    /// Whether the terminal stop latch has been set.
-    #[must_use]
-    pub const fn is_stopped(&self) -> bool {
-        self.stopped
-    }
-
-    /// Whether a live pump task handle is armed.
-    #[must_use]
-    pub const fn pump_handle_armed(&self) -> bool {
-        self.pump_handle_armed
-    }
-}
-
 impl EngineDriver {
     /// Standalone-Rust construction: adopts the shared `Bot` and builds the
     /// stage seam from the caller's typed config (ADR-050 D2).
@@ -396,16 +361,6 @@ impl EngineDriver {
     #[must_use]
     pub fn pump_handle_armed(&self) -> bool {
         self.pump_handle.lock().is_some()
-    }
-
-    /// Read the pump-protocol machinery as one immutable consult record.
-    #[must_use]
-    pub fn snapshot(&self) -> DriverSnapshot {
-        DriverSnapshot {
-            phase: self.current_phase(),
-            stopped: self.is_stopped(),
-            pump_handle_armed: self.pump_handle_armed(),
-        }
     }
 
     /// Await the spawned pump task's completion — cooperative exit, stream

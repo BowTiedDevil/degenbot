@@ -19,15 +19,15 @@ use degenbot_bot::sidecar_paths::V2ConnectorIndex;
 use degenbot_bot::strategy_host::{FacetStatus, HostError, HostHub, StrategyHost};
 
 /// The Python-facing name of a driver's FSM state.
-fn state_name(state: degenbot_bot::strategy_host::DriverState) -> &'static str {
-    use degenbot_bot::strategy_host::DriverState;
+fn state_name(state: degenbot_bot::strategy_host::DriverPose) -> &'static str {
+    use degenbot_bot::strategy_host::DriverPose;
     match state {
-        DriverState::Registered => "registered",
-        DriverState::Enabled => "enabled",
-        DriverState::Running => "running",
-        DriverState::Stopped => "stopped",
-        DriverState::Halted => "halted",
-        DriverState::Disabled => "disabled",
+        DriverPose::Registered => "registered",
+        DriverPose::Enabled => "enabled",
+        DriverPose::Running => "running",
+        DriverPose::Stopped => "stopped",
+        DriverPose::Halted => "halted",
+        DriverPose::Disabled => "disabled",
     }
 }
 
@@ -413,7 +413,7 @@ mod tests {
     #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
     use super::*;
-    use degenbot_bot::strategy_host::{DriverExit, DriverState};
+    use degenbot_bot::strategy_host::{DriverExit, DriverPose};
 
     /// The engine's start flow boots a driver that registered a factory and
     /// folds its terminal exit into the FSM, so a self-halt is a queryable
@@ -455,7 +455,7 @@ mod tests {
                     let record = engine.host.lock().record(&id).cloned();
                     if record
                         .as_ref()
-                        .is_some_and(|record| record.state() == DriverState::Halted)
+                        .is_some_and(|record| record.state() == DriverPose::Halted)
                     {
                         return record;
                     }

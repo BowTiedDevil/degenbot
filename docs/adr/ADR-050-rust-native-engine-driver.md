@@ -115,7 +115,7 @@ pub fn run_v4_registration_lifecycle_sync(&self, pool_manager: &str, pool_id_hex
 
 The engine-session protocol truth stays the existing FSM (`Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`); the driver reproduces today's transitions exactly (`after_subscribe` landing at `SnapshotLoaded`; `resume` landing at `Resumed`). No new discriminant is added to it.
 
-**Pump-protocol naming.** The enum is now `PumpPhase`: it is a protocol-phase machine for `subscribe`/`load_snapshot`/`backfill`/`resume` ordering, NOT the operator-facing lifecycle. The one operator lifecycle (`Registered → Enabled → Running → Stopped | Halted | Disabled`) is owned by `strategy_host::StrategyHost`; a consumer reads the pump machinery read-only through `EngineDriver::snapshot() -> DriverSnapshot { phase, is_stopped, pump_handle_armed }` and never derives operator legality from it.
+**Pump-protocol naming.** The enum is now `PumpPhase`: it is a protocol-phase machine for `subscribe`/`load_snapshot`/`backfill`/`resume` ordering, NOT the operator-facing lifecycle. The one operator lifecycle (`Registered → Enabled → Running → Stopped | Halted | Disabled`) is owned by `strategy_host::StrategyHost`; a consumer reads the pump machinery through `EngineDriver::current_phase()` and its sibling accessors and never derives operator legality from it.
 
 The driver adds a **terminal stopped latch** (`stopped: AtomicBool`), because the engine enum cannot express teardown. Every driver member except `stop()` rejects once stopped. `stop()` is deliberately any-phase and idempotent — the `BotRunner.shutdown` contract (the SIGINT/partial-startup teardown depends on it).
 
