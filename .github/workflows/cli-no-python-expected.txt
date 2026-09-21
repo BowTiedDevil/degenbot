@@ -10,12 +10,14 @@ Commands:
   aave      Aave commands
   fleet     Steer the live worker fleet over the operator command channel
   path      Steer a live bot over the operator command channel
+  strategy  Inspect the typed strategy facets (ADR-055)
 
 Options:
       --database <PATH>      Path to the SQLite database (`--database` > `DEGENBOT_DB_PATH` > `<state_home>/degenbot/db/degenbot.db`)
       --chain-id <CHAIN_ID>  Session chain id (`--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`)
       --node-http <URI>      HTTP RPC endpoint (`--node-http` > `DEGENBOT_RPC_HTTP_CHAINID_<id>`)
       --node-ws <URI>        WebSocket RPC endpoint (`--node-ws` > `DEGENBOT_RPC_WS_CHAINID_<id>`)
+      --config <PATH>        Typed config file the `strategy` verbs read and write (`--config` > `DEGENBOT_CONFIG` > the XDG config home)
   -h, --help                 Print help
   -V, --version              Print version
 exit 0
