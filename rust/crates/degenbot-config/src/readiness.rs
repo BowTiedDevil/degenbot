@@ -21,7 +21,7 @@ pub const SETTLEMENT_DEFAULT_ENDPOINTS: &[&str] = &[
     "https://rpc.mevblocker.io/fullprivacy",
 ];
 
-/// The MEVBlocker searcher WS the default backrun bundle channel resolves
+/// The `MEVBlocker` searcher WS the default backrun bundle channel resolves
 /// to. The feed crate re-exports this constant so the default has one
 /// home.
 pub const DEFAULT_BACKRUN_STREAM_URL: &str = "wss://searchers.mevblocker.io";

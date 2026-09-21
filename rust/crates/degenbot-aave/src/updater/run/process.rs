@@ -372,6 +372,11 @@ pub(super) struct ChunkCoreReport {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test fixtures fail loudly on an unconstructible prerequisite"
+)]
 mod tests {
     use super::*;
 

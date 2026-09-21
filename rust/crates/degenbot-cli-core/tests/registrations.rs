@@ -27,9 +27,9 @@ fn env() -> MapEnv {
     MapEnv::new(BTreeMap::new())
 }
 
-fn run_cmd(command: Command, path: &Path) -> degenbot_cli_core::CommandOutcome {
+fn run_cmd(command: &Command, path: &Path) -> degenbot_cli_core::CommandOutcome {
     run(
-        &command,
+        command,
         &degenbot_cli_core::CliContext::new(&env()).with_database(path.display().to_string()),
         &NoPrompt,
     )
@@ -75,7 +75,7 @@ fn database_reset_registers_supported_exchanges_and_market_inactive() {
     let db = dir.path().join("degenbot.db");
 
     let outcome = run_cmd(
-        Command::Database(DatabaseCommand::Reset { force: true }),
+        &Command::Database(DatabaseCommand::Reset { force: true }),
         &db,
     );
     assert_eq!(outcome.exit_code, degenbot_cli_core::ExitCode::Success);
@@ -89,7 +89,7 @@ fn database_reset_registers_supported_exchanges_and_market_inactive() {
     // Every supported exchange pair is registered inactive...
     assert_eq!(
         exchange_count(&db),
-        RETIRED_PAIRS as i64,
+        i64::try_from(RETIRED_PAIRS).unwrap(),
         "all 17 supported (chain, dex) pairs registered"
     );
     for (chain, name) in [
@@ -97,7 +97,7 @@ fn database_reset_registers_supported_exchanges_and_market_inactive() {
         (1, "uniswap_v4"),
         (1, "pancakeswap_v3"),
     ] {
-        let (active,) = exchange_row(&db, chain, name).expect("registered row");
+        let (active,) = exchange_row(&db, chain, name).unwrap();
         assert!(!active, "{name} must register inactive");
     }
     // ...including the V4 pool manager singletons.
@@ -111,7 +111,7 @@ fn database_reset_registers_supported_exchanges_and_market_inactive() {
 
     // `exchange list` now reads them as inactive (not "not in database").
     let outcome = run_cmd(
-        Command::Exchange(ExchangeCommand::List { chain: None }),
+        &Command::Exchange(ExchangeCommand::List { chain: None }),
         &db,
     );
     let lines = outcome.report().unwrap().render_lines();
@@ -136,7 +136,7 @@ fn ensure_is_idempotent_and_activation_flips_without_creating() {
 
     // Activation on a pre-registered row is a pure flag flip.
     let outcome = run_cmd(
-        Command::Exchange(ExchangeCommand::Activate {
+        &Command::Exchange(ExchangeCommand::Activate {
             chain: "ethereum".to_string(),
             name: "uniswap_v2".to_string(),
         }),
@@ -147,7 +147,7 @@ fn ensure_is_idempotent_and_activation_flips_without_creating() {
     assert!(active);
     assert_eq!(
         exchange_count(&db),
-        RETIRED_PAIRS as i64,
+        i64::try_from(RETIRED_PAIRS).unwrap(),
         "no duplicate rows"
     );
 }

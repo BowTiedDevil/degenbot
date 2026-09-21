@@ -1,11 +1,6 @@
 //! Parity: the feed crate's default searcher WS is the SAME constant the
 //! strategy-readiness resolution hands an activated backrun facet.
 
-#![expect(
-    clippy::expect_used,
-    reason = "test fixtures fail loudly on an unconstructible prerequisite"
-)]
-
 #[test]
 fn default_stream_url_is_the_config_default() {
     assert_eq!(

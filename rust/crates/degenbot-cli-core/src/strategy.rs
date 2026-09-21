@@ -108,8 +108,13 @@ impl StrategyFacet {
     }
 }
 
-/// Lookup a schema key by dotted section + field; panic-free typed refusal
-/// otherwise.
+/// Lookup a schema key by dotted section + field.
+///
+/// # Panics
+///
+/// Panics when the facet's declared section carries no such field; callers
+/// pair a facet's own section with one of its declared fields.
+#[expect(clippy::panic)] // both the section and the field are schema-registry facts
 fn facet_key(section: &str, field: &str) -> &'static degenbot_config::KeyDecl {
     SCHEMA
         .iter()
@@ -298,12 +303,12 @@ pub(crate) fn execute(
             endpoints_default,
         } => {
             let file = ctx.resolve_config_file()?;
-            activate(*facet, endpoints, *endpoints_default, &file, ctx)
+            activate(*facet, endpoints.as_ref(), *endpoints_default, &file, ctx)
         }
         StrategyCommand::Deactivate { facet } => {
             let file = ctx.resolve_config_file()?;
             let outcome = write_key_with_env(&file, facet.activation_key(), "false", ctx.env())
-                .map_err(strategy_write_error)?
+                .map_err(|error| strategy_write_error(&error))?
                 .into();
             Ok(StrategyReport::Deactivated {
                 facet: *facet,
@@ -314,7 +319,7 @@ pub(crate) fn execute(
             let file = ctx.resolve_config_file()?;
             let key = facet_lookup(*facet, key)?;
             let outcome = write_key_with_env(&file, key, value, ctx.env())
-                .map_err(strategy_write_error)?
+                .map_err(|error| strategy_write_error(&error))?
                 .into();
             Ok(StrategyReport::Set {
                 facet: *facet,
@@ -332,7 +337,8 @@ pub(crate) fn execute(
                     key.toml_path
                 )));
             }
-            degenbot_config::writer::remove_key(&file, key).map_err(strategy_write_error)?;
+            degenbot_config::writer::remove_key(&file, key)
+                .map_err(|error| strategy_write_error(&error))?;
             Ok(StrategyReport::Defaulted {
                 facet: *facet,
                 key: key.field,
@@ -391,7 +397,7 @@ fn load(file: &Path, ctx: &CliContext<'_>) -> Result<degenbot_config::LoadedConf
 /// never leave the config in a state the readiness gate would refuse).
 fn activate(
     facet: StrategyFacet,
-    endpoints: &Option<String>,
+    endpoints: Option<&String>,
     endpoints_default: bool,
     file: &Path,
     ctx: &CliContext<'_>,
@@ -406,7 +412,7 @@ fn activate(
     // single write path: the persisted `endpoints` list IS the posture (no
     // denormalized marker key to keep in step with it).
     let stamped = endpoints_default.then(|| facet.default_endpoint_set().join(","));
-    let chosen = endpoints.clone().or(stamped);
+    let chosen = endpoints.cloned().or(stamped);
     let loaded = load(file, ctx)?;
     let already_settled = facet_has_settled_choice(facet, &loaded.config);
     if chosen.is_none() && !already_settled {
@@ -428,12 +434,12 @@ fn activate(
                 facet.endpoints_key().field,
                 urls,
             )
-            .map_err(|problem| CliError::InvalidArgument(problem))?;
+            .map_err(CliError::InvalidArgument)?;
     }
     let activation = facet.activation_key();
     candidate
         .assign(activation.section, activation.field, "true")
-        .map_err(|problem| CliError::InvalidArgument(problem))?;
+        .map_err(CliError::InvalidArgument)?;
     let readiness = strategy_readiness(&candidate)
         .map_err(|error| CliError::InvalidArgument(error.to_string()))?;
     let arm = match facet {
@@ -451,11 +457,11 @@ fn activate(
     let mut outcome = MutationOutcome::Applied;
     if let Some(urls) = &chosen {
         outcome = write_key_with_env(file, facet.endpoints_key(), urls, ctx.env())
-            .map_err(strategy_write_error)?
+            .map_err(|error| strategy_write_error(&error))?
             .into();
     }
     let activation_outcome = write_key_with_env(file, facet.activation_key(), "true", ctx.env())
-        .map_err(strategy_write_error)?
+        .map_err(|error| strategy_write_error(&error))?
         .into();
     if matches!(outcome, MutationOutcome::Applied) {
         outcome = activation_outcome;
@@ -482,9 +488,7 @@ fn facet_has_settled_choice(
         StrategyFacet::Settlement => cfg.strategy.settlement.endpoints.as_deref(),
         StrategyFacet::Backrun => cfg.strategy.backrun.endpoints.as_deref(),
     };
-    endpoints
-        .map(|raw| raw.split(',').any(|s| !s.trim().is_empty()))
-        .unwrap_or(false)
+    endpoints.is_some_and(|raw| raw.split(',').any(|s| !s.trim().is_empty()))
 }
 
 /// Resolve a `set`/`default` key against the facet's declared section.
@@ -496,12 +500,7 @@ fn facet_lookup(
         .iter()
         .find(|k| k.section == facet.config_section() && k.field == key);
     let Some(key) = matched else {
-        let declared = descriptor(facet)
-            .fields
-            .iter()
-            .copied()
-            .collect::<Vec<_>>()
-            .join(", ");
+        let declared = descriptor(facet).fields.clone().join(", ");
         return Err(CliError::InvalidArgument(format!(
             "unknown key {key:?} on facet {} (declared: {declared})",
             facet.config_section()
@@ -519,13 +518,14 @@ fn facet_lookup(
 }
 
 /// Surface a write refusal with its facet context.
-fn strategy_write_error(error: degenbot_config::ConfigError) -> CliError {
+fn strategy_write_error(error: &degenbot_config::ConfigError) -> CliError {
     CliError::InvalidArgument(error.to_string())
 }
 
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::panic,
     reason = "unit tests: a malformed fixture must fail the test loudly"
 )]

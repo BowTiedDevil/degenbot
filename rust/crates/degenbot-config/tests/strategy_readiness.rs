@@ -42,15 +42,12 @@ fn settlement_explicit_endpoints_resolve() {
         Some("https://rpc.flashbots.net?hint=hash,https://rpc.mevblocker.io/fullprivacy"),
     );
     let readiness = strategy_readiness(&cfg).expect("ready");
-    let Arm::Active(urls) = readiness.settlement else {
-        panic!("settlement must resolve its endpoints");
-    };
     assert_eq!(
-        urls,
-        vec![
-            "https://rpc.flashbots.net?hint=hash",
-            "https://rpc.mevblocker.io/fullprivacy",
-        ]
+        readiness.settlement,
+        Arm::Active(vec![
+            "https://rpc.flashbots.net?hint=hash".to_string(),
+            "https://rpc.mevblocker.io/fullprivacy".to_string(),
+        ])
     );
 }
 
@@ -58,20 +55,17 @@ fn settlement_explicit_endpoints_resolve() {
 fn the_pinned_allowlist_resolves_when_stamped_as_endpoints() {
     // `--endpoints-default` stamps the pinned allowlist into the persisted
     // `endpoints` key; readiness must accept exactly that state.
-    let pinned = SETTLEMENT_DEFAULT_ENDPOINTS
-        .iter()
-        .copied()
-        .collect::<Vec<_>>()
-        .join(",");
+    let pinned = SETTLEMENT_DEFAULT_ENDPOINTS.to_vec().join(",");
     let cfg = activated("settlement", Some(&pinned));
     let readiness = strategy_readiness(&cfg).expect("ready");
-    let Arm::Active(urls) = readiness.settlement else {
-        panic!("the pinned allowlist must resolve");
-    };
-    assert_eq!(urls, SETTLEMENT_DEFAULT_ENDPOINTS.to_vec());
     assert_eq!(
-        urls.first().map(String::as_str),
-        Some("https://rpc.flashbots.net?hint=hash")
+        readiness.settlement,
+        Arm::Active(
+            SETTLEMENT_DEFAULT_ENDPOINTS
+                .iter()
+                .map(|url| (*url).to_string())
+                .collect()
+        )
     );
 }
 
@@ -80,20 +74,20 @@ fn the_backrun_default_channel_resolves_when_stamped_as_endpoints() {
     // The reference default posture the CLI stamps for the backrun arm.
     let cfg = activated("backrun", Some(DEFAULT_BACKRUN_STREAM_URL));
     let readiness = strategy_readiness(&cfg).expect("ready");
-    let Arm::Active(urls) = readiness.backrun else {
-        panic!("the default backrun channel must resolve");
-    };
-    assert_eq!(urls, vec![DEFAULT_BACKRUN_STREAM_URL.to_string()]);
+    assert_eq!(
+        readiness.backrun,
+        Arm::Active(vec![DEFAULT_BACKRUN_STREAM_URL.to_string()])
+    );
 }
 
 #[test]
 fn backrun_explicit_endpoint_resolves() {
     let cfg = activated("backrun", Some("wss://searchers.example/x"));
     let readiness = strategy_readiness(&cfg).expect("ready");
-    let Arm::Active(urls) = readiness.backrun else {
-        panic!("backrun must resolve its endpoints");
-    };
-    assert_eq!(urls, vec!["wss://searchers.example/x"]);
+    assert_eq!(
+        readiness.backrun,
+        Arm::Active(vec!["wss://searchers.example/x".to_string()])
+    );
 }
 
 #[test]

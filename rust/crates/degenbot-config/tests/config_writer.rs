@@ -10,10 +10,9 @@ use degenbot_config::writer::{remove_key, write_key_with_env, WriteOutcome};
 use degenbot_config::{BotConfigLoader, KeyDecl, MapEnv, SCHEMA};
 
 fn key(path: &str) -> &'static KeyDecl {
-    SCHEMA
-        .iter()
-        .find(|k| k.toml_path == path)
-        .unwrap_or_else(|| panic!("key {path} must be declared"))
+    let decl = SCHEMA.iter().find(|k| k.toml_path == path);
+    assert!(decl.is_some(), "key {path} must be declared");
+    decl.expect("declared in SCHEMA")
 }
 
 fn load(file: &Path, env: Option<MapEnv>) -> degenbot_config::LoadedConfig {

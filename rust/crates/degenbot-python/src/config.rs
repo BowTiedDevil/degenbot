@@ -62,7 +62,7 @@ impl StrategyReadinessView {
         fn arm(arm: &::degenbot_config::Arm) -> (bool, Vec<String>) {
             match arm {
                 ::degenbot_config::Arm::Inactive => (false, Vec::new()),
-                ::degenbot_config::Arm::Active(urls) => (true, urls.to_vec()),
+                ::degenbot_config::Arm::Active(urls) => (true, urls.clone()),
             }
         }
         let (settlement_active, settlement_endpoints) = arm(&readiness.settlement);
@@ -86,7 +86,7 @@ impl StrategyReadinessView {
 /// public mempool.
 #[pyfunction]
 pub fn validate_strategy_readiness() -> PyResult<StrategyReadinessView> {
-    ::degenbot_config::strategy_readiness(&::degenbot_config::holder::config())
+    ::degenbot_config::strategy_readiness(::degenbot_config::holder::config())
         .map(|readiness| StrategyReadinessView::from_readiness(&readiness))
         .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
@@ -102,14 +102,14 @@ pub fn validate_strategy_readiness() -> PyResult<StrategyReadinessView> {
 #[pyfunction]
 pub fn settlement_broadcast_endpoints() -> PyResult<Vec<String>> {
     let config = ::degenbot_config::holder::config();
-    ::degenbot_config::strategy_readiness(&config)
+    ::degenbot_config::strategy_readiness(config)
         .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))
         .and_then(|readiness| match &readiness.settlement {
             ::degenbot_config::Arm::Inactive => Err(::pyo3::exceptions::PyValueError::new_err(
                 "strategy settlement is not active: this hosted runner IS the settlement arm; \
                  activate it first (degenbot strategy activate settlement --endpoints-default)",
             )),
-            ::degenbot_config::Arm::Active(urls) => Ok(urls.to_vec()),
+            ::degenbot_config::Arm::Active(urls) => Ok(urls.clone()),
         })
 }
 /// Read the shared core verification-retry policy defaults.

@@ -1173,6 +1173,10 @@ fn strategy_arm_refusal(backrun_active: bool) -> Option<String> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "the arm-refusal fixture must fail loudly if the gate stops refusing"
+)]
 mod arm_gate_tests {
     use super::strategy_arm_refusal;
 

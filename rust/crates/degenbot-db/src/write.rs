@@ -2440,7 +2440,6 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// [`DbError::Sqlite`] on a query failure.
-    #[expect(clippy::missing_errors_doc)]
     pub fn register_aave_market(
         &self,
         chain_id: i64,
@@ -2489,7 +2488,6 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// [`DbError::Sqlite`] on a DELETE failure.
-    #[expect(clippy::missing_errors_doc)]
     pub fn delete_zero_balance_positions_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,

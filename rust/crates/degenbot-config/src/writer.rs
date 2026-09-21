@@ -150,6 +150,12 @@ fn write_document(file: &Path, document: &DocumentMut) -> Result<(), ConfigError
 }
 
 /// Descend to (creating as needed) the key's parent table.
+///
+/// # Panics
+///
+/// Panics when `key.toml_path` is empty or a parent segment is not a table;
+/// `KeyDecl` schema paths are non-empty and table-structured by construction.
+#[expect(clippy::expect_used)] // KeyDecl schema paths are non-empty table paths
 fn navigate_mut<'a>(
     document: &'a mut DocumentMut,
     key: &'static KeyDecl,

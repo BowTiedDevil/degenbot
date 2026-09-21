@@ -4,7 +4,7 @@
 //! test pins every retired `(chain, dex)` pair to a shipped registry record (the
 //! Uniswap V4 singletons excepted, documented), and the arm tests exercise the
 //! get-or-create / active-flip / V4 manager upsert against a temp DB.
-#![expect(clippy::unwrap_used)]
+#![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
