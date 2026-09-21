@@ -572,8 +572,12 @@ pub enum StrategySub {
 pub enum FacetArg {
     /// The settled-block strategy.
     Settlement,
-    /// The pending-transaction strategy.
-    Backrun,
+    /// The MEVBlocker-ecosystem pending-transaction strategy.
+    #[value(name = "mevblocker_backrun")]
+    MevblockerBackrun,
+    /// The public-mempool pending-transaction strategy.
+    #[value(name = "peer_backrun")]
+    PeerBackrun,
 }
 
 /// The [`CliContext`] the argv overrides describe (ADR-051 D8).
@@ -858,7 +862,8 @@ fn strategy(command: &StrategySub) -> StrategyCommand {
 fn facet_of(arg: FacetArg) -> StrategyFacet {
     match arg {
         FacetArg::Settlement => StrategyFacet::Settlement,
-        FacetArg::Backrun => StrategyFacet::Backrun,
+        FacetArg::MevblockerBackrun => StrategyFacet::MevblockerBackrun,
+        FacetArg::PeerBackrun => StrategyFacet::PeerBackrun,
     }
 }
 

@@ -25,13 +25,20 @@ class TestStrategyArmEnv:
         monkeypatch.delenv(STRATEGY_ENV, raising=False)
         assert strategy_arm_from_env() is None
 
-    @pytest.mark.parametrize("value", ["settlement", "backrun"])
+    @pytest.mark.parametrize(
+        "value", ["settlement", "mevblocker_backrun", "peer_backrun"]
+    )
     def test_env_accepts_typed_names(self, monkeypatch, value):
         monkeypatch.setenv(STRATEGY_ENV, value)
         assert strategy_arm_from_env() == value
 
     def test_env_rejects_unknown_names(self, monkeypatch):
         monkeypatch.setenv(STRATEGY_ENV, "v6-sniper")
+        with pytest.raises(ValueError, match=STRATEGY_ENV):
+            strategy_arm_from_env()
+
+    def test_env_rejects_the_retired_backrun_name(self, monkeypatch):
+        monkeypatch.setenv(STRATEGY_ENV, "backrun")
         with pytest.raises(ValueError, match=STRATEGY_ENV):
             strategy_arm_from_env()
 
@@ -47,23 +54,32 @@ class TestStrategyArmField:
         monkeypatch.delenv(STRATEGY_ENV, raising=False)
         cfg = DegenbotConfig(strategy_name="settlement")
         assert cfg.strategy_name == "settlement"
-        cfg = DegenbotConfig(strategy_name="backrun")
-        assert cfg.strategy_name == "backrun"
+        cfg = DegenbotConfig(strategy_name="mevblocker_backrun")
+        assert cfg.strategy_name == "mevblocker_backrun"
+        cfg = DegenbotConfig(strategy_name="peer_backrun")
+        assert cfg.strategy_name == "peer_backrun"
 
 
 @pytest.mark.usefixtures("monkeypatch")
 class TestAdmissionIsHostOwned:
     def test_runner_carries_no_python_arm_gate(self, monkeypatch):
-        """The runner constructs under the backrun env; admission is the host's.
+        """The runner constructs under the peer-backrun env; admission is the host's.
 
         A placeholder cfg is honest here — construction never touches it and no
         runner-side env check runs.
         """
-        monkeypatch.setenv(STRATEGY_ENV, "backrun")
+        monkeypatch.setenv(STRATEGY_ENV, "peer_backrun")
         assert BotRunner(None) is not None  # type: ignore[arg-type]
 
     def test_host_refuses_unconfigured_backrun(self):
         """The host's typed refusal is the one admission surface."""
         engine = ArbitrageEngine(py_bot=Bot(1))
         with pytest.raises(UnconfiguredStrategyError):
-            engine.enable_strategy("backrun")
+            engine.enable_strategy("mevblocker_backrun")
+        with pytest.raises(UnconfiguredStrategyError):
+            engine.enable_strategy("peer_backrun")
+
+
+@pytest.fixture(autouse=True)
+def _no_strategy_env(monkeypatch):
+    monkeypatch.delenv(STRATEGY_ENV, raising=False)

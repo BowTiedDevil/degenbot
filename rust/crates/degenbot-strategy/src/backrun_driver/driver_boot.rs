@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::backrun::BackrunConfig;
+use crate::backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
@@ -167,7 +167,9 @@ pub async fn resolve_backrun_registry(
     ix.set_ranker(Arc::new(OnChainLiquidityRanker::new(Arc::clone(provider))));
     let registry = Arc::new(RouteRegistry::new(ix));
     tracing::info!(edges = registry.index().len(), "connector index loaded");
-    if config.strategy.backrun.rank_evidence {
+    if config.strategy.mevblocker_backrun.rank_evidence
+        || config.strategy.peer_backrun.rank_evidence
+    {
         match degenbot_bot::connector_index::deep_pair_ranking_evidence(registry.index(), &db).await
         {
             Ok(()) => tracing::info!("rank evidence: deep USDC/WETH pair tops the ranking"),
@@ -216,6 +218,28 @@ pub fn resolve_backrun_connector_db() -> Option<DegenbotDb> {
     }
 }
 
+/// Which per-ecosystem backrun composition a boot constructs. The two
+/// compositions are distinct concrete types; this value only routes a boot to
+/// the right facet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackrunEcosystem {
+    /// The `MEVBlocker` private-auction composition.
+    Mevblocker,
+    /// The public-mempool composition.
+    Peer,
+}
+
+impl BackrunEcosystem {
+    /// Build the composition's driver config from its facet.
+    #[must_use]
+    fn config(self, cfg: &degenbot_config::BotConfig, rpc_url: String) -> BackrunConfig {
+        match self {
+            Self::Mevblocker => MevblockerBackrun::from_config(cfg, rpc_url).into_config(),
+            Self::Peer => PeerBackrun::from_config(cfg, rpc_url).into_config(),
+        }
+    }
+}
+
 /// Assemble a driver's boot from an already-resolved node join.
 ///
 /// Both a standalone boot (which builds its DB-backed registry over the
@@ -224,9 +248,14 @@ pub fn resolve_backrun_connector_db() -> Option<DegenbotDb> {
 /// (the fallback when absent) resolves here. `namespace_root` scopes the driver's
 /// run-artifacts under a multi-strategy host's state root; `None` keeps the
 /// process-global root (standalone parity).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the boot handoff threads the host-minted handles explicitly"
+)]
 #[must_use]
 pub fn backrun_boot(
     config: &degenbot_config::BotConfig,
+    ecosystem: BackrunEcosystem,
     join: BackrunNodeJoin,
     hub: Arc<Hub>,
     route_registry: Option<Arc<RouteRegistry>>,
@@ -234,7 +263,7 @@ pub fn backrun_boot(
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
 ) -> BackrunBoot {
-    let cfg = BackrunConfig::from_config(config, join.rpc_url);
+    let cfg = ecosystem.config(config, join.rpc_url);
     let head_ws_url =
         degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
             .ok()
@@ -264,6 +293,7 @@ pub fn backrun_boot(
 #[must_use]
 pub fn backrun_spawn_factory(
     config: Arc<degenbot_config::BotConfig>,
+    ecosystem: BackrunEcosystem,
     hub: Arc<Hub>,
     route_registry: Option<Arc<RouteRegistry>>,
     nonce_lane: Arc<NonceLane>,
@@ -275,6 +305,7 @@ pub fn backrun_spawn_factory(
                     let namespace_root = namespace.map(|ns| ns.root().to_path_buf());
                     backrun_boot(
                         &config,
+                        ecosystem,
                         join,
                         hub,
                         route_registry,

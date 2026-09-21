@@ -22,9 +22,10 @@ _WS_ENV_PREFIX = "DEGENBOT_RPC_WS_CHAINID_"
 _DEFAULT_CHAIN_ID_ENV_VAR = "DEGENBOT_DEFAULT_CHAIN_ID"
 _STRATEGY_NAME_ENV_VAR = "DEGENBOT_STRATEGY_NAME"
 
-# The typed names the arm selector accepts; mirrors the config_schema enum
-# (StrategyName::Settlement|Backrun). A name must exist in BOTH typescripts.
-_STRATEGY_NAMES = frozenset({"settlement", "backrun"})
+# The typed names the arm selector accepts; mirrors the config_schema facet
+# split (StrategyName::Settlement|MevblockerBackrun|PeerBackrun). A name must
+# exist in BOTH typescripts.
+_STRATEGY_NAMES = frozenset({"settlement", "mevblocker_backrun", "peer_backrun"})
 
 
 def _xdg_config_home() -> Path:
@@ -158,7 +159,7 @@ class DegenbotConfig(BaseSettings):
     # Python (the RPC cascade reads this file via load_config_from_file).
     failure_policy: dict[str, str | dict[str, str]] = {}
     # The arm selector (ADR-055). File-layer typed mirror of the Rust schema's
-    # strategy.name; DEGENBOT_STRATEGY_NAME reads run through
+    # strategy facets; DEGENBOT_STRATEGY_NAME reads run through
     # strategy_arm_from_env (env layer outranks the file, mirroring the
     # default_chain_id cascade precedent).
     strategy_name: str | None = None

@@ -466,12 +466,11 @@ pub(super) async fn run_frame(
                 access_list: None,
                 path_pools: HashSet::new(),
             };
-            // The private-broadcast arm: with `strategy.backrun.mevblocker_url`
-            // set, the signed backrun goes raw to that private endpoint first
-            // and to the chain node as the public fallback relay (the order
-            // `build_broadcast_relays` preserves). The URL augments the
-            // broadcast fan-out only; `bid_submission_target` never reads it,
-            // so the target stays the bundle-only arm regardless.
+            // The submission slot decides both the target and the raw
+            // fan-out: the MEVBlocker arm anchors a bundle and leads the
+            // fan-out with its private endpoint, the peer arm fans the signed
+            // bytes over the public relays. The reaction machinery above is
+            // identical for both.
             let broadcast_relays = build_broadcast_relays(cfg, provider).await;
             let target = bid_submission_target(cfg, ev.hash, head + 1);
             match dispatch_and_submit(
@@ -1128,7 +1127,7 @@ impl BackrunDriver {
             namespace_root,
             nonce_lane,
         } = ctx;
-        // The bundle-sim client (`strategy.backrun.sim_url`, default: the chain
+        // The bundle-sim client (the facet's `sim_url`, default: the chain
         // node the frames replay against). READ/SIM ONLY -- `eth_callMany` never
         // broadcasts, and this client is passed nothing else. The sim MUST run
         // on an endpoint that actually serves `eth_callMany`; MEVBlocker's
@@ -1139,7 +1138,7 @@ impl BackrunDriver {
                 .clone()
                 .unwrap_or_else(|| cfg.rpc_url.clone())
                 .parse()
-                .expect("strategy.backrun.sim_url parses as an http url"),
+                .expect("the facet's sim_url parses as an http url"),
         );
         // The gap-boundary probe samples the chain node's pending-pool lanes
         // whenever a frame claims a nonce ahead of the parent state.
@@ -1149,11 +1148,10 @@ impl BackrunDriver {
         // loads when the key material exists so observe-only runs need none.
         let signer: Option<TxSigner> = cfg.key_file.as_ref().map(|p| {
             let hex = std::fs::read_to_string(p)
-                .expect("strategy.backrun.key_file readable")
+                .expect("the facet's key_file readable")
                 .trim()
                 .to_string();
-            TxSigner::from_key_hex(&hex, 1)
-                .expect("strategy.backrun.key_file parses as a secp256k1 key")
+            TxSigner::from_key_hex(&hex, 1).expect("the facet's key_file parses as a secp256k1 key")
         });
 
         // Dry-run (offline-review): a captured frame JSONL replaces the live
@@ -1182,7 +1180,7 @@ impl BackrunDriver {
         let exec: Address = cfg
             .executor
             .parse()
-            .expect("strategy.backrun.executor is a valid address");
+            .expect("the facet's executor is a valid address");
         // The sim oracle's caller identity: the executor is OWNER-gated
         // (`execute()` asserts msg.sender == OWNER_ADDR), so the simulated
         // call must come from the OPERATOR address -- never the target tx's
@@ -1356,11 +1354,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
     let feed = BackrunFeed::spawn_on_hub(
         &event_hub,
         BackrunFeedConfig {
-            url: if cfg.stream_url.is_empty() {
-                BackrunFeedConfig::for_mainnet().url
-            } else {
-                cfg.stream_url.clone()
-            },
+            url: cfg.feed_url.clone(),
             ..BackrunFeedConfig::for_mainnet()
         },
     )

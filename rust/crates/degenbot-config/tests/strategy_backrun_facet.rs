@@ -1,4 +1,4 @@
-//! RED-first pins for the strategy.backrun facet keys (X6P5GN): every key
+//! RED-first pins for the two per-ecosystem backrun facets: every key
 //! resolves from TOML, from env, and collapses to its declared default.
 
 #![expect(
@@ -10,49 +10,86 @@ use std::collections::BTreeMap;
 
 use degenbot_config::{BotConfig, BotConfigLoader, MapEnv};
 
-/// The complete backrun facet surface (env name -> (toml leaf, raw env value)).
-fn facet_env() -> BTreeMap<&'static str, &'static str> {
-    BTreeMap::from([
-        ("DEGENBOT_STRATEGY_BACKRUN_ACTIVE", "1"),
-        ("DEGENBOT_STRATEGY_BACKRUN_BID_MODE", "1"),
-        (
-            "DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI",
-            "12345678901234567890",
-        ),
-        ("DEGENBOT_STRATEGY_BACKRUN_MAX_BUNDLE_WEI", "999"),
-        ("DEGENBOT_STRATEGY_BACKRUN_BRIBE_BIPS", "9500"),
-        ("DEGENBOT_STRATEGY_BACKRUN_PRIORITY_FEE_GWEI", "7"),
-        ("DEGENBOT_STRATEGY_BACKRUN_BUNDLE_GAS_EST", "333000"),
-        ("DEGENBOT_STRATEGY_BACKRUN_DRY_RUN", "1"),
-        ("DEGENBOT_STRATEGY_BACKRUN_KEY_FILE", "/tmp/k.key"),
-        (
-            "DEGENBOT_STRATEGY_BACKRUN_EXECUTOR",
-            "0x00000000000000000000000000000000000000aa",
-        ),
-        (
-            "DEGENBOT_STRATEGY_BACKRUN_OPERATOR",
-            "0x00000000000000000000000000000000000000bb",
-        ),
-        ("DEGENBOT_STRATEGY_BACKRUN_SIM_URL", "http://sim.local:8545"),
-        ("DEGENBOT_STRATEGY_BACKRUN_ENDPOINTS", "wss://stream.local"),
-        (
-            "DEGENBOT_STRATEGY_BACKRUN_MEVBLOCKER_URL",
-            "http://private.local:8545",
-        ),
-        ("DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE", "1"),
-        ("DEGENBOT_STRATEGY_BACKRUN_CONNECTORS", "5"),
-        ("DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD", "26001272"),
-        ("DEGENBOT_STRATEGY_BACKRUN_STOP_FILE", "/tmp/stop"),
-    ])
+const MEVBLOCKER_ENV: &[(&str, &str)] = &[
+    ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE", "1"),
+    ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BID_MODE", "1"),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUDGET_WEI",
+        "12345678901234567890",
+    ),
+    ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_MAX_BUNDLE_WEI", "999"),
+    ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BRIBE_BIPS", "9500"),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_PRIORITY_FEE_GWEI",
+        "7",
+    ),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUNDLE_GAS_EST",
+        "333000",
+    ),
+    ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_DRY_RUN", "1"),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_KEY_FILE",
+        "/tmp/k.key",
+    ),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_EXECUTOR",
+        "0x00000000000000000000000000000000000000aa",
+    ),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_OPERATOR",
+        "0x00000000000000000000000000000000000000bb",
+    ),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_SIM_URL",
+        "http://sim.local:8545",
+    ),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ENDPOINTS",
+        "wss://stream.local",
+    ),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_MEVBLOCKER_URL",
+        "http://private.local:8545",
+    ),
+    ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_RANK_EVIDENCE", "1"),
+    ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CONNECTORS", "5"),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_FIXTURE_HEAD",
+        "26001272",
+    ),
+    (
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_STOP_FILE",
+        "/tmp/stop",
+    ),
+];
+
+const PEER_ENV: &[(&str, &str)] = &[
+    ("DEGENBOT_STRATEGY_PEER_BACKRUN_ACTIVE", "1"),
+    ("DEGENBOT_STRATEGY_PEER_BACKRUN_BID_MODE", "1"),
+    (
+        "DEGENBOT_STRATEGY_PEER_BACKRUN_ENDPOINTS",
+        "https://relay.one,https://relay.two",
+    ),
+    ("DEGENBOT_STRATEGY_PEER_BACKRUN_STOP_FILE", "/tmp/peer-stop"),
+];
+
+fn env_map(pairs: &[(&str, &str)]) -> MapEnv {
+    MapEnv::new(
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect::<BTreeMap<String, String>>(),
+    )
 }
 
 #[test]
-fn backrun_facet_collapses_to_declared_defaults() {
+fn backrun_facets_collapse_to_declared_defaults() {
     let loaded = BotConfigLoader::new()
         .without_env()
         .load()
         .expect("defaults load");
-    let b = &loaded.config.strategy.backrun;
+    let b = &loaded.config.strategy.mevblocker_backrun;
     assert!(!b.bid_mode);
     assert_eq!(b.budget_wei, 0);
     assert_eq!(b.max_bundle_wei, 1_000_000_000_000_000);
@@ -64,21 +101,26 @@ fn backrun_facet_collapses_to_declared_defaults() {
     assert_eq!(b.connectors, 8);
     assert_eq!(b.fixture_head, None);
     assert_eq!(b.mevblocker_url, None);
+
+    let p = &loaded.config.strategy.peer_backrun;
+    assert!(!p.bid_mode);
+    assert_eq!(p.budget_wei, 0);
+    assert_eq!(p.max_bundle_wei, 1_000_000_000_000_000);
+    assert_eq!(p.endpoints, None);
+    assert_eq!(
+        p.stop_file,
+        std::path::PathBuf::from("/tmp/degenbot-sidecar-STOP")
+    );
+    assert!(!BotConfig::default().strategy.peer_backrun.active);
 }
 
 #[test]
-fn backrun_facet_resolves_from_env() {
-    let env = MapEnv::new(
-        facet_env()
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-    );
+fn mevblocker_facet_resolves_from_env() {
     let loaded = BotConfigLoader::new()
-        .with_env(Box::new(env))
+        .with_env(Box::new(env_map(MEVBLOCKER_ENV)))
         .load()
         .expect("env load");
-    let b = &loaded.config.strategy.backrun;
+    let b = &loaded.config.strategy.mevblocker_backrun;
     assert!(b.bid_mode);
     assert_eq!(b.budget_wei, 12_345_678_901_234_567_890u128);
     assert_eq!(b.bribe_bips, 9_500);
@@ -94,11 +136,29 @@ fn backrun_facet_resolves_from_env() {
 }
 
 #[test]
-fn backrun_facet_resolves_from_toml() {
-    let path = std::env::temp_dir().join(format!("x6p5gn-{}.toml", std::process::id()));
+fn peer_facet_resolves_from_env() {
+    let loaded = BotConfigLoader::new()
+        .with_env(Box::new(env_map(PEER_ENV)))
+        .load()
+        .expect("env load");
+    let p = &loaded.config.strategy.peer_backrun;
+    assert!(p.active);
+    assert!(p.bid_mode);
+    assert_eq!(
+        p.endpoints.as_deref(),
+        Some("https://relay.one,https://relay.two")
+    );
+    assert_eq!(p.stop_file, std::path::PathBuf::from("/tmp/peer-stop"));
+    // The MEVBlocker facet is untouched by peer env.
+    assert!(!loaded.config.strategy.mevblocker_backrun.active);
+}
+
+#[test]
+fn mevblocker_facet_resolves_from_toml() {
+    let path = std::env::temp_dir().join(format!("backrun-facet-{}.toml", std::process::id()));
     std::fs::write(
         &path,
-        "[strategy.backrun]\n         bid_mode = true\n         budget_wei = \"12345678901234567890\"\n         bribe_bips = 9500\n         connectors = 5\n         fixture_head = 26001272\n",
+        "[strategy.mevblocker_backrun]\n         bid_mode = true\n         budget_wei = \"12345678901234567890\"\n         bribe_bips = 9500\n         connectors = 5\n         fixture_head = 26001272\n",
     )
     .expect("write toml");
     let loaded = BotConfigLoader::new()
@@ -107,20 +167,19 @@ fn backrun_facet_resolves_from_toml() {
         .load()
         .expect("toml load");
     let _ = std::fs::remove_file(&path);
-    let b = &loaded.config.strategy.backrun;
+    let b = &loaded.config.strategy.mevblocker_backrun;
     assert!(b.bid_mode);
     assert_eq!(b.budget_wei, 12_345_678_901_234_567_890u128);
     assert_eq!(b.bribe_bips, 9_500);
     assert_eq!(b.connectors, 5);
     assert_eq!(b.fixture_head, Some(26_001_272));
-    // Untouched keys keep defaults.
     assert_eq!(b.max_bundle_wei, 1_000_000_000_000_000);
 }
 
 #[test]
 fn fixture_head_rejects_junk_at_load() {
     let env = MapEnv::new(BTreeMap::from([(
-        "DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD".to_string(),
+        "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_FIXTURE_HEAD".to_string(),
         "latest".to_string(),
     )]));
     assert!(

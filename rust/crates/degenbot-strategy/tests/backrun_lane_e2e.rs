@@ -29,7 +29,7 @@ use alloy::primitives::{address, keccak256, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_strategy::backrun::{BackrunConfig, Decision};
+use degenbot_strategy::backrun::{BackrunConfig, Decision, MevblockerBackrun};
 use degenbot_strategy::backrun_strategy::BackrunStrategy;
 use degenbot_strategy::frame_pipeline::{
     build_block_handle, process_frame, MarketContext, PipelineConfig,
@@ -88,7 +88,9 @@ fn trace_sink() -> &'static PathBuf {
 }
 
 fn bid_config() -> (BackrunConfig, PipelineConfig) {
-    let mut cfg = BackrunConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+    let mut cfg =
+        MevblockerBackrun::from_config(&degenbot_config::BotConfig::default(), String::new())
+            .into_config();
     cfg.bid_mode = true;
     cfg.budget_wei = U256::from(10_000_000u128) * U256::from(10u64).pow(U256::from(18u8));
     cfg.max_bundle_wei = U256::from(1_000_000u128) * U256::from(10u64).pow(U256::from(18u8));

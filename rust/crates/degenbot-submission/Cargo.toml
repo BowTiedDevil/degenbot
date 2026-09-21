@@ -19,7 +19,7 @@ degenbot-core.workspace = true
 # PendingTx drop-oldest ring on it (Phase B1).
 degenbot-eventhub.workspace = true
 # The typed config schema + 12-factor loader: the hosted boot sources every
-# migrated knob from the loaded `BotConfig` (strategy.backrun facet +
+# migrated knob from the loaded `BotConfig` (a backrun facet +
 # logging artifacts) and resolves the chain-node join through the shared
 # `DEGENBOT_RPC_HTTP_CHAINID_<id>`/`DEGENBOT_DB_PATH` resolvers.
 degenbot-config.workspace = true

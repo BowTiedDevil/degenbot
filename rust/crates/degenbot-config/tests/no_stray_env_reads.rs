@@ -110,7 +110,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &["CARGO_MANIFEST_DIR", "DEGENBOT_BUILD_NUMBER_FILE"][..],
         );
         // The backrun sidecar's configuration now loads through the typed
-        // `strategy.backrun` facet (X6P5GN Slice B hard cutover); the one
+        // per-ecosystem backrun facets; the one
         // remaining env read is the pre-typed executor-owner fallback the
         // facet's `operator` key documents.
         m.insert(

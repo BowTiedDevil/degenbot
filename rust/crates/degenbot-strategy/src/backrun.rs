@@ -21,24 +21,81 @@ use alloy::primitives::U256;
 use degenbot_config::BotConfig;
 use degenbot_decoders::target_class::TargetClass;
 
-/// The backrun driver's typed config, built from the loaded [`BotConfig`]'s
-/// `strategy.backrun` facet plus the chain-node join its boot resolves.
+/// One ecosystem's submission slot: the half of the strategy composition the
+/// two backrun arms differ in. The reaction machinery (frame feed, anchored
+/// discovery, decide gate, sim, dispatch) is shared; only the values named
+/// here vary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmissionSlot {
+    /// The `MEVBlocker` bundle auction. The signed backrun is bid through
+    /// `eth_sendBundle` on the searcher WebSocket, and the raw-broadcast
+    /// fan-out leads with the private endpoint (when set) before the read
+    /// provider fallback.
+    Mevblocker {
+        /// The searcher WebSocket the bundle is anchored on.
+        bundle_url: String,
+        /// Private-broadcast RPC. `None` leaves the raw fan-out to the read
+        /// provider alone; the bundle arm is unaffected either way.
+        private_url: Option<String>,
+    },
+    /// The public-mempool composition: no auction, the signed backrun goes raw
+    /// across the public relay fan-out with the read provider as fallback.
+    PublicFanOut {
+        /// The public relay URLs, in fan-out order.
+        relays: Vec<String>,
+    },
+}
+
+impl SubmissionSlot {
+    /// The ordered raw-broadcast relay URLs this slot names, private-first for
+    /// the `MEVBlocker` slot. Empty means the submit leaf falls back to the read
+    /// provider alone.
+    #[must_use]
+    pub fn raw_relay_urls(&self) -> Vec<String> {
+        match self {
+            Self::Mevblocker {
+                private_url: Some(url),
+                ..
+            } => vec![url.clone()],
+            Self::Mevblocker {
+                private_url: None, ..
+            } => Vec::new(),
+            Self::PublicFanOut { relays } => relays.clone(),
+        }
+    }
+
+    /// Whether this slot names a private (non-public) broadcast endpoint.
+    #[must_use]
+    pub const fn names_private_endpoint(&self) -> bool {
+        matches!(
+            self,
+            Self::Mevblocker {
+                private_url: Some(_),
+                ..
+            }
+        )
+    }
+}
+
+/// The backrun driver's typed config, built from one per-ecosystem facet plus
+/// the chain-node join its boot resolves.
 ///
 /// The key never leaves the signer — only `key_file` is named here.
 #[derive(Debug, Clone)]
 pub struct BackrunConfig {
-    pub stream_url: String,
+    /// The shared pending-transaction source: the `MEVBlocker` searcher feed.
+    pub feed_url: String,
     pub rpc_url: String,
     pub key_file: Option<PathBuf>,
     /// Explicit bid-mode flag. Off = observe-only.
     pub bid_mode: bool,
     /// Cumulative bid budget cap in wei; bid mode REQUIRES non-zero.
     pub budget_wei: U256,
-    /// Hard per-bundle cap in wei.
+    /// Hard per-submission cap in wei.
     pub max_bundle_wei: U256,
     /// Kill-switch path: if the file exists, bidding halts (then the loop).
     pub stop_file: PathBuf,
-    /// Sign-nothing dispatch (`strategy.backrun.dry_run`).
+    /// Sign-nothing dispatch (`strategy.*.dry_run`).
     pub dry_run: bool,
     /// The builder's bribe share in bips, clamped to the `10_000` ceiling.
     pub bribe_bips: u16,
@@ -48,9 +105,6 @@ pub struct BackrunConfig {
     pub priority_fee_gwei: u64,
     /// Bundle-sim endpoint; unset reuses the chain node.
     pub sim_url: Option<String>,
-    /// Private-broadcast RPC for the raw relay fan-out; unset keeps the
-    /// bundle-only bid and the read-provider broadcast.
-    pub mevblocker_url: Option<String>,
     /// Live deep-pair ranking sanity-probe gate.
     pub rank_evidence: bool,
     /// Discovery fan-out cap (connectors per frame).
@@ -64,51 +118,265 @@ pub struct BackrunConfig {
     pub operator: Option<String>,
     /// Dry-run fixture frames path (`logging.dry_run_jsonl`).
     pub dry_run_jsonl: Option<PathBuf>,
+    /// The submission slot this composition binds.
+    pub submission: SubmissionSlot,
 }
 
-impl BackrunConfig {
-    /// Build the driver config from the typed `strategy.backrun` facet
-    /// plus the `logging.dry_run_jsonl` artifact knob. `rpc_url` is the
-    /// chain-node join the bin resolves through the
-    /// `DEGENBOT_RPC_HTTP_CHAINID_<id>` cascade - the resolver family owns
-    /// every endpoint, so the facet carries no URL.
-    #[must_use]
-    pub fn from_config(cfg: &BotConfig, rpc_url: String) -> Self {
-        let backrun = &cfg.strategy.backrun;
-        Self {
-            // The bundle channel URL (searcher WS) from the strategy
-            // readiness: the persisted `endpoints` list (the
-            // `--endpoints-default` activation stamps the pinned searcher
-            // WS into it), or empty when the facet is inactive/unsettled (the
-            // boots refuse that state before the driver runs).
-            stream_url: degenbot_config::strategy_readiness(cfg)
-                .ok()
-                .and_then(|readiness| match &readiness.backrun {
-                    degenbot_config::Arm::Active(urls) => urls.first().cloned(),
-                    degenbot_config::Arm::Inactive => None,
-                })
-                .unwrap_or_default(),
+/// The knob set shared by both per-ecosystem facets. The two facet types are
+/// distinct, so this is the one place their common fields collapse.
+struct BackrunKnobs {
+    active_endpoints: Option<String>,
+    key_file: Option<PathBuf>,
+    bid_mode: bool,
+    budget_wei: u128,
+    max_bundle_wei: u128,
+    stop_file: PathBuf,
+    dry_run: bool,
+    bribe_bips: u64,
+    bundle_gas_est: u64,
+    priority_fee_gwei: u64,
+    sim_url: Option<String>,
+    rank_evidence: bool,
+    connectors: usize,
+    fixture_head: Option<u64>,
+    executor: String,
+    operator: Option<String>,
+}
+
+impl BackrunKnobs {
+    fn into_config(
+        self,
+        cfg: &BotConfig,
+        rpc_url: String,
+        submission: SubmissionSlot,
+    ) -> BackrunConfig {
+        BackrunConfig {
+            // The source slot is shared: both backrun arms consume the
+            // MEVBlocker searcher pending-tx feed.
+            feed_url: degenbot_config::DEFAULT_BACKRUN_STREAM_URL.to_string(),
             rpc_url,
-            key_file: backrun.key_file.clone(),
-            bid_mode: backrun.bid_mode,
-            budget_wei: U256::from(backrun.budget_wei),
-            max_bundle_wei: U256::from(backrun.max_bundle_wei),
-            stop_file: backrun.stop_file.clone(),
-            dry_run: backrun.dry_run,
-            bribe_bips: u16::try_from(backrun.bribe_bips.min(10_000)).unwrap_or(10_000),
-            bundle_gas_est: backrun.bundle_gas_est,
-            priority_fee_gwei: backrun.priority_fee_gwei,
-            sim_url: backrun.sim_url.clone(),
-            mevblocker_url: backrun.mevblocker_url.clone(),
-            rank_evidence: backrun.rank_evidence,
-            connectors: backrun.connectors,
-            fixture_head: backrun.fixture_head,
-            executor: backrun.executor.clone(),
-            operator: backrun.operator.clone(),
+            key_file: self.key_file,
+            bid_mode: self.bid_mode,
+            budget_wei: U256::from(self.budget_wei),
+            max_bundle_wei: U256::from(self.max_bundle_wei),
+            stop_file: self.stop_file,
+            dry_run: self.dry_run,
+            bribe_bips: u16::try_from(self.bribe_bips.min(10_000)).unwrap_or(10_000),
+            bundle_gas_est: self.bundle_gas_est,
+            priority_fee_gwei: self.priority_fee_gwei,
+            sim_url: self.sim_url,
+            rank_evidence: self.rank_evidence,
+            connectors: self.connectors,
+            fixture_head: self.fixture_head,
+            executor: self.executor,
+            operator: self.operator,
             dry_run_jsonl: cfg.logging.dry_run_jsonl.clone(),
+            submission,
+        }
+    }
+}
+
+impl From<&degenbot_config::StrategyMevblockerBackrunConfig> for BackrunKnobs {
+    fn from(f: &degenbot_config::StrategyMevblockerBackrunConfig) -> Self {
+        Self {
+            active_endpoints: f.endpoints.clone(),
+            key_file: f.key_file.clone(),
+            bid_mode: f.bid_mode,
+            budget_wei: f.budget_wei,
+            max_bundle_wei: f.max_bundle_wei,
+            stop_file: f.stop_file.clone(),
+            dry_run: f.dry_run,
+            bribe_bips: f.bribe_bips,
+            bundle_gas_est: f.bundle_gas_est,
+            priority_fee_gwei: f.priority_fee_gwei,
+            sim_url: f.sim_url.clone(),
+            rank_evidence: f.rank_evidence,
+            connectors: f.connectors,
+            fixture_head: f.fixture_head,
+            executor: f.executor.clone(),
+            operator: f.operator.clone(),
+        }
+    }
+}
+
+impl From<&degenbot_config::StrategyPeerBackrunConfig> for BackrunKnobs {
+    fn from(f: &degenbot_config::StrategyPeerBackrunConfig) -> Self {
+        Self {
+            active_endpoints: f.endpoints.clone(),
+            key_file: f.key_file.clone(),
+            bid_mode: f.bid_mode,
+            budget_wei: f.budget_wei,
+            max_bundle_wei: f.max_bundle_wei,
+            stop_file: f.stop_file.clone(),
+            dry_run: f.dry_run,
+            bribe_bips: f.bribe_bips,
+            bundle_gas_est: f.bundle_gas_est,
+            priority_fee_gwei: f.priority_fee_gwei,
+            sim_url: f.sim_url.clone(),
+            rank_evidence: f.rank_evidence,
+            connectors: f.connectors,
+            fixture_head: f.fixture_head,
+            executor: f.executor.clone(),
+            operator: f.operator.clone(),
+        }
+    }
+}
+
+impl BackrunKnobs {
+    /// The `MEVBlocker` submission slot: the bundle bound to the facet's
+    /// searcher WebSocket (or the pinned default) plus the private endpoint.
+    fn mevblocker_slot(
+        &self,
+        f: &degenbot_config::StrategyMevblockerBackrunConfig,
+    ) -> SubmissionSlot {
+        SubmissionSlot::Mevblocker {
+            bundle_url: resolve_arm_endpoint(
+                "mevblocker_backrun",
+                self.active_endpoints.as_deref(),
+                degenbot_config::DEFAULT_BACKRUN_STREAM_URL,
+            ),
+            private_url: f.mevblocker_url.clone(),
         }
     }
 
+    /// The peer submission slot: the facet's public relay fan-out (or the
+    /// pinned default) with the read provider as fallback.
+    fn peer_slot(&self) -> SubmissionSlot {
+        SubmissionSlot::PublicFanOut {
+            relays: resolve_arm_endpoints(
+                "peer_backrun",
+                self.active_endpoints.as_deref(),
+                degenbot_config::DEFAULT_PEER_BACKRUN_RELAYS,
+            ),
+        }
+    }
+}
+
+/// Resolve one activated facet's first endpoint, falling back to a pinned
+/// default. The boots refuse an unsettled active facet before this runs, so
+/// the fallback only serves an inactive or fixture construction.
+fn resolve_arm_endpoint(facet: &'static str, endpoints: Option<&str>, default: &str) -> String {
+    split_arm_endpoints(facet, endpoints, std::slice::from_ref(&default))
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| default.to_string())
+}
+
+/// Resolve an activated facet's endpoint list, falling back to a pinned
+/// default set.
+fn resolve_arm_endpoints(
+    facet: &'static str,
+    endpoints: Option<&str>,
+    default: &[&str],
+) -> Vec<String> {
+    split_arm_endpoints(facet, endpoints, default)
+}
+
+fn split_arm_endpoints(
+    _facet: &'static str,
+    endpoints: Option<&str>,
+    default: &[&str],
+) -> Vec<String> {
+    let urls: Vec<String> = endpoints
+        .into_iter()
+        .flat_map(|raw| raw.split(','))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if urls.is_empty() {
+        default.iter().map(|url| (*url).to_string()).collect()
+    } else {
+        urls
+    }
+}
+
+/// The MEVBlocker-ecosystem backrun strategy: the shared pending-transaction
+/// reaction composed over per-ecosystem facets.
+///
+/// | Slot | Binding |
+/// |---|---|
+/// | **source** | the MEVBlocker searcher pending-tx feed |
+/// | **infrastructure** | the connector-index route registry |
+/// | **calculation** | the anchored-dfs WETH-closing solver |
+/// | **encoder** | the composed executor calldata |
+/// | **simulator** | the frame replay + `eth_callMany` oracle gate |
+/// | **submission** | the MEVBlocker searcher bundle, private broadcast first |
+#[derive(Debug, Clone)]
+pub struct MevblockerBackrun {
+    config: BackrunConfig,
+}
+
+impl MevblockerBackrun {
+    /// Build the composition from the loaded config's
+    /// `strategy.mevblocker_backrun` facet plus the chain-node join.
+    #[must_use]
+    pub fn from_config(cfg: &BotConfig, rpc_url: String) -> Self {
+        let facet = &cfg.strategy.mevblocker_backrun;
+        let knobs = BackrunKnobs::from(facet);
+        let submission = knobs.mevblocker_slot(facet);
+        Self {
+            config: knobs.into_config(cfg, rpc_url, submission),
+        }
+    }
+
+    /// The composed driver config.
+    #[must_use]
+    pub fn config(&self) -> &BackrunConfig {
+        &self.config
+    }
+
+    /// Consume the composition into the driver config.
+    #[must_use]
+    pub fn into_config(self) -> BackrunConfig {
+        self.config
+    }
+}
+
+/// The public-mempool backrun strategy: the same pending-transaction reaction,
+/// submitting through the public relay fan-out instead of the `MEVBlocker`
+/// auction.
+///
+/// | Slot | Binding |
+/// |---|---|
+/// | **source** | the MEVBlocker searcher pending-tx feed |
+/// | **infrastructure** | the connector-index route registry |
+/// | **calculation** | the anchored-dfs WETH-closing solver |
+/// | **encoder** | the composed executor calldata |
+/// | **simulator** | the frame replay + `eth_callMany` oracle gate |
+/// | **submission** | the public relay fan-out, read-provider fallback |
+#[derive(Debug, Clone)]
+pub struct PeerBackrun {
+    config: BackrunConfig,
+}
+
+impl PeerBackrun {
+    /// Build the composition from the loaded config's `strategy.peer_backrun`
+    /// facet plus the chain-node join.
+    #[must_use]
+    pub fn from_config(cfg: &BotConfig, rpc_url: String) -> Self {
+        let facet = &cfg.strategy.peer_backrun;
+        let knobs = BackrunKnobs::from(facet);
+        let submission = knobs.peer_slot();
+        Self {
+            config: knobs.into_config(cfg, rpc_url, submission),
+        }
+    }
+
+    /// The composed driver config.
+    #[must_use]
+    pub fn config(&self) -> &BackrunConfig {
+        &self.config
+    }
+
+    /// Consume the composition into the driver config.
+    #[must_use]
+    pub fn into_config(self) -> BackrunConfig {
+        self.config
+    }
+}
+
+impl BackrunConfig {
     /// The bid-mode legality gate: explicit flag AND non-zero budget.
     #[must_use]
     pub fn bid_mode_legal(&self) -> bool {
@@ -209,7 +477,8 @@ mod tests {
     use degenbot_decoders::target_class::{PoolProtocol, SwapLeg};
 
     fn cfg() -> BackrunConfig {
-        let mut c = BackrunConfig::from_config(&BotConfig::default(), String::new());
+        let mut c =
+            MevblockerBackrun::from_config(&BotConfig::default(), String::new()).into_config();
         c.bid_mode = true;
         c.budget_wei = U256::from(1_000_000_000_000_000u64);
         c.max_bundle_wei = U256::from(500_000_000_000_000u64);
@@ -381,35 +650,60 @@ mod tests {
         clippy::expect_used,
         reason = "test fixtures fail loudly on an unconstructible prerequisite"
     )]
-    fn from_config_maps_every_migrated_knob() {
+    fn mevblocker_facet_maps_every_knob_and_binds_the_private_slot() {
         use std::collections::BTreeMap;
 
         use degenbot_config::{BotConfigLoader, MapEnv};
 
         let raw = BTreeMap::from([
-            ("DEGENBOT_STRATEGY_BACKRUN_ACTIVE", "1"),
-            ("DEGENBOT_STRATEGY_BACKRUN_BID_MODE", "1"),
-            ("DEGENBOT_STRATEGY_BACKRUN_BUDGET_WEI", "42"),
-            ("DEGENBOT_STRATEGY_BACKRUN_MAX_BUNDLE_WEI", "99"),
-            ("DEGENBOT_STRATEGY_BACKRUN_BRIBE_BIPS", "9500"),
-            ("DEGENBOT_STRATEGY_BACKRUN_PRIORITY_FEE_GWEI", "7"),
-            ("DEGENBOT_STRATEGY_BACKRUN_BUNDLE_GAS_EST", "333000"),
-            ("DEGENBOT_STRATEGY_BACKRUN_DRY_RUN", "1"),
-            ("DEGENBOT_STRATEGY_BACKRUN_KEY_FILE", "/tmp/k.key"),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE", "1"),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BID_MODE", "1"),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUDGET_WEI", "42"),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_MAX_BUNDLE_WEI", "99"),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BRIBE_BIPS", "9500"),
             (
-                "DEGENBOT_STRATEGY_BACKRUN_EXECUTOR",
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_PRIORITY_FEE_GWEI",
+                "7",
+            ),
+            (
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUNDLE_GAS_EST",
+                "333000",
+            ),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_DRY_RUN", "1"),
+            (
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_KEY_FILE",
+                "/tmp/k.key",
+            ),
+            (
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_EXECUTOR",
                 "0x00000000000000000000000000000000000000aa",
             ),
             (
-                "DEGENBOT_STRATEGY_BACKRUN_OPERATOR",
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_OPERATOR",
                 "0x00000000000000000000000000000000000000bb",
             ),
-            ("DEGENBOT_STRATEGY_BACKRUN_SIM_URL", "http://sim.local:8545"),
-            ("DEGENBOT_STRATEGY_BACKRUN_ENDPOINTS", "wss://stream.local"),
-            ("DEGENBOT_STRATEGY_BACKRUN_RANK_EVIDENCE", "1"),
-            ("DEGENBOT_STRATEGY_BACKRUN_CONNECTORS", "5"),
-            ("DEGENBOT_STRATEGY_BACKRUN_FIXTURE_HEAD", "26001272"),
-            ("DEGENBOT_STRATEGY_BACKRUN_STOP_FILE", "/tmp/stop"),
+            (
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_SIM_URL",
+                "http://sim.local:8545",
+            ),
+            (
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ENDPOINTS",
+                "wss://stream.local",
+            ),
+            (
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_MEVBLOCKER_URL",
+                "http://private.local:8545",
+            ),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_RANK_EVIDENCE", "1"),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CONNECTORS", "5"),
+            (
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_FIXTURE_HEAD",
+                "26001272",
+            ),
+            (
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_STOP_FILE",
+                "/tmp/stop",
+            ),
             ("DEGENBOT_DRY_RUN_JSONL", "/tmp/f.jsonl"),
         ])
         .into_iter()
@@ -419,7 +713,8 @@ mod tests {
             .with_env(Box::new(MapEnv::new(raw)))
             .load()
             .expect("typed load");
-        let c = BackrunConfig::from_config(&loaded.config, "http://node.local".to_string());
+        let c = MevblockerBackrun::from_config(&loaded.config, "http://node.local".to_string())
+            .into_config();
         assert_eq!(c.rpc_url, "http://node.local");
         assert!(c.bid_mode);
         assert_eq!(c.budget_wei, U256::from(42));
@@ -435,11 +730,70 @@ mod tests {
             Some("0x00000000000000000000000000000000000000bb")
         );
         assert_eq!(c.sim_url.as_deref(), Some("http://sim.local:8545"));
-        assert_eq!(c.stream_url, "wss://stream.local");
+        assert_eq!(c.feed_url, degenbot_config::DEFAULT_BACKRUN_STREAM_URL);
+        assert_eq!(
+            c.submission,
+            SubmissionSlot::Mevblocker {
+                bundle_url: String::from("wss://stream.local"),
+                private_url: Some(String::from("http://private.local:8545")),
+            }
+        );
+        assert!(c.submission.names_private_endpoint());
         assert!(c.rank_evidence);
         assert_eq!(c.connectors, 5);
         assert_eq!(c.fixture_head, Some(26_001_272));
         assert_eq!(c.stop_file, PathBuf::from("/tmp/stop"));
         assert_eq!(c.dry_run_jsonl, Some(PathBuf::from("/tmp/f.jsonl")));
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test fixtures fail loudly")]
+    fn peer_facet_maps_every_knob_and_binds_the_public_slot() {
+        use std::collections::BTreeMap;
+
+        use degenbot_config::{BotConfigLoader, MapEnv};
+
+        let raw = BTreeMap::from([
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_ACTIVE", "1"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_BID_MODE", "1"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_BUDGET_WEI", "42"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_MAX_BUNDLE_WEI", "99"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_BRIBE_BIPS", "9500"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_PRIORITY_FEE_GWEI", "7"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_BUNDLE_GAS_EST", "333000"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_DRY_RUN", "1"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_KEY_FILE", "/tmp/k.key"),
+            (
+                "DEGENBOT_STRATEGY_PEER_BACKRUN_ENDPOINTS",
+                "https://relay.one,https://relay.two",
+            ),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_CONNECTORS", "5"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_STOP_FILE", "/tmp/stop"),
+        ])
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let loaded = BotConfigLoader::new()
+            .with_env(Box::new(MapEnv::new(raw)))
+            .load()
+            .expect("typed load");
+        let c =
+            PeerBackrun::from_config(&loaded.config, "http://node.local".to_string()).into_config();
+        assert_eq!(c.feed_url, degenbot_config::DEFAULT_BACKRUN_STREAM_URL);
+        assert_eq!(
+            c.submission,
+            SubmissionSlot::PublicFanOut {
+                relays: vec![
+                    String::from("https://relay.one"),
+                    String::from("https://relay.two"),
+                ],
+            }
+        );
+        assert!(!c.submission.names_private_endpoint());
+        assert!(c
+            .submission
+            .raw_relay_urls()
+            .iter()
+            .all(|url| !url.contains("private")));
     }
 }

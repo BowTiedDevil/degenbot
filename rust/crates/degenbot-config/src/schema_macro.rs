@@ -11,9 +11,9 @@
 ///
 /// A section body is a sequence of key declarations and facet declarations
 /// (`name Type { ... }`). A facet generates a typed sub-struct field on its
-/// parent and a dotted section path (`strategy.backrun`); a facet body may
+/// parent and a dotted section path (`strategy.mevblocker_backrun`); a facet body may
 /// itself declare keys, which are flattened to `@fk` leaf markers under the
-/// facet's dotted section path (`strategy.backrun.bid_mode`) and generate a
+/// facet's dotted section path (`strategy.mevblocker_backrun.bid_mode`) and generate a
 /// two-level `assign` arm. `SECTION_PATHS` records every section path so the
 /// loader accepts a keyless facet table and resolves each key of a keyed one.
 ///

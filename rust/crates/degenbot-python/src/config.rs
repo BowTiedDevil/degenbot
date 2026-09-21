@@ -38,7 +38,8 @@ pub struct RetryPolicyDefaults {
 }
 
 /// The resolved strategy readiness, exposed as a self-describing Python
-/// view: `settlement`/`backrun` arms with their settled endpoint posture.
+/// view: the settlement and two per-ecosystem backrun arms with their settled
+/// endpoint posture.
 ///
 /// Built from the process-wide typed config through the SAME
 /// `strategy_readiness` authority the operators' `degenbot strategy` verbs
@@ -51,9 +52,13 @@ pub struct StrategyReadinessView {
     #[pyo3(get)]
     pub settlement_endpoints: Vec<String>,
     #[pyo3(get)]
-    pub backrun_active: bool,
+    pub mevblocker_backrun_active: bool,
     #[pyo3(get)]
-    pub backrun_endpoints: Vec<String>,
+    pub mevblocker_backrun_endpoints: Vec<String>,
+    #[pyo3(get)]
+    pub peer_backrun_active: bool,
+    #[pyo3(get)]
+    pub peer_backrun_endpoints: Vec<String>,
 }
 
 impl StrategyReadinessView {
@@ -66,12 +71,16 @@ impl StrategyReadinessView {
             }
         }
         let (settlement_active, settlement_endpoints) = arm(&readiness.settlement);
-        let (backrun_active, backrun_endpoints) = arm(&readiness.backrun);
+        let (mevblocker_backrun_active, mevblocker_backrun_endpoints) =
+            arm(&readiness.mevblocker_backrun);
+        let (peer_backrun_active, peer_backrun_endpoints) = arm(&readiness.peer_backrun);
         Self {
             settlement_active,
             settlement_endpoints,
-            backrun_active,
-            backrun_endpoints,
+            mevblocker_backrun_active,
+            mevblocker_backrun_endpoints,
+            peer_backrun_active,
+            peer_backrun_endpoints,
         }
     }
 }

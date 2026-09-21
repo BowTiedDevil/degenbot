@@ -26,11 +26,12 @@ def engine() -> ArbitrageEngine:
     return ArbitrageEngine(py_bot=Bot(1))
 
 
-def test_default_boot_registers_both_strategies_unenabled(engine: ArbitrageEngine) -> None:
-    """A settlement-only boot registers both facets; neither is enabled."""
+def test_default_boot_registers_all_strategies_unenabled(engine: ArbitrageEngine) -> None:
+    """The default boot registers settlement plus both backrun facets; none is enabled."""
     assert engine.strategies() == [
         ("settlement", "registered", None),
-        ("backrun", "registered", None),
+        ("mevblocker_backrun", "registered", None),
+        ("peer_backrun", "registered", None),
     ]
 
 
@@ -61,10 +62,10 @@ def test_unknown_strategy_raises_a_typed_error(engine: ArbitrageEngine) -> None:
 
 
 def test_unconfigured_backrun_raises_a_typed_error(engine: ArbitrageEngine) -> None:
-    """The default boot names no backrun keys, so enabling it fails loudly."""
+    """The default boot names no backrun keys, so enabling one fails loudly."""
     with pytest.raises(UnconfiguredStrategyError):
-        engine.enable_strategy("backrun")
-    assert engine.strategies()[1] == ("backrun", "registered", None)
+        engine.enable_strategy("peer_backrun")
+    assert engine.strategies()[2] == ("peer_backrun", "registered", None)
 
 
 def test_errors_share_the_strategy_host_base(engine: ArbitrageEngine) -> None:

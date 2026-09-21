@@ -432,7 +432,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     use alloy::primitives::address;
     use alloy::providers::ProviderBuilder;
     use degenbot_bot::bot_core::SimAnchorState;
-    use degenbot_strategy::backrun::{BackrunConfig, Decision};
+    use degenbot_strategy::backrun::{Decision, MevblockerBackrun};
     use degenbot_strategy::backrun_strategy::BackrunStrategy;
     use degenbot_strategy::frame_pipeline::{
         build_block_handle, load_fixture_frames, process_frame, MarketContext, PipelineConfig,
@@ -466,7 +466,8 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     );
 
     let mut knobs =
-        BackrunConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+        MevblockerBackrun::from_config(&degenbot_config::BotConfig::default(), String::new())
+            .into_config();
     knobs.stop_file = PathBuf::from("/nonexistent-wkpzqk");
     let pl = PipelineConfig {
         exec: address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),

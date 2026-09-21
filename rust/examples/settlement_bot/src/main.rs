@@ -574,12 +574,15 @@ fn run() -> Result<(), String> {
     let cli = parse_cli(&args)?;
 
     // Strategy-arm gate (ADR-055): this driver is the settled-block arm.
-    // An activated backrun facet must boot via the MEVBlocker backrun
-    // sidecar (or the hosted process), not this runner; the schema is the
-    // load source. A loader failure does not change behavior: the driver's
-    // own boot reads the config again and reports typed errors there.
+    // An activated per-ecosystem backrun facet must boot via its hosted
+    // driver, not this runner; the schema is the load source. A loader
+    // failure does not change behavior: the driver's own boot reads the
+    // config again and reports typed errors there.
     if let Ok(loaded) = degenbot::config::BotConfigLoader::new().load() {
-        if let Some(msg) = strategy_arm_refusal(loaded.config.strategy.backrun.active) {
+        if let Some(msg) = strategy_arm_refusal(
+            loaded.config.strategy.mevblocker_backrun.active,
+            loaded.config.strategy.peer_backrun.active,
+        ) {
             return Err(msg);
         }
     }
@@ -1166,9 +1169,9 @@ fn run() -> Result<(), String> {
 
 /// The arm the driver refuses: an explicitly activated pending-transaction
 /// facet belongs to its own binary or the hosted process, not this runner.
-fn strategy_arm_refusal(backrun_active: bool) -> Option<String> {
-    backrun_active.then(|| {
-        "strategy.backrun.active: this driver is the settled-block arm; the backrun arm boots via the MEVBlocker backrun sidecar binary".to_string()
+fn strategy_arm_refusal(mevblocker_active: bool, peer_active: bool) -> Option<String> {
+    (mevblocker_active || peer_active).then(|| {
+        "an activated backrun facet (strategy.mevblocker_backrun / strategy.peer_backrun): this driver is the settled-block arm; the backrun arms boot as hosted drivers".to_string()
     })
 }
 
@@ -1182,12 +1185,18 @@ mod arm_gate_tests {
 
     #[test]
     fn unset_arm_keeps_wiring_default() {
-        assert!(strategy_arm_refusal(false).is_none());
+        assert!(strategy_arm_refusal(false, false).is_none());
     }
 
     #[test]
-    fn backrun_arm_refuses_on_the_settlement_driver() {
-        let msg = strategy_arm_refusal(true).expect("backrun must refuse");
-        assert!(msg.contains("strategy.backrun.active"));
+    fn mevblocker_arm_refuses_on_the_settlement_driver() {
+        let msg = strategy_arm_refusal(true, false).expect("mevblocker must refuse");
+        assert!(msg.contains("strategy.mevblocker_backrun"));
+    }
+
+    #[test]
+    fn peer_arm_refuses_on_the_settlement_driver() {
+        let msg = strategy_arm_refusal(false, true).expect("peer must refuse");
+        assert!(msg.contains("strategy.peer_backrun"));
     }
 }

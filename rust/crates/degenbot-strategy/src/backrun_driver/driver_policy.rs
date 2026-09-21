@@ -2,18 +2,17 @@
 //! bundle target a decided frame is submitted against.
 //!
 //! Invariant surface: these are reads and pure derivations, never lifecycle
-//! moves. A bid's gas cost is priced off the observed head's next base fee,
-//! and `strategy.backrun.mevblocker_url` augments the raw broadcast fan-out
-//! without ever replacing the bundle target (pinned by
-//! `mevblocker_url_does_not_alter_the_target`).
+//! moves. The submission slot the composition binds decides the target and
+//! the raw fan-out: the `MEVBlocker` slot anchors a bundle on its searcher
+//! WebSocket and leads the raw fan-out with the private endpoint, the peer
+//! slot fans the signed bytes over the public relays.
 
 use std::sync::Arc;
 
-use crate::backrun::BackrunConfig;
+use crate::backrun::{BackrunConfig, SubmissionSlot};
 use alloy::primitives::B256;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 
-use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
 use degenbot_submission::submit::{BundleTarget, SubmissionTarget};
 
 /// The gas floor the envelope gate evaluates at (wei) - the composed strategy's
@@ -51,7 +50,7 @@ pub(super) async fn initial_wallet_gas_cost(provider: &AlloyProvider, cfg: &Back
 
 /// The raw-broadcast relay list for the private-broadcast arm, private-first.
 ///
-/// Empty when `strategy.backrun.mevblocker_url` is unset: the submit leaf then
+/// Empty when the `MEVBlocker` slot's private endpoint is unset: the submit leaf then
 /// broadcasts to the read provider alone. When set, the configured private
 /// endpoint leads and the read provider follows, so the private path is tried
 /// first and the public provider is the fallback relay. An endpoint that cannot
@@ -60,42 +59,42 @@ pub(super) async fn build_broadcast_relays(
     cfg: &BackrunConfig,
     provider: &Arc<AlloyProvider>,
 ) -> Vec<Arc<AlloyProvider>> {
-    let Some(url) = cfg.mevblocker_url.as_deref() else {
+    let urls = cfg.submission.raw_relay_urls();
+    if urls.is_empty() {
         return Vec::new();
-    };
-    match AlloyProvider::new(url, DEFAULT_MAX_RETRIES).await {
-        Ok(private) => vec![Arc::new(private), Arc::clone(provider)],
-        Err(error) => {
-            tracing::warn!(
-                %error,
-                url,
-                "strategy.backrun.mevblocker_url provider build failed - read provider only"
-            );
-            Vec::new()
+    }
+    let mut relays = Vec::new();
+    for url in &urls {
+        match AlloyProvider::new(url, DEFAULT_MAX_RETRIES).await {
+            Ok(relay) => relays.push(Arc::new(relay)),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    url,
+                    "raw broadcast relay build failed - skipped"
+                );
+            }
         }
     }
+    // The read provider is the public fallback relay on every raw fan-out.
+    relays.push(Arc::clone(provider));
+    relays
 }
 
-/// The bid's submission target: this frame's target hash pinned to the next
-/// block, `MEVBlocker` searcher WS only.
-///
-/// Deliberately independent of `strategy.backrun.mevblocker_url`: that key
-/// augments the raw broadcast fan-out (see [`build_broadcast_relays`]) and
-/// never replaces the bundle target. The bundle (auction) arm keeps its own
-/// economics; the private endpoint engages only when the target fans out
-/// under [`SubmissionTarget::Public`].
+/// The bid's submission target, bound by the composition's slot: the
+/// `MEVBlocker` arm anchors a bundle on its searcher WebSocket, the peer arm
+/// fans the signed bytes out over the public relays.
 pub(super) fn bid_submission_target(
     cfg: &BackrunConfig,
     target_tx_hash: B256,
     block_number: u64,
 ) -> SubmissionTarget {
-    SubmissionTarget::Bundle(BundleTarget {
-        stream_url: if cfg.stream_url.is_empty() {
-            String::from(MEVBLOCKER_STREAM_URL)
-        } else {
-            cfg.stream_url.clone()
-        },
-        target_tx_hash,
-        block_number,
-    })
+    match &cfg.submission {
+        SubmissionSlot::Mevblocker { bundle_url, .. } => SubmissionTarget::Bundle(BundleTarget {
+            stream_url: bundle_url.clone(),
+            target_tx_hash,
+            block_number,
+        }),
+        SubmissionSlot::PublicFanOut { .. } => SubmissionTarget::Public,
+    }
 }

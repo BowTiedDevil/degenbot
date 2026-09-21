@@ -2,7 +2,7 @@
 //! the strategy facets.
 //!
 //! A strategy **facet** is one typed per-strategy config section
-//! (`strategy.settlement`, `strategy.backrun`); each facet's `active` key
+//! (`strategy.settlement`, `strategy.mevblocker_backrun`, `strategy.peer_backrun`); each facet's `active` key
 //! selects it (the retired single-arm selector could not express a
 //! two-strategy host). Activation settles an endpoint posture: EITHER an
 //! explicit `--endpoints` set OR the explicit `--endpoints-default` choice,
@@ -25,25 +25,29 @@ use crate::error::CliError;
 use crate::prompt::PromptPlan;
 use crate::report::StrategyReport;
 
-/// One strategy arm — the two reaction kinds of ADR-055 (D1).
+/// One strategy arm — the per-ecosystem selection surface. Settlement plus the
+/// two per-ecosystem pending-transaction backruns (ADR-055 D1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrategyFacet {
     /// The settled-block strategy (settlement arbitrage).
     Settlement,
-    /// The pending-transaction strategy (backrun).
-    Backrun,
+    /// The MEVBlocker-ecosystem pending-transaction strategy.
+    MevblockerBackrun,
+    /// The public-mempool pending-transaction strategy.
+    PeerBackrun,
 }
 
 impl StrategyFacet {
-    /// Both facets, in declaration order.
-    pub const ALL: [Self; 2] = [Self::Settlement, Self::Backrun];
+    /// Every facet, in declaration order.
+    pub const ALL: [Self; 3] = [Self::Settlement, Self::MevblockerBackrun, Self::PeerBackrun];
 
-    /// The canonical lowercase spelling (`settlement` / `backrun`).
+    /// The canonical lowercase spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Settlement => "settlement",
-            Self::Backrun => "backrun",
+            Self::MevblockerBackrun => "mevblocker_backrun",
+            Self::PeerBackrun => "peer_backrun",
         }
     }
 
@@ -52,7 +56,7 @@ impl StrategyFacet {
     pub const fn trigger_kind(self) -> &'static str {
         match self {
             Self::Settlement => "settled-block",
-            Self::Backrun => "pending-transaction",
+            Self::MevblockerBackrun | Self::PeerBackrun => "pending-transaction",
         }
     }
 
@@ -61,7 +65,8 @@ impl StrategyFacet {
     pub const fn config_section(self) -> &'static str {
         match self {
             Self::Settlement => "strategy.settlement",
-            Self::Backrun => "strategy.backrun",
+            Self::MevblockerBackrun => "strategy.mevblocker_backrun",
+            Self::PeerBackrun => "strategy.peer_backrun",
         }
     }
 
@@ -81,15 +86,14 @@ impl StrategyFacet {
     /// the facet's `endpoints` list at activation time.
     #[must_use]
     pub fn default_endpoint_set(self) -> Vec<String> {
-        match self {
-            Self::Settlement => degenbot_config::SETTLEMENT_DEFAULT_ENDPOINTS
-                .iter()
-                .map(|url| (*url).to_string())
-                .collect(),
-            Self::Backrun => {
-                vec![degenbot_config::DEFAULT_BACKRUN_STREAM_URL.to_string()]
+        let urls: &[&str] = match self {
+            Self::Settlement => degenbot_config::SETTLEMENT_DEFAULT_ENDPOINTS,
+            Self::MevblockerBackrun => {
+                std::slice::from_ref(&degenbot_config::DEFAULT_BACKRUN_STREAM_URL)
             }
-        }
+            Self::PeerBackrun => degenbot_config::DEFAULT_PEER_BACKRUN_RELAYS,
+        };
+        urls.iter().map(|url| (*url).to_string()).collect()
     }
 
     /// Parse a facet selector case-insensitively.
@@ -100,9 +104,11 @@ impl StrategyFacet {
     pub fn parse(raw: &str) -> Result<Self, CliError> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "settlement" => Ok(Self::Settlement),
-            "backrun" => Ok(Self::Backrun),
+            "mevblocker_backrun" => Ok(Self::MevblockerBackrun),
+            "peer_backrun" => Ok(Self::PeerBackrun),
             other => Err(CliError::InvalidArgument(format!(
-                "unknown strategy facet {other:?} (expected one of: settlement backrun)"
+                "unknown strategy facet {other:?} (expected one of: settlement \
+                 mevblocker_backrun peer_backrun)"
             ))),
         }
     }
@@ -286,12 +292,7 @@ pub(crate) fn execute(
             let file = ctx.resolve_config_file()?;
             let loaded = load(&file, ctx)?;
             let readiness = strategy_readiness(&loaded.config);
-            let summary = endpoint_summary(
-                *facet,
-                loaded.config.strategy.settlement.active,
-                loaded.config.strategy.backrun.active,
-                &readiness,
-            );
+            let summary = endpoint_summary(*facet, &loaded.config, &readiness);
             Ok(StrategyReport::Shown {
                 descriptor: descriptor(*facet),
                 activation: Some(summary),
@@ -350,13 +351,13 @@ pub(crate) fn execute(
 /// Resolve one facet's endpoint summary for `show`.
 fn endpoint_summary(
     facet: StrategyFacet,
-    settlement_active: bool,
-    backrun_active: bool,
+    cfg: &degenbot_config::schema::BotConfig,
     readiness: &Result<degenbot_config::StrategyReadiness, degenbot_config::StrategyReadinessError>,
 ) -> EndpointSummary {
     let active = match facet {
-        StrategyFacet::Settlement => settlement_active,
-        StrategyFacet::Backrun => backrun_active,
+        StrategyFacet::Settlement => cfg.strategy.settlement.active,
+        StrategyFacet::MevblockerBackrun => cfg.strategy.mevblocker_backrun.active,
+        StrategyFacet::PeerBackrun => cfg.strategy.peer_backrun.active,
     };
     if !active {
         return EndpointSummary::Inactive;
@@ -365,7 +366,8 @@ fn endpoint_summary(
         Ok(readiness) => {
             let arm = match facet {
                 StrategyFacet::Settlement => &readiness.settlement,
-                StrategyFacet::Backrun => &readiness.backrun,
+                StrategyFacet::MevblockerBackrun => &readiness.mevblocker_backrun,
+                StrategyFacet::PeerBackrun => &readiness.peer_backrun,
             };
             match arm {
                 Arm::Active(urls) => {
@@ -380,9 +382,6 @@ fn endpoint_summary(
                 }
                 Arm::Inactive => EndpointSummary::Unset,
             }
-        }
-        Err(degenbot_config::StrategyReadinessError::UnsetEndpoints { .. }) => {
-            EndpointSummary::Unset
         }
         Err(_) => EndpointSummary::Unset,
     }
@@ -444,7 +443,8 @@ fn activate(
         .map_err(|error| CliError::InvalidArgument(error.to_string()))?;
     let arm = match facet {
         StrategyFacet::Settlement => &readiness.settlement,
-        StrategyFacet::Backrun => &readiness.backrun,
+        StrategyFacet::MevblockerBackrun => &readiness.mevblocker_backrun,
+        StrategyFacet::PeerBackrun => &readiness.peer_backrun,
     };
     let Arm::Active(urls) = arm else {
         return Err(CliError::InvalidArgument(format!(
@@ -486,7 +486,8 @@ fn facet_has_settled_choice(
 ) -> bool {
     let endpoints = match facet {
         StrategyFacet::Settlement => cfg.strategy.settlement.endpoints.as_deref(),
-        StrategyFacet::Backrun => cfg.strategy.backrun.endpoints.as_deref(),
+        StrategyFacet::MevblockerBackrun => cfg.strategy.mevblocker_backrun.endpoints.as_deref(),
+        StrategyFacet::PeerBackrun => cfg.strategy.peer_backrun.endpoints.as_deref(),
     };
     endpoints.is_some_and(|raw| raw.split(',').any(|s| !s.trim().is_empty()))
 }
@@ -599,10 +600,60 @@ mod tests {
             StrategyFacet::Settlement
         );
         assert_eq!(
-            StrategyFacet::parse("  backrun ").unwrap(),
-            StrategyFacet::Backrun
+            StrategyFacet::parse("  mevblocker_backrun ").unwrap(),
+            StrategyFacet::MevblockerBackrun
+        );
+        assert_eq!(
+            StrategyFacet::parse("peer_backrun").unwrap(),
+            StrategyFacet::PeerBackrun
+        );
+        assert!(
+            StrategyFacet::parse("backrun").is_err(),
+            "the retired single backrun spelling must not resolve"
         );
         assert!(StrategyFacet::parse("sandwich").is_err());
+    }
+
+    #[test]
+    fn both_backrun_facets_activate_independently() {
+        let file = test_file("activate-both-backruns");
+        let env = empty_env();
+        let ctx = ctx_at(&env, &file);
+        execute(
+            &StrategyCommand::Activate {
+                facet: StrategyFacet::MevblockerBackrun,
+                endpoints: None,
+                endpoints_default: true,
+            },
+            &ctx,
+            &NoPrompt,
+        )
+        .expect("activate mevblocker");
+        execute(
+            &StrategyCommand::Activate {
+                facet: StrategyFacet::PeerBackrun,
+                endpoints: None,
+                endpoints_default: true,
+            },
+            &ctx,
+            &NoPrompt,
+        )
+        .expect("activate peer");
+        let loaded = BotConfigLoader::new()
+            .with_config_path(&file)
+            .without_env()
+            .load()
+            .expect("config loads");
+        assert!(loaded.config.strategy.mevblocker_backrun.active);
+        assert!(loaded.config.strategy.peer_backrun.active);
+        assert_eq!(
+            loaded.config.strategy.peer_backrun.endpoints.as_deref(),
+            Some(
+                degenbot_config::DEFAULT_PEER_BACKRUN_RELAYS
+                    .join(",")
+                    .as_str()
+            )
+        );
     }
 
     // ── list / show ──
@@ -626,7 +677,7 @@ mod tests {
         // Activate with the default posture first: show then renders it.
         execute(
             &StrategyCommand::Activate {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 endpoints: None,
                 endpoints_default: true,
             },
@@ -636,7 +687,7 @@ mod tests {
         .expect("activate executes");
         let report = execute(
             &StrategyCommand::Show {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
             },
             &ctx,
             &NoPrompt,
@@ -664,7 +715,7 @@ mod tests {
         let ctx = ctx_at(&env, &file);
         execute(
             &StrategyCommand::Activate {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 endpoints: None,
                 endpoints_default: true,
             },
@@ -677,9 +728,14 @@ mod tests {
             .without_env()
             .load()
             .expect("written config loads");
-        assert!(loaded.config.strategy.backrun.active);
+        assert!(loaded.config.strategy.mevblocker_backrun.active);
         assert_eq!(
-            loaded.config.strategy.backrun.endpoints.as_deref(),
+            loaded
+                .config
+                .strategy
+                .mevblocker_backrun
+                .endpoints
+                .as_deref(),
             Some(degenbot_config::DEFAULT_BACKRUN_STREAM_URL),
             "the pinned default must be stamped into the persisted list"
         );
@@ -767,7 +823,7 @@ mod tests {
         let ctx = ctx_at(&env, &file);
         let error = execute(
             &StrategyCommand::Activate {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 endpoints: Some("wss://searchers.example".to_string()),
                 endpoints_default: true,
             },
@@ -811,7 +867,7 @@ mod tests {
         let ctx = ctx_at(&env, &file);
         execute(
             &StrategyCommand::Activate {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 endpoints: Some("wss://searchers.example".to_string()),
                 endpoints_default: false,
             },
@@ -822,7 +878,7 @@ mod tests {
         // Flip to the default posture: the explicit key must drop away.
         execute(
             &StrategyCommand::Activate {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 endpoints: None,
                 endpoints_default: true,
             },
@@ -835,9 +891,14 @@ mod tests {
             .without_env()
             .load()
             .expect("config loads");
-        assert!(loaded.config.strategy.backrun.active);
+        assert!(loaded.config.strategy.mevblocker_backrun.active);
         assert_eq!(
-            loaded.config.strategy.backrun.endpoints.as_deref(),
+            loaded
+                .config
+                .strategy
+                .mevblocker_backrun
+                .endpoints
+                .as_deref(),
             Some(degenbot_config::DEFAULT_BACKRUN_STREAM_URL),
             "the default re-activation must restamp the pinned list"
         );
@@ -847,13 +908,13 @@ mod tests {
     fn activate_reports_an_env_shadow_loudly() {
         let file = test_file("activate-shadowed");
         let env = MapEnv::new(BTreeMap::from([(
-            "DEGENBOT_STRATEGY_BACKRUN_ACTIVE".to_string(),
+            "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE".to_string(),
             "false".to_string(),
         )]));
         let ctx = ctx_at(&env, &file);
         let report = execute(
             &StrategyCommand::Activate {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 endpoints: None,
                 endpoints_default: true,
             },
@@ -868,7 +929,7 @@ mod tests {
         else {
             panic!("the shadow must reach the report");
         };
-        assert_eq!(env, "DEGENBOT_STRATEGY_BACKRUN_ACTIVE");
+        assert_eq!(env, "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE");
     }
 
     #[test]
@@ -920,7 +981,7 @@ mod tests {
         let ctx = ctx_at(&env, &file);
         execute(
             &StrategyCommand::Set {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 key: "priority_fee_gwei".to_string(),
                 value: "7".to_string(),
             },
@@ -933,11 +994,14 @@ mod tests {
             .without_env()
             .load()
             .expect("config loads");
-        assert_eq!(loaded.config.strategy.backrun.priority_fee_gwei, 7);
+        assert_eq!(
+            loaded.config.strategy.mevblocker_backrun.priority_fee_gwei,
+            7
+        );
 
         execute(
             &StrategyCommand::Default {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 key: "priority_fee_gwei".to_string(),
             },
             &ctx,
@@ -949,7 +1013,14 @@ mod tests {
             .without_env()
             .load()
             .expect("config loads");
-        assert_eq!(restored.config.strategy.backrun.priority_fee_gwei, 2);
+        assert_eq!(
+            restored
+                .config
+                .strategy
+                .mevblocker_backrun
+                .priority_fee_gwei,
+            2
+        );
     }
 
     #[test]
@@ -959,7 +1030,7 @@ mod tests {
         let ctx = ctx_at(&env, &file);
         execute(
             &StrategyCommand::Set {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 key: "bundle_gas_est".to_string(),
                 value: "333000".to_string(),
             },
@@ -969,7 +1040,7 @@ mod tests {
         .expect("set executes");
         execute(
             &StrategyCommand::Remove {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 key: "bundle_gas_est".to_string(),
             },
             &ctx,
@@ -981,7 +1052,10 @@ mod tests {
             .without_env()
             .load()
             .expect("config loads");
-        assert_eq!(restored.config.strategy.backrun.bundle_gas_est, 300_000);
+        assert_eq!(
+            restored.config.strategy.mevblocker_backrun.bundle_gas_est,
+            300_000
+        );
     }
 
     #[test]
@@ -997,7 +1071,7 @@ mod tests {
         ] {
             let error = execute(
                 &StrategyCommand::Set {
-                    facet: StrategyFacet::Backrun,
+                    facet: StrategyFacet::MevblockerBackrun,
                     key: key.to_string(),
                     value: "1".to_string(),
                 },
@@ -1020,7 +1094,7 @@ mod tests {
         let ctx = ctx_at(&env, &file);
         let error = execute(
             &StrategyCommand::Default {
-                facet: StrategyFacet::Backrun,
+                facet: StrategyFacet::MevblockerBackrun,
                 key: "priority_fee_gwei".to_string(),
             },
             &ctx,

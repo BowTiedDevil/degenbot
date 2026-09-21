@@ -351,9 +351,15 @@ fn strategy_arms_round_trip() {
         Command::Strategy(StrategyCommand::List)
     );
     assert_eq!(
-        resolve(&["degenbot", "strategy", "show", "backrun"]),
+        resolve(&["degenbot", "strategy", "show", "mevblocker_backrun"]),
         Command::Strategy(StrategyCommand::Show {
-            facet: StrategyFacet::Backrun,
+            facet: StrategyFacet::MevblockerBackrun,
+        })
+    );
+    assert_eq!(
+        resolve(&["degenbot", "strategy", "show", "peer_backrun"]),
+        Command::Strategy(StrategyCommand::Show {
+            facet: StrategyFacet::PeerBackrun,
         })
     );
     assert_eq!(
@@ -365,9 +371,15 @@ fn strategy_arms_round_trip() {
         })
     );
     assert_eq!(
-        resolve(&["degenbot", "strategy", "remove", "backrun", "enabled"]),
+        resolve(&[
+            "degenbot",
+            "strategy",
+            "remove",
+            "mevblocker_backrun",
+            "enabled"
+        ]),
         Command::Strategy(StrategyCommand::Remove {
-            facet: StrategyFacet::Backrun,
+            facet: StrategyFacet::MevblockerBackrun,
             key: "enabled".to_string(),
         })
     );

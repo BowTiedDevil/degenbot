@@ -35,7 +35,7 @@ pub struct MarketContext {
     pub registry: Option<Arc<RouteRegistry>>,
     /// The DB handle the index was loaded from (token id/address joins).
     pub db: Option<DegenbotDb>,
-    /// The discovery fan-out cap (`strategy.backrun.connectors`).
+    /// The discovery fan-out cap (`strategy.mevblocker_backrun`/`strategy.peer_backrun`).
     pub connector_cap: usize,
     /// Cross-block warm bytecode/account cache owner, shared into every
     /// per-block replay handle.

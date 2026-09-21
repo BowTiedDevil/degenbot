@@ -457,7 +457,7 @@ impl<'a> BotConfigLoader<'a> {
         }
     }
 
-    /// Resolve a known nested facet section (`[strategy.backrun]`). Its
+    /// Resolve a known nested facet section (`[strategy.mevblocker_backrun]`). Its
     /// members are either deeper facet paths or declared leaf keys under the
     /// dotted section path; an empty table is valid (the settlement facet
     /// declares no keys yet).

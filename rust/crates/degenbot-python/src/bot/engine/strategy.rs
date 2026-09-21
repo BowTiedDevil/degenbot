@@ -88,7 +88,8 @@ pub(crate) fn session_phase_next(current: &str, operation: &str) -> PyResult<Opt
 /// Boot the process-wide strategy host: mint the hub with the engine's two
 /// named source channels, the frozen route registry, and the nonce authority,
 /// register the two strategy facets this process configures, install the state
-/// root a hosted lane scopes its artifacts under, and attach the backrun
+/// root a hosted lane scopes its artifacts under, and attach the two
+/// per-ecosystem backrun
 /// lane's spawn factory.
 ///
 /// The settlement facet is always configured because this boot IS the
@@ -162,19 +163,29 @@ pub(crate) fn boot_host() -> BootedHost {
     );
 
     let cfg = degenbot_config::holder::config();
-    let backrun_configured = cfg.strategy.backrun.active;
+    let mevblocker_configured = cfg.strategy.mevblocker_backrun.active;
+    let peer_configured = cfg.strategy.peer_backrun.active;
 
     host.register(StrategyId::new("settlement"), FacetStatus::Configured)
         .expect("fresh host registers settlement");
     host.register(
-        StrategyId::new("backrun"),
-        if backrun_configured {
+        StrategyId::new("mevblocker_backrun"),
+        if mevblocker_configured {
             FacetStatus::Configured
         } else {
             FacetStatus::Unconfigured
         },
     )
-    .expect("fresh host registers backrun");
+    .expect("fresh host registers mevblocker_backrun");
+    host.register(
+        StrategyId::new("peer_backrun"),
+        if peer_configured {
+            FacetStatus::Configured
+        } else {
+            FacetStatus::Unconfigured
+        },
+    )
+    .expect("fresh host registers peer_backrun");
 
     #[cfg(feature = "submission")]
     let head_lanes = {
@@ -189,15 +200,14 @@ pub(crate) fn boot_host() -> BootedHost {
         // The per-strategy submission ledger is the head feed's
         // submission-truth arm: the host refreshes the authority per head and
         // asks this ledger to close outstanding records out, delivering the
-        // typed notices to the owning strategy. Both lanes stamp through the
-        // same authority and record into the same ledger.
+        // typed notices to the owning strategy. Every lane stamps through the
+        // same authority and records into the same ledger.
         let ledger = Arc::new(degenbot_submission::SubmissionLedger::new());
         host.attach_reconciler(
             Arc::clone(&ledger) as Arc<dyn degenbot_bot::strategy_host::HeadReconciler>
         );
 
         let settlement_id = StrategyId::new("settlement");
-        let backrun_id = StrategyId::new("backrun");
         let settlement_lane = Arc::new(degenbot_submission::NonceLane::new(
             Arc::clone(host.nonce()),
             Arc::clone(&ledger),
@@ -208,27 +218,39 @@ pub(crate) fn boot_host() -> BootedHost {
         // stamps through the shared authority once the boot installs it.
         crate::submission::submit::install_settlement_lane(Arc::clone(&settlement_lane));
 
-        let backrun_lane = Arc::new(degenbot_submission::NonceLane::new(
-            Arc::clone(host.nonce()),
-            Arc::clone(&ledger),
-            backrun_id.clone(),
-        ));
-        let hub = Arc::clone(host.hub());
-        let registry = Arc::clone(host.registry());
-        host.attach_spawn(
-            &backrun_id,
-            degenbot_strategy::backrun_driver::backrun_spawn_factory(
-                Arc::clone(degenbot_config::holder::config_arc()),
-                hub,
-                Some(registry),
-                Arc::clone(&backrun_lane),
-            ),
-        )
-        .expect("fresh host registers the backrun spawn");
-
+        // Each per-ecosystem backrun gets its own lane and spawn factory; the
+        // two are independently activatable and may run together.
         let mut lanes = HeadLanes::new();
         lanes.insert(settlement_id, settlement_lane);
-        lanes.insert(backrun_id, backrun_lane);
+        for (name, ecosystem) in [
+            (
+                "mevblocker_backrun",
+                degenbot_strategy::backrun_driver::BackrunEcosystem::Mevblocker,
+            ),
+            (
+                "peer_backrun",
+                degenbot_strategy::backrun_driver::BackrunEcosystem::Peer,
+            ),
+        ] {
+            let id = StrategyId::new(name);
+            let lane = Arc::new(degenbot_submission::NonceLane::new(
+                Arc::clone(host.nonce()),
+                Arc::clone(&ledger),
+                id.clone(),
+            ));
+            host.attach_spawn(
+                &id,
+                degenbot_strategy::backrun_driver::backrun_spawn_factory(
+                    Arc::clone(degenbot_config::holder::config_arc()),
+                    ecosystem,
+                    Arc::clone(host.hub()),
+                    Some(Arc::clone(host.registry())),
+                    Arc::clone(&lane),
+                ),
+            )
+            .expect("fresh host registers the backrun spawn");
+            lanes.insert(id, lane);
+        }
         lanes
     };
 
@@ -406,8 +428,18 @@ mod tests {
         Python::attach(|py| {
             let engine = PyArbEngine::new(py, None);
             assert!(
-                engine.host.lock().has_spawn(&StrategyId::new("backrun")),
-                "the engine boot registers the backrun lane's spawn factory"
+                engine
+                    .host
+                    .lock()
+                    .has_spawn(&StrategyId::new("mevblocker_backrun")),
+                "the engine boot registers the mevblocker backrun lane's spawn factory"
+            );
+            assert!(
+                engine
+                    .host
+                    .lock()
+                    .has_spawn(&StrategyId::new("peer_backrun")),
+                "the engine boot registers the peer backrun lane's spawn factory"
             );
             let id = StrategyId::new("settlement");
             engine.enable_strategy(py, "settlement").expect("enable");
@@ -474,8 +506,12 @@ mod tests {
                 .cloned()
                 .expect("the boot installs the settlement head lane");
             assert!(
-                lanes.contains_key(&StrategyId::new("backrun")),
-                "the boot installs the backrun head lane"
+                lanes.contains_key(&StrategyId::new("mevblocker_backrun")),
+                "the boot installs the mevblocker backrun head lane"
+            );
+            assert!(
+                lanes.contains_key(&StrategyId::new("peer_backrun")),
+                "the boot installs the peer backrun head lane"
             );
             drop(lanes);
 
@@ -483,6 +519,29 @@ mod tests {
             assert!(
                 engine.host.lock().has_hosted_activity(),
                 "a live lease opens the reconcile guard"
+            );
+        });
+    }
+
+    /// Both per-ecosystem backrun facets are hosted side by side: the boot
+    /// registers each under its own id, so either (or both) can be enabled
+    /// independently in the same process.
+    #[test]
+    fn the_boot_hosts_both_backrun_facets_independently() {
+        Python::attach(|py| {
+            let engine = PyArbEngine::new(py, None);
+            let names: Vec<String> = engine
+                .strategies(py)
+                .into_iter()
+                .map(|(name, _state, _halt)| name)
+                .collect();
+            assert!(
+                names.contains(&"mevblocker_backrun".to_string()),
+                "the mevblocker facet is registered on the host: {names:?}"
+            );
+            assert!(
+                names.contains(&"peer_backrun".to_string()),
+                "the peer facet is registered on the host: {names:?}"
             );
         });
     }

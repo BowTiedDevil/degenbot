@@ -1,7 +1,6 @@
-//! The strategy facet sections are typed, keyless namespaces (ADR-055):
-//! `SCHEMA` declares no keys under `strategy.settlement` / `strategy.backrun`,
-//! the loader accepts an empty facet table, and it still rejects an unknown
-//! key inside one.
+//! The strategy facet sections are typed namespaces (ADR-055):
+//! `SCHEMA` resolves each key of a keyed facet, the loader accepts an empty
+//! facet table, and it still rejects an unknown key inside one.
 
 use std::path::PathBuf;
 
@@ -26,14 +25,18 @@ fn load(path: &PathBuf) -> Result<LoadedConfig, ConfigError> {
 }
 
 #[test]
-fn section_paths_declare_both_facets() {
+fn section_paths_declare_every_facet() {
     assert!(SECTION_PATHS.contains(&"strategy.settlement"));
-    assert!(SECTION_PATHS.contains(&"strategy.backrun"));
+    assert!(SECTION_PATHS.contains(&"strategy.mevblocker_backrun"));
+    assert!(SECTION_PATHS.contains(&"strategy.peer_backrun"));
 }
 
 #[test]
 fn empty_facet_tables_load() {
-    let path = temp_toml("empty", "[strategy.settlement]\n[strategy.backrun]\n");
+    let path = temp_toml(
+        "empty",
+        "[strategy.settlement]\n[strategy.mevblocker_backrun]\n[strategy.peer_backrun]\n",
+    );
     let loaded = load(&path);
     let _ = std::fs::remove_file(&path);
     if let Err(e) = loaded {

@@ -91,7 +91,8 @@ def test_fake_and_real_agree_on_default_registration_order() -> None:
     real = ArbitrageEngine(py_bot=Bot(1))
     assert FakeEngine().strategies() == real.strategies() == [
         ("settlement", "registered", None),
-        ("backrun", "registered", None),
+        ("mevblocker_backrun", "registered", None),
+        ("peer_backrun", "registered", None),
     ]
 
 
