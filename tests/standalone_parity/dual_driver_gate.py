@@ -101,14 +101,14 @@ def diff_decisions(
 
 def python_offline_decisions() -> list[dict]:
     """The Python consumer probe's decisions against the parity.db fixture."""
-    from degenbot._ffi import Bot, build_path_graph
+    from degenbot._ffi import Bot, PoolKind, build_path_graph
 
     bot = Bot(1)
     bot.load_snapshot_from_db(str(_DB_PATH), 1)
     graph = build_path_graph(
         database_path=str(_DB_PATH),
         chain_id=DISCOVERY_CHAIN_ID,
-        pool_kinds={0, 1, 2},
+        pool_kinds={PoolKind.V2, PoolKind.V3, PoolKind.V4},
         allowed_intermediate_token_ids=None,
     )
     return [

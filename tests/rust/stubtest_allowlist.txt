@@ -83,6 +83,8 @@ degenbot._ffi.Bot.__init__
 degenbot._ffi.Bot.__new__
 degenbot._ffi.BotIo.__init__
 degenbot._ffi.BotIo.__new__
+degenbot._ffi.PathStepBuilder.__init__
+degenbot._ffi.PathStepBuilder.__new__
 degenbot._ffi.contract.Contract.__init__
 degenbot._ffi.contract.Contract.__new__
 degenbot._ffi.db.DatabasePositionQuery.__init__

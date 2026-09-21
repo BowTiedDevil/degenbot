@@ -28,5 +28,7 @@
 //! (where `SQLAlchemy` lives); the graph algorithm lives here.
 
 pub mod graph;
+pub mod plan;
 
 pub use graph::{Edge, EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind};
+pub use plan::{prepare_traversal_plan, TraversalSpec};

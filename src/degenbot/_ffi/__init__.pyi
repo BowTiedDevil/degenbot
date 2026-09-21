@@ -7,7 +7,7 @@ This module provides high-performance implementations of common operations used 
 Python package.
 """
 
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from typing import Any, final, overload
 
 from degenbot.types.chain import HexAddress
@@ -260,34 +260,68 @@ def session_phase_next(current: str, operation: str) -> str | None:
     verdict and never authors the legal-state matrix.
     """
 
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
+class PoolKind:
+    """The typed pool-family discriminant crossing the FFI."""
+
+    V2: PoolKind
+    V3: PoolKind
+    V4: PoolKind
+
+def classify_pool_kind(pool_type: type) -> PoolKind: ...
+def classify_pool_kinds(pool_types: Sequence[type]) -> set[PoolKind]: ...
+def convert_pool_type_filter(
+    pool_type_per_depth: Sequence[set[type] | None] | None,
+) -> list[set[PoolKind] | None] | None: ...
+def prepare_traversal_plan(
+    start_token_ids: list[int],
+    end_token_ids: list[int],
+    min_depth: int,
+    filter_len: int | None,
+) -> list[tuple[int, int, bool, int]]: ...
+
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
+class PathStepBuilder:
+    def __init__(
+        self,
+        pool_types: list[type],
+        pool_id_to_kind_string: dict[int, str],
+        v2v3_addresses: dict[int, str],
+        v4_lookups: dict[int, tuple[str, str]],
+        step_cls: type,
+    ) -> None: ...
+    def build(self, raw_path: list[tuple[int, PoolKind]]) -> list[Any]: ...
+
 def build_path_graph(
     database_path: str,
     chain_id: int,
-    pool_kinds: set[int],
+    pool_kinds: set[PoolKind],
     allowed_intermediate_token_ids: set[int] | None = ...,
 ) -> dict[str, Any]: ...
 def find_paths_rust(
-    edges: list[tuple[int, int, int, int]],
+    edges: list[tuple[int, int, int, PoolKind]],
     start_token_id: int,
     end_token_id: int,
     min_depth: int,
     max_depth: int | None,
     include_reverse: bool,
-    pool_type_per_depth: list[set[int] | None] | None = ...,
+    pool_type_per_depth: list[set[PoolKind] | None] | None = ...,
 ) -> PathIterator: ...
 
 class PathIterator:
     def __iter__(self) -> PathIterator: ...
-    def __next__(self) -> list[tuple[int, int]]: ...
+    def __next__(self) -> list[tuple[int, PoolKind]]: ...
 
 def find_paths_async_rust(
-    edges: list[tuple[int, int, int, int]],
+    edges: list[tuple[int, int, int, PoolKind]],
     start_token_id: int,
     end_token_id: int,
     min_depth: int,
     max_depth: int | None,
     include_reverse: bool,
-    pool_type_per_depth: list[set[int] | None] | None = ...,
+    pool_type_per_depth: list[set[PoolKind] | None] | None = ...,
     batch_size: int = ...,
 ) -> PathBatchIterator: ...
 
@@ -301,7 +335,7 @@ class PathBatchIterator:
     """
 
     def __aiter__(self) -> PathBatchIterator: ...
-    def __anext__(self) -> Awaitable[list[list[tuple[int, int]]]]: ...
+    def __anext__(self) -> Awaitable[list[list[tuple[int, PoolKind]]]]: ...
 
 # A plain ``str`` holding an EIP-55 checksummed 20-byte hex address
 # (``0x`` + 40 chars with the correct checksum casing). Rust FFI entry
@@ -1760,8 +1794,10 @@ __all__ = [
     "PathBatchIterator",
     "PathIterator",
     "PathRegistryFullError",
+    "PathStepBuilder",
     "Pool",
     "PoolAlreadyRegisteredError",
+    "PoolKind",
     "PoolRegistrationError",
     "PossibleInaccurateResult",
     "ReservePairView",
@@ -1783,11 +1819,14 @@ __all__ = [
     "call_blocking_on_ambient_runtime",
     "call_on_ambient_runtime",
     "cancel",
+    "classify_pool_kind",
+    "classify_pool_kinds",
     "cli_main",
     "compute_aerodrome_v2_pool_address",
     "compute_aerodrome_v3_pool_address",
     "concentrated_liquidity_math",
     "contract",
+    "convert_pool_type_filter",
     "create2_address",
     "curve_dy",
     "curve_math",
@@ -1809,6 +1848,7 @@ __all__ = [
     "generate_v3_pool_address",
     "keccak256",
     "pool",
+    "prepare_traversal_plan",
     "price",
     "provider",
     "runtime_status",

@@ -153,6 +153,29 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::pathfinding::PathIterator>()?;
     #[cfg(feature = "pathfinding")]
     m.add_class::<crate::pathfinding::PathBatchIterator>()?;
+    // Typed pool-kind discriminant + the plan-assembly / path-step seams
+    // ported out of the Python driver.
+    #[cfg(feature = "pathfinding")]
+    m.add_class::<crate::pathfinding::PoolKind>()?;
+    #[cfg(feature = "pathfinding")]
+    m.add_function(wrap_pyfunction!(crate::pathfinding::classify_pool_kind, m)?)?;
+    #[cfg(feature = "pathfinding")]
+    m.add_function(wrap_pyfunction!(
+        crate::pathfinding::classify_pool_kinds,
+        m
+    )?)?;
+    #[cfg(feature = "pathfinding")]
+    m.add_function(wrap_pyfunction!(
+        crate::pathfinding::convert_pool_type_filter,
+        m
+    )?)?;
+    #[cfg(feature = "pathfinding")]
+    m.add_function(wrap_pyfunction!(
+        crate::pathfinding::prepare_traversal_plan,
+        m
+    )?)?;
+    #[cfg(feature = "pathfinding")]
+    m.add_class::<crate::pathfinding::PathStepBuilder>()?;
 
     // Balancer V2 math library functions (feature = "balancer-math")
     #[cfg(feature = "balancer-math")]

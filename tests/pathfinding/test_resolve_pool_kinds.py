@@ -1,7 +1,7 @@
 """Loud-abort contract for unknown pool-table classes at graph build (ADR-055 D4).
 
-``_resolve_pool_kinds`` maps the driver-declared ``pool_types`` onto Rust
-``pool_kind`` discriminants. An unknown family at this use site is an
+``classify_pool_kinds`` maps the driver-declared ``pool_types`` onto the
+typed Rust ``PoolKind`` values. An unknown family at this use site is an
 infrastructure gap: the caller declared intent to use the pool, and the
 graph builder cannot serve it. It must abort loudly, never silently omit.
 """
@@ -14,7 +14,7 @@ from degenbot.database.models.pools import (
     LiquidityPoolTable,
     UniswapV3PoolTable,
 )
-from degenbot.pathfinding._pathfinding import _resolve_pool_kinds
+from degenbot.pathfinding import PoolKind, classify_pool_kinds
 
 
 def _unknown_table() -> type:
@@ -26,10 +26,10 @@ def _unknown_table() -> type:
 
 
 def test_known_families_resolve():
-    assert _resolve_pool_kinds([UniswapV3PoolTable]) == {1}
-    assert _resolve_pool_kinds([LiquidityPoolTable]) == {0, 1}
+    assert classify_pool_kinds([UniswapV3PoolTable]) == {PoolKind.V3}
+    assert classify_pool_kinds([LiquidityPoolTable]) == {PoolKind.V2, PoolKind.V3}
 
 
 def test_unknown_family_aborts_loudly():
     with pytest.raises(ValueError, match="SomeFuturePoolTable"):
-        _resolve_pool_kinds([_unknown_table()])
+        classify_pool_kinds([_unknown_table()])

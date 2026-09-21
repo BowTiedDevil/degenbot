@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot._ffi import Bot, build_path_graph
+from degenbot._ffi import Bot, PoolKind, build_path_graph
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _ORACLE_PATH = _FIXTURE_DIR / "settlement_bot_boot.json"
@@ -66,7 +66,7 @@ def _python_graph() -> dict:
     return build_path_graph(
         database_path=str(_DB_PATH),
         chain_id=_DISCOVERY_CHAIN_ID,
-        pool_kinds={0, 1, 2},
+        pool_kinds={PoolKind.V2, PoolKind.V3, PoolKind.V4},
         allowed_intermediate_token_ids=None,
     )
 

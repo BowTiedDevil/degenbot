@@ -43,6 +43,7 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.pathfinding import (
     _pathfinding,
     PathfindingRequest,
+    PoolKind,
     find_paths,
     find_paths_async,
     find_paths_async_rust,
@@ -166,15 +167,15 @@ def test_batched_async_matches_sync_stream(db: DatabaseSessionManager) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _star_edges() -> list[tuple[int, int, int, int]]:
+def _star_edges() -> list[tuple[int, int, int, PoolKind]]:
     """Three parallel WETH(1)<->A(2) pools each way -> 3 * 3 == 9 cycles."""
-    forward = [(1, 2, 100 + i, 0) for i in range(3)]
-    reverse = [(2, 1, 200 + i, 0) for i in range(3)]
+    forward = [(1, 2, 100 + i, PoolKind.V2) for i in range(3)]
+    reverse = [(2, 1, 200 + i, PoolKind.V2) for i in range(3)]
     return [*forward, *reverse]
 
 
 async def _collect_batches(
-    edges: list[tuple[int, int, int, int]], batch_size: int
+    edges: list[tuple[int, int, int, PoolKind]], batch_size: int
 ) -> tuple[list[object], list[int]]:
     iterator = find_paths_async_rust(
         edges,
@@ -215,10 +216,10 @@ def test_rust_async_iterator_batches_cadence() -> None:
 
 
 def test_rust_async_iterator_rejects_bad_pool_kind() -> None:
-    """Constructor-time validation still raises for an unknown pool kind."""
-    with pytest.raises(ValueError, match="pool_kind"):
+    """The typed seam rejects a bare int where a `PoolKind` is required."""
+    with pytest.raises(TypeError):
         find_paths_async_rust(
-            [(1, 2, 1, 3)],
+            [(1, 2, 1, 3)],  # type: ignore[list-item]
             1,
             1,
             2,
@@ -274,10 +275,15 @@ class _BoomError(RuntimeError):
     pass
 
 
+class _FakeStepBuilder:
+    """Pass-through standing in for the Rust `PathStepBuilder`."""
+
+    def build(self, raw_path: list[object]) -> list[object]:
+        return raw_path
+
+
 def _fake_traversal() -> object:
-    prepared = _pathfinding._PreparedGraph(
-        edges=[], v2v3_addresses={}, v4_lookups={}, pool_id_to_type={}
-    )
+    prepared = _pathfinding._PreparedGraph(edges=[], step_builder=_FakeStepBuilder())
     return _pathfinding._Traversal(
         prepared=prepared,
         start_token_id=1,
