@@ -297,6 +297,38 @@ The maximum `update_block` across all registered pools — the state clock. Duri
 backfill/drain desync it can run ahead of the pump's header clock; the solve anchor takes
 the max of the two.
 
+## Piecewise CL solving
+
+**Piecewise walker**:
+The active-set engine that solves a multi-hop concentrated-liquidity arbitrage by
+climbing per-hop ending-range indices piece by piece, refining the terminal window until
+the exact interior optimum is found. Runs entirely on captured-state values.
+_Avoid_: "the solver", "the mobius intake", naming the engine after its runtime config.
+
+**Hop state**:
+The immutable per-hop integer arithmetic view a walker consumes during evaluation
+(`IntHopState`-shaped), distinct from the **Hop** (the captured-state adapter observed at
+resolve time). A hop state does not carry an origin block.
+_Avoid_: using "hop" for the evaluation-time form.
+
+**Word profile**:
+The precomputed prefix of per-word-boundary swap steps for a dense CL range, where the
+boundary list, entry state, and fee are fixed — converts a sim query into a partition
+search plus one live landing step. Built once per range, shared by the walk across paths.
+_Avoid_: "caching table", "profile cache".
+
+**Composition memo**:
+The engine-owned cross-block fingerprint map from exact hop-composition fingerprints to
+prior solve outcomes. The fingerprint is the composition's correctness key; an identical
+composition always maps to the identical outcome.
+_Avoid_: "cache", "solution cache", "walk cache".
+
+**Walk telemetry**:
+The solver-internal counters and cost histograms the walker writes while solving (piece
+visits, per-section timings, densely-worded-range heights). Read by the run through the
+returned outcome's stats field; production defaults to off.
+_Avoid_: env-gated mutation reads mixed into solve math side effects.
+
 ## Profit envelope
 
 **Profit envelope**:
