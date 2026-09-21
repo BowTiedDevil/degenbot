@@ -3,7 +3,8 @@
 #
 #   scripts/coverage.sh rust    # cargo-llvm-cov over the cargo workspace suite
 #   scripts/coverage.sh pyo3    # pytest driving an instrumented degenbot._ffi cdylib
-#   scripts/coverage.sh all     # both, then a merged report over the union
+#   scripts/coverage.sh combined # re-merge existing profraws (no test runs)
+#   scripts/coverage.sh all     # rust + pyo3 + combined
 #
 # Outputs land under rust/target/coverage/; every arm writes `html/` (human
 # reading) and `coverage.json` (llvm-cov export format, agent consumption).
@@ -73,33 +74,29 @@ cov_pkg_features() {
     fi
 }
 
-# Generates the rust-arm reports from a completed --no-report run (no test
-# re-run). --json is cargo-llvm-cov's JSON, which is llvm-cov export text.
-report_rust() {
-    cov_pkg_features
-    mkdir -p "$COV_ROOT/rust"
-    cargo llvm-cov report "${scope[@]}" "${features[@]}" "${pkg_args[@]}" \
-        --json --output-path "$COV_ROOT/rust/coverage.json" "$@"
-    cargo llvm-cov report "${scope[@]}" "${features[@]}" "${pkg_args[@]}" \
-        --html --output-dir "$COV_ROOT/rust/html" "$@"
-}
+# Noise filter: foreign toolchain sources that show up with coverage maps but
+# can never carry our counters (Fedora rustc's shadow-build std paths, etc.).
+COV_IGNORE="${COV_IGNORE:-^/builddir/|/rustc/|/rustlib/}"
 
-# One agent JSON (llvm export, per-file summaries) + one HTML report from a
-# merged profdata over the given objects.
+# One HTML report + one agent JSON (llvm-cov export, per-file summaries) from
+# a merged profdata over the given objects. Identical shape for every arm.
 emit_report() { # $1 name, $2.. objects
     local name="$1"; shift
     local profdata="$COV_ROOT/$name.profdata"
-    llvm-cov show --instr-profile="$profdata" "$@" \
+    mkdir -p "$COV_ROOT/$name"
+    llvm-cov show --instr-profile="$profdata" \
+        --ignore-filename-regex="$COV_IGNORE" "$@" \
         -format=html --show-line-counts-or-regions \
         -output-dir "$COV_ROOT/$name/html" >/dev/null
-    llvm-cov export --instr-profile="$profdata" --summary-only "$@" \
-        >"$COV_ROOT/$name/coverage.json"
-    # lcov only exists for the combined arm (it feeds `just crap` with the
-    # pytest-driven coverage the cargo suite alone can't see).
-    if [ "$name" = combined ]; then
-        llvm-cov export --instr-profile="$profdata" -format=lcov "$@" \
-            >"$COV_ROOT/coverage.lcov"
-    fi
+    llvm-cov export --instr-profile="$profdata" \
+        --ignore-filename-regex="$COV_IGNORE" "$@" \
+        --summary-only >"$COV_ROOT/$name/coverage.json"
+    # lcov is cargo-crap's artifact; it walks members via cargo metadata, so
+    # rewrite the repo's absolute SF: paths relative to the rust/ workspace
+    # root (registry crates stay absolute and score no data).
+    llvm-cov export --instr-profile="$profdata" \
+        --ignore-filename-regex="$COV_IGNORE" "$@" \
+        -format=lcov | sed -E "s#^SF:$ROOT/rust/#SF:#" >"$COV_ROOT/$name/coverage.lcov"
 }
 
 stack_objects() { # one path per cargo test binary (inode dedupe: deps/ + debug/ are hardlink twins)
@@ -114,11 +111,16 @@ run_rust_arm() {
     cd "$ROOT/rust"
     cov_pkg_features
     # Delegating the run to cargo-llvm-cov (build + per-test profraws) keeps
-    # binary enumeration exact; reports are emitted separately so the JSON and
-    # HTML come from the same instrumented run.
+    # binary enumeration exact; report generation is unified with the other
+    # arms (emit_report below).
     cargo llvm-cov "${scope[@]}" "${features[@]}" "${pkg_args[@]}" \
         --no-fail-fast --no-report "$@"
-    report_rust
+    mkdir -p "$COV_ROOT"
+    readarray -t raws < <(find "$LV_TARGET" -name '*.profraw' -print)
+    [ "${#raws[@]}" -gt 0 ] || { echo "ERROR: no profraw files under $LV_TARGET" >&2; exit 1; }
+    llvm-profdata merge -sparse "${raws[@]}" -o "$COV_ROOT/rust.profdata"
+    readarray -t objects < <(stack_objects)
+    emit_report rust --object "${objects[@]}"
     )
 }
 
@@ -142,8 +144,12 @@ run_pyo3_arm() {
     # the normal cargo/maturin caches stay untouched. RUSTFLAGS must repeat
     # .cargo/config.toml's --cfg tokio_unstable: RUSTFLAGS replaces config
     # rustflags entirely.
+    # LLVM_PROFILE_FILE must cover the BUILD itself, not just pytest: the
+    # workspace's build scripts are also compiled with instrument-coverage and
+    # write default_<...>.profraw into each crate dir at build time.
     RUSTFLAGS="--cfg tokio_unstable -C instrument-coverage" \
     CARGO_TARGET_DIR="$COV_ROOT/pyo3-build" \
+    LLVM_PROFILE_FILE="$raw/build-%p-%m.profraw" \
         uv run --no-sync maturin develop
 
     LLVM_PROFILE_FILE="$raw/pyo3-%p-%m.profraw" \
@@ -166,7 +172,6 @@ run_combined() {
     # same sources; a single profdata over both object sets is the union of
     # suite- and pytest-driven coverage.
     local profdata="$COV_ROOT/combined.profdata"
-    mkdir -p "$COV_ROOT/combined"
     readarray -t raws < <(
         { find "$LV_TARGET" -maxdepth 2 -name '*.profraw' -print 2>/dev/null; \
           find "$COV_ROOT/pyo3-profraw" -name '*.profraw' -print 2>/dev/null; } | sort -u
@@ -187,10 +192,11 @@ run_combined() {
 }
 
 case "$mode" in
-    rust)   run_rust_arm "$@" ;;
-    pyo3)   run_pyo3_arm "$@" ;;
-    all)    run_rust_arm; run_pyo3_arm "$@"; run_combined ;;
-    *)      echo "unknown mode '$mode' (rust|pyo3|all)" >&2; exit 1 ;;
+    rust)     run_rust_arm "$@" ;;
+    pyo3)     run_pyo3_arm "$@" ;;
+    combined) run_combined ;;
+    all)      run_rust_arm; run_pyo3_arm "$@"; run_combined ;;
+    *)        echo "unknown mode '$mode' (rust|pyo3|combined|all)" >&2; exit 1 ;;
 esac
 
 echo

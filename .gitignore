@@ -86,6 +86,13 @@ docs/_build/
 .pybuilder/
 target/
 
+# LLVM coverage counters written OUTSIDE rust/target by any instrumented
+# binary that exits without LLVM_PROFILE_FILE (e.g. the settlement-bot boot
+# gates spawn the instrumented binary via Command::env_clear). Real coverage
+# reports collect profraws only from rust/target/llvm-cov-target and
+# rust/target/coverage/pyo3-profraw/, so these stranded files are noise.
+default_*.profraw
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
