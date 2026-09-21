@@ -18,7 +18,7 @@ A strategy picks exactly one reaction kind (ADR-055; `CONTEXT.md`
 "Strategy reaction kinds").
 
 - **Pending-transaction**: implement `PendingTxReaction`
-  (`rust/crates/degenbot-submission/src/pending_tx.rs:68`). Its stages are
+  (`rust/crates/degenbot-strategy/src/pending_tx.rs:68`). Its stages are
   `admit` (`:80`), `discover` (`:99`), `evaluate` (`:111`), `compose` (`:121`),
   `decide` (`:134`), threaded by the neutral artifacts `ComposedIntent` (`:45`)
   and `Decided` (`:56`). `BackrunStrategy` is the reference.
@@ -235,7 +235,7 @@ registers `HubClass::PendingTx`; the mock pins exactly that
 ## 6. The three driver partitions (boot / loop / policy)
 
 A family's driver is a facade over three partitions, by invariant
-(`rust/crates/degenbot-submission/src/backrun_driver.rs:1-42`, the three-way split):
+(`rust/crates/degenbot-strategy/src/backrun_driver.rs:1-42`, the three-way split):
 
 - `driver_boot` (`driver_boot.rs`) — the boot handoff and resolvers. It never
   owns process boot. Entry points: `backrun_boot(...)` (`:227`),
@@ -249,7 +249,7 @@ A family's driver is a facade over three partitions, by invariant
   relay fan-out, bundle target. Pure reads/derivations, never lifecycle moves.
 
 The facade `backrun_driver.rs` is 42 lines: module doc + `mod` declarations +
-`pub use` re-exports, so `degenbot_submission::backrun_driver::<item>` never
+`pub use` re-exports, so `degenbot_strategy::backrun_driver::<item>` never
 moves. A new family mirrors this shape: a boot module that resolves its
 artifacts and mints a spawn factory, a loop module owning only its own runtime
 state, and a policy module for its economics.
@@ -272,26 +272,31 @@ A family's operator surface is a typed schema facet, declared once
 
 ```text
 strategy StrategyConfig {
-    name [opt enum StrategyName Settlement Backrun] = None, ... // :360
-    settlement StrategySettlementConfig {}                      // :368
-    backrun StrategyBackrunConfig { ... }                       // :369
+    settlement StrategySettlementConfig {}                      // :363
+    mevblocker_backrun StrategyMevblockerBackrunConfig { ... }  // :369
+    peer_backrun StrategyPeerBackrunConfig { ... }              // :407
 }
 ```
 
-To add a family: add a `StrategyName` variant, add a `StrategyXConfig` facet
-struct with its keys, add the `strategy.<name>` row, and extend the schema tests
-(`strategy_name_parses_its_variants_case_insensitively`,
-`strategy_facets_are_declared_as_typed_sections`). The boot sets
+Each facet's `active` key is its activation; there is no single-arm
+`strategy.name` selector (it is deliberately undeclared, pinned by
+`strategy_arm_selector_is_retired`). To add a family: add a `StrategyName`
+variant in `degenbot-strategy/src/strategy_plane.rs`, add a `StrategyXConfig`
+facet struct with its keys, add the `strategy.<name>` row, and extend the schema
+tests (`strategy_facets_are_declared_as_typed_sections`,
+`strategy_activation_keys_parse_and_collapse_to_defaults`). The boot sets
 `FacetStatus::{Configured, Unconfigured}` from the facet so `enable` fails loudly
 on a name the config never configured.
 
 **Evidence / Keeps / Retires**
 
-- Evidence: `strategy.name` is declared exactly once
-  (`strategy_name_is_declared_as_optional_enum`).
+- Evidence: the facets are declared exactly once
+  (`strategy_facets_are_declared_as_typed_sections`); the retired
+  `strategy.name` selector is pinned undeclared
+  (`strategy_arm_selector_is_retired`).
 - Keeps: one declaration site; no strategy-scoped ad-hoc env reads outside the
   schema.
-- Retires: parallel env-only strategy selection.
+- Retires: parallel env-only strategy selection; the single-arm selector.
 
 ## 8. Python thinness rules
 
@@ -380,7 +385,7 @@ Pin every seam a family depends on at its own level:
 | Driver boot | `backrun_driver/driver_boot.rs:227` | `backrun_boot(...) -> BackrunBoot` |
 | Driver factory | `backrun_driver/driver_boot.rs:264` | `backrun_spawn_factory(...) -> DriverSpawnFactory` |
 | Driver loop | `backrun_driver/driver_loop.rs:1114` | `BackrunDriver::start(...) -> DriverHandle` |
-| Config strategy section | `degenbot-config/src/schema.rs:356` | `strategy StrategyConfig { name, settlement, backrun }` |
+| Config strategy section | `degenbot-config/src/schema.rs:362` | `strategy StrategyConfig { settlement, mevblocker_backrun, peer_backrun }` |
 | Engine fake parity | `tests/arbitrage/test_engine_fake_parity.py` | binds `ENGINE_SEAM_MEMBERS` to real engine + stub + fake |
 
 ## Discrepancies between the brief and the landed seams (Fistle log)

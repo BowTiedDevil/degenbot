@@ -51,7 +51,7 @@ broadcast transactions are real mainnet transactions with real gas cost.
 ### In scope
 
 - Deploying the in-repo `cmd_executor` (default adapter) or a user executor
-  via the `ExecutionStrategy` seam (ADR-025).
+  via the `ExecutionAdapter` seam (ADR-025).
 - **Deliberately widening the development-posture restrictions** (16-token
   intermediate whitelist, registered-path cap — code default 100k but this
   environment exports `DEGENBOT_MAX_PATHS=1000000`) or keeping them verbatim;

@@ -3,7 +3,7 @@
 the Rust seam ``degenbot._ffi.execution``.
 
 The lift adapts an arbitrary Python callable (``SolveResult -> bytes``) into the
-core ``PayloadComposer`` / ``ExecutionStrategy`` seam (Polars ``map_elements``
+core ``PayloadComposer`` / ``ExecutionAdapter`` seam (Polars ``map_elements``
 model — Rust holds the ``Py<PyAny>`` and calls back under the GIL). It is the
 foreign-contract path: nothing here is wired into the canonical
 ``dispatch_profitable_*`` fan-out (ADR-025 D3) — this test only pins the seam

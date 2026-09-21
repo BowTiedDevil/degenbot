@@ -69,9 +69,12 @@ The load-bearing decisions behind the two-consumer architecture:
 | [050](ADR-050-rust-native-engine-driver.md) | A public `EngineDriver` is the Rust driver seam — the engine stays crate-private behind the one stage seam | accepted |
 | [051](ADR-051-rust-owned-console.md) | The degenbot console is a Rust binary — one command model, an argv passthrough for Python | accepted |
 | [052](ADR-052-db-auto-upgrade-alembic-retirement.md) | The database upgrades itself at open — Alembic retires in-tree ahead of 0.7 | accepted |
+| [053](ADR-053-ffi-stub-generation.md) | FFI Stub Generation — Retire the Hand-Maintained `.pyi` Set? | accepted |
+| [054](ADR-054-strategy-plumbing-surface.md) | The strategy plumbing surface — ReplayOutcome, journal extractors, the planning workspace, and anchored discovery are the promoted seams | accepted |
 | [055](ADR-055-pending-tx-strategy-seams.md) | Pending-transaction strategy seams — MarketContext, PendingTxStrategy, SubmissionTarget, V4 substrate closure | accepted |
 | [056](ADR-056-retire-gated-serving-seam.md) | Retire the gated serving seam — refuted premise, membership to the boot registry | accepted |
 | [057](ADR-057-strategy-host.md) | The strategy host — one process, many drivers over one operator account | accepted |
+| [058](ADR-058-strategy-crate-split.md) | The strategy crate split — submission is mechanism, `degenbot-strategy` owns the plane | accepted |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 

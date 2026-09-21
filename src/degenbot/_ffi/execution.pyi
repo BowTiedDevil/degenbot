@@ -37,7 +37,7 @@ class SolveResult:
 class PayloadComposer:
     """Wrap a Python callable (``result: SolveResult -> bytes``) into the execution seam.
 
-    Implements the core ``PayloadComposer`` / ``ExecutionStrategy`` trait.
+    Implements the core ``PayloadComposer`` / ``ExecutionAdapter`` trait.
 
     Args:
         callback: A callable taking a ``SolveResult`` and returning the

@@ -14,8 +14,20 @@ executable payload), simulator (validity check of the payload), and submission (
 to an endpoint that can land it onchain). Distinct ecosystems get distinct strategies;
 shared reaction capabilities are mixed in by composition, never by sub-traits.
 _Avoid_: treating "lane", the frame pipeline, or the pending-tx driver loop as the
-strategy unit; using "strategy" for the executor-contract adapter (renamed from
-`ExecutionStrategy`).
+strategy unit; using "strategy" for the executor-contract adapter (the
+`ExecutionAdapter` seam).
+
+**Strategy plane**:
+The shared selection surface every concrete strategy participates in: its plane name
+(also its config facet name and host registration id) and selection through
+`StrategyName`. Extracted by subtraction — a slot with one consumer stays out.
+_Avoid_: folding per-strategy knobs or stage machinery into the plane.
+
+**SubmissionSlot**:
+The value that distinguishes the two backrun compositions: the `MEVBlocker`
+bundle-auction slot or the public-mempool fan-out slot. The reaction machinery is
+shared; only the submission slot varies by ecosystem.
+_Avoid_: conflating with `SubmissionTarget` (the typed channel at dispatch).
 
 **Settlement arbitrage**:
 Arbitrage of the cross-pool price discrepancies a settled block's trades leave behind,
@@ -48,21 +60,20 @@ ADR-018-named generalization (ADR-055 Phase C).
 
 **Pending-transaction strategy**:
 A strategy whose source is *observed mempool transactions*, implementing
-`PendingTxReaction` (`degenbot-submission/src/pending_tx.rs`, renamed from
-`PendingTxStrategy` to keep "strategy" unambiguous): `admit` → `discover` → `evaluate`
-→ `compose` → `decide`, threaded by the strategy-neutral artifacts `ComposedIntent` and
-`Decided`. Backrun is the reference implementation.
+`PendingTxReaction` (`degenbot-strategy/src/pending_tx.rs`): `admit` → `discover` →
+`evaluate` → `compose` → `decide`, threaded by the strategy-neutral artifacts
+`ComposedIntent` and `Decided`. Backrun is the reference implementation.
 _Avoid_: "lane", "frame pipeline" as the strategy unit.
 
 **Pending-transaction driver**:
-The `degenbot-submission` driver owning the strategy-neutral loop around a strategy's
+The `degenbot-strategy` driver owning the strategy-neutral loop around a strategy's
 stages: pending-tx replay (ADR-054 seam 1), journal extraction (seam 2), the bundle-sim
 gate, timings/tracing, liveness, and submission.
 
 **MarketContext**:
 The process-lifetime shared caches for pending-transaction strategies — the connector
 index + DFS graph, token id/address joins, and the warm code cache
-(`degenbot-submission/src/market_context.rs`). Substrate, never strategy identity.
+(`degenbot-strategy/src/market_context.rs`). Substrate, never strategy identity.
 _Avoid_: "StrategyRuntime" (retired).
 
 **SubmissionTarget**:
@@ -72,8 +83,10 @@ fallback). Strategy bid/observe policy stays with the strategy; nonce/fee/sign/m
 machinery stays with the channel.
 
 **Strategy facet**:
-One typed per-strategy config section at the schema's single declaration site;
-`strategy.name` (`StrategyName::Settlement|Backrun`, optional) is the arm selector.
+One typed per-strategy config section at the schema's single declaration site; its
+`active` key (plus its own knobs) is that strategy's activation and operator surface.
+There is no single-arm selector; `StrategyName` is the plane's selection key, not a
+config key.
 _Avoid_: strategy-scoped ad-hoc env reads outside the schema.
 
 **Loud-abort rule**:

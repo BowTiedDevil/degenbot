@@ -31,7 +31,7 @@ use crate::solve_result::SolveResult;
 /// canonical `cmd_executor` path), or (b) in a foreign searcher's own crate for
 /// their own execution contract — the exact same trait. A Python consumer
 /// instead supplies a callable + probe/assess spec, lifted into this seam by
-/// `degenbot-python` (`PyPayloadComposer` / `PyExecutionStrategy`).
+/// `degenbot-python` (`PyPayloadComposer`, exposed to Python as `PayloadComposer`).
 ///
 /// Only **Encode** is unconditionally user code. **Probe** is declared data;
 /// **Assess** and **Fee** have built-in defaults (sum-of-deltas gate +

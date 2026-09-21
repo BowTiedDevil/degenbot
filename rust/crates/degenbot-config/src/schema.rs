@@ -176,7 +176,7 @@ crate::config_schema! {
     // leading `~` resolves against HOME at use (degenbot-runs).
     persistence PersistenceConfig {
         state_dir [path] = std::path::PathBuf::from("~/.local/state/degenbot/state"), env = "DEGENBOT_STATE_DIR", def = "~/.local/state/degenbot/state",
-            doc = "Root directory for durable, process-lifetime-independent bot state (e.g. the backrun sidecar's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME.";
+            doc = "Root directory for durable, process-lifetime-independent bot state (e.g. the backrun arm's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME.";
     }
 
     allocator AllocatorConfig {

@@ -8,7 +8,7 @@ contract degenbot offers you for supplying your **own** execution strategy —
 your own payload encoding and your own success/failure gate — for **your own**
 contract, whether you write Rust or Python.
 
-This is the `ExecutionStrategy` seam (ADR-025). Skip to the [quick
+This is the `ExecutionAdapter` seam (ADR-025). Skip to the [quick
 examples](#quick-examples) if you just want to plug in.
 
 ## The parts
@@ -40,7 +40,7 @@ There is **one** seam — `degenbot-execution` — and two ways to reach it:
 - **Rust user:** implement a trait in your own crate.
   ```toml
   # Cargo.toml
-  degenbot-execution = "0.x"   # the seam (PayloadComposer, ExecutionStrategy, Probe/Assess/Fee types)
+  degenbot-execution = "0.x"   # the seam (PayloadComposer, ExecutionAdapter, Probe/Assess/Fee types)
   degenbot-executor = "0.x"    # PathInfo / HopInfo hop descriptors
   degenbot-solvers = "0.x"     # the solve result type (SolvePathResult)
   ```
@@ -49,7 +49,7 @@ There is **one** seam — `degenbot-execution` — and two ways to reach it:
   own recorded expected-bytes corpus.
 - **Python user:** pass a callable + a probe/assess spec. The PyO3 layer
   (`degenbot._ffi.execution.PyPayloadComposer`, feature `execution`) lifts your
-  callable into the same `PayloadComposer` / `ExecutionStrategy` trait — the
+  callable into the same `PayloadComposer` / `ExecutionAdapter` trait — the
   Polars-`map_elements` model (Rust holds the callable and invokes it under the
   GIL). No Rust required.
 
@@ -86,11 +86,11 @@ ABI `execute(uint256,uint256,uint256[])` call whose selector + argument shape
 are deliberately distinct from the default `cmd_executor` adapter (the
 recorded corpus in the repo asserts this).
 
-### Rust — implement `ExecutionStrategy` for your contract
+### Rust — implement `ExecutionAdapter` for your contract
 
 ```rust
 use degenbot_execution::{
-    AssessRule, ComposeError, ComposerInputs, ExecutionStrategy, FeePolicy,
+    AssessRule, ComposeError, ComposerInputs, ExecutionAdapter, FeePolicy,
     PayloadComposer, ProbeSpec, ProbeSpecs,
 };
 use degenbot_executor::composers::PathInfo;
@@ -112,8 +112,8 @@ impl PayloadComposer for MyComposer {
 // The full four-part strategy: Encode + Probe (declared data) + Assess
 // (built-in gate) + Fee (defaulted). See `degenbot-execution-sample` for the
 // complete, green implementation.
-struct MyStrategy { composer: MyComposer, probes: ProbeSpecs }
-impl ExecutionStrategy for MyStrategy {
+struct MyAdapter { composer: MyComposer, probes: ProbeSpecs }
+impl ExecutionAdapter for MyAdapter {
     fn encode(&self, path: &PathInfo, inputs: &ComposerInputs<'_>)
         -> Result<Bytes, ComposeError> { self.composer.compose(path, inputs) }
     fn probe_spec(&self) -> &ProbeSpecs { &self.probes }   // declared reads
@@ -172,7 +172,7 @@ parity oracle) and never touch the canonical `dispatch_profitable_*` fan-out.
 
 ## See also
 
-- [ADR-025 — the `ExecutionStrategy` seam](adr/ADR-025-execution-strategy-seam.md)
+- [ADR-025 — the `ExecutionAdapter` seam](adr/ADR-025-execution-strategy-seam.md)
 - ADR-019 — `cmd_executor` + the settlement-arbitrage 7-call balance gate are Rust and stay
   Rust (the default adapter); pricing folds into Assess.
 - `CONTEXT.md` — the seam / two-consumer (Rust engine, Python driver shell)

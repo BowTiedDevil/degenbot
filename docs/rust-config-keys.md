@@ -44,7 +44,7 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_STATE_DIR` | `persistence.state_dir` | `path` | `~/.local/state/degenbot/state` | Root directory for durable, process-lifetime-independent bot state (e.g. the backrun sidecar's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. |
+| `DEGENBOT_STATE_DIR` | `persistence.state_dir` | `path` | `~/.local/state/degenbot/state` | Root directory for durable, process-lifetime-independent bot state (e.g. the backrun arm's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. |
 ## `allocator`
 
 | Env var | TOML key | Type | Default | Description |

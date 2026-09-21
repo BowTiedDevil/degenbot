@@ -5,7 +5,15 @@ import tomllib
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BaseModel, Field, HttpUrl, PlainSerializer, WebsocketUrl, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    HttpUrl,
+    PlainSerializer,
+    WebsocketUrl,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from degenbot.database.operations import create_new_sqlite_database
@@ -20,12 +28,6 @@ _WS_ENV_PREFIX = "DEGENBOT_RPC_WS_CHAINID_"
 # degenbot-python/src/lib.rs exits 2), so the Python cascade owns the chain id
 # through this env name instead (docs/config-migration.md replacement table).
 _DEFAULT_CHAIN_ID_ENV_VAR = "DEGENBOT_DEFAULT_CHAIN_ID"
-_STRATEGY_NAME_ENV_VAR = "DEGENBOT_STRATEGY_NAME"
-
-# The typed names the arm selector accepts; mirrors the config_schema facet
-# split (StrategyName::Settlement|MevblockerBackrun|PeerBackrun). A name must
-# exist in BOTH typescripts.
-_STRATEGY_NAMES = frozenset({"settlement", "mevblocker_backrun", "peer_backrun"})
 
 
 def _xdg_config_home() -> Path:
@@ -158,22 +160,33 @@ class DegenbotConfig(BaseSettings):
     # carries the table so a config file the Rust side accepts also loads in
     # Python (the RPC cascade reads this file via load_config_from_file).
     failure_policy: dict[str, str | dict[str, str]] = {}
-    # The arm selector (ADR-055). File-layer typed mirror of the Rust schema's
-    # strategy facets; DEGENBOT_STRATEGY_NAME reads run through
-    # strategy_arm_from_env (env layer outranks the file, mirroring the
-    # default_chain_id cascade precedent).
-    strategy_name: str | None = None
 
-    @field_validator("strategy_name", mode="after")
-    def validate_strategy_name(cls, value: str | None) -> str | None:  # ruff:ignore[invalid-first-argument-to-instance-method]
-        """Type-enforce the arm names; an unknown name is a config error."""
-        if value is not None and value.strip() not in _STRATEGY_NAMES:
-            msg = (
-                f"strategy.name={value!r} is not a valid strategy name. "
-                f"Valid names: {sorted(_STRATEGY_NAMES)}."
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_strategy_selector(cls, data: object) -> object:
+        """Refuse the retired single-arm ``strategy.name`` selector.
+
+        The typed Rust schema no longer declares ``strategy.name`` (per-facet
+        ``strategy.<facet>.active`` flags own selection, and the Rust loader is
+        fail-closed on the unknown key). Mirror that here so a surviving
+        selector spelling in the operator file (or an init kwarg) is a pointed
+        error, never a silently absorbed value.
+        """
+        if isinstance(data, dict):
+            strategy = data.get("strategy")
+            retired_selector = "strategy_name" in data or (
+                isinstance(strategy, dict) and "name" in strategy
             )
-            raise ValueError(msg)
-        return value
+            if retired_selector:
+                msg = (
+                    "the retired single-arm strategy selector is not supported: "
+                    "select strategies with the per-facet "
+                    "strategy.<facet>.active flags (strategy.settlement.active, "
+                    "strategy.mevblocker_backrun.active, "
+                    "strategy.peer_backrun.active)."
+                )
+                raise ValueError(msg)
+        return data
 
     @field_validator("rpc", mode="after")
     def validate_paths(
@@ -210,31 +223,6 @@ def _env_http_var(chain_id: ChainId) -> str:
 
 def _env_ws_var(chain_id: ChainId) -> str:
     return f"{_WS_ENV_PREFIX}{chain_id}"
-
-
-def strategy_arm_from_env() -> str | None:
-    """Resolve ``DEGENBOT_STRATEGY_NAME`` (the arm selector's env surface).
-
-    The typed Rust schema is the declaration site (``strategy.name``); this
-    helper is the Python twin that lets driver-shell entry points consult the
-    arm without loading the full config cascade. Returns ``None`` when unset
-    or empty (wiring default), the name when typed.
-
-    Raises:
-        ValueError: When the variable is set to an unknown strategy name.
-
-    """
-    raw = os.environ.get(_STRATEGY_NAME_ENV_VAR)
-    if raw is None or not raw.strip():
-        return None
-    name = raw.strip()
-    if name not in _STRATEGY_NAMES:
-        msg = (
-            f"{_STRATEGY_NAME_ENV_VAR}={raw!r} is not a valid strategy name. "
-            f"Valid names: {sorted(_STRATEGY_NAMES)}."
-        )
-        raise ValueError(msg) from None
-    return name
 
 
 def _env_default_chain_id() -> int | None:
