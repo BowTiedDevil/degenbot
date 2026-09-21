@@ -2,7 +2,7 @@ use alloy::primitives::U256;
 
 use super::IntV3TickRangeHop;
 
-use super::telemetry::WALK_WORD_STEPS;
+use super::telemetry::bump_word_steps;
 
 // ---------------------------------------------------------------------------
 // Integer V3 Swap Simulation
@@ -99,7 +99,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
         if remaining <= I256::ZERO {
             break;
         }
-        WALK_WORD_STEPS.with(|c| c.set(c.get() + 1));
+        bump_word_steps(1);
         let Ok(step) = compute_swap_step_v3(sp, *target, liquidity, remaining, fee_pips) else {
             return V3SwapResult::default();
         };

@@ -4,8 +4,8 @@ use alloy::primitives::U256;
 
 use super::active_set::{landed_any_above, simulate_walk_path, WalkHop};
 use super::telemetry::{
-    WALK_EVENT_SOLVER_FALLBACKS, WALK_EVENT_SOLVER_OK, WALK_LEFT_EDGE_SIMS, WALK_MAX_DENSE_WORDS,
-    WALK_PRED_NS_TOTAL, WALK_RIGHT_EDGE_SIMS,
+    add_pred_ns, bump_event_solver_fallbacks, bump_event_solver_ok, bump_left_edge_sims,
+    bump_right_edge_sims, observe_max_dense_words,
 };
 use super::word_profile::{word_profile_min_input_for_output, V3WordProfile};
 use super::{ClCrossingTable, ClProfileTable, IntTickRangeCrossing, IntV3TickRangeSequence};
@@ -47,10 +47,7 @@ fn cl_hop_min_input_for_output(
 pub(super) fn walk_event_first_above_predicted(hops: &[WalkHop], ks: &[usize]) -> Option<U256> {
     let p_t0 = std::time::Instant::now();
     let out = walk_event_first_above_predicted_inner(hops, ks);
-    WALK_PRED_NS_TOTAL.fetch_add(
-        u64::try_from(p_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    add_pred_ns(u64::try_from(p_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
     out
 }
 
@@ -138,7 +135,7 @@ pub(super) fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256)
     let mut lo = U256::ZERO;
     let mut hi = hint.max(U256::ONE);
     for _ in 0..256 {
-        WALK_LEFT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
+        bump_left_edge_sims(1);
         let landed = simulate_walk_path(hi, hops).landed;
         if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             break; // predicate true
@@ -153,7 +150,7 @@ pub(super) fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256)
     // then scan for the exact first in-window input.
     while hi.saturating_sub(lo) > U256::from(64u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
-        WALK_LEFT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
+        bump_left_edge_sims(1);
         let landed = simulate_walk_path(mid, hops).landed;
         if landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             lo = mid;
@@ -163,7 +160,7 @@ pub(super) fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256)
     }
     let mut x = lo + U256::from(1u64);
     while x < hi {
-        WALK_LEFT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
+        bump_left_edge_sims(1);
         let landed = simulate_walk_path(x, hops).landed;
         if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             return x;
@@ -202,14 +199,14 @@ pub(super) fn piece_window_right_edge_evented(
         };
         if usable {
             let below = simulate_walk_path(pa - U256::ONE, hops).landed;
-            WALK_RIGHT_EDGE_SIMS.with(|c| c.set(c.get() + 2));
+            bump_right_edge_sims(2);
             if !landed_any_above(&below, ks) {
-                WALK_EVENT_SOLVER_OK.with(|c| c.set(c.get() + 1));
+                bump_event_solver_ok(1);
                 return (Some(pa - U256::ONE), pa);
             }
         }
     }
-    WALK_EVENT_SOLVER_FALLBACKS.with(|c| c.set(c.get() + 1));
+    bump_event_solver_fallbacks(1);
     piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed)
 }
 
@@ -251,7 +248,7 @@ fn piece_window_right_edge_seeded(
         hi = hseed.max(hint.max(U256::ONE));
     }
     for _ in 0..256 {
-        WALK_RIGHT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
+        bump_right_edge_sims(1);
         let landed = simulate_walk_path(hi, hops).landed;
         if landed_any_above(&landed, ks) {
             confirmed = true;
@@ -269,7 +266,7 @@ fn piece_window_right_edge_seeded(
     // Bisect to a ≤4 bracket: lo is the largest known ≤ ks input.
     while hi.saturating_sub(lo) > U256::from(4u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
-        WALK_RIGHT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
+        bump_right_edge_sims(1);
         let landed = simulate_walk_path(mid, hops).landed;
         if landed_any_above(&landed, ks) {
             hi = mid;
@@ -312,11 +309,7 @@ pub(super) fn build_word_profiles(
 ) -> Vec<Option<Arc<V3WordProfile>>> {
     for c in crossings {
         let n = c.ending_range.word_boundary_prices.len();
-        WALK_MAX_DENSE_WORDS.with(|m| {
-            if n > m.get() {
-                m.set(n);
-            }
-        });
+        observe_max_dense_words(n);
         // KEEP ledger (Stage-1 sharing): a dense profile builds ONCE per
         // (pool, direction) and is Arc-shared across every path reusing the
         // projection — build cost amortized over paths, O(1) clone per path,

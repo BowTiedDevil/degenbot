@@ -35,6 +35,11 @@ hotpath = { version = "^0.26", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]
+# Ambient walk telemetry: the per-thread walk-combinator counters, event
+# census, and process-wide timing statics. Off by default so a release build
+# that never reads the counters pays nothing for them; enabling it turns the
+# writers on. See src/cl/telemetry.rs for the gate.
+telemetry = []
 
 [dev-dependencies]
 rayon = { version = "^1.12" }

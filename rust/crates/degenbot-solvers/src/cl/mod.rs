@@ -36,7 +36,8 @@
 //! - `active_set` — the active-set piecewise Möbius walk.
 //! - `entries` — the public solve entry points and [`ClPrepared`].
 //! - `memo` — the cross-block composition memo.
-//! - `telemetry` — walk counters, census, and process-wide timing statics.
+//! - `telemetry` — walk counters, census, and process-wide timing statics,
+//!   written only when the crate's default-off `telemetry` feature is enabled.
 
 use std::sync::Arc;
 

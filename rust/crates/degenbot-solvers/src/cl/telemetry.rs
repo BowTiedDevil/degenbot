@@ -1,6 +1,17 @@
+//! Ambient walk telemetry: per-thread walk-combinator counters (pieces, sims,
+//! word steps, refinement and per-edge probe splits), the event census, and the
+//! process-wide timing statics the cache lab reads.
+//!
+//! Compiling `degenbot-solvers` without its `telemetry` feature (the default)
+//! flushes every writer to a no-op, so the counters read as zero and the
+//! release build pays nothing for them. The read accessors keep their shape.
+
 use alloy::primitives::U256;
 
-use super::active_set::{landed_any_above, simulate_walk_path, WalkHop, WalkStats};
+#[cfg(feature = "telemetry")]
+use super::active_set::{landed_any_above, simulate_walk_path};
+use super::active_set::{WalkHop, WalkStats};
+#[cfg(feature = "telemetry")]
 use super::crossings::walk_event_first_above_predicted;
 use crate::runtime::SolveRuntimeConfig;
 
@@ -63,10 +74,12 @@ thread_local! {
 
 /// Census gate from the injected runtime config (T4: no env read here —
 /// the owner packs the stance at construction).
+#[cfg(feature = "telemetry")]
 fn event_census_on(cfg: &SolveRuntimeConfig) -> bool {
     cfg.walk_event_census
 }
 
+#[cfg(feature = "telemetry")]
 fn event_census_bucket(d: U256) -> usize {
     if d <= U256::from(4u64) {
         0
@@ -82,6 +95,20 @@ fn event_census_bucket(d: U256) -> usize {
 /// Record one piece: `x_r = Some(lo)` with `hi` above (bracket `[lo+1, hi]`)
 /// when bounded, `None` for a terminal piece.
 pub(super) fn event_census_record(
+    hops: &[WalkHop],
+    ks: &[usize],
+    x_r: Option<U256>,
+    hi: U256,
+    cfg: &SolveRuntimeConfig,
+) {
+    #[cfg(feature = "telemetry")]
+    event_census_record_inner(hops, ks, x_r, hi, cfg);
+    #[cfg(not(feature = "telemetry"))]
+    let _ = (hops, ks, x_r, hi, cfg);
+}
+
+#[cfg(feature = "telemetry")]
+fn event_census_record_inner(
     hops: &[WalkHop],
     ks: &[usize],
     x_r: Option<U256>,
@@ -204,19 +231,29 @@ pub static WALK_CENSUS_REFINE_SIMNS: std::sync::atomic::AtomicU64 =
 /// Loop-17 section census helper: records (wall ns, sims, sim wall ns)
 /// between `Mark::start()` and `commit`, attributing them to a section.
 pub(super) struct Mark {
+    #[cfg(feature = "telemetry")]
     at: std::time::Instant,
+    #[cfg(feature = "telemetry")]
     probes: u64,
+    #[cfg(feature = "telemetry")]
     probe_ns: u64,
 }
 
 impl Mark {
     #[inline]
     pub(super) fn start() -> Self {
-        Self {
-            at: std::time::Instant::now(),
-            probes: u64::try_from(WALK_PATH_SIMULATIONS.with(std::cell::Cell::get))
-                .unwrap_or(u64::MAX),
-            probe_ns: WALK_SIM_NS_TOTAL.load(std::sync::atomic::Ordering::Relaxed),
+        #[cfg(feature = "telemetry")]
+        {
+            Self {
+                at: std::time::Instant::now(),
+                probes: u64::try_from(WALK_PATH_SIMULATIONS.with(std::cell::Cell::get))
+                    .unwrap_or(u64::MAX),
+                probe_ns: WALK_SIM_NS_TOTAL.load(std::sync::atomic::Ordering::Relaxed),
+            }
+        }
+        #[cfg(not(feature = "telemetry"))]
+        {
+            Self {}
         }
     }
 
@@ -227,20 +264,25 @@ impl Mark {
         tally: &std::sync::atomic::AtomicU64,
         probe_ns: &std::sync::atomic::AtomicU64,
     ) {
-        use std::sync::atomic::Ordering::Relaxed;
-        wall.fetch_add(
-            u64::try_from(self.at.elapsed().as_nanos()).unwrap_or(u64::MAX),
-            Relaxed,
-        );
-        let now_probes =
-            u64::try_from(WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)).unwrap_or(u64::MAX);
-        tally.fetch_add(now_probes.saturating_sub(self.probes), Relaxed);
-        probe_ns.fetch_add(
-            WALK_SIM_NS_TOTAL
-                .load(Relaxed)
-                .saturating_sub(self.probe_ns),
-            Relaxed,
-        );
+        #[cfg(not(feature = "telemetry"))]
+        let _ = (self, wall, tally, probe_ns);
+        #[cfg(feature = "telemetry")]
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            wall.fetch_add(
+                u64::try_from(self.at.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                Relaxed,
+            );
+            let now_probes =
+                u64::try_from(WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)).unwrap_or(u64::MAX);
+            tally.fetch_add(now_probes.saturating_sub(self.probes), Relaxed);
+            probe_ns.fetch_add(
+                WALK_SIM_NS_TOTAL
+                    .load(Relaxed)
+                    .saturating_sub(self.probe_ns),
+                Relaxed,
+            );
+        }
     }
 }
 
@@ -304,6 +346,12 @@ thread_local! {
 /// Drain ALL walk counters + census state on the calling thread.
 /// Drain = read-and-clear; the discarded value is the prior path's.
 pub(crate) fn reset_walk_stats() {
+    #[cfg(feature = "telemetry")]
+    reset_walk_stats_inner();
+}
+
+#[cfg(feature = "telemetry")]
+fn reset_walk_stats_inner() {
     EVENT_CENSUS.with(|c| c.set(WalkEventCensus::default()));
     WALK_PIECES_VISITED.with(|c| c.set(0));
     WALK_PATH_SIMULATIONS.with(|c| c.set(0));
@@ -321,6 +369,18 @@ pub(crate) fn reset_walk_stats() {
 /// Snapshot (no clearing) of the full per-thread walk telemetry.
 #[must_use]
 pub(super) fn peek_walk_stats() -> WalkStats {
+    #[cfg(feature = "telemetry")]
+    {
+        peek_walk_stats_inner()
+    }
+    #[cfg(not(feature = "telemetry"))]
+    {
+        WalkStats::default()
+    }
+}
+
+#[cfg(feature = "telemetry")]
+fn peek_walk_stats_inner() -> WalkStats {
     WalkStats {
         pieces: WALK_PIECES_VISITED.with(std::cell::Cell::get),
         sims: WALK_PATH_SIMULATIONS.with(std::cell::Cell::get),
@@ -335,5 +395,108 @@ pub(super) fn peek_walk_stats() -> WalkStats {
         event_solver_fallbacks: WALK_EVENT_SOLVER_FALLBACKS.with(std::cell::Cell::get),
         max_dense_words: WALK_MAX_DENSE_WORDS.with(std::cell::Cell::get),
         census: EVENT_CENSUS.with(std::cell::Cell::get),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Gated writer accessors
+//
+// Every ambient mutation routes through one of these helpers. With the
+// `telemetry` feature off each is a no-op, so the counters stay at their
+// zero initializers and the release build never touches the cells or statics.
+// ---------------------------------------------------------------------------
+
+/// Adds `by` to one thread-local walk counter.
+macro_rules! gated_cell_bump {
+    ($name:ident, $cell:ident) => {
+        #[inline]
+        pub(super) fn $name(by: usize) {
+            #[cfg(feature = "telemetry")]
+            $cell.with(|c| c.set(c.get() + by));
+            #[cfg(not(feature = "telemetry"))]
+            let _ = by;
+        }
+    };
+}
+
+gated_cell_bump!(bump_path_simulations, WALK_PATH_SIMULATIONS);
+gated_cell_bump!(bump_pieces_visited, WALK_PIECES_VISITED);
+gated_cell_bump!(bump_word_steps, WALK_WORD_STEPS);
+gated_cell_bump!(bump_refine_sims, WALK_REFINE_SIMS);
+gated_cell_bump!(bump_ternary_sims, WALK_TERNARY_SIMS);
+gated_cell_bump!(bump_grid_sims, WALK_GRID_SIMS);
+gated_cell_bump!(bump_left_edge_sims, WALK_LEFT_EDGE_SIMS);
+gated_cell_bump!(bump_right_edge_sims, WALK_RIGHT_EDGE_SIMS);
+gated_cell_bump!(bump_anchor_sims, WALK_ANCHOR_SIMS);
+gated_cell_bump!(bump_event_solver_ok, WALK_EVENT_SOLVER_OK);
+gated_cell_bump!(bump_event_solver_fallbacks, WALK_EVENT_SOLVER_FALLBACKS);
+
+/// Adds `ns` to one process-wide timing counter.
+macro_rules! gated_atomic_add {
+    ($name:ident, $atomic:ident) => {
+        #[inline]
+        pub(super) fn $name(ns: u64) {
+            #[cfg(feature = "telemetry")]
+            $atomic.fetch_add(ns, std::sync::atomic::Ordering::Relaxed);
+            #[cfg(not(feature = "telemetry"))]
+            let _ = ns;
+        }
+    };
+}
+
+gated_atomic_add!(add_sim_ns, WALK_SIM_NS_TOTAL);
+gated_atomic_add!(add_anchor_ns, WALK_ANCHOR_NS_TOTAL);
+gated_atomic_add!(add_pred_ns, WALK_PRED_NS_TOTAL);
+gated_atomic_add!(add_solve_ns, WALK_SOLVE_NS_TOTAL);
+gated_atomic_add!(add_anchor_build_ns, WALK_ANCHOR_BUILD_NS);
+gated_atomic_add!(add_anchor_compose_ns, WALK_ANCHOR_COMPOSE_NS);
+gated_atomic_add!(add_anchor_argmax_ns, WALK_ANCHOR_ARGMAX_NS);
+
+/// Raises this thread's largest observed word-boundary count to at least `n`.
+#[inline]
+pub(super) fn observe_max_dense_words(n: usize) {
+    #[cfg(feature = "telemetry")]
+    WALK_MAX_DENSE_WORDS.with(|m| {
+        if n > m.get() {
+            m.set(n);
+        }
+    });
+    #[cfg(not(feature = "telemetry"))]
+    let _ = n;
+}
+
+/// Zeroes this thread's pieces/sims at the start of a solve.
+#[inline]
+pub(super) fn clear_walk_pieces_and_sims() {
+    #[cfg(feature = "telemetry")]
+    {
+        WALK_PIECES_VISITED.with(|c| c.set(0));
+        WALK_PATH_SIMULATIONS.with(|c| c.set(0));
+    }
+}
+
+/// Sims executed so far on this thread (`0` without `telemetry`).
+#[inline]
+pub(super) fn path_simulations_now() -> usize {
+    #[cfg(feature = "telemetry")]
+    {
+        WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)
+    }
+    #[cfg(not(feature = "telemetry"))]
+    {
+        0
+    }
+}
+
+/// Drains the thread's census piece recorder (empty without `telemetry`).
+#[inline]
+pub(super) fn take_event_census_pieces() -> Vec<(Vec<usize>, U256)> {
+    #[cfg(feature = "telemetry")]
+    {
+        EVENT_CENSUS_PIECES.with_borrow_mut(std::mem::take)
+    }
+    #[cfg(not(feature = "telemetry"))]
+    {
+        Vec::new()
     }
 }

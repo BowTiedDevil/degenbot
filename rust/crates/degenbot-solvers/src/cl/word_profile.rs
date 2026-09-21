@@ -3,7 +3,7 @@ use alloy::primitives::U256;
 use super::IntV3TickRangeHop;
 
 use super::hop_sim::V3SwapResult;
-use super::telemetry::WALK_WORD_STEPS;
+use super::telemetry::bump_word_steps;
 
 // ---------------------------------------------------------------------------
 // Event-solver inversion (loop 15)
@@ -128,7 +128,7 @@ impl V3WordProfile {
             .copied()
             .chain(std::iter::once(exit_price))
         {
-            WALK_WORD_STEPS.with(|c| c.set(c.get() + 1));
+            bump_word_steps(1);
             let Ok(step) = compute_swap_step_v3(sp, target_price, liquidity, full, fee_pips) else {
                 return None;
             };
@@ -178,7 +178,7 @@ impl V3WordProfile {
                 output: base_o,
             };
         }
-        WALK_WORD_STEPS.with(|c| c.set(c.get() + 1));
+        bump_word_steps(1);
         let Ok(step) = compute_swap_step_v3(
             self.price[j],
             self.target[j],

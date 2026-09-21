@@ -13,14 +13,14 @@ use super::crossings::{
 };
 use super::hop_sim::int_simulate_v3_swap;
 use super::telemetry::{
-    event_census_record, peek_walk_stats, reset_walk_stats, Mark, WalkEventCensus,
-    EVENT_CENSUS_PIECES, WALK_ANCHOR_ARGMAX_NS, WALK_ANCHOR_BUILD_NS, WALK_ANCHOR_COMPOSE_NS,
-    WALK_ANCHOR_NS_TOTAL, WALK_ANCHOR_SIMS, WALK_CENSUS_DIR_NS, WALK_CENSUS_DIR_SIMNS,
-    WALK_CENSUS_DIR_SIMS, WALK_CENSUS_EDGE_NS, WALK_CENSUS_EDGE_SIMNS, WALK_CENSUS_EDGE_SIMS,
-    WALK_CENSUS_REDGE_NS, WALK_CENSUS_REDGE_SIMNS, WALK_CENSUS_REDGE_SIMS, WALK_CENSUS_REFINE_NS,
-    WALK_CENSUS_REFINE_SIMNS, WALK_CENSUS_REFINE_SIMS, WALK_GRID_SIMS, WALK_PATH_SIMULATIONS,
-    WALK_PIECES_VISITED, WALK_REFINE_SIMS, WALK_SIM_NS_TOTAL, WALK_SOLVE_NS_TOTAL,
-    WALK_TERNARY_SIMS,
+    add_anchor_argmax_ns, add_anchor_build_ns, add_anchor_compose_ns, add_anchor_ns, add_sim_ns,
+    add_solve_ns, bump_anchor_sims, bump_grid_sims, bump_path_simulations, bump_pieces_visited,
+    bump_refine_sims, bump_ternary_sims, clear_walk_pieces_and_sims, event_census_record,
+    path_simulations_now, peek_walk_stats, reset_walk_stats, take_event_census_pieces, Mark,
+    WalkEventCensus, WALK_CENSUS_DIR_NS, WALK_CENSUS_DIR_SIMNS, WALK_CENSUS_DIR_SIMS,
+    WALK_CENSUS_EDGE_NS, WALK_CENSUS_EDGE_SIMNS, WALK_CENSUS_EDGE_SIMS, WALK_CENSUS_REDGE_NS,
+    WALK_CENSUS_REDGE_SIMNS, WALK_CENSUS_REDGE_SIMS, WALK_CENSUS_REFINE_NS,
+    WALK_CENSUS_REFINE_SIMNS, WALK_CENSUS_REFINE_SIMS,
 };
 use super::{ClCrossingTable, ClProfileTable};
 use crate::runtime::{AnchorSweep, SolveRuntimeConfig};
@@ -80,13 +80,10 @@ pub(super) struct WalkPathOutcome {
 /// lands in — which is what makes it usable as the walk's ground truth for
 /// any candidate.
 pub(super) fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
-    WALK_PATH_SIMULATIONS.with(|c| c.set(c.get() + 1));
+    bump_path_simulations(1);
     let sim_t0 = std::time::Instant::now();
     let out = simulate_walk_path_inner(amount_in, hops);
-    WALK_SIM_NS_TOTAL.fetch_add(
-        u64::try_from(sim_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    add_sim_ns(u64::try_from(sim_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
     out
 }
 
@@ -345,11 +342,11 @@ pub(super) fn walk_refine_window(
     let mut best_score = I256::MIN;
     // phase 0 = ternary narrowing, phase 1 = final grid / dense sweep.
     let mut probe = |x: U256, hops: &[WalkHop], rec: &mut WalkRecorder, phase: u8| -> I256 {
-        WALK_REFINE_SIMS.with(|c| c.set(c.get() + 1));
+        bump_refine_sims(1);
         if phase == 0 {
-            WALK_TERNARY_SIMS.with(|c| c.set(c.get() + 1));
+            bump_ternary_sims(1);
         } else {
-            WALK_GRID_SIMS.with(|c| c.set(c.get() + 1));
+            bump_grid_sims(1);
         }
         let o = rec.eval_and_record(x, hops);
         let s = walk_profit_score(o.final_output, x);
@@ -496,12 +493,9 @@ pub(super) fn solve_active_set_path(hops: &[WalkHop], cfg: &SolveRuntimeConfig) 
     // THIS path's telemetry (no frozen thread-locals on the read-back path).
     reset_walk_stats();
     let out = solve_active_set_path_inner(hops, cfg);
-    WALK_SOLVE_NS_TOTAL.fetch_add(
-        u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    add_solve_ns(u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
     let stats = peek_walk_stats();
-    let census_pieces = EVENT_CENSUS_PIECES.with_borrow_mut(std::mem::take);
+    let census_pieces = take_event_census_pieces();
     WalkOutcome {
         result: out,
         stats,
@@ -627,8 +621,7 @@ fn solve_active_set_path_inner(
         return None;
     }
 
-    WALK_PIECES_VISITED.with(|c| c.set(0));
-    WALK_PATH_SIMULATIONS.with(|c| c.set(0));
+    clear_walk_pieces_and_sims();
 
     let iteration_cap: usize = hops
         .iter()
@@ -665,7 +658,7 @@ fn solve_active_set_path_inner(
         if !visited.insert(ks.clone()) {
             break;
         }
-        WALK_PIECES_VISITED.with(|c| c.set(c.get() + 1));
+        bump_pieces_visited(1);
 
         // Transitional anchor: extra candidates (±2 sweep) and edge-growth
         // hint; never trusted for the direction decision.
@@ -676,29 +669,23 @@ fn solve_active_set_path_inner(
         let anchor_all_t0 = std::time::Instant::now();
         let anchor_build_t0 = std::time::Instant::now();
         let anchor_pieces = build_shifted_piece_hops(hops, &ks);
-        WALK_ANCHOR_BUILD_NS.fetch_add(
+        add_anchor_build_ns(
             u64::try_from(anchor_build_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-            std::sync::atomic::Ordering::Relaxed,
         );
         let anchor_compose_t0 = std::time::Instant::now();
         let anchor_coeffs = anchor_memo.piece_coefficients(&anchor_pieces, &ks);
-        WALK_ANCHOR_COMPOSE_NS.fetch_add(
+        add_anchor_compose_ns(
             u64::try_from(anchor_compose_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-            std::sync::atomic::Ordering::Relaxed,
         );
         let anchor_argmax_t0 = std::time::Instant::now();
         let anchor = crate::mobius_shifted_piece::shifted_piece_model_optimal_input(&anchor_coeffs)
             .unwrap_or(U256::ZERO);
-        WALK_ANCHOR_ARGMAX_NS.fetch_add(
+        add_anchor_argmax_ns(
             u64::try_from(anchor_argmax_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-            std::sync::atomic::Ordering::Relaxed,
         );
-        WALK_ANCHOR_NS_TOTAL.fetch_add(
-            u64::try_from(anchor_all_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        add_anchor_ns(u64::try_from(anchor_all_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
         if !anchor.is_zero() {
-            let anchor_t0 = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
+            let anchor_t0 = path_simulations_now();
             let deltas: &[i32] = match sweep {
                 AnchorSweep::Full => &[-2, -1, 0, 1, 2],
                 AnchorSweep::CenterOnly => &[0],
@@ -719,8 +706,8 @@ fn solve_active_set_path_inner(
                 }
                 rec.eval_and_record(candidate, hops);
             }
-            let anchor_delta = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get) - anchor_t0;
-            WALK_ANCHOR_SIMS.with(|c| c.set(c.get() + anchor_delta));
+            let anchor_delta = path_simulations_now() - anchor_t0;
+            bump_anchor_sims(anchor_delta);
         }
         if single_piece_path {
             // F1 corner guard (adversarial review): the exact unclamped smooth

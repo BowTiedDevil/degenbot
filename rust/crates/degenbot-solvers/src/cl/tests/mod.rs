@@ -2600,6 +2600,12 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
         sims <= 900,
         "seed + dedup probe budget regressed, got {sims} sims (baseline 844, seeded 832)"
     );
+    #[cfg(not(feature = "telemetry"))]
+    assert_eq!(
+        (pieces, sims),
+        (0, 0),
+        "walk counters must flush to zero without the telemetry feature"
+    );
 
     // Common case: 3-hop, moderate multi-range sequences.
     let s1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
@@ -2621,6 +2627,12 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
     // Seeded-bracket regression contract: 251 measured with the
     // warm start; 300 keeps headroom.
     assert!(sims <= 300);
+    #[cfg(not(feature = "telemetry"))]
+    assert_eq!(
+        (pieces, sims),
+        (0, 0),
+        "walk counters must flush to zero without the telemetry feature"
+    );
 }
 
 /// Property: the walk's profit must match a fine grid
