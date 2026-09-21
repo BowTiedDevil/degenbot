@@ -21,6 +21,8 @@ use alloy::primitives::U256;
 use degenbot_config::BotConfig;
 use degenbot_decoders::target_class::TargetClass;
 
+use crate::strategy_plane::{Strategy, StrategyName};
+
 /// One ecosystem's submission slot: the half of the strategy composition the
 /// two backrun arms differ in. The reaction machinery (frame feed, anchored
 /// discovery, decide gate, sim, dispatch) is shared; only the values named
@@ -333,6 +335,10 @@ impl MevblockerBackrun {
     }
 }
 
+impl Strategy for MevblockerBackrun {
+    const NAME: StrategyName = StrategyName::MevblockerBackrun;
+}
+
 /// The public-mempool backrun strategy: the same pending-transaction reaction,
 /// submitting through the public relay fan-out instead of the `MEVBlocker`
 /// auction.
@@ -374,6 +380,10 @@ impl PeerBackrun {
     pub fn into_config(self) -> BackrunConfig {
         self.config
     }
+}
+
+impl Strategy for PeerBackrun {
+    const NAME: StrategyName = StrategyName::PeerBackrun;
 }
 
 impl BackrunConfig {

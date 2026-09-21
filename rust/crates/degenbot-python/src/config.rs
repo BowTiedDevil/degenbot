@@ -111,15 +111,19 @@ pub fn validate_strategy_readiness() -> PyResult<StrategyReadinessView> {
 #[pyfunction]
 pub fn settlement_broadcast_endpoints() -> PyResult<Vec<String>> {
     let config = ::degenbot_config::holder::config();
-    ::degenbot_config::strategy_readiness(config)
-        .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))
-        .and_then(|readiness| match &readiness.settlement {
-            ::degenbot_config::Arm::Inactive => Err(::pyo3::exceptions::PyValueError::new_err(
-                "strategy settlement is not active: this hosted runner IS the settlement arm; \
-                 activate it first (degenbot strategy activate settlement --endpoints-default)",
-            )),
-            ::degenbot_config::Arm::Active(urls) => Ok(urls.clone()),
-        })
+    let readiness = ::degenbot_config::strategy_readiness(config)
+        .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    if matches!(readiness.settlement, ::degenbot_config::Arm::Inactive) {
+        return Err(::pyo3::exceptions::PyValueError::new_err(
+            "strategy settlement is not active: this hosted runner IS the settlement arm; \
+             activate it first (degenbot strategy activate settlement --endpoints-default)",
+        ));
+    }
+    // The endpoints come from the settlement strategy composition, so the
+    // broadcast posture and the strategy plane read one config surface.
+    Ok(::degenbot_strategy::Settlement::from_config(config)
+        .into_config()
+        .endpoints)
 }
 /// Read the shared core verification-retry policy defaults.
 #[pyfunction]

@@ -163,29 +163,23 @@ pub(crate) fn boot_host() -> BootedHost {
     );
 
     let cfg = degenbot_config::holder::config();
-    let mevblocker_configured = cfg.strategy.mevblocker_backrun.active;
-    let peer_configured = cfg.strategy.peer_backrun.active;
-
-    host.register(StrategyId::new("settlement"), FacetStatus::Configured)
-        .expect("fresh host registers settlement");
-    host.register(
-        StrategyId::new("mevblocker_backrun"),
-        if mevblocker_configured {
-            FacetStatus::Configured
-        } else {
-            FacetStatus::Unconfigured
-        },
-    )
-    .expect("fresh host registers mevblocker_backrun");
-    host.register(
-        StrategyId::new("peer_backrun"),
-        if peer_configured {
-            FacetStatus::Configured
-        } else {
-            FacetStatus::Unconfigured
-        },
-    )
-    .expect("fresh host registers peer_backrun");
+    // Register every strategy under its plane name, in plane order. The
+    // settlement facet is the arm this hosted boot IS, so it registers
+    // configured regardless of `strategy.settlement.active`: the runner
+    // resolves its live relay posture after the engine exists, and a dry-run
+    // boot that never broadcasts must still enable the arm.
+    for name in degenbot_strategy::StrategyName::ALL {
+        let configured = name == degenbot_strategy::StrategyName::Settlement || name.is_active(cfg);
+        host.register(
+            StrategyId::new(name.as_str()),
+            if configured {
+                FacetStatus::Configured
+            } else {
+                FacetStatus::Unconfigured
+            },
+        )
+        .expect("a freshly minted host registers every strategy");
+    }
 
     #[cfg(feature = "submission")]
     let head_lanes = {

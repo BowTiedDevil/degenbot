@@ -62,3 +62,12 @@ pub mod gap_quarantine;
 pub mod gap_quarantine_journal;
 pub mod market_context;
 pub mod pending_tx;
+pub mod settlement;
+pub mod strategy_plane;
+
+// The strategy plane's shared selection surface and the concrete compositions
+// it selects. Root re-exports so a consumer names `degenbot_strategy::StrategyName`
+// rather than threading the module path.
+pub use backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun, SubmissionSlot};
+pub use settlement::{Settlement, SettlementConfig};
+pub use strategy_plane::{SelectedStrategy, Strategy, StrategyName};
