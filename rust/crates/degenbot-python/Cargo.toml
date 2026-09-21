@@ -85,7 +85,7 @@ serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 toml = "1.1.6"
-degenbot-eventhub = { version = "0.6.0-alpha.11", path = "../degenbot-eventhub" }
+degenbot-eventhub = { version = "0.6.0-alpha.12", path = "../degenbot-eventhub" }
 
 [features]
 # Per-domain binding-layer features. Each gates its optional
