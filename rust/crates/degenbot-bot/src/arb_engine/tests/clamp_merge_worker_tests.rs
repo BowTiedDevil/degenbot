@@ -135,9 +135,7 @@ fn worker_probe_ctx(
         metadata: BlockMetadata::default(),
         runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         gate_capture: None,
-        walk_memo: Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
-            false, false,
-        )),
+        walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
         prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
         min_profit: ::alloy::primitives::U256::ZERO,
         capture: None,

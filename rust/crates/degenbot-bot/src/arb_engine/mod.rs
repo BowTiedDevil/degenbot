@@ -526,7 +526,7 @@ impl ArbitrageEngine {
                 // the machine's pre-cycle init lives on the machine
                 // (dormant Unopened, pipe closed, counters at 0).
                 detached_cycle: detached_cycle::DetachedCycle::new(),
-                walk_memo: std::sync::Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
+                walk_memo: std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(
                     cfg.solve.solver_walk_memo,
                     cfg.solve.solver_walk_memo_stats,
                 )),

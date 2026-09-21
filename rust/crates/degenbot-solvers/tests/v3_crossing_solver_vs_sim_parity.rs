@@ -81,7 +81,7 @@ use degenbot_pools::v3_state::{
 };
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::mobius_v3_int::{int_simulate_v3_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{int_simulate_v3_swap, IntV3TickRangeSequence};
 
 /// Sqrt-price limit that lets the walk cross every tick the input can reach
 /// (V3 Pool.swap's `sqrtPriceLimit` MIN/MAX bound for the direction).

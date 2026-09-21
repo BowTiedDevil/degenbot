@@ -26,7 +26,7 @@
 //! the caller must NOT skip in that case (conservative) — the verdict type
 //! carries the distinction, so it cannot be ignored by accident.
 
-use crate::mobius_v3_int::{build_cl_crossing_table, ClCrossingTable};
+use crate::cl::{build_cl_crossing_table, ClCrossingTable};
 use crate::runtime::SolveRuntimeConfig;
 use alloy::primitives::{aliases::I512, U256, U512};
 use degenbot_core::diag;
@@ -1467,7 +1467,7 @@ impl std::fmt::Debug for PrefixCache {
 }
 
 /// Reset all gate counters on the calling thread (call at solve-cycle start,
-/// mirroring [`crate::mobius_v3_int::reset_walk_stats`]).
+/// mirroring `reset_walk_stats`).
 pub fn reset_gate_stats() {
     gate_tls(|t| *t = GateStats::EMPTY);
 }
@@ -1517,7 +1517,7 @@ pub struct GateDeps<'a> {
     pub capture: Option<&'a GateCaptureCfg>,
     /// The engine-owned cross-block walk-memo handle (SU7MAE T3); `None`
     /// disables the memo for this solve.
-    pub walk_memo: Option<&'a crate::mobius_v3_int::WalkMemo>,
+    pub walk_memo: Option<&'a crate::cl::WalkMemo>,
     /// the owner's runtime stance (envelope caps + trace gate),
     /// instance-scoped and passed down — the gate reads no environment.
     pub runtime: SolveRuntimeConfig,
@@ -1569,7 +1569,7 @@ impl GateDeps<'_> {
 
     /// The engine-owned walk-memo handle, if any (`None` disables it).
     #[must_use]
-    pub fn walk_memo(&self) -> Option<&crate::mobius_v3_int::WalkMemo> {
+    pub fn walk_memo(&self) -> Option<&crate::cl::WalkMemo> {
         self.walk_memo
     }
 }
@@ -2482,7 +2482,7 @@ fn compose_boundary_reference(
 #[expect(clippy::expect_used)] // tiny literals; panic on typo is the point
 mod tests {
     use super::*;
-    use crate::mobius_v3_int::int_simulate_v3_swap;
+    use crate::cl::int_simulate_v3_swap;
     use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
 
     // ===================================================================

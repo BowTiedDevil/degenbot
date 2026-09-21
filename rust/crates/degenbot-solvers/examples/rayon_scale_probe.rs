@@ -45,8 +45,8 @@ use std::time::Instant;
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles, WalkStats};
 use degenbot_solvers::mixed::{solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath};
-use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles, WalkStats};
 use degenbot_solvers::profit_envelope::{reset_gate_stats, take_last_gate_stats};
 use rayon::prelude::*;
 use serde_json::Value;

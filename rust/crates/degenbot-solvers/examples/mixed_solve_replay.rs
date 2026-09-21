@@ -51,7 +51,7 @@
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{exact_solve_mixed_path_n, WalkStats};
+use degenbot_solvers::cl::{exact_solve_mixed_path_n, WalkStats};
 use serde_json::Value;
 
 const PROFIT_EPS: u128 = 100_000;

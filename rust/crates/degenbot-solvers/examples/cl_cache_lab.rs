@@ -27,8 +27,8 @@ extern crate degenbot_solvers;
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
+use degenbot_solvers::cl::int_solve_cl_path;
 use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy, PreparedHop};
-use degenbot_solvers::mobius_v3_int::int_solve_cl_path;
 use serde_json::Value;
 
 fn u256(s: &str) -> Result<U256, String> {
@@ -92,20 +92,20 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
 ) -> Option<(U256, U256, Vec<U256>)> {
     let prepared: Vec<PreparedHop> = strategy.refill(seqs, event);
     if prepared.is_empty() {
-        return degenbot_solvers::mobius_v3_int::solve_cl_derived(
+        return degenbot_solvers::cl::solve_cl_derived(
             seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         )
         .result;
     }
-    let crossings: Vec<&std::sync::Arc<degenbot_solvers::mobius_v3_int::ClCrossingTable>> =
+    let crossings: Vec<&std::sync::Arc<degenbot_solvers::cl::ClCrossingTable>> =
         prepared.iter().map(|(c, _)| c).collect();
-    let profiles: Vec<&std::sync::Arc<degenbot_solvers::mobius_v3_int::ClProfileTable>> =
+    let profiles: Vec<&std::sync::Arc<degenbot_solvers::cl::ClProfileTable>> =
         prepared.iter().map(|(_, p)| p).collect();
-    let prepared_hops: Vec<degenbot_solvers::mobius_v3_int::ClPrepared> = crossings
+    let prepared_hops: Vec<degenbot_solvers::cl::ClPrepared> = crossings
         .iter()
         .zip(profiles.iter())
-        .map(|(c, p)| degenbot_solvers::mobius_v3_int::ClPrepared {
+        .map(|(c, p)| degenbot_solvers::cl::ClPrepared {
             crossings: std::sync::Arc::clone(c),
             profiles: std::sync::Arc::clone(p),
         })
@@ -240,7 +240,7 @@ fn main() {
                 catalog.iter().map(|s| s.counters().clone()).collect();
             let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
             let t_ref = std::time::Instant::now();
-            let reference = degenbot_solvers::mobius_v3_int::solve_cl_derived(
+            let reference = degenbot_solvers::cl::solve_cl_derived(
                 &seq_refs,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             )
@@ -288,44 +288,44 @@ fn main() {
         n_paths += 1;
     }
 
-    let sim_ns = degenbot_solvers::mobius_v3_int::WALK_SIM_NS_TOTAL
+    let sim_ns =
+        degenbot_solvers::cl::WALK_SIM_NS_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let anchor_ns =
+        degenbot_solvers::cl::WALK_ANCHOR_NS_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let pred_ns =
+        degenbot_solvers::cl::WALK_PRED_NS_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let solve_ns =
+        degenbot_solvers::cl::WALK_SOLVE_NS_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let edge_ns =
+        degenbot_solvers::cl::WALK_CENSUS_EDGE_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let edge_sims =
+        degenbot_solvers::cl::WALK_CENSUS_EDGE_SIMS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let edge_simns =
+        degenbot_solvers::cl::WALK_CENSUS_EDGE_SIMNS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let redge_ns =
+        degenbot_solvers::cl::WALK_CENSUS_REDGE_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let redge_sims =
+        degenbot_solvers::cl::WALK_CENSUS_REDGE_SIMS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let redge_simns =
+        degenbot_solvers::cl::WALK_CENSUS_REDGE_SIMNS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let dir_ns =
+        degenbot_solvers::cl::WALK_CENSUS_DIR_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let dir_sims =
+        degenbot_solvers::cl::WALK_CENSUS_DIR_SIMS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let dir_simns =
+        degenbot_solvers::cl::WALK_CENSUS_DIR_SIMNS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let refine_ns =
+        degenbot_solvers::cl::WALK_CENSUS_REFINE_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let refine_sims =
+        degenbot_solvers::cl::WALK_CENSUS_REFINE_SIMS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let refine_simns = degenbot_solvers::cl::WALK_CENSUS_REFINE_SIMNS
         .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let anchor_ns = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_NS_TOTAL
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let pred_ns = degenbot_solvers::mobius_v3_int::WALK_PRED_NS_TOTAL
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let solve_ns = degenbot_solvers::mobius_v3_int::WALK_SOLVE_NS_TOTAL
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let edge_ns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_EDGE_NS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let edge_sims = degenbot_solvers::mobius_v3_int::WALK_CENSUS_EDGE_SIMS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let edge_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_EDGE_SIMNS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let redge_ns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REDGE_NS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let redge_sims = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REDGE_SIMS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let redge_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REDGE_SIMNS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let dir_ns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_DIR_NS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let dir_sims = degenbot_solvers::mobius_v3_int::WALK_CENSUS_DIR_SIMS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let dir_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_DIR_SIMNS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let refine_ns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REFINE_NS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let refine_sims = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REFINE_SIMS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let refine_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REFINE_SIMNS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let ab_ns = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_BUILD_NS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let ac_ns = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_COMPOSE_NS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let am_ns = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_ARGMAX_NS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let ab_ns =
+        degenbot_solvers::cl::WALK_ANCHOR_BUILD_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let ac_ns =
+        degenbot_solvers::cl::WALK_ANCHOR_COMPOSE_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let am_ns =
+        degenbot_solvers::cl::WALK_ANCHOR_ARGMAX_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
     println!(
         "  anchor split: build {:.1} ms | compose {:.1} ms | argmax {:.1} ms (of anchors total)",
         ab_ns as f64 / 1e6,
@@ -428,9 +428,8 @@ fn run_micro_bench(micro_seqs: Option<Vec<IntV3TickRangeSequence>>) {
 
     // Build the tables for the densest hop once.
     let seq = &seqs[0];
-    let crossings = degenbot_solvers::mobius_v3_int::build_cl_crossing_table(seq);
-    let profiles =
-        degenbot_solvers::mobius_v3_int::build_cl_word_profiles_from_crossings(&crossings);
+    let crossings = degenbot_solvers::cl::build_cl_crossing_table(seq);
+    let profiles = degenbot_solvers::cl::build_cl_word_profiles_from_crossings(&crossings);
     println!(
         "  hop0: {} ranges, {} word-profiles",
         crossings.len(),

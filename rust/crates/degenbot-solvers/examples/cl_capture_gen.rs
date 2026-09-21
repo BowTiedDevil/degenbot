@@ -59,7 +59,7 @@ use degenbot_pools::TickBootstrapRpc;
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickBootstrapRpc;
-use degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence;
+use degenbot_solvers::cl::IntV3TickRangeSequence;
 use serde_json::{json, Value};
 
 const MAX_FETCHES: usize = 320; // per-pool tick-word fetch cap, overridable
@@ -329,7 +329,7 @@ fn main() -> ExitCode {
             let _zfo_a = other_a == a_t0;
             let _zfo_b = s == b_t0;
             let t0 = std::time::Instant::now();
-            let out = degenbot_solvers::mobius_v3_int::solve_cl_derived(
+            let out = degenbot_solvers::cl::solve_cl_derived(
                 &[sa, sb],
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             );

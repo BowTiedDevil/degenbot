@@ -15,7 +15,7 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::WalkStats;
+use degenbot_solvers::cl::WalkStats;
 use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
 use std::time::Instant;
@@ -98,7 +98,7 @@ fn replay_captured_heavy_paths() {
         let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
         // RED-1: small-K ranges must build word profiles after the threshold
         // widening. Until then the per-sim linear word walk is the driver.
-        let small_k_profile = degenbot_solvers::mobius_v3_int::build_cl_word_profiles(&seqs[1]);
+        let small_k_profile = degenbot_solvers::cl::build_cl_word_profiles(&seqs[1]);
         let small_k_covered = seqs[1]
             .ranges
             .iter()
@@ -135,7 +135,7 @@ fn replay_captured_heavy_paths() {
         sub.merge_enum += gs.pairs_enumerated;
         sub.merge_fallbacks += gs.merge_legacy_fallbacks;
         let t0 = Instant::now();
-        let outcome = degenbot_solvers::mobius_v3_int::solve_cl_derived(
+        let outcome = degenbot_solvers::cl::solve_cl_derived(
             &seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         );

@@ -207,13 +207,13 @@ pub(crate) fn solve_one_path(
     // read-back. The Q3 dense one-shot alert is the
     // CONSUMER's decision.
     let outcome_stats = &outcome.stats;
-    if outcome_stats.max_dense_words >= ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD
+    if outcome_stats.max_dense_words >= ::degenbot_solvers::cl::DENSE_OBSERVE_THRESHOLD
         && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         op_warn!(
             domain = solver,
             max_dense_words = outcome_stats.max_dense_words,
-            threshold = ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD,
+            threshold = ::degenbot_solvers::cl::DENSE_OBSERVE_THRESHOLD,
             "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
         );
     }

@@ -9,10 +9,8 @@
 
 use std::sync::Arc;
 
+use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles_from_crossings};
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
-use degenbot_solvers::mobius_v3_int::{
-    build_cl_crossing_table, build_cl_word_profiles_from_crossings,
-};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -32,10 +30,10 @@ use crate::arb_engine::PoolTickCoverage;
 /// shared.
 #[must_use]
 fn fused_cl_tables(
-    seq: &degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence,
+    seq: &degenbot_solvers::cl::IntV3TickRangeSequence,
 ) -> (
-    Arc<degenbot_solvers::mobius_v3_int::ClCrossingTable>,
-    Arc<degenbot_solvers::mobius_v3_int::ClProfileTable>,
+    Arc<degenbot_solvers::cl::ClCrossingTable>,
+    Arc<degenbot_solvers::cl::ClProfileTable>,
 ) {
     let crossings = Arc::new(build_cl_crossing_table(seq));
     let profiles = Arc::new(build_cl_word_profiles_from_crossings(&crossings));

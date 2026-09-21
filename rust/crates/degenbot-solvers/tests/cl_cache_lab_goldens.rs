@@ -13,8 +13,8 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_solvers::cl::int_solve_cl_path;
 use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy, PreparedHop};
-use degenbot_solvers::mobius_v3_int::int_solve_cl_path;
 use serde_json::Value;
 
 const PROFIT_EPS: u128 = 100_000;
@@ -58,15 +58,15 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
 ) -> Option<(U256, U256, Vec<U256>)> {
     let prepared: Vec<PreparedHop> = strategy.refill(seqs, event);
     if prepared.is_empty() {
-        return degenbot_solvers::mobius_v3_int::solve_cl_derived(
+        return degenbot_solvers::cl::solve_cl_derived(
             seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         )
         .result;
     }
-    let prepared_hops: Vec<degenbot_solvers::mobius_v3_int::ClPrepared> = prepared
+    let prepared_hops: Vec<degenbot_solvers::cl::ClPrepared> = prepared
         .iter()
-        .map(|(c, p)| degenbot_solvers::mobius_v3_int::ClPrepared {
+        .map(|(c, p)| degenbot_solvers::cl::ClPrepared {
             crossings: std::sync::Arc::clone(c),
             profiles: std::sync::Arc::clone(p),
         })
@@ -159,7 +159,7 @@ fn golden_epochs_and_transitioned_epochs_stay_exact() {
 
         // Golden epoch: strategies on the captured state + two-sided gate.
         let seq_refs: Vec<&IntV3TickRangeSequence> = baseline.iter().collect();
-        let reference = degenbot_solvers::mobius_v3_int::solve_cl_derived(
+        let reference = degenbot_solvers::cl::solve_cl_derived(
             &seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         )
@@ -235,7 +235,7 @@ fn golden_epochs_and_transitioned_epochs_stay_exact() {
                 }
             };
             let refs2: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
-            let reference = degenbot_solvers::mobius_v3_int::solve_cl_derived(
+            let reference = degenbot_solvers::cl::solve_cl_derived(
                 &refs2,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             )

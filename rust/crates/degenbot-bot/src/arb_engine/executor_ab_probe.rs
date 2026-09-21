@@ -18,7 +18,7 @@ use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles};
+use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles};
 use hashbrown::HashMap;
 use serde_json::Value;
 use std::sync::Arc;
@@ -130,9 +130,7 @@ pub(in crate::arb_engine) fn probe_ctx() -> Arc<SolveCycleShared> {
         metadata: BlockMetadata::default(),
         runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         gate_capture: None,
-        walk_memo: Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
-            false, false,
-        )),
+        walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
         prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
         min_profit: ::alloy::primitives::U256::ZERO,
         capture: None,

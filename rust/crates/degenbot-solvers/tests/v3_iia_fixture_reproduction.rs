@@ -55,7 +55,7 @@ use degenbot_pools::TickBootstrapRpc;
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickBootstrapRpc;
-use degenbot_solvers::mobius_v3_int::{int_simulate_v3_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{int_simulate_v3_swap, IntV3TickRangeSequence};
 
 /// Hardcoded fixture from the captured `DEGENBOT_SIM_EXIT_ON_FAIL=1` trap
 /// (`logs/bot_run.log` block 25647669, path 7724). Pool `0x57D7…dF80`,

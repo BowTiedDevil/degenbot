@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};
 
-use crate::mobius_v3_int::{IntTickRangeCrossing, IntV3TickRangeSequence, V3WordProfile};
+use crate::cl::{IntTickRangeCrossing, IntV3TickRangeSequence, V3WordProfile};
 use degenbot_math::balancer::PowVersion;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::v2::IntHopState;

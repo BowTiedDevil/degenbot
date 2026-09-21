@@ -219,7 +219,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 /// `isqrt_u512`. Floor division matches `EVM DIV` semantics.
 ///
 /// This function is also used by the mixed V2-V3 integer solver
-/// (`mobius_v3_int::exact_solve_mixed_v2_v3_sequence`) and the
+/// (`cl::exact_solve_mixed_v2_v3_sequence`) and the
 /// Solidly-bracketed dispatcher
 /// (`arb_engine::solver_dispatch::solve_solidly`), each of which uses the
 /// model-optimum output as an anchor for its own discrete search
@@ -395,7 +395,7 @@ fn u512_to_u2048(v: U512) -> Option<U2048> {
 
 /// Convert U512 to U256, returning U256::ZERO if the value overflows.
 ///
-/// This is `pub` so that `mobius_v3_int` can use it too.
+/// This is `pub` so that `cl` can use it too.
 /// Narrow a `U512` to a `U256`.
 ///
 /// For pool state sourced from on-chain events (V2 `Sync(uint112,uint112)`,

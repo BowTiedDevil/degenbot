@@ -505,8 +505,8 @@ mod tests {
     };
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U128, U256};
+    use degenbot_solvers::cl::{IntTickRangeCrossing, V3WordProfile};
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
-    use degenbot_solvers::mobius_v3_int::{IntTickRangeCrossing, V3WordProfile};
 
     fn ref_v3(pool_key: u64) -> MixedPoolRef {
         MixedPoolRef {
@@ -911,16 +911,16 @@ mod tests {
             .iter()
             .filter_map(ResolvedHop::as_crossing_table)
             .collect();
-        let prepared: Vec<degenbot_solvers::mobius_v3_int::ClPrepared> = seqs
+        let prepared: Vec<degenbot_solvers::cl::ClPrepared> = seqs
             .iter()
             .zip(crossings.iter())
             .zip(profiles.iter())
-            .map(|((_, c), p)| degenbot_solvers::mobius_v3_int::ClPrepared {
+            .map(|((_, c), p)| degenbot_solvers::cl::ClPrepared {
                 crossings: std::sync::Arc::clone(c),
                 profiles: std::sync::Arc::clone(p),
             })
             .collect();
-        degenbot_solvers::mobius_v3_int::int_solve_cl_path(
+        degenbot_solvers::cl::int_solve_cl_path(
             &seqs,
             &prepared,
             None,
@@ -946,37 +946,35 @@ mod tests {
             .map(|opt| opt.cloned())
             .collect();
         // RLVDUP T1: borrow - the walk reads the sequences only.
-        let seqs: Vec<Option<&degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence>> =
+        let seqs: Vec<Option<&degenbot_solvers::cl::IntV3TickRangeSequence>> =
             r.hops.iter().map(ResolvedHop::as_int_sequence).collect();
-        let crossings: Vec<
-            Option<std::sync::Arc<degenbot_solvers::mobius_v3_int::ClCrossingTable>>,
-        > = r
+        let crossings: Vec<Option<std::sync::Arc<degenbot_solvers::cl::ClCrossingTable>>> = r
             .hops
             .iter()
             .map(ResolvedHop::as_crossing_table)
             .map(|opt| opt.cloned())
             .collect();
-        let profiles: Vec<Option<std::sync::Arc<degenbot_solvers::mobius_v3_int::ClProfileTable>>> =
-            r.hops
-                .iter()
-                .map(ResolvedHop::as_word_profiles)
-                .map(|opt| opt.cloned())
-                .collect();
-        let cl_prepared: Vec<Option<degenbot_solvers::mobius_v3_int::ClPrepared>> = hop_order
+        let profiles: Vec<Option<std::sync::Arc<degenbot_solvers::cl::ClProfileTable>>> = r
+            .hops
+            .iter()
+            .map(ResolvedHop::as_word_profiles)
+            .map(|opt| opt.cloned())
+            .collect();
+        let cl_prepared: Vec<Option<degenbot_solvers::cl::ClPrepared>> = hop_order
             .iter()
             .enumerate()
             .map(|(i, &is_v2)| {
                 if is_v2 {
                     None
                 } else {
-                    Some(degenbot_solvers::mobius_v3_int::ClPrepared {
+                    Some(degenbot_solvers::cl::ClPrepared {
                         crossings: std::sync::Arc::clone(crossings[i].as_ref()?),
                         profiles: std::sync::Arc::clone(profiles[i].as_ref()?),
                     })
                 }
             })
             .collect();
-        degenbot_solvers::mobius_v3_int::exact_solve_mixed_path_n(
+        degenbot_solvers::cl::exact_solve_mixed_path_n(
             &v2_hops,
             &seqs,
             &cl_prepared,

@@ -51,7 +51,7 @@ use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::mobius_v3_int::{int_simulate_v3_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{int_simulate_v3_swap, IntV3TickRangeSequence};
 
 /// The on-chain actual + the pre-fix lpFee-only prediction for path=97.
 const ONCHAIN_ACTUAL_OUT: u128 = 25_885;

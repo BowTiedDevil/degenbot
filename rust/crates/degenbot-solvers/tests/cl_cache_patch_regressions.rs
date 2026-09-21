@@ -18,8 +18,8 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{build_cl_crossing_table, ClCrossingTable};
 use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent};
-use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, ClCrossingTable};
 
 fn single_range_seq() -> IntV3TickRangeSequence {
     let mk = |liq: u128, lo: u64, hi: u64, price: u64| IntV3TickRangeHop {

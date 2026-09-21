@@ -7,7 +7,7 @@
 //! `degenbot-bot/src/solvers/arb_engine/solver_dispatch.rs` (where they were
 //! `impl ArbitrageEngine` associated fns with `#[allow(unused_self)]`).
 //!
-//! The CL hop uses `crate::mobius_v3_int::*` (same crate); the V2 + CL
+//! The CL hop uses `crate::cl::*` (same crate); the V2 + CL
 //! Möbius arms call `crate::mobius_int::*` / `crate::mobius_int_exact::*`.
 
 use std::sync::Arc;
@@ -38,7 +38,7 @@ use crate::mixed::{
 #[derive(Debug, Default)]
 pub struct SolveOutcome {
     pub result: Option<SolvePathResult>,
-    pub stats: crate::mobius_v3_int::WalkStats,
+    pub stats: crate::cl::WalkStats,
 }
 
 #[must_use]
@@ -159,10 +159,10 @@ pub fn solve_path_with_min_profit(
 pub fn solve_path_inner(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
-) -> (Option<SolvePathResult>, crate::mobius_v3_int::WalkStats) {
+) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
-        return (None, crate::mobius_v3_int::WalkStats::default());
+        return (None, crate::cl::WalkStats::default());
     }
     let all_v2 = resolved
         .hops
@@ -243,10 +243,10 @@ pub fn solve_path_inner(
                             None
                         }
                     }),
-                crate::mobius_v3_int::WalkStats::default(),
+                crate::cl::WalkStats::default(),
             )
         } else {
-            (None, crate::mobius_v3_int::WalkStats::default())
+            (None, crate::cl::WalkStats::default())
         }
     } else if all_cl {
         // V3-V3, V4-V4, V3-V4, V4-V3, V3-V3-V3, etc: all concentrated-liquidity
@@ -266,16 +266,16 @@ pub fn solve_path_inner(
             .filter_map(ResolvedHop::as_crossing_table)
             .collect();
         if int_sequences.len() >= 2 {
-            let prepared: Vec<crate::mobius_v3_int::ClPrepared> = int_sequences
+            let prepared: Vec<crate::cl::ClPrepared> = int_sequences
                 .iter()
                 .zip(cl_crossings.iter())
                 .zip(cl_profiles.iter())
-                .map(|((_, c), p)| crate::mobius_v3_int::ClPrepared {
+                .map(|((_, c), p)| crate::cl::ClPrepared {
                     crossings: Arc::clone(c),
                     profiles: Arc::clone(p),
                 })
                 .collect();
-            let out = crate::mobius_v3_int::int_solve_cl_path(
+            let out = crate::cl::int_solve_cl_path(
                 &int_sequences,
                 &prepared,
                 gate.walk_memo(),
@@ -309,7 +309,7 @@ pub fn solve_path_inner(
                 out.stats,
             )
         } else {
-            (None, crate::mobius_v3_int::WalkStats::default())
+            (None, crate::cl::WalkStats::default())
         }
     } else if all_v2_or_solidly && has_solidly {
         // All-V2-or-Solidly with ≥1 Solidly hop — the two-stage Möbius
@@ -317,13 +317,13 @@ pub fn solve_path_inner(
         // Solidly mixed with CL is rejected below.
         (
             solve_solidly_path_int(resolved),
-            crate::mobius_v3_int::WalkStats::default(),
+            crate::cl::WalkStats::default(),
         )
     } else if has_solidly {
         // A Solidly hop alongside a CL hop — out of scope (p). The
         // Solidly solve is a per-hop `swap_fn` walk incompatible with
         // CL tick-range enumeration; Python rejects these too.
-        (None, crate::mobius_v3_int::WalkStats::default())
+        (None, crate::cl::WalkStats::default())
     } else if all_v2_or_weighted && has_balancer_weighted {
         // All-V2-or-Balancer-weighted with ≥1 weighted hop — the
         // Möbius precheck + golden-section solve over the Balancer
@@ -331,12 +331,12 @@ pub fn solve_path_inner(
         // rejected below (same scope rule as Solidly+CL).
         (
             solve_balancer_weighted_path_int(resolved),
-            crate::mobius_v3_int::WalkStats::default(),
+            crate::cl::WalkStats::default(),
         )
     } else if has_balancer_weighted {
         // A weighted hop alongside a CL hop — out of scope (same
         // rationale as Solidly+CL).
-        (None, crate::mobius_v3_int::WalkStats::default())
+        (None, crate::cl::WalkStats::default())
     } else if all_v2_or_stable && has_balancer_stable {
         // All-V2-or-Balancer-stable with ≥1 stable hop — the
         // Möbius precheck + golden-section solve over the Balancer
@@ -344,21 +344,21 @@ pub fn solve_path_inner(
         // rejected below.
         (
             solve_balancer_stable_path_int(resolved),
-            crate::mobius_v3_int::WalkStats::default(),
+            crate::cl::WalkStats::default(),
         )
     } else if has_balancer_stable {
         // A stable hop alongside a CL or weighted hop — out of scope.
-        (None, crate::mobius_v3_int::WalkStats::default())
+        (None, crate::cl::WalkStats::default())
     } else if all_v2_or_curve && has_curve {
         // All-V2-or-Curve with ≥1 Curve hop — the Möbius precheck +
         // golden-section solve over the Curve stableswap math leaf.
         (
             solve_curve_path_int(resolved),
-            crate::mobius_v3_int::WalkStats::default(),
+            crate::cl::WalkStats::default(),
         )
     } else if has_curve {
         // A Curve hop alongside a CL or Balancer hop — out of scope.
-        (None, crate::mobius_v3_int::WalkStats::default())
+        (None, crate::cl::WalkStats::default())
     } else {
         // Mixed V2 + CL (V3 or V4)
         solve_mixed_path_int(resolved, gate)
@@ -441,9 +441,9 @@ pub fn solve_path_inner(
 fn solve_mixed_path_int(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
-) -> (Option<SolvePathResult>, crate::mobius_v3_int::WalkStats) {
+) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
     if resolved.hops.len() < 2 {
-        return (None, crate::mobius_v3_int::WalkStats::default());
+        return (None, crate::cl::WalkStats::default());
     }
 
     // Check that this is actually a mixed path (both V2 and CL hops)
@@ -454,7 +454,7 @@ fn solve_mixed_path_int(
     let has_cl = resolved.hops.iter().any(|h| h.as_int_sequence().is_some());
     if !has_v2 || !has_cl {
         // not a mixed path — should be handled by other dispatches
-        return (None, crate::mobius_v3_int::WalkStats::default());
+        return (None, crate::cl::WalkStats::default());
     }
 
     // Build hop_order and adapter arrays from the enum
@@ -471,35 +471,35 @@ fn solve_mixed_path_int(
     // RLVDUP T1: borrow the CL sequences straight off the resolved hops -
     // the walk reads them; the old deep clone copied every ranges Vec per
     // solve.
-    let int_v3_sequences: Vec<Option<&crate::mobius_v3_int::IntV3TickRangeSequence>> =
+    let int_v3_sequences: Vec<Option<&crate::cl::IntV3TickRangeSequence>> =
         resolved.hops.iter().map(|h| h.as_int_sequence()).collect();
-    let cl_crossings: Vec<Option<Arc<crate::mobius_v3_int::ClCrossingTable>>> = resolved
+    let cl_crossings: Vec<Option<Arc<crate::cl::ClCrossingTable>>> = resolved
         .hops
         .iter()
         .map(|h| h.as_crossing_table().cloned())
         .collect();
-    let cl_profiles: Vec<Option<Arc<crate::mobius_v3_int::ClProfileTable>>> = resolved
+    let cl_profiles: Vec<Option<Arc<crate::cl::ClProfileTable>>> = resolved
         .hops
         .iter()
         .map(|h| h.as_word_profiles().cloned())
         .collect();
 
     // Per-CL-hop prepared tables from the projection (V2 positions None).
-    let cl_prepared: Vec<Option<crate::mobius_v3_int::ClPrepared>> = hop_order
+    let cl_prepared: Vec<Option<crate::cl::ClPrepared>> = hop_order
         .iter()
         .enumerate()
         .map(|(i, &is_v2)| {
             if is_v2 {
                 None
             } else {
-                Some(crate::mobius_v3_int::ClPrepared {
+                Some(crate::cl::ClPrepared {
                     crossings: Arc::clone(cl_crossings[i].as_ref()?),
                     profiles: Arc::clone(cl_profiles[i].as_ref()?),
                 })
             }
         })
         .collect();
-    let out = crate::mobius_v3_int::exact_solve_mixed_path_n(
+    let out = crate::cl::exact_solve_mixed_path_n(
         &v2_hops,
         &int_v3_sequences,
         &cl_prepared,

@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use alloy::primitives::U256;
 
-use crate::mobius_v3_int::{
+use crate::cl::{
     build_cl_crossing_table, build_cl_word_profiles, build_cl_word_profiles_from_crossings,
     ClCrossingTable, ClProfileTable, IntTickRangeCrossing, IntV3TickRangeHop,
     IntV3TickRangeSequence,
@@ -197,8 +197,8 @@ fn crossings_match_shape(
 fn rebuild_profile_at(
     crossings: &IntTickRangeCrossing,
     k: usize,
-    old: Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>>,
-) -> Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>> {
+    old: Vec<Option<Arc<crate::cl::V3WordProfile>>>,
+) -> Vec<Option<Arc<crate::cl::V3WordProfile>>> {
     let mut table = old;
     if k >= table.len() {
         return table;
@@ -212,8 +212,8 @@ fn rebuild_profile_at(
 
 fn rebuild_range0_profile(
     crossings: &IntTickRangeCrossing,
-    old: Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>>,
-) -> Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>> {
+    old: Vec<Option<Arc<crate::cl::V3WordProfile>>>,
+) -> Vec<Option<Arc<crate::cl::V3WordProfile>>> {
     rebuild_profile_at(crossings, 0, old)
 }
 
@@ -645,7 +645,7 @@ impl ClCacheStrategy for SeqMemoProbe {
 #[derive(Default)]
 pub struct ProfileSplitCache {
     crossings: HashMap<(usize, String), Arc<ClCrossingTable>>,
-    profiles: HashMap<(usize, String), Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>>>,
+    profiles: HashMap<(usize, String), Vec<Option<Arc<crate::cl::V3WordProfile>>>>,
     last_profile_keys: HashMap<usize, Vec<String>>,
     counters: BuildCounters,
 }
@@ -668,7 +668,7 @@ impl ClCacheStrategy for ProfileSplitCache {
                     c
                 }
             };
-            let mut table: Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>> =
+            let mut table: Vec<Option<Arc<crate::cl::V3WordProfile>>> =
                 Vec::with_capacity(seq.ranges.len());
             let mut new_keys = Vec::with_capacity(seq.ranges.len());
             let prev_t = self.profiles.get(&(i, key.clone())).cloned();
@@ -709,7 +709,7 @@ impl ClCacheStrategy for ProfileSplitCache {
 #[derive(Default)]
 pub struct CompositeSplitCache {
     segs: HashMap<usize, (String, String, Vec<(U256, U256)>, Arc<ClCrossingTable>)>,
-    profiles: HashMap<(usize, String), Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>>>,
+    profiles: HashMap<(usize, String), Vec<Option<Arc<crate::cl::V3WordProfile>>>>,
     last_profile_keys: HashMap<usize, Vec<String>>,
     counters: BuildCounters,
 }
@@ -829,8 +829,8 @@ impl CompositeSplitCache {
         key: &str,
         seq: &IntV3TickRangeSequence,
         crossings: &Arc<ClCrossingTable>,
-    ) -> Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>> {
-        let mut table: Vec<Option<Arc<crate::mobius_v3_int::V3WordProfile>>> =
+    ) -> Vec<Option<Arc<crate::cl::V3WordProfile>>> {
+        let mut table: Vec<Option<Arc<crate::cl::V3WordProfile>>> =
             Vec::with_capacity(seq.ranges.len());
         let mut new_keys = Vec::with_capacity(seq.ranges.len());
         let prev_t = self.profiles.get(&(i, key.to_string())).cloned();

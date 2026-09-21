@@ -115,7 +115,7 @@ pub(crate) struct SolveCycleShared {
     pub(crate) solve_block: u64,
     pub(crate) epoch: u64,
     pub(crate) gate_capture: Option<::degenbot_solvers::profit_envelope::GateCaptureCfg>,
-    pub(crate) walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
+    pub(crate) walk_memo: std::sync::Arc<::degenbot_solvers::cl::WalkMemo>,
     /// The engine-owned prefix-composition cache; epoch-generationed, so
     /// entries never survive a block boundary.
     pub(crate) prefix_cache: std::sync::Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
@@ -257,7 +257,7 @@ pub(crate) struct SolveCycle {
     /// The engine-owned cross-block walk-composition memo (SU7MAE T3, Q12a):
     /// passed into the solve entries by handle; epoch advances at the
     /// block-lifecycle start.
-    pub(crate) walk_memo: Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
+    pub(crate) walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>,
     /// The engine-owned prefix-composition cache.
     pub(crate) prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
     /// The pre-solve profitability floor. A packed instance

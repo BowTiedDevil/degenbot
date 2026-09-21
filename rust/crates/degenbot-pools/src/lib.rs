@@ -77,9 +77,6 @@ pub mod curve_dy_io;
 pub use curve_dy_io::{resolve_dy_inputs, CurveInputsError};
 pub mod curve_state;
 pub mod curve_strategies;
-// Domain-math prose (sqrtPriceX96, Solidity, …) moved verbatim from
-// `degenbot-bot/src/solvers/mobius_v3_int.rs`; mirrors the `#[allow]` on that
-// module in `degenbot-bot/src/solvers/mod.rs`.
 #[expect(clippy::doc_markdown)]
 pub mod int_v3_hop;
 pub mod liquidity_event;
