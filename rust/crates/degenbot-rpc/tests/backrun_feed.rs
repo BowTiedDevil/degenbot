@@ -1,4 +1,4 @@
-//! Backrun feed client spec (task 7D7IGX).
+//! Backrun feed client spec.
 //!
 //! Seam: `degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig, BackrunFeedEvent}`
 //! and `BackrunFeedStatus`. Tests drive a local mock WS server and assert on

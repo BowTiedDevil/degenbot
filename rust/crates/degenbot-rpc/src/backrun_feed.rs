@@ -1,4 +1,4 @@
-//! `MEVBlocker` searcher feed client (task 7D7IGX).
+//! `MEVBlocker` searcher feed client.
 //!
 //! Connects to `<wss://searchers.mevblocker.io>`, subscribes to
 //! `mevblocker_partialPendingTransactions`, and delivers typed

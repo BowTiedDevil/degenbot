@@ -1,4 +1,4 @@
-//! Gap-prefix hydration probes (ergo OOFT63): sample the four RPC lanes the
+//! Gap-prefix hydration probes: sample the four RPC lanes the
 //! quarantine task relies on (per-sender only, NEVER a full-pool scan) and
 //! emit their latency/presence evidence through the JSONL trace. The honest
 //! cost model of gap rescue is measured here, not retro-fitted after the FSM

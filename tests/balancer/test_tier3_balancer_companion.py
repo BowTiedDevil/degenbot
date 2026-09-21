@@ -12,7 +12,7 @@ which transitively pins them to canonical Solidity.
 bytecode even on legacy hardfork specs, while revm inside the rust test runs
 it fine - see the epic task notes.)
 
-Acceptance gate for the thin-shell migration (ergo epic GTDLLN): every commit
+Acceptance gate for the thin-shell migration: every commit
 that touches the Balancer companions keeps this green.
 """
 
