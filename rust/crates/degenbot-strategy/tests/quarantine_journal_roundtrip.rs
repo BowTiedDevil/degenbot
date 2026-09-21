@@ -15,10 +15,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
-use degenbot_submission::gap_quarantine::{
+use degenbot_strategy::gap_quarantine::{
     FrameState, NonceConsumed, Quarantine, QuarantineDecision,
 };
-use degenbot_submission::gap_quarantine_journal::{
+use degenbot_strategy::gap_quarantine_journal::{
     compact, corrupt_sidecar_path, read_pending, ArchivedResolution, ParkRecord, QuarantineJournal,
     RecordFidelity, Resolution, ResolutionArchiveRecord, TentativeRecord, JOURNAL_FILE_NAME,
     RESOLVED_ARCHIVE_FILE_NAME,

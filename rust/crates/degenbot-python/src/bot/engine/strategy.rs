@@ -125,9 +125,9 @@ pub(crate) struct BootedHost {
 fn hosted_route_registry() -> Arc<RouteRegistry> {
     let config = degenbot_config::holder::config();
     let db_path = degenbot_config::resolve_database_path(&degenbot_config::ProcessEnv, None).value;
-    match degenbot_submission::backrun_driver::resolve_backrun_node_join() {
+    match degenbot_strategy::backrun_driver::resolve_backrun_node_join() {
         Ok(join) => degenbot_core::runtime::get_runtime().block_on(
-            degenbot_submission::backrun_driver::resolve_backrun_host_registry(
+            degenbot_strategy::backrun_driver::resolve_backrun_host_registry(
                 config,
                 &db_path,
                 &join.provider,
@@ -217,7 +217,7 @@ pub(crate) fn boot_host() -> BootedHost {
         let registry = Arc::clone(host.registry());
         host.attach_spawn(
             &backrun_id,
-            degenbot_submission::backrun_driver::backrun_spawn_factory(
+            degenbot_strategy::backrun_driver::backrun_spawn_factory(
                 Arc::clone(degenbot_config::holder::config_arc()),
                 hub,
                 Some(registry),

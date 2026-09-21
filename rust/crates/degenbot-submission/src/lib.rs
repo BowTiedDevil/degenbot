@@ -65,21 +65,12 @@
 //!   hands it to the Rust signer ONCE).
 //! - The `SubmittedTx` monitor / dispatcher state — sibling tasks in the epic.
 
-pub mod anchored_dfs;
-pub mod backrun_driver;
-pub mod backrun_strategy;
 pub mod bundle;
 pub mod dispatcher;
 pub mod error;
 pub mod fee;
-pub mod frame_pipeline;
-pub mod gap_probe;
-pub mod gap_quarantine;
-pub mod gap_quarantine_journal;
-pub mod market_context;
 pub mod monitor;
 pub mod params;
-pub mod pending_tx;
 pub mod signer;
 pub mod submission_ledger;
 pub mod submit;

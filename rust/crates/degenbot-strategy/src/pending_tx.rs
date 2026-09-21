@@ -11,9 +11,9 @@
 //! driver threads between the stages; the trait itself names no strategy
 //! identity.
 
+use crate::backrun::BackrunConfig;
+use crate::backrun_engine::BackrunSolver;
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_bot::backrun::BackrunConfig;
-use degenbot_bot::backrun_engine::BackrunSolver;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::provider::AlloyProvider;
@@ -54,7 +54,7 @@ pub struct ComposedIntent {
 /// The strategy's decided outcome for one frame: the gate decision plus the
 /// bid-able artifact the driver submits when one exists.
 pub struct Decided {
-    pub decision: degenbot_bot::backrun::Decision,
+    pub decision: crate::backrun::Decision,
     pub requested_bid: U256,
     pub submit_calldata: Option<Bytes>,
     pub economics: Option<BidEconomics>,

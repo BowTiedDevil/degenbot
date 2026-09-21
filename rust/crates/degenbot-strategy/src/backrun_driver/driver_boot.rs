@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use degenbot_bot::backrun::BackrunConfig;
+use crate::backrun::BackrunConfig;
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
@@ -20,7 +20,7 @@ use degenbot_db::connection::DegenbotDb;
 use degenbot_eventhub::Hub;
 use degenbot_rpc::provider::AlloyProvider;
 
-use crate::submission_ledger::NonceLane;
+use degenbot_submission::submission_ledger::NonceLane;
 
 use super::driver_loop::BackrunDriver;
 

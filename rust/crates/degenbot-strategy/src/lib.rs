@@ -47,3 +47,18 @@ pub use degenbot_execution::{
     PayloadComposer, ProbeSpecs, SolveResult,
 };
 pub use degenbot_submission::{SkipReason, SubmissionTarget, SubmitCandidate, SubmitOutcome};
+
+// The backrun arm: the concrete strategy composition whose frame pipeline,
+// anchored discovery, gap quarantine, and hosted driver live here. Capability
+// implementations are imported from their own crates, never moved in.
+pub mod anchored_dfs;
+pub mod backrun;
+pub mod backrun_driver;
+pub mod backrun_engine;
+pub mod backrun_strategy;
+pub mod frame_pipeline;
+pub mod gap_probe;
+pub mod gap_quarantine;
+pub mod gap_quarantine_journal;
+pub mod market_context;
+pub mod pending_tx;

@@ -2299,7 +2299,6 @@ dependencies = [
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-solvers",
- "degenbot-submission",
  "degenbot-uniswap",
  "degenbot-workers",
  "futures-util",
@@ -2662,8 +2661,32 @@ dependencies = [
 name = "degenbot-strategy"
 version = "0.6.0-alpha.11"
 dependencies = [
+ "alloy",
+ "degenbot-bot",
+ "degenbot-config",
+ "degenbot-db",
+ "degenbot-decoders",
+ "degenbot-eventhub",
  "degenbot-execution",
+ "degenbot-executor",
+ "degenbot-math",
+ "degenbot-pathfinding",
+ "degenbot-pools",
+ "degenbot-rpc",
+ "degenbot-runs",
+ "degenbot-simulation",
+ "degenbot-solvers",
  "degenbot-submission",
+ "hashbrown 0.17.1",
+ "parking_lot",
+ "proptest",
+ "revm",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2755,6 +2778,7 @@ dependencies = [
  "degenbot-rpc",
  "degenbot-simulation",
  "degenbot-solvers",
+ "degenbot-strategy",
  "degenbot-submission",
  "degenbot-uniswap",
  "degenbot-workers",

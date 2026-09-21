@@ -70,9 +70,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::backrun::{BackrunConfig, Decision};
+use crate::backrun_engine::BackrunSolver;
 use alloy::primitives::{address, Address, Bytes, U256};
-use degenbot_bot::backrun::{BackrunConfig, Decision};
-use degenbot_bot::backrun_engine::BackrunSolver;
 use degenbot_bot::bot_core::SimAnchorOracle;
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_pools::v3_state::ClSlotLayout;
@@ -553,9 +553,12 @@ pub async fn simulate_candidate(
         "gas": format!("0x{:x}", ev.gas.max(120_000)),
         "gasPrice": format!("0x{:x}", ev.max_fee_per_gas.max(1)),
     });
-    let backrun_call = crate::bundle::backrun_sim_call(owner, exec, cd, 900_000, 30_000_000_000);
-    let params =
-        crate::bundle::eth_call_many_bundle_sim_params(&[target_call, backrun_call], "latest");
+    let backrun_call =
+        degenbot_submission::bundle::backrun_sim_call(owner, exec, cd, 900_000, 30_000_000_000);
+    let params = degenbot_submission::bundle::eth_call_many_bundle_sim_params(
+        &[target_call, backrun_call],
+        "latest",
+    );
     // params[0] = the bundle object (doc shape); the mev-geth shape wraps
     // it in the blocks list.
     let mut blocks_list = params.clone();

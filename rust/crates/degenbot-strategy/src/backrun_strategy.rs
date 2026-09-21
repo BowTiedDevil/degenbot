@@ -8,12 +8,12 @@
 
 use std::time::Duration;
 
-use alloy::primitives::{address, Address, U256};
-use degenbot_bot::backrun::{decide, BackrunConfig, Decision};
-use degenbot_bot::backrun_engine::{
+use crate::backrun::{decide, BackrunConfig, Decision};
+use crate::backrun_engine::{
     compose_candidate, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily,
     PathReject,
 };
+use alloy::primitives::{address, Address, U256};
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_decoders::target_class::TargetClass;
 use degenbot_pathfinding::PoolKind;

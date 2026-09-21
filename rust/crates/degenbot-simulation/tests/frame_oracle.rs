@@ -210,7 +210,7 @@ fn capture_path() -> PathBuf {
         return PathBuf::from(path);
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../degenbot-submission/tests/fixtures/frame_replay_capture.jsonl")
+        .join("../degenbot-strategy/tests/fixtures/frame_replay_capture.jsonl")
 }
 
 /// One captured frame with its archetype (archetype, frame), deduped by hash.

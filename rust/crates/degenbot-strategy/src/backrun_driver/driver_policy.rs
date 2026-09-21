@@ -9,12 +9,12 @@
 
 use std::sync::Arc;
 
+use crate::backrun::BackrunConfig;
 use alloy::primitives::B256;
-use degenbot_bot::backrun::BackrunConfig;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 
-use crate::bundle::MEVBLOCKER_STREAM_URL;
-use crate::submit::{BundleTarget, SubmissionTarget};
+use degenbot_submission::bundle::MEVBLOCKER_STREAM_URL;
+use degenbot_submission::submit::{BundleTarget, SubmissionTarget};
 
 /// The gas floor the envelope gate evaluates at (wei) - the composed strategy's
 /// standing economics (the env override did not exist upstream either).

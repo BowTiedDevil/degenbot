@@ -9,10 +9,13 @@
 const SUBMIT_RS: &str = include_str!("../src/submit.rs");
 const DISPATCHER_RS: &str = include_str!("../src/dispatcher.rs");
 const SUBMISSION_LEDGER_RS: &str = include_str!("../src/submission_ledger.rs");
-const BACKRUN_DRIVER_RS: &str = include_str!("../src/backrun_driver.rs");
-const BACKRUN_DRIVER_BOOT_RS: &str = include_str!("../src/backrun_driver/driver_boot.rs");
-const BACKRUN_DRIVER_LOOP_RS: &str = include_str!("../src/backrun_driver/driver_loop.rs");
-const BACKRUN_DRIVER_POLICY_RS: &str = include_str!("../src/backrun_driver/driver_policy.rs");
+const BACKRUN_DRIVER_RS: &str = include_str!("../../degenbot-strategy/src/backrun_driver.rs");
+const BACKRUN_DRIVER_BOOT_RS: &str =
+    include_str!("../../degenbot-strategy/src/backrun_driver/driver_boot.rs");
+const BACKRUN_DRIVER_LOOP_RS: &str =
+    include_str!("../../degenbot-strategy/src/backrun_driver/driver_loop.rs");
+const BACKRUN_DRIVER_POLICY_RS: &str =
+    include_str!("../../degenbot-strategy/src/backrun_driver/driver_policy.rs");
 const HOSTED_BOOT_RS: &str = include_str!("../../degenbot-python/src/bot/engine/strategy.rs");
 
 /// The sign path names exactly one nonce source: a `NonceLane` over the

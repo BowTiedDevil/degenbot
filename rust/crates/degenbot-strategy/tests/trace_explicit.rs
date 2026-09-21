@@ -21,7 +21,7 @@ fn typed_trace_override_wins_over_the_run_default() {
     );
     // Seed the session trace BEFORE the override is installed, so the
     // capture provably stops appending to it once the typed override lands.
-    degenbot_submission::frame_pipeline::trace_jsonl("run_default", serde_json::json!({"k": 0}));
+    degenbot_strategy::frame_pipeline::trace_jsonl("run_default", serde_json::json!({"k": 0}));
     let run_before = std::fs::read_to_string(run.trace_jsonl_path()).expect("read run trace");
 
     let explicit = dir.join("explicit.jsonl");
@@ -32,7 +32,7 @@ fn typed_trace_override_wins_over_the_run_default() {
         "first install wins in this test process"
     );
 
-    degenbot_submission::frame_pipeline::trace_jsonl("test_kind", serde_json::json!({"k": 2}));
+    degenbot_strategy::frame_pipeline::trace_jsonl("test_kind", serde_json::json!({"k": 2}));
     let explicit_text = std::fs::read_to_string(&explicit).expect("read explicit trace");
     let explicit_line: serde_json::Value =
         serde_json::from_str(explicit_text.trim()).expect("trace line is JSON");

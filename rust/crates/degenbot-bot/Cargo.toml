@@ -150,7 +150,3 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 # solve_dirty span-gate regression test so that
 # span-parenting invariants run in the DEFAULT test gate, not just --features otel.
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter", "registry"] }
-# The frame pipeline e2e: the replay-driven lane e2e drives
-# degenbot_submission::frame_pipeline end to end (dev-only cycle: bot is a
-# regular dependency of submission).
-degenbot-submission = { workspace = true }

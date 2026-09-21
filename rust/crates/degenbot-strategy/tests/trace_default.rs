@@ -20,7 +20,7 @@ fn trace_capture_lands_in_the_run_default() {
         degenbot_runs::set_trace_jsonl_default(run.trace_jsonl_path().to_path_buf()),
         "first install wins in this test process"
     );
-    degenbot_submission::frame_pipeline::trace_jsonl("test_kind", serde_json::json!({"k": 1}));
+    degenbot_strategy::frame_pipeline::trace_jsonl("test_kind", serde_json::json!({"k": 1}));
     let text = std::fs::read_to_string(run.trace_jsonl_path()).expect("read trace");
     let line: serde_json::Value = serde_json::from_str(text.trim()).expect("trace line is JSON");
     assert_eq!(

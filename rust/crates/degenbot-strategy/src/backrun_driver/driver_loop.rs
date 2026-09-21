@@ -21,8 +21,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
-use degenbot_bot::backrun::{gate_mined_target, BackrunConfig, Decision};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
@@ -33,7 +33,6 @@ use degenbot_simulation::BlockSimHandle;
 use parking_lot::Mutex as ParkingMutex;
 
 use crate::backrun_strategy::BackrunStrategy;
-use crate::dispatcher::Dispatcher;
 use crate::frame_pipeline::{
     build_block_handle, load_fixture_frames, process_frame_with_prefix, trace_jsonl, MarketContext,
     PipelineConfig,
@@ -42,10 +41,11 @@ use crate::gap_quarantine::{NonceConsumed, ParkedFrame, Quarantine, QuarantineDe
 use crate::gap_quarantine_journal::{
     self, ArchivedResolution, ParkRecord, QuarantineJournal, Resolution, ResolutionArchiveRecord,
 };
-use crate::monitor::ReceiptProbe;
-use crate::signer::TxSigner;
-use crate::submission_ledger::NonceLane;
-use crate::submit::{dispatch_and_submit, SubmitCandidate};
+use degenbot_submission::dispatcher::Dispatcher;
+use degenbot_submission::monitor::ReceiptProbe;
+use degenbot_submission::signer::TxSigner;
+use degenbot_submission::submission_ledger::NonceLane;
+use degenbot_submission::submit::{dispatch_and_submit, SubmitCandidate};
 
 use super::driver_boot::BackrunContext;
 use super::driver_policy::{
@@ -79,14 +79,18 @@ impl ReceiptProbe for BackrunProbe {
         &self,
         tx_hash: alloy::primitives::B256,
     ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = crate::SubmissionResult<bool>> + Send + '_>,
+        Box<
+            dyn std::future::Future<Output = degenbot_submission::SubmissionResult<bool>>
+                + Send
+                + '_,
+        >,
     > {
         let provider = Arc::clone(&self.provider);
         Box::pin(async move {
             let rec = provider
                 .get_transaction_receipt(&tx_hash.to_string())
                 .await
-                .map_err(|e| crate::SubmissionError::MonitorProbe(format!("{e}")))?;
+                .map_err(|e| degenbot_submission::SubmissionError::MonitorProbe(format!("{e}")))?;
             Ok(rec.is_some())
         })
     }

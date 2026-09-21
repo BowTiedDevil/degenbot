@@ -10,15 +10,15 @@
 
 use alloy::primitives::{address, aliases::U112, Address};
 
-use degenbot_bot::backrun_engine::BackrunSolver;
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout::V2ReservesParts;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost, V4PoolSet,
 };
-use degenbot_submission::backrun_strategy::{admit_extracted, WETH};
-use degenbot_submission::frame_pipeline::MarketContext;
+use degenbot_strategy::backrun_engine::BackrunSolver;
+use degenbot_strategy::backrun_strategy::{admit_extracted, WETH};
+use degenbot_strategy::frame_pipeline::MarketContext;
 
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");
 const P: Address = address!("000000000000000000000000000000000000b001");

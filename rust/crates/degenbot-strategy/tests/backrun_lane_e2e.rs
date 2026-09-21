@@ -26,12 +26,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use alloy::primitives::{address, keccak256, Bytes, U256};
-use degenbot_bot::backrun::{BackrunConfig, Decision};
 use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_submission::backrun_strategy::BackrunStrategy;
-use degenbot_submission::frame_pipeline::{
+use degenbot_strategy::backrun::{BackrunConfig, Decision};
+use degenbot_strategy::backrun_strategy::BackrunStrategy;
+use degenbot_strategy::frame_pipeline::{
     build_block_handle, process_frame, MarketContext, PipelineConfig,
 };
 

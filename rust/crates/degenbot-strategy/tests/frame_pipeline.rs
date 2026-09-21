@@ -10,12 +10,12 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use alloy::primitives::{address, aliases::U112, Address, U256};
-use degenbot_bot::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout;
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
-use degenbot_submission::backrun_strategy::{admit_extracted, net_bid, solve_dfs_chains, WETH};
-use degenbot_submission::frame_pipeline::{build_descriptors, state_digest, MarketContext};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
+use degenbot_strategy::backrun_strategy::{admit_extracted, net_bid, solve_dfs_chains, WETH};
+use degenbot_strategy::frame_pipeline::{build_descriptors, state_digest, MarketContext};
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
 // ─────────────────── the golden frame (offline, end to end) ────────────────
@@ -225,7 +225,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     );
 
     // compose: the executable artifact builds from the solved hops.
-    let cd = degenbot_bot::backrun_engine::build_candidate_calldata(
+    let cd = degenbot_strategy::backrun_engine::build_candidate_calldata(
         &best,
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         WETH,
@@ -402,17 +402,17 @@ fn admitted_pair(
 #[test]
 fn non_base_quote_drop_is_truthful() {
     assert_eq!(
-        degenbot_submission::frame_pipeline::honest_observe("no_candidate", true, false),
+        degenbot_strategy::frame_pipeline::honest_observe("no_candidate", true, false),
         "non_base_quote"
     );
     // A WETH-closing candidate that did solve keeps the existing truthful
     // verdict; an unrelated observe reason is never rewritten.
     assert_eq!(
-        degenbot_submission::frame_pipeline::honest_observe("no_candidate", true, true),
+        degenbot_strategy::frame_pipeline::honest_observe("no_candidate", true, true),
         "no_candidate"
     );
     assert_eq!(
-        degenbot_submission::frame_pipeline::honest_observe("budget_exhausted", true, false),
+        degenbot_strategy::frame_pipeline::honest_observe("budget_exhausted", true, false),
         "budget_exhausted"
     );
 }
@@ -431,10 +431,10 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
 
     use alloy::primitives::address;
     use alloy::providers::ProviderBuilder;
-    use degenbot_bot::backrun::{BackrunConfig, Decision};
     use degenbot_bot::bot_core::SimAnchorState;
-    use degenbot_submission::backrun_strategy::BackrunStrategy;
-    use degenbot_submission::frame_pipeline::{
+    use degenbot_strategy::backrun::{BackrunConfig, Decision};
+    use degenbot_strategy::backrun_strategy::BackrunStrategy;
+    use degenbot_strategy::frame_pipeline::{
         build_block_handle, load_fixture_frames, process_frame, MarketContext, PipelineConfig,
     };
 
@@ -611,7 +611,7 @@ fn walker_three_hop_chain_solves_and_composes() {
     ]];
 
     let stats =
-        degenbot_submission::backrun_strategy::solve_dfs_chains(&mut solver, &chains, U256::ZERO);
+        degenbot_strategy::backrun_strategy::solve_dfs_chains(&mut solver, &chains, U256::ZERO);
     assert_eq!(stats.dfs_declared, 1, "the walker chain declares once");
     assert_eq!(stats.dfs_evaluated, 1, "the chain clears the zero floor");
     let best = stats.best.expect("the 3-hop walker chain profits");
@@ -642,7 +642,7 @@ fn walker_three_hop_chain_solves_and_composes() {
         w_star
     );
 
-    let cd = degenbot_bot::backrun_engine::build_candidate_calldata(
+    let cd = degenbot_strategy::backrun_engine::build_candidate_calldata(
         &best,
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         WETH,
@@ -696,7 +696,7 @@ fn replay_reasons_split() {
     use degenbot_simulation::sim::evm::frame_replay::ReplayFrameError;
 
     let (r, v) =
-        degenbot_submission::frame_pipeline::replay_observe_reason(&ReplayFrameError::GapPending {
+        degenbot_strategy::frame_pipeline::replay_observe_reason(&ReplayFrameError::GapPending {
             claimed: 12,
             expected: 10,
         });
@@ -704,7 +704,7 @@ fn replay_reasons_split() {
     assert_eq!(v["claimed_nonce"], 12);
     assert_eq!(v["expected_nonce"], 10);
 
-    let (r, v) = degenbot_submission::frame_pipeline::replay_observe_reason(
+    let (r, v) = degenbot_strategy::frame_pipeline::replay_observe_reason(
         &ReplayFrameError::AlreadySettled {
             frame: 30673,
             parent: 30674,
@@ -714,7 +714,7 @@ fn replay_reasons_split() {
     assert_eq!(v["frame_nonce"], 30673);
     assert_eq!(v["parent_nonce"], 30674);
 
-    let (r, v) = degenbot_submission::frame_pipeline::replay_observe_reason(
+    let (r, v) = degenbot_strategy::frame_pipeline::replay_observe_reason(
         &ReplayFrameError::MalformedTransaction {
             raw: "call gas cost (49784) exceeds the gas limit (0)".into(),
         },
@@ -726,7 +726,7 @@ fn replay_reasons_split() {
     );
 
     let (r, _) =
-        degenbot_submission::frame_pipeline::replay_observe_reason(&ReplayFrameError::Other {
+        degenbot_strategy::frame_pipeline::replay_observe_reason(&ReplayFrameError::Other {
             raw: "rpc timeout".into(),
         });
     assert_eq!(r, "replay_failed");

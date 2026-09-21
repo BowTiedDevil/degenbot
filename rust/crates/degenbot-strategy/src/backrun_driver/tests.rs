@@ -4,11 +4,11 @@
 
 #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
+use crate::backrun::BackrunConfig;
 use crate::frame_pipeline::predecessor_observe_reason;
 use crate::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{ParkRecord, QuarantineJournal};
 use alloy::primitives::{Address, B256, U256};
-use degenbot_bot::backrun::BackrunConfig;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use std::sync::Arc;
 
@@ -207,7 +207,7 @@ fn mevblocker_url_does_not_alter_the_target() {
     // Adjudicated policy: augment, never replace. The key only changes the
     // `extra_broadcast` list content; the target-selection region computes
     // the same target with and without it set.
-    use crate::submit::SubmissionTarget;
+    use degenbot_submission::submit::SubmissionTarget;
 
     let mut cfg = BackrunConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
     let hash = alloy::primitives::B256::repeat_byte(0x11);

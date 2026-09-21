@@ -14,3 +14,30 @@ workspace = true
 [dependencies]
 degenbot-execution.workspace = true
 degenbot-submission.workspace = true
+degenbot-bot.workspace = true
+degenbot-pathfinding.workspace = true
+degenbot-pools.workspace = true
+degenbot-simulation.workspace = true
+degenbot-rpc.workspace = true
+degenbot-decoders.workspace = true
+degenbot-db.workspace = true
+degenbot-config.workspace = true
+degenbot-eventhub.workspace = true
+degenbot-runs = { workspace = true, features = ["tracing"] }
+degenbot-solvers.workspace = true
+degenbot-math.workspace = true
+degenbot-executor.workspace = true
+alloy = { version = "^2.4", features = ["full", "transport-throttle"] }
+hashbrown.workspace = true
+parking_lot = "^0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "^1.0" }
+thiserror = { version = "^2.0" }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tracing = { version = "^0.1" }
+
+[dev-dependencies]
+degenbot-rpc = { workspace = true, features = ["test-utils"] }
+proptest = "^1.11"
+revm = { version = "^43.0", default-features = false, features = ["std"] }
+tempfile = { version = "^3.27" }

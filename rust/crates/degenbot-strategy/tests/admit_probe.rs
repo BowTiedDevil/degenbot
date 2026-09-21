@@ -11,15 +11,15 @@
 use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
-use degenbot_bot::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_submission::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
-use degenbot_submission::frame_pipeline::{build_block_handle, MarketContext};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
+use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
+use degenbot_strategy::frame_pipeline::{build_block_handle, MarketContext};
 
 const ANCHOR: Address = address!("11b815efb8f581194ae79006d24e0d814b7697f6");
 const MID1: Address = address!("f641eafb5bce9568c4ff1079c58f36a7e8a6cd8d");

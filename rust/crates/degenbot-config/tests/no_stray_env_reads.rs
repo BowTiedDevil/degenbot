@@ -114,7 +114,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
         // remaining env read is the pre-typed executor-owner fallback the
         // facet's `operator` key documents.
         m.insert(
-            "crates/degenbot-submission/src/backrun_driver/driver_loop.rs",
+            "crates/degenbot-strategy/src/backrun_driver/driver_loop.rs",
             &["EXECUTOR_OWNER_ADDRESS"][..],
         );
         m

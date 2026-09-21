@@ -9,7 +9,6 @@
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use alloy::primitives::{address, Address, U128, U256};
-use degenbot_bot::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;
@@ -17,9 +16,10 @@ use degenbot_pools::TickInfo;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_submission::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
-use degenbot_submission::frame_pipeline::MarketContext;
-use degenbot_submission::pending_tx::V3TickWindow;
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
+use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
+use degenbot_strategy::frame_pipeline::MarketContext;
+use degenbot_strategy::pending_tx::V3TickWindow;
 use hashbrown::HashMap as HbMap;
 
 /// The V3 anchor's tokens (canonical order: TOK0 < WETH).
@@ -190,7 +190,7 @@ fn v3_anchor_sparse_tick_window_admits_and_solves() {
         "an anchor with no modelable tick ranges must not evaluate"
     );
     match stats.chains[0].reject {
-        Some(degenbot_bot::backrun_engine::PathReject::UnusablePoolState { deficits }) => {
+        Some(degenbot_strategy::backrun_engine::PathReject::UnusablePoolState { deficits }) => {
             assert!(deficits >= 1, "the unusable anchor is the deficit");
         }
         other => panic!("expected unusable_pool_state, got {other:?}"),

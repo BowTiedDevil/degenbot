@@ -1,5 +1,5 @@
 //! Acceptance tests for the anchored touched-set discovery engine
-//! (`degenbot_submission::anchored_dfs`): the frame's touched pools anchor
+//! (`degenbot_strategy::anchored_dfs`): the frame's touched pools anchor
 //! cycles into the shared pathfinding walker, replacing the hand-rolled
 //! 2-hop star.
 //!
@@ -18,7 +18,7 @@ use std::time::Duration;
 use alloy::primitives::Address;
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::PoolKind;
-use degenbot_submission::anchored_dfs::{
+use degenbot_strategy::anchored_dfs::{
     resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, DiscoveryBudget, UnsupportedHop,
 };
 use proptest::prelude::*;

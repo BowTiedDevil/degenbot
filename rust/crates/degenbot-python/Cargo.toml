@@ -41,6 +41,10 @@ degenbot-db = { path = "../degenbot-db", optional = true }
 degenbot-pathfinding = { path = "../degenbot-pathfinding", optional = true }
 degenbot-price = { path = "../degenbot-price", optional = true, features = ["pyo3"] }
 degenbot-submission = { path = "../degenbot-submission", optional = true, features = ["pyo3"] }
+# The concrete strategy compositions (the backrun arm) the hosted boot
+# registers on the strategy host. Reaches down into the core crates; nothing
+# outside the binding/CLI/umbrella depends on it.
+degenbot-strategy = { path = "../degenbot-strategy", optional = true }
 degenbot-simulation = { path = "../degenbot-simulation", optional = true }
 degenbot-workers = { path = "../degenbot-workers", optional = true }
 revm = { version = "^43.0", default-features = false }
@@ -104,7 +108,7 @@ auto-initialize = ["pyo3/auto-initialize"]
 # builds now name the type too).
 bot = ["dep:degenbot-bot", "dep:degenbot-ingestion", "dep:degenbot-solvers", "dep:degenbot-workers", "rpc", "decoders", "uniswap"]
 price = ["dep:degenbot-price", "rpc"]
-submission = ["dep:degenbot-submission", "rpc"]
+submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
 simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-workers", "rpc", "executor", "submission"]
 executor = ["dep:degenbot-executor"]
 execution = ["dep:degenbot-execution", "executor"]

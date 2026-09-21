@@ -11,10 +11,10 @@ use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_simulation::sim::evm::frame_replay::{
     PredStatus, ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm,
 };
-use degenbot_submission::gap_quarantine::{
+use degenbot_strategy::gap_quarantine::{
     FrameState, NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
 };
-use degenbot_submission::gap_quarantine_journal::{
+use degenbot_strategy::gap_quarantine_journal::{
     read_pending, ParkRecord, QuarantineJournal, Resolution, JOURNAL_FILE_NAME,
 };
 use revm::bytecode::Bytecode;

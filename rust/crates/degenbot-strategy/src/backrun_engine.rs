@@ -15,9 +15,11 @@ use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::TickInfo;
 use degenbot_solvers::mixed::SolvePathResult;
 
-use crate::bot_core::planning::{ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace};
+use degenbot_bot::bot_core::planning::{
+    ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace,
+};
 
-pub use crate::bot_core::planning::PathReject;
+pub use degenbot_bot::bot_core::planning::PathReject;
 
 /// One admitted V2 pool: identity + the LIVE reserves the caller fetched
 /// (the adapter keeps this narrow; reserves come from `fetch_v2_reserves`).
