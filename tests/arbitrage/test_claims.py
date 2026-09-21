@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import gc
 import threading
-import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -86,7 +85,7 @@ async def _async_policy_properties(make_claims: Callable[[], object]) -> list[st
 
     async def ok_run() -> int:
         calls.append(1)
-        await asyncio.sleep(0.001)
+        await asyncio.sleep(0)  # yield: the peer gets its turn to park
         return 7
 
     leader, peer = await asyncio.gather(
@@ -146,7 +145,7 @@ async def _async_policy_properties(make_claims: Callable[[], object]) -> list[st
 
     async def slow_ok() -> int:
         calls.append(1)
-        await asyncio.sleep(0.005)
+        await asyncio.sleep(0)  # yield: the other 7 coroutines park on the claim
         return 3
 
     results = await asyncio.gather(*(claims.run("k3", slow_ok) for _ in range(8)))
@@ -226,8 +225,7 @@ async def test_asyncio_adapter_cancelled_leader_cancels_claim_and_releases() -> 
 
     async def hang() -> int:
         started.set()
-        await release_leader.wait()
-        await asyncio.sleep(5)  # pragma: no cover — cancelled before this
+        await release_leader.wait()  # never set: the leader hangs until cancelled
         return 1
 
     async def peer_call() -> int:
@@ -264,7 +262,7 @@ async def test_claim_record_await_is_the_peer_wait() -> None:
 
     async def ok() -> int:
         started.set()
-        await asyncio.sleep(0.005)
+        await asyncio.sleep(0)  # yield: the leader is at its first suspension
         return 11
 
     leader = asyncio.create_task(claims.run("k", ok))
@@ -304,7 +302,7 @@ async def test_wrong_shape_mechanics_fail_loudly() -> None:
 
     async def hang() -> int:
         started.set()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)  # yield: the claim stays live while the guard fires
         return 1
 
     leader = asyncio.create_task(claims.run("k", hang))
@@ -330,39 +328,113 @@ def _run_capture(claims, key: str, run) -> BaseException | None:
     return None
 
 
-def test_thread_adapter_leader_success_peer_parks_and_window_closes() -> None:
+class _SeatDance:
+    """One deterministic seat-thread claim race (the thread-adapter dance).
+
+    ``leader_peer`` starts the leader and peer seat threads and returns only once
+    the peer is parked on the SAME live claim — observed through the claim
+    record's ``parked`` signal, which ``VerifyClaims`` sets as a peer parks.
+    The leader's body holds the claim open on :attr:`release`; every
+    ``wait(5)``/``join(5)`` below is a bounded failure timeout, never a
+    sequencing sleep.
+    """
+
+    def __init__(self, claims: VerifyClaims, key: str) -> None:
+        self._claims = claims
+        self._key = key
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.outcomes: dict[str, BaseException | None] = {}
+        self._threads: list[threading.Thread] = []
+
+    def _spawn(self, target: Callable[[], None]) -> None:
+        thread = threading.Thread(target=target)
+        thread.start()
+        self._threads.append(thread)
+
+    def leader_peer(self, work: Callable[[], None]) -> None:
+        """Start one leader + peer; return once the peer is parked."""
+
+        def leader_run() -> None:
+            self.outcomes["leader"] = _run_capture(self._claims, self._key, work)
+
+        def peer_run() -> None:
+            assert self.started.wait(5), "harness timeout: leader never claimed"
+            self.outcomes["peer"] = _run_capture(self._claims, self._key, work)
+
+        self._spawn(leader_run)
+        self._spawn(peer_run)
+        assert self.started.wait(5), "harness timeout: leader never claimed"
+        record = self._claims._claims[self._key]
+        assert record.parked.wait(5), "harness timeout: peer never parked"
+
+    def race(self, units: list[Callable[[], None]]) -> None:
+        """Start every unit thread and join them all (bounded)."""
+        for unit in units:
+            self._spawn(unit)
+        self.join()
+
+    def join(self) -> None:
+        for thread in self._threads:
+            thread.join(5)
+
+
+@pytest.fixture
+def seat_dance() -> Callable[[VerifyClaims, str], _SeatDance]:
+    """Factory for :class:`_SeatDance` — the ONE threaded-dance definition."""
+
+    def make(claims: VerifyClaims, key: str) -> _SeatDance:
+        return _SeatDance(claims, key)
+
+    return make
+
+
+def test_peer_park_is_observable_on_the_live_claim_record() -> None:
+    """Pin the peer-park seam: a parked peer sets the live claim record's
+    ``parked`` event and the leader never does, so the threaded dance can
+    sequence on observed claim state instead of a wall-clock proxy."""
+    claims = VerifyClaims(ThreadEventWake())
+    claimed = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        claimed.set()
+        assert release.wait(5), "harness timeout"
+
+    leader = threading.Thread(target=lambda: _run_capture(claims, "k", hold))
+    leader.start()
+    assert claimed.wait(5), "harness timeout: leader never claimed"
+    record = claims._claims["k"]
+    assert not record.parked.is_set(), "only a peer parks — the leader must not set it"
+
+    peer = threading.Thread(target=lambda: _run_capture(claims, "k", hold))
+    peer.start()
+    assert record.parked.wait(5), "a parked peer must be observable on the live claim record"
+    release.set()
+    leader.join(5)
+    peer.join(5)
+
+
+def test_thread_adapter_leader_success_peer_parks_and_window_closes(
+    seat_dance: Callable[[VerifyClaims, str], _SeatDance],
+) -> None:
     """Leader success: the parked peer waits it out (no re-run) and shares
     completion — not a value; the window closes for a later unit."""
     claims = VerifyClaims(ThreadEventWake())
+    dance = seat_dance(claims, "k")
     calls: list[str] = []
-    started = threading.Event()
-    release = threading.Event()
 
     def work() -> None:
         calls.append("run")
-        started.set()
-        assert release.wait(5), "harness timeout"
+        dance.started.set()
+        assert dance.release.wait(5), "harness timeout"
 
-    outcomes: dict[str, BaseException | None] = {}
-
-    def leader_thread() -> None:
-        outcomes["leader"] = _run_capture(claims, "k", work)
-
-    def peer_thread() -> None:
-        started.wait(5)
-        outcomes["peer"] = _run_capture(claims, "k", work)  # parks on the live claim
-
-    threads = [threading.Thread(target=leader_thread), threading.Thread(target=peer_thread)]
-    for thread in threads:
-        thread.start()
-    started.wait(5)
-    time.sleep(0.05)  # give the peer a beat to park
+    dance.leader_peer(work)
     assert calls == ["run"], "a parked peer must not re-run the lifecycle"
-    release.set()
-    for thread in threads:
-        thread.join(5)
+    dance.release.set()
+    dance.join()
     assert calls == ["run"]
-    assert outcomes == {"leader": None, "peer": None}  # completion, not a value
+    assert dance.outcomes == {"leader": None, "peer": None}  # completion, not a value
     # release-on-success closes the window: a later unit re-runs (the
     # consumers' key caches are the cross-window dedup, a different layer).
     rechecked: list[str] = []
@@ -370,42 +442,31 @@ def test_thread_adapter_leader_success_peer_parks_and_window_closes() -> None:
     assert rechecked == ["run2"]
 
 
-def test_thread_adapter_leader_failure_peer_exact_exception_then_retry() -> None:
+def test_thread_adapter_leader_failure_peer_exact_exception_then_retry(
+    seat_dance: Callable[[VerifyClaims, str], _SeatDance],
+) -> None:
     """Leader failure: the parked peer re-raises the leader's EXACT exception
     instance; the failed claim is released so a LATER unit retries."""
     claims = VerifyClaims(ThreadEventWake())
+    dance = seat_dance(claims, "k")
     calls: list[str] = []
-    started = threading.Event()
-    release = threading.Event()
     boom = RuntimeError("seat leader fails")
 
     def failing() -> None:
         calls.append("run")
-        started.set()
-        assert release.wait(5), "harness timeout"
+        dance.started.set()
+        assert dance.release.wait(5), "harness timeout"
         raise boom
 
-    outcomes: dict[str, BaseException | None] = {}
-
-    def leader_thread() -> None:
-        outcomes["leader"] = _run_capture(claims, "k", failing)
-
-    def peer_thread() -> None:
-        started.wait(5)
-        outcomes["peer"] = _run_capture(claims, "k", failing)  # parks on the live claim
-
-    threads = [threading.Thread(target=leader_thread), threading.Thread(target=peer_thread)]
-    for thread in threads:
-        thread.start()
-    started.wait(5)
-    time.sleep(0.05)  # give the peer a beat to park
+    dance.leader_peer(failing)
     assert calls == ["run"]
-    release.set()
-    for thread in threads:
-        thread.join(5)
+    dance.release.set()
+    dance.join()
     assert calls == ["run"], "the parked peer re-raised instead of re-running"
-    assert outcomes["leader"] is boom
-    assert outcomes["peer"] is boom, "the peer re-raises the leader's EXACT exception instance"
+    assert dance.outcomes["leader"] is boom
+    assert dance.outcomes["peer"] is boom, (
+        "the peer re-raises the leader's EXACT exception instance"
+    )
     # release-on-failure: the failed claim is gone; a LATER unit retries.
     retried: list[str] = []
 
@@ -416,17 +477,20 @@ def test_thread_adapter_leader_failure_peer_exact_exception_then_retry() -> None
     assert retried == ["retry"]
 
 
-def test_thread_adapter_concurrent_peers_single_winner() -> None:
+def test_thread_adapter_concurrent_peers_single_winner(
+    seat_dance: Callable[[VerifyClaims, str], _SeatDance],
+) -> None:
     """N>2 concurrent seat threads racing one claim: single winner, every
     peer shares the outcome.
 
     Deterministic white-box harness: an instance-local _acquire wrap counts
     arrivals, and the leader's slow() does not return until all 8 threads have
-    resolved _acquire. Without that, a thread dispatched later than the
-    leader's 20ms window resolves _acquire after the leader's release and
-    legitimately re-claims — the test-side race this pins out.
+    resolved _acquire. Without that, a thread dispatched after the leader's
+    release resolves _acquire too late and legitimately re-claims — the
+    test-side race this pins out.
     """
     claims = VerifyClaims(ThreadEventWake())
+    dance = seat_dance(claims, "k")
     calls: list[int] = []
     barrier = threading.Barrier(8, timeout=5)
 
@@ -453,7 +517,6 @@ def test_thread_adapter_concurrent_peers_single_winner() -> None:
             assert arrivals_cv.wait_for(lambda: arrivals == 8, timeout=5), (
                 "harness timeout: not all threads resolved _acquire"
             )
-        time.sleep(0.02)
 
     outcomes: list[BaseException | None] = []
     lock = threading.Lock()
@@ -464,10 +527,6 @@ def test_thread_adapter_concurrent_peers_single_winner() -> None:
         with lock:
             outcomes.append(outcome)
 
-    threads = [threading.Thread(target=unit) for _ in range(8)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(5)
+    dance.race([unit for _ in range(8)])
     assert calls == [1], "N concurrent seat threads must run the lifecycle once"
     assert outcomes == [None] * 8

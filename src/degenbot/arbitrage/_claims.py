@@ -53,7 +53,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast, override
 
 if TYPE_CHECKING:
@@ -80,10 +80,16 @@ class ClaimRecord[W]:
     wake itself). Awaiting the record directly is defined for the asyncio
     shape — it delegates to the wake Future (the registry's racing-sibling
     observers ``await`` the in-flight table entry directly).
+
+    ``parked`` is the peer-park observable: a peer (never the leader) sets it
+    as it enters the park/peer-wait, so an observer holding the live claim
+    record can wait for "the peer is parked" instead of inferring it from
+    wall-clock timing.
     """
 
     wake: W
     error: BaseException | None = None
+    parked: threading.Event = field(default_factory=threading.Event)
 
     def __await__(self) -> Generator[Any, Any, object]:
         # asyncio shape only — the threading Event has no __await__ (its
@@ -310,6 +316,7 @@ class VerifyClaims[W, V]:
         """
         record, leader = self._acquire(claim_key)
         if not leader:
+            record.parked.set()
             return await self._wake.peer_wait(record)
         try:
             value = await run()
@@ -331,6 +338,7 @@ class VerifyClaims[W, V]:
         """
         record, leader = self._acquire(claim_key)
         if not leader:
+            record.parked.set()
             self._wake.park(record)
             return
         try:
