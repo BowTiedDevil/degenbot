@@ -16,7 +16,7 @@
 
 //! Offline heavy mixed V2+CL path replay harness with N-repeat stable timing.
 //! Mirrors `cl_solve_replay.rs` for paths that dispatch to
-//! `exact_solve_mixed_path_n` (V2→V3→V3, V2→V3→V4, …).
+//! `solve_mixed_piecewise` (V2→V3→V3, V2→V3→V4, …).
 //!
 //! Usage:
 //!   `cargo run -p degenbot-solvers --example mixed_solve_replay -- [<capture.jsonl>]`
@@ -26,7 +26,7 @@
 //! the live hook
 //! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`), rebuilds
 //! `IntHopState` per V2 hop + `IntV3TickRangeSequence` per CL hop from the
-//! captured fields, and re-runs `exact_solve_mixed_path_n` — the exact
+//! captured fields, and re-runs `solve_mixed_piecewise` — the exact
 //! decomposed call `mixed::solve_mixed_path_int` makes — OFFLINE, with no
 //! bot / RPC / DB. Each path is solved N times; the median / p95 / min wall
 //! time is the stable A/B signal. Per-run nondeterminism is flagged (the solver
@@ -37,7 +37,7 @@
 //! The capture records `measured.time_us` for the FULL `solve_path_with_min`
 //! call (profit-envelope gate + resolve + the decomposed solver). This harness
 //! re-runs only the decomposed solver entry
-//! (`exact_solve_mixed_path_n`, no crossings/profiles → rebuilt per
+//! (`solve_mixed_piecewise`, no crossings/profiles → rebuilt per
 //! call). If the replay time ≪ `measured.time_us`, the bottleneck is NOT the
 //! active-set walk — it lives in the profit-envelope gate or the resolve phase
 //! (which run before the decomposed solver). The walk-stats line
@@ -51,7 +51,7 @@
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::{exact_solve_mixed_path_n, WalkStats};
+use degenbot_solvers::cl::{solve_mixed_piecewise, WalkStats};
 use serde_json::Value;
 
 const PROFIT_EPS: u128 = 100_000;
@@ -264,7 +264,7 @@ fn main() {
             let no_tables = vec![None; hop_order.len()];
             let seq_refs: Vec<Option<&IntV3TickRangeSequence>> =
                 cl_seqs.iter().map(|o| o.as_ref()).collect();
-            let out = exact_solve_mixed_path_n(
+            let out = solve_mixed_piecewise(
                 &v2_hops,
                 &seq_refs,
                 &no_tables,

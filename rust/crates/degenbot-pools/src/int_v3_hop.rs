@@ -175,7 +175,7 @@ pub struct IntV3TickRangeHop {
     /// that [`compute_tick_ranges`](crate::tick_bitmap::compute_tick_ranges)
     /// collapsed out of this range's constant-liquidity span. The solver
     /// re-walks these per boundary in [`IntV3TickRangeSequence::compute_crossing`]
-    /// and [`int_simulate_v3_swap`] to restore the per-step `computeSwapStep`
+    /// and [`simulate_v3_range_swap`] to restore the per-step `computeSwapStep`
     /// flooring the on-chain V3/V4 PoolManager performs at every word
     /// boundary — without this, a collapsed multi-word span
     /// is modelled as a single big step and the accumulated per-step fee

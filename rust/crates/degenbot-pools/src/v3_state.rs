@@ -922,7 +922,7 @@ impl V3PoolState {
                 zero_for_one,
                 // Convert the interior word-boundary ticks `compute_tick_ranges`
                 // collapsed out of this range into sqrt prices (swap order) so
-                // the solver's `compute_crossing` / `int_simulate_v3_swap` can
+                // the solver's `compute_crossing` / `simulate_v3_range_swap` can
                 // re-walk them per boundary, restoring the per-step
                 // `computeSwapStep` flooring .
                 word_boundary_prices: r

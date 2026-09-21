@@ -17,7 +17,7 @@
 //! Re-reads a capture JSONL produced by the live hook
 //! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`) or by `cl_capture_gen`, rebuilds
 //! each Vec<IntV3TickRangeSequence> from the per-range fields, and re-runs
-//! `int_solve_cl_path` — the production all-CL solver (the exact call
+//! `solve_cl_piecewise` — the production all-CL solver (the exact call
 //! `mixed::solve_path` makes, initial input ONE) — OFFLINE, with no bot / RPC /
 //! DB. Each path is solved N times; the median / p95 / min of the per-run wall
 //! time is the stable A/B signal. As a bonus the N runs must agree — `int_solve`
@@ -209,7 +209,7 @@ fn main() {
         );
 
         // N independent repetitions for a stable A/B (no single-shot noise).
-        // int_solve_cl_path is pure math, so all runs must agree; per-run
+        // solve_cl_piecewise is pure math, so all runs must agree; per-run
         // nondeterminism (e.g. HashMap-iteration order in the active-set walk)
         // is flagged and counted separately.
         let mut times: Vec<u128> = Vec::with_capacity(iters);
@@ -219,7 +219,7 @@ fn main() {
         let mut path_pieces: Vec<(Vec<usize>, U256)> = Vec::new();
         for _ in 0..iters {
             let t0 = std::time::Instant::now();
-            let out = degenbot_solvers::cl::solve_cl_derived(
+            let out = degenbot_solvers::cl::derive_and_solve_cl_piecewise(
                 refs.as_slice(),
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             );

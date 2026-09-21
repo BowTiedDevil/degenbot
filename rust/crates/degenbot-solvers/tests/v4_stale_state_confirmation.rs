@@ -17,7 +17,7 @@
 //!
 //! With `protocol_fee = 0x001f_41f4` stored on `V4PoolState` (the packed uint24
 //! read from `slot0.protocolFee` at registration), `v4_simulate_swap` AND the
-//! solver's crossing path (`compute_crossing` + `int_simulate_v3_swap`) both
+//! solver's crossing path (`compute_crossing` + `simulate_v3_range_swap`) both
 //! internally compute `calculateSwapFee(500, 3000) = 3499` pips and feed it as
 //! the swap-step fee. The result must be the ON-CHAIN ACTUAL (25_885), not the
 //! stale-feeling lpFee-only prediction (25_898). The two pre-fix sides —
@@ -51,7 +51,7 @@ use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{int_simulate_v3_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence};
 
 /// The on-chain actual + the pre-fix lpFee-only prediction for path=97.
 const ONCHAIN_ACTUAL_OUT: u128 = 25_885;
@@ -146,7 +146,7 @@ fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Opti
         return Some(U256::ZERO);
     }
     let remaining = amount_in - crossing.crossing_gross_input;
-    let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+    let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
     Some(crossing.crossing_output.saturating_add(ending.output))
 }
 

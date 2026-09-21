@@ -734,7 +734,7 @@ impl V4PoolState {
                 zero_for_one,
                 // Convert collapsed interior word-boundary ticks → sqrt
                 // prices (swap order) so `compute_crossing` /
-                // `int_simulate_v3_swap` re-walk them per boundary. V4 shares `compute_tick_ranges` + the V3-family
+                // `simulate_v3_range_swap` re-walk them per boundary. V4 shares `compute_tick_ranges` + the V3-family
                 // solver hop, so V4 gets the same per-step flooring parity fix.
                 word_boundary_prices: r
                     .interior_boundaries

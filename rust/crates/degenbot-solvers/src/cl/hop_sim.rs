@@ -27,7 +27,7 @@ use super::telemetry::bump_word_steps;
 /// UniswapV3Pool.sol). `consumed_input` tracks this consumed amount so that
 /// the profit calculation uses the actual cost, not the full specified input.
 #[derive(Clone, Debug, Default)]
-pub struct V3SwapResult {
+pub struct V3RangeSwapResult {
     /// Gross input actually consumed (including fees).
     ///
     /// When the swap does NOT reach the range boundary, `consumed_input ==
@@ -40,7 +40,7 @@ pub struct V3SwapResult {
 
 /// Simulate a V3 swap within a single tick range using integer arithmetic.
 ///
-/// Returns a [`V3SwapResult`] with the consumed input and output amounts.
+/// Returns a [`V3RangeSwapResult`] with the consumed input and output amounts.
 /// When the range boundary is reached before the full input is consumed,
 /// `consumed_input` is the amount that would actually be charged by the V3
 /// pool — matching the on-chain behavior where `amountSpecifiedRemaining`
@@ -52,7 +52,7 @@ pub struct V3SwapResult {
 /// reach the target is consumed.
 #[must_use = "the V3 swap result should be used"]
 #[hotpath::measure(label = "cl_solve.int_simulate_v3_swap")]
-pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3SwapResult {
+pub fn simulate_v3_range_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3RangeSwapResult {
     // Per-step parity: per-step rounding is delegated to the canonical V3
     // step function `compute_swap_step_v3` — the single source of the
     // word-boundary flooring parity. The on-chain V3/V4 PoolManager floors
@@ -67,7 +67,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
     use degenbot_math::cl::swap_math::compute_swap_step_v3;
 
     if amount_in.is_zero() || v3_hop.liquidity == 0 {
-        return V3SwapResult::default();
+        return V3RangeSwapResult::default();
     }
 
     let liquidity = i128::try_from(v3_hop.liquidity).unwrap_or(i128::MAX);
@@ -101,7 +101,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
         }
         bump_word_steps(1);
         let Ok(step) = compute_swap_step_v3(sp, *target, liquidity, remaining, fee_pips) else {
-            return V3SwapResult::default();
+            return V3RangeSwapResult::default();
         };
         let consumed = step.amount_in.saturating_add(step.fee_amount);
         total_consumed = total_consumed.saturating_add(consumed);
@@ -119,7 +119,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
         }
     }
 
-    V3SwapResult {
+    V3RangeSwapResult {
         consumed_input: total_consumed,
         output: total_output,
     }

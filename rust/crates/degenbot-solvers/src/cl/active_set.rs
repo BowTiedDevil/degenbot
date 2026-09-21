@@ -11,7 +11,7 @@ use super::crossings::{
     landed_ending_range_index, piece_window_left_edge, piece_window_right_edge,
     piece_window_right_edge_evented,
 };
-use super::hop_sim::int_simulate_v3_swap;
+use super::hop_sim::simulate_v3_range_swap;
 use super::telemetry::{
     add_anchor_argmax_ns, add_anchor_build_ns, add_anchor_compose_ns, add_anchor_ns, add_sim_ns,
     add_solve_ns, bump_anchor_sims, bump_grid_sims, bump_path_simulations, bump_pieces_visited,
@@ -120,7 +120,7 @@ fn simulate_walk_path_inner(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcom
                 let remaining = current - crossing.crossing_gross_input;
                 let ending = match &profiles[k] {
                     Some(profile) => profile.swap(remaining),
-                    None => int_simulate_v3_swap(remaining, &crossing.ending_range),
+                    None => simulate_v3_range_swap(remaining, &crossing.ending_range),
                 };
                 let out = crossing.crossing_output.saturating_add(ending.output);
                 hop_outputs.push(out);

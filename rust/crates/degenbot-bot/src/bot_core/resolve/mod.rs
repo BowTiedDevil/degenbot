@@ -505,7 +505,7 @@ mod tests {
     };
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U128, U256};
-    use degenbot_solvers::cl::{IntTickRangeCrossing, V3WordProfile};
+    use degenbot_solvers::cl::{ClWordProfile, IntTickRangeCrossing};
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
 
     fn ref_v3(pool_key: u64) -> MixedPoolRef {
@@ -559,7 +559,7 @@ mod tests {
     fn profile_ptr(
         cache: &HopProjectionCache,
         key: &(HopType, u64, bool),
-    ) -> *const Vec<Option<Arc<V3WordProfile>>> {
+    ) -> *const Vec<Option<Arc<ClWordProfile>>> {
         match &cache.get_entry(key).expect("entry") {
             (CachedProjection::Hop(arc), _) => match arc.as_ref() {
                 ResolvedHop::V3 { word_profiles, .. } => Arc::as_ptr(word_profiles),
@@ -894,7 +894,7 @@ mod tests {
             .collect()
     }
 
-    /// The all-CL intake: resolve -> cached tables -> `int_solve_cl_path`.
+    /// The all-CL intake: resolve -> cached tables -> `solve_cl_piecewise`.
     fn all_cl_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
         let seqs: Vec<_> = r
             .hops
@@ -911,16 +911,16 @@ mod tests {
             .iter()
             .filter_map(ResolvedHop::as_crossing_table)
             .collect();
-        let prepared: Vec<degenbot_solvers::cl::ClPrepared> = seqs
+        let prepared: Vec<degenbot_solvers::cl::ClSolveTables> = seqs
             .iter()
             .zip(crossings.iter())
             .zip(profiles.iter())
-            .map(|((_, c), p)| degenbot_solvers::cl::ClPrepared {
+            .map(|((_, c), p)| degenbot_solvers::cl::ClSolveTables {
                 crossings: std::sync::Arc::clone(c),
                 profiles: std::sync::Arc::clone(p),
             })
             .collect();
-        degenbot_solvers::cl::int_solve_cl_path(
+        degenbot_solvers::cl::solve_cl_piecewise(
             &seqs,
             &prepared,
             None,
@@ -929,7 +929,7 @@ mod tests {
         .result
     }
 
-    /// The mixed intake: resolve -> cached tables -> `exact_solve_mixed_path_n_cached`.
+    /// The mixed intake: resolve -> cached tables -> `solve_mixed_piecewise_cached`.
     // `Option::cloned` is ambiguous as a bare fn item (two impls); the
     // equivalent forwarding closures are what the code needs.
     #[expect(clippy::redundant_closure_for_method_calls)]
@@ -960,21 +960,21 @@ mod tests {
             .map(ResolvedHop::as_word_profiles)
             .map(|opt| opt.cloned())
             .collect();
-        let cl_prepared: Vec<Option<degenbot_solvers::cl::ClPrepared>> = hop_order
+        let cl_prepared: Vec<Option<degenbot_solvers::cl::ClSolveTables>> = hop_order
             .iter()
             .enumerate()
             .map(|(i, &is_v2)| {
                 if is_v2 {
                     None
                 } else {
-                    Some(degenbot_solvers::cl::ClPrepared {
+                    Some(degenbot_solvers::cl::ClSolveTables {
                         crossings: std::sync::Arc::clone(crossings[i].as_ref()?),
                         profiles: std::sync::Arc::clone(profiles[i].as_ref()?),
                     })
                 }
             })
             .collect();
-        degenbot_solvers::cl::exact_solve_mixed_path_n(
+        degenbot_solvers::cl::solve_mixed_piecewise(
             &v2_hops,
             &seqs,
             &cl_prepared,

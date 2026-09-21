@@ -308,7 +308,7 @@ thread_local! {
     pub(crate) static WALK_PIECES_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // See `WALK_PIECES_VISITED`.
     pub(crate) static WALK_PATH_SIMULATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Total `compute_swap_step_v3` steps executed inside `int_simulate_v3_swap`
+    // Total `compute_swap_step_v3` steps executed inside `simulate_v3_range_swap`
     //'s word-boundary walk — the per-simulation cost driver for dense
     // (many-word-boundary) CL ranges. `sims × per-sim steps` is the real cost.
     pub(crate) static WALK_WORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

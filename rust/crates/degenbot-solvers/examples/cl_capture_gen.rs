@@ -21,7 +21,7 @@
 //! production sparse-backfill pattern, pull real tick words from the archive
 //! node), builds each pool's `IntV3TickRangeSequence` via the same
 //! `build_int_v3_sequence` the bot uses, forms valid 2-hop all-CL paths by
-//! shared token, runs `int_solve_cl_path` on each, and writes (input sequences
+//! shared token, runs `solve_cl_piecewise` on each, and writes (input sequences
 //! + golden) to a JSONL consumed by `cl_solve_replay`. Deterministic,
 //! network-gated source of real heavy-CL data, no full bot soak.
 //!
@@ -329,7 +329,7 @@ fn main() -> ExitCode {
             let _zfo_a = other_a == a_t0;
             let _zfo_b = s == b_t0;
             let t0 = std::time::Instant::now();
-            let out = degenbot_solvers::cl::solve_cl_derived(
+            let out = degenbot_solvers::cl::derive_and_solve_cl_piecewise(
                 &[sa, sb],
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             );

@@ -7,7 +7,7 @@ use super::telemetry::{
     add_pred_ns, bump_event_solver_fallbacks, bump_event_solver_ok, bump_left_edge_sims,
     bump_right_edge_sims, observe_max_dense_words,
 };
-use super::word_profile::{word_profile_min_input_for_output, V3WordProfile};
+use super::word_profile::{word_profile_min_input_for_output, ClWordProfile};
 use super::{ClCrossingTable, ClProfileTable, IntTickRangeCrossing, IntV3TickRangeSequence};
 use crate::runtime::SolveRuntimeConfig;
 
@@ -16,19 +16,19 @@ use crate::runtime::SolveRuntimeConfig;
 /// the landing's capacity.
 fn cl_hop_min_input_for_output(
     crossing: &IntTickRangeCrossing,
-    profile: Option<&V3WordProfile>,
+    profile: Option<&ClWordProfile>,
     w: U256,
 ) -> Option<U256> {
     if w <= crossing.crossing_output {
         return Some(crossing.crossing_gross_input);
     }
     let w_ending = w - crossing.crossing_output;
-    // Profiles are byte-equivalent to the linear `int_simulate_v3_swap`
+    // Profiles are byte-equivalent to the linear `simulate_v3_range_swap`
     // walk, so the inversion routes through the profile tables.
     let r = if let Some(p) = profile {
         word_profile_min_input_for_output(p, w_ending)?
     } else {
-        let built = V3WordProfile::build(&crossing.ending_range)?;
+        let built = ClWordProfile::build(&crossing.ending_range)?;
         word_profile_min_input_for_output(&built, w_ending)?
     };
     crossing.crossing_gross_input.checked_add(r)
@@ -306,7 +306,7 @@ pub const DENSE_OBSERVE_THRESHOLD: usize = 64;
 #[hotpath::measure(label = "cl_solve.build_word_profiles")]
 pub(super) fn build_word_profiles(
     crossings: &[IntTickRangeCrossing],
-) -> Vec<Option<Arc<V3WordProfile>>> {
+) -> Vec<Option<Arc<ClWordProfile>>> {
     for c in crossings {
         let n = c.ending_range.word_boundary_prices.len();
         observe_max_dense_words(n);
@@ -318,7 +318,7 @@ pub(super) fn build_word_profiles(
     }
     crossings
         .iter()
-        .map(|c| V3WordProfile::build(&c.ending_range).map(Arc::new))
+        .map(|c| ClWordProfile::build(&c.ending_range).map(Arc::new))
         .collect()
 }
 
@@ -331,7 +331,7 @@ pub fn build_cl_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRange
 }
 
 /// Cache-less dense-range profiles for a CL sequence (offline replays and the
-/// direct `int_solve_cl_path` path, which build per call). Result is parallel to
+/// direct `solve_cl_piecewise` path, which build per call). Result is parallel to
 /// `seq.ranges` (`None` for ranges below `WORD_PROFILE_THRESHOLD`).
 #[must_use]
 pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> ClProfileTable {

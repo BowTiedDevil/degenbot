@@ -85,14 +85,14 @@ fn int_simulate_cl_path_n(
                 };
             }
             let remaining = current_input - crossing.crossing_gross_input;
-            let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+            let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
             let out = crossing.crossing_output.saturating_add(ending.output);
             let consumed = crossing
                 .crossing_gross_input
                 .saturating_add(ending.consumed_input);
             (consumed, out)
         } else {
-            let result = int_simulate_v3_swap(current_input, &base_ranges[i]);
+            let result = simulate_v3_range_swap(current_input, &base_ranges[i]);
             (result.consumed_input, result.output)
         };
 
@@ -151,7 +151,7 @@ fn int_simulate_v3_v3_path(
             };
         }
         let remaining = amount_in - c1.crossing_gross_input;
-        let ending = int_simulate_v3_swap(remaining, &c1.ending_range);
+        let ending = simulate_v3_range_swap(remaining, &c1.ending_range);
         let out = c1.crossing_output.saturating_add(ending.output);
         // consumed = crossing_gross_input + ending.consumed_input
         let consumed = c1
@@ -159,7 +159,7 @@ fn int_simulate_v3_v3_path(
             .saturating_add(ending.consumed_input);
         (consumed, out)
     } else {
-        let result = int_simulate_v3_swap(amount_in, base_range1);
+        let result = simulate_v3_range_swap(amount_in, base_range1);
         (result.consumed_input, result.output)
     };
 
@@ -181,14 +181,14 @@ fn int_simulate_v3_v3_path(
             };
         }
         let remaining = output1 - c2.crossing_gross_input;
-        let ending = int_simulate_v3_swap(remaining, &c2.ending_range);
+        let ending = simulate_v3_range_swap(remaining, &c2.ending_range);
         let out = c2.crossing_output.saturating_add(ending.output);
         let consumed = c2
             .crossing_gross_input
             .saturating_add(ending.consumed_input);
         (consumed, out)
     } else {
-        let result = int_simulate_v3_swap(output1, base_range2);
+        let result = simulate_v3_range_swap(output1, base_range2);
         (result.consumed_input, result.output)
     };
 
@@ -318,7 +318,7 @@ fn int_simulate_mixed_path_n(
                     };
                 }
                 let remaining = current_input - crossing.crossing_gross_input;
-                let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+                let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
                 let out = crossing.crossing_output.saturating_add(ending.output);
                 let consumed = crossing
                     .crossing_gross_input
@@ -338,7 +338,7 @@ fn int_simulate_mixed_path_n(
                         steps: steps.into(),
                     };
                 };
-                let result = int_simulate_v3_swap(current_input, base_range);
+                let result = simulate_v3_range_swap(current_input, base_range);
                 (result.consumed_input, result.output)
             };
             steps.push(StepOutcome {
@@ -428,12 +428,12 @@ fn test_v3_to_int_hop_state() {
 }
 
 #[test]
-fn test_int_simulate_v3_swap_small_input_zfo() {
+fn test_simulate_v3_range_swap_small_input_zfo() {
     let hop = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
 
     // Small swap: 1000 token0 in, zfo
     let input = U256::from(1000u64);
-    let result = int_simulate_v3_swap(input, &hop);
+    let result = simulate_v3_range_swap(input, &hop);
 
     // Should produce positive output less than input (due to fees on 1:1 pool)
     assert!(
@@ -451,12 +451,12 @@ fn test_int_simulate_v3_swap_small_input_zfo() {
 }
 
 #[test]
-fn test_int_simulate_v3_swap_small_input_ofz() {
+fn test_simulate_v3_range_swap_small_input_ofz() {
     let hop = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
 
     // Small swap: 1000 token1 in, ofz
     let input = U256::from(1000u64);
-    let result = int_simulate_v3_swap(input, &hop);
+    let result = simulate_v3_range_swap(input, &hop);
 
     assert!(result.output > U256::ZERO);
     assert!(
@@ -467,15 +467,15 @@ fn test_int_simulate_v3_swap_small_input_ofz() {
 }
 
 #[test]
-fn test_int_simulate_v3_swap_zero_input() {
+fn test_simulate_v3_range_swap_zero_input() {
     let hop = make_v3_hop_at_1to1(1_000_000u128, true);
-    let result = int_simulate_v3_swap(U256::ZERO, &hop);
+    let result = simulate_v3_range_swap(U256::ZERO, &hop);
     assert!(result.output.is_zero());
     assert!(result.consumed_input.is_zero());
 }
 
 #[test]
-fn test_int_simulate_v3_swap_zero_liquidity() {
+fn test_simulate_v3_range_swap_zero_liquidity() {
     let hop = IntV3TickRangeHop {
         liquidity: 0,
         sqrt_price_x96: U256::from(1u128) << 96,
@@ -486,7 +486,7 @@ fn test_int_simulate_v3_swap_zero_liquidity() {
         zero_for_one: true,
         word_boundary_prices: Vec::new(),
     };
-    let result = int_simulate_v3_swap(U256::from(1000u64), &hop);
+    let result = simulate_v3_range_swap(U256::from(1000u64), &hop);
     assert!(result.output.is_zero());
     assert!(result.consumed_input.is_zero());
 }
@@ -533,7 +533,7 @@ fn test_int_v3_sequence_empty() {
 }
 
 #[test]
-fn test_exact_solve_mixed_v2_v3_sequence_profitable() {
+fn test_solve_mixed_v2_v3_piecewise_profitable() {
     // V2 pool: 1.5M USDC / 800 WETH (cheap WETH)
     // V3 pool at 1:1 with different effective reserves
     let v2_hop = IntHopState::new(
@@ -562,7 +562,7 @@ fn test_exact_solve_mixed_v2_v3_sequence_profitable() {
     let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
 
     let result =
-        exact_solve_mixed_v2_v3_sequence(&[v2_hop], &v3_seq, true, &SolveRuntimeConfig::default())
+        solve_mixed_v2_v3_piecewise(&[v2_hop], &v3_seq, true, &SolveRuntimeConfig::default())
             .result;
     // Key thing is no panics.
     let _ = result;
@@ -746,16 +746,16 @@ fn test_compute_crossing_matches_max_gross_input_k1() {
     );
 }
 
-// --- Slice 14: int_solve_v3_v3 tests ---
+// --- Slice 14: solve_v3_v3_piecewise tests ---
 
 #[test]
-fn test_int_solve_v3_v3_single_range_unprofitable() {
+fn test_solve_v3_v3_piecewise_single_range_unprofitable() {
     // Two V3 pools at the same price → no arb (fees dominate)
     let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
     let hop2 = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
     let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
-    let result = int_solve_v3_v3(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
+    let result = solve_v3_v3_piecewise(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
     assert!(
         result.is_none(),
         "Same-price pools should not be profitable"
@@ -763,7 +763,7 @@ fn test_int_solve_v3_v3_single_range_unprofitable() {
 }
 
 #[test]
-fn test_int_solve_v3_v3_single_range_no_panic() {
+fn test_solve_v3_v3_piecewise_single_range_no_panic() {
     // Different effective reserves — may or may not be profitable,
     // but must not panic
     let sp_0 = U256::from(1u128) << 96;
@@ -800,11 +800,11 @@ fn test_int_solve_v3_v3_single_range_no_panic() {
 
     let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
-    let _ = int_solve_v3_v3(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
+    let _ = solve_v3_v3_piecewise(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
 }
 
 #[test]
-fn test_int_solve_v3_v3_multi_range_no_panic() {
+fn test_solve_v3_v3_piecewise_multi_range_no_panic() {
     let sp_0 = U256::from(1u128) << 96;
     let sp_lower0 = U256::from(
         degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
@@ -851,7 +851,7 @@ fn test_int_solve_v3_v3_multi_range_no_panic() {
 
     let seq1 = IntV3TickRangeSequence::new(vec![range1_0, range1_1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![range2_0]).unwrap();
-    let _ = int_solve_v3_v3(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
+    let _ = solve_v3_v3_piecewise(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
 }
 
 // ── Per-hop output tests ──────────────────────────────────────
@@ -871,9 +871,9 @@ fn test_int_simulate_v3_v3_path_hop_outputs_single_range() {
         result.steps.last().map(|s| s.output).unwrap()
     );
     // Invariant: hop_outputs[1] is the output after hop 2 using hop 1's output as input
-    let expected_hop1 = int_simulate_v3_swap(U256::from(1_000_000u64), &hop1);
+    let expected_hop1 = simulate_v3_range_swap(U256::from(1_000_000u64), &hop1);
     assert_eq!(result.steps[0].output, expected_hop1.output);
-    let expected_hop2 = int_simulate_v3_swap(expected_hop1.output, &hop2);
+    let expected_hop2 = simulate_v3_range_swap(expected_hop1.output, &hop2);
     assert_eq!(result.steps[1].output, expected_hop2.output);
     assert_eq!(result.final_output, expected_hop2.output);
 }
@@ -909,11 +909,11 @@ fn test_int_simulate_cl_path_n_3hop() {
     // 3 hops → 3 hop_outputs
     assert_eq!(result.steps.len(), 3);
     // Verify chain: output1 feeds into hop2, output2 feeds into hop3
-    let expected1 = int_simulate_v3_swap(amount_in, &hop1);
+    let expected1 = simulate_v3_range_swap(amount_in, &hop1);
     assert_eq!(result.steps[0].output, expected1.output);
-    let expected2 = int_simulate_v3_swap(expected1.output, &hop2);
+    let expected2 = simulate_v3_range_swap(expected1.output, &hop2);
     assert_eq!(result.steps[1].output, expected2.output);
-    let expected3 = int_simulate_v3_swap(expected2.output, &hop3);
+    let expected3 = simulate_v3_range_swap(expected2.output, &hop3);
     assert_eq!(result.steps[2].output, expected3.output);
     assert_eq!(result.final_output, expected3.output);
 }
@@ -975,22 +975,23 @@ fn walk_fingerprint_is_content_stable_and_separates_compositions() {
 }
 
 #[test]
-fn test_int_solve_cl_path_2hop_delegates_to_v3_v3() {
-    // 2-hop CL path should delegate to int_solve_v3_v3
+fn test_solve_cl_piecewise_2hop_delegates_to_v3_v3() {
+    // 2-hop CL path should delegate to solve_v3_v3_piecewise
     let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
     let hop2 = make_v3_hop_at_1to1(8_000_000_000_000u128, false);
 
     let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
 
-    let result_cl = solve_cl_derived(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
-    let result_v3v3 = int_solve_v3_v3(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
+    let result_cl =
+        derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
+    let result_v3v3 = solve_v3_v3_piecewise(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
 
     assert_eq!(result_cl, result_v3v3);
 }
 
 #[test]
-fn test_int_solve_cl_path_3hop_single_range() {
+fn test_solve_cl_piecewise_3hop_single_range() {
     // 3-hop CL path with single-range sequences (all at 1:1, different reserves)
     // zfo → ofz → zfo to form a cycle
 
@@ -1018,7 +1019,9 @@ fn test_int_solve_cl_path_3hop_single_range() {
     let seq3 = IntV3TickRangeSequence::new(vec![hop3]).unwrap();
 
     // Same-product 3-hop — should not be profitable
-    let result = solve_cl_derived(&[&seq1, &seq2, &seq3], &SolveRuntimeConfig::default()).result;
+    let result =
+        derive_and_solve_cl_piecewise(&[&seq1, &seq2, &seq3], &SolveRuntimeConfig::default())
+            .result;
     assert!(
         result.is_none(),
         "Same-product 3-hop should not be profitable"
@@ -1026,7 +1029,7 @@ fn test_int_solve_cl_path_3hop_single_range() {
 }
 
 #[test]
-fn test_int_solve_cl_path_3hop_profitable() {
+fn test_solve_cl_piecewise_3hop_profitable() {
     // Create a 3-hop cycle with genuine price disagreement
     // Pool 1: zfo, large t0, large t1 at 1:1 (entry pool)
     // Pool 2: ofz, mispriced — more t0 than t1 (can buy t0 cheap)
@@ -1087,7 +1090,9 @@ fn test_int_solve_cl_path_3hop_profitable() {
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
     let seq3 = IntV3TickRangeSequence::new(vec![hop3]).unwrap();
 
-    let result = solve_cl_derived(&[&seq1, &seq2, &seq3], &SolveRuntimeConfig::default()).result;
+    let result =
+        derive_and_solve_cl_piecewise(&[&seq1, &seq2, &seq3], &SolveRuntimeConfig::default())
+            .result;
 
     // This should produce a result — there's genuine price disagreement
     // across the three pools. However, fees may eat all profit.
@@ -1120,7 +1125,7 @@ fn test_int_solve_cl_path_3hop_profitable() {
 // ── N-hop mixed path solver tests ────────────────────────────
 
 #[test]
-fn test_exact_solve_mixed_path_n_2hop_delegates() {
+fn test_solve_mixed_piecewise_2hop_delegates() {
     // 2-hop mixed path should delegate to existing 2-hop solver
     let v2_hop = IntHopState::new(
         U256::from(1_500_000_000_000u64),
@@ -1133,7 +1138,7 @@ fn test_exact_solve_mixed_path_n_2hop_delegates() {
     let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
 
     // V2 first, then CL
-    let result = exact_solve_mixed_path_n(
+    let result = solve_mixed_piecewise(
         &[Some(v2_hop.clone()), None],
         &[None, Some(&v3_seq)],
         &[None, None], // offline shape: tables derive here
@@ -1161,23 +1166,24 @@ fn cl_path_cached_crossings_match_profile_only_solve() {
     // Carried tables must equal the per-call derived solve (byte-identical
     // CL math).
     let prepared = [
-        ClPrepared {
+        ClSolveTables {
             crossings: Arc::clone(&c1),
             profiles: Arc::clone(&p1),
         },
-        ClPrepared {
+        ClSolveTables {
             crossings: Arc::clone(&c2),
             profiles: Arc::clone(&p2),
         },
     ];
-    let cached = int_solve_cl_path(
+    let cached = solve_cl_piecewise(
         &[&seq1, &seq2],
         &prepared,
         None,
         &SolveRuntimeConfig::default(),
     )
     .result;
-    let offline = solve_cl_derived(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
+    let offline =
+        derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
     assert_eq!(cached, offline);
     assert!(cached.is_some(), "late-liquidity fixture is profitable");
 }
@@ -1202,7 +1208,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
     ));
     let cl_prepared = [
         None,
-        Some(ClPrepared {
+        Some(ClSolveTables {
             crossings: crossing,
             profiles: profile,
         }),
@@ -1210,14 +1216,14 @@ fn mixed_path_cached_crossings_match_offline_solve() {
 
     // Projection-backed cached tables must equal the offline build
     // (byte-identical mixed-path math).
-    let cached = exact_solve_mixed_path_n(
+    let cached = solve_mixed_piecewise(
         &v2_hops,
         &cl_sequences,
         &cl_prepared,
         &[true, false],
         &SolveRuntimeConfig::default(),
     );
-    let offline = exact_solve_mixed_path_n(
+    let offline = solve_mixed_piecewise(
         &v2_hops,
         &cl_sequences,
         &[None, None],
@@ -1233,7 +1239,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
 }
 
 #[test]
-fn test_exact_solve_mixed_path_n_3hop_v2_cl_v2() {
+fn test_solve_mixed_piecewise_3hop_v2_cl_v2() {
     // 3-hop mixed path: V2 → CL → V2
     let v2_hop1 = IntHopState::new(
         U256::from(2_000_000_000_000u64),              // 2M USDC
@@ -1251,7 +1257,7 @@ fn test_exact_solve_mixed_path_n_3hop_v2_cl_v2() {
     let v3_hop = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
     let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
 
-    let result = exact_solve_mixed_path_n(
+    let result = solve_mixed_piecewise(
         &[Some(v2_hop1.clone()), None, Some(v2_hop2.clone())],
         &[None, Some(&v3_seq), None],
         &[None, None, None],  // offline shape: tables derive here
@@ -1302,21 +1308,21 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
     let profile = Arc::new(build_cl_word_profiles_from_crossings(&crossing));
     let cl_prepared = [
         None,
-        Some(ClPrepared {
+        Some(ClSolveTables {
             crossings: crossing,
             profiles: profile,
         }),
         None,
     ];
 
-    let cached = exact_solve_mixed_path_n(
+    let cached = solve_mixed_piecewise(
         &v2_hops,
         &cl_sequences,
         &cl_prepared,
         &[true, false, true],
         &SolveRuntimeConfig::default(),
     );
-    let offline = exact_solve_mixed_path_n(
+    let offline = solve_mixed_piecewise(
         &v2_hops,
         &cl_sequences,
         &[None, None, None],
@@ -1367,7 +1373,7 @@ fn test_int_simulate_mixed_path_n_3hop() {
     assert_eq!(result.steps[0].consumed_input, amount_in);
 
     // Hop 2 (CL): swap output through V3
-    let expected_out2 = int_simulate_v3_swap(expected_out1, &cl_hop);
+    let expected_out2 = simulate_v3_range_swap(expected_out1, &cl_hop);
     assert_eq!(result.steps[1].output, expected_out2.output);
 
     // Hop 3 (V2): swap output through V2 pool 2
@@ -1381,7 +1387,7 @@ fn test_int_simulate_mixed_path_n_3hop() {
 // The full V4 CurrencyNotSettled fix covers TWO pieces of the solver's
 // per-hop V3 calc: (a) `compute_crossing`'s per-range round-up
 // (covered by degenbot-pools/int_v3_hop.rs tests), and (b) the partial
-// (target-NOT-reached) step in `int_simulate_v3_swap`. The tests below
+// (target-NOT-reached) step in `simulate_v3_range_swap`. The tests below
 // pin (b): for a swap that stops inside a tick range WITHOUT reaching
 // either boundary, the solver's `output`/`consumed_input`/`sqrt_price_next`
 // MUST match `compute_swap_step_v3` (the on-chain-faithful oracle) exactly
@@ -1389,7 +1395,7 @@ fn test_int_simulate_mixed_path_n_3hop() {
 //
 //   - zfo (token0 in, price decreases): on-chain derives `sp_next` via
 //     `get_next_sqrt_price_from_amount0_rounding_up` = CEIL; the prior
-//     floor in `int_simulate_v3_swap` under-shot `sp_next` → over-shot
+//     floor in `simulate_v3_range_swap` under-shot `sp_next` → over-shot
 //     `spCur − sp_next` → over-predicted `output` (the same direction
 //     as the CurrencyNotSettled bug).
 //   - ofz (token1 in, price increases): on-chain uses
@@ -1423,7 +1429,7 @@ fn range_hop_at_tick(tick_cur: i32, spacing: i32, liquidity: u128, zfo: bool) ->
     }
 }
 
-/// RED→GREEN: `int_simulate_v3_swap` for a swap that does NOT reach the
+/// RED→GREEN: `simulate_v3_range_swap` for a swap that does NOT reach the
 /// lower boundary (zfo) MUST match the on-chain `compute_swap_step_v3`
 /// step (`output`, `consumed_input`, and the implied `sqrt_price_next`).
 /// Before the round-up fix this over-predicted `output` because `sp_next`
@@ -1431,7 +1437,7 @@ fn range_hop_at_tick(tick_cur: i32, spacing: i32, liquidity: u128, zfo: bool) ->
 // -----------------------------------------------------------------
 // Differential proof: oracle (`v3_simulate_swap`, 30k-budget tick walk)
 // vs solver path (`build_int_v3_sequence` → chained
-// `int_simulate_v3_swap`). Proves whether the integer solver handles
+// `simulate_v3_range_swap`). Proves whether the integer solver handles
 // edge-case pool topologies — distant/full-range liquidity, sparse word
 // boundaries, range exhaustion — byte-for-byte.
 // -----------------------------------------------------------------
@@ -1484,7 +1490,7 @@ fn pool_at_tick0(
     (state, tick_spacing, fee)
 }
 
-/// Solver-side simulation: chain int_simulate_v3_swap across the built
+/// Solver-side simulation: chain simulate_v3_range_swap across the built
 /// sequence's hops, feeding remaining input forward.
 fn solver_swap(
     state: &V3PoolState,
@@ -1508,7 +1514,7 @@ fn solver_swap(
     }
     let crossing = &crossings[k];
     let remaining = amount_in - crossing.crossing_gross_input;
-    let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+    let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
     Some((
         crossing
             .crossing_gross_input
@@ -1671,7 +1677,7 @@ fn full_range_spacing1_builds_and_matches_oracle() {
 }
 
 #[test]
-fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3() {
+fn simulate_v3_range_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3() {
     let liquidity = 10_000_000_000_000u128; // 1e13
     let spacing = 60;
     let hop = range_hop_at_tick(0, spacing, liquidity, /* zfo */ true);
@@ -1700,7 +1706,7 @@ fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3() 
     .expect("oracle compute_swap_step_v3 must succeed");
 
     // Solver:
-    let result = int_simulate_v3_swap(amount_in, &hop);
+    let result = simulate_v3_range_swap(amount_in, &hop);
 
     assert_eq!(
         result.output, step.amount_out,
@@ -1713,12 +1719,12 @@ fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3() 
     );
 }
 
-/// Sweep regression guard: `int_simulate_v3_swap` for a swap that does
+/// Sweep regression guard: `simulate_v3_range_swap` for a swap that does
 /// NOT reach the lower boundary (zfo) MUST match the on-chain
 /// `compute_swap_step_v3` across a sweep of inputs AND liquidity magnitudes.
 ///
 /// The on-chain oracle uses `muldiv_rounding_up` for `sp_next` (zfo),
-/// while `int_simulate_v3_swap` floors; for L « Q96 the floor/ceil gap is
+/// while `simulate_v3_range_swap` floors; for L « Q96 the floor/ceil gap is
 /// hidden by the `floor(L·(spCur − sp_next)/Q96)` quantization, but for
 /// L `\approx` Q96 (realistic for highly-liquid mature pools) a divergence
 /// could surface. This test pins the invariant across both regimes.
@@ -1726,9 +1732,9 @@ fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3() 
 /// Excluded are dust amounts (< 1 wei of net_in after the floor fee
 /// deduction) which round `net_in` to 0 in the solver while on-chain still
 /// consumes the full amount as fee-only — that's a separate corner tracked
-/// by [`int_simulate_v3_swap_dust_amount_zfo_consumes_full_input`].
+/// by [`simulate_v3_range_swap_dust_amount_zfo_consumes_full_input`].
 #[test]
-fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3_sweep() {
+fn simulate_v3_range_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3_sweep() {
     let spacings_and_liquids: [(i32, u128); 5] = [
         (60, 10_000_000_000_000u128),                    // 1e13 « Q96
         (60, 100_000_000_000_000_000_000u128),           // 1e20
@@ -1773,7 +1779,7 @@ fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3_sw
                 fee_pips,
             )
             .expect("oracle compute_swap_step_v3 must succeed");
-            let result = int_simulate_v3_swap(amount_in, &hop);
+            let result = simulate_v3_range_swap(amount_in, &hop);
             assert_eq!(
                 result.output, step.amount_out,
                 "zfo partial output mismatch L={} spc={} amount_in={amount_in}: solver={}, oracle={}",
@@ -1788,13 +1794,13 @@ fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3_sw
     }
 }
 
-/// Regression guard: `int_simulate_v3_swap` for a swap that does NOT reach
+/// Regression guard: `simulate_v3_range_swap` for a swap that does NOT reach
 /// the upper boundary (ofz) MUST match the on-chain `compute_swap_step_v3`
 /// step (sweep over L). ofz uses floor on both sides (sp_next derivation
 /// via `get_next_sqrt_price_from_amount1_rounding_down`), so this should
 /// always pass — it pins the invariant.
 #[test]
-fn int_simulate_v3_swap_partial_step_ofz_matches_onchain_compute_swap_step_v3_sweep() {
+fn simulate_v3_range_swap_partial_step_ofz_matches_onchain_compute_swap_step_v3_sweep() {
     let spacings_and_liquids: [(i32, u128); 5] = [
         (60, 10_000_000_000_000u128),
         (60, 100_000_000_000_000_000_000u128),
@@ -1834,7 +1840,7 @@ fn int_simulate_v3_swap_partial_step_ofz_matches_onchain_compute_swap_step_v3_sw
                 fee_pips,
             )
             .expect("oracle compute_swap_step_v3 must succeed");
-            let result = int_simulate_v3_swap(amount_in, &hop);
+            let result = simulate_v3_range_swap(amount_in, &hop);
             assert_eq!(
                 result.output, step.amount_out,
                 "ofz partial output mismatch L={} spc={} amount_in={amount_in}: solver={}, oracle={}",
@@ -1860,7 +1866,7 @@ fn int_simulate_v3_swap_partial_step_ofz_matches_onchain_compute_swap_step_v3_sw
 /// `net_in` to 0 and reported `consumed_input = 0` (a documented
 /// limitation that the dust-agreement test below has now flipped).
 #[test]
-fn int_simulate_v3_swap_dust_amount_zfo_consumes_full_input_onchain_only() {
+fn simulate_v3_range_swap_dust_amount_zfo_consumes_full_input_onchain_only() {
     let liquidity = 10_000_000_000_000u128;
     let hop = range_hop_at_tick(0, 60, liquidity, /* zfo */ true);
     let fee_pips = U256::from(hop.fee_denom - hop.gamma_numer);
@@ -1882,7 +1888,7 @@ fn int_simulate_v3_swap_dust_amount_zfo_consumes_full_input_onchain_only() {
         fee_pips,
     )
     .expect("oracle must succeed");
-    let result = int_simulate_v3_swap(amount_in, &hop);
+    let result = simulate_v3_range_swap(amount_in, &hop);
 
     // AGREEMENT: output is 0 on both sides.
     assert_eq!(result.output, U256::ZERO);
@@ -2130,7 +2136,7 @@ fn word_profile_min_input_for_output_matches_bruteforce() {
         word_boundary_prices: Vec::new(),
     };
     for hop in [&dense_zfo, &sparse_ofz] {
-        let Some(profile) = V3WordProfile::build(hop) else {
+        let Some(profile) = ClWordProfile::build(hop) else {
             panic!("profile build failed");
         };
         let cap = profile.swap(U256::MAX).output;
@@ -2167,7 +2173,7 @@ fn word_profile_min_input_for_output_matches_bruteforce() {
 }
 
 /// The legacy all-CL enumeration with NO `max_candidates` cap. This is
-/// the pre-cutover `int_solve_cl_path` general case verbatim except the
+/// the pre-cutover `solve_cl_piecewise` general case verbatim except the
 /// radix is the full range count. Kept in-tree as the brute-force
 /// reference: the production solver must equal it (concavity ⇒ both find
 /// the same argmax piece), while the historical capped enumeration
@@ -2266,7 +2272,7 @@ fn reference_uncapped_cl_solve(
 }
 
 /// The legacy mixed V2+CL enumeration with NO `max_candidates` cap
-/// (uncapped twin of the pre-cutover `exact_solve_mixed_path_n`).
+/// (uncapped twin of the pre-cutover `solve_mixed_piecewise`).
 #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
 fn reference_uncapped_mixed_solve(
     v2_hops: &[Option<IntHopState>],
@@ -2426,7 +2432,7 @@ fn reference_uncapped_mixed_solve(
 /// corner-blind on this geometry). The active-set walk refines each
 /// visited piece with a windowed ternary search, which sees the corner.
 #[test]
-fn int_solve_cl_path_beyond_ten_range_prefix_finds_corner_profit() {
+fn solve_cl_piecewise_beyond_ten_range_prefix_finds_corner_profit() {
     // Hop 1: single 1300-tick-wide deep zfo range, price pinned at tick 750.
     let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
     // Hop 2: 12 ofz ranges of width 60; thin until tick 600, deep on
@@ -2443,7 +2449,7 @@ fn int_solve_cl_path_beyond_ten_range_prefix_finds_corner_profit() {
     );
 
     let (x, profit, _hop_outputs) =
-        solve_cl_derived(&[&seq1, &seq2], &SolveRuntimeConfig::default())
+        derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default())
             .result
             .expect("the active-set walk must find the deep range-10/11 profit");
 
@@ -2474,7 +2480,7 @@ fn int_solve_cl_path_beyond_ten_range_prefix_finds_corner_profit() {
 /// deep-late-liquidity CL construction; the CL hop's argmax piece sits
 /// beyond the legacy 10-tuple prefix.
 #[test]
-fn exact_solve_mixed_path_n_beyond_ten_range_prefix_matches_uncapped_reference() {
+fn solve_mixed_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
     // V2 entry pool priced at tick +750: price(token0) = r1/r0
     // ≈ 1.0001^750 ≈ 1.07163.
     let r0 = U256::from(1_000_000_000_000_000u128);
@@ -2491,7 +2497,7 @@ fn exact_solve_mixed_path_n_beyond_ten_range_prefix_matches_uncapped_reference()
         &[None, Some(cl_seq.clone())],
         &[true, false],
     );
-    let result = exact_solve_mixed_path_n(
+    let result = solve_mixed_piecewise(
         &[Some(v2_entry), None],
         &[None, Some(&cl_seq)],
         &[None, None],
@@ -2534,7 +2540,9 @@ fn cl_path_solver_matches_uncapped_reference_across_late_liquidity_family() {
             liquidities.push(1_000_000_000u128);
             let seq2 = multi_range_sequence(0, 60, false, &liquidities);
 
-            let solver = solve_cl_derived(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
+            let solver =
+                derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default())
+                    .result;
             let reference = reference_uncapped_cl_solve(&[&seq1, &seq2]);
             let solver_profit = solver.map_or(U256::ZERO, |(_, profit, _)| profit);
             let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
@@ -2577,7 +2585,8 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
 
     WALK_PIECES_VISITED.with(|c| c.set(0));
     WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-    let result = solve_cl_derived(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
+    let result =
+        derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
     assert!(result.is_some());
     let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
     let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
@@ -2613,7 +2622,7 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
     let s3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
     WALK_PIECES_VISITED.with(|c| c.set(0));
     WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-    let _ = solve_cl_derived(&[&s1, &s2, &s3], &SolveRuntimeConfig::default()).result;
+    let _ = derive_and_solve_cl_piecewise(&[&s1, &s2, &s3], &SolveRuntimeConfig::default()).result;
     let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
     let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
     let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
@@ -2700,7 +2709,8 @@ fn cl_path_solver_matches_fine_grid_oracle_across_families() {
             let seqs = [&seq1, &seq2];
             let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
             let oracle = grid_oracle_profit(&hops);
-            let solver = solve_cl_derived(&seqs, &SolveRuntimeConfig::default()).result;
+            let solver =
+                derive_and_solve_cl_piecewise(&seqs, &SolveRuntimeConfig::default()).result;
             let solver_profit = solver.map_or(U256::ZERO, |(_, p, _)| p);
             eprintln!(
                 "deep_liquidity={deep_liquidity} deep_index={deep_index}:                      oracle={oracle} solver={solver_profit}"
@@ -2748,14 +2758,15 @@ fn bench_active_set_walk_solve() {
     let sr1 = multi_range_sequence(-100, 200, true, &[5_000_000_000_000u128]);
     let sr2 = multi_range_sequence(0, 200, false, &[10_000_000_000_000u128]);
     time_solve("2-hop single-range", || {
-        let _ = solve_cl_derived(&[&sr1, &sr2], &SolveRuntimeConfig::default()).result;
+        let _ = derive_and_solve_cl_piecewise(&[&sr1, &sr2], &SolveRuntimeConfig::default()).result;
     });
 
     // 8-range 2-hop
     let mr2h1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
     let mr2h2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
     time_solve("2-hop 8-range", || {
-        let _ = solve_cl_derived(&[&mr2h1, &mr2h2], &SolveRuntimeConfig::default()).result;
+        let _ =
+            derive_and_solve_cl_piecewise(&[&mr2h1, &mr2h2], &SolveRuntimeConfig::default()).result;
     });
 
     // 3-hop 8-range each
@@ -2763,7 +2774,11 @@ fn bench_active_set_walk_solve() {
     let mr3h2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
     let mr3h3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
     time_solve("3-hop 8-range", || {
-        let _ = solve_cl_derived(&[&mr3h1, &mr3h2, &mr3h3], &SolveRuntimeConfig::default()).result;
+        let _ = derive_and_solve_cl_piecewise(
+            &[&mr3h1, &mr3h2, &mr3h3],
+            &SolveRuntimeConfig::default(),
+        )
+        .result;
     });
 
     // Uncapped enumeration reference on the same 8-range 2-hop. Cost per
@@ -2778,7 +2793,8 @@ fn bench_active_set_walk_solve() {
         let _ = Relaxed;
         WALK_PATH_SIMULATIONS.with(|c| c.set(0));
         WALK_PIECES_VISITED.with(|c| c.set(0));
-        let _ = solve_cl_derived(&[&mr2h1, &mr2h2], &SolveRuntimeConfig::default()).result;
+        let _ =
+            derive_and_solve_cl_piecewise(&[&mr2h1, &mr2h2], &SolveRuntimeConfig::default()).result;
         eprintln!(
             "2-hop 8-range walk: pieces={} sims={}",
             WALK_PIECES_VISITED.with(std::cell::Cell::get),
@@ -2851,7 +2867,8 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
                 }
                 let seq2 = multi_range_sequence(0, 60, false, &liquidities);
                 let Some((x_star, profit, _)) =
-                    solve_cl_derived(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result
+                    derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default())
+                        .result
                 else {
                     continue;
                 };
@@ -3113,9 +3130,9 @@ fn block_25641093_pool_feed_hop2_predicts_revm_output() {
 #[test]
 fn v3_word_profile_matches_linear_walk_on_dense_hop() {
     // Real on-chain dense range (path 36864 hop1): a wide band whose ~2400
-    // active-liquidity tick boundaries make `int_simulate_v3_swap` re-walk the
+    // active-liquidity tick boundaries make `simulate_v3_range_swap` re-walk the
     // same word-boundary prefix on nearly every walk evaluation. This test
-    // locks that the precomputed `V3WordProfile::swap` is byte-for-byte equal
+    // locks that the precomputed `ClWordProfile::swap` is byte-for-byte equal
     // to the linear walk across a sweep of inputs (partial landings deep into
     // the band AND full traversal past the exit).
     let entry: U256 = "158834591426315835485322".parse().unwrap();
@@ -3142,7 +3159,7 @@ fn v3_word_profile_matches_linear_walk_on_dense_hop() {
         !hop.word_boundary_prices.is_empty(),
         "test hop must carry word boundaries to take the profile path"
     );
-    let prof = V3WordProfile::build(&hop).expect("profile builds for a valid dense hop");
+    let prof = ClWordProfile::build(&hop).expect("profile builds for a valid dense hop");
     let full = prof.consumed.last().copied().expect("non-empty profile");
     assert!(!full.is_zero(), "dense crossing capacity must be nonzero");
     // 0 ..= 4x full traversal: partial landings (i < 32) and full traversal
@@ -3150,7 +3167,7 @@ fn v3_word_profile_matches_linear_walk_on_dense_hop() {
     let mut any_nonzero = false;
     for i in 0..=128u128 {
         let x = full * U256::from(i) / U256::from(32);
-        let linear = int_simulate_v3_swap(x, &hop);
+        let linear = simulate_v3_range_swap(x, &hop);
         let profile = prof.swap(x);
         assert_eq!(
             linear.consumed_input, profile.consumed_input,
@@ -3202,7 +3219,7 @@ fn single_piece_saturation_kink_is_not_missed() {
         "cell sanity: requires anchor > x_sat (got anchor={anchor}, x_sat={x_sat})"
     );
     let Some((x, profit, _)) =
-        solve_cl_derived(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result
+        derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result
     else {
         panic!(
             "F1 silent under-shoot: solver=None while the saturation corner x={x_sat} is worth {corner_profit} (anchor={anchor}); the single-piece terminal refine must bracket the corner"
@@ -3267,7 +3284,7 @@ fn single_piece_hop1_binding_kink_is_not_dropped() {
         "cell needs a substantial hop1-binding profit (got {corner_profit})"
     );
     let Some((x, profit, _)) =
-        solve_cl_derived(&[&seq0, &seq1], &SolveRuntimeConfig::default()).result
+        derive_and_solve_cl_piecewise(&[&seq0, &seq1], &SolveRuntimeConfig::default()).result
     else {
         panic!(
             "hop1-binding kink dropped: solver=None while x_cap={x_cap} is worth {corner_profit}; the terminal refine must not silently skip it"
@@ -3355,7 +3372,7 @@ fn dense_edge_direction_guard_synthetic() {
 
     let eps = U256::from(REFINE_BRACKET_WEI);
     let Some((xr, profit, _)) =
-        solve_cl_derived(&[&seq0, &seq1], &SolveRuntimeConfig::default()).result
+        derive_and_solve_cl_piecewise(&[&seq0, &seq1], &SolveRuntimeConfig::default()).result
     else {
         panic!("solver=None on a dense path while the fine oracle is {oracle_profit}");
     };

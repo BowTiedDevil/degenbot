@@ -2,7 +2,7 @@ use alloy::primitives::U256;
 
 use super::IntV3TickRangeHop;
 
-use super::hop_sim::V3SwapResult;
+use super::hop_sim::V3RangeSwapResult;
 use super::telemetry::bump_word_steps;
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ fn v3_step_min_gross_for_output(
 
 /// Smallest ending-range input whose realized profile output is >= `w`.
 /// Returns `None` when `w` exceeds the ending range's total output capacity.
-pub(super) fn word_profile_min_input_for_output(profile: &V3WordProfile, w: U256) -> Option<U256> {
+pub(super) fn word_profile_min_input_for_output(profile: &ClWordProfile, w: U256) -> Option<U256> {
     if w.is_zero() {
         return Some(U256::ZERO);
     }
@@ -68,8 +68,8 @@ pub(super) fn word_profile_min_input_for_output(profile: &V3WordProfile, w: U256
 }
 
 /// One-time precomputed forward word-boundary profile of a single dense CL
-/// `ending_range` for `int_simulate_v3_swap`. The active-set walk calls
-/// `int_simulate_v3_swap` ~`sims` times on the SAME ending range (fixed entry
+/// `ending_range` for `simulate_v3_range_swap`. The active-set walk calls
+/// `simulate_v3_range_swap` ~`sims` times on the SAME ending range (fixed entry
 /// price, liquidity, fee, and word-boundary list — only `amount_in` varies), so
 /// the per-boundary prefix is recomputed on nearly every simulation. For a range
 /// with K word boundaries that is ~`sims × K` `compute_swap_step_v3` calls; the
@@ -81,7 +81,7 @@ pub(super) fn word_profile_min_input_for_output(profile: &V3WordProfile, w: U256
 /// a per-sim walk would; the landing step is then computed live with the
 /// candidate's real remaining. `consumed` is non-decreasing.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct V3WordProfile {
+pub struct ClWordProfile {
     liquidity: i128,
     fee_pips: U256,
     /// `price[j]` = price after completing `j` full steps (j=0 is the entry).
@@ -94,7 +94,7 @@ pub struct V3WordProfile {
     output: Vec<U256>,
 }
 
-impl V3WordProfile {
+impl ClWordProfile {
     /// Build the profile with one full walk. `None` for a degenerate hop (zero
     /// liquidity or no word boundaries) which the linear walk already handles.
     pub(super) fn build(v3_hop: &IntV3TickRangeHop) -> Option<Self> {
@@ -150,13 +150,13 @@ impl V3WordProfile {
         })
     }
 
-    /// O(log K) replacement for `int_simulate_v3_swap(amount_in, v3_hop)` on the
+    /// O(log K) replacement for `simulate_v3_range_swap(amount_in, v3_hop)` on the
     /// hop this profile was built from.
-    pub(super) fn swap(&self, amount_in: U256) -> V3SwapResult {
+    pub(super) fn swap(&self, amount_in: U256) -> V3RangeSwapResult {
         use alloy::primitives::I256;
         use degenbot_math::cl::swap_math::compute_swap_step_v3;
         if amount_in.is_zero() {
-            return V3SwapResult::default();
+            return V3RangeSwapResult::default();
         }
         let n = self.target.len();
         // `j` = largest index with `consumed[j] <= amount_in` (`consumed[0] ==
@@ -164,7 +164,7 @@ impl V3WordProfile {
         // input covers the full walk to the exit.
         let j = self.consumed.partition_point(|c| c <= &amount_in) - 1;
         if j >= n {
-            return V3SwapResult {
+            return V3RangeSwapResult {
                 consumed_input: self.consumed[n],
                 output: self.output[n],
             };
@@ -173,7 +173,7 @@ impl V3WordProfile {
         let base_o = self.output[j];
         let remaining = amount_in - base_c;
         if remaining.is_zero() {
-            return V3SwapResult {
+            return V3RangeSwapResult {
                 consumed_input: base_c,
                 output: base_o,
             };
@@ -186,10 +186,10 @@ impl V3WordProfile {
             I256::try_from(remaining).unwrap_or(I256::MAX),
             self.fee_pips,
         ) else {
-            return V3SwapResult::default();
+            return V3RangeSwapResult::default();
         };
         let c = step.amount_in.saturating_add(step.fee_amount);
-        V3SwapResult {
+        V3RangeSwapResult {
             consumed_input: base_c.saturating_add(c),
             output: base_o.saturating_add(step.amount_out),
         }

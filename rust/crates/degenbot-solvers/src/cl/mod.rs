@@ -34,7 +34,7 @@
 //! - `word_profile` — dense-range forward word-boundary profiles.
 //! - `crossings` — crossing tables, hop assembly, and window-edge helpers.
 //! - `active_set` — the active-set piecewise Möbius walk.
-//! - `entries` — the public solve entry points and [`ClPrepared`].
+//! - `entries` — the public solve entry points and [`ClSolveTables`].
 //! - `memo` — the cross-block composition memo.
 //! - `telemetry` — walk counters, census, and process-wide timing statics,
 //!   written only when the crate's default-off `telemetry` feature is enabled.
@@ -48,7 +48,7 @@ pub use ::degenbot_pools::int_v3_hop::{
 /// Cached per-ending-range crossing table, parallel to `IntV3TickRangeSequence`.
 pub type ClCrossingTable = Vec<IntTickRangeCrossing>;
 /// Cached dense-range word-boundary profile table, parallel to crossings.
-pub type ClProfileTable = Vec<Option<Arc<V3WordProfile>>>;
+pub type ClProfileTable = Vec<Option<Arc<ClWordProfile>>>;
 
 mod active_set;
 mod crossings;
@@ -74,10 +74,10 @@ pub use crossings::{
     DENSE_OBSERVE_THRESHOLD,
 };
 pub use entries::{
-    exact_solve_mixed_path_n, exact_solve_mixed_v2_v3_sequence, int_solve_cl_path, int_solve_v3_v3,
-    solve_cl_derived, ClPrepared,
+    derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_mixed_piecewise,
+    solve_mixed_v2_v3_piecewise, solve_v3_v3_piecewise, ClSolveTables,
 };
-pub use hop_sim::{int_simulate_v3_swap, V3SwapResult};
+pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{walk_path_fingerprint, WalkMemo, WalkMemoStats};
 pub use telemetry::{
     WalkEventCensus, WALK_ANCHOR_ARGMAX_NS, WALK_ANCHOR_BUILD_NS, WALK_ANCHOR_COMPOSE_NS,
@@ -87,4 +87,4 @@ pub use telemetry::{
     WALK_CENSUS_REFINE_SIMNS, WALK_CENSUS_REFINE_SIMS, WALK_CENSUS_SIMNS, WALK_PRED_NS_TOTAL,
     WALK_SIM_NS_TOTAL, WALK_SOLVE_NS_TOTAL,
 };
-pub use word_profile::V3WordProfile;
+pub use word_profile::ClWordProfile;

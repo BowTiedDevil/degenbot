@@ -3,7 +3,7 @@
 //! The bound is load-bearing for skips: every test here exists to catch an
 //! envelope that ever dips BELOW a true output curve. The oracle is an
 //! independent step-by-step walk built directly on `compute_swap_step_v3`
-//! (NOT the solver's own `int_simulate_v3_swap`, so implementation bugs
+//! (NOT the solver's own `simulate_v3_range_swap`, so implementation bugs
 //! cannot cancel between the two).
 
 #![expect(

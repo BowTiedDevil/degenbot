@@ -55,7 +55,7 @@ use degenbot_pools::TickBootstrapRpc;
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickBootstrapRpc;
-use degenbot_solvers::cl::{int_simulate_v3_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence};
 
 /// Hardcoded fixture from the captured `DEGENBOT_SIM_EXIT_ON_FAIL=1` trap
 /// (`logs/bot_run.log` block 25647669, path 7724). Pool `0x57D7…dF80`,
@@ -127,7 +127,7 @@ fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Opti
         return Some(U256::ZERO);
     }
     let remaining = amount_in - crossing.crossing_gross_input;
-    let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+    let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
     Some(crossing.crossing_output.saturating_add(ending.output))
 }
 

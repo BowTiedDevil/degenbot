@@ -1708,7 +1708,7 @@ impl SolveCycle {
         let capture = HeavyPathCapture::from_capture(&self.cfg.capture, CaptureVariant::HeavyCl);
         // Optional mixed V2+CL solver capture (same gate): heavy
         // mixed paths (e.g. path 7042 V2->V3->V3) dispatch to
-        // `exact_solve_mixed_path_n_cached`, which the all-CL capture skips.
+        // `solve_mixed_piecewise_cached`, which the all-CL capture skips.
         // Defaults OUT of the fixtures dir (loop-18: working rows never
         // accrete there; goldens are produced only by cl_capture_gen).
         let capture_mixed =

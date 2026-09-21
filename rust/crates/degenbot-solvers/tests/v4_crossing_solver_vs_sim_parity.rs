@@ -10,7 +10,7 @@
 //!
 //! 1. **Stale active state** — engine `V4PoolState` lags the solve-block RPC
 //!    state the sim reads.
-//! 2. **A residual in `compute_crossing` / `int_simulate_v3_swap`** — the
+//! 2. **A residual in `compute_crossing` / `simulate_v3_range_swap`** — the
 //!    solver's hand-rolled 2-range→N-range CL model diverges from V4's
 //!    stepwise `compute_swap_step_v4` walk on a multi-tick crossing.
 //!
@@ -20,7 +20,7 @@
 //!   PoolManager bytecode; this Rust twin matches it, proven by the V3/V4
 //!   Python `compute_swap_step` oracle suite).
 //! - the solver's crossing path: `IntV3TickRangeSequence::compute_crossing`
-//!   + `int_simulate_v3_swap` for the ending partial step — exactly what
+//!   + `simulate_v3_range_swap` for the ending partial step — exactly what
 //!   `int_simulate_mixed_path_n` assembles for a CL hop's `hop_outputs[i]`.
 //!
 //! Because the input state is byte-identical, ANY divergence is pure solver
@@ -57,7 +57,7 @@ use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{int_simulate_v3_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence};
 
 /// Sqrt-price limit that lets the walk cross every tick the input can reach
 /// (V4 Pool.swap's `sqrtPriceLimit` = the MIN/MAX bound for the direction).
@@ -154,7 +154,7 @@ fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Opti
         return Some(U256::ZERO);
     }
     let remaining = amount_in - crossing.crossing_gross_input;
-    let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+    let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
     Some(crossing.crossing_output.saturating_add(ending.output))
 }
 
@@ -265,7 +265,7 @@ fn run_parity_sweep(zero_for_one: bool, base_liquidity: u128, tick_count: usize)
 fn v4_crossing_solver_matches_v4_simulate_swap_across_liquidity_and_amounts() {
     // Realistic liquidity magnitudes for mature V3/V4 pools (L ≈ 1e13 to
     // 1e21 — the sweep that surfaced the zfo partial-step round-up bug in
-    // `int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3_sweep`).
+    // `simulate_v3_range_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3_sweep`).
     let liquidities: [u128; 5] = [
         10_000_000_000_000,            // 1e13
         1_000_000_000_000_000,         // 1e15
@@ -290,7 +290,7 @@ fn v4_crossing_solver_matches_v4_simulate_swap_across_liquidity_and_amounts() {
     assert!(
         failures.is_empty(),
         "V4 crossing solver diverges from v4_simulate_swap (hypothesis 2 confirmed — residual is \
-         in compute_crossing/int_simulate_v3_swap, NOT stale state). First {} divergence(s):\n{}",
+         in compute_crossing/simulate_v3_range_swap, NOT stale state). First {} divergence(s):\n{}",
         failures.len(),
         failures
             .iter()
@@ -382,7 +382,7 @@ fn build_fee1_tiny_state(
 /// grounded by the tier-3 `v4_simulate_swap` == on-chain PoolManager oracle):
 /// the int-solve crossing path over-predicted output on **zero-for-one** CL
 /// hops by a few wei because its `build_int_v4_sequence` → `compute_crossing` /
-/// `int_simulate_v3_swap` range-collapse evaluated each tick range as a SINGLE
+/// `simulate_v3_range_swap` range-collapse evaluated each tick range as a SINGLE
 /// floored step, MISSING the zero-amount current-tick flooring the on-chain
 /// PoolManager (and `v4_simulate_swap`) apply at the current tick's word
 /// boundary — but ONLY when the current tick sits exactly on a word boundary

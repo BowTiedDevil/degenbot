@@ -135,7 +135,7 @@ fn replay_captured_heavy_paths() {
         sub.merge_enum += gs.pairs_enumerated;
         sub.merge_fallbacks += gs.merge_legacy_fallbacks;
         let t0 = Instant::now();
-        let outcome = degenbot_solvers::cl::solve_cl_derived(
+        let outcome = degenbot_solvers::cl::derive_and_solve_cl_piecewise(
             &seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         );

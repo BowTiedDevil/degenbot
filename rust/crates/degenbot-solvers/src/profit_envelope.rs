@@ -2482,7 +2482,7 @@ fn compose_boundary_reference(
 #[expect(clippy::expect_used)] // tiny literals; panic on typo is the point
 mod tests {
     use super::*;
-    use crate::cl::int_simulate_v3_swap;
+    use crate::cl::simulate_v3_range_swap;
     use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
 
     // ===================================================================
@@ -2875,7 +2875,7 @@ mod tests {
             } else {
                 let mut gross = U256::ZERO;
                 let target_out = U256::ZERO;
-                // Reuse int_simulate_v3_swap with a saturated input to get
+                // Reuse simulate_v3_range_swap with a saturated input to get
                 // the full-crossing cost? Too heavy; instead detect landing
                 // via accumulated crossing compare below.
                 let _ = (&mut gross, target_out);
@@ -2899,7 +2899,7 @@ mod tests {
                 zero_for_one: r.zero_for_one,
                 word_boundary_prices: r.word_boundary_prices.clone(),
             };
-            let res = int_simulate_v3_swap(x, &sim_hop);
+            let res = simulate_v3_range_swap(x, &sim_hop);
             out += res.output;
             x -= res.consumed_input;
         }
@@ -2993,7 +2993,7 @@ mod tests {
             1_000_000_000_000u64,
             5_000_000_000_000u64,
         ] {
-            let res = int_simulate_v3_swap(U256::from(x), &s.ranges[46]);
+            let res = simulate_v3_range_swap(U256::from(x), &s.ranges[46]);
             println!(
                 "sim46(x={x}) out={} consumed={}",
                 res.output, res.consumed_input
@@ -3008,7 +3008,7 @@ mod tests {
     /// min-of-lines survives sampling; sound reductions only loosen), so a
     /// bound BELOW the true optimal profit means some stage under-cuts.
     /// This test walks the derivation stage by stage against an ORACLE built
-    /// from production's own per-range step (`int_simulate_v3_swap`, the
+    /// from production's own per-range step (`simulate_v3_range_swap`, the
     /// compute_swap_step_v3 parity path) and names the failing stage.
     #[expect(
         clippy::unwrap_used,
@@ -3066,7 +3066,7 @@ mod tests {
         assert_eq!(seqs.len(), 3);
 
         // --- Oracle: production-parity exact output for one CL hop at input x
-        // (each range via int_simulate_v3_swap; boundary crossings carry the
+        // (each range via simulate_v3_range_swap; boundary crossings carry the
         // unconsumed remainder to the next range).
         let hop_truth = |seq: &IntV3TickRangeSequence, x: U256| -> U256 { chained_hop_out(seq, x) };
 

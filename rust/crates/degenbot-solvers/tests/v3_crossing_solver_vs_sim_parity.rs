@@ -19,7 +19,7 @@
 //! 1. **Stale engine state** — the engine `V3PoolState` the solver read lags
 //!    the solve-block state the in-process revm sim reads.
 //! 2. **A residual in the solver's CL crossing accumulation** —
-//!    `IntV3TickRangeSequence::compute_crossing` + `int_simulate_v3_swap`
+//!    `IntV3TickRangeSequence::compute_crossing` + `simulate_v3_range_swap`
 //!    diverges from V3's stepwise `compute_swap_step_v3` walk on a multi-tick
 //!    crossing.
 //!
@@ -27,7 +27,7 @@
 //! - `degenbot_pools::v3_simulate_swap` — the byte-exact full-tick-walk the
 //!   sim's `actual` amount mirrors.
 //! - the solver's crossing path: `IntV3TickRangeSequence::compute_crossing`
-//!   + `int_simulate_v3_swap` for the ending partial step — exactly what the
+//!   + `simulate_v3_range_swap` for the ending partial step — exactly what the
 //!   solver assembles for a CL hop's `hop_outputs[i]`.
 //!
 //! Because the input state is byte-identical, ANY divergence is pure solver
@@ -61,7 +61,7 @@
 //! fee-rounding divergence = the on-chain `+13`. The fix records the collapsed
 //! interior boundaries on `V3TickRangeForSolver::interior_boundaries` /
 //! `IntV3TickRangeHop::word_boundary_prices` and makes `compute_crossing` +
-//! `int_simulate_v3_swap` re-walk them per boundary (per-step flooring parity).
+//! `simulate_v3_range_swap` re-walk them per boundary (per-step flooring parity).
 //! `v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class` is now a
 //! GREEN regression guard (was `#[ignore]`d RED).
 
@@ -81,7 +81,7 @@ use degenbot_pools::v3_state::{
 };
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{int_simulate_v3_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence};
 
 /// Sqrt-price limit that lets the walk cross every tick the input can reach
 /// (V3 Pool.swap's `sqrtPriceLimit` MIN/MAX bound for the direction).
@@ -179,7 +179,7 @@ fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Opti
         return Some(U256::ZERO);
     }
     let remaining = amount_in - crossing.crossing_gross_input;
-    let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+    let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
     Some(crossing.crossing_output.saturating_add(ending.output))
 }
 
@@ -322,7 +322,7 @@ fn v3_crossing_solver_matches_v3_simulate_swap_across_liquidity_and_amounts() {
     assert!(
         failures.is_empty(),
         "V3 crossing solver diverges from v3_simulate_swap (hypothesis 2 confirmed — residual is \
-         in compute_crossing/int_simulate_v3_swap, NOT stale state). First {} divergence(s):\n{}",
+         in compute_crossing/simulate_v3_range_swap, NOT stale state). First {} divergence(s):\n{}",
         failures.len(),
         failures
             .iter()
@@ -515,7 +515,7 @@ fn run_sparse_range0_sweep(
 // Regression guard — the solver's `compute_tick_ranges`
 // collapses interior word-boundary ticks in constant-liquidity runs; the solver
 // now RE-WALKS the collapsed interior boundaries per word boundary in
-// `compute_crossing` / `int_simulate_v3_swap` (via `word_boundary_prices`),
+// `compute_crossing` / `simulate_v3_range_swap` (via `word_boundary_prices`),
 // restoring the per-step `computeSwapStep` flooring `v3_simulate_swap`
 // performs at every word boundary. The on-chain `+13` IIA trap (block
 // 25647669, pool 0x57D7…dF80) is reproduced here on a synthetic sparse

@@ -23,7 +23,7 @@ pub(crate) fn gate_capture_from_cfg(
         })
 }
 /// One-shot capture of heavy solver inputs, so the offline replay harnesses
-/// (`int_solve_cl_path` for all-CL, `examples/mixed_solve_replay.rs` for mixed
+/// (`solve_cl_piecewise` for all-CL, `examples/mixed_solve_replay.rs` for mixed
 /// V2+CL) can be optimized against real captured pool state without a full bot
 /// run.
 ///

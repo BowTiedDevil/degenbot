@@ -27,7 +27,7 @@ extern crate degenbot_solvers;
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solvers::cl::int_solve_cl_path;
+use degenbot_solvers::cl::solve_cl_piecewise;
 use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy, PreparedHop};
 use serde_json::Value;
 
@@ -83,7 +83,7 @@ fn parse_hop(v: &Value) -> Result<IntV3TickRangeSequence, String> {
 }
 
 /// Solve through a strategy's prepared tables (production walk). Returns
-/// None for the S0 sentinel (drive `int_solve_cl_path` directly).
+/// None for the S0 sentinel (drive `solve_cl_piecewise` directly).
 fn solve_prepared<S: ClCacheStrategy + ?Sized>(
     strategy: &mut S,
     seqs: &[IntV3TickRangeSequence],
@@ -92,7 +92,7 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
 ) -> Option<(U256, U256, Vec<U256>)> {
     let prepared: Vec<PreparedHop> = strategy.refill(seqs, event);
     if prepared.is_empty() {
-        return degenbot_solvers::cl::solve_cl_derived(
+        return degenbot_solvers::cl::derive_and_solve_cl_piecewise(
             seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         )
@@ -102,15 +102,15 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
         prepared.iter().map(|(c, _)| c).collect();
     let profiles: Vec<&std::sync::Arc<degenbot_solvers::cl::ClProfileTable>> =
         prepared.iter().map(|(_, p)| p).collect();
-    let prepared_hops: Vec<degenbot_solvers::cl::ClPrepared> = crossings
+    let prepared_hops: Vec<degenbot_solvers::cl::ClSolveTables> = crossings
         .iter()
         .zip(profiles.iter())
-        .map(|(c, p)| degenbot_solvers::cl::ClPrepared {
+        .map(|(c, p)| degenbot_solvers::cl::ClSolveTables {
             crossings: std::sync::Arc::clone(c),
             profiles: std::sync::Arc::clone(p),
         })
         .collect();
-    int_solve_cl_path(
+    solve_cl_piecewise(
         seq_refs,
         &prepared_hops,
         None,
@@ -240,7 +240,7 @@ fn main() {
                 catalog.iter().map(|s| s.counters().clone()).collect();
             let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
             let t_ref = std::time::Instant::now();
-            let reference = degenbot_solvers::cl::solve_cl_derived(
+            let reference = degenbot_solvers::cl::derive_and_solve_cl_piecewise(
                 &seq_refs,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             )
@@ -435,7 +435,7 @@ fn run_micro_bench(micro_seqs: Option<Vec<IntV3TickRangeSequence>>) {
         crossings.len(),
         profiles.iter().filter(|p| p.is_some()).count(),
     );
-    // V3WordProfile fields are private; pull step params out of the first
+    // ClWordProfile fields are private; pull step params out of the first
     // crossing's ending range instead.
     let hop = &crossings[crossings.len() / 2].ending_range;
 

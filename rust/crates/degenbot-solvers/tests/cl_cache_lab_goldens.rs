@@ -13,7 +13,7 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::int_solve_cl_path;
+use degenbot_solvers::cl::solve_cl_piecewise;
 use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy, PreparedHop};
 use serde_json::Value;
 
@@ -58,20 +58,20 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
 ) -> Option<(U256, U256, Vec<U256>)> {
     let prepared: Vec<PreparedHop> = strategy.refill(seqs, event);
     if prepared.is_empty() {
-        return degenbot_solvers::cl::solve_cl_derived(
+        return degenbot_solvers::cl::derive_and_solve_cl_piecewise(
             seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         )
         .result;
     }
-    let prepared_hops: Vec<degenbot_solvers::cl::ClPrepared> = prepared
+    let prepared_hops: Vec<degenbot_solvers::cl::ClSolveTables> = prepared
         .iter()
-        .map(|(c, p)| degenbot_solvers::cl::ClPrepared {
+        .map(|(c, p)| degenbot_solvers::cl::ClSolveTables {
             crossings: std::sync::Arc::clone(c),
             profiles: std::sync::Arc::clone(p),
         })
         .collect();
-    int_solve_cl_path(
+    solve_cl_piecewise(
         seq_refs,
         &prepared_hops,
         None,
@@ -159,7 +159,7 @@ fn golden_epochs_and_transitioned_epochs_stay_exact() {
 
         // Golden epoch: strategies on the captured state + two-sided gate.
         let seq_refs: Vec<&IntV3TickRangeSequence> = baseline.iter().collect();
-        let reference = degenbot_solvers::cl::solve_cl_derived(
+        let reference = degenbot_solvers::cl::derive_and_solve_cl_piecewise(
             &seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         )
@@ -235,7 +235,7 @@ fn golden_epochs_and_transitioned_epochs_stay_exact() {
                 }
             };
             let refs2: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
-            let reference = degenbot_solvers::cl::solve_cl_derived(
+            let reference = degenbot_solvers::cl::derive_and_solve_cl_piecewise(
                 &refs2,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             )

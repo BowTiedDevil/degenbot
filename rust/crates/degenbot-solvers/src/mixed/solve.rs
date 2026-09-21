@@ -266,16 +266,16 @@ pub fn solve_path_inner(
             .filter_map(ResolvedHop::as_crossing_table)
             .collect();
         if int_sequences.len() >= 2 {
-            let prepared: Vec<crate::cl::ClPrepared> = int_sequences
+            let prepared: Vec<crate::cl::ClSolveTables> = int_sequences
                 .iter()
                 .zip(cl_crossings.iter())
                 .zip(cl_profiles.iter())
-                .map(|((_, c), p)| crate::cl::ClPrepared {
+                .map(|((_, c), p)| crate::cl::ClSolveTables {
                     crossings: Arc::clone(c),
                     profiles: Arc::clone(p),
                 })
                 .collect();
-            let out = crate::cl::int_solve_cl_path(
+            let out = crate::cl::solve_cl_piecewise(
                 &int_sequences,
                 &prepared,
                 gate.walk_memo(),
@@ -485,21 +485,21 @@ fn solve_mixed_path_int(
         .collect();
 
     // Per-CL-hop prepared tables from the projection (V2 positions None).
-    let cl_prepared: Vec<Option<crate::cl::ClPrepared>> = hop_order
+    let cl_prepared: Vec<Option<crate::cl::ClSolveTables>> = hop_order
         .iter()
         .enumerate()
         .map(|(i, &is_v2)| {
             if is_v2 {
                 None
             } else {
-                Some(crate::cl::ClPrepared {
+                Some(crate::cl::ClSolveTables {
                     crossings: Arc::clone(cl_crossings[i].as_ref()?),
                     profiles: Arc::clone(cl_profiles[i].as_ref()?),
                 })
             }
         })
         .collect();
-    let out = crate::cl::exact_solve_mixed_path_n(
+    let out = crate::cl::solve_mixed_piecewise(
         &v2_hops,
         &int_v3_sequences,
         &cl_prepared,

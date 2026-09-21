@@ -1120,7 +1120,7 @@ fn v3_pool_start_in_empty_region_crosses_to_liquidity() {
 /// runs): find the largest crossed range `k` with
 /// `compute_crossing(k).crossing_gross_input <= amount_in`, take its cumulative
 /// output, then run the ending partial step via the canonical
-/// `compute_swap_step_v3` (exactly what `int_simulate_v3_swap` delegates to).
+/// `compute_swap_step_v3` (exactly what `simulate_v3_range_swap` delegates to).
 fn solver_crossing_output_v3(
     amount_in: U256,
     seq: &degenbot_pools::int_v3_hop::IntV3TickRangeSequence,
