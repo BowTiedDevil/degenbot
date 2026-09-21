@@ -31,7 +31,7 @@ hashbrown.workspace = true
 # hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
 # default-features = false -> no-op stubs in default builds; the
 # `hotpath` feature enables real instrumentation.
-hotpath = { version = "^0.25", default-features = false }
+hotpath = { version = "^0.26", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]

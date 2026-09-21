@@ -34,7 +34,7 @@ tracing = { version = "^0.1" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 # Backrun feed (task 7D7IGX): MEVBlocker searcher WS. Version tracks the
 # graph (alloy-transport-ws pulls 0.29); TLS via rustls webpki roots.
-tokio-tungstenite = { version = "^0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 tower = { version = "^0.5", default-features = false }
 
 [dev-dependencies]
