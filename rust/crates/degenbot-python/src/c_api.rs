@@ -56,8 +56,14 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The Python discovery pipeline reads it and forwards it to
     // `find_paths_async`.
     m.add_function(wrap_pyfunction!(crate::config::discovery_batch_size, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::config::validate_strategy_readiness, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::config::settlement_broadcast_endpoints, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::config::validate_strategy_readiness,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::config::settlement_broadcast_endpoints,
+        m
+    )?)?;
 
     // 6LC4JB: the shared core verification-retry policy defaults, so the
     // Python driver shell reads them from the one Rust-owned declaration site.
@@ -195,7 +201,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "executor")]
     crate::executor::add_executor_module(m)?;
 
-    // ExecutionStrategy seam lift (feature = "execution") — `PySolveResult`,
+    // ExecutionAdapter seam lift (feature = "execution") — `PySolveResult`,
     // `PyPayloadComposer`, `abi_encode_call` (ADR-025). Foreign-contract path;
     // never threaded into the canonical dispatch fan-out (D3).
     #[cfg(feature = "execution")]

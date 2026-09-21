@@ -6,6 +6,17 @@ ship history, and measurements live in `docs/adr/` and `docs/architecture/`, not
 
 ## Strategy
 
+**Strategy**:
+A top-level label for one kind of profit opportunity the bot executes, composed as values
+over six capability slots: source (where opportunities are found), infrastructure
+(pool/account/token/path loaders), calculation (solver), encoder (opportunity → onchain
+executable payload), simulator (validity check of the payload), and submission (delivery
+to an endpoint that can land it onchain). Distinct ecosystems get distinct strategies;
+shared reaction capabilities are mixed in by composition, never by sub-traits.
+_Avoid_: treating "lane", the frame pipeline, or the pending-tx driver loop as the
+strategy unit; using "strategy" for the executor-contract adapter (renamed from
+`ExecutionStrategy`).
+
 **Settlement arbitrage**:
 Arbitrage of the cross-pool price discrepancies a settled block's trades leave behind,
 executed as a single transaction at the head of the next block. The opportunity is the
@@ -15,14 +26,18 @@ _Avoid_: describing this bot's mechanism as "backrun"; "victim transaction" fram
 
 **Backrun (classic MEV)**:
 A transaction positioned immediately after a specific, identified victim transaction in
-mempool order, profiting from the victim's price impact. This bot is not a backrunner; the
-word survives only as the legacy name of the `degenbot-arbitrage` crate and the
-execution-strategy adapter.
+mempool order, profiting from the victim's price impact. Settlement arbitrage is not
+backrunning (no victim transaction); the bot's pending-transaction backrun strategies
+(whose submissions land after an identified victim) are classic-MEV backruns. The word
+also survives as the legacy name of the `degenbot-arbitrage` crate.
 
-**Searcher strategy**:
-The searcher's own transaction encoding, profit detection, and operator policy, assembled
-at runtime over the tools the core exposes and out of scope for the core.
-_Avoid_: wedging a strategy into the simulation/solve engine.
+**Searcher adapter**:
+A foreign searcher's contract-specific execution adapter (encoding + probes + assess),
+authored against the `ExecutionAdapter` seam in their own crate. Composition of the
+bot's own strategies is in-core first-class; only the foreign contract surface stays
+out.
+_Avoid_: "searcher strategy" for this concept; wedging a strategy into the
+simulation/solve engine.
 
 ## Strategy reaction kinds (ADR-055)
 
@@ -32,10 +47,11 @@ pump/`StageHandlers` seam; its product types are deliberately settlement-shaped 
 ADR-018-named generalization (ADR-055 Phase C).
 
 **Pending-transaction strategy**:
-A strategy reacting to *observed mempool transactions*, implementing `PendingTxStrategy`
-(`degenbot-submission/src/pending_tx.rs`): `admit` → `discover` → `evaluate` → `compose`
-→ `decide`, threaded by the strategy-neutral artifacts `ComposedIntent` and `Decided`.
-Backrun is the reference implementation.
+A strategy whose source is *observed mempool transactions*, implementing
+`PendingTxReaction` (`degenbot-submission/src/pending_tx.rs`, renamed from
+`PendingTxStrategy` to keep "strategy" unambiguous): `admit` → `discover` → `evaluate`
+→ `compose` → `decide`, threaded by the strategy-neutral artifacts `ComposedIntent` and
+`Decided`. Backrun is the reference implementation.
 _Avoid_: "lane", "frame pipeline" as the strategy unit.
 
 **Pending-transaction driver**:

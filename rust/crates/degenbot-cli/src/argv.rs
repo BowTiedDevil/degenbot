@@ -522,7 +522,11 @@ pub enum StrategySub {
         #[arg(value_enum)]
         facet: FacetArg,
         /// The explicit endpoint set (comma-separated URLs).
-        #[arg(long = "endpoints", value_name = "URLS", conflicts_with = "endpoints_default")]
+        #[arg(
+            long = "endpoints",
+            value_name = "URLS",
+            conflicts_with = "endpoints_default"
+        )]
         endpoints: Option<String>,
         /// Adopt the documented default endpoint set.
         #[arg(long = "endpoints-default")]

@@ -9,7 +9,7 @@
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use alloy::primitives::{address, Address, U128, U256};
-use degenbot_bot::backrun_engine::{LaneFamily, BackrunHopRef, BackrunSolver, BackrunV2Pool};
+use degenbot_bot::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;

@@ -14,7 +14,10 @@ use degenbot_config::{BotConfigLoader, MapEnv};
 
 #[test]
 fn settlement_facet_collapses_to_declared_defaults() {
-    let loaded = BotConfigLoader::new().without_env().load().expect("defaults load");
+    let loaded = BotConfigLoader::new()
+        .without_env()
+        .load()
+        .expect("defaults load");
     let s = &loaded.config.strategy.settlement;
     assert!(!s.active);
     assert_eq!(s.endpoints, None);
@@ -23,7 +26,10 @@ fn settlement_facet_collapses_to_declared_defaults() {
 #[test]
 fn settlement_facet_resolves_from_env() {
     let env = MapEnv::new(BTreeMap::from([
-        ("DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE".to_string(), "1".to_string()),
+        (
+            "DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE".to_string(),
+            "1".to_string(),
+        ),
         (
             "DEGENBOT_STRATEGY_SETTLEMENT_ENDPOINTS".to_string(),
             "https://rpc.flashbots.net?hint=hash,https://rpc.mevblocker.io/noreverts".to_string(),
@@ -52,7 +58,10 @@ fn the_retired_default_endpoint_marker_env_var_is_inert() {
         .load()
         .expect("env load");
     let s = &loaded.config.strategy.settlement;
-    assert!(!s.active, "the retired marker spells nothing the schema knows");
+    assert!(
+        !s.active,
+        "the retired marker spells nothing the schema knows"
+    );
     assert_eq!(s.endpoints, None);
 }
 
@@ -72,7 +81,10 @@ fn settlement_facet_resolves_from_toml() {
     let _ = std::fs::remove_file(&path);
     let s = &loaded.config.strategy.settlement;
     assert!(s.active);
-    assert_eq!(s.endpoints.as_deref(), Some("https://rpc.mevblocker.io/noreverts"));
+    assert_eq!(
+        s.endpoints.as_deref(),
+        Some("https://rpc.mevblocker.io/noreverts")
+    );
 }
 
 #[test]

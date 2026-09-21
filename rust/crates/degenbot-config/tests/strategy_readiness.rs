@@ -17,9 +17,13 @@ use degenbot_config::readiness::{strategy_readiness, Arm};
 fn activated(facet: &str, endpoints: Option<&str>) -> BotConfig {
     let mut config = BotConfig::default();
     let section = format!("strategy.{facet}");
-    config.assign(&section, "active", "true").expect("assign active");
+    config
+        .assign(&section, "active", "true")
+        .expect("assign active");
     if let Some(urls) = endpoints {
-        config.assign(&section, "endpoints", urls).expect("assign endpoints");
+        config
+            .assign(&section, "endpoints", urls)
+            .expect("assign endpoints");
     }
     config
 }
@@ -152,9 +156,10 @@ fn readiness_error_for_unset_survives_a_full_loader_round_trip() {
     // The remediation path an operator actually hits: env-driven activation
     // with no endpoint choice, loaded through the standard loader.
     let env = MapEnv::new(
-        [
-            ("DEGENBOT_".to_string() + "STRATEGY_SETTLEMENT_ACTIVE", "true".to_string()),
-        ]
+        [(
+            "DEGENBOT_".to_string() + "STRATEGY_SETTLEMENT_ACTIVE",
+            "true".to_string(),
+        )]
         .into_iter()
         .collect(),
     );

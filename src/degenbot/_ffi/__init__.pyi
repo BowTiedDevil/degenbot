@@ -210,7 +210,6 @@ def settlement_broadcast_endpoints() -> list[str]:
 
     """
 
-
 class RetryPolicyDefaults:
     """Self-describing verification-retry policy defaults.
 

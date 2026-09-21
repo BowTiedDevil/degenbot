@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
+use degenbot_bot::backrun::{gate_mined_target, BackrunConfig, Decision};
 use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_bot::backrun::{gate_mined_target, Decision, BackrunConfig};
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};

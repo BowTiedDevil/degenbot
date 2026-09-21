@@ -65,15 +65,19 @@ pub mod holder;
 pub mod loader;
 pub mod readiness;
 pub mod resolvers;
-pub mod writer;
 pub mod schema;
 #[doc(hidden)]
 pub mod schema_macro;
+pub mod writer;
 
 pub use error::ConfigError;
 pub use loader::{
     standard_file_path, standard_file_path_with, BotConfigLoader, EnvVars, LoadedConfig, MapEnv,
     ProcessEnv, Source,
+};
+pub use readiness::{
+    strategy_readiness, Arm, StrategyReadiness, StrategyReadinessError, DEFAULT_BACKRUN_STREAM_URL,
+    SETTLEMENT_DEFAULT_ENDPOINTS,
 };
 pub use resolvers::{
     config_home, expand_state_path, expand_state_path_with, expand_tilde_path, node_http_env_name,
@@ -85,10 +89,6 @@ pub use resolvers::{
 pub use schema::{
     AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyBackrunConfig,
     StrategySettlementConfig,
-};
-pub use readiness::{
-    strategy_readiness, Arm, StrategyReadiness, StrategyReadinessError,
-    DEFAULT_BACKRUN_STREAM_URL, SETTLEMENT_DEFAULT_ENDPOINTS,
 };
 pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA, SECTION_PATHS};
 

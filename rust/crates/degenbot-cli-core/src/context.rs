@@ -177,9 +177,7 @@ impl<'a> CliContext<'a> {
     ///
     /// The loader's fail-closed [`degenbot_config::ConfigError`] wrapped in
     /// [`crate::error::CliError::InvalidArgument`].
-    pub fn load_bot_config(
-        &self,
-    ) -> Result<degenbot_config::LoadedConfig, crate::error::CliError> {
+    pub fn load_bot_config(&self) -> Result<degenbot_config::LoadedConfig, crate::error::CliError> {
         let file = self.resolve_config_file()?;
         self.load_bot_config_at(&file)
     }
@@ -209,4 +207,3 @@ impl<'a> CliContext<'a> {
             .map_err(|error| crate::error::CliError::InvalidArgument(error.to_string()))
     }
 }
-

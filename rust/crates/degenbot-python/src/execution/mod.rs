@@ -1,7 +1,7 @@
 //! `PyO3` seam for the `degenbot_execution` seam crate (feature = `"execution"`).
 //!
 //! ADR-025 lift: adapt an arbitrary Python callable (`SolveResult -> bytes`)
-//! into the core [`PayloadComposer`] / [`ExecutionStrategy`] seam — the
+//! into the core [`PayloadComposer`] / [`ExecutionAdapter`] seam — the
 //! Polars-`map_elements` model (Rust holds a `Py<PyAny>` and calls back under
 //! the GIL). Rust keeps ownership of the seam; Python supplies the Encode blob
 //! against the caller's *own* contract (ADR-025 D2/D4).
@@ -15,7 +15,7 @@
 //!   reads these to build calldata.
 //! - [`PyPayloadComposer`] — wraps a `result -> bytes` callable into a core
 //!   [`PayloadComposer`] (which, via the seam's blanket impl, is also an
-//!   [`ExecutionStrategy`]). When `compose` runs, Rust builds the
+//!   [`ExecutionAdapter`]). When `compose` runs, Rust builds the
 //!   [`SolveResult`] view, calls the Python callable under the GIL, and takes
 //!   back the payload `bytes`.
 //! - [`abi_encode_call`] — a thin `degenbot.abi`-backed helper so a Python user
@@ -190,8 +190,8 @@ fn hop_descriptor_to_dict<'py>(py: Python<'py>, d: &HopDescriptor) -> PyResult<B
 ///
 /// Rust drives `compose` (under the GIL it builds the [`SolveResult`] view,
 /// calls the Python callable, and takes back the payload `bytes`). Because the
-/// seam provides a blanket `PayloadComposer -> ExecutionStrategy` impl, a
-/// `PyPayloadComposer` is a full `ExecutionStrategy` (built-in Probe/Assess/Fee
+/// seam provides a blanket `PayloadComposer -> ExecutionAdapter` impl, a
+/// `PyPayloadComposer` is a full `ExecutionAdapter` (built-in Probe/Assess/Fee
 /// defaults) that a foreign searcher can adopt directly. Nothing here is wired
 /// into the canonical `dispatch_profitable_*` fan-out (ADR-025 D3).
 ///
@@ -250,7 +250,7 @@ impl PayloadComposer for PyPayloadComposer {
 ///
 /// The `PayloadComposer::compose` seam carries the solver-driven amounts as
 /// `ComposerInputs` (u128) + the hop descriptors via `PathInfo`, but not the
-/// solver's `path_id`. The view path (`ExecutionStrategy::compose_view`) is the
+/// solver's `path_id`. The view path (`ExecutionAdapter::compose_view`) is the
 /// one that carries a full `SolveResult` including `path_id`; here the encode
 /// seam doesn't need it, so it is projected as `0`. `net_profit` is derived as
 /// `final_output − consumed_inputs[0]` (the same identity the seam documents).

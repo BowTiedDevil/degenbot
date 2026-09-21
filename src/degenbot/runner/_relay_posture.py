@@ -19,12 +19,12 @@ import warnings
 class RelayPosture:
     """The session's relay posture.
 
-    Constructed once per session from the resolved settlement endpoints;
-an
-    empty list is impossible past the boot gate (a live runner without
-    settled endpoints refuses to start rather than degrade to the public
-    mempool). This is a posture holder only; the nonce itself is issued by
-    the Rust authority at sign time.
+        Constructed once per session from the resolved settlement endpoints;
+    an
+        empty list is impossible past the boot gate (a live runner without
+        settled endpoints refuses to start rather than degrade to the public
+        mempool). This is a posture holder only; the nonce itself is issued by
+        the Rust authority at sign time.
     """
 
     def __init__(self, relay_urls: list[str] | tuple[str, ...]) -> None:

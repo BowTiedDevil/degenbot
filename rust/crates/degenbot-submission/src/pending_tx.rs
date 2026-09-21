@@ -1,6 +1,6 @@
 //! The pending-transaction strategy seam.
 //!
-//! A [`PendingTxStrategy`] reacts to one observed mempool transaction: it
+//! A [`PendingTxReaction`] reacts to one observed mempool transaction: it
 //! admits the recovered pool post-states its identity cares about into the
 //! trigger's fresh solver workspace, discovers candidate plays, prices them,
 //! composes the artifact the driver simulates, and gates the final bid. The
@@ -65,7 +65,7 @@ pub struct Decided {
     async_fn_in_trait,
     reason = "consumed only through generic dispatch, never as a dyn object"
 )]
-pub trait PendingTxStrategy {
+pub trait PendingTxReaction {
     /// The pools admitted into this trigger's workspace.
     type Affected;
     /// The candidate plays discovery produced.

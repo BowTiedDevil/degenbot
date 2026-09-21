@@ -1,4 +1,4 @@
-//! The **Encode** part of an `ExecutionStrategy` (ADR-025 D2) — the
+//! The **Encode** part of an `ExecutionAdapter` (ADR-025 D2) — the
 //! `PayloadComposer` seam.
 //!
 //! A solver result becomes payload `bytes` for ONE execution contract. Rust
@@ -86,7 +86,7 @@ impl ComposeError {
     }
 }
 
-/// The **Encode** part of an `ExecutionStrategy`: solve result → payload
+/// The **Encode** part of an `ExecutionAdapter`: solve result → payload
 /// `bytes` for ONE execution contract (ADR-025 D2).
 ///
 /// Rust users implement this trait; Python users supply a callable lifted into

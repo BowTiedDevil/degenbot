@@ -10,8 +10,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use degenbot_cli_core::{
-    ensure_supported_registrations, run, Command, DatabaseCommand, DatabaseReport,
-    ExchangeCommand,
+    ensure_supported_registrations, run, Command, DatabaseCommand, DatabaseReport, ExchangeCommand,
 };
 use degenbot_config::MapEnv;
 use tempfile::TempDir;
@@ -75,7 +74,10 @@ fn database_reset_registers_supported_exchanges_and_market_inactive() {
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("degenbot.db");
 
-    let outcome = run_cmd(Command::Database(DatabaseCommand::Reset { force: true }), &db);
+    let outcome = run_cmd(
+        Command::Database(DatabaseCommand::Reset { force: true }),
+        &db,
+    );
     assert_eq!(outcome.exit_code, degenbot_cli_core::ExitCode::Success);
     assert!(matches!(
         outcome.report(),
@@ -143,7 +145,11 @@ fn ensure_is_idempotent_and_activation_flips_without_creating() {
     assert_eq!(outcome.exit_code, degenbot_cli_core::ExitCode::Success);
     let (active,) = exchange_row(&db, 1, "uniswap_v2").unwrap();
     assert!(active);
-    assert_eq!(exchange_count(&db), RETIRED_PAIRS as i64, "no duplicate rows");
+    assert_eq!(
+        exchange_count(&db),
+        RETIRED_PAIRS as i64,
+        "no duplicate rows"
+    );
 }
 
 #[test]

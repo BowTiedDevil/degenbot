@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 use alloy::primitives::B256;
 use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
 use degenbot_bot::connector_index::V2ConnectorIndex;
+use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
 use degenbot_bot::strategy_host::{
     DriverExit, DriverPose, DriverSpawnFactory, FacetStatus, FsmDecline, HeadReconciler, HostError,
     SessionDecline, SessionPhase, StrategyHost, StrategyNotice,

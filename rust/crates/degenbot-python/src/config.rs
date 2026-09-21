@@ -37,7 +37,6 @@ pub struct RetryPolicyDefaults {
     pub jitter: f64,
 }
 
-
 /// The resolved strategy readiness, exposed as a self-describing Python
 /// view: `settlement`/`backrun` arms with their settled endpoint posture.
 ///
@@ -60,9 +59,7 @@ pub struct StrategyReadinessView {
 impl StrategyReadinessView {
     /// Build from the resolved arms (activity + resolved URLs).
     fn from_readiness(readiness: &::degenbot_config::StrategyReadiness) -> Self {
-        fn arm(
-            arm: &::degenbot_config::Arm,
-        ) -> (bool, Vec<String>) {
+        fn arm(arm: &::degenbot_config::Arm) -> (bool, Vec<String>) {
             match arm {
                 ::degenbot_config::Arm::Inactive => (false, Vec::new()),
                 ::degenbot_config::Arm::Active(urls) => (true, urls.to_vec()),
@@ -91,9 +88,7 @@ impl StrategyReadinessView {
 pub fn validate_strategy_readiness() -> PyResult<StrategyReadinessView> {
     ::degenbot_config::strategy_readiness(&::degenbot_config::holder::config())
         .map(|readiness| StrategyReadinessView::from_readiness(&readiness))
-        .map_err(|error| {
-            ::pyo3::exceptions::PyValueError::new_err(error.to_string())
-        })
+        .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
 /// The resolved settlement broadcast endpoints (this process's settlement

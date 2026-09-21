@@ -11,8 +11,8 @@
 use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
+use degenbot_bot::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_bot::bot_core::SimAnchorState;
-use degenbot_bot::backrun_engine::{LaneFamily, BackrunHopRef, BackrunSolver, BackrunV2Pool};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{

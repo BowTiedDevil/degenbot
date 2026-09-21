@@ -3782,15 +3782,12 @@ mod tests {
         // stamp arrives with `aave activate`); a re-registration is a no-op
         // returning the same id.
         let db = write_db_with_market();
-        assert!(
-            db.fetch_aave_market_by_name(1, "Aave Ethereum Market")
-                .unwrap()
-                .is_none()
-        );
+        assert!(db
+            .fetch_aave_market_by_name(1, "Aave Ethereum Market")
+            .unwrap()
+            .is_none());
 
-        let (id, created) = db
-            .register_aave_market(1, "Aave Ethereum Market")
-            .unwrap();
+        let (id, created) = db.register_aave_market(1, "Aave Ethereum Market").unwrap();
         assert!(created, "first registration creates");
 
         let row = db
@@ -3801,9 +3798,7 @@ mod tests {
         assert!(!row.active, "registered inactive");
         assert_eq!(row.last_update_block, None, "bare registration, no stamp");
 
-        let (id2, created2) = db
-            .register_aave_market(1, "Aave Ethereum Market")
-            .unwrap();
+        let (id2, created2) = db.register_aave_market(1, "Aave Ethereum Market").unwrap();
         assert_eq!(id2, id, "idempotent: same row");
         assert!(!created2, "idempotent: nothing created");
 

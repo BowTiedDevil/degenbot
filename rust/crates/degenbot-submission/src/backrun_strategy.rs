@@ -1,4 +1,4 @@
-//! The backrun strategy — the first [`PendingTxStrategy`] implementation.
+//! The backrun strategy — the first [`PendingTxReaction`] implementation.
 //!
 //! Given a pending transaction's recovered pool post-states, [`BackrunStrategy`]
 //! admits the pools that settle through a supported quote, walks the anchored
@@ -9,10 +9,10 @@
 use std::time::Duration;
 
 use alloy::primitives::{address, Address, U256};
-use degenbot_bot::backrun::{decide, Decision, BackrunConfig};
+use degenbot_bot::backrun::{decide, BackrunConfig, Decision};
 use degenbot_bot::backrun_engine::{
-    compose_candidate, LaneCandidate, LaneFamily, PathReject, BackrunHopRef, BackrunSolver,
-    BackrunV2Pool,
+    compose_candidate, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily,
+    PathReject,
 };
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_decoders::target_class::TargetClass;
@@ -29,7 +29,7 @@ use hashbrown::HashMap as HbMap;
 use crate::anchored_dfs::{resolve_hop, AnchorPool, DfsCycle, DiscoveryBudget, ResolvedHop};
 use crate::frame_pipeline::{honest_observe, trace_jsonl, BidEconomics, PipelineConfig};
 use crate::market_context::MarketContext;
-use crate::pending_tx::{ComposedIntent, Decided, PendingTxStrategy, V3TickWindow};
+use crate::pending_tx::{ComposedIntent, Decided, PendingTxReaction, V3TickWindow};
 
 /// The canonical mainnet WETH address — the base (settlement) quote.
 pub const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
@@ -919,7 +919,7 @@ pub struct BackrunEvaluated {
     pub stats: SolveStats,
 }
 
-impl PendingTxStrategy for BackrunStrategy {
+impl PendingTxReaction for BackrunStrategy {
     type Affected = BackrunAffected;
     type Intents = BackrunIntents;
     type Evaluated = BackrunEvaluated;

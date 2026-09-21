@@ -65,7 +65,9 @@ impl ExchangeCommand {
     #[must_use]
     pub fn selector(&self) -> Option<(&str, &str)> {
         match self {
-            Self::Activate { chain, name } | Self::Deactivate { chain, name } => Some((chain, name)),
+            Self::Activate { chain, name } | Self::Deactivate { chain, name } => {
+                Some((chain, name))
+            }
             Self::List { .. } => None,
         }
     }
@@ -377,9 +379,7 @@ pub(crate) fn execute(
 ) -> Result<ExchangeReport, CliError> {
     let path = ctx.database_path().value;
     match command {
-        ExchangeCommand::Activate { chain, name } => {
-            activate(&deployment_for(chain, name)?, &path)
-        }
+        ExchangeCommand::Activate { chain, name } => activate(&deployment_for(chain, name)?, &path),
         ExchangeCommand::Deactivate { chain, name } => {
             deactivate(&deployment_for(chain, name)?, &path)
         }
@@ -395,11 +395,10 @@ fn deployment_for(chain: &str, name: &str) -> Result<ExchangeDeployment, CliErro
 
 /// List every supported `(chain, DEX)` pair (optionally one chain's), joined
 /// with its DB activation state.
-fn list(
-    chain_filter: Option<&str>,
-    path: &std::path::Path,
-) -> Result<ExchangeReport, CliError> {
-    let chain_id = chain_filter.map(crate::block::resolve_chain_selector).transpose()?;
+fn list(chain_filter: Option<&str>, path: &std::path::Path) -> Result<ExchangeReport, CliError> {
+    let chain_id = chain_filter
+        .map(crate::block::resolve_chain_selector)
+        .transpose()?;
     let (db, _state) = DegenbotDb::open(path)?;
     let mut rows = Vec::new();
     for entry in RETIRED_EXCHANGES {
@@ -422,7 +421,9 @@ fn list(
             chain_label: entry.chain_label,
             display_name: entry.display_name,
             dex_slug: entry.dex_slug,
-            factory: resolve_deployment(entry.chain_id, entry.dex_slug)?.factory.to_string(),
+            factory: resolve_deployment(entry.chain_id, entry.dex_slug)?
+                .factory
+                .to_string(),
             state,
         });
     }

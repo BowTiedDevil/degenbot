@@ -563,9 +563,7 @@ class BotRunner:
             validate_strategy_readiness()
         except ValueError as refusal:
             if live:
-                raise RuntimeError(
-                    f"activation gate refused: {refusal}"
-                ) from refusal
+                raise RuntimeError(f"activation gate refused: {refusal}") from refusal
             return None
         if not live:
             return None

@@ -105,9 +105,7 @@ impl std::fmt::Display for EndpointRefusal {
                 "not on the pinned revert-protecting relay allowlist \
                  (MEV-Blocker /fast and /nochecks hold no revert protection)",
             ),
-            Self::NotAWsChannel => {
-                f.write_str("expected exactly one ws:// or wss:// channel URL")
-            }
+            Self::NotAWsChannel => f.write_str("expected exactly one ws:// or wss:// channel URL"),
         }
     }
 }
@@ -168,9 +166,7 @@ fn backrun_refusal(url: &str) -> Option<EndpointRefusal> {
 ///
 /// A typed refusal naming the facet and the remediation (see
 /// [`StrategyReadinessError`]).
-pub fn strategy_readiness(
-    cfg: &BotConfig,
-) -> Result<StrategyReadiness, StrategyReadinessError> {
+pub fn strategy_readiness(cfg: &BotConfig) -> Result<StrategyReadiness, StrategyReadinessError> {
     let settlement = &cfg.strategy.settlement;
     let backrun = &cfg.strategy.backrun;
     Ok(StrategyReadiness {

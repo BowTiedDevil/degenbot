@@ -34,10 +34,7 @@ fn facet_env() -> BTreeMap<&'static str, &'static str> {
             "0x00000000000000000000000000000000000000bb",
         ),
         ("DEGENBOT_STRATEGY_BACKRUN_SIM_URL", "http://sim.local:8545"),
-        (
-            "DEGENBOT_STRATEGY_BACKRUN_ENDPOINTS",
-            "wss://stream.local",
-        ),
+        ("DEGENBOT_STRATEGY_BACKRUN_ENDPOINTS", "wss://stream.local"),
         (
             "DEGENBOT_STRATEGY_BACKRUN_MEVBLOCKER_URL",
             "http://private.local:8545",

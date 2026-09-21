@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::backrun::BackrunConfig;
+use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
 use degenbot_db::connection::DegenbotDb;
@@ -168,7 +168,8 @@ pub async fn resolve_backrun_registry(
     let registry = Arc::new(RouteRegistry::new(ix));
     tracing::info!(edges = registry.index().len(), "connector index loaded");
     if config.strategy.backrun.rank_evidence {
-        match degenbot_bot::connector_index::deep_pair_ranking_evidence(registry.index(), &db).await {
+        match degenbot_bot::connector_index::deep_pair_ranking_evidence(registry.index(), &db).await
+        {
             Ok(()) => tracing::info!("rank evidence: deep USDC/WETH pair tops the ranking"),
             Err(e) => tracing::warn!(evidence = %e, "rank evidence FAILED"),
         }

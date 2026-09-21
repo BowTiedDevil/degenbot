@@ -478,9 +478,7 @@ async def _submit_batch_records(
         if outcome.gas_profitable and not session.cfg.dry_run:
             # Unreachable past the boot gate; kept as the loudly-impossible
             # state guard rather than any fallthrough to a raw broadcast.
-            bot_logger.error(
-                "[dispatch] no relay posture on a live session: refusing submission"
-            )
+            bot_logger.error("[dispatch] no relay posture on a live session: refusing submission")
             return
         broadcast_providers = None
     else:

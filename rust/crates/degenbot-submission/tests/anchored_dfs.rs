@@ -335,7 +335,10 @@ fn capped_hostile_walk_returns_sound_prefix() {
     let budget = DiscoveryBudget::after(Duration::from_secs(3600));
     let cap = 64;
     let cycles = graph.cycles_through_pool(anchor(5000, 0, 1, PoolKind::V2), &budget, cap);
-    assert!(!budget.expired(), "the far-future budget must stay unexpired");
+    assert!(
+        !budget.expired(),
+        "the far-future budget must stay unexpired"
+    );
     assert_eq!(
         cycles.len(),
         cap,
@@ -343,7 +346,10 @@ fn capped_hostile_walk_returns_sound_prefix() {
     );
     for c in &cycles {
         let ids = cycle_pool_ids(c);
-        assert!(ids.contains(&5000), "soundness under the cap: every cycle crosses the anchor");
+        assert!(
+            ids.contains(&5000),
+            "soundness under the cap: every cycle crosses the anchor"
+        );
         assert!(ids.len() <= 3);
     }
 }

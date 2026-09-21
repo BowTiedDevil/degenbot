@@ -547,7 +547,10 @@ impl StrategyReport {
                 shadow_line(outcome),
             ],
             Self::Deactivated { facet, outcome } => vec![
-                format!("deactivated strategy {} (recorded endpoints kept)", facet.as_str()),
+                format!(
+                    "deactivated strategy {} (recorded endpoints kept)",
+                    facet.as_str()
+                ),
                 shadow_line(outcome),
             ],
             Self::Set {
@@ -585,9 +588,9 @@ fn posture_line(summary: &crate::strategy::EndpointSummary) -> String {
 fn shadow_line(outcome: &crate::strategy::MutationOutcome) -> String {
     match outcome {
         crate::strategy::MutationOutcome::Applied => "  applies at load time".to_string(),
-        crate::strategy::MutationOutcome::Shadowed { env } => format!(
-            "  WARNING: {env} is set in the environment and will shadow this write"
-        ),
+        crate::strategy::MutationOutcome::Shadowed { env } => {
+            format!("  WARNING: {env} is set in the environment and will shadow this write")
+        }
     }
 }
 

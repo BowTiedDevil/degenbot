@@ -1,8 +1,8 @@
 # degenbot-execution
 
-The ExecutionStrategy seam (ADR-025) — a pyo3-free crate owning the user-owned execution layer: the ExecutionStrategy trait + its value types (solve-result view, gate protocol, ExecutionResult, ComposerInputs) and the PayloadComposer Encode part. No default strategy ships here.
+The ExecutionAdapter seam (ADR-025) — a pyo3-free crate owning the user-owned execution layer: the ExecutionAdapter trait + its value types (solve-result view, gate protocol, ExecutionResult, ComposerInputs) and the PayloadComposer Encode part. No default strategy ships here.
 
-The ExecutionStrategy seam (ADR-025): the trait and its value types (solve-result view, gate protocol, ExecutionResult, composer inputs) for user-owned execution layers. No default strategy ships here.
+The ExecutionAdapter seam (ADR-025): the trait and its value types (solve-result view, gate protocol, ExecutionResult, composer inputs) for user-owned execution layers. No default strategy ships here.
 
 ## Usage
 

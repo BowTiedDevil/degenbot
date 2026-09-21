@@ -415,7 +415,15 @@ fn group_help_renders_the_leaf_commands() {
         ("path", vec!["add", "discover"]),
         (
             "strategy",
-            vec!["list", "show", "activate", "deactivate", "set", "default", "remove"],
+            vec![
+                "list",
+                "show",
+                "activate",
+                "deactivate",
+                "set",
+                "default",
+                "remove",
+            ],
         ),
     ] {
         let sub = command.find_subcommand(group).expect("group present");

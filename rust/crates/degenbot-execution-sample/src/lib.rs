@@ -2,7 +2,7 @@
 //! strategy** for a FOREIGN contract.
 //!
 //! This crate is a sample consumer of the [`degenbot_execution`] seam
-//! (ADR-025). It implements the full four-part `ExecutionStrategy` for a
+//! (ADR-025). It implements the full four-part `ExecutionAdapter` for a
 //! sample **`SimpleExecutor`** contract of our own design — deliberately NOT
 //! `cmd_executor`:
 //!
@@ -29,7 +29,7 @@
 use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_execution::solve_result::SolveResult;
 use degenbot_execution::{
-    AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionResult, ExecutionStrategy,
+    AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter, ExecutionResult,
     FeePolicy, PayloadComposer, ProbeSpec, ProbeSpecs,
 };
 use degenbot_executor::composers::PathInfo;
@@ -122,10 +122,10 @@ impl PayloadComposer for SimpleExecutorComposer {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// ExecutionStrategy — the full four-part seam (ADR-025 D2)
+// ExecutionAdapter — the full four-part seam (ADR-025 D2)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// The full foreign `ExecutionStrategy` — wires all four parts explicitly
+/// The full foreign `ExecutionAdapter` — wires all four parts explicitly
 /// (rather than the `PayloadComposer` blanket default) to demonstrate a
 /// searcher owning its Encode + declared Probe + Assess + Fee.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -222,11 +222,11 @@ impl SimpleExecutorStrategy {
     /// `passed = net ≥ min_net_profit`.
     #[must_use]
     pub fn assess(&self, deltas: &[i128], gas_used: u64, base_fee_next: u128) -> ExecutionResult {
-        ExecutionStrategy::assess(self, deltas, gas_used, base_fee_next)
+        ExecutionAdapter::assess(self, deltas, gas_used, base_fee_next)
     }
 }
 
-impl ExecutionStrategy for SimpleExecutorStrategy {
+impl ExecutionAdapter for SimpleExecutorStrategy {
     fn encode(&self, path: &PathInfo, inputs: &ComposerInputs<'_>) -> Result<Bytes, ComposeError> {
         PayloadComposer::compose(&self.composer, path, inputs)
     }

@@ -71,9 +71,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use alloy::primitives::{address, Address, Bytes, U256};
-use degenbot_bot::bot_core::SimAnchorOracle;
-use degenbot_bot::backrun::{Decision, BackrunConfig};
+use degenbot_bot::backrun::{BackrunConfig, Decision};
 use degenbot_bot::backrun_engine::BackrunSolver;
+use degenbot_bot::bot_core::SimAnchorOracle;
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
@@ -89,7 +89,7 @@ use degenbot_simulation::{SimulationOverrideParams, WarmCodeCacheInner};
 use hashbrown::HashMap as HbMap;
 use parking_lot::RwLock;
 
-use crate::pending_tx::PendingTxStrategy;
+use crate::pending_tx::PendingTxReaction;
 
 pub use crate::backrun_strategy::WETH;
 pub use crate::market_context::MarketContext;
@@ -637,7 +637,7 @@ pub fn predecessor_observe_reason(e: &ReplayFrameError) -> &'static str {
     clippy::too_many_arguments,
     reason = "the frame takes the runtime surfaces it needs"
 )]
-pub async fn process_frame<S: PendingTxStrategy>(
+pub async fn process_frame<S: PendingTxReaction>(
     strategy: &mut S,
     ctx: &mut MarketContext,
     provider: &AlloyProvider,
@@ -675,7 +675,7 @@ pub async fn process_frame<S: PendingTxStrategy>(
     clippy::too_many_arguments,
     reason = "the frame takes the runtime surfaces it needs"
 )]
-pub async fn process_frame_with_prefix<S: PendingTxStrategy>(
+pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     strategy: &mut S,
     ctx: &mut MarketContext,
     provider: &AlloyProvider,

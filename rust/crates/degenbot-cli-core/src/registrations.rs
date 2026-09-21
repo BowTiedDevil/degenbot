@@ -86,10 +86,7 @@ pub fn ensure_supported_registrations(
 
     for deployment in AAVE_DEPLOYMENTS {
         let chain = i64::try_from(deployment.chain_id).map_err(|_| {
-            CliError::InvalidArgument(format!(
-                "chain id {} is out of range",
-                deployment.chain_id
-            ))
+            CliError::InvalidArgument(format!("chain id {} is out of range", deployment.chain_id))
         })?;
         if db
             .fetch_aave_market_by_name(chain, deployment.market_name)?

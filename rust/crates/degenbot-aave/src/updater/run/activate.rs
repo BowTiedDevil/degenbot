@@ -109,12 +109,11 @@ pub(crate) fn activate_aave_market_on_conn(
         // Stamp the bootstrap block ONLY when the row is still bare — an
         // already-bootstrapped market keeps its committed cursor (re-running
         // `aave activate` must never rewind `last_update_block`).
-        let stamp: Option<i64> = conn
-            .query_row(
-                "SELECT last_update_block FROM aave_v3_markets WHERE id = ?1",
-                rusqlite::params![id],
-                |row| row.get::<_, Option<i64>>(0),
-            )?;
+        let stamp: Option<i64> = conn.query_row(
+            "SELECT last_update_block FROM aave_v3_markets WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
         if stamp.is_none() {
             DegenbotDb::set_market_last_update_block_on_conn(conn, id, bootstrap_block)?;
         }

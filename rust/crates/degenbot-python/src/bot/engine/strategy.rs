@@ -14,8 +14,8 @@ use crate::prelude::*;
 
 use degenbot_bot::arb_engine::EngineChannelHandles;
 use degenbot_bot::bot_core::route_registry::RouteRegistry;
-use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
 use degenbot_bot::connector_index::V2ConnectorIndex;
+use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
 use degenbot_bot::strategy_host::{FacetStatus, HostError, HostHub, StrategyHost};
 
 /// The Python-facing name of a driver's FSM state.

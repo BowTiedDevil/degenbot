@@ -1,4 +1,4 @@
-//! The **Probe**/**Assess**/**Fee** parts of an `ExecutionStrategy` (ADR-025
+//! The **Probe**/**Assess**/**Fee** parts of an `ExecutionAdapter` (ADR-025
 //! D2) — declared *data* + value types, pyo3-free.
 //!
 //! Probe is declared data (which pre/post read-calls to snapshot); Assess is a
@@ -45,7 +45,7 @@ pub type ProbeSpecs = Vec<ProbeSpec>;
 ///
 /// The engine runs the declared probes and returns per-probe deltas; the gate
 /// rule turns those deltas into gross profit + pass/fail. A foreign searcher
-/// may instead supply a tiny user interpreter (the `ExecutionStrategy::assess`
+/// may instead supply a tiny user interpreter (the `ExecutionAdapter::assess`
 /// hook), but the built-in shapes cover the common cases.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum AssessRule {
@@ -135,7 +135,7 @@ impl FeePolicy {
 /// The outcome of running a strategy's Assess/Fee parts over a sim — the gross
 /// → net profit resolution plus the gate verdict.
 ///
-/// This is the value type both the Rust `ExecutionStrategy` and a Python
+/// This is the value type both the Rust `ExecutionAdapter` and a Python
 /// consumer observe. **Amounts are integer fixed-point wei (never floats).**
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionResult {

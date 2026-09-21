@@ -10,7 +10,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use alloy::primitives::{address, aliases::U112, Address, U256};
-use degenbot_bot::backrun_engine::{LaneFamily, BackrunHopRef, BackrunSolver, BackrunV2Pool};
+use degenbot_bot::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout;
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
@@ -431,8 +431,8 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
 
     use alloy::primitives::address;
     use alloy::providers::ProviderBuilder;
+    use degenbot_bot::backrun::{BackrunConfig, Decision};
     use degenbot_bot::bot_core::SimAnchorState;
-    use degenbot_bot::backrun::{Decision, BackrunConfig};
     use degenbot_submission::backrun_strategy::BackrunStrategy;
     use degenbot_submission::frame_pipeline::{
         build_block_handle, load_fixture_frames, process_frame, MarketContext, PipelineConfig,

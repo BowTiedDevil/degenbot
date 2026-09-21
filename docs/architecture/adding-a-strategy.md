@@ -17,7 +17,7 @@ runbook's host path lives at
 A strategy picks exactly one reaction kind (ADR-055; `CONTEXT.md`
 "Strategy reaction kinds").
 
-- **Pending-transaction**: implement `PendingTxStrategy`
+- **Pending-transaction**: implement `PendingTxReaction`
   (`rust/crates/degenbot-submission/src/pending_tx.rs:68`). Its stages are
   `admit` (`:80`), `discover` (`:99`), `evaluate` (`:111`), `compose` (`:121`),
   `decide` (`:134`), threaded by the neutral artifacts `ComposedIntent` (`:45`)
@@ -34,7 +34,7 @@ a strategy trait object. `StrategyHost` never names a family
 **Evidence / Keeps / Retires**
 
 - Evidence: reaction kind is an existing `CONTEXT.md` term, and
-  `PendingTxStrategy` is the only landed family trait
+  `PendingTxReaction` is the only landed family trait
   (`pending_tx.rs:68`).
 - Keeps: the two-kind split and the `admit → discover → evaluate → compose →
   decide` stage vocabulary.
@@ -345,7 +345,7 @@ Pin every seam a family depends on at its own level:
 
 1. Pick the reaction kind (§0).
 2. Add the config facet + `StrategyName` variant + schema test (§7).
-3. Implement the family body (`PendingTxStrategy` or settled-block stage).
+3. Implement the family body (`PendingTxReaction` or settled-block stage).
 4. Add the driver partitions: a boot resolver + spawn factory (§6).
 5. Bind the lane: `NonceLane::new(host.nonce().clone(), ledger.clone(),
    StrategyId::new("<name>"))` (§3).

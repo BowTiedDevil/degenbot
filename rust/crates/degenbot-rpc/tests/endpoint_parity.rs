@@ -1,4 +1,3 @@
-
 //! Parity: the feed crate's default searcher WS is the SAME constant the
 //! strategy-readiness resolution hands an activated backrun facet.
 

@@ -16,9 +16,9 @@
 
 use std::path::Path;
 
-use degenbot_config::writer::{write_key_with_env, WriteOutcome};
-use degenbot_config::{SCHEMA, strategy_readiness};
 use degenbot_config::readiness::Arm;
+use degenbot_config::writer::{write_key_with_env, WriteOutcome};
+use degenbot_config::{strategy_readiness, SCHEMA};
 
 use crate::context::CliContext;
 use crate::error::CliError;
@@ -281,8 +281,12 @@ pub(crate) fn execute(
             let file = ctx.resolve_config_file()?;
             let loaded = load(&file, ctx)?;
             let readiness = strategy_readiness(&loaded.config);
-            let summary = endpoint_summary(*facet, loaded.config.strategy.settlement.active,
-                loaded.config.strategy.backrun.active, &readiness);
+            let summary = endpoint_summary(
+                *facet,
+                loaded.config.strategy.settlement.active,
+                loaded.config.strategy.backrun.active,
+                &readiness,
+            );
             Ok(StrategyReport::Shown {
                 descriptor: descriptor(*facet),
                 activation: Some(summary),
@@ -298,14 +302,9 @@ pub(crate) fn execute(
         }
         StrategyCommand::Deactivate { facet } => {
             let file = ctx.resolve_config_file()?;
-            let outcome = write_key_with_env(
-                &file,
-                facet.activation_key(),
-                "false",
-                ctx.env(),
-            )
-            .map_err(strategy_write_error)?
-            .into();
+            let outcome = write_key_with_env(&file, facet.activation_key(), "false", ctx.env())
+                .map_err(strategy_write_error)?
+                .into();
             Ok(StrategyReport::Deactivated {
                 facet: *facet,
                 outcome,
@@ -333,8 +332,7 @@ pub(crate) fn execute(
                     key.toml_path
                 )));
             }
-            degenbot_config::writer::remove_key(&file, key)
-                .map_err(strategy_write_error)?;
+            degenbot_config::writer::remove_key(&file, key).map_err(strategy_write_error)?;
             Ok(StrategyReport::Defaulted {
                 facet: *facet,
                 key: key.field,
@@ -425,7 +423,11 @@ fn activate(
     let mut candidate = loaded.config.clone();
     if let Some(urls) = &chosen {
         candidate
-            .assign(facet.endpoints_key().section, facet.endpoints_key().field, urls)
+            .assign(
+                facet.endpoints_key().section,
+                facet.endpoints_key().field,
+                urls,
+            )
             .map_err(|problem| CliError::InvalidArgument(problem))?;
     }
     let activation = facet.activation_key();
@@ -521,7 +523,6 @@ fn strategy_write_error(error: degenbot_config::ConfigError) -> CliError {
     CliError::InvalidArgument(error.to_string())
 }
 
-
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
@@ -593,8 +594,14 @@ mod tests {
 
     #[test]
     fn facet_selector_parses_case_insensitively_and_refuses_unknown() {
-        assert_eq!(StrategyFacet::parse("Settlement").unwrap(), StrategyFacet::Settlement);
-        assert_eq!(StrategyFacet::parse("  backrun ").unwrap(), StrategyFacet::Backrun);
+        assert_eq!(
+            StrategyFacet::parse("Settlement").unwrap(),
+            StrategyFacet::Settlement
+        );
+        assert_eq!(
+            StrategyFacet::parse("  backrun ").unwrap(),
+            StrategyFacet::Backrun
+        );
         assert!(StrategyFacet::parse("sandwich").is_err());
     }
 
@@ -604,8 +611,7 @@ mod tests {
     fn list_reports_every_facet() {
         let env = empty_env();
         let ctx = CliContext::new(&env);
-        let report =
-            execute(&StrategyCommand::List, &ctx, &NoPrompt).expect("list executes");
+        let report = execute(&StrategyCommand::List, &ctx, &NoPrompt).expect("list executes");
         let StrategyReport::Listed { rows } = report else {
             panic!("list must produce Listed");
         };
@@ -639,7 +645,8 @@ mod tests {
         let StrategyReport::Shown {
             activation: Some(summary),
             ..
-        } = report else {
+        } = report
+        else {
             panic!("show must produce Shown with activation");
         };
         assert_eq!(
@@ -768,7 +775,11 @@ mod tests {
             &NoPrompt,
         )
         .expect_err("both choices must refuse");
-        assert!(error.message().contains("exactly one"), "{}", error.message());
+        assert!(
+            error.message().contains("exactly one"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]
@@ -853,7 +864,8 @@ mod tests {
         let StrategyReport::Activated {
             outcome: MutationOutcome::Shadowed { env },
             ..
-        } = report else {
+        } = report
+        else {
             panic!("the shadow must reach the report");
         };
         assert_eq!(env, "DEGENBOT_STRATEGY_BACKRUN_ACTIVE");
@@ -890,7 +902,11 @@ mod tests {
         assert!(!loaded.config.strategy.settlement.active);
         assert_eq!(
             loaded.config.strategy.settlement.endpoints.as_deref(),
-            Some(degenbot_config::SETTLEMENT_DEFAULT_ENDPOINTS.join(",").as_str()),
+            Some(
+                degenbot_config::SETTLEMENT_DEFAULT_ENDPOINTS
+                    .join(",")
+                    .as_str()
+            ),
             "deactivation keeps the recorded endpoint set for re-activation"
         );
     }

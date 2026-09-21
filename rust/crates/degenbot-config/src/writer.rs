@@ -14,7 +14,7 @@ use toml_edit::{DocumentMut, Item, Table};
 
 use crate::error::ConfigError;
 use crate::loader::{EnvVars, ProcessEnv};
-use crate::schema::{BotConfig, BaseKind, KeyDecl};
+use crate::schema::{BaseKind, BotConfig, KeyDecl};
 
 /// The result of a successful write: whether the written key will actually
 /// apply at load time.
@@ -117,9 +117,12 @@ fn remove_path(table: &mut dyn toml_edit::TableLike, segments: &[&str]) -> bool 
 /// parent directory is an empty document (the write creates them).
 fn read_document(file: &Path) -> Result<DocumentMut, ConfigError> {
     match std::fs::read_to_string(file) {
-        Ok(text) => text
-            .parse()
-            .map_err(|e| ConfigError::of(vec![format!("--config {}: parse error: {e}", file.display())])),
+        Ok(text) => text.parse().map_err(|e| {
+            ConfigError::of(vec![format!(
+                "--config {}: parse error: {e}",
+                file.display()
+            )])
+        }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(DocumentMut::new()),
         Err(e) => Err(ConfigError::of(vec![format!(
             "--config {}: unreadable: {e}",
@@ -159,11 +162,10 @@ fn navigate_mut<'a>(
         let table = item
             .as_table_like_mut()
             .expect("a schema path's parents are tables");
-        item = table
-            .entry(segment)
-            .or_insert(Item::Table(Table::new()));
+        item = table.entry(segment).or_insert(Item::Table(Table::new()));
     }
-    item.as_table_like_mut().expect("the navigated parent is a table")
+    item.as_table_like_mut()
+        .expect("the navigated parent is a table")
 }
 
 /// Render the raw text as the typed TOML value the loader round-trips.

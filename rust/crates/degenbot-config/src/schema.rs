@@ -598,9 +598,8 @@ mod tests {
         // per-facet `active` keys own activation now, so every retired
         // selector spelling must stay undeclared (fail-closed at the load).
         assert!(
-            !SCHEMA
-                .iter()
-                .any(|k| k.toml_path == "strategy.name" || k.env == std::concat!("DEGENBOT_", "STRATEGY_NAME")),
+            !SCHEMA.iter().any(|k| k.toml_path == "strategy.name"
+                || k.env == std::concat!("DEGENBOT_", "STRATEGY_NAME")),
             "the retired single-arm selector must stay undeclared"
         );
     }
@@ -614,24 +613,24 @@ mod tests {
         assert!(!defaults.backrun.active);
         assert_eq!(defaults.backrun.endpoints, None);
 
-        assert!(config.assign("strategy.settlement", "active", "true").is_ok());
-        assert!(
-            config
-                .assign(
-                    "strategy.settlement",
-                    "endpoints",
-                    "https://rpc.flashbots.net?hint=hash,https://rpc.mevblocker.io/noreverts"
-                )
-                .is_ok()
-        );
+        assert!(config
+            .assign("strategy.settlement", "active", "true")
+            .is_ok());
+        assert!(config
+            .assign(
+                "strategy.settlement",
+                "endpoints",
+                "https://rpc.flashbots.net?hint=hash,https://rpc.mevblocker.io/noreverts"
+            )
+            .is_ok());
         assert!(config.assign("strategy.backrun", "active", "1").is_ok());
+        assert!(config
+            .assign("strategy.backrun", "endpoints", "wss://searchers.example")
+            .is_ok());
         assert!(
             config
-                .assign("strategy.backrun", "endpoints", "wss://searchers.example")
-                .is_ok()
-        );
-        assert!(
-            config.assign("strategy.settlement", "active", "maybe").is_err(),
+                .assign("strategy.settlement", "active", "maybe")
+                .is_err(),
             "junk activation fails the assign, not a later gate"
         );
 
@@ -647,7 +646,6 @@ mod tests {
             c.backrun.endpoints.as_deref(),
             Some("wss://searchers.example")
         );
-
     }
 
     #[test]
@@ -670,7 +668,9 @@ mod tests {
             .collect();
         assert_eq!(settlement, vec!["active", "endpoints"]);
         for key in SCHEMA.iter().filter(|k| k.section == "strategy.settlement") {
-            assert!(key.env.starts_with(std::concat!("DEGENBOT_", "STRATEGY_SETTLEMENT_")));
+            assert!(key
+                .env
+                .starts_with(std::concat!("DEGENBOT_", "STRATEGY_SETTLEMENT_")));
         }
         let backrun: Vec<&str> = SCHEMA
             .iter()

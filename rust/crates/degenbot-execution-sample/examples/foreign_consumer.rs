@@ -1,5 +1,5 @@
 #![expect(clippy::expect_used, clippy::print_stdout)]
-//! TLQ5VH runnable sample: a standalone-Rust user-defined `ExecutionStrategy`
+//! TLQ5VH runnable sample: a standalone-Rust user-defined `ExecutionAdapter`
 //! for a FOREIGN contract (not `cmd_executor`).
 //!
 //! Run: `cargo run -p degenbot-execution-sample --example foreign_consumer`

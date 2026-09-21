@@ -1,6 +1,6 @@
 #![expect(clippy::expect_used)]
 //! Exercise the `degenbot-execution` scaffold seam (ADR-025): the value types,
-//! the `PayloadComposer` Encode part, and the `ExecutionStrategy` trait that
+//! the `PayloadComposer` Encode part, and the `ExecutionAdapter` trait that
 //! wraps it with built-in Probe/Assess/Fee defaults.
 //!
 //! These pin the scaffold contract so downstream tasks (facet A and facet B, the
@@ -10,7 +10,7 @@
 use alloy::primitives::{address, Address, Bytes, U256};
 
 use degenbot_execution::{
-    AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionStrategy, FeePolicy,
+    AssessRule, ComposeError, ComposeOptions, ComposerInputs, ExecutionAdapter, FeePolicy,
     PayloadComposer, ProbeSpec, SolveResult,
 };
 use degenbot_executor::composers::PathInfo;
@@ -54,7 +54,7 @@ fn payload_composer_produces_distinct_foreign_bytes() {
 
 #[test]
 fn payload_composer_blanket_satisfies_execution_strategy() {
-    // A `PayloadComposer` meets the full `ExecutionStrategy` seam through the
+    // A `PayloadComposer` meets the full `ExecutionAdapter` seam through the
     // blanket impl (built-in Probe/Assess/Fee defaults) — matching the docs'
     // "impl PayloadComposer" Rust path.
     let path = PathInfo::new(vec![]);
@@ -66,7 +66,7 @@ fn payload_composer_blanket_satisfies_execution_strategy() {
         opts: ComposeOptions,
     };
     let composer = ForeignComposer;
-    let encoded = ExecutionStrategy::encode(&composer, &path, &inputs).expect("encode");
+    let encoded = ExecutionAdapter::encode(&composer, &path, &inputs).expect("encode");
     // Blanket defaults: sum-of-deltas probe list is empty; fee is market-percentile.
     assert!(composer.probe_spec().is_empty());
     assert_eq!(composer.fee_policy(), FeePolicy::default());

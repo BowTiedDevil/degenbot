@@ -802,10 +802,8 @@ pub fn apply_aave_chunk_writes_on_conn(
     // delete those rows BEFORE the stamp so they do not accumulate as
     // permanent '0' rows. Inside the chunk's transaction — a rollback reverts
     // it with the chunk (§3.4 restart-invariant).
-    report.zero_balances_cleared = DegenbotDb::delete_zero_balance_positions_on_conn(
-        conn,
-        market_id,
-    )?;
+    report.zero_balances_cleared =
+        DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
 
     // Stamp `last_update_block` as the LAST write (§3.4 restart-invariant:
     // on rollback the stamp does NOT advance, so a restart re-processes the
@@ -979,8 +977,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report =
-                apply_aave_chunk_writes_on_conn(&tx, 1, &[], 2_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], 2_000).unwrap();
             assert_eq!(report.stamped_block, Some(2_000));
             tx.commit().unwrap();
         }
@@ -1005,7 +1002,11 @@ mod tests {
                 1,
                 "the nonzero collateral row stays"
             );
-            assert_eq!(count("aave_v3_debt_positions", 3), 0, "the zero-balance debt row is cleared");
+            assert_eq!(
+                count("aave_v3_debt_positions", 3),
+                0,
+                "the zero-balance debt row is cleared"
+            );
         }
         assert_eq!(market_stamp(&db), Some(2_000));
     }

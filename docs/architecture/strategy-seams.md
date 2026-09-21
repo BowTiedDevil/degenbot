@@ -29,7 +29,7 @@ partitions, the config-facet additions, and the test-surface pattern.
 
 A strategy picks exactly ONE:
 
-- **Pending-transaction strategies** (`PendingTxStrategy` trait,
+- **Pending-transaction strategies** (`PendingTxReaction` trait,
   `degenbot-submission/src/pending_tx.rs`) react to observed mempool
   transactions. The pending-transaction driver owns the substrate loop:
   simulate the pending tx (`ScratchEvm::replay`) → recover pool post-states
@@ -43,7 +43,7 @@ A strategy picks exactly ONE:
 
 ## Adding a pending-transaction strategy — the checklist
 
-1. Write one `PendingTxStrategy` impl in `degenbot-submission`: your
+1. Write one `PendingTxReaction` impl in `degenbot-submission`: your
    `admit` selection (from recovered pool post-states), `discover`
    (anchored DFS over the connector index, or otherwise), `evaluate`
    pricing, `compose` payload policy, `decide` gate. The runtime caches
@@ -104,7 +104,7 @@ are hub-registered `UnboundedFlagged` sources with observable depth via
 `Hub::named_pending` (B3), the gated serving seam was retired (B4, ADR-056),
 and the boot-snapshot `RouteRegistry` answers pool membership for strategies
 (B5). A second pending transaction strategy now implements
-`PendingTxStrategy` and subscribes; no intake wiring. The Phase C runtime host
+`PendingTxReaction` and subscribes; no intake wiring. The Phase C runtime host
 now lands on top of it ([ADR-057](adr/ADR-057-strategy-host.md)).
 
 ## Where the seams are (exact owners)
@@ -112,7 +112,7 @@ now lands on top of it ([ADR-057](adr/ADR-057-strategy-host.md)).
 | Seam | Lives at |
 |---|---|
 | `MarketContext` (frame-surviving caches) | `degenbot-submission/src/market_context.rs` |
-| `PendingTxStrategy` + artifacts | `degenbot-submission/src/pending_tx.rs` |
+| `PendingTxReaction` + artifacts | `degenbot-submission/src/pending_tx.rs` |
 | `BackrunStrategy` (reference lane) | `degenbot-submission/src/backrun_strategy.rs` |
 | Pending-tx driver (replay/extract/stages/gate) | `degenbot-submission/src/frame_pipeline.rs` |
 | `SubmissionTarget` + `dispatch_and_submit` | `degenbot-submission/src/submit.rs` |

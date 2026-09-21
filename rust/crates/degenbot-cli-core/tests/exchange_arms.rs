@@ -305,10 +305,7 @@ fn list_on_a_fresh_database_reports_every_supported_pair() {
     let lines = outcome.report().unwrap().render_lines();
     assert_eq!(lines.len(), 17);
     assert!(lines[0].starts_with("Aerodrome V2 on Base (chain ID 8453): not in database"));
-    let active_lines = lines
-        .iter()
-        .filter(|l| l.contains(": active"))
-        .count();
+    let active_lines = lines.iter().filter(|l| l.contains(": active")).count();
     assert_eq!(active_lines, 0);
 }
 
@@ -316,10 +313,7 @@ fn list_on_a_fresh_database_reports_every_supported_pair() {
 fn list_reflects_activation_state_and_honors_the_chain_filter() {
     let dir = TempDir::new().unwrap();
     let db = write_db(dir.path());
-    for (chain, name) in [
-        ("base", "aerodrome_v2"),
-        ("ethereum", "uniswap_v2"),
-    ] {
+    for (chain, name) in [("base", "aerodrome_v2"), ("ethereum", "uniswap_v2")] {
         let (outcome, _) = run_exchange(
             ExchangeCommand::Activate {
                 chain: chain.to_string(),
@@ -333,8 +327,12 @@ fn list_reflects_activation_state_and_honors_the_chain_filter() {
     let (outcome, _) = run_exchange(ExchangeCommand::List { chain: None }, &db);
     let lines = outcome.report().unwrap().render_lines();
     assert_eq!(lines.len(), 17);
-    assert!(lines.iter().any(|l| l == "Aerodrome V2 on Base (chain ID 8453): active"));
-    assert!(lines.iter().any(|l| l == "Uniswap V2 on Ethereum (chain ID 1): active"));
+    assert!(lines
+        .iter()
+        .any(|l| l == "Aerodrome V2 on Base (chain ID 8453): active"));
+    assert!(lines
+        .iter()
+        .any(|l| l == "Uniswap V2 on Ethereum (chain ID 1): active"));
 
     // The chain filter narrows to one chain's pairs only.
     let (filtered, _) = run_exchange(
@@ -355,8 +353,9 @@ fn list_reflects_activation_state_and_honors_the_chain_filter() {
     assert_eq!(active, 1);
     let filtered_lines = filtered.report().unwrap().render_lines();
     assert!(filtered_lines.iter().all(|l| l.contains("(chain ID 1)")));
-    assert!(filtered_lines.iter().any(|l| l
-        == "Pancakeswap V2 on Ethereum (chain ID 1): not in database"));
+    assert!(filtered_lines
+        .iter()
+        .any(|l| l == "Pancakeswap V2 on Ethereum (chain ID 1): not in database"));
 
     // A deactivation shows as inactive, not absent.
     let (deactivated, _) = run_exchange(
@@ -387,7 +386,10 @@ fn list_with_an_unknown_chain_filter_is_a_typed_failure() {
         &db,
     );
     assert_eq!(outcome.exit_code, ExitCode::Failure);
-    assert!(matches!(outcome.error(), Some(CliError::UnknownChain { .. })));
+    assert!(matches!(
+        outcome.error(),
+        Some(CliError::UnknownChain { .. })
+    ));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! The `ExecutionStrategy` trait — the full four-part seam (ADR-025 D2).
+//! The `ExecutionAdapter` trait — the full four-part seam (ADR-025 D2).
 //!
 //! A strategy decomposes into:
 //!
@@ -25,7 +25,7 @@ use crate::gate::{AssessRule, FeePolicy, ProbeSpecs};
 use crate::payload::{ComposeError, ComposeOptions, ComposerInputs, PayloadComposer};
 use crate::solve_result::SolveResult;
 
-/// The full four-part `ExecutionStrategy` seam (ADR-025 D2).
+/// The full four-part `ExecutionAdapter` seam (ADR-025 D2).
 ///
 /// Implement this (a) as the default adapter (`degenbot-arbitrage`, the
 /// canonical `cmd_executor` path), or (b) in a foreign searcher's own crate for
@@ -38,7 +38,7 @@ use crate::solve_result::SolveResult;
 /// market-percentile pricing) a foreign searcher may override — they are *not*
 /// independent fifth seams (pricing is folded into Assess; see
 /// [`Self::assess`]).
-pub trait ExecutionStrategy {
+pub trait ExecutionAdapter {
     /// **Encode** — turn a solved path into payload `bytes` for this
     /// strategy's contract.
     ///
@@ -166,9 +166,9 @@ pub trait ExecutionStrategy {
 }
 
 /// Blanket so a `PayloadComposer` (Encode-only, ADR-025 D2) satisfies the full
-/// `ExecutionStrategy` seam with the built-in Probe/Assess/Fee defaults —
+/// `ExecutionAdapter` seam with the built-in Probe/Assess/Fee defaults —
 /// implementing just the Encode blob is enough for the common case.
-impl<P: PayloadComposer> ExecutionStrategy for P {
+impl<P: PayloadComposer> ExecutionAdapter for P {
     fn encode(&self, path: &PathInfo, inputs: &ComposerInputs<'_>) -> Result<Bytes, ComposeError> {
         PayloadComposer::compose(self, path, inputs)
     }
