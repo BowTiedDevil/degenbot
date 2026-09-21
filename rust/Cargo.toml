@@ -99,6 +99,7 @@ degenbot-rpc = { version = "0.6.0-alpha.11", path = "crates/degenbot-rpc" }
 degenbot-runs = { version = "0.6.0-alpha.11", path = "crates/degenbot-runs" }
 degenbot-simulation = { version = "0.6.0-alpha.11", path = "crates/degenbot-simulation" }
 degenbot-solvers = { version = "0.6.0-alpha.11", path = "crates/degenbot-solvers" }
+degenbot-strategy = { version = "0.6.0-alpha.11", path = "crates/degenbot-strategy" }
 degenbot-submission = { version = "0.6.0-alpha.11", path = "crates/degenbot-submission" }
 degenbot-uniswap = { version = "0.6.0-alpha.11", path = "crates/degenbot-uniswap" }
 degenbot-workers = { version = "0.6.0-alpha.11", path = "crates/degenbot-workers" }
@@ -149,6 +150,7 @@ members = [
     "crates/degenbot-simulation",
     "crates/degenbot-arbitrage",
     "crates/degenbot-solvers",
+    "crates/degenbot-strategy",
     "crates/degenbot-submission",
     "crates/degenbot-uniswap",
     "crates/degenbot-order-index",

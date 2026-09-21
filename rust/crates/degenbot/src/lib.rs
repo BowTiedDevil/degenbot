@@ -41,6 +41,10 @@ pub use degenbot_pathfinding as pathfinding;
 /// `QuantAMM` Balancer basket solver) — relocated from `degenbot-bot` (ADR-015).
 pub use degenbot_solvers as solvers;
 
+/// The strategy plane: the six-slot strategy vocabulary and the concrete
+/// executable strategies composed over the capability crates.
+pub use degenbot_strategy as strategy;
+
 /// The whole `degenbot-uniswap` crate (dex identity + V2 encoding + registry).
 pub use degenbot_uniswap as uniswap;
 /// value objects + `pub const` per-DEX presets, and the V2 swap-call encoder.

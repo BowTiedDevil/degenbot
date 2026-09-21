@@ -1,0 +1,16 @@
+[package]
+name = "degenbot-strategy"
+description = "The strategy plane: the six-slot Strategy vocabulary and the concrete executable strategies composed over the capability crates (execution adapter seam + submission surface). pyo3-free."
+keywords = ["mev", "strategy", "arbitrage", "evm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+degenbot-execution.workspace = true
+degenbot-submission.workspace = true

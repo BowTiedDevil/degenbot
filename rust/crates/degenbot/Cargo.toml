@@ -53,6 +53,7 @@ degenbot-runs.workspace = true
 degenbot-simulation.workspace = true
 degenbot-arbitrage = { workspace = true, features = ["order-index"] }
 degenbot-solvers.workspace = true
+degenbot-strategy.workspace = true
 degenbot-submission.workspace = true
 degenbot-uniswap.workspace = true
 # The role-switching worker fleet (ADR-042): FSM, budget authority,

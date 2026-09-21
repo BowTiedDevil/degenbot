@@ -2212,6 +2212,7 @@ dependencies = [
  "degenbot-runs",
  "degenbot-simulation",
  "degenbot-solvers",
+ "degenbot-strategy",
  "degenbot-submission",
  "degenbot-uniswap",
  "degenbot-workers",
@@ -2655,6 +2656,14 @@ dependencies = [
  "tokio",
  "tracing",
  "zstd",
+]
+
+[[package]]
+name = "degenbot-strategy"
+version = "0.6.0-alpha.11"
+dependencies = [
+ "degenbot-execution",
+ "degenbot-submission",
 ]
 
 [[package]]
