@@ -412,7 +412,9 @@ async fn session(
                 let _ = serde_json::from_slice::<Json>(&b);
                 s.count(Count::RejectedParse);
             }
-            _ => {}
+            // ExpectedAbsent: raw frames never surface on read; pong answers
+            // our keepalive ping.
+            Message::Pong(_) | Message::Frame(_) => {}
         }
     }
 }

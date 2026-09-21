@@ -272,7 +272,7 @@ pub(super) async fn process_chunk_on_conn(
                             seen.insert((false, *to));
                         }
                     }
-                    _ => {}
+                    _ => {} // ExpectedAbsent: only position-bearing events feed this trace.
                 }
             }
             let txhex = alloy::hex::encode(group.tx_hash);

@@ -76,7 +76,7 @@ pub mod table {
             "uniswap_v3" => Some("uniswap_v3_pools"),
             "pancakeswap_v3" => Some("pancakeswap_v3_pools"),
             "sushiswap_v3" => Some("sushiswap_v3_pools"),
-            _ => None,
+            _ => None, // ExpectedAbsent: only V2/V3 subclass kinds have a table.
         }
     }
 

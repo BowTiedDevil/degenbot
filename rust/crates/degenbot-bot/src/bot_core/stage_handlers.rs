@@ -1065,7 +1065,12 @@ mod conformance {
                         publishes_total += 1;
                     }
                     Stage::Finalize => finalizes_total += 1,
-                    _ => {}
+                    // ExpectedAbsent: only quiesce-cycle stages are counted.
+                    Stage::Resolve
+                    | Stage::Solve
+                    | Stage::Simulate
+                    | Stage::Gate
+                    | Stage::Rewind => {}
                 }
             }
             // The trailing cycle has no closing StreamingComplete; its

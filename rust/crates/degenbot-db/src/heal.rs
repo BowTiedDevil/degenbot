@@ -151,8 +151,8 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
             drop(old_conn);
             return Err(DbError::UnrecognizedSchema);
         }
-        // LegacyAlembic / FreshStandalone → proceed to heal.
-        _ => {}
+        // ExpectedAbsent: both non-Rust-owned states heal in place below.
+        SchemaState::LegacyAlembic | SchemaState::FreshStandalone { .. } => {}
     }
 
     let old_state_for_report = old_state.clone();

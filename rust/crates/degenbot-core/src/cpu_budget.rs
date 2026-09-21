@@ -358,7 +358,7 @@ pub(crate) fn parse_cpu_stat(text: &str) -> Option<ThrottleStats> {
         match key {
             "nr_throttled" => stats.nr_throttled = v,
             "throttled_usec" => stats.throttled_usec = v,
-            _ => {}
+            _ => {} // ExpectedAbsent: cpu.stat carries other fields; only counters here.
         }
     }
     // A body with no parseable key-value pairs is not a cpu.stat; a body

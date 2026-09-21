@@ -565,7 +565,7 @@ impl<'a> TransactionOperationsParser<'a> {
                             scaled_events.push(s);
                         }
                     }
-                    _ => {} // pool events handled separately in step 1
+                    _ => {} // ExpectedAbsent: pool events are handled separately in step 1.
                 }
             }
         }
@@ -2331,9 +2331,9 @@ impl<'a> TransactionOperationsParser<'a> {
                 op.validation_errors
                     .push("STKAAVE_TRANSFER expects 1 DiscountTransfer".into());
             }
-            // Liquidation / GhoLiquidation / GhoFlashLoan / Unknown — minimal
-            // validation in A (B owns the LiquidationCall builder + its
-            // validators).
+            // ExpectedAbsent: Liquidation / GhoLiquidation / GhoFlashLoan /
+            // Unknown get minimal validation (B owns the LiquidationCall
+            // builder + its validators).
             _ => {}
         }
     }

@@ -206,7 +206,7 @@ pub fn parse_type_list(types_str: &str) -> Result<Vec<AbiType>, AbiTypeError> {
                 types.push(parse_abi_type(&types_str[start..i])?);
                 start = i + 1;
             }
-            _ => {}
+            _ => {} // ExpectedAbsent: any other char is part of a type token.
         }
     }
 
@@ -266,7 +266,7 @@ fn parse_tuple_type(maybe_tuple: &str) -> Result<AbiType, AbiTypeError> {
                     break;
                 }
             }
-            _ => {}
+            _ => {} // ExpectedAbsent: any other char is part of the tuple spec.
         }
     }
     let close = close.ok_or_else(|| AbiTypeError::UnknownType(maybe_tuple.to_string()))?;

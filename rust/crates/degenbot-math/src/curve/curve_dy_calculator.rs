@@ -360,8 +360,9 @@ fn standard_axes(style: SwapStyle) -> StandardAxes {
         SwapStyle::LiveAdmin => {
             a.rate_source = RateSource::RateMultipliers;
         }
-        // STANDARD / CYTOKEN / LIVE_ADMIN_ORACLE use all-default axes; the
-        // dynamic/crypto styles are dispatched before this function is called.
+        // ExpectedAbsent: STANDARD / CYTOKEN / LIVE_ADMIN_ORACLE use all-default
+        // axes; the dynamic/crypto styles are dispatched before this function
+        // is called.
         _ => {}
     }
     a

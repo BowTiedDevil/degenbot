@@ -359,7 +359,7 @@ fn parse_json_array(input: &str) -> Result<Vec<String>, ContractError> {
                 }
                 start = i + 1;
             }
-            _ => {}
+            _ => {} // ExpectedAbsent: any other char is part of an array element.
         }
     }
 
