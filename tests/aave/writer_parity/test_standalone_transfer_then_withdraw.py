@@ -68,6 +68,14 @@ if TYPE_CHECKING:
 _RAY = 10**27  # 1e27 — the liquidity index (steady-state).
 _AMOUNT = 10**15  # 0.001 WETH (on-chain-truth value from block 16496928).
 
+# USER withdraws only half its credited balance: the end-of-chunk zero-balance
+# sweep (cleanup_zero_balance_positions, c4085eaa6) deletes positions the chunk
+# zeroed, so a full withdraw would leave NO row to assert against. With a
+# partial withdraw USER's row survives at balance _AMOUNT - _WITHDRAW — keeping
+# the credited-then-burned arithmetic (and its a_token + value gates) observable
+# in the committed table.
+_WITHDRAW = _AMOUNT // 2
+
 # The new reserve (WETH) + its aToken/vToken — created by ReserveInitialized.
 _WETH = "0x" + "c0" * 20
 _A_WETH = "0x" + "77" * 20  # the aToken (the Transfer/Mint/Burn emitter)
@@ -178,8 +186,8 @@ def _build_chunk_logs() -> list[dict[str, object]]:
     )
     li += 1
 
-    # tx 3 (continued): USER withdraws — Pool Withdraw + aWETH Burn
-    # (CollateralBurn, debits USER) + the outgoing Transfer-to-zero companion.
+    # tx 3 (continued): USER withdraws _WITHDRAW — Pool Withdraw + aWETH Burn
+    # (CollateralBurn, debits USER) + the outgoing Transfer companion.
     # Pre-fix: USER's balance=0 (the Transfer credit stolen) → the Burn →
     # negative → crash.
     logs.append(
@@ -187,7 +195,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             reserve=_WETH,
             user=USER_ADDRESS,
             to=USER_ADDRESS,
-            amount=_AMOUNT,
+            amount=_WITHDRAW,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
@@ -199,7 +207,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             token_address=_A_WETH,
             from_address=USER_ADDRESS,
             target=USER_ADDRESS,
-            value=_AMOUNT,
+            value=_WITHDRAW,
             balance_increase=0,
             index=_RAY,
             log_index=li,
@@ -208,12 +216,12 @@ def _build_chunk_logs() -> list[dict[str, object]]:
         )
     )
     li += 1
-    logs.append(  # outgoing Transfer-to-zero companion
+    logs.append(  # outgoing Transfer companion for the burn
         make_erc20_transfer_log(
             token_address=_A_WETH,
             from_address=USER_ADDRESS,
             to_address="0x" + "00" * 20,
-            value=_AMOUNT,
+            value=_WITHDRAW,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
@@ -261,23 +269,24 @@ def test_standalone_transfer_credit_then_withdraw(tmp_path: Path) -> None:
 
     # GREEN: no crash (the standalone Transfer credited USER before the
     # Withdraw debited — the deficit_coverage scavenger no longer steals the
-    # unpaired transfer). Two collateral positions land: SENDER (supplied +
-    # transferred out → settles to 0) + USER (received + withdrew → 0). The
-    # a_token == aWETH (the (b) re-fetch + the standalone Transfer op both
-    # target the right token). Loads-bearing: the absence of the
-    # Regression guard: the Rust reader crashed with `balance would go negative` on the same corpus.
-    assert len(positions) == 2, f"expected 2 positions (SENDER+USER); got {len(positions)}"
+    # unpaired transfer; a stolen credit makes the Burn go negative and
+    # aborts `run_aave_update` before this assertion).
+    #
+    # End-of-chunk contract (cleanup_zero_balance_positions, restored by
+    # c4085eaa6): rows the chunk zeroed are swept, so SENDER (supplied then
+    # standalone-transferred out) leaves NO row. USER received _AMOUNT and
+    # withdrew _WITHDRAW, so exactly one collateral position survives with
+    # balance _AMOUNT - _WITHDRAW — the credited-then-burned arithmetic, plus
+    # a_token == aWETH (the (b) re-fetch + the standalone Transfer op target
+    # the right token). A bare positional existence check once masked a
+    # ~10^69 oddity here (a user's address read as a U256), so the VALUE
+    # assertion below is the load-bearing gate.
+    assert len(positions) == 1, f"expected 1 surviving position (USER); got {positions!r}"
+    assert int(positions[0]["balance"]) == _AMOUNT - _WITHDRAW, (
+        f"expected USER balance {_AMOUNT - _WITHDRAW!r} "
+        f"(credit {_AMOUNT!r} - burn {_WITHDRAW!r}); got {positions[0]!r}"
+    )
     assert a_token_addr is not None, "no a_token resolved for the collateral position"
     assert a_token_addr.lower() == _A_WETH.lower(), (
         f"a_token {a_token_addr!r} ≠ {_A_WETH!r} (the WETH aToken)"
     )
-    # Both end-state balances must be 0 (SENDER supplied _AMOUNT then
-    # standalone-transferred it out; USER received then withdrew). A bare
-    # positional existence check once masked a ~10^69 oddity here (the
-    # SENDER balance was the user's address read as a U256, ~1.3e57), so
-    # the VALUE assertion below is the load-bearing gate.
-    for pos in positions:
-        assert int(pos["balance"]) == 0, (
-            f"expected end-state balance 0 (supply+transfer-out for SENDER; "
-            f"receive+withdraw for USER); got {pos!r}"
-        )
