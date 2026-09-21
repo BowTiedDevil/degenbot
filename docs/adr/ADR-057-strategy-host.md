@@ -2,6 +2,16 @@
 
 **Status: accepted** (2026-09-19). Records the landed dynamic host (commits
 184b800fe, 8015f23f3, b9c8d8954, 73d902f9d, 971917465, 6e057be05). Basis:
+
+> **Amendment (2026-09-20): the standalone sidecar file is removed.** This
+> ADR originally kept `bin/backrun_sidecar.rs` green as a parallel deployment
+> shape ("a host of size one") per its "not removed and stays green"
+> consequence. The operator has since ruled there is no future for multiple
+> binaries: the hosted one-process boot is the only runtime shape, the bin and
+> its runbook are deleted, and the backrun lineage's `sidecar` vocabulary is
+> renamed for what it is (`backrun`, `connector_index`, hosted `Backrun*`
+> types). The ADR text below is the historical record of what landed; read
+> "standalone sidecar" mentions against that retirement.
 ADR-055 D5's scheduled Phase C, the Phase B substrate (ADR-056 and the
 hub/registry slices), and the executed design
 `.scratch/strategy-arch-survey/phase-c-design.md`. The crate sources remain the

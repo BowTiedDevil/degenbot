@@ -4,7 +4,7 @@
 //! Invariant surface: this module never owns process boot. It resolves the
 //! node join from the environment, opens the connector DB, freezes the route
 //! registry, and packages everything as a `BackrunBoot` whose only exit is
-//! `BackrunBoot::into_driver_future`. The standalone sidecar and a hosted
+//! `BackrunBoot::into_driver_future`. A hosted
 //! driver call the same resolvers, so the two runtime shapes cannot drift;
 //! the spawn factory defers resolution to host-drive time, so a boot that
 //! never enables backrun pays for no node connection or DB handle.
@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_bot::sidecar::SidecarConfig;
-use degenbot_bot::sidecar_paths::{OnChainLiquidityRanker, V2ConnectorIndex};
+use degenbot_bot::backrun::BackrunConfig;
+use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_eventhub::Hub;
@@ -42,10 +42,10 @@ pub struct BackrunContext {
     /// The driver's run-artifact root inside a multi-strategy host, so this
     /// driver's journal never collides with another strategy's. `None` keeps
     /// the process-global state root for the standalone single-strategy
-    /// sidecar (strict parity).
+    /// driver (strict parity with any direct caller).
     pub namespace_root: Option<PathBuf>,
     /// The sign-time nonce seam: the one issuer every runtime shape stamps
-    /// through. The standalone sidecar mints a host of size one around its
+    /// through. The boot is a host of size N around its
     /// own authority; a hosted driver receives the host's shared nonce lane.
     pub nonce_lane: Arc<NonceLane>,
 }
@@ -60,7 +60,7 @@ pub enum BackrunBootError {
 }
 
 /// The driver's node join: the resolved chain-node HTTP endpoint and the provider
-/// built over it. The standalone sidecar and a hosted driver resolve this the same
+/// built over it. Every boot resolves this the same
 /// way, so the boot ranker and the driver read one connection pool.
 pub struct BackrunNodeJoin {
     /// The `DEGENBOT_RPC_HTTP_CHAINID_<id>` endpoint the driver signs against.
@@ -94,12 +94,12 @@ pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> 
 /// registry, and the driver's run-artifact scope.
 ///
 /// The driver has exactly ONE boot path — [`Self::into_driver_future`]. The
-/// standalone sidecar polls it inline (a driver panic still unwinds the process)
+/// boot may poll it inline (a driver panic still unwinds the process)
 /// and a `StrategyHost` spawns it as a driver task (a panic becomes a tombstone
-/// at the task boundary), so a hosted driver and a standalone sidecar cannot
+/// at the task boundary), so two boots cannot
 /// drift apart.
 pub struct BackrunBoot {
-    cfg: SidecarConfig,
+    cfg: BackrunConfig,
     hub: Arc<Hub>,
     route_registry: Option<Arc<RouteRegistry>>,
     context: BackrunContext,
@@ -127,7 +127,7 @@ impl BackrunBoot {
 /// Resolve the boot route registry every backrun runtime discovers over, and
 /// the opened connector DB the driver's token joins borrow.
 ///
-/// This is the ONE registry-construction seam: the standalone sidecar (a host
+/// This is the ONE registry-construction seam: a standalone boot (a host
 /// of size one) and a hosted driver both hand it the resolved DB path and the
 /// driver's node join, so the two runtime shapes cannot drift apart. It opens
 /// `db_path` once, loads the V2 connector scan plus its V3 additions, attaches
@@ -168,7 +168,7 @@ pub async fn resolve_backrun_registry(
     let registry = Arc::new(RouteRegistry::new(ix));
     tracing::info!(edges = registry.index().len(), "connector index loaded");
     if config.strategy.backrun.rank_evidence {
-        match degenbot_bot::sidecar_paths::deep_pair_ranking_evidence(registry.index(), &db).await {
+        match degenbot_bot::connector_index::deep_pair_ranking_evidence(registry.index(), &db).await {
             Ok(()) => tracing::info!("rank evidence: deep USDC/WETH pair tops the ranking"),
             Err(e) => tracing::warn!(evidence = %e, "rank evidence FAILED"),
         }
@@ -179,7 +179,7 @@ pub async fn resolve_backrun_registry(
 /// The route registry a hosted boot mints the strategy host over.
 ///
 /// Delegates to [`resolve_backrun_registry`], so a hosted driver discovers over
-/// the same DB-backed snapshot the standalone sidecar builds. A process with
+/// the same DB-backed snapshot a standalone boot builds. A process with
 /// no connector DB mints an empty snapshot instead; the driver then observes
 /// with discovery shut rather than guessing connectors.
 #[must_use]
@@ -197,7 +197,7 @@ pub async fn resolve_backrun_host_registry(
 }
 
 /// Open the connector DB behind the registry's token joins, exactly as the
-/// standalone sidecar does. A missing file leaves the discovery fan shut and
+/// standalone boot does. A missing file leaves the discovery fan shut and
 /// frames observe — connectors are never guessed.
 #[must_use]
 pub fn resolve_backrun_connector_db() -> Option<DegenbotDb> {
@@ -217,7 +217,7 @@ pub fn resolve_backrun_connector_db() -> Option<DegenbotDb> {
 
 /// Assemble a driver's boot from an already-resolved node join.
 ///
-/// Both the standalone sidecar (which builds its DB-backed registry over the
+/// Both a standalone boot (which builds its DB-backed registry over the
 /// join) and a hosted driver call this, so the driver's config derivation and
 /// context shape have one definition. The chain node's `newHeads` WS endpoint
 /// (the fallback when absent) resolves here. `namespace_root` scopes the driver's
@@ -233,7 +233,7 @@ pub fn backrun_boot(
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
 ) -> BackrunBoot {
-    let cfg = SidecarConfig::from_config(config, join.rpc_url);
+    let cfg = BackrunConfig::from_config(config, join.rpc_url);
     let head_ws_url =
         degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
             .ok()

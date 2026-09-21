@@ -894,7 +894,7 @@ impl StrategyHost {
             // `!Send` and must be polled inline on one thread, never spawned.
             // Drive it under the AMBIENT multi-thread runtime (via `block_on`
             // from a blocking thread) so the lane sees the same runtime
-            // ambience as the standalone sidecar: `revm`'s
+            // ambience a dedicated process entrypoint provides: `revm`'s
             // `WrapDatabaseAsync::new` captures the current handle only when
             // that runtime is multi-threaded, and its layer reads then use
             // `block_in_place`. A dedicated current-thread runtime captures no
@@ -1050,7 +1050,7 @@ impl fmt::Debug for StrategyHost {
 )]
 mod tests {
     use super::*;
-    use crate::sidecar_paths::V2ConnectorIndex;
+    use crate::connector_index::V2ConnectorIndex;
 
     fn sid(name: &str) -> StrategyId {
         StrategyId::new(name)
@@ -1410,7 +1410,7 @@ mod tests {
     }
 
     /// A hosted lane must observe the multi-thread ambient runtime the
-    /// standalone sidecar provides: `revm`'s `WrapDatabaseAsync::new` (the
+    /// dedicated process entrypoint provides: `revm`'s `WrapDatabaseAsync::new` (the
     /// layer `BlockSimHandle::build` stacks) returns `None` under a
     /// current-thread runtime, so a dedicated current-thread lane runtime
     /// leaves every frame with `replay_unavailable`.

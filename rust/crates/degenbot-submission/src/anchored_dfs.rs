@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use degenbot_bot::sidecar_paths::{V2ConnectorIndex, V2Edge, V3Edge};
+use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::{EdgeKey, PathGraph, PoolKind};
 
 /// One touched pool the frame's cycles anchor on: the connector-index

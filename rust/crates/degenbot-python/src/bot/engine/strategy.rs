@@ -15,7 +15,7 @@ use crate::prelude::*;
 use degenbot_bot::arb_engine::EngineChannelHandles;
 use degenbot_bot::bot_core::route_registry::RouteRegistry;
 use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
-use degenbot_bot::sidecar_paths::V2ConnectorIndex;
+use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_bot::strategy_host::{FacetStatus, HostError, HostHub, StrategyHost};
 
 /// The Python-facing name of a driver's FSM state.
@@ -117,7 +117,7 @@ pub(crate) struct BootedHost {
 /// The route registry a hosted boot mints the strategy host over.
 ///
 /// Delegates to the shared submission resolver, so a hosted backrun lane
-/// discovers over the same DB-backed snapshot the standalone sidecar builds.
+/// discovers over the same DB-backed snapshot a hosted boot builds.
 /// A process with no connector DB (or no resolvable node join) mints an empty
 /// snapshot; the lane then observes with discovery shut rather than guessing
 /// connectors.

@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use alloy::primitives::B256;
-use degenbot_bot::sidecar::SidecarConfig;
+use degenbot_bot::backrun::BackrunConfig;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 
 use crate::bundle::MEVBLOCKER_STREAM_URL;
@@ -21,7 +21,7 @@ use crate::submit::{BundleTarget, SubmissionTarget};
 pub(super) const GAS_FLOOR_WEI: u64 = 50_000_000_000_000;
 
 /// The operator's priority fee converted from the facet's gwei to wei.
-pub(super) fn priority_fee_wei(cfg: &SidecarConfig) -> u128 {
+pub(super) fn priority_fee_wei(cfg: &BackrunConfig) -> u128 {
     u128::from(cfg.priority_fee_gwei).saturating_mul(1_000_000_000u128)
 }
 
@@ -31,7 +31,7 @@ pub(super) fn priority_fee_wei(cfg: &SidecarConfig) -> u128 {
 pub(super) async fn wallet_gas_cost_at(
     provider: &AlloyProvider,
     head: u64,
-    cfg: &SidecarConfig,
+    cfg: &BackrunConfig,
 ) -> u128 {
     let base_fee_next = provider
         .get_block(head)
@@ -44,7 +44,7 @@ pub(super) async fn wallet_gas_cost_at(
         .saturating_mul(base_fee_next.saturating_add(priority_fee_wei(cfg)))
 }
 
-pub(super) async fn initial_wallet_gas_cost(provider: &AlloyProvider, cfg: &SidecarConfig) -> u128 {
+pub(super) async fn initial_wallet_gas_cost(provider: &AlloyProvider, cfg: &BackrunConfig) -> u128 {
     let head = provider.get_block_number().await.unwrap_or(0);
     wallet_gas_cost_at(provider, head, cfg).await
 }
@@ -57,7 +57,7 @@ pub(super) async fn initial_wallet_gas_cost(provider: &AlloyProvider, cfg: &Side
 /// first and the public provider is the fallback relay. An endpoint that cannot
 /// be constructed degrades to the read-provider-only list.
 pub(super) async fn build_broadcast_relays(
-    cfg: &SidecarConfig,
+    cfg: &BackrunConfig,
     provider: &Arc<AlloyProvider>,
 ) -> Vec<Arc<AlloyProvider>> {
     let Some(url) = cfg.mevblocker_url.as_deref() else {
@@ -85,7 +85,7 @@ pub(super) async fn build_broadcast_relays(
 /// economics; the private endpoint engages only when the target fans out
 /// under [`SubmissionTarget::Public`].
 pub(super) fn bid_submission_target(
-    cfg: &SidecarConfig,
+    cfg: &BackrunConfig,
     target_tx_hash: B256,
     block_number: u64,
 ) -> SubmissionTarget {

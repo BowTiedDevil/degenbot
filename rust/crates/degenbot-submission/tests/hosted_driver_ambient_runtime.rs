@@ -1,7 +1,7 @@
 #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
-//! A hosted driver must see the same multi-thread runtime ambience the
-//! standalone `backrun_sidecar` gets from `#[tokio::main]`.
+//! A hosted driver must see the multi-thread runtime ambience a dedicated
+//! `#[tokio::main]` entrypoint provides (the retired standalone bin's shape).
 //!
 //! The live two-driver run failed every `BlockSimHandle::build` with "no ambient
 //! multi-threaded tokio runtime" because `StrategyHost::start_driving` booted
@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
-use degenbot_bot::sidecar_paths::V2ConnectorIndex;
+use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_bot::strategy_host::{DriverExit, DriverSpawnFactory, FacetStatus, StrategyHost};
 use degenbot_eventhub::Hub;
 use revm::database_interface::async_db::DatabaseAsyncRef;

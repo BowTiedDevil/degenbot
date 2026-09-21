@@ -45,7 +45,7 @@ pub struct GapProbe {
 }
 
 impl GapProbe {
-    /// Wrap the chain-node client the sidecar already carries (NOT the relay
+    /// Wrap the chain-node client the driver already carries (NOT the relay
     /// socket — pool evidence and nonce provisioning chain-side only).
     #[must_use]
     pub const fn new(client: RpcClient) -> Self {

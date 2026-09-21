@@ -1252,7 +1252,7 @@ mod tests {
     #[test]
     fn two_strategies_drive_lowest_free_repackage_and_orphan_fill() {
         use degenbot_bot::bot_core::route_registry::RouteRegistry;
-        use degenbot_bot::sidecar_paths::V2ConnectorIndex;
+        use degenbot_bot::connector_index::V2ConnectorIndex;
         use degenbot_bot::strategy_host::{FacetStatus, StrategyHost};
         use degenbot_eventhub::Hub;
         use tokio::sync::mpsc::unbounded_channel;

@@ -1,8 +1,8 @@
 //! Boot-time route registry: the Rust-owned pool world-view of one host
 //! process, frozen at registration.
 //!
-//! The pending-sidecar runtime otherwise rebuilds its connector world-view per
-//! driver: a DB-index scan, a discovery graph over its edges, and a decoder
+//! A pending-transaction runtime otherwise rebuilds its connector world-view
+//! per driver: a DB-index scan, a discovery graph over its edges, and a decoder
 //! registration table. This module owns that snapshot ONCE at boot and hands it
 //! out as a shared handle, so a strategy reads the same frozen pool set rather
 //! than paying for a rebuild.
@@ -20,7 +20,7 @@
 use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
 
-use crate::sidecar_paths::V2ConnectorIndex;
+use crate::connector_index::V2ConnectorIndex;
 
 use super::sim_anchor::SimAnchorOracle;
 
@@ -99,10 +99,10 @@ mod tests {
 
     use super::*;
     use crate::bot_core::log_dispatcher::LogDispatcher;
-    use crate::sidecar_paths::V3Edge;
+    use crate::connector_index::V3Edge;
 
-    fn v2_edge(pool_id: u64, address: Address) -> crate::sidecar_paths::V2Edge {
-        crate::sidecar_paths::V2Edge {
+    fn v2_edge(pool_id: u64, address: Address) -> crate::connector_index::V2Edge {
+        crate::connector_index::V2Edge {
             pool_id,
             token0_id: 10,
             token1_id: 20,

@@ -12,8 +12,8 @@
 //! identity.
 
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_bot::sidecar::SidecarConfig;
-use degenbot_bot::sidecar_engine::SidecarSolver;
+use degenbot_bot::backrun::BackrunConfig;
+use degenbot_bot::backrun_engine::BackrunSolver;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::provider::AlloyProvider;
@@ -54,7 +54,7 @@ pub struct ComposedIntent {
 /// The strategy's decided outcome for one frame: the gate decision plus the
 /// bid-able artifact the driver submits when one exists.
 pub struct Decided {
-    pub decision: degenbot_bot::sidecar::Decision,
+    pub decision: degenbot_bot::backrun::Decision,
     pub requested_bid: U256,
     pub submit_calldata: Option<Bytes>,
     pub economics: Option<BidEconomics>,
@@ -80,7 +80,7 @@ pub trait PendingTxStrategy {
     fn admit(
         &mut self,
         ctx: &MarketContext,
-        workspace: &mut SidecarSolver,
+        workspace: &mut BackrunSolver,
         states: &[PoolPostState],
         seed_block: u64,
         trace_tx: &str,
@@ -99,7 +99,7 @@ pub trait PendingTxStrategy {
     async fn discover(
         &mut self,
         ctx: &MarketContext,
-        workspace: &mut SidecarSolver,
+        workspace: &mut BackrunSolver,
         scratch: &mut ScratchEvm<ScratchDb<'_>>,
         provider: &AlloyProvider,
         affected: &Self::Affected,
@@ -110,7 +110,7 @@ pub trait PendingTxStrategy {
     /// Evaluate the discovered intents inside the workspace.
     fn evaluate(
         &mut self,
-        workspace: &mut SidecarSolver,
+        workspace: &mut BackrunSolver,
         intents: Self::Intents,
         pl: &PipelineConfig,
         trace_tx: &str,
@@ -133,7 +133,7 @@ pub trait PendingTxStrategy {
     )]
     fn decide(
         &self,
-        sidecar: &SidecarConfig,
+        knobs: &BackrunConfig,
         pl: &PipelineConfig,
         evaluated: &Self::Evaluated,
         composed: Option<&ComposedIntent>,

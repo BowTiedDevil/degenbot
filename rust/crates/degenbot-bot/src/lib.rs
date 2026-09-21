@@ -226,9 +226,9 @@ pub mod nonce_authority;
 #[cfg(feature = "otel")]
 pub mod otel;
 pub mod profiling;
-pub mod sidecar;
-pub mod sidecar_engine;
-pub mod sidecar_paths;
+pub mod backrun;
+pub mod backrun_engine;
+pub mod connector_index;
 pub mod strategy_host;
 pub mod telemetry;
 

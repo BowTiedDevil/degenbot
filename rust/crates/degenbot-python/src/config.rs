@@ -43,7 +43,7 @@ pub struct RetryPolicyDefaults {
 ///
 /// Built from the process-wide typed config through the SAME
 /// `strategy_readiness` authority the operators' `degenbot strategy` verbs
-/// and the sidecar boot use, so the Python driver shell cannot disagree
+/// and the backrun driver boot use, so the Python driver shell cannot disagree
 /// with the console about what "settled" means.
 #[pyclass(frozen, module = "degenbot._ffi")]
 pub struct StrategyReadinessView {

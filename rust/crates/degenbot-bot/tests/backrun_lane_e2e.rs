@@ -27,7 +27,7 @@ use std::sync::{Arc, OnceLock};
 
 use alloy::primitives::{address, keccak256, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorState;
-use degenbot_bot::sidecar::{Decision, SidecarConfig};
+use degenbot_bot::backrun::{Decision, BackrunConfig};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::backrun_strategy::BackrunStrategy;
@@ -87,8 +87,8 @@ fn trace_sink() -> &'static PathBuf {
     })
 }
 
-fn bid_config() -> (SidecarConfig, PipelineConfig) {
-    let mut cfg = SidecarConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+fn bid_config() -> (BackrunConfig, PipelineConfig) {
+    let mut cfg = BackrunConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
     cfg.bid_mode = true;
     cfg.budget_wei = U256::from(10_000_000u128) * U256::from(10u64).pow(U256::from(18u8));
     cfg.max_bundle_wei = U256::from(1_000_000u128) * U256::from(10u64).pow(U256::from(18u8));
@@ -99,7 +99,7 @@ fn bid_config() -> (SidecarConfig, PipelineConfig) {
         bribe_bips: BRIBE_BIPS,
         wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(
             // Live-scale wallet gas burn so the e2e path exercises the
-            // net-of-gas gate exactly as the sidecar prices it.
+            // net-of-gas gate exactly as the driver prices it.
             600_000_000_000,
         )),
         gas_floor_wei: U256::from(GAS_FLOOR_WEI),
@@ -228,10 +228,10 @@ async fn runtime(
         ids.contains_key(&WETH) && ids.contains_key(&USDC),
         "WETH/USDC joined from the DB"
     );
-    let mut index = degenbot_bot::sidecar_paths::V2ConnectorIndex::load(&db, 1).unwrap();
+    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::load(&db, 1).unwrap();
     index.load_v3(&db, 1).unwrap();
     index.set_ranker(Arc::new(
-        degenbot_bot::sidecar_paths::OnChainLiquidityRanker::new(Arc::clone(provider)),
+        degenbot_bot::connector_index::OnChainLiquidityRanker::new(Arc::clone(provider)),
     ));
     assert!(
         index.edge_by_address(USDC_WETH_V2).is_some(),

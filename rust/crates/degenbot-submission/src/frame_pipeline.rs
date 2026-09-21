@@ -12,7 +12,7 @@
 //!   These caches are process-scoped, exactly like the frame stream they
 //!   serve — a per-frame refill of the token joins would re-pay a DB query
 //!   per pool per frame and forfeit the index's memoized depth rankings.
-//! - **The planning workspace scope** dies per frame: [`SidecarSolver`]
+//! - **The planning workspace scope** dies per frame: [`BackrunSolver`]
 //!   wraps a fresh [`degenbot_bot::bot_core::planning::Workspace`] per
 //!   frame; replayed pool state, declared paths, and workspace pool ids
 //!   never outlive the frame that staged them. Nothing the scope mutates
@@ -50,7 +50,7 @@
 //!    replay handle ([`build_block_handle`]) projects `b_next` as the
 //!    EIP-1559 100%-full-block worst case, `parent_basefee × 12 / 10`; the
 //!    operator's gas budget is denominated at that projected fee and rides
-//!    [`PipelineConfig::gas_floor_wei`]. [`SidecarSolver::evaluate`] gates
+//!    [`PipelineConfig::gas_floor_wei`]. [`BackrunSolver::evaluate`] gates
 //!    on `P`'s rigorous upper bound (the solver's profit-envelope gate)
 //!    BEFORE the bribe: a candidate must clear its gas cost from true
 //!    profit. The residual we keep after the bribe (`P − B`, the 2% of the
@@ -72,9 +72,9 @@ use std::time::Instant;
 
 use alloy::primitives::{address, Address, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorOracle;
-use degenbot_bot::sidecar::{Decision, SidecarConfig};
-use degenbot_bot::sidecar_engine::SidecarSolver;
-use degenbot_bot::sidecar_paths::V2ConnectorIndex;
+use degenbot_bot::backrun::{Decision, BackrunConfig};
+use degenbot_bot::backrun_engine::BackrunSolver;
+use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
@@ -186,7 +186,7 @@ impl PipelineConfig {
 
 /// A bid's wallet economics, carried to the bin's submit path so
 /// `SubmitCandidate` reports gross/net/gas HONESTLY (the struct's own doc
-/// contract; the sidecar used to fill both profit fields with the bid and
+/// contract; the arm used to fill both profit fields with the bid and
 /// a hardcoded 300k gas).
 #[derive(Debug, Clone)]
 pub struct BidEconomics {
@@ -277,7 +277,7 @@ impl FrameArtifacts {
 /// block's env. State overrides are the ZERO set — a foreign frame must
 /// execute against chain state, not the strategy's simulated funding.
 /// `oracle` is the sim DB's membership/observation view — the boot
-/// [`RouteRegistry`](degenbot_bot::bot_core::RouteRegistry) (the sidecar
+/// [`RouteRegistry`](degenbot_bot::bot_core::RouteRegistry) (the driver
 /// carries no engine state, so the divergence observer is inert) or a
 /// state-less [`NoSimAnchor`](degenbot_bot::bot_core::NoSimAnchor) when the
 /// registry load failed; the shared `warm_cache` carries the cross-block
@@ -642,7 +642,7 @@ pub async fn process_frame<S: PendingTxStrategy>(
     ctx: &mut MarketContext,
     provider: &AlloyProvider,
     sim_client: &alloy::rpc::client::RpcClient,
-    sidecar: &SidecarConfig,
+    knobs: &BackrunConfig,
     pl: &PipelineConfig,
     handle: &mut Option<BlockSimHandle<'_>>,
     ev: &BackrunFeedEvent,
@@ -654,7 +654,7 @@ pub async fn process_frame<S: PendingTxStrategy>(
         ctx,
         provider,
         sim_client,
-        sidecar,
+        knobs,
         pl,
         handle,
         ev,
@@ -680,7 +680,7 @@ pub async fn process_frame_with_prefix<S: PendingTxStrategy>(
     ctx: &mut MarketContext,
     provider: &AlloyProvider,
     sim_client: &alloy::rpc::client::RpcClient,
-    sidecar: &SidecarConfig,
+    knobs: &BackrunConfig,
     pl: &PipelineConfig,
     handle: &mut Option<BlockSimHandle<'_>>,
     ev: &BackrunFeedEvent,
@@ -823,7 +823,7 @@ pub async fn process_frame_with_prefix<S: PendingTxStrategy>(
 
     // ── stage: admission (fresh scope; replayed state verbatim) ──────────
     let t = Instant::now();
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     let affected = strategy.admit(
         &*ctx,
         &mut solver,
@@ -894,7 +894,7 @@ pub async fn process_frame_with_prefix<S: PendingTxStrategy>(
 
     // ── stage: decide (strategy-owned; carries the truthful observe) ─────
     let decided = strategy.decide(
-        sidecar,
+        knobs,
         pl,
         &evaluated,
         composed.as_ref(),

@@ -1,4 +1,4 @@
-//! Sidecar connector-solve engine (epic DFYDYI, task B3): the standalone
+//! Backrun connector-solve engine (epic DFYDYI, task B3): the
 //! engine-backed path solver replacing the hand-composed mono-pool probe.
 //!
 //! Solves over a PRIVATE planning [`Workspace`] (the FORK-1 isolation: the
@@ -22,7 +22,7 @@ pub use crate::bot_core::planning::PathReject;
 /// One admitted V2 pool: identity + the LIVE reserves the caller fetched
 /// (the adapter keeps this narrow; reserves come from `fetch_v2_reserves`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SidecarV2Pool {
+pub struct BackrunV2Pool {
     pub address: Address,
     pub token0: Address,
     pub token1: Address,
@@ -36,11 +36,11 @@ pub struct SidecarV2Pool {
 /// declaration, and evaluation delegate to the workspace; the lane owns the
 /// RPC fetch ladders that PRODUCE the explicit state (slot0/tick bootstrap,
 /// live reserves).
-pub struct SidecarSolver {
+pub struct BackrunSolver {
     ws: Workspace,
 }
 
-impl SidecarSolver {
+impl BackrunSolver {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -54,7 +54,7 @@ impl SidecarSolver {
     /// # Errors
     ///
     /// Registration rejections (spec-bound reserve violations).
-    pub fn admit_v2(&mut self, p: &SidecarV2Pool) -> Result<u64, String> {
+    pub fn admit_v2(&mut self, p: &BackrunV2Pool) -> Result<u64, String> {
         let Ok(reserve0) = p.reserve0.try_into() else {
             return Err(format!("reserve0 out of uint112: {}", p.reserve0));
         };
@@ -83,10 +83,10 @@ impl SidecarSolver {
     /// Hops referencing unknown pools make the path invalid for this frame
     /// (dropped loudly at resolve, not admitted lazily here).
     /// Declare a path from executable hop refs (the declare side of
-    /// [`SidecarHopRef`] -- cycle order is hop order; the per-hop family
+    /// [`BackrunHopRef`] -- cycle order is hop order; the per-hop family
     /// carries the solver `HopType` so V2/V3 mixes resolve in one cycle).
     #[must_use]
-    pub fn declare_hops(&mut self, hops: &[SidecarHopRef]) -> usize {
+    pub fn declare_hops(&mut self, hops: &[BackrunHopRef]) -> usize {
         let refs: Vec<PlanningHop> = hops
             .iter()
             .map(|h| PlanningHop {
@@ -113,7 +113,7 @@ impl SidecarSolver {
         self.ws.evaluate(path_idx, min_profit)
     }
 
-    /// The typed form of [`SidecarSolver::evaluate`]: the reject cause
+    /// The typed form of [`BackrunSolver::evaluate`]: the reject cause
     /// survives the `Option` collapse for the per-chain trace.
     ///
     /// # Errors
@@ -140,7 +140,7 @@ impl SidecarSolver {
     }
 }
 
-impl Default for SidecarSolver {
+impl Default for BackrunSolver {
     fn default() -> Self {
         Self::new()
     }
@@ -150,7 +150,7 @@ impl Default for SidecarSolver {
 /// the declared solver key (`pool_id`) and the composer identity (`pool`)
 /// ride together so a declared cycle and its executable form cannot drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SidecarHopRef {
+pub struct BackrunHopRef {
     pub pool_id: u64,
     pub pool: Address,
     pub token0: Address,
@@ -185,7 +185,7 @@ impl LaneFamily {
 /// sim need (epic DFYDYI B4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaneCandidate {
-    pub hops: Vec<SidecarHopRef>,
+    pub hops: Vec<BackrunHopRef>,
     pub optimal_input: u128,
     pub hop_outputs: Vec<u128>,
     pub consumed_inputs: Vec<u128>,
@@ -193,7 +193,7 @@ pub struct LaneCandidate {
     pub profit: u128,
 }
 
-impl SidecarSolver {
+impl BackrunSolver {
     /// Admit a V3 pool with EXPLICIT journal-provided state — the frame
     /// pipeline's no-RPC admission: post-target `slot0`/`liquidity` + the
     /// replayed per-tick words land here verbatim (`Sparse` coverage; the
@@ -573,7 +573,7 @@ mod tests {
         let token0 = TOK;
         let candidate = LaneCandidate {
             hops: vec![
-                SidecarHopRef {
+                BackrunHopRef {
                     pool_id: 1,
                     pool: P,
                     token0,
@@ -581,7 +581,7 @@ mod tests {
                     zfo: false,
                     family: LaneFamily::V2,
                 },
-                SidecarHopRef {
+                BackrunHopRef {
                     pool_id: 2,
                     pool: Q,
                     token0,
@@ -607,7 +607,7 @@ mod tests {
     fn candidate_rejects_misaligned_hops() {
         let candidate = LaneCandidate {
             hops: vec![
-                SidecarHopRef {
+                BackrunHopRef {
                     pool_id: 1,
                     pool: P,
                     token0: TOK,
@@ -615,7 +615,7 @@ mod tests {
                     zfo: false,
                     family: LaneFamily::V2,
                 },
-                SidecarHopRef {
+                BackrunHopRef {
                     pool_id: 2,
                     pool: Q,
                     token0: TOK,
@@ -640,7 +640,7 @@ mod tests {
     fn compose_reject_names_amount_overflow() {
         let candidate = LaneCandidate {
             hops: vec![
-                SidecarHopRef {
+                BackrunHopRef {
                     pool_id: 1,
                     pool: P,
                     token0: TOK,
@@ -648,7 +648,7 @@ mod tests {
                     zfo: false,
                     family: LaneFamily::V2,
                 },
-                SidecarHopRef {
+                BackrunHopRef {
                     pool_id: 2,
                     pool: Q,
                     token0: TOK,

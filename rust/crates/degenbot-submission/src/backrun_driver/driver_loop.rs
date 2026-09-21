@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_bot::sidecar::{gate_mined_target, Decision, SidecarConfig};
+use degenbot_bot::backrun::{gate_mined_target, Decision, BackrunConfig};
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
@@ -70,11 +70,11 @@ const HEAD_WATCH_STALE: Duration = Duration::from_secs(30);
 /// The fallback head-poll cadence (the pre-subscription loop's tick).
 const HEAD_POLL_TICK: Duration = Duration::from_millis(200);
 
-struct SidecarProbe {
+struct BackrunProbe {
     provider: Arc<AlloyProvider>,
 }
 
-impl ReceiptProbe for SidecarProbe {
+impl ReceiptProbe for BackrunProbe {
     fn receipt_found(
         &self,
         tx_hash: alloy::primitives::B256,
@@ -249,7 +249,7 @@ pub(super) async fn run_frame(
     strategy: &mut BackrunStrategy,
     provider: &Arc<AlloyProvider>,
     sim_client: &alloy::rpc::client::RpcClient,
-    cfg: &SidecarConfig,
+    cfg: &BackrunConfig,
     pl: &PipelineConfig,
     handle: &mut Option<BlockSimHandle<'_>>,
     head: u64,
@@ -395,7 +395,7 @@ pub(super) async fn run_frame(
     // failure carries no positive evidence, so it never kills the bid; the
     // MEVBlocker bundle's block anchoring is the final backstop.
     let target_mined = if matches!(artifacts.decision, Decision::Bid { .. }) {
-        SidecarProbe {
+        BackrunProbe {
             provider: Arc::clone(provider),
         }
         .receipt_found(ev.hash)
@@ -475,7 +475,7 @@ pub(super) async fn run_frame(
                 dispatcher,
                 provider,
                 s,
-                Arc::new(SidecarProbe {
+                Arc::new(BackrunProbe {
                     provider: Arc::clone(provider),
                 }),
                 nonce_lane,
@@ -845,7 +845,7 @@ async fn classify_consumption(
 /// corrupt lines are all non-fatal.
 /// Resolve the quarantine journal path: the lane namespace when this driver
 /// is hosted (another strategy may share the process), the process-global
-/// state root for the standalone single-strategy sidecar.
+/// state root for a standalone single-strategy boot.
 pub(super) fn quarantine_journal_path(namespace_root: Option<&Path>) -> std::io::Result<PathBuf> {
     match namespace_root {
         Some(root) => Ok(root.join(gap_quarantine_journal::JOURNAL_FILE_NAME)),
@@ -1039,7 +1039,7 @@ impl LoopShared {
 /// The loop future the handle drives. Boxed so the handle owns it without the
 /// bin naming the driver's generic stack. Deliberately NOT `Send`: the loop's
 /// replay stack holds `Rc`-backed buffers, so a host drives it on a dedicated
-/// single-thread runtime (the standalone sidecar polls it inline).
+/// single-thread runtime (a standalone boot polls it inline).
 type RunFuture = Pin<Box<dyn Future<Output = ()> + 'static>>;
 
 /// A started driver loop. [`wait`](Self::wait) drives it to completion;
@@ -1112,7 +1112,7 @@ impl BackrunDriver {
     /// address, or a failed head fetch), preserving the single-driver bin's
     /// loud-failure behavior.
     pub async fn start(
-        cfg: SidecarConfig,
+        cfg: BackrunConfig,
         hub: Arc<Hub>,
         route_registry: Option<Arc<RouteRegistry>>,
         ctx: BackrunContext,
@@ -1230,7 +1230,7 @@ impl BackrunDriver {
             bid_mode = cfg.bid_mode_legal(),
             budget = %cfg.budget_wei,
             stop_file = %cfg.stop_file.display(),
-            "sidecar starting"
+            "backrun driver starting"
         );
 
         let boot = LoopBoot {
@@ -1259,7 +1259,7 @@ impl BackrunDriver {
 /// The driver loop. Everything here is loop-local: the replay handle borrows
 /// only the loop's own runtime, never a host handle.
 #[expect(clippy::too_many_lines, reason = "the driver loop reads top-to-bottom")]
-async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<LoopShared>) {
+async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<LoopShared>) {
     let LoopBoot {
         provider,
         mut runtime,
@@ -1279,7 +1279,7 @@ async fn drive(cfg: SidecarConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
     // advances (the scratch stack pins `BlockId::Number(head)` and frames
     // run in the NEXT block's env). The sim DB's membership view is the boot
     // registry (or a state-less no-op when the discovery lane is shut); the
-    // sidecar carries no engine state, so the divergence observer is inert.
+    // driver carries no engine state, so the divergence observer is inert.
     // The shared warm cache carries the cross-block bytecode/account caches
     // across rebuilds.
     let oracle_holder = runtime.registry.clone();

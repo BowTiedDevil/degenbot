@@ -990,7 +990,7 @@ mod tests {
     fn a_host_minted_hub_wires_one_driver() {
         use crate::bot_core::route_registry::RouteRegistry;
         use crate::nonce_authority::NonceAuthority;
-        use crate::sidecar_paths::V2ConnectorIndex;
+        use crate::connector_index::V2ConnectorIndex;
         use crate::strategy_host::StrategyHost;
 
         let (host, attached) = StrategyHost::mint(

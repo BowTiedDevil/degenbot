@@ -111,7 +111,7 @@ pub use submit::{
 /// The configured durable-state root, or `None` when it cannot be resolved.
 ///
 /// A hosted strategy scopes its lane artifacts under this root; the standalone
-/// single-strategy sidecar ignores it and keeps its process-global paths.
+/// single-strategy boot ignores it and keeps its process-global paths.
 #[must_use]
 pub fn resolve_state_root() -> Option<std::path::PathBuf> {
     degenbot_runs::resolve_state_root().ok()

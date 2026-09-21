@@ -10,8 +10,8 @@
 
 use alloy::primitives::{address, aliases::U112, Address};
 
-use degenbot_bot::sidecar_engine::SidecarSolver;
-use degenbot_bot::sidecar_paths::{V2ConnectorIndex, V2Edge};
+use degenbot_bot::backrun_engine::BackrunSolver;
+use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout::V2ReservesParts;
 use degenbot_simulation::sim::evm::journal_pools::{
@@ -60,7 +60,7 @@ fn mixed_frame_traces_the_v4_half_instead_of_dropping_it_silently() {
     let _ = degenbot_config::holder::install(std::sync::Arc::new(boot));
 
     let rt = runtime_fixture();
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     let states = vec![
         PoolPostState {
             address: P,

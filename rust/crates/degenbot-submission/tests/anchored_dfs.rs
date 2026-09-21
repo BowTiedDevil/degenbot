@@ -13,10 +13,10 @@
 
 #![expect(clippy::unwrap_used)]
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use alloy::primitives::Address;
-use degenbot_bot::sidecar_paths::{V2ConnectorIndex, V2Edge, V3Edge};
+use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::PoolKind;
 use degenbot_submission::anchored_dfs::{
     resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, DiscoveryBudget, UnsupportedHop,
@@ -258,15 +258,29 @@ proptest! {
     }
 }
 
-// ─────────────── 4. cancel budget on a hostile fixture ───────────────
+// ─────────────── 4. discovery budget on a hostile fixture ───────────────
+//
+// The budget contract is covered as three deterministic assertions instead of
+// one wall-clock race. A fixed slice against a fixed fixture is a lottery:
+// the same 1ms slice that passes in isolation failed under plain
+// parallel-suite CPU contention AND under llvm-cov loop instrumentation,
+// because first-yield latency and slice cost both float with machine speed.
+//
+//   1. expiry SEMANTICS (monotone, forward-only) — budget-type unit test.
+//   2. a SPENT budget stops the frame at the entry check, before any walker
+//      construction — the no-hang guarantee in deterministic form.
+//   3. the PARTIAL-RESULT shape a mid-walk expiry produces (walker halt +
+//      sound prefix) — deterministic via the cap stop on the same fixture.
+// The one link that stays clock-driven in production — the deadline passing
+// between two yields arming the cancel flag — composes 1 with
+// `degenbot-pathfinding`'s own deterministic cancellation tests
+// (test_borrowed_finder_cancel_mid_stream), so no assertion here depends on
+// how fast the suite runs.
 
-/// A dense clique graph whose full depth-2 enumeration runs well past the
-/// budget: the walker must stop promptly (no hang), return only sound
-/// cycles, and report the expiry.
-#[test]
-fn cancel_budget_fires_on_hostile_fixture() {
+fn hostile_clique_graph() -> AnchoredGraph {
     let mut index = V2ConnectorIndex::default();
-    // 400-token clique, 4 parallel pools per pair.
+    // 400-token clique, 4 parallel pools per pair: deeper than any 3-hop cap
+    // can enumerate, so both the cap and the budget stops are reachable.
     let mut pool: u64 = 5000;
     for a in 0u64..400 {
         for b in (a + 1)..400 {
@@ -281,26 +295,55 @@ fn cancel_budget_fires_on_hostile_fixture() {
             }
         }
     }
-    let graph = AnchoredGraph::from_connector_index(&index);
+    AnchoredGraph::from_connector_index(&index)
+}
+
+/// Expiry is a monotone predicate against a construction-time deadline: never
+/// true before it, never false after it. The forward-flip case sleeps past
+/// the deadline, which a monotonic clock guarantees — no assumption about how
+/// fast this test itself runs.
+#[test]
+fn discovery_budget_expires_only_forward_in_time() {
+    assert!(!DiscoveryBudget::after(Duration::from_secs(3600)).expired());
+    assert!(DiscoveryBudget::after(Duration::ZERO).expired());
+
     let budget = DiscoveryBudget::after(Duration::from_millis(1));
-    let started = Instant::now();
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(budget.expired());
+}
+
+/// A budget spent on entry stops the walk at the loop's expiry check, before
+/// any finder construction: no cycles, immediate return. This is the
+/// frame-loop hazard (a hostile anchor must never hang the caller past its
+/// slice) in its deterministic degenerate form.
+#[test]
+fn spent_budget_yields_nothing_without_walking() {
+    let graph = hostile_clique_graph();
+    let budget = DiscoveryBudget::after(Duration::ZERO);
     let cycles = graph.cycles_through_pool(anchor(5000, 0, 1, PoolKind::V2), &budget, usize::MAX);
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed < Duration::from_secs(2),
-        "the budget must stop the walker promptly, took {elapsed:?}"
-    );
-    assert!(
-        !cycles.is_empty(),
-        "the first yields land well inside the slice"
-    );
-    assert!(
-        budget.expired(),
-        "a hostile fixture must exhaust the 1ms slice"
+    assert!(budget.expired(), "the spent budget must report expiry");
+    assert!(cycles.is_empty(), "a spent budget must not produce cycles");
+}
+
+/// The partial-result shape a mid-walk expiry produces — walker halt plus a
+/// sound prefix — pinned on the cap stop, which is deterministic by
+/// construction instead of pinned to the clock: exactly `cap` cycles, every
+/// one crossing the anchor, none deeper than 3 hops.
+#[test]
+fn capped_hostile_walk_returns_sound_prefix() {
+    let graph = hostile_clique_graph();
+    let budget = DiscoveryBudget::after(Duration::from_secs(3600));
+    let cap = 64;
+    let cycles = graph.cycles_through_pool(anchor(5000, 0, 1, PoolKind::V2), &budget, cap);
+    assert!(!budget.expired(), "the far-future budget must stay unexpired");
+    assert_eq!(
+        cycles.len(),
+        cap,
+        "the cap must stop the walk deterministically"
     );
     for c in &cycles {
         let ids = cycle_pool_ids(c);
-        assert!(ids.contains(&5000), "soundness holds under cancellation");
+        assert!(ids.contains(&5000), "soundness under the cap: every cycle crosses the anchor");
         assert!(ids.len() <= 3);
     }
 }

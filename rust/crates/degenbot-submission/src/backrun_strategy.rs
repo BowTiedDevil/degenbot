@@ -9,12 +9,12 @@
 use std::time::Duration;
 
 use alloy::primitives::{address, Address, U256};
-use degenbot_bot::sidecar::{decide, Decision, SidecarConfig};
-use degenbot_bot::sidecar_engine::{
-    compose_candidate, LaneCandidate, LaneFamily, PathReject, SidecarHopRef, SidecarSolver,
-    SidecarV2Pool,
+use degenbot_bot::backrun::{decide, Decision, BackrunConfig};
+use degenbot_bot::backrun_engine::{
+    compose_candidate, LaneCandidate, LaneFamily, PathReject, BackrunHopRef, BackrunSolver,
+    BackrunV2Pool,
 };
-use degenbot_bot::sidecar_paths::V2ConnectorIndex;
+use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_decoders::target_class::TargetClass;
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::v3_state::ClSlotLayout;
@@ -163,7 +163,7 @@ fn quote_orientations(rt: &MarketContext, token0: Address, token1: Address) -> V
 #[must_use]
 pub fn admit_extracted(
     rt: &MarketContext,
-    solver: &mut SidecarSolver,
+    solver: &mut BackrunSolver,
     states: &[PoolPostState],
     seed_block: u64,
     trace_tx: &str,
@@ -210,7 +210,7 @@ pub fn admit_extracted(
                     u112_to_u128(reserves.reserve0),
                     u112_to_u128(reserves.reserve1),
                 );
-                let Ok(p_id) = solver.admit_v2(&SidecarV2Pool {
+                let Ok(p_id) = solver.admit_v2(&BackrunV2Pool {
                     address: st.address,
                     token0,
                     token1,
@@ -493,7 +493,7 @@ fn floor_div_i64(a: i64, b: i64) -> i64 {
 pub struct ChainOutcome {
     /// The hop pool addresses in traversal order.
     pub pools: Vec<Address>,
-    /// Whether [`SidecarSolver::evaluate_verdict`] returned `Ok`.
+    /// Whether [`BackrunSolver::evaluate_verdict`] returned `Ok`.
     pub evaluated: bool,
     /// The solved profit in wei when evaluated.
     pub profit_wei: Option<u128>,
@@ -523,8 +523,8 @@ pub struct SolveStats {
 /// selection across fans, quotes, and walker chains still compares wei
 /// downstream — this function only bundles the walker surface's counts.
 pub fn solve_dfs_chains(
-    solver: &mut SidecarSolver,
-    chains: &[Vec<SidecarHopRef>],
+    solver: &mut BackrunSolver,
+    chains: &[Vec<BackrunHopRef>],
     gas_floor_wei: U256,
 ) -> SolveStats {
     let mut stats = SolveStats::default();
@@ -576,7 +576,7 @@ pub fn solve_dfs_chains(
 /// (zero reserves, incomplete slot0/liquidity) is skipped, never guessed.
 async fn admit_hop_pool(
     rt: &MarketContext,
-    solver: &mut SidecarSolver,
+    solver: &mut BackrunSolver,
     scratch: &mut ScratchEvm<ScratchDb<'_>>,
     provider: &AlloyProvider,
     hop: &ResolvedHop,
@@ -619,7 +619,7 @@ async fn admit_hop_pool(
                 trace_admit_fail(trace_tx, address, "token-join", "V2 token id unresolved");
                 return None;
             };
-            match solver.admit_v2(&SidecarV2Pool {
+            match solver.admit_v2(&BackrunV2Pool {
                 address: e.address,
                 token0,
                 token1,
@@ -713,11 +713,11 @@ pub fn n_hop_refs(
     first_out_id: u64,
     first_out_addr: Address,
     mids: &[(u64, Address, ResolvedHop, u64)],
-) -> Option<Vec<SidecarHopRef>> {
+) -> Option<Vec<BackrunHopRef>> {
     if mids.is_empty() {
         return None;
     }
-    let anchor = SidecarHopRef {
+    let anchor = BackrunHopRef {
         pool_id: a.workspace_pool_id,
         pool: a.address,
         token0: a.token0,
@@ -743,7 +743,7 @@ pub fn n_hop_refs(
         } else {
             (*out_addr, in_addr)
         };
-        out.push(SidecarHopRef {
+        out.push(BackrunHopRef {
             pool_id: *ws_id,
             pool: *h.address(),
             token0: t0,
@@ -772,7 +772,7 @@ pub fn n_hop_refs(
 #[derive(Debug, Default)]
 struct DfsWalk {
     admitted: usize,
-    chains: Vec<Vec<SidecarHopRef>>,
+    chains: Vec<Vec<BackrunHopRef>>,
     unsupported_hop: usize,
 }
 
@@ -791,7 +791,7 @@ async fn dfs_cycle_chains(
     wq: &AffectedQuote,
     cycles: &[DfsCycle],
     scratch: &mut ScratchEvm<ScratchDb<'_>>,
-    solver: &mut SidecarSolver,
+    solver: &mut BackrunSolver,
     provider: &AlloyProvider,
     head: u64,
     trace_tx: &str,
@@ -897,7 +897,7 @@ pub type BackrunAffected = Vec<AffectedPool>;
 /// The discovery output for one frame: the WETH-closing chains to solve, plus
 /// whether a supported-quote fan was dropped for lack of a WETH lane.
 pub struct BackrunIntents {
-    pub chains: Vec<Vec<SidecarHopRef>>,
+    pub chains: Vec<Vec<BackrunHopRef>>,
     pub non_base_quote_dropped: bool,
     /// `true` when the context carries no discovery graph or WETH join: the
     /// frame ran no discovery at all and is observed with `no_candidate`.
@@ -935,7 +935,7 @@ impl PendingTxStrategy for BackrunStrategy {
     fn admit(
         &mut self,
         ctx: &MarketContext,
-        workspace: &mut SidecarSolver,
+        workspace: &mut BackrunSolver,
         states: &[PoolPostState],
         seed_block: u64,
         trace_tx: &str,
@@ -947,7 +947,7 @@ impl PendingTxStrategy for BackrunStrategy {
     async fn discover(
         &mut self,
         ctx: &MarketContext,
-        workspace: &mut SidecarSolver,
+        workspace: &mut BackrunSolver,
         scratch: &mut ScratchEvm<ScratchDb<'_>>,
         provider: &AlloyProvider,
         affected: &Self::Affected,
@@ -964,7 +964,7 @@ impl PendingTxStrategy for BackrunStrategy {
         // quote composes no candidate. The anchored walker owns discovery
         // entirely (2-hop parity and deep cycles both land in the DFS lane).
         let mut non_base_quote_dropped = false;
-        let mut dfs_chains: Vec<Vec<SidecarHopRef>> = Vec::new();
+        let mut dfs_chains: Vec<Vec<BackrunHopRef>> = Vec::new();
         let mut dfs_cycles = 0usize;
         let mut connectors_seen = 0usize;
         let mut unsupported_hop = 0usize;
@@ -1020,7 +1020,7 @@ impl PendingTxStrategy for BackrunStrategy {
 
     fn evaluate(
         &mut self,
-        workspace: &mut SidecarSolver,
+        workspace: &mut BackrunSolver,
         intents: Self::Intents,
         pl: &PipelineConfig,
         trace_tx: &str,
@@ -1107,7 +1107,7 @@ impl PendingTxStrategy for BackrunStrategy {
 
     fn decide(
         &self,
-        sidecar: &SidecarConfig,
+        knobs: &BackrunConfig,
         pl: &PipelineConfig,
         evaluated: &Self::Evaluated,
         composed: Option<&ComposedIntent>,
@@ -1127,7 +1127,7 @@ impl PendingTxStrategy for BackrunStrategy {
                     // Historical mode: the live bundle sim is skipped. The
                     // wallet gate still runs: whether the frame WOULD have
                     // bid is part of the historical answer.
-                    let cap = u128::try_from(sidecar.max_bundle_wei).unwrap_or(u128::MAX);
+                    let cap = u128::try_from(knobs.max_bundle_wei).unwrap_or(u128::MAX);
                     if net_bid(best.profit, pl.wallet_gas_cost(), pl.bribe_bips, cap).is_none() {
                         net_gated = true;
                     }
@@ -1136,7 +1136,7 @@ impl PendingTxStrategy for BackrunStrategy {
                     // The wallet economics gate: the wallet funds only the
                     // gas (the bribe is drawn from flash proceeds on-chain).
                     let wallet_gas_cost = pl.wallet_gas_cost();
-                    let bid_cap_wei = u128::try_from(sidecar.max_bundle_wei).unwrap_or(u128::MAX);
+                    let bid_cap_wei = u128::try_from(knobs.max_bundle_wei).unwrap_or(u128::MAX);
                     if let Some(nb) =
                         net_bid(best.profit, wallet_gas_cost, pl.bribe_bips, bid_cap_wei)
                     {
@@ -1189,8 +1189,8 @@ impl PendingTxStrategy for BackrunStrategy {
         // through its actionable arm without consulting degenbot_decoders.
         let class = TargetClass::Swap(Vec::new());
         let decision = decide(
-            sidecar,
-            sidecar.stop_file.exists(),
+            knobs,
+            knobs.stop_file.exists(),
             &class,
             composed_any,
             requested_bid,

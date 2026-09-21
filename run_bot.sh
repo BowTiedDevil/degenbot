@@ -13,14 +13,16 @@
 #   --rust                the pure-Rust parity driver
 #                         (rust/examples/settlement_bot), built on demand
 #
-#   --strategy NAME       strategy arm selector (settlement|backrun). Omitted
-#                         means settlement: the launcher then behaves exactly as
-#                         before and exports nothing. `settlement` exports the
-#                         typed selector key DEGENBOT_STRATEGY_NAME (inert until
-#                         the arm readers migrate onto it, ADR-055). `backrun`
-#                         has no runner in this launcher — backrun runs via the
-#                         sidecar — so it refuses with a pointer instead of
-#                         pretending. Ignored by stop/status.
+#   --strategy NAME       Accepted for muscle-memory (settlement|backrun),
+#                         but activation is NOT a launcher concern anymore:
+#                         the per-facet `active` keys in the holder config
+#                         (`degenbot strategy activate <facet> ...`) own it
+#                         (ADR-055 cutover; the retired single-arm selector
+#                         key is gone from the schema). `settlement` is a
+#                         no-op; `backrun` likewise — the backrun arm runs
+#                         as a hosted driver in the SAME process this
+#                         launcher starts when its facet is active. Ignored
+#                         by stop/status.
 #
 #   ./run_bot.sh            # foreground (output -> console + log)
 #   ./run_bot.sh start      # detached (setsid), pid -> logs/bot_run.pid
@@ -254,20 +256,16 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# Strategy selector (ADR-055): additive and inert by default. An explicit
-# `settlement` exports the typed selector key (a valid enum value the config
-# loader accepts; no arm reader consumes it yet). `backrun` has no in-launcher
-# runner, so it refuses with a pointer rather than pretending; stop/status
-# ignore the selector entirely so a running bot stays stoppable.
+# Strategy selector (ADR-055): accepted for muscle-memory only; activation
+# lives in the holder config. Both spellings are no-ops here — the backrun
+# arm runs as a hosted driver in the process this launcher starts. stop and
+# status ignore the selector entirely so a running bot stays stoppable.
 case "${ACTION:-foreground}" in
     start|foreground|print-cmd)
         case "$STRATEGY" in
             "") : ;;
-            settlement) export DEGENBOT_STRATEGY_NAME=settlement ;;
-            backrun)
-                echo "error: --strategy backrun has no runner in this launcher; backrun runs via the sidecar (rust/crates/degenbot-submission/src/bin/backrun_sidecar.rs) — see docs/sidecar_runbook.md" >&2
-                exit 2
-                ;;
+            settlement) : ;;
+            backrun) : ;;
         esac
         ;;
 esac
@@ -452,10 +450,7 @@ foreground() {
 print_cmd() {
     local line ws
     echo "[runner] driver=$DRIVER"
-    echo "[runner] strategy=${STRATEGY:-settlement(default; no export)}"
-    if [ "$STRATEGY" = settlement ]; then
-        echo "[runner] export DEGENBOT_STRATEGY_NAME=settlement"
-    fi
+    echo "[runner] strategy=${STRATEGY:-settlement} (activation is owned by the holder config)"
     if [ "$DRIVER" = rust ]; then
         echo "[runner] rust-profile=$RUST_PROFILE"
         echo "[runner] rust-binary=$RUST_BIN"

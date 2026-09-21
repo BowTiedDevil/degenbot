@@ -20,7 +20,7 @@
 //!
 //! The membership the `basic_ref` tripwire asks (is this a tracked pool?) is
 //! delegated to a [`SimAnchorOracle`] — the boot-snapshot `RouteRegistry` in
-//! the sidecar, the engine's `SimAnchorState` snapshot in the Python path.
+//! the hosted backrun boot, the engine's `SimAnchorState` snapshot in the Python path.
 //!
 //! The wrapper persists because the live `BlockSimHandle` chain
 //! (`simulator.rs`) references it as the `CacheDB` backing; collapsing it to
@@ -365,7 +365,7 @@ mod tests {
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U256};
     use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams, RouteRegistry, SimAnchorState};
-    use degenbot_bot::sidecar_paths::{V2ConnectorIndex, V2Edge};
+    use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
     use degenbot_uniswap::dex_identity::DexVariant;
     use revm::bytecode::Bytecode;
     use revm::primitives::B256;

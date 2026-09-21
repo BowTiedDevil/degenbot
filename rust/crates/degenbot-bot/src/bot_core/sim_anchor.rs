@@ -19,8 +19,9 @@
 //! of `probe_tracked_storage_slot`. So the words stay — but the sim DB no
 //! longer depends on this concrete type: it takes a [`SimAnchorOracle`].
 //! Pool membership (the `basic_ref` code-less tripwire's question) is answered
-//! by the boot-snapshot [`RouteRegistry`](super::RouteRegistry) in the sidecar,
-//! and by this snapshot in the Python engine (which has no connector index).
+//! by the boot-snapshot [`RouteRegistry`](super::RouteRegistry) in the hosted
+//! backrun boot, and by this snapshot in the Python engine (which has no
+//! connector index).
 //!
 //! What the sim consults through [`super::BotState`] (the complete surface —
 //! verified by the ULUWNI audit):
@@ -59,7 +60,7 @@ pub trait SimAnchorOracle: Send + Sync {
     /// The on-chain-packed engine word for a tracked scalar slot, if this view
     /// carries state. State-less views (the registry) return `None`, leaving
     /// the divergence observer inert — the same behavior as the retired empty
-    /// sidecar anchor.
+    /// empty anchor.
     fn probe_tracked_storage_slot(
         &self,
         address: Address,
@@ -71,7 +72,7 @@ pub trait SimAnchorOracle: Send + Sync {
 }
 
 /// The state-less oracle: no membership, no words. Used by a host whose boot
-/// registry load failed (the sidecar's discovery lane disabled).
+/// registry load failed (the discovery lane disabled).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoSimAnchor;
 
@@ -147,7 +148,7 @@ impl SimAnchorOracle for SimAnchorState {
 mod tests {
     use super::*;
     use crate::bot_core::{RegisterV2PoolParams, RegisterV3PoolParams, RouteRegistry};
-    use crate::sidecar_paths::{V2ConnectorIndex, V2Edge, V3Edge};
+    use crate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
     use alloy::primitives::aliases::U112;
     use alloy::primitives::Address;
     use degenbot_uniswap::dex_identity::DexVariant;

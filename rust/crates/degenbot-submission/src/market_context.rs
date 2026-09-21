@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use alloy::primitives::Address;
 use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_bot::sidecar_paths::V2ConnectorIndex;
+use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_simulation::WarmCodeCacheInner;
 use parking_lot::RwLock;

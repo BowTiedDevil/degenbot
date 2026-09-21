@@ -10,7 +10,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use alloy::primitives::{address, aliases::U112, Address, U256};
-use degenbot_bot::sidecar_engine::{LaneFamily, SidecarHopRef, SidecarSolver, SidecarV2Pool};
+use degenbot_bot::backrun_engine::{LaneFamily, BackrunHopRef, BackrunSolver, BackrunV2Pool};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout;
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
@@ -66,14 +66,14 @@ fn runtime_fixture() -> (MarketContext, u64, u64) {
     let weth_id = db
         .get_or_create_erc20_token(1, &WETH.to_checksum(None), None, None, None)
         .unwrap();
-    let mut index = degenbot_bot::sidecar_paths::V2ConnectorIndex::default();
-    index.push_edge(degenbot_bot::sidecar_paths::V2Edge {
+    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::default();
+    index.push_edge(degenbot_bot::connector_index::V2Edge {
         pool_id: 101,
         token0_id: u64::try_from(tok_id).unwrap(),
         token1_id: u64::try_from(weth_id).unwrap(),
         address: P,
     });
-    index.push_edge(degenbot_bot::sidecar_paths::V2Edge {
+    index.push_edge(degenbot_bot::connector_index::V2Edge {
         pool_id: 102,
         token0_id: u64::try_from(tok_id).unwrap(),
         token1_id: u64::try_from(weth_id).unwrap(),
@@ -142,7 +142,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     assert_eq!(reserves.reserve1, U112::from(1_050u64), "WETH side grew");
 
     // admit into THIS frame's fresh workspace scope.
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture", None);
     assert_eq!(affected.len(), 1, "P admits and trades WETH");
     assert_eq!(affected[0].address, P);
@@ -152,7 +152,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     // shape is unchanged; the discovery traversal itself is exercised in the
     // live e2e).
     let q_id = solver
-        .admit_v2(&SidecarV2Pool {
+        .admit_v2(&BackrunV2Pool {
             address: Q,
             token0: affected[0].token0,
             token1: affected[0].token1,
@@ -166,7 +166,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     // consumes WETH, mid consumes TOK) — the 2-hop walker output verbatim.
     let (t0, t1) = (affected[0].token0, affected[0].token1);
     let tok = if t0 == WETH { t1 } else { t0 };
-    let anchor_consuming_weth = SidecarHopRef {
+    let anchor_consuming_weth = BackrunHopRef {
         pool_id: affected[0].workspace_pool_id,
         pool: P,
         token0: t0,
@@ -174,7 +174,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
         zfo: t0 == WETH,
         family: LaneFamily::V2,
     };
-    let mid_consuming_tok = SidecarHopRef {
+    let mid_consuming_tok = BackrunHopRef {
         pool_id: q_id,
         pool: Q,
         token0: t0,
@@ -182,7 +182,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
         zfo: tok == t0,
         family: LaneFamily::V2,
     };
-    let mid_consuming_weth = SidecarHopRef {
+    let mid_consuming_weth = BackrunHopRef {
         pool_id: q_id,
         pool: Q,
         token0: t0,
@@ -190,7 +190,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
         zfo: t0 == WETH,
         family: LaneFamily::V2,
     };
-    let anchor_consuming_tok = SidecarHopRef {
+    let anchor_consuming_tok = BackrunHopRef {
         pool_id: affected[0].workspace_pool_id,
         pool: P,
         token0: t0,
@@ -225,7 +225,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     );
 
     // compose: the executable artifact builds from the solved hops.
-    let cd = degenbot_bot::sidecar_engine::build_candidate_calldata(
+    let cd = degenbot_bot::backrun_engine::build_candidate_calldata(
         &best,
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         WETH,
@@ -295,7 +295,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
         u64::try_from(weth_id).unwrap(),
         u64::try_from(usdc_id).unwrap(),
     );
-    let mut index = degenbot_bot::sidecar_paths::V2ConnectorIndex::default();
+    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::default();
     // P2 + Q2 trade (TOK, USDC); the normalizer edges trade (USDC, WETH) so
     // the quote actually connects back to the base quote in the index.
     for (pool_id, t0, t1, addr) in [
@@ -303,7 +303,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
         (104u64, tok_id, usdc_id, Q),
         (105u64, usdc_id, weth_id, P),
     ] {
-        index.push_edge(degenbot_bot::sidecar_paths::V2Edge {
+        index.push_edge(degenbot_bot::connector_index::V2Edge {
             pool_id,
             token0_id: t0,
             token1_id: t1,
@@ -326,7 +326,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
         &descriptors,
     );
     assert_eq!(extracted.len(), 1);
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture", None);
     // The WETH-only admission cut this frame short: `affected` was empty, so
     // no quote-land discovery could ever start for a USDC-quoted pair.
@@ -377,7 +377,7 @@ fn best_chain_profit(chains: &[(u128, u128)], max_in: u128) -> (u128, u128) {
 /// Admit an abstract-units V2 fixture pool (canonical token order by
 /// address, which the fixture constants already are).
 fn admitted_pair(
-    solver: &mut SidecarSolver,
+    solver: &mut BackrunSolver,
     addr: Address,
     token0: Address,
     token1: Address,
@@ -385,7 +385,7 @@ fn admitted_pair(
     r1: u128,
 ) -> u64 {
     solver
-        .admit_v2(&SidecarV2Pool {
+        .admit_v2(&BackrunV2Pool {
             address: addr,
             token0,
             token1,
@@ -432,7 +432,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     use alloy::primitives::address;
     use alloy::providers::ProviderBuilder;
     use degenbot_bot::bot_core::SimAnchorState;
-    use degenbot_bot::sidecar::{Decision, SidecarConfig};
+    use degenbot_bot::backrun::{Decision, BackrunConfig};
     use degenbot_submission::backrun_strategy::BackrunStrategy;
     use degenbot_submission::frame_pipeline::{
         build_block_handle, load_fixture_frames, process_frame, MarketContext, PipelineConfig,
@@ -465,9 +465,9 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
             .expect("live replay handle builds"),
     );
 
-    let mut sidecar =
-        SidecarConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
-    sidecar.stop_file = PathBuf::from("/nonexistent-wkpzqk");
+    let mut knobs =
+        BackrunConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+    knobs.stop_file = PathBuf::from("/nonexistent-wkpzqk");
     let pl = PipelineConfig {
         exec: address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         owner: address!("0x5c603b8a137a40426e0ddfa981ec10c245af080e"),
@@ -505,7 +505,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
             &mut runtime,
             &provider,
             &sim_client,
-            &sidecar,
+            &knobs,
             &pl,
             &mut handle,
             &frame,
@@ -574,7 +574,7 @@ const C2: Address = address!("000000000000000000000000000000000000b102");
 /// composable. Profit matches the independent reference CLP-chain scan.
 #[test]
 fn walker_three_hop_chain_solves_and_composes() {
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     // P staged golden (476_259 TOK / 1_050 WETH), C1 (400_000 TOK /
     // 800_000 M), C2 (800_000 M / 2_000 WETH): the bridge pays ~0.005 WETH
     // per TOK against P's ~0.0022, so the WETH-entry chain profits.
@@ -584,7 +584,7 @@ fn walker_three_hop_chain_solves_and_composes() {
 
     // Canonical `zfo` rule: the INPUT token is the hop's token0.
     let chains = vec![vec![
-        SidecarHopRef {
+        BackrunHopRef {
             pool_id: p_id,
             pool: P,
             token0: TOK,
@@ -592,7 +592,7 @@ fn walker_three_hop_chain_solves_and_composes() {
             zfo: false, // entry WETH = token1
             family: LaneFamily::V2,
         },
-        SidecarHopRef {
+        BackrunHopRef {
             pool_id: c1_id,
             pool: C1,
             token0: TOK,
@@ -600,7 +600,7 @@ fn walker_three_hop_chain_solves_and_composes() {
             zfo: true, // input TOK = token0
             family: LaneFamily::V2,
         },
-        SidecarHopRef {
+        BackrunHopRef {
             pool_id: c2_id,
             pool: C2,
             token0: M,
@@ -642,7 +642,7 @@ fn walker_three_hop_chain_solves_and_composes() {
         w_star
     );
 
-    let cd = degenbot_bot::sidecar_engine::build_candidate_calldata(
+    let cd = degenbot_bot::backrun_engine::build_candidate_calldata(
         &best,
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         WETH,

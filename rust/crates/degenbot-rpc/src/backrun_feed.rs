@@ -84,7 +84,7 @@ impl BackrunFeedConfig {
 /// One unsigned pending tx revealed by the `MEVBlocker` auction.
 ///
 /// The hub's [`PendingTx`](degenbot_eventhub::PendingTx) vocabulary, re-exported
-/// under the feed's historical name so consumers (the sidecar's frame
+/// under the feed's historical name so consumers (the driver's frame
 /// signature included) are unchanged by the ring's move onto the hub.
 pub use degenbot_eventhub::PendingTx as BackrunFeedEvent;
 

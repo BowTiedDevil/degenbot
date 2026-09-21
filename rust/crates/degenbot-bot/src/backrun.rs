@@ -1,12 +1,10 @@
-//! The standalone backrun sidecar (epic 6ZOGIT, task OQQCQO; FORK-1 =
-//! standalone binary, zero touches to the live engine block pump).
+//! The backrun arm's decision layer and typed knobs.
 //!
-//! The sidecar owns the full edge: `MEVBlocker` feed -> hub classification ->
-//! exact-sim oracle gate -> budgeted bid via the submission leaf. The DECISION
-//! layer lives here as a pure function ([`decide`]) so the safety invariants
-//! are testable without a network; the bin lives in `degenbot-submission`
-//! (the only crate allowed to depend on both this crate and the submission
-//! leaf - see the dependency one-way note in that crate's Cargo.toml).
+//! The arm owns the full edge — `MEVBlocker` feed -> hub classification ->
+//! exact-sim oracle gate -> budgeted bid via the submission leaf — and runs
+//! as the hosted `BackrunDriver` on the one-process `StrategyHost`. The
+//! DECISION layer lives here as a pure function ([`decide`]) so the safety
+//! invariants are testable without a network.
 //!
 //! Safety model (task acceptance):
 //! - observe-only default: no bid unless `bid_mode` is set AND the budget is
@@ -23,14 +21,12 @@ use alloy::primitives::U256;
 use degenbot_config::BotConfig;
 use degenbot_decoders::target_class::TargetClass;
 
-/// Typed sidecar config, built from the loaded [`BotConfig`]'s
-/// `strategy.backrun` facet plus the chain-node join the bin resolves.
+/// The backrun driver's typed config, built from the loaded [`BotConfig`]'s
+/// `strategy.backrun` facet plus the chain-node join its boot resolves.
 ///
-/// The key never leaves the signer - only `key_file` is named here. Every
-/// legacy sidecar knob migrated onto the typed schema lands as a field: the
-/// decision layer reads the first group, the bin reads the rest.
+/// The key never leaves the signer — only `key_file` is named here.
 #[derive(Debug, Clone)]
-pub struct SidecarConfig {
+pub struct BackrunConfig {
     pub stream_url: String,
     pub rpc_url: String,
     pub key_file: Option<PathBuf>,
@@ -61,7 +57,7 @@ pub struct SidecarConfig {
     pub connectors: usize,
     /// Offline dry-run's pinned head block.
     pub fixture_head: Option<u64>,
-    /// Executor contract address (validated at the sidecar boot).
+    /// Executor contract address (validated at the driver boot).
     pub executor: String,
     /// Executor owner / sim caller; unset falls back to
     /// `EXECUTOR_OWNER_ADDRESS`, then the built-in default.
@@ -70,8 +66,8 @@ pub struct SidecarConfig {
     pub dry_run_jsonl: Option<PathBuf>,
 }
 
-impl SidecarConfig {
-    /// Build the full sidecar config from the typed `strategy.backrun` facet
+impl BackrunConfig {
+    /// Build the driver config from the typed `strategy.backrun` facet
     /// plus the `logging.dry_run_jsonl` artifact knob. `rpc_url` is the
     /// chain-node join the bin resolves through the
     /// `DEGENBOT_RPC_HTTP_CHAINID_<id>` cascade - the resolver family owns
@@ -141,7 +137,7 @@ pub enum Decision {
 /// - Per-bundle cap: bundle > `max_bundle_wei` -> Observe.
 #[must_use]
 pub fn decide(
-    cfg: &SidecarConfig,
+    cfg: &BackrunConfig,
     stop_file_exists: bool,
     target_class: &TargetClass,
     sim_ok: bool,
@@ -212,8 +208,8 @@ mod tests {
     use alloy::primitives::address;
     use degenbot_decoders::target_class::{PoolProtocol, SwapLeg};
 
-    fn cfg() -> SidecarConfig {
-        let mut c = SidecarConfig::from_config(&BotConfig::default(), String::new());
+    fn cfg() -> BackrunConfig {
+        let mut c = BackrunConfig::from_config(&BotConfig::default(), String::new());
         c.bid_mode = true;
         c.budget_wei = U256::from(1_000_000_000_000_000u64);
         c.max_bundle_wei = U256::from(500_000_000_000_000u64);
@@ -423,7 +419,7 @@ mod tests {
             .with_env(Box::new(MapEnv::new(raw)))
             .load()
             .expect("typed load");
-        let c = SidecarConfig::from_config(&loaded.config, "http://node.local".to_string());
+        let c = BackrunConfig::from_config(&loaded.config, "http://node.local".to_string());
         assert_eq!(c.rpc_url, "http://node.local");
         assert!(c.bid_mode);
         assert_eq!(c.budget_wei, U256::from(42));

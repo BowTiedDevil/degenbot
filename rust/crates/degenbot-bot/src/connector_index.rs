@@ -1,11 +1,11 @@
-//! DB-backed V2 connector index for the sidecar frame solver (epic DFYDYI,
+//! DB-backed V2 connector index for the backrun frame solver (epic DFYDYI,
 //! task B3): one startup load of the unified `pools` table's V2 edges, an
 //! adjacency map by token id, and the two-hop candidate expansion the solver
 //! needs: "other pools trading TOKEN against WETH".
 //!
 //! This is the Rust-native answer to the discovery prototype's adjacency
 //! join (610k pools -> sub-ms connector lookups) — the DB read happens ONCE
-//! at sidecar startup, never per frame.
+//! at boot, never per frame.
 //!
 //! Truncation ranks by LIVE depth, not DB row order: the first fan for a
 //! `(token, quote)` pair runs one Multicall3 batch of depth probes (V2
@@ -56,7 +56,7 @@ pub struct RankCandidate {
 
 /// Live depth scoring for connector candidates (higher = deeper). The index
 /// consumes these scores once per `(token, quote)` pair and memoizes the
-/// descending order; the sidecar attaches [`OnChainLiquidityRanker`] at
+/// descending order; the driver attaches [`OnChainLiquidityRanker`] at
 /// startup so truncation keeps the deepest pools, not the oldest rows.
 #[async_trait]
 pub trait ConnectorLiquidityRanker: Send + Sync {
@@ -618,7 +618,7 @@ const EVIDENCE_DEEP_PAIR: Address = address!("b4e16d0168e52d35cacd2c6185b44281ec
 
 /// Startup evidence (a LIVE probe — not a fixture, not a test): with a
 /// ranker attached, the top of the USDC/WETH connector ranking must be the
-/// canonical deep pair. The sidecar bin logs the `Err` loudly in evidence
+/// canonical deep pair. The driver logs the `Err` loudly in evidence
 /// mode, so a mis-ranked or row-ordered index announces itself instead of
 /// silently truncating by age.
 ///

@@ -9,8 +9,8 @@
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use alloy::primitives::{address, Address, U128, U256};
-use degenbot_bot::sidecar_engine::{LaneFamily, SidecarHopRef, SidecarSolver, SidecarV2Pool};
-use degenbot_bot::sidecar_paths::{V2ConnectorIndex, V2Edge, V3Edge};
+use degenbot_bot::backrun_engine::{LaneFamily, BackrunHopRef, BackrunSolver, BackrunV2Pool};
+use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::TickInfo;
@@ -127,9 +127,9 @@ fn anchor_post_state() -> PoolPostState {
     }
 }
 
-fn chain_refs(anchor_id: u64, mid_id: u64) -> Vec<SidecarHopRef> {
+fn chain_refs(anchor_id: u64, mid_id: u64) -> Vec<BackrunHopRef> {
     vec![
-        SidecarHopRef {
+        BackrunHopRef {
             pool_id: anchor_id,
             pool: ANCHOR,
             token0: TOK,
@@ -138,7 +138,7 @@ fn chain_refs(anchor_id: u64, mid_id: u64) -> Vec<SidecarHopRef> {
             zfo: false,
             family: LaneFamily::V3 { fee: ANCHOR_FEE },
         },
-        SidecarHopRef {
+        BackrunHopRef {
             pool_id: mid_id,
             pool: MID,
             token0: TOK,
@@ -150,9 +150,9 @@ fn chain_refs(anchor_id: u64, mid_id: u64) -> Vec<SidecarHopRef> {
     ]
 }
 
-fn admit_mid(solver: &mut SidecarSolver) -> u64 {
+fn admit_mid(solver: &mut BackrunSolver) -> u64 {
     solver
-        .admit_v2(&SidecarV2Pool {
+        .admit_v2(&BackrunV2Pool {
             address: MID,
             token0: TOK,
             token1: WETH,
@@ -168,7 +168,7 @@ fn admit_mid(solver: &mut SidecarSolver) -> u64 {
 fn v3_anchor_sparse_tick_window_admits_and_solves() {
     // RED: the replayed state alone cannot project — the whole chain rejects.
     let (rt, _tok, _weth) = runtime();
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     let affected = admit_extracted(
         &rt,
         &mut solver,
@@ -190,7 +190,7 @@ fn v3_anchor_sparse_tick_window_admits_and_solves() {
         "an anchor with no modelable tick ranges must not evaluate"
     );
     match stats.chains[0].reject {
-        Some(degenbot_bot::sidecar_engine::PathReject::UnusablePoolState { deficits }) => {
+        Some(degenbot_bot::backrun_engine::PathReject::UnusablePoolState { deficits }) => {
             assert!(deficits >= 1, "the unusable anchor is the deficit");
         }
         other => panic!("expected unusable_pool_state, got {other:?}"),
@@ -199,7 +199,7 @@ fn v3_anchor_sparse_tick_window_admits_and_solves() {
     // GREEN: the chain-view tick window fills the replayed map; the same
     // healthy anchor + healthy V2 hop now solves.
     let (rt, _tok, _weth) = runtime();
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     let affected = admit_extracted(
         &rt,
         &mut solver,
@@ -238,7 +238,7 @@ fn replayed_touched_tick_wins_over_window() {
             },
         );
     }
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     let affected = admit_extracted(
         &rt,
         &mut solver,

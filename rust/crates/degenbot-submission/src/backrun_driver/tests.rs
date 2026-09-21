@@ -8,7 +8,7 @@ use crate::frame_pipeline::predecessor_observe_reason;
 use crate::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{ParkRecord, QuarantineJournal};
 use alloy::primitives::{Address, B256, U256};
-use degenbot_bot::sidecar::SidecarConfig;
+use degenbot_bot::backrun::BackrunConfig;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use std::sync::Arc;
 
@@ -20,7 +20,7 @@ use super::driver_loop::{
 };
 use super::driver_policy::{bid_submission_target, build_broadcast_relays};
 
-/// The boot registry has ONE construction seam: the standalone sidecar's
+/// The boot registry has ONE construction seam: the standalone knobs's
 /// boot and the hosted boot both hand it a DB path and the lane's node
 /// join, and both read the same populated snapshot back. The fixture seeds
 /// the canonical USDC/WETH V2 connector plus a V3 connector, pinning the
@@ -183,7 +183,7 @@ async fn broadcast_relays_are_private_first_with_read_provider_fallback() {
             .await
             .expect("lazy http provider"),
     );
-    let mut cfg = SidecarConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+    let mut cfg = BackrunConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
     assert!(
         build_broadcast_relays(&cfg, &provider).await.is_empty(),
         "an unset mevblocker_url must leave the read-provider-only list"
@@ -209,7 +209,7 @@ fn mevblocker_url_does_not_alter_the_target() {
     // the same target with and without it set.
     use crate::submit::SubmissionTarget;
 
-    let mut cfg = SidecarConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
+    let mut cfg = BackrunConfig::from_config(&degenbot_config::BotConfig::default(), String::new());
     let hash = alloy::primitives::B256::repeat_byte(0x11);
     let without = bid_submission_target(&cfg, hash, 21_000_001);
 
@@ -632,7 +632,7 @@ fn feed_loop_and_rescue_reentry_share_run_frame_surface() {
 
 fn temp_journal(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!(
-        "degenbot-sidecar-reentry-{}-{tag}",
+        "degenbot-knobs-reentry-{}-{tag}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
@@ -726,7 +726,7 @@ fn terminal_reentry_writes_exactly_one_resolve() {
 }
 
 /// A hosted lane's journal lands under its namespace; the standalone
-/// single-strategy sidecar keeps the process-global root (strict parity).
+/// single-strategy knobs keeps the process-global root (strict parity).
 #[test]
 fn lane_root_scopes_the_quarantine_journal() {
     let lane = std::path::PathBuf::from("/var/state/backrun");

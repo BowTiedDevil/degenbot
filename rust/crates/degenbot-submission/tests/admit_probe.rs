@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
 use degenbot_bot::bot_core::SimAnchorState;
-use degenbot_bot::sidecar_engine::{LaneFamily, SidecarHopRef, SidecarSolver, SidecarV2Pool};
+use degenbot_bot::backrun_engine::{LaneFamily, BackrunHopRef, BackrunSolver, BackrunV2Pool};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
@@ -44,10 +44,10 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
     let provider = live_provider();
     let db_path = std::env::var("DEGENBOT_DB_PATH").unwrap();
     let (db, _state) = DegenbotDb::open(std::path::Path::new(&db_path)).unwrap();
-    let mut index = degenbot_bot::sidecar_paths::V2ConnectorIndex::load(&db, 1).unwrap();
+    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::load(&db, 1).unwrap();
     index.load_v3(&db, 1).unwrap();
     index.set_ranker(Arc::new(
-        degenbot_bot::sidecar_paths::OnChainLiquidityRanker::new(Arc::clone(&provider)),
+        degenbot_bot::connector_index::OnChainLiquidityRanker::new(Arc::clone(&provider)),
     ));
     let rt = MarketContext::new(
         1,
@@ -88,7 +88,7 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
         }),
     };
 
-    let mut solver = SidecarSolver::new();
+    let mut solver = BackrunSolver::new();
     let affected = admit_extracted(
         &rt,
         &mut solver,
@@ -101,7 +101,7 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
     let a = &affected[0];
 
     // The two production V2 mids, admitted from live reserves.
-    let mut chain = vec![SidecarHopRef {
+    let mut chain = vec![BackrunHopRef {
         pool_id: a.workspace_pool_id,
         pool: ANCHOR,
         token0: a.token0,
@@ -122,7 +122,7 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
             .await
             .unwrap();
         let id = solver
-            .admit_v2(&SidecarV2Pool {
+            .admit_v2(&BackrunV2Pool {
                 address: mid,
                 token0: m0,
                 token1: m1,
@@ -135,7 +135,7 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
         } else {
             (false, edge.token0_id)
         };
-        chain.push(SidecarHopRef {
+        chain.push(BackrunHopRef {
             pool_id: id,
             pool: mid,
             token0: m0,
