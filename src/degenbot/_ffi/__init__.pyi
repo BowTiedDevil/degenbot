@@ -8,7 +8,7 @@ Python package.
 """
 
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any, overload
+from typing import Any, final, overload
 
 from degenbot.types.chain import HexAddress
 
@@ -182,6 +182,8 @@ def discovery_batch_size() -> int:
     `find_paths_async`.
     """
 
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
 class StrategyReadinessView:
     """The resolved strategy readiness of the installed typed config."""
 
@@ -203,7 +205,7 @@ def validate_strategy_readiness() -> StrategyReadinessView:
     """
 
 def settlement_broadcast_endpoints() -> list[str]:
-    """The resolved settlement broadcast endpoints (this process's arm).
+    """Return the resolved settlement broadcast endpoints (this process's arm).
 
     Raises:
         ValueError: when the settlement facet is inactive or its endpoints
@@ -250,7 +252,7 @@ def runtime_status() -> dict[str, Any]:
     """
 
 def session_phase_next(current: str, operation: str) -> str | None:
-    """The cockpit session-phase table (`strategy_host::SessionPhase`).
+    """Return the cockpit session-phase table (`strategy_host::SessionPhase`).
 
     `current` is `new`/`started`/`running`/`closed`; `operation` is
     `start`/`run`/`query`/`shutdown`. Returns the next phase name, or `None`
@@ -1766,6 +1768,7 @@ __all__ = [
     "RetryPolicyDefaults",
     "SpecViolationError",
     "StrategyHostError",
+    "StrategyReadinessView",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
     "VerificationMismatchError",
@@ -1793,8 +1796,6 @@ __all__ = [
     "dex_identity",
     "diagnostics",
     "discovery_batch_size",
-    "validate_strategy_readiness",
-    "settlement_broadcast_endpoints",
     "eip_1559",
     "event_topic",
     "execution",
@@ -1812,6 +1813,7 @@ __all__ = [
     "provider",
     "runtime_status",
     "session_phase_next",
+    "settlement_broadcast_endpoints",
     "shutdown_log_drainer",
     "simulation",
     "solady",
@@ -1820,5 +1822,6 @@ __all__ = [
     "submission",
     "to_checksum_address",
     "v2_math",
+    "validate_strategy_readiness",
     "verification_retry_policy_defaults",
 ]

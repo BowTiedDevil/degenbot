@@ -1,4 +1,4 @@
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Sequence
 from typing import Any
 
 from degenbot._ffi.provider import AsyncAlloyProvider
@@ -113,7 +113,9 @@ def dispatch_profitable_py(
 ) -> Coroutine[Any, Any, DispatchOutcome]: ...
 def assemble_dispatch_candidates_py(
     engine: ArbitrageEngine,
-    results: list[tuple[int, int, int, list[int], list[int], int, list[int]]],
+    # The binding extracts any sequence (pyo3 Vec<T>: list or tuple rows) —
+    # the runner's solver-result batch stream delivers tuple rows.
+    results: Sequence[tuple[int, int, int, Sequence[int], Sequence[int], int, Sequence[int]]],
     *,
     erc6909_profit: bool = False,
     use_v4_batch: bool = False,

@@ -16,6 +16,21 @@ from __future__ import annotations
 import warnings
 
 
+class RelayPostureUnsettled(RuntimeError):
+    """The relay posture was constructed without settled settlement endpoints.
+
+    A live runner that boots past the readiness gate always carries non-empty
+    endpoints, so reaching this constructor means a gate was bypassed; the
+    session must abort rather than degrade a broadcast to the public mempool.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "RelayPosture requires settled settlement endpoints; the boot gate "
+            "should have refused a live session before reaching this constructor"
+        )
+
+
 class RelayPosture:
     """The session's relay posture.
 
@@ -30,10 +45,7 @@ class RelayPosture:
     def __init__(self, relay_urls: list[str] | tuple[str, ...]) -> None:
         self._relay_urls = list(relay_urls)
         if not self._relay_urls:
-            raise RuntimeError(
-                "RelayPosture requires settled settlement endpoints; the boot gate \
-                 should have refused a live session before reaching this constructor"
-            )
+            raise RelayPostureUnsettled
 
     @property
     def relay_urls(self) -> list[str]:

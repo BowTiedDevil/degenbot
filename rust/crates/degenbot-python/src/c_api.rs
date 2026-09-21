@@ -56,6 +56,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The Python discovery pipeline reads it and forwards it to
     // `find_paths_async`.
     m.add_function(wrap_pyfunction!(crate::config::discovery_batch_size, m)?)?;
+    // The readiness view is the documented return type of the readiness
+    // verbs: exposing the pyclass keeps the stub's `StrategyReadinessView`
+    // introspectable (and stubtest honest) at `degenbot._ffi` top level.
+    m.add_class::<crate::config::StrategyReadinessView>()?;
     m.add_function(wrap_pyfunction!(
         crate::config::validate_strategy_readiness,
         m

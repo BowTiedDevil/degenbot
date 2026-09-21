@@ -121,6 +121,31 @@ def _make_arbitrage_config(node_http: str) -> DegenbotConfig:
 # ============ class BotRunner ============
 
 
+class ActivationGateRefused(RuntimeError):
+    """Strategy readiness (the activation gate) refused a live session.
+
+    The gate refuses an activated facet that fails readiness, so a live boot
+    either aborts here or degrades a broadcast to the public mempool; the
+    gate's ValueError text becomes the message so the operator keeps the
+    gate's own diagnostic unchanged.
+    """
+
+    def __init__(self, refusal: ValueError) -> None:
+        super().__init__(f"activation gate refused: {refusal}")
+
+
+class SettlementArmGateRefused(RuntimeError):
+    """The settlement-arm gate refused: broadcast endpoints are not settled.
+
+    A hosted runner IS the settlement arm, so an unsettled (or inactive)
+    endpoint set aborts the session instead of degrading a live broadcast
+    to the public mempool; the gate's ValueError text becomes the message.
+    """
+
+    def __init__(self, refusal: ValueError) -> None:
+        super().__init__(f"settlement arm gate refused: {refusal}")
+
+
 class PhaseError(RuntimeError):
     """Cockpit phase violation: a lifecycle method ran in the wrong phase.
 
@@ -563,14 +588,14 @@ class BotRunner:
             validate_strategy_readiness()
         except ValueError as refusal:
             if live:
-                raise RuntimeError(f"activation gate refused: {refusal}") from refusal
+                raise ActivationGateRefused(refusal) from refusal
             return None
         if not live:
             return None
         try:
             relay_urls = settlement_broadcast_endpoints()
         except ValueError as refusal:
-            raise RuntimeError(f"settlement arm gate refused: {refusal}") from refusal
+            raise SettlementArmGateRefused(refusal) from refusal
         return RelayPosture(relay_urls=relay_urls)
 
     @staticmethod

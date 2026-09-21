@@ -171,6 +171,14 @@ class DegenbotConfig(BaseSettings):
         fail-closed on the unknown key). Mirror that here so a surviving
         selector spelling in the operator file (or an init kwarg) is a pointed
         error, never a silently absorbed value.
+
+        Returns:
+            The validated input object, unchanged when no retired selector is present.
+
+        Raises:
+            ValueError: when a retired ``strategy_name`` or ``strategy.name``
+                selector spelling is present in the input.
+
         """
         if isinstance(data, dict):
             strategy = data.get("strategy")
