@@ -157,34 +157,16 @@ async def _run(
 ) -> tuple[Dispatcher, _FakeW3, list[int]]:
     dispatcher = dispatcher or Dispatcher.for_block(0)
     w3 = _FakeW3()
-    # Monkeypatch the consumer's binding of ``_dispatch_profitable`` so a
-    # non-empty batch records the ``current_block`` it was dispatched with,
-    # proving it keys off the block stream (not solve_block).
     dispatched: list[int] = []
 
-    def _fake_dispatch(session: Any, results: Any, **kwargs: Any):
-        dispatched.append(session.dispatcher.current_block)
-
-        async def _n() -> None:
-            pass
-
-        return _n()
-
-    from degenbot.runner import _consume as _runner_consume
     from degenbot.runner.bot_runner import _SessionState
     from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
-    orig = _runner_consume._dispatch_profitable
-    orig_pipe = _runner_consume.SimSubmitPipeline
-    _runner_consume._dispatch_profitable = _fake_dispatch  # type: ignore[assignment]
-
-    # SIMPIPE option A: the default consumer path routes batches through the
-    # pipeline; the shared void stub records the dispatch clock at enqueue
-    # the same way the serial-leaf fake above does (owner + clock captures
-    # ride StubPipeline.instances, drained into `dispatched` after the drive
-    # because both paths can never fire for the same batch).
+    # SIMPIPE option A: the consumer routes batches through the pipeline; the
+    # session's pipeline factory supplies the shared void stub, which records
+    # the dispatch clock at enqueue. That clock is what `dispatched` proves —
+    # the stub stands in for the serial leaf's own dispatch clock capture.
     StubPipeline.instances.clear()
-    _runner_consume.SimSubmitPipeline = StubPipeline  # type: ignore[misc-assignment]
     owner = _SessionState(
         engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
         async_w3=w3,  # type: ignore[arg-type]
@@ -203,17 +185,14 @@ async def _run(
             rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
         ),
         current_block=dispatcher.current_block,
+        pipeline_factory=StubPipeline,
     )
-    try:
-        await consume_result_batches(
-            owner,
-            block_stream=_Blocks(blocks),
-            result_iter=_Results(batches),
-            allow_quiet_end=allow_quiet_end,
-        )
-    finally:
-        _runner_consume._dispatch_profitable = orig  # type: ignore[assignment]
-        _runner_consume.SimSubmitPipeline = orig_pipe  # type: ignore[assignment]
+    await consume_result_batches(
+        owner,
+        block_stream=_Blocks(blocks),
+        result_iter=_Results(batches),
+        allow_quiet_end=allow_quiet_end,
+    )
     for stub in StubPipeline.instances:
         dispatched.extend(stub.enqueue_clock)
     return dispatcher, w3, dispatched

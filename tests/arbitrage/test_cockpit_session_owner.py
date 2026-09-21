@@ -169,8 +169,7 @@ def _empty_batch() -> dict[str, object]:
 
 
 @pytest.fixture(name="stub_pipeline")
-def _stub_pipeline(monkeypatch: pytest.MonkeyPatch) -> type[StubPipeline]:
-    monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", StubPipeline)
+def _stub_pipeline() -> type[StubPipeline]:
     return StubPipeline
 
 
@@ -260,7 +259,7 @@ class TestNoFrozenMirrors:
     async def test_consumer_advanced_block_visible_through_every_reader(
         self, stub_pipeline: type[StubPipeline]
     ) -> None:
-        runner = _runner()
+        runner = _runner(pipeline_factory=stub_pipeline)
         await runner.start()
         session = runner._session
         assert session is not None
@@ -282,7 +281,7 @@ class TestNoFrozenMirrors:
     async def test_pipeline_attach_visible_through_the_owner(
         self, stub_pipeline: type[StubPipeline]
     ) -> None:
-        runner = _runner()
+        runner = _runner(pipeline_factory=stub_pipeline)
         await runner.start()
         session = runner._session
         assert session is not None

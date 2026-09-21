@@ -162,7 +162,12 @@ def _pipeline_with_bot(
         pancakeswap_v3_tracker=None,
         weth=None,
     )
-    pipeline = PathRegistrationPipeline(context=ctx, engine_registry=engine_registry)
+    pipeline = PathRegistrationPipeline(
+        context=ctx,
+        engine_registry=engine_registry,
+        # Keep progress logs out of the capture buffer for CI readability.
+        progress_interval_secs=1_000_000.0,
+    )
     return pipeline, constr_bot
 
 
@@ -335,16 +340,6 @@ def test_retired_skip_gate_pipeline_tests_upgraded_shape() -> None:
 # seat execution is proven by the intake-station subprocess test.
 
 
-@pytest.fixture(autouse=True)
-def _no_progress_noise(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Keep progress logs out of the capture buffer for CI readability.
-    monkeypatch.setattr(
-        PathRegistrationPipeline,
-        "_PROGRESS_INTERVAL_S",
-        1_000_000.0,
-    )
-
-
 WETH_CHECKSUM = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 T1_CHECKSUM = get_checksum_address("0x" + "11" * 20)
 POOL_A = "0x" + "aa" * 20
@@ -412,6 +407,7 @@ def _pipeline_over_registry(
     return PathRegistrationPipeline(
         context=ctx,
         engine_registry=registry,  # type: ignore[arg-type]
+        progress_interval_secs=1_000_000.0,
     )
 
 
@@ -540,6 +536,7 @@ def _pipeline_over_registry_three_pools(
     return PathRegistrationPipeline(
         context=ctx,
         engine_registry=registry,  # type: ignore[arg-type]
+        progress_interval_secs=1_000_000.0,
     )
 
 

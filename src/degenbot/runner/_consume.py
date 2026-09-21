@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.calculations import next_base_fee
 from degenbot.diagnostics import mark_progress
-from degenbot.dispatch import fetch_fee_history
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._dispatch import BatchContext, _dispatch_profitable
 from degenbot.runner._driver_constants import FEE_PERCENTILES
@@ -56,7 +55,7 @@ async def consume_result_batches(
     # (created here - the session owns the instance lifetime).
     pipeline = session.sim_submit_pipeline
     if pipeline is None:
-        pipeline = SimSubmitPipeline(session)
+        pipeline = session.pipeline_factory(session)
         # FJA2Z7: the remote attach rides the owner's mutator — attribute
         # pokes on the session are forbidden downstream of bot_runner.
         session.attach_pipeline(pipeline)
@@ -159,7 +158,7 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
     # happen in the Rust submit leaf (``fetch_fee_history``). No-op on failure.
     async_alloy = async_w3.as_async_alloy()
     if async_alloy is not None:
-        await fetch_fee_history(
+        await session.fee_history_fetcher(
             provider=async_alloy,
             dispatcher=dispatcher,
             block_count=1,

@@ -45,7 +45,7 @@ from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
 )
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.dispatch import Dispatcher, SimulateContext
+from degenbot.dispatch import Dispatcher, SimulateContext, fetch_fee_history
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner._consume import consume_result_batches
@@ -250,6 +250,14 @@ class _SessionState:
     #: consumer start via :meth:`attach_pipeline`); ``None`` runs the
     #: serial leaf.
     sim_submit_pipeline: SimSubmitPipeline | None = None
+    #: Factory for the lazily-built sim/submit pipeline. The default builds
+    #: the production pipeline; a test double supplied here observes the
+    #: consumer's attach without touching the Rust sim seam.
+    pipeline_factory: Callable[[_SessionState], SimSubmitPipeline] = SimSubmitPipeline
+    #: The head-tick ``eth_feeHistory`` leaf (Rust owns the decode +
+    #: ``record_priority_fees``). Injected so a provider double can drive the
+    #: reconcile path; the default is the production FFI leaf.
+    fee_history_fetcher: Callable[..., Awaitable[bool]] = fetch_fee_history
     #: The operator add-a-path surface (attached in run() via
     #: :meth:`attach_registration_pipeline` when the real build_paths runs),
     #: kept reachable for the session's lifetime; ``None`` for injected/fake
@@ -287,6 +295,10 @@ class InjectedActors:
     snapshots: tuple[Any, Any, Any, Any] | None = None
     path_builder: Any = None
     consumer: Any = None
+    #: Factory for the session's lazily-built sim/submit pipeline (``None`` =
+    #: production :class:`SimSubmitPipeline`); tests inject a stub to observe
+    #: the consumer's attach without the Rust sim seam.
+    pipeline_factory: Callable[[_SessionState], SimSubmitPipeline] | None = None
     #: Offline seam for the live activation gate: when set, the session's
     #: relay posture is this injected value (lifecycle tests pin a stub;
     #: production leaves it unset so the Rust readiness resolution owns the
@@ -372,6 +384,7 @@ class BotRunner:
         self._injected_snapshots = injected.snapshots
         self._path_builder = injected.path_builder
         self._consumer = injected.consumer
+        self._injected_pipeline_factory = injected.pipeline_factory
         self._injected_relay_posture = injected.relay_posture
         self._background_registration: bool | None = background_registration
         # The registration-owned construction context (built in run() for
@@ -550,6 +563,11 @@ class BotRunner:
             cfg=cfg,
             current_block=current_block,
             bot=bot,
+            pipeline_factory=(
+                self._injected_pipeline_factory
+                if self._injected_pipeline_factory is not None
+                else SimSubmitPipeline
+            ),
             relay_posture=(
                 self._injected_relay_posture
                 if self._injected_relay_posture is not None

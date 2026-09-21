@@ -178,27 +178,16 @@ class TestSessionOwner:
         assert owner is session_runner._session  # whitebox: the owner is private API
         assert owner.dispatcher is session_runner.dispatcher
 
-    async def test_dispatch_leaf_receives_the_same_owner(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    async def test_dispatch_leaf_receives_the_same_owner(self) -> None:
         """The loop and the dispatch leaf read one and the same owner."""
         from degenbot.runner._consume import consume_result_batches
         from degenbot.runner.bot_runner import _SessionState
 
-        captured: dict[str, object] = {}
-
-        def fake_dispatch_leaf(*args: object, **kwargs: object) -> object:
-            captured["positional"] = args
-            captured.update(kwargs)
-            return _noop()
-
-        monkeypatch.setattr("degenbot.runner._consume._dispatch_profitable", fake_dispatch_leaf)
-
-        # SIMPIPE option A: the default consumer path routes batches through
-        # the pipeline — the owner flows into the pipeline at construction,
-        # which is the same "one owner" contract the serial leaf asserted.
-        monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", StubPipeline)
+        # SIMPIPE option A: the consumer path routes batches through the
+        # pipeline — the owner flows into the pipeline at construction, which
+        # is the same "one owner" contract the serial leaf asserted. The
+        # session's pipeline factory supplies the stub so the consumer attaches
+        # a recording double instead of the real Rust sim seam.
         StubPipeline.instances.clear()
 
         dispatcher = _FakeDispatcher(current_block=12_346)
@@ -209,6 +198,7 @@ class TestSessionOwner:
             dispatcher=dispatcher,
             cfg=_cfg(),
             current_block=12_345,
+            pipeline_factory=StubPipeline,
         )
         await consume_result_batches(
             owner,
@@ -224,24 +214,13 @@ class TestSessionOwner:
             "dispatch pipeline did not receive the session owner"
         )
 
-    async def test_owner_advances_with_the_block_clock(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_owner_advances_with_the_block_clock(self) -> None:
         """The owner mirrors the newHeads clock as the loop applies it."""
         from degenbot.runner._consume import consume_result_batches
         from degenbot.runner.bot_runner import _SessionState
 
-        def fake_dispatch_leaf(*args: object, **kwargs: object) -> object:
-            return _noop()
-
-        monkeypatch.setattr(
-            "degenbot.runner._consume._dispatch_profitable",
-            fake_dispatch_leaf,
-        )
-
-        # SIMPIPE option A: the default consumer path constructs the pipeline
-        # — keep the fake-engine session out of the real Rust seam.
-        monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", StubPipeline)
+        # SIMPIPE option A: the session's pipeline factory constructs the
+        # stub — keep the fake-engine session out of the real Rust seam.
         owner = _SessionState(
             engine_registry=_FakeEngineRegistry(),
             async_w3=_FakeAsyncW3(),
@@ -249,6 +228,7 @@ class TestSessionOwner:
             dispatcher=_FakeDispatcher(current_block=12_346),
             cfg=_cfg(),
             current_block=12_345,
+            pipeline_factory=StubPipeline,
         )
         await consume_result_batches(
             owner,

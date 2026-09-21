@@ -182,6 +182,13 @@ def _empty_batch() -> dict[str, object]:
     }
 
 
+async def _noop_fee_history(**_kwargs: object) -> bool:
+    """Skip the Rust fee-history leaf over the w3 double; the head tick's
+    reconcile assertions do not depend on priority-fee recording."""
+    await asyncio.sleep(0)
+    return True
+
+
 async def _drive_one_head(engine: FakeEngine) -> None:
     session = _SessionState(
         engine_registry=FakeEngineRegistry(engine),  # type: ignore[arg-type]
@@ -190,6 +197,8 @@ async def _drive_one_head(engine: FakeEngine) -> None:
         dispatcher=_Dispatcher(),  # type: ignore[arg-type]
         cfg=_cfg(),
         current_block=12_345,
+        pipeline_factory=StubPipeline,
+        fee_history_fetcher=_noop_fee_history,
     )
     await consume_result_batches(
         session,
@@ -199,14 +208,7 @@ async def _drive_one_head(engine: FakeEngine) -> None:
     )
 
 
-async def test_head_tick_reconciles_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _noop_fee_history(**kwargs: object) -> None:
-        await asyncio.sleep(0)
-
-    monkeypatch.setattr("degenbot.runner._consume.fetch_fee_history", _noop_fee_history)
-    monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", StubPipeline)
+async def test_head_tick_reconciles_once() -> None:
     StubPipeline.instances.clear()
 
     engine = FakeEngine(hosted_activity=True)
@@ -218,14 +220,7 @@ async def test_head_tick_reconciles_once(
     assert engine.reconcile_calls[0]["operator_address"] == _cfg().operator_address
 
 
-async def test_reconcile_guard_short_circuits_without_hosted_activity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _noop_fee_history(**kwargs: object) -> None:
-        await asyncio.sleep(0)
-
-    monkeypatch.setattr("degenbot.runner._consume.fetch_fee_history", _noop_fee_history)
-    monkeypatch.setattr("degenbot.runner._consume.SimSubmitPipeline", StubPipeline)
+async def test_reconcile_guard_short_circuits_without_hosted_activity() -> None:
     StubPipeline.instances.clear()
 
     engine = FakeEngine(hosted_activity=False)

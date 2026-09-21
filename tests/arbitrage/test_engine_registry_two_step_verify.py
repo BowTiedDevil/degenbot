@@ -57,9 +57,7 @@ class _FakeV4Pool:
     _py_pool = _PyPool()
 
 
-def _registry_started_with_snapshots(
-    monkeypatch,
-) -> tuple[runner.EngineRegistry, _RecordingVerifyEngine]:
+def _registry_started_with_snapshots() -> tuple[runner.EngineRegistry, _RecordingVerifyEngine]:
     fake = _RecordingVerifyEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
     # XEANMB: `load_*_from_py` is retired; `start()` sets `snapshot_seed_block`
@@ -77,11 +75,11 @@ def _registry_started_with_snapshots(
     return registry, fake
 
 
-def test_register_v3_pool_delegates_to_core_lifecycle(monkeypatch) -> None:
+def test_register_v3_pool_delegates_to_core_lifecycle() -> None:
     """D1: register_v3_pool makes ONE core-owned call, passing the stashed
     snapshot block (step-1 seed-verify target). The drain/pin/step-2/live
     ordering is owned inside the core lifecycle (Rust-tested)."""
-    registry, fake = _registry_started_with_snapshots(monkeypatch)
+    registry, fake = _registry_started_with_snapshots()
     assert inspect.iscoroutinefunction(registry.register_v3_pool)
 
     async def _go() -> int:
@@ -98,9 +96,9 @@ def test_register_v3_pool_delegates_to_core_lifecycle(monkeypatch) -> None:
     }
 
 
-def test_register_v4_pool_delegates_to_core_lifecycle(monkeypatch) -> None:
+def test_register_v4_pool_delegates_to_core_lifecycle() -> None:
     """D1: register_v4_pool makes ONE core-owned call (pm + pool_id + block)."""
-    registry, fake = _registry_started_with_snapshots(monkeypatch)
+    registry, fake = _registry_started_with_snapshots()
     assert inspect.iscoroutinefunction(registry.register_v4_pool)
 
     async def _go() -> int:
@@ -120,13 +118,12 @@ def test_register_v4_pool_delegates_to_core_lifecycle(monkeypatch) -> None:
 
 @pytest.mark.parametrize("family", ["v3", "v4"])
 def test_register_fail_fast_surfaces_error_to_racing_sibling(
-    monkeypatch,
     family: str,
 ) -> None:
     """A sibling that claims the DMZ3DD inflight entry while a tripwired
     lifecycle is in flight must receive the VerificationMismatchError DIRECTLY
     from the shared claim (not a hang, cancel, or dropped future)."""
-    registry, fake = _registry_started_with_snapshots(monkeypatch)
+    registry, fake = _registry_started_with_snapshots()
     inflight = (
         (registry._v3_inflight, "0xV3POOL")
         if family == "v3"
@@ -170,11 +167,11 @@ def test_register_fail_fast_surfaces_error_to_racing_sibling(
     asyncio.run(_go())
 
 
-def test_register_v3_pool_fail_fast_surfaces_mismatch(monkeypatch) -> None:
+def test_register_v3_pool_fail_fast_surfaces_mismatch() -> None:
     """The verification tripwire (D-A) propagates as VerificationMismatchError
     from the core lifecycle, surfacing from build_paths — not 18k pools later.
     No auto-repair: the exception is not caught by the registry."""
-    registry, fake = _registry_started_with_snapshots(monkeypatch)
+    registry, fake = _registry_started_with_snapshots()
     fake.fail_next = "v3"
 
     async def _go() -> int:
@@ -212,10 +209,10 @@ def test_register_always_delegates_even_without_verify_config() -> None:
     assert fake.run_calls[0]["snapshot_block"] is None
 
 
-def test_register_v3_pool_idempotent_skips_lifecycle(monkeypatch) -> None:
+def test_register_v3_pool_idempotent_skips_lifecycle() -> None:
     """A pool already in the cache short-circuits before the core lifecycle —
     no second run on the next path that touches the same pool."""
-    registry, fake = _registry_started_with_snapshots(monkeypatch)
+    registry, fake = _registry_started_with_snapshots()
 
     async def _go() -> int:
         return await registry.register_v3_pool(_FakeV3Pool())
