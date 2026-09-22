@@ -35,8 +35,13 @@ from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.database.models.pools import (
     UniswapV2PoolTableBase,
     UniswapV3PoolTableBase,
-    UniswapV4PoolTable,
     UniswapV4PoolTableBase,
+)
+from degenbot.database.species_manifest import (
+    manifest as _species_manifest,
+)
+from degenbot.database.species_manifest import (
+    pool_version_map,
 )
 from degenbot.exceptions import (
     DirectionResolutionError,
@@ -89,24 +94,11 @@ def _discovery_batch_size() -> int:
 # ──────────────────────────────────────────────────────────────────
 
 
-def _concrete_pool_types(base_type: type) -> list[type]:
-    """Expand an abstract pool table base into its concrete subclasses."""
-    if not getattr(base_type, "__abstract__", False):
-        return [base_type]
-    subs = base_type.__subclasses__()
-    if not subs:
-        return [base_type]
-    result: list[type] = []
-    for s in subs:
-        result.extend(_concrete_pool_types(s))
-    return result
-
-
-_POOL_VERSION_MAP: dict[str, list[type]] = {
-    "V2": _concrete_pool_types(UniswapV2PoolTableBase),
-    "V3": _concrete_pool_types(UniswapV3PoolTableBase),
-    "V4": [UniswapV4PoolTable],
-}
+# The V2/V3/V4 tags are the public permutation API surface (config strings);
+# the concrete classes under each tag come from the species manifest (ADR-059
+# D3), so a new fork needs a manifest row plus a model class — not an edit to
+# a second Python enumeration here.
+_POOL_VERSION_MAP: dict[str, list[type]] = pool_version_map(_species_manifest())
 
 
 def _parse_permutation_filter(
