@@ -6,6 +6,8 @@
 //! - [`Structure::ReservePair`] — two-token reserve pools (Uniswap V2, Aerodrome V2)
 //! - [`Structure::ConcentratedLiquidity`] — tick-based CL pools (Uniswap V3, Uniswap V4)
 //! - [`Structure::BalanceVector`] — N-token balance pools (Curve, Balancer weighted/stable)
+//! - [`Structure::BinnedLiquidity`] — discrete-bin liquidity (LFJ `LBPairs`); the
+//!   roadmap-only structure no tier admits yet
 //!
 //! The handle distinguishes the protocol family (V3 vs. V4, Curve vs. Balancer)
 //! because those families have materially different state shapes. It ALSO
@@ -34,6 +36,10 @@ pub enum Structure {
     ReservePair,
     ConcentratedLiquidity,
     BalanceVector,
+    /// Discrete-bin liquidity (LFJ Trader Joe `LBPairs`): price granularity is
+    /// a fixed `binStep` over indexed bins, not continuous ticks. Declared here
+    /// as the taxonomy of record; no tier admits it yet (ADR-059 D8).
+    BinnedLiquidity,
 }
 
 /// Identity value object — structural projection over a registered pool.
@@ -56,6 +62,10 @@ pub enum Identity {
         variant: BalanceVectorVariant,
         dex: Option<DexName>,
     },
+    BinnedLiquidity {
+        variant: BinnedLiquidityVariant,
+        dex: Option<DexName>,
+    },
 }
 
 impl Identity {
@@ -71,6 +81,7 @@ impl Identity {
             Self::ReservePair { .. } => Structure::ReservePair,
             Self::ConcentratedLiquidity { .. } => Structure::ConcentratedLiquidity,
             Self::BalanceVector { .. } => Structure::BalanceVector,
+            Self::BinnedLiquidity { .. } => Structure::BinnedLiquidity,
         }
     }
 }
@@ -104,6 +115,16 @@ pub enum BalanceVectorVariant {
     Curve,
     BalancerWeighted,
     BalancerStable,
+}
+
+/// Concrete DEX variant behind a [`Structure::BinnedLiquidity`] pool.
+///
+/// LFJ (Trader Joe Liquidity Book) is the first binned-liquidity family; the
+/// variant exists so a later binned fork lands as a sibling arm rather than a
+/// new structure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinnedLiquidityVariant {
+    Lfj,
 }
 
 /// Shared pool handle presenting a structural interface over `BotState`.
@@ -415,6 +436,13 @@ mod structure_tests {
                     dex: None,
                 },
                 Structure::BalanceVector,
+            ),
+            (
+                Identity::BinnedLiquidity {
+                    variant: BinnedLiquidityVariant::Lfj,
+                    dex: None,
+                },
+                Structure::BinnedLiquidity,
             ),
         ];
         for (identity, structure) in cases {

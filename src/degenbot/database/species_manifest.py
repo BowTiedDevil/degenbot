@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from degenbot.database.models.pools import (
+    LFJPoolTable,
     UniswapV2PoolTableBase,
     UniswapV3PoolTableBase,
     UniswapV4PoolTable,
@@ -44,6 +45,16 @@ if TYPE_CHECKING:
 #: The ``table`` sentinel a V4 species carries. V4 pools join the managed
 #: polymorphic base, not a V2/V3 subclass table.
 V4_MANAGED_TABLE = "managed"
+
+#: The subclass table the LFJ binned family names.
+LFJ_POOLS = "lfj_pools"
+
+#: Persisted pool kinds whose family the taxonomy declares but no tier
+#: supports yet (ADR-059 D8). Mirrors the Rust graph vocabulary's
+#: ``DECLARED_UNSUPPORTED_KINDS``: the ``LFJPoolTable`` model exists so a
+#: manifest LFJ row resolves, but the shipped manifest declares no LFJ species
+#: (no deployment addresses are invented here).
+DECLARED_UNSUPPORTED_KINDS: frozenset[str] = frozenset({"lfj_binned"})
 
 #: The repo-relative location of the Rust-owned manifest.
 _MANIFEST_RELATIVE = Path("rust") / "crates" / "degenbot-db" / "src" / "species.toml"
@@ -64,11 +75,17 @@ _CHAIN_KEYS = frozenset({"chain_id", "factory", "init_codehash", "manager"})
 
 
 class Family(StrEnum):
-    """The pool family a species belongs to (the graph vocabulary's V2/V3/V4)."""
+    """The pool family a species belongs to.
+
+    V2/V3/V4 name graph-vocabulary families; LFJ names the declared-but-
+    unsupported binned-liquidity family (ADR-059 E3), which has no graph pool
+    kind.
+    """
 
     V2 = "v2"
     V3 = "v3"
     V4 = "v4"
+    LFJ = "lfj"
 
 
 class SlotLayout(StrEnum):
@@ -225,7 +242,7 @@ def _parse_chains(  # ruff:ignore[too-many-branches]
                 raise ManifestError(msg)
         else:
             if manager is not None:
-                msg = f"V2/V3 species {kind!r} chain {chain_id} carries a V4 manager address"
+                msg = f"non-V4 species {kind!r} chain {chain_id} carries a V4 manager address"
                 raise ManifestError(msg)
             if factory is None:
                 msg = f"species {kind!r} chain {chain_id} is missing its factory"
@@ -271,7 +288,11 @@ def _parse_species(  # ruff:ignore[too-many-branches, too-many-statements]
     if not isinstance(table, str) or not table:
         msg = f"species {kind!r} is missing a non-empty table"
         raise ManifestError(msg)
-    if family is Family.V4:
+    if family is Family.LFJ:
+        if table != LFJ_POOLS:
+            msg = f"LFJ species {kind!r} must name table {LFJ_POOLS!r}, got {table!r}"
+            raise ManifestError(msg)
+    elif family is Family.V4:
         if table != V4_MANAGED_TABLE:
             msg = f"V4 species {kind!r} must name table {V4_MANAGED_TABLE!r}, got {table!r}"
             raise ManifestError(msg)
@@ -491,18 +512,26 @@ def _model_index() -> tuple[dict[str, type], dict[str, type]]:
     if isinstance(v4_identity, str):
         by_kind[v4_identity] = UniswapV4PoolTable
     by_table[V4_MANAGED_TABLE] = UniswapV4PoolTable
+    # The declared-but-unsupported LFJ family's model: resolvable so a
+    # fixture manifest row passes parity, excluded from the shipped-kind set.
+    lfj_identity = LFJPoolTable.__mapper__.polymorphic_identity
+    if isinstance(lfj_identity, str):
+        by_kind[lfj_identity] = LFJPoolTable
+    by_table[LFJ_POOLS] = LFJPoolTable
     return by_kind, by_table
 
 
 def model_pool_kinds() -> frozenset[str]:
-    """Return the pool-kind discriminators the SQLAlchemy models declare.
+    """Return the SUPPORTED pool-kind discriminators the models declare.
 
     Returns:
-        The set of polymorphic identities (V2/V3 subclasses + V4).
+        The set of supported polymorphic identities (V2/V3 subclasses + V4).
+        The declared-but-unsupported LFJ kind is excluded so the shipped
+        manifest and the shipped model set stay 1:1.
 
     """
     by_kind, _ = _model_index()
-    return frozenset(by_kind)
+    return frozenset(by_kind) - DECLARED_UNSUPPORTED_KINDS
 
 
 def _missing_model_message(species: Species) -> str:
@@ -573,7 +602,7 @@ def assert_manifest_model_parity(manifest_obj: Manifest) -> None:
     by_kind, _ = _model_index()
     manifest_kinds = {species.kind for species in manifest_obj.species}
     missing = sorted(manifest_kinds - set(by_kind))
-    extra = sorted(set(by_kind) - manifest_kinds)
+    extra = sorted(set(by_kind) - manifest_kinds - DECLARED_UNSUPPORTED_KINDS)
     if missing or extra:
         parts: list[str] = []
         if missing:

@@ -38,7 +38,14 @@
 //!   `UnsupportedHopType`).
 //! - [`Family::LfjBinned`] is roadmap-only: both arms declare it unsupported
 //!   (D8), and the descriptor seam carries the loud `family-unsupported`
-//!   observation when its rows appear.
+//!   observation when its rows appear. The family also has a taxonomy
+//!   identity ([`crate::pool::Identity::BinnedLiquidity`]), so these NONE rows
+//!   describe a real identity rather than an unreachable enum arm.
+
+use crate::pool::{
+    BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
+    ReservePairVariant,
+};
 
 /// Which executable arm a capability row describes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -87,6 +94,34 @@ pub enum Family {
 }
 
 impl Family {
+    /// Project a taxonomy [`Identity`] onto the capability family (ADR-059 D1).
+    ///
+    /// Every taxonomy identity names exactly one capability family, including
+    /// the roadmap-only [`Self::LfjBinned`] — the declaration table's NONE rows
+    /// are therefore a verdict about a real identity, not a placeholder.
+    #[must_use]
+    pub const fn from_identity(identity: &Identity) -> Self {
+        match identity {
+            Identity::ReservePair { variant, .. } => match variant {
+                ReservePairVariant::UniswapV2
+                | ReservePairVariant::AerodromeV2 { stable: false } => Self::V2,
+                ReservePairVariant::AerodromeV2 { stable: true } => Self::SolidlyStable,
+            },
+            Identity::ConcentratedLiquidity { variant, .. } => match variant {
+                ConcentratedLiquidityVariant::UniswapV3 => Self::V3,
+                ConcentratedLiquidityVariant::UniswapV4 => Self::V4,
+            },
+            Identity::BalanceVector { variant, .. } => match variant {
+                BalanceVectorVariant::Curve => Self::CurveStableswap,
+                BalanceVectorVariant::BalancerWeighted => Self::BalancerWeighted,
+                BalanceVectorVariant::BalancerStable => Self::BalancerStable,
+            },
+            Identity::BinnedLiquidity { variant, .. } => match variant {
+                BinnedLiquidityVariant::Lfj => Self::LfjBinned,
+            },
+        }
+    }
+
     /// Every family, including the roadmap-only [`Self::LfjBinned`].
     pub const ALL: [Self; 8] = [
         Self::V2,
@@ -340,6 +375,22 @@ mod tests {
                 ENCODER_FAMILIES.contains(&family),
                 "settlement {}: compose must track the executor's HopInfo arm set",
                 family.label()
+            );
+        }
+    }
+
+    #[test]
+    fn lfj_identity_reaches_the_declared_lfj_family() {
+        let identity = crate::pool::Identity::BinnedLiquidity {
+            variant: crate::pool::BinnedLiquidityVariant::Lfj,
+            dex: None,
+        };
+        assert_eq!(Family::from_identity(&identity), Family::LfjBinned);
+        for arm in Arm::ALL {
+            assert_eq!(
+                capabilities(arm, Family::from_identity(&identity)),
+                Some(FamilyCapabilities::NONE),
+                "the LFJ taxonomy identity must reach the NONE declaration",
             );
         }
     }

@@ -101,7 +101,9 @@ impl PoolFamilyTag {
                 ConcentratedLiquidityVariant::UniswapV3 => Some(Self::V3),
                 ConcentratedLiquidityVariant::UniswapV4 => Some(Self::V4PoolManager),
             },
-            Identity::BalanceVector { .. } => None,
+            // The extractor carries neither a balance-vector family nor a
+            // bin-layout descriptor: both LAG the taxonomy (D8).
+            Identity::BalanceVector { .. } | Identity::BinnedLiquidity { .. } => None,
         }
     }
 }
@@ -417,8 +419,8 @@ mod taxonomy_tests {
     //! extraction vocabulary deliberately does not admit.
     use super::{PoolFamily, PoolFamilyTag, V4PoolSet};
     use degenbot_pools::{
-        BalanceVectorVariant, ClSlotLayout, ConcentratedLiquidityVariant, Identity,
-        ReservePairVariant,
+        BalanceVectorVariant, BinnedLiquidityVariant, ClSlotLayout, ConcentratedLiquidityVariant,
+        Identity, ReservePairVariant,
     };
 
     fn reserve_pair(variant: ReservePairVariant) -> Identity {
@@ -495,6 +497,14 @@ mod taxonomy_tests {
         assert_eq!(
             PoolFamilyTag::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
             None,
+        );
+        assert_eq!(
+            PoolFamilyTag::from_identity(&Identity::BinnedLiquidity {
+                variant: BinnedLiquidityVariant::Lfj,
+                dex: None,
+            }),
+            None,
+            "no bin-layout descriptor yet: binned liquidity must lag, not guess",
         );
     }
 }

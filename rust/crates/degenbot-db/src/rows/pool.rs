@@ -57,6 +57,9 @@ pub enum PoolKindRow {
     /// A Uniswap V4 managed pool: pool hash + hooks + currencies + fees +
     /// `tick_spacing` + the liquidity-update marker.
     V4(V4PoolRow),
+    /// A declared-but-unsupported LFJ binned pair: `(pool_id, bin_step)`
+    /// (ADR-059 D8). The row type lands with the schema; no tier admits it.
+    Lfj(LfjPoolRow),
 }
 
 /// The V2 subclass columns shared by every V2 variant (`UniswapFeeMixin`).
@@ -81,6 +84,17 @@ pub struct V3PoolRow {
     pub fee_token0: i64,
     pub fee_token1: i64,
     pub fee_denominator: i64,
+}
+
+/// The LFJ binned-pair subclass columns (`SQLAlchemy` `LFJPoolTable`).
+///
+/// LFJ is the first genuinely new pool structure through the kernel; the
+/// persisted identity is `bin_step`, the immutable price granularity (basis
+/// points). No bin math lives here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LfjPoolRow {
+    pub pool_id: i64,
+    pub bin_step: i64,
 }
 
 /// The V4 subclass columns (`SQLAlchemy` `UniswapV4PoolTable`).
@@ -149,6 +163,19 @@ impl V3PoolRow {
             fee_token0: row.get(4)?,
             fee_token1: row.get(5)?,
             fee_denominator: row.get(6)?,
+        })
+    }
+}
+
+impl LfjPoolRow {
+    /// Column SELECT list matching `lfj_pools`.
+    pub const SELECT_LFJ: &'static str = "pool_id, bin_step";
+
+    /// Decode from a row laid out as [`Self::SELECT_LFJ`].
+    pub(crate) fn from_row(row: &Row<'_>) -> Result<Self, DbError> {
+        Ok(Self {
+            pool_id: row.get(0)?,
+            bin_step: row.get(1)?,
         })
     }
 }

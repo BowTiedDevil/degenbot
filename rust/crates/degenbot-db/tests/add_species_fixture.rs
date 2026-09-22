@@ -25,7 +25,10 @@ fn fixture_v4_species_flows_through_the_loader() {
             .map(|s| s.kind.as_str()),
         Some("sushi_v4")
     );
-    assert_eq!(sushi.family.pool_kind(), degenbot_pathfinding::PoolKind::V4);
+    assert_eq!(
+        sushi.family.pool_kind(),
+        Some(degenbot_pathfinding::PoolKind::V4)
+    );
 }
 
 #[test]

@@ -100,6 +100,7 @@ const HEAD_TABLES: &[&str] = &[
     "erc20_tokens",
     "exchanges",
     "initialization_maps",
+    "lfj_pools",
     "liquidity_positions",
     "managed_pool_initialization_maps",
     "managed_pool_liquidity_positions",

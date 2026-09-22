@@ -12,12 +12,13 @@ use crate::connection::DegenbotDb;
 use crate::error::DbError;
 use crate::rows::decode::decode_address;
 use crate::rows::{
-    InitializationMapRow, LiquidityPoolRow, LiquidityPositionRow, ManagedPoolInitializationMapRow,
-    ManagedPoolLiquidityPositionRow, PoolKindRow, V2PoolRow, V3PoolRow, V4PoolRow,
+    InitializationMapRow, LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow,
+    ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow, PoolKindRow, V2PoolRow,
+    V3PoolRow, V4PoolRow,
 };
 use crate::schema::table::{
-    is_v2_kind, is_v3_kind, is_v4_kind, v2_v3_subclass_table, EXCHANGES, MANAGED_POOLS, POOLS,
-    POOL_MANAGERS,
+    is_lfj_kind, is_v2_kind, is_v3_kind, is_v4_kind, v2_v3_subclass_table, EXCHANGES, LFJ_POOLS,
+    MANAGED_POOLS, POOLS, POOL_MANAGERS,
 };
 
 /// Whether to filter exchange `last_update_block` rows by V3 or V4 family name
@@ -284,7 +285,21 @@ impl DegenbotDb {
         pool_id: i64,
     ) -> Result<Option<PoolKindRow>, DbError> {
         let conn = self.lock();
-        if let Some(sub) = v2_v3_subclass_table(kind) {
+        if is_lfj_kind(kind) {
+            // A declared-but-unsupported LFJ binned pair (D8): typed so the
+            // persisted identity is reachable; no tier admits it.
+            let sql = format!(
+                "SELECT {} FROM {} WHERE pool_id = ?1",
+                LfjPoolRow::SELECT_LFJ,
+                LFJ_POOLS
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query(rusqlite::params![pool_id])?;
+            if let Some(row) = rows.next()? {
+                return Ok(Some(PoolKindRow::Lfj(LfjPoolRow::from_row(row)?)));
+            }
+            Ok(None)
+        } else if let Some(sub) = v2_v3_subclass_table(kind) {
             // V2/V3 subclass table joins on pool_id.
             if kind == "aerodrome_v2" {
                 // the only V2 subclass with a `stable` column

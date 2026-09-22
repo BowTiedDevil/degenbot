@@ -73,7 +73,9 @@ impl PoolFamily {
                 ConcentratedLiquidityVariant::UniswapV3 => Some(Self::V3),
                 ConcentratedLiquidityVariant::UniswapV4 => Some(Self::V4),
             },
-            Identity::BalanceVector { .. } => None,
+            // The decode station carries neither a balance-vector creation
+            // event nor an LBPair decode leaf: both LAG the taxonomy.
+            Identity::BalanceVector { .. } | Identity::BinnedLiquidity { .. } => None,
         }
     }
 
@@ -1077,7 +1079,8 @@ mod taxonomy_tests {
     //! this station does not decode.
     use super::PoolFamily;
     use degenbot_pools::{
-        BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+        BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
+        ReservePairVariant,
     };
 
     fn reserve_pair(variant: ReservePairVariant) -> Identity {
@@ -1133,6 +1136,14 @@ mod taxonomy_tests {
         assert_eq!(
             PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
             None,
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&Identity::BinnedLiquidity {
+                variant: BinnedLiquidityVariant::Lfj,
+                dex: None,
+            }),
+            None,
+            "no LBPair decode leaf yet: binned liquidity must lag, not guess",
         );
     }
 }

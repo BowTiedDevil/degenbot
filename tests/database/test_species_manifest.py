@@ -391,3 +391,49 @@ def test_shipped_manifest_chains_reconcile_with_deployments_json() -> None:
                 assert record.init_hash == chain.init_codehash, (
                     f"{species.kind!r} chain {chain.chain_id} init hash drift"
                 )
+
+
+# ──────────────────────────────────────────────────────────────────
+# Declared-but-unsupported LFJ family (ADR-059 E3)
+# ──────────────────────────────────────────────────────────────────
+
+#: A clearly-placeholder LFJ factory used only to exercise the species SHAPE.
+#: The shipped manifest deliberately declares no LFJ deployment.
+LFJ_FACTORY = "0x000000000000000000000000000000000000dead"
+
+
+def _lfj_block() -> str:
+    return (
+        '[[species]]\nkind = "lfj_binned"\nfamily = "lfj"\n'
+        'table = "lfj_pools"\n'
+        f'[[species.chains]]\nchain_id = 1\nfactory = "{LFJ_FACTORY}"\n'
+    )
+
+
+def test_lfj_family_shape_loads_and_resolves_to_the_model() -> None:
+    body = sm.shipped_manifest_path().read_text(encoding="utf-8") + "\n" + _lfj_block()
+    parsed = sm.parse_manifest(body)
+    lfj = parsed.get("lfj_binned")
+    assert lfj is not None
+    assert lfj.family is sm.Family.LFJ
+    assert lfj.table == sm.LFJ_POOLS
+    assert parsed.subclass_table_for_kind("lfj_binned") == sm.LFJ_POOLS
+    # The model now exists, so the parity gate resolves the declared family
+    # instead of refusing it as model-less.
+    sm.assert_manifest_model_parity(parsed)
+
+
+def test_lfj_kind_is_declared_unsupported_until_a_tier_admits_it() -> None:
+    assert "lfj_binned" in sm.DECLARED_UNSUPPORTED_KINDS
+    assert "lfj_binned" not in sm.model_pool_kinds()
+    assert sm.manifest().get("lfj_binned") is None, "no invented LFJ deployment"
+
+
+def test_lfj_species_must_name_the_lfj_table() -> None:
+    bad = (
+        '[[species]]\nkind = "lfj_binned"\nfamily = "lfj"\n'
+        'table = "uniswap_v2_pools"\n'
+        f'[[species.chains]]\nchain_id = 1\nfactory = "{LFJ_FACTORY}"\n'
+    )
+    with pytest.raises(sm.ManifestError, match="must name table"):
+        sm.parse_manifest(bad)

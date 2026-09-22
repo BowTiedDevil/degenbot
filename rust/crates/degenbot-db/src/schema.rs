@@ -33,7 +33,7 @@ pub const SCHEMA_HEAD: &str = include_str!("schema_head.sql");
 /// The open path applies pending steps automatically (ADR-052 D2), so no
 /// consumer calls a migration verb; a binary older than the DB refuses with
 /// [`crate::error::DbError::SchemaAhead`] and never writes ahead.
-pub const RUST_SCHEMA_VERSION: u32 = 1;
+pub const RUST_SCHEMA_VERSION: u32 = 2;
 
 /// Name of the private Rust-owned schema stamp table.
 pub const SCHEMA_VERSION_TABLE: &str = "_degenbot_db_schema_version";
@@ -60,7 +60,13 @@ pub mod table {
     pub const MANAGED_POOL_INITIALIZATION_MAPS: &str = "managed_pool_initialization_maps";
     pub const UNISWAP_V3_POOLS: &str = "uniswap_v3_pools";
 
-    /// The subclass table names the schema admits for V2/V3 species. The
+    /// The LFJ (Trader Joe Liquidity Book) binned-pair subclass table. LFJ is
+    /// the declared-but-unsupported `lfj_binned` family (ADR-059 D8): the table
+    /// gives the persisted identity a home before any tier reads it.
+    pub const LFJ_POOLS: &str = "lfj_pools";
+
+    /// The subclass table names the schema admits: every V2/V3 species plus
+    /// the declared-but-unsupported LFJ binned family (`lfj_pools`). The
     /// species manifest ([`crate::species`]) validates every non-V4 `table`
     /// against this set, so a manifest entry cannot name a table the DDL does
     /// not create.
@@ -75,6 +81,7 @@ pub mod table {
         "sushiswap_v3_pools",
         "pancakeswap_v3_pools",
         "aerodrome_v3_pools",
+        "lfj_pools",
     ];
 
     /// The per-DEX subclass table for a V2/V3 `kind` discriminator.
@@ -114,6 +121,15 @@ pub mod table {
     pub fn is_v4_kind(kind: &str) -> bool {
         matches!(PoolKind::from_kind_str(kind), Some(PoolKind::V4))
     }
+
+    /// `true` if `kind` is a declared-but-unsupported family discriminator
+    /// (ADR-059 D8) — projected through the graph vocabulary's declared table,
+    /// so the LFJ kind classifies loudly instead of vanishing. Every
+    /// `is_v*_kind` helper is false for it by construction.
+    #[must_use]
+    pub fn is_lfj_kind(kind: &str) -> bool {
+        PoolKind::is_declared_unsupported(kind)
+    }
 }
 
 #[cfg(test)]
@@ -122,7 +138,7 @@ mod table_tests {
     //! single source the schema helpers project through, and it covers exactly
     //! the species the schema admits. A taxonomy species added without a graph
     //! tag fails here instead of vanishing from every consumer's graph.
-    use super::table::{is_v2_kind, is_v3_kind, is_v4_kind, v2_v3_subclass_table};
+    use super::table::{is_lfj_kind, is_v2_kind, is_v3_kind, is_v4_kind, v2_v3_subclass_table};
     use degenbot_pathfinding::PoolKind;
 
     /// The golden projection, independent of the implementation: every
@@ -164,6 +180,23 @@ mod table_tests {
     fn every_kind_has_a_graph_tag_or_is_loudly_refused() {
         assert_eq!(PoolKind::from_kind_str("lfj_binned"), None);
         assert_eq!(PoolKind::from_kind_str(""), None);
+    }
+
+    #[test]
+    fn lfj_kind_is_declared_but_unsupported() {
+        // D8: the LFJ kind is declared in the graph vocabulary (so a DB row
+        // classifies) without joining the supported graph roster.
+        assert!(PoolKind::is_declared_unsupported("lfj_binned"));
+        assert!(is_lfj_kind("lfj_binned"));
+        assert!(!is_v2_kind("lfj_binned"));
+        assert!(!is_v3_kind("lfj_binned"));
+        assert!(!is_v4_kind("lfj_binned"));
+        assert!(
+            !PoolKind::KNOWN_KINDS
+                .iter()
+                .any(|(k, _)| *k == "lfj_binned"),
+            "a declared-but-unsupported kind must not carry a graph tag"
+        );
     }
 
     #[test]

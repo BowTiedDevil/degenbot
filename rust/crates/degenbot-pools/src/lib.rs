@@ -139,7 +139,7 @@ pub use tick_fetch::{
 };
 
 pub use pool::{
-    BalanceVectorVariant, BalanceVectorView, ConcentratedLiquidityVariant,
+    BalanceVectorVariant, BalanceVectorView, BinnedLiquidityVariant, ConcentratedLiquidityVariant,
     ConcentratedLiquidityView, Identity, Pool, ReservePairVariant, ReservePairView, Structure,
 };
 

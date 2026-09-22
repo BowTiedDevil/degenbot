@@ -172,6 +172,13 @@ CREATE TABLE IF NOT EXISTS initialization_maps (
 	PRIMARY KEY (id), 
 	FOREIGN KEY(pool_id) REFERENCES pools (id)
 );
+CREATE TABLE IF NOT EXISTS lfj_pools (
+	pool_id INTEGER NOT NULL, 
+	bin_step INTEGER NOT NULL, 
+	PRIMARY KEY (pool_id), 
+	FOREIGN KEY(pool_id) REFERENCES pools (id)
+);
+
 CREATE TABLE IF NOT EXISTS liquidity_positions (
 	id INTEGER NOT NULL, 
 	pool_id INTEGER NOT NULL, 

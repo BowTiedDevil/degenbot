@@ -14,7 +14,8 @@ use degenbot_pools::capability::{
     capabilities, Arm, Family, ENCODER_FAMILIES, V4_FEE_CEILING_EXCLUSIVE, V4_HOOKLESS_ONLY,
 };
 use degenbot_pools::{
-    BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+    BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
+    ReservePairVariant,
 };
 use degenbot_solvers::mixed::HopType;
 use degenbot_strategy::backrun_engine::LaneFamilyTag;
@@ -50,7 +51,10 @@ fn identity_for(family: Family) -> Identity {
             variant: BalanceVectorVariant::Curve,
             dex: None,
         },
-        Family::LfjBinned => panic!("LFJ has no taxonomy identity until E3"),
+        Family::LfjBinned => Identity::BinnedLiquidity {
+            variant: BinnedLiquidityVariant::Lfj,
+            dex: None,
+        },
     }
 }
 
@@ -109,8 +113,8 @@ fn hop_type_solve_coverage_and_settlement_compose_match_the_declaration() {
     ];
     for (hop, family) in HOP_TYPES {
         assert_eq!(
-            HopType::from(&identity_for(family)),
-            hop,
+            HopType::try_from(&identity_for(family)).ok(),
+            Some(hop),
             "{} must project to {hop:?}",
             family.label()
         );
@@ -135,6 +139,19 @@ fn hop_type_solve_coverage_and_settlement_compose_match_the_declaration() {
         );
     }
     assert_eq!(ENCODER_FAMILIES, [Family::V2, Family::V3, Family::V4]);
+
+    // The LFJ taxonomy identity reaches the declared NONE rows and lags every
+    // tier vocabulary: no hop engine, no lane tag, no graph kind string.
+    let lfj = identity_for(Family::LfjBinned);
+    assert_eq!(Family::from_identity(&lfj), Family::LfjBinned);
+    assert_eq!(HopType::try_from(&lfj).ok(), None);
+    assert_eq!(LaneFamilyTag::from_identity(&lfj), None);
+    for arm in Arm::ALL {
+        assert_eq!(
+            capabilities(arm, Family::LfjBinned),
+            Some(degenbot_pools::capability::FamilyCapabilities::NONE),
+        );
+    }
 }
 
 #[test]

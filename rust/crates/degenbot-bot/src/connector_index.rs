@@ -1055,6 +1055,10 @@ mod tests {
         );
         ix.load_unsupported(&db, 1).unwrap();
         assert_eq!(ix.unsupported_kind(LFJ), Some("lfj_binned"));
+        assert!(
+            degenbot_db::schema::table::is_lfj_kind("lfj_binned"),
+            "the D8 roster kind is a DECLARED graph kind, not unclassifiable"
+        );
     }
 
     /// Every supported V3 variant table feeds `load_v3`, chain-filtered.

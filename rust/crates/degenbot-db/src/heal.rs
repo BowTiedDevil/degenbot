@@ -503,18 +503,35 @@ fn copy_table(
 fn verify_row_counts(old_path: &Path, tmp_path: &Path) -> Result<(), DbError> {
     let old = open_readonly(old_path)?;
     let new = open_readonly(tmp_path)?;
-    let tables: Vec<String> = new
-        .prepare(
-            "SELECT name FROM sqlite_master \
+    let content_sql = "SELECT name FROM sqlite_master \
              WHERE type='table' AND name NOT LIKE 'sqlite_%' \
-             AND name NOT IN ('alembic_version','_degenbot_db_schema_version')",
-        )?
+             AND name NOT IN ('alembic_version','_degenbot_db_schema_version')";
+    let tables: Vec<String> = new
+        .prepare(content_sql)?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
+    let old_tables: HashSet<String> = old
+        .prepare(content_sql)?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
     for table in &tables {
-        let q = format!("SELECT COUNT(*) FROM {}", quote_ident(table));
-        let old_n: i64 = old.query_row(&q, [], |r| r.get(0))?;
-        let new_n: i64 = new.query_row(&q, [], |r| r.get(0))?;
+        // A table added to the head schema since the old DB was written has no
+        // source rows: treat the missing old table as zero rather than failing
+        // the count comparison (the same case `copy_table` already skips).
+        let old_n: i64 = if old_tables.contains(table) {
+            old.query_row(
+                &format!("SELECT COUNT(*) FROM {}", quote_ident(table)),
+                [],
+                |r| r.get(0),
+            )?
+        } else {
+            0
+        };
+        let new_n: i64 = new.query_row(
+            &format!("SELECT COUNT(*) FROM {}", quote_ident(table)),
+            [],
+            |r| r.get(0),
+        )?;
         if old_n != new_n {
             return Err(DbError::HealVerificationFailed {
                 table: table.clone(),

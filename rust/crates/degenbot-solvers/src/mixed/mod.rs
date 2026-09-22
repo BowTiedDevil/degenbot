@@ -91,35 +91,47 @@ impl HopType {
     }
 }
 
-impl From<&Identity> for HopType {
+/// A taxonomy identity whose structure the mixed solver has no hop engine for
+/// — the roadmap-only binned-liquidity family (ADR-059 D8). The solver LAGS
+/// the taxonomy here: it names the family only by refusing it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnsupportedHopIdentity;
+
+impl TryFrom<&Identity> for HopType {
+    type Error = UnsupportedHopIdentity;
+
     /// Project the pool taxonomy onto the solver's hop engine (ADR-059 D1).
     ///
-    /// Total: the solver vocabulary is FINER than the graph's — it names the
-    /// Solidly and balance-vector solve branches discovery does not carry.
+    /// The FEATURED set is finer than the graph's — it names the Solidly and
+    /// balance-vector solve branches discovery does not carry.
     /// `ReservePair::UniswapV2` is the constant-product family (its `dex` only
     /// names the fork; the V2 math is shared), and an `AerodromeV2` pair is
     /// constant-product when volatile, Solidly-stable when stable.
+    ///
+    /// Binned liquidity has no solve branch, so it is the lagging leg: a
+    /// `TryFrom` error naming the unsupported identity, never a guessed hop.
     ///
     /// The ladder is lossy by design: a fork whose behavior diverges inside a
     /// taxonomy variant (Camelot's `stable_swap` V2 species is not a distinct
     /// `Identity`) is still derived at registration by the engine's
     /// `derive_hop_type`, not from this projection.
-    fn from(identity: &Identity) -> Self {
+    fn try_from(identity: &Identity) -> Result<Self, Self::Error> {
         match identity {
-            Identity::ReservePair { variant, .. } => match variant {
+            Identity::ReservePair { variant, .. } => Ok(match variant {
                 ReservePairVariant::UniswapV2
                 | ReservePairVariant::AerodromeV2 { stable: false } => Self::V2,
                 ReservePairVariant::AerodromeV2 { stable: true } => Self::SolidlyStable,
-            },
-            Identity::ConcentratedLiquidity { variant, .. } => match variant {
+            }),
+            Identity::ConcentratedLiquidity { variant, .. } => Ok(match variant {
                 ConcentratedLiquidityVariant::UniswapV3 => Self::V3,
                 ConcentratedLiquidityVariant::UniswapV4 => Self::V4,
-            },
-            Identity::BalanceVector { variant, .. } => match variant {
+            }),
+            Identity::BalanceVector { variant, .. } => Ok(match variant {
                 BalanceVectorVariant::Curve => Self::CurveStableswap,
                 BalanceVectorVariant::BalancerWeighted => Self::BalancerWeighted,
                 BalanceVectorVariant::BalancerStable => Self::BalancerStable,
-            },
+            }),
+            Identity::BinnedLiquidity { .. } => Err(UnsupportedHopIdentity),
         }
     }
 }
@@ -513,9 +525,10 @@ mod taxonomy_tests {
     //! hop engine the old hand classification produced. These are the tests
     //! that make a taxonomy change reviewable — a new variant fails to compile
     //! the exhaustive `match`, and a changed mapping fails here.
-    use super::HopType;
+    use super::{HopType, UnsupportedHopIdentity};
     use degenbot_pools::{
-        BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+        BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
+        ReservePairVariant,
     };
 
     fn reserve_pair(variant: ReservePairVariant) -> Identity {
@@ -530,20 +543,25 @@ mod taxonomy_tests {
         Identity::BalanceVector { variant, dex: None }
     }
 
+    fn hop(identity: Identity) -> HopType {
+        #[expect(clippy::unwrap_used)] // the taxonomy arm is pinned below
+        HopType::try_from(&identity).unwrap()
+    }
+
     #[test]
     fn reserve_pair_projects_to_the_constant_product_or_solidly_engine() {
         assert_eq!(
-            HopType::from(&reserve_pair(ReservePairVariant::UniswapV2)),
+            hop(reserve_pair(ReservePairVariant::UniswapV2)),
             HopType::V2
         );
         assert_eq!(
-            HopType::from(&reserve_pair(ReservePairVariant::AerodromeV2 {
+            hop(reserve_pair(ReservePairVariant::AerodromeV2 {
                 stable: false
             })),
             HopType::V2
         );
         assert_eq!(
-            HopType::from(&reserve_pair(ReservePairVariant::AerodromeV2 {
+            hop(reserve_pair(ReservePairVariant::AerodromeV2 {
                 stable: true
             })),
             HopType::SolidlyStable
@@ -553,13 +571,13 @@ mod taxonomy_tests {
     #[test]
     fn concentrated_liquidity_projects_to_its_own_engine() {
         assert_eq!(
-            HopType::from(&concentrated_liquidity(
+            hop(concentrated_liquidity(
                 ConcentratedLiquidityVariant::UniswapV3
             )),
             HopType::V3
         );
         assert_eq!(
-            HopType::from(&concentrated_liquidity(
+            hop(concentrated_liquidity(
                 ConcentratedLiquidityVariant::UniswapV4
             )),
             HopType::V4
@@ -569,16 +587,29 @@ mod taxonomy_tests {
     #[test]
     fn balance_vector_projects_to_its_own_solve_branch() {
         assert_eq!(
-            HopType::from(&balance_vector(BalanceVectorVariant::Curve)),
+            hop(balance_vector(BalanceVectorVariant::Curve)),
             HopType::CurveStableswap
         );
         assert_eq!(
-            HopType::from(&balance_vector(BalanceVectorVariant::BalancerWeighted)),
+            hop(balance_vector(BalanceVectorVariant::BalancerWeighted)),
             HopType::BalancerWeighted
         );
         assert_eq!(
-            HopType::from(&balance_vector(BalanceVectorVariant::BalancerStable)),
+            hop(balance_vector(BalanceVectorVariant::BalancerStable)),
             HopType::BalancerStable
+        );
+    }
+
+    #[test]
+    fn binned_liquidity_is_the_lagging_leg() {
+        let identity = Identity::BinnedLiquidity {
+            variant: BinnedLiquidityVariant::Lfj,
+            dex: None,
+        };
+        assert_eq!(
+            HopType::try_from(&identity),
+            Err(UnsupportedHopIdentity),
+            "binned liquidity has no solver hop engine and must refuse, not guess"
         );
     }
 }

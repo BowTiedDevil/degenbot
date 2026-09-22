@@ -91,11 +91,18 @@ pub struct MigrationStep {
 /// the next step here. `RUST_MIGRATIONS.last().version == RUST_SCHEMA_VERSION`
 /// is asserted in this module's tests. The mechanical bump ritual lives on
 /// [`crate::schema::RUST_SCHEMA_VERSION`].
-pub const RUST_MIGRATIONS: &[MigrationStep] = &[MigrationStep {
-    version: 1,
-    name: "baseline",
-    sql: SCHEMA_HEAD,
-}];
+pub const RUST_MIGRATIONS: &[MigrationStep] = &[
+    MigrationStep {
+        version: 1,
+        name: "baseline",
+        sql: SCHEMA_HEAD,
+    },
+    MigrationStep {
+        version: 2,
+        name: "lfj_pools",
+        sql: "CREATE TABLE IF NOT EXISTS lfj_pools (\n\tpool_id INTEGER NOT NULL, \n\tbin_step INTEGER NOT NULL, \n\tPRIMARY KEY (pool_id), \n\tFOREIGN KEY(pool_id) REFERENCES pools (id)\n);",
+    },
+];
 
 /// What [`apply_forward_migrations`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]

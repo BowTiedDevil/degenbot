@@ -3912,6 +3912,7 @@ impl PyPool {
                 "concentrated_liquidity".to_string()
             }
             degenbot_pools::Structure::BalanceVector => "balance_vector".to_string(),
+            degenbot_pools::Structure::BinnedLiquidity => "binned_liquidity".to_string(),
         })
     }
 
@@ -3957,6 +3958,12 @@ impl PyPool {
                     }
                 }),
             ),
+            degenbot_pools::Identity::BinnedLiquidity { variant, .. } => (
+                "binned_liquidity".to_string(),
+                Some(match variant {
+                    degenbot_pools::BinnedLiquidityVariant::Lfj => "lfj".to_string(),
+                }),
+            ),
         })
     }
 
@@ -3968,7 +3975,8 @@ impl PyPool {
         self.with_pool(py, |pool| match pool.identity() {
             degenbot_pools::Identity::ReservePair { dex, .. }
             | degenbot_pools::Identity::ConcentratedLiquidity { dex, .. }
-            | degenbot_pools::Identity::BalanceVector { dex, .. } => {
+            | degenbot_pools::Identity::BalanceVector { dex, .. }
+            | degenbot_pools::Identity::BinnedLiquidity { dex, .. } => {
                 dex.map(|d| d.as_str().to_string())
             }
         })

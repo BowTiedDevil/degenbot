@@ -269,6 +269,23 @@ class SushiswapV3PoolTable(UniswapV3PoolTableBase):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
+class LFJPoolTable(LiquidityPoolTable):
+    """LFJ (Trader Joe) Liquidity Book binned-pair table.
+
+    The persisted identity of the first genuinely new pool structure through
+    the kernel (ADR-059 E3): a token pair plus its immutable ``bin_step``
+    price granularity. Declared-but-unsupported — no tier admits it yet.
+    """
+
+    __tablename__ = "lfj_pools"
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
+        "polymorphic_identity": "lfj_binned",
+    }
+
+    pool_id: Mapped[PrimaryForeignKeyPoolId]
+    bin_step: Mapped[int]
+
+
 class ManagedPoolLiquidityPositionTable(Base):
     """ManagedPoolLiquidityPositionTable class."""
 

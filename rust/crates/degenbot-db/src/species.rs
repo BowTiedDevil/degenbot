@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use alloy::primitives::{Address, B256};
 use degenbot_core::address_utils;
 
-use crate::schema::table::V2_V3_SUBCLASS_TABLES;
+use crate::schema::table::{LFJ_POOLS, V2_V3_SUBCLASS_TABLES};
 
 /// The embedded manifest. A published crate can only `include_str!` files
 /// under its own directory, so the file lives beside this module.
@@ -33,6 +33,10 @@ pub enum Family {
     V2,
     V3,
     V4,
+    /// LFJ (Trader Joe) binned liquidity — declared in the taxonomy (ADR-059
+    /// E3) but without a graph pool kind, so [`Self::pool_kind`] returns
+    /// `None`. Its `pools.kind` discriminator is `lfj_binned`.
+    Lfj,
 }
 
 impl Family {
@@ -40,13 +44,15 @@ impl Family {
     ///
     /// The graph tier keys on family, not species: every V4 species resolves
     /// to the same `PoolKind::V4` arm, so adding a manager species needs no
-    /// new graph enumeration.
+    /// new graph enumeration. The LFJ binned family has no graph kind, so it
+    /// LAGS the taxonomy and returns `None` (ADR-059 D8).
     #[must_use]
-    pub const fn pool_kind(self) -> degenbot_pathfinding::PoolKind {
+    pub const fn pool_kind(self) -> Option<degenbot_pathfinding::PoolKind> {
         match self {
-            Self::V2 => degenbot_pathfinding::PoolKind::V2,
-            Self::V3 => degenbot_pathfinding::PoolKind::V3,
-            Self::V4 => degenbot_pathfinding::PoolKind::V4,
+            Self::V2 => Some(degenbot_pathfinding::PoolKind::V2),
+            Self::V3 => Some(degenbot_pathfinding::PoolKind::V3),
+            Self::V4 => Some(degenbot_pathfinding::PoolKind::V4),
+            Self::Lfj => None,
         }
     }
 }
@@ -163,6 +169,8 @@ pub enum ManifestError {
     UnknownTable { kind: String, table: String },
     #[error("V4 species {kind:?} must name table {V4_MANAGED_TABLE:?}, got {table:?}")]
     V4TableMismatch { kind: String, table: String },
+    #[error("LFJ species {kind:?} must name table {LFJ_POOLS:?}, got {table:?}")]
+    LfjTableMismatch { kind: String, table: String },
     #[error("V3 species {kind:?} is missing its {field}")]
     MissingV3Field { kind: String, field: &'static str },
     #[error("non-V3 species {0:?} declares a slot_layout")]
@@ -272,6 +280,14 @@ fn validate_species(r: &RawSpecies) -> Result<Species, ManifestError> {
                 });
             }
         }
+        Family::Lfj => {
+            if r.table != LFJ_POOLS {
+                return Err(ManifestError::LfjTableMismatch {
+                    kind: r.kind.clone(),
+                    table: r.table.clone(),
+                });
+            }
+        }
         Family::V2 | Family::V3 => {
             if !V2_V3_SUBCLASS_TABLES.contains(&r.table.as_str()) {
                 return Err(ManifestError::UnknownTable {
@@ -359,7 +375,7 @@ fn validate_chains(r: &RawSpecies) -> Result<BTreeMap<u64, ChainIdentifiers>, Ma
                     });
                 }
             }
-            Family::V2 | Family::V3 => {
+            Family::V2 | Family::V3 | Family::Lfj => {
                 if manager.is_some() {
                     return Err(ManifestError::ManagerOnCreate2 {
                         kind: r.kind.clone(),
@@ -672,6 +688,42 @@ mod tests {
         assert!(parsed.manager_deployment(8453, manager).is_none());
     }
 
+    const FIXTURE_LFJ_FACTORY: &str = "0x000000000000000000000000000000000000dead";
+
+    #[test]
+    fn loads_a_fixture_lfj_species_without_a_graph_kind() {
+        // The LFJ species SHAPE (no shipped deployment addresses). Fixture
+        // addresses are clearly placeholder markers, never deployments.
+        let parsed = parse_manifest(&format!(
+            "[[species]]\nkind = \"lfj_binned\"\nfamily = \"lfj\"\n\
+             table = \"lfj_pools\"\n\
+             [[species.chains]]\nchain_id = 1\nfactory = \"{FIXTURE_LFJ_FACTORY}\"\n"
+        ))
+        .expect("the LFJ species shape must load");
+        let lfj = parsed.get("lfj_binned").expect("fixture species loads");
+        assert_eq!(lfj.family, Family::Lfj);
+        assert_eq!(lfj.table, LFJ_POOLS);
+        assert_eq!(lfj.family.pool_kind(), None, "LFJ has no graph kind");
+        assert_eq!(lfj.manager_on(1), None, "LFJ is factory-keyed, not managed");
+    }
+
+    #[test]
+    fn rejects_an_lfj_species_naming_a_v2_table() {
+        let err = parse_manifest(&format!(
+            "[[species]]\nkind = \"lfj_binned\"\nfamily = \"lfj\"\n\
+             table = \"uniswap_v2_pools\"\n\
+             [[species.chains]]\nchain_id = 1\nfactory = \"{FIXTURE_LFJ_FACTORY}\"\n"
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ManifestError::LfjTableMismatch {
+                kind: "lfj_binned".to_owned(),
+                table: "uniswap_v2_pools".to_owned(),
+            }
+        );
+    }
+
     #[test]
     fn a_v4_fixture_species_needs_no_new_graph_pool_kind() {
         let parsed = fixture_v4_manifest();
@@ -679,10 +731,10 @@ mod tests {
         // The graph vocabulary projects by FAMILY: a new V4 species reuses the
         // existing `PoolKind::V4` arm, and the shipped roster is untouched by
         // a fixture parse (the loader holds no global state).
-        assert_eq!(species.family.pool_kind(), PoolKind::V4);
+        assert_eq!(species.family.pool_kind(), Some(PoolKind::V4));
         assert_eq!(
             species.family.pool_kind(),
-            PoolKind::from_kind_str("uniswap_v4").unwrap()
+            Some(PoolKind::from_kind_str("uniswap_v4").unwrap())
         );
         assert_eq!(PoolKind::KNOWN_KINDS.len(), 11);
         // A V4 kind never carries a V2/V3 subclass table.

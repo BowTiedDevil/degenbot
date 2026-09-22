@@ -86,9 +86,9 @@ pub use ops::{
 pub use pathfinding::{PathEdge, PathGraphData};
 pub use read::ExchangeFamily;
 pub use rows::{
-    InitializationMapRow, LiquidityPoolRow, LiquidityPositionRow, ManagedLiquidityPoolRow,
-    ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow,
-    V2PoolRow, V3PoolRow, V4PoolRow,
+    InitializationMapRow, LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow,
+    ManagedLiquidityPoolRow, ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow,
+    PoolKindRow, PoolManagerRow, V2PoolRow, V3PoolRow, V4PoolRow,
 };
 pub use snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap, PoolKey};
 pub use species::{ChainIdentifiers, Family, Manifest, ManifestError, SlotLayout, Species};

@@ -104,6 +104,24 @@ impl PoolKind {
             .find(|(name, _)| *name == kind)
             .map(|(_, pool_kind)| *pool_kind)
     }
+
+    /// `pools.kind` / `managed_pools.kind` discriminators whose family the
+    /// taxonomy declares but this graph vocabulary does not admit (ADR-059
+    /// D8). These are NOT supported: [`Self::from_kind_str`] returns `None`
+    /// for them, and a DB row carrying one flows into the loud
+    /// `load_unsupported` roster instead of being unclassifiable.
+    ///
+    /// `lfj_binned` is the LFJ (Trader Joe) binned-liquidity family — the
+    /// first genuinely new pool structure through the kernel, declared here
+    /// before any tier admits it.
+    pub const DECLARED_UNSUPPORTED_KINDS: &'static [&'static str] = &["lfj_binned"];
+
+    /// `true` if `kind` is a declared-but-unsupported family discriminator
+    /// (present in the taxonomy, absent from the supported [`Self::KNOWN_KINDS`]).
+    #[must_use]
+    pub fn is_declared_unsupported(kind: &str) -> bool {
+        Self::DECLARED_UNSUPPORTED_KINDS.contains(&kind)
+    }
 }
 
 /// A pool edge in the external (database) form. Retained for API

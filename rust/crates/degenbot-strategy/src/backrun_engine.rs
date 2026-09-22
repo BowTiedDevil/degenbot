@@ -226,7 +226,9 @@ impl LaneFamilyTag {
                 ConcentratedLiquidityVariant::UniswapV3 => Some(Self::V3),
                 ConcentratedLiquidityVariant::UniswapV4 => Some(Self::V4),
             },
-            Identity::BalanceVector { .. } => None,
+            // The lane vocabulary is V2/V3/V4-only; balance-vector and binned
+            // liquidity both LAG the taxonomy rather than a false claim (D8).
+            Identity::BalanceVector { .. } | Identity::BinnedLiquidity { .. } => None,
         }
     }
 }
@@ -960,7 +962,8 @@ mod taxonomy_tests {
     use alloy::primitives::{Address, B256};
     use degenbot_pathfinding::PoolKind;
     use degenbot_pools::{
-        BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+        BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
+        ReservePairVariant,
     };
     use degenbot_solvers::mixed::HopType;
 
@@ -1043,6 +1046,14 @@ mod taxonomy_tests {
         assert_eq!(
             LaneFamilyTag::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
             None
+        );
+        assert_eq!(
+            LaneFamilyTag::from_identity(&Identity::BinnedLiquidity {
+                variant: BinnedLiquidityVariant::Lfj,
+                dex: None,
+            }),
+            None,
+            "the lane vocabulary is V2/V3/V4-only: binned liquidity must lag",
         );
     }
 }

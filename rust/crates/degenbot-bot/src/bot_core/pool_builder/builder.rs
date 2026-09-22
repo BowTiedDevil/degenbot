@@ -81,6 +81,10 @@ impl PoolFamily {
                 BalanceVectorVariant::BalancerWeighted => Some(Self::BalancerWeighted),
                 BalanceVectorVariant::BalancerStable => Some(Self::BalancerStable),
             },
+            // Binned liquidity has no single-address selector probe: its
+            // LBPair identity is an LBFactory deployment the probe station
+            // does not model, so it LAGS the taxonomy and projects to None.
+            Identity::BinnedLiquidity { .. } => None,
         }
     }
 }
@@ -1532,7 +1536,8 @@ mod taxonomy_tests {
     //! `None` here, never silently mapped onto a neighbour.
     use super::PoolFamily;
     use degenbot_pools::{
-        BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+        BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
+        ReservePairVariant,
     };
 
     fn reserve_pair(variant: ReservePairVariant) -> Identity {
@@ -1588,6 +1593,14 @@ mod taxonomy_tests {
         assert_eq!(
             PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
             Some(PoolFamily::BalancerStable),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&Identity::BinnedLiquidity {
+                variant: BinnedLiquidityVariant::Lfj,
+                dex: None,
+            }),
+            None,
+            "no single-address probe for binned liquidity: it must lag",
         );
     }
 }

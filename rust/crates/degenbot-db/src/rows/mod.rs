@@ -21,6 +21,6 @@ pub use liquidity::{
     ManagedPoolLiquidityPositionRow,
 };
 pub use pool::{
-    LiquidityPoolRow, ManagedLiquidityPoolRow, PoolKindRow, PoolManagerRow, V2PoolRow, V3PoolRow,
-    V4PoolRow,
+    LfjPoolRow, LiquidityPoolRow, ManagedLiquidityPoolRow, PoolKindRow, PoolManagerRow, V2PoolRow,
+    V3PoolRow, V4PoolRow,
 };
