@@ -23,6 +23,7 @@ from degenbot._ffi import ArbitrageEngine, Bot
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner.bot_runner import _SessionState
 from degenbot.runner.config import ArbitrageConfig
+from degenbot.strategy import validate_strategy_readiness as readiness
 from tests.fakes.engine import (
     ENGINE_SEAM_MEMBERS,
     RETIRED_ENGINE_MEMBERS,
@@ -97,15 +98,40 @@ def test_fake_and_real_agree_on_default_registration_order() -> None:
 
 
 def test_fake_and_real_agree_on_enable_disable_vocabulary() -> None:
+    """Drives the vocabulary walk on a facet the ambient config admits: the
+    real engine's admission reads `strategy.<facet>.active`, so an inactive
+    facet refuses and the fake — a pure FSM double — cannot mirror that."""
     real = ArbitrageEngine(py_bot=Bot(1))
     fake = FakeEngine()
 
-    assert fake.enable_strategy("settlement") == real.enable_strategy("settlement") == "enabled"
-    assert fake.strategies()[0] == real.strategies()[0] == ("settlement", "enabled", None)
+    facet = next(
+        (
+            name
+            for name, key in (
+                ("settlement", readiness().settlement_active),
+                ("mevblocker_backrun", readiness().mevblocker_backrun_active),
+                ("peer_backrun", readiness().peer_backrun_active),
+            )
+            if key
+        ),
+        None,
+    )
+    if facet is None:
+        pytest.skip(
+            "the ambient config activates no facet; the real engine's "
+            "admission refuses every enable until one is activated"
+        )
 
-    fake.disable_strategy("settlement")
-    real.disable_strategy("settlement")
-    assert fake.strategies()[0] == real.strategies()[0] == ("settlement", "disabled", None)
+    assert fake.enable_strategy(facet) == real.enable_strategy(facet) == "enabled"
+    fake_state = next(r for r in fake.strategies() if r[0] == facet)
+    real_state = next(r for r in real.strategies() if r[0] == facet)
+    assert fake_state == real_state == (facet, "enabled", None)
+
+    fake.disable_strategy(facet)
+    real.disable_strategy(facet)
+    fake_state = next(r for r in fake.strategies() if r[0] == facet)
+    real_state = next(r for r in real.strategies() if r[0] == facet)
+    assert fake_state == real_state == (facet, "disabled", None)
 
 
 class _AlloyW3:

@@ -245,7 +245,7 @@ class TestBotRunnerStart:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -281,7 +281,7 @@ class TestBotRunnerStart:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -306,7 +306,7 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -333,7 +333,7 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -366,7 +366,7 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -428,7 +428,7 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
         )
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=registry,  # type: ignore[arg-type]
                 async_w3=_FakeAsyncW3(),
@@ -469,7 +469,7 @@ class TestBotRunnerShutdown:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -495,7 +495,7 @@ class TestBotRunnerShutdown:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -522,7 +522,7 @@ class TestBotRunnerShutdown:
         engine_registry.engine.stop_raises = RuntimeError("engine torn down")
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -547,7 +547,7 @@ class TestBotRunnerShutdown:
         # AttributeError). Let a Ctrl-C during startup still exit cleanly.
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=None,
                 engine_registry=None,
                 async_w3=None,
@@ -575,7 +575,7 @@ class TestBotRunnerShutdown:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -618,7 +618,7 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -641,7 +641,7 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -670,7 +670,7 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -697,7 +697,7 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -783,7 +783,7 @@ class TestConstructionContext:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -834,7 +834,7 @@ class TestSubBBackgroundRegistration:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -862,7 +862,7 @@ class TestSubBBackgroundRegistration:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -899,7 +899,7 @@ class TestSubBBackgroundRegistration:
         bot._py_bot = _RecordingPyBot(calls)  # records `close_snapshot_tx`
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),
@@ -942,7 +942,7 @@ class TestSubBBackgroundRegistration:
         bot._py_bot = _RecordingPyBot(calls, raise_on_close=True)
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),
@@ -1013,7 +1013,7 @@ class TestSubCBgRegistrationConcurrency:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1063,7 +1063,7 @@ class TestSubCBgRegistrationConcurrency:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1103,7 +1103,7 @@ class TestSubCBgRegistrationConcurrency:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1158,7 +1158,7 @@ class TestSubCBgRegistrationConcurrency:
         bot = _FakeBot(blocks=[_block_dict(500)])
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=registry,  # type: ignore[arg-type]
                 async_w3=_FakeAsyncW3(),
@@ -1208,7 +1208,7 @@ class Test6VZN7HOngoingDiscovery:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1550,7 +1550,7 @@ class TestSessionOperatorSurface:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1605,7 +1605,7 @@ class TestSessionOperatorSurface:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1665,7 +1665,7 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1721,7 +1721,7 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1747,7 +1747,7 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),

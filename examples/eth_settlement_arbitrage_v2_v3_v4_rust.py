@@ -32,6 +32,7 @@ from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.exceptions import BootRefused
 from degenbot.logging import logger as bot_logger
 from degenbot.runner import BotRunner
+from degenbot.runner.bot_runner import ActivationGateRefused, SettlementArmGateRefused
 from degenbot.runner.cli import build_arbitrage_arg_parser
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
@@ -124,6 +125,11 @@ async def main() -> None:
                     with contextlib.suppress(asyncio.CancelledError):
                         await operator_task
                     await operator.close()
+    except (ActivationGateRefused, SettlementArmGateRefused) as exc:
+        # The posture gate refused the fleet: same fail-fast discipline as
+        # the boot refusal — one named line, EX_CONFIG, no partial run().
+        bot_logger.error(f"[activation-gate] REFUSED — {exc}")
+        sys.exit(78)
     except BootRefused as exc:
         # FF-T1 (BPHR6F): the library surfaced the TYPED fleet boot
         # refusal (it never aborts the host process); the BINARY owns the

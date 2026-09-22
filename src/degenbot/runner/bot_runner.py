@@ -304,6 +304,11 @@ class InjectedActors:
     #: production leaves it unset so the Rust readiness resolution owns the
     #: posture and the gate refuses an unsettled live boot).
     relay_posture: RelayPosture | None = None
+    #: Forces the session's settlement-arm posture (None = derive from the
+    #: readiness resolution). The runner's engine loop reads this once at
+    #: start(): settlement off -> no path registration, no python-state trim,
+    #: the active hosted arms (backrun drivers) enable around resume().
+    settlement_arm: bool | None = None
 
 
 class BotRunner:
@@ -386,6 +391,7 @@ class BotRunner:
         self._consumer = injected.consumer
         self._injected_pipeline_factory = injected.pipeline_factory
         self._injected_relay_posture = injected.relay_posture
+        self._injected_settlement_arm = injected.settlement_arm
         self._background_registration: bool | None = background_registration
         # The registration-owned construction context (built in run() for
         # the real build_paths; None for injected builders and until run()).
@@ -574,9 +580,24 @@ class BotRunner:
                 else self._resolve_relay_posture(live=not cfg.dry_run)
             ),
         )
+        self._resolve_settlement_arm()
         self._install_sigint_handler()
         self._phase = next_phase
         return self
+
+    def _resolve_settlement_arm(self) -> None:
+        """Resolve the settlement-arm posture once, before run() reads it.
+
+        The injected flag (test/probe DI) wins; otherwise the readiness view
+        the posture gate already walked owns the answer — the same facet
+        activation the gate used, so the arm never disagrees with the fleet.
+        """
+        if self._injected_settlement_arm is not None:
+            self._settlement_active = self._injected_settlement_arm
+            return
+        from degenbot.strategy import validate_strategy_readiness
+
+        self._settlement_active = bool(validate_strategy_readiness().settlement_active)
 
     async def _build_actors(
         self, cfg: ArbitrageConfig
@@ -591,29 +612,43 @@ class BotRunner:
     def _resolve_relay_posture(*, live: bool) -> RelayPosture | None:
         """The settlement broadcast posture from the resolved typed config.
 
-        In live mode this is the fail-closed boot gate: the Rust readiness
+        The fail-closed boot gate is stance-independent: the Rust readiness
         resolution refuses an activated facet with an unsettled endpoint set
         (naming the `degenbot strategy activate` remedies), and the hosted
         runner IS the settlement arm, so an inactive settlement facet is a
-        refusal too — both abort the session instead of degrading a live
-        broadcast to the public mempool. Dry-run sessions keep no posture:
-        nothing is signed, so no fan-out matters and offline boots stay
-        env-free."""
+        refusal too — aborting the session in BOTH stances instead of
+        degrading a broadcast to the public mempool or simulating a strategy
+        the operator deactivated. Dry-run sessions still keep no posture:
+        nothing is signed, so no fan-out surface exists once the gate
+        settles."""
 
         from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
 
+        # The posture gate is stance-independent over the resolved facet
+        # postures: the operator's active facets RUN; the inactive facets do
+        # not load. An empty fleet refuses (there is nothing to host); an
+        # active-settlement boot needs settled endpoints; a backrun-only boot
+        # runs no settlement pipeline, so no settlement posture exists.
         try:
-            validate_strategy_readiness()
+            view = validate_strategy_readiness()
         except ValueError as refusal:
-            if live:
-                raise ActivationGateRefused(refusal) from refusal
-            return None
-        if not live:
+            raise ActivationGateRefused(refusal) from refusal
+        if not (
+            view.settlement_active or view.mevblocker_backrun_active or view.peer_backrun_active
+        ):
+            refusal = ValueError(
+                "no active strategy: activate at least one facet "
+                "(degenbot strategy activate settlement|mevblocker_backrun|peer_backrun)"
+            )
+            raise ActivationGateRefused(refusal) from refusal
+        if not view.settlement_active:
             return None
         try:
             relay_urls = settlement_broadcast_endpoints()
         except ValueError as refusal:
             raise SettlementArmGateRefused(refusal) from refusal
+        if not live:
+            return None
         return RelayPosture(relay_urls=relay_urls)
 
     @staticmethod
@@ -709,6 +744,28 @@ class BotRunner:
             consumer(session=session, block_stream=block_stream),
             name="result-consumer",
         )
+
+        # Posture-driven arms: resume() drives hosted loops only for facets
+        # the operator ENABLED, so every active non-settlement facet enables
+        # now. enable_strategy refuses an unconfigured facet, and the readiness
+        # resolution already refused an active facet with unsettled endpoints
+        # at the boot gate, so this follows the same config surface.
+        if not self._settlement_active:
+            from degenbot.strategy import validate_strategy_readiness
+
+            view = validate_strategy_readiness()
+            enabled: list[str] = []
+            for facet, active in (
+                ("mevblocker_backrun", view.mevblocker_backrun_active),
+                ("peer_backrun", view.peer_backrun_active),
+            ):
+                if active:
+                    session.engine_registry.engine.enable_strategy(facet)
+                    enabled.append(facet)
+            bot_logger.info(
+                f"[host-arms] settlement facet inactive — hosted arms: "
+                f"{', '.join(enabled) if enabled else 'NONE'}"
+            )
         # Attach the consumer to the session watch the moment it exists — a
         # teardown after any later run() failure (an inline build_paths
         # raise, Ctrl-C during registration) still reaches it.
@@ -762,7 +819,15 @@ class BotRunner:
         background = self._background_registration
         if background is None:
             background = self._path_builder is None
-        if background:
+        if not self._settlement_active:
+            # Backrun-only boot: the settlement pipeline (discovery ->
+            # registration -> sims -> submit arm) is the settlement facet's
+            # seam, and nothing else consumes registered paths, so registration
+            # does not run and the python-state trim never fires. The pump
+            # stays live: the hosted drivers it feeds read the head lanes and
+            # the reconcile guard, not registered paths.
+            pass
+        elif background:
             self._registration_task = asyncio.create_task(
                 self._run_registration_background(
                     path_builder=path_builder,

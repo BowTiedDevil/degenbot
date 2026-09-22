@@ -78,7 +78,7 @@ class _FakeAsyncW3:
 def _session() -> BotRunner:
     return BotRunner(
         _cfg(),
-        actors=InjectedActors(
+        actors=InjectedActors(settlement_arm=True, 
             bot=_FakeBot(),
             engine_registry=_FakeEngineRegistry(),
             async_w3=_FakeAsyncW3(),

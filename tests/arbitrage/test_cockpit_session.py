@@ -160,7 +160,7 @@ class TestSessionOwner:
 
         session_runner = BotRunner(
             _cfg(),
-            actors=InjectedActors(
+            actors=InjectedActors(settlement_arm=True, 
                 bot=_FakeBot(),
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),

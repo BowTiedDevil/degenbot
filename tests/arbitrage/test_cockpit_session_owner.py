@@ -125,7 +125,7 @@ def _runner(**overrides: object) -> BotRunner:
     install_sigint = overrides.pop("install_sigint", False)
     actors.update(overrides)
     return BotRunner(  # type: ignore[arg-type]
-        _cfg(), actors=InjectedActors(**actors), install_sigint=install_sigint
+        _cfg(), actors=InjectedActors(settlement_arm=True, **actors), install_sigint=install_sigint
     )
 
 

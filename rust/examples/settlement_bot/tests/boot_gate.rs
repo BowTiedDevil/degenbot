@@ -253,6 +253,11 @@ fn run_binary(discovery_chain_id: Option<&str>) -> String {
     command.env("DEGENBOT_DB_AUTO_HEAL", "0");
     command.env("DEGENBOT_RPC_HTTP_CHAINID_1", "http://127.0.0.1:1");
     command.env("DEGENBOT_RPC_WS_CHAINID_1", "ws://127.0.0.1:1");
+    // The hermetic boot has no config file, so its facets fall to schema
+    // defaults (every facet inactive) — and the stance-independent arm gate
+    // refuses an inactive settlement facet. Activate the settled-block arm
+    // the way the 12-factor cascade does for any other DEGENBOT_* key.
+    command.env("DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE", "1");
     // Hermetic telemetry (Gap G6 /): the example now boots the
     // Prometheus scrape endpoint, so bind an ephemeral port per test binary
     // instead of racing the default 127.0.0.1:9464 across parallel tests.

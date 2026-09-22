@@ -574,12 +574,14 @@ fn run() -> Result<(), String> {
     let cli = parse_cli(&args)?;
 
     // Strategy-arm gate (ADR-055): this driver is the settled-block arm.
-    // An activated per-ecosystem backrun facet must boot via its hosted
+    // An inactive settlement facet refuses in both stances, and an
+    // activated per-ecosystem backrun facet must boot via its hosted
     // driver, not this runner; the schema is the load source. A loader
     // failure does not change behavior: the driver's own boot reads the
     // config again and reports typed errors there.
     if let Ok(loaded) = degenbot::config::BotConfigLoader::new().load() {
         if let Some(msg) = strategy_arm_refusal(
+            loaded.config.strategy.settlement.active,
             loaded.config.strategy.mevblocker_backrun.active,
             loaded.config.strategy.peer_backrun.active,
         ) {
@@ -1167,9 +1169,21 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// The arm the driver refuses: an explicitly activated pending-transaction
-/// facet belongs to its own binary or the hosted process, not this runner.
-fn strategy_arm_refusal(mevblocker_active: bool, peer_active: bool) -> Option<String> {
+/// The arms the driver refuses. This driver IS the settled-block arm, so:
+/// an inactive `strategy.settlement.active` refuses in both stances (the
+/// parity twin of the hosted runner's stance-independent posture gate), and
+/// an activated pending-transaction facet belongs to its own binary or the
+/// hosted process, not this runner.
+fn strategy_arm_refusal(
+    settlement_active: bool,
+    mevblocker_active: bool,
+    peer_active: bool,
+) -> Option<String> {
+    if !settlement_active {
+        return Some(
+            "an inactive settlement facet (strategy.settlement.active = false): this driver is the settled-block arm; activate it first (degenbot strategy activate settlement)".to_string(),
+        );
+    }
     (mevblocker_active || peer_active).then(|| {
         "an activated backrun facet (strategy.mevblocker_backrun / strategy.peer_backrun): this driver is the settled-block arm; the backrun arms boot as hosted drivers".to_string()
     })
@@ -1184,19 +1198,30 @@ mod arm_gate_tests {
     use super::strategy_arm_refusal;
 
     #[test]
-    fn unset_arm_keeps_wiring_default() {
-        assert!(strategy_arm_refusal(false, false).is_none());
+    fn active_settlement_with_no_backruns_boots() {
+        assert!(strategy_arm_refusal(true, false, false).is_none());
+    }
+
+    #[test]
+    fn inactive_settlement_refuses_the_settled_arm() {
+        // The parity twin of the hosted runner: the driver IS the settled-block
+        // arm, so a deactivated settlement facet refuses in BOTH stances,
+        // naming the activation remedy the hosted runner names.
+        let msg = strategy_arm_refusal(false, false, false)
+            .expect("an inactive settlement facet must refuse");
+        assert!(msg.contains("strategy.settlement.active"));
+        assert!(msg.contains("degenbot strategy activate settlement"));
     }
 
     #[test]
     fn mevblocker_arm_refuses_on_the_settlement_driver() {
-        let msg = strategy_arm_refusal(true, false).expect("mevblocker must refuse");
+        let msg = strategy_arm_refusal(true, true, false).expect("mevblocker must refuse");
         assert!(msg.contains("strategy.mevblocker_backrun"));
     }
 
     #[test]
     fn peer_arm_refuses_on_the_settlement_driver() {
-        let msg = strategy_arm_refusal(false, true).expect("peer must refuse");
+        let msg = strategy_arm_refusal(true, false, true).expect("peer must refuse");
         assert!(msg.contains("strategy.peer_backrun"));
     }
 }

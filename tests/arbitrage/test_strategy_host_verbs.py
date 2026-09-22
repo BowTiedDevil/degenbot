@@ -19,11 +19,41 @@ from degenbot._ffi import (
     UnconfiguredStrategyError,
     UnknownStrategyError,
 )
+from degenbot.strategy import validate_strategy_readiness
 
 
 @pytest.fixture
 def engine() -> ArbitrageEngine:
     return ArbitrageEngine(py_bot=Bot(1))
+
+
+def _active_facet(engine: ArbitrageEngine) -> str:
+    """A facet the ambient holder config admits, for FSM-walk tests.
+
+    Admission is stance-independent over `strategy.<facet>.active` (the boot
+    installs the ambient config in every Python process), so the walk needs a
+    facet whose key is actually on; the probe runs on a THROWAWAY engine so
+    the caller's instance stays untouched (a disabled facet is terminal and
+    would poison the walk under test).
+    """
+    readiness = validate_strategy_readiness()
+    for facet, key in (
+        ("settlement", readiness.settlement_active),
+        ("mevblocker_backrun", readiness.mevblocker_backrun_active),
+        ("peer_backrun", readiness.peer_backrun_active),
+    ):
+        if not key:
+            continue
+        probe = ArbitrageEngine(py_bot=Bot(1))
+        try:
+            probe.enable_strategy(facet)
+        except StrategyHostError:
+            continue
+        return facet
+    pytest.skip(
+        "the ambient config activates no admissible facet; stance-independent "
+        "admission refuses every enable until one is activated"
+    )
 
 
 def test_default_boot_registers_all_strategies_unenabled(engine: ArbitrageEngine) -> None:
@@ -36,22 +66,27 @@ def test_default_boot_registers_all_strategies_unenabled(engine: ArbitrageEngine
 
 
 def test_enable_then_disable_walks_the_fsm(engine: ArbitrageEngine) -> None:
-    assert engine.enable_strategy("settlement") == "enabled"
-    assert engine.strategies()[0] == ("settlement", "enabled", None)
+    facet = _active_facet(engine)
+    assert engine.enable_strategy(facet) == "enabled"
+    record = next(r for r in engine.strategies() if r[0] == facet)
+    assert record[1] == "enabled"
 
-    engine.disable_strategy("settlement")
-    assert engine.strategies()[0] == ("settlement", "disabled", None)
+    engine.disable_strategy(facet)
+    record = next(r for r in engine.strategies() if r[0] == facet)
+    assert record[1] == "disabled"
 
 
 def test_a_disabled_tombstone_is_terminal_and_never_restarts(engine: ArbitrageEngine) -> None:
-    engine.enable_strategy("settlement")
-    engine.disable_strategy("settlement")
+    facet = _active_facet(engine)
+    engine.enable_strategy(facet)
+    engine.disable_strategy(facet)
 
     # Disabled is terminal: a second enable is a typed lifecycle refusal, and
     # the record stays frozen.
     with pytest.raises(StrategyHostError):
-        engine.enable_strategy("settlement")
-    assert engine.strategies()[0] == ("settlement", "disabled", None)
+        engine.enable_strategy(facet)
+    record = next(r for r in engine.strategies() if r[0] == facet)
+    assert record[1] == "disabled"
 
 
 def test_unknown_strategy_raises_a_typed_error(engine: ArbitrageEngine) -> None:

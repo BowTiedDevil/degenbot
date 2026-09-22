@@ -17,7 +17,7 @@ import pytest
 from degenbot._ffi import ArbitrageEngine, Bot, UnconfiguredStrategyError
 from degenbot.config import DegenbotConfig
 from degenbot.runner.bot_runner import BotRunner
-
+from degenbot.strategy import validate_strategy_readiness
 
 STRATEGY_ENV = "DEGENBOT_STRATEGY_NAME"
 
@@ -54,13 +54,24 @@ class TestAdmissionIsHostOwned:
         monkeypatch.setenv(STRATEGY_ENV, "peer_backrun")
         assert BotRunner(None) is not None  # type: ignore[arg-type]
 
-    def test_host_refuses_unconfigured_backrun(self):
-        """The host's typed refusal is the one admission surface."""
+    def test_host_admission_follows_the_facet_config(self):
+        """The host's typed refusal is the one admission surface, and it reads
+        the SAME facet activation the readiness resolution reports: enabled
+        iff `strategy.<facet>.active`. The test derives the expectation from
+        that resolution rather than pinning ambient holder state — the boot
+        installs the ambient config, so a workspace with an activated backrun
+        facet must admit it exactly as a defaulted one refuses."""
         engine = ArbitrageEngine(py_bot=Bot(1))
-        with pytest.raises(UnconfiguredStrategyError):
-            engine.enable_strategy("mevblocker_backrun")
-        with pytest.raises(UnconfiguredStrategyError):
-            engine.enable_strategy("peer_backrun")
+        readiness = validate_strategy_readiness()
+        for facet, active in (
+            ("mevblocker_backrun", readiness.mevblocker_backrun_active),
+            ("peer_backrun", readiness.peer_backrun_active),
+        ):
+            if active:
+                engine.enable_strategy(facet)
+            else:
+                with pytest.raises(UnconfiguredStrategyError):
+                    engine.enable_strategy(facet)
 
 
 @pytest.fixture(autouse=True)

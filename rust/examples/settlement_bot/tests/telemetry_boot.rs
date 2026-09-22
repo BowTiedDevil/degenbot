@@ -45,6 +45,11 @@ fn base_command() -> Command {
     command.env("DEGENBOT_RPC_WS_CHAINID_1", "ws://127.0.0.1:1");
     command.env("DEGENBOT_DISCOVERY_CHAIN_ID", "8453");
     command.env("DEGENBOT_METRICS_ADDR", "127.0.0.1:0");
+    // Same facet discipline as boot_gate.rs: the hermetic boot has no config
+    // file, so schema defaults leave every facet inactive and the
+    // stance-independent arm gate refuses the settled-block arm. Activate it
+    // through the 12-factor cascade like any other DEGENBOT_* key.
+    command.env("DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE", "1");
     command
 }
 

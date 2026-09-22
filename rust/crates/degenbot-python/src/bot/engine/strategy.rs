@@ -151,6 +151,22 @@ fn hosted_route_registry() -> Arc<RouteRegistry> {
     Arc::new(RouteRegistry::new(V2ConnectorIndex::default()))
 }
 
+/// The host's admission status for one strategy: configured iff its facet is
+/// active in the resolved typed config. Stance-independent — the runner's
+/// posture gate refuses the boot in BOTH stances when the arm it hosts is
+/// inactive, so no stance-specific waiver lives at the boot's facet table.
+#[must_use]
+fn facet_status(
+    name: degenbot_strategy::StrategyName,
+    cfg: &degenbot_config::schema::BotConfig,
+) -> FacetStatus {
+    if name.is_active(cfg) {
+        FacetStatus::Configured
+    } else {
+        FacetStatus::Unconfigured
+    }
+}
+
 #[expect(
     clippy::expect_used,
     reason = "a freshly minted host has no registered strategies, so both registers are infallible"
@@ -163,22 +179,13 @@ pub(crate) fn boot_host() -> BootedHost {
     );
 
     let cfg = degenbot_config::holder::config();
-    // Register every strategy under its plane name, in plane order. The
-    // settlement facet is the arm this hosted boot IS, so it registers
-    // configured regardless of `strategy.settlement.active`: the runner
-    // resolves its live relay posture after the engine exists, and a dry-run
-    // boot that never broadcasts must still enable the arm.
+    // Register every strategy under its plane name, in plane order, derived
+    // from its `strategy.<facet>.active` key — including settlement, whose
+    // retired boot-time waiver ("a dry-run boot must still enable the arm")
+    // is gone: activation isn't a live-only concern.
     for name in degenbot_strategy::StrategyName::ALL {
-        let configured = name == degenbot_strategy::StrategyName::Settlement || name.is_active(cfg);
-        host.register(
-            StrategyId::new(name.as_str()),
-            if configured {
-                FacetStatus::Configured
-            } else {
-                FacetStatus::Unconfigured
-            },
-        )
-        .expect("a freshly minted host registers every strategy");
+        host.register(StrategyId::new(name.as_str()), facet_status(name, cfg))
+            .expect("a freshly minted host registers every strategy");
     }
 
     #[cfg(feature = "submission")]
@@ -419,6 +426,17 @@ mod tests {
     /// tombstone carried by `strategies()`.
     #[test]
     fn the_start_flow_boots_a_registered_factory_and_folds_its_exit() {
+        // The facet's start flow needs an active settlement facet: the boot's
+        // facet table reads `strategy.settlement.active` for every strategy,
+        // so a defaulted (inactive) holder refuses the enable like any other
+        // facet. The install is first-wins, and no other test in this binary
+        // installs — a second install unittesting HERE would fail loudly.
+        let mut cfg = degenbot_config::schema::BotConfig::default();
+        cfg.strategy.settlement.active = true;
+        assert!(
+            degenbot_config::holder::install(std::sync::Arc::new(cfg)),
+            "this test owns the binary's holder install"
+        );
         Python::attach(|py| {
             let engine = PyArbEngine::new(py, None);
             assert!(
@@ -538,5 +556,43 @@ mod tests {
                 "the peer facet is registered on the host: {names:?}"
             );
         });
+    }
+
+    /// The stance-independent posture rule at the host's facet table: every
+    /// strategy — settlement included — registers configured iff its
+    /// `strategy.<facet>.active` key is on. The boot-time settlement waiver
+    /// (a dry-run boot must still enable the arm) is retired: activation
+    /// isn't a live-only concern, and the stance-independent runner gate
+    /// refuses the boot in both stances before the host serves a session.
+    #[test]
+    fn each_facet_is_configured_iff_its_active_key_is_on() {
+        let name_and_active: [(
+            degenbot_strategy::StrategyName,
+            fn(&mut degenbot_config::schema::BotConfig),
+        ); 3] = [
+            (degenbot_strategy::StrategyName::Settlement, |cfg| {
+                cfg.strategy.settlement.active = true;
+            }),
+            (degenbot_strategy::StrategyName::MevblockerBackrun, |cfg| {
+                cfg.strategy.mevblocker_backrun.active = true;
+            }),
+            (degenbot_strategy::StrategyName::PeerBackrun, |cfg| {
+                cfg.strategy.peer_backrun.active = true;
+            }),
+        ];
+        for (name, activate) in name_and_active {
+            let mut cfg = degenbot_config::schema::BotConfig::default();
+            assert_eq!(
+                facet_status(name, &cfg),
+                FacetStatus::Unconfigured,
+                "a defaulted config activates no facet"
+            );
+            activate(&mut cfg);
+            assert_eq!(
+                facet_status(name, &cfg),
+                FacetStatus::Configured,
+                "the activated facet registers configured"
+            );
+        }
     }
 }
