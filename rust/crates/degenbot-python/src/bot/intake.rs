@@ -161,7 +161,7 @@ impl PyIntakeReceipt {
         let signal_rx = Arc::clone(&self.signal_rx);
         let done = Arc::clone(&self.done);
         let fault = self.fault.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::ambient_runtime::future_into_py(py, async move {
             tokio::task::spawn_blocking(move || {
                 join_signals(&signal_rx, &done, fault.as_deref(), None)
             })

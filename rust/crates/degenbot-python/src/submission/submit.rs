@@ -28,6 +28,7 @@
 //! rule is satisfied. The probe polls `Provider::get_transaction_receipt`
 //! (typed) — `true` iff a receipt exists (the transaction is mined).
 
+use crate::ambient_runtime::future_into_py;
 use crate::prelude::*;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
 use crate::submission::dispatcher::PyDispatcher;
@@ -39,7 +40,6 @@ use degenbot_submission::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList};
-use pyo3_async_runtimes::tokio::future_into_py;
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;

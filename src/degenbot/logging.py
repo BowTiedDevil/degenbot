@@ -9,8 +9,10 @@ This module owns two concerns:
 Rust ``tracing`` events — and ``log::`` records, bridged into ``tracing`` by
 ``tracing_log::LogTracer`` — are forwarded to Python ``logging`` by the
 ``PythonLogLayer`` installed by ``init_logging_subscriber`` in
-``rust/crates/degenbot-python/src/python_log_layer.rs`` during ``degenbot_rs``
-module init. The layer derives each record's Python logger name from the Rust
+``rust/crates/degenbot-python/src/python_log_layer.rs`` during the explicit
+``driver_boot()`` call (module init registers symbols only, and ``Bot``
+triggers the boot at construction). The layer derives each record's Python
+logger name from the Rust
 target (``::`` → ``.``): an event for ``degenbot_bot::bot_core::block_pump``
 lands on the Python logger ``degenbot_bot.bot_core.block_pump``.
 

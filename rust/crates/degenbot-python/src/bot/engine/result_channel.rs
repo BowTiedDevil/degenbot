@@ -314,7 +314,7 @@ impl PyArbEngine {
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let result_rx = Arc::clone(&self.result_rx);
 
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::ambient_runtime::future_into_py(py, async move {
             // Take the receiver for awaiting
             let mut rx = result_rx
                 .lock()
@@ -573,7 +573,7 @@ impl BlockStream {
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let block_rx = Arc::clone(&self.block_rx);
 
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::ambient_runtime::future_into_py(py, async move {
             let mut rx = block_rx
                 .lock()
                 .take()

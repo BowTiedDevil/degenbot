@@ -13,6 +13,46 @@
 
 use pyo3::prelude::*;
 
+/// Bind `pyo3-async-runtimes` to the shared degenbot-core ambient runtime,
+/// exactly once per process, before the first `future_into_py` runs.
+///
+/// GOQWCL (incident 2026-08-21): using pyo3-async's default runtime when the
+/// binding never happened is what spawned a SECOND nproc-worker runtime
+/// mid-run (24 surprise worker threads at the wedge timestamp). The singleton
+/// here is the ONE shared runtime (`degenbot_core::runtime`), and the
+/// `OnceLock` makes creation deterministic at first async use; the driver's
+/// explicit `driver_boot()` moves that first use back to process start.
+pub fn ensure_async_runtime_bound() {
+    static BOUND: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    BOUND.get_or_init(|| {
+        if pyo3_async_runtimes::tokio::init_with_runtime(degenbot_core::runtime::get_runtime())
+            .is_err()
+        {
+            degenbot_core::diag!(
+                domain = pump,
+                "pyo3_async_runtimes already bound to a runtime"
+            );
+        }
+    });
+}
+
+/// The ONE async seam: every `future_into_py` call site routes through here
+/// so a process that never called `driver_boot()` still binds the shared
+/// runtime instead of pyo3-async's default. Bounds mirror
+/// `pyo3_async_runtimes::tokio::future_into_py` verbatim.
+///
+/// # Errors
+///
+/// Propagates the upstream result unchanged; the guard itself cannot fail.
+pub fn future_into_py<F, T>(py: Python<'_>, fut: F) -> PyResult<Bound<'_, PyAny>>
+where
+    F: std::future::Future<Output = PyResult<T>> + Send + 'static,
+    T: for<'any> pyo3::IntoPyObject<'any> + Send + 'static,
+{
+    ensure_async_runtime_bound();
+    pyo3_async_runtimes::tokio::future_into_py(py, fut)
+}
+
 /// Call `fn_work()` with the shared degenbot-core runtime entered on the
 /// calling thread.
 ///

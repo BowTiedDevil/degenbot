@@ -181,7 +181,9 @@ s = degenbot.runtime_status()
 assert s["fleet_booted"] is False, s
 assert s["profile"] == "auto", s
 assert s["binding"] in ("pinned", "serial"), s
-assert s["census"], "the census is always present"
+# Import installs no runtimes or threads, so the census is EMPTY until
+# driver_boot() — that emptiness IS the default projection.
+assert s["census"] == [], s
 print("PRE-OK")
 """
     proc = subprocess.run(
@@ -193,3 +195,37 @@ print("PRE-OK")
         check=False,
     )
     assert "PRE-OK" in proc.stdout, f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"
+
+
+def test_runtime_status_after_driver_boot_populates_the_census() -> None:
+    """driver_boot() installs the shared runtime; the census row appears."""
+    child = """
+import os
+os.environ.pop("DEGENBOT_FLEET", None)
+os.environ.pop("DEGENBOT_FLEET_PROFILE", None)
+import degenbot
+from degenbot.bot import driver_boot
+before = degenbot.runtime_status()["census"]
+driver_boot()
+after = degenbot.runtime_status()["census"]
+assert before == [], before
+assert any(row["resource"] == "io_runtime_workers" for row in after), after
+print("BOOT-OK")
+"""
+    proc = subprocess.run(
+
+        [sys.executable, "-c", child],
+
+        capture_output=True,
+
+        text=True,
+
+        cwd=str(Path(__file__).parents[2]),
+
+        timeout=120,
+
+        check=False,
+
+    )
+
+    assert "BOOT-OK" in proc.stdout, f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"

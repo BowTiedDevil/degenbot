@@ -907,7 +907,7 @@ impl PathBatchIterator {
         let state = Arc::clone(&self.state);
         let batch_size = self.batch_size;
 
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::ambient_runtime::future_into_py(py, async move {
             let mut taken = state
                 .lock()
                 .take()

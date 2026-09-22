@@ -12,6 +12,7 @@ from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALA
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.bot_lifecycle import close as _close_handles
+from degenbot.bot import driver_boot as _driver_boot
 from degenbot.bot_lifecycle import (
     release_python_state as _release_python_state,
 )
@@ -231,6 +232,10 @@ class Bot(AccountQueryMixin):
                 chain.
 
         """
+        # A driver session is constructing its engine: bind the shared
+        # runtime + telemetry stack now (idempotent), not at import time.
+        _driver_boot()
+
         self.config = config
 
         if config.default_chain_id is None:

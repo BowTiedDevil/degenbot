@@ -337,7 +337,7 @@ impl PyArbEngine {
         })?;
         let host = Arc::clone(&self.host);
         let lanes = Arc::clone(&self.head_lanes);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::ambient_runtime::future_into_py(py, async move {
             if !host.lock().has_hosted_activity() {
                 return Ok(0u64);
             }

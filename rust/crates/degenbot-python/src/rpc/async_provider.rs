@@ -16,6 +16,7 @@
 //! If attach fails because the interpreter is shutting down, `try_attach`
 //! returns None and we propagate a clear error.
 
+use crate::ambient_runtime::future_into_py;
 use crate::conversion::cache::to_py_bytes;
 use crate::conversion::rpc_types::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use crate::prelude::*;
@@ -23,7 +24,6 @@ use crate::provider::{AlloyProvider, LogFetcher};
 use crate::rpc::provider::PyAlloyProvider;
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyList;
-use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
 /// Python wrapper for async provider operations.

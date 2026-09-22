@@ -126,7 +126,7 @@ impl PyArbEngine {
 
         let tick_lens = Address::ZERO;
 
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::ambient_runtime::future_into_py(py, async move {
             let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
                 .await
                 .map_err(|e| {
@@ -206,7 +206,7 @@ impl PyArbEngine {
             )));
         };
 
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::ambient_runtime::future_into_py(py, async move {
             let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
                 .await
                 .map_err(|e| {

@@ -1,10 +1,11 @@
 """degenbot: Ethereum DEX helper library."""
 
 # FIRST import (ADR-043 §6): `logging` attaches the console handler that owns
-# this process's console. The Rust extension below emits its boot-time records
-# during ITS module init, and the Rust→Python bridge forwards them to the
-# `degenbot` logger — so the handler must already exist or those early records
-# hit stdlib `lastResort` (WARNING+, no handler) and are dropped.
+# this process's console. The Rust side emits boot-time records during the
+# explicit driver boot (`degenbot._ffi.driver_boot()`, triggered by Bot
+# construction), and the Rust→Python bridge forwards them to the `degenbot`
+# logger — so the handler must already exist or those early records hit
+# stdlib `lastResort` (WARNING+, no handler) and are dropped.
 from .logging import logger
 
 # isort: split

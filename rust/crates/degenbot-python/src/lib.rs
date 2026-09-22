@@ -23,7 +23,6 @@
 //!
 //! See individual module documentation for usage examples.
 
-use degenbot_core::diag;
 use degenbot_core::op_info;
 // Opt-in allocator swap for churn-heavy workloads (missed-WS-pong follow-up,
 // RSS-growth investigation). The measured pathology was glibc free-page
@@ -219,6 +218,40 @@ fn init_python_before_test_threads() {
 
 use pyo3::prelude::*;
 
+/// Install the long-running-driver stack: the ONE shared runtime bound to
+/// pyo3-async, the tracing subscriber + Rust→Python log drainer, the metrics
+/// scrape thread, the panic hook, and the worker-census boot dump.
+///
+/// Idempotent — each piece guards its own once-registration, so a second call
+/// reallocates nothing. The async seams additionally call
+/// [`ambient_runtime::ensure_async_runtime_bound`] themselves, so a driver
+/// that forgets this call degrades to a deterministic first-use boot rather
+/// than a missing subscriber.
+static PANIC_HOOK: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+#[pyfunction]
+fn driver_boot(_py: Python<'_>) {
+    ambient_runtime::ensure_async_runtime_bound();
+
+    // Soak-2026-08-22 forensics + ADR-043 §2: the panic hook lives in the
+    // observability facade (degenbot_core::telemetry::install_panic_hook) so
+    // the pure-Rust core and this binding share ONE contract — exactly one
+    // ERROR carrying the panic payload + thread name, with the active span
+    // marked ERROR so the OTel layer exports it as a span exception. The hook
+    // chains the previous hook, so the default backtrace still prints, and
+    // fires for ANY panic anywhere (PythonLogLayer forwards it to Python).
+    PANIC_HOOK.get_or_init(degenbot_core::telemetry::install_panic_hook);
+
+    python_log_layer::init_logging_subscriber();
+
+    // dump the ONE structured worker-census boot line with the full
+    // table (see degenbot_core::worker_census). Resources that boot lazily
+    // (solve executor, drainers, sim slots) register later and emit their
+    // own census line on first use — the metric gauge picks every row up
+    // through the export hook either way.
+    degenbot_core::worker_census::emit_boot_table();
+}
+
 #[pymodule]
 fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize tracing subscriber stack with batched Python-forwarding layer.
@@ -310,41 +343,16 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
         }
     }
 
-    python_log_layer::init_logging_subscriber();
-
     // ADR-043 §5 migration safety net: loudly name any retired verbosity env
     // name still present in the environment (detection, not compatibility).
     degenbot_core::telemetry::warn_retired_env_names();
 
-    // GOQWCL (incident 2026-08-21): bind pyo3-async-runtimes to the shared
-    // bot runtime instead of letting the first `future_into_py` call lazily
-    // spawn a SECOND nproc-worker multi-thread runtime mid-run (observed as
-    // 24 surprise worker threads appearing at the wedge timestamp). The
-    // singleton is created on first use either way — this just makes it the
-    // ONE runtime, created deterministically at import.
-    if pyo3_async_runtimes::tokio::init_with_runtime(degenbot_core::runtime::get_runtime()).is_err()
-    {
-        diag!(
-            domain = pump,
-            "pyo3_async_runtimes already bound to a runtime"
-        );
-    }
-
-    // Soak-2026-08-22 forensics + ADR-043 §2: the panic hook lives in the
-    // observability facade (degenbot_core::telemetry::install_panic_hook) so
-    // the pure-Rust core and this binding share ONE contract — exactly one
-    // ERROR carrying the panic payload + thread name, with the active span
-    // marked ERROR so the OTel layer exports it as a span exception. The hook
-    // chains the previous hook, so the default backtrace still prints, and
-    // fires for ANY panic anywhere (PythonLogLayer forwards it to Python).
-    degenbot_core::telemetry::install_panic_hook();
-
-    // dump the ONE structured worker-census boot line with the full
-    // table (see degenbot_core::worker_census). Resources that boot lazily
-    // (solve executor, drainers, sim slots) register later and emit their
-    // own census line on first use — the metric gauge picks every row up
-    // through the export hook either way.
-    degenbot_core::worker_census::emit_boot_table();
+    // Register the driver-boot pyfunction on the module: everything the
+    // long-running Python driver needs (runtimes, subscriber + drainer,
+    // metrics scrape, panic hook, census dump) lives behind the explicit
+    // `driver_boot()` — a one-shot consumer (the console passthrough, a
+    // plain library import) pays none of it at import.
+    m.add_function(wrap_pyfunction!(driver_boot, m)?)?;
 
     // Register the shutdown pyfunction on the module.
     python_log_layer::PythonLogLayer::register_pyfunction(m)?;

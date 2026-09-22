@@ -70,7 +70,7 @@ pub(crate) fn pump_finished_future<'py>(
     driver: &Arc<EngineDriver>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let driver = Arc::clone(driver);
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    crate::ambient_runtime::future_into_py(py, async move {
         driver.wait_pump_finished().await;
         Ok(())
     })
@@ -93,7 +93,7 @@ pub(crate) fn run_v3_registration_lifecycle<'py>(
         .parse()
         .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))?;
     let driver = Arc::clone(driver);
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    crate::ambient_runtime::future_into_py(py, async move {
         driver
             .run_v3_registration_lifecycle(pool_addr, snapshot_block)
             .await
@@ -120,7 +120,7 @@ pub(crate) fn run_v4_registration_lifecycle<'py>(
     let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)
         .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
     let driver = Arc::clone(driver);
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    crate::ambient_runtime::future_into_py(py, async move {
         driver
             .run_v4_registration_lifecycle(pool_manager, pool_id, snapshot_block)
             .await

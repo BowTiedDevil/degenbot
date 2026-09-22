@@ -43,6 +43,7 @@
 //!    [`PyDispatchOutcome::from_join`] stores the core types + builds Python
 //!    wrappers on getter access. No business logic in this wrapper.
 
+use crate::ambient_runtime::future_into_py;
 use crate::prelude::*;
 use crate::provider::AlloyProvider;
 use crate::simulation::candidate::PyDispatchCandidate;
@@ -60,7 +61,6 @@ use degenbot_executor::composers::{HopInfo, PathInfo};
 use degenbot_submission::{PoolKey, SubmitCandidate};
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBytes, PyDict, PyList};
-use pyo3_async_runtimes::tokio::future_into_py;
 use std::collections::hash_map;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
