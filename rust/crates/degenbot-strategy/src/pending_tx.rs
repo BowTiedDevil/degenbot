@@ -13,7 +13,7 @@
 
 use crate::backrun::BackrunConfig;
 use crate::backrun_engine::BackrunSolver;
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::provider::AlloyProvider;
@@ -37,6 +37,20 @@ pub trait V3TickWindow {
         current_tick: i32,
         head: u64,
     ) -> HbMap<i32, TickInfo>;
+
+    /// The V4 twin: the in-range initialized ticks around `current_tick`,
+    /// read at the `PoolManager` singleton through the `poolId`-derived
+    /// bases. The default is empty so offline mocks need no V4 state.
+    fn v4_tick_window(
+        &self,
+        _manager: Address,
+        _pool_id: B256,
+        _tick_spacing: i32,
+        _current_tick: i32,
+        _head: u64,
+    ) -> HbMap<i32, TickInfo> {
+        HbMap::default()
+    }
 }
 
 /// The candidate the driver simulates: the solved best composed at the

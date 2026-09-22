@@ -13,12 +13,13 @@ use crate::backrun_engine::{
     compose_candidate, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily,
     PathReject,
 };
-use alloy::primitives::{address, Address, U256};
+use alloy::primitives::{address, Address, B256, U256};
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_decoders::target_class::TargetClass;
+use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::v3_state::ClSlotLayout;
-use degenbot_pools::{slot_layout, v3_storage_slots, TickInfo};
+use degenbot_pools::{slot_layout, v3_storage_slots, v4_storage_slots, TickInfo};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
@@ -158,7 +159,7 @@ fn quote_orientations(rt: &MarketContext, token0: Address, token1: Address) -> V
 /// scope. Returns the affected pools that BOTH admitted AND trade WETH.
 #[expect(
     clippy::too_many_lines,
-    reason = "the V2/V3 admission arms read top-to-bottom per family"
+    reason = "the V2/V3/V4 admission arms read top-to-bottom per family"
 )]
 #[must_use]
 pub fn admit_extracted(
@@ -317,9 +318,101 @@ pub fn admit_extracted(
                 }
             }
             PoolFamily::V4PoolManager { .. } => {
-                // A typed V4 post-state has no admission arm yet; record the
-                // same skip as the `Unsupported` half.
-                skip(st.address, "v4-half-unobserved");
+                let TypedPoolPost::V4 {
+                    pool_id,
+                    sqrt_price_x96,
+                    tick,
+                    liquidity,
+                    touched_ticks,
+                } = tp
+                else {
+                    continue;
+                };
+                // The index edge carries the key's fee/spacing/hooks and the
+                // manager-keyed DB identity; a typed post with no roster edge
+                // has no lane (the manager's touched set may name a pool the
+                // connector never loaded).
+                let Some(edge) = idx.v4_edge_by_pool_hash(*pool_id) else {
+                    skip(st.address, "v4-edge");
+                    continue;
+                };
+                // The executor encodes the V4 fee in 2 bytes; a fee past that
+                // bound can never compose, so refuse at admission (the gate
+                // says no, rather than the composer failing later).
+                if edge.fee >= V4_FEE_ENCODER_MAX {
+                    skip(st.address, "v4-fee-encoder-overflow");
+                    continue;
+                }
+                // Nothing is fabricated: an incomplete slot0/liquidity set
+                // cannot stage (the scope never fills in missing words).
+                let (Some(sqrt), Some(tk), Some(liq)) = (*sqrt_price_x96, *tick, *liquidity) else {
+                    skip(st.address, "incomplete-slot0-liquidity");
+                    continue;
+                };
+                let mut tick_data = HbMap::default();
+                for t in touched_ticks {
+                    tick_data.insert(
+                        t.tick,
+                        TickInfo {
+                            liquidity_gross: alloy::primitives::aliases::U128::from(
+                                t.liquidity_gross,
+                            ),
+                            liquidity_net: t.liquidity_net,
+                            block: seed_block,
+                        },
+                    );
+                }
+                // The V4 twin of the V3 anchor merge: the replayed journal
+                // carries only the ticks the target CROSSED, so seed the
+                // in-range window from the same chain view the frames replay
+                // over (manager-addressed `poolId`-derived bases).
+                if let Some(window) = tick_window {
+                    for (tick, info) in window.v4_tick_window(
+                        st.address,
+                        *pool_id,
+                        edge.tick_spacing,
+                        tk,
+                        seed_block,
+                    ) {
+                        tick_data.entry(tick).or_insert(info);
+                    }
+                }
+                let Some(p_id) = solver.admit_v4_explicit(
+                    st.address,
+                    edge.token0,
+                    edge.token1,
+                    *pool_id,
+                    edge.fee,
+                    edge.tick_spacing,
+                    edge.hooks,
+                    sqrt,
+                    liq,
+                    tk,
+                    tick_data,
+                    seed_block,
+                ) else {
+                    skip(st.address, "v4-admit");
+                    continue;
+                };
+                let quotes = quote_orientations(rt, edge.token0, edge.token1);
+                if quotes.is_empty() {
+                    skip(st.address, "no-supported-quote");
+                } else {
+                    out.push(AffectedPool {
+                        address: st.address,
+                        workspace_pool_id: p_id,
+                        index_pool_id: edge.db_pool_id,
+                        token0: edge.token0,
+                        token1: edge.token1,
+                        quotes,
+                        family: LaneFamily::V4 {
+                            fee: edge.fee,
+                            pool_id: *pool_id,
+                            tick_spacing: edge.tick_spacing,
+                            hooks: edge.hooks,
+                        },
+                    });
+                }
             }
         }
     }
@@ -422,6 +515,68 @@ fn read_v3_tick_window(
     tick_data
 }
 
+/// Read a V4 pool's in-range tick window through a layered [`DatabaseRef`]
+/// view: the bitmap words at `current_tick` ± 1 at the `poolId`-derived
+/// `tickBitmap` base under the `PoolManager` singleton, then the initialized
+/// tick words those bitmaps select. The V4 twin of [`read_v3_tick_window`]:
+/// same window shape, manager-addressed `keccak` bases.
+fn read_v4_tick_window(
+    ext: &ScratchDb<'_>,
+    manager: Address,
+    pool_id: B256,
+    tick_spacing: i32,
+    current_tick: i32,
+    head: u64,
+) -> HbMap<i32, TickInfo> {
+    let base = v4_storage_slots::v4_pool_state_base_slot(pool_id);
+    let spacing = i64::from(tick_spacing.max(1));
+    let (word_pos, _) = floor_word_pos(current_tick, spacing);
+    let w0 = i64::from(word_pos).saturating_sub(1);
+    let w1 = i64::from(word_pos).saturating_add(1);
+    let mut tick_data = HbMap::default();
+    for w in w0..=w1 {
+        let Ok(word_pos_i16) = i16::try_from(w) else {
+            continue;
+        };
+        let slot = v4_storage_slots::v4_tick_bitmap_word_slot(word_pos_i16, base);
+        let Some(bitmap) = read_view_word(ext, manager, slot) else {
+            continue;
+        };
+        for bit in 0..256i64 {
+            let Ok(bit_u256) = U256::try_from(bit) else {
+                continue;
+            };
+            if (bitmap >> bit_u256) & U256::ONE != U256::ONE {
+                continue;
+            }
+            let tick = i64::from(word_pos_i16) * 256 + bit;
+            let Some(tick_scaled) = tick.checked_mul(spacing) else {
+                continue;
+            };
+            let Ok(tick_i32) = i32::try_from(tick_scaled) else {
+                continue;
+            };
+            let Some(word) = read_view_word(
+                ext,
+                manager,
+                v4_storage_slots::v4_tick_mapping_slot(tick_i32, base),
+            ) else {
+                continue;
+            };
+            let (gross, net) = slot_layout::decode_tick_word(word);
+            tick_data.insert(
+                tick_i32,
+                TickInfo {
+                    liquidity_gross: alloy::primitives::aliases::U128::from(gross),
+                    liquidity_net: net,
+                    block: head,
+                },
+            );
+        }
+    }
+    tick_data
+}
+
 impl V3TickWindow for ScratchDb<'_> {
     fn tick_window(
         &self,
@@ -432,6 +587,17 @@ impl V3TickWindow for ScratchDb<'_> {
         head: u64,
     ) -> HbMap<i32, TickInfo> {
         read_v3_tick_window(self, pool, layout, tick_spacing, current_tick, head)
+    }
+
+    fn v4_tick_window(
+        &self,
+        manager: Address,
+        pool_id: B256,
+        tick_spacing: i32,
+        current_tick: i32,
+        head: u64,
+    ) -> HbMap<i32, TickInfo> {
+        read_v4_tick_window(self, manager, pool_id, tick_spacing, current_tick, head)
     }
 }
 
@@ -980,6 +1146,7 @@ impl PendingTxReaction for BackrunStrategy {
                     pool_kind: match a.family {
                         LaneFamily::V2 => PoolKind::V2,
                         LaneFamily::V3 { .. } => PoolKind::V3,
+                        LaneFamily::V4 { .. } => PoolKind::V4,
                     },
                     token_a_id: wq.quote_id,
                     token_b_id: wq.tok_id,

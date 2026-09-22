@@ -10,7 +10,7 @@
 //! `admit_v3_explicit`) or the RPC fetch ladders (`admit_v3_full`); discovery
 //! over the DB connector index is the pipeline's job.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, B256, U256};
 use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::TickInfo;
 use degenbot_solvers::mixed::SolvePathResult;
@@ -18,6 +18,7 @@ use degenbot_solvers::mixed::SolvePathResult;
 use degenbot_bot::bot_core::planning::{
     ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace,
 };
+use degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags;
 
 pub use degenbot_bot::bot_core::planning::PathReject;
 
@@ -171,6 +172,16 @@ pub enum LaneFamily {
     V3 {
         fee: u32,
     },
+    /// V4 concentrated liquidity: the `poolId`-keyed identity the executor's
+    /// V4 swap commands need, plus the key's fee/spacing/hooks for the
+    /// composer's path info. The lane's `BackrunHopRef.pool` is the
+    /// `PoolManager` singleton address, not the poolId.
+    V4 {
+        fee: u32,
+        pool_id: B256,
+        tick_spacing: i32,
+        hooks: Address,
+    },
 }
 
 impl LaneFamily {
@@ -179,6 +190,7 @@ impl LaneFamily {
         match self {
             Self::V2 => degenbot_solvers::mixed::HopType::V2,
             Self::V3 { .. } => degenbot_solvers::mixed::HopType::V3,
+            Self::V4 { .. } => degenbot_solvers::mixed::HopType::V4,
         }
     }
 }
@@ -233,6 +245,63 @@ impl BackrunSolver {
                     tick_spacing,
                     tick_data,
                     coverage: PoolTickCoverage::Sparse,
+                },
+                seed_block,
+            )
+            .ok()
+    }
+
+    /// Admit a V4 pool with EXPLICIT journal-provided state — the V4 twin of
+    /// [`BackrunSolver::admit_v3_explicit`]: post-target `slot0`/`liquidity` +
+    /// the replayed per-tick words land here verbatim (`Sparse` coverage; the
+    /// solver's projections fail loudly on missing words instead of guessing).
+    /// `None` on a spec-bound registration rejection (bad replayed state).
+    ///
+    /// `hook_flags` is derived from `hooks` (the hook contract address is the
+    /// single source of truth for the low-16-bit mask). `protocol_fee` is
+    /// admitted as `0`: the manager's live value is not consumed by backrun
+    /// state math today — settlement's gate reads it from the manager settings,
+    /// so a nonzero protocol fee would need that integration before live
+    /// execution decisions.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "explicit V4 state admission carries the full typed state"
+    )]
+    pub fn admit_v4_explicit(
+        &mut self,
+        manager: Address,
+        token0: Address,
+        token1: Address,
+        pool_id: B256,
+        fee: u32,
+        tick_spacing: i32,
+        hooks: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: hashbrown::HashMap<i32, TickInfo>,
+        seed_block: u64,
+    ) -> Option<u64> {
+        self.ws
+            .register_with_state(
+                PlanningPoolParams {
+                    address: manager,
+                    token0,
+                    token1,
+                },
+                ExplicitPoolState::V4 {
+                    pool_id: pool_id.0,
+                    fee,
+                    tick_spacing,
+                    hooks,
+                    hook_flags: derive_hook_flags(hooks),
+                    protocol_fee: 0,
+                    sqrt_price_x96,
+                    liquidity,
+                    tick,
+                    tick_data,
+                    coverage: PoolTickCoverage::Sparse,
+                    tick_data_block: None,
                 },
                 seed_block,
             )
@@ -336,6 +405,9 @@ pub enum ComposeReject {
     StreamEncodingFailed,
     /// The `execute(commands, config)` call could not be ABI-encoded.
     ExecuteEncodingFailed,
+    /// A V4 hop reached the composer before the V4 `HopInfo` encoding landed.
+    /// The candidate is refused loudly rather than encoded as the wrong family.
+    V4ComposePending,
 }
 
 impl ComposeReject {
@@ -347,6 +419,7 @@ impl ComposeReject {
             Self::AmountExceedsUint96 => "amount_exceeds_uint96",
             Self::StreamEncodingFailed => "encoding_failed:cmd_stream",
             Self::ExecuteEncodingFailed => "encoding_failed:execute_call",
+            Self::V4ComposePending => "v4_compose_pending",
         }
     }
 }
@@ -391,10 +464,9 @@ pub fn compose_candidate(
         return Err(ComposeReject::AmountExceedsUint96);
     }
 
-    let hops = candidate
-        .hops
-        .iter()
-        .map(|h| match h.family {
+    let mut hops = Vec::with_capacity(candidate.hops.len());
+    for h in &candidate.hops {
+        let hop = match h.family {
             LaneFamily::V2 => HopInfo::V2(V2HopInfo {
                 pool_address: h.pool,
                 token0_address: h.token0,
@@ -409,8 +481,13 @@ pub fn compose_candidate(
                 fee,
                 zfo: h.zfo,
             }),
-        })
-        .collect();
+            // The V4 `HopInfo` compose arm lands with the V4 lane's composer
+            // work; a V4 candidate solves but must be refused here rather than
+            // encoded as the wrong family.
+            LaneFamily::V4 { .. } => return Err(ComposeReject::V4ComposePending),
+        };
+        hops.push(hop);
+    }
     let req = EncodeRequest::new(
         degenbot_executor::composers::PathInfo::new(hops),
         candidate.optimal_input,
