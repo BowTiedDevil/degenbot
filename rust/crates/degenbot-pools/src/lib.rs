@@ -72,6 +72,7 @@
 pub mod aerodrome_v2_state;
 pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
+pub mod capability;
 pub mod curve_data_provider;
 pub mod curve_dy_io;
 pub use curve_dy_io::{resolve_dy_inputs, CurveInputsError};
