@@ -543,7 +543,7 @@ pub fn family_label(family: &PoolFamily) -> &'static str {
     match family {
         PoolFamily::V2Pair => "v2",
         PoolFamily::V3 { .. } => "v3",
-        PoolFamily::V4PoolManager { .. } => "v4_manager",
+        PoolFamily::V4PoolManager { .. } => "v4",
     }
 }
 
@@ -1044,5 +1044,18 @@ mod tests {
         .expect("viable at 10000 bips");
         // Floor to U256 arithmetic: bid_wei must never exceed the cap.
         assert!(nb.bid_wei <= alloy::primitives::U256::from(500_000_000_000_000u128));
+    }
+
+    /// The extract JSONL `families` array speaks the bare family name, so the
+    /// V4 manager arm reads `v4` alongside `v2`/`v3` — not a manager-specific
+    /// tag that would fork the offline-review vocabulary.
+    #[test]
+    fn family_label_names_the_v4_family_as_v4() {
+        use super::{family_label, PoolFamily, V4PoolSet};
+
+        let family = PoolFamily::V4PoolManager {
+            pools: V4PoolSet::new(Vec::new()),
+        };
+        assert_eq!(family_label(&family), "v4");
     }
 }

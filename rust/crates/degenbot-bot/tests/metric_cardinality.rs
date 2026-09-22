@@ -26,10 +26,24 @@ const ALLOWED_LABELS: &[&str] = &[
     "outcome",
     "site",
     // `degenbot_backrun_frame_observed{reason}`: the frame-terminal observe
-    // reason — a closed set of `&'static` pipeline constants (`no_candidate`,
-    // `v4_unsupported`, `family-unsupported`, `reverted`, ...). The
-    // unsupported family `kind` string must never become a reason value; it
-    // rides the JSONL extract detail instead.
+    // reason — a closed set of `&'static` `Decision` reasons produced by
+    // `backrun.rs::decide`, `backrun_strategy.rs::decide` (`honest_observe`),
+    // and the `frame_pipeline.rs` reason functions: `no_candidate`,
+    // `non_base_quote`, `v4_unsupported`, `family-unsupported`, `reverted`,
+    // `replay_unavailable`, `gap_pending`, `already_settled`,
+    // `malformed_transaction`, `mispriced_transaction`, `replay_failed`,
+    // `predecessor_malformed`, `predecessor_replay_failed`,
+    // `sim_gate_failed`, `sim_skipped_fixture_mode`,
+    // `net_after_gas_unprofitable`, `observe_only`, `zero_bid`,
+    // `budget_exhausted`, `kill_switch`, `inert_target`. The same `reason`
+    // label name also carries the registration-skip and sim-error closed
+    // sets. Compose-reject labels (`amount_exceeds_uint96`,
+    // `encoding_failed:cmd_stream`, `encoding_failed:execute_call`,
+    // `mixed_pool_managers`, `unsupported_hop_shape`) and admission-skip
+    // `stage` strings (`v4-admit`, `v4-fee-encoder-overflow`, `v4-edge`,
+    // `incomplete-slot0-liquidity`, ...) ride the JSONL trace only — never a
+    // metric value. The unsupported family `kind` string must never become a
+    // reason value either; it rides the JSONL extract detail.
     "reason",
     // `degenbot_backrun_frame_observed{decision}`: the frame-terminal
     // decision — a three-value closed set (bid | observe | drop) matching
