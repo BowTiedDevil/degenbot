@@ -774,6 +774,183 @@ fn registered_pool_by_address_is_none_for_unknown_and_v4() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
+fn registered_family_readers_tag_every_registered_family() {
+    // ADR-059 D1: every `RegisteredPoolFamily` arm is reachable from the
+    // registration readers — the address-keyed families through
+    // `registered_pool_by_address`, V4 through its `(pool_manager, pool_id)`
+    // twin `registered_family_at`.
+    use crate::bot_core::{
+        RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
+        RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams,
+    };
+
+    let mut core = BotState::new();
+
+    // V2.
+    let v2_addr = make_pool_addr();
+    let v2_id = core
+        .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
+        .expect("V2 registration");
+    assert_eq!(
+        core.registered_pool_by_address(&v2_addr),
+        Some((v2_id, RegisteredPoolFamily::V2)),
+    );
+
+    // V3 (distinct address so it can share the core with V2).
+    let v3_addr = Address::from([0x33u8; 20]);
+    let v3_id = register_v3_on_core(&mut core, v3_addr, 0);
+    assert_eq!(
+        core.registered_pool_by_address(&v3_addr),
+        Some((v3_id, RegisteredPoolFamily::V3)),
+    );
+
+    // Curve.
+    let curve_addr = Address::from([0xc0u8; 20]);
+    let curve_id = core.register_curve_pool(&RegisterCurvePoolParams {
+        address: curve_addr,
+        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+        a_coefficient: 100,
+        a_precision: 100,
+        fee: 4_000_000,
+        admin_fee: 5_000_000_000,
+        rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+        balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+        update_block: 0,
+        swap_style: 0,
+        lending_rate_style: 0,
+        d_variant: 1,
+        y_variant: 1,
+        yd_variant: 0,
+        base_pool: None,
+        initial_a_coefficient: None,
+        future_a_coefficient: None,
+        initial_a_coefficient_time: None,
+        future_a_coefficient_time: None,
+        create_timestamp: None,
+        fee_gamma: None,
+        mid_fee: None,
+        offpeg_fee_multiplier: None,
+        out_fee: None,
+        gamma: None,
+        lp_token: None,
+        use_lending: vec![false, false],
+        precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+        tokens_underlying: None,
+        metapool_rate_style: 1,
+        metapool_underlying_style: 1,
+        data_provider: None,
+    });
+    assert_eq!(
+        core.registered_pool_by_address(&curve_addr),
+        Some((curve_id, RegisteredPoolFamily::Curve)),
+    );
+
+    // Balancer weighted.
+    let bal_weighted_addr = Address::from([0xb1u8; 20]);
+    let bal_weighted_id =
+        core.register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
+            address: bal_weighted_addr,
+            vault: Address::from([0xa0u8; 20]),
+            pool_id: [0x11u8; 32],
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            weights: vec![
+                U256::from(5_000_000_000_000_000_000u128),
+                U256::from(5_000_000_000_000_000_000u128),
+            ],
+            scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+            swap_fee: 1_000_000_000_000_000,
+            pow_version: 2,
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+            update_block: 0,
+        });
+    assert_eq!(
+        core.registered_pool_by_address(&bal_weighted_addr),
+        Some((bal_weighted_id, RegisteredPoolFamily::BalancerWeighted)),
+    );
+
+    // Balancer stable.
+    let bal_stable_addr = Address::from([0xb2u8; 20]);
+    let bal_stable_id = core.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
+        address: bal_stable_addr,
+        vault: Address::from([0xb0u8; 20]),
+        pool_id: [0x22u8; 32],
+        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+        amp: 100,
+        scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+        swap_fee: 1_000_000_000_000_000,
+        bpt_idx: None,
+        invariant_version: 2,
+        balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+        update_block: 0,
+        rate_provider: None,
+    });
+    assert_eq!(
+        core.registered_pool_by_address(&bal_stable_addr),
+        Some((bal_stable_id, RegisteredPoolFamily::BalancerStable)),
+    );
+
+    // Aerodrome V2.
+    let aero_addr = Address::from([0xaeu8; 20]);
+    let aero_id = core.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+        address: aero_addr,
+        token0: Address::ZERO,
+        token1: Address::from([0x01u8; 20]),
+        factory: Address::from([0xafu8; 20]),
+        variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+        stable: false,
+        fee: (3, 1000),
+        token0_decimals: 18,
+        token1_decimals: 18,
+        reserve0: U112::from(1_000_000u64),
+        reserve1: U112::from(2_000_000u64),
+        update_block: 0,
+    });
+    assert_eq!(
+        core.registered_pool_by_address(&aero_addr),
+        Some((aero_id, RegisteredPoolFamily::AerodromeV2)),
+    );
+
+    // V4: the PoolManager address cannot name the pool at the address-keyed
+    // reader; the keyed reader resolves the arm.
+    let v4 = make_v4_params_in_spec();
+    core.register_v4_pool(&v4).expect("V4 registration");
+    assert_eq!(
+        core.registered_pool_by_address(&v4.pool_manager),
+        None,
+        "a PoolManager address cannot name a V4 pool",
+    );
+    assert_eq!(
+        core.registered_family_at(v4.pool_manager, &v4.pool_id),
+        Some(RegisteredPoolFamily::V4),
+    );
+}
+
+#[test]
+fn registered_family_at_is_none_for_unregistered_manager_or_pool_id() {
+    let mut core = BotState::new();
+    let v4 = make_v4_params_in_spec();
+
+    assert_eq!(
+        core.registered_family_at(v4.pool_manager, &v4.pool_id),
+        None,
+        "an unregistered (pool_manager, pool_id) answers None",
+    );
+
+    core.register_v4_pool(&v4).expect("V4 registration");
+    assert_eq!(
+        core.registered_family_at(Address::from([0x99u8; 20]), &v4.pool_id),
+        None,
+        "a different manager answers None",
+    );
+    assert_eq!(
+        core.registered_family_at(v4.pool_manager, &[0x01u8; 32]),
+        None,
+        "a different pool_id answers None",
+    );
+}
+
+#[test]
 fn unregister_pool_on_unknown_address_returns_false_silently() {
     let mut core = BotState::new();
     // Register one pool at make_pool_addr().

@@ -657,24 +657,33 @@ impl BotState {
     ///
     /// V4 pools are NOT address-keyed (one `PoolManager` hosts many pool ids,
     /// keying is `(pool_manager, pool_id)`) and return `None` here; their
-    /// fast path is the existing `try_registered_v4`.
+    /// family tag is resolved by [`Self::registered_family_at`] and their fast
+    /// path is the existing `try_registered_v4`.
     #[must_use]
     pub fn registered_pool_by_address(
         &self,
         address: &Address,
     ) -> Option<(u64, RegisteredPoolFamily)> {
         let pool_id = self.pool_id_by_address(address)?;
-        let family = match self.pools.get(&pool_id)? {
-            PoolEntry::V2(..) => RegisteredPoolFamily::V2,
-            PoolEntry::V3(..) => RegisteredPoolFamily::V3,
-            PoolEntry::Curve(..) => RegisteredPoolFamily::Curve,
-            PoolEntry::BalancerWeighted(..) => RegisteredPoolFamily::BalancerWeighted,
-            PoolEntry::BalancerStable(..) => RegisteredPoolFamily::BalancerStable,
-            PoolEntry::AerodromeV2(..) => RegisteredPoolFamily::AerodromeV2,
-            // V4 is (PoolManager, pool_id)-keyed, never address-keyed.
-            PoolEntry::V4(..) => return None,
-        };
-        Some((pool_id, family))
+        match self.pools.get(&pool_id)?.registered_family() {
+            // An address query cannot name a V4 pool (see the doc above).
+            RegisteredPoolFamily::V4 => None,
+            family => Some((pool_id, family)),
+        }
+    }
+
+    /// The `(pool_manager, pool_id)`-keyed twin of
+    /// [`Self::registered_pool_by_address`] (ADR-059 D1): V4 pools register
+    /// under the pair, so this reader resolves a registered V4 pool's family
+    /// tag. `None` for an unregistered pair.
+    #[must_use]
+    pub fn registered_family_at(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<RegisteredPoolFamily> {
+        let id = self.v4_pool_id_by_key(pool_manager, pool_id)?;
+        Some(self.pools.get(&id)?.registered_family())
     }
 
     /// Unregister a pool. ADR-007 U3.

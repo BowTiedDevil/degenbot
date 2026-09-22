@@ -36,10 +36,34 @@ pub enum PoolEntry {
 pub enum RegisteredPoolFamily {
     V2,
     V3,
+    /// V4 registers under `(PoolManager, pool_id)`, not an address — one
+    /// manager hosts many pool ids — so this arm is resolved only by the
+    /// `(pool_manager, pool_id)`-keyed reader; an address query cannot name a
+    /// V4 pool and stays `None` there.
+    V4,
     AerodromeV2,
     BalancerWeighted,
     BalancerStable,
     Curve,
+}
+
+impl PoolEntry {
+    /// Project the entry onto its registration family tag (ADR-059 D1). Total
+    /// over the variants; the address-keyed reader consults it and rejects
+    /// [`RegisteredPoolFamily::V4`] because an address query cannot name a
+    /// V4 pool.
+    #[must_use]
+    pub fn registered_family(&self) -> RegisteredPoolFamily {
+        match self {
+            Self::V2(..) => RegisteredPoolFamily::V2,
+            Self::V3(..) => RegisteredPoolFamily::V3,
+            Self::V4(..) => RegisteredPoolFamily::V4,
+            Self::Curve(..) => RegisteredPoolFamily::Curve,
+            Self::BalancerWeighted(..) => RegisteredPoolFamily::BalancerWeighted,
+            Self::BalancerStable(..) => RegisteredPoolFamily::BalancerStable,
+            Self::AerodromeV2(..) => RegisteredPoolFamily::AerodromeV2,
+        }
+    }
 }
 
 /// Per-variant projection methods for [`PoolEntry`] (ADR-014 D5).
