@@ -305,6 +305,32 @@ fn decode_exchange(row: &Row<'_>, base: usize) -> Result<ExchangeRow, DbError> {
     })
 }
 
+/// Decode a [`DiscoveryV4Row`] from the [`v4_select`] column layout.
+fn decode_v4_row(row: &Row<'_>) -> Result<DiscoveryV4Row, DbError> {
+    Ok(DiscoveryV4Row {
+        managed_pool_id: row.get(0)?,
+        pool_hash: decode_pool_hash(&row.get::<_, String>(1)?)?,
+        hooks: decode_address(&row.get::<_, String>(2)?)?,
+        manager: PoolManagerRow {
+            id: row.get(11)?,
+            address: decode_address(&row.get::<_, String>(12)?)?,
+            chain: row.get(13)?,
+            kind: row.get(14)?,
+            state_view: decode_opt_address(row.get::<_, Option<String>>(15)?.as_deref())?,
+            exchange_id: row.get(16)?,
+        },
+        token0: decode_token(row, 17)?,
+        token1: decode_token(row, 23)?,
+        exchange: decode_exchange(row, 29)?,
+        fee_currency0: row.get(5)?,
+        fee_currency1: row.get(6)?,
+        fee_denominator: row.get(7)?,
+        tick_spacing: row.get(8)?,
+        liquidity_update_block: row.get(9)?,
+        liquidity_update_log_index: row.get(10)?,
+    })
+}
+
 // ── the read surface ───────────────────────────────────────────────────────
 
 /// Read every candidate pool for `chain_id` on a borrowed connection.
@@ -378,33 +404,34 @@ pub fn fetch_discovery_rows_on_conn(
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params![chain_id])?;
         while let Some(row) = rows.next()? {
-            let pool_hash = decode_pool_hash(&row.get::<_, String>(1)?)?;
-            let manager = PoolManagerRow {
-                id: row.get(11)?,
-                address: decode_address(&row.get::<_, String>(12)?)?,
-                chain: row.get(13)?,
-                kind: row.get(14)?,
-                state_view: decode_opt_address(row.get::<_, Option<String>>(15)?.as_deref())?,
-                exchange_id: row.get(16)?,
-            };
-            out.push(DiscoveryPoolRow::V4(DiscoveryV4Row {
-                managed_pool_id: row.get(0)?,
-                pool_hash,
-                hooks: decode_address(&row.get::<_, String>(2)?)?,
-                manager,
-                token0: decode_token(row, 17)?,
-                token1: decode_token(row, 23)?,
-                exchange: decode_exchange(row, 29)?,
-                fee_currency0: row.get(5)?,
-                fee_currency1: row.get(6)?,
-                fee_denominator: row.get(7)?,
-                tick_spacing: row.get(8)?,
-                liquidity_update_block: row.get(9)?,
-                liquidity_update_log_index: row.get(10)?,
-            }));
+            out.push(DiscoveryPoolRow::V4(decode_v4_row(row)?));
         }
     }
 
+    Ok(out)
+}
+
+/// Read every V4 managed pool for `chain_id` on a borrowed connection.
+///
+/// The V4 half of [`fetch_discovery_rows_on_conn`], sharing the SAME
+/// [`v4_select`] statement so the roster and the full discovery read can never
+/// drift. Result order follows the statement: ascending `managed_pools.id`.
+///
+/// # Errors
+///
+/// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a
+/// malformed address / pool-hash / integer column.
+pub fn fetch_v4_discovery_rows_on_conn(
+    conn: &Connection,
+    chain_id: i64,
+) -> Result<Vec<DiscoveryV4Row>, DbError> {
+    let sql = v4_select();
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params![chain_id])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(decode_v4_row(row)?);
+    }
     Ok(out)
 }
 
@@ -421,6 +448,18 @@ impl DegenbotDb {
     pub fn fetch_discovery_rows(&self, chain_id: i64) -> Result<Vec<DiscoveryPoolRow>, DbError> {
         let conn = self.lock();
         fetch_discovery_rows_on_conn(&conn, chain_id)
+    }
+
+    /// Read every V4 managed pool for `chain_id` — the connector-index roster
+    /// surface, the V4 half of [`Self::fetch_discovery_rows`], self-locking on
+    /// this handle's connection.
+    ///
+    /// # Errors
+    ///
+    /// Same error conditions as [`fetch_v4_discovery_rows_on_conn`].
+    pub fn fetch_v4_discovery_rows(&self, chain_id: i64) -> Result<Vec<DiscoveryV4Row>, DbError> {
+        let conn = self.lock();
+        fetch_v4_discovery_rows_on_conn(&conn, chain_id)
     }
 }
 
@@ -483,5 +522,87 @@ mod tests {
         // ordered by pools.id
         assert_eq!(rows[0].kind(), "aerodrome_v2");
         assert_eq!(rows[1].kind(), "uniswap_v2");
+    }
+
+    /// Seed an in-memory DB with one chain-1 V4 managed pool (non-hooked) so
+    /// the V4 roster read has a graph to decode.
+    fn seed_v4_db() -> DegenbotDb {
+        let (db, state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        assert!(matches!(state, SchemaState::FreshStandalone { .. }));
+        let t0 = Address::new([0x11; 20]);
+        let t1 = Address::new([0x22; 20]);
+        let manager = Address::new([0xaa; 20]);
+        let factory = Address::new([0x99; 20]);
+        let state_view = Address::new([0x77; 20]);
+        let hash = B256::from([0x11; 32]);
+        {
+            let conn = db.lock();
+            conn.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address, name, symbol, decimals) \
+                 VALUES (1, 1, ?1, 'T0', 'T0', 18), (2, 1, ?2, 'T1', 'T1', 6)",
+                rusqlite::params![t0.to_checksum(None), t1.to_checksum(None)],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO exchanges (id, chain_id, name, active, factory) \
+                 VALUES (1, 1, 'uniswap_v4', 1, ?1)",
+                [factory.to_checksum(None)],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO pool_managers (id, address, chain, kind, state_view, exchange_id) \
+                 VALUES (1, ?1, 1, 'uniswap_v4', ?2, 1)",
+                rusqlite::params![manager.to_checksum(None), state_view.to_checksum(None)],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO managed_pools (id, kind, manager_id) VALUES (7, 'uniswap_v4', 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO uniswap_v4_pools (managed_pool_id, pool_hash, hooks, currency0_id, \
+                 currency1_id, fee_currency0, fee_currency1, fee_denominator, tick_spacing) \
+                 VALUES (7, ?1, ?2, 1, 2, 500, 500, 1000000, 10)",
+                rusqlite::params![format!("{hash:#x}"), Address::ZERO.to_checksum(None)],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    /// The V4 roster read decodes the same row the full discovery read's V4
+    /// half yields, chain-scoped.
+    #[test]
+    fn v4_roster_read_matches_the_v4_half_of_discovery() {
+        let db = seed_v4_db();
+        let roster = db.fetch_v4_discovery_rows(1).unwrap();
+        assert_eq!(roster.len(), 1, "one chain-1 V4 pool");
+        let row = &roster[0];
+        assert_eq!(row.managed_pool_id, 7);
+        assert_eq!(row.pool_hash, B256::from([0x11; 32]));
+        assert_eq!(row.hooks, Address::ZERO);
+        assert_eq!(row.manager.address, Address::new([0xaa; 20]));
+        assert_eq!(row.token0.address, Address::new([0x11; 20]));
+        assert_eq!(row.token1.address, Address::new([0x22; 20]));
+        assert_eq!(
+            (row.fee_currency0, row.fee_currency1, row.fee_denominator),
+            (500, 500, 1_000_000)
+        );
+        assert_eq!(row.tick_spacing, 10);
+
+        // The roster is exactly the V4 subset of the full discovery read.
+        let all = db.fetch_discovery_rows(1).unwrap();
+        let v4: Vec<_> = all
+            .into_iter()
+            .filter_map(|r| match r {
+                DiscoveryPoolRow::V4(v) => Some(v),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(roster, v4);
+
+        assert!(db.fetch_v4_discovery_rows(8453).unwrap().is_empty());
     }
 }

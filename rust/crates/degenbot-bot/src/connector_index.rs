@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use alloy::primitives::{address, Address, Bytes, U256};
+use alloy::primitives::{address, Address, Bytes, B256, U256};
 use async_trait::async_trait;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::error::DbError;
@@ -41,6 +41,53 @@ pub struct V2Edge {
     pub token0_id: u64,
     pub token1_id: u64,
     pub address: Address,
+}
+
+/// One V4 managed-pool edge of the connector index — the identity the backrun
+/// V4 lane needs to admit a post-state and compose a hop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V4Edge {
+    /// The V4 `pool_hash` (`keccak(abi.encode(pool_key))`).
+    pub pool_hash: B256,
+    /// The `PoolManager` singleton address (`pool_managers.address`).
+    pub manager: Address,
+    /// `currency0` (V4's sorted-lower currency) token address.
+    pub token0: Address,
+    /// `currency1` token address.
+    pub token1: Address,
+    /// The direction-0 fee (`fee_currency0`) in pips of 1e6.
+    ///
+    /// Settlement reads this SAME column into `V4PoolKey.fee`
+    /// (`bot_core::pool_builder::builder::resolve_v4_identity`), and the
+    /// pool-updater writes its single `Initialize` fee into both columns
+    /// (`upsert_v4_pools_on_conn`), so every row that pipeline creates has
+    /// `fee_currency0 == fee_currency1`. [`Self::fee_currency1`] is retained
+    /// separately so a direction-dependent pair is never silently collapsed.
+    pub fee: u32,
+    /// The direction-1 fee (`fee_currency1`) in pips of 1e6; see [`Self::fee`].
+    pub fee_currency1: u32,
+    /// The V4 tick spacing.
+    pub tick_spacing: i32,
+    /// The pool's hook contract address. Always [`Address::ZERO`]: hooked
+    /// pools are excluded at load (backrun replay does not model hook
+    /// intervention).
+    pub hooks: Address,
+    /// The `managed_pools.id` (V4's polymorphic DB primary key).
+    pub db_pool_id: u64,
+}
+
+/// Outcome counts of one [`V2ConnectorIndex::load_v4`] scan. Every fetched row
+/// lands in `loaded`, `excluded_hooked`, or `skipped`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct V4RosterLoad {
+    /// Rows the chain-scoped scan returned.
+    pub total: usize,
+    /// Rows pushed into the roster.
+    pub loaded: usize,
+    /// Hooked rows excluded (backrun replay does not model hook intervention).
+    pub excluded_hooked: usize,
+    /// Rows dropped because a column did not fit its target type.
+    pub skipped: usize,
 }
 
 /// One candidate pool handed to the depth ranker: identity + the orientation
@@ -257,6 +304,14 @@ pub struct V2ConnectorIndex {
     v3_by_pool: HashMap<u64, usize>,
     v3_by_address: HashMap<Address, usize>,
     v3_by_token: HashMap<u64, Vec<usize>>,
+    /// V4 managed-pool roster + its `pool_hash`, token-pair, and manager
+    /// adjacency (the backrun V4 connector lane).
+    v4_edges: Vec<V4Edge>,
+    v4_by_pool_hash: HashMap<B256, usize>,
+    v4_by_pair: HashMap<(Address, Address), Vec<usize>>,
+    v4_by_manager: HashMap<Address, Vec<usize>>,
+    /// Outcome counts of the most recent [`Self::load_v4`] scan.
+    v4_last_load: V4RosterLoad,
     ranker: Option<Arc<dyn ConnectorLiquidityRanker>>,
     /// Memoized descending-depth edge order per `(token_id, quote_id)` — the
     /// memo is what keeps the per-frame fan cost unchanged (first touch
@@ -281,6 +336,10 @@ impl fmt::Debug for V2ConnectorIndex {
             .field("v3_by_pool", &self.v3_by_pool.len())
             .field("v3_by_address", &self.v3_by_address.len())
             .field("v3_by_token", &self.v3_by_token.len())
+            .field("v4_edges", &self.v4_edges.len())
+            .field("v4_by_pool_hash", &self.v4_by_pool_hash.len())
+            .field("v4_by_pair", &self.v4_by_pair.len())
+            .field("v4_by_manager", &self.v4_by_manager.len())
             .finish()
     }
 }
@@ -358,6 +417,26 @@ impl V2ConnectorIndex {
             .or_default()
             .push(idx);
         self.v3_edges.push(edge);
+    }
+
+    /// In-memory V4 edge insertion (the loader's body; pub for fixture
+    /// assembly — see [`Self::push_edge`]).
+    pub fn push_v4_edge(&mut self, edge: V4Edge) {
+        let idx = self.v4_edges.len();
+        self.v4_by_pool_hash.insert(edge.pool_hash, idx);
+        // V4 enforces currency0 < currency1, but a neighborhood walk may query
+        // either orientation, so the pair key is canonicalized symmetric.
+        let pair = if edge.token0 <= edge.token1 {
+            (edge.token0, edge.token1)
+        } else {
+            (edge.token1, edge.token0)
+        };
+        self.v4_by_pair.entry(pair).or_default().push(idx);
+        self.v4_by_manager
+            .entry(edge.manager)
+            .or_default()
+            .push(idx);
+        self.v4_edges.push(edge);
     }
 
     /// Attach the live depth ranker (call once at startup, before frames
@@ -621,6 +700,127 @@ impl V2ConnectorIndex {
     }
 }
 
+// ───────────────────────── V4 edges (backrun roster) ─────────────────────────
+
+impl V2ConnectorIndex {
+    /// Load the chain-scoped V4 managed-pool roster (one scan; call once at
+    /// startup after [`Self::load_v3`]).
+    ///
+    /// Hooked pools are excluded: backrun replay does not model hook
+    /// intervention, so their post-states cannot be replayed. One INFO line
+    /// reports the totals (loaded rows, excluded hooked rows).
+    ///
+    /// # Errors
+    ///
+    /// DB failures propagate (`DbError`).
+    pub fn load_v4(&mut self, db: &DegenbotDb, chain_id: i64) -> Result<(), DbError> {
+        let rows = db.fetch_v4_discovery_rows(chain_id)?;
+        let total = rows.len();
+        let mut loaded = 0usize;
+        let mut excluded_hooked = 0usize;
+        let mut skipped = 0usize;
+        for row in rows {
+            if row.hooks != Address::ZERO {
+                excluded_hooked += 1;
+                continue;
+            }
+            let converted = (|| -> Result<_, &'static str> {
+                Ok((
+                    u64::try_from(row.managed_pool_id).map_err(|_| "managed_pool_id")?,
+                    u32::try_from(row.fee_currency0).map_err(|_| "fee_currency0")?,
+                    u32::try_from(row.fee_currency1).map_err(|_| "fee_currency1")?,
+                    i32::try_from(row.tick_spacing).map_err(|_| "tick_spacing")?,
+                ))
+            })();
+            let (db_pool_id, fee, fee_currency1, tick_spacing) = match converted {
+                Ok(values) => values,
+                Err(field) => {
+                    skipped += 1;
+                    tracing::warn!(
+                        chain_id,
+                        pool_hash = %row.pool_hash,
+                        field,
+                        "v4 connector roster row skipped: column out of range for target type"
+                    );
+                    continue;
+                }
+            };
+            self.push_v4_edge(V4Edge {
+                pool_hash: row.pool_hash,
+                manager: row.manager.address,
+                token0: row.token0.address,
+                token1: row.token1.address,
+                fee,
+                fee_currency1,
+                tick_spacing,
+                hooks: row.hooks,
+                db_pool_id,
+            });
+            loaded += 1;
+        }
+        self.v4_last_load = V4RosterLoad {
+            total,
+            loaded,
+            excluded_hooked,
+            skipped,
+        };
+        tracing::info!(
+            chain_id,
+            loaded,
+            total,
+            excluded_hooked,
+            skipped,
+            "v4 connector roster loaded"
+        );
+        Ok(())
+    }
+
+    /// The V4 edge of a known `pool_hash`.
+    #[must_use]
+    pub fn v4_edge_by_pool_hash(&self, pool_hash: B256) -> Option<&V4Edge> {
+        self.v4_by_pool_hash
+            .get(&pool_hash)
+            .map(|&i| &self.v4_edges[i])
+    }
+
+    /// Every V4 edge touching the unordered token pair `(token_a, token_b)` —
+    /// the neighborhood walk. Orientation is recovered from the edge's
+    /// `token0` / `token1`.
+    #[must_use]
+    pub fn v4_edges_for_pair(&self, token_a: Address, token_b: Address) -> Vec<&V4Edge> {
+        let pair = if token_a <= token_b {
+            (token_a, token_b)
+        } else {
+            (token_b, token_a)
+        };
+        self.v4_by_pair
+            .get(&pair)
+            .map(|idxs| idxs.iter().map(|&i| &self.v4_edges[i]).collect())
+            .unwrap_or_default()
+    }
+
+    /// Every V4 edge owned by `manager` — the per-manager descriptor set.
+    #[must_use]
+    pub fn v4_edges_for_manager(&self, manager: Address) -> Vec<&V4Edge> {
+        self.v4_by_manager
+            .get(&manager)
+            .map(|idxs| idxs.iter().map(|&i| &self.v4_edges[i]).collect())
+            .unwrap_or_default()
+    }
+
+    /// The loaded V4 edge count.
+    #[must_use]
+    pub fn v4_len(&self) -> usize {
+        self.v4_edges.len()
+    }
+
+    /// Outcome counts of the most recent [`Self::load_v4`] scan.
+    #[must_use]
+    pub fn v4_last_load(&self) -> V4RosterLoad {
+        self.v4_last_load
+    }
+}
+
 // ───────────────────────── startup evidence (LIVE) ─────────────────────────
 
 /// The canonical mainnet WETH address for the ranking's evidence probe.
@@ -824,6 +1024,133 @@ mod tests {
                 Err(DbError::UnknownPoolKind { ref kind, pool_id: 1 }) if kind == "V3"
             ),
             "a non-V2 edge must be refused with UnknownPoolKind(V3)"
+        );
+    }
+
+    /// The V4 roster loader decodes a chain-scoped graph, drops hooked pools,
+    /// and indexes by `pool_hash`, token pair, and manager.
+    #[test]
+    fn load_v4_roster_decodes_indexes_and_excludes_hooked() {
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
+
+        let t0 = Address::new([0x11; 20]).to_checksum(None);
+        let t1 = Address::new([0x22; 20]).to_checksum(None);
+        let manager = Address::new([0xaa; 20]).to_checksum(None);
+        let manager2 = Address::new([0xbb; 20]).to_checksum(None);
+        let clean_hash = format!("{:#x}", B256::from([0x11; 32]));
+        let hooked_hash = format!("{:#x}", B256::from([0x22; 32]));
+        let other_chain_hash = format!("{:#x}", B256::from([0x33; 32]));
+        let overflow_fee_hash = format!("{:#x}", B256::from([0x44; 32]));
+        let zero_hooks = Address::ZERO.to_checksum(None);
+        let hooked_hooks = Address::new([0x01; 20]).to_checksum(None);
+        {
+            let conn = db.lock();
+            conn.execute_batch(&format!(
+                "PRAGMA foreign_keys=OFF;
+                 INSERT INTO erc20_tokens (id, chain, address, name, symbol, decimals) VALUES
+                   (1, 1, '{t0}', 'T0', 'T0', 18),
+                   (2, 1, '{t1}', 'T1', 'T1', 6);
+                 INSERT INTO exchanges (id, chain_id, name, active, factory) VALUES
+                   (1, 1, 'uniswap_v4', 1, '0x0000000000000000000000000000000000000001');
+                 INSERT INTO pool_managers (id, address, chain, kind, state_view, exchange_id) VALUES
+                   (1, '{manager}', 1, 'uniswap_v4', NULL, 1),
+                   (2, '{manager2}', 8453, 'uniswap_v4', NULL, 1);
+                 INSERT INTO managed_pools (id, kind, manager_id) VALUES
+                   (10, 'uniswap_v4', 1),
+                   (11, 'uniswap_v4', 1),
+                   (12, 'uniswap_v4', 2),
+                   (13, 'uniswap_v4', 1);
+                 INSERT INTO uniswap_v4_pools (managed_pool_id, pool_hash, hooks, currency0_id,
+                   currency1_id, fee_currency0, fee_currency1, fee_denominator, tick_spacing) VALUES
+                   (10, '{clean_hash}', '{zero_hooks}', 1, 2, 500, 500, 1000000, 10),
+                   (11, '{hooked_hash}', '{hooked_hooks}', 1, 2, 3000, 3000, 1000000, 60),
+                   (12, '{other_chain_hash}', '{zero_hooks}', 1, 2, 100, 100, 1000000, 1),
+                   (13, '{overflow_fee_hash}', '{zero_hooks}', 1, 2, 5000000000, 500, 1000000, 10);"
+            ))
+            .unwrap();
+        }
+
+        let mut ix = V2ConnectorIndex::default();
+        ix.load_v4(&db, 1).unwrap();
+
+        // Pool 10 loads; pool 11 (hooked) and pool 12 (chain 8453) do not.
+        assert_eq!(ix.v4_len(), 1);
+        let edge = ix
+            .v4_edge_by_pool_hash(B256::from([0x11; 32]))
+            .expect("clean chain-1 pool is indexed");
+        assert_eq!(edge.db_pool_id, 10);
+        assert_eq!(edge.manager, Address::new([0xaa; 20]));
+        assert_eq!(edge.token0, Address::new([0x11; 20]));
+        assert_eq!(edge.token1, Address::new([0x22; 20]));
+        assert_eq!((edge.fee, edge.fee_currency1), (500, 500));
+        assert_eq!(edge.tick_spacing, 10);
+        assert_eq!(edge.hooks, Address::ZERO);
+
+        assert!(
+            ix.v4_edge_by_pool_hash(B256::from([0x22; 32])).is_none(),
+            "hooked pool excluded at load"
+        );
+        assert!(
+            ix.v4_edge_by_pool_hash(B256::from([0x33; 32])).is_none(),
+            "other-chain pool excluded"
+        );
+
+        // Pair adjacency is orientation-independent.
+        assert_eq!(
+            ix.v4_edges_for_pair(Address::new([0x11; 20]), Address::new([0x22; 20]))
+                .len(),
+            1
+        );
+        assert_eq!(
+            ix.v4_edges_for_pair(Address::new([0x22; 20]), Address::new([0x11; 20]))
+                .len(),
+            1
+        );
+        assert_eq!(
+            ix.v4_edges_for_pair(Address::new([0x99; 20]), Address::new([0x22; 20]))
+                .len(),
+            0
+        );
+
+        // Manager grouping feeds the per-manager descriptor set.
+        assert_eq!(ix.v4_edges_for_manager(Address::new([0xaa; 20])).len(), 1);
+        assert_eq!(ix.v4_edges_for_manager(Address::new([0xbb; 20])).len(), 0);
+
+        // The 8453 roster loads its own pool.
+        let mut ix_base = V2ConnectorIndex::default();
+        ix_base.load_v4(&db, 8453).unwrap();
+        assert_eq!(ix_base.v4_len(), 1);
+        assert_eq!(
+            ix_base
+                .v4_edge_by_pool_hash(B256::from([0x33; 32]))
+                .expect("8453 pool is indexed on its chain")
+                .db_pool_id,
+            12
+        );
+
+        // A fee column exceeding u32 is skipped, not silently dropped: the
+        // row is absent from the roster while the counters account for it.
+        assert!(
+            ix.v4_edge_by_pool_hash(B256::from([0x44; 32])).is_none(),
+            "overflowing-fee row is not indexed"
+        );
+        let load = ix.v4_last_load();
+        assert_eq!(
+            load.total, 3,
+            "chain-1 scan saw clean, hooked, and bad rows"
+        );
+        assert_eq!(load.loaded, 1);
+        assert_eq!(load.excluded_hooked, 1);
+        assert_eq!(load.skipped, 1, "the bad row is counted, not lost");
+        assert_eq!(
+            ix_base.v4_last_load(),
+            V4RosterLoad {
+                total: 1,
+                loaded: 1,
+                excluded_hooked: 0,
+                skipped: 0,
+            }
         );
     }
 }

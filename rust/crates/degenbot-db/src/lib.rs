@@ -68,7 +68,8 @@ pub use degenbot_math::cl::liquidity_mapping::{
 };
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use discovery_read::{
-    fetch_discovery_rows_on_conn, DiscoveryPoolRow, DiscoveryV2Row, DiscoveryV3Row, DiscoveryV4Row,
+    fetch_discovery_rows_on_conn, fetch_v4_discovery_rows_on_conn, DiscoveryPoolRow,
+    DiscoveryV2Row, DiscoveryV3Row, DiscoveryV4Row,
 };
 pub use error::DbError;
 pub use heal::{heal_database, HealReport};
