@@ -2733,6 +2733,7 @@ dependencies = [
  "alloy",
  "degenbot-abi",
  "degenbot-core",
+ "degenbot-db",
  "serde",
  "serde_json",
 ]

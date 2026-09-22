@@ -25,6 +25,7 @@ from degenbot.database.models.pools import (
     UniswapV3PoolTableBase,
     UniswapV4PoolTable,
 )
+from degenbot.registry.deployment_loader import load_deployments
 from degenbot.runner.build_paths import (
     _POOL_VERSION_MAP,
     _pool_types_from_filter,
@@ -317,3 +318,76 @@ def test_allowed_tables_can_be_overridden_for_fixtures() -> None:
         allowed_tables={"fake_v2_pools"},
     )
     assert parsed.get("fake_v2") is not None
+
+
+# ──────────────────────────────────────────────────────────────────
+# V4 manager-species add path + deployments.json reconciliation
+# ──────────────────────────────────────────────────────────────────
+
+
+def _v4_manager_block(kind: str, manager: str) -> str:
+    return (
+        f'[[species]]\nkind = "{kind}"\nfamily = "v4"\ntable = "managed"\n'
+        f"fee_denominator = 1000000\n"
+        f'[[species.chains]]\nchain_id = 1\nmanager = "{manager}"\n'
+    )
+
+
+def test_fixture_v4_species_loads_and_expansion_refuses_until_a_model_exists() -> None:
+    """The documented add-a-species recipe (ADR-059 D3).
+
+    A new V4 manager species is a manifest row. The loader accepts it and its
+    manager is keyed by chain; the model parity gate refuses it with the exact
+    mismatch until the SQLAlchemy model identity lands. The Rust
+    ``MixedPoolManagers`` compose refusal is per-manager and independent of the
+    manifest roster (see ``degenbot-strategy``'s refusal test).
+    """
+    manager = "0x1111111111111111111111111111111111111111"
+    parsed = sm.parse_manifest(_v4_manager_block("sushi_v4", manager))
+    sushi = parsed.get("sushi_v4")
+    assert sushi is not None
+    assert sushi.family is sm.Family.V4
+    assert sushi.table == sm.V4_MANAGED_TABLE
+    assert sushi.chains[1].manager == manager
+    assert parsed.subclass_table_for_kind("sushi_v4") is None
+
+    with pytest.raises(
+        sm.SpeciesModelMismatchError,
+        match=re.escape(
+            "manifest species 'sushi_v4' has no SQLAlchemy pool model "
+            "with polymorphic identity 'sushi_v4'",
+        ),
+    ):
+        sm.pool_version_map(parsed)
+
+    with pytest.raises(
+        sm.SpeciesModelMismatchError,
+        match=re.escape("manifest species without a model: ['sushi_v4']"),
+    ):
+        sm.assert_manifest_model_parity(parsed)
+
+
+def test_shipped_manifest_chains_reconcile_with_deployments_json() -> None:
+    """Every manifest chain agrees with the canonical ``deployments.json``.
+
+    The manifest owns species identity; ``deployments.json`` owns the
+    on-chain-resolution extras (CREATE2 deployer, Aerodrome implementation).
+    Their shared facts — the per-chain factory + CREATE2 init hash, and the V4
+    manager that must never be keyed as a factory — are pinned here so a
+    one-sided edit fails.
+    """
+    records = {(r.chain_id, r.factory.lower()): r for r in load_deployments()}
+    for species in sm.manifest().species:
+        assert species.chains, species.kind
+        for chain in species.chains.values():
+            if species.family is sm.Family.V4:
+                assert chain.manager is not None
+                assert (chain.chain_id, chain.manager.lower()) not in records, (
+                    f"V4 manager for {species.kind!r} must not be a factory row"
+                )
+            else:
+                assert chain.factory is not None
+                record = records[chain.chain_id, chain.factory.lower()]
+                assert record.init_hash == chain.init_codehash, (
+                    f"{species.kind!r} chain {chain.chain_id} init hash drift"
+                )

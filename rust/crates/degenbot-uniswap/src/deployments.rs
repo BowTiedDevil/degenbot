@@ -349,6 +349,15 @@ pub fn lookup(chain_id: u64, factory: Address) -> Option<&'static DeploymentReco
     table().get(&(chain_id, factory))
 }
 
+/// Iterate every parsed deployment record in the shipped `deployments.json`.
+///
+/// The single-row [`lookup`] cannot answer "is this factory anywhere in the
+/// shipped table", which the species-manifest reconciliation gate needs. The
+/// iterator order is unspecified (the backing map is a `HashMap`).
+pub fn records() -> impl Iterator<Item = &'static DeploymentRecord> {
+    table().values()
+}
+
 /// Resolve the DEX name for a `(chain_id, factory)` pool deployment.
 ///
 /// Returns the deployment's derived [`DexName`] when the `(chain, factory)` is

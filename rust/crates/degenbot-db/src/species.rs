@@ -35,6 +35,22 @@ pub enum Family {
     V4,
 }
 
+impl Family {
+    /// Project this manifest family onto the graph vocabulary's pool kind.
+    ///
+    /// The graph tier keys on family, not species: every V4 species resolves
+    /// to the same `PoolKind::V4` arm, so adding a manager species needs no
+    /// new graph enumeration.
+    #[must_use]
+    pub const fn pool_kind(self) -> degenbot_pathfinding::PoolKind {
+        match self {
+            Self::V2 => degenbot_pathfinding::PoolKind::V2,
+            Self::V3 => degenbot_pathfinding::PoolKind::V3,
+            Self::V4 => degenbot_pathfinding::PoolKind::V4,
+        }
+    }
+}
+
 /// The EVM storage-layout id a V3 species uses. Mirrors the variants of
 /// `degenbot-pools`'s `ClSlotLayout`; kept as a manifest-local enum so this
 /// crate does not depend on `degenbot-pools`.
@@ -80,6 +96,19 @@ pub struct Species {
     pub chains: BTreeMap<u64, ChainIdentifiers>,
 }
 
+impl Species {
+    /// The V4 pool-manager singleton this species uses on `chain_id`.
+    ///
+    /// `None` for a V2/V3 species (its chain entry carries a factory) or an
+    /// out-of-scope chain. A V4 manager hosts many pool ids on one chain, so
+    /// the manager address is the deployment key the factory-keyed table
+    /// cannot express.
+    #[must_use]
+    pub fn manager_on(&self, chain_id: u64) -> Option<Address> {
+        self.chains.get(&chain_id).and_then(|ids| ids.manager)
+    }
+}
+
 /// The validated species manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Manifest {
@@ -92,6 +121,30 @@ impl Manifest {
     #[must_use]
     pub fn get(&self, kind: &str) -> Option<&Species> {
         self.species.iter().find(|s| s.kind == kind)
+    }
+
+    /// The V4 species whose manager on `chain_id` is `manager`.
+    ///
+    /// Manager address + chain is the V4 deployment key — V4 has no CREATE2
+    /// factory and one manager hosts many pool ids. V2/V3 species never match
+    /// (their chain entries carry no manager).
+    #[must_use]
+    pub fn manager_deployment(&self, chain_id: u64, manager: Address) -> Option<&Species> {
+        self.species
+            .iter()
+            .find(|s| s.manager_on(chain_id) == Some(manager))
+    }
+
+    /// Every V4 manager the manifest declares, as `(chain_id, manager, species)`.
+    pub fn v4_managers(&self) -> impl Iterator<Item = (u64, Address, &Species)> {
+        self.species
+            .iter()
+            .filter(|s| s.family == Family::V4)
+            .flat_map(|s| {
+                s.chains.iter().filter_map(move |(&chain_id, ids)| {
+                    ids.manager.map(|manager| (chain_id, manager, s))
+                })
+            })
     }
 }
 
@@ -388,8 +441,18 @@ pub fn subclass_table_for_kind(kind: &str) -> Option<&'static str> {
     (species.family != Family::V4).then_some(species.table.as_str())
 }
 
+/// The V4 species the shipped manifest declares for `(chain_id, manager)`.
+///
+/// The manager-keyed twin of the factory-keyed `degenbot-uniswap` deployment
+/// lookup: V4 pools are keyed by their manager singleton and pool id, not a
+/// CREATE2 factory, so this is the resolution seam for V4 species identity.
+#[must_use]
+pub fn manager_deployment(chain_id: u64, manager: Address) -> Option<&'static Species> {
+    manifest().manager_deployment(chain_id, manager)
+}
+
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use degenbot_pathfinding::PoolKind;
@@ -564,5 +627,65 @@ mod tests {
                 field: "factory",
             }
         );
+    }
+
+    // ── add-a-species recipe (fixture manifest, no global mutation) ──────
+    //
+    // The documented path for landing a real V4 manager species: a manifest
+    // row with `family = "v4"`, `table = "managed"`, and a `manager` per
+    // chain. This fixture proves the loader + manager-keyed resolution accept
+    // it without touching the shipped `species.toml` or the graph roster.
+
+    const FIXTURE_V4_MANAGER: &str = "0x1111111111111111111111111111111111111111";
+
+    fn fixture_v4_manifest() -> Manifest {
+        parse_manifest(&format!(
+            "[[species]]\nkind = \"sushi_v4\"\nfamily = \"v4\"\n\
+             table = \"managed\"\nfee_denominator = 1000000\n\
+             [[species.chains]]\nchain_id = 1\nmanager = \"{FIXTURE_V4_MANAGER}\"\n"
+        ))
+        .expect("a V4 manager species must load")
+    }
+
+    #[test]
+    fn loads_a_fixture_v4_species_and_resolves_it_by_manager() {
+        let parsed = fixture_v4_manifest();
+        let species = parsed.get("sushi_v4").expect("fixture species loads");
+        assert_eq!(species.family, Family::V4);
+        assert_eq!(species.table, V4_MANAGED_TABLE);
+
+        let manager = Address::from_str(FIXTURE_V4_MANAGER).unwrap();
+        assert_eq!(species.manager_on(1), Some(manager));
+        assert_eq!(species.manager_on(8453), None, "chain not in fixture");
+        assert_eq!(
+            parsed.v4_managers().next().map(|(chain, m, _)| (chain, m)),
+            Some((1, manager))
+        );
+
+        assert_eq!(
+            parsed
+                .manager_deployment(1, manager)
+                .map(|s| s.kind.as_str()),
+            Some("sushi_v4")
+        );
+        assert!(parsed.manager_deployment(1, Address::ZERO).is_none());
+        assert!(parsed.manager_deployment(8453, manager).is_none());
+    }
+
+    #[test]
+    fn a_v4_fixture_species_needs_no_new_graph_pool_kind() {
+        let parsed = fixture_v4_manifest();
+        let species = parsed.get("sushi_v4").expect("fixture species loads");
+        // The graph vocabulary projects by FAMILY: a new V4 species reuses the
+        // existing `PoolKind::V4` arm, and the shipped roster is untouched by
+        // a fixture parse (the loader holds no global state).
+        assert_eq!(species.family.pool_kind(), PoolKind::V4);
+        assert_eq!(
+            species.family.pool_kind(),
+            PoolKind::from_kind_str("uniswap_v4").unwrap()
+        );
+        assert_eq!(PoolKind::KNOWN_KINDS.len(), 11);
+        // A V4 kind never carries a V2/V3 subclass table.
+        assert!(subclass_table_for_kind("sushi_v4").is_none());
     }
 }

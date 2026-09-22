@@ -15,5 +15,9 @@ workspace = true
 alloy = { version = "^2.4" }
 degenbot-abi.workspace = true
 degenbot-core.workspace = true
+# The species manifest (ADR-059 D3) lives in `degenbot-db` beside its loader;
+# V4 manager-keyed resolution reads it here. The factory-keyed V2/V3
+# `deployments` table below does not use this edge.
+degenbot-db.workspace = true
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }

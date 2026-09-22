@@ -7,12 +7,13 @@
 //! supported DEX+variant, plus the V2 swap-call encoder (`encode_v2_swap`,
 //! `EncodedCall`, `V2_SWAP_SELECTOR`).
 //!
-//! It depends only on `alloy::primitives`, `degenbot-abi` (the encoder +
-//! `AbiValue` for `encode_v2_swap`), and `degenbot-core` (for
-//! `AbiDecodeError`). It has **no `pyo3`, no `tokio`, no `degenbot-rpc`,
-//! no `degenbot-bot`** — a standalone Rust consumer can look up a Sushiswap
-//! V2 preset and encode a V2 swap call without pulling the engine/pump/RPC
-//! stack (ADR-005 "standalone constraint").
+//! It depends on `alloy::primitives`, `degenbot-abi` (the encoder +
+//! `AbiValue` for `encode_v2_swap`), `degenbot-core` (for `AbiDecodeError`),
+//! and `degenbot-db` (for the ADR-059 D3 species manifest). It has **no
+//! `pyo3`, no `tokio`, no `degenbot-rpc`, no `degenbot-bot`** — a standalone
+//! Rust consumer can look up a Sushiswap V2 preset and encode a V2 swap call
+//! without pulling the engine/pump/RPC stack (ADR-005 "standalone
+//! constraint").
 //!
 //! # Why not `degenbot-core`?
 //!
@@ -28,6 +29,8 @@
 //!   objects + `pub const` per-DEX presets.
 //! - [`deployments`] — `(chain, factory)`-keyed CREATE2 identity lookup over
 //!   the embedded canonical `deployments.json` (init hash + deployer).
+//! - [`manager_deployments`] — `(chain, manager)`-keyed V4 species lookup over
+//!   the embedded species manifest (V4 has no CREATE2 factory).
 //! - [`v2_encoding`] — V2 `swap(uint256,uint256,address,bytes)` callldata
 //!   encoding (`EncodedCall`, `V2_SWAP_SELECTOR`, `encode_v2_swap`).
 //! - [`create2`] — CREATE2 pool-address derivation (pure-Rust mirror of the
@@ -36,4 +39,5 @@
 pub mod create2;
 pub mod deployments;
 pub mod dex_identity;
+pub mod manager_deployments;
 pub mod v2_encoding;

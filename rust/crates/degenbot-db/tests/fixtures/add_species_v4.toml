@@ -1,0 +1,15 @@
+# Test-only add-a-species fixture (ADR-059 D3).
+#
+# `species.toml` ships NO SushiSwap/PancakeSwap V4 rows: those manager
+# addresses are the operator's to supply after on-chain verification. This file
+# documents the shape of the row a real species lands as. The manager below is
+# a placeholder, not an on-chain address.
+
+[[species]]
+kind = "sushi_v4"
+family = "v4"
+table = "managed"
+fee_denominator = 1000000
+[[species.chains]]
+chain_id = 1
+manager = "0x1111111111111111111111111111111111111111"
