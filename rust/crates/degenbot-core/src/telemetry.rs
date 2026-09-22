@@ -207,6 +207,17 @@ macro_rules! diag_trace {
     }};
 }
 
+/// A DEBUG lifecycle event under a closed domain target (the boot/census
+/// verdicts: process-wide sizing, runtime construction). Deliberately
+/// unguarded — unlike [`diag!`] these fire BEFORE any engine span exists, so
+/// the engine-span guard would only raise false alarms.
+#[macro_export]
+macro_rules! op_debug {
+    (domain = $domain:ident, $($rest:tt)*) => {
+        ::tracing::debug!(target: $crate::telemetry_target!($domain), $($rest)*)
+    };
+}
+
 /// An INFO lifecycle event under a closed domain target.
 #[macro_export]
 macro_rules! op_info {

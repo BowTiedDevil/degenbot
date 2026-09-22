@@ -10,11 +10,12 @@
 //!   `cancelled` report, and committed chunks stay durable.
 //! - **second Ctrl+C** -> [`Action::Abort`]: abort the process.
 //!
-//! The listener is one spawned task on the process-wide shared runtime
-//! (`degenbot_core::runtime::get_runtime()`) — no ad-hoc runtime. The command
-//! itself stays synchronous: the listener parks on the shared runtime's IO
-//! driver and never blocks the calling thread, and cli-core's arms `block_on`
-//! that same runtime from a clean (non-nested) context.
+//! The listener is ONE dedicated std thread running a current-thread runtime.
+//! A one-shot console command must never boot the shared bot runtimes
+//! (`degenbot_core::runtime`) for a single parked signal task, so this surface
+//! is fully self-owned (asserted by `tests/sigint_runtime_isolation.rs`). The
+//! command itself stays synchronous: the listener parks on the signal stream
+//! and never blocks the calling thread.
 
 use degenbot_cli_core::CancelHandle;
 
@@ -43,33 +44,91 @@ pub const fn action(already_cancelled: bool) -> Action {
 #[derive(Debug)]
 #[must_use = "the guard must outlive the command run"]
 pub struct Guard {
-    listener: Option<tokio::task::JoinHandle<()>>,
+    /// Aborting the task parks the single listener thread at its next
+    /// `.await`, which returns from `block_on`, drops the runtime, and ends
+    /// the thread.
+    listener: Option<tokio::task::AbortHandle>,
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        // Aborting the task drops its signal `Stream` -> the SIGINT handler
-        // de-registers. The abort is synchronous + non-blocking (safe from any
-        // thread, inside a runtime context included): the task cancels at its
-        // next `.await` — it parks on `interrupts.recv().await`.
+        // The abort is synchronous + non-blocking (safe from any thread): the
+        // task cancels at its next `.await` park.
         if let Some(listener) = self.listener.take() {
             listener.abort();
         }
     }
 }
 
+/// The census entry for the dedicated listener thread. The registry is
+/// documentation-enforced for every spawn site (see `worker_census` module
+/// docs): an unregistered thread is invisible to the gauge and the boot dump.
+#[cfg(unix)]
+const fn census_entry() -> degenbot_core::worker_census::WorkerCensusEntry {
+    degenbot_core::worker_census::WorkerCensusEntry {
+        resource: "cli_sigint_listener",
+        kind: "std signal-listener thread (one current-thread runtime; SIGINT -> cooperative CancelHandle)",
+        count: 1,
+        thread_name: "degenbot-cli-sigint",
+        sizing: "exactly one per run (fixed; owned by the run guard)",
+        binding: "pinned",
+    }
+}
+
 /// Install the SIGINT policy for `cancel`.
 ///
-/// Spawns the listener on the process-wide shared runtime
-/// (`degenbot_core::runtime::get_runtime()`); no per-listener runtime is
-/// built. A signal-stream build failure is handled inside [`listen`] (a
-/// warning is logged): cooperative cancel is then unavailable, but the run
-/// still proceeds.
+/// Spawns the listener on its OWN current-thread runtime — never the
+/// process-wide shared runtime (`degenbot_core::runtime::get_runtime`), which
+/// a console invocation must not pay for. A runtime- or thread-spawn failure
+/// is handled at this site (a warning is logged): cooperative cancel is then
+/// unavailable, but the run still proceeds.
 #[cfg(unix)]
 pub fn install(cancel: CancelHandle) -> Guard {
-    Guard {
-        listener: Some(degenbot_core::runtime::get_runtime().spawn(listen(cancel))),
+    degenbot_core::worker_census::register(census_entry());
+
+    // Built on the calling thread (a Runtime is Send), then handed to the
+    // one listener thread. A current_thread runtime suffices: the listener is
+    // a single task parking on the signal stream.
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        degenbot_core::op_warn!(
+            domain = pump,
+            "could not build the SIGINT listener runtime; cooperative cancel is unavailable"
+        );
+        return Guard { listener: None };
+    };
+
+    // The abort handle crosses back to the guard; the listen task stays with
+    // the runtime that spawned it.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("degenbot-cli-sigint".to_owned())
+        .spawn(move || {
+            let task = runtime.spawn(listen(cancel));
+            let _ = tx.send(task.abort_handle());
+            let _ = runtime.block_on(task);
+        });
+
+    if let Err(error) = spawned {
+        degenbot_core::op_warn!(
+            domain = pump,
+            error = %error,
+            "could not spawn the SIGINT listener thread; cooperative cancel is unavailable"
+        );
+        return Guard { listener: None };
     }
+    let listener = rx
+        .recv()
+        .map_err(|_| {
+            degenbot_core::op_warn!(
+                domain = pump,
+                "SIGINT listener thread died before installing; cooperative cancel is unavailable"
+            );
+        })
+        .ok();
+    Guard { listener }
 }
 
 /// Non-Unix builds have no SIGINT policy to install.

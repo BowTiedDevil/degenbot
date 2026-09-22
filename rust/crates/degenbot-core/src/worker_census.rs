@@ -11,7 +11,8 @@
 //!   exported by `degenbot-bot::instruments` via the hook installed at
 //!   metrics init);
 //! - [`emit_boot_table`] fires the one structured `info!` boot line with
-//!   the full table (called by the drivers' boot prelude);
+//!   the full table (called by the drivers' boot prelude — NOT by a
+//!   one-shot command's sink boot, see degenbot-cli);
 //! - registrations AFTER the boot dump each emit their own structured
 //!   `info!` line, so lazily-booted resources are visible in the log too.
 //!
@@ -32,7 +33,8 @@
 //! via `worker_census::register`. The census survives unknown-future spawns
 //! only by this documentation; an unregistered thread is invisible to the
 //! gauge, the boot dump, and the /proc comm cross-check. Registered ids
-//! today: `io_runtime_workers`, `inline_sim_runtime_workers`,
+//! today: `io_runtime_workers`, `cli_sigint_listener`,
+//! `inline_sim_runtime_workers`,
 //! `solve_probe_executor`, `fleet_solver_slots`, `fleet_simdriver_slots`,
 //! `fleet_resolve_slots`, `fleet_merge_slots`,
 //! `fleet_pool_state_updater_slots`,
