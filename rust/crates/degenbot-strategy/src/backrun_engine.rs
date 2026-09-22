@@ -405,9 +405,10 @@ pub enum ComposeReject {
     StreamEncodingFailed,
     /// The `execute(commands, config)` call could not be ABI-encoded.
     ExecuteEncodingFailed,
-    /// A V4 hop reached the composer before the V4 `HopInfo` encoding landed.
-    /// The candidate is refused loudly rather than encoded as the wrong family.
-    V4ComposePending,
+    /// V4 hops in one candidate name different `PoolManager` singletons; the
+    /// session's `EncodeContext` carries one manager, so a mixed path has no
+    /// single sentinel to resolve.
+    MixedPoolManagers,
 }
 
 impl ComposeReject {
@@ -419,7 +420,7 @@ impl ComposeReject {
             Self::AmountExceedsUint96 => "amount_exceeds_uint96",
             Self::StreamEncodingFailed => "encoding_failed:cmd_stream",
             Self::ExecuteEncodingFailed => "encoding_failed:execute_call",
-            Self::V4ComposePending => "v4_compose_pending",
+            Self::MixedPoolManagers => "mixed_pool_managers",
         }
     }
 }
@@ -444,7 +445,7 @@ pub fn compose_candidate(
 ) -> Result<alloy::primitives::Bytes, ComposeReject> {
     use degenbot_executor::composers::{
         encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
-        HopInfo, V2HopInfo, V3HopInfo,
+        HopInfo, V2HopInfo, V3HopInfo, V4HopInfo,
     };
     use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
 
@@ -465,6 +466,11 @@ pub fn compose_candidate(
     }
 
     let mut hops = Vec::with_capacity(candidate.hops.len());
+    // The session's `EncodeContext` holds one PoolManager; source it from the
+    // candidate's V4 hops rather than a hardcoded deployment so a non-mainnet
+    // manager resolves its own sentinel. All V4 hops must agree (single-species
+    // is the documented scope); V2/V3-only candidates never read it.
+    let mut pool_manager: Option<Address> = None;
     for h in &candidate.hops {
         let hop = match h.family {
             LaneFamily::V2 => HopInfo::V2(V2HopInfo {
@@ -481,10 +487,27 @@ pub fn compose_candidate(
                 fee,
                 zfo: h.zfo,
             }),
-            // The V4 `HopInfo` compose arm lands with the V4 lane's composer
-            // work; a V4 candidate solves but must be refused here rather than
-            // encoded as the wrong family.
-            LaneFamily::V4 { .. } => return Err(ComposeReject::V4ComposePending),
+            LaneFamily::V4 {
+                fee,
+                pool_id,
+                tick_spacing,
+                hooks,
+            } => {
+                if pool_manager.is_some_and(|manager| manager != h.pool) {
+                    return Err(ComposeReject::MixedPoolManagers);
+                }
+                pool_manager = Some(h.pool);
+                HopInfo::V4(V4HopInfo {
+                    pool_manager_address: h.pool,
+                    pool_id_hex: format!("0x{}", alloy::hex::encode(pool_id)),
+                    currency0_address: h.token0,
+                    currency1_address: h.token1,
+                    fee,
+                    tick_spacing,
+                    hook_address: hooks,
+                    zfo: h.zfo,
+                })
+            }
         };
         hops.push(hop);
     }
@@ -501,11 +524,13 @@ pub fn compose_candidate(
             bribe: Bribe::None,
         },
     );
-    // V4-only context field: irrelevant for all-V2 streams; the canonical
-    // mainnet PoolManager keeps the context well-formed.
+    // V2/V3-only streams never read the manager (no V4 sentinel/table entry),
+    // so the canonical mainnet PoolManager keeps that context well-formed.
     let ctx = EncodeContext::new(
         executor,
-        alloy::primitives::address!("000000000004444c5dc75cb358380d2e3de08a90"),
+        pool_manager.unwrap_or(alloy::primitives::address!(
+            "000000000004444c5dc75cb358380d2e3de08a90"
+        )),
         weth,
     );
     let commands = encode_cmd_stream(&ctx, &req).ok_or(ComposeReject::StreamEncodingFailed)?;
@@ -680,6 +705,116 @@ mod tests {
         // config = (1000 << 8) | 1 rides the head of the ABI tail; just
         // sanity the total size bounds (selector + 0x40 + words + bytes).
         assert!(cd.len() > 4 + 32 * 3 + 64);
+    }
+
+    /// A single V4→V2 lane candidate composes to `execute` calldata: the V4
+    /// arm builds a real `V4HopInfo` (not the interim refusal) and the stream
+    /// opens with a `V4_UNLOCK` wrapping a `V4_SWAP_COMPACT`.
+    ///
+    /// The V4 lead must consume WETH (or native) and the V2 tail return it —
+    /// the only v4v2 cycle the shape admits — so the terminal is WETH and the
+    /// path needs no leading self-fund byte.
+    #[test]
+    fn golden_v4_lane_composes_to_execute_calldata() {
+        use degenbot_executor::composers::EXECUTE_SELECTOR;
+        use degenbot_executor::encoders::{
+            BEGIN_EXECUTION, CMD_SET_ADDRESS, CMD_V4_SWAP_COMPACT, CMD_V4_UNLOCK,
+        };
+        // A non-canonical manager: the composer must source the session's
+        // PoolManager from the V4 hop, not the hardcoded mainnet const.
+        const V4_MANAGER: Address = address!("000000000000000000000000000000000000c0fe");
+        let candidate = LaneCandidate {
+            hops: vec![
+                BackrunHopRef {
+                    pool_id: 1,
+                    pool: V4_MANAGER,
+                    token0: TOK,
+                    token1: WETH,
+                    // input currency1=WETH, output currency0=TOK
+                    zfo: false,
+                    family: LaneFamily::V4 {
+                        fee: 500,
+                        pool_id: B256::new([0xab; 32]),
+                        tick_spacing: 10,
+                        hooks: Address::ZERO,
+                    },
+                },
+                BackrunHopRef {
+                    pool_id: 2,
+                    pool: Q,
+                    token0: TOK,
+                    token1: WETH,
+                    // input token0=TOK, output token1=WETH
+                    zfo: true,
+                    family: LaneFamily::V2,
+                },
+            ],
+            optimal_input: 1_000_000_000_000_000_000,
+            hop_outputs: vec![1_000_000_000_000_000_000, 1_000_000_000_000_000_000],
+            consumed_inputs: vec![1_000_000_000_000_000_000, 1_000_000_000_000_000_000],
+            profit: 1_000_000_000_000_000_000,
+        };
+        let cd = compose_candidate(&candidate, P, WETH, 1000).expect("a V4 lane composes");
+        assert_eq!(&cd[0..4], &EXECUTE_SELECTOR[..]);
+        // Decode the `execute(bytes,uint256)` ABI tail: head slot 0 is the
+        // offset (0x40) to the `bytes`, so the length word starts at 4+0x40.
+        let mut len_word = [0u8; 32];
+        len_word.copy_from_slice(&cd[68..100]);
+        let cmds_len = usize::try_from(u64::try_from(U256::from_be_bytes(len_word)).expect("fits"))
+            .expect("fits usize");
+        let commands = &cd[100..100 + cmds_len];
+        // Skip the address-table preprocessing (`SET_ADDRESS` × N) to the
+        // `BEGIN_EXECUTION` separator, then read the first command opcode.
+        let mut at = 0;
+        while commands[at] == CMD_SET_ADDRESS {
+            at += 21;
+        }
+        assert_eq!(commands[at], BEGIN_EXECUTION, "preprocessing ends at 0xFF");
+        at += 1;
+        // Ledger-only `SelfFund` emits no byte, so a V4-led path opens its
+        // PoolManager unlock first.
+        assert_eq!(
+            commands[at], CMD_V4_UNLOCK,
+            "the V4-led path opens its PoolManager unlock first"
+        );
+        assert_eq!(
+            commands[at + 2],
+            CMD_V4_SWAP_COMPACT,
+            "the unlock's first inner command is the V4 swap"
+        );
+    }
+
+    /// V4 hops naming different `PoolManager` singletons have no single
+    /// sentinel to resolve, so the candidate is refused loudly.
+    #[test]
+    fn mixed_pool_managers_reject_loudly() {
+        let v4_hop = |pool_id: u8, manager: Address| BackrunHopRef {
+            pool_id: u64::from(pool_id),
+            pool: manager,
+            token0: TOK,
+            token1: WETH,
+            zfo: false,
+            family: LaneFamily::V4 {
+                fee: 500,
+                pool_id: B256::new([pool_id; 32]),
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+        };
+        let candidate = LaneCandidate {
+            hops: vec![
+                v4_hop(1, address!("000000000000000000000000000000000000c0fe")),
+                v4_hop(2, address!("000000000000000000000000000000000000dead")),
+            ],
+            optimal_input: 1_000,
+            hop_outputs: vec![990, 1_010],
+            consumed_inputs: vec![1_000, 990],
+            profit: 10,
+        };
+        assert_eq!(
+            compose_candidate(&candidate, P, WETH, 1000),
+            Err(ComposeReject::MixedPoolManagers)
+        );
     }
 
     #[test]
