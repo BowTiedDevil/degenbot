@@ -7,7 +7,12 @@
 //! 2. The live e2e (`#[ignore]`-gated): a captured frame JSONL replays
 //!    end-to-end against a forked node.
 
-#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::items_after_statements
+)]
 
 use alloy::primitives::{address, aliases::U112, Address, B256, U256};
 use degenbot_db::connection::DegenbotDb;

@@ -8,9 +8,15 @@
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::print_stderr,
     clippy::similar_names,
-    clippy::doc_markdown
+    clippy::print_stdout,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::map_unwrap_or,
+    clippy::match_wildcard_for_single_variants,
+    clippy::uninlined_format_args,
+    clippy::type_complexity
 )]
 
 use std::borrow::Cow;

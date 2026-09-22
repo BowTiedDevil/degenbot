@@ -381,8 +381,7 @@ pub(super) fn walk_refine_window(
     // ±REFINE_BRACKET_WEI bracket instead of the full window. Neighbor
     // refinements pass `piece_anchor = None` — a different piece's anchor is
     // not evidence for this window, so they keep the full search.
-    if cfg.refine_model_anchor && piece_anchor.is_some_and(|a| a >= lo && a <= hi) {
-        let anchor = piece_anchor.expect("checked is_some_and above");
+    if let Some(anchor) = piece_anchor.filter(|a| cfg.refine_model_anchor && *a >= lo && *a <= hi) {
         lo = anchor
             .saturating_sub(U256::from(REFINE_BRACKET_WEI))
             .max(lo);
@@ -587,7 +586,6 @@ fn solve_active_set_path_inner(
         clippy::too_many_arguments,
         reason = "walk-domain refinement carry (window pair + hint + recorder + neighbor switch + runtime stance) is coherent as a flat signature"
     )]
-    #[allow(clippy::too_many_arguments)]
     fn refine_at_stop(
         hops: &[WalkHop],
         ks: &[usize],

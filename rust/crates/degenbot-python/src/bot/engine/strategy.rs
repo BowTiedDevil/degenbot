@@ -566,6 +566,7 @@ mod tests {
     /// refuses the boot in both stances before the host serves a session.
     #[test]
     fn each_facet_is_configured_iff_its_active_key_is_on() {
+        #[expect(clippy::type_complexity)]
         let name_and_active: [(
             degenbot_strategy::StrategyName,
             fn(&mut degenbot_config::schema::BotConfig),

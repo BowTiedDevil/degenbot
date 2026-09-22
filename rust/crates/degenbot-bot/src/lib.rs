@@ -136,10 +136,14 @@ pub mod instruments {
         pub fn set_seconds_since_header(&self, _secs: f64) {}
         /// no-op
         pub fn set_seconds_since_apply(&self, _secs: f64) {}
-        /// no-op (MEVBlocker searcher-feed family)
+        /// no-op (`MEVBlocker` searcher-feed family)
         pub fn count_backrun_frame(&self, _decision: &str, _reason: &str) {}
 
-        /// no-op (MEVBlocker searcher-feed family)
+        /// no-op (`MEVBlocker` searcher-feed family)
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "one flat sample of a closed 7-field status snapshot"
+        )]
         pub fn record_backrun_feed(
             &self,
             _connected: bool,

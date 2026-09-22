@@ -133,7 +133,6 @@ fn solve_cl_piecewise_inner(
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// `hop_outputs[0]` = output from the first hop, `hop_outputs[1]` = output from the second.
 #[must_use]
-#[expect(clippy::allow_attributes)]
 pub fn solve_mixed_v2_v3_piecewise(
     v2_hops: &[IntHopState],
     v3_sequence: &IntV3TickRangeSequence,

@@ -7,7 +7,12 @@
 //! `logging.trace_jsonl` override cannot race another test file's trace
 //! assertions.
 
-#![expect(clippy::unwrap_used, clippy::expect_used)]
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::similar_names
+)]
 
 use alloy::primitives::{address, aliases::U112, Address, B256, U128, U256};
 

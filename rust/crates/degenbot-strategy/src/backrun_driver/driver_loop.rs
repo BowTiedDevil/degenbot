@@ -1439,6 +1439,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         // here rather than inside the feed pump.
         if let Some(pipeline) = degenbot_bot::instruments::pipeline() {
             let st = feed.status();
+            #[expect(clippy::cast_precision_loss)]
             let seconds_since_event = (st.last_event_unix_ms != 0).then(|| {
                 let now_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)

@@ -112,11 +112,11 @@ pub struct PipelineInstruments {
     pump_seconds_since_header: Gauge<f64>,
     /// Seconds since the newest log applied to state (state-advance liveness).
     pump_seconds_since_apply: Gauge<f64>,
-    /// MEVBlocker searcher pending-tx feed liveness: 1 while the WS session
+    /// `MEVBlocker` searcher pending-tx feed liveness: 1 while the WS session
     /// is up, 0 between reconnects.
     backrun_feed_connected: Gauge<f64>,
     /// Age of the newest accepted searcher event; grows while the feed is
-    /// connected but silent (a parked MEVBlocker auction shows up here).
+    /// connected but silent (a parked `MEVBlocker` auction shows up here).
     backrun_feed_seconds_since_event: Gauge<f64>,
     /// Accepted pending-tx notifications (counted from sampler deltas).
     backrun_feed_frames: Counter<u64>,
@@ -844,9 +844,9 @@ impl PipelineInstruments {
         self.pump_seconds_since_apply.record(secs, &[]);
     }
 
-    /// Sample the MEVBlocker searcher feed into the instruments. The caller
+    /// Sample the `MEVBlocker` searcher feed into the instruments. The caller
     /// (the backrun driver's own tick) owns the cadence and passes counter
-    /// DELTAS since its previous sample — OTel counters accumulate the pushes.
+    /// DELTAS since its previous sample — `OTel` counters accumulate the pushes.
     /// `seconds_since_event` is `None` until the feed's first accepted event;
     /// `None` leaves the last recorded age standing rather than overwriting
     /// it with a fake 0.

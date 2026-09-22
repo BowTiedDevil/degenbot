@@ -504,7 +504,7 @@ fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<
                     ranked.push((U512::from(er.max_gross_input_in_range()), kept));
                     kept += 1;
                 }
-                ranked.sort_by(|x, y| y.0.cmp(&x.0));
+                ranked.sort_by_key(|x| std::cmp::Reverse(x.0));
                 let mut chosen: Vec<usize> =
                     ranked.iter().take(max_tangent_lines).map(|p| p.1).collect();
                 chosen.push(0usize);

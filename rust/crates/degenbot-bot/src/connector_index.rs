@@ -347,6 +347,7 @@ impl fmt::Debug for V2ConnectorIndex {
             .field("v4_by_pool_hash", &self.v4_by_pool_hash.len())
             .field("v4_by_pair", &self.v4_by_pair.len())
             .field("v4_by_manager", &self.v4_by_manager.len())
+            .field("v4_last_load", &self.v4_last_load)
             .field("unsupported_by_address", &self.unsupported_by_address.len())
             .finish()
     }
@@ -937,6 +938,7 @@ pub async fn deep_pair_ranking_evidence(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1005,12 +1007,12 @@ mod tests {
     /// to `load_unsupported` rather than refused mid-scan.
     #[test]
     fn load_tolerates_unsupported_pool_kind() {
-        let (db, _state) =
-            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
         const TOK: Address = Address::new([0x31; 20]);
         const OTHER: Address = Address::new([0x32; 20]);
         const PAIR: Address = Address::new([0xB1; 20]);
         const LFJ: Address = Address::new([0xB2; 20]);
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
         let tok_id = u64::try_from(
             db.get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
                 .unwrap(),
@@ -1037,8 +1039,8 @@ mod tests {
                         id,
                         addr.to_checksum(None),
                         kind,
-                        tok_id as i64,
-                        other_id as i64
+                        tok_id.cast_signed(),
+                        other_id.cast_signed()
                     ],
                 )
                 .unwrap();
@@ -1062,11 +1064,11 @@ mod tests {
     /// producing zero path registrations with no signal anywhere.
     #[test]
     fn load_v3_admits_every_v3_variant_table_for_the_chain() {
+        const TOK: Address = Address::new([0x11; 20]);
+        const OTHER: Address = Address::new([0x22; 20]);
         let (db, _state) =
             degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
 
-        const TOK: Address = Address::new([0x11; 20]);
-        const OTHER: Address = Address::new([0x22; 20]);
         let tok_id = db
             .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
             .unwrap();
@@ -1097,7 +1099,14 @@ mod tests {
             conn.execute(
                 "INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
-                rusqlite::params![id, addr, chain, kind, tok_id as i64, (tok_id + 1) as i64],
+                rusqlite::params![
+                    id,
+                    addr,
+                    chain,
+                    kind,
+                    tok_id.cast_signed(),
+                    (tok_id + 1).cast_signed()
+                ],
             )
             .unwrap();
             conn.execute(
@@ -1152,13 +1161,10 @@ mod tests {
         );
     }
 
-    /// The V4 roster loader decodes a chain-scoped graph, drops hooked pools,
-    /// and indexes by `pool_hash`, token pair, and manager.
-    #[test]
-    fn load_v4_roster_decodes_indexes_and_excludes_hooked() {
-        let (db, _state) =
-            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
-
+    /// Seed a chain-scoped V4 roster: two tokens, managers on chains 1 and
+    /// 8453, and four managed pools (clean, hooked, other-chain, overflowing
+    /// fee).
+    fn seed_v4_roster(db: &degenbot_db::connection::DegenbotDb) {
         let t0 = Address::new([0x11; 20]).to_checksum(None);
         let t1 = Address::new([0x22; 20]).to_checksum(None);
         let manager = Address::new([0xaa; 20]).to_checksum(None);
@@ -1195,6 +1201,15 @@ mod tests {
             ))
             .unwrap();
         }
+    }
+
+    /// The V4 roster loader decodes a chain-scoped graph, drops hooked pools,
+    /// and indexes by `pool_hash`, token pair, and manager.
+    #[test]
+    fn load_v4_roster_decodes_indexes_and_excludes_hooked() {
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
+        seed_v4_roster(&db);
 
         let mut ix = V2ConnectorIndex::default();
         ix.load_v4(&db, 1).unwrap();

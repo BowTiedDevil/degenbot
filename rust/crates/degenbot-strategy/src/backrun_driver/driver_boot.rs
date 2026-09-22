@@ -261,13 +261,17 @@ impl BackrunEcosystem {
 /// proceeds, `trace_jsonl` stays absent, and the WARN says so (the
 /// per-frame INFO + counter still carry the signals).
 #[expect(
-    clippy::needless_pass_by_ref_fn,
+    clippy::trivially_copy_pass_by_ref,
     reason = "ecosystem names the engine directory without consuming it"
 )]
 fn install_frame_trace_sink(ecosystem: &BackrunEcosystem) {
     install_frame_trace_sink_under(None, ecosystem);
 }
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "ecosystem names the engine directory without consuming it"
+)]
 fn install_frame_trace_sink_under(root: Option<&Path>, ecosystem: &BackrunEcosystem) {
     if degenbot_runs::trace_jsonl_default().is_some() {
         return; // first driver in the process owns the session trace
@@ -335,37 +339,6 @@ pub fn backrun_boot(
     }
 }
 
-#[cfg(test)]
-mod trace_install_tests {
-    use super::*;
-
-    /// The install mints a session directory + seeds `trace.jsonl`, and the
-    /// second ecosystem's boot cannot steal the at-most-once sink.
-    #[test]
-    fn install_marks_the_session_and_is_first_driver_wins() {
-        let root = tempfile::tempdir().unwrap();
-        install_frame_trace_sink_under(Some(root.path()), &BackrunEcosystem::Mevblocker);
-        let first = degenbot_runs::trace_jsonl_default()
-            .map(std::path::Path::to_path_buf)
-            .expect("install installs a session trace default");
-        assert!(
-            first.is_file(),
-            "trace.jsonl seeded on disk: {}",
-            first.display()
-        );
-        assert!(first.to_string_lossy().contains("backrun-mevblocker"));
-
-        install_frame_trace_sink_under(Some(root.path()), &BackrunEcosystem::Peer);
-        let after = degenbot_runs::trace_jsonl_default()
-            .map(std::path::Path::to_path_buf)
-            .expect("the default stays installed");
-        assert_eq!(
-            first, after,
-            "second ecosystem's boot must not steal the sink"
-        );
-    }
-}
-
 /// The spawn factory a `StrategyHost` registers for the backrun driver.
 ///
 /// The driver resolves its node join and connector DB when the host drives the
@@ -403,4 +376,36 @@ pub fn backrun_spawn_factory(
             }
         })
     })
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
+mod trace_install_tests {
+    use super::*;
+
+    /// The install mints a session directory + seeds `trace.jsonl`, and the
+    /// second ecosystem's boot cannot steal the at-most-once sink.
+    #[test]
+    fn install_marks_the_session_and_is_first_driver_wins() {
+        let root = tempfile::tempdir().unwrap();
+        install_frame_trace_sink_under(Some(root.path()), &BackrunEcosystem::Mevblocker);
+        let first = degenbot_runs::trace_jsonl_default()
+            .map(std::path::Path::to_path_buf)
+            .expect("install installs a session trace default");
+        assert!(
+            first.is_file(),
+            "trace.jsonl seeded on disk: {}",
+            first.display()
+        );
+        assert!(first.to_string_lossy().contains("backrun-mevblocker"));
+
+        install_frame_trace_sink_under(Some(root.path()), &BackrunEcosystem::Peer);
+        let after = degenbot_runs::trace_jsonl_default()
+            .map(std::path::Path::to_path_buf)
+            .expect("the default stays installed");
+        assert_eq!(
+            first, after,
+            "second ecosystem's boot must not steal the sink"
+        );
+    }
 }
