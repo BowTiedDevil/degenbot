@@ -1,0 +1,1184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<script>window.addEventListener('error', function (e) { window.__LOAD_ERR = String((e && (e.message + ' @ ' + (e.filename || '') + ':' + e.lineno + ':' + e.colno)) || e); });</script>
+<title>Möbius solver × concentrated liquidity — interactive explainer</title>
+<style>
+:root{
+  --bg:#0a0e14;--panel:#10151d;--panel2:#0d1219;--line:#1d2733;--txt:#cfd8e3;--dim:#7d8b9e;
+  --v3:#4cc2ff;--v2:#ffb454;--profit:#7ee787;--walk:#ff7b72;--argmax:#d2a8ff;--piece:#2c3a4d;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif}
+header{padding:26px 28px 10px}
+h1{margin:0 0 6px;font-size:21px}
+h1 code{font-size:15px;color:var(--v3)}
+.sub{color:var(--dim);max-width:1050px}
+.sub code,.card code,.caption code,footer code{color:var(--v2)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;padding:14px 28px 4px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+.card h3{margin:0 0 7px;font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--v3)}
+.card p{margin:6px 0;font-size:13px}
+.formula{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--argmax);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:7px 9px;margin:8px 0;overflow-x:auto;white-space:pre}
+.layout{display:grid;grid-template-columns:280px 1fr;gap:14px;padding:6px 28px}
+@media(max-width:900px){.layout{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:14px}
+.panel h2{margin:0 0 9px;font-size:14px}
+.controls label{display:block;margin:10px 0 3px;font-size:12px;color:var(--dim)}
+.controls input[type=range]{width:100%}
+.controls input[type=number],.controls select{width:100%;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font:inherit}
+.btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+button{background:#162634;color:var(--txt);border:1px solid #2a4258;border-radius:7px;padding:7px 12px;font:inherit;cursor:pointer}
+button:hover{background:#1c3247}
+button.primary{background:#0e3a52;border-color:#1d5f85}
+.ctl-toggle{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin:2px 0 8px;font-size:12px;color:var(--dim)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:18px;height:3px;border-radius:2px;display:inline-block}
+canvas{width:100%;height:300px;display:block;border-radius:8px;background:var(--panel2);cursor:crosshair}
+.caption{font-size:12px;color:var(--dim);margin-top:7px}
+.hoverline{font-family:ui-monospace,Menlo,monospace;font-size:12px;min-height:18px;margin-top:6px}
+#log{max-height:230px;overflow:auto;margin:0;padding-left:22px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+#log li{margin:4px 0}
+#log .ok{color:var(--profit)}
+footer{padding:10px 28px 30px;color:var(--dim);font-size:12px;max-width:1100px}
+</style>
+</head>
+<body>
+<header>
+  <h1>How the Möbius solver prices a path through a <code>concentrated-liquidity</code> hop</h1>
+  <div class="sub">A tick range of a V3/V4 pool is a bounded-product CFMM with virtual reserves
+  <code>R₀+α = L·2⁹⁶/√P</code>, <code>R₁+β = L·√P/2⁹⁶</code>. The solver turns each possible <em>ending tick range</em>
+  into exactly one <em>Möbius piece</em> of the path, finds each piece's argmax in closed integer form, then reaches the
+  global argmax with a monotone <em>active-set walk</em> instead of enumerating ending-range tuples. All math below runs
+  live in BigInt, mirroring <code>degenbot-solvers</code>.</div>
+</header>
+
+<div class="cards">
+  <div class="card">
+    <h3>1 · One tick range ⇒ one CP piece</h3>
+    <p>Inside a range the pool swaps like constant-product; crossing a boundary switches liquidity, so the hop's curve is a <em>staircase of CP pieces</em>.</p>
+    <div class="formula">per piece k (input g = x − C_k):
+  net = ⌊g·γ/FD⌋
+  s   = L·2⁹⁶·S / (net·S + L·2⁹⁶)
+  out = F_k + ⌊L·(S−s)/2⁹⁶⌋</div>
+    <p><code>C_k</code>/<code>F_k</code> come from the precomputed <b>crossing table</b> (<code>int_v3_hop.rs</code>, <code>cl/crossings.rs</code>): gross input to traverse ranges &lt; k and the output they pay.</p>
+  </div>
+  <div class="card">
+    <h3>2 · Each piece is exactly Möbius</h3>
+    <p>Composing CP maps stays CP (SL(2) closure); crossing translations just shift the matrix. So per piece — for a chain of ANY length mixing V2 and V3 pools — the whole path is one rational function parameterized by the ending-range tuple of its V3 hops.</p>
+    <div class="formula">O(x) = (a·x + b) / (c·x + d)
+argmax of P(x) = O(x) − x:
+  x* = (⌊√(a·d − b·c)⌋ − d) / c</div>
+    <p><code>mobius_shifted_piece.rs</code> builds the matrix; <code>mobius_int_exact.rs</code> does the same for pure-V2 paths.</p>
+  </div>
+  <div class="card">
+    <h3>3 · Active-set walk, no enumeration</h3>
+    <p>P is concave and C¹ across pieces, so the landed ending-range tuple moves <em>monotonically</em>: simulate a candidate → take the piece's √-argmax → re-simulate → repeat; then refine ± a few wei. See <code>cl/active_set.rs</code>. A profit-envelope gate (<code>profit_envelope.rs</code>) can reject the path before any walk runs.</p>
+  </div>
+</div>
+
+<div class="layout">
+  <aside class="panel controls">
+    <h2>Path parameters</h2>
+    <label>CL hop tick ranges: <span id="v-ranges"></span></label>
+    <input type="range" id="ranges" min="1" max="8" step="1" value="5">
+    <label>Range width (ticks)</label>
+    <select id="spacing">
+      <option value="200">200 (~2%)</option>
+      <option value="1000">1000 (~10.5%)</option>
+      <option value="2000" selected>2000 (~22%)</option>
+      <option value="5000">5000 (~65%)</option>
+    </select>
+    <label>Liquidity profile</label>
+    <select id="profile">
+      <option value="uniform" selected>uniform</option>
+      <option value="decaying">decaying (thin far ranges)</option>
+      <option value="growing">growing (deep far ranges)</option>
+      <option value="random">random</option>
+    </select>
+    <label>Depth per range (token0 units)</label>
+    <input type="range" id="depth" min="5" max="200" step="5" value="40">
+    <label>Fee tier</label>
+    <select id="fee">
+      <option value="100">0.01%</option>
+      <option value="500">0.05%</option>
+      <option value="3000" selected>0.30%</option>
+      <option value="10000">1.00%</option>
+    </select>
+    <label>Hop 1 kind</label>
+    <select id="hop1kind">
+      <option value="cl" selected>V3 pool</option>
+      <option value="v2">V2 pool</option>
+    </select>
+    <label>Hop 2 kind</label>
+    <select id="hop2kind">
+      <option value="none">— none (stop chain here) —</option>
+      <option value="v2">V2 pool</option>
+      <option value="v3" selected>V3 pool</option>
+    </select>
+    <label>Hop 3 kind</label>
+    <select id="hop3kind">
+      <option value="none" selected>— none (stop chain here) —</option>
+      <option value="v2">V2 pool</option>
+      <option value="v3">V3 pool</option>
+    </select>
+    <div id="v2ctl">
+      <label>V2 reserve_in (tokens, shared by all V2 hops)</label>
+      <input type="range" id="v2rin" min="5" max="120" step="5" value="25">
+      <label>V2 price gap: reserve_out / reserve_in</label>
+      <input type="range" id="v2ratio" min="0.9" max="2" step="0.05" value="1.5">
+    </div>
+    <div id="v3ctl">
+      <label>Pool 2 price gap vs pool 1 (ticks, + = richer)</label>
+      <input type="range" id="cl2offset" min="-200" max="4000" step="100" value="2000">
+      <label>Pool 2 depth per range (token units)</label>
+      <input type="range" id="cl2depth" min="5" max="200" step="5" value="25">
+      <label>Pool 2 fee tier</label>
+      <select id="fee2">
+        <option value="100">0.01%</option>
+        <option value="500">0.05%</option>
+        <option value="3000" selected>0.30%</option>
+        <option value="10000">1.00%</option>
+      </select>
+      <label>Pool 2 tick ranges: <span id="v-cl2ranges"></span></label>
+      <input type="range" id="cl2ranges" min="1" max="8" step="1" value="5">
+    </div>
+    <div id="v3ctl3">
+      <label>Pool 3 price gap vs pool 1 (ticks, + = richer)</label>
+      <input type="range" id="cl3offset" min="-200" max="4000" step="100" value="2000">
+      <label>Pool 3 depth per range (token units)</label>
+      <input type="range" id="cl3depth" min="5" max="200" step="5" value="25">
+      <label>Pool 3 fee tier</label>
+      <select id="fee3">
+        <option value="100">0.01%</option>
+        <option value="500">0.05%</option>
+        <option value="3000" selected>0.30%</option>
+        <option value="10000">1.00%</option>
+      </select>
+      <label>Pool 3 tick ranges: <span id="v-cl3ranges"></span></label>
+      <input type="range" id="cl3ranges" min="1" max="8" step="1" value="5">
+    </div>
+    <div class="ctl-toggle"><input type="checkbox" id="showEnvelope" checked><span>show profit-envelope bounds</span></div>
+    <label>Gate min profit (tokens)</label>
+    <input type="range" id="gateMin" min="0" max="2" step="0.05" value="0">
+    <label>Walk seed (tokens) — start high to watch it descend</label>
+    <input type="number" id="seed" step="0.0001" min="0">
+    <label>Walk speed</label>
+    <select id="speed">
+      <option value="900">slow</option>
+      <option value="450" selected>normal</option>
+      <option value="120">fast</option>
+    </select>
+    <div class="btns">
+      <button class="primary" id="btn-run">▶ Run walk</button>
+      <button id="btn-prev">◀ Prev</button>
+      <button id="btn-next">Next ▶</button>
+      <button id="btn-random">Randomize</button>
+    </div>
+    <div class="caption" style="margin-top:10px">Click the profit chart to probe any input exactly; hover for readouts.</div>
+  </aside>
+
+  <section>
+    <div class="panel">
+      <h2>Path output O(x) — bounded tick ranges vs constant product</h2>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--v3)"></i>CL path output (exact BigInt steps)</span>
+        <span><i class="sw" style="background:var(--v2)"></i>constant-product stand-in (same active liquidity, unbounded)</span>
+      </div>
+      <canvas id="c1"></canvas>
+      <div class="caption">Inside <b>range 0</b> the CL pool is <em>identical</em> to a CP pool with virtual reserves
+      <code>R_in = L·2⁹⁶/√P</code>, <code>R_out = L·√P/2⁹⁶</code>. Once a range exhausts, the curves diverge: the CL hop's
+      marginal price jumps (liquidity changes) and eventually the pool empties at <code>x = maxSpend</code> — beyond that
+      the swap reverts on-chain, which is why the solver clips the domain there.</div>
+    </div>
+    <div class="panel">
+      <h2>Profit P(x) = O(x) − x — piecewise-Möbius argmax &amp; active-set walk</h2>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--profit)"></i>P(x)</span>
+        <span><i class="sw" style="background:var(--piece)"></i>piece boundaries C_k</span>
+        <span><i class="sw" style="background:var(--walk)"></i>– – profit envelope (upper bound)</span>
+        <span><i class="sw" style="background:var(--argmax)"></i>◇ per-piece closed-form argmax x*ₖ</span>
+        <span><i class="sw" style="background:var(--walk)"></i>① walk candidates</span>
+        <span><i class="sw" style="background:var(--profit);height:9px;width:9px;border-radius:50%"></i>★ discrete argmax after ±wei refine</span>
+      </div>
+      <canvas id="c2"></canvas>
+      <div class="hoverline" id="hover2">&nbsp;</div>
+      <div class="hoverline" id="gate2">&nbsp;</div>
+      <div class="caption">Each section between dotted lines is <b>one Möbius piece</b>: one per ending tick range of the
+      CL hop (deeper hops add their own shelves — V2 pools add one, V3 pools one per ending range — so a piece is an ending-range tuple k₁·k₂·k₃ over the V3 hops). The walk seeds an input, lands in a
+      piece, jumps straight to that piece's √-formula argmax, and the landed tuple can only march one way — this tiny loop
+      replaces combinatorial ending-range enumeration. The y-axis is <b>symmetric-log</b>: linear near zero so the peak
+      stays readable, logarithmic tails so the deep-loss region and every walk step remain on-chart.</div>
+    </div>
+  </section>
+</div>
+
+<section class="panel" style="margin:0 28px 14px">
+  <h2>Walk log</h2>
+  <ol id="log"></ol>
+</section>
+
+<footer>
+  Illustrative implementation: same integer formulas and rounding direction as the Rust core
+  (<code>rust/crates/degenbot-solvers</code>: <code>cl/active_set.rs</code>, <code>mobius_shifted_piece.rs</code>,
+  <code>int_v3_hop.rs</code>), with simplified crossing rounding and float64 tick prices — on-chain parity
+  (<code>computeSwapStep</code> byte-exactness) is proven by the Rust test suite, not here.
+  Amounts display as raw wei / 10¹⁸.
+</footer>
+
+<script id="math">
+// ---------- pure math, DOM-free (also exercised by node smoke test) ----------
+var Q96n = 1n << 96n;
+
+function isqrt(n) {
+  if (n < 0n) throw new Error('isqrt(negative)');
+  if (n < 2n) return n;
+  var x = 1n << BigInt(Math.ceil(n.toString(2).length / 2) + 1);
+  for (;;) {
+    var y = (x + n / x) >> 1n;
+    if (y >= x) return x;
+    x = y;
+  }
+}
+function ceilDiv(a, b) {
+  var q = a / b;
+  return (a % b === 0n) ? q : q + 1n;
+}
+function sqrtRatioX96(tick) {
+  if (tick === 0) return Q96n;
+  var s = Math.pow(1.0001, tick / 2); // sqrt(1.0001^tick), Uniswap sqrtPriceX96 convention
+  return BigInt(Math.round(s * Math.pow(2, 96)));
+}
+// L that lets one range absorb depthTokens of token0 end-to-end:
+// Δx = L·2⁹⁶·(S−Sbot)/(S·Sbot)  ⇒  L = Δx·S·Sbot/(2⁹⁶·(S−Sbot))
+function liquidityForDepth(depthTokens, S, Sbot) {
+  var x = BigInt(Math.round(depthTokens * 1e18));
+  return (x * S * Sbot) / (Q96n * (S - Sbot));
+}
+
+function buildClPool(cfg) {
+  var FDn = 1000000n;
+  var gamma = FDn - BigInt(cfg.feeNum);
+  var K = cfg.Ls.length;
+  var sCur = sqrtRatioX96(cfg.startTick);
+  var ranges = [];
+  for (var j = 0; j < K; j++) {
+    var topTick = cfg.startTick - j * cfg.spacing;
+    ranges.push({
+      topTick: topTick, botTick: topTick - cfg.spacing,
+      S: sqrtRatioX96(topTick), Sbot: sqrtRatioX96(topTick - cfg.spacing),
+      L: cfg.Ls[j]
+    });
+  }
+  // crossing table: C_k = gross input to land at top of range k, F_k = output paid, G_k = gross to exhaust range k
+  var C = new Array(K), F = new Array(K), G = new Array(K);
+  var c = 0n, f = 0n;
+  for (var j2 = 0; j2 < K; j2++) {
+    C[j2] = c; F[j2] = f;
+    var r = ranges[j2];
+    var ds = r.S - r.Sbot;
+    var netFull = ceilDiv(r.L * Q96n * ds, r.Sbot * r.S); // round up (getAmount0Delta round_up)
+    var outFull = (r.L * ds) / Q96n;                      // round down
+    G[j2] = ceilDiv(netFull * FDn, gamma);
+    c += G[j2]; f += outFull;
+  }
+  return {
+    K: K, C: C, F: F, G: G, ranges: ranges,
+    gamma: gamma, FD: FDn, sCur: sCur,
+    maxSpend: C[K - 1] + G[K - 1],
+    landed: function (x) {
+      for (var k = 0; k < K; k++) if (x <= C[k] + G[k]) return { k: k, exhausted: false };
+      return { k: K - 1, exhausted: true };
+    },
+    rangeOut: function (k, g) {
+      var r = ranges[k], S = r.S, L = r.L;
+      if (g <= 0n) return 0n;
+      var net = (g * gamma) / FDn;
+      if (net === 0n) return 0n;
+      var s = (L * Q96n * S) / (net * S + L * Q96n);
+      if (s >= S) return 0n;
+      return (L * (S - s)) / Q96n;
+    },
+    clOut: function (x) {
+      var l = this.landed(x);
+      if (l.exhausted) return null;
+      return F[l.k] + this.rangeOut(l.k, x - C[l.k]);
+    },
+    // Möbius matrix of the CL hop alone for ending range k, in PATH-input units
+    pieceMatrix: function (k) {
+      var r = ranges[k], S = r.S, L = r.L;
+      var a = L * S * S * gamma;
+      var cc = Q96n * S * gamma;
+      var d = L * Q96n * Q96n * FDn;
+      var Ck = C[k], Fk = F[k];
+      var A = a + Fk * cc;
+      return [A, Fk * d - A * Ck, cc, d - cc * Ck]; // out = (A x + B)/(cc x + D)
+    }
+  };
+}
+
+// V2 hop: out = γ·rOut·y / (FD·rIn + γ·y)  ⇒  matrix [[γ·rOut, 0],[γ, FD·rIn]]
+function v2MatrixOf(v) { return [v.gammaNum * v.rOut, 0n, v.gammaNum, v.FD * v.rIn]; }
+function v2HopOut(v, y) {
+  if (y <= 0n) return 0n;
+  return (v.gammaNum * v.rOut * y) / (v.FD * v.rIn + v.gammaNum * y);
+}
+// compose outer∘inner; matrix [[a,b],[c,d]] means (a x + b)/(c x + d)
+function composeOuter(o, i) {
+  return [
+    o[0] * i[0] + o[1] * i[2], o[0] * i[1] + o[1] * i[3],
+    o[2] * i[0] + o[3] * i[2], o[2] * i[1] + o[3] * i[3]
+  ];
+}
+// ----- chain model: hops = [{kind:'v2', v} | {kind:'cl', cl}, ...] -----
+function bmax(a, b) { return a > b ? a : b; }
+function bmin(a, b) { return a < b ? a : b; }
+function chainEvalPrefix(hops, upto, x) { // output after hops[0..upto); null if a CL hop drained
+  var y = x;
+  for (var i = 0; i < upto; i++) {
+    var h = hops[i];
+    if (h.kind === 'v2') { y = v2HopOut(h.v, y); continue; }
+    y = h.cl.clOut(y);
+    if (y === null) return null;
+  }
+  return y;
+}
+function chainEval(hops, x) { return chainEvalPrefix(hops, hops.length, x); }
+function smallestXForChainY(hops, upto, y, xCap) { // smallest x with prefix output >= y; null if unreachable
+  var top = chainEvalPrefix(hops, upto, xCap);
+  if (top === null || top < y) return null;
+  if (chainEvalPrefix(hops, upto, 0n) >= y) return 0n;
+  var lo = 0n, hi = xCap;
+  while (lo < hi) {
+    var mid = (lo + hi) >> 1n;
+    var o = chainEvalPrefix(hops, upto, mid);
+    if (o !== null && o >= y) hi = mid; else lo = mid + 1n;
+  }
+  return lo;
+}
+function smallestXForChainAbove(hops, upto, y, xCap) { // smallest x with prefix output > y; null if never
+  var top = chainEvalPrefix(hops, upto, xCap);
+  if (top !== null && top <= y) return null;
+  var lo = 0n, hi = xCap;
+  while (lo < hi) {
+    var mid = (lo + hi) >> 1n;
+    var o = chainEvalPrefix(hops, upto, mid);
+    if (o === null || o > y) hi = mid; else lo = mid + 1n;
+  }
+  return lo;
+}
+function chainDomainMax(hops) { // inputs past this would drain a pool mid-chain → revert on-chain
+  var clAny = false, rm = 0n;
+  for (var i = 0; i < hops.length; i++) {
+    if (hops[i].kind === 'cl') clAny = true;
+    else rm = bmax(rm, hops[i].v.rIn);
+  }
+  if (!clAny) return rm * 8n; // V2-only chain: no drain; display-cap heuristic
+  var cap = hops[0].kind === 'cl' ? hops[0].cl.maxSpend : rm * 64n;
+  for (var j = 1; j < hops.length; j++) {
+    if (hops[j].kind !== 'cl') continue;
+    var ex = smallestXForChainAbove(hops, j, hops[j].cl.maxSpend, cap);
+    if (ex !== null) cap = bmin(cap, ex - 1n);
+  }
+  return cap > 0n ? cap : 1n;
+}
+function totalMatrix(hops, ks) { // compose hop matrices left→right; V3 hops use their landed range
+  var acc = null, ki = 0;
+  for (var i = 0; i < hops.length; i++) {
+    var m = hops[i].kind === 'v2' ? v2MatrixOf(hops[i].v) : hops[i].cl.pieceMatrix(ks[ki++]);
+    acc = acc === null ? m : composeOuter(m, acc);
+  }
+  return acc;
+}
+// closed-form integer argmax of (a x + b)/(c x + d) − x, clamped to [lo,hi]
+function pieceArgmax(m, lo, hi) {
+  var a = m[0], b = m[1], c = m[2], d = m[3];
+  var t = a * d - b * c;
+  var x = t > 0n ? ((isqrt(t) - d) / c) : 0n;
+  if (x < 0n) x = 0n;
+  if (x < lo) x = lo;
+  if (x > hi) x = hi;
+  return x;
+}
+function pathOutOf(hops) {
+  return function (x) { return chainEval(hops, x); };
+}
+function landingTuple(hops, x) { // one entry per V3 hop; null when a hop drains mid-chain
+  var ks = [], y = x;
+  for (var i = 0; i < hops.length; i++) {
+    var h = hops[i];
+    if (h.kind === 'v2') { y = v2HopOut(h.v, y); continue; }
+    y = h.cl.clOut(y);
+    if (y === null) return null;
+    ks.push(h.cl.landed(y).k);
+  }
+  return ks;
+}
+// piece domain: intersection of every V3 hop's ending window, pulled back through its prefix chain
+function tupleDomain(hops, ks, hardMax) {
+  var lo = 0n, hi = hardMax, ki = 0;
+  for (var i = 0; i < hops.length; i++) {
+    if (hops[i].kind !== 'cl') continue;
+    var clp = hops[i].cl;
+    var k = ks[ki++];
+    var ylo = clp.C[k], yhi = clp.C[k] + clp.G[k];
+    var xlo = smallestXForChainY(hops, i, ylo, hardMax);
+    if (xlo === null) return null; // this ending range unreachable within the prefix
+    lo = bmax(lo, xlo);
+    var xex = smallestXForChainAbove(hops, i, yhi, hardMax);
+    hi = bmin(hi, xex === null ? hardMax : xex - 1n);
+  }
+  return hi < lo ? null : [lo, hi];
+}
+function tupleCmp(a, b) {
+  for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  return 0;
+}
+
+// ---------- active-set walk (mirrors cl/active_set.rs) ----------
+function runWalk(hops, seed, hardMax) {
+  var sim = pathOutOf(hops);
+  var steps = [], seen = {};
+  var x = seed, prevK = null, converged = false, any = false;
+  for (var iter = 0; iter < 40; iter++) {
+    var out = sim(x);
+    if (out === null) break;
+    var k = landingTuple(hops, x);
+    if (k === null) break;
+    var dom = tupleDomain(hops, k, hardMax) || [0n, hardMax];
+    var anchor = pieceArgmax(totalMatrix(hops, k), dom[0], dom[1]);
+    steps.push({
+      x: x, k: k, out: out, profit: out - x, anchor: anchor,
+      noteCode: !any ? 'seed' : (tupleCmp(k, prevK) > 0 ? 'up' : tupleCmp(k, prevK) < 0 ? 'down' : 'stay'),
+      landedNext: landingTuple(hops, anchor),
+      fixed: anchor === x
+    });
+    any = true; prevK = k;
+    if (anchor === x) { converged = true; break; }
+    if (seen[anchor.toString()]) break;
+    seen[anchor.toString()] = true;
+    x = anchor;
+  }
+  return { steps: steps, best: refineBest(hops, steps, hardMax), converged: converged };
+}
+function refineBest(hops, steps, hardMax) {
+  var sim = pathOutOf(hops);
+  var cands = {};
+  function push(v) {
+    if (v < 0n) v = 0n;
+    if (v > hardMax) v = hardMax;
+    cands[v.toString()] = v;
+  }
+  for (var i = 0; i < steps.length; i++) {
+    push(steps[i].x);
+    for (var d = -2; d <= 2; d++) push(steps[i].anchor + BigInt(d));
+  }
+  // odometer over the ending-range tuple space (one wheel per V3 hop)
+  var clIdx = [];
+  for (var c = 0; c < hops.length; c++) if (hops[c].kind === 'cl') clIdx.push(c);
+  var ks = clIdx.map(function () { return 0; });
+  for (;;) {
+    var dom = tupleDomain(hops, ks, hardMax);
+    if (dom) {
+      var a = pieceArgmax(totalMatrix(hops, ks), dom[0], dom[1]);
+      push(a);
+      for (var d2 = -2; d2 <= 2; d2++) push(a + BigInt(d2));
+      push(dom[0]); push(dom[1] > 0n ? dom[1] - 1n : dom[1]);
+    }
+    var pos = ks.length - 1;
+    while (pos >= 0) {
+      ks[pos]++;
+      if (ks[pos] < hops[clIdx[pos]].cl.K) break;
+      ks[pos] = 0;
+      pos--;
+    }
+    if (pos < 0) break;
+  }
+  var best = null;
+  for (var key in cands) {
+    var o = sim(cands[key]);
+    if (o === null) continue;
+    var cand = { x: cands[key], out: o, profit: o - cands[key] };
+    if (!best || cand.profit > best.profit) best = cand;
+  }
+  return best;
+}
+
+// ---------- profit-envelope gate (viz mirror of profit_envelope.rs) ----------
+// Every hop curve here is concave, so a tangent line at any point sits on or
+// above the WHOLE hop curve. V3 hop: take the tangent at each ending range's
+// entry (slope = marginal price × (1−fee), anchored at the crossing point).
+// V2 hop: tangent at 0. Affine ∘ affine stays affine (hops are monotone), so
+// the composed set pointwise-dominates the path output; bound(x) = min of the
+// set, evaluated with ceil so rounding can only push the bound UP. Gate:
+// max over x of (bound(x) − x) vs min profit — below it, provably unprofitable.
+function ceilDivQ(a, b) { // ceil(a/b), b > 0, a possibly negative
+  var q = a / b;
+  if (a > 0n && a % b !== 0n) q += 1n;
+  return q;
+}
+function lineEval(L, x) { return ceilDivQ(L[0] + L[1] * x, L[2]); }
+// [A, B, C]: y = (A + B*x)/C with B ≥ 0
+function hopTangentLines(h) {
+  if (h.kind === 'v2') return [[0n, h.v.gammaNum * h.v.rOut, h.v.FD * h.v.rIn]];
+  var lines = [], clp = h.cl;
+  for (var k = 0; k < clp.K; k++) {
+    var m = clp.pieceMatrix(k);
+    var cC = m[2] * clp.C[k] + m[3];              // (c·C_k + d), value at the entry point
+    var Dq = cC * cC;
+    var slopeNum = m[0] * m[3] - m[1] * m[2];     // A·d − B·c = slope · cC²
+    lines.push([clp.F[k] * Dq - slopeNum * clp.C[k], slopeNum, Dq]);
+  }
+  return lines;
+}
+function pruneLines(lines, xm) {
+  var keep = [];
+  for (var i = 0; i < lines.length; i++) {
+    var dominated = false;
+    for (var j = 0; j < lines.length && !dominated; j++) {
+      if (i === j) continue;
+      var l0 = lines[j][0] * lines[i][2] <= lines[i][0] * lines[j][2];
+      var l1 = (lines[j][0] + lines[j][1] * xm) * lines[i][2] <= (lines[i][0] + lines[i][1] * xm) * lines[j][2];
+      if (!(l0 && l1)) continue;
+      var strict = lines[j][0] * lines[i][2] < lines[i][0] * lines[j][2] ||
+        (lines[j][0] + lines[j][1] * xm) * lines[i][2] < (lines[i][0] + lines[i][1] * xm) * lines[j][2];
+      var ident = lines[j][0] === lines[i][0] && lines[j][1] === lines[i][1] && lines[j][2] === lines[i][2];
+      if (strict || (ident && j < i)) dominated = true;
+    }
+    if (!dominated) keep.push(lines[i]);
+  }
+  return keep;
+}
+function composeHopLineSets(sets, xm, trace) {
+  var composed = pruneLines(sets[0], xm);
+  if (trace) trace.push(composed.length);
+  for (var i = 1; i < sets.length; i++) {
+    var nxt = [];
+    for (var p = 0; p < composed.length; p++) {
+      for (var q = 0; q < sets[i].length; q++) {
+        var inL = composed[p], outL = sets[i][q];
+        nxt.push([outL[0] * inL[2] + outL[1] * inL[0], outL[1] * inL[1], inL[2] * outL[2]]);
+      }
+    }
+    composed = pruneLines(nxt, xm);
+    if (trace) trace.push(composed.length);
+  }
+  return composed;
+}
+function envelopeGate(hops, xm, minProfit) {
+  var sets = hops.map(hopTangentLines);
+  var trace = { tangents: sets.map(function (s) { return s.length; }), after: [] };
+  var lines = composeHopLineSets(sets, xm, trace.after);
+  function minAt(x) {
+    var m = null;
+    for (var i = 0; i < lines.length; i++) {
+      var v = lineEval(lines[i], x);
+      if (m === null || v < m) m = v;
+    }
+    return m === null ? 0n : m;
+  }
+  var samples = [];
+  for (var s = 0; s <= 120; s++) {
+    var sx = xm * BigInt(s) / 120n;
+    samples.push({ x: sx, bound: minAt(sx) });
+  }
+  // max of (bound(x) − x): bound is piecewise-linear ⇒ endpoints + intersections suffice
+  var bx = 0n, bBound = minAt(0n), best = bBound - 0n;
+  var cands = [0n, xm];
+  for (var i2 = 0; i2 < lines.length; i2++) {
+    for (var j2 = i2 + 1; j2 < lines.length; j2++) {
+      var den = lines[i2][1] * lines[j2][2] - lines[j2][1] * lines[i2][2];
+      if (den === 0n) continue;
+      var num = lines[j2][0] * lines[i2][2] - lines[i2][0] * lines[j2][2];
+      var xi = num / den;
+      cands.push(xi < 0n ? 0n : (xi > xm ? xm : xi));
+      cands.push(xi + 1n < 0n ? 0n : (xi + 1n > xm ? xm : xi + 1n));
+    }
+  }
+  for (var c = 0; c < cands.length; c++) {
+    var px2 = cands[c];
+    var pr = minAt(px2) - px2;
+    if (pr > best) { best = pr; bx = px2; bBound = minAt(px2); }
+  }
+  return { lines: lines, trace: trace, samples: samples, bestX: bx, bestBound: bBound, maxProfit: best, minProfit: minProfit };
+}
+
+// constant-product stand-in with the same active liquidity (unbounded tick range)
+function v2EquivalentReserves(cl) {
+  var L = cl.ranges[0].L, S = cl.sCur;
+  return { rIn: (L * Q96n) / S, rOut: (L * S) / Q96n, gammaNum: cl.gamma, FD: cl.FD };
+}
+function cpOut(v, y) { return y <= 0n ? 0n : (v.gammaNum * v.rOut * y) / (v.FD * v.rIn + v.gammaNum * y); }
+</script>
+
+<script>
+// ---------- UI ----------
+var $ = function (id) { return document.getElementById(id); };
+var state = null;
+
+function tokDisp(raw) {
+  var n = Number(raw) / 1e18;
+  if (Math.abs(n) >= 1000) return n.toFixed(1);
+  if (Math.abs(n) >= 1) return n.toFixed(4);
+  return n.toFixed(7);
+}
+function fmtSigned(raw) { return (raw >= 0n ? '+' : '-') + tokDisp(raw < 0n ? -raw : raw); }
+
+function rebuild() {
+  var K = parseInt($('ranges').value, 10);
+  var spacing = parseInt($('spacing').value, 10);
+  var depth = parseFloat($('depth').value);
+  var profile = $('profile').value;
+  function buildCl(idx, offset, Kp) {
+    var feeSel = idx === 0 ? 'fee' : (idx === 1 ? 'fee2' : 'fee3');
+    var Ls = [];
+    for (var i = 0; i < Kp; i++) {
+      var f = 1;
+      if (profile === 'decaying') f = Math.pow(0.62, i);
+      else if (profile === 'growing') f = Math.pow(1.55, i);
+      else if (profile === 'random') f = 0.35 + Math.random() * 1.9;
+      Ls.push(liquidityForDepth(depth * f, sqrtRatioX96(offset - i * spacing), sqrtRatioX96(offset - (i + 1) * spacing)));
+    }
+    return buildClPool({ Ls: Ls, startTick: offset, spacing: spacing, feeNum: parseInt($(feeSel).value, 10) });
+  }
+  function buildV2() {
+    var rIn = BigInt(Math.round(parseFloat($('v2rin').value) * 1e18));
+    var rOut = BigInt(Math.round(Number(rIn) * parseFloat($('v2ratio').value)));
+    return { kind: 'v2', v: { rIn: rIn, rOut: rOut, gammaNum: 997000n, FD: 1000000n } };
+  }
+  var hops = [];
+  if ($('hop1kind').value === 'cl') hops.push({ kind: 'cl', cl: buildCl(0, 0, K) });
+  else hops.push(buildV2());
+  var kind2 = $('hop2kind').value;
+  var kind3 = kind2 === 'none' ? 'none' : $('hop3kind').value;
+  $('hop3kind').disabled = kind2 === 'none';
+  if (kind2 === 'v3') hops.push({ kind: 'cl', cl: buildCl(1, parseInt($('cl2offset').value, 10), parseInt($('cl2ranges').value, 10)) });
+  else if (kind2 === 'v2') hops.push(buildV2());
+  if (kind3 === 'v3') hops.push({ kind: 'cl', cl: buildCl(2, parseInt($('cl3offset').value, 10), parseInt($('cl3ranges').value, 10)) });
+  else if (kind3 === 'v2') hops.push(buildV2());
+  var cl0 = hops[0].kind === 'cl' ? hops[0].cl : null; // stage-1 pool (chart bands + CP overlay)
+  $('v-ranges').textContent = K + ' (' + profile + ')';
+  $('v-cl2ranges').textContent = kind2 === 'cl' ? parseInt($('cl2ranges').value, 10) : '—';
+  $('v-cl3ranges').textContent = kind3 === 'cl' ? parseInt($('cl3ranges').value, 10) : '—';
+  var hasV2 = false;
+  for (var hv = 0; hv < hops.length; hv++) if (hops[hv].kind === 'v2') hasV2 = true;
+  $('v2ctl').style.display = hasV2 ? '' : 'none';
+  $('v3ctl').style.display = kind2 === 'cl' ? '' : 'none';
+  $('v3ctl3').style.display = kind3 === 'cl' ? '' : 'none';
+  state = { hops: hops, cl0: cl0, hardMax: chainDomainMax(hops), walk: null, shown: 0, probe: null, timer: null };
+  state.gate = envelopeGate(hops, state.hardMax, BigInt(Math.round(parseFloat($('gateMin').value) * 1e18)));
+  var mp = Number(state.gate.maxProfit) / 1e18, mn = Number(state.gate.minProfit) / 1e18;
+  var gateOk = state.gate.maxProfit >= state.gate.minProfit;
+  $('gate2').innerHTML = '⛨ profit-envelope gate — composed <b>' + state.gate.lines.length +
+    '</b> tangent bound(s) · max over x ∈ [0, ' + tokDisp(state.hardMax) + '] of (bound(x) − x) = <b>' +
+    (mp >= 0 ? '+' : '') + mp.toFixed(4) + '</b> tokens ' + (gateOk ? '≥' : '&lt;') + ' min profit ' + mn.toFixed(2) + ' → ' +
+    (gateOk ? '<span style="color:var(--profit)">gate passes — walk runs</span>'
+            : '<span style="color:var(--walk)">provably unprofitable — the production solver would skip this path</span>') +
+    ' <span style="color:var(--dim)">(display-only here: the walk runs anyway so you can compare)</span>';
+  $('seed').value = tokDisp(state.hardMax * 95n / 100n);
+  runWalkNow();
+}
+
+function runWalkNow() {
+  if (!state) return;
+  var seedRaw;
+  try {
+    seedRaw = BigInt(Math.round(parseFloat($('seed').value) * 1e18));
+  } catch (e) { seedRaw = 1n; }
+  if (!(seedRaw >= 0n) || seedRaw > state.hardMax) seedRaw = state.hardMax * 95n / 100n;
+  state.walk = runWalk(state.hops, seedRaw, state.hardMax);
+  state.probe = null;
+  clearInterval(state.timer);
+  var sp = parseInt($('speed').value, 10);
+  state.shown = 0;
+  renderLog();
+  drawBoth();
+  (function animate() {
+    if (!state.walk) return;
+    if (state.shown < state.walk.steps.length) {
+      gotoStep(state.shown + 1);
+      state.timer = setTimeout(animate, sp);
+    }
+  })();
+}
+// --- step navigation: state.shown is the single source of truth; the log is
+// always re-rendered to it so Prev/Next stay in sync with the trail ---
+function gotoStep(n) {
+  if (!state || !state.walk) return;
+  clearInterval(state.timer);
+  state.shown = Math.max(0, Math.min(n, state.walk.steps.length));
+  renderLog();
+  drawBoth();
+}
+function stepOnce() { // Next: advance one step; at the end, restart at step 1
+  if (!state || !state.walk) return;
+  gotoStep(state.shown >= state.walk.steps.length ? 1 : state.shown + 1);
+}
+function prevStep() { gotoStep(state.shown - 1); }
+function renderLog() {
+  if (!state || !state.walk) { logClear(); return; }
+  logClear();
+  logHead();
+  logGate();
+  for (var i = 0; i < state.shown; i++) logStep(state.walk.steps[i], i + 1);
+  if (state.shown >= state.walk.steps.length) logFinal(state.walk.best);
+}
+function logGate() { // the envelope step(s), shown with numbers before the walk narrative
+  var g = state.gate;
+  if (!g) return;
+  li('', '<i>envelope</i>: tangent upper bound(s) per hop [' + g.trace.tangents.join(', ') +
+    '] → composed ' + g.trace.tangents.reduce(function (x, y) { return x * y; }, 1) +
+    ' candidate line(s) → <b>' + g.lines.length + '</b> survive pruning');
+  li(g.maxProfit >= g.minProfit ? 'ok' : '',
+    '<i>gate</i>: max over x of (bound(x) − x) = <b>' + fmtSigned(g.maxProfit) + '</b> @ x=' + tokDisp(g.bestX) +
+    ' (bound there: ' + tokDisp(g.bestBound) + ' tokens) vs min profit ' + (Number(g.minProfit) / 1e18).toFixed(2) + ' → ' +
+    (g.maxProfit >= g.minProfit ? 'PASS — the walk below is allowed' : 'FAIL — production would skip this path entirely'));
+}
+
+// ---------- logging ----------
+function logClear() { $('log').innerHTML = ''; }
+function li(cls, html) {
+  var el = document.createElement('li');
+  if (cls) el.className = cls;
+  el.innerHTML = html;
+  $('log').appendChild(el);
+}
+function logHead() {
+  var names = state.hops.map(function (h) { return h.kind === 'v2' ? '<b>V2 pool</b>' : '<b>V3 pool</b>'; }).join(' → ');
+  var ncl = 0;
+  for (var i = 0; i < state.hops.length; i++) if (state.hops[i].kind === 'cl') ncl++;
+  li('', 'path = ' + names + ' · pieces = ending-range ' + (ncl > 1 ? 'tuples (one wheel per V3 hop: k₁·k₂·k₃)' : 'ranges') +
+    ' · domain 0 … ' + tokDisp(state.hardMax) + ' tokens (chain exhaustion)');
+}
+function logStep(s, idx) {
+  var txt = '#' + idx + ' <b>' + s.noteCode + '</b>: x=' + tokDisp(s.x) + ' → landed piece ' + s.k.join('·') +
+    ' · O=' + tokDisp(s.out) + ' · P=' + fmtSigned(s.profit) +
+    ' · piece ' + s.k.join('·') + ' argmax ⇒ x*=' + tokDisp(s.anchor);
+  if (s.fixed) txt += ' · fixed point';
+  else if (s.noteCode === 'up') txt += ' · next lands at ' + s.landedNext.join('·') + ' — walk up';
+  else if (s.noteCode === 'down') txt += ' · next lands at ' + s.landedNext.join('·') + ' — walk down';
+  li('', txt);
+}
+function envBoundAt(x) { // pointwise min of the composed envelope at x
+  if (!state.gate) return null;
+  var m = null;
+  for (var i = 0; i < state.gate.lines.length; i++) {
+    var v = lineEval(state.gate.lines[i], x);
+    if (m === null || v < m) m = v;
+  }
+  return m;
+}
+function logFinal(best) {
+  var envTxt = (best && state.gate) ? (function () {
+    var b = envBoundAt(best.x);
+    return b === null ? '' : ' · envelope: O(x) ≤ bound=' + tokDisp(b) + ' (realized P sits ' + fmtSigned(b - best.out) + ' below it)';
+  })() : '';
+  if (best && best.profit > 0n)
+    li('ok', '✔ discrete argmax: x=' + tokDisp(best.x) + ' · O=' + tokDisp(best.out) +
+      ' · <b>P=' + fmtSigned(best.profit) + '</b> tokens (refined ±2 wei at every piece argmax and window edge)' + envTxt);
+  else
+    li('', '✘ no profitable input found (prices ~aligned or fees eat the gap) — widen the V2 price gap or randomize' + envTxt);
+}
+
+// ---------- charts ----------
+function fitCanvas(cv) {
+  var dpr = window.devicePixelRatio || 1;
+  var w = cv.clientWidth, h = cv.clientHeight || 300;
+  var bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+  if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+  var g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return g;
+}
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+function samplePath(N) {
+  var sim = pathOutOf(state.hops), xm = state.hardMax;
+  var xs = [], os = [], ps = [];
+  for (var i = 0; i <= N; i++) {
+    var x = xm * BigInt(i) / BigInt(N);
+    var o = sim(x);
+    if (o === null) o = sim(xm);
+    xs.push(x); os.push(o); ps.push(o - x);
+  }
+  return { xs: xs, os: os, ps: ps, N: N };
+}
+
+function drawBands(g, X, plotT, plotB) {
+  var hops = state.hops, cl0 = state.cl0;
+  var bands = [];
+  if (cl0) {
+    for (var k = 0; k < cl0.K; k++) bands.push([cl0.C[k], cl0.C[k] + cl0.G[k]]);
+  } else {
+    // hop 1 is a V2 pool: show the first V3 hop's shelves pulled back through the prefix
+    var fj = -1;
+    for (var i = 0; i < hops.length; i++) if (hops[i].kind === 'cl') { fj = i; break; }
+    if (fj >= 0) {
+      var clj = hops[fj].cl;
+      for (var k2 = 0; k2 < clj.K; k2++) {
+        var wa = smallestXForChainY(hops, fj, clj.C[k2], state.hardMax);
+        var wb = smallestXForChainAbove(hops, fj, clj.C[k2] + clj.G[k2], state.hardMax);
+        if (wa !== null) bands.push([wa, wb === null ? state.hardMax : wb - 1n]);
+      }
+    }
+  }
+  for (var b = 0; b < bands.length; b++) {
+    var x0 = X(bands[b][0]);
+    var x1 = X(bands[b][1]);
+    g.fillStyle = b % 2 ? 'rgba(76,194,255,0.045)' : 'rgba(76,194,255,0.015)';
+    g.fillRect(x0, plotT, x1 - x0, plotB - plotT);
+    g.strokeStyle = css('--piece');
+    g.setLineDash([3, 4]);
+    g.beginPath(); g.moveTo(x0, plotT); g.lineTo(x0, plotB); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = css('--dim');
+    g.font = '10px ui-monospace,Menlo,monospace';
+    g.fillText('R' + b, (x0 + x1) / 2 - 5, plotT + 11);
+  }
+  var xe = X(state.hardMax);
+  g.strokeStyle = css('--walk');
+  g.setLineDash([2, 3]);
+  g.beginPath(); g.moveTo(xe, plotT); g.lineTo(xe, plotB); g.stroke();
+  g.setLineDash([]);
+}
+
+function axisTicks(g, lo, hi, px0, px1, py, fmt, vert) {
+  g.fillStyle = css('--dim');
+  g.font = '10px ui-monospace,Menlo,monospace';
+  for (var i = 0; i <= 5; i++) {
+    var v = lo + (hi - lo) * i / 5;
+    var px = px0 + (px1 - px0) * i / 5;
+    g.textAlign = vert ? 'right' : (i === 0 ? 'left' : (i === 5 ? 'right' : 'center'));
+    g.fillText(fmt(v), px, py);
+  }
+  g.textAlign = 'left';
+}
+
+function drawC1() {
+  var cv = $('c1'), g = fitCanvas(cv);
+  var W = cv.clientWidth, H = 300, padL = 56, padR = 14, padT = 14, padB = 26;
+  g.clearRect(0, 0, W, H);
+  var cl0 = state.cl0, xm = state.hardMax;
+  var S = samplePath(600);
+  var showOverlay = cl0 !== null; // CP stand-in only meaningful when hop 1 is the V3 pool
+  var eq = showOverlay ? v2EquivalentReserves(cl0) : null;
+  function eqOut(x) { // CP stand-in for hop 1 only; the rest of the chain is exact
+    if (!showOverlay) return null;
+    var y = cpOut(eq, x);
+    for (var i = 1; i < state.hops.length; i++) {
+      var h2 = state.hops[i];
+      y = h2.kind === 'v2' ? v2HopOut(h2.v, y) : h2.cl.clOut(y);
+    }
+    return y;
+  }
+  var yTop = Number(S.os[S.N]) / 1e18;
+  if (showOverlay) yTop = Math.max(yTop, Number(eqOut(xm)) / 1e18);
+  yTop *= 1.08;
+  function X(raw) { return padL + (W - padL - padR) * Number(raw) / Number(xm); }
+  function Y(tok) { return (H - padB) - (H - padB - padT) * tok / yTop; }
+  drawBands(g, X, padT, H - padB);
+  g.strokeStyle = css('--line');
+  g.beginPath(); g.moveTo(padL, padT); g.lineTo(padL, H - padB); g.lineTo(W - padR, H - padB); g.stroke();
+  // CP stand-in (dashed amber), only when hop 1 is a V3 pool
+  if (showOverlay) {
+    g.strokeStyle = css('--v2'); g.setLineDash([5, 4]); g.lineWidth = 1.4;
+    g.beginPath();
+    for (var i = 0; i <= 300; i++) {
+      var x = xm * BigInt(i) / 300n;
+      var y = Number(eqOut(x)) / 1e18;
+      if (i === 0) g.moveTo(X(x), Y(y)); else g.lineTo(X(x), Y(y));
+    }
+    g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+  }
+  // exact CL path (solid cyan)
+  g.strokeStyle = css('--v3'); g.lineWidth = 2;
+  g.beginPath();
+  for (var j = 0; j <= S.N; j++) {
+    var y2 = Number(S.os[j]) / 1e18;
+    if (j === 0) g.moveTo(X(S.xs[j]), Y(y2)); else g.lineTo(X(S.xs[j]), Y(y2));
+  }
+  g.stroke(); g.lineWidth = 1;
+  g.fillStyle = css('--v3'); g.font = '11px ui-monospace,Menlo,monospace';
+  g.fillText('path (piecewise)', X(S.xs[Math.round(S.N * 0.55)]) + 6, Y(Number(S.os[Math.round(S.N * 0.55)]) / 1e18) - 8);
+  if (showOverlay) {
+    g.fillStyle = css('--v2');
+    g.fillText('constant product', X(xm * 3n / 5n) + 6, Y(Number(eqOut(xm * 3n / 5n)) / 1e18) + 14);
+  }
+  axisTicks(g, 0, Number(xm) / 1e18, padL, W - padR, H - 8, function (v) { return v.toFixed(1); }, false);
+  axisTicks(g, 0, yTop, padL - 8, padL - 8, (H - padB) + 4, function (v) { return v.toFixed(0); }, true);
+  window.__c1 = { X: X, Y: Y };
+}
+
+function numP(st) { return Number(st.profit) / 1e18; }
+
+function drawC2() {
+  var cv = $('c2'), g = fitCanvas(cv);
+  var W = cv.clientWidth, H = 300, padL = 56, padR = 14, padT = 14, padB = 26;
+  g.clearRect(0, 0, W, H);
+  var xm = state.hardMax;
+  var S = samplePath(600);
+  // vertical window covers samples AND the walk trail/probe (symlog keeps the
+  // deep-loss tail and the peak visible together; no clipped "horizontal" runs)
+  var pmax = -Infinity, pmin = Infinity;
+  for (var i = 0; i <= S.N; i++) {
+    var v = Number(S.ps[i]) / 1e18;
+    if (v > pmax) pmax = v;
+    if (v < pmin) pmin = v;
+  }
+  if (state.walk) {
+    for (var wi = 0; wi < state.walk.steps.length; wi++) {
+      var wv = numP(state.walk.steps[wi]);
+      if (wv > pmax) pmax = wv;
+      if (wv < pmin) pmin = wv;
+    }
+  }
+  if (state.probe) {
+    var pv = numP(state.probe);
+    if (pv > pmax) pmax = pv;
+    if (pv < pmin) pmin = pv;
+  }
+  if (state.gate && $('showEnvelope').checked) {
+    for (var gi = 0; gi < state.gate.samples.length; gi++) {
+      var gv = Number(state.gate.samples[gi].bound) / 1e18;
+      if (gv > pmax) pmax = gv;
+    }
+  }
+  if (!isFinite(pmax) || !isFinite(pmin)) { pmax = 1; pmin = -1; }
+  if (pmax - pmin < 1e-9) { pmax = pmax + 0.5; pmin = pmin - 0.5; }
+  var symScale = Math.max(Math.abs(pmax), Math.abs(pmin));
+  function symF(v) { return Math.asinh(v / symScale); } // linear near 0, log tails
+  var fLo = symF(pmin), fHi = symF(pmax);
+  function X(raw) { return padL + (W - padL - padR) * Number(raw) / Number(xm); }
+  function Y(tok) { return (H - padB) - (H - padB - padT) * (symF(tok) - fLo) / (fHi - fLo); }
+  drawBands(g, X, padT, H - padB);
+  g.strokeStyle = css('--line');
+  g.beginPath(); g.moveTo(padL, padT); g.lineTo(padL, H - padB); g.lineTo(W - padR, H - padB); g.stroke();
+  g.strokeStyle = '#233242';
+  g.beginPath(); g.moveTo(padL, Y(0)); g.lineTo(W - padR, Y(0)); g.stroke();
+  g.fillStyle = css('--dim'); g.font = '10px ui-monospace,Menlo,monospace';
+  g.fillText('P=0', padL + 4, Y(0) - 4);
+  g.strokeStyle = css('--profit'); g.lineWidth = 2;
+  g.beginPath();
+  for (var j = 0; j <= S.N; j++) {
+    if (j === 0) g.moveTo(X(S.xs[j]), Y(Number(S.ps[j]) / 1e18)); else g.lineTo(X(S.xs[j]), Y(Number(S.ps[j]) / 1e18));
+  }
+  g.stroke(); g.lineWidth = 1;
+// profit-envelope gate (composed tangent upper bounds; rose = individual lines,
+// dashed red = their pointwise min; circle = gate argmax)
+if (state.gate && $('showEnvelope').checked) {
+  var gl = state.gate.lines;
+  g.strokeStyle = 'rgba(255,123,114,0.22)'; g.lineWidth = 1;
+  for (var li2 = 0; li2 < gl.length; li2++) {
+    g.beginPath();
+    g.moveTo(X(0n), Y(Number(lineEval(gl[li2], 0n)) / 1e18));
+    g.lineTo(X(xm), Y(Number(lineEval(gl[li2], xm)) / 1e18));
+    g.stroke();
+  }
+  g.strokeStyle = css('--walk'); g.lineWidth = 1.6; g.setLineDash([6, 3]);
+  g.beginPath();
+  for (var si = 0; si < state.gate.samples.length; si++) {
+    var gs = state.gate.samples[si];
+    if (si === 0) g.moveTo(X(gs.x), Y(Number(gs.bound) / 1e18));
+    else g.lineTo(X(gs.x), Y(Number(gs.bound) / 1e18));
+  }
+  g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+  g.strokeStyle = css('--walk');
+  g.beginPath(); g.arc(X(state.gate.bestX), Y(Number(state.gate.bestBound) / 1e18), 4, 0, 7); g.stroke();
+  g.fillStyle = css('--walk'); g.font = '11px ui-monospace,Menlo,monospace';
+  g.fillText('gate bound ' + fmtSigned(state.gate.maxProfit), X(state.gate.bestX) + 8, Y(Number(state.gate.bestBound) / 1e18) + 4);
+}
+
+// per-ending-range-tuple argmax diamonds (composed matrix, clamped to piece domain)
+  g.fillStyle = css('--argmax');
+  var sim = pathOutOf(state.hops);
+  var clIdx = [];
+  for (var ci2 = 0; ci2 < state.hops.length; ci2++) if (state.hops[ci2].kind === 'cl') clIdx.push(ci2);
+  var ks = clIdx.map(function () { return 0; });
+  for (;;) {
+    var domD = tupleDomain(state.hops, ks, state.hardMax);
+    if (domD) {
+      var aD = pieceArgmax(totalMatrix(state.hops, ks), domD[0], domD[1]);
+      var oD = sim(aD);
+      if (oD !== null) {
+        var pxD = X(aD), pyD = Y(Number(oD - aD) / 1e18);
+        g.save(); g.translate(pxD, pyD); g.rotate(Math.PI / 4);
+        g.fillRect(-3.5, -3.5, 7, 7); g.restore();
+      }
+    }
+    var posD = ks.length - 1;
+    while (posD >= 0) {
+      ks[posD]++;
+      if (ks[posD] < state.hops[clIdx[posD]].cl.K) break;
+      ks[posD] = 0;
+      posD--;
+    }
+    if (posD < 0) break;
+  }
+// walk trail up to shown
+  if (state.walk) {
+    var steps = state.walk.steps.slice(0, state.shown);
+    g.strokeStyle = css('--walk');
+    g.fillStyle = css('--walk');
+    for (var s = 1; s < steps.length; s++) {
+      arrow(g, X(steps[s - 1].x), Y(numP(steps[s - 1])), X(steps[s].x), Y(numP(steps[s])));
+    }
+    for (var s2 = 0; s2 < steps.length; s2++) {
+      var st = steps[s2];
+      var px2 = X(st.x), py2 = Y(numP(st));
+      g.beginPath(); g.arc(px2, py2, 4, 0, 7); g.fill();
+      g.fillStyle = '#fff'; g.font = '9px ui-monospace,Menlo,monospace';
+      g.fillText(String(s2 + 1), px2 + 6, py2 - 6);
+      g.fillStyle = css('--walk');
+    }
+    if (state.shown >= state.walk.steps.length && state.walk.best && state.walk.best.profit > 0n) {
+      var b = state.walk.best;
+      var bx = X(b.x), by = Y(numP(b));
+      drawStar(g, bx, by, 7, css('--profit'));
+      g.fillStyle = css('--profit'); g.font = '11px ui-monospace,Menlo,monospace';
+      g.fillText('P=' + fmtSigned(b.profit), bx + 10, by - 8);
+    }
+  }
+  if (state.probe) {
+    g.strokeStyle = css('--v2');
+    g.beginPath(); g.arc(X(state.probe.x), Y(numP(state.probe)), 5, 0, 7); g.stroke();
+  }
+  axisTicks(g, 0, Number(xm) / 1e18, padL, W - padR, H - 8, function (v) { return v.toFixed(1); }, false);
+  // symlog y ticks: nice values ±(1·2·5)·10^e placed where they land in-window
+  g.fillStyle = css('--dim'); g.font = '10px ui-monospace,Menlo,monospace'; g.textAlign = 'right';
+  var mag = Math.max(Math.abs(pmax), Math.abs(pmin), 1e-9);
+  var mag10 = Math.pow(10, Math.floor(Math.log(mag) / Math.log(10)));
+  var seen = { '0': true };
+  for (var e = -3; e <= 6; e++) {
+    var stp = mag10 * Math.pow(10, -e);
+    var muls2 = [1, 2, 5];
+    for (var mi = 0; mi < 3; mi++) {
+      var cand = [muls2[mi] * stp, -muls2[mi] * stp];
+      for (var ci = 0; ci < 2; ci++) {
+        var tv = cand[ci];
+        var key = tv.toFixed(6);
+        if (seen[key]) continue;
+        var py0 = Y(tv);
+        if (py0 < padT - 2 || py0 > H - padB + 2) continue;
+        seen[key] = true;
+        g.strokeStyle = 'rgba(255,255,255,0.04)';
+        g.beginPath(); g.moveTo(padL, py0); g.lineTo(W - padR, py0); g.stroke();
+        g.fillStyle = css('--dim');
+        g.fillText(Math.abs(tv) < 1 ? tv.toFixed(2) : tv.toFixed(0), padL - 6, py0 + 3);
+      }
+    }
+  }
+  g.textAlign = 'left';
+  g.fillStyle = css('--dim');
+  g.fillText('y: symlog', padL + 4, padT + 2);
+  window.__c2 = { X: X, Y: Y, padL: padL, padR: padR, xm: xm };
+}
+function arrow(g, x0, y0, x1, y1) {
+  g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  var ang = Math.atan2(y1 - y0, x1 - x0);
+  g.beginPath();
+  g.moveTo(x1, y1);
+  g.lineTo(x1 - 7 * Math.cos(ang - 0.4), y1 - 7 * Math.sin(ang - 0.4));
+  g.lineTo(x1 - 7 * Math.cos(ang + 0.4), y1 - 7 * Math.sin(ang + 0.4));
+  g.closePath(); g.fill();
+}
+function drawStar(g, cx, cy, r, color) {
+  g.fillStyle = color;
+  g.beginPath();
+  for (var i = 0; i < 10; i++) {
+    var rr = i % 2 ? r / 2.4 : r;
+    var a = -Math.PI / 2 + i * Math.PI / 5;
+    var px = cx + rr * Math.cos(a), py = cy + rr * Math.sin(a);
+    if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+  }
+  g.closePath(); g.fill();
+}
+function drawBoth() { drawC1(); drawC2(); }
+
+// ---------- interaction ----------
+function chart2XFromEvent(ev) {
+  var c = window.__c2;
+  if (!c) return null;
+  var rect = $('c2').getBoundingClientRect();
+  var px = ev.clientX - rect.left;
+  var frac = (px - c.padL) / (rect.width - c.padL - c.padR);
+  if (frac < 0) frac = 0;
+  if (frac > 1) frac = 1;
+  return c.xm * BigInt(Math.round(frac * 1e6)) / 1000000n;
+}
+$('c2').addEventListener('mousemove', function (ev) {
+  if (!state) return;
+  var x = chart2XFromEvent(ev);
+  if (x === null) return;
+  var sim = pathOutOf(state.hops);
+  var o = sim(x);
+  var k = landingTuple(state.hops, x);
+  var extra = '';
+  if (o !== null) {
+    var y = x, parts = [];
+    for (var i = 0; i < state.hops.length; i++) {
+      var h = state.hops[i];
+      if (h.kind === 'v2') { y = v2HopOut(h.v, y); continue; }
+      var yy = h.cl.clOut(y);
+      if (yy === null) break;
+      parts.push('h' + (i + 1) + ' in=' + tokDisp(y) + '→P' + h.cl.landed(y).k);
+      y = yy;
+    }
+    if (parts.length) extra = ' · ' + parts.join(' · ');
+  }
+  $('hover2').textContent = o === null
+    ? 'x=' + tokDisp(x) + ' → beyond domain: a hop would revert'
+    : 'x=' + tokDisp(x) + ' · landed piece ' + k.join('·') + extra + ' · O(x)=' + tokDisp(o) + ' · P(x)=' + fmtSigned(o - x);
+});
+$('c2').addEventListener('click', function (ev) {
+  if (!state) return;
+  var x = chart2XFromEvent(ev);
+  if (x === null) return;
+  var sim = pathOutOf(state.hops);
+  var o = sim(x);
+  if (o === null) { state.probe = null; drawBoth(); return; }
+  state.probe = { x: x, out: o, profit: o - x };
+  var k = landingTuple(state.hops, x);
+  li('probe', '◇ probe: x=' + tokDisp(x) + ' → piece ' + k.join('·') + ' · O=' + tokDisp(o) + ' · P=' + fmtSigned(o - x));
+  drawBoth();
+});
+['ranges', 'spacing', 'profile', 'depth', 'fee', 'hop1kind', 'hop2kind', 'hop3kind', 'v2rin', 'v2ratio', 'cl2offset', 'cl2depth', 'fee2', 'cl2ranges', 'cl3offset', 'cl3depth', 'fee3', 'cl3ranges', 'gateMin', 'showEnvelope', 'speed'].forEach(function (id) {
+  $(id).addEventListener('change', rebuild);
+  $(id).addEventListener('input', function () { clearTimeout(state && state._deb); state._deb = setTimeout(rebuild, 180); });
+});
+$('btn-run').addEventListener('click', runWalkNow);
+$('btn-prev').addEventListener('click', prevStep);
+$('btn-next').addEventListener('click', stepOnce);
+$('btn-random').addEventListener('click', function () {
+  $('profile').value = 'random';
+  for (var i = 1; i <= 3; i++) {
+    var kind = i === 1 ? $('hop1kind').value : $('hop' + i + 'kind').value;
+    if (kind === 'cl' || kind === 'v3') {
+      $('fee' + (i === 1 ? '' : i)).value = ['100', '500', '3000', '10000'][Math.floor(Math.random() * 4)];
+      if (i === 1) $('depth').value = String(5 + Math.floor(Math.random() * 39) * 5);
+      else {
+        $('cl' + i + 'offset').value = String(500 + Math.floor(Math.random() * 30) * 100);
+        $('cl' + i + 'depth').value = String(5 + Math.floor(Math.random() * 39) * 5);
+      }
+    } else if (kind === 'v2') {
+      $('v2ratio').value = (1 + Math.random()).toFixed(2);
+      $('v2rin').value = String(5 + Math.floor(Math.random() * 24) * 5);
+    }
+  }
+  rebuild();
+});
+window.addEventListener('resize', function () { if (state) drawBoth(); });
+
+// ---------- init (also lets headless checks assert health) ----------
+try {
+  rebuild();
+  window.__VIZ_OK = true;
+} catch (e) {
+  window.__VIZ_ERR = String(e && e.stack || e);
+  throw e;
+}
+</script>
+</body>
+</html>
