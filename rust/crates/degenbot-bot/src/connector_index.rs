@@ -358,11 +358,25 @@ impl V2ConnectorIndex {
     ///
     /// # Errors
     ///
-    /// DB failures propagate (`DbError`), including
-    /// [`DbError::UnknownPoolKind`] if the V2-only edge query ever yields a
-    /// non-V2 edge.
+    /// DB failures propagate (`DbError`). A `kind` outside the V2 family is
+    /// skipped here — the unsupported-family roster captures it — so an
+    /// unrecognized row cannot disable the lane at boot.
     pub fn load(db: &DegenbotDb, chain_id: i64) -> Result<Self, DbError> {
-        let data = db.fetch_path_graph_edges(chain_id, &[PoolKind::V2])?;
+        let rows = db.fetch_connector_pool_rows(chain_id)?;
+        let mut data = degenbot_db::pathfinding::PathGraphData::default();
+        for row in rows {
+            if !degenbot_db::schema::table::is_v2_kind(&row.kind) {
+                continue;
+            }
+            // The DB emits `0x`-prefixed checksum addresses; `parse` accepts
+            // those and the lowercase fixture form alike.
+            let Ok(address) = row.address.parse::<Address>() else {
+                continue;
+            };
+            data.edges
+                .push((row.token0_id, row.token1_id, row.pool_id, PoolKind::V2));
+            data.v2v3_addresses.insert(row.pool_id, address);
+        }
         Self::from_graph_data(&data)
     }
 
@@ -372,8 +386,8 @@ impl V2ConnectorIndex {
     /// # Errors
     ///
     /// [`DbError::UnknownPoolKind`] when the snapshot carries a non-V2 edge:
-    /// the `[PoolKind::V2]` query makes this impossible, so a violation means
-    /// the edge source and this loader disagree — refused, never dropped.
+    /// [`Self::load`] only ever pushes V2 edges, so a violation means the edge
+    /// source and this loader disagree — refused, never dropped.
     fn from_graph_data(data: &degenbot_db::pathfinding::PathGraphData) -> Result<Self, DbError> {
         let mut index = Self::default();
         index.edges.reserve(data.edges.len());
@@ -984,6 +998,61 @@ mod tests {
         assert_eq!(ix.edge_degree(30, 10), 0);
         assert_eq!(ix.v3_edge_degree(20, 10), 1);
         assert_eq!(ix.v3_edge_degree(20, 30), 0);
+    }
+
+    /// A `pools` row under a family the index cannot type must not disable the
+    /// V2 load: the recognized row still indexes, and the unknown one is left
+    /// to `load_unsupported` rather than refused mid-scan.
+    #[test]
+    fn load_tolerates_unsupported_pool_kind() {
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
+        const TOK: Address = Address::new([0x31; 20]);
+        const OTHER: Address = Address::new([0x32; 20]);
+        const PAIR: Address = Address::new([0xB1; 20]);
+        const LFJ: Address = Address::new([0xB2; 20]);
+        let tok_id = u64::try_from(
+            db.get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
+                .unwrap(),
+        )
+        .unwrap();
+        let other_id = u64::try_from(
+            db.get_or_create_erc20_token(1, &OTHER.to_checksum(None), None, None, None)
+                .unwrap(),
+        )
+        .unwrap();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO exchanges (id, chain_id, name, active, last_update_block, factory) \
+                 VALUES (1, 1, 'test', 0, NULL, '0x0000000000000000000000000000000000000001')",
+                [],
+            )
+            .unwrap();
+            for (id, addr, kind) in [(1_i64, PAIR, "uniswap_v2"), (2_i64, LFJ, "lfj_binned")] {
+                conn.execute(
+                    "INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) \
+                     VALUES (?1, ?2, 1, ?3, ?4, ?5, 1)",
+                    rusqlite::params![
+                        id,
+                        addr.to_checksum(None),
+                        kind,
+                        tok_id as i64,
+                        other_id as i64
+                    ],
+                )
+                .unwrap();
+            }
+        }
+
+        let mut ix =
+            V2ConnectorIndex::load(&db, 1).expect("an unsupported kind must not refuse the load");
+        assert!(
+            ix.edge_by_address(PAIR).is_some(),
+            "the recognized V2 pair still indexes"
+        );
+        ix.load_unsupported(&db, 1).unwrap();
+        assert_eq!(ix.unsupported_kind(LFJ), Some("lfj_binned"));
     }
 
     /// Every supported V3 variant table feeds `load_v3`, chain-filtered.

@@ -55,6 +55,23 @@ pub struct UnsupportedPoolAddress {
     pub kind: String,
 }
 
+/// One `pools` row as the connector index sees it: identity, the raw on-chain
+/// address string, and the polymorphic `kind` discriminator (deliberately
+/// unclassified — the connector index routes V2 rows to edges and leaves every
+/// other family to [`UnsupportedPoolAddress`]).
+///
+/// The address stays the DB string so a row the index will not use (a
+/// non-checksummed V3 address from a fixture) never fails the scan: the
+/// consumer parses only the rows it routes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectorPoolRow {
+    pub pool_id: u64,
+    pub token0_id: u64,
+    pub token1_id: u64,
+    pub address: String,
+    pub kind: String,
+}
+
 impl DegenbotDb {
     /// `SELECT * FROM erc20_tokens WHERE address=? AND chain=?`.
     ///
@@ -468,6 +485,53 @@ impl DegenbotDb {
             crate::rows::ExchangeRow::from_row(row).map_err(rusqlite::Error::from)
         })?;
         Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
+    }
+
+    /// Every `pools` row on `chain_id` with its polymorphic `kind`, for the
+    /// connector index's V2 edge load.
+    ///
+    /// Unlike [`Self::fetch_path_graph_edges`], an unrecognized `kind` is
+    /// returned rather than refused: the connector index routes V2 rows to
+    /// edges and leaves every other family to
+    /// [`Self::fetch_unsupported_pool_addresses`], so a DB row for an
+    /// unsupported family cannot disable the whole lane at boot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`]
+    /// on a malformed address column.
+    pub fn fetch_connector_pool_rows(
+        &self,
+        chain_id: i64,
+    ) -> Result<Vec<ConnectorPoolRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, token0_id, token1_id, address, kind FROM {POOLS} WHERE chain = ?1"
+        ))?;
+        let mut rows = stmt.query(rusqlite::params![chain_id])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let token0_id: i64 = row.get(1)?;
+            let token1_id: i64 = row.get(2)?;
+            let address: String = row.get(3)?;
+            let kind: String = row.get(4)?;
+            let (Ok(pool_id), Ok(token0_id), Ok(token1_id)) = (
+                u64::try_from(id),
+                u64::try_from(token0_id),
+                u64::try_from(token1_id),
+            ) else {
+                continue;
+            };
+            out.push(ConnectorPoolRow {
+                pool_id,
+                token0_id,
+                token1_id,
+                address,
+                kind,
+            });
+        }
+        Ok(out)
     }
 
     /// Every chain-scoped pool row whose family the backrun descriptor seam
