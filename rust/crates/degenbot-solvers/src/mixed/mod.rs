@@ -21,6 +21,9 @@ use crate::cl::{ClWordProfile, IntTickRangeCrossing, IntV3TickRangeSequence};
 use degenbot_math::balancer::PowVersion;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::v2::IntHopState;
+use degenbot_pools::{
+    BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+};
 use degenbot_uniswap::dex_identity::DexVariant;
 
 // ---------------------------------------------------------------------------
@@ -85,6 +88,39 @@ impl HopType {
     #[must_use]
     pub const fn is_concentrated_liquidity(&self) -> bool {
         matches!(self, Self::V3 | Self::V4)
+    }
+}
+
+impl From<&Identity> for HopType {
+    /// Project the pool taxonomy onto the solver's hop engine (ADR-059 D1).
+    ///
+    /// Total: the solver vocabulary is FINER than the graph's — it names the
+    /// Solidly and balance-vector solve branches discovery does not carry.
+    /// `ReservePair::UniswapV2` is the constant-product family (its `dex` only
+    /// names the fork; the V2 math is shared), and an `AerodromeV2` pair is
+    /// constant-product when volatile, Solidly-stable when stable.
+    ///
+    /// The ladder is lossy by design: a fork whose behavior diverges inside a
+    /// taxonomy variant (Camelot's `stable_swap` V2 species is not a distinct
+    /// `Identity`) is still derived at registration by the engine's
+    /// `derive_hop_type`, not from this projection.
+    fn from(identity: &Identity) -> Self {
+        match identity {
+            Identity::ReservePair { variant, .. } => match variant {
+                ReservePairVariant::UniswapV2
+                | ReservePairVariant::AerodromeV2 { stable: false } => Self::V2,
+                ReservePairVariant::AerodromeV2 { stable: true } => Self::SolidlyStable,
+            },
+            Identity::ConcentratedLiquidity { variant, .. } => match variant {
+                ConcentratedLiquidityVariant::UniswapV3 => Self::V3,
+                ConcentratedLiquidityVariant::UniswapV4 => Self::V4,
+            },
+            Identity::BalanceVector { variant, .. } => match variant {
+                BalanceVectorVariant::Curve => Self::CurveStableswap,
+                BalanceVectorVariant::BalancerWeighted => Self::BalancerWeighted,
+                BalanceVectorVariant::BalancerStable => Self::BalancerStable,
+            },
+        }
     }
 }
 
@@ -470,3 +506,79 @@ pub mod solve;
 // orchestrator/tests so callers can use `degenbot_solvers::mixed::solve_path`
 // without descending into `solve`.
 pub use solve::{simulate_solidly_path, solve_path, solve_path_with_min_profit};
+
+#[cfg(test)]
+mod taxonomy_tests {
+    //! ADR-059 D1 parity: every `Structure` x variant projects to the solver
+    //! hop engine the old hand classification produced. These are the tests
+    //! that make a taxonomy change reviewable — a new variant fails to compile
+    //! the exhaustive `match`, and a changed mapping fails here.
+    use super::HopType;
+    use degenbot_pools::{
+        BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+    };
+
+    fn reserve_pair(variant: ReservePairVariant) -> Identity {
+        Identity::ReservePair { variant, dex: None }
+    }
+
+    fn concentrated_liquidity(variant: ConcentratedLiquidityVariant) -> Identity {
+        Identity::ConcentratedLiquidity { variant, dex: None }
+    }
+
+    fn balance_vector(variant: BalanceVectorVariant) -> Identity {
+        Identity::BalanceVector { variant, dex: None }
+    }
+
+    #[test]
+    fn reserve_pair_projects_to_the_constant_product_or_solidly_engine() {
+        assert_eq!(
+            HopType::from(&reserve_pair(ReservePairVariant::UniswapV2)),
+            HopType::V2
+        );
+        assert_eq!(
+            HopType::from(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: false
+            })),
+            HopType::V2
+        );
+        assert_eq!(
+            HopType::from(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: true
+            })),
+            HopType::SolidlyStable
+        );
+    }
+
+    #[test]
+    fn concentrated_liquidity_projects_to_its_own_engine() {
+        assert_eq!(
+            HopType::from(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV3
+            )),
+            HopType::V3
+        );
+        assert_eq!(
+            HopType::from(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV4
+            )),
+            HopType::V4
+        );
+    }
+
+    #[test]
+    fn balance_vector_projects_to_its_own_solve_branch() {
+        assert_eq!(
+            HopType::from(&balance_vector(BalanceVectorVariant::Curve)),
+            HopType::CurveStableswap
+        );
+        assert_eq!(
+            HopType::from(&balance_vector(BalanceVectorVariant::BalancerWeighted)),
+            HopType::BalancerWeighted
+        );
+        assert_eq!(
+            HopType::from(&balance_vector(BalanceVectorVariant::BalancerStable)),
+            HopType::BalancerStable
+        );
+    }
+}

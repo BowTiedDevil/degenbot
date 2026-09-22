@@ -46,6 +46,8 @@ pub const SCHEMA_VERSION_TABLE: &str = "_degenbot_db_schema_version";
 pub mod table {
     //! Canonical table names (mirror `models/*.py` `__tablename__`).
 
+    use degenbot_pathfinding::PoolKind;
+
     pub const EXCHANGES: &str = "exchanges";
     pub const ERC20_TOKENS: &str = "erc20_tokens";
     pub const POOLS: &str = "pools";
@@ -82,26 +84,19 @@ pub mod table {
 
     /// `true` if `kind` is a V3 family discriminator
     /// (a `UniswapV3PoolTableBase` subclass polymorphic identity).
+    ///
+    /// Projects through the graph vocabulary's single kind table
+    /// ([`PoolKind::from_kind_str`]) — ADR-059 D1: the schema helper is a
+    /// view of the taxonomy projection, not a second enumeration.
     #[must_use]
     pub fn is_v3_kind(kind: &str) -> bool {
-        matches!(
-            kind,
-            "uniswap_v3" | "sushiswap_v3" | "pancakeswap_v3" | "aerodrome_v3"
-        )
+        matches!(PoolKind::from_kind_str(kind), Some(PoolKind::V3))
     }
 
     /// `true` if `kind` is a V2 family discriminator.
     #[must_use]
     pub fn is_v2_kind(kind: &str) -> bool {
-        matches!(
-            kind,
-            "uniswap_v2"
-                | "aerodrome_v2"
-                | "camelot_v2"
-                | "pancakeswap_v2"
-                | "sushiswap_v2"
-                | "swapbased_v2"
-        )
+        matches!(PoolKind::from_kind_str(kind), Some(PoolKind::V2))
     }
 
     /// `true` if `kind` is a V4 discriminator (only `uniswap_v4` today — the
@@ -109,6 +104,74 @@ pub mod table {
     /// `uniswap_v4_pools`).
     #[must_use]
     pub fn is_v4_kind(kind: &str) -> bool {
-        matches!(kind, "uniswap_v4")
+        matches!(PoolKind::from_kind_str(kind), Some(PoolKind::V4))
+    }
+}
+
+#[cfg(test)]
+mod table_tests {
+    //! ADR-059 D1 golden table: the graph vocabulary's kind table is the
+    //! single source the schema helpers project through, and it covers exactly
+    //! the species the schema admits. A taxonomy species added without a graph
+    //! tag fails here instead of vanishing from every consumer's graph.
+    use super::table::{is_v2_kind, is_v3_kind, is_v4_kind, v2_v3_subclass_table};
+    use degenbot_pathfinding::PoolKind;
+
+    /// The golden projection, independent of the implementation: every
+    /// `pools.kind` / `managed_pools.kind` string and its graph tag.
+    const GOLDEN: &[(&str, PoolKind)] = &[
+        ("uniswap_v2", PoolKind::V2),
+        ("sushiswap_v2", PoolKind::V2),
+        ("pancakeswap_v2", PoolKind::V2),
+        ("aerodrome_v2", PoolKind::V2),
+        ("camelot_v2", PoolKind::V2),
+        ("swapbased_v2", PoolKind::V2),
+        ("uniswap_v3", PoolKind::V3),
+        ("sushiswap_v3", PoolKind::V3),
+        ("pancakeswap_v3", PoolKind::V3),
+        ("aerodrome_v3", PoolKind::V3),
+        ("uniswap_v4", PoolKind::V4),
+    ];
+
+    #[test]
+    fn kind_table_matches_the_golden_projection() {
+        let actual: Vec<(&str, PoolKind)> = PoolKind::KNOWN_KINDS
+            .iter()
+            .map(|(name, kind)| (*name, *kind))
+            .collect();
+        assert_eq!(actual, GOLDEN);
+    }
+
+    #[test]
+    fn schema_helpers_agree_with_the_projection() {
+        for (kind, expected) in GOLDEN {
+            assert_eq!(PoolKind::from_kind_str(kind), Some(*expected));
+            assert_eq!(is_v2_kind(kind), *expected == PoolKind::V2);
+            assert_eq!(is_v3_kind(kind), *expected == PoolKind::V3);
+            assert_eq!(is_v4_kind(kind), *expected == PoolKind::V4);
+        }
+    }
+
+    #[test]
+    fn every_kind_has_a_graph_tag_or_is_loudly_refused() {
+        assert_eq!(PoolKind::from_kind_str("lfj_binned"), None);
+        assert_eq!(PoolKind::from_kind_str(""), None);
+    }
+
+    #[test]
+    fn every_subclass_species_has_a_graph_tag() {
+        for (kind, _) in GOLDEN {
+            if *kind == "uniswap_v4" {
+                continue;
+            }
+            assert!(
+                v2_v3_subclass_table(kind).is_some(),
+                "{kind} lost its subclass table"
+            );
+            assert!(
+                PoolKind::from_kind_str(kind).is_some(),
+                "{kind} lost its graph tag"
+            );
+        }
     }
 }

@@ -58,6 +58,23 @@ pub enum Identity {
     },
 }
 
+impl Identity {
+    /// The [`Structure`] this identity belongs to.
+    ///
+    /// ADR-059 D1: the structural taxonomy is the source every tier's family
+    /// vocabulary projects from; this accessor names the coarse structure
+    /// without a `DexName` lookup, so a projection at a tier that lacks the
+    /// `(chain, factory)` resolution still classifies the pool.
+    #[must_use]
+    pub const fn structure(&self) -> Structure {
+        match self {
+            Self::ReservePair { .. } => Structure::ReservePair,
+            Self::ConcentratedLiquidity { .. } => Structure::ConcentratedLiquidity,
+            Self::BalanceVector { .. } => Structure::BalanceVector,
+        }
+    }
+}
+
 /// Concrete DEX variant behind a [`Structure::ReservePair`] pool.
 ///
 /// Distinguishes the Uniswap-V2-style constant-product family from the
@@ -331,5 +348,77 @@ impl BalanceVectorView<'_> {
     #[must_use]
     pub fn n_tokens(&self) -> usize {
         self.tokens().len()
+    }
+}
+
+#[cfg(test)]
+mod structure_tests {
+    //! ADR-059 D1: the identity's coarse structure is the taxonomy accessor
+    //! every tier's projection starts from.
+    use super::*;
+
+    #[test]
+    fn identity_projects_onto_its_structure() {
+        let cases: &[(Identity, Structure)] = &[
+            (
+                Identity::ReservePair {
+                    variant: ReservePairVariant::UniswapV2,
+                    dex: None,
+                },
+                Structure::ReservePair,
+            ),
+            (
+                Identity::ReservePair {
+                    variant: ReservePairVariant::AerodromeV2 { stable: true },
+                    dex: None,
+                },
+                Structure::ReservePair,
+            ),
+            (
+                Identity::ReservePair {
+                    variant: ReservePairVariant::AerodromeV2 { stable: false },
+                    dex: None,
+                },
+                Structure::ReservePair,
+            ),
+            (
+                Identity::ConcentratedLiquidity {
+                    variant: ConcentratedLiquidityVariant::UniswapV3,
+                    dex: None,
+                },
+                Structure::ConcentratedLiquidity,
+            ),
+            (
+                Identity::ConcentratedLiquidity {
+                    variant: ConcentratedLiquidityVariant::UniswapV4,
+                    dex: None,
+                },
+                Structure::ConcentratedLiquidity,
+            ),
+            (
+                Identity::BalanceVector {
+                    variant: BalanceVectorVariant::Curve,
+                    dex: None,
+                },
+                Structure::BalanceVector,
+            ),
+            (
+                Identity::BalanceVector {
+                    variant: BalanceVectorVariant::BalancerWeighted,
+                    dex: None,
+                },
+                Structure::BalanceVector,
+            ),
+            (
+                Identity::BalanceVector {
+                    variant: BalanceVectorVariant::BalancerStable,
+                    dex: None,
+                },
+                Structure::BalanceVector,
+            ),
+        ];
+        for (identity, structure) in cases {
+            assert_eq!(identity.structure(), *structure);
+        }
     }
 }

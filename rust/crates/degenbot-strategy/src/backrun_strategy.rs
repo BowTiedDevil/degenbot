@@ -1143,11 +1143,7 @@ impl PendingTxReaction for BackrunStrategy {
                 };
                 let anchor = AnchorPool {
                     pool_id: a.index_pool_id,
-                    pool_kind: match a.family {
-                        LaneFamily::V2 => PoolKind::V2,
-                        LaneFamily::V3 { .. } => PoolKind::V3,
-                        LaneFamily::V4 { .. } => PoolKind::V4,
-                    },
+                    pool_kind: PoolKind::from(a.family.tag()),
                     token_a_id: wq.quote_id,
                     token_b_id: wq.tok_id,
                 };

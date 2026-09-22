@@ -11,8 +11,9 @@
 //! over the DB connector index is the pipeline's job.
 
 use alloy::primitives::{Address, B256, U256};
+use degenbot_pathfinding::PoolKind;
 use degenbot_pools::v3_state::PoolTickCoverage;
-use degenbot_pools::TickInfo;
+use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 use degenbot_solvers::mixed::SolvePathResult;
 
 use degenbot_bot::bot_core::planning::{
@@ -184,14 +185,81 @@ pub enum LaneFamily {
     },
 }
 
-impl LaneFamily {
+/// The family TAG of a [`LaneFamily`] — the lane vocabulary's projection onto
+/// the V2/V3/V4 identities the discovery graph and the executor share
+/// (ADR-059 D1). [`LaneFamily`] itself stays the lane's data-carrying payload;
+/// only the tag projects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LaneFamilyTag {
+    V2,
+    V3,
+    V4,
+}
+
+impl LaneFamilyTag {
+    /// The solver hop engine this family tag dispatches to.
     #[must_use]
     pub const fn hop_type(self) -> degenbot_solvers::mixed::HopType {
         match self {
             Self::V2 => degenbot_solvers::mixed::HopType::V2,
-            Self::V3 { .. } => degenbot_solvers::mixed::HopType::V3,
-            Self::V4 { .. } => degenbot_solvers::mixed::HopType::V4,
+            Self::V3 => degenbot_solvers::mixed::HopType::V3,
+            Self::V4 => degenbot_solvers::mixed::HopType::V4,
         }
+    }
+
+    /// Project the pool taxonomy onto the lane tag (ADR-059 D1).
+    ///
+    /// The backrun arm is V2/V3/V4-only, so the projection LAGS the taxonomy:
+    /// the balance-vector families and the Solidly-stable branch it does not
+    /// admit project to `None` rather than to a false V2/V3 claim. A volatile
+    /// `AerodromeV2` pair is the constant-product V2 lane; a stable one is
+    /// Solidly, which the lane cannot express.
+    #[must_use]
+    pub fn from_identity(identity: &Identity) -> Option<Self> {
+        match identity {
+            Identity::ReservePair { variant, .. } => match variant {
+                ReservePairVariant::UniswapV2
+                | ReservePairVariant::AerodromeV2 { stable: false } => Some(Self::V2),
+                ReservePairVariant::AerodromeV2 { stable: true } => None,
+            },
+            Identity::ConcentratedLiquidity { variant, .. } => match variant {
+                ConcentratedLiquidityVariant::UniswapV3 => Some(Self::V3),
+                ConcentratedLiquidityVariant::UniswapV4 => Some(Self::V4),
+            },
+            Identity::BalanceVector { .. } => None,
+        }
+    }
+}
+
+impl From<LaneFamilyTag> for PoolKind {
+    /// Project the lane tag onto the discovery graph's pool kind (ADR-059 D1):
+    /// a lane's declared anchor and the graph edge it is looked up by must not
+    /// drift.
+    fn from(tag: LaneFamilyTag) -> Self {
+        match tag {
+            LaneFamilyTag::V2 => Self::V2,
+            LaneFamilyTag::V3 => Self::V3,
+            LaneFamilyTag::V4 => Self::V4,
+        }
+    }
+}
+
+impl LaneFamily {
+    /// The lane family's tag (ADR-059 D1) — the one way to reach
+    /// [`LaneFamilyTag::hop_type`] and [`PoolKind`] from the data-carrying
+    /// enum.
+    #[must_use]
+    pub const fn tag(self) -> LaneFamilyTag {
+        match self {
+            Self::V2 => LaneFamilyTag::V2,
+            Self::V3 { .. } => LaneFamilyTag::V3,
+            Self::V4 { .. } => LaneFamilyTag::V4,
+        }
+    }
+
+    #[must_use]
+    pub const fn hop_type(self) -> degenbot_solvers::mixed::HopType {
+        self.tag().hop_type()
     }
 }
 
@@ -879,6 +947,102 @@ mod tests {
         assert_eq!(
             compose_candidate(&candidate, P, WETH, 1000).err(),
             Some(ComposeReject::AmountExceedsUint96)
+        );
+    }
+}
+
+#[cfg(test)]
+mod taxonomy_tests {
+    //! ADR-059 D1 parity: the lane vocabulary projects from the pool taxonomy,
+    //! and the lane tag drives both the solver hop engine and the discovery
+    //! graph kind. The lagging (unsupported) legs are pinned here too.
+    use super::{LaneFamily, LaneFamilyTag};
+    use alloy::primitives::{Address, B256};
+    use degenbot_pathfinding::PoolKind;
+    use degenbot_pools::{
+        BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+    };
+    use degenbot_solvers::mixed::HopType;
+
+    fn reserve_pair(variant: ReservePairVariant) -> Identity {
+        Identity::ReservePair { variant, dex: None }
+    }
+
+    fn concentrated_liquidity(variant: ConcentratedLiquidityVariant) -> Identity {
+        Identity::ConcentratedLiquidity { variant, dex: None }
+    }
+
+    fn balance_vector(variant: BalanceVectorVariant) -> Identity {
+        Identity::BalanceVector { variant, dex: None }
+    }
+
+    #[test]
+    fn tag_covers_every_data_carrying_lane_family() {
+        assert_eq!(LaneFamily::V2.tag(), LaneFamilyTag::V2);
+        assert_eq!(LaneFamily::V3 { fee: 500 }.tag(), LaneFamilyTag::V3);
+        assert_eq!(
+            LaneFamily::V4 {
+                fee: 500,
+                pool_id: B256::ZERO,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            }
+            .tag(),
+            LaneFamilyTag::V4
+        );
+    }
+
+    #[test]
+    fn lane_tag_drives_the_solver_engine_and_graph_kind() {
+        assert_eq!(LaneFamilyTag::V2.hop_type(), HopType::V2);
+        assert_eq!(LaneFamilyTag::V3.hop_type(), HopType::V3);
+        assert_eq!(LaneFamilyTag::V4.hop_type(), HopType::V4);
+        assert_eq!(PoolKind::from(LaneFamilyTag::V2), PoolKind::V2);
+        assert_eq!(PoolKind::from(LaneFamilyTag::V3), PoolKind::V3);
+        assert_eq!(PoolKind::from(LaneFamilyTag::V4), PoolKind::V4);
+    }
+
+    #[test]
+    fn identity_projection_admits_only_the_lanes_the_arm_can_express() {
+        assert_eq!(
+            LaneFamilyTag::from_identity(&reserve_pair(ReservePairVariant::UniswapV2)),
+            Some(LaneFamilyTag::V2)
+        );
+        assert_eq!(
+            LaneFamilyTag::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: false
+            })),
+            Some(LaneFamilyTag::V2)
+        );
+        assert_eq!(
+            LaneFamilyTag::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: true
+            })),
+            None
+        );
+        assert_eq!(
+            LaneFamilyTag::from_identity(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV3
+            )),
+            Some(LaneFamilyTag::V3)
+        );
+        assert_eq!(
+            LaneFamilyTag::from_identity(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV4
+            )),
+            Some(LaneFamilyTag::V4)
+        );
+        assert_eq!(
+            LaneFamilyTag::from_identity(&balance_vector(BalanceVectorVariant::Curve)),
+            None
+        );
+        assert_eq!(
+            LaneFamilyTag::from_identity(&balance_vector(BalanceVectorVariant::BalancerWeighted)),
+            None
+        );
+        assert_eq!(
+            LaneFamilyTag::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
+            None
         );
     }
 }

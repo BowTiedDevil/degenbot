@@ -64,6 +64,46 @@ impl PoolKind {
             _ => None,
         }
     }
+
+    /// The single table of persisted `kind` discriminators the graph
+    /// vocabulary admits, paired with their tag.
+    ///
+    /// ADR-059 D1: this is the one enumeration [`Self::from_kind_str`] (and
+    /// therefore every schema `is_v*_kind` helper and graph reader) projects
+    /// through; `degenbot-db`'s golden test pins its membership so a taxonomy
+    /// species cannot be added without a graph tag.
+    pub const KNOWN_KINDS: &'static [(&'static str, Self)] = &[
+        ("uniswap_v2", Self::V2),
+        ("sushiswap_v2", Self::V2),
+        ("pancakeswap_v2", Self::V2),
+        ("aerodrome_v2", Self::V2),
+        ("camelot_v2", Self::V2),
+        ("swapbased_v2", Self::V2),
+        ("uniswap_v3", Self::V3),
+        ("sushiswap_v3", Self::V3),
+        ("pancakeswap_v3", Self::V3),
+        ("aerodrome_v3", Self::V3),
+        ("uniswap_v4", Self::V4),
+    ];
+
+    /// Project a persisted pool `kind` discriminator onto the graph vocabulary
+    /// (ADR-059 D1).
+    ///
+    /// The discovery tier receives a pool's taxonomy species as the database
+    /// `pools.kind` / `managed_pools.kind` string, not a `degenbot-pools`
+    /// `Identity`: this crate is the graph leaf and carries no taxonomy
+    /// dependency. The `kind` string is therefore the minimal taxonomy input
+    /// the tier can construct from its own data.
+    ///
+    /// Returns `None` for a kind outside the V2/V3/V4 graph vocabulary; the
+    /// caller refuses it loudly rather than dropping the row.
+    #[must_use]
+    pub fn from_kind_str(kind: &str) -> Option<Self> {
+        Self::KNOWN_KINDS
+            .iter()
+            .find(|(name, _)| *name == kind)
+            .map(|(_, pool_kind)| *pool_kind)
+    }
 }
 
 /// A pool edge in the external (database) form. Retained for API

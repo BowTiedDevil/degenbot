@@ -38,9 +38,7 @@ use degenbot_pathfinding::PoolKind;
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
 use crate::rows::decode::decode_address;
-use crate::schema::table::{
-    is_v2_kind, is_v3_kind, MANAGED_POOLS, POOLS, POOL_MANAGERS, UNISWAP_V4_POOLS,
-};
+use crate::schema::table::{MANAGED_POOLS, POOLS, POOL_MANAGERS, UNISWAP_V4_POOLS};
 
 /// A pool edge in the pathfinding graph: `(token0_id, token1_id, pool_id, pool_kind)`.
 ///
@@ -165,15 +163,14 @@ impl DegenbotDb {
                 let address: String = row.get(3)?;
                 let kind: String = row.get(4)?;
 
-                let pool_kind = if is_v2_kind(&kind) {
-                    PoolKind::V2
-                } else if is_v3_kind(&kind) {
-                    PoolKind::V3
-                } else {
-                    // A `pools` row whose family the graph cannot represent:
+                let pool_kind = match PoolKind::from_kind_str(&kind) {
+                    Some(PoolKind::V2) => PoolKind::V2,
+                    Some(PoolKind::V3) => PoolKind::V3,
+                    // A `pools` row whose family the graph cannot represent
+                    // (including a V4 kind, which lives in `managed_pools`):
                     // refuse instead of dropping it, so a forward-kind row
                     // cannot silently vanish from every consumer's graph.
-                    return Err(DbError::UnknownPoolKind { kind, pool_id: id });
+                    _ => return Err(DbError::UnknownPoolKind { kind, pool_id: id }),
                 };
 
                 let included = match pool_kind {
