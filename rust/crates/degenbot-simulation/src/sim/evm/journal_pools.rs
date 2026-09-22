@@ -35,7 +35,10 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pools::slot_layout;
-use degenbot_pools::{v3_storage_slots, v4_storage_slots, ClSlotLayout};
+use degenbot_pools::{
+    v3_storage_slots, v4_storage_slots, ClSlotLayout, ConcentratedLiquidityVariant, Identity,
+    ReservePairVariant,
+};
 use hashbrown::HashMap;
 
 use super::frame_replay::ReplayOutcome;
@@ -63,6 +66,56 @@ pub enum PoolFamily {
     /// [`PoolPostKind::Unsupported`] (skip it with
     /// `observe reason="v4_unsupported"`), never a guessed decode.
     V4PoolManager { pools: V4PoolSet },
+}
+
+/// The family-level tag of a [`PoolFamily`] — the journal-extraction
+/// vocabulary's projection onto the `degenbot_pools` taxonomy (ADR-059 D1).
+///
+/// [`PoolFamily`] stays the data-carrying descriptor (the fork slot layout,
+/// the live V4 roster); only the family discriminant projects, so a caller
+/// holding a taxonomy [`Identity`] can name the extraction family without
+/// inventing layout payload it does not have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PoolFamilyTag {
+    V2Pair,
+    V3,
+    V4PoolManager,
+}
+
+impl PoolFamilyTag {
+    /// Project the pool taxonomy onto the journal-extraction family tag.
+    ///
+    /// The extraction vocabulary LAGS the taxonomy: it carries no
+    /// balance-vector arm, and its `V2Pair` layout is the canonical
+    /// Uniswap-V2 slot-8 pair — an Aerodrome V2 (Solidly) pair stores its
+    /// reserves at different slots, so it projects to `None` rather than a
+    /// false slot-8 claim.
+    #[must_use]
+    pub fn from_identity(identity: &Identity) -> Option<Self> {
+        match identity {
+            Identity::ReservePair { variant, .. } => match variant {
+                ReservePairVariant::UniswapV2 => Some(Self::V2Pair),
+                ReservePairVariant::AerodromeV2 { .. } => None,
+            },
+            Identity::ConcentratedLiquidity { variant, .. } => match variant {
+                ConcentratedLiquidityVariant::UniswapV3 => Some(Self::V3),
+                ConcentratedLiquidityVariant::UniswapV4 => Some(Self::V4PoolManager),
+            },
+            Identity::BalanceVector { .. } => None,
+        }
+    }
+}
+
+impl PoolFamily {
+    /// The family-level tag of this extraction descriptor (ADR-059 D1).
+    #[must_use]
+    pub const fn tag(&self) -> PoolFamilyTag {
+        match self {
+            Self::V2Pair => PoolFamilyTag::V2Pair,
+            Self::V3 { .. } => PoolFamilyTag::V3,
+            Self::V4PoolManager { .. } => PoolFamilyTag::V4PoolManager,
+        }
+    }
 }
 
 /// One tracked V4 pool the singleton manages: the `poolId` the `_pools`
@@ -354,4 +407,94 @@ fn recover_touched_ticks(
     }
     ticks.sort_unstable_by_key(|t| t.tick);
     ticks
+}
+
+#[cfg(test)]
+mod taxonomy_tests {
+    //! ADR-059 D1: the journal-extraction family tag is a projection of the
+    //! pool taxonomy; the data-carrying [`PoolFamily`] never restates the
+    //! family. Every structure x variant is pinned, including the legs this
+    //! extraction vocabulary deliberately does not admit.
+    use super::{PoolFamily, PoolFamilyTag, V4PoolSet};
+    use degenbot_pools::{
+        BalanceVectorVariant, ClSlotLayout, ConcentratedLiquidityVariant, Identity,
+        ReservePairVariant,
+    };
+
+    fn reserve_pair(variant: ReservePairVariant) -> Identity {
+        Identity::ReservePair { variant, dex: None }
+    }
+
+    fn concentrated_liquidity(variant: ConcentratedLiquidityVariant) -> Identity {
+        Identity::ConcentratedLiquidity { variant, dex: None }
+    }
+
+    fn balance_vector(variant: BalanceVectorVariant) -> Identity {
+        Identity::BalanceVector { variant, dex: None }
+    }
+
+    #[test]
+    fn tag_covers_every_extraction_family() {
+        assert_eq!(PoolFamily::V2Pair.tag(), PoolFamilyTag::V2Pair);
+        assert_eq!(
+            PoolFamily::V3 {
+                layout: ClSlotLayout::UniswapV3,
+                tick_spacing: 10,
+                current_tick_hint: None,
+            }
+            .tag(),
+            PoolFamilyTag::V3,
+        );
+        assert_eq!(
+            PoolFamily::V4PoolManager {
+                pools: V4PoolSet::default(),
+            }
+            .tag(),
+            PoolFamilyTag::V4PoolManager,
+        );
+    }
+
+    #[test]
+    fn identity_projection_admits_only_the_structures_extraction_types() {
+        assert_eq!(
+            PoolFamilyTag::from_identity(&reserve_pair(ReservePairVariant::UniswapV2)),
+            Some(PoolFamilyTag::V2Pair),
+        );
+        assert_eq!(
+            PoolFamilyTag::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: true
+            })),
+            None,
+        );
+        assert_eq!(
+            PoolFamilyTag::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: false
+            })),
+            None,
+        );
+        assert_eq!(
+            PoolFamilyTag::from_identity(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV3
+            )),
+            Some(PoolFamilyTag::V3),
+        );
+        assert_eq!(
+            PoolFamilyTag::from_identity(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV4
+            )),
+            Some(PoolFamilyTag::V4PoolManager),
+        );
+        assert_eq!(
+            PoolFamilyTag::from_identity(&balance_vector(BalanceVectorVariant::Curve)),
+            None,
+        );
+        assert_eq!(
+            PoolFamilyTag::from_identity(&balance_vector(BalanceVectorVariant::BalancerWeighted)),
+            None,
+        );
+        assert_eq!(
+            PoolFamilyTag::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
+            None,
+        );
+    }
 }

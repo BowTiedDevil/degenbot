@@ -28,6 +28,7 @@ use degenbot_decoders::pool_created_decoder::{
 };
 use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
 use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
+use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant};
 use degenbot_rpc::provider::LogFetcher;
 
 use crate::spec::ExchangeSpec;
@@ -52,6 +53,30 @@ pub enum PoolFamily {
 }
 
 impl PoolFamily {
+    /// Project the pool taxonomy onto the decode family (ADR-059 D1).
+    ///
+    /// The decode station LAGS the taxonomy on structure, not species: a
+    /// balance-vector pool has no `PoolCreated`-style creation event here, so
+    /// Curve/Balancer project to `None`. The species fork stays where it is —
+    /// an `AerodromeV2` pair is its own family because its event carries the
+    /// `stable` flag and a distinct topic0, while an Aerodrome V3 pool decodes
+    /// through the shared `V3` structure (its `event_topic` differs per
+    /// exchange, not per family).
+    #[must_use]
+    pub fn from_identity(identity: &Identity) -> Option<Self> {
+        match identity {
+            Identity::ReservePair { variant, .. } => match variant {
+                ReservePairVariant::UniswapV2 => Some(Self::V2),
+                ReservePairVariant::AerodromeV2 { .. } => Some(Self::AerodromeV2),
+            },
+            Identity::ConcentratedLiquidity { variant, .. } => match variant {
+                ConcentratedLiquidityVariant::UniswapV3 => Some(Self::V3),
+                ConcentratedLiquidityVariant::UniswapV4 => Some(Self::V4),
+            },
+            Identity::BalanceVector { .. } => None,
+        }
+    }
+
     /// The topic0 hash for this family's pool-creation event.
     #[must_use]
     pub const fn topic0(&self) -> B256 {
@@ -1042,5 +1067,72 @@ mod tests {
             0,
         );
         assert!(decode_v4_liquidity_log_with_pool(&empty_v4).is_none());
+    }
+}
+
+#[cfg(test)]
+mod taxonomy_tests {
+    //! ADR-059 D1: the decode family is a projection of the pool taxonomy.
+    //! Every structure x variant is pinned, including the balance-vector legs
+    //! this station does not decode.
+    use super::PoolFamily;
+    use degenbot_pools::{
+        BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+    };
+
+    fn reserve_pair(variant: ReservePairVariant) -> Identity {
+        Identity::ReservePair { variant, dex: None }
+    }
+
+    fn concentrated_liquidity(variant: ConcentratedLiquidityVariant) -> Identity {
+        Identity::ConcentratedLiquidity { variant, dex: None }
+    }
+
+    fn balance_vector(variant: BalanceVectorVariant) -> Identity {
+        Identity::BalanceVector { variant, dex: None }
+    }
+
+    #[test]
+    fn identity_projection_admits_only_the_decoded_families() {
+        assert_eq!(
+            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::UniswapV2)),
+            Some(PoolFamily::V2),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: true
+            })),
+            Some(PoolFamily::AerodromeV2),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: false
+            })),
+            Some(PoolFamily::AerodromeV2),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV3
+            )),
+            Some(PoolFamily::V3),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV4
+            )),
+            Some(PoolFamily::V4),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::Curve)),
+            None,
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::BalancerWeighted)),
+            None,
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
+            None,
+        );
     }
 }

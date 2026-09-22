@@ -31,6 +31,9 @@ use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::{ClSlotLayout, RegisterV3PoolParams};
 use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
+use degenbot_pools::{
+    BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+};
 use degenbot_rpc::abi;
 use degenbot_uniswap::deployments;
 use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
@@ -50,6 +53,36 @@ pub enum PoolFamily {
     BalancerWeighted,
     BalancerStable,
     Curve,
+}
+
+impl PoolFamily {
+    /// Project the pool taxonomy onto the registration-probe family (ADR-059
+    /// D1).
+    ///
+    /// The probe station LAGS the taxonomy in two places, and the lag is
+    /// explicit rather than silently mapped: an `AerodromeV2` pair registers
+    /// through the dedicated `build_aerodrome_v2` path (its `stable`/fee reads
+    /// have no home here), and a `UniswapV4` pool through the separate
+    /// `(PoolManager, pool_id)` `build_v4` path — neither is reachable from a
+    /// single-address selector probe, so both project to `None`.
+    #[must_use]
+    pub fn from_identity(identity: &Identity) -> Option<Self> {
+        match identity {
+            Identity::ReservePair { variant, .. } => match variant {
+                ReservePairVariant::UniswapV2 => Some(Self::V2),
+                ReservePairVariant::AerodromeV2 { .. } => None,
+            },
+            Identity::ConcentratedLiquidity { variant, .. } => match variant {
+                ConcentratedLiquidityVariant::UniswapV3 => Some(Self::V3),
+                ConcentratedLiquidityVariant::UniswapV4 => None,
+            },
+            Identity::BalanceVector { variant, .. } => match variant {
+                BalanceVectorVariant::Curve => Some(Self::Curve),
+                BalanceVectorVariant::BalancerWeighted => Some(Self::BalancerWeighted),
+                BalanceVectorVariant::BalancerStable => Some(Self::BalancerStable),
+            },
+        }
+    }
 }
 
 /// Typed builder failure.
@@ -1489,5 +1522,72 @@ fn order_currencies(a: Address, b: Address) -> (Address, Address) {
         (a, b)
     } else {
         (b, a)
+    }
+}
+
+#[cfg(test)]
+mod taxonomy_tests {
+    //! ADR-059 D1: the registration-probe family is a projection of the pool
+    //! taxonomy. The two legs the probe station cannot reach are pinned as
+    //! `None` here, never silently mapped onto a neighbour.
+    use super::PoolFamily;
+    use degenbot_pools::{
+        BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+    };
+
+    fn reserve_pair(variant: ReservePairVariant) -> Identity {
+        Identity::ReservePair { variant, dex: None }
+    }
+
+    fn concentrated_liquidity(variant: ConcentratedLiquidityVariant) -> Identity {
+        Identity::ConcentratedLiquidity { variant, dex: None }
+    }
+
+    fn balance_vector(variant: BalanceVectorVariant) -> Identity {
+        Identity::BalanceVector { variant, dex: None }
+    }
+
+    #[test]
+    fn identity_projection_maps_only_the_probed_families() {
+        assert_eq!(
+            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::UniswapV2)),
+            Some(PoolFamily::V2),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: true
+            })),
+            None,
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&reserve_pair(ReservePairVariant::AerodromeV2 {
+                stable: false
+            })),
+            None,
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV3
+            )),
+            Some(PoolFamily::V3),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&concentrated_liquidity(
+                ConcentratedLiquidityVariant::UniswapV4
+            )),
+            None,
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::Curve)),
+            Some(PoolFamily::Curve),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::BalancerWeighted)),
+            Some(PoolFamily::BalancerWeighted),
+        );
+        assert_eq!(
+            PoolFamily::from_identity(&balance_vector(BalanceVectorVariant::BalancerStable)),
+            Some(PoolFamily::BalancerStable),
+        );
     }
 }

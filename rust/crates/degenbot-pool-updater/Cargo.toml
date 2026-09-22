@@ -17,6 +17,9 @@ degenbot-db.workspace = true
 # Tick-map types from degenbot-db are hashbrown maps.
 hashbrown.workspace = true
 degenbot-decoders.workspace = true
+# Taxonomy projection (ADR-059 D1): `PoolFamily::from_identity` projects the
+# pool family kernel's `Identity` onto the decode family. Pyo3-free core.
+degenbot-pools.workspace = true
 degenbot-core.workspace = true
 degenbot-rpc.workspace = true
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros", "sync"] }
