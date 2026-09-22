@@ -9,10 +9,17 @@
 
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use alloy::primitives::{address, aliases::U112, Address, U256};
+use alloy::primitives::{address, aliases::U112, Address, B256, U256};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout;
+use degenbot_pools::v4_storage_slots::{
+    encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
+    v4_slot0_slot, V4Slot0Parts,
+};
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
+use degenbot_simulation::sim::evm::journal_pools::{
+    PoolFamily, PoolPostKind, TypedPoolPost, V4PoolDescriptor,
+};
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, net_bid, solve_dfs_chains, WETH};
 use degenbot_strategy::frame_pipeline::{
@@ -453,6 +460,146 @@ fn unsupported_family_observes_loudly_not_silently() {
         "family-unsupported",
         "an unsupported-only frame observes the reason, not no_candidate"
     );
+}
+
+/// The live connector-index V4 roster fills the touched manager's
+/// `V4PoolSet`, so journal extraction decodes the known pool's typed
+/// post-state instead of reporting the family Unsupported.
+#[test]
+fn known_v4_roster_extracts_the_typed_post_state() {
+    const V4_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
+    let pool_hash = B256::new([0x5a; 32]);
+    let state_base = v4_pool_state_base_slot(pool_hash);
+    let sqrt_price_x96 = U256::from(1u128) << 96;
+    let tick_post = 1234i32;
+    let liquidity: u128 = 42;
+    let slot0 = v4_slot0_slot(state_base);
+    let liq_slot = v4_liquidity_slot(state_base);
+
+    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::default();
+    index.push_v4_edge(degenbot_bot::connector_index::V4Edge {
+        pool_hash,
+        manager: V4_MANAGER,
+        token0: TOK,
+        token1: WETH,
+        fee: 3000,
+        fee_currency1: 3000,
+        tick_spacing: 60,
+        hooks: Address::ZERO,
+        db_pool_id: 902,
+    });
+
+    let outcome = manager_journal_outcome(
+        V4_MANAGER,
+        &[
+            (
+                slot0,
+                encode_v4_slot0(V4Slot0Parts {
+                    sqrt_price_x96,
+                    tick: tick_post,
+                    ..Default::default()
+                }),
+            ),
+            (liq_slot, encode_v4_liquidity_slot(liquidity)),
+        ],
+    );
+
+    let descriptors = build_descriptors(Some(&index), &outcome.touched);
+    let Some(PoolFamily::V4PoolManager { pools }) = descriptors.by_address.get(&V4_MANAGER) else {
+        panic!("the touched manager must get a V4 descriptor");
+    };
+    assert_eq!(
+        pools.as_slice(),
+        &[V4PoolDescriptor {
+            pool_id: pool_hash,
+            tick_spacing: 60,
+        }],
+        "the manager descriptor set owns the index roster"
+    );
+
+    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
+        &outcome,
+        &descriptors.by_address,
+    );
+    let v4 = extracted
+        .iter()
+        .find(|s| s.address == V4_MANAGER)
+        .expect("the manager extracts");
+    match &v4.kind {
+        PoolPostKind::Typed(TypedPoolPost::V4 {
+            pool_id,
+            sqrt_price_x96: sqrt,
+            tick,
+            liquidity: liq,
+            ..
+        }) => {
+            assert_eq!(*pool_id, pool_hash);
+            assert_eq!(*sqrt, Some(sqrt_price_x96));
+            assert_eq!(*tick, Some(tick_post));
+            assert_eq!(*liq, Some(liquidity));
+        }
+        other => panic!("expected a typed V4 post-state, got {other:?}"),
+    }
+}
+
+/// A manager with NO roster edges keeps the empty set: the extractor reports
+/// the family Unsupported rather than guessing a pool identity.
+#[test]
+fn manager_without_roster_edges_stays_unsupported() {
+    const V4_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
+    let outcome =
+        manager_journal_outcome(V4_MANAGER, &[(U256::from(0xdead_u64), U256::from(1u64))]);
+    let index = degenbot_bot::connector_index::V2ConnectorIndex::default();
+
+    let descriptors = build_descriptors(Some(&index), &outcome.touched);
+    let Some(PoolFamily::V4PoolManager { pools }) = descriptors.by_address.get(&V4_MANAGER) else {
+        panic!("the singleton is a known manager even with an empty roster");
+    };
+    assert!(pools.is_empty());
+    assert!(descriptors.hit_v4);
+
+    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
+        &outcome,
+        &descriptors.by_address,
+    );
+    let v4 = extracted
+        .iter()
+        .find(|s| s.address == V4_MANAGER)
+        .expect("the manager extracts");
+    assert!(
+        matches!(v4.kind, PoolPostKind::Unsupported),
+        "an empty roster never fabricates a decode, got {:?}",
+        v4.kind
+    );
+    assert_eq!(empty_frame_observe_reason(&descriptors), "v4_unsupported");
+}
+
+/// One hand-built frame whose only touched account is `manager`, holding the
+/// given `(slot, present_value)` writes.
+fn manager_journal_outcome(manager: Address, writes: &[(U256, U256)]) -> ReplayOutcome {
+    let mut state = EvmState::default();
+    let mut account = Account::default();
+    account.status = AccountStatus::Touched;
+    for (slot, value) in writes {
+        account.storage.insert(
+            *slot,
+            EvmStorageSlot {
+                original_value: U256::ZERO,
+                present_value: *value,
+                transaction_id: revm::state::TransactionId::ZERO,
+                is_cold: false,
+            },
+        );
+    }
+    state.insert(manager, account);
+    ReplayOutcome {
+        status: ReplayStatus::Success,
+        state,
+        touched: vec![(manager, writes.iter().map(|(slot, _)| *slot).collect())],
+        rpc_reads: 0,
+        wall: std::time::Duration::from_micros(1),
+        base_fee_source: BaseFeeSource::Projected,
+    }
 }
 
 /// Reference constant-product output (independent of the mixed solver's

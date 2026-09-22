@@ -31,6 +31,8 @@
 // ubiquitous here — match the frame_replay convention.
 #![expect(clippy::doc_markdown)]
 
+use std::sync::Arc;
+
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pools::slot_layout;
 use degenbot_pools::{v3_storage_slots, v4_storage_slots, ClSlotLayout};
@@ -40,7 +42,7 @@ use super::frame_replay::ReplayOutcome;
 
 /// The per-pool layout knowledge the extractor needs, projected from the
 /// engine's tracked-pool registry by the caller.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PoolFamily {
     /// A V2 pair: reserves are packed at the layout table's slot 8.
     V2Pair,
@@ -76,20 +78,27 @@ pub struct V4PoolDescriptor {
 /// carries. [`Default`] is the EMPTY set: the extractor then reports the
 /// family [`PoolPostKind::Unsupported`], preserving the explicit-unsupported
 /// behavior until a caller supplies the index's known poolIds.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct V4PoolSet {
-    pools: &'static [V4PoolDescriptor],
+    pools: Arc<[V4PoolDescriptor]>,
 }
 
 impl V4PoolSet {
     #[must_use]
-    pub const fn new(pools: &'static [V4PoolDescriptor]) -> Self {
-        Self { pools }
+    pub fn new(pools: Vec<V4PoolDescriptor>) -> Self {
+        Self {
+            pools: pools.into(),
+        }
     }
 
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.pools.is_empty()
+    }
+
+    #[must_use]
+    pub fn as_slice(&self) -> &[V4PoolDescriptor] {
+        &self.pools
     }
 }
 
@@ -165,7 +174,7 @@ pub fn extract_pool_post_states(
 ) -> Vec<PoolPostState> {
     let mut out = Vec::new();
     for (address, slots) in &outcome.touched {
-        let Some(&family) = descriptors.get(address) else {
+        let Some(family) = descriptors.get(address) else {
             continue;
         };
         let journal_word = |slot: U256| {
@@ -180,13 +189,13 @@ pub fn extract_pool_post_states(
             if typed.is_empty() {
                 out.push(PoolPostState {
                     address: *address,
-                    family,
+                    family: family.clone(),
                     kind: PoolPostKind::Unsupported,
                 });
             } else {
                 out.extend(typed.into_iter().map(|post| PoolPostState {
                     address: *address,
-                    family,
+                    family: family.clone(),
                     kind: PoolPostKind::Typed(post),
                 }));
             }
@@ -217,14 +226,14 @@ pub fn extract_pool_post_states(
                     let post_tick =
                         journal_word(U256::ZERO).map(|w| v3_storage_slots::decode_v3_slot0(w).tick);
                     let mut anchors: Vec<i32> =
-                        current_tick_hint.into_iter().chain(post_tick).collect();
+                        (*current_tick_hint).into_iter().chain(post_tick).collect();
                     anchors.sort_unstable();
                     anchors.dedup();
                     recover_touched_ticks(
                         slots,
                         U256::from(layout.ticks_mapping_slot()),
                         &[U256::ZERO, U256::from(layout.liquidity_slot())],
-                        tick_spacing,
+                        *tick_spacing,
                         &anchors,
                         &journal_word,
                     )
@@ -233,7 +242,7 @@ pub fn extract_pool_post_states(
         };
         out.push(PoolPostState {
             address: *address,
-            family,
+            family: family.clone(),
             kind,
         });
     }
@@ -246,12 +255,12 @@ pub fn extract_pool_post_states(
 /// singleton for other reasons contributes nothing, leaving the caller to
 /// report the family [`PoolPostKind::Unsupported`].
 fn extract_v4_pool_states(
-    pools: V4PoolSet,
+    pools: &V4PoolSet,
     slots: &[U256],
     journal_word: &impl Fn(U256) -> Option<U256>,
 ) -> Vec<TypedPoolPost> {
     let mut out = Vec::new();
-    for pool in pools.pools {
+    for pool in pools.pools.iter() {
         let base = v4_storage_slots::v4_pool_state_base_slot(pool.pool_id);
         let slot0_slot = v4_storage_slots::v4_slot0_slot(base);
         let liquidity_slot = v4_storage_slots::v4_liquidity_slot(base);

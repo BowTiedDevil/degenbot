@@ -209,10 +209,9 @@ fn scratch_relayed(relay: Address, pool: Address) -> ScratchEvm<TestExt> {
     ScratchEvm::new(db, block_env())
 }
 
-/// A known-V4-pool set backed by a leaked slice (the descriptor carries a
-/// `&'static` set; tests build it once per case).
+/// A known-V4-pool set owning its descriptors.
 fn v4_set(pools: Vec<V4PoolDescriptor>) -> V4PoolSet {
-    V4PoolSet::new(Box::leak(pools.into_boxed_slice()))
+    V4PoolSet::new(pools)
 }
 
 fn descriptors(
@@ -481,7 +480,7 @@ fn v4_poolmanager_with_no_known_poolids_returns_unsupported() {
     let family = PoolFamily::V4PoolManager {
         pools: V4PoolSet::default(),
     };
-    let states = extract_pool_post_states(&out, &descriptors([(POOL, family)]));
+    let states = extract_pool_post_states(&out, &descriptors([(POOL, family.clone())]));
     let state = post(&states, POOL);
     assert_eq!(state.family, family);
     assert!(
@@ -530,7 +529,7 @@ fn v4_known_poolid_slots_decode_to_the_typed_post_state() {
         tick_spacing: spacing,
     }]);
     let family = PoolFamily::V4PoolManager { pools: set };
-    let states = extract_pool_post_states(&out, &descriptors([(POOL, family)]));
+    let states = extract_pool_post_states(&out, &descriptors([(POOL, family.clone())]));
     let state = post(&states, POOL);
     assert_eq!(state.family, family);
     match &state.kind {
@@ -1242,7 +1241,7 @@ async fn v3_live_parity(want_crossing: bool) {
             );
 
             let states = extract_pool_post_states(&out, &descriptors);
-            for (&pool, &family) in &descriptors {
+            for (&pool, family) in &descriptors {
                 let PoolFamily::V3 {
                     layout,
                     tick_spacing: _,
@@ -1252,7 +1251,7 @@ async fn v3_live_parity(want_crossing: bool) {
                     panic!("v3 parity only handles V3 descriptors");
                 };
                 let state = post(&states, pool);
-                assert_eq!(state.family, family);
+                assert_eq!(&state.family, family);
                 let pool_post = node_post.get(&pool).expect("diff reported this pool");
                 let liquidity_slot = layout.liquidity_slot();
                 match &state.kind {

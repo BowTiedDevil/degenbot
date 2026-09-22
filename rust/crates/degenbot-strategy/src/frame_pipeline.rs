@@ -82,7 +82,8 @@ use degenbot_simulation::sim::evm::frame_replay::{
     ReplayFrameError, ReplayStatus, ReplayableTx, SequenceReplayError,
 };
 use degenbot_simulation::sim::evm::journal_pools::{
-    extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost, V4PoolSet,
+    extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
+    V4PoolDescriptor, V4PoolSet,
 };
 use degenbot_simulation::sim::evm::BlockSimHandle;
 use degenbot_simulation::{SimulationOverrideParams, WarmCodeCacheInner};
@@ -424,14 +425,28 @@ pub fn build_descriptors(
 ) -> FrameDescriptors {
     let mut out = FrameDescriptors::default();
     for (addr, _) in touched {
-        if *addr == V4_POOL_MANAGER {
+        let manager_edges = index.map(|idx| idx.v4_edges_for_manager(*addr));
+        let is_manager = *addr == V4_POOL_MANAGER
+            || manager_edges
+                .as_ref()
+                .is_some_and(|edges| !edges.is_empty());
+        if is_manager {
             out.hit_v4 = true;
-            // The connector index carries no V4 poolIds yet; the empty set
-            // keeps extraction explicitly Unsupported (see `V4PoolSet`).
+            // The index's live V4 roster populates the per-manager descriptor
+            // set; a manager with no roster edges keeps the empty set, so
+            // extraction stays explicitly Unsupported (see `V4PoolSet`).
+            let pools = manager_edges
+                .unwrap_or_default()
+                .into_iter()
+                .map(|edge| V4PoolDescriptor {
+                    pool_id: edge.pool_hash,
+                    tick_spacing: edge.tick_spacing,
+                })
+                .collect();
             out.by_address.insert(
                 *addr,
                 PoolFamily::V4PoolManager {
-                    pools: V4PoolSet::default(),
+                    pools: V4PoolSet::new(pools),
                 },
             );
             continue;
@@ -524,7 +539,7 @@ pub fn state_digest(state: &PoolPostState) -> String {
 
 /// The JSONL-family label of a descriptor.
 #[must_use]
-pub const fn family_label(family: PoolFamily) -> &'static str {
+pub fn family_label(family: &PoolFamily) -> &'static str {
     match family {
         PoolFamily::V2Pair => "v2",
         PoolFamily::V3 { .. } => "v3",
@@ -855,7 +870,10 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
         "extract",
         serde_json::json!({
             "tx": tx_hex,
-            "families": extracted.iter().map(|s| family_label(s.family)).collect::<Vec<_>>(),
+            "families": extracted
+                .iter()
+                .map(|s| family_label(&s.family))
+                .collect::<Vec<_>>(),
             "digests": extracted.iter().map(state_digest).collect::<Vec<_>>(),
             "v4_half_unobserved": v4_half_unobserved,
             // The kind string rides the JSONL detail: the Prometheus reason

@@ -130,7 +130,8 @@ impl BackrunBoot {
 /// This is the ONE registry-construction seam: a standalone boot (a host
 /// of size one) and a hosted driver both hand it the resolved DB path and the
 /// driver's node join, so the two runtime shapes cannot drift apart. It opens
-/// `db_path` once, loads the V2 connector scan plus its V3 additions, attaches
+/// `db_path` once, loads the V2 connector scan plus its V3 additions and V4
+/// roster, attaches
 /// the on-chain ranker, freezes the [`RouteRegistry`], and runs the live
 /// rank-evidence probe last when the operator asked for it. A missing or
 /// unopenable DB, or a failed index load, answers `None` — the discovery fan
@@ -158,6 +159,9 @@ pub async fn resolve_backrun_registry(
     };
     let mut ix = match V2ConnectorIndex::load(&db, 1).and_then(|mut ix| {
         ix.load_v3(&db, 1)?;
+        // The live V4 roster populates the per-manager extraction descriptor
+        // set; without it every V4 frame extracts Unsupported.
+        ix.load_v4(&db, 1)?;
         // A DB family the backrun arm cannot type must be known at boot so a
         // frame touching it observes `family-unsupported`, never a silent drop.
         ix.load_unsupported(&db, 1)?;
