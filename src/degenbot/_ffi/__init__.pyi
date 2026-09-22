@@ -173,6 +173,18 @@ def cli_main(args: list[str]) -> int:
 
     """
 
+def driver_boot() -> None:
+    """Install the long-running-driver stack (idempotent).
+
+    Binds the ONE shared tokio runtime to pyo3-async, installs the tracing
+    subscriber + Rust→Python log drainer, the metrics scrape thread, the
+    panic hook, and emits the worker-census boot dump. Each piece guards its
+    own once-registration, so a second call reallocates nothing; the async
+    seams additionally ensure the async runtime is bound themselves, so a
+    driver that forgets this call degrades to a deterministic first-use boot
+    rather than a missing subscriber.
+    """
+
 def discovery_batch_size() -> int:
     """Return the typed `pathfinding.discovery_batch_size` (4IOEVT).
 
@@ -1835,6 +1847,7 @@ __all__ = [
     "dex_identity",
     "diagnostics",
     "discovery_batch_size",
+    "driver_boot",
     "eip_1559",
     "event_topic",
     "execution",

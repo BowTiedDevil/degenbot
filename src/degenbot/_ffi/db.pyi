@@ -37,6 +37,16 @@ def db_compact_database(path: str) -> None:
 
     """
 
+def db_schema_version() -> int:
+    """Return the Rust core's schema version.
+
+    The value stamped into ``_degenbot_db_schema_version`` on create / heal /
+    migrate. The Python driver (and its parity tests) pin to this constant
+    instead of hardcoding it, mirroring the Rust-side tests' use of
+    ``degenbot_db::schema::RUST_SCHEMA_VERSION``.
+
+    """
+
 def db_upgrade_database(path: str) -> str:
     """Ensure the database is at the current Rust schema.
 
@@ -546,6 +556,7 @@ __all__ = [
     "db_fetch_pool_row",
     "db_heal_database",
     "db_inspect_schema_state",
+    "db_schema_version",
     "db_set_exchange_active",
     "db_set_exchange_last_update_block",
     "db_upgrade_database",

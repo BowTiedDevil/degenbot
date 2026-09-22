@@ -11,8 +11,8 @@ from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALANCER_V2_POOLS
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
-from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot import driver_boot as _driver_boot
+from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot_lifecycle import (
     release_python_state as _release_python_state,
 )

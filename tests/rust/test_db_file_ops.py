@@ -35,11 +35,21 @@ from degenbot.db import (
     db_create_new_database,
     db_fetch_exchange_by_name,
     db_heal_database,
+    db_schema_version,
     db_upgrade_database,
     db_upsert_exchange,
 )
 
 RUST_STAMP_TABLE = "_degenbot_db_schema_version"
+
+# The current Rust schema stamp, read from the Rust core through the seam —
+# never hardcoded, so a schema bump only touches the core (mirrors the
+# Rust-side tests' assert against `RUST_SCHEMA_VERSION`).
+CURRENT_RUST_SCHEMA_VERSION = db_schema_version()
+# Schema v2 (`lfj_pools`, ADR-059 E3) added the first subclass table that a
+# v1-stamped DB must migrate in to reach head; the upgrade-path tests lean on
+# that gap below.
+assert CURRENT_RUST_SCHEMA_VERSION >= 2
 
 
 def _tables(db_path: pathlib.Path) -> set[str]:
@@ -112,7 +122,7 @@ def test_create_new_database_is_wal_and_rust_stamped(tmp_path: pathlib.Path):
     tables = _tables(db_path)
     assert RUST_STAMP_TABLE in tables
     assert "alembic_version" not in tables
-    assert _rust_stamp(db_path) == 1
+    assert _rust_stamp(db_path) == CURRENT_RUST_SCHEMA_VERSION
 
 
 def test_rust_and_python_create_produce_equivalent_files(tmp_path: pathlib.Path):
@@ -123,7 +133,7 @@ def test_rust_and_python_create_produce_equivalent_files(tmp_path: pathlib.Path)
     create_new_sqlite_database(py_path)
 
     assert _journal_mode(rust_path) == _journal_mode(py_path) == "wal"
-    assert _rust_stamp(rust_path) == _rust_stamp(py_path) == 1
+    assert _rust_stamp(rust_path) == _rust_stamp(py_path) == CURRENT_RUST_SCHEMA_VERSION
     assert _tables(rust_path) == _tables(py_path)
 
 
@@ -142,7 +152,7 @@ def test_backup_is_byte_stable_and_reopens(tmp_path: pathlib.Path):
 
     # the backup reopens with the same Rust stamp
     assert RUST_STAMP_TABLE in _tables(bak1)
-    assert _rust_stamp(bak1) == 1
+    assert _rust_stamp(bak1) == CURRENT_RUST_SCHEMA_VERSION
 
 
 def test_backup_raises_backup_exists_guard(tmp_path: pathlib.Path, monkeypatch):
@@ -164,7 +174,7 @@ def test_compact_is_idempotent_and_preserves_stamp(tmp_path: pathlib.Path):
     compact_sqlite_database(db_path)
     compact_sqlite_database(db_path)
 
-    assert _rust_stamp(db_path) == 1
+    assert _rust_stamp(db_path) == CURRENT_RUST_SCHEMA_VERSION
     assert _journal_mode(db_path) == "wal"
 
 
@@ -172,7 +182,7 @@ def test_upgrade_on_current_db_is_noop(tmp_path: pathlib.Path):
     db_path = tmp_path / "current.db"
     create_new_sqlite_database(db_path)
     assert db_upgrade_database(str(db_path)) == "already_current"
-    assert _rust_stamp(db_path) == 1
+    assert _rust_stamp(db_path) == CURRENT_RUST_SCHEMA_VERSION
 
 
 def test_upgrade_on_empty_file_brings_up_to_current(tmp_path: pathlib.Path):
@@ -180,7 +190,7 @@ def test_upgrade_on_empty_file_brings_up_to_current(tmp_path: pathlib.Path):
     db_path.write_bytes(b"")
     assert db_upgrade_database(str(db_path)) == "created_fresh"
     assert RUST_STAMP_TABLE in _tables(db_path)
-    assert _rust_stamp(db_path) == 1
+    assert _rust_stamp(db_path) == CURRENT_RUST_SCHEMA_VERSION
 
 
 def test_upgrade_on_legacy_marker_heals(tmp_path: pathlib.Path):
@@ -194,7 +204,7 @@ def test_upgrade_on_legacy_marker_heals(tmp_path: pathlib.Path):
     tables = _tables(db_path)
     assert RUST_STAMP_TABLE in tables
     assert "alembic_version" not in tables
-    assert _rust_stamp(db_path) == 1
+    assert _rust_stamp(db_path) == CURRENT_RUST_SCHEMA_VERSION
 
 
 def test_heal_round_trips_through_seam(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):

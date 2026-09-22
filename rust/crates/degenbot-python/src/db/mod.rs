@@ -28,6 +28,7 @@ use pyo3::wrap_pyfunction;
 
 pub use aave::PyDatabasePositionQuery;
 use degenbot_db::ops::{self, UpgradeOutcome};
+use degenbot_db::schema::RUST_SCHEMA_VERSION;
 pub use liquidity_updater::PyLiquidityUpdateEvent;
 pub use pool_read::{PyExchangeRow, PyLiquidityPoolRow, PyPoolManagerRow};
 pub use snapshot::PyDatabaseSnapshot;
@@ -63,6 +64,17 @@ fn db_compact_database(py: Python<'_>, path: &str) -> PyResult<()> {
     let path = PathBuf::from(path);
     py.detach(|| ops::compact_database(&path))
         .map_err(|e| db_err_to_py(&e))
+}
+
+/// `degenbot._ffi.db.db_schema_version() -> int`
+///
+/// The Rust core's schema version ([`degenbot_db::schema::RUST_SCHEMA_VERSION`])
+/// — the value stamped into `_degenbot_db_schema_version` on create / heal /
+/// migrate. Exposed so the Python driver (and its parity tests) pin to the
+/// same constant the core writes instead of hardcoding it.
+#[pyfunction]
+fn db_schema_version() -> u32 {
+    RUST_SCHEMA_VERSION
 }
 
 /// `degenbot._ffi.db.db_upgrade_database(path: str) -> str`
@@ -263,6 +275,7 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_function(wrap_pyfunction!(db_create_new_database, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_backup_database, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_compact_database, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(db_schema_version, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_upgrade_database, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_inspect_schema_state, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_convert_alembic_to_rust_owned, &submod)?)?;
