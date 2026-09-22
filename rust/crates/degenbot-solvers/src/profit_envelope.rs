@@ -38,10 +38,10 @@ use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 /// One affine upper-bound line: `y = ceil((A + B·x) / C)` with `C > 0`, `B ≥ 0`.
 /// `A` may be negative (lines anchored past their own window's left edge).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Line {
-    a: I512,
-    b: I512,
-    c: I512,
+pub struct Line {
+    pub a: I512,
+    pub b: I512,
+    pub c: I512,
 }
 
 impl Line {
@@ -484,7 +484,35 @@ fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<
                 .count();
             let mut sel: Vec<usize> = Vec::with_capacity(max_tangent_lines + 1);
             let early = n_keeps_usize > max_tangent_lines;
-            if early {
+            if early && cfg.tangent_sample_by_mass {
+                // Loop-20 mass-weighted sampling: rank keep-indices by their
+                // range's input capacity (max gross in range) instead of even
+                // index spacing, keeping the heaviest shelves plus the first
+                // and last (which anchor the envelope at both domain
+                // endpoints). The CL tangents sit on the Pareto front
+                // (increasing intercept, decreasing slope), so ORDER never
+                // matters to min() — only membership, and capacity-correlated
+                // membership keeps the high-volume region where real trade
+                // sizes live.
+                let mut ranked: Vec<(U512, usize)> = Vec::with_capacity(n_keeps_usize);
+                let mut kept = 0usize;
+                for cr in crossings {
+                    let er = &cr.ending_range;
+                    if er.liquidity == 0 || er.sqrt_price_x96.is_zero() {
+                        continue;
+                    }
+                    ranked.push((U512::from(er.max_gross_input_in_range()), kept));
+                    kept += 1;
+                }
+                ranked.sort_by(|x, y| y.0.cmp(&x.0));
+                let mut chosen: Vec<usize> =
+                    ranked.iter().take(max_tangent_lines).map(|p| p.1).collect();
+                chosen.push(0usize);
+                chosen.push(n_keeps_usize - 1);
+                chosen.sort_unstable();
+                chosen.dedup();
+                sel.extend(chosen);
+            } else if early {
                 let step = (n_keeps_usize / max_tangent_lines).max(1);
                 let mut idx = 0usize;
                 while idx < n_keeps_usize {
@@ -1988,8 +2016,15 @@ fn path_profit_bound_inner(
             }
         }
     }
-    {
-        let v = f(&xmax.min(one));
+    // Loop-6 fuzz fix (right-edge false-skip class): composed bound lines can
+    // carry slope > 1 on genuinely profitable cycles (chained marginal price
+    // > 1 is the DEFINITION of an arb), making f(x) = bound(x) − x strictly
+    // increasing at the domain's right end. The breakpoint scan cannot see
+    // that max — evaluate the right edge directly. Skipping it under-reported
+    // the ceiling exactly on profitable paths (over-skip risk: case from the
+    // Loop-6 corpus, 2-hop synthetic, realized profit 101e9 vs bound 85.6e9).
+    if !xmax.is_zero() {
+        let v = f(&xmax);
         if v > best {
             best = v;
         }
@@ -2067,6 +2102,156 @@ pub fn path_output_bound_at(
         return Some(U256::ZERO);
     }
     narrow(best)
+}
+
+/// Walk-side composed envelope (Loop-21 `envelope_pruned_refine`): the line
+/// set the active-set walk intersects its refine windows against. Same
+/// compose/reduce/sample pipeline as [`path_output_bound_at`] (per-hop prune
+/// rides [`compose_boundary_merged`] inside the gate; here the per-path
+/// compose is once-per-solve, so the simpler product + sample tail suffices).
+/// Soundness contract identical: the lines pointwise-dominate the true path
+/// output, so any input the lines disprove can never beat the walk's best.
+#[derive(Debug)]
+pub struct PathBoundLines {
+    pub lines: Vec<Line>,
+}
+/// Compose the path's bound lines ([`path_bound_lines`] intake; same
+/// degenerate/overflow causes as the gate).
+pub(crate) fn path_bound_lines(
+    hops: &[Option<HopMath<'_>>],
+    cfg: &SolveRuntimeConfig,
+) -> Option<PathBoundLines> {
+    let mut lines = vec![Line::IDENTITY];
+    let mut total_cap = U256::ZERO;
+    for slot in hops {
+        let hop = slot.as_ref()?;
+        let (hop_ls, cap) = hop_lines_and_cap(hop.clone(), cfg)?;
+        let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());
+        for outer in &hop_ls {
+            for inner in &lines {
+                let composed = outer.compose(inner)?;
+                next.push(composed);
+            }
+        }
+        total_cap = total_cap.checked_add(cap)?;
+        // Uniform sample cap (same stance as the gate): bound the product.
+        // min(fewer lines) ≥ min(all lines) — the bound can only loosen.
+        let compose_cap = cfg.sampled_compose_lines.max(1);
+        if next.len() > compose_cap {
+            let step = next.len() / compose_cap;
+            let mut sampled: Vec<Line> = Vec::with_capacity(compose_cap + 1);
+            let mut i = 0usize;
+            while i < next.len() {
+                sampled.push(next[i]);
+                i += step.max(1);
+            }
+            if let Some(last_line) = next.last() {
+                if sampled.last() != Some(last_line) {
+                    sampled.push(*last_line);
+                }
+            }
+            next = sampled;
+        }
+        for l in &mut next {
+            l.reduce(COMPOSE_TARGET_BITS);
+        }
+        lines = next;
+    }
+    let _ = total_cap;
+    Some(PathBoundLines { lines })
+}
+/// Loop-21: intersect the refine window `[lo, hi]` with the inputs the
+/// composed bound cannot disprove: for the walk's best-so-far profit `best`
+/// (output − input), any x with `bound(x) − x < best` can never beat the
+/// walk's argmax (the lines dominate the true output pointwise), so the
+/// sub-window is skipped without a simulation. Each line yields an exact
+/// half-interval in x (`(A + B·x)/C ≥ best` with C > 0); the clamp is their
+/// intersection. Returns `None` when the whole window is disproven;
+/// arithmetic overflow falls back to the unpruned window (the clamp is an
+/// optimization, never a contract).
+pub(crate) fn clamp_window_to_bound(
+    lines: &[Line],
+    lo: U256,
+    hi: U256,
+    best: U256,
+) -> Option<(U256, U256)> {
+    fn i512_from_u256(v: U256) -> Option<I512> {
+        I512::try_from(U512::from(v)).ok()
+    }
+    fn i512_floor_u256(v: I512) -> Option<U256> {
+        // Same limbs discipline as [`narrow`]: check negativity + upper
+        // limbs, then repack the low four limbs into U256.
+        let neg = v.is_negative();
+        let abs = v.abs();
+        let mag = abs.as_limbs();
+        if neg || mag[4] != 0 || mag[5] != 0 || mag[6] != 0 || mag[7] != 0 {
+            return None;
+        }
+        Some(U256::from_limbs([mag[0], mag[1], mag[2], mag[3]]))
+    }
+    fn div_ceil_i512(n: I512, d: I512) -> I512 {
+        let q = n / d;
+        if n % d != I512::ZERO && (n < I512::ZERO) == (d > I512::ZERO) {
+            q + I512::ONE
+        } else {
+            q
+        }
+    }
+    fn div_floor_i512(n: I512, d: I512) -> I512 {
+        let q = n / d;
+        if n % d != I512::ZERO && (n < I512::ZERO) != (d > I512::ZERO) {
+            q - I512::ONE
+        } else {
+            q
+        }
+    }
+    let Some(lo_i) = i512_from_u256(lo) else {
+        return Some((lo, hi));
+    };
+    let Some(hi_i) = i512_from_u256(hi) else {
+        return Some((lo, hi));
+    };
+    let Some(best_i) = i512_from_u256(best) else {
+        return Some((lo, hi));
+    };
+    let mut a = lo_i;
+    let mut b = hi_i;
+    for l in lines {
+        // (A + B·x)/C ≥ best  ⇔  (B − C)·x ≥ best·C − A   (C > 0)
+        let Some(req) = best_i.checked_mul(l.c).and_then(|v| v.checked_sub(l.a)) else {
+            return Some((lo, hi));
+        };
+        let Some(slope) = l.b.checked_sub(l.c) else {
+            return Some((lo, hi));
+        };
+        if slope == I512::ZERO {
+            if req > I512::ZERO {
+                return None; // this line disproves the whole window
+            }
+            continue;
+        }
+        if slope > I512::ZERO {
+            let x0 = div_ceil_i512(req, slope);
+            if x0 > a {
+                a = x0;
+            }
+        } else {
+            let x1 = div_floor_i512(req, slope);
+            if x1 < b {
+                b = x1;
+            }
+        }
+        if a > b {
+            return None;
+        }
+    }
+    let f_lo = if a <= lo_i { lo } else { i512_floor_u256(a)? };
+    let f_hi = if b >= hi_i { hi } else { i512_floor_u256(b)? };
+    if f_lo > f_hi {
+        None
+    } else {
+        Some((f_lo, f_hi))
+    }
 }
 
 /// GATE-COMPOSE-2: legacy-fallback trigger reasons. Per-reason counters

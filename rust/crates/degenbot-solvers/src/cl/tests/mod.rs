@@ -1,3 +1,5 @@
+mod refinements;
+
 use std::sync::Arc;
 
 use crate::runtime::SolveRuntimeConfig;
@@ -1144,6 +1146,7 @@ fn test_solve_mixed_piecewise_2hop_delegates() {
         &[None, None], // offline shape: tables derive here
         &[true, false],
         &SolveRuntimeConfig::default(),
+        None,
     );
 
     // Just verify no panic; profit depends on specific reserves
@@ -1180,6 +1183,7 @@ fn cl_path_cached_crossings_match_profile_only_solve() {
         &prepared,
         None,
         &SolveRuntimeConfig::default(),
+        None,
     )
     .result;
     let offline =
@@ -1222,6 +1226,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
         &cl_prepared,
         &[true, false],
         &SolveRuntimeConfig::default(),
+        None,
     );
     let offline = solve_mixed_piecewise(
         &v2_hops,
@@ -1229,6 +1234,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
         &[None, None],
         &[true, false],
         &SolveRuntimeConfig::default(),
+        None,
     )
     .result;
     assert_eq!(cached.result, offline);
@@ -1263,6 +1269,7 @@ fn test_solve_mixed_piecewise_3hop_v2_cl_v2() {
         &[None, None, None],  // offline shape: tables derive here
         &[true, false, true], // V2 → CL → V2
         &SolveRuntimeConfig::default(),
+        None,
     );
 
     // Price disagreement: V2 pool 1 sells 1 WETH at 2000 USDC,
@@ -1321,6 +1328,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
         &cl_prepared,
         &[true, false, true],
         &SolveRuntimeConfig::default(),
+        None,
     );
     let offline = solve_mixed_piecewise(
         &v2_hops,
@@ -1328,6 +1336,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
         &[None, None, None],
         &[true, false, true],
         &SolveRuntimeConfig::default(),
+        None,
     )
     .result;
     assert_eq!(cached.result, offline);
@@ -2503,6 +2512,7 @@ fn solve_mixed_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
         &[None, None],
         &[true, false],
         &SolveRuntimeConfig::default(),
+        None,
     );
 
     // Not exact equality: the reference's ±2 sweep around its piecewise
@@ -2881,7 +2891,15 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
                     continue;
                 };
                 let mut rec = WalkRecorder::new();
-                let (_argmax_x, piece_best_score) = walk_refine_window(&hops, x_l, x_r, &mut rec);
+                let (_argmax_x, piece_best_score) = walk_refine_window(
+                    &hops,
+                    x_l,
+                    x_r,
+                    &mut rec,
+                    Some(anchor),
+                    &SolveRuntimeConfig::default(),
+                    None,
+                );
 
                 // Skip corner members: the refined argmax must sit strictly
                 // interior to the window.

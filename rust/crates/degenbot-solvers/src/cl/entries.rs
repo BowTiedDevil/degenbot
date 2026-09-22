@@ -6,6 +6,7 @@ use super::active_set::{solve_active_set_path, WalkHop, WalkOutcome};
 use super::crossings::{build_cl_crossing_table, build_word_profiles, cl_walk_hop};
 use super::memo::{walk_path_fingerprint, WalkMemo};
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
+use crate::profit_envelope::PathBoundLines;
 use crate::runtime::SolveRuntimeConfig;
 
 // Clippy: allow manual_ok_err in solve_v3_v3_piecewise match arms
@@ -22,7 +23,11 @@ pub fn solve_v3_v3_piecewise(
     seq2: &IntV3TickRangeSequence,
     cfg: &SolveRuntimeConfig,
 ) -> WalkOutcome {
-    solve_active_set_path(&[cl_walk_hop(seq1, None), cl_walk_hop(seq2, None)], cfg)
+    solve_active_set_path(
+        &[cl_walk_hop(seq1, None), cl_walk_hop(seq2, None)],
+        cfg,
+        None,
+    )
 }
 
 /// Solve an N-hop concentrated-liquidity arbitrage path with the active-set
@@ -59,7 +64,7 @@ pub fn derive_and_solve_cl_piecewise(
     cfg: &SolveRuntimeConfig,
 ) -> WalkOutcome {
     let prepared: Vec<ClSolveTables> = sequences.iter().map(|s| ClSolveTables::derive(s)).collect();
-    solve_cl_piecewise(sequences, &prepared, None, cfg)
+    solve_cl_piecewise(sequences, &prepared, None, cfg, None)
 }
 
 /// Stage-1 all-CL solve consuming the projection's precomputed crossing
@@ -77,6 +82,7 @@ pub fn solve_cl_piecewise(
     prepared: &[ClSolveTables],
     memo: Option<&WalkMemo>,
     cfg: &SolveRuntimeConfig,
+    env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
     if sequences.is_empty() || prepared.len() != sequences.len() {
         return WalkOutcome::none();
@@ -91,13 +97,13 @@ pub fn solve_cl_piecewise(
             if let Some(hit) = memo.probe(fp) {
                 return WalkOutcome::from_result(Some(hit));
             }
-            let outcome = solve_cl_piecewise_inner(sequences, prepared, cfg);
+            let outcome = solve_cl_piecewise_inner(sequences, prepared, cfg, env);
             memo.note_cost(fp, outcome.stats.sims as u64);
             memo.store(fp, outcome.result.as_ref());
             return outcome;
         }
     }
-    solve_cl_piecewise_inner(sequences, prepared, cfg)
+    solve_cl_piecewise_inner(sequences, prepared, cfg, env)
 }
 
 /// The memo-less solve body (the memo hook is the only difference).
@@ -105,6 +111,7 @@ fn solve_cl_piecewise_inner(
     sequences: &[&IntV3TickRangeSequence],
     prepared: &[ClSolveTables],
     cfg: &SolveRuntimeConfig,
+    env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
     let hops: Vec<WalkHop> = (0..sequences.len())
         .map(|i| WalkHop::Cl {
@@ -112,7 +119,7 @@ fn solve_cl_piecewise_inner(
             profiles: Arc::clone(&prepared[i].profiles),
         })
         .collect();
-    solve_active_set_path(&hops, cfg)
+    solve_active_set_path(&hops, cfg, env)
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +133,7 @@ fn solve_cl_piecewise_inner(
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// `hop_outputs[0]` = output from the first hop, `hop_outputs[1]` = output from the second.
 #[must_use]
+#[expect(clippy::allow_attributes)]
 pub fn solve_mixed_v2_v3_piecewise(
     v2_hops: &[IntHopState],
     v3_sequence: &IntV3TickRangeSequence,
@@ -141,7 +149,7 @@ pub fn solve_mixed_v2_v3_piecewise(
         hops.extend(v2_hops.iter().map(WalkHop::ConstantProduct));
         hops.push(cl_hop);
     }
-    solve_active_set_path(&hops, cfg)
+    solve_active_set_path(&hops, cfg, None)
 }
 
 /// Solve an N-hop mixed V2 + CL (V3/V4) arbitrage path with the active-set
@@ -169,6 +177,7 @@ pub fn solve_mixed_piecewise(
     cl_prepared: &[Option<ClSolveTables>],
     hop_order: &[bool], // true = V2, false = CL
     cfg: &SolveRuntimeConfig,
+    env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
     let n_hops = hop_order.len();
     if n_hops < 2 || v2_hops.len() != n_hops || cl_sequences.len() != n_hops {
@@ -203,5 +212,5 @@ pub fn solve_mixed_piecewise(
             });
         }
     }
-    solve_active_set_path(&hops, cfg)
+    solve_active_set_path(&hops, cfg, env)
 }

@@ -23,6 +23,7 @@ use super::telemetry::{
     WALK_CENSUS_REFINE_SIMNS, WALK_CENSUS_REFINE_SIMS,
 };
 use super::{ClCrossingTable, ClProfileTable};
+use crate::profit_envelope::{clamp_window_to_bound, PathBoundLines};
 use crate::runtime::{AnchorSweep, SolveRuntimeConfig};
 
 // ---------------------------------------------------------------------------
@@ -255,6 +256,17 @@ impl WalkRecorder {
         }
     }
 
+    /// The walk's best-so-far profit as a non-negative output−input level
+    /// (zero until the walk finds its first positive-profit candidate). The
+    /// Loop-21 envelope clamp uses it as the threshold every kept input must
+    /// still be able to beat.
+    fn best_floor(&self) -> U256 {
+        if self.top_score <= alloy::primitives::I256::ZERO {
+            return U256::ZERO;
+        }
+        U256::try_from(self.top_score).unwrap_or(U256::ZERO)
+    }
+
     /// Simulate `candidate`, update the bests, and return the outcome (the
     /// caller needs `landed` / `final_output` for direction decisions).
     fn eval_and_record(&mut self, candidate: U256, hops: &[WalkHop]) -> WalkPathOutcome {
@@ -336,8 +348,48 @@ pub(super) fn walk_refine_window(
     lo: U256,
     hi: U256,
     rec: &mut WalkRecorder,
+    piece_anchor: Option<U256>,
+    cfg: &SolveRuntimeConfig,
+    env: Option<&PathBoundLines>,
 ) -> (U256, alloy::primitives::I256) {
     use alloy::primitives::I256;
+    // Loop-21 envelope pruning (`envelope_pruned_refine`): the composed bound
+    // pointwise-dominates O(x), so any input with bound(x) − x < best cannot
+    // beat the walk's best candidate — clamp the window to the undisproved
+    // region (exact per-line half-intervals) and never probe a disproven wei.
+    let mut lo = lo;
+    let mut hi = hi;
+    if let Some(env) = env {
+        match clamp_window_to_bound(&env.lines, lo, hi, rec.best_floor()) {
+            Some((clamped_lo, clamped_hi)) => {
+                lo = clamped_lo;
+                hi = clamped_hi;
+            }
+            None => {
+                // The envelope disproves the entire window — zero sims.
+                return (lo, I256::MIN);
+            }
+        }
+        if lo > hi {
+            return (lo, I256::MIN);
+        }
+    }
+    // Loop-19 model-anchor bracket (`refine_model_anchor`): the piece's
+    // smooth Möbius anchor has P′(x) = 0 and the EVM floor staircase
+    // perturbs the top at wei scale (see REFINE_BRACKET_WEI), so when this
+    // window's OWN anchor is inside, start the ternary from its
+    // ±REFINE_BRACKET_WEI bracket instead of the full window. Neighbor
+    // refinements pass `piece_anchor = None` — a different piece's anchor is
+    // not evidence for this window, so they keep the full search.
+    if cfg.refine_model_anchor && piece_anchor.is_some_and(|a| a >= lo && a <= hi) {
+        let anchor = piece_anchor.expect("checked is_some_and above");
+        lo = anchor
+            .saturating_sub(U256::from(REFINE_BRACKET_WEI))
+            .max(lo);
+        hi = anchor
+            .saturating_add(U256::from(REFINE_BRACKET_WEI))
+            .min(hi);
+    }
     let mut argmax_x = lo;
     let mut best_score = I256::MIN;
     // phase 0 = ternary narrowing, phase 1 = final grid / dense sweep.
@@ -487,12 +539,16 @@ const SOLVE_TELEMETRY_PIECES_WARN: usize = 500;
 const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 
 #[hotpath::measure(label = "cl_solve.active_set")]
-pub(super) fn solve_active_set_path(hops: &[WalkHop], cfg: &SolveRuntimeConfig) -> WalkOutcome {
+pub(super) fn solve_active_set_path(
+    hops: &[WalkHop],
+    cfg: &SolveRuntimeConfig,
+    env: Option<&PathBoundLines>,
+) -> WalkOutcome {
     let s_t0 = std::time::Instant::now();
     // The walk drains its own counters at entry; the returned outcome carries
     // THIS path's telemetry (no frozen thread-locals on the read-back path).
     reset_walk_stats();
-    let out = solve_active_set_path_inner(hops, cfg);
+    let out = solve_active_set_path_inner(hops, cfg, env);
     add_solve_ns(u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
     let stats = peek_walk_stats();
     let census_pieces = take_event_census_pieces();
@@ -507,6 +563,7 @@ pub(super) fn solve_active_set_path(hops: &[WalkHop], cfg: &SolveRuntimeConfig) 
 fn solve_active_set_path_inner(
     hops: &[WalkHop],
     cfg: &SolveRuntimeConfig,
+    env: Option<&PathBoundLines>,
 ) -> Option<(U256, U256, Vec<U256>)> {
     /// Advance the landed tuple one piece past the window's right edge
     /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).
@@ -530,23 +587,28 @@ fn solve_active_set_path_inner(
         clippy::too_many_arguments,
         reason = "walk-domain refinement carry (window pair + hint + recorder + neighbor switch + runtime stance) is coherent as a flat signature"
     )]
+    #[allow(clippy::too_many_arguments)]
     fn refine_at_stop(
         hops: &[WalkHop],
         ks: &[usize],
         x_l: U256,
         x_r: Option<U256>,
-        hint: U256,
+        anchor: Option<U256>,
         rec: &mut WalkRecorder,
         refine_neighbor: bool,
         cfg: &SolveRuntimeConfig,
+        env: Option<&PathBoundLines>,
     ) {
+        let Some(hint) = anchor else {
+            return;
+        };
         let hi_current = x_r.unwrap_or_else(|| {
             hint.saturating_mul(U256::from(4u64))
                 .max(x_l.saturating_mul(U256::from(2u64)))
                 .max(x_l.saturating_add(U256::from(1024u64)))
         });
         if x_l <= hi_current {
-            walk_refine_window(hops, x_l, hi_current, rec);
+            walk_refine_window(hops, x_l, hi_current, rec, anchor, cfg, env);
         }
         // Gated forward-neighbor refine (6V3ZS6 follow-up): a full ternary +
         // grid over the neighbor window runs on climbing stops (edge can
@@ -593,7 +655,7 @@ fn solve_active_set_path_inner(
                 let grace = rec.top_score.max(alloy::primitives::I256::ZERO)
                     / alloy::primitives::I256::from_raw(alloy::primitives::U256::from(1_000u64));
                 if best_coarse + grace >= rec.top_score {
-                    walk_refine_window(hops, n_l, n_hi, rec);
+                    walk_refine_window(hops, n_l, n_hi, rec, None, cfg, env);
                 }
             }
             return;
@@ -612,7 +674,7 @@ fn solve_active_set_path_inner(
                 .max(n_l.saturating_add(U256::from(1024u64)))
         });
         if n_l <= n_hi {
-            walk_refine_window(hops, n_l, n_hi, rec);
+            walk_refine_window(hops, n_l, n_hi, rec, None, cfg, env);
         }
     }
 
@@ -734,7 +796,7 @@ fn solve_active_set_path_inner(
             let hi = sat.map_or(anchor.max(U256::from(1024)), |e| e.max(anchor));
             if hi > U256::ZERO {
                 let rq_mk = Mark::start();
-                walk_refine_window(hops, U256::ZERO, hi, &mut rec);
+                walk_refine_window(hops, U256::ZERO, hi, &mut rec, Some(anchor), cfg, env);
                 rq_mk.commit(
                     &WALK_CENSUS_REFINE_NS,
                     &WALK_CENSUS_REFINE_SIMS,
@@ -835,7 +897,17 @@ fn solve_active_set_path_inner(
         let Some(xr) = x_r else {
             // Terminal piece (unbounded right): refine and finish.
             let term_mk = Mark::start();
-            refine_at_stop(hops, &ks, x_l, None, anchor, &mut rec, false, cfg);
+            refine_at_stop(
+                hops,
+                &ks,
+                x_l,
+                None,
+                Some(anchor),
+                &mut rec,
+                false,
+                cfg,
+                env,
+            );
             term_mk.commit(
                 &WALK_CENSUS_REFINE_NS,
                 &WALK_CENSUS_REFINE_SIMS,
@@ -875,7 +947,17 @@ fn solve_active_set_path_inner(
             continue;
         }
         let term_mk = Mark::start();
-        refine_at_stop(hops, &ks, x_l, Some(xr), anchor, &mut rec, climbing, cfg);
+        refine_at_stop(
+            hops,
+            &ks,
+            x_l,
+            Some(xr),
+            Some(anchor),
+            &mut rec,
+            climbing,
+            cfg,
+            env,
+        );
         term_mk.commit(
             &WALK_CENSUS_REFINE_NS,
             &WALK_CENSUS_REFINE_SIMS,

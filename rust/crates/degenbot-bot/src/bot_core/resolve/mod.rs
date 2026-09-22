@@ -925,6 +925,7 @@ mod tests {
             &prepared,
             None,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
+            None,
         )
         .result
     }
@@ -980,6 +981,7 @@ mod tests {
             &cl_prepared,
             &hop_order,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
+            None,
         )
         .result
     }

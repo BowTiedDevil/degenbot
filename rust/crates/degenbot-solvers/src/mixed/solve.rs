@@ -146,7 +146,14 @@ pub fn solve_path_with_min_profit(
             }
         }
     }
-    let (result, stats) = solve_path_inner(resolved, gate);
+    // Loop-21 `envelope_pruned_refine`: hand the walk the composed bound so
+    // its refine windows skip the inputs the bound disproves.
+    let walk_env = if gate.runtime.envelope_pruned_refine {
+        crate::profit_envelope::path_bound_lines(&views, &gate.runtime)
+    } else {
+        None
+    };
+    let (result, stats) = solve_path_inner(resolved, gate, walk_env.as_ref());
     SolveOutcome { result, stats }
 }
 
@@ -159,6 +166,7 @@ pub fn solve_path_with_min_profit(
 pub fn solve_path_inner(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
+    walk_env: Option<&crate::profit_envelope::PathBoundLines>,
 ) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
@@ -280,6 +288,7 @@ pub fn solve_path_inner(
                 &prepared,
                 gate.walk_memo(),
                 &gate.runtime,
+                walk_env,
             );
             (
                 out.result.map(|(optimal_input, _profit, hop_outputs)| {
@@ -361,7 +370,7 @@ pub fn solve_path_inner(
         (None, crate::cl::WalkStats::default())
     } else {
         // Mixed V2 + CL (V3 or V4)
-        solve_mixed_path_int(resolved, gate)
+        solve_mixed_path_int(resolved, gate, walk_env)
     };
 
     // V4 int128 guard: reject paths where any V4 hop's consumed input or
@@ -441,6 +450,7 @@ pub fn solve_path_inner(
 fn solve_mixed_path_int(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
+    walk_env: Option<&crate::profit_envelope::PathBoundLines>,
 ) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
     if resolved.hops.len() < 2 {
         return (None, crate::cl::WalkStats::default());
@@ -505,6 +515,7 @@ fn solve_mixed_path_int(
         &cl_prepared,
         &hop_order,
         &gate.runtime,
+        walk_env,
     );
     (
         out.result.map(|(optimal_input, profit, hop_outputs)| {
@@ -1499,7 +1510,7 @@ mod gate_tests {
         let p = profitable_path();
         assert_eq!(
             solve_path_with_min_profit(&p, U256::from(u64::MAX), &GateDeps::offline()).result,
-            solve_path_inner(&p, &GateDeps::offline()).0,
+            solve_path_inner(&p, &GateDeps::offline(), None).0,
             "offline deps (no prefix cache) must be bit-for-bit identical"
         );
     }

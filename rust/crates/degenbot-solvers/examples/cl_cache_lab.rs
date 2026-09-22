@@ -115,6 +115,7 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
         &prepared_hops,
         None,
         &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
+        None,
     )
     .result
 }

@@ -28,6 +28,11 @@ pub(crate) fn solve_runtime_config_from_cfg(
         sampled_compose_lines: cfg.solve.envelope_sampled_compose_lines,
         memo_on: cfg.solve.solver_walk_memo,
         memo_stats: cfg.solve.solver_walk_memo_stats,
+        // Loop-19/20/21 experiment stances — schema keys pending in
+        // degenbot-config; the engine pins the measured defaults for now.
+        refine_model_anchor: false,
+        tangent_sample_by_mass: false,
+        envelope_pruned_refine: true,
     }
 }
 /// T4: the ONE config parse point for the engine's runtime stances —

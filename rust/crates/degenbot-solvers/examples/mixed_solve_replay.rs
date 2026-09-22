@@ -270,6 +270,7 @@ fn main() {
                 &no_tables,
                 &hop_order,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
+                None,
             );
             let us = t0.elapsed().as_micros() as u128;
             times_us.push(us);

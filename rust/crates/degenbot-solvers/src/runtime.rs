@@ -41,6 +41,21 @@ pub struct SolveRuntimeConfig {
     pub memo_on: bool,
     /// DEGENBOT_SOLVER_WALK_MEMO_STATS (recomposition census).
     pub memo_stats: bool,
+    /// Loop-19 EXPERIMENT (`refine_model_anchor`): `walk_refine_window`
+    /// brackets its ternary around the piece's model anchor when the anchor
+    /// is inside the window (the EVM floor staircase perturbs the top at wei
+    /// scale — see the [`crate::cl::active_set`] REFINE_BRACKET_WEI note),
+    /// saving the ternary-narrowing probes.
+    pub refine_model_anchor: bool,
+    /// Loop-20 EXPERIMENT (`tangent_sample_by_mass`): CL tangent sampling
+    /// ranks ranges by input capacity (`max_gross_input_in_range`) instead
+    /// of even index spacing, keeping the high-volume shelves.
+    pub tangent_sample_by_mass: bool,
+    /// Loop-21 EXPERIMENT (`envelope_pruned_refine`): the active-set walk
+    /// intersects each refine window with the composed envelope bound's
+    /// undisproved region — inputs the bound proves cannot beat the walk's
+    /// best candidate are skipped without a simulation.
+    pub envelope_pruned_refine: bool,
 }
 
 impl Default for SolveRuntimeConfig {
@@ -53,6 +68,9 @@ impl Default for SolveRuntimeConfig {
             sampled_compose_lines: 48,
             memo_on: false,
             memo_stats: false,
+            refine_model_anchor: false,
+            tangent_sample_by_mass: false,
+            envelope_pruned_refine: true,
         }
     }
 }
