@@ -180,26 +180,21 @@ impl DiscoveryPoolRow {
 
 // ── SELECT construction ────────────────────────────────────────────────────
 
-/// `(kind, subclass table, is_aerodrome_stable)` for every V2 family.
-///
-/// Mirrors [`crate::schema::table::v2_v3_subclass_table`]; kept as an ordered
-/// const so one `UNION ALL` covers every V2 subclass table.
-const V2_FAMILIES: &[(&str, &str, bool)] = &[
-    ("uniswap_v2", "uniswap_v2_pools", false),
-    ("sushiswap_v2", "sushiswap_v2_pools", false),
-    ("pancakeswap_v2", "pancakeswap_v2_pools", false),
-    ("camelot_v2", "camelot_v2_pools", false),
-    ("swapbased_v2", "swapbased_v2_pools", false),
-    ("aerodrome_v2", "aerodrome_v2_pools", true),
-];
+/// `(kind, subclass table, has_stable_column)` for every V2 species, in
+/// manifest order. Projects [`crate::species`] (ADR-059 D3) so one `UNION ALL`
+/// covers every V2 subclass table without a second hand-listed enumeration.
+fn v2_families() -> Vec<(&'static str, &'static str, bool)> {
+    crate::species::species_of(crate::species::Family::V2)
+        .map(|s| (s.kind.as_str(), s.table.as_str(), s.stable))
+        .collect()
+}
 
-/// `(kind, subclass table)` for every V3 family.
-const V3_FAMILIES: &[(&str, &str)] = &[
-    ("uniswap_v3", "uniswap_v3_pools"),
-    ("sushiswap_v3", "sushiswap_v3_pools"),
-    ("pancakeswap_v3", "pancakeswap_v3_pools"),
-    ("aerodrome_v3", "aerodrome_v3_pools"),
-];
+/// `(kind, subclass table)` for every V3 species, in manifest order.
+fn v3_families() -> Vec<(&'static str, &'static str)> {
+    crate::species::species_of(crate::species::Family::V3)
+        .map(|s| (s.kind.as_str(), s.table.as_str()))
+        .collect()
+}
 
 /// Column-list prefix shared by every V2/V3 union branch: the base `pools`
 /// row, then the two token joins, then the exchange row.
@@ -218,9 +213,11 @@ const V2V3_JOINS: &str = "FROM pools p \
 /// Build the one-statement V2/V3 discovery SELECT (`UNION ALL` over every
 /// subclass table so a single query covers all V2 + V3 families).
 fn v2v3_select() -> String {
-    let mut branches: Vec<String> = Vec::with_capacity(V2_FAMILIES.len() + V3_FAMILIES.len());
-    for (kind, table, aerodrome) in V2_FAMILIES {
-        let stable = if *aerodrome { "s.stable" } else { "NULL" };
+    let v2 = v2_families();
+    let v3 = v3_families();
+    let mut branches: Vec<String> = Vec::with_capacity(v2.len() + v3.len());
+    for (kind, table, aerodrome) in v2 {
+        let stable = if aerodrome { "s.stable" } else { "NULL" };
         branches.push(format!(
             "SELECT {V2V3_SELECT_PREFIX}, \
              s.fee_token0, s.fee_token1, s.fee_denominator, \
@@ -230,7 +227,7 @@ fn v2v3_select() -> String {
              WHERE p.chain = ?1 AND p.kind = '{kind}'"
         ));
     }
-    for (kind, table) in V3_FAMILIES {
+    for (kind, table) in v3 {
         branches.push(format!(
             "SELECT {V2V3_SELECT_PREFIX}, \
              s.fee_token0, s.fee_token1, s.fee_denominator, \

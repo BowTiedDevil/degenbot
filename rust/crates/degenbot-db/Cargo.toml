@@ -18,6 +18,12 @@ workspace = true
 # `just check-no-pyo3-in-cores`.
 [dependencies]
 alloy = { version = "^2.4" }
+# Species-manifest decode (ADR-059 D3): `serde`/`toml` parse the embedded
+# `species.toml` into typed structs with `deny_unknown_fields`, so a typo'd
+# species key fails at first use. `toml` already resolves in the workspace
+# graph (degenbot-config / degenbot-python), so this grows no new crate.
+serde = { version = "^1.0", features = ["derive"] }
+toml = "1.1.6"
 # `op_info!` / `op_warn!` telemetry — the ADR-052 D1 heal-at-open report.
 # Pyo3-free and already in this crate's graph via `degenbot-math` (which
 # depends on `degenbot-core`), so this direct edge only names the macros the
@@ -42,7 +48,6 @@ tracing = { version = "^0.1" }
 
 [dev-dependencies]
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
-serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 tempfile = { version = "^3.27" }
 

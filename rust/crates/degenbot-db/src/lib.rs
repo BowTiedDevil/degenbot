@@ -52,6 +52,7 @@ pub mod rows;
 pub mod schema;
 pub mod snapshot;
 pub mod snapshot_db;
+pub mod species;
 pub mod write;
 
 pub use aave::{
@@ -90,6 +91,7 @@ pub use rows::{
     V2PoolRow, V3PoolRow, V4PoolRow,
 };
 pub use snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap, PoolKey};
+pub use species::{ChainIdentifiers, Family, Manifest, ManifestError, SlotLayout, Species};
 pub use write::DebtPositionRefreshContext;
 pub use write::{
     decode_reserve_configuration_bitmap, AssetRow, ReserveConfiguration, ScaledTokenPosition,

@@ -555,13 +555,8 @@ pub fn fetch_liquidity_map_v4_on_conn(
 /// uniswap-only lookup returned `None`, so the seed verify fell back to head
 /// and re-tripped the wrong-block bug). Returns `None` for non-V3 kinds.
 fn v3_kind_liquidity_table(kind: &str) -> Option<&'static str> {
-    match kind {
-        "uniswap_v3" => Some("uniswap_v3_pools"),
-        "pancakeswap_v3" => Some("pancakeswap_v3_pools"),
-        "sushiswap_v3" => Some("sushiswap_v3_pools"),
-        "aerodrome_v3" => Some("aerodrome_v3_pools"),
-        _ => None,
-    }
+    let species = crate::species::manifest().get(kind)?;
+    (species.family == crate::species::Family::V3).then_some(species.table.as_str())
 }
 
 /// The V3 pool's `liquidity_update_block`, by address — the block its DB

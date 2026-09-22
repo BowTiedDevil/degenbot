@@ -60,26 +60,34 @@ pub mod table {
     pub const MANAGED_POOL_INITIALIZATION_MAPS: &str = "managed_pool_initialization_maps";
     pub const UNISWAP_V3_POOLS: &str = "uniswap_v3_pools";
 
+    /// The subclass table names the schema admits for V2/V3 species. The
+    /// species manifest ([`crate::species`]) validates every non-V4 `table`
+    /// against this set, so a manifest entry cannot name a table the DDL does
+    /// not create.
+    pub const V2_V3_SUBCLASS_TABLES: &[&str] = &[
+        "uniswap_v2_pools",
+        "sushiswap_v2_pools",
+        "pancakeswap_v2_pools",
+        "camelot_v2_pools",
+        "swapbased_v2_pools",
+        "aerodrome_v2_pools",
+        "uniswap_v3_pools",
+        "sushiswap_v3_pools",
+        "pancakeswap_v3_pools",
+        "aerodrome_v3_pools",
+    ];
+
     /// The per-DEX subclass table for a V2/V3 `kind` discriminator.
     ///
     /// Returns `None` for `base`/non-subclass kinds (no subclass row).
     /// V4 has no V2/V3-style subclass table — it joins `uniswap_v4_pools`
     /// via the `managed_pools` polymorphic base, handled separately.
+    ///
+    /// Projects [`crate::species`] (ADR-059 D3) so the kind-to-table mapping
+    /// has one home instead of a second hand-listed `match`.
     #[must_use]
     pub fn v2_v3_subclass_table(kind: &str) -> Option<&'static str> {
-        match kind {
-            "aerodrome_v2" => Some("aerodrome_v2_pools"),
-            "camelot_v2" => Some("camelot_v2_pools"),
-            "pancakeswap_v2" => Some("pancakeswap_v2_pools"),
-            "sushiswap_v2" => Some("sushiswap_v2_pools"),
-            "swapbased_v2" => Some("swapbased_v2_pools"),
-            "uniswap_v2" => Some("uniswap_v2_pools"),
-            "aerodrome_v3" => Some("aerodrome_v3_pools"),
-            "uniswap_v3" => Some("uniswap_v3_pools"),
-            "pancakeswap_v3" => Some("pancakeswap_v3_pools"),
-            "sushiswap_v3" => Some("sushiswap_v3_pools"),
-            _ => None, // ExpectedAbsent: only V2/V3 subclass kinds have a table.
-        }
+        crate::species::subclass_table_for_kind(kind)
     }
 
     /// `true` if `kind` is a V3 family discriminator
