@@ -441,3 +441,101 @@ fn dispatch_economics_instruments_render() {
     // Prometheus renders the f64 sum as a plain integer at this magnitude.
     assert!(realized.ends_with("250000000000000000"), "got: {realized}");
 }
+
+/// Backrun searcher-feed instruments render the expected Prometheus
+/// families. Counters accumulate the pushed deltas; gauges take the last
+/// recorded value; a `None` event-age (no event yet) leaves the last value
+/// standing instead of overwriting it with a fake 0.
+#[test]
+fn backrun_feed_instruments_render_expected_families() {
+    use degenbot_bot::instruments::PipelineInstruments;
+    use degenbot_bot::metrics;
+    use opentelemetry::metrics::MeterProvider;
+
+    let (provider, registry) = metrics::build_prometheus_provider().expect("provider");
+    let meter = provider.meter("degenbot.test");
+    let p = PipelineInstruments::new(&meter);
+
+    p.record_backrun_feed(true, Some(1.5), 5, 2, 1, 3, 7);
+    p.record_backrun_feed(false, None, 2, 0, 0, 0, 1);
+
+    let text = metrics::render(&registry);
+    for family in [
+        "degenbot_backrun_feed_connected",
+        "degenbot_backrun_feed_seconds_since_event",
+        "degenbot_backrun_feed_frames_total",
+        "degenbot_backrun_feed_dropped_ring_total",
+        "degenbot_backrun_feed_rejected_parse_total",
+        "degenbot_backrun_feed_rejected_chain_id_total",
+        "degenbot_backrun_feed_reconnects_total",
+    ] {
+        assert!(
+            text.contains(family),
+            "expected family {family} in prometheus text, got:\n{text}"
+        );
+    }
+    let frames = text
+        .lines()
+        .find(|l| l.starts_with("degenbot_backrun_feed_frames_total"))
+        .expect("frames series missing");
+    assert!(
+        frames.ends_with(" 7"),
+        "counters must accumulate, got: {frames}"
+    );
+    let connected = text
+        .lines()
+        .find(|l| l.starts_with("degenbot_backrun_feed_connected"))
+        .expect("connected series missing");
+    assert!(
+        connected.ends_with(" 0"),
+        "gauge takes the last value, got: {connected}"
+    );
+    let age = text
+        .lines()
+        .find(|l| l.starts_with("degenbot_backrun_feed_seconds_since_event"))
+        .expect("age series missing");
+    assert!(
+        age.ends_with(" 1.5"),
+        "None age must leave the last value standing, got: {age}"
+    );
+    let reconnects = text
+        .lines()
+        .find(|l| l.starts_with("degenbot_backrun_feed_reconnects_total"))
+        .expect("reconnects series missing");
+    assert!(reconnects.ends_with(" 8"), "got: {reconnects}");
+}
+
+/// Backrun frame-terminal decisions render as a labeled counter over the
+/// closed decision/reason vocabulary — no silent drops (the tx-0x3dcfe class).
+#[test]
+fn backrun_frame_observed_renders_by_decision_and_reason() {
+    use degenbot_bot::instruments::PipelineInstruments;
+    use degenbot_bot::metrics;
+    use opentelemetry::metrics::MeterProvider;
+
+    let (provider, registry) = metrics::build_prometheus_provider().expect("provider");
+    let meter = provider.meter("degenbot.test");
+    let p = PipelineInstruments::new(&meter);
+
+    p.count_backrun_frame("observe", "no_candidate");
+    p.count_backrun_frame("observe", "no_candidate");
+    p.count_backrun_frame("bid", "");
+
+    let text = metrics::render(&registry);
+    let no_candidate = text
+        .lines()
+        .find(|l| {
+            l.starts_with("degenbot_backrun_frame_observed_total")
+                && l.contains("decision=\"observe\"")
+                && l.contains("reason=\"no_candidate\"")
+        })
+        .expect("no_candidate series missing");
+    assert!(no_candidate.ends_with(" 2"), "got: {no_candidate}");
+    let bid = text
+        .lines()
+        .find(|l| {
+            l.starts_with("degenbot_backrun_frame_observed_total") && l.contains("decision=\"bid\"")
+        })
+        .expect("bid series missing");
+    assert!(bid.ends_with(" 1"), "got: {bid}");
+}

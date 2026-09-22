@@ -8,7 +8,7 @@
 #![expect(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
@@ -420,4 +420,143 @@ async fn t07_drain_returns_unbatched_frames_oldest_first() {
     assert_eq!(st.dropped_ring, 0, "under capacity, nothing evicted");
     assert_eq!(st.accepted, 5);
     assert!(feed.drain().is_empty(), "drain is an atomic take");
+}
+
+// ── INFO lifecycle logging ─────────────────────────────────────────────
+//
+// The `op_*` events emit under the closed `degenbot::rpc` domain target, so
+// the capture layer filters on it exactly like the provider's retry-loop
+// capture (same once-per-process constraint: a `Once`-installed global
+// subscriber forwards every matching event into a SHARED collector — events
+// emit from the pump task's worker threads, so thread-local capture cannot
+// see them).
+
+/// Install (once) the capturing subscriber and return the shared collector.
+/// Lines are `"{level}|{message}"`.
+fn feed_log_capture() -> Arc<StdMutex<Vec<String>>> {
+    static INSTALL: Once = Once::new();
+    static COLLECTOR: OnceLock<Arc<StdMutex<Vec<String>>>> = OnceLock::new();
+    let collector = COLLECTOR.get_or_init(|| Arc::new(StdMutex::new(Vec::new())));
+    INSTALL.call_once(|| {
+        use tracing_subscriber::layer::{Context, Layer};
+        use tracing_subscriber::registry::LookupSpan;
+
+        struct MessageCollector(String);
+        impl tracing::field::Visit for MessageCollector {
+            fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+                if f.name() == "message" {
+                    let s = format!("{v:?}");
+                    let unquoted = s
+                        .strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                        .unwrap_or(&s);
+                    self.0.clear();
+                    self.0.push_str(unquoted);
+                }
+            }
+
+            fn record_str(&mut self, f: &tracing::field::Field, v: &str) {
+                if f.name() == "message" {
+                    self.0.clear();
+                    self.0.push_str(v);
+                }
+            }
+        }
+
+        struct Capture(Arc<StdMutex<Vec<String>>>);
+        impl<S> Layer<S> for Capture
+        where
+            S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+        {
+            fn on_event(&self, event: &tracing::Event, _ctx: Context<'_, S>) {
+                if event.metadata().target() != "degenbot::rpc" {
+                    return;
+                }
+                let mut collector = MessageCollector(String::new());
+                event.record(&mut collector);
+                self.0.lock().unwrap().push(format!(
+                    "{}|{}",
+                    event.metadata().level(),
+                    collector.0
+                ));
+            }
+        }
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(Capture(Arc::clone(collector))),
+        );
+    });
+    Arc::clone(collector)
+}
+
+/// Bounded wait for a captured line matching `needle` (concurrent tests may
+/// interleave captures, so presence — not order — is the assertion).
+async fn wait_for_line(capture: &Arc<StdMutex<Vec<String>>>, needle: &str, secs: u64) {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        {
+            let lines = capture.lock().unwrap();
+            if lines.iter().any(|l| l.contains(needle)) {
+                return;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for captured line {needle:?}; have: {:?}",
+            capture.lock().unwrap()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The feed's INFO lifecycle: connect → subscribed → per-payload →
+/// disconnect — all at INFO level, all under the `degenbot::rpc` domain.
+#[tokio::test]
+async fn t08_info_logs_cover_connect_subscribed_payload_disconnect() {
+    let capture = feed_log_capture();
+    let h2 = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let server = start_server(vec![
+        vec![
+            Step::ExpectSubscribe,
+            Step::Ack,
+            Step::Push(sample_event("0x1")),
+            Step::Close,
+        ],
+        vec![
+            Step::ExpectSubscribe,
+            Step::Ack,
+            Step::Push(sample_tx("0x1", 1, h2)),
+            Step::Hold,
+        ],
+    ])
+    .await;
+    let feed = spawn_feed(cfg_with(server.addr.port(), Duration::from_secs(30), 64));
+    let _ = drain_until(&feed, 2, Duration::from_secs(10)).await;
+
+    wait_for_line(&capture, "backrun feed: connected", 10).await;
+    wait_for_line(&capture, "backrun feed: subscribed", 10).await;
+    wait_for_line(&capture, "backrun feed: pending tx", 10).await;
+    wait_for_line(&capture, "backrun feed: disconnected", 10).await;
+    // All lifecycle lines are INFO (not the pre-existing WARN family).
+    {
+        let lines = capture.lock().unwrap();
+        for needle in [
+            "backrun feed: connected",
+            "backrun feed: subscribed",
+            "backrun feed: pending tx",
+            "backrun feed: disconnected",
+        ] {
+            assert!(
+                lines.iter().any(|l| l.contains(needle)),
+                "missing captured line {needle:?}"
+            );
+            let hit = lines.iter().find(|l| l.contains(needle)).expect("checked");
+            assert!(
+                hit.starts_with("INFO|"),
+                "{needle} must log at INFO, got: {hit}"
+            );
+        }
+    }
+    feed.stop();
 }

@@ -129,6 +129,8 @@ tokio-util = ["dep:tokio-util"]
 libc = "^0.2"
 
 [dev-dependencies]
+# The load_v3 variant-coverage test seeds pools + variant tables via raw SQL.
+rusqlite = { version = "^0.40", features = ["bundled"] }
 
 
 # `start_paused` runtime for the early-slice gap-stream tests

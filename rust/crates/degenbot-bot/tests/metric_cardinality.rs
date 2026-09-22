@@ -26,6 +26,10 @@ const ALLOWED_LABELS: &[&str] = &[
     "outcome",
     "site",
     "reason",
+    // `degenbot_backrun_frame_observed{decision}`: the frame-terminal
+    // decision — a three-value closed set (bid | observe | drop) matching
+    // the pipeline's `Decision` enum, never a per-frame value.
+    "decision",
     "mode",
     "arm",
     "verdict",

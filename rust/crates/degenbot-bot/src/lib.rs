@@ -136,6 +136,21 @@ pub mod instruments {
         pub fn set_seconds_since_header(&self, _secs: f64) {}
         /// no-op
         pub fn set_seconds_since_apply(&self, _secs: f64) {}
+        /// no-op (MEVBlocker searcher-feed family)
+        pub fn count_backrun_frame(&self, _decision: &str, _reason: &str) {}
+
+        /// no-op (MEVBlocker searcher-feed family)
+        pub fn record_backrun_feed(
+            &self,
+            _connected: bool,
+            _seconds_since_event: Option<f64>,
+            _frames: u64,
+            _dropped_ring: u64,
+            _rejected_parse: u64,
+            _rejected_chain_id: u64,
+            _reconnects: u64,
+        ) {
+        }
         /// no-op
         pub fn observe_mutex_hold_duration(&self, _secs: f64, _arm: &'static str) {}
         /// no-op

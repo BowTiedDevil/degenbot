@@ -20,6 +20,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
@@ -332,6 +333,18 @@ pub(super) async fn run_frame(
             "spent": spent.to_string(),
             "stop_file": cfg.stop_file.exists(),
         }),
+    );
+    // Every frame exits through exactly one counter bucket + one INFO line —
+    // a silent drop (the frame that killed one path registration!) is no
+    // longer observable (Regression for tx 0x3dcfe).
+    if let Some(pipeline) = degenbot_bot::instruments::pipeline() {
+        pipeline.count_backrun_frame(decision_kind, decision_reason.as_deref().unwrap_or(""));
+    }
+    tracing::info!(
+        tx = %ev.hash,
+        decision = decision_kind,
+        reason = decision_reason.as_deref().unwrap_or(""),
+        "backrun frame decided"
     );
     if let Some(degenbot_simulation::sim::evm::frame_replay::ReplayFrameError::GapPending {
         claimed,
@@ -1410,11 +1423,40 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         None
     };
 
+    // Feed-telemetry sampler state: the last status scraped into the engine
+    // instruments. Counters are pushed as DELTAS against this snapshot; the
+    // OTel counters accumulate the pushes.
+    let mut feed_last = feed.status();
     loop {
         if cfg.stop_file.exists() || shared.stop_requested() {
             tracing::info!("kill switch present - halting");
             feed.stop();
             break;
+        }
+        // Scrape the feed's status into the engine instruments on the loop's
+        // own <=2s tick. The instruments live in `degenbot-bot`, which the
+        // feed crate deliberately does not depend on, so the sampler rides
+        // here rather than inside the feed pump.
+        if let Some(pipeline) = degenbot_bot::instruments::pipeline() {
+            let st = feed.status();
+            let seconds_since_event = (st.last_event_unix_ms != 0).then(|| {
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+                    .unwrap_or_default();
+                (now_ms.saturating_sub(st.last_event_unix_ms)) as f64 / 1_000.0
+            });
+            pipeline.record_backrun_feed(
+                st.connected,
+                seconds_since_event,
+                st.accepted.saturating_sub(feed_last.accepted),
+                st.dropped_ring.saturating_sub(feed_last.dropped_ring),
+                st.rejected_parse.saturating_sub(feed_last.rejected_parse),
+                st.rejected_chain_id
+                    .saturating_sub(feed_last.rejected_chain_id),
+                st.reconnects.saturating_sub(feed_last.reconnects),
+            );
+            feed_last = st;
         }
         // The head source resolves on a header's arrival; the 2s bound keeps
         // the frame feed serviced while the head is quiet. On timeout a stale

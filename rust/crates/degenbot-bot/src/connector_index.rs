@@ -501,44 +501,59 @@ impl V2ConnectorIndex {
     ///
     /// DB failures propagate (`DbError`).
     pub fn load_v3(&mut self, db: &DegenbotDb, chain_id: i64) -> Result<(), DbError> {
+        // Every supported V3 variant. The registry's `*-v3` pool types each
+        // get their own variant table with an IDENTICAL column shape
+        // (`fee_token0`/`fee_denominator` on one 1e6 denominator, so the fee
+        // reads directly); a missing table for an unsupported variant is a
+        // schema state this build never creates — refused via `?`, never
+        // skipped.
+        const V3_VARIANT_TABLES: [&str; 4] = [
+            "uniswap_v3_pools",
+            "pancakeswap_v3_pools",
+            "sushiswap_v3_pools",
+            "aerodrome_v3_pools",
+        ];
         // The DB emits `0x`-prefixed checksum addresses; alloy parses those.
         // (rows::decode::decode_address is pub(crate) to degenbot-db.)
         let conn = db.lock();
-        let mut stmt = conn.prepare(
-            "SELECT p.id, p.token0_id, p.token1_id, p.address, v.fee_token0, v.tick_spacing \
-             FROM pools p JOIN uniswap_v3_pools v ON v.pool_id = p.id WHERE p.chain = ?1",
-        )?;
-        let mut rows = stmt.query([chain_id])?;
-        while let Some(row) = rows.next()? {
-            let id: i64 = row.get(0)?;
-            let t0: i64 = row.get(1)?;
-            let t1: i64 = row.get(2)?;
-            let address: String = row.get(3)?;
-            let fee: i64 = row.get(4)?;
-            let tick_spacing: i64 = row.get(5)?;
-            let (Ok(pool_id), Ok(token0_id), Ok(token1_id)) =
-                (u64::try_from(id), u64::try_from(t0), u64::try_from(t1))
-            else {
-                continue;
-            };
-            let (Ok(fee), Ok(tick_spacing)) = (u32::try_from(fee), i32::try_from(tick_spacing))
-            else {
-                continue;
-            };
-            // The DB emits `0x`-prefixed checksum addresses; alloy parses
-            // those directly (rows::decode::decode_address is pub(crate)).
-            let address: Address = match address.parse() {
-                Ok(a) => a,
-                Err(_) => continue,
-            };
-            self.push_v3_edge(V3Edge {
-                pool_id,
-                token0_id,
-                token1_id,
-                address,
-                fee,
-                tick_spacing,
-            });
+        for table in V3_VARIANT_TABLES {
+            let sql = format!(
+                "SELECT p.id, p.token0_id, p.token1_id, p.address, v.fee_token0, v.tick_spacing \
+                 FROM pools p JOIN {table} v ON v.pool_id = p.id WHERE p.chain = ?1"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query([chain_id])?;
+            while let Some(row) = rows.next()? {
+                let id: i64 = row.get(0)?;
+                let t0: i64 = row.get(1)?;
+                let t1: i64 = row.get(2)?;
+                let address: String = row.get(3)?;
+                let fee: i64 = row.get(4)?;
+                let tick_spacing: i64 = row.get(5)?;
+                let (Ok(pool_id), Ok(token0_id), Ok(token1_id)) =
+                    (u64::try_from(id), u64::try_from(t0), u64::try_from(t1))
+                else {
+                    continue;
+                };
+                let (Ok(fee), Ok(tick_spacing)) = (u32::try_from(fee), i32::try_from(tick_spacing))
+                else {
+                    continue;
+                };
+                // The DB emits `0x`-prefixed checksum addresses; alloy parses
+                // those directly (rows::decode::decode_address is pub(crate)).
+                let address: Address = match address.parse() {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                };
+                self.push_v3_edge(V3Edge {
+                    pool_id,
+                    token0_id,
+                    token1_id,
+                    address,
+                    fee,
+                    tick_spacing,
+                });
+            }
         }
         Ok(())
     }
@@ -713,6 +728,88 @@ mod tests {
         assert_eq!(ix.edge_degree(30, 10), 0);
         assert_eq!(ix.v3_edge_degree(20, 10), 1);
         assert_eq!(ix.v3_edge_degree(20, 30), 0);
+    }
+
+    /// Every supported V3 variant table feeds `load_v3`, chain-filtered.
+    /// Regression (tx 0x3dcfe class): only `uniswap_v3_pools` was loaded, so
+    /// Pancake/Sushi V3 pools were invisible descriptors — a frame swapping
+    /// through one extracted as `Unsupported` and dropped before admission,
+    /// producing zero path registrations with no signal anywhere.
+    #[test]
+    fn load_v3_admits_every_v3_variant_table_for_the_chain() {
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
+
+        const TOK: Address = Address::new([0x11; 20]);
+        const OTHER: Address = Address::new([0x22; 20]);
+        let tok_id = db
+            .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
+            .unwrap();
+        let tok_id = u64::try_from(tok_id).unwrap();
+        let _other_id = db
+            .get_or_create_erc20_token(1, &OTHER.to_checksum(None), None, None, None)
+            .unwrap();
+
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO exchanges (id, chain_id, name, active, last_update_block, factory) \
+             VALUES (1, 1, 'test', 0, NULL, '0x0000000000000000000000000000000000000001')",
+            [],
+        )
+        .unwrap();
+
+        // One pool per V3 variant; Aerodrome is base-only in the registry.
+        let variants: [(&str, &str, i64); 4] = [
+            ("uniswap_v3", "uniswap_v3_pools", 1),
+            ("pancakeswap_v3", "pancakeswap_v3_pools", 1),
+            ("sushiswap_v3", "sushiswap_v3_pools", 1),
+            // Aerodrome seeded on 8453: a chain-1 index must NOT carry it.
+            ("aerodrome_v3", "aerodrome_v3_pools", 8453),
+        ];
+        for (i, (kind, variant_table, chain)) in variants.iter().enumerate() {
+            let id = 50 + i64::try_from(i).unwrap();
+            let addr = format!("{:?}", Address::new([u8::try_from(i).unwrap() + 0xB0; 20]));
+            conn.execute(
+                "INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
+                rusqlite::params![id, addr, chain, kind, tok_id as i64, (tok_id + 1) as i64],
+            )
+            .unwrap();
+            conn.execute(
+                &format!(
+                    "INSERT INTO {variant_table} (pool_id, tick_spacing, liquidity_update_block, \
+                     liquidity_update_log_index, fee_token0, fee_token1, fee_denominator) \
+                     VALUES (?1, ?2, NULL, NULL, 500, 500, 1000000)"
+                ),
+                rusqlite::params![id, 10],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let mut ix = V2ConnectorIndex::load(&db, 1).unwrap();
+        ix.load_v3(&db, 1).unwrap();
+        for (i, (kind, _, _)) in variants.iter().take(3).enumerate() {
+            let addr = Address::new([u8::try_from(i).unwrap() + 0xB0; 20]);
+            let edge = ix.v3_edge_by_address(addr);
+            assert!(
+                edge.is_some(),
+                "{kind}: a pool in the DB must surface as an indexed V3 edge"
+            );
+            assert_eq!(edge.unwrap().fee, 500, "{kind}: fee from fee_token0");
+        }
+        let aerodrome = Address::new([0xB3; 20]);
+        assert!(
+            ix.v3_edge_by_address(aerodrome).is_none(),
+            "a chain-1 index must not carry the 8453 Aerodrome pool"
+        );
+
+        let mut ix_base = V2ConnectorIndex::load(&db, 8453).unwrap();
+        ix_base.load_v3(&db, 8453).unwrap();
+        assert!(
+            ix_base.v3_edge_by_address(aerodrome).is_some(),
+            "the 8453 index carries the Aerodrome pool"
+        );
     }
 
     /// A non-V2 edge in a V2-only snapshot is refused, not silently filtered.

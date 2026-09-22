@@ -240,6 +240,48 @@ impl BackrunEcosystem {
     }
 }
 
+/// Install the process-global frame-trace sink: one session artifact
+/// directory under `logging.runs_dir` per driver boot. The JSONL records
+/// every frame's replay/extract/admit/decision story — without this the
+/// live run's frame evidence is a silent no-op (`set_trace_jsonl_default`
+/// was only ever called by tests). At-most-once per process: with two
+/// hosted ecosystems the SECOND boot's call is the no-op, so both facets
+/// share one session's trace rather than fighting over the sink.
+///
+/// A failure to mint the directory degrades capture only — the boot
+/// proceeds, `trace_jsonl` stays absent, and the WARN says so (the
+/// per-frame INFO + counter still carry the signals).
+#[expect(
+    clippy::needless_pass_by_ref_fn,
+    reason = "ecosystem names the engine directory without consuming it"
+)]
+fn install_frame_trace_sink(ecosystem: &BackrunEcosystem) {
+    install_frame_trace_sink_under(None, ecosystem);
+}
+
+fn install_frame_trace_sink_under(root: Option<&Path>, ecosystem: &BackrunEcosystem) {
+    if degenbot_runs::trace_jsonl_default().is_some() {
+        return; // first driver in the process owns the session trace
+    }
+    let engine = match ecosystem {
+        BackrunEcosystem::Mevblocker => "backrun-mevblocker",
+        BackrunEcosystem::Peer => "backrun-peer",
+    };
+    let run = match root {
+        Some(root) => degenbot_runs::RunDirectory::create_in(root, engine),
+        None => degenbot_runs::RunDirectory::create(engine),
+    };
+    match run {
+        Ok(run) => {
+            let _ = degenbot_runs::set_trace_jsonl_default(run.trace_jsonl_path().to_path_buf());
+            tracing::info!(path = %run.session_dir().display(), "frame trace artifact session created");
+        }
+        Err(error) => {
+            tracing::warn!(%error, "frame-trace artifact directory failed - JSONL capture disabled");
+        }
+    }
+}
+
 /// Assemble a driver's boot from an already-resolved node join.
 ///
 /// Both a standalone boot (which builds its DB-backed registry over the
@@ -263,6 +305,7 @@ pub fn backrun_boot(
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
 ) -> BackrunBoot {
+    install_frame_trace_sink(&ecosystem);
     let cfg = ecosystem.config(config, join.rpc_url);
     let head_ws_url =
         degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
@@ -280,6 +323,37 @@ pub fn backrun_boot(
         hub,
         route_registry,
         context,
+    }
+}
+
+#[cfg(test)]
+mod trace_install_tests {
+    use super::*;
+
+    /// The install mints a session directory + seeds `trace.jsonl`, and the
+    /// second ecosystem's boot cannot steal the at-most-once sink.
+    #[test]
+    fn install_marks_the_session_and_is_first_driver_wins() {
+        let root = tempfile::tempdir().unwrap();
+        install_frame_trace_sink_under(Some(root.path()), &BackrunEcosystem::Mevblocker);
+        let first = degenbot_runs::trace_jsonl_default()
+            .map(std::path::Path::to_path_buf)
+            .expect("install installs a session trace default");
+        assert!(
+            first.is_file(),
+            "trace.jsonl seeded on disk: {}",
+            first.display()
+        );
+        assert!(first.to_string_lossy().contains("backrun-mevblocker"));
+
+        install_frame_trace_sink_under(Some(root.path()), &BackrunEcosystem::Peer);
+        let after = degenbot_runs::trace_jsonl_default()
+            .map(std::path::Path::to_path_buf)
+            .expect("the default stays installed");
+        assert_eq!(
+            first, after,
+            "second ecosystem's boot must not steal the sink"
+        );
     }
 }
 

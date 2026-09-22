@@ -178,6 +178,11 @@ RUST_BRIDGE_LOGGER_NAMES = (
     # gate before reaching a handler (silent even with the env var on).
     "degenbot_simulation",
     "degenbot_arbitrage",
+    # The in-process backrun strategy driver (tx 0x3dcfe follow-up): the
+    # frame-decision INFO line (``degenbot_strategy.backrun_driver.driver_loop``)
+    # and the connector-index boot line dropped at this gate before the
+    # crate root was configured here.
+    "degenbot_strategy",
 )
 
 #: The Python package-tree root whose descendants include Python-side modules

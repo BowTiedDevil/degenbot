@@ -39,6 +39,11 @@ RUST_BRIDGE_LOGGER_NAMES = (
     # config in ``degenbot.logging`` lowers them so the records are visible.
     "degenbot_simulation",
     "degenbot_arbitrage",
+    # The in-process backrun strategy driver (tx 0x3dcfe follow-up): the
+    # frame-decision INFO line (``degenbot_strategy.backrun_driver.driver_loop``)
+    # and the connector-index boot line dropped here until the crate root was
+    # configured.
+    "degenbot_strategy",
 )
 
 #: The same contract is exported by ``degenbot.logging`` so other code (e.g. the

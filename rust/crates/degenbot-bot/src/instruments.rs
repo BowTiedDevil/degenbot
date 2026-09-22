@@ -112,6 +112,28 @@ pub struct PipelineInstruments {
     pump_seconds_since_header: Gauge<f64>,
     /// Seconds since the newest log applied to state (state-advance liveness).
     pump_seconds_since_apply: Gauge<f64>,
+    /// MEVBlocker searcher pending-tx feed liveness: 1 while the WS session
+    /// is up, 0 between reconnects.
+    backrun_feed_connected: Gauge<f64>,
+    /// Age of the newest accepted searcher event; grows while the feed is
+    /// connected but silent (a parked MEVBlocker auction shows up here).
+    backrun_feed_seconds_since_event: Gauge<f64>,
+    /// Accepted pending-tx notifications (counted from sampler deltas).
+    backrun_feed_frames: Counter<u64>,
+    /// Ring evictions on the feed's drop-oldest channel (consumer lag).
+    backrun_feed_dropped_ring: Counter<u64>,
+    /// Frames dropped by parse (malformed or unknown shape; tolerated by
+    /// design — counted, never fatal).
+    backrun_feed_rejected_parse: Counter<u64>,
+    /// Frames rejected by the feed's chain-id gate.
+    backrun_feed_rejected_chain_id: Counter<u64>,
+    /// WS session teardowns + re-establishments (incl. watchdog stalls).
+    backrun_feed_reconnects: Counter<u64>,
+    /// Frame-terminal decisions by {decision, reason} — the silent-drop
+    /// killer: every drained searcher frame exits through exactly one
+    /// Bucket of this counter (`no_candidate`, `reverted`, a composed
+    /// `bid`, ...).
+    backrun_frame_observed: Counter<u64>,
     /// Engine-`Mutex` HOLD duration for a dirty solve cycle (T2 SLOWEXEC);
     /// distinct from `solve_duration` only if the hold moves off the calling
     /// thread — today hold == cycle by design, so this is the hold metric.
@@ -398,6 +420,42 @@ impl PipelineInstruments {
                 .f64_gauge("degenbot.pump.seconds_since_apply")
                 .with_description(
                     "Seconds since the newest log applied to state (state-advance liveness)",
+                )
+                .build(),
+            backrun_feed_connected: meter
+                .f64_gauge("degenbot.backrun.feed.connected")
+                .with_description("MEVBlocker searcher feed WS session is up (1) or down (0)")
+                .build(),
+            backrun_feed_seconds_since_event: meter
+                .f64_gauge("degenbot.backrun.feed.seconds_since_event")
+                .with_description(
+                    "Seconds since the newest accepted searcher pending-tx event",
+                )
+                .build(),
+            backrun_feed_frames: meter
+                .u64_counter("degenbot.backrun.feed.frames")
+                .with_description("Accepted searcher pending-tx notifications")
+                .build(),
+            backrun_feed_dropped_ring: meter
+                .u64_counter("degenbot.backrun.feed.dropped_ring")
+                .with_description("Feed ring evictions (drop-oldest, consumer lag)")
+                .build(),
+            backrun_feed_rejected_parse: meter
+                .u64_counter("degenbot.backrun.feed.rejected_parse")
+                .with_description("Searcher frames dropped by parse (tolerated, counted)")
+                .build(),
+            backrun_feed_rejected_chain_id: meter
+                .u64_counter("degenbot.backrun.feed.rejected_chain_id")
+                .with_description("Searcher frames rejected by the feed's chain-id gate")
+                .build(),
+            backrun_feed_reconnects: meter
+                .u64_counter("degenbot.backrun.feed.reconnects")
+                .with_description("Feed WS session teardowns incl. watchdog stalls")
+                .build(),
+            backrun_frame_observed: meter
+                .u64_counter("degenbot.backrun.frame.observed")
+                .with_description(
+                    "Backrun frame terminal decisions (decision/reason labels)",
                 )
                 .build(),
             mutex_hold_duration: meter
@@ -784,6 +842,52 @@ impl PipelineInstruments {
     /// Age (seconds) of the newest log applied to state; grows on a freeze.
     pub fn set_seconds_since_apply(&self, secs: f64) {
         self.pump_seconds_since_apply.record(secs, &[]);
+    }
+
+    /// Sample the MEVBlocker searcher feed into the instruments. The caller
+    /// (the backrun driver's own tick) owns the cadence and passes counter
+    /// DELTAS since its previous sample — OTel counters accumulate the pushes.
+    /// `seconds_since_event` is `None` until the feed's first accepted event;
+    /// `None` leaves the last recorded age standing rather than overwriting
+    /// it with a fake 0.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one flat sample of a closed 7-field status snapshot"
+    )]
+    pub fn record_backrun_feed(
+        &self,
+        connected: bool,
+        seconds_since_event: Option<f64>,
+        frames: u64,
+        dropped_ring: u64,
+        rejected_parse: u64,
+        rejected_chain_id: u64,
+        reconnects: u64,
+    ) {
+        self.backrun_feed_connected
+            .record(if connected { 1.0 } else { 0.0 }, &[]);
+        if let Some(secs) = seconds_since_event {
+            self.backrun_feed_seconds_since_event.record(secs, &[]);
+        }
+        self.backrun_feed_frames.add(frames, &[]);
+        self.backrun_feed_dropped_ring.add(dropped_ring, &[]);
+        self.backrun_feed_rejected_parse.add(rejected_parse, &[]);
+        self.backrun_feed_rejected_chain_id
+            .add(rejected_chain_id, &[]);
+        self.backrun_feed_reconnects.add(reconnects, &[]);
+    }
+
+    /// Count one frame's terminal decision. `reason` is empty for a plain
+    /// `bid`; the label vocabulary is the pipeline's closed `Decision`
+    /// reason set (`no_candidate`, `v4_unsupported`, `reverted`, ...).
+    pub fn count_backrun_frame(&self, decision: &str, reason: &str) {
+        self.backrun_frame_observed.add(
+            1,
+            &[
+                KeyValue::new("decision", decision.to_string()),
+                KeyValue::new("reason", reason.to_string()),
+            ],
+        );
     }
 
     /// Engine-`Mutex` hold duration for a dirty solve cycle (T2 instrument).

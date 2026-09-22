@@ -2318,6 +2318,7 @@ dependencies = [
  "proptest",
  "rand 0.10.3",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror",

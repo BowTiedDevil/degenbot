@@ -33,7 +33,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
-use degenbot_core::op_warn;
+use degenbot_core::{op_info, op_warn};
 use degenbot_eventhub::{
     DropOldestReceiver, DropOldestSender, Hub, HubClass, HubError, HubEvent, OverflowPolicy,
     SourceHandle, Subscription,
@@ -300,7 +300,10 @@ async fn run_loop(cfg: BackrunFeedConfig, s: Arc<Shared>, mut stop_rx: watch::Re
             }
         };
         let socket = match tokio::time::timeout(cfg.watchdog, connect_async(request)).await {
-            Ok(Ok((ws, _resp))) => ws,
+            Ok(Ok((ws, _resp))) => {
+                op_info!(domain = rpc, url = %cfg.url, "backrun feed: connected");
+                ws
+            }
             Ok(Err(e)) => {
                 s.count(Count::Reconnects);
                 op_warn!(domain = rpc, %e, "backrun feed: connect failed");
@@ -318,14 +321,26 @@ async fn run_loop(cfg: BackrunFeedConfig, s: Arc<Shared>, mut stop_rx: watch::Re
         };
         let accepted_before = s.accepted.load(Ordering::Relaxed);
         match session(socket, &cfg, &s, &mut stop_rx).await {
-            SessionEnd::Stopped => return,
-            SessionEnd::Closed | SessionEnd::Stall => {
+            SessionEnd::Stopped => {
+                op_info!(domain = rpc, url = %cfg.url, "backrun feed: stopped");
+                return;
+            }
+            end @ (SessionEnd::Closed | SessionEnd::Stall) => {
+                let session_accepted = s.accepted.load(Ordering::Relaxed) - accepted_before;
                 // A session that delivered events proved the transport; reset backoff.
-                if s.accepted.load(Ordering::Relaxed) > accepted_before {
+                if session_accepted > 0 {
                     backoff = init_backoff;
                 }
                 s.connected.store(false, Ordering::Relaxed);
                 s.count(Count::Reconnects);
+                op_info!(
+                    domain = rpc,
+                    url = %cfg.url,
+                    reason = if end == SessionEnd::Stall { "stall" } else { "closed" },
+                    session_accepted,
+                    reconnects = s.reconnects.load(Ordering::Relaxed),
+                    "backrun feed: disconnected"
+                );
                 tokio::time::sleep(backoff).await;
                 backoff = std::cmp::min(backoff.saturating_mul(2), max_backoff);
             }
@@ -379,6 +394,7 @@ async fn session(
                 {
                     if let Some(id) = v.get("result").and_then(Json::as_str) {
                         sub_id = Some(id.to_string());
+                        op_info!(domain = rpc, subscription = %id, "backrun feed: subscribed");
                     }
                     continue;
                 }
@@ -392,6 +408,16 @@ async fn session(
                     match v.pointer("/params/result") {
                         Some(result) => {
                             if let Some(ev) = parse_event(result, cfg.expected_chain_id, s) {
+                                op_info!(
+                                    domain = rpc,
+                                    hash = %ev.hash,
+                                    from = %ev.from,
+                                    to = ?ev.to,
+                                    chain_id = ev.chain_id,
+                                    gas = ev.gas,
+                                    nonce = ev.nonce,
+                                    "backrun feed: pending tx"
+                                );
                                 s.push(ev);
                             }
                         }
