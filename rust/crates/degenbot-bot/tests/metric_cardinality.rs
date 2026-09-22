@@ -25,6 +25,11 @@ use std::path::{Path, PathBuf};
 const ALLOWED_LABELS: &[&str] = &[
     "outcome",
     "site",
+    // `degenbot_backrun_frame_observed{reason}`: the frame-terminal observe
+    // reason — a closed set of `&'static` pipeline constants (`no_candidate`,
+    // `v4_unsupported`, `family-unsupported`, `reverted`, ...). The
+    // unsupported family `kind` string must never become a reason value; it
+    // rides the JSONL extract detail instead.
     "reason",
     // `degenbot_backrun_frame_observed{decision}`: the frame-terminal
     // decision — a three-value closed set (bid | observe | drop) matching

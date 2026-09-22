@@ -395,25 +395,40 @@ impl TakeObject for serde_json::Value {
 // Descriptors + extraction trace
 // ─────────────────────────────────────────────────────────────────────────
 
+/// The descriptor projection of one frame's touched set: the supported-family
+/// map the journal extractor consumes, whether the `PoolManager` was touched,
+/// and the touched addresses whose DB family this arm cannot type.
+#[derive(Debug, Default)]
+pub struct FrameDescriptors {
+    /// Supported-family descriptors, from the connector index only.
+    pub by_address: HbMap<Address, PoolFamily>,
+    /// Whether the V4 `PoolManager` singleton named a touched account.
+    pub hit_v4: bool,
+    /// Touched addresses present in the DB under an unsupported family, with
+    /// the `kind` discriminator. Excluded from `by_address` on purpose —
+    /// extraction must never guess a decode — but carried so the frame
+    /// observes `family-unsupported` instead of an unexplained no-candidate.
+    pub unsupported: Vec<(Address, String)>,
+}
+
 /// Project the frame's touched set into the pool-descriptor map the journal
 /// extractor consumes: EVERY descriptor comes from the connector index (the
 /// tracked-pool registry) — V2 pair / V3 pool / the V4 `PoolManager` singleton
 /// (descriptors exist so `v4_unsupported` is OBSERVABLE, never guessable).
-/// A touched address without a tracked descriptor contributes nothing.
-/// Also returns whether the `PoolManager` named a touched account.
+/// A touched address whose DB family the arm cannot type yields no descriptor
+/// but is returned in [`FrameDescriptors::unsupported`] so it observes loudly.
 #[must_use]
 pub fn build_descriptors(
     index: Option<&V2ConnectorIndex>,
     touched: &[(Address, Vec<U256>)],
-) -> (HbMap<Address, PoolFamily>, bool) {
-    let mut map = HbMap::new();
-    let mut hit_v4 = false;
+) -> FrameDescriptors {
+    let mut out = FrameDescriptors::default();
     for (addr, _) in touched {
         if *addr == V4_POOL_MANAGER {
-            hit_v4 = true;
+            out.hit_v4 = true;
             // The connector index carries no V4 poolIds yet; the empty set
             // keeps extraction explicitly Unsupported (see `V4PoolSet`).
-            map.insert(
+            out.by_address.insert(
                 *addr,
                 PoolFamily::V4PoolManager {
                     pools: V4PoolSet::default(),
@@ -423,11 +438,11 @@ pub fn build_descriptors(
         }
         let Some(idx) = index else { continue };
         if idx.edge_by_address(*addr).is_some() {
-            map.insert(*addr, PoolFamily::V2Pair);
+            out.by_address.insert(*addr, PoolFamily::V2Pair);
             continue;
         }
         if let Some(e3) = idx.v3_edge_by_address(*addr) {
-            map.insert(
+            out.by_address.insert(
                 *addr,
                 PoolFamily::V3 {
                     layout: ClSlotLayout::UniswapV3,
@@ -437,9 +452,13 @@ pub fn build_descriptors(
                     current_tick_hint: None,
                 },
             );
+            continue;
+        }
+        if let Some(kind) = idx.unsupported_kind(*addr) {
+            out.unsupported.push((*addr, kind.to_string()));
         }
     }
-    (map, hit_v4)
+    out
 }
 
 /// A stable short digest of one extracted post-state (the JSONL `extract`
@@ -510,6 +529,22 @@ pub const fn family_label(family: PoolFamily) -> &'static str {
         PoolFamily::V2Pair => "v2",
         PoolFamily::V3 { .. } => "v3",
         PoolFamily::V4PoolManager { .. } => "v4_manager",
+    }
+}
+
+/// The terminal observe reason for a frame that surfaced no tracked pool
+/// state. An unsupported DB family outranks the V4 manager (naming the
+/// untracked family is the more specific cause), which outranks a genuine
+/// no-candidate. The kind string rides the extract JSONL detail, never the
+/// closed Prometheus reason label.
+#[must_use]
+pub fn empty_frame_observe_reason(descriptors: &FrameDescriptors) -> &'static str {
+    if !descriptors.unsupported.is_empty() {
+        "family-unsupported"
+    } else if descriptors.hit_v4 {
+        "v4_unsupported"
+    } else {
+        "no_candidate"
     }
 }
 
@@ -784,8 +819,22 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
 
     // ── stage: extract (journal post-states; descriptors from the index) ──
     let t = Instant::now();
-    let (descriptors, hit_v4) = build_descriptors(ctx.index(), &outcome.touched);
-    let extracted = extract_pool_post_states(&outcome, &descriptors);
+    let descriptors = build_descriptors(ctx.index(), &outcome.touched);
+    if !descriptors.unsupported.is_empty() {
+        // Loud, and legible alongside the closed `family-unsupported` reason:
+        // the kind string never becomes a metric label, so it is named here
+        // and in the extract JSONL detail.
+        tracing::info!(
+            tx = %tx_hex,
+            kinds = ?descriptors
+                .unsupported
+                .iter()
+                .map(|(_, kind)| kind.as_str())
+                .collect::<Vec<_>>(),
+            "frame touched an unsupported pool family"
+        );
+    }
+    let extracted = extract_pool_post_states(&outcome, &descriptors.by_address);
     stages.extract_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
     let all_unsupported = !extracted.is_empty()
         && extracted
@@ -809,19 +858,20 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
             "families": extracted.iter().map(|s| family_label(s.family)).collect::<Vec<_>>(),
             "digests": extracted.iter().map(state_digest).collect::<Vec<_>>(),
             "v4_half_unobserved": v4_half_unobserved,
+            // The kind string rides the JSONL detail: the Prometheus reason
+            // label is the closed `family-unsupported` bucket.
+            "unsupported_families": descriptors
+                .unsupported
+                .iter()
+                .map(|(addr, kind)| serde_json::json!({
+                    "address": format!("0x{}", alloy::hex::encode(addr)),
+                    "kind": kind,
+                }))
+                .collect::<Vec<_>>(),
         }),
     );
     if all_unsupported || extracted.is_empty() {
-        // V4-only frames are observably unsupported; everything else that
-        // surfaced no tracked pool state is (so far) a no-candidate frame.
-        return FrameArtifacts::observe(
-            if hit_v4 {
-                "v4_unsupported"
-            } else {
-                "no_candidate"
-            },
-            stages,
-        );
+        return FrameArtifacts::observe(empty_frame_observe_reason(&descriptors), stages);
     }
 
     // ── stage: admission (fresh scope; replayed state verbatim) ──────────

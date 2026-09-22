@@ -10,11 +10,15 @@ use alloy::primitives::Address;
 
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
+use crate::rows::decode::decode_address;
 use crate::rows::{
     InitializationMapRow, LiquidityPoolRow, LiquidityPositionRow, ManagedPoolInitializationMapRow,
     ManagedPoolLiquidityPositionRow, PoolKindRow, V2PoolRow, V3PoolRow, V4PoolRow,
 };
-use crate::schema::table::{is_v4_kind, v2_v3_subclass_table, EXCHANGES};
+use crate::schema::table::{
+    is_v2_kind, is_v3_kind, is_v4_kind, v2_v3_subclass_table, EXCHANGES, MANAGED_POOLS, POOLS,
+    POOL_MANAGERS,
+};
 
 /// Whether to filter exchange `last_update_block` rows by V3 or V4 family name
 /// (mirrors Python's `name.like('%!_v3'/'%!_v4')` — names ending in `_v3` or
@@ -37,6 +41,18 @@ impl ExchangeFamily {
             ExchangeFamily::V4 => "%\\_v4",
         }
     }
+}
+
+/// One chain-scoped pool family the backrun arm cannot type: the on-chain
+/// address a frame would touch and the DB `kind` discriminator.
+///
+/// A unified `pools` row's address is the pool contract; a `managed_pools`
+/// row's address is the pool MANAGER (`pool_managers.address`, joined via
+/// `manager_id`) — that is the account a frame touches for a managed family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedPoolAddress {
+    pub address: Address,
+    pub kind: String,
 }
 
 impl DegenbotDb {
@@ -453,6 +469,63 @@ impl DegenbotDb {
         })?;
         Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
     }
+
+    /// Every chain-scoped pool row whose family the backrun descriptor seam
+    /// cannot type, as `(touched address, kind)`.
+    ///
+    /// Two scans: the unified `pools` table (address = the pool contract) and
+    /// the `managed_pools` polymorphic base joined to `pool_managers`
+    /// (address = the pool MANAGER, the account a frame touches for a managed
+    /// family). A row whose `kind` is V2/V3-family or `uniswap_v4` is a
+    /// supported family and does not appear.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`]
+    /// on a malformed address column.
+    pub fn fetch_unsupported_pool_addresses(
+        &self,
+        chain_id: i64,
+    ) -> Result<Vec<UnsupportedPoolAddress>, DbError> {
+        let conn = self.lock();
+        let mut out = Vec::new();
+        {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT address, kind FROM {POOLS} WHERE chain = ?1"
+            ))?;
+            let mut rows = stmt.query(rusqlite::params![chain_id])?;
+            while let Some(row) = rows.next()? {
+                let address: String = row.get(0)?;
+                let kind: String = row.get(1)?;
+                if is_v2_kind(&kind) || is_v3_kind(&kind) {
+                    continue;
+                }
+                out.push(UnsupportedPoolAddress {
+                    address: decode_address(&address)?,
+                    kind,
+                });
+            }
+        }
+        {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT m.address, mp.kind FROM {MANAGED_POOLS} mp \
+                 JOIN {POOL_MANAGERS} m ON m.id = mp.manager_id WHERE m.chain = ?1"
+            ))?;
+            let mut rows = stmt.query(rusqlite::params![chain_id])?;
+            while let Some(row) = rows.next()? {
+                let address: String = row.get(0)?;
+                let kind: String = row.get(1)?;
+                if is_v4_kind(&kind) {
+                    continue;
+                }
+                out.push(UnsupportedPoolAddress {
+                    address: decode_address(&address)?,
+                    kind,
+                });
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// `fetch_newest_update_block` body taking a borrowed `&Connection` (works on
@@ -540,5 +613,65 @@ mod tests {
         assert_eq!(both.len(), 2);
         assert_eq!(both[0].id, v2.id, "ordered by id — v2 first");
         assert_eq!(both[1].id, v3.id);
+    }
+
+    #[test]
+    fn fetch_unsupported_pool_addresses_keeps_only_unsupported_families() {
+        let db = write_db();
+        let pool = Address::new([0xc1; 20]);
+        let supported = Address::new([0xc2; 20]);
+        let manager = Address::new([0xc3; 20]);
+        let v4_manager = Address::new([0xc4; 20]);
+        let t0 = Address::new([0x11; 20]).to_checksum(None);
+        let t1 = Address::new([0x22; 20]).to_checksum(None);
+        {
+            let conn = db.lock();
+            conn.execute_batch(&format!(
+                "PRAGMA foreign_keys=OFF;
+                 INSERT INTO erc20_tokens (id, chain, address, name, symbol, decimals) VALUES
+                   (1, 1, '{t0}', 'T0', 'T0', 18), (2, 1, '{t1}', 'T1', 'T1', 18);
+                 INSERT INTO exchanges (id, chain_id, name, active, factory) VALUES
+                   (1, 1, 'test', 1, '0x0000000000000000000000000000000000000001');
+                 INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) VALUES
+                   (901, '{pool}', 1, 'lfj_binned', 1, 2, 1),
+                   (902, '{supported}', 1, 'uniswap_v2', 1, 2, 1);
+                 INSERT INTO pool_managers (id, address, chain, kind, state_view, exchange_id) VALUES
+                   (901, '{manager}', 1, 'lfj_binned', NULL, 1),
+                   (902, '{v4_manager}', 1, 'uniswap_v4', NULL, 1);
+                 INSERT INTO managed_pools (id, kind, manager_id) VALUES
+                   (901, 'lfj_binned', 901), (902, 'uniswap_v4', 902);",
+                pool = pool.to_checksum(None),
+                supported = supported.to_checksum(None),
+                manager = manager.to_checksum(None),
+                v4_manager = v4_manager.to_checksum(None),
+            ))
+            .unwrap();
+        }
+        let rows = db.fetch_unsupported_pool_addresses(1).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .any(|r| r.address == pool && r.kind == "lfj_binned"),
+            "a `pools`-table unsupported kind is keyed by the pool address"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r.address == manager && r.kind == "lfj_binned"),
+            "a managed unsupported family is keyed by its MANAGER address"
+        );
+        assert!(
+            !rows.iter().any(|r| r.address == supported),
+            "a supported V2 pool is excluded"
+        );
+        assert!(
+            !rows.iter().any(|r| r.address == v4_manager),
+            "uniswap_v4 is excluded"
+        );
+        assert!(
+            db.fetch_unsupported_pool_addresses(8453)
+                .unwrap()
+                .is_empty(),
+            "the scan is chain-scoped"
+        );
     }
 }

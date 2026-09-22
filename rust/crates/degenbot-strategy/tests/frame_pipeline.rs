@@ -15,7 +15,9 @@ use degenbot_pools::slot_layout;
 use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, net_bid, solve_dfs_chains, WETH};
-use degenbot_strategy::frame_pipeline::{build_descriptors, state_digest, MarketContext};
+use degenbot_strategy::frame_pipeline::{
+    build_descriptors, empty_frame_observe_reason, state_digest, MarketContext,
+};
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
 // ─────────────────── the golden frame (offline, end to end) ────────────────
@@ -104,10 +106,13 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     let outcome = golden_replay_outcome();
 
     // descriptors: projected from the connector index (the tracked registry).
-    let (descriptors, hit_v4) = build_descriptors(rt.index(), &outcome.touched);
-    assert!(!hit_v4, "an all-V2 frame touches no PoolManager");
+    let descriptors = build_descriptors(rt.index(), &outcome.touched);
+    assert!(
+        !descriptors.hit_v4,
+        "an all-V2 frame touches no PoolManager"
+    );
     assert_eq!(
-        descriptors.len(),
+        descriptors.by_address.len(),
         1,
         "only the tracked pool gets a descriptor"
     );
@@ -115,7 +120,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     // extract: the journalled slot-8 word decodes to the post-target pair.
     let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
         &outcome,
-        &descriptors,
+        &descriptors.by_address,
     );
     assert_eq!(extracted.len(), 1, "one touched tracked pool extracted");
     let degenbot_simulation::sim::evm::journal_pools::PoolPostState {
@@ -320,10 +325,10 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
     );
     let outcome = usdc_frame_replay_outcome();
 
-    let (descriptors, _) = build_descriptors(rt.index(), &outcome.touched);
+    let descriptors = build_descriptors(rt.index(), &outcome.touched);
     let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
         &outcome,
-        &descriptors,
+        &descriptors.by_address,
     );
     assert_eq!(extracted.len(), 1);
     let mut solver = BackrunSolver::new();
@@ -343,6 +348,110 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
     assert!(
         quotes.iter().all(|q| q.quote != WETH),
         "WETH-only selection yields no quote for this frame"
+    );
+}
+
+/// ADR-059 D8: a touched address present in the DB under a family the backrun
+/// arm cannot type observes the closed `family-unsupported` reason (the kind
+/// rides the JSONL detail) instead of dropping into an unexplained
+/// no-candidate. Positive path: a known V2 address still types as `V2Pair`.
+#[test]
+fn unsupported_family_observes_loudly_not_silently() {
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    let tok_id = db
+        .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
+        .unwrap();
+    let weth_id = db
+        .get_or_create_erc20_token(1, &WETH.to_checksum(None), None, None, None)
+        .unwrap();
+    let (tok_id, weth_id) = (
+        u64::try_from(tok_id).unwrap(),
+        u64::try_from(weth_id).unwrap(),
+    );
+
+    const LFJ: Address = address!("000000000000000000000000000000000000c001");
+    const LFJ_MANAGER: Address = address!("000000000000000000000000000000000000c002");
+    const V4_MANAGER: Address = address!("000000000000000000000000000000000000c003");
+    {
+        let conn = db.lock();
+        conn.execute_batch(&format!(
+            "PRAGMA foreign_keys=OFF;
+             INSERT INTO exchanges (id, chain_id, name, active, factory) VALUES
+               (1, 1, 'test', 1, '0x0000000000000000000000000000000000000001');
+             INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) VALUES
+               (901, '{lfj}', 1, 'lfj_binned', {t0}, {t1}, 1),
+               (902, '{p}', 1, 'uniswap_v2', {t0}, {t1}, 1);
+             INSERT INTO pool_managers (id, address, chain, kind, state_view, exchange_id) VALUES
+               (901, '{lfj_mgr}', 1, 'lfj_binned', NULL, 1),
+               (902, '{v4_mgr}', 1, 'uniswap_v4', NULL, 1);
+             INSERT INTO managed_pools (id, kind, manager_id) VALUES
+               (901, 'lfj_binned', 901),
+               (902, 'uniswap_v4', 902);",
+            lfj = LFJ.to_checksum(None),
+            p = P.to_checksum(None),
+            lfj_mgr = LFJ_MANAGER.to_checksum(None),
+            v4_mgr = V4_MANAGER.to_checksum(None),
+            t0 = tok_id,
+            t1 = weth_id,
+        ))
+        .unwrap();
+    }
+
+    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::default();
+    index.push_edge(degenbot_bot::connector_index::V2Edge {
+        pool_id: 101,
+        token0_id: tok_id,
+        token1_id: weth_id,
+        address: P,
+    });
+    index.load_unsupported(&db, 1).unwrap();
+    assert_eq!(
+        index.unsupported_kind(LFJ),
+        Some("lfj_binned"),
+        "a `pools`-table unsupported kind is keyed by the pool address"
+    );
+    assert_eq!(
+        index.unsupported_kind(LFJ_MANAGER),
+        Some("lfj_binned"),
+        "a managed unsupported family is keyed by its MANAGER address"
+    );
+    assert!(
+        index.unsupported_kind(P).is_none(),
+        "a supported V2 pool is not an unsupported family"
+    );
+    assert!(
+        index.unsupported_kind(V4_MANAGER).is_none(),
+        "uniswap_v4 is supported and must not appear"
+    );
+
+    let descriptors = build_descriptors(Some(&index), &[(P, Vec::new()), (LFJ, Vec::new())]);
+    assert!(
+        matches!(
+            descriptors.by_address.get(&P),
+            Some(degenbot_simulation::sim::evm::journal_pools::PoolFamily::V2Pair)
+        ),
+        "positive path: a known V2 address still types as V2Pair"
+    );
+    assert!(
+        !descriptors.by_address.contains_key(&LFJ),
+        "an unsupported family never enters the descriptor map (no guessing)"
+    );
+    assert_eq!(
+        descriptors.unsupported,
+        vec![(LFJ, "lfj_binned".to_string())],
+        "the unsupported touched address surfaces with its kind"
+    );
+    assert_eq!(
+        empty_frame_observe_reason(&descriptors),
+        "family-unsupported"
+    );
+
+    let only_unsupported = build_descriptors(Some(&index), &[(LFJ, Vec::new())]);
+    assert!(only_unsupported.by_address.is_empty());
+    assert_eq!(
+        empty_frame_observe_reason(&only_unsupported),
+        "family-unsupported",
+        "an unsupported-only frame observes the reason, not no_candidate"
     );
 }
 
@@ -522,6 +631,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
                     matches!(
                         *reason,
                         "no_candidate"
+                            | "family-unsupported"
                             | "v4_unsupported"
                             | "reverted"
                             | "replay_failed"

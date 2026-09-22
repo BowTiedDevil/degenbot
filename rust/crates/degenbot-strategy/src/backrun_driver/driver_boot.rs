@@ -156,14 +156,19 @@ pub async fn resolve_backrun_registry(
             return None;
         }
     };
-    let mut ix =
-        match V2ConnectorIndex::load(&db, 1).and_then(|mut ix| ix.load_v3(&db, 1).map(|()| ix)) {
-            Ok(ix) => ix,
-            Err(error) => {
-                tracing::warn!(error = %error, "connector index load failed - lane disabled");
-                return None;
-            }
-        };
+    let mut ix = match V2ConnectorIndex::load(&db, 1).and_then(|mut ix| {
+        ix.load_v3(&db, 1)?;
+        // A DB family the backrun arm cannot type must be known at boot so a
+        // frame touching it observes `family-unsupported`, never a silent drop.
+        ix.load_unsupported(&db, 1)?;
+        Ok(ix)
+    }) {
+        Ok(ix) => ix,
+        Err(error) => {
+            tracing::warn!(error = %error, "connector index load failed - lane disabled");
+            return None;
+        }
+    };
     ix.set_ranker(Arc::new(OnChainLiquidityRanker::new(Arc::clone(provider))));
     let registry = Arc::new(RouteRegistry::new(ix));
     tracing::info!(edges = registry.index().len(), "connector index loaded");

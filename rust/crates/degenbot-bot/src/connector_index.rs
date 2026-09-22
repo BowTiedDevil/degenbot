@@ -312,6 +312,13 @@ pub struct V2ConnectorIndex {
     v4_by_manager: HashMap<Address, Vec<usize>>,
     /// Outcome counts of the most recent [`Self::load_v4`] scan.
     v4_last_load: V4RosterLoad,
+    /// Chain-scoped pool families this index does NOT type, keyed by the
+    /// address a frame touches: a unified `pools` row's address is the pool
+    /// contract, a `managed_pools` row's is the pool MANAGER
+    /// (`pool_managers.address`). The descriptor seam consults this so an
+    /// unsupported family observes loudly instead of dropping into an
+    /// unexplained no-candidate.
+    unsupported_by_address: HashMap<Address, String>,
     ranker: Option<Arc<dyn ConnectorLiquidityRanker>>,
     /// Memoized descending-depth edge order per `(token_id, quote_id)` — the
     /// memo is what keeps the per-frame fan cost unchanged (first touch
@@ -340,6 +347,7 @@ impl fmt::Debug for V2ConnectorIndex {
             .field("v4_by_pool_hash", &self.v4_by_pool_hash.len())
             .field("v4_by_pair", &self.v4_by_pair.len())
             .field("v4_by_manager", &self.v4_by_manager.len())
+            .field("unsupported_by_address", &self.unsupported_by_address.len())
             .finish()
     }
 }
@@ -818,6 +826,54 @@ impl V2ConnectorIndex {
     #[must_use]
     pub fn v4_last_load(&self) -> V4RosterLoad {
         self.v4_last_load
+    }
+
+    /// Load the chain-scoped roster of pool families this index does NOT
+    /// type (one scan; call once at startup after [`Self::load_v4`]).
+    ///
+    /// Keys are the address a frame touches: a unified `pools` row's address
+    /// is the pool contract, a `managed_pools` row's is the pool MANAGER. An
+    /// INFO line reports the total with a per-kind breakdown so a future
+    /// family present in the DB is legible at boot.
+    ///
+    /// # Errors
+    ///
+    /// DB failures propagate (`DbError`).
+    pub fn load_unsupported(&mut self, db: &DegenbotDb, chain_id: i64) -> Result<(), DbError> {
+        let rows = db.fetch_unsupported_pool_addresses(chain_id)?;
+        let mut by_address = HashMap::new();
+        let mut by_kind: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for row in rows {
+            *by_kind.entry(row.kind.clone()).or_default() += 1;
+            by_address.insert(row.address, row.kind);
+        }
+        let total = by_address.len();
+        let kinds = by_kind.len();
+        self.unsupported_by_address = by_address;
+        tracing::info!(
+            chain_id,
+            total,
+            kinds,
+            ?by_kind,
+            "unsupported-family roster loaded"
+        );
+        Ok(())
+    }
+
+    /// The `kind` of an address whose pool family this index does not type
+    /// (`None` for a supported or unrecorded address).
+    #[must_use]
+    pub fn unsupported_kind(&self, address: Address) -> Option<&str> {
+        self.unsupported_by_address
+            .get(&address)
+            .map(String::as_str)
+    }
+
+    /// The loaded unsupported-family count.
+    #[must_use]
+    pub fn unsupported_len(&self) -> usize {
+        self.unsupported_by_address.len()
     }
 }
 
