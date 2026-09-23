@@ -34,6 +34,7 @@ use degenbot_core::diag;
 use degenbot_core::op_warn;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
+use std::sync::Arc;
 
 /// One affine upper-bound line: `y = ceil((A + B·x) / C)` with `C > 0`, `B ≥ 0`.
 /// `A` may be negative (lines anchored past their own window's left edge).
@@ -464,10 +465,307 @@ fn mobius_lines(
     Some((lines, r_out))
 }
 
+/// The first eligible crossing's tangent: the only CL line that anchors at the
+/// table's live in-range price, so it is derived per call and never cached.
+enum ClHead {
+    /// No crossing carried liquidity (the table is degenerate).
+    Absent,
+    /// The first liquid crossing's tangent, if its coefficients fit `I512`.
+    Tangent(Option<Line>),
+    /// A liquid crossing had a zero entry price: hard reject, no bound.
+    ZeroPrice,
+}
+
+/// Locate and derive the head tangent (see [`ClHead`]).
+fn cl_head(crossings: &[IntTickRangeCrossing]) -> ClHead {
+    for cr in crossings {
+        let er = &cr.ending_range;
+        if er.liquidity == 0 {
+            continue;
+        }
+        if er.sqrt_price_x96.is_zero() {
+            return ClHead::ZeroPrice;
+        }
+        return ClHead::Tangent(cl_tangent_from_crossing(cr));
+    }
+    ClHead::Absent
+}
+
+/// One crossing's entry-slope tangent line. `None` on a zero
+/// denominator/numerator or an `I512` coefficient overflow — the caller drops
+/// the line, which only loosens the envelope (every tangent is a global upper
+/// bound).
+fn cl_tangent_from_crossing(cr: &IntTickRangeCrossing) -> Option<Line> {
+    let er = &cr.ending_range;
+    let p_entry = er.sqrt_price_x96;
+    // Entry marginal rate m (out/in token units):
+    //   zfo: m = P²/2¹⁹² ; !zfo: m = 2¹⁹²/P²  (P = sqrt_ratio_x96)
+    // Slope = ceil-free EXACT fraction (γ_num·m / fee_denom); ceil happens
+    // only at evaluation.
+    let p_sq = U512::from(p_entry).saturating_mul(U512::from(p_entry));
+    let two192 = U512::from(1u8) << 192;
+    let (m_num, m_den) = if er.zero_for_one {
+        (p_sq, two192)
+    } else {
+        (two192, p_sq)
+    };
+    // line: y = acc_out + (γ·m_num / (fee_denom·m_den))·(x − acc_in)
+    //      = ((acc_out·D − N·acc_in) + N·x) / D
+    //   with D = fee_denom·m_den, N = γ_num·m_num.
+    let d512 = U512::from(er.fee_denom).saturating_mul(m_den);
+    let n512 = U512::from(er.gamma_numer).saturating_mul(m_num);
+    if d512.is_zero() || n512.is_zero() {
+        return None;
+    }
+    let d = I512::try_from(d512).ok()?;
+    let n = I512::try_from(n512).ok()?;
+    let oc = I512::try_from(U512::from(cr.crossing_output)).ok()?;
+    let ic = I512::try_from(U512::from(cr.crossing_gross_input)).ok()?;
+    let a = oc
+        .checked_mul(d)
+        .and_then(|v| n.checked_mul(ic).and_then(|ni| v.checked_sub(ni)))?;
+    Some(Line { a, b: n, c: d })
+}
+
+/// Early-select keep-indices over the eligible-crossing ordering, plus the
+/// eligible count. An empty `sel` means the table is small enough that no cap
+/// is applied. Membership is the existing rule — even-spacing multiples plus
+/// the last entry, or capacity-ranked under `mass` — reused unchanged.
+fn cl_keep_selection(
+    crossings: &[IntTickRangeCrossing],
+    max_tangent_lines: usize,
+    mass: bool,
+) -> (usize, Vec<usize>) {
+    let n_keeps = crossings
+        .iter()
+        .filter(|cr| {
+            let er = &cr.ending_range;
+            er.liquidity != 0 && !er.sqrt_price_x96.is_zero()
+        })
+        .count();
+    let mut sel: Vec<usize> = Vec::with_capacity(max_tangent_lines + 1);
+    let early = n_keeps > max_tangent_lines;
+    if early && mass {
+        // Loop-20 mass-weighted sampling: rank keep-indices by their range's
+        // input capacity (max gross in range) instead of even index spacing,
+        // keeping the heaviest shelves plus the first and last (which anchor
+        // the envelope at both domain endpoints). The CL tangents sit on the
+        // Pareto front (increasing intercept, decreasing slope), so ORDER
+        // never matters to min() — only membership.
+        let mut ranked: Vec<(U512, usize)> = Vec::with_capacity(n_keeps);
+        let mut kept = 0usize;
+        for cr in crossings {
+            let er = &cr.ending_range;
+            if er.liquidity == 0 || er.sqrt_price_x96.is_zero() {
+                continue;
+            }
+            ranked.push((U512::from(er.max_gross_input_in_range()), kept));
+            kept += 1;
+        }
+        ranked.sort_by_key(|x| std::cmp::Reverse(x.0));
+        let mut chosen: Vec<usize> = ranked.iter().take(max_tangent_lines).map(|p| p.1).collect();
+        chosen.push(0usize);
+        chosen.push(n_keeps - 1);
+        chosen.sort_unstable();
+        chosen.dedup();
+        sel.extend(chosen);
+    } else if early {
+        let step = (n_keeps / max_tangent_lines).max(1);
+        let mut idx = 0usize;
+        while idx < n_keeps {
+            sel.push(idx);
+            idx += step;
+        }
+        let last = n_keeps - 1;
+        if (last % step) != 0 {
+            sel.push(last);
+        }
+    }
+    (n_keeps, sel)
+}
+
+/// Pool-static CL tangent set: every sampled line after the head, plus the
+/// asymptotic cap from the last crossing. A pure function of the crossing
+/// table (the head alone anchors at the live price), so it is cacheable by
+/// content.
+#[derive(Clone, Debug)]
+pub(crate) struct ClFan {
+    lines: Vec<Line>,
+    cap: U256,
+}
+
+/// Derive the pool-static fan (see [`ClFan`]). `None` is a hard reject (a
+/// liquid crossing carried a zero entry price, or the table is empty) and is
+/// never cached.
+fn derive_cl_fan(crossings: &[IntTickRangeCrossing], sel: &[usize]) -> Option<ClFan> {
+    let early = !sel.is_empty();
+    let mut lines: Vec<Line> = Vec::with_capacity(sel.len());
+    let mut keep_idx: usize = 0;
+    let mut sel_i: usize = 0;
+    for cr in crossings {
+        let er = &cr.ending_range;
+        if er.liquidity == 0 {
+            continue;
+        }
+        if er.sqrt_price_x96.is_zero() {
+            return None;
+        }
+        if early {
+            if sel_i < sel.len() && keep_idx == sel[sel_i] {
+                sel_i += 1;
+            } else {
+                keep_idx += 1;
+                continue;
+            }
+        }
+        // keep_idx 0 is the head, derived per call.
+        if keep_idx >= 1 {
+            if let Some(l) = cl_tangent_from_crossing(cr) {
+                lines.push(l);
+            }
+        }
+        keep_idx += 1;
+    }
+    let cap = cl_cap_tail(crossings.last()?);
+    Some(ClFan { lines, cap })
+}
+
+/// Asymptotic output of the LAST range (cross it fully with infinite input),
+/// added to its accumulated anchor. Mirrors `exact_in_step_to_target`'s output
+/// rounding (round DOWN) while accepting u128 liquidity that overflows i128.
+fn cl_cap_tail(cr_last: &IntTickRangeCrossing) -> U256 {
+    let er = &cr_last.ending_range;
+    let exit = if er.zero_for_one {
+        er.sqrt_price_lower_x96
+    } else {
+        er.sqrt_price_upper_x96
+    };
+    let sp_entry = er.sqrt_price_x96;
+    let l_u512 = U512::from(er.liquidity);
+    let q96 = U512::from(1u8) << 96;
+    let last_range_out_u512 = if er.zero_for_one {
+        // sp_entry >= exit (price decreasing).
+        let sp_diff = U512::from(sp_entry.saturating_sub(exit));
+        if sp_diff.is_zero() {
+            U512::ZERO
+        } else {
+            (l_u512 * sp_diff) / q96
+        }
+    } else {
+        // exit >= sp_entry (price increasing).
+        let sp_diff = U512::from(exit.saturating_sub(sp_entry));
+        if sp_diff.is_zero() {
+            U512::ZERO
+        } else {
+            let denom = U512::from(sp_entry) * U512::from(exit);
+            if denom.is_zero() {
+                U512::ZERO
+            } else {
+                (l_u512 * q96 * sp_diff) / denom
+            }
+        }
+    };
+    // Narrow to U256 with saturation (a saturated cap is still sound — it can
+    // only shrink the search domain).
+    let last_range_out = if last_range_out_u512 > U512::from(U256::MAX) {
+        U256::MAX
+    } else {
+        last_range_out_u512.to::<U256>()
+    };
+    cr_last.crossing_output.saturating_add(last_range_out)
+}
+
+/// Cap a tangent set to `max_tangent_lines` by even index stride, always
+/// keeping the first and last entries (the envelope anchors). Membership is
+/// reused unchanged.
+fn sample_tangent_lines(lines: &[Line], max_tangent_lines: usize) -> Vec<Line> {
+    let step = lines.len() / max_tangent_lines;
+    let mut sampled = Vec::with_capacity(max_tangent_lines + 1);
+    let mut i = 0;
+    while i < lines.len() {
+        sampled.push(lines[i]);
+        i += step.max(1);
+    }
+    if sampled.last() != Some(&lines[lines.len() - 1]) {
+        sampled.push(lines[lines.len() - 1]);
+    }
+    sampled
+}
+
+/// CL hop lines + domain cap. The head tangent (live in-range price) is
+/// derived per call; the pool-static fan after it is reused from `fan_cache`
+/// when present, keyed by the fan's content hash and generationed by the
+/// solve-cycle epoch.
+fn cl_lines_and_cap(
+    crossings: &[IntTickRangeCrossing],
+    max_tangent_lines: usize,
+    mass: bool,
+    fan_cache: Option<(&PrefixCache, u64)>,
+) -> Option<(Vec<Line>, U256)> {
+    if crossings.is_empty() {
+        return None;
+    }
+    let head = match cl_head(crossings) {
+        ClHead::ZeroPrice => return None,
+        other => other,
+    };
+    // The cap consumes the last crossing: with a single crossing that is the
+    // head, whose entry price is live — such a table is never cached.
+    let fan_cache = if crossings.len() >= 2 {
+        fan_cache
+    } else {
+        None
+    };
+    // One selection pass serves both the key and the derive; it is the same
+    // O(eligible) scan the uncached path always paid.
+    let (n_keeps, sel) = cl_keep_selection(crossings, max_tangent_lines, mass);
+    let fan = if let Some((store, epoch)) = fan_cache {
+        let key = cl_fan_key(crossings, n_keeps, &sel, max_tangent_lines, mass);
+        if let Some(hit) = store.get_cl_fan(epoch, &key) {
+            gate_tls(|t| t.cl_fan_hits += 1);
+            hit
+        } else {
+            gate_tls(|t| t.cl_fan_misses += 1);
+            // A hard-reject fan is never cached (no poisoned entries).
+            let derived = Arc::new(derive_cl_fan(crossings, &sel)?);
+            store.insert_cl_fan(epoch, key, Arc::clone(&derived));
+            derived
+        }
+    } else {
+        Arc::new(derive_cl_fan(crossings, &sel)?)
+    };
+
+    let mut lines: Vec<Line> = Vec::with_capacity(1 + fan.lines.len());
+    if let ClHead::Tangent(Some(l)) = head {
+        lines.push(l);
+    }
+    lines.extend_from_slice(&fan.lines);
+    if lines.len() > max_tangent_lines {
+        lines = sample_tangent_lines(&lines, max_tangent_lines);
+    }
+    // Every range was zero-liquidity (or every tangent overflowed) → genuinely
+    // dead pool. Reject as degenerate so classify_cl_rejection can report
+    // `all_zero_liq`.
+    if lines.is_empty() {
+        return None;
+    }
+    Some((lines, fan.cap))
+}
+
 /// Affine lines dominating one hop's output curve, plus the hop's maximum
 /// extractable output (used to cap the search domain).
-#[expect(clippy::too_many_lines)]
 fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<Line>, U256)> {
+    hop_lines_and_cap_cached(hop, cfg, None)
+}
+
+/// [`hop_lines_and_cap`] with the owner's pool-static CL fan cache threaded
+/// in: `fan_cache` is the prefix store plus the solve-cycle epoch. `None`
+/// disables reuse (offline deps and direct callers).
+fn hop_lines_and_cap_cached(
+    hop: HopMath<'_>,
+    cfg: &SolveRuntimeConfig,
+    fan_cache: Option<(&PrefixCache, u64)>,
+) -> Option<(Vec<Line>, U256)> {
     match hop {
         HopMath::V2(h) => {
             let (r_in, r_out) = (h.reserve_in, h.reserve_out);
@@ -478,278 +776,27 @@ fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<
         }
         HopMath::Cl(ch) => {
             let seq = ch.seq;
-            // Tangent-line budget: dense CL pools (1-bps USDC/USDT with
-            // 700+ ranges) emit one tangent per range. Composition across
-            // two CL hops produces R1×R2 composed tangent lines, each
-            // requiring 4 I512 multiplies — the 65k compositions dominate
-            // gate time. Capping at MAX_TANGENT_LINES keeps the composition
-            // product bounded (K² not R1×R2).
-            //
-            // Soundness: EVERY tangent line is a global upper bound on the
-            // concave output curve. Keeping fewer tangents makes min(lines)
-            // LOOSER (higher) — the gate becomes more conservative (passes
-            // more paths to the solver) but NEVER skips a profitable path.
+            // Tangent-line budget: dense CL pools emit one tangent per range,
+            // and composition across two CL hops multiplies them (K² not
+            // R1×R2) — so the set is sampled to `max_tangent_lines`. Keeping
+            // fewer tangents only LOOSENS the envelope (every tangent is a
+            // global upper bound), so the gate never skips a profitable path.
             let max_tangent_lines = cfg.max_tangent_lines.max(1);
             if seq.ranges.is_empty() {
                 return None;
             }
-            // Carried crossings: the table the resolve pass already
-            // built once per (pool, direction) for the active-set walk —
-            // deriving it here per path dominated gate time. The table rides
-            // the [ClHop] descriptor; tableless callers pay their own derive
-            // via HopMath::cl_derived.
+            // Carried crossings: the table the resolve pass already built once
+            // per (pool, direction) for the active-set walk — deriving it here
+            // per path dominated gate time. The table rides the [ClHop]
+            // descriptor; tableless callers pay their own derive via
+            // HopMath::cl_derived.
             let crossings: &[IntTickRangeCrossing] = ch.crossings.as_ref();
-            // O(N) single pass: the crossings table accumulates the
-            // per-range crossing once (either caller-carried or derived),
-            // replacing the prior quadratic per-iteration re-scan that
-            // dominated gate time on dense-tick pools.
-            //
-            // Loop-12 PVOPYP: tangent lines are then SAMPLED to
-            // MAX_TANGENT_LINES entries, so on fat tables most of the
-            // ~300ns/range derivation is thrown away. Early-select the
-            // sampled keep-indices FIRST (same membership rule as the cap
-            // below: multiples of step + the last entry) and derive only
-            // those. Skip-membership counts only zero-liq / zero-price
-            // ranges — identical to the legacy filter for every normal
-            // table, so the resulting sampled set is byte-identical on the
-            // replay corpora; a would-be-I512-overflow range is the only
-            // case where the sampled set can differ, and there the bound
-            // stays sound (looser) by the tangent upper-bound argument.
-            let mut lines: Vec<Line> = Vec::with_capacity(max_tangent_lines + 1);
-            let n_keeps_usize = crossings
-                .iter()
-                .filter(|cr| {
-                    let er = &cr.ending_range;
-                    er.liquidity != 0 && !er.sqrt_price_x96.is_zero()
-                })
-                .count();
-            let mut sel: Vec<usize> = Vec::with_capacity(max_tangent_lines + 1);
-            let early = n_keeps_usize > max_tangent_lines;
-            if early && cfg.tangent_sample_by_mass {
-                // Loop-20 mass-weighted sampling: rank keep-indices by their
-                // range's input capacity (max gross in range) instead of even
-                // index spacing, keeping the heaviest shelves plus the first
-                // and last (which anchor the envelope at both domain
-                // endpoints). The CL tangents sit on the Pareto front
-                // (increasing intercept, decreasing slope), so ORDER never
-                // matters to min() — only membership, and capacity-correlated
-                // membership keeps the high-volume region where real trade
-                // sizes live.
-                let mut ranked: Vec<(U512, usize)> = Vec::with_capacity(n_keeps_usize);
-                let mut kept = 0usize;
-                for cr in crossings {
-                    let er = &cr.ending_range;
-                    if er.liquidity == 0 || er.sqrt_price_x96.is_zero() {
-                        continue;
-                    }
-                    ranked.push((U512::from(er.max_gross_input_in_range()), kept));
-                    kept += 1;
-                }
-                ranked.sort_by_key(|x| std::cmp::Reverse(x.0));
-                let mut chosen: Vec<usize> =
-                    ranked.iter().take(max_tangent_lines).map(|p| p.1).collect();
-                chosen.push(0usize);
-                chosen.push(n_keeps_usize - 1);
-                chosen.sort_unstable();
-                chosen.dedup();
-                sel.extend(chosen);
-            } else if early {
-                let step = (n_keeps_usize / max_tangent_lines).max(1);
-                let mut idx = 0usize;
-                while idx < n_keeps_usize {
-                    sel.push(idx);
-                    idx += step;
-                }
-                let last = n_keeps_usize - 1;
-                if (last % step) != 0 {
-                    sel.push(last);
-                }
-            }
-            let mut keep_idx: usize = 0;
-            let mut sel_i: usize = 0;
-            for cr in crossings {
-                // Anchor cumulative (gross_input, output) at the boundary
-                // ENTERING range k: `crossings[k]` carries the sum of
-                // ranges [0, k) — the anchor this tangent line needs.
-                let acc_in = cr.crossing_gross_input;
-                let acc_out = cr.crossing_output;
-                let er = &cr.ending_range;
-                let liq = er.liquidity;
-                if liq == 0 {
-                    // Zero-liquidity range: `computeSwapStep` with L=0
-                    // consumes 0 input and produces 0 output — the price
-                    // advances to the range boundary for FREE, so the swap
-                    // crosses this range without capital and lands in the
-                    // next range. The pool may sit with its entry price in
-                    // a zero-liq gap between two initialized ticks while
-                    // real liquidity lives a few ranges deeper; such a pool
-                    // is perfectly swappable — just skip the tangent line
-                    // (a zero-liq segment has zero width: you exit it the
-                    // instant you enter, at no cost, so it contributes no
-                    // output line) and advance acc so the next real range's
-                    // line anchors correctly. `compute_crossing(k)` gives
-                    // the cumulative cost to REACH range k regardless of k's
-                    // own liquidity; since crossing the zero-liq range k adds
-                    // 0 to both acc_in and acc_out, the next real range's
-                    // anchor is correct.
-                    continue;
-                }
-                let p_entry = er.sqrt_price_x96;
-                if p_entry.is_zero() {
-                    // Zero entry price is nonsensical (the pool would be
-                    // irreversibly drained) — this is a genuine degenerate
-                    // case, not an arithmetic limitation.
-                    return None;
-                }
-                // Early-select gate (loop-12 PVOPYP): derive only ranges
-                // whose keep-index is in sel; non-selected entries advance
-                // the counter and skip the coefficient derivation entirely.
-                if early {
-                    if sel_i < sel.len() && keep_idx == sel[sel_i] {
-                        sel_i += 1;
-                    } else {
-                        keep_idx += 1;
-                        continue;
-                    }
-                }
-                keep_idx += 1;
-                // Entry marginal rate m (out/in token units):
-                //   zfo: m = P²/2¹⁹² ; !zfo: m = 2¹⁹²/P²  (P = sqrt_ratio_x96)
-                // Slope = ceil-free EXACT fraction (γ_num·m / fee_denom);
-                // ceil happens only at evaluation.
-                let p_sq = U512::from(p_entry).saturating_mul(U512::from(p_entry));
-                let two192 = U512::from(1u8) << 192;
-                let (m_num, m_den) = if er.zero_for_one {
-                    (p_sq, two192)
-                } else {
-                    (two192, p_sq)
-                };
-                // line: y = acc_out + (γ·m_num / (fee_denom·m_den))·(x − acc_in)
-                //      = ((acc_out·D − N·acc_in) + N·x) / D
-                //   with D = fee_denom·m_den, N = γ_num·m_num.
-                let d512 = U512::from(er.fee_denom).saturating_mul(m_den);
-                let n512 = U512::from(er.gamma_numer).saturating_mul(m_num);
-                // If this range's coefficient derivation overflows I512
-                // (e.g. P is at an extreme tick — a pool pushed far from fair
-                // value by a misrouted swap), skip this range's tangent line
-                // and continue. This is SOUND: every tangent line of a concave
-                // function is a global upper bound, so the envelope `min(lines)`
-                // stays valid (just looser) with fewer lines. The solver then
-                // decides whether to simulate; viability checks handle
-                // directional infeasibility. An extreme price is NOT evidence
-                // of infeasibility — for zero_for_one it is exactly the
-                // recovery direction (price moving down from the misrouted
-                // extreme). Rejecting the entire hop because one range's
-                // arithmetic overflowed would discard real arbitrage.
-                //
-                // Advance acc (crossing is computable in U256 regardless of
-                // the tangent-line overflow) so the next real range's line
-                // anchors at the correct cumulative offset.
-                if !d512.is_zero() && !n512.is_zero() {
-                    if let (Ok(d), Ok(n), Ok(oc), Ok(ic)) = (
-                        I512::try_from(d512),
-                        I512::try_from(n512),
-                        I512::try_from(U512::from(acc_out)),
-                        I512::try_from(U512::from(acc_in)),
-                    ) {
-                        if let Some(a) = oc
-                            .checked_mul(d)
-                            .and_then(|v| n.checked_mul(ic).and_then(|ni| v.checked_sub(ni)))
-                        {
-                            lines.push(Line { a, b: n, c: d });
-                        }
-                    }
-                }
-            }
-            // Cap tangent lines: sample MAX_TANGENT_LINES evenly-spaced
-            // entries (keeping the first + last, which anchor the envelope
-            // at both endpoints). The full set of CL tangents are ALL on
-            // the Pareto front (increasing intercept, decreasing slope), so
-            // prune() cannot reduce them. Sampling is the only way to bound
-            // the composition product.
-            if lines.len() > max_tangent_lines {
-                let step = lines.len() / max_tangent_lines;
-                let mut sampled = Vec::with_capacity(max_tangent_lines + 1);
-                let mut i = 0;
-                while i < lines.len() {
-                    sampled.push(lines[i]);
-                    i += step.max(1);
-                }
-                // Always keep the last tangent (the flattest slope, highest
-                // intercept — the tightest bound at large x).
-                if sampled.last() != Some(&lines[lines.len() - 1]) {
-                    sampled.push(lines[lines.len() - 1]);
-                }
-                lines = sampled;
-            }
-            // Every range was zero-liquidity → genuinely dead pool (no
-            // initialized tick reachable in the swap direction produces any
-            // output). Reject as degenerate so classify_cl_rejection can
-            // report `all_zero_liq`.
-            if lines.is_empty() {
-                return None;
-            }
-            // Cap-tail: compute the asymptotic output of the LAST range
-            // (crossing it fully with infinite input) and add it to
-            // acc_out. We bypass `compute_swap_step_v3` (which takes
-            // `liquidity: i128`) and compute directly in U512 to accept
-            // u128::MAX liquidity — the on-chain `uint128` type whose top
-            // bit (>= 2^127) overflows i128 and would reject the hop.
-            //
-            // The formula mirrors `exact_in_step_to_target`'s output
-            // (byte-identical for i128-representable liquidity — both
-            // round DOWN, matching v3-core's getAmount0Delta/getAmount1Delta
-            // for the "target price reachable" branch taken by
-            // `compute_swap_step_v3(... I256::MAX ...)`):
-            //   zfo: output = L · (sp_entry − sp_exit) / Q96
-            //   ofz: output = L · Q96 · (sp_exit − sp_entry) / (sp_entry · sp_exit)
-            // Both fit comfortably in U512 for any u128 L and any uint160
-            // sqrt_price; the result narrows to U256 with saturation (a cap
-            // shrunk by saturation is still a sound search-domain bound —
-            // the binary search just explores a smaller input range).
-            // The last crossing already carries the accumulated anchor
-            // (O(1) reuse — no re-scan).
-            let cr_last = crossings.last()?;
-            let er = cr_last.ending_range.clone();
-            let exit = if er.zero_for_one {
-                er.sqrt_price_lower_x96
-            } else {
-                er.sqrt_price_upper_x96
-            };
-            let sp_entry = er.sqrt_price_x96;
-            let l_u512 = U512::from(er.liquidity);
-            let q96 = U512::from(1u8) << 96;
-            let last_range_out_u512 = if er.zero_for_one {
-                // sp_entry >= exit (price decreasing).
-                let sp_diff = U512::from(sp_entry.saturating_sub(exit));
-                if sp_diff.is_zero() {
-                    U512::ZERO
-                } else {
-                    (l_u512 * sp_diff) / q96
-                }
-            } else {
-                // exit >= sp_entry (price increasing).
-                let sp_diff = U512::from(exit.saturating_sub(sp_entry));
-                if sp_diff.is_zero() {
-                    U512::ZERO
-                } else {
-                    let denom = U512::from(sp_entry) * U512::from(exit);
-                    if denom.is_zero() {
-                        U512::ZERO
-                    } else {
-                        (l_u512 * q96 * sp_diff) / denom
-                    }
-                }
-            };
-            // Narrow to U256 with saturation (a saturated cap is still
-            // sound — see above). Then `cap = acc_out + last_range_out`.
-            let last_range_out = if last_range_out_u512 > U512::from(U256::MAX) {
-                U256::MAX
-            } else {
-                last_range_out_u512.to::<U256>()
-            };
-            let cap = cr_last.crossing_output.saturating_add(last_range_out);
-            Some((lines, cap))
+            cl_lines_and_cap(
+                crossings,
+                max_tangent_lines,
+                cfg.tangent_sample_by_mass,
+                fan_cache,
+            )
         }
         HopMath::SolidlyVolatile {
             reserve_in,
@@ -1280,6 +1327,10 @@ pub struct GateStats {
     pub duration_ns: u128,
     /// Composed-boundary cache hits inside this path's envelope product.
     pub prefix_hits: u64,
+    /// Pool-static CL tangent-fan cache hits (per CL hop derivation).
+    pub cl_fan_hits: u64,
+    /// Pool-static CL tangent-fan cache misses (per CL hop derivation).
+    pub cl_fan_misses: u64,
     /// Composition boundaries actually executed for this path.
     pub boundaries_composed: u64,
     /// Product-matrix wall time (ns) across this path's boundaries.
@@ -1342,6 +1393,8 @@ impl GateStats {
         none_overflow: 0,
         duration_ns: 0,
         prefix_hits: 0,
+        cl_fan_hits: 0,
+        cl_fan_misses: 0,
         boundaries_composed: 0,
         product_ns: 0,
         prune_stage1_ns: 0,
@@ -1379,6 +1432,8 @@ impl GateStats {
         self.none_overflow += other.none_overflow;
         self.duration_ns += other.duration_ns;
         self.prefix_hits += other.prefix_hits;
+        self.cl_fan_hits += other.cl_fan_hits;
+        self.cl_fan_misses += other.cl_fan_misses;
         self.boundaries_composed += other.boundaries_composed;
         self.product_ns += other.product_ns;
         self.prune_stage1_ns += other.prune_stage1_ns;
@@ -1465,16 +1520,100 @@ fn cl_table_key(crossings: &[IntTickRangeCrossing]) -> u128 {
     h
 }
 
+/// Static-content key for a CL hop's pool-static tangent fan. The fan is a
+/// function of the SELECTED crossings only (the head anchors at the live
+/// in-range price and is rebuilt per call), so the key hashes just those
+/// entries' derivation inputs plus the cap-tail inputs — re-hashing the whole
+/// table per path would rival the derivation it saves. `n_keeps`/`sel.len()`
+/// pin the sampling shape; the stance fields keep two configs from sharing a
+/// fan.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct ClFanKey {
+    table: u128,
+    max_tangent_lines: usize,
+    mass: bool,
+}
+
+/// Mix everything `cl_tangent_from_crossing` reads.
+fn mix_tangent_inputs(mut h: u128, cr: &IntTickRangeCrossing) -> u128 {
+    let er = &cr.ending_range;
+    h = content_mix_u256(h, &cr.crossing_gross_input);
+    h = content_mix_u256(h, &cr.crossing_output);
+    h = content_mix_u256(h, &er.sqrt_price_x96);
+    h = (h ^ er.liquidity).wrapping_mul(0x0000_0100_0000_01B3);
+    (h ^ u128::from(er.gamma_numer)
+        ^ u128::from(er.fee_denom)
+        ^ u128::from(u64::from(er.zero_for_one)))
+    .wrapping_mul(0x0000_0100_0000_01B3)
+}
+
+/// Mix everything `cl_cap_tail` reads.
+fn mix_cap_inputs(mut h: u128, cr: &IntTickRangeCrossing) -> u128 {
+    let er = &cr.ending_range;
+    h = content_mix_u256(h, &cr.crossing_output);
+    h = content_mix_u256(h, &er.sqrt_price_x96);
+    h = content_mix_u256(h, &er.sqrt_price_lower_x96);
+    h = content_mix_u256(h, &er.sqrt_price_upper_x96);
+    (h ^ er.liquidity ^ u128::from(u64::from(er.zero_for_one))).wrapping_mul(0x0000_0100_0000_01B3)
+}
+
+/// Build the fan key from the precomputed selection (`n_keeps`, `sel`).
+fn cl_fan_key(
+    crossings: &[IntTickRangeCrossing],
+    n_keeps: usize,
+    sel: &[usize],
+    max_tangent_lines: usize,
+    mass: bool,
+) -> ClFanKey {
+    let mut h = 0xcbf2_9ce4_8422_2325_u128
+        ^ u128::try_from(crossings.len()).unwrap_or(u128::MAX)
+        ^ (u128::try_from(n_keeps).unwrap_or(u128::MAX) << 7)
+        ^ (u128::try_from(sel.len()).unwrap_or(u128::MAX) << 33)
+        ^ u128::from(u64::from(mass));
+    let early = !sel.is_empty();
+    let mut keep_idx = 0usize;
+    let mut sel_i = 0usize;
+    for cr in crossings {
+        let er = &cr.ending_range;
+        if er.liquidity == 0 {
+            continue;
+        }
+        if early {
+            if sel_i < sel.len() && keep_idx == sel[sel_i] {
+                sel_i += 1;
+            } else {
+                keep_idx += 1;
+                continue;
+            }
+        }
+        // keep_idx 0 is the head (live-priced), excluded from the fan.
+        if keep_idx >= 1 {
+            h = mix_tangent_inputs(h, cr);
+        }
+        keep_idx += 1;
+    }
+    if let Some(last) = crossings.last() {
+        h = mix_cap_inputs(h, last);
+    }
+    ClFanKey {
+        table: h,
+        max_tangent_lines,
+        mass,
+    }
+}
+
 struct PrefixCacheState {
     epoch: u64,
     map: std::collections::HashMap<Vec<HopCacheKey>, Vec<Line>>,
+    cl_fans: std::collections::HashMap<ClFanKey, Arc<ClFan>>,
 }
 
-/// Engine-owned prefix-composition cache (C4; loop-8 origin — the former
-/// process static `PREFIX_CACHE`). Entries are epoch-generationed: first
-/// touch of a new epoch clears older entries, so no entry survives a block
-/// boundary and no public reset exists. One instance per solve owner — two
-/// engines in one process no longer share cache state.
+/// Engine-owned gate memo (C4; loop-8 origin — the former process static
+/// `PREFIX_CACHE`): composed prefix line sets plus the pool-static CL tangent
+/// fans. Entries are epoch-generationed: first touch of a new epoch clears
+/// older entries, so no entry survives a block boundary and no public reset
+/// exists. One instance per solve owner — two engines in one process no
+/// longer share cache state.
 pub struct PrefixCache {
     inner: std::sync::Mutex<PrefixCacheState>,
 }
@@ -1487,6 +1626,7 @@ impl PrefixCache {
             inner: std::sync::Mutex::new(PrefixCacheState {
                 epoch: 0,
                 map: std::collections::HashMap::new(),
+                cl_fans: std::collections::HashMap::new(),
             }),
         }
     }
@@ -1499,6 +1639,7 @@ impl PrefixCache {
                 if cache.epoch != epoch {
                     cache.epoch = epoch;
                     cache.map.clear();
+                    cache.cl_fans.clear();
                 }
                 cache.map.get(chain).cloned()
             }
@@ -1512,8 +1653,37 @@ impl PrefixCache {
             if cache.epoch != epoch {
                 cache.epoch = epoch;
                 cache.map.clear();
+                cache.cl_fans.clear();
             }
             cache.map.insert(chain, lines);
+        }
+    }
+
+    /// Pool-static CL tangent fan against `epoch` (the same rollover-on-first
+    /// touch rule as the prefix map). Poisoned lock → miss.
+    pub(crate) fn get_cl_fan(&self, epoch: u64, key: &ClFanKey) -> Option<Arc<ClFan>> {
+        match self.inner.lock() {
+            Ok(mut cache) => {
+                if cache.epoch != epoch {
+                    cache.epoch = epoch;
+                    cache.map.clear();
+                    cache.cl_fans.clear();
+                }
+                cache.cl_fans.get(key).cloned()
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Pool-static CL tangent fan write against `epoch`.
+    pub(crate) fn insert_cl_fan(&self, epoch: u64, key: ClFanKey, fan: Arc<ClFan>) {
+        if let Ok(mut cache) = self.inner.lock() {
+            if cache.epoch != epoch {
+                cache.epoch = epoch;
+                cache.map.clear();
+                cache.cl_fans.clear();
+            }
+            cache.cl_fans.insert(key, fan);
         }
     }
 }
@@ -1711,12 +1881,20 @@ fn path_profit_bound_inner(
 ) -> Result<U256, GateSkipCause> {
     let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
+    // Pool-static CL fans are shared across a block's paths; `None` (offline
+    // deps, no store) leaves `hop_lines_and_cap`'s uncached path in place.
+    let fan_cache = if deps.prefix_cache {
+        deps.prefix_store.map(|store| (store, deps.epoch))
+    } else {
+        None
+    };
     let phase_derive = std::time::Instant::now();
     for (hop_idx, slot) in hops.iter().enumerate() {
         let Some(hop) = slot.as_ref() else {
             return Err(GateSkipCause::UnmappedHop);
         };
-        let Some((hop_ls, cap)) = hop_lines_and_cap(hop.clone(), &deps.runtime) else {
+        let Some((hop_ls, cap)) = hop_lines_and_cap_cached(hop.clone(), &deps.runtime, fan_cache)
+        else {
             // M6776W degenerate diagnostic: log the hop family + the reject
             // reason so the steady-state degenerate rate can be classified as
             // the expected shape (sparse CL with empty active range / zero
@@ -3802,6 +3980,207 @@ mod tests {
         // Epoch 7 never touched: no carry.
         let c = PrefixCache::new();
         assert!(c.get(7, &chain).is_none());
+    }
+
+    use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+
+    // ===================================================================
+    // Pool-static CL tangent-fan cache.
+    // ===================================================================
+
+    fn sp_at(tick: i32) -> U256 {
+        U256::from(get_sqrt_ratio_at_tick_internal(tick).unwrap_or_default())
+    }
+
+    /// Dense zero-for-one CL sequence: `n` contiguous 1-tick ranges below the
+    /// anchor, all with `liq` — a fat table that trips the tangent sample cap.
+    fn fat_cl_seq(n: i32, liq: u128) -> IntV3TickRangeSequence {
+        let ranges = (0..n)
+            .map(|i| {
+                let (tick_lo, tick_hi) = (-(i + 1), -i);
+                IntV3TickRangeHop {
+                    liquidity: liq,
+                    sqrt_price_x96: sp_at(-i),
+                    sqrt_price_lower_x96: sp_at(tick_lo),
+                    sqrt_price_upper_x96: sp_at(tick_hi),
+                    gamma_numer: 997_000,
+                    fee_denom: 1_000_000,
+                    zero_for_one: true,
+                    word_boundary_prices: Vec::new(),
+                }
+            })
+            .collect();
+        IntV3TickRangeSequence::new(ranges).expect("valid sequence")
+    }
+
+    /// Content hash of a derived line set (Debug bytes suffice for an equality
+    /// witness; the test also asserts exact `Vec` equality).
+    fn hash_lines(lines: &[Line]) -> u128 {
+        let mut h = 0xcbf2_9ce4_8422_2325_u128;
+        for l in lines {
+            for b in format!("{l:?}").bytes() {
+                h = (h ^ u128::from(b)).wrapping_mul(0x0000_0100_0000_01B3);
+            }
+        }
+        h
+    }
+
+    /// Cold derivation, a warm cache hit, and the uncached reference must all
+    /// produce byte-identical line vectors + caps — sampled (fat table) and,
+    /// under both sampling stances.
+    #[test]
+    fn cl_fan_cache_is_byte_identical_cold_warm_and_uncached() {
+        let seq = fat_cl_seq(200, 1_000_000_000_000);
+        let mk = || {
+            HopMath::Cl(ClHop {
+                seq: &seq,
+                crossings: std::borrow::Cow::Owned(build_cl_crossing_table(&seq)),
+            })
+        };
+        for mass in [false, true] {
+            let cfg = SolveRuntimeConfig {
+                tangent_sample_by_mass: mass,
+                ..SolveRuntimeConfig::default()
+            };
+            let (reference, reference_cap) = hop_lines_and_cap(mk(), &cfg).expect("derivable");
+            assert!(
+                reference.len() < seq.ranges.len(),
+                "sample cap must drop most of the 200-range table"
+            );
+
+            let store = PrefixCache::new();
+            gate_tls(|t| {
+                t.cl_fan_hits = 0;
+                t.cl_fan_misses = 0;
+            });
+            let (cold, cold_cap) =
+                hop_lines_and_cap_cached(mk(), &cfg, Some((&store, 1))).expect("derivable");
+            assert_eq!(gate_tls(|t| t.cl_fan_misses), 1, "cold must miss once");
+            assert_eq!(gate_tls(|t| t.cl_fan_hits), 0);
+
+            gate_tls(|t| {
+                t.cl_fan_hits = 0;
+                t.cl_fan_misses = 0;
+            });
+            let (warm, warm_cap) =
+                hop_lines_and_cap_cached(mk(), &cfg, Some((&store, 1))).expect("derivable");
+            assert_eq!(gate_tls(|t| t.cl_fan_hits), 1, "warm must hit once");
+            assert_eq!(gate_tls(|t| t.cl_fan_misses), 0);
+
+            assert_eq!(
+                hash_lines(&reference),
+                hash_lines(&cold),
+                "cold line hash diverged (mass={mass})"
+            );
+            assert_eq!(
+                hash_lines(&reference),
+                hash_lines(&warm),
+                "warm line hash diverged (mass={mass})"
+            );
+            assert_eq!(reference, cold, "cold lines diverged (mass={mass})");
+            assert_eq!(reference, warm, "warm lines diverged (mass={mass})");
+            assert_eq!(reference_cap, cold_cap);
+            assert_eq!(reference_cap, warm_cap);
+        }
+    }
+
+    /// The fan key excludes the head's live price: a within-range-0 price move
+    /// reuses the cached fan and only rebuilds the head tangent. A tick-set
+    /// change alters the key and misses.
+    #[test]
+    fn cl_fan_key_ignores_head_price_and_tracks_tick_set() {
+        let seq = fat_cl_seq(80, 1_000_000_000_000);
+        let cfg = SolveRuntimeConfig::default();
+        let base = build_cl_crossing_table(&seq);
+        let view = |crossings: &[IntTickRangeCrossing]| {
+            HopMath::Cl(ClHop {
+                seq: &seq,
+                crossings: std::borrow::Cow::Owned(crossings.to_vec()),
+            })
+        };
+        let key_of = |crossings: &[IntTickRangeCrossing]| {
+            let (n, sel) = cl_keep_selection(crossings, cfg.max_tangent_lines, false);
+            cl_fan_key(crossings, n, &sel, cfg.max_tangent_lines, false)
+        };
+
+        let store = PrefixCache::new();
+        let (base_lines, _) =
+            hop_lines_and_cap_cached(view(&base), &cfg, Some((&store, 1))).expect("derivable");
+
+        // Live price move within range 0: only crossings[0]'s entry price
+        // changes (its accumulation is zero), so the fan key is unchanged.
+        let mut moved = base.clone();
+        let live = moved[0].ending_range.sqrt_price_x96;
+        moved[0].ending_range.sqrt_price_x96 = live.saturating_sub(U256::from(1u8));
+        assert_eq!(
+            key_of(&base),
+            key_of(&moved),
+            "price move must reuse the fan key"
+        );
+        gate_tls(|t| {
+            t.cl_fan_hits = 0;
+            t.cl_fan_misses = 0;
+        });
+        let (moved_lines, _) =
+            hop_lines_and_cap_cached(view(&moved), &cfg, Some((&store, 1))).expect("derivable");
+        assert_eq!(gate_tls(|t| t.cl_fan_hits), 1, "price move must hit");
+        assert_eq!(gate_tls(|t| t.cl_fan_misses), 0);
+        assert_ne!(
+            base_lines, moved_lines,
+            "the head tangent must be rebuilt from the new live price"
+        );
+
+        // Tick-set change on a SELECTED sampled entry (range 2 is in the
+        // stride set for n=80 / cap=32): the fan key changes → miss.
+        let mut changed = base.clone();
+        changed[2].ending_range.liquidity = 0;
+        assert_ne!(
+            key_of(&base),
+            key_of(&changed),
+            "changed tick set must produce a different key"
+        );
+        gate_tls(|t| {
+            t.cl_fan_hits = 0;
+            t.cl_fan_misses = 0;
+        });
+        let (_changed_lines, _) =
+            hop_lines_and_cap_cached(view(&changed), &cfg, Some((&store, 1))).expect("derivable");
+        assert_eq!(gate_tls(|t| t.cl_fan_misses), 1, "changed table must miss");
+    }
+
+    /// A hard-reject fan (zero entry price deeper in the table) must not write
+    /// a cache entry, so a subsequent valid lookup cannot be poisoned.
+    #[test]
+    fn cl_fan_reject_does_not_poison_cache() {
+        let seq = fat_cl_seq(80, 1_000_000_000_000);
+        let cfg = SolveRuntimeConfig::default();
+        let store = PrefixCache::new();
+        let view = |crossings: &[IntTickRangeCrossing]| {
+            HopMath::Cl(ClHop {
+                seq: &seq,
+                crossings: std::borrow::Cow::Owned(crossings.to_vec()),
+            })
+        };
+        let mut poisoned = build_cl_crossing_table(&seq);
+        poisoned[1].ending_range.sqrt_price_x96 = U256::ZERO;
+        let poisoned_view = view(&poisoned);
+        assert!(
+            hop_lines_and_cap_cached(poisoned_view, &cfg, Some((&store, 1))).is_none(),
+            "zero entry price must be a hard reject"
+        );
+
+        let valid = build_cl_crossing_table(&seq);
+        gate_tls(|t| {
+            t.cl_fan_hits = 0;
+            t.cl_fan_misses = 0;
+        });
+        let hit = hop_lines_and_cap_cached(view(&valid), &cfg, Some((&store, 1)));
+        assert!(hit.is_some(), "the valid table must still derive");
+        assert_eq!(
+            gate_tls(|t| t.cl_fan_misses),
+            1,
+            "nothing was cached by the reject"
+        );
     }
 
     /// Early-exit focused test: `concave_max` must (a) stop before the last
