@@ -36,6 +36,7 @@
 //! - `active_set` — the active-set piecewise Möbius walk.
 //! - `entries` — the public solve entry points and [`ClSolveTables`].
 //! - `memo` — the cross-block composition memo.
+//! - `path_sim` — the public byte-exact forward path simulator.
 //! - `telemetry` — walk counters, census, and process-wide timing statics,
 //!   written only when the crate's default-off `telemetry` feature is enabled.
 
@@ -55,6 +56,7 @@ mod crossings;
 mod entries;
 mod hop_sim;
 mod memo;
+mod path_sim;
 mod telemetry;
 mod word_profile;
 
@@ -78,6 +80,7 @@ pub use entries::{
 };
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{walk_path_fingerprint, WalkMemo, WalkMemoStats};
+pub use path_sim::{ClPathOutcome, ClPathSim};
 pub use telemetry::{
     WalkEventCensus, WALK_ANCHOR_ARGMAX_NS, WALK_ANCHOR_BUILD_NS, WALK_ANCHOR_COMPOSE_NS,
     WALK_ANCHOR_NS_TOTAL, WALK_CENSUS_DIR_NS, WALK_CENSUS_DIR_SIMNS, WALK_CENSUS_DIR_SIMS,

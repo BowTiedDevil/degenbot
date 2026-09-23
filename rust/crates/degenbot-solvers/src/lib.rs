@@ -22,6 +22,7 @@
 //! PyO3 driver shell.
 pub mod affected_keys;
 pub mod basket;
+pub mod bounded_brent;
 pub mod capture_fixture;
 pub mod cl_cache;
 pub mod mixed;
