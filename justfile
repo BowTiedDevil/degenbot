@@ -208,10 +208,9 @@ verify-build-fresh:
 # forcing anything colder than that).
 # Running the recipe applies the defaults and frees the space immediately - no
 # preview/dry-run mode:
-#   just gc-target            # sweep artifacts older than the 14-day horizon
+#   just gc-target            # sweep artifacts older than the 7-day horizon
 #   AGE=0 just gc-target      # sweep everything except target/maturin
-#   DUPES=1 just gc-target    # also sweep stale duplicate-hash variants, keep newest per basename
-# DUPES=1 also sweeps duplicate-hash test binaries: cargo hashes metadata into
+# The sweep also removes duplicate-hash test binaries: cargo hashes metadata into
 # each artifact name, so feature-flag/env churn (extension-module, hotpath,
 # CI parity runs) leaves older variants of the same suite piling up at ~0.5 GiB
 # apiece. Only executables >= 10 MiB are considered, and the newest mtime in
@@ -219,8 +218,7 @@ verify-build-fresh:
 gc-target:
     #!/usr/bin/env bash
     set -euo pipefail
-    age=${AGE:-14}
-    dupes=${DUPES:-}
+    age=${AGE:-7}
     roots=(rust/target/debug rust/target/release rust/target/rust-analyzer/debug)
     subtrees=(deps examples build .fingerprint)
     total_kb=0
@@ -242,28 +240,26 @@ gc-target:
             rm -rf $stale 2>/dev/null || echo "WARN: partial removal in $dir" >&2
         done
     done
-    # Stale duplicate-hash variants (see dupes=1 in the header comment). Only
+    # Stale duplicate-hash variants (see the header comment). Only
     # extensionless executables >= 10 MiB; the newest mtime per basename wins.
-    if [ -n "${dupes}" ] && [ "${dupes}" != "0" ]; then
-        tmp=$(mktemp)
-        for dir in rust/target/debug/deps rust/target/debug/examples rust/target/release/deps rust/target/release/examples rust/target/rust-analyzer/debug/deps; do
-            if [ ! -d "$dir" ]; then continue; fi
-            find "$dir" -maxdepth 1 -type f -size +10M -printf '%T@ %f\n' \
-                | awk '{ b=$2; sub(/-[0-9a-f]{16}$/, "", b); if (b in newest) { if ($1 > newest[b]) { print path[b]; newest[b]=$1; path[b]=$2 } else print $2 } else { newest[b]=$1; path[b]=$2 } }' > "$tmp"
-            if [ -s "$tmp" ]; then
-                dupes_list=$(awk -v d="$dir" '{ print d "/" $0 }' "$tmp")
-                kb=$(du -skc $dupes_list 2>/dev/null | tail -1 | cut -f1)
-                n=$(wc -l < "$tmp")
-                rm -f $dupes_list
-                total_kb=$((total_kb + kb))
-                echo "deduped: $n stale variants in $dir"
-            fi
-        done
-        rm -f "$tmp"
-    fi
+    tmp=$(mktemp)
+    for dir in rust/target/debug/deps rust/target/debug/examples rust/target/release/deps rust/target/release/examples rust/target/rust-analyzer/debug/deps; do
+        if [ ! -d "$dir" ]; then continue; fi
+        find "$dir" -maxdepth 1 -type f -size +10M -printf '%T@ %f\n' \
+            | awk '{ b=$2; sub(/-[0-9a-f]{16}$/, "", b); if (b in newest) { if ($1 > newest[b]) { print path[b]; newest[b]=$1; path[b]=$2 } else print $2 } else { newest[b]=$1; path[b]=$2 } }' > "$tmp"
+        if [ -s "$tmp" ]; then
+            dupes_list=$(awk -v d="$dir" '{ print d "/" $0 }' "$tmp")
+            kb=$(du -skc $dupes_list 2>/dev/null | tail -1 | cut -f1)
+            n=$(wc -l < "$tmp")
+            rm -f $dupes_list
+            total_kb=$((total_kb + kb))
+            echo "deduped: $n stale variants in $dir"
+        fi
+    done
+    rm -f "$tmp"
     freed=$(numfmt --to=iec "$((total_kb * 1024))" 2>/dev/null || echo "${total_kb} KiB")
     now=$(du -sh rust/target 2>/dev/null | cut -f1 || true)
-    echo "swept: ~$freed freed at a ${age}-day horizon (+dupes if requested) (rust/target now: ${now:-n/a})"
+    echo "swept: ~$freed freed at a ${age}-day horizon, dupes deduped (rust/target now: ${now:-n/a})"
 
 # ========== Python Development ==========
 
