@@ -15,7 +15,7 @@ use std::sync::Arc;
 use alloy::primitives::{U256, U512};
 
 use crate::profit_envelope::gate_tls;
-use crate::profit_envelope::{path_profit_bound, ClHop, Envelope, GateDeps, HopMath};
+use crate::profit_envelope::{path_profit_bound_with_floor, ClHop, Envelope, GateDeps, HopMath};
 
 use crate::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, ResolvedHop,
@@ -135,7 +135,7 @@ pub fn solve_path_with_min_profit(
             }
         })
         .collect();
-    match path_profit_bound(&views, gate) {
+    match path_profit_bound_with_floor(&views, gate, min_profit) {
         // Unsupported families are SOLVED unscreened, never skipped — the
         // gate counts its own verdicts (evaluated / unsupported / cause).
         Envelope::Unsupported(_) => {}

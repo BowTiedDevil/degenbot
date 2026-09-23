@@ -1298,6 +1298,10 @@ pub struct GateStats {
     pub compose_ns: u128,
     /// Search phase wall time (ns) — the discrete concave max search.
     pub search_ns: u128,
+    /// Search phase hull segments whose candidates the concave max scan
+    /// evaluated. One count per breakpoint segment; a floor early-exit stops
+    /// the count at the segment that cleared the floor (diagnostic).
+    pub search_segments: u64,
     /// Affine composition pairs evaluated (diagnostic).
     pub pairs: u64,
     /// GATE-COMPOSE-1: prune invocations (diagnostic).
@@ -1345,6 +1349,7 @@ impl GateStats {
         derive_ns: 0,
         compose_ns: 0,
         search_ns: 0,
+        search_segments: 0,
         postprune_reduce_ns: 0,
         sample_ns: 0,
         pairs: 0,
@@ -1381,6 +1386,7 @@ impl GateStats {
         self.derive_ns += other.derive_ns;
         self.compose_ns += other.compose_ns;
         self.search_ns += other.search_ns;
+        self.search_segments += other.search_segments;
         self.postprune_reduce_ns += other.postprune_reduce_ns;
         self.sample_ns += other.sample_ns;
         self.pairs += other.pairs;
@@ -1648,8 +1654,35 @@ pub struct GateCaptureCfg {
 /// on full hop content and generationed by [`GateDeps::epoch`].
 #[must_use]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>], deps: &GateDeps<'_>) -> Envelope {
+    path_profit_bound_impl(hops, deps, None)
+}
+
+/// [`path_profit_bound`] with the caller's skip floor threaded into the
+/// discrete concave max scan.
+///
+/// The caller's only use of the result is the sign of `bound <= min_profit`
+/// (skip). Once a hull segment's candidates push the running best STRICTLY
+/// above the floor, the "don't skip" verdict is established — later segments
+/// can only raise the max — so the scan returns without evaluating the
+/// remainder. The returned value keeps the exact `best + best/2048` slack
+/// contract; only its magnitude may be smaller (never below the floor), so
+/// the skip verdict is unchanged.
+#[must_use]
+pub fn path_profit_bound_with_floor(
+    hops: &[Option<HopMath<'_>>],
+    deps: &GateDeps<'_>,
+    min_profit: U256,
+) -> Envelope {
+    path_profit_bound_impl(hops, deps, Some(min_profit))
+}
+
+fn path_profit_bound_impl(
+    hops: &[Option<HopMath<'_>>],
+    deps: &GateDeps<'_>,
+    floor: Option<U256>,
+) -> Envelope {
     let gate_t0 = std::time::Instant::now();
-    let result = path_profit_bound_inner(hops, deps);
+    let result = path_profit_bound_inner(hops, deps, floor);
     gate_tls(|t| t.duration_ns = gate_t0.elapsed().as_nanos());
     match result {
         Ok(b) => {
@@ -1674,6 +1707,7 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>], deps: &GateDeps<'_>) -> E
 fn path_profit_bound_inner(
     hops: &[Option<HopMath<'_>>],
     deps: &GateDeps<'_>,
+    floor: Option<U256>,
 ) -> Result<U256, GateSkipCause> {
     let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
@@ -1908,6 +1942,38 @@ fn path_profit_bound_inner(
     if xmax.is_zero() {
         return Ok(U256::ZERO);
     }
+    let best = concave_max(&lines, xmax, floor);
+
+    gate_tls(|t| t.search_ns += phase_search.elapsed().as_nanos());
+    // Rounding slack: composed reductions and I512 ceiling evaluation can
+    // leave the derived lower envelope a hair BELOW the true curve. The
+    // deficit is ~2^-11 of the bound per reduction for very deep chains
+    // (block 25826949 path 400: 200M under-cut on a 7.23e13 bound), but the
+    // same per-hop reductions compound on moderate chains too: block
+    // 25826949 path 704 under-cut 3.7e15 on a 2.7e23 bound while its
+    // composed survivor count stayed <= 200, so the old lines>200 gate
+    // skipped the slack. The slack must be UNCONDITIONAL — soundness of the
+    // skip decision is the only contract; the 1/2048 (~0.05%) looseness is
+    // invisible to live skips against the incumbent/floor comparisons.
+    if let Some(b) = narrow(best) {
+        return Ok(b.saturating_add(b / U256::from(2048u64)));
+    }
+    Err(GateSkipCause::DomainOverflow)
+}
+
+/// Discrete concave max of `f(x) = min_lines(x) − x` over `[0, xmax]`.
+///
+/// `floor` is the caller's skip floor, threaded so the scan can stop early:
+/// once a hull segment's candidates put the running `best` strictly above the
+/// floor, the "don't skip" verdict is established and the remaining segments
+/// (which can only raise the max) are not evaluated. `None` runs the full scan
+/// for the exact max.
+///
+/// Every evaluated value is the selected hull line's ceil-eval minus `x`, a
+/// rigorous upper bound of the true profit at that x, so the scan's soundness
+/// is unchanged by the early exit.
+#[expect(clippy::too_many_lines)]
+fn concave_max(lines: &[Line], xmax: U256, floor: Option<U256>) -> I512 {
     // Lower-envelope hull over the surviving lines: order by slope (b/c,
     // exact rational compare) descending, drop same-slope dominated
     // intercepts, and store per-hull-line the ceil-rounded integer
@@ -2025,11 +2091,23 @@ fn path_profit_bound_inner(
     // evaluated value is min-line ceil-eval − x, a valid upper bound of the
     // true profit at that x, so the reported bound stays SOUND.
     let one = U256::from(1u8);
+    // Skip-floor early exit: the caller only uses the sign of
+    // `bound <= floor`, so once a segment's candidates push `best`
+    // strictly above the floor the remainder cannot change the verdict
+    // (later segments only raise the max). `narrow` must succeed to
+    // return a `U256`; an overflowing best keeps scanning to the caller's
+    // normal DomainOverflow exit.
+    let floor_i = floor.and_then(|f| I512::try_from(U512::from(f)).ok());
+    let over_floor = |v: I512| -> bool { floor_i.is_some_and(|fl| v > fl) && narrow(v).is_some() };
     let mut best = f(&U256::ZERO);
+    if over_floor(best) {
+        return best;
+    }
     for &(bp, _) in &hull {
         if bp.is_zero() || bp > xmax {
             continue;
         }
+        gate_tls(|t| t.search_segments += 1);
         for &cand in &[bp, (bp + one).min(xmax)] {
             let v = f(&cand);
             if v > best {
@@ -2046,6 +2124,9 @@ fn path_profit_bound_inner(
                 best = v;
             }
         }
+        if over_floor(best) {
+            return best;
+        }
     }
     // Loop-6 fuzz fix (right-edge false-skip class): composed bound lines can
     // carry slope > 1 on genuinely profitable cycles (chained marginal price
@@ -2060,21 +2141,7 @@ fn path_profit_bound_inner(
             best = v;
         }
     }
-    gate_tls(|t| t.search_ns += phase_search.elapsed().as_nanos());
-    // Rounding slack: composed reductions and I512 ceiling evaluation can
-    // leave the derived lower envelope a hair BELOW the true curve. The
-    // deficit is ~2^-11 of the bound per reduction for very deep chains
-    // (block 25826949 path 400: 200M under-cut on a 7.23e13 bound), but the
-    // same per-hop reductions compound on moderate chains too: block
-    // 25826949 path 704 under-cut 3.7e15 on a 2.7e23 bound while its
-    // composed survivor count stayed <= 200, so the old lines>200 gate
-    // skipped the slack. The slack must be UNCONDITIONAL — soundness of the
-    // skip decision is the only contract; the 1/2048 (~0.05%) looseness is
-    // invisible to live skips against the incumbent/floor comparisons.
-    if let Some(b) = narrow(best) {
-        return Ok(b.saturating_add(b / U256::from(2048u64)));
-    }
-    Err(GateSkipCause::DomainOverflow)
+    best
 }
 
 /// Narrow a non-negative bound value; `None` on overflow (>U256::MAX is
@@ -3735,5 +3802,59 @@ mod tests {
         // Epoch 7 never touched: no carry.
         let c = PrefixCache::new();
         assert!(c.get(7, &chain).is_none());
+    }
+
+    /// Early-exit focused test: `concave_max` must (a) stop before the last
+    /// hull segment once the running best strictly clears the floor and (b)
+    /// visit every segment when the floor exceeds the max. The
+    /// `search_segments` TLS counter is the witness. All lines have integer
+    /// slopes or even numerators, so the exact max (86) is pinned.
+    #[test]
+    fn concave_max_early_exits_at_floor_before_last_segment() {
+        // Hull, slope-descending: y=4x (bp 0), y=(200+x)/2 (bp 29), y=140
+        // (bp 80). f(x)=min-x is 0, peaks at 86 on the first kink (x=29), then
+        // decays to 60 on the last segment: the max sits before the last
+        // segment.
+        let lines = [
+            Line {
+                a: ival(0),
+                b: ival(4),
+                c: ival(1),
+            },
+            Line {
+                a: ival(200),
+                b: ival(1),
+                c: ival(2),
+            },
+            Line {
+                a: ival(140),
+                b: ival(0),
+                c: ival(1),
+            },
+        ];
+        let xmax = U256::from(100u8);
+
+        // Exact max, full scan (no floor threaded).
+        gate_tls(|t| t.search_segments = 0);
+        let exact = concave_max(&lines, xmax, None);
+        let full_segments = gate_tls(|t| t.search_segments);
+        assert_eq!(exact, ival(86), "exact max");
+        assert_eq!(full_segments, 2, "full scan visits both hull segments");
+
+        // (a) floor 80 < max: the first segment's candidates clear it, so the
+        // scan must stop without ever reaching the last segment.
+        gate_tls(|t| t.search_segments = 0);
+        let early = concave_max(&lines, xmax, Some(U256::from(80u8)));
+        let early_segments = gate_tls(|t| t.search_segments);
+        assert_eq!(early, ival(86));
+        assert_eq!(early_segments, 1, "early exit before the last segment");
+
+        // (b) floor 100 > max: nothing clears it, every hull segment is
+        // evaluated and the exact max is still returned (verdict: skip).
+        gate_tls(|t| t.search_segments = 0);
+        let never = concave_max(&lines, xmax, Some(U256::from(100u8)));
+        let never_segments = gate_tls(|t| t.search_segments);
+        assert_eq!(never, ival(86));
+        assert_eq!(never_segments, 2, "floor above max scans every segment");
     }
 }
