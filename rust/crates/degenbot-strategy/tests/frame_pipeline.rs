@@ -25,13 +25,21 @@ use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, 
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, TypedPoolPost, V4PoolDescriptor,
 };
+use std::sync::Arc;
+use std::time::Duration;
+
+use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
+use degenbot_pathfinding::PoolKind;
+use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph, DiscoveryBudget};
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{
-    admit_extracted, cycle_refs, net_bid, solve_dfs_chains, CycleHop, WETH,
+    admit_extracted, cycle_refs, cycle_touched_legs, discover_trace_payload, net_bid,
+    solve_dfs_chains, BackrunIntents, CycleHop, WETH,
 };
 use degenbot_strategy::frame_pipeline::{
-    build_descriptors, empty_frame_observe_reason, state_digest, MarketContext,
+    build_descriptors, empty_frame_observe_reason, state_digest, MarketContext, PipelineConfig,
 };
+use degenbot_strategy::pending_tx::PendingTxReaction;
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
 // ─────────────────── the golden frame (offline, end to end) ────────────────
@@ -336,6 +344,199 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
     assert_eq!(
         new_stats.best, committed_stats.best,
         "the dominant two-hop candidate is unchanged"
+    );
+}
+
+/// Touched-set discovery: a touched pool that never quotes WETH rides a
+/// WETH-entry 4-hop cycle as a mid hop. The frame trace must carry the
+/// effective cycle cap, the frame's pin count, each admitted cycle's
+/// multi-touched verdict, and each solved chain's touched-leg count. The
+/// discover stage needs the production scratch stack, so its payload is
+/// asserted at the `discover_trace_payload` boundary; the solve stage runs
+/// end-to-end through `evaluate` and its JSONL line is read back.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one frame reads top-to-bottom: admission, payload, solve"
+)]
+fn touched_set_trace_reports_cap_pins_and_multi_touched() {
+    const WETH_ID: u64 = 20;
+    const A_ID: u64 = 10;
+    const B_ID: u64 = 30;
+    const C_ID: u64 = 40;
+    const P1: Address = address!("000000000000000000000000000000000000c001");
+    const P2: Address = address!("000000000000000000000000000000000000c002");
+    const P3: Address = address!("000000000000000000000000000000000000c003");
+    const P4: Address = address!("000000000000000000000000000000000000c004");
+    const A: Address = address!("0000000000000000000000000000000000000a01");
+    const B: Address = address!("0000000000000000000000000000000000000a02");
+    const C: Address = address!("0000000000000000000000000000000000000a03");
+
+    let mut index = V2ConnectorIndex::default();
+    index.push_edge(V2Edge {
+        pool_id: 201,
+        token0_id: A_ID,
+        token1_id: WETH_ID,
+        address: P1,
+    });
+    index.push_edge(V2Edge {
+        pool_id: 202,
+        token0_id: A_ID,
+        token1_id: B_ID,
+        address: P2,
+    });
+    index.push_edge(V2Edge {
+        pool_id: 203,
+        token0_id: B_ID,
+        token1_id: C_ID,
+        address: P3,
+    });
+    index.push_edge(V2Edge {
+        pool_id: 204,
+        token0_id: C_ID,
+        token1_id: WETH_ID,
+        address: P4,
+    });
+    let graph = AnchoredGraph::from_connector_index(&index);
+
+    // The frame's only touched pool trades A/B and never quotes WETH.
+    let touched = vec![AnchorPool {
+        pool_id: 202,
+        pool_kind: PoolKind::V2,
+        token_a_id: A_ID,
+        token_b_id: B_ID,
+    }];
+    let budget = DiscoveryBudget::after(Duration::from_secs(60));
+    let (cycles, refused) = graph.weth_entry_cycles(&touched, WETH_ID, &budget, 16, 4);
+    assert_eq!(refused, 0, "a WETH-closing rotation exists: {cycles:?}");
+
+    let four_hop = cycles
+        .iter()
+        .find(|c| c.pools.len() == 4 && c.pools.iter().any(|(id, _)| *id == 202))
+        .expect("the 4-hop WETH-entry cycle over the touched mid hop");
+    assert_eq!(
+        four_hop.entry_token_id, WETH_ID,
+        "the cycle is rotated to its WETH stake entry"
+    );
+    assert_eq!(
+        cycle_touched_legs(four_hop, &touched),
+        1,
+        "only the pinned mid hop is touched"
+    );
+    assert_eq!(
+        cycles
+            .iter()
+            .filter(|c| cycle_touched_legs(c, &touched) > 1)
+            .count(),
+        0,
+        "no admitted cycle carries two pins"
+    );
+
+    let discover = discover_trace_payload(
+        "0xtouched",
+        cycles.len(),
+        cycles.len(),
+        1,
+        0,
+        1,
+        refused,
+        false,
+        4,
+        &touched,
+        &cycles,
+    );
+    assert_eq!(
+        discover["touched_pools"].as_u64(),
+        Some(1),
+        "one pin this frame: {discover}"
+    );
+    assert_eq!(
+        discover["cycle_max_hops"].as_u64(),
+        Some(4),
+        "the effective cap is the configured one: {discover}"
+    );
+    assert_eq!(discover["cycles_with_multi_touched"].as_u64(), Some(0));
+    assert_eq!(discover["non_weth_cycles"].as_u64(), Some(0));
+    assert_eq!(discover["cycle_reject"], "non_weth_cycle");
+
+    // The solve stage runs end-to-end; the trace capture lands in a temp file.
+    let trace_path = std::env::temp_dir().join("yd5cqx-touched-set-trace.jsonl");
+    let _ = std::fs::remove_file(&trace_path);
+    let mut boot = degenbot_config::BotConfig::default();
+    boot.logging.trace_jsonl = Some(trace_path.clone());
+    let _ = degenbot_config::holder::install(Arc::new(boot));
+
+    let mut solver = BackrunSolver::new();
+    let p1_id = admitted_pair(&mut solver, P1, A, WETH, 2_000_000, 1_000_000);
+    let p2_id = admitted_pair(&mut solver, P2, A, B, 2_000_000, 1_800_000);
+    let p3_id = admitted_pair(&mut solver, P3, B, C, 1_800_000, 1_700_000);
+    let p4_id = admitted_pair(&mut solver, P4, C, WETH, 1_700_000, 1_000_000);
+    let hops = vec![
+        CycleHop {
+            workspace_pool_id: p1_id,
+            pool: P1,
+            token0: A,
+            token1: WETH,
+            family: LaneFamily::V2,
+        },
+        CycleHop {
+            workspace_pool_id: p2_id,
+            pool: P2,
+            token0: A,
+            token1: B,
+            family: LaneFamily::V2,
+        },
+        CycleHop {
+            workspace_pool_id: p3_id,
+            pool: P3,
+            token0: B,
+            token1: C,
+            family: LaneFamily::V2,
+        },
+        CycleHop {
+            workspace_pool_id: p4_id,
+            pool: P4,
+            token0: C,
+            token1: WETH,
+            family: LaneFamily::V2,
+        },
+    ];
+    let chain = cycle_refs(&hops, WETH).expect("the WETH-entry 4-hop cycle closes");
+    assert_eq!(chain.len(), 4);
+
+    let pl = PipelineConfig {
+        exec: address!("00000000000000000000000000000000000000e1"),
+        owner: address!("00000000000000000000000000000000000000e2"),
+        bribe_bips: 9_800,
+        wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        gas_floor_wei: U256::ZERO,
+        fixture_mode: false,
+    };
+    let mut strategy = degenbot_strategy::backrun_strategy::BackrunStrategy::new();
+    let intents = BackrunIntents {
+        chains: vec![chain],
+        touched_legs: vec![1],
+        non_base_quote_dropped: false,
+        bailed: false,
+    };
+    let _ = strategy.evaluate(&mut solver, intents, &pl, "0xtouched");
+
+    let traced = std::fs::read_to_string(&trace_path).expect("trace file was written");
+    let solve = traced
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).expect("trace line parses"))
+        .find(|v| v["kind"] == "solve")
+        .expect("the solve event was emitted");
+    let chain_trace = &solve["chains"][0];
+    assert_eq!(
+        chain_trace["pools"].as_array().map(Vec::len),
+        Some(4),
+        "the solved chain carries all 4 pools: {solve}"
+    );
+    assert_eq!(
+        chain_trace["touched_legs"].as_u64(),
+        Some(1),
+        "the chain carries one touched leg: {solve}"
     );
 }
 

@@ -910,6 +910,22 @@ pub fn cycle_refs(hops: &[CycleHop], weth: Address) -> Option<Vec<BackrunHopRef>
     Some(out)
 }
 
+/// The touched pins a cycle carries: how many of its hop pools anchor a
+/// touched pool this frame. The per-cycle companion to the frame's pin
+/// count, so a cycle riding several touched pools is legible in the trace.
+#[must_use]
+pub fn cycle_touched_legs(cycle: &DfsCycle, touched: &[AnchorPool]) -> usize {
+    cycle
+        .pools
+        .iter()
+        .filter(|key| {
+            touched
+                .iter()
+                .any(|a| a.pool_id == key.0 && a.pool_kind == key.1)
+        })
+        .count()
+}
+
 /// One admissible WETH-entry cycle's walker outcome: the executable chain
 /// (when the pool resolution closed) and the admission counters.
 #[derive(Debug, Default)]
@@ -1022,6 +1038,9 @@ pub type BackrunAffected = Vec<AffectedPool>;
 /// whether a supported-quote fan was dropped for lack of a WETH lane.
 pub struct BackrunIntents {
     pub chains: Vec<Vec<BackrunHopRef>>,
+    /// Per-chain touched-pool count, aligned with `chains`, so the solve
+    /// trace reports how many of a chain's hops pinned a touched pool.
+    pub touched_legs: Vec<usize>,
     pub non_base_quote_dropped: bool,
     /// `true` when the context carries no discovery graph or WETH join: the
     /// frame ran no discovery at all and is observed with `no_candidate`.
@@ -1032,10 +1051,55 @@ impl BackrunIntents {
     fn bailed() -> Self {
         Self {
             chains: Vec::new(),
+            touched_legs: Vec::new(),
             non_base_quote_dropped: false,
             bailed: true,
         }
     }
+}
+
+/// The `discover` JSONL payload built from the frame's counters. `touched`
+/// is the frame's pin set and `admitted_cycles` the WETH-entry cycles that
+/// cleared admission, so the pinned-pool and multi-pinned fields are derived
+/// here rather than at each call site; the offline harness asserts this
+/// boundary because the stage itself needs the production scratch stack.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per discovery counter the trace publishes"
+)]
+#[must_use]
+pub fn discover_trace_payload(
+    trace_tx: &str,
+    connectors: usize,
+    dfs_cycles: usize,
+    dfs_chains: usize,
+    unsupported_hop: usize,
+    affected: usize,
+    non_weth_cycles: usize,
+    non_base_quote_dropped: bool,
+    cycle_max_hops: usize,
+    touched: &[AnchorPool],
+    admitted_cycles: &[DfsCycle],
+) -> serde_json::Value {
+    let cycles_with_multi_touched = admitted_cycles
+        .iter()
+        .filter(|c| cycle_touched_legs(c, touched) > 1)
+        .count();
+    serde_json::json!({
+        "tx": trace_tx,
+        "connectors": connectors,
+        "cycles_proposed": dfs_cycles,
+        "dfs_cycles": dfs_cycles,
+        "dfs_chains": dfs_chains,
+        "unsupported_hop": unsupported_hop,
+        "affected": affected,
+        "non_weth_cycles": non_weth_cycles,
+        "cycle_reject": NON_WETH_CYCLE,
+        "non_base_quote_dropped": non_base_quote_dropped,
+        "cycle_max_hops": cycle_max_hops,
+        "touched_pools": touched.len(),
+        "cycles_with_multi_touched": cycles_with_multi_touched,
+    })
 }
 
 /// The solved frame: the aggregate solve stats behind the best candidate.
@@ -1068,6 +1132,10 @@ impl PendingTxReaction for BackrunStrategy {
         admit_extracted(ctx, workspace, states, seed_block, trace_tx, tick_window)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the discovery stage threads every counter and trace field top-to-bottom"
+    )]
     async fn discover(
         &mut self,
         ctx: &MarketContext,
@@ -1091,15 +1159,17 @@ impl PendingTxReaction for BackrunStrategy {
         // legal mid-cycle hop.
         let mut non_base_quote_dropped = false;
         let mut dfs_chains: Vec<Vec<BackrunHopRef>> = Vec::new();
+        let mut chain_touched_legs: Vec<usize> = Vec::new();
         let mut dfs_cycles = 0usize;
         let mut non_weth_cycles = 0usize;
         let mut connectors_seen = 0usize;
         let mut unsupported_hop = 0usize;
+        let mut touched: Vec<AnchorPool> = Vec::with_capacity(affected.len());
+        let mut admitted_cycles: Vec<DfsCycle> = Vec::new();
         if let Some(graph) = ctx.dfs.as_ref() {
             let budget = DiscoveryBudget::after(FRAME_DISCOVERY_SLICE);
             // Every touched pool pins on BOTH of its token pairs: a pool with
             // no WETH quote is still a legal mid-cycle hop.
-            let mut touched: Vec<AnchorPool> = Vec::with_capacity(affected.len());
             for a in affected {
                 let (Some(token0_id), Some(token1_id)) =
                     (ctx.token_id(a.token0), ctx.token_id(a.token1))
@@ -1127,6 +1197,7 @@ impl PendingTxReaction for BackrunStrategy {
             );
             non_weth_cycles = non_weth;
             dfs_cycles = cycles.len() + non_weth;
+            admitted_cycles = cycles;
             let mut affected_by_index: HbMap<u64, &AffectedPool> =
                 HbMap::with_capacity(affected.len());
             for a in affected {
@@ -1136,7 +1207,7 @@ impl PendingTxReaction for BackrunStrategy {
             // Each WETH-entry directed cycle solves once, whichever touched
             // pool anchored its discovery.
             let mut solved: HashSet<Vec<(u64, bool)>> = HashSet::new();
-            for cycle in &cycles {
+            for cycle in &admitted_cycles {
                 if budget.expired() {
                     break;
                 }
@@ -1161,6 +1232,7 @@ impl PendingTxReaction for BackrunStrategy {
                 if !solved.insert(chain.iter().map(|h| (h.pool_id, h.zfo)).collect()) {
                     continue;
                 }
+                chain_touched_legs.push(cycle_touched_legs(cycle, &touched));
                 dfs_chains.push(chain);
             }
 
@@ -1169,25 +1241,27 @@ impl PendingTxReaction for BackrunStrategy {
             let has_non_weth_quote_pool = affected
                 .iter()
                 .any(|a| a.quotes.iter().all(|q| q.quote != WETH));
-            non_base_quote_dropped = has_non_weth_quote_pool && cycles.is_empty();
+            non_base_quote_dropped = has_non_weth_quote_pool && admitted_cycles.is_empty();
         }
         trace_jsonl(
             "discover",
-            serde_json::json!({
-                "tx": trace_tx,
-                "connectors": connectors_seen,
-                "cycles_proposed": dfs_cycles,
-                "dfs_cycles": dfs_cycles,
-                "dfs_chains": dfs_chains.len(),
-                "unsupported_hop": unsupported_hop,
-                "affected": affected.len(),
-                "non_weth_cycles": non_weth_cycles,
-                "cycle_reject": NON_WETH_CYCLE,
-                "non_base_quote_dropped": non_base_quote_dropped,
-            }),
+            discover_trace_payload(
+                trace_tx,
+                connectors_seen,
+                dfs_cycles,
+                dfs_chains.len(),
+                unsupported_hop,
+                affected.len(),
+                non_weth_cycles,
+                non_base_quote_dropped,
+                ctx.cycle_max_hops,
+                &touched,
+                &admitted_cycles,
+            ),
         );
         BackrunIntents {
             chains: dfs_chains,
+            touched_legs: chain_touched_legs,
             non_base_quote_dropped,
             bailed: false,
         }
@@ -1228,12 +1302,14 @@ impl PendingTxReaction for BackrunStrategy {
                 "chains": aggregate
                     .chains
                     .iter()
-                    .map(|c| serde_json::json!({
+                    .enumerate()
+                    .map(|(i, c)| serde_json::json!({
                         "pools": c
                             .pools
                             .iter()
                             .map(|a| format!("0x{}", alloy::hex::encode(a)))
                             .collect::<Vec<_>>(),
+                        "touched_legs": intents.touched_legs.get(i).copied().unwrap_or(0),
                         "evaluated": c.evaluated,
                         "profit_wei": c.profit_wei.map(|p| p.to_string()),
                         "reject": c.reject.map(PathReject::label),
