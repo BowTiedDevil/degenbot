@@ -1136,21 +1136,48 @@ impl PendingTxReaction for BackrunStrategy {
         let mut unsupported_hop = 0usize;
         if let Some(graph) = ctx.dfs.as_ref() {
             let budget = DiscoveryBudget::after(FRAME_DISCOVERY_SLICE);
+            let mut touched: Vec<AnchorPool> = Vec::new();
+            for a in affected {
+                match a.quotes.iter().find(|q| q.quote == WETH) {
+                    Some(wq) => touched.push(AnchorPool {
+                        pool_id: a.index_pool_id,
+                        pool_kind: PoolKind::from(a.family.tag()),
+                        token_a_id: wq.quote_id,
+                        token_b_id: wq.tok_id,
+                    }),
+                    None => non_base_quote_dropped |= !a.quotes.is_empty(),
+                }
+            }
+            // Cycle hop cap: the pin plus up to three connectors.
+            let cycles =
+                graph.cycles_through_touched(&touched, &budget, ctx.connector_cap.max(1), 4);
+            dfs_cycles += cycles.len();
             for a in affected {
                 let Some(wq) = a.quotes.iter().find(|q| q.quote == WETH) else {
-                    non_base_quote_dropped |= !a.quotes.is_empty();
                     continue;
                 };
-                let anchor = AnchorPool {
-                    pool_id: a.index_pool_id,
-                    pool_kind: PoolKind::from(a.family.tag()),
-                    token_a_id: wq.quote_id,
-                    token_b_id: wq.tok_id,
-                };
-                let cycles = graph.cycles_through_pool(anchor, &budget, ctx.connector_cap.max(1));
-                dfs_cycles += cycles.len();
+                let anchor_key = (a.index_pool_id, PoolKind::from(a.family.tag()));
+                let anchor_cycles: Vec<DfsCycle> = cycles
+                    .iter()
+                    .filter(|c| {
+                        c.pools.first() == Some(&anchor_key) && c.entry_token_id == wq.quote_id
+                    })
+                    .cloned()
+                    .collect();
+                if anchor_cycles.is_empty() {
+                    continue;
+                }
                 let walk = dfs_cycle_chains(
-                    ctx, idx, a, wq, &cycles, scratch, workspace, provider, head, trace_tx,
+                    ctx,
+                    idx,
+                    a,
+                    wq,
+                    &anchor_cycles,
+                    scratch,
+                    workspace,
+                    provider,
+                    head,
+                    trace_tx,
                 )
                 .await;
                 connectors_seen += walk.admitted;

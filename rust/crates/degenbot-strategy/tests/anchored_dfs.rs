@@ -96,10 +96,11 @@ async fn walker_finds_every_star_cycle_on_synthetic_frame() {
     };
 
     let graph = AnchoredGraph::from_connector_index(&index);
-    let cycles = graph.cycles_through_pool(
-        anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2),
+    let cycles = graph.cycles_through_touched(
+        &[anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2)],
         &open_budget(),
         64,
+        3,
     );
 
     // Walker 2-hop pairs = (anchor, connector) sets, regardless of which
@@ -173,10 +174,11 @@ async fn walker_finds_depth_three_cycles_the_star_cannot_express() {
     assert!(star.is_empty(), "star fan must be empty on this fixture");
 
     let graph = AnchoredGraph::from_connector_index(&index);
-    let cycles = graph.cycles_through_pool(
-        anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2),
+    let cycles = graph.cycles_through_touched(
+        &[anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2)],
         &open_budget(),
         64,
+        3,
     );
     let threes: Vec<Vec<u64>> = cycles
         .iter()
@@ -238,15 +240,16 @@ proptest! {
         }
         let anchor_pool = 1001_u64;
         let graph = AnchoredGraph::from_connector_index(&index);
-        let cycles = graph.cycles_through_pool(
-            anchor(
+        let cycles = graph.cycles_through_touched(
+            &[anchor(
                 anchor_pool,
                 u64::from(anchor_pair.0),
                 u64::from(anchor_pair.1),
                 PoolKind::V2,
-            ),
+            )],
             &open_budget(),
             128,
+            3,
         );
         for c in &cycles {
             let ids = cycle_pool_ids(c);
@@ -320,7 +323,8 @@ fn discovery_budget_expires_only_forward_in_time() {
 fn spent_budget_yields_nothing_without_walking() {
     let graph = hostile_clique_graph();
     let budget = DiscoveryBudget::after(Duration::ZERO);
-    let cycles = graph.cycles_through_pool(anchor(5000, 0, 1, PoolKind::V2), &budget, usize::MAX);
+    let cycles =
+        graph.cycles_through_touched(&[anchor(5000, 0, 1, PoolKind::V2)], &budget, usize::MAX, 3);
     assert!(budget.expired(), "the spent budget must report expiry");
     assert!(cycles.is_empty(), "a spent budget must not produce cycles");
 }
@@ -334,7 +338,7 @@ fn capped_hostile_walk_returns_sound_prefix() {
     let graph = hostile_clique_graph();
     let budget = DiscoveryBudget::after(Duration::from_secs(3600));
     let cap = 64;
-    let cycles = graph.cycles_through_pool(anchor(5000, 0, 1, PoolKind::V2), &budget, cap);
+    let cycles = graph.cycles_through_touched(&[anchor(5000, 0, 1, PoolKind::V2)], &budget, cap, 3);
     assert!(
         !budget.expired(),
         "the far-future budget must stay unexpired"

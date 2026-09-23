@@ -1,19 +1,20 @@
-//! Anchored touched-set discovery over the shared pathfinding walker.
+//! Touched-set discovery over the shared pathfinding walker.
 //!
-//! The frame's touched pools anchor cycles into
-//! [`degenbot_pathfinding`](::degenbot_pathfinding)'s DFS walker: for each
-//! touched anchor pool `p` spanning tokens `(a, b)`, the walker enumerates
-//! the open paths `b → a` (and `a → b`) up to two connector hops, and each
-//! cycle is the anchor hop followed by one open path. Every returned cycle
-//! therefore contains its touched anchor pool by construction, and the
-//! depth cap stays at 3 hops (anchor + 2 connectors) regardless of graph
-//! size. Both drift directions surface — the same two-cycles-per-pairing
-//! shape the 2-hop star expresses, plus the 3-hop cycles the star can't
-//! represent at all. A per-frame [`DiscoveryBudget`] arms the walker's
-//! cancel flag between yields, so a hostile graph bounds one anchor's
-//! enumeration without hanging the frame loop.
+//! Each frame's touched pools anchor cycles into
+//! [`degenbot_pathfinding`](::degenbot_pathfinding)'s DFS walker: for a
+//! touched pool `p` spanning tokens `(a, b)`, the walker enumerates the open
+//! paths `b → a` (and `a → b`) up to `max_hops - 1` connectors, and each
+//! cycle is the anchor hop followed by one open path. Connector positions may
+//! contain OTHER touched pools, so a cycle can carry several touched pools in
+//! any rotation; cycles sharing a directed edge sequence are deduplicated
+//! across their anchoring rotations. More-touched cycles rank ahead of
+//! fewer-touched ones before the cap truncates, so a small cap cannot starve
+//! dual-touched cycles. Both drift directions surface. A per-frame
+//! [`DiscoveryBudget`] arms the walker's cancel flag between yields and is
+//! split fairly across anchors, so a hostile graph bounds the frame's
+//! enumeration without letting one anchor spend the whole slice.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,8 +36,8 @@ pub struct AnchorPool {
     pub token_b_id: u64,
 }
 
-/// One walker cycle: pools in traversal order (anchor hop FIRST,
-/// traversed `token_a → token_b`), plus the DB id of the token the first
+/// One walker cycle: pools in traversal order (the first hop is the traversed
+/// touched pool for this rotation), plus the DB id of the token the first
 /// pool consumes — the cycle's transit currency.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DfsCycle {
@@ -72,6 +73,12 @@ impl DiscoveryBudget {
     pub fn expired(&self) -> bool {
         Instant::now() >= self.deadline
     }
+
+    /// Wall-clock time left in the slice (zero once expired).
+    #[must_use]
+    pub fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
 }
 
 /// The startup-built discovery graph: the connector index's loaded edge set
@@ -80,6 +87,10 @@ impl DiscoveryBudget {
 #[derive(Clone)]
 pub struct AnchoredGraph {
     graph: PathGraph,
+    /// Pool identity → its `(token0_id, token1_id)` pair, from the same
+    /// startup edge list as the graph; cycle dedup canonicalizes a directed
+    /// sequence with it so rotations and drift directions stay distinguishable.
+    edge_tokens: HashMap<EdgeKey, (u64, u64)>,
 }
 
 impl AnchoredGraph {
@@ -87,68 +98,187 @@ impl AnchoredGraph {
     /// per-frame graph construction).
     #[must_use]
     pub fn from_connector_index(index: &V2ConnectorIndex) -> Self {
+        let edges = index.path_edges();
+        let mut edge_tokens = HashMap::with_capacity(edges.len());
+        for &(token0_id, token1_id, pool_id, pool_kind) in &edges {
+            edge_tokens.insert((pool_id, pool_kind), (token0_id, token1_id));
+        }
         Self {
-            graph: PathGraph::from_edges(index.path_edges()),
+            graph: PathGraph::from_edges(edges),
+            edge_tokens,
         }
     }
 
-    /// Every cycle (≤ 3 hops) through `anchor`, anchor hop first, in BOTH
-    /// drift directions (anchor traversed `token_a → token_b` and the
-    /// reverse). Cycles stop at `cap` entries or when the budget expires;
-    /// the anchor pool itself never re-appears as a connector.
+    /// Touched-set cycle enumeration: every touched pool anchors (both drift
+    /// directions); open paths of 1..=`max_hops - 1` connectors close the
+    /// cycle, and connector positions may hold OTHER touched pools. Directed
+    /// cycles dedup across anchoring rotations; the `cap` strongest by
+    /// touched-pool count (then edge sequence) are returned.
+    ///
+    /// Anchors are walked in two passes (each pool's `token_a` exit first,
+    /// then its `token_b` exit), so a directed cycle reachable from some
+    /// anchor's `token_a` rotation is first seen in a rotation the solver
+    /// lane can consume. Each anchor gets a fair share of the remaining
+    /// slice, so one anchor cannot spend the whole budget before the others
+    /// run.
     #[must_use]
-    pub fn cycles_through_pool(
+    pub fn cycles_through_touched(
         &self,
-        anchor: AnchorPool,
+        touched: &[AnchorPool],
         budget: &DiscoveryBudget,
         cap: usize,
+        max_hops: usize,
     ) -> Vec<DfsCycle> {
-        let mut out: Vec<DfsCycle> = Vec::new();
-        let mut seen: HashSet<(u64, Vec<u64>)> = HashSet::new();
-        let anchor_key = (anchor.pool_id, anchor.pool_kind);
-        for (entry, exit) in [
-            (anchor.token_a_id, anchor.token_b_id),
-            (anchor.token_b_id, anchor.token_a_id),
-        ] {
-            if budget.expired() || out.len() >= cap {
-                break;
-            }
-            // Open paths exit → entry at depth 1..=2 close the cycle through
-            // the anchor: [anchor, open] is always ≤ 3 hops.
-            let mut finder = self
-                .graph
-                .find_paths_iter(exit, entry, 1, Some(2), false, None, None)
-                .with_cancel(Arc::clone(&budget.cancel));
-            // The budget's clock is checked between yields (the only points
-            // this loop controls); expiring arms the flag so the walker's
-            // next internal iteration reports exhaustion.
-            while let Some(open) = finder.next_path() {
+        if cap == 0 || touched.is_empty() || max_hops < 2 {
+            return Vec::new();
+        }
+        let touched_keys: HashSet<EdgeKey> =
+            touched.iter().map(|p| (p.pool_id, p.pool_kind)).collect();
+        let mut seen: HashSet<Vec<(u64, u8, u64)>> = HashSet::new();
+        let mut best: Vec<Candidate> = Vec::new();
+        let mut jobs_left = touched.len() * 2;
+        'passes: for pass in 0..2u8 {
+            for anchor in touched {
                 if budget.expired() {
                     budget.cancel.store(true, Ordering::Relaxed);
+                    break 'passes;
                 }
-                if out.len() >= cap {
-                    break;
+                let share = budget.remaining() / u32::try_from(jobs_left).unwrap_or(u32::MAX);
+                let pin_deadline = Instant::now() + share;
+                jobs_left -= 1;
+                let anchor_key = (anchor.pool_id, anchor.pool_kind);
+                let (entry, exit) = if pass == 0 {
+                    (anchor.token_a_id, anchor.token_b_id)
+                } else {
+                    (anchor.token_b_id, anchor.token_a_id)
+                };
+                let mut finder = self
+                    .graph
+                    .find_paths_iter(exit, entry, 1, Some(max_hops - 1), false, None, None)
+                    .with_cancel(Arc::clone(&budget.cancel));
+                while let Some(open) = finder.next_path() {
+                    if budget.expired() {
+                        budget.cancel.store(true, Ordering::Relaxed);
+                        break 'passes;
+                    }
+                    if Instant::now() >= pin_deadline {
+                        break;
+                    }
+                    let mut pools = Vec::with_capacity(open.len() + 1);
+                    pools.push(anchor_key);
+                    pools.extend(open);
+                    if has_duplicate(&pools) {
+                        continue;
+                    }
+                    let Some(key) = self.directed_key(&pools, entry) else {
+                        continue;
+                    };
+                    if !seen.insert(key.clone()) {
+                        continue;
+                    }
+                    let touched_count = pools.iter().filter(|k| touched_keys.contains(k)).count();
+                    insert_top(
+                        &mut best,
+                        Candidate {
+                            cycle: DfsCycle {
+                                pools,
+                                entry_token_id: entry,
+                            },
+                            key,
+                            touched_count,
+                        },
+                        cap,
+                    );
+                    if best.len() >= cap && best.iter().all(|c| c.touched_count >= touched.len()) {
+                        break 'passes;
+                    }
                 }
-                // A 1-hop open path may itself ride the anchor's edge — the
-                // anchor hop never re-runs as a connector.
-                if open.contains(&anchor_key) {
-                    continue;
-                }
-                let dedup = (entry, open.iter().map(|(pid, _)| *pid).collect::<Vec<_>>());
-                if !seen.insert(dedup) {
-                    continue;
-                }
-                let mut pools = Vec::with_capacity(open.len() + 1);
-                pools.push(anchor_key);
-                pools.extend(open);
-                out.push(DfsCycle {
-                    pools,
-                    entry_token_id: entry,
-                });
             }
         }
-        out
+        best.sort_by(rank);
+        best.truncate(cap);
+        best.into_iter().map(|c| c.cycle).collect()
     }
+
+    /// Canonical form of a directed cycle for dedup: the minimum rotation of
+    /// the `(hop, consumed_token)` sequence. It is rotation invariant, so one
+    /// directed cycle seen from any anchor's rotation shares a key, while the
+    /// forward and reverse drift carry different keys.
+    fn directed_key(&self, pools: &[EdgeKey], entry: u64) -> Option<Vec<(u64, u8, u64)>> {
+        let mut in_token = entry;
+        let mut seq = Vec::with_capacity(pools.len());
+        for &key in pools {
+            let &(token0_id, token1_id) = self.edge_tokens.get(&key)?;
+            let out_token = if token0_id == in_token {
+                token1_id
+            } else if token1_id == in_token {
+                token0_id
+            } else {
+                return None;
+            };
+            seq.push((key.0, key.1.as_u8(), in_token));
+            in_token = out_token;
+        }
+        if in_token != entry {
+            return None;
+        }
+        let n = seq.len();
+        let mut best: Option<Vec<(u64, u8, u64)>> = None;
+        for offset in 0..n {
+            let rotation: Vec<(u64, u8, u64)> = (0..n).map(|i| seq[(offset + i) % n]).collect();
+            if best.as_ref().is_none_or(|b| rotation < *b) {
+                best = Some(rotation);
+            }
+        }
+        best
+    }
+}
+
+/// A ranked enumeration candidate: the cycle, its canonical dedup key, and
+/// how many touched pools it carries.
+struct Candidate {
+    cycle: DfsCycle,
+    key: Vec<(u64, u8, u64)>,
+    touched_count: usize,
+}
+
+/// Cycles carrying more touched pools rank first; ties break on the canonical
+/// edge sequence (ascending) so ranking is deterministic.
+fn rank(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
+    b.touched_count
+        .cmp(&a.touched_count)
+        .then_with(|| a.key.cmp(&b.key))
+}
+
+/// Keep the top `cap` candidates, replacing the current worst when a stronger
+/// one arrives.
+fn insert_top(best: &mut Vec<Candidate>, candidate: Candidate, cap: usize) {
+    if best.len() < cap {
+        best.push(candidate);
+        return;
+    }
+    let worst_idx = best
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| rank(a, b))
+        .map(|(idx, _)| idx);
+    if let Some(worst_idx) = worst_idx {
+        if rank(&candidate, &best[worst_idx]) == std::cmp::Ordering::Less {
+            best[worst_idx] = candidate;
+        }
+    }
+}
+
+/// Whether a pool appears more than once in a cycle.
+fn has_duplicate(pools: &[EdgeKey]) -> bool {
+    for (i, a) in pools.iter().enumerate() {
+        for b in &pools[i + 1..] {
+            if a == b {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// One walker cycle hop resolved to its connector-index edge (identity
@@ -221,5 +351,119 @@ pub fn resolve_hop(
             pool_id: key.0,
             kind: key.1,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::Address;
+
+    fn v2_edge(pool_id: u64, token0_id: u64, token1_id: u64) -> V2Edge {
+        V2Edge {
+            pool_id,
+            token0_id,
+            token1_id,
+            address: Address::new([u8::try_from(pool_id % 254).unwrap_or(0); 20]),
+        }
+    }
+
+    fn build_graph(edges: &[(u64, u64, u64)]) -> AnchoredGraph {
+        let mut index = V2ConnectorIndex::default();
+        for &(pool_id, token0_id, token1_id) in edges {
+            index.push_edge(v2_edge(pool_id, token0_id, token1_id));
+        }
+        AnchoredGraph::from_connector_index(&index)
+    }
+
+    fn anchor_of(pool_id: u64, from_token: u64, to_token: u64) -> AnchorPool {
+        AnchorPool {
+            pool_id,
+            pool_kind: PoolKind::V2,
+            token_a_id: from_token,
+            token_b_id: to_token,
+        }
+    }
+
+    fn open_budget() -> DiscoveryBudget {
+        DiscoveryBudget::after(Duration::from_secs(3600))
+    }
+
+    fn pool_ids(cycle: &DfsCycle) -> Vec<u64> {
+        cycle.pools.iter().map(|(pool_id, _)| *pool_id).collect()
+    }
+
+    fn carries(cycle: &DfsCycle, ids: &[u64]) -> bool {
+        let pools = pool_ids(cycle);
+        ids.iter().all(|id| pools.contains(id))
+    }
+
+    #[test]
+    fn touched_pool_mid_cycle_is_found_at_four_hops() {
+        // P:1-2, Q:2-3, R:3-4, S:4-1. Q is touched but never anchors a
+        // connector of P under the old two-connector cap; the only cycle it
+        // rides is four hops long.
+        let graph = build_graph(&[(101, 1, 2), (102, 2, 3), (103, 3, 4), (104, 4, 1)]);
+        let cycles = graph.cycles_through_touched(
+            &[anchor_of(101, 1, 2), anchor_of(102, 2, 3)],
+            &open_budget(),
+            8,
+            4,
+        );
+        assert!(
+            cycles
+                .iter()
+                .any(|c| pool_ids(c) == vec![101, 102, 103, 104]),
+            "the pin-first 4-hop rotation must expose the touched mid pool: {cycles:?}"
+        );
+    }
+
+    #[test]
+    fn re_riding_the_touched_edge_is_rejected() {
+        // Only P connects 1-2, so the sole open path back is P itself.
+        let graph = build_graph(&[(101, 1, 2)]);
+        let cycles = graph.cycles_through_touched(&[anchor_of(101, 1, 2)], &open_budget(), 8, 4);
+        assert!(
+            cycles.is_empty(),
+            "a cycle that re-rides the pin must be rejected: {cycles:?}"
+        );
+    }
+
+    #[test]
+    fn dual_touched_cycles_outrank_single_touched_under_cap() {
+        // P:1-2 is touched; three parallel partners close single-touched
+        // 2-cycles with it, and Q:2-3 + R:3-1 close a dual-touched cycle
+        // through P and Q. Enumerated first, the singles must not fill the cap.
+        let graph = build_graph(&[
+            (101, 1, 2),
+            (105, 1, 2),
+            (106, 1, 2),
+            (107, 1, 2),
+            (102, 2, 3),
+            (103, 3, 1),
+        ]);
+        let cycles = graph.cycles_through_touched(
+            &[anchor_of(101, 1, 2), anchor_of(102, 2, 3)],
+            &open_budget(),
+            2,
+            4,
+        );
+        assert_eq!(cycles.len(), 2, "the cap bounds the result: {cycles:?}");
+        assert!(
+            cycles.iter().all(|c| carries(c, &[101, 102])),
+            "dual-touched cycles must outrank the singles under the cap: {cycles:?}"
+        );
+    }
+
+    #[test]
+    fn expired_budget_stops_enumeration() {
+        let graph = build_graph(&[(101, 1, 2), (102, 2, 3), (103, 3, 1)]);
+        let budget = DiscoveryBudget::after(Duration::ZERO);
+        let cycles = graph.cycles_through_touched(&[anchor_of(101, 1, 2)], &budget, 8, 4);
+        assert!(budget.expired(), "a zero slice reports expiry");
+        assert!(
+            cycles.is_empty(),
+            "an expired budget must not enumerate: {cycles:?}"
+        );
     }
 }
