@@ -163,6 +163,7 @@ allow-star-arg-any = true
     "suspicious-pickle-import",
     "private-member-access",   # tests may need to access private attributes to test implementation
     "print",     # print
+    "E402",      # tests/conftest.py pins DEGENBOT_CONFIG above the degenbot import (the FFI init installs the ambient holder config at import)
 ]
 "src/degenbot/provider/factory.py" = [
     "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__

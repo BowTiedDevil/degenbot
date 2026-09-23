@@ -1,0 +1,14 @@
+# The pinned ambient typed BotConfig for the Python suite, loaded through the
+# DEGENBOT_CONFIG override set in tests/conftest.py BEFORE any degenbot import
+# -- the FFI module init installs this file's value as the process-wide holder
+# config, first-wins, so nothing later can change it.
+#
+# Exactly one facet is activated: the mevblocker backrun arm with its default
+# searcher channel. The posture-driven boot gate refuses an empty fleet, so
+# boot-path tests need a deterministic non-empty fleet; settlement stays
+# inactive so the suite exercises the backrun-only boot. Every other schema
+# key is absent and keeps its default (the posture CI already runs with).
+
+[strategy.mevblocker_backrun]
+active = true
+endpoints = "wss://searchers.mevblocker.io"

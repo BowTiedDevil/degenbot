@@ -9,6 +9,19 @@ import pytest
 from _pytest.config import Config, Parser
 from _pytest.nodes import Item
 
+# The Rust FFI module init installs the process-wide typed BotConfig at import
+# (env > $XDG_CONFIG_HOME/$HOME/.config/degenbot/config.toml), and the runner's
+# activation gate refuses a boot whose fleet has no active facet. A developer's
+# ambient operator config therefore leaks into the suite (one machine fails CI,
+# another silently misses the refusal). Pin ONE suite-wide ambient config
+# before any degenbot import; `setdefault` honors an explicit operator
+# override. `tests/ambient_config.toml` activates the mevblocker backrun facet
+# only - every other schema key keeps its default.
+os.environ.setdefault(
+    "DEGENBOT_CONFIG",
+    str(Path(__file__).resolve().parent / "ambient_config.toml"),
+)
+
 from degenbot.bot import Bot
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.fork import AnvilFork, ForkLaunchConfig
