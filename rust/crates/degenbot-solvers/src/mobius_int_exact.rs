@@ -225,20 +225,27 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 /// model-optimum output as an anchor for its own discrete search
 /// (golden-section for the latter, ±\[1,N\] EVM-sim sweep for the mixed path).
 pub fn compute_mobius_model_optimal_input(coeffs: &IntMobiusCoefficients) -> U256 {
-    // K * M fits in U512 (each is at most U512)
-    let km = coeffs.K * coeffs.M;
+    // `K * M` needs `bit_len(K) + bit_len(M)` bits. Composed multi-hop
+    // coefficients reach ~140-290 bits each, so on deep paths the product
+    // exceeds the 512 bits a `U512` multiply provides, and ruint's `Mul`
+    // wraps modulo 2^512 rather than panicking. A wrapped product shrinks
+    // below `M`, collapsing the anchor to zero and handing the caller a
+    // false micro-profit. Widen the discriminant to `U2048`, where every
+    // product of `U512` operands is exact. This raises the *product* budget
+    // only: `K` and `M` are still `U512`-bounded inputs, so coefficient
+    // widths beyond that remain a separate limit of the types.
+    let km = u512_to_u2048(coeffs.K) * u512_to_u2048(coeffs.M);
+    let m = u512_to_u2048(coeffs.M);
+    let n = u512_to_u2048(coeffs.N);
 
-    // Integer square root of K*M
-    let sqrt_km = isqrt_u512(km);
+    // Integer square root of the true K*M
+    let sqrt_km = isqrt_u2048(km);
 
-    // sqrt(K*M) - M
-    // If M > sqrt(K*M), this underflows — but that can't happen when K > M
-    // because sqrt(K*M) >= sqrt(M*M) = M.
-    let numerator = if sqrt_km >= coeffs.M {
-        sqrt_km - coeffs.M
+    // sqrt(K*M) - M. If the floor root falls below M the integer truncation
+    // has erased a vanishingly small (K > M) profit; no usable anchor exists.
+    let numerator = if sqrt_km >= m {
+        sqrt_km - m
     } else {
-        // K > M but sqrt(K*M) < M due to integer truncation.
-        // This means K is only slightly larger than M — profit is vanishingly small.
         return U256::ZERO;
     };
 
@@ -246,10 +253,10 @@ pub fn compute_mobius_model_optimal_input(coeffs: &IntMobiusCoefficients) -> U25
     if coeffs.N.is_zero() {
         return U256::ZERO;
     }
-    let x_u512 = numerator / coeffs.N;
+    let x_u2048 = numerator / n;
 
-    // Truncate U512 → U256
-    u512_to_u256_internal(x_u512)
+    // Narrow U2048 → U512 → U256, keeping the U512→U256 overflow contract.
+    u512_to_u256_internal(u2048_to_u512(x_u2048))
 }
 
 /// Integer square root of a U512 value.
@@ -328,16 +335,10 @@ pub fn isqrt_u2048(n: U2048) -> U2048 {
     // wide-division cost.
     if bit_len <= 256 {
         let narrow = u2048_to_u256_lossy(n);
-        let root = isqrt_u512(u512_from_u256(narrow));
-        if let Some(rt) = u512_to_u2048(root) {
-            return rt;
-        }
-    } else if bit_len <= 512 {
-        let narrow = u2048_to_u512(n);
-        let root = isqrt_u512(narrow);
-        if let Some(rt) = u512_to_u2048(root) {
-            return rt;
-        }
+        return u512_to_u2048(isqrt_u512(u512_from_u256(narrow)));
+    }
+    if bit_len <= 512 {
+        return u512_to_u2048(isqrt_u512(u2048_to_u512(n)));
     }
 
     let half_bits = (bit_len + 1).div_ceil(2);
@@ -383,14 +384,13 @@ fn u2048_to_u512(n: U2048) -> U512 {
     ])
 }
 
-fn u512_to_u2048(v: U512) -> Option<U2048> {
+/// Widen a `U512` into the 2048-bit accumulator. Total by construction:
+/// every `U512` value fits in `U2048`.
+fn u512_to_u2048(v: U512) -> U2048 {
     let limbs = v.into_limbs();
-    if limbs[8..].iter().any(|&l| l != 0) {
-        return None;
-    }
     let mut wide = [0u64; 32];
     wide[..8].copy_from_slice(&limbs);
-    Some(U2048::from_limbs(wide))
+    U2048::from_limbs(wide)
 }
 
 /// Convert U512 to U256, returning U256::ZERO if the value overflows.
@@ -693,6 +693,62 @@ mod tests {
         let result = exact_mobius_solve(&hops).unwrap();
         // Same product with fees → not profitable
         assert!(!result.is_profitable);
+    }
+
+    // ── Deep-path discriminant widening ─────────────────────────
+
+    fn pow10(e: u32) -> U256 {
+        let mut p = U256::from(1u64);
+        for _ in 0..e {
+            p *= U256::from(10u64);
+        }
+        p
+    }
+
+    #[test]
+    fn test_deep_three_hop_discriminant_does_not_wrap() {
+        // 3-hop 1e24: bit_len(K) + bit_len(M) > 512, so the pre-fix U512
+        // product wrapped and collapsed the anchor to zero. The widened
+        // discriminant must produce a real anchor, and the solver must use
+        // the closed form rather than the 1-wei micro-profit fallback.
+        let base = pow10(24);
+        let hops = vec![
+            IntHopState::new(base, base * U256::from(100u64), 9995, 10000),
+            IntHopState::new(base, base, 9995, 10000),
+            IntHopState::new(base, base, 9995, 10000),
+        ];
+        let coeffs = compute_int_mobius_coefficients(&hops).unwrap();
+        assert!(
+            coeffs.K.checked_mul(coeffs.M).is_none(),
+            "discriminant must exceed U512"
+        );
+        assert!(!compute_mobius_model_optimal_input(&coeffs).is_zero());
+
+        let result = exact_mobius_solve(&hops).unwrap();
+        assert!(
+            result.used_closed_form,
+            "must not enter micro-profit fallback"
+        );
+        assert!(
+            result.optimal_input > pow10(20),
+            "must be a real e2x-scale optimum"
+        );
+        // Profit is verified EVM-exactly at the returned input.
+        let output = int_simulate_path(result.optimal_input, &hops)
+            .unwrap()
+            .final_output;
+        assert!(output > result.optimal_input);
+        assert_eq!(output - result.optimal_input, result.profit);
+    }
+
+    #[test]
+    fn test_isqrt_u2048_matches_isqrt_u512_in_domain() {
+        for n in [1u64, 2, 3, 99, 100, 1_000_000_007, u64::MAX] {
+            let wide = U2048::from(n);
+            assert_eq!(u2048_to_u512(isqrt_u2048(wide)), isqrt_u512(U512::from(n)));
+        }
+        let n = U512::from(U256::MAX);
+        assert_eq!(u2048_to_u512(isqrt_u2048(u512_to_u2048(n))), isqrt_u512(n));
     }
 }
 
