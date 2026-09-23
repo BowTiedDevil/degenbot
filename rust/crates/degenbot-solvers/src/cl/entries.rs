@@ -1,41 +1,14 @@
-use std::sync::Arc;
-
 use degenbot_math::v2::IntHopState;
 
 use super::active_set::{solve_active_set_path, PieceView, WalkOutcome};
-use super::crossings::{build_cl_crossing_table, build_word_profiles, cl_walk_hop};
+use super::crossings::{
+    build_cl_crossing_table, build_word_profiles, cl_walk_hop, cl_walk_hop_cached,
+};
 use super::memo::{walk_path_fingerprint, WalkMemo};
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
 use crate::profit_envelope::PathBoundLines;
 use crate::runtime::SolveRuntimeConfig;
 
-// Clippy: allow manual_ok_err in solve_v3_v3_piecewise match arms
-// (the None/Err branches have side effects so let-else doesn't apply)
-
-/// Solve a 2-hop V3-V3 arbitrage path with the active-set piecewise Möbius
-/// walk (replaces the capped ending-range enumeration).
-///
-/// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
-/// `hop_outputs[0]` = intermediate output from hop 1, `hop_outputs[1]` = final output.
-#[must_use]
-pub fn solve_v3_v3_piecewise(
-    seq1: &IntV3TickRangeSequence,
-    seq2: &IntV3TickRangeSequence,
-    cfg: &SolveRuntimeConfig,
-) -> WalkOutcome {
-    solve_active_set_path(
-        &[cl_walk_hop(seq1, None), cl_walk_hop(seq2, None)],
-        cfg,
-        None,
-    )
-}
-
-/// Solve an N-hop concentrated-liquidity arbitrage path with the active-set
-/// piecewise Möbius walk (replaces the capped mixed-radix
-/// ending-range enumeration — there is no tuple budget any more).
-///
-/// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
-/// `hop_outputs[i]` = output after hop `i`.
 /// One CL hop's prepared tables (crossing + word profiles): the intake value
 /// for the solve entry — built ONCE per (pool, direction) by the projection,
 /// or derived via [`ClSolveTables::derive`] by tableless callers (their cost).
@@ -52,6 +25,19 @@ impl ClSolveTables {
             crossings: std::sync::Arc::new(build_cl_crossing_table(seq)),
             profiles: std::sync::Arc::new(build_word_profiles(&build_cl_crossing_table(seq))),
         }
+    }
+}
+
+/// Build one CL hop's walk view from a sequence and its optional prepared
+/// tables. `Some` O(1)-clones the projection's `Arc` tables; `None` builds
+/// them here. The single seam both solve entries assemble CL hops through.
+fn cl_hop_view<'a>(
+    seq: &'a IntV3TickRangeSequence,
+    prepared: Option<&ClSolveTables>,
+) -> PieceView<'a> {
+    match prepared {
+        Some(p) => cl_walk_hop_cached(seq, Some(&p.crossings), Some(&p.profiles)),
+        None => cl_walk_hop(seq, None),
     }
 }
 
@@ -87,6 +73,7 @@ pub fn solve_cl_piecewise(
     if sequences.is_empty() || prepared.len() != sequences.len() {
         return WalkOutcome::none();
     }
+
     // Cross-block composition memo: the fingerprint is the exact correctness
     // key (the tables are pure derivations of the sequence), so an identical
     // key cannot carry a stale result. `None` memo = disabled run never pays
@@ -103,6 +90,7 @@ pub fn solve_cl_piecewise(
             return outcome;
         }
     }
+
     solve_cl_piecewise_inner(sequences, prepared, cfg, env)
 }
 
@@ -113,13 +101,10 @@ fn solve_cl_piecewise_inner(
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
-    let hops: Vec<PieceView> = (0..sequences.len())
-        .map(|i| {
-            PieceView::cl(
-                Arc::clone(&prepared[i].crossings),
-                Arc::clone(&prepared[i].profiles),
-            )
-        })
+    let hops: Vec<PieceView> = sequences
+        .iter()
+        .zip(prepared)
+        .map(|(seq, tables)| cl_hop_view(seq, Some(tables)))
         .collect();
     solve_active_set_path(&hops, cfg, env)
 }
@@ -127,31 +112,6 @@ fn solve_cl_piecewise_inner(
 // ---------------------------------------------------------------------------
 // Integer V3 Exact Solver
 // ---------------------------------------------------------------------------
-
-/// Solve a mixed V2-V3 arbitrage path with the active-set piecewise Möbius
-/// walk (replaces the capped ending-range enumeration over the
-/// V3 side — there is no tuple budget any more).
-///
-/// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
-/// `hop_outputs[0]` = output from the first hop, `hop_outputs[1]` = output from the second.
-#[must_use]
-pub fn solve_mixed_v2_v3_piecewise(
-    v2_hops: &[IntHopState],
-    v3_sequence: &IntV3TickRangeSequence,
-    v3_first: bool,
-    cfg: &SolveRuntimeConfig,
-) -> WalkOutcome {
-    let mut hops: Vec<PieceView> = Vec::with_capacity(v2_hops.len() + 1);
-    let cl_hop = cl_walk_hop(v3_sequence, None);
-    if v3_first {
-        hops.push(cl_hop);
-        hops.extend(v2_hops.iter().map(PieceView::constant_product));
-    } else {
-        hops.extend(v2_hops.iter().map(PieceView::constant_product));
-        hops.push(cl_hop);
-    }
-    solve_active_set_path(&hops, cfg, None)
-}
 
 /// Solve an N-hop mixed V2 + CL (V3/V4) arbitrage path with the active-set
 /// piecewise Möbius walk (replaces the capped mixed-radix
@@ -171,9 +131,9 @@ pub fn solve_mixed_v2_v3_piecewise(
 #[hotpath::measure(label = "cl_solve.exact_solve_mixed_path_n")]
 pub fn solve_mixed_piecewise(
     v2_hops: &[Option<IntHopState>],
-    // RLVDUP T1: borrowed sequences - the walk only READS a sequence
-    // (fallback table build); the previous owned signature forced every
-    // caller to deep-copy the ranges Vec per solve.
+    // Borrowed sequences: the walk only READS a sequence (fallback table
+    // build), so an owned signature would make every caller deep-copy the
+    // ranges Vec per solve.
     cl_sequences: &[Option<&IntV3TickRangeSequence>],
     cl_prepared: &[Option<ClSolveTables>],
     hop_order: &[bool], // true = V2, false = CL
@@ -187,6 +147,7 @@ pub fn solve_mixed_piecewise(
     if cl_prepared.len() != n_hops {
         return WalkOutcome::none();
     }
+
     let mut hops: Vec<PieceView> = Vec::with_capacity(n_hops);
     for (i, &is_v2) in hop_order.iter().enumerate() {
         if is_v2 {
@@ -198,17 +159,9 @@ pub fn solve_mixed_piecewise(
             let Some(seq) = cl_sequences[i] else {
                 return WalkOutcome::none();
             };
-            let crossings;
-            let profiles;
-            if let Some(prep) = cl_prepared[i].as_ref() {
-                crossings = Arc::clone(&prep.crossings);
-                profiles = Arc::clone(&prep.profiles);
-            } else {
-                crossings = Arc::new(build_cl_crossing_table(seq));
-                profiles = Arc::new(build_word_profiles(&crossings));
-            }
-            hops.push(PieceView::cl(crossings, profiles));
+            hops.push(cl_hop_view(seq, cl_prepared[i].as_ref()));
         }
     }
+
     solve_active_set_path(&hops, cfg, env)
 }

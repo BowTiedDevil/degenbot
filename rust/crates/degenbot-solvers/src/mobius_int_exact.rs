@@ -219,7 +219,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 /// `isqrt_u512`. Floor division matches `EVM DIV` semantics.
 ///
 /// This function is also used by the mixed V2-V3 integer solver
-/// (`cl::solve_mixed_v2_v3_piecewise`) and the
+/// (`cl::solve_mixed_piecewise`) and the
 /// Solidly-bracketed dispatcher
 /// (`arb_engine::solver_dispatch::solve_solidly`), each of which uses the
 /// model-optimum output as an anchor for its own discrete search

@@ -322,7 +322,7 @@ pub fn build_cl_word_profiles_from_crossings(crossings: &[IntTickRangeCrossing])
 /// are precomputed projection tables (Arc-shared through the hop memoization),
 /// cloned in O(1); `None` builds that table here.
 #[hotpath::measure(label = "cl_solve.cl_walk_hop")]
-fn cl_walk_hop_cached<'a>(
+pub(super) fn cl_walk_hop_cached<'a>(
     seq: &'a IntV3TickRangeSequence,
     crossings: Option<&Arc<ClCrossingTable>>,
     profiles: Option<&Arc<ClProfileTable>>,

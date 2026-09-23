@@ -535,7 +535,7 @@ fn test_int_v3_sequence_empty() {
 }
 
 #[test]
-fn test_solve_mixed_v2_v3_piecewise_profitable() {
+fn test_solve_mixed_piecewise_v3_then_v2_no_panic() {
     // V2 pool: 1.5M USDC / 800 WETH (cheap WETH)
     // V3 pool at 1:1 with different effective reserves
     let v2_hop = IntHopState::new(
@@ -563,9 +563,19 @@ fn test_solve_mixed_v2_v3_piecewise_profitable() {
 
     let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
 
-    let result =
-        solve_mixed_v2_v3_piecewise(&[v2_hop], &v3_seq, true, &SolveRuntimeConfig::default())
-            .result;
+    let v2_hops: [Option<IntHopState>; 2] = [None, Some(v2_hop)];
+    let cl_sequences: [Option<&IntV3TickRangeSequence>; 2] = [Some(&v3_seq), None];
+    let cl_prepared: [Option<ClSolveTables>; 2] = [None, None];
+    // v3_first: the CL hop leads, then the V2 hop.
+    let result = solve_mixed_piecewise(
+        &v2_hops,
+        &cl_sequences,
+        &cl_prepared,
+        &[false, true],
+        &SolveRuntimeConfig::default(),
+        None,
+    )
+    .result;
     // Key thing is no panics.
     let _ = result;
 }
@@ -748,16 +758,17 @@ fn test_compute_crossing_matches_max_gross_input_k1() {
     );
 }
 
-// --- Slice 14: solve_v3_v3_piecewise tests ---
+// --- Slice 14: two-hop CL solve tests ---
 
 #[test]
-fn test_solve_v3_v3_piecewise_single_range_unprofitable() {
+fn test_solve_cl_piecewise_two_hop_single_range_unprofitable() {
     // Two V3 pools at the same price → no arb (fees dominate)
     let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
     let hop2 = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
     let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
-    let result = solve_v3_v3_piecewise(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
+    let result =
+        derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
     assert!(
         result.is_none(),
         "Same-price pools should not be profitable"
@@ -765,7 +776,7 @@ fn test_solve_v3_v3_piecewise_single_range_unprofitable() {
 }
 
 #[test]
-fn test_solve_v3_v3_piecewise_single_range_no_panic() {
+fn test_solve_cl_piecewise_two_hop_single_range_no_panic() {
     // Different effective reserves — may or may not be profitable,
     // but must not panic
     let sp_0 = U256::from(1u128) << 96;
@@ -802,11 +813,11 @@ fn test_solve_v3_v3_piecewise_single_range_no_panic() {
 
     let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
-    let _ = solve_v3_v3_piecewise(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
+    let _ = derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
 }
 
 #[test]
-fn test_solve_v3_v3_piecewise_multi_range_no_panic() {
+fn test_solve_cl_piecewise_two_hop_multi_range_no_panic() {
     let sp_0 = U256::from(1u128) << 96;
     let sp_lower0 = U256::from(
         degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
@@ -853,7 +864,7 @@ fn test_solve_v3_v3_piecewise_multi_range_no_panic() {
 
     let seq1 = IntV3TickRangeSequence::new(vec![range1_0, range1_1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![range2_0]).unwrap();
-    let _ = solve_v3_v3_piecewise(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
+    let _ = derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
 }
 
 // ── Per-hop output tests ──────────────────────────────────────
@@ -977,19 +988,28 @@ fn walk_fingerprint_is_content_stable_and_separates_compositions() {
 }
 
 #[test]
-fn test_solve_cl_piecewise_2hop_delegates_to_v3_v3() {
-    // 2-hop CL path should delegate to solve_v3_v3_piecewise
+fn test_solve_cl_piecewise_2hop_prepared_matches_derived() {
+    // Prepared projection tables and per-call derivation must walk the same
+    // 2-hop CL path byte-identically.
     let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
     let hop2 = make_v3_hop_at_1to1(8_000_000_000_000u128, false);
 
     let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
 
-    let result_cl =
+    let prepared = [ClSolveTables::derive(&seq1), ClSolveTables::derive(&seq2)];
+    let result_prepared = solve_cl_piecewise(
+        &[&seq1, &seq2],
+        &prepared,
+        None,
+        &SolveRuntimeConfig::default(),
+        None,
+    )
+    .result;
+    let result_derived =
         derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
-    let result_v3v3 = solve_v3_v3_piecewise(&seq1, &seq2, &SolveRuntimeConfig::default()).result;
 
-    assert_eq!(result_cl, result_v3v3);
+    assert_eq!(result_prepared, result_derived);
 }
 
 #[test]

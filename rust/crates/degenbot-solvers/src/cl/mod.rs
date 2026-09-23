@@ -74,8 +74,7 @@ pub use crossings::{
     DENSE_OBSERVE_THRESHOLD,
 };
 pub use entries::{
-    derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_mixed_piecewise,
-    solve_mixed_v2_v3_piecewise, solve_v3_v3_piecewise, ClSolveTables,
+    derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_mixed_piecewise, ClSolveTables,
 };
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{walk_path_fingerprint, WalkMemo, WalkMemoStats};
