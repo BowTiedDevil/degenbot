@@ -414,6 +414,18 @@ const REFINE_GRID_POINTS: u64 = 33;
 /// instead of using the coarse grid — narrow brackets (small ranges) may peak
 /// sharply in the interior, so exactness there is worth the (≤1025) probes.
 const REFINE_DENSE_SPAN: u64 = 1024;
+/// Compile-time stance for the anchor-overshoot re-entry (`refine_adaptive_
+/// anchor_overshoot`). A `SolveRuntimeConfig` field would require editing the
+/// exhaustive struct literal in `degenbot-bot`'s engine lifecycle, outside
+/// this crate; benchmarked ON (the walk-side cost is one extra refine only on
+/// the deep-book paths whose fee-dominated entry hides the peak, and zero on
+/// the light books the default profile is tuned for).
+const REFINE_ADAPTIVE_ANCHOR_OVERSHOOT: bool = true;
+/// Minimum walk-piece count (`Σ range counts + 2`) below which the re-entry
+/// stance stays dormant. The A/B census's failures all sit on 250-750-range
+/// books; under this many pieces the walk's concavity premise holds, so the
+/// stance would only shuffle equal-profit plateau points.
+const REFINE_ADAPTIVE_MIN_TOTAL_PIECES: usize = 64;
 
 /// Maximize profit over the piece window `[lo, hi]`: ternary to a coarse
 /// bracket, then a probe grid over that bracket (or a wei-precise sweep for
@@ -768,6 +780,15 @@ fn solve_active_set_path_inner(
     clear_walk_pieces_and_sims();
 
     let iteration_cap: usize = hops.iter().map(PieceView::piece_count).sum::<usize>() + 2;
+    // The anchor fixed-point re-entry is scoped to wide/deep books: below this
+    // many walk pieces the piecewise staircase stays effectively unimodal, the
+    // direction test is trustworthy, and the stance only perturbs equal-profit
+    // plateau tie-breaking (observed on the small synthetic corpora).
+    let wide_book = iteration_cap >= REFINE_ADAPTIVE_MIN_TOTAL_PIECES;
+    // Latched once the degenerate-leading-piece trigger fires, so the anchor
+    // fixed-point chain can continue across the (non-degenerate) pieces it
+    // lands in; ordinary wide-book stops never set it.
+    let mut anchor_reentry_active = false;
 
     let mut ks = vec![0usize; hops.len()];
     let mut visited: HashSet<Vec<usize>> = HashSet::new();
@@ -1017,6 +1038,52 @@ fn solve_active_set_path_inner(
         if let Some(next) = advance {
             ks = next;
             continue;
+        }
+        // Anchor fixed-point re-entry (`REFINE_ADAPTIVE_ANCHOR_OVERSHOOT`): a
+        // fee-dominated entry can hold the marginal profit below zero for the
+        // first stretches of a deep book, so the local ±64 straddle reads
+        // "falling" while the composed smooth anchor — and the peak it
+        // approximates — sits many pieces away. The immediate-neighbor refine
+        // cannot reach it, so re-enter the walk at the anchor's landed tuple
+        // and iterate: the piece's own smooth argmax is the next iterate, and
+        // the fixed point is where the anchor lands in its own piece. The
+        // visited guard bounds oscillation; the disproof-by-jump is followed
+        // by a current-window refine because accumulated EVM flooring can
+        // still move the realized peak inside the window being left.
+        // The miss mode is a near-zero-width leading piece: the first crossing
+        // is reached for ~0 input, so the piece-0 window is degenerate and the
+        // ±64 straddle lands in the fee-dominated entry, misreading "falling".
+        // Gate the re-entry on that geometry so ordinary wide-book stops keep
+        // their recorded behaviour.
+        let degenerate_lead = xr.saturating_sub(x_l) <= U256::from(REFINE_DENSE_SPAN);
+        if REFINE_ADAPTIVE_ANCHOR_OVERSHOOT
+            && wide_book
+            && (anchor_reentry_active || degenerate_lead)
+            && !climbing
+        {
+            let anchor_landed = simulate_walk_path(anchor, hops).landed;
+            if anchor_landed != ks && !visited.contains(&anchor_landed) {
+                // Run the full stop-time refine (current window + gated forward
+                // neighbor) before leaving, so the extra exploration only adds
+                // candidates and never forfeits the region a plain stop would
+                // have refined.
+                refine_at_stop(
+                    hops,
+                    &ks,
+                    x_l,
+                    Some(xr),
+                    Some(anchor),
+                    &mut rec,
+                    false,
+                    cfg,
+                    env,
+                );
+                anchor_reentry_active = true;
+                ks = anchor_landed;
+                prev_right_edge = None;
+                right_bracket = None;
+                continue;
+            }
         }
         let term_mk = Mark::start();
         refine_at_stop(
