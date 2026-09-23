@@ -333,8 +333,10 @@ _Avoid_: env-gated mutation reads mixed into solve math side effects.
 
 **Profit envelope**:
 A piecewise-linear concave upper bound on a hop's output curve, derived from projection
-data the solve already builds. Extending a single piece's validity window is not a sound
-bound.
+data the solve already builds, and the point-wise minimum of its hop tangent lines and
+per-hop caps. A constant-product-family hop contributes its exact post-fee entry tangent
+beside the fee-agnostic rise; a CL hop contributes its pool-static tangent fan.
+Extending a single piece's validity window is not a sound bound.
 
 **Envelope gate**:
 The pre-solve skip test over the chained path bound: when the bound's best possible gain
@@ -345,6 +347,42 @@ single simulation. Distinct from the per-hop direction viability gate.
 The gate's typed outcome: `Bound` (a sound bound) or `Unsupported` (none derivable).
 Unsupported paths are solved unscreened, never skipped.
 _Avoid_: overloading a bare `None` to mean both unsupported and unprofitable.
+
+**Rise line**:
+A hop's entry tangent at zero input, anchoring its envelope. A constant-product (Möbius)
+hop carries its exact post-fee tangent `γ·r_out / (fee_denom·r_in)` beside the
+fee-agnostic `r_out / r_in` line; taking the point-wise minimum of both stays a rigorous
+upper bound and is strictly tighter than either alone.
+_Avoid_: using a fee-agnostic rise where the retained fee is known.
+
+**Tangent fan (CL)**:
+The pool-static set of sampled crossing-entry tangent lines a CL hop contributes, plus the
+asymptotic cap from its last crossing. It is a pure function of the crossing table after
+the live in-range price, which anchors a head tangent rebuilt per call, so reuse is keyed
+by fan content and scoped to the solve-cycle epoch.
+_Avoid_: caching the head tangent; keying a fan to the live price.
+
+**Exact concave composition**:
+Composing two hulls into their point-wise lower envelope by selecting only the
+y-overlapping outer/inner piece pairs, yielding a canonical hull of at most `K1 + K2`
+pieces with no sampling. Degenerate operands (flat or negative-slope lines, ambiguous
+seam boundaries, an `I512` compose wall) fall back to the frozen sampled reference.
+_Avoid_: composing the full `K1 × K2` product; letting a fallback emit a looser bound than
+the sampling it replaces.
+
+**Bound-scan early exit**:
+The gate's floor-threaded stop in the concave-max scan: once a hull segment's candidate
+strictly clears the caller's skip floor, later segments cannot change the skip verdict and
+are not visited. Distinct from the envelope verdict, which the scan still returns.
+_Avoid_: running the full scan when the skip floor is already decided.
+
+**Hull-edge seed**:
+Seeding the active-set walk's first-piece right-edge bisection from the composed hull's
+first growth-rate takeover. Not a production mechanism: the walk's event solver
+supersedes the seeded bisection and the measured probe saving is negligible
+([evaluation](docs/architecture/hull-edge-seed-evaluation.md)).
+_Avoid_: seeding walk bisections from envelope geometry without measuring under the
+production event-solver stance.
 
 **Walk memo**:
 The engine-owned cross-block composition cache passed into solve entries and advanced

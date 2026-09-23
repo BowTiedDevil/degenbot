@@ -317,6 +317,15 @@ of the probe regardless of pass/fail.
   families admitted to the walk add a capability rather than an enum arm.
 - The family two-stage solves keep their own dispatch; the walk's
   monomorphism discipline (ADR-059 D6) is preserved.
+- The envelope side lands on the same piece boundary and feeds the walk:
+  constant-product rise lines now carry the exact post-fee entry tangent,
+  the gate's bound scan exits early once a segment clears the skip floor,
+  and exact concave composition (at most K1+K2 pieces, sampled fallback
+  retained) replaces product-plus-sampling for the refine-window hull the
+  active-set walk intersects. Terminology: `CONTEXT.md` profit envelope.
+- The hull-edge seed of the walk's first-piece right-edge bisection is a
+  measured no-op under the production event solver and is not shipped.
+  Evaluation: `docs/architecture/hull-edge-seed-evaluation.md`.
 
 ## Open questions
 
