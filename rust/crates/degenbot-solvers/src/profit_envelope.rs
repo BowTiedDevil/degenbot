@@ -356,11 +356,16 @@ pub enum HopMath<'a> {
     /// [`HopMath::cl_derived`]).
     Cl(ClHop<'a>),
     /// Solidly volatile pool (constant-product family). SOUND: identical
-    /// Möbius family → the V2 rise+flat lines. The fee is taken on input,
-    /// which only reduces output, so the fee-agnostic bound stays rigorous
-    /// (over-estimates). Reserves are NATIVE (un-oriented) and must be
+    /// Möbius family → the V2 rise lines. Carrying the retained fee
+    /// (`gamma_numer/fee_denom`) lets the exact-fee tangent tighten the
+    /// fee-agnostic rise. Reserves are NATIVE (un-oriented) and must be
     /// flipped to the swap direction by the caller.
-    SolidlyVolatile { reserve_in: U256, reserve_out: U256 },
+    SolidlyVolatile {
+        reserve_in: U256,
+        reserve_out: U256,
+        gamma_numer: U256,
+        fee_denom: U256,
+    },
     /// Balancer V2 weighted pool. The output curve `1 − (1+x·sf_in/B_in)^(−w_in/w_out)`
     /// is CONCAVE in the (native) input (diminishing returns), so the tangent
     /// at x=0 — the entry marginal rate `B_out·sf_in·w_in/(B_in·w_out·sf_out)` —
@@ -410,6 +415,55 @@ impl<'a> HopMath<'a> {
     }
 }
 
+/// Build the line set for a constant-product (Möbius) hop:
+/// `[rise_feeless, rise_fee'd, flat]`.
+///
+/// The real output curve `γ·r_out·x / (fee_denom·r_in + γ·x)` is concave in
+/// the gross input (diminishing marginal rate), so its tangent at zero —
+/// slope `γ·r_out/(fee_denom·r_in)` — is exact at entry and, by the
+/// tangent-line property of concave functions, never below the curve; the
+/// fee-agnostic `r_out/r_in·x` also bounds it because `r_in + x ≥ r_in`.
+/// Keeping both rises plus the flat `r_out` cap and taking the point-wise
+/// minimum stays a rigorous upper bound, strictly tighter than the feeless
+/// pair alone.
+///
+/// The fee'd rise is dropped (not fatal) when its exact coefficients exceed
+/// `I512` or `fee_denom·r_in` is zero: the fee-agnostic rise still bounds the
+/// curve, so the result merely loosens. Returns `None` when the feeless
+/// coefficients do not fit — no rigorous line, caller treats it as degenerate.
+fn mobius_lines(
+    r_in: U256,
+    r_out: U256,
+    gamma_numer: U256,
+    fee_denom: U256,
+) -> Option<(Vec<Line>, U256)> {
+    let rise_feeless = Line {
+        a: I512::ZERO,
+        b: I512::try_from(U512::from(r_out)).ok()?,
+        c: I512::try_from(U512::from(r_in)).ok()?,
+    };
+    let flat = Line {
+        a: I512::try_from(U512::from(r_out)).ok()?,
+        b: I512::ZERO,
+        c: I512::ONE,
+    };
+    let mut lines = Vec::with_capacity(3);
+    lines.push(rise_feeless);
+    let b_fee = U512::from(gamma_numer).saturating_mul(U512::from(r_out));
+    let c_fee = U512::from(fee_denom).saturating_mul(U512::from(r_in));
+    if !c_fee.is_zero() {
+        if let (Ok(b), Ok(c)) = (I512::try_from(b_fee), I512::try_from(c_fee)) {
+            lines.push(Line {
+                a: I512::ZERO,
+                b,
+                c,
+            });
+        }
+    }
+    lines.push(flat);
+    Some((lines, r_out))
+}
+
 /// Affine lines dominating one hop's output curve, plus the hop's maximum
 /// extractable output (used to cap the search domain).
 #[expect(clippy::too_many_lines)]
@@ -420,20 +474,7 @@ fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<
             if r_in.is_zero() || r_out.is_zero() {
                 return None;
             }
-            // Möbius `r_out·x/(r_in+x)` satisfies both
-            // `out ≤ (r_out/r_in)·x` (since r_in+x ≥ r_in) and `out ≤ r_out`.
-            // As exact fractions: y = (r_out·x)/r_in and y = r_out.
-            let rise = Line {
-                a: I512::ZERO,
-                b: I512::try_from(U512::from(r_out)).ok()?,
-                c: I512::try_from(U512::from(r_in)).ok()?,
-            };
-            let flat = Line {
-                a: I512::try_from(U512::from(r_out)).ok()?,
-                b: I512::ZERO,
-                c: I512::ONE,
-            };
-            Some((vec![rise, flat], r_out))
+            mobius_lines(r_in, r_out, h.gamma_numer, h.fee_denom)
         }
         HopMath::Cl(ch) => {
             let seq = ch.seq;
@@ -713,24 +754,13 @@ fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<
         HopMath::SolidlyVolatile {
             reserve_in,
             reserve_out,
+            gamma_numer,
+            fee_denom,
         } => {
             if reserve_in.is_zero() || reserve_out.is_zero() {
                 return None;
             }
-            // Identical Möbius family — fee on input only reduces output, so
-            // the fee-agnostic V2 lines (rise `r_out/r_in·x` + flat `r_out`)
-            // are a rigorous point-wise upper bound.
-            let rise = Line {
-                a: I512::ZERO,
-                b: I512::try_from(U512::from(reserve_out)).ok()?,
-                c: I512::try_from(U512::from(reserve_in)).ok()?,
-            };
-            let flat = Line {
-                a: I512::try_from(U512::from(reserve_out)).ok()?,
-                b: I512::ZERO,
-                c: I512::ONE,
-            };
-            Some((vec![rise, flat], reserve_out))
+            mobius_lines(reserve_in, reserve_out, gamma_numer, fee_denom)
         }
         HopMath::Weighted {
             balance_in,
@@ -907,7 +937,7 @@ pub(crate) fn capture_degenerate_path(
                     format!("v2(r_in={},r_out={})", h.reserve_in, h.reserve_out)
                 }
                 Some(HopMath::Cl(_)) => "cl".to_string(),
-                Some(HopMath::SolidlyVolatile { reserve_in, reserve_out }) => {
+                Some(HopMath::SolidlyVolatile { reserve_in, reserve_out, .. }) => {
                     format!("solidly_volatile(r_in={reserve_in},r_out={reserve_out})")
                 }
                 Some(HopMath::Weighted { balance_in, balance_out, weight_in, weight_out, .. }) => {
@@ -1674,6 +1704,7 @@ fn path_profit_bound_inner(
                 HopMath::SolidlyVolatile {
                     reserve_in,
                     reserve_out,
+                    ..
                 } => {
                     format!(
                         "SolidlyVolatile(zero={})",
@@ -3375,6 +3406,66 @@ mod tests {
             }
             other @ Envelope::Unsupported(_) => panic!("gate unsupported: {other:?}"),
         }
+    }
+
+    /// The exact-fee rise must share the feeless rise's entry intercept and
+    /// differ by exactly the fee factor: at x→0 the fee'd slope is
+    /// `gamma/fee_denom` of the feeless slope, so the fee'd line beats (is
+    /// strictly below) the feeless line and the point-wise min tightens.
+    fn assert_fee_d_rise(lines: &[Line], r_in: U256, r_out: U256, gamma: u64, fee_denom: u64) {
+        assert_eq!(lines.len(), 3, "feeless rise + fee'd rise + flat");
+        let feeless = &lines[0];
+        let feed = &lines[1];
+        let flat = &lines[2];
+        assert_eq!(feeless.a, I512::ZERO);
+        assert_eq!(feed.a, I512::ZERO);
+        assert_eq!(feeless.b, I512::try_from(U512::from(r_out)).expect("small"));
+        assert_eq!(feeless.c, I512::try_from(U512::from(r_in)).expect("small"));
+        assert_eq!(
+            feed.b,
+            I512::try_from(U512::from(gamma) * U512::from(r_out)).expect("small")
+        );
+        assert_eq!(
+            feed.c,
+            I512::try_from(U512::from(fee_denom) * U512::from(r_in)).expect("small")
+        );
+        // Exact slope ratio `gamma/fee_denom` at x→0, cross-multiplied.
+        let lhs = U512::from(feed.b) * U512::from(feeless.c) * U512::from(fee_denom);
+        let rhs = U512::from(feeless.b) * U512::from(feed.c) * U512::from(gamma);
+        assert_eq!(lhs, rhs, "fee'd slope must be the exact-fee tangent");
+        assert!(
+            U512::from(feed.b) * U512::from(feeless.c) < U512::from(feeless.b) * U512::from(feed.c),
+            "fee'd rise slope must be strictly tighter"
+        );
+        assert_eq!(flat.b, I512::ZERO);
+        assert_eq!(flat.a, I512::try_from(U512::from(r_out)).expect("small"));
+    }
+
+    #[test]
+    fn fee_d_rise_is_exact_fee_tangent_v2() {
+        let hop = IntHopState::new(U256::from(1_000_000u64), U256::from(800_000u64), 997, 1000);
+        let (lines, _cap) = hop_lines_and_cap(HopMath::V2(&hop), &SolveRuntimeConfig::default())
+            .expect("v2 derivable");
+        assert_fee_d_rise(&lines, hop.reserve_in, hop.reserve_out, 997, 1000);
+    }
+
+    #[test]
+    fn fee_d_rise_is_exact_fee_tangent_solidly_volatile() {
+        let hop = HopMath::SolidlyVolatile {
+            reserve_in: U256::from(2_000_000u64),
+            reserve_out: U256::from(1_500_000u64),
+            gamma_numer: U256::from(997u64),
+            fee_denom: U256::from(1000u64),
+        };
+        let (lines, _cap) = hop_lines_and_cap(hop, &SolveRuntimeConfig::default())
+            .expect("solidly volatile derivable");
+        assert_fee_d_rise(
+            &lines,
+            U256::from(2_000_000u64),
+            U256::from(1_500_000u64),
+            997,
+            1000,
+        );
     }
 
     /// Regression: eval() saturates to I512::MAX on overflow,

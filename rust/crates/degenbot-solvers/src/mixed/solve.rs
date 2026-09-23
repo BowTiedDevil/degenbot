@@ -93,6 +93,10 @@ pub fn solve_path_with_min_profit(
                     Some(HopMath::SolidlyVolatile {
                         reserve_in,
                         reserve_out,
+                        // Solidly stores the fee RATE (`fee_numer/fee_denom`);
+                        // the Möbius tangent wants the retained fraction.
+                        gamma_numer: state.fee_denom.saturating_sub(state.fee_numer),
+                        fee_denom: state.fee_denom,
                     })
                 }
             }
@@ -1513,8 +1517,9 @@ mod gate_tests {
     use proptest::prelude::*;
 
     proptest! {
-        /// Solidly volatile = constant-product: the fee-agnostic V2 rise+flat
-        /// lines must dominate `calc_exact_in_volatile` for every reserve/amount.
+        /// Solidly volatile = constant-product: the fee-agnostic and exact-fee
+        /// rise lines plus the flat cap must dominate `calc_exact_in_volatile`
+        /// for every reserve/amount.
         #[test]
         fn m6776w_solidly_volatile_bound_dominates_real_leaf(
             r0 in 1u64..10_000_000u64,
@@ -1526,6 +1531,8 @@ mod gate_tests {
             let hop = HopMath::SolidlyVolatile {
                 reserve_in: U256::from(rin),
                 reserve_out: U256::from(rout),
+                gamma_numer: U256::from(997u64),
+                fee_denom: U256::from(1000u64),
             };
             let bound = path_output_bound_at(&[Some(hop)], &U256::from(x), &crate::runtime::SolveRuntimeConfig::default())
                 .unwrap_or(U256::ZERO);
