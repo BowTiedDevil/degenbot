@@ -631,6 +631,23 @@ const DISCOVERY_HEARTBEAT: Duration = Duration::from_secs(10);
 /// is a bitmask.
 const HEARTBEAT_CHECK_EVERY: u64 = 4096;
 
+/// A long-running walk's live progress, delivered to a caller-installed
+/// observation hook ([`BundledSearch::with_progress`]) on the heartbeat
+/// checkpoint. A pure snapshot: reading it never perturbs the enumeration.
+#[derive(Clone, Copy, Debug)]
+pub struct WalkerTally {
+    /// Wall clock since the search's first advance.
+    pub elapsed: Duration,
+    /// Completed paths yielded so far.
+    pub paths_yielded: u64,
+    /// Stack-frame advances since the most recent yield: a large value with a
+    /// small `paths_yielded` is the no-yield straggler shape.
+    pub advances_since_yield: u64,
+    /// Peak DFS stack depth observed — distinguishes "stuck shallow" from
+    /// "grinding deep" on a real run.
+    pub max_stack_depth: usize,
+}
+
 /// One pending yield's expansion state: the walk's per-step candidate pool
 /// lists (kind-filtered), an odometer over those lists, and same-bundle
 /// injectivity validation. Each valid odometer state is one concrete pool
@@ -814,6 +831,12 @@ pub struct BundledSearch<B: Borrow<PathGraph>> {
     /// Peak DFS stack depth observed — distinguishes "stuck shallow" (ordering
     /// gap) from "grinding deep" (graph-size variance) on a real run.
     max_stack_depth: usize,
+    /// Caller-installed long-run observation hook ([`WalkerTally`]); when
+    /// present it replaces the default stderr heartbeat as the emit channel.
+    progress: Option<Box<dyn FnMut(&WalkerTally) + Send + Sync>>,
+    /// Wall clock between progress reports. The hook's interval when a hook
+    /// is installed; [`DISCOVERY_HEARTBEAT`] for the default stderr line.
+    progress_every: Duration,
 }
 
 /// Unordered compact token pair packed into one u64 (identity-hashed keys).
@@ -938,7 +961,29 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
             advances_since_yield: 0,
             last_heartbeat: now,
             max_stack_depth: 0,
+            progress: None,
+            progress_every: DISCOVERY_HEARTBEAT,
         }
+    }
+
+    /// Install a long-run observation hook on top of the default heartbeat.
+    ///
+    /// The hook replaces the stderr line as the emit channel: once `every` of
+    /// wall clock has passed on a heartbeat checkpoint (every
+    /// [`HEARTBEAT_CHECK_EVERY`] stack-frame advances), the walk's
+    /// [`WalkerTally`] snapshot is handed to `sink`. Callers that run walks
+    /// to completion (no cancellation) use this to surface no-yield
+    /// stragglers — the tally's `advances_since_yield` is large precisely
+    /// when the DFS is grinding with nothing ready to return.
+    #[must_use]
+    pub fn with_progress(
+        mut self,
+        every: Duration,
+        sink: impl FnMut(&WalkerTally) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress = Some(Box::new(sink));
+        self.progress_every = every;
+        self
     }
 
     /// Attach a cooperative cancellation flag checked on every DFS advance.
@@ -1037,19 +1082,30 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                     .is_multiple_of(HEARTBEAT_CHECK_EVERY)
                 {
                     let now = Instant::now();
-                    if now.duration_since(self.last_heartbeat) >= DISCOVERY_HEARTBEAT {
+                    if now.duration_since(self.last_heartbeat) >= self.progress_every {
                         self.last_heartbeat = now;
-                        let elapsed = now.duration_since(self.search_started);
-                        // Low-frequency stderr diagnostic on a zero-dependency
-                        // leaf; no logging crate is available and this runs
-                        // off the hot path.
-                        #[expect(clippy::print_stderr)]
-                        {
-                            eprintln!(
-                                "discovery heartbeat: elapsed={elapsed:?} \
-                                 paths_yielded={} advances_since_yield={} max_stack_depth={}",
-                                self.paths_yielded, self.advances_since_yield, self.max_stack_depth
-                            );
+                        let tally = WalkerTally {
+                            elapsed: now.duration_since(self.search_started),
+                            paths_yielded: self.paths_yielded,
+                            advances_since_yield: self.advances_since_yield,
+                            max_stack_depth: self.max_stack_depth,
+                        };
+                        match self.progress.as_mut() {
+                            Some(sink) => sink(&tally),
+                            // Default diagnostic on a zero-dependency leaf; no
+                            // logging crate is available and this runs off the
+                            // hot path.
+                            None => {
+                                #[expect(clippy::print_stderr)]
+                                {
+                                    eprintln!(
+                                        "discovery heartbeat: elapsed={:?} \
+                                         paths_yielded={} advances_since_yield={} max_stack_depth={}",
+                                        tally.elapsed, tally.paths_yielded,
+                                        tally.advances_since_yield, tally.max_stack_depth
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -1417,7 +1473,7 @@ impl PathGraph {
 mod tests {
     use super::*;
     use std::collections::{BTreeSet, HashSet};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
     // Token IDs for the synthetic 4-pool V2 fixture (mirrors the in-memory
@@ -1811,6 +1867,49 @@ mod tests {
     /// refactor of `OwnedPathFinder::advance` must not alter enumeration order
     /// or yield count. Two independent searches on the same graph must produce
     /// identical, stable output — the heartbeat is purely diagnostic stderr.
+    /// A walk that grinds past the heartbeat checkpoint BEFORE its first
+    /// yield reports through the caller's hook: hub-rooted walks (the
+    /// production frame that anchored 0x1d8168b6…) run 9000 spokes before
+    /// reaching the closing leaf, so a zero-interval hook observes un-yielded
+    /// DFS work mid-walk with the running tally.
+    #[test]
+    fn test_progress_hook_fires_mid_walk_with_the_tally() {
+        const SPOKES: u64 = 9000;
+        const HUB: u64 = 10_000;
+        const END: u64 = 11_000;
+        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::with_capacity(SPOKES as usize + 1);
+        let mut pool = 1000u64;
+        for leaf in 1..=SPOKES {
+            edges.push((HUB, HUB + leaf, pool, PoolKind::V2));
+            pool += 1;
+        }
+        // The lone closing edge hangs off the last spoke; unbounded depth (no
+        // prune sort) keeps the closing path at the END of the scan order.
+        edges.push((HUB + SPOKES, END, pool, PoolKind::V2));
+        let graph = PathGraph::from_edges(edges);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let saw_mid_walk = Arc::new(AtomicBool::new(false));
+        {
+            let calls = Arc::clone(&calls);
+            let saw_mid_walk = Arc::clone(&saw_mid_walk);
+            let mut finder = graph
+                .find_paths_iter(HUB, END, 2, None, false, None, None)
+                .with_progress(Duration::ZERO, move |t| {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    if t.advances_since_yield > 0 {
+                        saw_mid_walk.store(true, Ordering::Relaxed);
+                    }
+                });
+            assert!(finder.next_path().is_some(), "the lone closing path yields");
+        }
+        assert!(calls.load(Ordering::Relaxed) >= 1, "the hook fired");
+        assert!(
+            saw_mid_walk.load(Ordering::Relaxed),
+            "a tally arrived while the DFS was mid-grind (advances > 0, no yield yet)"
+        );
+    }
+
     #[test]
     fn test_heartbeat_diagnostics_do_not_alter_enumeration() {
         let graph = build_fixture_graph();

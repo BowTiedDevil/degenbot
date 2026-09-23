@@ -7,7 +7,6 @@
 //! driver simulates and submits.
 
 use std::collections::HashSet;
-use std::time::Duration;
 
 use crate::backrun::{decide, BackrunConfig, Decision};
 use crate::backrun_engine::{
@@ -28,9 +27,7 @@ use degenbot_simulation::sim::evm::journal_pools::{
 use degenbot_simulation::sim::evm::{read_view_word, ScratchDb, ScratchEvm};
 use hashbrown::HashMap as HbMap;
 
-use crate::anchored_dfs::{
-    resolve_hop, AnchorPool, DfsCycle, DiscoveryBudget, ResolvedHop, NON_WETH_CYCLE,
-};
+use crate::anchored_dfs::{resolve_hop, AnchorPool, DfsCycle, ResolvedHop, NON_WETH_CYCLE};
 use crate::frame_pipeline::{honest_observe, trace_jsonl, BidEconomics, PipelineConfig};
 use crate::market_context::MarketContext;
 use crate::pending_tx::{ComposedIntent, Decided, PendingTxReaction, V3TickWindow};
@@ -46,10 +43,6 @@ pub const USDT: Address = address!("dac17f958d2ee523a2206206994597c13d831ec7");
 /// the set, a pool keeps its truthful no-quote skip.
 pub const SUPPORTED_QUOTES: [Address; 3] = [WETH, USDC, USDT];
 
-/// The per-frame discovery slice: how long the anchored walker may grind on
-/// one frame before its cancel flag fires. The slice bounds only the walker
-/// (its churn is checked between yields) — never the solve/sim stages.
-const FRAME_DISCOVERY_SLICE: Duration = Duration::from_millis(2);
 /// The composed bundle's bid economics: what the builder gets and the bips
 /// the on-chain config word speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1167,7 +1160,6 @@ impl PendingTxReaction for BackrunStrategy {
         let mut touched: Vec<AnchorPool> = Vec::with_capacity(affected.len());
         let mut admitted_cycles: Vec<DfsCycle> = Vec::new();
         if let Some(graph) = ctx.dfs.as_ref() {
-            let budget = DiscoveryBudget::after(FRAME_DISCOVERY_SLICE);
             // Every touched pool pins on BOTH of its token pairs: a pool with
             // no WETH quote is still a legal mid-cycle hop.
             for a in affected {
@@ -1191,7 +1183,6 @@ impl PendingTxReaction for BackrunStrategy {
             let (cycles, non_weth) = graph.weth_entry_cycles(
                 &touched,
                 weth_id,
-                &budget,
                 ctx.connector_cap.max(1),
                 ctx.cycle_max_hops,
             );
@@ -1208,9 +1199,6 @@ impl PendingTxReaction for BackrunStrategy {
             // pool anchored its discovery.
             let mut solved: HashSet<Vec<(u64, bool)>> = HashSet::new();
             for cycle in &admitted_cycles {
-                if budget.expired() {
-                    break;
-                }
                 let walk = cycle_chain(
                     ctx,
                     idx,

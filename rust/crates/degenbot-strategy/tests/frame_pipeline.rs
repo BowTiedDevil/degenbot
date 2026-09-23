@@ -26,11 +26,10 @@ use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, TypedPoolPost, V4PoolDescriptor,
 };
 use std::sync::Arc;
-use std::time::Duration;
 
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
 use degenbot_pathfinding::PoolKind;
-use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph, DiscoveryBudget};
+use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{
     admit_extracted, cycle_refs, cycle_touched_legs, discover_trace_payload, net_bid,
@@ -406,8 +405,7 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
         token_a_id: A_ID,
         token_b_id: B_ID,
     }];
-    let budget = DiscoveryBudget::after(Duration::from_secs(60));
-    let (cycles, refused) = graph.weth_entry_cycles(&touched, WETH_ID, &budget, 16, 4);
+    let (cycles, refused) = graph.weth_entry_cycles(&touched, WETH_ID, 16, 4);
     assert_eq!(refused, 0, "a WETH-closing rotation exists: {cycles:?}");
 
     let four_hop = cycles

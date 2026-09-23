@@ -8,19 +8,17 @@
 //! 2. Depth-3 gain: a cycle requiring three hops the star can't express.
 //! 3. Soundness property: over generated graphs, returned cycles ALWAYS
 //!    intersect the touched pool set.
-//! 4. Cancel budget: a per-frame time slice fires on a hostile fixture
-//!    without hanging.
+//! 4. Long-run completion: a hostile-fixture hub walk drains and admits its
+//!    sound cycle prefix — no deadline drops a walk whose first yield sits
+//!    deep in scan order; the 1 s progress report surfaces the grind.
 
 #![expect(clippy::unwrap_used)]
-
-use std::time::Duration;
 
 use alloy::primitives::Address;
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{
-    resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, DiscoveryBudget, UnsupportedHop,
-    NON_WETH_CYCLE,
+    resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, UnsupportedHop, NON_WETH_CYCLE,
 };
 use proptest::prelude::*;
 
@@ -54,11 +52,6 @@ fn anchor(pool_id: u64, a: u64, b: u64, kind: PoolKind) -> AnchorPool {
         token_a_id: a,
         token_b_id: b,
     }
-}
-
-/// A budget that never expires in-test.
-fn open_budget() -> DiscoveryBudget {
-    DiscoveryBudget::after(Duration::from_secs(3600))
 }
 
 /// Cycle pool ids, normalized for comparison against the star's
@@ -97,12 +90,8 @@ async fn walker_finds_every_star_cycle_on_synthetic_frame() {
     };
 
     let graph = AnchoredGraph::from_connector_index(&index);
-    let cycles = graph.cycles_through_touched(
-        &[anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2)],
-        &open_budget(),
-        64,
-        3,
-    );
+    let cycles =
+        graph.cycles_through_touched(&[anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2)], 64, 3);
 
     // Walker 2-hop pairs = (anchor, connector) sets, regardless of which
     // side the connector indexes the pair on.
@@ -175,12 +164,8 @@ async fn walker_finds_depth_three_cycles_the_star_cannot_express() {
     assert!(star.is_empty(), "star fan must be empty on this fixture");
 
     let graph = AnchoredGraph::from_connector_index(&index);
-    let cycles = graph.cycles_through_touched(
-        &[anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2)],
-        &open_budget(),
-        64,
-        3,
-    );
+    let cycles =
+        graph.cycles_through_touched(&[anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2)], 64, 3);
     let threes: Vec<Vec<u64>> = cycles
         .iter()
         .filter(|c| c.pools.len() == 3)
@@ -248,7 +233,6 @@ proptest! {
                 u64::from(anchor_pair.1),
                 PoolKind::V2,
             )],
-            &open_budget(),
             128,
             3,
         );
@@ -262,24 +246,13 @@ proptest! {
     }
 }
 
-// ─────────────── 4. discovery budget on a hostile fixture ───────────────
+// ─────────────── 4. long-run completion on a hostile fixture ───────────────
 //
-// The budget contract is covered as three deterministic assertions instead of
-// one wall-clock race. A fixed slice against a fixed fixture is a lottery:
-// the same 1ms slice that passes in isolation failed under plain
-// parallel-suite CPU contention AND under llvm-cov loop instrumentation,
-// because first-yield latency and slice cost both float with machine speed.
-//
-//   1. expiry SEMANTICS (monotone, forward-only) — budget-type unit test.
-//   2. a SPENT budget stops the frame at the entry check, before any walker
-//      construction — the no-hang guarantee in deterministic form.
-//   3. the PARTIAL-RESULT shape a mid-walk expiry produces (walker halt +
-//      sound prefix) — deterministic via the cap stop on the same fixture.
-// The one link that stays clock-driven in production — the deadline passing
-// between two yields arming the cancel flag — composes 1 with
-// `degenbot-pathfinding`'s own deterministic cancellation tests
-// (test_borrowed_finder_cancel_mid_stream), so no assertion here depends on
-// how fast the suite runs.
+// Walks run to completion: the deterministic stop is the CAP, not a clock.
+// The budget-era partial-result contract (walker halt + sound prefix) is
+// pinned on the cap stop, which is deterministic by construction instead of
+// pinned to the wall clock: exactly `cap` cycles, every one crossing the
+// anchor, none deeper than the hop cap.
 
 fn hostile_clique_graph() -> AnchoredGraph {
     let mut index = V2ConnectorIndex::default();
@@ -302,48 +275,13 @@ fn hostile_clique_graph() -> AnchoredGraph {
     AnchoredGraph::from_connector_index(&index)
 }
 
-/// Expiry is a monotone predicate against a construction-time deadline: never
-/// true before it, never false after it. The forward-flip case sleeps past
-/// the deadline, which a monotonic clock guarantees — no assumption about how
-/// fast this test itself runs.
-#[test]
-fn discovery_budget_expires_only_forward_in_time() {
-    assert!(!DiscoveryBudget::after(Duration::from_secs(3600)).expired());
-    assert!(DiscoveryBudget::after(Duration::ZERO).expired());
-
-    let budget = DiscoveryBudget::after(Duration::from_millis(1));
-    std::thread::sleep(Duration::from_millis(20));
-    assert!(budget.expired());
-}
-
-/// A budget spent on entry stops the walk at the loop's expiry check, before
-/// any finder construction: no cycles, immediate return. This is the
-/// frame-loop hazard (a hostile anchor must never hang the caller past its
-/// slice) in its deterministic degenerate form.
-#[test]
-fn spent_budget_yields_nothing_without_walking() {
-    let graph = hostile_clique_graph();
-    let budget = DiscoveryBudget::after(Duration::ZERO);
-    let cycles =
-        graph.cycles_through_touched(&[anchor(5000, 0, 1, PoolKind::V2)], &budget, usize::MAX, 3);
-    assert!(budget.expired(), "the spent budget must report expiry");
-    assert!(cycles.is_empty(), "a spent budget must not produce cycles");
-}
-
-/// The partial-result shape a mid-walk expiry produces — walker halt plus a
-/// sound prefix — pinned on the cap stop, which is deterministic by
-/// construction instead of pinned to the clock: exactly `cap` cycles, every
-/// one crossing the anchor, none deeper than 3 hops.
+/// The partial-result shape a capped walk produces — exactly `cap` cycles,
+/// every one crossing the anchor, none deeper than 3 hops.
 #[test]
 fn capped_hostile_walk_returns_sound_prefix() {
     let graph = hostile_clique_graph();
-    let budget = DiscoveryBudget::after(Duration::from_secs(3600));
     let cap = 64;
-    let cycles = graph.cycles_through_touched(&[anchor(5000, 0, 1, PoolKind::V2)], &budget, cap, 3);
-    assert!(
-        !budget.expired(),
-        "the far-future budget must stay unexpired"
-    );
+    let cycles = graph.cycles_through_touched(&[anchor(5000, 0, 1, PoolKind::V2)], cap, 3);
     assert_eq!(
         cycles.len(),
         cap,
@@ -397,7 +335,6 @@ fn touched_non_weth_pool_rides_a_weth_entry_cycle_as_mid() {
     let (admitted, refused) = graph.weth_entry_cycles(
         &[anchor(102, TOK_ID, MID_ID, PoolKind::V2)],
         QUOTE_ID,
-        &open_budget(),
         16,
         4,
     );
@@ -431,7 +368,6 @@ fn cycle_without_a_weth_hop_is_refused_as_non_weth() {
     let (admitted, refused) = graph.weth_entry_cycles(
         &[anchor(101, TOK_ID, MID_ID, PoolKind::V2)],
         QUOTE_ID,
-        &open_budget(),
         16,
         4,
     );
@@ -439,6 +375,60 @@ fn cycle_without_a_weth_hop_is_refused_as_non_weth() {
     assert!(admitted.is_empty(), "no WETH rotation exists: {admitted:?}");
     assert_eq!(refused, 2, "both drift directions are refused");
     assert_eq!(NON_WETH_CYCLE, "non_weth_cycle");
+}
+
+/// A non-WETH-quoted pool rides a WETH-entry cycle as a mid hop through a
+/// SECOND quote-token hub: the frame behind tx 0x1d8168b6… (V3 pool without a
+/// WETH quote) must still discover and register that quote-land cycle, whose
+/// WETH legs sit at the start and end of the rotation.
+#[test]
+fn hub_rooted_non_weth_anchor_discovers_its_weth_entry_cycle() {
+    const HUB_ID: u64 = 40;
+    const FILLER_BASE: u64 = 1000;
+    let mut index = V2ConnectorIndex::default();
+    index.push_edge(edge(101, QUOTE_ID, TOK_ID, 0xB1)); // WETH-TOK stake leg
+    index.push_edge(edge(102, QUOTE_ID, HUB_ID, 0xB2)); // WETH-HUB entry leg
+    index.push_edge(edge(4999, TOK_ID, HUB_ID, 0xB3)); // touched, no WETH quote
+    index.push_edge(edge(4998, TOK_ID, HUB_ID, 0xB4)); // closes on the hub, not WETH
+                                                       // Walk-around filler spokes that close on nothing: they force the
+                                                       // admission to find the rotated WETH entry, not a trivial first yield.
+    let mut pool = 5000;
+    for i in 1..=3000u64 {
+        index.push_edge(edge(
+            pool,
+            HUB_ID,
+            FILLER_BASE + i,
+            u8::try_from((pool % 254) + 1).unwrap_or(0xFE),
+        ));
+        pool += 1;
+    }
+    let graph = AnchoredGraph::from_connector_index(&index);
+
+    let (admitted, refused) = graph.weth_entry_cycles(
+        &[anchor(4999, TOK_ID, HUB_ID, PoolKind::V2)],
+        QUOTE_ID,
+        16,
+        4,
+    );
+
+    let ids = admitted
+        .iter()
+        .map(cycle_pool_ids)
+        .collect::<Vec<Vec<u64>>>();
+    assert_eq!(
+        refused, 2,
+        "both hub-locked rotations are refused: {admitted:?}"
+    );
+    assert!(
+        ids.contains(&vec![102, 4999, 101]),
+        "the WETH-entry rotation through the touched mid hop: {admitted:?}"
+    );
+    assert!(
+        admitted
+            .iter()
+            .all(|cycle| cycle.entry_token_id == QUOTE_ID),
+        "every admitted cycle stakes WETH: {admitted:?}"
+    );
 }
 
 /// The committed discovery pinned WETH-quoted anchors with `token_a` = the
@@ -455,12 +445,7 @@ fn weth_entry_admission_reproduces_the_committed_weth_anchor_cycle() {
     // Committed: pin ordered by the WETH quote; keep the anchor-first
     // WETH-entry rotation.
     let committed = graph
-        .cycles_through_touched(
-            &[anchor(101, QUOTE_ID, TOK_ID, PoolKind::V2)],
-            &open_budget(),
-            16,
-            4,
-        )
+        .cycles_through_touched(&[anchor(101, QUOTE_ID, TOK_ID, PoolKind::V2)], 16, 4)
         .into_iter()
         .find(|c| c.pools.first() == Some(&(101, PoolKind::V2)) && c.entry_token_id == QUOTE_ID)
         .unwrap();
@@ -469,7 +454,6 @@ fn weth_entry_admission_reproduces_the_committed_weth_anchor_cycle() {
     let (admitted, refused) = graph.weth_entry_cycles(
         &[anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2)],
         QUOTE_ID,
-        &open_budget(),
         16,
         4,
     );

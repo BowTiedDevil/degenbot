@@ -9,15 +9,13 @@
 //! any rotation; cycles sharing a directed edge sequence are deduplicated
 //! across their anchoring rotations. More-touched cycles rank ahead of
 //! fewer-touched ones before the cap truncates, so a small cap cannot starve
-//! dual-touched cycles. Both drift directions surface. A per-frame
-//! [`DiscoveryBudget`] arms the walker's cancel flag between yields and is
-//! split fairly across anchors, so a hostile graph bounds the frame's
-//! enumeration without letting one anchor spend the whole slice.
+//! dual-touched cycles. Both drift directions surface. Each walk runs to
+//! completion — the walker's cap and hop budget bound the result — and a 1 s
+//! `tracing::info!` progress report (elapsed, yields, walker advances)
+//! surfaces a hub-rooted, no-yield straggler mid-grind.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::{EdgeKey, PathGraph, PoolKind};
@@ -53,40 +51,6 @@ pub struct DfsCycle {
 /// settlement token: it cannot be entered with a WETH stake and is refused
 /// before the solver ever sees it.
 pub const NON_WETH_CYCLE: &str = "non_weth_cycle";
-
-/// The per-frame discovery slice: a wall-clock deadline + the walker's
-/// cooperative cancel flag. The finding loop checks the clock between
-/// yields (the only points it controls) and arms the flag; the walker
-/// stops at its next internal loop iteration, so a hostile graph can
-/// never out-run the slice by more than one yield's work.
-#[derive(Debug)]
-pub struct DiscoveryBudget {
-    deadline: Instant,
-    cancel: Arc<AtomicBool>,
-}
-
-impl DiscoveryBudget {
-    /// A budget expiring `slice` from now.
-    #[must_use]
-    pub fn after(slice: Duration) -> Self {
-        Self {
-            deadline: Instant::now() + slice,
-            cancel: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Whether the slice has run out (checked between walker yields).
-    #[must_use]
-    pub fn expired(&self) -> bool {
-        Instant::now() >= self.deadline
-    }
-
-    /// Wall-clock time left in the slice (zero once expired).
-    #[must_use]
-    pub fn remaining(&self) -> Duration {
-        self.deadline.saturating_duration_since(Instant::now())
-    }
-}
 
 /// The startup-built discovery graph: the connector index's loaded edge set
 /// (V2 + V3; `PoolKind` carries the family) as a pathfinding multigraph,
@@ -125,19 +89,15 @@ impl AnchoredGraph {
     /// Anchors are walked in two passes (each pool's `token_a` exit first,
     /// then its `token_b` exit), so a directed cycle reachable from some
     /// anchor's `token_a` rotation is first seen in a rotation the solver
-    /// lane can consume. Each anchor gets a fair share of the remaining
-    /// slice, so one anchor cannot spend the whole budget before the others
-    /// run.
+    /// lane can consume.
     #[must_use]
     pub fn cycles_through_touched(
         &self,
         touched: &[AnchorPool],
-        budget: &DiscoveryBudget,
         cap: usize,
         max_hops: usize,
     ) -> Vec<DfsCycle> {
-        self.enumerate_cycles(touched, budget, cap, max_hops, Some)
-            .0
+        self.enumerate_cycles(touched, cap, max_hops, Some).0
     }
 
     /// The WETH-stake admission of the touched-set enumeration: every
@@ -153,11 +113,10 @@ impl AnchoredGraph {
         &self,
         touched: &[AnchorPool],
         weth_token_id: u64,
-        budget: &DiscoveryBudget,
         cap: usize,
         max_hops: usize,
     ) -> (Vec<DfsCycle>, usize) {
-        self.enumerate_cycles(touched, budget, cap, max_hops, |cycle| {
+        self.enumerate_cycles(touched, cap, max_hops, |cycle| {
             self.rotate_to_entry(&cycle, weth_token_id)
         })
     }
@@ -204,7 +163,6 @@ impl AnchoredGraph {
     fn enumerate_cycles<F>(
         &self,
         touched: &[AnchorPool],
-        budget: &DiscoveryBudget,
         cap: usize,
         max_hops: usize,
         transform: F,
@@ -220,34 +178,37 @@ impl AnchoredGraph {
         let mut seen: HashSet<Vec<(u64, u8, u64)>> = HashSet::new();
         let mut best: Vec<Candidate> = Vec::new();
         let mut refused = 0usize;
-        let mut jobs_left = touched.len() * 2;
         'passes: for pass in 0..2u8 {
             for anchor in touched {
-                if budget.expired() {
-                    budget.cancel.store(true, Ordering::Relaxed);
-                    break 'passes;
-                }
-                let share = budget.remaining() / u32::try_from(jobs_left).unwrap_or(u32::MAX);
-                let pin_deadline = Instant::now() + share;
-                jobs_left -= 1;
                 let anchor_key = (anchor.pool_id, anchor.pool_kind);
                 let (entry, exit) = if pass == 0 {
                     (anchor.token_a_id, anchor.token_b_id)
                 } else {
                     (anchor.token_b_id, anchor.token_a_id)
                 };
+                // The 1 s progress report is the only channel that observes a
+                // hub-rooted grind BEFORE its first yield: the caller loop is
+                // parked inside `next_path()` until one arrives.
+                let anchor_pool_id = anchor.pool_id;
+                let pass_num = pass;
                 let mut finder = self
                     .graph
                     .find_paths_iter(exit, entry, 1, Some(max_hops - 1), false, None, None)
-                    .with_cancel(Arc::clone(&budget.cancel));
+                    .with_progress(Duration::from_secs(1), move |tally| {
+                        tracing::info!(
+                            anchor_pool = anchor_pool_id,
+                            pass = pass_num,
+                            entry_token = entry,
+                            exit_token = exit,
+                            elapsed_ms =
+                                u64::try_from(tally.elapsed.as_millis()).unwrap_or(u64::MAX),
+                            paths_yielded = tally.paths_yielded,
+                            advances_since_yield = tally.advances_since_yield,
+                            max_stack_depth = tally.max_stack_depth,
+                            "long pathfinding walk"
+                        );
+                    });
                 while let Some(open) = finder.next_path() {
-                    if budget.expired() {
-                        budget.cancel.store(true, Ordering::Relaxed);
-                        break 'passes;
-                    }
-                    if Instant::now() >= pin_deadline {
-                        break;
-                    }
                     let mut pools = Vec::with_capacity(open.len() + 1);
                     pools.push(anchor_key);
                     pools.extend(open);
@@ -473,10 +434,6 @@ mod tests {
         }
     }
 
-    fn open_budget() -> DiscoveryBudget {
-        DiscoveryBudget::after(Duration::from_secs(3600))
-    }
-
     fn pool_ids(cycle: &DfsCycle) -> Vec<u64> {
         cycle.pools.iter().map(|(pool_id, _)| *pool_id).collect()
     }
@@ -492,12 +449,8 @@ mod tests {
         // connector of P under the old two-connector cap; the only cycle it
         // rides is four hops long.
         let graph = build_graph(&[(101, 1, 2), (102, 2, 3), (103, 3, 4), (104, 4, 1)]);
-        let cycles = graph.cycles_through_touched(
-            &[anchor_of(101, 1, 2), anchor_of(102, 2, 3)],
-            &open_budget(),
-            8,
-            4,
-        );
+        let cycles =
+            graph.cycles_through_touched(&[anchor_of(101, 1, 2), anchor_of(102, 2, 3)], 8, 4);
         assert!(
             cycles
                 .iter()
@@ -510,7 +463,7 @@ mod tests {
     fn re_riding_the_touched_edge_is_rejected() {
         // Only P connects 1-2, so the sole open path back is P itself.
         let graph = build_graph(&[(101, 1, 2)]);
-        let cycles = graph.cycles_through_touched(&[anchor_of(101, 1, 2)], &open_budget(), 8, 4);
+        let cycles = graph.cycles_through_touched(&[anchor_of(101, 1, 2)], 8, 4);
         assert!(
             cycles.is_empty(),
             "a cycle that re-rides the pin must be rejected: {cycles:?}"
@@ -530,28 +483,12 @@ mod tests {
             (102, 2, 3),
             (103, 3, 1),
         ]);
-        let cycles = graph.cycles_through_touched(
-            &[anchor_of(101, 1, 2), anchor_of(102, 2, 3)],
-            &open_budget(),
-            2,
-            4,
-        );
+        let cycles =
+            graph.cycles_through_touched(&[anchor_of(101, 1, 2), anchor_of(102, 2, 3)], 2, 4);
         assert_eq!(cycles.len(), 2, "the cap bounds the result: {cycles:?}");
         assert!(
             cycles.iter().all(|c| carries(c, &[101, 102])),
             "dual-touched cycles must outrank the singles under the cap: {cycles:?}"
-        );
-    }
-
-    #[test]
-    fn expired_budget_stops_enumeration() {
-        let graph = build_graph(&[(101, 1, 2), (102, 2, 3), (103, 3, 1)]);
-        let budget = DiscoveryBudget::after(Duration::ZERO);
-        let cycles = graph.cycles_through_touched(&[anchor_of(101, 1, 2)], &budget, 8, 4);
-        assert!(budget.expired(), "a zero slice reports expiry");
-        assert!(
-            cycles.is_empty(),
-            "an expired budget must not enumerate: {cycles:?}"
         );
     }
 }
