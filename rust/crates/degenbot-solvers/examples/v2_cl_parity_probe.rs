@@ -30,16 +30,11 @@
 //! consumption.
 
 #![expect(
-    clippy::cast_lossless,
     clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
     clippy::print_stdout,
     clippy::print_stderr,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::similar_names
+    clippy::too_many_lines
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -240,14 +235,16 @@ struct Bucket {
 impl Bucket {
     fn push(&mut self, delta: i128, consumed_ok: bool) {
         self.n += 1;
-        if delta == 0 {
-            self.zero += 1;
-        } else if delta > 0 {
-            self.positive += 1;
-            self.divergent += 1;
-        } else {
-            self.negative += 1;
-            self.divergent += 1;
+        match delta.cmp(&0) {
+            std::cmp::Ordering::Equal => self.zero += 1,
+            std::cmp::Ordering::Greater => {
+                self.positive += 1;
+                self.divergent += 1;
+            }
+            std::cmp::Ordering::Less => {
+                self.negative += 1;
+                self.divergent += 1;
+            }
         }
         if !consumed_ok {
             self.consumed_mismatch += 1;
