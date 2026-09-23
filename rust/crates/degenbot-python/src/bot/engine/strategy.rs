@@ -172,6 +172,15 @@ fn facet_status(
     reason = "a freshly minted host has no registered strategies, so both registers are infallible"
 )]
 pub(crate) fn boot_host() -> BootedHost {
+    // An engine construction IS the ambient runtime's first use (FF-T5):
+    // the fleet boot stamps the process with a fleet, so the shared io
+    // runtime must exist - the worker census reports at least the
+    // io_runtime_workers row - regardless of whether the backrun lane's
+    // node join resolved (a joinless host keeps the registry EMPTY below,
+    // but nothing may make the runtime's existence host-dependent). The
+    // binding also pins pyo3-async to the shared runtime BEFORE any async
+    // seam runs, the GOQWCL second-runtime obligation.
+    crate::ambient_runtime::ensure_async_runtime_bound();
     let (mut host, attached) = StrategyHost::mint(
         hosted_route_registry(),
         Arc::new(NonceAuthority::new(0)),

@@ -94,6 +94,14 @@ import sys
 # Determinism (the FF-T5 addendum): the child controls its own env - pop
 # the retired stance key, then apply THIS leg's profile.
 os.environ.pop("DEGENBOT_FLEET", None)
+# Hermetic ambient pins (the cc0ffcd93 lesson): the backrun node join
+# resolves from the operator env (DEGENBOT_RPC_HTTP_CHAINID_*), and a join
+# resolving DID change what engine construction materializes (the hosted
+# registry built the shared io runtime; a joinless host left the census
+# EMPTY). Pop BOTH join layers so every leg sees the JOINLESS host and the
+# census pin cannot pass on one developer machine and fail on clean CI.
+os.environ.pop("DEGENBOT_RPC_HTTP_CHAINID_1", None)
+os.environ.pop("DEGENBOT_RPC_WS_CHAINID_1", None)
 if @SET_PROFILE@:
     os.environ["DEGENBOT_FLEET_PROFILE"] = @SET_PROFILE@
 else:
