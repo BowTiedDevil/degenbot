@@ -257,69 +257,10 @@ pub fn solve_path_inner(
             (None, crate::cl::WalkStats::default())
         }
     } else if all_cl {
-        // V3-V3, V4-V4, V3-V4, V4-V3, V3-V3-V3, etc: all concentrated-liquidity
-        let int_sequences: Vec<_> = resolved
-            .hops
-            .iter()
-            .filter_map(ResolvedHop::as_int_sequence)
-            .collect();
-        let cl_profiles: Vec<_> = resolved
-            .hops
-            .iter()
-            .filter_map(ResolvedHop::as_word_profiles)
-            .collect();
-        let cl_crossings: Vec<_> = resolved
-            .hops
-            .iter()
-            .filter_map(ResolvedHop::as_crossing_table)
-            .collect();
-        if int_sequences.len() >= 2 {
-            let prepared: Vec<crate::cl::ClSolveTables> = int_sequences
-                .iter()
-                .zip(cl_crossings.iter())
-                .zip(cl_profiles.iter())
-                .map(|((_, c), p)| crate::cl::ClSolveTables {
-                    crossings: Arc::clone(c),
-                    profiles: Arc::clone(p),
-                })
-                .collect();
-            let out = crate::cl::solve_cl_piecewise(
-                &int_sequences,
-                &prepared,
-                gate.walk_memo(),
-                &gate.runtime,
-                walk_env,
-            );
-            (
-                out.result.map(|(optimal_input, _profit, hop_outputs)| {
-                    // consumed_inputs[0] = optimal_input (first hop always consumes
-                    // its full input for single-range paths; no partial fill).
-                    // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
-                    // output becomes this hop's input — matching the pipeline:
-                    // V3 output flows into V4 as amountSpecified).
-                    let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-                    consumed_inputs.push(optimal_input);
-                    for i in 1..hop_outputs.len() {
-                        consumed_inputs.push(hop_outputs[i - 1]);
-                    }
-                    let profit = hop_outputs
-                        .last()
-                        .copied()
-                        .unwrap_or(U256::ZERO)
-                        .saturating_sub(consumed_inputs[0]);
-                    SolvePathResult {
-                        optimal_input,
-                        profit,
-                        hop_outputs,
-                        consumed_inputs,
-                        ..Default::default()
-                    }
-                }),
-                out.stats,
-            )
-        } else {
-            (None, crate::cl::WalkStats::default())
-        }
+        // V3-V3, V4-V4, V3-V4, V4-V3, V3-V3-V3, etc: all concentrated-liquidity.
+        // Shares the mixed arm's construction flow — see
+        // `solve_walkable_path_int`.
+        solve_walkable_path_int(resolved, gate, walk_env)
     } else if all_v2_or_solidly && has_solidly {
         // All-V2-or-Solidly with ≥1 Solidly hop — the two-stage Möbius
         // precheck + golden-section solve. Scope (p):
@@ -370,7 +311,7 @@ pub fn solve_path_inner(
         (None, crate::cl::WalkStats::default())
     } else {
         // Mixed V2 + CL (V3 or V4)
-        solve_mixed_path_int(resolved, gate, walk_env)
+        solve_walkable_path_int(resolved, gate, walk_env)
     };
 
     // V4 int128 guard: reject paths where any V4 hop's consumed input or
@@ -437,17 +378,18 @@ pub fn solve_path_inner(
     (result, walk_stats)
 }
 
-/// Solve a mixed V2 + CL (V3 or V4) path using integer-exact Möbius solver.
+/// Solve a walkable path — every hop is V2, V3, or V4 — with the active-set
+/// piecewise Möbius walk.
 ///
-/// Uses the pre-built `IntV3TickRangeSequence` from `resolve_path`,
-/// which was constructed directly from U256 values (no f64 conversion).
-/// V3 and V4 hops produce the same type — `IntV3TickRangeSequence`.
+/// All-CL and mixed V2+CL paths share this ONE construction flow: the hop
+/// order, V2 states, borrowed CL sequences, and per-CL-hop prepared tables are
+/// assembled once, then the memo-capable all-CL entry or the mixed entry
+/// consumes them.
 ///
-/// The sequence-based solver enumerates CL ending ranges and computes
-/// the optimal input for each piece, validating with crossing-aware
-/// simulation. This eliminates false positives from single-range
-/// approximation when swaps exceed the current tick range capacity.
-fn solve_mixed_path_int(
+/// The pre-built `IntV3TickRangeSequence` from `resolve_path` was constructed
+/// directly from U256 values (no f64 conversion); V3 and V4 hops produce the
+/// same type.
+fn solve_walkable_path_int(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
     walk_env: Option<&crate::profit_envelope::PathBoundLines>,
@@ -456,18 +398,7 @@ fn solve_mixed_path_int(
         return (None, crate::cl::WalkStats::default());
     }
 
-    // Check that this is actually a mixed path (both V2 and CL hops)
-    let has_v2 = resolved
-        .hops
-        .iter()
-        .any(|h| matches!(h, ResolvedHop::V2 { .. }));
-    let has_cl = resolved.hops.iter().any(|h| h.as_int_sequence().is_some());
-    if !has_v2 || !has_cl {
-        // not a mixed path — should be handled by other dispatches
-        return (None, crate::cl::WalkStats::default());
-    }
-
-    // Build hop_order and adapter arrays from the enum
+    // Build hop_order and adapter arrays from the enum (true = V2 hop).
     let hop_order: Vec<bool> = resolved
         .hops
         .iter()
@@ -478,21 +409,10 @@ fn solve_mixed_path_int(
         .iter()
         .map(|h| h.as_v2_state().cloned())
         .collect();
-    // RLVDUP T1: borrow the CL sequences straight off the resolved hops -
-    // the walk reads them; the old deep clone copied every ranges Vec per
-    // solve.
+    // Borrow the CL sequences straight off the resolved hops - the walk reads
+    // them; a deep clone would copy every ranges Vec per solve.
     let int_v3_sequences: Vec<Option<&crate::cl::IntV3TickRangeSequence>> =
         resolved.hops.iter().map(|h| h.as_int_sequence()).collect();
-    let cl_crossings: Vec<Option<Arc<crate::cl::ClCrossingTable>>> = resolved
-        .hops
-        .iter()
-        .map(|h| h.as_crossing_table().cloned())
-        .collect();
-    let cl_profiles: Vec<Option<Arc<crate::cl::ClProfileTable>>> = resolved
-        .hops
-        .iter()
-        .map(|h| h.as_word_profiles().cloned())
-        .collect();
 
     // Per-CL-hop prepared tables from the projection (V2 positions None).
     let cl_prepared: Vec<Option<crate::cl::ClSolveTables>> = hop_order
@@ -503,20 +423,49 @@ fn solve_mixed_path_int(
                 None
             } else {
                 Some(crate::cl::ClSolveTables {
-                    crossings: Arc::clone(cl_crossings[i].as_ref()?),
-                    profiles: Arc::clone(cl_profiles[i].as_ref()?),
+                    crossings: Arc::clone(resolved.hops[i].as_crossing_table()?),
+                    profiles: Arc::clone(resolved.hops[i].as_word_profiles()?),
                 })
             }
         })
         .collect();
-    let out = crate::cl::solve_mixed_piecewise(
-        &v2_hops,
-        &int_v3_sequences,
-        &cl_prepared,
-        &hop_order,
-        &gate.runtime,
-        walk_env,
-    );
+
+    // Every CL position must carry its prepared tables; a missing one means
+    // the projection is incomplete.
+    if hop_order
+        .iter()
+        .zip(&cl_prepared)
+        .any(|(&is_v2, prepared)| !is_v2 && prepared.is_none())
+    {
+        return (None, crate::cl::WalkStats::default());
+    }
+
+    let all_cl = hop_order.iter().all(|&is_v2| !is_v2);
+    let out = if all_cl {
+        let Some(sequences) = int_v3_sequences.iter().copied().collect::<Option<Vec<_>>>() else {
+            return (None, crate::cl::WalkStats::default());
+        };
+        let Some(prepared) = cl_prepared.iter().cloned().collect::<Option<Vec<_>>>() else {
+            return (None, crate::cl::WalkStats::default());
+        };
+        crate::cl::solve_cl_piecewise(
+            &sequences,
+            &prepared,
+            gate.walk_memo(),
+            &gate.runtime,
+            walk_env,
+        )
+    } else {
+        crate::cl::solve_mixed_piecewise(
+            &v2_hops,
+            &int_v3_sequences,
+            &cl_prepared,
+            &hop_order,
+            &gate.runtime,
+            walk_env,
+        )
+    };
+
     (
         out.result.map(|(optimal_input, profit, hop_outputs)| {
             // consumed_inputs[0] = optimal_input (first hop consumes full input).
