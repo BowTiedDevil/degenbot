@@ -73,6 +73,7 @@ fn runtime_fixture(v4_fee: u32) -> MarketContext {
         )),
         Some(db),
         8,
+        4,
     )
 }
 

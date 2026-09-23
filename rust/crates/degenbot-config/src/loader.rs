@@ -334,6 +334,13 @@ impl<'a> BotConfigLoader<'a> {
             }
         }
 
+        // Semantic validation: a value that parses into its declared kind
+        // but cannot serve its domain fails the load here, with the remedy in
+        // the message, rather than at a distant call site.
+        if let Err(error) = config.validate() {
+            problems.extend(error.problems);
+        }
+
         if problems.is_empty() {
             Ok(LoadedConfig { config, provenance })
         } else {

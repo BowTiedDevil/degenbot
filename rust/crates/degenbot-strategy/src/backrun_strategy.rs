@@ -1114,11 +1114,17 @@ impl PendingTxReaction for BackrunStrategy {
                 });
             }
 
-            // Cycle hop cap: the pin plus up to three connectors. Admission
-            // rotates each cycle to its WETH stake entry; a no-WETH cycle is
-            // refused before it can consume a cap slot.
-            let (cycles, non_weth) =
-                graph.weth_entry_cycles(&touched, weth_id, &budget, ctx.connector_cap.max(1), 4);
+            // Cycle hop cap: the pin plus up to `cycle_max_hops - 1`
+            // connectors (operator-set, minimum 2). Admission rotates each
+            // cycle to its WETH stake entry; a no-WETH cycle is refused before
+            // it can consume a cap slot.
+            let (cycles, non_weth) = graph.weth_entry_cycles(
+                &touched,
+                weth_id,
+                &budget,
+                ctx.connector_cap.max(1),
+                ctx.cycle_max_hops,
+            );
             non_weth_cycles = non_weth;
             dfs_cycles = cycles.len() + non_weth;
             let mut affected_by_index: HbMap<u64, &AffectedPool> =

@@ -104,6 +104,7 @@ fn runtime_fixture() -> (MarketContext, u64, u64) {
             )),
             Some(db),
             8,
+            4,
         ),
         u64::try_from(tok_id).unwrap(),
         u64::try_from(weth_id).unwrap(),
@@ -416,6 +417,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
         )),
         Some(db),
         8,
+        4,
     );
     let outcome = usdc_frame_replay_outcome();
 
@@ -799,7 +801,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     let _ = degenbot_config::holder::install(std::sync::Arc::new(boot));
 
     // Live mode needs no feed/signer/dispatcher: process frames directly.
-    let mut runtime = MarketContext::new(1, None, None, 8);
+    let mut runtime = MarketContext::new(1, None, None, 8, 4);
     let mut strategy = BackrunStrategy::new();
     let anchor_state = SimAnchorState::default();
     let mut handle = Option::from(

@@ -1127,6 +1127,10 @@ impl BackrunDriver {
     /// unreadable or malformed key file, an unparseable executor/owner
     /// address, or a failed head fetch), preserving the single-driver bin's
     /// loud-failure behavior.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the boot threads the host-minted handles and validates the config in one place"
+    )]
     pub async fn start(
         cfg: BackrunConfig,
         hub: Arc<Hub>,
@@ -1187,7 +1191,13 @@ impl BackrunDriver {
         // The strategy runtime OWNS the frame-surviving caches (index, token
         // joins, warm-code cache); each frame gets a fresh planning Workspace
         // scope (see frame_pipeline's module doc for the split).
-        let runtime = MarketContext::new(1, route_registry, connector_db, cfg.connectors);
+        let runtime = MarketContext::new(
+            1,
+            route_registry,
+            connector_db,
+            cfg.connectors,
+            cfg.cycle_max_hops,
+        );
         let strategy = BackrunStrategy::new();
 
         let exec: Address = cfg

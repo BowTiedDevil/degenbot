@@ -245,6 +245,7 @@ async fn runtime(
         Some(Arc::new(degenbot_bot::bot_core::RouteRegistry::new(index))),
         Some(live_db()),
         8,
+        4,
     );
     (rt, head, ids)
 }

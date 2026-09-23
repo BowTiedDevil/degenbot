@@ -109,8 +109,11 @@ pub struct BackrunConfig {
     pub sim_url: Option<String>,
     /// Live deep-pair ranking sanity-probe gate.
     pub rank_evidence: bool,
-    /// Discovery fan-out cap (connectors per frame).
+    /// Discovery fan-out cap (cycles per frame).
     pub connectors: usize,
+    /// Hop-depth cap per discovered cycle (the WETH pin plus up to
+    /// `cycle_max_hops - 1` connectors).
+    pub cycle_max_hops: usize,
     /// Offline dry-run's pinned head block.
     pub fixture_head: Option<u64>,
     /// Executor contract address (validated at the driver boot).
@@ -140,6 +143,7 @@ struct BackrunKnobs {
     sim_url: Option<String>,
     rank_evidence: bool,
     connectors: usize,
+    cycle_max_hops: usize,
     fixture_head: Option<u64>,
     executor: String,
     operator: Option<String>,
@@ -169,6 +173,7 @@ impl BackrunKnobs {
             sim_url: self.sim_url,
             rank_evidence: self.rank_evidence,
             connectors: self.connectors,
+            cycle_max_hops: self.cycle_max_hops,
             fixture_head: self.fixture_head,
             executor: self.executor,
             operator: self.operator,
@@ -194,6 +199,7 @@ impl From<&degenbot_config::StrategyMevblockerBackrunConfig> for BackrunKnobs {
             sim_url: f.sim_url.clone(),
             rank_evidence: f.rank_evidence,
             connectors: f.connectors,
+            cycle_max_hops: f.cycle_max_hops,
             fixture_head: f.fixture_head,
             executor: f.executor.clone(),
             operator: f.operator.clone(),
@@ -217,6 +223,7 @@ impl From<&degenbot_config::StrategyPeerBackrunConfig> for BackrunKnobs {
             sim_url: f.sim_url.clone(),
             rank_evidence: f.rank_evidence,
             connectors: f.connectors,
+            cycle_max_hops: f.cycle_max_hops,
             fixture_head: f.fixture_head,
             executor: f.executor.clone(),
             operator: f.operator.clone(),
@@ -706,6 +713,7 @@ mod tests {
             ),
             ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_RANK_EVIDENCE", "1"),
             ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CONNECTORS", "5"),
+            ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CYCLE_MAX_HOPS", "5"),
             (
                 "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_FIXTURE_HEAD",
                 "26001272",
@@ -751,6 +759,7 @@ mod tests {
         assert!(c.submission.names_private_endpoint());
         assert!(c.rank_evidence);
         assert_eq!(c.connectors, 5);
+        assert_eq!(c.cycle_max_hops, 5);
         assert_eq!(c.fixture_head, Some(26_001_272));
         assert_eq!(c.stop_file, PathBuf::from("/tmp/stop"));
         assert_eq!(c.dry_run_jsonl, Some(PathBuf::from("/tmp/f.jsonl")));
@@ -778,6 +787,7 @@ mod tests {
                 "https://relay.one,https://relay.two",
             ),
             ("DEGENBOT_STRATEGY_PEER_BACKRUN_CONNECTORS", "5"),
+            ("DEGENBOT_STRATEGY_PEER_BACKRUN_CYCLE_MAX_HOPS", "5"),
             ("DEGENBOT_STRATEGY_PEER_BACKRUN_STOP_FILE", "/tmp/stop"),
         ])
         .into_iter()
@@ -799,6 +809,7 @@ mod tests {
                 ],
             }
         );
+        assert_eq!(c.cycle_max_hops, 5);
         assert!(!c.submission.names_private_endpoint());
         assert!(c
             .submission

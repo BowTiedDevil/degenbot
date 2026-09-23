@@ -394,7 +394,9 @@ crate::config_schema! {
             rank_evidence [bool] = false, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_RANK_EVIDENCE", def = "false",
                 doc = "Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic).";
             connectors [usize] = 8, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CONNECTORS", def = "8",
-                doc = "Discovery fan-out cap (connectors per frame).";
+                doc = "Discovery fan-out cap: the maximum number of WETH-entry cycles admitted per frame (strongest by touched-pool count).";
+            cycle_max_hops [usize] = 4, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CYCLE_MAX_HOPS", def = "4",
+                doc = "Hop-depth cap per admitted cycle: the WETH stake pin plus up to cycle_max_hops - 1 connectors (cycle length in pools). Minimum 2 (one pin + one connector); a lower value fails the load. Distinct from `connectors`, which caps the cycles admitted per frame.";
             fixture_head [opt u64] = None, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_FIXTURE_HEAD", def = "(unset)",
                 doc = "Offline dry-run's pinned head block: replays captured frames against the chain view they were pending in instead of the live tip. Unset falls back to the fetched head.";
             stop_file [path] = std::path::PathBuf::from("/tmp/degenbot-sidecar-STOP"), env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_STOP_FILE", def = "/tmp/degenbot-sidecar-STOP",
@@ -432,7 +434,9 @@ crate::config_schema! {
             rank_evidence [bool] = false, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_RANK_EVIDENCE", def = "false",
                 doc = "Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic).";
             connectors [usize] = 8, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_CONNECTORS", def = "8",
-                doc = "Discovery fan-out cap (connectors per frame).";
+                doc = "Discovery fan-out cap: the maximum number of WETH-entry cycles admitted per frame (strongest by touched-pool count).";
+            cycle_max_hops [usize] = 4, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_CYCLE_MAX_HOPS", def = "4",
+                doc = "Hop-depth cap per admitted cycle: the WETH stake pin plus up to cycle_max_hops - 1 connectors (cycle length in pools). Minimum 2 (one pin + one connector); a lower value fails the load. Distinct from `connectors`, which caps the cycles admitted per frame.";
             fixture_head [opt u64] = None, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_FIXTURE_HEAD", def = "(unset)",
                 doc = "Offline dry-run's pinned head block: replays captured frames against the chain view they were pending in instead of the live tip. Unset falls back to the fetched head.";
             stop_file [path] = std::path::PathBuf::from("/tmp/degenbot-sidecar-STOP"), env = "DEGENBOT_STRATEGY_PEER_BACKRUN_STOP_FILE", def = "/tmp/degenbot-sidecar-STOP",
@@ -474,6 +478,44 @@ crate::config_schema! {
             doc = "Default-ON flag-parse probe (asserted by the bot-core unit tests).";
     }
 
+}
+
+impl BotConfig {
+    /// Semantic validation the per-key scalar parsers cannot express: a value
+    /// that parses into its declared kind but cannot serve its domain fails
+    /// the load with the remedy rather than a silent clamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns every problem found, mirroring the loader's aggregate
+    /// [`ConfigError`](crate::error::ConfigError).
+    pub fn validate(&self) -> Result<(), crate::error::ConfigError> {
+        let mut problems: Vec<String> = Vec::new();
+        for (path, env, hops) in [
+            (
+                "strategy.mevblocker_backrun.cycle_max_hops",
+                "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CYCLE_MAX_HOPS",
+                self.strategy.mevblocker_backrun.cycle_max_hops,
+            ),
+            (
+                "strategy.peer_backrun.cycle_max_hops",
+                "DEGENBOT_STRATEGY_PEER_BACKRUN_CYCLE_MAX_HOPS",
+                self.strategy.peer_backrun.cycle_max_hops,
+            ),
+        ] {
+            if hops < 2 {
+                problems.push(format!(
+                    "{path} ({env}) is {hops}; the minimum is 2 (the WETH-entry pin plus \
+                     at least one connector) — set it to 2 or more"
+                ));
+            }
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::error::ConfigError::of(problems))
+        }
+    }
 }
 
 // Dynamic per-chain vars (documented, intentionally NOT static schema keys):
@@ -708,6 +750,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one assertion block per declared facet key"
+    )]
     fn strategy_facets_are_declared_as_typed_sections() {
         // The per-arm facet namespaces exist as typed fields with dotted TOML
         // section paths. Settlement plus one facet per backrun ecosystem.
@@ -760,6 +806,7 @@ mod tests {
                 "sim_url",
                 "rank_evidence",
                 "connectors",
+                "cycle_max_hops",
                 "fixture_head",
                 "stop_file",
                 "endpoints",
@@ -788,6 +835,7 @@ mod tests {
                 "sim_url",
                 "rank_evidence",
                 "connectors",
+                "cycle_max_hops",
                 "fixture_head",
                 "stop_file",
                 "endpoints",
@@ -832,6 +880,7 @@ mod tests {
             assert_eq!(b.endpoints, None);
             assert!(!b.rank_evidence);
             assert_eq!(b.connectors, 8);
+            assert_eq!(b.cycle_max_hops, 4);
             assert_eq!(b.fixture_head, None);
             assert_eq!(
                 b.stop_file,
@@ -868,6 +917,7 @@ mod tests {
         sim_url: Option<String>,
         rank_evidence: bool,
         connectors: usize,
+        cycle_max_hops: usize,
         fixture_head: Option<u64>,
         stop_file: std::path::PathBuf,
         endpoints: Option<String>,
@@ -890,6 +940,7 @@ mod tests {
             sim_url: f.sim_url,
             rank_evidence: f.rank_evidence,
             connectors: f.connectors,
+            cycle_max_hops: f.cycle_max_hops,
             fixture_head: f.fixture_head,
             stop_file: f.stop_file,
             endpoints: f.endpoints,
@@ -913,10 +964,41 @@ mod tests {
             sim_url: f.sim_url,
             rank_evidence: f.rank_evidence,
             connectors: f.connectors,
+            cycle_max_hops: f.cycle_max_hops,
             fixture_head: f.fixture_head,
             stop_file: f.stop_file,
             endpoints: f.endpoints,
         }
+    }
+
+    #[test]
+    #[expect(
+        clippy::expect_used,
+        reason = "test fixtures fail loudly on an unconstructible prerequisite"
+    )]
+    fn cycle_max_hops_below_two_is_refused_with_the_remedy() {
+        for (section, field) in [
+            ("strategy.mevblocker_backrun", "cycle_max_hops"),
+            ("strategy.peer_backrun", "cycle_max_hops"),
+        ] {
+            for bad in ["0", "1"] {
+                let mut config = BotConfig::default();
+                config
+                    .assign(section, field, bad)
+                    .expect("the raw value parses as usize");
+                let error = config
+                    .validate()
+                    .expect_err("below the pin-plus-connector minimum must refuse");
+                let message = error.to_string();
+                assert!(
+                    message.contains("minimum") && message.contains("connector"),
+                    "the refusal names the remedy: {message}"
+                );
+            }
+        }
+        BotConfig::default()
+            .validate()
+            .expect("the declared default 4 is valid");
     }
 
     #[test]

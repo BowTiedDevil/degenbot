@@ -54,6 +54,7 @@ const MEVBLOCKER_ENV: &[(&str, &str)] = &[
     ),
     ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_RANK_EVIDENCE", "1"),
     ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CONNECTORS", "5"),
+    ("DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CYCLE_MAX_HOPS", "6"),
     (
         "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_FIXTURE_HEAD",
         "26001272",
@@ -99,6 +100,7 @@ fn backrun_facets_collapse_to_declared_defaults() {
     assert!(!b.dry_run);
     assert_eq!(b.key_file, None);
     assert_eq!(b.connectors, 8);
+    assert_eq!(b.cycle_max_hops, 4);
     assert_eq!(b.fixture_head, None);
     assert_eq!(b.mevblocker_url, None);
 
@@ -106,6 +108,8 @@ fn backrun_facets_collapse_to_declared_defaults() {
     assert!(!p.bid_mode);
     assert_eq!(p.budget_wei, 0);
     assert_eq!(p.max_bundle_wei, 1_000_000_000_000_000);
+    assert_eq!(p.connectors, 8);
+    assert_eq!(p.cycle_max_hops, 4);
     assert_eq!(p.endpoints, None);
     assert_eq!(
         p.stop_file,
@@ -127,6 +131,7 @@ fn mevblocker_facet_resolves_from_env() {
     assert_eq!(b.priority_fee_gwei, 7);
     assert_eq!(b.fixture_head, Some(26_001_272));
     assert_eq!(b.stop_file, std::path::PathBuf::from("/tmp/stop"));
+    assert_eq!(b.cycle_max_hops, 6);
     assert_eq!(
         b.mevblocker_url.as_deref(),
         Some("http://private.local:8545")
@@ -158,7 +163,7 @@ fn mevblocker_facet_resolves_from_toml() {
     let path = std::env::temp_dir().join(format!("backrun-facet-{}.toml", std::process::id()));
     std::fs::write(
         &path,
-        "[strategy.mevblocker_backrun]\n         bid_mode = true\n         budget_wei = \"12345678901234567890\"\n         bribe_bips = 9500\n         connectors = 5\n         fixture_head = 26001272\n",
+        "[strategy.mevblocker_backrun]\n         bid_mode = true\n         budget_wei = \"12345678901234567890\"\n         bribe_bips = 9500\n         connectors = 5\n         cycle_max_hops = 6\n         fixture_head = 26001272\n",
     )
     .expect("write toml");
     let loaded = BotConfigLoader::new()
@@ -172,8 +177,46 @@ fn mevblocker_facet_resolves_from_toml() {
     assert_eq!(b.budget_wei, 12_345_678_901_234_567_890u128);
     assert_eq!(b.bribe_bips, 9_500);
     assert_eq!(b.connectors, 5);
+    assert_eq!(b.cycle_max_hops, 6);
     assert_eq!(b.fixture_head, Some(26_001_272));
     assert_eq!(b.max_bundle_wei, 1_000_000_000_000_000);
+}
+
+#[test]
+fn cycle_max_hops_below_two_refuses_at_load_with_the_remedy() {
+    for (facet_env, toml_path) in [
+        (
+            "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CYCLE_MAX_HOPS",
+            "strategy.mevblocker_backrun.cycle_max_hops",
+        ),
+        (
+            "DEGENBOT_STRATEGY_PEER_BACKRUN_CYCLE_MAX_HOPS",
+            "strategy.peer_backrun.cycle_max_hops",
+        ),
+    ] {
+        for bad in ["0", "1"] {
+            let error = BotConfigLoader::new()
+                .with_env(Box::new(env_map(&[(facet_env, bad)])))
+                .load()
+                .expect_err("below the pin-plus-connector minimum must fail the load");
+            let message = error.to_string();
+            assert!(
+                message.contains(toml_path),
+                "the refusal names the key ({toml_path}): {message}"
+            );
+            assert!(
+                message.contains("minimum") && message.contains("connector"),
+                "the refusal names the remedy: {message}"
+            );
+        }
+        assert!(
+            BotConfigLoader::new()
+                .with_env(Box::new(env_map(&[(facet_env, "2")])))
+                .load()
+                .is_ok(),
+            "the minimum 2 (pin + one connector) loads"
+        );
+    }
 }
 
 #[test]

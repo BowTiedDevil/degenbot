@@ -102,6 +102,7 @@ fn runtime() -> (MarketContext, u64, u64) {
             )),
             Some(db),
             8,
+            4,
         ),
         tok_id,
         weth_id,

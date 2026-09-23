@@ -56,6 +56,7 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
         )),
         Some(db),
         8,
+        4,
     );
     let head = provider.get_block_number().await.unwrap();
 

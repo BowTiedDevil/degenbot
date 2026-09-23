@@ -37,6 +37,10 @@ pub struct MarketContext {
     pub db: Option<DegenbotDb>,
     /// The discovery fan-out cap (`strategy.mevblocker_backrun`/`strategy.peer_backrun`).
     pub connector_cap: usize,
+    /// The hop-depth cap per discovered cycle: the WETH-entry pin plus up to
+    /// `cycle_max_hops - 1` connectors
+    /// (`strategy.mevblocker_backrun`/`strategy.peer_backrun`).
+    pub cycle_max_hops: usize,
     /// Cross-block warm bytecode/account cache owner, shared into every
     /// per-block replay handle.
     pub warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
@@ -55,6 +59,7 @@ impl MarketContext {
         registry: Option<Arc<RouteRegistry>>,
         db: Option<DegenbotDb>,
         connector_cap: usize,
+        cycle_max_hops: usize,
     ) -> Self {
         Self {
             chain_id,
@@ -66,6 +71,7 @@ impl MarketContext {
             registry,
             db,
             connector_cap,
+            cycle_max_hops,
             warm_cache: WarmCodeCacheInner::shared_default(),
             token_ids: Mutex::new(HashMap::new()),
             token_addrs: Mutex::new(HashMap::new()),
