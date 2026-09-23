@@ -66,7 +66,7 @@ const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// Upper search bound (wei) of the bounded-Brent objective. The archived
 /// Python shape's `MAX_INPUT = 100e18` truncated optima past the first-hop
-/// saturation edge (stress_w books absorb 3000-8000 tokens, so an edge can
+/// saturation edge (`stress_w` books absorb 3000-8000 tokens, so an edge can
 /// sit near 8e21) and manufactured `disagree_cap_hit` rows. The bound must
 /// clear the largest in-corpus optimum with headroom; Brent pays for that
 /// with more nfev narrowing the wider f64 bracket.

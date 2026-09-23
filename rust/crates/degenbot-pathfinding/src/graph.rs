@@ -831,13 +831,17 @@ pub struct BundledSearch<B: Borrow<PathGraph>> {
     /// Peak DFS stack depth observed — distinguishes "stuck shallow" (ordering
     /// gap) from "grinding deep" (graph-size variance) on a real run.
     max_stack_depth: usize,
-    /// Caller-installed long-run observation hook ([`WalkerTally`]); when
-    /// present it replaces the default stderr heartbeat as the emit channel.
-    progress: Option<Box<dyn FnMut(&WalkerTally) + Send + Sync>>,
+    /// Caller-installed long-run observation hook; when present it
+    /// replaces the default stderr heartbeat as the emit channel.
+    progress: Option<Box<ProgressHook>>,
     /// Wall clock between progress reports. The hook's interval when a hook
     /// is installed; [`DISCOVERY_HEARTBEAT`] for the default stderr line.
     progress_every: Duration,
 }
+
+/// Caller-installed long-run observation hook ([`WalkerTally`]); when
+/// present it replaces the default stderr heartbeat as the emit channel.
+type ProgressHook = dyn FnMut(&WalkerTally) + Send + Sync;
 
 /// Unordered compact token pair packed into one u64 (identity-hashed keys).
 #[inline]
@@ -1877,7 +1881,7 @@ mod tests {
         const SPOKES: u64 = 9000;
         const HUB: u64 = 10_000;
         const END: u64 = 11_000;
-        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::with_capacity(SPOKES as usize + 1);
+        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::new();
         let mut pool = 1000u64;
         for leaf in 1..=SPOKES {
             edges.push((HUB, HUB + leaf, pool, PoolKind::V2));

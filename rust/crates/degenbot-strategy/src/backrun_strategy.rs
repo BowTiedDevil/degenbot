@@ -1125,10 +1125,6 @@ impl PendingTxReaction for BackrunStrategy {
         admit_extracted(ctx, workspace, states, seed_block, trace_tx, tick_window)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the discovery stage threads every counter and trace field top-to-bottom"
-    )]
     async fn discover(
         &mut self,
         ctx: &MarketContext,

@@ -15,7 +15,7 @@
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
-    clippy::too_many_lines,
+    clippy::print_stdout,
     clippy::unreadable_literal
 )]
 
@@ -242,11 +242,11 @@ fn make_hop(
 struct PathSpec {
     id: usize,
     family: &'static str,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     spacings: [i32; 3],
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fees: [u32; 3],
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     dirs: [bool; 3],
     ranges: [usize; 3],
     seqs: Vec<IntV3TickRangeSequence>,

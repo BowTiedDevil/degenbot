@@ -392,15 +392,13 @@ fn hub_rooted_non_weth_anchor_discovers_its_weth_entry_cycle() {
     index.push_edge(edge(4998, TOK_ID, HUB_ID, 0xB4)); // closes on the hub, not WETH
                                                        // Walk-around filler spokes that close on nothing: they force the
                                                        // admission to find the rotated WETH entry, not a trivial first yield.
-    let mut pool = 5000;
-    for i in 1..=3000u64 {
+    for (pool, i) in (5000u64..).zip(1..=3000u64) {
         index.push_edge(edge(
             pool,
             HUB_ID,
             FILLER_BASE + i,
             u8::try_from((pool % 254) + 1).unwrap_or(0xFE),
         ));
-        pool += 1;
     }
     let graph = AnchoredGraph::from_connector_index(&index);
 
