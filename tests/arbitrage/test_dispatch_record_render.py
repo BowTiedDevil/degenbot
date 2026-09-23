@@ -139,12 +139,30 @@ async def test_silent_veto_streak_warns_once(monkeypatch: pytest.MonkeyPatch) ->
 class TestSubmissionSmokeFsm:
     """The per-session smoke FSM's `Quiet | Streak | Warn` transitions."""
 
+    def test_first_warn_fires_on_any_monotonic_clock_origin(self) -> None:
+        """A fresh boot's monotonic clock starts near zero, so `now` can sit
+        INSIDE the 300s throttle window; the never-warned state must not be
+        conflated with `last_warn=0.0` - the first full-veto streak WARNs on
+        the third veto no matter what the clock reads."""
+        smoke = dispatch_module.SubmissionSmoke()
+        verdict = dispatch_module.SubmissionSmokeVerdict
+
+        assert smoke.observe(vetoed=False, now=10.0) is verdict.QUIET
+        assert smoke.observe(vetoed=True, now=110.0) is verdict.STREAK
+        assert smoke.observe(vetoed=True, now=210.0) is verdict.STREAK
+        assert smoke.observe(vetoed=True, now=260.0) is verdict.WARN
+
+        # Once warned, the 300s throttle anchors at that warning.
+        assert smoke.observe(vetoed=True, now=261.0) is verdict.STREAK
+        assert smoke.observe(vetoed=True, now=561.0) is verdict.WARN
+
     def test_quiet_streak_warn_and_throttle(self) -> None:
         smoke = dispatch_module.SubmissionSmoke()
         verdict = dispatch_module.SubmissionSmokeVerdict
 
-        # A realistic monotonic clock: the first WARN fires on the third
-        # consecutive veto because `last_warn` starts at 0.0 (never warned).
+        # A mature monotonic clock (host up for hours): the first WARN fires
+        # on the third consecutive veto; `last_warn=0.0` is out of the
+        # window because the clock is already past the interval.
         assert smoke.observe(vetoed=False, now=10_000.0) is verdict.QUIET
         assert smoke.streak == 0
         assert smoke.observe(vetoed=True, now=10_000.0) is verdict.STREAK

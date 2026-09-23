@@ -429,7 +429,11 @@ class SubmissionSmoke:
     """
 
     streak: int = 0
-    last_warn: float = 0.0
+    # `None` (not 0.0) is "never warned": the monotonic clock's origin is the
+    # boot, so a fresh host reads `now < _STALL_WARN_INTERVAL_S` and a 0.0
+    # anchor would park the FIRST warn inside the throttle window (never
+    # fired until the host is 300s up - the CI-runner flake).
+    last_warn: float | None = None
 
     def observe(self, *, vetoed: bool, now: float) -> SubmissionSmokeVerdict:
         """Advance the smoke FSM by one batch and return the typed verdict."""
@@ -437,7 +441,10 @@ class SubmissionSmoke:
             self.streak = 0
             return SubmissionSmokeVerdict.QUIET
         self.streak += 1
-        if self.streak >= _STALL_STREAK and now - self.last_warn >= _STALL_WARN_INTERVAL_S:
+        warned_recently = (
+            self.last_warn is not None and now - self.last_warn < _STALL_WARN_INTERVAL_S
+        )
+        if self.streak >= _STALL_STREAK and not warned_recently:
             self.last_warn = now
             return SubmissionSmokeVerdict.WARN
         return SubmissionSmokeVerdict.STREAK
