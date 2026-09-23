@@ -1381,6 +1381,30 @@ pub struct GateStats {
     pub merge_fb_y_disorder: u64,
     /// GC-3: saturated boundary arithmetic during the sweep.
     pub merge_fb_cmp_overflow: u64,
+    /// Exact-compose boundaries that fell back to the sampled reference.
+    pub exact_compose_fallbacks: u64,
+    /// Exact-compose fallback reasons (I512 compose wall).
+    pub exact_fb_overflow: u64,
+    /// Exact-compose fallback reasons (negative-slope operand).
+    pub exact_fb_b_sign: u64,
+    /// Exact-compose fallback reasons (flat piece rejected by selection).
+    pub exact_fb_flat: u64,
+    /// Exact-compose fallback reasons (empty hull pieces).
+    pub exact_fb_empty_pieces: u64,
+    /// Exact-compose fallback reasons (empty selection).
+    pub exact_fb_empty_selection: u64,
+    /// Exact-compose fallback reasons (clamped-bp piece reordering).
+    pub exact_fb_y_disorder: u64,
+    /// Exact-compose fallback reasons (saturated boundary arithmetic).
+    pub exact_fb_cmp_overflow: u64,
+    /// Exact-compose selected pairs (<= K1+K2 per boundary).
+    pub exact_hull_pairs: u64,
+    /// Exact-compose m*n pairs the full product would have composed.
+    pub exact_pairs_enumerated: u64,
+    /// Exact-compose hull lines emitted (post-prune, pre-search).
+    pub exact_hull_lines: u64,
+    /// Exact-compose selection + compose wall time (ns).
+    pub exact_compose_ns: u128,
 }
 
 impl GateStats {
@@ -1419,6 +1443,18 @@ impl GateStats {
         merge_fb_empty_selection: 0,
         merge_fb_y_disorder: 0,
         merge_fb_cmp_overflow: 0,
+        exact_compose_fallbacks: 0,
+        exact_fb_overflow: 0,
+        exact_fb_b_sign: 0,
+        exact_fb_flat: 0,
+        exact_fb_empty_pieces: 0,
+        exact_fb_empty_selection: 0,
+        exact_fb_y_disorder: 0,
+        exact_fb_cmp_overflow: 0,
+        exact_hull_pairs: 0,
+        exact_pairs_enumerated: 0,
+        exact_hull_lines: 0,
+        exact_compose_ns: 0,
     };
 
     /// Aggregate one worker thread's per-path counters into these cycle
@@ -1458,6 +1494,18 @@ impl GateStats {
         self.merge_fb_empty_selection += other.merge_fb_empty_selection;
         self.merge_fb_y_disorder += other.merge_fb_y_disorder;
         self.merge_fb_cmp_overflow += other.merge_fb_cmp_overflow;
+        self.exact_compose_fallbacks += other.exact_compose_fallbacks;
+        self.exact_fb_overflow += other.exact_fb_overflow;
+        self.exact_fb_b_sign += other.exact_fb_b_sign;
+        self.exact_fb_flat += other.exact_fb_flat;
+        self.exact_fb_empty_pieces += other.exact_fb_empty_pieces;
+        self.exact_fb_empty_selection += other.exact_fb_empty_selection;
+        self.exact_fb_y_disorder += other.exact_fb_y_disorder;
+        self.exact_fb_cmp_overflow += other.exact_fb_cmp_overflow;
+        self.exact_hull_pairs += other.exact_hull_pairs;
+        self.exact_pairs_enumerated += other.exact_pairs_enumerated;
+        self.exact_hull_lines += other.exact_hull_lines;
+        self.exact_compose_ns += other.exact_compose_ns;
     }
 }
 
@@ -2038,24 +2086,23 @@ fn path_profit_bound_inner(
         // nothing about the final envelope.
         //
         // Effect: collapses a 3000-line CL hop to ~50 Pareto-front survivors
-        // BEFORE composition (that prune now happens INSIDE
-        // compose_boundary_merged once -- the loop-head prune was removed per
-        // reviewer M2: the double-prune was unmeasured byte-identity
-        // territory plus pure waste; the differential feeds RAW hop sets
-        // exactly like production now does).
+        // BEFORE composition. That prune happens INSIDE
+        // `compose_envelopes_exact` exactly once; the loop-head prune was
+        // removed because the double-prune was unmeasured byte-identity
+        // territory plus pure waste (the differential feeds RAW hop sets
+        // exactly like production does).
         let hop_ls_len_dbg = hop_ls.len();
-        // GATE-COMPOSE-2 (7OT63B): pair-selection merge instead of the
-        // m*n product. Selects only the <= m + n - 1 (outer_piece,
-        // inner_piece) pairs whose canonical-envelope y-intervals
-        // intersect, composes those, and runs the UNCHANGED
-        // prune -> reduce -> sample tail (byte-identical output; falls
-        // back to the frozen legacy product on flat/sign/ambiguous
-        // inputs — see compose_boundary_merged). Err(DomainOverflow) on
-        // a SELECTED pair matches legacy exactly (same compose, same
-        // reduce-retry); skipped-pair overflows may relax Err -> Ok
-        // (documented skip-relaxation, still sound).
+        // Fallback cap for the sampled reference: the exact path ignores it
+        // (its hull is <= K1 + K2), but the documented overflow/ambiguity
+        // fallback still applies the owner's `sampled_compose_lines` stance.
         let compose_cap = deps.runtime.sampled_compose_lines.max(1);
-        let mut next: Vec<Line> = compose_boundary_merged(hop_ls, &lines2, domain, compose_cap)?;
+        // Exact concave-envelope composition: both sides are initialised at
+        // their (min-over-lines) hull pieces, only the <= K1 + K2
+        // y-overlapping pairs are composed, and the canonical hull is kept
+        // without sampling (see `compose_envelopes_exact`). The old
+        // product+sample path survives only as the documented fallback
+        // (overflow / ambiguity), counted via TLS.
+        let mut next: Vec<Line> = compose_envelopes_exact(hop_ls, &lines2, domain, compose_cap)?;
         // One reduction pass per hop boundary (O(survivors)) — replaces the
         // per-pair reduction removed from Line::compose. Byte-identical
         // coefficients to the old per-pair pass (same ceil/floor rules).
@@ -2072,27 +2119,6 @@ fn path_profit_bound_inner(
         // tangent cap: min(fewer lines) ≥ min(all lines), so the bound can
         // only rise (skip less, never more). With the live min-profit floor
         // of zero the tightness loss does not affect skips.
-        let samp_t0 = if next.len() > compose_cap {
-            Some(std::time::Instant::now())
-        } else {
-            None
-        };
-        if let Some(_t0) = samp_t0 {
-            let step = next.len() / compose_cap;
-            let mut sampled = Vec::with_capacity(compose_cap + 1);
-            let mut i = 0usize;
-            while i < next.len() {
-                sampled.push(next[i]);
-                i += step.max(1);
-            }
-            if sampled.last() != Some(&next[next.len() - 1]) {
-                sampled.push(next[next.len() - 1]);
-            }
-            next = sampled;
-        }
-        if let Some(t0) = samp_t0 {
-            gate_tls(|t| t.sample_ns += t0.elapsed().as_nanos());
-        }
         // Cache the composed prefix set under the content-key chain. Only
         // miss paths reach here; a hit path returns early above.
         if chainable {
@@ -2381,12 +2407,11 @@ pub fn path_output_bound_at(
 }
 
 /// Walk-side composed envelope (Loop-21 `envelope_pruned_refine`): the line
-/// set the active-set walk intersects its refine windows against. Same
-/// compose/reduce/sample pipeline as [`path_output_bound_at`] (per-hop prune
-/// rides `compose_boundary_merged` inside the gate; here the per-path
-/// compose is once-per-solve, so the simpler product + sample tail suffices).
-/// Soundness contract identical: the lines pointwise-dominate the true path
-/// output, so any input the lines disprove can never beat the walk's best.
+/// set the active-set walk intersects its refine windows against. Built with
+/// the same exact hull composition as the gate ([`compose_envelopes_exact`]),
+/// so the refine clamp sees the tightest sound envelope. Soundness contract
+/// identical: the lines pointwise-dominate the true path output, so any input
+/// the lines disprove can never beat the walk's best.
 #[derive(Debug)]
 pub struct PathBoundLines {
     pub lines: Vec<Line>,
@@ -2402,36 +2427,11 @@ pub(crate) fn path_bound_lines(
     for slot in hops {
         let hop = slot.as_ref()?;
         let (hop_ls, cap) = hop_lines_and_cap(hop.clone(), cfg)?;
-        let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());
-        for outer in &hop_ls {
-            for inner in &lines {
-                let composed = outer.compose(inner)?;
-                next.push(composed);
-            }
-        }
         total_cap = total_cap.checked_add(cap)?;
-        // Uniform sample cap (same stance as the gate): bound the product.
-        // min(fewer lines) ≥ min(all lines) — the bound can only loosen.
         let compose_cap = cfg.sampled_compose_lines.max(1);
-        if next.len() > compose_cap {
-            let step = next.len() / compose_cap;
-            let mut sampled: Vec<Line> = Vec::with_capacity(compose_cap + 1);
-            let mut i = 0usize;
-            while i < next.len() {
-                sampled.push(next[i]);
-                i += step.max(1);
-            }
-            if let Some(last_line) = next.last() {
-                if sampled.last() != Some(last_line) {
-                    sampled.push(*last_line);
-                }
-            }
-            next = sampled;
-        }
-        for l in &mut next {
-            l.reduce(COMPOSE_TARGET_BITS);
-        }
-        lines = next;
+        // Exact composition keeps the walk-refine envelope on the same
+        // hull the gate uses; only the documented fallback samples.
+        lines = compose_envelopes_exact(&hop_ls, &lines, total_cap, compose_cap).ok()?;
     }
     let _ = total_cap;
     Some(PathBoundLines { lines })
@@ -2565,6 +2565,136 @@ impl MergeFallbackReason {
     }
 }
 
+/// Two-pointer selection of the (outer_piece, inner_piece) pairs whose
+/// y-intervals overlap — the active set of the composed lower envelope.
+/// Piece boundaries are EXACT I512 crossovers (no U256 clamp in any
+/// comparison); x is clamped to [0, upper] only at eval time. Seam overhang
+/// (adjacent pieces evaluate a shared crossover through different quantized
+/// coefficients) selects a couple of extra pairs, which [`prune`] resolves
+/// exactly. Returns `Err(reason)` when selection cannot be proven
+/// unambiguous; the caller must then route to the frozen sampled reference.
+fn select_compose_pairs(
+    hop_ls: &[Line],
+    chain: &[Line],
+    upper: U256,
+) -> Result<Vec<(usize, usize)>, MergeFallbackReason> {
+    // Both sides are initialized at their (min-over-lines) hull pieces rather
+    // than the raw lines: the envelope is unchanged, and the piece count is
+    // the hull's, not the input set's.
+    let outer_pieces = hull_pieces(hop_ls);
+    let inner_pieces = hull_pieces(chain);
+    if outer_pieces.is_empty() || inner_pieces.is_empty() {
+        return Err(MergeFallbackReason::EmptyPieces);
+    }
+
+    let upper_i = I512::try_from(U512::from(upper)).unwrap_or(I512::MAX);
+    let x_clamp = |x: I512| -> U256 {
+        let x = if x < I512::ZERO { I512::ZERO } else { x };
+        let x = if x > upper_i { upper_i } else { x };
+        let mag = x.unsigned_abs();
+        if mag > U512::from(U256::MAX) {
+            U256::MAX
+        } else {
+            mag.to::<U256>()
+        }
+    };
+    // A saturated boundary means an unchecked channel — fall back, never
+    // silently trust it.
+    let exact = |bp: I512| -> Option<I512> { (bp != I512::MAX).then_some(bp) };
+
+    let mut selected: Vec<(usize, usize)> =
+        Vec::with_capacity(outer_pieces.len() + inner_pieces.len());
+    let mut prev_bx = I512::ZERO;
+    for (k, &(bx_k, ref ik, origin_k)) in inner_pieces.iter().enumerate() {
+        // Exact crossovers of a canonical hull ascend; a descent is
+        // mathematically impossible here — if it ever fires, escalate.
+        if k > 0 && bx_k < prev_bx {
+            return Err(MergeFallbackReason::YDisorder);
+        }
+        prev_bx = bx_k;
+        let x_start_i = bx_k.max(I512::ZERO).min(upper_i);
+        let x_end_i = inner_pieces
+            .get(k + 1)
+            .map_or(upper_i, |&(bx, _, _)| bx)
+            .min(upper_i)
+            .max(I512::ZERO);
+        if x_end_i <= x_start_i {
+            continue; // degenerate-width piece inside the domain
+        }
+        let x_eval_start = x_clamp(x_start_i);
+        let x_eval_end = x_clamp(x_end_i);
+        let y_lo0 = ik.eval(&x_eval_start);
+        let y_hi0 = ik.eval(&x_eval_end);
+        let (y_lo, y_hi) = if y_lo0 <= y_hi0 {
+            (y_lo0, y_hi0)
+        } else {
+            (y_hi0, y_lo0)
+        };
+        // First outer piece whose breakpoint starts within reach of the
+        // piece's y-extent (one before the partition point covers seams where
+        // the previous piece's span touches y_lo).
+        let first = outer_pieces.partition_point(|&(obp, _, _)| obp < y_lo);
+        let start_l = first.saturating_sub(1);
+        let mut l = start_l;
+        loop {
+            let (obp, _, o_origin) = outer_pieces[l];
+            if obp <= y_hi {
+                let span_end = match outer_pieces
+                    .get(l + 1)
+                    .map(|&(next_obp, _, _)| exact(next_obp))
+                {
+                    None => I512::MAX, // last piece: open-ended span
+                    Some(Some(v)) => v,
+                    Some(None) => return Err(MergeFallbackReason::CmpOverflow),
+                };
+                if span_end >= y_lo {
+                    selected.push((o_origin, origin_k));
+                }
+            } else {
+                break;
+            }
+            if l + 1 >= outer_pieces.len() {
+                break;
+            }
+            if obp > y_hi {
+                break;
+            }
+            l += 1;
+        }
+    }
+    if selected.is_empty() {
+        return Err(MergeFallbackReason::EmptySelection);
+    }
+    Ok(selected)
+}
+
+/// Compose the selected pairs at the merged breakpoints (outer-major order, a
+/// subsequence of the legacy product walk so prune's stable tiebreaks see the
+/// same relative order), then reduce to the canonical lower-envelope hull.
+/// Errors only on an I512 compose wall (`compose` already retried after a
+/// sound `reduce`); the caller decides fallback vs propagation.
+fn compose_selected_pairs(
+    hop_ls: &[Line],
+    chain: &[Line],
+    selected: &[(usize, usize)],
+    upper: U256,
+) -> Result<Vec<Line>, GateSkipCause> {
+    let mut ordered: Vec<(usize, usize)> = selected.to_vec();
+    ordered.sort_unstable_by_key(|&(oj, oi)| (oj, oi));
+    let mut next: Vec<Line> = Vec::with_capacity(ordered.len());
+    for &(oj, oi) in &ordered {
+        let Some(composed) = hop_ls[oj].compose(&chain[oi]) else {
+            return Err(GateSkipCause::DomainOverflow);
+        };
+        next.push(composed);
+    }
+    prune(&mut next, upper);
+    for l in &mut next {
+        l.reduce(COMPOSE_TARGET_BITS);
+    }
+    Ok(next)
+}
+
 /// GATE-COMPOSE-2 (7OT63B): merged pair-selection compose.
 ///
 /// The composed lower envelope F(x) = min over pairs of outer_j(inner_i(x))
@@ -2596,7 +2726,7 @@ impl MergeFallbackReason {
 /// Err(DomainOverflow) may relax to Ok — the exact envelope is still a
 /// valid upper bound (see the differential test's documented
 /// skip-relaxation arm).
-#[expect(clippy::too_many_lines)]
+#[cfg(test)]
 fn compose_boundary_merged(
     hop_lines: &[Line],
     chain: &[Line],
@@ -2636,156 +2766,25 @@ fn compose_boundary_merged(
     if hop_ls.iter().any(|l| l.b == I512::ZERO) || chain.iter().any(|l| l.b == I512::ZERO) {
         return legacy(MergeFallbackReason::Flat);
     }
-    // The chain set is post-sample (NOT canonical); its envelope pieces
-    // come from a fresh hull over the subset. Pieces carry their ORIGIN
-    // index so emitted pairs map back to real (hop_ls, chain) positions —
-    // no synthetic composes (byte-identity requirement).
-    let outer_pieces = hull_pieces(&hop_ls);
-    let inner_pieces = hull_pieces(chain);
-    if outer_pieces.is_empty() || inner_pieces.is_empty() {
-        return legacy(MergeFallbackReason::EmptyPieces);
-    }
-
-    // Two-pointer sweep over y-intervals (GC-3, reviewer option (i)):
-    // piece boundaries are EXACT I512 crossovers - no U256 clamp in any
-    // comparison. x positions clamp to [0, upper] only at eval time (the
-    // consumption edge); y overlap tests run on raw I512.
-    //
-    // SEAM OVERHANG (live finding, 2026-09-03): adjacent inner pieces
-    // evaluate the SHARED crossover through different quantized
-    // coefficients, and the ceil-rounded takeover lets the previous
-    // piece's value sit above the next piece's start by up to
-    // |delta-slope| units at the seam - the y_lo sequence is therefore
-    // NOT monotone in general, and no cheap y-ordering invariant exists.
-    // Selection is per-piece partition_point (start at the first outer
-    // piece whose breakpoint is < y_lo, walk while it starts at or below
-    // y_hi); overlaps at seams simply select a couple more pairs, which
-    // the unchanged prune drops or resolves exactly as legacy would.
-    let merge_work_t0 = std::time::Instant::now();
-    let upper_i = I512::try_from(U512::from(upper)).unwrap_or(I512::MAX);
-    let x_clamp = |x: I512| -> U256 {
-        let x = if x < I512::ZERO { I512::ZERO } else { x };
-        let x = if x > upper_i { upper_i } else { x };
-        let mag = x.unsigned_abs();
-        if mag > U512::from(U256::MAX) {
-            U256::MAX
-        } else {
-            mag.to::<U256>()
-        }
+    // Exact pair selection over the <= K1+K2 y-overlapping hull pieces, then
+    // the canonical hull of the composed pairs. This is the merge without the
+    // final sample: the composed hull IS the exact lower envelope, so capping
+    // it would only loosen the bound.
+    let select_t0 = std::time::Instant::now();
+    let selected = match select_compose_pairs(&hop_ls, chain, upper) {
+        Ok(s) => s,
+        Err(reason) => return legacy(reason),
     };
-    // overflow guard (reviewer guard 2): a saturated boundary means an
-    // unchecked channel - fall back, never silently trust it.
-    let exact = |bp: I512| -> Option<I512> { (bp != I512::MAX).then_some(bp) };
-    let mut selected: Vec<(usize, usize)> =
-        Vec::with_capacity(outer_pieces.len() + inner_pieces.len());
-    let mut prev_bx = I512::ZERO;
-    for (k, &(bx_k, ref ik, origin_k)) in inner_pieces.iter().enumerate() {
-        // exact crossovers of a canonical hull ascend; a descent is
-        // mathematically impossible here - if it ever fires, escalate
-        // (contradicts the hull construction, per reviewer L1/L2).
-        if k > 0 && bx_k < prev_bx {
-            return legacy(MergeFallbackReason::YDisorder);
-        }
-        prev_bx = bx_k;
-        let x_start_i = bx_k.max(I512::ZERO).min(upper_i);
-        let x_end_i = inner_pieces
-            .get(k + 1)
-            .map_or(upper_i, |&(bx, _, _)| bx)
-            .min(upper_i)
-            .max(I512::ZERO);
-        if x_end_i <= x_start_i {
-            continue; // degenerate-width piece inside the domain
-        }
-        let x_eval_start = x_clamp(x_start_i);
-        let x_eval_end = x_clamp(x_end_i);
-        let y_lo0 = ik.eval(&x_eval_start);
-        let y_hi0 = ik.eval(&x_eval_end);
-        let (y_lo, y_hi) = if y_lo0 <= y_hi0 {
-            (y_lo0, y_hi0)
-        } else {
-            (y_hi0, y_lo0)
-        };
-        // first outer piece whose breakpoint starts within reach of the
-        // piece's y-extent (one before the partition point covers seams
-        // where the previous piece's span touches y_lo)
-        let first = outer_pieces.partition_point(|&(obp, _, _)| obp < y_lo);
-        let start_l = first.saturating_sub(1);
-        let mut l = start_l;
-        loop {
-            let (obp, _, o_origin) = outer_pieces[l];
-            if obp <= y_hi {
-                let span_end = match outer_pieces
-                    .get(l + 1)
-                    .map(|&(next_obp, _, _)| exact(next_obp))
-                {
-                    None => I512::MAX, // last piece: open-ended span
-                    Some(Some(v)) => v,
-                    Some(None) => {
-                        return legacy(MergeFallbackReason::CmpOverflow);
-                    }
-                };
-                if span_end >= y_lo {
-                    selected.push((o_origin, origin_k));
-                }
-            } else {
-                break;
-            }
-            if l + 1 >= outer_pieces.len() {
-                break;
-            }
-            if obp > y_hi {
-                break;
-            }
-            l += 1;
-        }
-    }
-    if selected.is_empty() {
-        return legacy(MergeFallbackReason::EmptySelection);
-    }
     gate_tls(|t| {
         t.merge_selected += selected.len() as u64;
         t.pairs_enumerated += (hop_ls.len() as u64) * (chain.len() as u64);
         t.pairs += selected.len() as u64;
     });
-    if selected.is_empty() {
-        return legacy(MergeFallbackReason::EmptySelection);
-    }
-    gate_tls(|t| {
-        t.merge_selected += selected.len() as u64;
-        t.pairs_enumerated += (hop_ls.len() as u64) * (chain.len() as u64);
-        // S1: pairs/product_ns regain writers on the merged path (pairs =
-        // composes actually evaluated; product_ns = selection + compose
-        // work, i.e. what the legacy pair product paid).
-        t.pairs += selected.len() as u64;
-        t.product_ns += merge_work_t0.elapsed().as_nanos();
-    });
-    gate_tls(|t| {
-        // S1: pairs/product_ns writers on the merged path (pairs = composes
-        // actually evaluated; product_ns = selection + compose work).
-        t.product_ns += merge_work_t0.elapsed().as_nanos();
-    });
-    // Outer-major lexicographic order over the origins: a subsequence of
-    // the legacy product walk (hop_ls outer-major, chain inner-minor), so
-    // every stable-sort tiebreak in the downstream prune sees the same
-    // relative order legacy would have given it.
-    selected.sort_unstable_by_key(|&(oj, oi)| (oj, oi));
-    let mut next: Vec<Line> = Vec::with_capacity(selected.len());
-    for &(oj, oi) in &selected {
-        // A SELECTED pair failing compose (even after reduce-retry) fails
-        // identically in legacy: the reference composed the same pair. A
-        // SKIPPED pair failing is the documented skip-relaxation (legacy
-        // Err may relax to Ok — still sound: the exact composed envelope
-        // is a valid upper bound).
-        let Some(composed) = hop_ls[oj].compose(&chain[oi]) else {
-            return Err(GateSkipCause::DomainOverflow);
-        };
-        next.push(composed);
-    }
-    // Unchanged legacy tail (prune -> reduce -> sample).
-    prune(&mut next, upper);
-    for l in &mut next {
-        l.reduce(COMPOSE_TARGET_BITS);
-    }
+    let mut next = compose_selected_pairs(&hop_ls, chain, &selected, upper)?;
+    gate_tls(|t| t.product_ns += select_t0.elapsed().as_nanos());
+    // Sample tail: GATE-COMPOSE-2's byte-identity contract with the frozen
+    // reference is the reason this path still samples. min(fewer lines) >=
+    // min(all lines), so dropping lines can only loosen (raise) the bound.
     if next.len() > cap {
         let step = next.len() / cap;
         let mut sampled = Vec::with_capacity(cap + 1);
@@ -2799,6 +2798,94 @@ fn compose_boundary_merged(
         }
         next = sampled;
     }
+    Ok(next)
+}
+
+/// Exact concave-envelope composition: initialize both sides at their
+/// (min-over-lines) hull pieces (see [`select_compose_pairs`]), compose only
+/// the y-overlapping pairs, and return the canonical composed hull WITHOUT
+/// sampling. The result has <= K1+K2 pieces and is the exact pointwise lower
+/// envelope of the two composed bounds (every line is a global upper bound,
+/// so the min of them is the tightest sound bound).
+///
+/// Soundness is preserved end-to-end:
+/// - The composition identity `min_pairs o_j(i_k(x)) = OW(E_inner(x))` needs
+///   non-decreasing operands; a negative-slope line falls back.
+/// - Flat reserve-cap pieces (b == 0) collapse y-intervals to points and
+///   make the selection double-visit-prone; they route to the sampled
+///   reference like the merged path, counted via TLS.
+/// - A compose that exhausts I512 even after `Line::compose`'s sound reduce
+///   retry falls back to the frozen sampled composition, counted via TLS —
+///   never a silently looser-than-expected bound.
+/// - The unconditional `best/2048` evaluation slack in
+///   `path_profit_bound_inner` stays as-is: the exact hull is a rigorous
+///   pointwise upper bound on its own and does not lean on that slack.
+/// - The T5 near-zero-slope staircase and Loop-6 right-edge protections live
+///   in the search phase ([`concave_max`], unchanged); exact composition only
+///   hands it a no-larger, unsampled hull with the same soundness property.
+pub(crate) fn compose_envelopes_exact(
+    hop_lines: &[Line],
+    chain: &[Line],
+    upper: U256,
+    cap: usize,
+) -> Result<Vec<Line>, GateSkipCause> {
+    let fallback = |reason: MergeFallbackReason| -> Result<Vec<Line>, GateSkipCause> {
+        gate_tls(|t| {
+            t.exact_compose_fallbacks += 1;
+            match reason {
+                MergeFallbackReason::BSign => t.exact_fb_b_sign += 1,
+                MergeFallbackReason::Flat => t.exact_fb_flat += 1,
+                MergeFallbackReason::EmptyPieces => t.exact_fb_empty_pieces += 1,
+                MergeFallbackReason::EmptySelection => t.exact_fb_empty_selection += 1,
+                MergeFallbackReason::YDisorder => t.exact_fb_y_disorder += 1,
+                MergeFallbackReason::CmpOverflow => t.exact_fb_cmp_overflow += 1,
+            }
+        });
+        diag!(
+            domain = solver,
+            reason = reason.key(),
+            "exact compose fell back to sampled composition"
+        );
+        compose_boundary_reference(hop_lines, chain, upper, cap)
+    };
+    // Selection needs monotone preimages: every line non-decreasing.
+    let monotone = |lines: &[Line]| lines.iter().all(|l| l.b >= I512::ZERO);
+    if !monotone(hop_lines) || !monotone(chain) {
+        return fallback(MergeFallbackReason::BSign);
+    }
+    let mut hop_ls = hop_lines.to_vec();
+    prune(&mut hop_ls, upper);
+    // Flat (b == 0) reserve-cap pieces make the monotone preimage machinery
+    // non-strict; fall back to the sampled reference (same stance as
+    // GATE-COMPOSE-2) and count the reason.
+    if hop_ls.iter().any(|l| l.b == I512::ZERO) || chain.iter().any(|l| l.b == I512::ZERO) {
+        return fallback(MergeFallbackReason::Flat);
+    }
+    let select_t0 = std::time::Instant::now();
+    let selected = match select_compose_pairs(&hop_ls, chain, upper) {
+        Ok(s) => s,
+        Err(reason) => return fallback(reason),
+    };
+    gate_tls(|t| {
+        t.exact_hull_pairs += selected.len() as u64;
+        t.exact_pairs_enumerated += (hop_ls.len() as u64) * (chain.len() as u64);
+        t.pairs += selected.len() as u64;
+    });
+    let Ok(next) = compose_selected_pairs(&hop_ls, chain, &selected, upper) else {
+        gate_tls(|t| {
+            t.exact_compose_fallbacks += 1;
+            t.exact_fb_overflow += 1;
+        });
+        diag!(
+            domain = solver,
+            "exact compose exhausted I512; falling back to sampled composition"
+        );
+        return compose_boundary_reference(hop_lines, chain, upper, cap);
+    };
+    gate_tls(|t| {
+        t.exact_compose_ns += select_t0.elapsed().as_nanos();
+        t.exact_hull_lines += next.len() as u64;
+    });
     Ok(next)
 }
 
@@ -4235,5 +4322,496 @@ mod tests {
         let never_segments = gate_tls(|t| t.search_segments);
         assert_eq!(never, ival(86));
         assert_eq!(never_segments, 2, "floor above max scans every segment");
+    }
+
+    // ===================================================================
+    // Exact concave-envelope composition (replaces product + sample).
+    // ===================================================================
+
+    /// Deterministic monotone concave front: K pieces with strictly
+    /// decreasing positive slopes whose breakpoints sit at integer x. The
+    /// lower envelope is the tangent hull, so it has exactly K active pieces
+    /// on [0, K-1]. `compose_boundary_reference`'s product sees K1*K2 pairs;
+    /// exact composition must see only the <= K1+K2 hull pieces.
+    fn concave_front(k: usize, scale: i64) -> Vec<Line> {
+        (0..k)
+            .map(|j| {
+                #[expect(clippy::cast_possible_wrap)]
+                let j = j as i64;
+                #[expect(clippy::cast_possible_wrap)]
+                let k = k as i64;
+                Line {
+                    a: ival(scale * j * (j + 1) / 2),
+                    b: ival(scale * (k - j)),
+                    c: ival(1),
+                }
+            })
+            .collect()
+    }
+
+    /// Pointwise minimum over a line set (the composed bound value).
+    fn min_at(lines: &[Line], x: &U256) -> I512 {
+        lines.iter().map(|l| l.eval(x)).min().expect("non-empty")
+    }
+
+    /// The exact compose is the un-sampled product hull: selection must not
+    /// drop any active pair, so byte-equality with the frozen reference at an
+    /// effectively infinite cap is the no-lost-lines witness. On each seed the
+    /// sampled reference (tiny cap) must be pointwise >= the exact hull
+    /// (min over a superset can only be lower). Both directions cover the
+    /// flat / equal-slope / near-tie families the randomized generator emits.
+    #[test]
+    fn exact_compose_matches_unsampled_product_on_randomized_sets() {
+        for seed in 0..256u64 {
+            let mut lcg = seed | (seed << 32) | 1;
+            let rand_nxt = |lcg: &mut u64| {
+                *lcg = lcg
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                *lcg
+            };
+            let hop_count = (rand_nxt(&mut lcg) % 5) as usize + 1;
+            let chain_count = (rand_nxt(&mut lcg) % 5) as usize + 1;
+            let rand_line = |lcg: &mut u64| -> Line {
+                let v = |lcg: &mut u64, bits: u32| -> I512 {
+                    let mut x = I512::from_raw(U512::from(rand_nxt(lcg)));
+                    let shift = u32::try_from(rand_nxt(lcg) % (u64::from(bits) + 1)).unwrap_or(0);
+                    x <<= shift;
+                    if rand_nxt(lcg).is_multiple_of(3) {
+                        -x
+                    } else {
+                        x
+                    }
+                };
+                let c = I512::from_raw(U512::from(rand_nxt(lcg) % 15 + 1));
+                let b = I512::from_raw(U512::from(rand_nxt(lcg) % 7)); // includes b == 0
+                Line {
+                    a: v(lcg, 40),
+                    b,
+                    c,
+                }
+            };
+            let hop_lines: Vec<Line> = (0..hop_count).map(|_| rand_line(&mut lcg)).collect();
+            let chain: Vec<Line> = (0..chain_count).map(|_| rand_line(&mut lcg)).collect();
+            let upper = match seed % 5 {
+                0 => U256::from(1_000u64) << 96,
+                1 => U256::from(1_000u64) << 190,
+                2 => U256::MAX - U256::from(1337u64),
+                3 => U256::MAX,
+                _ => U256::from(9_000_000_000u64),
+            };
+            let big_cap = 1_000_000usize;
+            let exact = compose_envelopes_exact(&hop_lines, &chain, upper, big_cap);
+            let product = compose_boundary_reference(&hop_lines, &chain, upper, big_cap);
+            if let (Ok(exact), Ok(product)) = (&exact, &product) {
+                assert_eq!(
+                    exact, product,
+                    "seed {seed} upper {upper}: exact compose diverged from the un-sampled product hull"
+                );
+            }
+            let sampled = compose_boundary_reference(&hop_lines, &chain, upper, 3);
+            if let (Ok(exact), Ok(sampled)) = (&exact, &sampled) {
+                for x in grid_probes(upper) {
+                    assert!(
+                        min_at(exact, &x) <= min_at(sampled, &x),
+                        "seed {seed} @x={x}: exact hull must not be looser than the sampled reference"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Additive hull size: composing two K-piece concave fronts yields at most
+    /// K1+K2 pieces, never the K1*K2 product. This is the structural claim the
+    /// exact path exists to make good on.
+    #[test]
+    fn exact_compose_hull_size_is_additive_not_multiplicative() {
+        let (k1, k2) = (40usize, 40usize);
+        let hop = concave_front(k1, 7);
+        let chain = concave_front(k2, 5);
+        let upper = U256::from(200u64);
+        gate_tls(|t| {
+            t.exact_hull_pairs = 0;
+            t.exact_pairs_enumerated = 0;
+        });
+        let mid =
+            compose_envelopes_exact(&chain, &[Line::IDENTITY], upper, 8).expect("first boundary");
+        let exact = compose_envelopes_exact(&hop, &mid, upper, 8).expect("second boundary");
+        assert!(
+            exact.len() <= k1 + k2,
+            "hull size {} exceeds K1+K2={}",
+            exact.len(),
+            k1 + k2
+        );
+        assert!(
+            exact.len() < k1 * k2,
+            "hull size {} must beat the K1*K2={} product",
+            exact.len(),
+            k1 * k2
+        );
+        let pairs = gate_tls(|t| t.exact_hull_pairs);
+        let enumerated = gate_tls(|t| t.exact_pairs_enumerated);
+        assert!(
+            pairs <= (k1 + k2) as u64 * 2,
+            "selected pairs {pairs} blew past the additive bound"
+        );
+        assert!(enumerated >= (k1 * k2) as u64, "enumeration witness");
+        let product = compose_boundary_reference(&hop, &mid, upper, 1_000_000).expect("product");
+        assert_eq!(
+            exact, product,
+            "exact hull must equal the un-sampled product hull"
+        );
+    }
+
+    /// T5 near-zero-slope staircase: tiny-liquidity tail ranges emit tangents
+    /// with periods ~ c/b; a stride sample keeps a handful and loses the rest
+    /// of the lower envelope. The exact hull keeps every active piece and
+    /// stays pointwise no looser than the sampled reference.
+    #[test]
+    fn exact_compose_keeps_near_zero_slope_staircase() {
+        // Near-zero-slope concave front: slopes ~ (K-i)/unit with
+        // unit = 1e18 and takeovers spaced (i+1)*unit, so each piece's
+        // ceil-eval staircase has period ~ unit/(K-i) and a stride sample
+        // loses most of the hull pieces.
+        let unit = "1000000000000000000".parse::<U512>().expect("1e18");
+        let upper: U256 = "66000000000000000000".parse().expect("66e18");
+        let k: usize = 64;
+        let k_i = i64::try_from(k).expect("small");
+        let mut hop = Vec::with_capacity(k);
+        for i in 0..k {
+            let i_i = i64::try_from(i).expect("small");
+            let tri = u64::try_from(i_i * (i_i + 1) / 2).expect("small");
+            hop.push(Line {
+                a: I512::from_raw(unit * U512::from(tri)),
+                b: ival(k_i - i_i),
+                c: I512::from_raw(unit),
+            });
+        }
+        let exact = compose_envelopes_exact(&hop, &[Line::IDENTITY], upper, 4).expect("exact");
+        let sampled =
+            compose_boundary_reference(&hop, &[Line::IDENTITY], upper, 4).expect("sampled");
+        assert!(
+            exact.len() > sampled.len(),
+            "exact hull {} must keep more staircase pieces than sampled {}",
+            exact.len(),
+            sampled.len()
+        );
+        assert!(
+            exact.len() >= k - 2,
+            "expected a fat staircase hull, got {}",
+            exact.len()
+        );
+        let product =
+            compose_boundary_reference(&hop, &[Line::IDENTITY], upper, 1_000_000).expect("product");
+        assert_eq!(
+            exact, product,
+            "staircase hull must equal the un-sampled product hull"
+        );
+        for x in grid_probes(upper) {
+            assert!(min_at(&exact, &x) <= min_at(&sampled, &x));
+        }
+    }
+
+    /// Loop-6 right edge: composed bound lines can carry slope > 1, making
+    /// f(x)=bound(x)-x strictly increasing at the domain's right end. Exact
+    /// composition must preserve that line so `concave_max` still finds the
+    /// max at xmax.
+    #[test]
+    fn exact_compose_preserves_right_edge_slope_above_one() {
+        let outer = vec![Line {
+            a: ival(0),
+            b: ival(3),
+            c: ival(2),
+        }]; // slope 1.5
+        let inner = vec![Line {
+            a: ival(0),
+            b: ival(2),
+            c: ival(1),
+        }]; // slope 2
+        let upper = U256::from(1000u64);
+        let exact = compose_envelopes_exact(&outer, &inner, upper, 8).expect("exact");
+        // Composed slope 1.5*2 = 3; f(x) = 3x - x = 2x, max at xmax.
+        assert_eq!(concave_max(&exact, upper, None), ival(2000));
+        let sampled = compose_boundary_reference(&outer, &inner, upper, 8).expect("sampled");
+        let sampled_best = concave_max(&sampled, upper, None);
+        assert!(sampled_best <= ival(2000));
+        assert!(min_at(&exact, &upper) <= min_at(&sampled, &upper));
+    }
+
+    /// Corpus A/B over the committed captured CL pools: on every path the
+    /// exact hull is pointwise no looser than the product+sample reference and
+    /// still dominates the recorded golden profit. Prints the xmax and
+    /// hull-peak exact/sampled bound-ratio distributions and the compose-time
+    /// delta. The heavy corpus is the identity witness (its hulls stay below
+    /// the stride-sample threshold); the giant synthetic corpus exercises the
+    /// additive hull where the old pipeline dropped lines.
+    #[test]
+    #[expect(
+        clippy::print_stdout,
+        clippy::unwrap_used,
+        clippy::too_many_lines,
+        reason = "measurement harness: stdout is the deliverable"
+    )]
+    fn exact_compose_tightens_or_equals_on_captured_cl_corpora() {
+        let corpora: [(&str, &str, usize); 2] = [
+            (
+                "heavy_cl_solve_captures",
+                "heavy_cl_solve_captures.jsonl",
+                200,
+            ),
+            ("synth_giant_cl", "synth_giant_cl.jsonl", 300),
+        ];
+        let cfg = SolveRuntimeConfig::default();
+        let cap = cfg.sampled_compose_lines.max(1);
+        for (label, name, max) in corpora {
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name);
+            let content = crate::capture_fixture::read_fixture(&fixture);
+            gate_tls(|t| t.exact_compose_fallbacks = 0);
+            let mut n = 0usize;
+            let mut tightened = 0usize;
+            let mut equal = 0usize;
+            let mut ratios: Vec<f64> = Vec::new();
+            let mut peak_ratios: Vec<f64> = Vec::new();
+            let mut max_exact_hull = 0usize;
+            let mut max_sampled_hull = 0usize;
+            let mut hull_diff = 0usize;
+            let mut verdict_tightened = 0usize;
+            let mut exact_ns = 0u128;
+            let mut sampled_ns = 0u128;
+            for line in content.lines().filter(|l| !l.trim().is_empty()).take(max) {
+                let doc: serde_json::Value = serde_json::from_str(line).unwrap();
+                let hops = doc
+                    .get("hops")
+                    .and_then(serde_json::Value::as_array)
+                    .unwrap();
+                let seqs: Vec<IntV3TickRangeSequence> = hops
+                    .iter()
+                    .map(parse_hop_json)
+                    .collect::<Option<Vec<_>>>()
+                    .unwrap();
+                let views: Vec<Option<HopMath<'_>>> =
+                    seqs.iter().map(|s| Some(HopMath::cl_derived(s))).collect();
+                let mut domain = U256::ZERO;
+                let mut exact = vec![Line::IDENTITY];
+                let mut sampled = vec![Line::IDENTITY];
+                for slot in &views {
+                    let hop = slot.as_ref().unwrap();
+                    let (hop_ls, hop_cap) = hop_lines_and_cap(hop.clone(), &cfg).unwrap();
+                    domain = domain.checked_add(hop_cap).unwrap();
+                    let t_exact = std::time::Instant::now();
+                    exact = compose_envelopes_exact(&hop_ls, &exact, domain, cap).unwrap();
+                    exact_ns += t_exact.elapsed().as_nanos();
+                    let t_sampled = std::time::Instant::now();
+                    sampled = compose_boundary_reference(&hop_ls, &sampled, domain, cap).unwrap();
+                    sampled_ns += t_sampled.elapsed().as_nanos();
+                    max_exact_hull = max_exact_hull.max(exact.len());
+                    max_sampled_hull = max_sampled_hull.max(sampled.len());
+                    if exact.len() != sampled.len() {
+                        hull_diff += 1;
+                    }
+                }
+                let mut is_tighter = false;
+                for x in grid_probes(domain) {
+                    let e = min_at(&exact, &x);
+                    let s = min_at(&sampled, &x);
+                    assert!(e <= s, "{label}: exact looser than sampled at x={x}");
+                    if e < s {
+                        is_tighter = true;
+                    }
+                }
+                if is_tighter {
+                    tightened += 1;
+                } else {
+                    equal += 1;
+                }
+                // Bound-ratio at every hull peak of either chain (the place
+                // the sampled cap's dropped lines would show): sampled/exact.
+                let mut peaks: Vec<U256> = Vec::new();
+                for (bp, _, _) in hull_pieces(&exact)
+                    .iter()
+                    .chain(hull_pieces(&sampled).iter())
+                {
+                    if *bp > I512::ZERO {
+                        if let Ok(u) = U512::try_from(*bp) {
+                            if u <= U512::from(domain) {
+                                peaks.push(u.to::<U256>());
+                            }
+                        }
+                    }
+                }
+                for x in peaks {
+                    let e = min_at(&exact, &x);
+                    let s = min_at(&sampled, &x);
+                    if e > I512::ZERO && s > I512::ZERO {
+                        peak_ratios.push(i512_to_f64(s) / i512_to_f64(e));
+                    }
+                }
+                // Gate-verdict A/B: exact is pointwise <= sampled, so its
+                // argmax bound cannot exceed the sampled one. Any floor between
+                // the two makes exact skip where sampled skipped, never the
+                // reverse; the extra skips are bounded below the floor by a
+                // rigorous upper bound.
+                let exact_best = concave_max(&exact, domain, None);
+                let sampled_best = concave_max(&sampled, domain, None);
+                assert!(
+                    exact_best <= sampled_best,
+                    "{label}: exact argmax bound {exact_best} exceeds sampled {sampled_best}"
+                );
+                if exact_best < sampled_best {
+                    verdict_tightened += 1;
+                }
+                if let Some(golden) = doc.get("golden").and_then(serde_json::Value::as_object) {
+                    let go: U256 = golden["optimal_input"].as_str().unwrap().parse().unwrap();
+                    let gh: Vec<U256> = golden["hop_outputs"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|v| v.as_str().unwrap().parse().unwrap())
+                        .collect();
+                    let gprof = gh.last().copied().unwrap_or(U256::ZERO).saturating_sub(go);
+                    let bound = narrow(concave_max(&exact, domain, None)).unwrap_or(U256::MAX);
+                    assert!(
+                        bound >= gprof,
+                        "{label}: exact bound {bound} undercuts golden {gprof}"
+                    );
+                }
+                let e_xmax = min_at(&exact, &domain);
+                let s_xmax = min_at(&sampled, &domain);
+                ratios.push(i512_to_f64(s_xmax) / i512_to_f64(e_xmax).max(1.0));
+                n += 1;
+            }
+            let fallbacks = gate_tls(|t| t.exact_compose_fallbacks);
+            ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            peak_ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let pick = |v: &[f64], num: usize, den: usize| {
+                if v.is_empty() {
+                    return f64::NAN;
+                }
+                v[(v.len().saturating_mul(num) / den).min(v.len() - 1)]
+            };
+            let peak_gt1 = peak_ratios.iter().filter(|r| **r > 1.0 + 1e-12).count();
+            println!(
+                "P5 [{label}] exact-vs-sampled: n={n} tightened={tightened} equal={equal} hull_diff_boundaries={hull_diff} verdict_tightened={verdict_tightened} exact_fallbacks={fallbacks} max_exact_hull={max_exact_hull} max_sampled_hull={max_sampled_hull} compose_exact_us={} compose_sampled_us={}\n  xmax ratio p50={:.9} p90={:.9} p99={:.9} max={:.9}\n  peak ratio p50={:.9} p90={:.9} p99={:.9} max={:.9} peaks_gt_1={peak_gt1}/{}",
+                exact_ns / 1_000,
+                sampled_ns / 1_000,
+                pick(&ratios, 1, 2),
+                pick(&ratios, 9, 10),
+                pick(&ratios, 99, 100),
+                pick(&ratios, 1, 1),
+                pick(&peak_ratios, 1, 2),
+                pick(&peak_ratios, 9, 10),
+                pick(&peak_ratios, 99, 100),
+                pick(&peak_ratios, 1, 1),
+                peak_ratios.len()
+            );
+            assert!(n > 0, "{label}: no captures read");
+        }
+    }
+
+    /// Fat-chain exactness: on the giant synthetic CL captures the full
+    /// product hull keeps redundant lines (its size can exceed K1+K2 because
+    /// prune retains lines whose ceil-rounded take-over is inside the domain),
+    /// while the exact composed hull stays additive. The two must be POINTWISE
+    /// equal — if the selection ever missed an active pair the exact bound
+    /// would sit above the product's min somewhere on the grid.
+    #[test]
+    #[expect(clippy::print_stdout, clippy::unwrap_used)]
+    fn exact_compose_is_pointwise_exact_and_additive_on_fat_chains() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/synth_giant_cl.jsonl");
+        let content = crate::capture_fixture::read_fixture(&fixture);
+        let cfg = SolveRuntimeConfig::default();
+        let cap = cfg.sampled_compose_lines.max(1);
+        let mut boundaries = 0usize;
+        let mut max_additive = 0usize;
+        let mut max_product = 0usize;
+        for (pi, line) in content.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+            let doc: serde_json::Value = serde_json::from_str(line).unwrap();
+            let hops = doc
+                .get("hops")
+                .and_then(serde_json::Value::as_array)
+                .unwrap();
+            let seqs: Vec<IntV3TickRangeSequence> = hops
+                .iter()
+                .map(parse_hop_json)
+                .collect::<Option<Vec<_>>>()
+                .unwrap();
+            let views: Vec<Option<HopMath<'_>>> =
+                seqs.iter().map(|s| Some(HopMath::cl_derived(s))).collect();
+            let mut domain = U256::ZERO;
+            let mut exact = vec![Line::IDENTITY];
+            let mut huge = vec![Line::IDENTITY];
+            for (hi, slot) in views.iter().enumerate() {
+                let hop = slot.as_ref().unwrap();
+                let (hop_ls, hop_cap) = hop_lines_and_cap(hop.clone(), &cfg).unwrap();
+                domain = domain.checked_add(hop_cap).unwrap();
+                let chain_hull = exact.len();
+                let mut hop_hull = hop_ls.clone();
+                prune(&mut hop_hull, domain);
+                exact = compose_envelopes_exact(&hop_ls, &exact, domain, cap).unwrap();
+                huge = compose_boundary_reference(&hop_ls, &huge, domain, 1_000_000).unwrap();
+                max_additive = max_additive.max(exact.len());
+                max_product = max_product.max(huge.len());
+                assert!(
+                    exact.len() <= hop_hull.len() + chain_hull,
+                    "path {pi} hop {hi}: hull {} exceeds K1+K2={}",
+                    exact.len(),
+                    hop_hull.len() + chain_hull
+                );
+                let mut looser = I512::ZERO;
+                let mut redundant = I512::ZERO;
+                for x in grid_probes(domain) {
+                    let e = min_at(&exact, &x);
+                    let h = min_at(&huge, &x);
+                    if e > h {
+                        looser = looser.max(e - h);
+                    }
+                    if h > e {
+                        redundant = redundant.max(h - e);
+                    }
+                }
+                assert!(
+                    looser.is_zero(),
+                    "path {pi} hop {hi}: exact looser than the product by {looser}"
+                );
+                assert!(
+                    redundant.is_zero(),
+                    "path {pi} hop {hi}: product looser than exact by {redundant}"
+                );
+                boundaries += 1;
+            }
+        }
+        println!(
+            "P5 fat exactness: {boundaries} boundaries, max additive hull={max_additive}, max product hull={max_product}"
+        );
+        assert!(boundaries > 0);
+    }
+
+    fn parse_hop_json(v: &serde_json::Value) -> Option<IntV3TickRangeSequence> {
+        let arr = v.as_array()?;
+        let mut ranges = Vec::with_capacity(arr.len());
+        for item in arr {
+            let liq: u128 = item.get("liquidity")?.as_str()?.parse().ok()?;
+            let wbp: Vec<U256> = item
+                .get("word_boundary_prices")?
+                .as_array()?
+                .iter()
+                .filter_map(|w| w.as_str())
+                .map(|s| s.parse().ok())
+                .collect::<Option<Vec<U256>>>()?;
+            ranges.push(IntV3TickRangeHop {
+                liquidity: liq,
+                sqrt_price_x96: item.get("sqrt_price_x96")?.as_str()?.parse().ok()?,
+                sqrt_price_lower_x96: item.get("sqrt_price_lower_x96")?.as_str()?.parse().ok()?,
+                sqrt_price_upper_x96: item.get("sqrt_price_upper_x96")?.as_str()?.parse().ok()?,
+                gamma_numer: item.get("gamma_numer")?.as_u64()?,
+                fee_denom: item.get("fee_denom")?.as_u64()?,
+                zero_for_one: item.get("zero_for_one")?.as_bool()?,
+                word_boundary_prices: wbp,
+            });
+        }
+        Some(IntV3TickRangeSequence { ranges })
     }
 }
