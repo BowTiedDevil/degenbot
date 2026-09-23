@@ -24,6 +24,12 @@
 //! histogram reports how many paths touch each entry and what fraction of the
 //! cold table-build work the warm cache saves.
 //!
+//! The default pool set is MIXED: 20 light books (the five viz profiles) plus
+//! 4 giant stress-shape books (one deep-late walk-heavy `giant_w`, two
+//! many-range gate-burst `giant_g`, one `giant_g2`). Rows are flagged `giant`
+//! when any hop pool has more than 100 ranges, and the summary splits timings,
+//! warmup, and reuse counts by that book class.
+//!
 //! Four timed conditions per path, all over the same physical path:
 //!
 //! - `warmup` (measured, untimed region): `ClSolveTables::derive` once per
@@ -91,7 +97,8 @@ const HOPS: usize = 3;
 
 const DEFAULT_WINDOW: f64 = 0.001;
 
-/// The five per-pool liquidity profiles, cycled so every profile is present.
+/// The five light per-pool liquidity profiles, cycled so every profile is
+/// present. Giant books carry their own profile names below.
 const PROFILES: [&str; 5] = [
     "uniform",
     "decaying",
@@ -99,6 +106,23 @@ const PROFILES: [&str; 5] = [
     "random",
     "single-range-deep",
 ];
+
+/// Giant (stress-shape) pool recipes appended after the light set: profile
+/// name and inclusive range-count band. `giant_w` is the deep-late walk-heavy
+/// book; `giant_g`/`giant_g2` are the many-range gate-burst books.
+const GIANT_SPECS: [(&str, usize, usize); 4] = [
+    ("giant_w", 380, 380),
+    ("giant_g", 450, 649),
+    ("giant_g", 500, 749),
+    ("giant_g2", 250, 399),
+];
+
+/// Distinct giant profile names, in summary order.
+const GIANT_PROFILES: [&str; 3] = ["giant_w", "giant_g", "giant_g2"];
+
+/// A hop pool wider than this marks the path's book class as giant. Matches
+/// the class split in the summary (paths with ANY giant hop vs none).
+const GIANT_RANGE_THRESHOLD: usize = 100;
 
 // ---------------------------------------------------------------------------
 // Deterministic RNG
@@ -294,6 +318,45 @@ impl SharedPool {
     }
 }
 
+/// Build the reusable pool state + both swap-direction sequences from an
+/// already-assembled tick book.
+fn assemble_shared_pool(
+    profile: &'static str,
+    spacing: i32,
+    fee: u32,
+    ranges: usize,
+    anchor: i32,
+    tick_data: HashMap<i32, TickInfo>,
+    active: u128,
+) -> SharedPool {
+    let params = RegisterV3PoolParams {
+        fee,
+        tick_spacing: spacing,
+        sqrt_price_x96: sqrt_at(anchor),
+        liquidity: active,
+        tick: anchor,
+        tick_data,
+        coverage: PoolTickCoverage::Tracked,
+        ..Default::default()
+    };
+    let (_identity, state) = V3PoolState::from_params(params, 8);
+    let seq_zfo = state
+        .build_int_v3_sequence(spacing, fee, true)
+        .expect("pool yields a zfo swap-direction sequence");
+    let seq_ofz = state
+        .build_int_v3_sequence(spacing, fee, false)
+        .expect("pool yields an ofz swap-direction sequence");
+    SharedPool {
+        profile,
+        spacing,
+        fee,
+        ranges,
+        state,
+        seq_zfo,
+        seq_ofz,
+    }
+}
+
 fn make_shared_pool(profile: &'static str, rng: &mut Rng) -> SharedPool {
     let spacing = [200, 1000, 2000, 5000][rng.range_usize(0, 3)];
     let fee = [100, 500, 3000, 10000][rng.range_usize(0, 3)] as u32;
@@ -328,40 +391,95 @@ fn make_shared_pool(profile: &'static str, rng: &mut Rng) -> SharedPool {
     // Current tick sits exactly on the anchor boundary; the active range is
     // the nearest above-anchor shelf (`[anchor, anchor+spacing)`).
     let active: u128 = high.first().copied().unwrap_or(0);
-
-    let params = RegisterV3PoolParams {
-        fee,
-        tick_spacing: spacing,
-        sqrt_price_x96: sqrt_at(anchor),
-        liquidity: active,
-        tick: anchor,
-        tick_data,
-        coverage: PoolTickCoverage::Tracked,
-        ..Default::default()
-    };
-    let (_identity, state) = V3PoolState::from_params(params, 8);
-    let seq_zfo = state
-        .build_int_v3_sequence(spacing, fee, true)
-        .expect("pool yields a zfo swap-direction sequence");
-    let seq_ofz = state
-        .build_int_v3_sequence(spacing, fee, false)
-        .expect("pool yields an ofz swap-direction sequence");
-    SharedPool {
-        profile,
-        spacing,
-        fee,
-        ranges,
-        state,
-        seq_zfo,
-        seq_ofz,
-    }
+    assemble_shared_pool(profile, spacing, fee, ranges, anchor, tick_data, active)
 }
 
+/// Per-range liquidities for one side of a giant (stress-shape) pool, built on
+/// the same `liquidity_for_depth` parameterization as the light pools.
+/// `giant_w` places a single deep-late bar at the far end of `count - 1` thin
+/// bars; every burst bar draws depth from `[1, 5]` tokens.
+fn giant_liquidities(
+    rng: &mut Rng,
+    profile: &str,
+    anchor: i32,
+    spacing: i32,
+    zfo: bool,
+    count: usize,
+) -> Vec<u128> {
+    (0..count)
+        .map(|i| {
+            let i_i32 = i32::try_from(i).unwrap();
+            let (s, s_next) = range_sqrt(anchor, spacing, zfo, i_i32);
+            let depth = if profile == "giant_w" {
+                if i + 1 == count {
+                    rng.range_f64(3000.0, 8000.0)
+                } else {
+                    rng.range_f64(0.5, 2.0)
+                }
+            } else {
+                rng.range_f64(1.0, 5.0)
+            };
+            liquidity_for_depth(depth, s, s_next, zfo)
+        })
+        .collect()
+}
+
+/// Build one giant stress-shape pool with both swap directions. Spacings match
+/// the cold example's stress shapes: thin `giant_w` bars at 60 ticks, burst
+/// books at 2..3 ticks.
+fn make_giant_pool(profile: &'static str, ranges: usize, rng: &mut Rng) -> SharedPool {
+    let spacing = match profile {
+        "giant_w" => 60,
+        "giant_g" => [2, 3][rng.range_usize(0, 1)],
+        _ => 3,
+    };
+    let fee = 500;
+    // Near-zero anchor keeps the wide book inside V3 tick bounds.
+    let anchor = snap(rng.range_i32(-300, 300), spacing);
+
+    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+    let low = giant_liquidities(rng, profile, anchor, spacing, true, ranges);
+    let high = giant_liquidities(rng, profile, anchor, spacing, false, ranges);
+    for (i, &liq) in low.iter().enumerate() {
+        add_range(
+            &mut tick_data,
+            anchor,
+            spacing,
+            true,
+            i32::try_from(i).unwrap(),
+            liq,
+        );
+    }
+    for (i, &liq) in high.iter().enumerate() {
+        add_range(
+            &mut tick_data,
+            anchor,
+            spacing,
+            false,
+            i32::try_from(i).unwrap(),
+            liq,
+        );
+    }
+    let active: u128 = high.first().copied().unwrap_or(0);
+    assemble_shared_pool(profile, spacing, fee, ranges, anchor, tick_data, active)
+}
+
+/// Build the shared pool set: light books cycle the five viz profiles, then
+/// the giant stress-shape recipes are appended. The default count of 24 gives
+/// the 20 light + 4 giant split.
 fn build_pools(count: usize) -> Vec<SharedPool> {
     let mut rng = Rng::new(SEED);
-    (0..count)
-        .map(|id| make_shared_pool(PROFILES[id % PROFILES.len()], &mut rng))
-        .collect()
+    let giant_count = GIANT_SPECS.len().min(count);
+    let light_count = count - giant_count;
+    let mut pools = Vec::with_capacity(count);
+    for id in 0..light_count {
+        pools.push(make_shared_pool(PROFILES[id % PROFILES.len()], &mut rng));
+    }
+    for &(profile, lo, hi) in GIANT_SPECS.iter().take(giant_count) {
+        let ranges = rng.range_usize(lo, hi);
+        pools.push(make_giant_pool(profile, ranges, &mut rng));
+    }
+    pools
 }
 
 // ---------------------------------------------------------------------------
@@ -731,6 +849,23 @@ fn dist_u128(v: &[u128]) -> Value {
     })
 }
 
+/// Raw count distribution (no unit scaling), for nfev-style counters.
+fn dist_count(v: &[u128]) -> Value {
+    if v.is_empty() {
+        return json!({ "n": 0 });
+    }
+    let mut s = v.to_vec();
+    s.sort_unstable();
+    let n = s.len();
+    json!({
+        "n": n,
+        "min": s[0],
+        "p50": s[n / 2],
+        "p95": s[(n * 95) / 100],
+        "max": s[n - 1],
+    })
+}
+
 fn median_u128(v: &[u128]) -> f64 {
     if v.is_empty() {
         return 0.0;
@@ -738,6 +873,13 @@ fn median_u128(v: &[u128]) -> f64 {
     let mut s = v.to_vec();
     s.sort_unstable();
     s[s.len() / 2] as f64
+}
+
+fn mean_u128(v: &[u128]) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.iter().sum::<u128>() as f64 / v.len() as f64
 }
 
 // ---------------------------------------------------------------------------
@@ -766,6 +908,30 @@ struct FamilyAgg {
     brent_med: Vec<u128>,
 }
 
+/// Per-path timing aggregates split by book class (light vs giant hop set).
+#[derive(Default)]
+struct BookClassAgg {
+    paths: u64,
+    warm_med: Vec<u128>,
+    cold_med: Vec<u128>,
+    brent_med: Vec<u128>,
+    brent_sim_med: Vec<u128>,
+    brent_nfev: Vec<u128>,
+    brent_sim_nfev: Vec<u128>,
+}
+
+fn class_split(agg: &BookClassAgg) -> Value {
+    json!({
+        "paths": agg.paths,
+        "mobius_warm": dist_u128(&agg.warm_med),
+        "mobius_cold": dist_u128(&agg.cold_med),
+        "brent_native": dist_u128(&agg.brent_med),
+        "brent_helper": dist_u128(&agg.brent_sim_med),
+        "brent_native_nfev": dist_count(&agg.brent_nfev),
+        "brent_helper_nfev": dist_count(&agg.brent_sim_nfev),
+    })
+}
+
 fn main() {
     let pool_count = env_usize("DR_SHARED_POOLS", DEFAULT_POOLS);
     let path_count = env_usize("DR_SHARED_PATHS", DEFAULT_PATHS);
@@ -783,6 +949,11 @@ fn main() {
     // Corpus generation is deliberately OUTSIDE every timed region.
     let t_corpus = Instant::now();
     let pools = build_pools(pool_count);
+    let giant_pools = pools
+        .iter()
+        .filter(|p| p.ranges > GIANT_RANGE_THRESHOLD)
+        .count();
+    let light_pools = pools.len() - giant_pools;
     let paths = build_paths(&pools, path_count);
     let corpus_gen_ms = t_corpus.elapsed().as_millis();
 
@@ -811,12 +982,20 @@ fn main() {
     // measured for the amortization report.
     let mut warm_cache: Vec<Option<ClSolveTables>> = (0..pool_count * 2).map(|_| None).collect();
     let mut warmup_times_ns: Vec<u128> = Vec::with_capacity(reuse.len());
+    let mut warmup_light_ns: Vec<u128> = Vec::new();
+    let mut warmup_giant_ns: Vec<u128> = Vec::new();
     let t_warmup = Instant::now();
     for &(pool, zfo) in reuse.keys() {
         let seq = pools[pool].seq(zfo);
         let t0 = Instant::now();
         let tables = ClSolveTables::derive(seq);
-        warmup_times_ns.push(t0.elapsed().as_nanos());
+        let entry_ns = t0.elapsed().as_nanos();
+        warmup_times_ns.push(entry_ns);
+        if pools[pool].ranges > GIANT_RANGE_THRESHOLD {
+            warmup_giant_ns.push(entry_ns);
+        } else {
+            warmup_light_ns.push(entry_ns);
+        }
         warm_cache[pool * 2 + SharedPool::dir_index(zfo)] = Some(tables);
     }
     let warmup_total_ns = t_warmup.elapsed().as_nanos();
@@ -832,6 +1011,8 @@ fn main() {
     let mut overall_brent_sim: Vec<u128> = Vec::new();
     let mut by_family: HashMap<&'static str, FamilyAgg> = HashMap::new();
     let mut class_counts: HashMap<&'static str, u64> = HashMap::new();
+    let mut light_agg = BookClassAgg::default();
+    let mut giant_agg = BookClassAgg::default();
     let mut nondet_total = 0u64;
 
     for path in &paths {
@@ -850,6 +1031,10 @@ fn main() {
             })
             .collect();
         let sim = ClPathSim::new(&seqs, None);
+        let giant = path
+            .hops
+            .iter()
+            .any(|h| pools[h.pool].ranges > GIANT_RANGE_THRESHOLD);
 
         let warm = time_mobius_warm(&seqs, &prepared, reps);
         let cold = time_mobius_cold(&seqs, reps);
@@ -883,6 +1068,7 @@ fn main() {
         let row = json!({
             "path_id": path.id,
             "family": path.family,
+            "giant": giant,
             "pools": path.hops.iter().map(|h| h.pool).collect::<Vec<_>>(),
             "pool_profiles": path.hops.iter().map(|h| pools[h.pool].profile).collect::<Vec<_>>(),
             "spacings": path.hops.iter().map(|h| pools[h.pool].spacing).collect::<Vec<_>>(),
@@ -953,6 +1139,23 @@ fn main() {
         agg.cold_med.push(cold.med_ns);
         agg.warm_med.push(warm.med_ns);
         agg.brent_med.push(brent.med_ns);
+
+        let class_agg = if giant {
+            &mut giant_agg
+        } else {
+            &mut light_agg
+        };
+        class_agg.paths += 1;
+        class_agg.warm_med.push(warm.med_ns);
+        class_agg.cold_med.push(cold.med_ns);
+        class_agg.brent_med.push(brent.med_ns);
+        class_agg.brent_sim_med.push(brent_sim.med_ns);
+        class_agg
+            .brent_nfev
+            .push(u128::try_from(brent.value.nfev).unwrap());
+        class_agg
+            .brent_sim_nfev
+            .push(u128::try_from(brent_sim.value.nfev).unwrap());
     }
 
     if let Some(parent) = out_path.parent() {
@@ -966,8 +1169,14 @@ fn main() {
     let sum_brent_us: f64 = overall_brent.iter().map(|&n| n as f64 / 1000.0).sum();
     let warm_amortized_total_us = warmup_total_ms * 1000.0 + sum_warm_us;
 
+    let all_profiles: Vec<&str> = PROFILES
+        .iter()
+        .chain(GIANT_PROFILES.iter())
+        .copied()
+        .collect();
     let families: Vec<Value> = PROFILES
         .iter()
+        .chain(GIANT_PROFILES.iter())
         .filter_map(|f| by_family.get(f).map(|a| (f, a)))
         .map(|(f, a)| {
             let cold_med_us = median_u128(&a.cold_med) / 1000.0;
@@ -998,7 +1207,7 @@ fn main() {
             "pools": pool_count,
             "paths": path_count,
             "hops": HOPS,
-            "profiles": PROFILES,
+            "profiles": all_profiles,
             "generation_ms": corpus_gen_ms,
         },
         "window": window,
@@ -1013,6 +1222,24 @@ fn main() {
             "per_entry_mean_us": warmup_per_entry_ns / 1000.0,
             "entry_times": dist_u128(&warmup_times_ns),
         },
+        "warmup_by_class": {
+            "light": {
+                "unique_entries": warmup_light_ns.len(),
+                "entries_possible": light_pools * 2,
+                "total_ns": warmup_light_ns.iter().sum::<u128>(),
+                "per_entry_median_us": median_u128(&warmup_light_ns) / 1000.0,
+                "per_entry_mean_us": mean_u128(&warmup_light_ns) / 1000.0,
+                "entry_times": dist_u128(&warmup_light_ns),
+            },
+            "giant": {
+                "unique_entries": warmup_giant_ns.len(),
+                "entries_possible": giant_pools * 2,
+                "total_ns": warmup_giant_ns.iter().sum::<u128>(),
+                "per_entry_median_us": median_u128(&warmup_giant_ns) / 1000.0,
+                "per_entry_mean_us": mean_u128(&warmup_giant_ns) / 1000.0,
+                "entry_times": dist_u128(&warmup_giant_ns),
+            },
+        },
         "reuse_histogram": {
             "total_hop_occurrences": total_hop_occurrences,
             "unique_entries": unique_entries,
@@ -1021,12 +1248,24 @@ fn main() {
             "median": reuse_med,
             "max": reuse_max,
             "build_work_saved_pct": build_saved_pct,
+            "unique_entries_by_class": {
+                "light": warmup_light_ns.len(),
+                "giant": warmup_giant_ns.len(),
+            },
+            "entries_possible_by_class": {
+                "light": light_pools * 2,
+                "giant": giant_pools * 2,
+            },
         },
         "overall": {
             "mobius_warm_med": dist_u128(&overall_warm),
             "mobius_cold_med": dist_u128(&overall_cold),
             "brent_med": dist_u128(&overall_brent),
             "brent_helper_med": dist_u128(&overall_brent_sim),
+        },
+        "book_class_split": {
+            "light": class_split(&light_agg),
+            "giant": class_split(&giant_agg),
         },
         "amortized_totals": {
             "mobius_warm_amortized_total_us": warm_amortized_total_us,
