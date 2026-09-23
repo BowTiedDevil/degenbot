@@ -41,11 +41,18 @@ pub struct AnchorPool {
 /// pool consumes — the cycle's transit currency.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DfsCycle {
-    /// `(pool_id, PoolKind)` hops in traversal order, anchor first.
+    /// `(pool_id, PoolKind)` hops in traversal order. The raw walker emits
+    /// the touched anchor first; admission rotates the cycle to its stake
+    /// entry, so the first hop is the WETH consumer for an admitted cycle.
     pub pools: Vec<EdgeKey>,
-    /// The token the anchor hop consumes (the cycle's transit currency).
+    /// The token the first hop consumes (the cycle's transit currency).
     pub entry_token_id: u64,
 }
+
+/// The trace label for an enumerated cycle no rotation of which consumes the
+/// settlement token: it cannot be entered with a WETH stake and is refused
+/// before the solver ever sees it.
+pub const NON_WETH_CYCLE: &str = "non_weth_cycle";
 
 /// The per-frame discovery slice: a wall-clock deadline + the walker's
 /// cooperative cancel flag. The finding loop checks the clock between
@@ -129,13 +136,90 @@ impl AnchoredGraph {
         cap: usize,
         max_hops: usize,
     ) -> Vec<DfsCycle> {
+        self.enumerate_cycles(touched, budget, cap, max_hops, Some)
+            .0
+    }
+
+    /// The WETH-stake admission of the touched-set enumeration: every
+    /// enumerated directed cycle is rotated so its first hop consumes
+    /// `weth_token_id`. A cycle no rotation of which consumes WETH cannot be
+    /// entered with the settlement asset and is refused
+    /// ([`NON_WETH_CYCLE`]); the refusal is counted, not returned.
+    ///
+    /// Admission runs inside the enumeration loop, so a refused no-WETH cycle
+    /// never consumes a `cap` slot ahead of an admissible one.
+    #[must_use]
+    pub fn weth_entry_cycles(
+        &self,
+        touched: &[AnchorPool],
+        weth_token_id: u64,
+        budget: &DiscoveryBudget,
+        cap: usize,
+        max_hops: usize,
+    ) -> (Vec<DfsCycle>, usize) {
+        self.enumerate_cycles(touched, budget, cap, max_hops, |cycle| {
+            self.rotate_to_entry(&cycle, weth_token_id)
+        })
+    }
+
+    /// Rotate one directed cycle so its traversal starts at the hop that
+    /// consumes `entry_token_id`, preserving hop order and closing back on the
+    /// same token; `None` when no hop consumes it. The result is the same
+    /// directed cycle with a different starting hop.
+    #[must_use]
+    pub fn rotate_to_entry(&self, cycle: &DfsCycle, entry_token_id: u64) -> Option<DfsCycle> {
+        let n = cycle.pools.len();
+        if n == 0 {
+            return None;
+        }
+        let mut in_token = cycle.entry_token_id;
+        let mut entries = Vec::with_capacity(n);
+        for key in &cycle.pools {
+            entries.push(in_token);
+            let &(token0_id, token1_id) = self.edge_tokens.get(key)?;
+            in_token = if token0_id == in_token {
+                token1_id
+            } else if token1_id == in_token {
+                token0_id
+            } else {
+                return None;
+            };
+        }
+        if in_token != cycle.entry_token_id {
+            return None;
+        }
+        let position = entries.iter().position(|&token| token == entry_token_id)?;
+        let pools = (0..n).map(|i| cycle.pools[(position + i) % n]).collect();
+        Some(DfsCycle {
+            pools,
+            entry_token_id,
+        })
+    }
+
+    /// The shared enumeration loop behind [`Self::cycles_through_touched`] and
+    /// [`Self::weth_entry_cycles`]: `transform` maps each freshly
+    /// deduplicated directed cycle to the rotation the caller admits, or
+    /// `None` to refuse it. A refused cycle is counted so a caller's trace can
+    /// name the refusal without enumerating it again.
+    fn enumerate_cycles<F>(
+        &self,
+        touched: &[AnchorPool],
+        budget: &DiscoveryBudget,
+        cap: usize,
+        max_hops: usize,
+        transform: F,
+    ) -> (Vec<DfsCycle>, usize)
+    where
+        F: Fn(DfsCycle) -> Option<DfsCycle>,
+    {
         if cap == 0 || touched.is_empty() || max_hops < 2 {
-            return Vec::new();
+            return (Vec::new(), 0);
         }
         let touched_keys: HashSet<EdgeKey> =
             touched.iter().map(|p| (p.pool_id, p.pool_kind)).collect();
         let mut seen: HashSet<Vec<(u64, u8, u64)>> = HashSet::new();
         let mut best: Vec<Candidate> = Vec::new();
+        let mut refused = 0usize;
         let mut jobs_left = touched.len() * 2;
         'passes: for pass in 0..2u8 {
             for anchor in touched {
@@ -177,13 +261,17 @@ impl AnchoredGraph {
                         continue;
                     }
                     let touched_count = pools.iter().filter(|k| touched_keys.contains(k)).count();
+                    let Some(cycle) = transform(DfsCycle {
+                        pools,
+                        entry_token_id: entry,
+                    }) else {
+                        refused += 1;
+                        continue;
+                    };
                     insert_top(
                         &mut best,
                         Candidate {
-                            cycle: DfsCycle {
-                                pools,
-                                entry_token_id: entry,
-                            },
+                            cycle,
                             key,
                             touched_count,
                         },
@@ -197,7 +285,7 @@ impl AnchoredGraph {
         }
         best.sort_by(rank);
         best.truncate(cap);
-        best.into_iter().map(|c| c.cycle).collect()
+        (best.into_iter().map(|c| c.cycle).collect(), refused)
     }
 
     /// Canonical form of a directed cycle for dedup: the minimum rotation of

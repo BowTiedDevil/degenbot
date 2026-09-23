@@ -20,6 +20,7 @@ use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{
     resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, DiscoveryBudget, UnsupportedHop,
+    NON_WETH_CYCLE,
 };
 use proptest::prelude::*;
 
@@ -377,4 +378,105 @@ fn resolve_hop_refuses_family_without_index_lane() {
 
     // A V2 edge absent from the index is a data gap, not a family gap.
     assert_eq!(resolve_hop(&index, (8, PoolKind::V2)).unwrap(), None);
+}
+
+// ─────────────── 6. WETH-entry admission ───────────────
+
+/// A touched pool that trades no WETH still rides a WETH-closing cycle as a
+/// mid hop: the walker pins it on its own pair, and admission rotates the
+/// cycle to the WETH leg instead of dropping the pool.
+#[test]
+fn touched_non_weth_pool_rides_a_weth_entry_cycle_as_mid() {
+    const MID_ID: u64 = 30;
+    let mut index = V2ConnectorIndex::default();
+    index.push_edge(edge(101, QUOTE_ID, TOK_ID, 0xB1)); // WETH-TOK connector
+    index.push_edge(edge(102, TOK_ID, MID_ID, 0xB2)); // touched, non-WETH
+    index.push_edge(edge(103, MID_ID, QUOTE_ID, 0xB3)); // M-WETH connector
+    let graph = AnchoredGraph::from_connector_index(&index);
+
+    let (admitted, refused) = graph.weth_entry_cycles(
+        &[anchor(102, TOK_ID, MID_ID, PoolKind::V2)],
+        QUOTE_ID,
+        &open_budget(),
+        16,
+        4,
+    );
+
+    assert_eq!(refused, 0, "a WETH-closing rotation exists: {admitted:?}");
+    let cycle = admitted
+        .iter()
+        .find(|c| {
+            let ids = cycle_pool_ids(c);
+            ids.len() == 3 && ids.contains(&102)
+        })
+        .unwrap();
+    assert_eq!(cycle.entry_token_id, QUOTE_ID, "staked with WETH");
+    let ids = cycle_pool_ids(cycle);
+    assert_ne!(
+        ids[0], 102,
+        "the non-WETH pool rides mid-cycle, not as the entry"
+    );
+}
+
+/// A cycle whose rotations never consume WETH cannot be staked and is refused
+/// with the `non_weth_cycle` label; both drift directions are counted.
+#[test]
+fn cycle_without_a_weth_hop_is_refused_as_non_weth() {
+    const MID_ID: u64 = 30;
+    let mut index = V2ConnectorIndex::default();
+    index.push_edge(edge(101, TOK_ID, MID_ID, 0xB1));
+    index.push_edge(edge(102, MID_ID, TOK_ID, 0xB2));
+    let graph = AnchoredGraph::from_connector_index(&index);
+
+    let (admitted, refused) = graph.weth_entry_cycles(
+        &[anchor(101, TOK_ID, MID_ID, PoolKind::V2)],
+        QUOTE_ID,
+        &open_budget(),
+        16,
+        4,
+    );
+
+    assert!(admitted.is_empty(), "no WETH rotation exists: {admitted:?}");
+    assert_eq!(refused, 2, "both drift directions are refused");
+    assert_eq!(NON_WETH_CYCLE, "non_weth_cycle");
+}
+
+/// The committed discovery pinned WETH-quoted anchors with `token_a` = the
+/// WETH quote and kept only anchor-first WETH-entry cycles. On a single
+/// WETH-quoted touched pool, the rotated admission reproduces that cycle's
+/// traversal and entry token exactly.
+#[test]
+fn weth_entry_admission_reproduces_the_committed_weth_anchor_cycle() {
+    let mut index = V2ConnectorIndex::default();
+    index.push_edge(edge(101, TOK_ID, QUOTE_ID, 0xB1));
+    index.push_edge(edge(102, TOK_ID, QUOTE_ID, 0xC1));
+    let graph = AnchoredGraph::from_connector_index(&index);
+
+    // Committed: pin ordered by the WETH quote; keep the anchor-first
+    // WETH-entry rotation.
+    let committed = graph
+        .cycles_through_touched(
+            &[anchor(101, QUOTE_ID, TOK_ID, PoolKind::V2)],
+            &open_budget(),
+            16,
+            4,
+        )
+        .into_iter()
+        .find(|c| c.pools.first() == Some(&(101, PoolKind::V2)) && c.entry_token_id == QUOTE_ID)
+        .unwrap();
+
+    // Touched-set: pin the pool's actual pair, then rotate to its stake leg.
+    let (admitted, refused) = graph.weth_entry_cycles(
+        &[anchor(101, TOK_ID, QUOTE_ID, PoolKind::V2)],
+        QUOTE_ID,
+        &open_budget(),
+        16,
+        4,
+    );
+
+    assert_eq!(refused, 0);
+    assert!(
+        admitted.contains(&committed),
+        "committed cycle {committed:?} missing from the rotated admission {admitted:?}"
+    );
 }

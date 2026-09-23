@@ -6,6 +6,7 @@
 //! workspace, and prices the best candidate into the wallet-true bid the
 //! driver simulates and submits.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::backrun::{decide, BackrunConfig, Decision};
@@ -27,7 +28,9 @@ use degenbot_simulation::sim::evm::journal_pools::{
 use degenbot_simulation::sim::evm::{read_view_word, ScratchDb, ScratchEvm};
 use hashbrown::HashMap as HbMap;
 
-use crate::anchored_dfs::{resolve_hop, AnchorPool, DfsCycle, DiscoveryBudget, ResolvedHop};
+use crate::anchored_dfs::{
+    resolve_hop, AnchorPool, DfsCycle, DiscoveryBudget, ResolvedHop, NON_WETH_CYCLE,
+};
 use crate::frame_pipeline::{honest_observe, trace_jsonl, BidEconomics, PipelineConfig};
 use crate::market_context::MarketContext;
 use crate::pending_tx::{ComposedIntent, Decided, PendingTxReaction, V3TickWindow};
@@ -732,11 +735,6 @@ pub fn solve_dfs_chains(
     stats
 }
 
-/// The hop refs of one WETH-entry 3-hop walker cycle:
-/// `WETH →(anchor) tok →(h1) mid →(h2) WETH`. `None` unless the resolved
-/// bridges straddle exactly that token path — the cycle came from the
-/// walker, and this re-derives its traversal from index identity instead
-/// of trusting orientation.
 /// Admit one walker hop's pool at the frame's chain view (raw-RPC fallback)
 /// and return its workspace id. A pool whose state reads as unusable
 /// (zero reserves, incomplete slot0/liquidity) is skipped, never guessed.
@@ -862,182 +860,142 @@ fn trace_admit_fail(trace_tx: &str, pool: Address, stage: &str, detail: &str) {
     );
 }
 
-/// The hop refs of one WETH-entry walker cycle of arbitrary depth >= 2,
-/// anchored at `a`: quote →(anchor) `first_out` →(mids...) quote. Each mid hop
-/// is re-oriented from index identity (the walker's traversal is re-derived,
-/// never trusted). `None` unless the mid chain straddles a contiguous token
-/// path back to the quote token.
-///
-/// `mids` carries one entry per non-anchor pool in traversal order:
-/// (`out_token_id`, `out_token_address`, resolved pool, admitted workspace id),
-/// where "out" is the token the frame holds AFTER that hop.
+/// One WETH-entry cycle hop resolved against the frame: the workspace pool id
+/// already admitted (or freshly admitted) for this cycle, its canonical token
+/// order, and its lane family. [`cycle_refs`] orients each hop to the
+/// traversal from these alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CycleHop {
+    pub workspace_pool_id: u64,
+    pub pool: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub family: LaneFamily,
+}
+
+/// The executable hop refs of one WETH-entry cycle from its resolved pools in
+/// traversal order (`hops[0]` consumes WETH). Each ref's `zfo` orients its
+/// canonical token order to the traversal; `None` unless every hop straddles
+/// its neighbour and the traversal closes back on WETH.
 #[must_use]
-pub fn n_hop_refs(
-    a: &AffectedPool,
-    quote_id: u64,
-    quote_addr: Address,
-    first_out_id: u64,
-    first_out_addr: Address,
-    mids: &[(u64, Address, ResolvedHop, u64)],
-) -> Option<Vec<BackrunHopRef>> {
-    if mids.is_empty() {
+pub fn cycle_refs(hops: &[CycleHop], weth: Address) -> Option<Vec<BackrunHopRef>> {
+    if hops.is_empty() {
         return None;
     }
-    let anchor = BackrunHopRef {
-        pool_id: a.workspace_pool_id,
-        pool: a.address,
-        token0: a.token0,
-        token1: a.token1,
-        // The anchor hop consumes the quote: `zfo` ⇔ the input is the hop's token0.
-        zfo: a.token0 == quote_addr,
-        family: a.family,
-    };
-    let mut out = Vec::with_capacity(mids.len() + 1);
-    out.push(anchor);
-    let mut in_id = first_out_id;
-    let mut in_addr = first_out_addr;
-    let last_idx = mids.len() - 1;
-    for (i, (out_id, out_addr, h, ws_id)) in mids.iter().enumerate() {
-        let straddles = (h.token0_id() == in_id && h.token1_id() == *out_id)
-            || (h.token1_id() == in_id && h.token0_id() == *out_id);
-        if !straddles {
+    let last = hops.len() - 1;
+    let mut in_addr = weth;
+    let mut out = Vec::with_capacity(hops.len());
+    for (i, h) in hops.iter().enumerate() {
+        let zfo = h.token0 == in_addr;
+        if !zfo && h.token1 != in_addr {
             return None;
         }
-        let zfo = h.token0_id() == in_id;
-        let (t0, t1) = if zfo {
-            (in_addr, *out_addr)
-        } else {
-            (*out_addr, in_addr)
-        };
+        let out_addr = if zfo { h.token1 } else { h.token0 };
         out.push(BackrunHopRef {
-            pool_id: *ws_id,
-            pool: *h.address(),
-            token0: t0,
-            token1: t1,
+            pool_id: h.workspace_pool_id,
+            pool: h.pool,
+            token0: h.token0,
+            token1: h.token1,
             zfo,
-            family: match h {
-                ResolvedHop::V2(_) => LaneFamily::V2,
-                ResolvedHop::V3(e) => LaneFamily::V3 { fee: e.fee },
-            },
+            family: h.family,
         });
-        if i == last_idx {
-            // The final mid must close on the quote token.
-            if *out_id != quote_id {
+        if i == last {
+            if out_addr != weth {
                 return None;
             }
         } else {
-            in_id = *out_id;
-            in_addr = *out_addr;
+            in_addr = out_addr;
         }
     }
     Some(out)
 }
 
-/// One affected pool's walker outcome: the connectors admitted, the solved
-/// chains, and the cycles dropped because a hop's family has no index lane.
+/// One admissible WETH-entry cycle's walker outcome: the executable chain
+/// (when the pool resolution closed) and the admission counters.
 #[derive(Debug, Default)]
-struct DfsWalk {
+struct CycleWalk {
+    chain: Option<Vec<BackrunHopRef>>,
     admitted: usize,
-    chains: Vec<Vec<BackrunHopRef>>,
     unsupported_hop: usize,
 }
 
-/// Resolve and admit every mid hop of each WETH-entry cycle of ANY depth the
-/// anchored walker produced for this affected pool, returning the solved
-/// chain refs. Cycles whose mid chain re-derivation fails (unresolvable hop,
-/// unadmittable pool, straddle mismatch) are skipped, never guessed.
+/// Resolve every hop of one WETH-entry cycle against the frame's workspace. A
+/// hop whose pool the frame already admitted (a touched pool) reuses its
+/// workspace id; every other hop is admitted from its index edge through the
+/// same [`admit_hop_pool`] ladder the mids use. A cycle whose resolution fails
+/// (unresolvable hop, unadmittable pool, non-closing traversal) yields no
+/// chain, never a guess.
 #[expect(
     clippy::too_many_arguments,
     reason = "the workspace, index, solver, and provider are distinct seams the pipeline threads"
 )]
-async fn dfs_cycle_chains(
+async fn cycle_chain(
     rt: &MarketContext,
     idx: &V2ConnectorIndex,
-    a: &AffectedPool,
-    wq: &AffectedQuote,
-    cycles: &[DfsCycle],
+    affected: &HbMap<u64, &AffectedPool>,
+    cycle: &DfsCycle,
+    weth_id: u64,
     scratch: &mut ScratchEvm<ScratchDb<'_>>,
     solver: &mut BackrunSolver,
     provider: &AlloyProvider,
     head: u64,
     trace_tx: &str,
-) -> DfsWalk {
-    let mut chains = Vec::new();
-    let mut admitted = 0usize;
-    let mut unsupported_hop = 0usize;
-    let Some(tok_addr) = rt.token_addr(wq.tok_id) else {
-        return DfsWalk::default();
+) -> CycleWalk {
+    let mut walk = CycleWalk::default();
+    let Some(weth_addr) = rt.token_addr(weth_id) else {
+        return walk;
     };
-    let Some(quote_addr) = rt.token_addr(wq.quote_id) else {
-        return DfsWalk::default();
-    };
-    for cycle in cycles {
-        if cycle.entry_token_id != wq.quote_id || cycle.pools.len() < 2 {
+    let mut hops = Vec::with_capacity(cycle.pools.len());
+    for key in &cycle.pools {
+        if let Some(a) = affected.get(&key.0) {
+            hops.push(CycleHop {
+                workspace_pool_id: a.workspace_pool_id,
+                pool: a.address,
+                token0: a.token0,
+                token1: a.token1,
+                family: a.family,
+            });
             continue;
         }
-        let mut mids: Vec<(u64, Address, ResolvedHop, u64)> =
-            Vec::with_capacity(cycle.pools.len() - 1);
-        let mut in_id = wq.tok_id;
-        let mut rejected = false;
-        for key in &cycle.pools[1..] {
-            let h = match resolve_hop(idx, *key) {
-                Ok(Some(h)) => h,
-                Ok(None) => {
-                    rejected = true;
-                    break;
-                }
-                Err(hop) => {
-                    unsupported_hop += 1;
-                    trace_jsonl(
-                        "unsupported_hop",
-                        serde_json::json!({
-                            "tx": trace_tx,
-                            "pool_id": hop.pool_id,
-                            "kind": format!("{:?}", hop.kind),
-                        }),
-                    );
-                    rejected = true;
-                    break;
-                }
-            };
-            let Some(out_id) = (if h.token0_id() == in_id {
-                h.token1_id().into()
-            } else if h.token1_id() == in_id {
-                h.token0_id().into()
-            } else {
-                rejected = true;
-                None
-            }) else {
-                break;
-            };
-            let Some(out_addr) = rt.token_addr(out_id) else {
-                rejected = true;
-                break;
-            };
-            let Some(ws) = admit_hop_pool(rt, solver, scratch, provider, &h, head, trace_tx).await
-            else {
-                rejected = true;
-                break;
-            };
-            admitted += 1;
-            mids.push((out_id, out_addr, h, ws));
-            in_id = out_id;
-        }
-        if rejected {
-            continue;
-        }
-        if let Some(chain) = n_hop_refs(a, wq.quote_id, quote_addr, wq.tok_id, tok_addr, &mids) {
-            // Parity check: the re-derived traversal must close on the quote.
-            if mids.last().is_some_and(|(id, _, _, _)| *id == wq.quote_id) {
-                chains.push(chain);
+        let h = match resolve_hop(idx, *key) {
+            Ok(Some(h)) => h,
+            Ok(None) => return walk,
+            Err(hop) => {
+                walk.unsupported_hop += 1;
+                trace_jsonl(
+                    "unsupported_hop",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool_id": hop.pool_id,
+                        "kind": format!("{:?}", hop.kind),
+                    }),
+                );
+                return walk;
             }
-        }
+        };
+        let (Some(token0), Some(token1)) =
+            (rt.token_addr(h.token0_id()), rt.token_addr(h.token1_id()))
+        else {
+            return walk;
+        };
+        let Some(ws) = admit_hop_pool(rt, solver, scratch, provider, &h, head, trace_tx).await
+        else {
+            return walk;
+        };
+        walk.admitted += 1;
+        hops.push(CycleHop {
+            workspace_pool_id: ws,
+            pool: *h.address(),
+            token0,
+            token1,
+            family: match h {
+                ResolvedHop::V2(_) => LaneFamily::V2,
+                ResolvedHop::V3(e) => LaneFamily::V3 { fee: e.fee },
+            },
+        });
     }
-    DfsWalk {
-        admitted,
-        chains,
-        unsupported_hop,
-    }
+    walk.chain = cycle_refs(&hops, weth_addr);
+    walk
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1123,56 +1081,65 @@ impl PendingTxReaction for BackrunStrategy {
         let Some(idx) = ctx.index() else {
             return BackrunIntents::bailed();
         };
-        if ctx.token_id(WETH).is_none() {
+        let Some(weth_id) = ctx.token_id(WETH) else {
             return BackrunIntents::bailed();
-        }
-        // WETH-only instance: a frame whose affected pool trades no WETH
-        // quote composes no candidate. The anchored walker owns discovery
-        // entirely (2-hop parity and deep cycles both land in the DFS lane).
+        };
+        // Every cycle this instance admits is staked in WETH, so an unknown
+        // settlement token leaves nothing admissible. Discovery is per-frame
+        // over the touched set; WETH gates cycle admission, not pool
+        // membership, since a touched pool with no WETH quote is still a
+        // legal mid-cycle hop.
         let mut non_base_quote_dropped = false;
         let mut dfs_chains: Vec<Vec<BackrunHopRef>> = Vec::new();
         let mut dfs_cycles = 0usize;
+        let mut non_weth_cycles = 0usize;
         let mut connectors_seen = 0usize;
         let mut unsupported_hop = 0usize;
         if let Some(graph) = ctx.dfs.as_ref() {
             let budget = DiscoveryBudget::after(FRAME_DISCOVERY_SLICE);
-            let mut touched: Vec<AnchorPool> = Vec::new();
+            // Every touched pool pins on BOTH of its token pairs: a pool with
+            // no WETH quote is still a legal mid-cycle hop.
+            let mut touched: Vec<AnchorPool> = Vec::with_capacity(affected.len());
             for a in affected {
-                match a.quotes.iter().find(|q| q.quote == WETH) {
-                    Some(wq) => touched.push(AnchorPool {
-                        pool_id: a.index_pool_id,
-                        pool_kind: PoolKind::from(a.family.tag()),
-                        token_a_id: wq.quote_id,
-                        token_b_id: wq.tok_id,
-                    }),
-                    None => non_base_quote_dropped |= !a.quotes.is_empty(),
-                }
-            }
-            // Cycle hop cap: the pin plus up to three connectors.
-            let cycles =
-                graph.cycles_through_touched(&touched, &budget, ctx.connector_cap.max(1), 4);
-            dfs_cycles += cycles.len();
-            for a in affected {
-                let Some(wq) = a.quotes.iter().find(|q| q.quote == WETH) else {
+                let (Some(token0_id), Some(token1_id)) =
+                    (ctx.token_id(a.token0), ctx.token_id(a.token1))
+                else {
                     continue;
                 };
-                let anchor_key = (a.index_pool_id, PoolKind::from(a.family.tag()));
-                let anchor_cycles: Vec<DfsCycle> = cycles
-                    .iter()
-                    .filter(|c| {
-                        c.pools.first() == Some(&anchor_key) && c.entry_token_id == wq.quote_id
-                    })
-                    .cloned()
-                    .collect();
-                if anchor_cycles.is_empty() {
-                    continue;
+                touched.push(AnchorPool {
+                    pool_id: a.index_pool_id,
+                    pool_kind: PoolKind::from(a.family.tag()),
+                    token_a_id: token0_id,
+                    token_b_id: token1_id,
+                });
+            }
+
+            // Cycle hop cap: the pin plus up to three connectors. Admission
+            // rotates each cycle to its WETH stake entry; a no-WETH cycle is
+            // refused before it can consume a cap slot.
+            let (cycles, non_weth) =
+                graph.weth_entry_cycles(&touched, weth_id, &budget, ctx.connector_cap.max(1), 4);
+            non_weth_cycles = non_weth;
+            dfs_cycles = cycles.len() + non_weth;
+            let mut affected_by_index: HbMap<u64, &AffectedPool> =
+                HbMap::with_capacity(affected.len());
+            for a in affected {
+                affected_by_index.insert(a.index_pool_id, a);
+            }
+
+            // Each WETH-entry directed cycle solves once, whichever touched
+            // pool anchored its discovery.
+            let mut solved: HashSet<Vec<(u64, bool)>> = HashSet::new();
+            for cycle in &cycles {
+                if budget.expired() {
+                    break;
                 }
-                let walk = dfs_cycle_chains(
+                let walk = cycle_chain(
                     ctx,
                     idx,
-                    a,
-                    wq,
-                    &anchor_cycles,
+                    &affected_by_index,
+                    cycle,
+                    weth_id,
                     scratch,
                     workspace,
                     provider,
@@ -1181,12 +1148,22 @@ impl PendingTxReaction for BackrunStrategy {
                 )
                 .await;
                 connectors_seen += walk.admitted;
-                dfs_chains.extend(walk.chains);
                 unsupported_hop += walk.unsupported_hop;
-                if budget.expired() {
-                    break;
+                let Some(chain) = walk.chain else {
+                    continue;
+                };
+                if !solved.insert(chain.iter().map(|h| (h.pool_id, h.zfo)).collect()) {
+                    continue;
                 }
+                dfs_chains.push(chain);
             }
+
+            // The non-base-quote label is now a cycle-level verdict: it may
+            // fire only when no WETH-entered cycle was admitted at all.
+            let has_non_weth_quote_pool = affected
+                .iter()
+                .any(|a| a.quotes.iter().all(|q| q.quote != WETH));
+            non_base_quote_dropped = has_non_weth_quote_pool && cycles.is_empty();
         }
         trace_jsonl(
             "discover",
@@ -1198,6 +1175,8 @@ impl PendingTxReaction for BackrunStrategy {
                 "dfs_chains": dfs_chains.len(),
                 "unsupported_hop": unsupported_hop,
                 "affected": affected.len(),
+                "non_weth_cycles": non_weth_cycles,
+                "cycle_reject": NON_WETH_CYCLE,
                 "non_base_quote_dropped": non_base_quote_dropped,
             }),
         );

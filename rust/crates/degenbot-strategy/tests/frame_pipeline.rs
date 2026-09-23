@@ -26,7 +26,9 @@ use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, TypedPoolPost, V4PoolDescriptor,
 };
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
-use degenbot_strategy::backrun_strategy::{admit_extracted, net_bid, solve_dfs_chains, WETH};
+use degenbot_strategy::backrun_strategy::{
+    admit_extracted, cycle_refs, net_bid, solve_dfs_chains, CycleHop, WETH,
+};
 use degenbot_strategy::frame_pipeline::{
     build_descriptors, empty_frame_observe_reason, state_digest, MarketContext,
 };
@@ -254,6 +256,86 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     // digest evidence for the JSONL extract trace.
     let digest = state_digest(&extracted[0]);
     assert!(digest.starts_with("0x"), "digest {digest}");
+}
+
+/// The generalized WETH-entry intake reproduces the committed two-hop
+/// traversal: `cycle_refs` on the same resolved pools yields the same hop list
+/// (per-hop `zfo` + canonical token order) as the committed anchor+mid
+/// construction, and the solver's best candidate is identical.
+#[test]
+fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
+    let (rt, _tok_id, _weth_id) = runtime_fixture();
+    let outcome = golden_replay_outcome();
+    let descriptors = build_descriptors(rt.index(), &outcome.touched);
+    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
+        &outcome,
+        &descriptors.by_address,
+    );
+    let mut solver = BackrunSolver::new();
+    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xparity", None);
+    assert_eq!(affected.len(), 1);
+    let q_id = solver
+        .admit_v2(&BackrunV2Pool {
+            address: Q,
+            token0: affected[0].token0,
+            token1: affected[0].token1,
+            reserve0: 200_000,
+            reserve1: 900,
+        })
+        .expect("connector admits");
+
+    let a = &affected[0];
+    let hops = [
+        CycleHop {
+            workspace_pool_id: a.workspace_pool_id,
+            pool: P,
+            token0: a.token0,
+            token1: a.token1,
+            family: a.family,
+        },
+        CycleHop {
+            workspace_pool_id: q_id,
+            pool: Q,
+            token0: a.token0,
+            token1: a.token1,
+            family: LaneFamily::V2,
+        },
+    ];
+    let new_chain = cycle_refs(&hops, WETH).expect("the WETH-entry two-hop cycle closes");
+
+    // The committed anchor/mid refs, verbatim.
+    let (t0, t1) = (a.token0, a.token1);
+    let tok = if t0 == WETH { t1 } else { t0 };
+    let committed = vec![
+        BackrunHopRef {
+            pool_id: a.workspace_pool_id,
+            pool: P,
+            token0: t0,
+            token1: t1,
+            zfo: t0 == WETH,
+            family: LaneFamily::V2,
+        },
+        BackrunHopRef {
+            pool_id: q_id,
+            pool: Q,
+            token0: t0,
+            token1: t1,
+            zfo: tok == t0,
+            family: LaneFamily::V2,
+        },
+    ];
+    assert_eq!(
+        new_chain, committed,
+        "the rotated intake must reproduce the committed traversal"
+    );
+
+    let new_stats = solve_dfs_chains(&mut solver, std::slice::from_ref(&new_chain), U256::ZERO);
+    let committed_stats =
+        solve_dfs_chains(&mut solver, std::slice::from_ref(&committed), U256::ZERO);
+    assert_eq!(
+        new_stats.best, committed_stats.best,
+        "the dominant two-hop candidate is unchanged"
+    );
 }
 
 // ─────────────── per-frame quote selection (the USDC frame) ────────────────
