@@ -1,6 +1,6 @@
 # ADR-060: Collapsing the V2 walk dispatch — representation vs interface
 
-**Status: proposed** (2026-09-22). Basis: the affected-site survey of
+**Status: accepted** (2026-09-23). Basis: the affected-site survey of
 `rust/crates/degenbot-solvers` recorded in Context below, and the
 rounding-parity analysis of `IntHopState::swap` against
 `compute_swap_step_v3`. The deciding empirical evidence (a byte-parity
@@ -206,6 +206,33 @@ their internal hop construction changes. The engine adapters in
 `bot_core/resolve` and `mixed::solve_mixed_path_int` are not part of the
 change. The memo fingerprint and `WalkStats` fields keep their meaning.
 
+## Outcome
+
+The collapse shipped as **Option B**. `WalkHop` is gone: `PieceView` is the
+sibling view of `ShiftedPieceHop` that carries each hop's forward step,
+exact-out inversion, piece count, and bounded-first-range capability behind a
+single family enum matched only inside the view's methods. The CL hop is
+assembled in one `cl_hop_view` seam shared by both solve entries, and the
+all-CL and mixed dispatch arms are consolidated into one
+`solve_walkable_path_int` construction flow. Neither per-family simulator
+changed: V2 still floors its rational in one DIV, and CL still runs
+`compute_swap_step_v3` per target.
+
+The byte-parity probe refuted Option A (representation collapse). Against the
+zero-tolerance bar it found 18.2% of the 1,236 swap-step comparisons divergent
+(10% on the real-capture subset), including real captured hops whose output
+differs by hundreds of millions of wei at `x = 1` and multi-thousand-wei at
+production-scale inputs. The cause is structural - the CL step floors the
+post-fee net input before the invariant, and floors both the geometric-mean
+liquidity and the spot price - so it is not an accumulation a probe could
+erase. Evidence: `docs/architecture/v2-cl-parity-probe.md`.
+
+The all-V2 fast arm stays on `exact_mobius_solve`. Routing all-V2 paths through
+the walk's constant-product projection is neither byte-identical (83.3% of the
+A/B corpus agreed overall; the 2-hop and captured subsets matched fully, while
+the 3-hop grid is where it diverges) nor competitive (the walk runs ~239x
+slower at the median). Evidence: `examples/all_v2_fastpath_ab.rs`.
+
 ## Non-goals
 
 - **Solidly, Balancer weighted/stable, and Curve two-stage solves stay
@@ -296,16 +323,33 @@ of the probe regardless of pass/fail.
 1. Does the collapse target the all-V2 fast path as well? If all-V2 paths
    stay on `exact_mobius_solve`, A need not represent V2 at all and the
    probe's V2 corpus shrinks to mixed paths only.
+   **Disposition:** No - the fast path stays. The A/B evidence shows the
+   walk's all-V2 projection is divergent on the 3-hop grid and far slower, so
+   `exact_mobius_solve` remains the all-V2 arm. The 3-hop divergence itself is
+   tracked in the task graph, outside this ADR.
 2. Corpus ownership and size: captured fixtures are state-dependent. Is
    the `cl_capture_gen` sequence set sufficient, or must the probe mine
    fresh captures (and under what chain-state conditions)?
+   **Disposition:** The shipped corpus (production captures, offline replay
+   fixtures, `cl_capture_gen` sequences, and golden states) was sufficient to
+   settle the step-level question. Boundary-exact and multi-hop composition
+   coverage stay noted as gaps for any future representation proposal.
 3. Placement of the walk-time piece view: extend `ShiftedPieceHop`
    (already the anchor's view) or introduce a sibling that carries
    `landed` and the simulators? `ShiftedPieceHop` deliberately models the
    ending-range approximation only, so overloading it may blur the anchor
    versus simulation boundary.
+   **Disposition:** A sibling. `PieceView` carries `landed` and the
+   simulators beside `ShiftedPieceHop`, keeping the anchor's
+   ending-range-approximation view separate from the simulation view.
 4. Disposition of `solve_v3_v3_piecewise` and `solve_mixed_v2_v3_piecewise`:
    test-only conveniences may be deleted rather than ported.
+   **Disposition:** Deleted. The two test-only entries had no production
+   intake and were removed with the CL assembly unification; the two
+   production entries remain.
 5. If the probe clears A, is deleting `WalkHop::ConstantProduct` still a
    win once degenerate-range CL profiles are built and walked for every
    V2 hop, or does the profile build cost outweigh the variant removal?
+   **Disposition:** Moot. The probe failed A on the zero-tolerance bar, so
+   the constant-product arm is never deleted and no degenerate-range profile
+   is built for a V2 hop.

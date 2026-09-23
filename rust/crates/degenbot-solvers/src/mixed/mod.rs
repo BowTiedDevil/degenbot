@@ -152,7 +152,7 @@ pub struct MixedPoolRef {
     pub zero_for_one: bool,
 }
 
-/// A single hop in a path submitted to [`ArbitrageEngine::register_path`].
+/// A single hop in a path submitted to `ArbitrageEngine::register_path`.
 ///
 /// The caller supplies the `BotState`-owned `pool_id` (obtained from
 /// `PyBot::register_v*_pool` / `BotState::register_v*_pool`) and the swap

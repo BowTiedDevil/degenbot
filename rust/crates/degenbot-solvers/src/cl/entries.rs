@@ -55,9 +55,9 @@ pub fn derive_and_solve_cl_piecewise(
 
 /// Stage-1 all-CL solve consuming the projection's precomputed crossing
 /// tables + word-boundary profiles (built once per `(pool, direction)` in
-/// `HopProjectionCache`, shared via `Arc` across paths). `crossings[k]` and
-/// `profiles[k]` are parallel to `sequences[k]`. `crossings = None` builds the
-/// crossing tables per call (offline mirror of [`solve_cl_piecewise`]).
+/// `HopProjectionCache`, shared via `Arc` across paths). `prepared[k]` carries
+/// the tables for `sequences[k]`; tableless callers derive them per call via
+/// [`ClSolveTables::derive`] at their own cost.
 /// THE all-CL solve entry: one interface taking the hop sequences, the
 /// prepared tables (parallel to `sequences`), and the caller's
 /// engine-owned cross-block memo handle.
@@ -119,8 +119,8 @@ fn solve_cl_piecewise_inner(
 ///
 /// - `v2_hops[i]`: V2 hop state at position `i` (`None` for CL positions)
 /// - `cl_sequences[i]`: CL tick-range sequence at position `i` (`None` for V2 positions)
-/// - `cl_crossings[i]`/`cl_profiles[i]`: cached projection tables (`None` for V2
-///   positions; `cl_crossings = None` builds tables per call for offline callers)
+/// - `cl_prepared[i]`: cached projection tables (`None` for V2 positions;
+///   `None` derives them per call at the caller's cost for offline callers)
 /// - `hop_order`: true = V2 hop, false = CL hop
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.

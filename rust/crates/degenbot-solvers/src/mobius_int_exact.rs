@@ -223,7 +223,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 /// Solidly-bracketed dispatcher
 /// (`arb_engine::solver_dispatch::solve_solidly`), each of which uses the
 /// model-optimum output as an anchor for its own discrete search
-/// (golden-section for the latter, ±[1,N] EVM-sim sweep for the mixed path).
+/// (golden-section for the latter, ±\[1,N\] EVM-sim sweep for the mixed path).
 pub fn compute_mobius_model_optimal_input(coeffs: &IntMobiusCoefficients) -> U256 {
     // K * M fits in U512 (each is at most U512)
     let km = coeffs.K * coeffs.M;

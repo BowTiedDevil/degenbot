@@ -2107,7 +2107,7 @@ pub fn path_output_bound_at(
 /// Walk-side composed envelope (Loop-21 `envelope_pruned_refine`): the line
 /// set the active-set walk intersects its refine windows against. Same
 /// compose/reduce/sample pipeline as [`path_output_bound_at`] (per-hop prune
-/// rides [`compose_boundary_merged`] inside the gate; here the per-path
+/// rides `compose_boundary_merged` inside the gate; here the per-path
 /// compose is once-per-solve, so the simpler product + sample tail suffices).
 /// Soundness contract identical: the lines pointwise-dominate the true path
 /// output, so any input the lines disprove can never beat the walk's best.

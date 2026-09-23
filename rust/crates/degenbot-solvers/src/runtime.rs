@@ -44,7 +44,7 @@ pub struct SolveRuntimeConfig {
     /// Loop-19 EXPERIMENT (`refine_model_anchor`): `walk_refine_window`
     /// brackets its ternary around the piece's model anchor when the anchor
     /// is inside the window (the EVM floor staircase perturbs the top at wei
-    /// scale — see the [`crate::cl::active_set`] REFINE_BRACKET_WEI note),
+    /// scale — see the `crate::cl::active_set` REFINE_BRACKET_WEI note),
     /// saving the ternary-narrowing probes.
     pub refine_model_anchor: bool,
     /// Loop-20 EXPERIMENT (`tangent_sample_by_mass`): CL tangent sampling

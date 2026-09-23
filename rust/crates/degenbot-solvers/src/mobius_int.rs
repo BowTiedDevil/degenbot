@@ -4,7 +4,7 @@
 //! (`mobius.rs`), the f64-seed-then-integer-refine path, and the f64 V3
 //! tick-range solvers have all been removed. Every path composes to
 //! `l(x) = K·x / (M + N·x)` via the U512 2×2 matrix recurrence below, and the
-//! closed-form optimal input lives in [`crate::solvers::mobius_int_exact`].
+//! closed-form optimal input lives in [`crate::mobius_int_exact`].
 //!
 //! The per-hop swap primitive — `IntHopState`, `IntHopState::swap`, and
 //! `int_simulate_path` — has been extracted into the standalone

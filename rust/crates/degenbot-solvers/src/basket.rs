@@ -10,7 +10,7 @@
 //! (renormalized) weight — `(R^p)^(1/q)` has no exact integer form in
 //! general. The paper's derivation is **inherently floating-point**, so the
 //! core computation runs entirely in `f64`. Integer trades are recovered at
-//! the end via [`refine_to_integer`] (descale + ±3 brute-force), matching the
+//! the end via `refine_to_integer` (descale + ±3 brute-force), matching the
 //! Python reference exactly.
 //!
 //! # Standalone entry point
