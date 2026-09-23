@@ -8,8 +8,8 @@ use degenbot_core::op_warn;
 use degenbot_math::v2::IntHopState;
 
 use super::crossings::{
-    landed_ending_range_index, piece_window_left_edge, piece_window_right_edge,
-    piece_window_right_edge_evented,
+    cl_hop_min_input_for_output, landed_ending_range_index, piece_window_left_edge,
+    piece_window_right_edge, piece_window_right_edge_evented,
 };
 use super::hop_sim::simulate_v3_range_swap;
 use super::telemetry::{
@@ -39,9 +39,26 @@ use crate::runtime::{AnchorSweep, SolveRuntimeConfig};
 // prefix cap. See
 // `docs/architecture/mobius_v3_ending_range_enumeration_evaluation.md`.
 
-/// A hop in the active-set walk: constant-product (a single piece — no tick
-/// ranges; V2-family) or concentrated-liquidity (one piece per ending range).
-pub(super) enum WalkHop<'a> {
+/// A hop in the active-set walk, projected at construction into exactly the
+/// capabilities the walk consumes. The walk never branches on the family:
+/// the per-family simulators sit behind this seam, so this struct is the one
+/// place a constant-product hop and a concentrated-liquidity hop differ.
+pub(super) struct PieceView<'a> {
+    family: PieceFamily<'a>,
+    /// Walk pieces this hop contributes: one per ending range for CL, one
+    /// for constant product.
+    piece_count: usize,
+    /// True when the hop is a single walk piece; the walk skips the
+    /// multi-piece lattice machinery then.
+    single_piece: bool,
+    /// First range's gross-input saturation edge in path-input units, when
+    /// the first range is bounded; `None` for constant product.
+    bounded_first_range: Option<U256>,
+}
+
+/// The per-family payload behind [`PieceView`], matched only inside the
+/// view's methods - never in a per-candidate walk loop.
+enum PieceFamily<'a> {
     /// V2-family constant-product hop. The landed tuple entry is always 0.
     ConstantProduct(&'a IntHopState),
     /// CL hop with its pre-computed per-index crossing table (`crossings[k]`
@@ -58,6 +75,129 @@ pub(super) enum WalkHop<'a> {
         /// every path reusing the hop (the hop-projection memoization).
         profiles: Arc<ClProfileTable>,
     },
+}
+
+impl<'a> PieceView<'a> {
+    pub(super) fn constant_product(hop: &'a IntHopState) -> Self {
+        Self {
+            family: PieceFamily::ConstantProduct(hop),
+            piece_count: 1,
+            single_piece: true,
+            bounded_first_range: None,
+        }
+    }
+
+    pub(super) fn cl(crossings: Arc<ClCrossingTable>, profiles: Arc<ClProfileTable>) -> Self {
+        let piece_count = crossings.len();
+        let bounded_first_range = crossings
+            .first()
+            .map(|c| c.ending_range.max_gross_input_in_range());
+        Self {
+            family: PieceFamily::Cl {
+                crossings,
+                profiles,
+            },
+            piece_count,
+            single_piece: piece_count == 1,
+            bounded_first_range,
+        }
+    }
+
+    pub(super) fn piece_count(&self) -> usize {
+        self.piece_count
+    }
+
+    pub(super) fn single_piece(&self) -> bool {
+        self.single_piece
+    }
+
+    pub(super) fn bounded_first_range(&self) -> Option<U256> {
+        self.bounded_first_range
+    }
+
+    /// Forward step for a non-zero `current`: the hop output and the
+    /// ending-range index the input landed in (always 0 for constant product).
+    pub(super) fn step(&self, current: U256) -> (U256, usize) {
+        match &self.family {
+            PieceFamily::ConstantProduct(hop_state) => {
+                // V2 overflow-reverts on-chain → the path yields nothing there.
+                let out = hop_state.swap(current).unwrap_or(U256::ZERO);
+                (out, 0)
+            }
+            PieceFamily::Cl {
+                crossings,
+                profiles,
+            } => {
+                let k = landed_ending_range_index(crossings, current);
+                let crossing = &crossings[k];
+                let remaining = current - crossing.crossing_gross_input;
+                let ending = match &profiles[k] {
+                    Some(profile) => profile.swap(remaining),
+                    None => simulate_v3_range_swap(remaining, &crossing.ending_range),
+                };
+                (crossing.crossing_output.saturating_add(ending.output), k)
+            }
+        }
+    }
+
+    /// The anchor-time projection of piece `k`: the landed range (or
+    /// constant-product) state plus its crossing translations.
+    pub(super) fn anchor_piece(&self, k: usize) -> crate::mobius_shifted_piece::ShiftedPieceHop {
+        use crate::mobius_shifted_piece::ShiftedPieceHop;
+        match &self.family {
+            PieceFamily::ConstantProduct(hop_state) => ShiftedPieceHop {
+                hop: (*hop_state).clone(),
+                gross_input_offset: U256::ZERO,
+                output_offset: U256::ZERO,
+            },
+            PieceFamily::Cl { crossings, .. } => {
+                let crossing = &crossings[k];
+                ShiftedPieceHop {
+                    hop: crossing.ending_range.to_int_hop_state(),
+                    gross_input_offset: if k > 0 {
+                        crossing.crossing_gross_input
+                    } else {
+                        U256::ZERO
+                    },
+                    output_offset: crossing.crossing_output,
+                }
+            }
+        }
+    }
+
+    /// Gross input of the crossing boundary after landed range `k`, when the
+    /// hop has one: `None` for constant product or a terminal range.
+    pub(super) fn next_boundary_gross(&self, k: usize) -> Option<U256> {
+        match &self.family {
+            PieceFamily::ConstantProduct(_) => None,
+            PieceFamily::Cl { crossings, .. } => {
+                crossings.get(k + 1).map(|c| c.crossing_gross_input)
+            }
+        }
+    }
+
+    /// Smallest input into this hop that lands in range `k` and yields at
+    /// least `demand`; `None` when the demand is unreachable within the
+    /// landing (constant-product overflow-revert, CL capacity, or an
+    /// upstream exit preempting the next boundary).
+    pub(super) fn min_input_for_output(&self, k: usize, demand: U256) -> Option<U256> {
+        match &self.family {
+            PieceFamily::ConstantProduct(hop_state) => hop_state.swap_exact_out(demand).ok(),
+            PieceFamily::Cl {
+                crossings,
+                profiles,
+            } => {
+                let crossing = &crossings[k];
+                let z = cl_hop_min_input_for_output(crossing, profiles[k].as_deref(), demand)?;
+                if let Some(next_boundary) = crossings.get(k + 1) {
+                    if z >= next_boundary.crossing_gross_input {
+                        return None;
+                    }
+                }
+                Some(z)
+            }
+        }
+    }
 }
 
 /// Result of a [`simulate_walk_path`] evaluation: the per-hop outputs plus
@@ -80,7 +220,7 @@ pub(super) struct WalkPathOutcome {
 /// the assumption), this walker always simulates the piece the input truly
 /// lands in — which is what makes it usable as the walk's ground truth for
 /// any candidate.
-pub(super) fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
+pub(super) fn simulate_walk_path(amount_in: U256, hops: &[PieceView]) -> WalkPathOutcome {
     bump_path_simulations(1);
     let sim_t0 = std::time::Instant::now();
     let out = simulate_walk_path_inner(amount_in, hops);
@@ -88,7 +228,7 @@ pub(super) fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathO
     out
 }
 
-fn simulate_walk_path_inner(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
+fn simulate_walk_path_inner(amount_in: U256, hops: &[PieceView]) -> WalkPathOutcome {
     let n_hops = hops.len();
     let mut hop_outputs = Vec::with_capacity(n_hops);
     let mut landed = Vec::with_capacity(n_hops);
@@ -100,34 +240,10 @@ fn simulate_walk_path_inner(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcom
             landed.push(0);
             continue;
         }
-        match hop {
-            WalkHop::ConstantProduct(hop_state) => {
-                landed.push(0);
-                let out = match hop_state.swap(current) {
-                    Ok(o) => o,
-                    // V2 hop overflow-reverts on-chain → path yields nothing.
-                    Err(_) => U256::ZERO,
-                };
-                hop_outputs.push(out);
-                current = out;
-            }
-            WalkHop::Cl {
-                crossings,
-                profiles,
-            } => {
-                let k = landed_ending_range_index(crossings, current);
-                landed.push(k);
-                let crossing = &crossings[k];
-                let remaining = current - crossing.crossing_gross_input;
-                let ending = match &profiles[k] {
-                    Some(profile) => profile.swap(remaining),
-                    None => simulate_v3_range_swap(remaining, &crossing.ending_range),
-                };
-                let out = crossing.crossing_output.saturating_add(ending.output);
-                hop_outputs.push(out);
-                current = out;
-            }
-        }
+        let (out, k) = hop.step(current);
+        landed.push(k);
+        hop_outputs.push(out);
+        current = out;
     }
 
     WalkPathOutcome {
@@ -140,31 +256,12 @@ fn simulate_walk_path_inner(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcom
 /// Build the per-hop shifted-piece inputs for tuple `ks`: each hop's
 /// ending-range (or V2) state plus its crossing translations.
 fn build_shifted_piece_hops(
-    hops: &[WalkHop],
+    hops: &[PieceView],
     ks: &[usize],
 ) -> Vec<crate::mobius_shifted_piece::ShiftedPieceHop> {
-    use crate::mobius_shifted_piece::ShiftedPieceHop;
     hops.iter()
         .zip(ks.iter())
-        .map(|(hop, &k)| match hop {
-            WalkHop::ConstantProduct(hop_state) => ShiftedPieceHop {
-                hop: (*hop_state).clone(),
-                gross_input_offset: U256::ZERO,
-                output_offset: U256::ZERO,
-            },
-            WalkHop::Cl { crossings, .. } => {
-                let crossing = &crossings[k];
-                ShiftedPieceHop {
-                    hop: crossing.ending_range.to_int_hop_state(),
-                    gross_input_offset: if k > 0 {
-                        crossing.crossing_gross_input
-                    } else {
-                        U256::ZERO
-                    },
-                    output_offset: crossing.crossing_output,
-                }
-            }
-        })
+        .map(|(hop, &k)| hop.anchor_piece(k))
         .collect()
 }
 
@@ -184,7 +281,7 @@ fn build_shifted_piece_hops(
 /// corner (the smooth argmax runs past the pinned edge) is owned by
 /// `walk_refine_window`, which searches for the discrete peak.
 #[cfg(test)]
-pub(super) fn walk_piece_anchor(hops: &[WalkHop], ks: &[usize]) -> U256 {
+pub(super) fn walk_piece_anchor(hops: &[PieceView], ks: &[usize]) -> U256 {
     // Fresh single-shot reference for the doc tests: production uses the
     // memoizing `ShiftedPieceComposer` inline (byte-identical results).
     let pieces = build_shifted_piece_hops(hops, ks);
@@ -198,20 +295,13 @@ pub(super) fn walk_piece_anchor(hops: &[WalkHop], ks: &[usize]) -> U256 {
 /// Retained under cfg(test) as the A/B baseline for the exact-anchor
 /// quality tests.
 #[cfg(test)]
-pub(super) fn walk_piece_anchor_transitional(hops: &[WalkHop], ks: &[usize]) -> U256 {
+pub(super) fn walk_piece_anchor_transitional(hops: &[PieceView], ks: &[usize]) -> U256 {
     let mut flat_hops: Vec<IntHopState> = Vec::with_capacity(hops.len());
     let mut gross_sum = U256::ZERO;
     for (hop, &k) in hops.iter().zip(ks.iter()) {
-        match hop {
-            WalkHop::ConstantProduct(hop_state) => flat_hops.push((*hop_state).clone()),
-            WalkHop::Cl { crossings, .. } => {
-                let crossing = &crossings[k];
-                if k > 0 {
-                    gross_sum = gross_sum.saturating_add(crossing.crossing_gross_input);
-                }
-                flat_hops.push(crossing.ending_range.to_int_hop_state());
-            }
-        }
+        let piece = hop.anchor_piece(k);
+        gross_sum = gross_sum.saturating_add(piece.gross_input_offset);
+        flat_hops.push(piece.hop);
     }
     let Ok(result) = crate::mobius_int_exact::exact_mobius_solve(&flat_hops) else {
         return gross_sum;
@@ -269,7 +359,7 @@ impl WalkRecorder {
 
     /// Simulate `candidate`, update the bests, and return the outcome (the
     /// caller needs `landed` / `final_output` for direction decisions).
-    fn eval_and_record(&mut self, candidate: U256, hops: &[WalkHop]) -> WalkPathOutcome {
+    fn eval_and_record(&mut self, candidate: U256, hops: &[PieceView]) -> WalkPathOutcome {
         let outcome = simulate_walk_path(candidate, hops);
         let score = walk_profit_score(outcome.final_output, candidate);
         if score > self.top_score {
@@ -304,14 +394,8 @@ fn anchor_sweep_mode(cfg: &SolveRuntimeConfig) -> AnchorSweep {
 /// `None` when a hop has a single range). Returns `None` when the first hop
 /// has no bounded range (constant product / unbounded), so callers fall back
 /// to the anchor.
-fn single_piece_saturation_edge(hops: &[WalkHop]) -> Option<U256> {
-    let hop = hops.first()?;
-    match hop {
-        WalkHop::Cl { crossings, .. } => crossings
-            .first()
-            .map(|c| c.ending_range.max_gross_input_in_range()),
-        WalkHop::ConstantProduct(_) => None,
-    }
+fn single_piece_saturation_edge(hops: &[PieceView]) -> Option<U256> {
+    hops.first()?.bounded_first_range()
 }
 
 /// Maximum width the refine ternary settles to before the final probe grid.
@@ -344,7 +428,7 @@ const REFINE_DENSE_SPAN: u64 = 1024;
 /// flat interior top makes the coarse grid profit-equivalent, and the bounded
 /// corner is captured because `hi` is the pinned right edge.
 pub(super) fn walk_refine_window(
-    hops: &[WalkHop],
+    hops: &[PieceView],
     lo: U256,
     hi: U256,
     rec: &mut WalkRecorder,
@@ -392,7 +476,7 @@ pub(super) fn walk_refine_window(
     let mut argmax_x = lo;
     let mut best_score = I256::MIN;
     // phase 0 = ternary narrowing, phase 1 = final grid / dense sweep.
-    let mut probe = |x: U256, hops: &[WalkHop], rec: &mut WalkRecorder, phase: u8| -> I256 {
+    let mut probe = |x: U256, hops: &[PieceView], rec: &mut WalkRecorder, phase: u8| -> I256 {
         bump_refine_sims(1);
         if phase == 0 {
             bump_ternary_sims(1);
@@ -539,7 +623,7 @@ const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 
 #[hotpath::measure(label = "cl_solve.active_set")]
 pub(super) fn solve_active_set_path(
-    hops: &[WalkHop],
+    hops: &[PieceView],
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
@@ -560,13 +644,13 @@ pub(super) fn solve_active_set_path(
 
 #[expect(clippy::too_many_lines)]
 fn solve_active_set_path_inner(
-    hops: &[WalkHop],
+    hops: &[PieceView],
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> Option<(U256, U256, Vec<U256>)> {
     /// Advance the landed tuple one piece past the window's right edge
     /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).
-    fn landed_beyond(hops: &[WalkHop], right_edge: U256, ks: &[usize]) -> Option<Vec<usize>> {
+    fn landed_beyond(hops: &[PieceView], right_edge: U256, ks: &[usize]) -> Option<Vec<usize>> {
         for d in 1u64..=8 {
             let landed = simulate_walk_path(right_edge.saturating_add(U256::from(d)), hops).landed;
             if landed_any_above(&landed, ks) {
@@ -587,7 +671,7 @@ fn solve_active_set_path_inner(
         reason = "walk-domain refinement carry (window pair + hint + recorder + neighbor switch + runtime stance) is coherent as a flat signature"
     )]
     fn refine_at_stop(
-        hops: &[WalkHop],
+        hops: &[PieceView],
         ks: &[usize],
         x_l: U256,
         x_r: Option<U256>,
@@ -683,14 +767,7 @@ fn solve_active_set_path_inner(
 
     clear_walk_pieces_and_sims();
 
-    let iteration_cap: usize = hops
-        .iter()
-        .map(|h| match h {
-            WalkHop::ConstantProduct(_) => 1,
-            WalkHop::Cl { crossings, .. } => crossings.len(),
-        })
-        .sum::<usize>()
-        + 2;
+    let iteration_cap: usize = hops.iter().map(PieceView::piece_count).sum::<usize>() + 2;
 
     let mut ks = vec![0usize; hops.len()];
     let mut visited: HashSet<Vec<usize>> = HashSet::new();
@@ -709,10 +786,7 @@ fn solve_active_set_path_inner(
     // confirm_hi with a single probe. Byte-identical to the cold path.
     let mut right_bracket: Option<(U256, U256)> = None;
 
-    let single_piece_path = hops.iter().all(|h| match h {
-        WalkHop::ConstantProduct(_) => true,
-        WalkHop::Cl { crossings, .. } => crossings.len() == 1,
-    });
+    let single_piece_path = hops.iter().all(PieceView::single_piece);
 
     for _ in 0..iteration_cap {
         if !visited.insert(ks.clone()) {
@@ -978,10 +1052,7 @@ fn solve_active_set_path_inner(
         let mut range_counts = Vec::with_capacity(n_hops);
         let mut total_ranges = 0usize;
         for h in hops {
-            let n = match h {
-                WalkHop::ConstantProduct(_) => 1,
-                WalkHop::Cl { crossings, .. } => crossings.len(),
-            };
+            let n = h.piece_count();
             range_counts.push(n);
             total_ranges += n;
         }

@@ -2013,11 +2013,11 @@ fn walk_event_first_above_predicted_is_exact_on_synthetic_paths() {
         997,
         1000,
     );
-    let shape_a: Vec<WalkHop> = vec![
+    let shape_a: Vec<PieceView> = vec![
         h0,
-        WalkHop::ConstantProduct(&v2),
+        PieceView::constant_product(&v2),
         h2,
-        WalkHop::ConstantProduct(&v2_tail),
+        PieceView::constant_product(&v2_tail),
     ];
     // Shape B: 3-level CL-CL-CL recursion (mixed directions, staggered
     // liquidities so crossing grosses interleave across all hops).
@@ -2039,7 +2039,7 @@ fn walk_event_first_above_predicted_is_exact_on_synthetic_paths() {
         true,
         &[5_000_000_000_000u128, 7_000_000_000_000, 9_000_000_000_000],
     );
-    let shape_b: Vec<WalkHop> = vec![
+    let shape_b: Vec<PieceView> = vec![
         cl_walk_hop(&seqb0, None),
         cl_walk_hop(&seqb1, None),
         cl_walk_hop(&seqb2, None),
@@ -2060,7 +2060,7 @@ fn walk_event_first_above_predicted_is_exact_on_synthetic_paths() {
 /// lattice walk + per-tuple two-probe verification.
 fn run_predicted_lattice_verification(
     label: &str,
-    hops: &[WalkHop],
+    hops: &[PieceView],
     crossings0: &[IntTickRangeCrossing],
 ) -> (usize, usize) {
     use std::collections::HashSet;
@@ -2664,7 +2664,7 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
 /// coarse argmax, then an exact ±64 dense sweep.
 #[test]
 fn cl_path_solver_matches_fine_grid_oracle_across_families() {
-    fn grid_oracle_profit(hops: &[WalkHop]) -> U256 {
+    fn grid_oracle_profit(hops: &[PieceView]) -> U256 {
         let mut best = U256::ZERO;
         let mut best_x = U256::ZERO;
         // Coarse ×1.05 scan over the plausible input range.
@@ -3123,10 +3123,7 @@ fn block_25641093_pool_feed_hop2_predicts_revm_output() {
     let oracle_out = lead_out + last_leg_out;
 
     let profiles = Arc::new(build_word_profiles(&crossings));
-    let hops = [WalkHop::Cl {
-        crossings,
-        profiles,
-    }];
+    let hops = [PieceView::cl(crossings, profiles)];
     let outcome = simulate_walk_path(gross_in, &hops);
     let got = outcome.hop_outputs[0];
     // vs the validated step-faithful oracle: the residual is per-step

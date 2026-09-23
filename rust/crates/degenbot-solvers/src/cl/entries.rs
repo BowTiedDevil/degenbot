@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use degenbot_math::v2::IntHopState;
 
-use super::active_set::{solve_active_set_path, WalkHop, WalkOutcome};
+use super::active_set::{solve_active_set_path, PieceView, WalkOutcome};
 use super::crossings::{build_cl_crossing_table, build_word_profiles, cl_walk_hop};
 use super::memo::{walk_path_fingerprint, WalkMemo};
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
@@ -113,10 +113,12 @@ fn solve_cl_piecewise_inner(
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
-    let hops: Vec<WalkHop> = (0..sequences.len())
-        .map(|i| WalkHop::Cl {
-            crossings: Arc::clone(&prepared[i].crossings),
-            profiles: Arc::clone(&prepared[i].profiles),
+    let hops: Vec<PieceView> = (0..sequences.len())
+        .map(|i| {
+            PieceView::cl(
+                Arc::clone(&prepared[i].crossings),
+                Arc::clone(&prepared[i].profiles),
+            )
         })
         .collect();
     solve_active_set_path(&hops, cfg, env)
@@ -139,13 +141,13 @@ pub fn solve_mixed_v2_v3_piecewise(
     v3_first: bool,
     cfg: &SolveRuntimeConfig,
 ) -> WalkOutcome {
-    let mut hops: Vec<WalkHop> = Vec::with_capacity(v2_hops.len() + 1);
+    let mut hops: Vec<PieceView> = Vec::with_capacity(v2_hops.len() + 1);
     let cl_hop = cl_walk_hop(v3_sequence, None);
     if v3_first {
         hops.push(cl_hop);
-        hops.extend(v2_hops.iter().map(WalkHop::ConstantProduct));
+        hops.extend(v2_hops.iter().map(PieceView::constant_product));
     } else {
-        hops.extend(v2_hops.iter().map(WalkHop::ConstantProduct));
+        hops.extend(v2_hops.iter().map(PieceView::constant_product));
         hops.push(cl_hop);
     }
     solve_active_set_path(&hops, cfg, None)
@@ -185,13 +187,13 @@ pub fn solve_mixed_piecewise(
     if cl_prepared.len() != n_hops {
         return WalkOutcome::none();
     }
-    let mut hops: Vec<WalkHop> = Vec::with_capacity(n_hops);
+    let mut hops: Vec<PieceView> = Vec::with_capacity(n_hops);
     for (i, &is_v2) in hop_order.iter().enumerate() {
         if is_v2 {
             let Some(v2) = v2_hops[i].as_ref() else {
                 return WalkOutcome::none();
             };
-            hops.push(WalkHop::ConstantProduct(v2));
+            hops.push(PieceView::constant_product(v2));
         } else {
             let Some(seq) = cl_sequences[i] else {
                 return WalkOutcome::none();
@@ -205,10 +207,7 @@ pub fn solve_mixed_piecewise(
                 crossings = Arc::new(build_cl_crossing_table(seq));
                 profiles = Arc::new(build_word_profiles(&crossings));
             }
-            hops.push(WalkHop::Cl {
-                crossings,
-                profiles,
-            });
+            hops.push(PieceView::cl(crossings, profiles));
         }
     }
     solve_active_set_path(&hops, cfg, env)

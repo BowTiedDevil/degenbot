@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy::primitives::U256;
 
-use super::active_set::{landed_any_above, simulate_walk_path, WalkHop};
+use super::active_set::{landed_any_above, simulate_walk_path, PieceView};
 use super::telemetry::{
     add_pred_ns, bump_event_solver_fallbacks, bump_event_solver_ok, bump_left_edge_sims,
     bump_right_edge_sims, observe_max_dense_words,
@@ -14,7 +14,7 @@ use crate::runtime::SolveRuntimeConfig;
 /// Smallest input into this CL hop, while it lands exactly in the crossing's
 /// ending range, whose realized output is >= `w`. `None` when `w` exceeds
 /// the landing's capacity.
-fn cl_hop_min_input_for_output(
+pub(super) fn cl_hop_min_input_for_output(
     crossing: &IntTickRangeCrossing,
     profile: Option<&ClWordProfile>,
     w: U256,
@@ -44,24 +44,19 @@ fn cl_hop_min_input_for_output(
 /// This is the *exact* realized-chain inversion under the floor-cancel
 /// lemma; the loop-15 census measures how often it agrees with the bisection
 /// ground truth on captured states.
-pub(super) fn walk_event_first_above_predicted(hops: &[WalkHop], ks: &[usize]) -> Option<U256> {
+pub(super) fn walk_event_first_above_predicted(hops: &[PieceView], ks: &[usize]) -> Option<U256> {
     let p_t0 = std::time::Instant::now();
     let out = walk_event_first_above_predicted_inner(hops, ks);
     add_pred_ns(u64::try_from(p_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
     out
 }
 
-fn walk_event_first_above_predicted_inner(hops: &[WalkHop], ks: &[usize]) -> Option<U256> {
+fn walk_event_first_above_predicted_inner(hops: &[PieceView], ks: &[usize]) -> Option<U256> {
     let mut best: Option<U256> = None;
     for i in 0..hops.len() {
-        let crossings = match &hops[i] {
-            WalkHop::ConstantProduct(_) => continue,
-            WalkHop::Cl { crossings, .. } => crossings,
-        };
-        let Some(next) = crossings.get(ks[i] + 1) else {
+        let Some(mut demand) = hops[i].next_boundary_gross(ks[i]) else {
             continue;
         };
-        let mut demand = next.crossing_gross_input;
         if demand.is_zero() {
             // Zero-cost boundary: the tuple is already exceeded at x = 0.
             return Some(U256::ZERO);
@@ -71,39 +66,11 @@ fn walk_event_first_above_predicted_inner(hops: &[WalkHop], ks: &[usize]) -> Opt
             if demand.is_zero() {
                 break;
             }
-            match &hops[h] {
-                WalkHop::ConstantProduct(state) => {
-                    if let Ok(z) = state.swap_exact_out(demand) {
-                        demand = z;
-                    } else {
-                        reachable = false;
-                        break;
-                    }
-                }
-                WalkHop::Cl {
-                    crossings,
-                    profiles,
-                } => {
-                    let k = ks[h];
-                    let crossing = &crossings[k];
-                    let Some(z) =
-                        cl_hop_min_input_for_output(crossing, profiles[k].as_deref(), demand)
-                    else {
-                        reachable = false;
-                        break;
-                    };
-                    if let Some(next_boundary) = crossings.get(k + 1) {
-                        if z >= next_boundary.crossing_gross_input {
-                            // The upstream hop exits its landing before the
-                            // demand is met — its own candidate (in this set)
-                            // preempts this one.
-                            reachable = false;
-                            break;
-                        }
-                    }
-                    demand = z;
-                }
-            }
+            let Some(z) = hops[h].min_input_for_output(ks[h], demand) else {
+                reachable = false;
+                break;
+            };
+            demand = z;
         }
         if reachable {
             best = Some(best.map_or(demand, |b| b.min(demand)));
@@ -126,7 +93,7 @@ pub(super) fn landed_ending_range_index(
 ///
 /// `landed(x)` is componentwise non-decreasing in `x`, so the predicate is
 /// monotone and bisection is sound.
-pub(super) fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> U256 {
+pub(super) fn piece_window_left_edge(hops: &[PieceView], ks: &[usize], hint: U256) -> U256 {
     if ks.iter().all(|&k| k == 0) {
         return U256::ZERO;
     }
@@ -175,12 +142,16 @@ pub(super) fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256)
 /// crosses any further — the piece is terminal).
 ///
 /// Sound by the same monotonicity argument as [`piece_window_left_edge`].
-pub(super) fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option<U256> {
+pub(super) fn piece_window_right_edge(
+    hops: &[PieceView],
+    ks: &[usize],
+    hint: U256,
+) -> Option<U256> {
     piece_window_right_edge_seeded(hops, ks, hint, None, None).0
 }
 
 pub(super) fn piece_window_right_edge_evented(
-    hops: &[WalkHop],
+    hops: &[PieceView],
     ks: &[usize],
     hint: U256,
     lo_seed: Option<U256>,
@@ -222,7 +193,7 @@ pub(super) fn piece_window_right_edge_evented(
 /// where `hi_to_reuse` is the final confirmed-above bound — the caller feeds
 /// it back on the next piece.
 fn piece_window_right_edge_seeded(
-    hops: &[WalkHop],
+    hops: &[PieceView],
     ks: &[usize],
     hint: U256,
     lo_seed: Option<U256>,
@@ -346,7 +317,7 @@ pub fn build_cl_word_profiles_from_crossings(crossings: &[IntTickRangeCrossing])
     build_word_profiles(crossings)
 }
 
-/// Build a `WalkHop::Cl` (crossing table + word-boundary profiles) for one CL
+/// Build a `PieceView` for one CL
 /// sequence - the single place a CL walk hop is assembled. `crossings`/`profiles`
 /// are precomputed projection tables (Arc-shared through the hop memoization),
 /// cloned in O(1); `None` builds that table here.
@@ -355,7 +326,7 @@ fn cl_walk_hop_cached<'a>(
     seq: &'a IntV3TickRangeSequence,
     crossings: Option<&Arc<ClCrossingTable>>,
     profiles: Option<&Arc<ClProfileTable>>,
-) -> WalkHop<'a> {
+) -> PieceView<'a> {
     let crossings = match crossings {
         Some(c) => Arc::clone(c),
         None => Arc::new(build_crossing_table(seq)),
@@ -364,10 +335,7 @@ fn cl_walk_hop_cached<'a>(
         Some(p) => Arc::clone(p),
         None => Arc::new(build_word_profiles(&crossings)),
     };
-    WalkHop::Cl {
-        crossings,
-        profiles,
-    }
+    PieceView::cl(crossings, profiles)
 }
 
 /// Cache-less variant of [`cl_walk_hop_cached`] for offline callers that only
@@ -375,6 +343,6 @@ fn cl_walk_hop_cached<'a>(
 pub(super) fn cl_walk_hop<'a>(
     seq: &'a IntV3TickRangeSequence,
     profiles: Option<&Arc<ClProfileTable>>,
-) -> WalkHop<'a> {
+) -> PieceView<'a> {
     cl_walk_hop_cached(seq, None, profiles)
 }

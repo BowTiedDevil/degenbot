@@ -10,7 +10,7 @@ use alloy::primitives::U256;
 
 #[cfg(feature = "telemetry")]
 use super::active_set::{landed_any_above, simulate_walk_path};
-use super::active_set::{WalkHop, WalkStats};
+use super::active_set::{PieceView, WalkStats};
 #[cfg(feature = "telemetry")]
 use super::crossings::walk_event_first_above_predicted;
 use crate::runtime::SolveRuntimeConfig;
@@ -95,7 +95,7 @@ fn event_census_bucket(d: U256) -> usize {
 /// Record one piece: `x_r = Some(lo)` with `hi` above (bracket `[lo+1, hi]`)
 /// when bounded, `None` for a terminal piece.
 pub(super) fn event_census_record(
-    hops: &[WalkHop],
+    hops: &[PieceView],
     ks: &[usize],
     x_r: Option<U256>,
     hi: U256,
@@ -109,7 +109,7 @@ pub(super) fn event_census_record(
 
 #[cfg(feature = "telemetry")]
 fn event_census_record_inner(
-    hops: &[WalkHop],
+    hops: &[PieceView],
     ks: &[usize],
     x_r: Option<U256>,
     hi: U256,
