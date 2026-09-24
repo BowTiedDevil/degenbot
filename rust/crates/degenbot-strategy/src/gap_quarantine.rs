@@ -74,6 +74,9 @@ pub struct ParkedFrame {
     pub access_list: serde_json::Value,
     /// Feed receive time; forensics only, no liveness clock rides the frame.
     pub received_unix_ms: u64,
+    /// The signed wire bytes when the source revealed them; a fq park keeps
+    /// them so a rescue can still bundle the target verbatim.
+    pub raw_signed_tx: Option<Bytes>,
 }
 
 impl ParkedFrame {
@@ -112,6 +115,7 @@ impl ParkedFrame {
             access_list: self.access_list.clone(),
             tx_type: self.tx_type,
             received_unix_ms: self.received_unix_ms,
+            raw_signed_tx: self.raw_signed_tx.clone(),
         }
     }
 }
@@ -709,6 +713,7 @@ mod tests {
             expected_at_capture: expected,
             tx_type: 2,
             access_list: serde_json::json!([]),
+            raw_signed_tx: None,
             received_unix_ms: 1_700_000_000_000,
         }
     }

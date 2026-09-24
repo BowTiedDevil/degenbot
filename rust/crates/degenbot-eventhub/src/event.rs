@@ -34,6 +34,10 @@ pub struct PendingTx {
     pub tx_type: u8,
     /// Local receive time (unix ms) stamped by the feed.
     pub received_unix_ms: u64,
+    /// The signed RLP wire bytes (`None` when the source reveals the frame
+    /// unsigned — the `MEVBlocker` partial-pending stream). The txpool feed
+    /// fills this so a bundle can carry the target's verbatim bytes.
+    pub raw_signed_tx: Option<Bytes>,
 }
 
 /// The classes an intake can emit. One hub registration exists per class.

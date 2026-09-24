@@ -513,6 +513,7 @@ fn parse_event(v: &Json, expected_chain: u64, s: &Shared) -> Option<BackrunFeedE
             .and_then(|t| u8::try_from(t).ok())
             .unwrap_or_default(),
         received_unix_ms: now_unix_ms(),
+        raw_signed_tx: None,
     })
 }
 

@@ -302,7 +302,7 @@ A family's operator surface is a typed schema facet, declared once
 strategy StrategyConfig {
     settlement StrategySettlementConfig {}                      // :363
     mevblocker_backrun StrategyMevblockerBackrunConfig { ... }  // :369
-    peer_backrun StrategyPeerBackrunConfig { ... }              // :407
+    txpool_backrun StrategyTxpoolBackrunConfig { ... }              // :407
 }
 ```
 
@@ -413,7 +413,7 @@ Pin every seam a family depends on at its own level:
 | Driver boot | `backrun_driver/driver_boot.rs:227` | `backrun_boot(...) -> BackrunBoot` |
 | Driver factory | `backrun_driver/driver_boot.rs:264` | `backrun_spawn_factory(...) -> DriverSpawnFactory` |
 | Driver loop | `backrun_driver/driver_loop.rs:1114` | `BackrunDriver::start(...) -> DriverHandle` |
-| Config strategy section | `degenbot-config/src/schema.rs:362` | `strategy StrategyConfig { settlement, mevblocker_backrun, peer_backrun }` |
+| Config strategy section | `degenbot-config/src/schema.rs:362` | `strategy StrategyConfig { settlement, mevblocker_backrun, txpool_backrun }` |
 | Engine fake parity | `tests/arbitrage/test_engine_fake_parity.py` | binds `ENGINE_SEAM_MEMBERS` to real engine + stub + fake |
 
 ## Discrepancies between the brief and the landed seams (Fistle log)

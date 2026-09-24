@@ -4,7 +4,7 @@
 
 #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
-use crate::backrun::{MevblockerBackrun, PeerBackrun, SubmissionSlot};
+use crate::backrun::{MevblockerBackrun, SubmissionSlot, TxpoolBackrun};
 use crate::frame_pipeline::predecessor_observe_reason;
 use crate::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{ParkRecord, QuarantineJournal};
@@ -84,7 +84,7 @@ async fn one_boot_product_shares_db_registry_graph_and_policy_facts() {
     );
     let mut config = degenbot_config::BotConfig::default();
     config.strategy.mevblocker_backrun.verify_ticks = degenbot_config::VerifyTicks::Strict;
-    config.strategy.peer_backrun.verify_ticks = degenbot_config::VerifyTicks::Off;
+    config.strategy.txpool_backrun.verify_ticks = degenbot_config::VerifyTicks::Off;
 
     let resources = super::resolve_backrun_boot(
         Arc::new(config),
@@ -96,7 +96,7 @@ async fn one_boot_product_shares_db_registry_graph_and_policy_facts() {
     )
     .await;
     let mevblocker = resources.strategy_boot(super::BackrunEcosystem::Mevblocker);
-    let peer = resources.strategy_boot(super::BackrunEcosystem::Peer);
+    let peer = resources.strategy_boot(super::BackrunEcosystem::Txpool);
 
     assert!(mevblocker.registry().is_registered_pool(&USDC_WETH_V2));
     assert!(mevblocker.registry().is_registered_pool(&USDC_WETH_V3));
@@ -221,7 +221,7 @@ async fn peer_slot_fans_out_public_relays_with_read_provider_fallback() {
             .await
             .expect("lazy http provider"),
     );
-    let mut cfg = PeerBackrun::from_config(&degenbot_config::BotConfig::default(), String::new())
+    let mut cfg = TxpoolBackrun::from_config(&degenbot_config::BotConfig::default(), String::new())
         .into_config();
     cfg.submission = SubmissionSlot::PublicFanOut {
         relays: vec![String::from("http://relay.one:8545")],
@@ -259,26 +259,28 @@ fn submission_slots_diverge_on_private_first_and_target() {
     assert!(mevblocker.submission.names_private_endpoint());
     let hash = B256::repeat_byte(0x11);
     assert!(matches!(
-        bid_submission_target(&mevblocker, hash, 21_000_001),
-        SubmissionTarget::Bundle(_)
+        bid_submission_target(&mevblocker, hash, 21_000_001, None),
+        Some(SubmissionTarget::Bundle(_))
     ));
 
-    let mut peer = PeerBackrun::from_config(&degenbot_config::BotConfig::default(), String::new())
-        .into_config();
-    peer.submission = SubmissionSlot::PublicFanOut {
-        relays: vec![String::from("http://relay.one:8545")],
+    let mut peer =
+        TxpoolBackrun::from_config(&degenbot_config::BotConfig::default(), String::new())
+            .into_config();
+    peer.submission = SubmissionSlot::BuilderRelay {
+        relays: vec![String::from("https://relay.flashbots.net")],
     };
     assert!(!peer.submission.names_private_endpoint());
     assert!(
-        peer.submission
-            .raw_relay_urls()
-            .iter()
-            .all(|url| !url.contains("private")),
-        "the peer submit path names no private endpoint"
+        peer.submission.raw_relay_urls().is_empty(),
+        "the builder-relay submit path names NO raw fan-out: the bundle POST is the submission"
     );
+    // A frame without the target's raw signed bytes has no bundle: the
+    // builder-relay slot refuses it (never a raw broadcast).
+    assert!(bid_submission_target(&peer, hash, 21_000_001, None).is_none());
+    let target_raw = alloy::primitives::Bytes::from(vec![0x02, 0xf8, 0x01]);
     assert!(matches!(
-        bid_submission_target(&peer, hash, 21_000_001),
-        SubmissionTarget::Public
+        bid_submission_target(&peer, hash, 21_000_001, Some(&target_raw)),
+        Some(SubmissionTarget::BuilderRelay { .. })
     ));
 }
 
@@ -299,19 +301,19 @@ fn both_backrun_compositions_host_independently_in_one_process() {
     cfg.strategy.mevblocker_backrun.endpoints = Some(String::from("wss://searchers.mevblocker.io"));
     cfg.strategy.mevblocker_backrun.mevblocker_url =
         Some(String::from("http://private.local:8545"));
-    cfg.strategy.peer_backrun.active = true;
-    cfg.strategy.peer_backrun.endpoints = Some(String::from("http://relay.one:8545"));
+    cfg.strategy.txpool_backrun.active = true;
+    cfg.strategy.txpool_backrun.endpoints = Some(String::from("http://relay.one:8545"));
 
     let mevblocker = MevblockerBackrun::from_config(&cfg, String::new());
-    let peer = PeerBackrun::from_config(&cfg, String::new());
+    let peer = TxpoolBackrun::from_config(&cfg, String::new());
     assert_eq!(
         mevblocker.config().submission.raw_relay_urls(),
         vec![String::from("http://private.local:8545")]
     );
     assert!(mevblocker.config().submission.names_private_endpoint());
-    assert_eq!(
-        peer.config().submission.raw_relay_urls(),
-        vec![String::from("http://relay.one:8545")]
+    assert!(
+        peer.config().submission.raw_relay_urls().is_empty(),
+        "the builder-relay slot names no raw fan-out: the bundle POST is the submission"
     );
     assert!(!peer.config().submission.names_private_endpoint());
 
@@ -321,7 +323,7 @@ fn both_backrun_compositions_host_independently_in_one_process() {
         Arc::new(NonceAuthority::new(1)),
     );
     let mevblocker_id = StrategyId::new("mevblocker_backrun");
-    let peer_id = StrategyId::new("peer_backrun");
+    let peer_id = StrategyId::new("txpool_backrun");
     host.register(mevblocker_id.clone(), FacetStatus::Configured)
         .expect("register mevblocker");
     host.register(peer_id.clone(), FacetStatus::Configured)
@@ -777,6 +779,7 @@ fn parked(hash_byte: u8) -> ParkedFrame {
         tx_type: 2,
         access_list: serde_json::json!([]),
         received_unix_ms: 1_700_000_000_000,
+        raw_signed_tx: None,
     }
 }
 

@@ -30,6 +30,7 @@ pub mod offline;
 pub mod provider;
 pub mod subscription;
 pub mod tick_bootstrap;
+pub mod txpool_feed;
 
 pub use fees::{fetch_priority_fee_percentiles, BlockPriorityFees};
 pub use head_watch::{HeadWatch, HeadWatchConfig, HeadWatchError};

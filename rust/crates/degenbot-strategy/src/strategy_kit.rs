@@ -246,7 +246,7 @@ pub const STRATEGY_CELLS: &[(StrategyName, &[StrategyCell])] = &[
         &[StrategyCell::Provision, StrategyCell::Discovery],
     ),
     (
-        StrategyName::PeerBackrun,
+        StrategyName::TxpoolBackrun,
         &[StrategyCell::Provision, StrategyCell::Discovery],
     ),
 ];

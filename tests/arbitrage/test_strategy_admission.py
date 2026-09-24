@@ -51,7 +51,7 @@ class TestAdmissionIsHostOwned:
         A placeholder cfg is honest here — construction never touches it and no
         runner-side env check runs (the retired env name is inert).
         """
-        monkeypatch.setenv(STRATEGY_ENV, "peer_backrun")
+        monkeypatch.setenv(STRATEGY_ENV, "txpool_backrun")
         assert BotRunner(None) is not None  # type: ignore[arg-type]
 
     def test_host_admission_follows_the_facet_config(self):
@@ -65,7 +65,7 @@ class TestAdmissionIsHostOwned:
         readiness = validate_strategy_readiness()
         for facet, active in (
             ("mevblocker_backrun", readiness.mevblocker_backrun_active),
-            ("peer_backrun", readiness.peer_backrun_active),
+            ("txpool_backrun", readiness.txpool_backrun_active),
         ):
             if active:
                 engine.enable_strategy(facet)

@@ -56,9 +56,9 @@ pub struct StrategyReadinessView {
     #[pyo3(get)]
     pub mevblocker_backrun_endpoints: Vec<String>,
     #[pyo3(get)]
-    pub peer_backrun_active: bool,
+    pub txpool_backrun_active: bool,
     #[pyo3(get)]
-    pub peer_backrun_endpoints: Vec<String>,
+    pub txpool_backrun_endpoints: Vec<String>,
 }
 
 impl StrategyReadinessView {
@@ -73,14 +73,14 @@ impl StrategyReadinessView {
         let (settlement_active, settlement_endpoints) = arm(&readiness.settlement);
         let (mevblocker_backrun_active, mevblocker_backrun_endpoints) =
             arm(&readiness.mevblocker_backrun);
-        let (peer_backrun_active, peer_backrun_endpoints) = arm(&readiness.peer_backrun);
+        let (txpool_backrun_active, txpool_backrun_endpoints) = arm(&readiness.txpool_backrun);
         Self {
             settlement_active,
             settlement_endpoints,
             mevblocker_backrun_active,
             mevblocker_backrun_endpoints,
-            peer_backrun_active,
-            peer_backrun_endpoints,
+            txpool_backrun_active,
+            txpool_backrun_endpoints,
         }
     }
 }

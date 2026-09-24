@@ -191,7 +191,7 @@ class DegenbotConfig(BaseSettings):
                     "select strategies with the per-facet "
                     "strategy.<facet>.active flags (strategy.settlement.active, "
                     "strategy.mevblocker_backrun.active, "
-                    "strategy.peer_backrun.active)."
+                    "strategy.txpool_backrun.active)."
                 )
                 raise ValueError(msg)
         return data

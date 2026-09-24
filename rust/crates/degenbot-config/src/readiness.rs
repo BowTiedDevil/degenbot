@@ -12,7 +12,7 @@
 //! semantics: `mevblocker_backrun.endpoints` is the `MEVBlocker` searcher
 //! WebSocket that carries the private bundle, and its bid mode additionally
 //! requires the operator key file and the private `mevblocker_url`.
-//! `peer_backrun.endpoints` is the public relay fan-out, validated as
+//! `txpool_backrun.endpoints` is the public relay fan-out, validated as
 //! http(s) relay URLs.
 //!
 //! The module never reads env or files; pure config -> result.
@@ -33,9 +33,14 @@ pub const SETTLEMENT_DEFAULT_ENDPOINTS: &[&str] = &[
 /// re-exports this constant so the default has one home.
 pub const DEFAULT_BACKRUN_STREAM_URL: &str = "wss://searchers.mevblocker.io";
 
-/// The default public relay fan-out for the peer-backrun composition: the
-/// Flashbots relay, with the read provider as the fallback relay.
-pub const DEFAULT_PEER_BACKRUN_RELAYS: &[&str] = &["https://rpc.flashbots.net?hint=hash"];
+/// The default `eth_sendBundle` builder-relay set for the txpool-backrun
+/// composition: the relays accept Flashbots-compatible bundles over HTTPS.
+/// These are BUILDER bundle relays, deliberately distinct from the
+/// revert-protecting protection RPCs the settlement arm fans raw out to.
+pub const DEFAULT_TXPOOL_BACKRUN_RELAYS: &[&str] = &[
+    "https://relay.flashbots.net",
+    "https://rpc.titanbuilder.xyz",
+];
 
 /// One strategy arm's settled endpoint posture.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +62,7 @@ pub struct StrategyReadiness {
     /// The MEVBlocker-ecosystem pending-transaction arm.
     pub mevblocker_backrun: Arm,
     /// The public-mempool pending-transaction arm.
-    pub peer_backrun: Arm,
+    pub txpool_backrun: Arm,
 }
 
 /// A refused readiness. Every refusal names a remediation in its
@@ -204,7 +209,7 @@ fn peer_relay_refusal(url: &str) -> Option<EndpointRefusal> {
 pub fn strategy_readiness(cfg: &BotConfig) -> Result<StrategyReadiness, StrategyReadinessError> {
     let settlement = &cfg.strategy.settlement;
     let mevblocker = &cfg.strategy.mevblocker_backrun;
-    let peer = &cfg.strategy.peer_backrun;
+    let peer = &cfg.strategy.txpool_backrun;
     let mevblocker_arm = settle_arm(
         "mevblocker_backrun",
         mevblocker.active,
@@ -235,8 +240,8 @@ pub fn strategy_readiness(cfg: &BotConfig) -> Result<StrategyReadiness, Strategy
             settlement_refusal,
         )?,
         mevblocker_backrun: mevblocker_arm,
-        peer_backrun: settle_arm(
-            "peer_backrun",
+        txpool_backrun: settle_arm(
+            "txpool_backrun",
             peer.active,
             peer.endpoints.as_deref(),
             peer_relay_refusal,

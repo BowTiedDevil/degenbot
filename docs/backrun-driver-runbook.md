@@ -7,7 +7,7 @@ facet is active (ADR-057). The standalone two-binary deployment is retired.
 - `mevblocker_backrun`: the MEVBlocker-ecosystem composition. Its submission
   slot anchors an `eth_sendBundle` auction on the MEVBlocker searcher
   WebSocket and leads the raw-broadcast fan-out with the private endpoint.
-- `peer_backrun`: the public-mempool composition. Its submission slot fans the
+- `txpool_backrun`: the public-mempool composition. Its submission slot fans the
   signed bytes over the public relay allowlist with the read provider as the
   fallback relay.
 
@@ -22,7 +22,7 @@ They are independently activatable and MAY run together in one process.
 rust/target/debug/degenbot strategy activate mevblocker_backrun --endpoints-default
 
 # Or activate the public-mempool composition instead (pinned relay allowlist).
-rust/target/debug/degenbot strategy activate peer_backrun --endpoints-default
+rust/target/debug/degenbot strategy activate txpool_backrun --endpoints-default
 
 # Boot the hosted process (this is the settlement launcher too).
 source bot.env
@@ -39,7 +39,7 @@ publicly and has no private URL.
 ## 2. Budget lines (bid mode)
 
 Every knob is a typed per-ecosystem key: set it in the config.toml
-`[strategy.mevblocker_backrun]` / `[strategy.peer_backrun]` table (or its
+`[strategy.mevblocker_backrun]` / `[strategy.txpool_backrun]` table (or its
 `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_*` / `DEGENBOT_STRATEGY_PEER_BACKRUN_*`
 env name). The node/DB resolvers stay env-only (`DEGENBOT_RPC_HTTP_CHAINID_1`,
 `DEGENBOT_RPC_WS_CHAINID_1`, `DEGENBOT_DB_PATH`).

@@ -197,6 +197,10 @@ pub struct WireFrame {
     pub tx_type: u8,
     pub received_unix_ms: u64,
     pub access_list: serde_json::Value,
+    /// Hex-encoded signed wire bytes (`None` preserves the pre-mevblocker-free
+    /// journal lines via the default).
+    #[serde(default)]
+    pub raw_signed_tx: Option<String>,
 }
 
 impl WireFrame {
@@ -217,6 +221,10 @@ impl WireFrame {
             tx_type: event.tx_type,
             received_unix_ms: event.received_unix_ms,
             access_list: event.access_list.clone(),
+            raw_signed_tx: event
+                .raw_signed_tx
+                .as_ref()
+                .map(|b| format!("0x{}", alloy::hex::encode(b))),
         }
     }
 
@@ -254,6 +262,13 @@ impl WireFrame {
             access_list: self.access_list.clone(),
             tx_type: self.tx_type,
             received_unix_ms: self.received_unix_ms,
+            raw_signed_tx: match self.raw_signed_tx.as_deref() {
+                None => None,
+                Some(s) => Some(Bytes::from(
+                    alloy::hex::decode(s.trim_start_matches("0x"))
+                        .map_err(|e| JournalError::Field(e.to_string()))?,
+                )),
+            },
         })
     }
 }
@@ -343,6 +358,7 @@ impl ParkRecord {
                 tx_type: 0,
                 access_list: serde_json::json!([]),
                 received_unix_ms: 0,
+                raw_signed_tx: None,
             });
         }
         let event = self.to_event()?;
@@ -361,6 +377,7 @@ impl ParkRecord {
             tx_type: event.tx_type,
             access_list: event.access_list,
             received_unix_ms: event.received_unix_ms,
+            raw_signed_tx: event.raw_signed_tx,
         })
     }
 
@@ -708,6 +725,7 @@ struct LegacyWireFrame {
     tx_type: Option<u8>,
     received_unix_ms: Option<u64>,
     access_list: Option<serde_json::Value>,
+    raw_signed_tx: Option<String>,
 }
 
 /// Rebuild a tracked park from a park-shaped line the current schema rejects.
@@ -773,6 +791,8 @@ fn full_wire_candidate(frame: &LegacyWireFrame, hash: B256, nonce: u64) -> Optio
         tx_type: frame.tx_type?,
         received_unix_ms: frame.received_unix_ms?,
         access_list: frame.access_list.clone()?,
+        // Raw bytes are optional evidence; their absence never degrades FULL.
+        raw_signed_tx: frame.raw_signed_tx.clone(),
     };
     wire_is_full(&wire).then_some(wire)
 }
@@ -797,6 +817,7 @@ fn degraded_wire(frame: &LegacyWireFrame, hash: B256, nonce: u64) -> WireFrame {
         tx_type: 0,
         received_unix_ms: 0,
         access_list: serde_json::json!([]),
+        raw_signed_tx: None,
     }
 }
 
@@ -1070,6 +1091,7 @@ mod tests {
             access_list: serde_json::json!([]),
             tx_type: 2,
             received_unix_ms,
+            raw_signed_tx: None,
         }
     }
 

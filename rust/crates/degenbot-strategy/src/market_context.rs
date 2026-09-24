@@ -33,11 +33,11 @@ use crate::strategy_kit::StrategyKit;
 pub struct MarketContext {
     /// The chain the connector index + DB id joins are keyed on.
     pub chain_id: i64,
-    /// The discovery fan-out cap (`strategy.mevblocker_backrun`/`strategy.peer_backrun`).
+    /// The discovery fan-out cap (`strategy.mevblocker_backrun`/`strategy.txpool_backrun`).
     pub connector_cap: usize,
     /// The hop-depth cap per discovered cycle: the WETH-entry pin plus up to
     /// `cycle_max_hops - 1` connectors
-    /// (`strategy.mevblocker_backrun`/`strategy.peer_backrun`).
+    /// (`strategy.mevblocker_backrun`/`strategy.txpool_backrun`).
     pub cycle_max_hops: usize,
     /// Cross-block warm bytecode/account cache owner, shared into every
     /// per-block replay handle.

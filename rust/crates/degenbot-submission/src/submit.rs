@@ -126,6 +126,17 @@ pub enum SubmissionTarget {
     /// The public mempool broadcast: the signed bytes fan out to every listed
     /// relay (the read provider when none is listed).
     Public,
+    /// The Flashbots-compatible builder-relay bundle: the TARGET's verbatim
+    /// signed bytes + the signed backrun as one `eth_sendBundle` HTTPS POST
+    /// to every relay (no auction host in the path, no public raw fan-out).
+    BuilderRelay {
+        /// The builder relay URLs, in fan-out order.
+        relays: Vec<String>,
+        /// The target tx's verbatim signed bytes (the txpool frame's `raw`).
+        target_raw: alloy::primitives::Bytes,
+        /// The block the bundle is valid for (dispatch head + 1).
+        block_number: u64,
+    },
 }
 
 /// The bundle relay round-trip budget. One-shot per bid; a dropped bid is a
@@ -471,7 +482,11 @@ pub async fn dispatch_and_submit(
             let signed_hash = alloy::primitives::keccak256(&raw_signed);
             let target_id = match &target {
                 SubmissionTarget::Bundle(bt) => TargetId::new(bt.target_tx_hash),
-                SubmissionTarget::Public => TargetId::new(signed_hash),
+                // Both non-auction arms identify the submission by the freshly
+                // signed backrun's hash.
+                SubmissionTarget::BuilderRelay { .. } | SubmissionTarget::Public => {
+                    TargetId::new(signed_hash)
+                }
             };
             nonce_lane
                 .record_signed(&lease, target_id, signed_hash, current_block)
@@ -559,6 +574,87 @@ pub async fn dispatch_and_submit(
                     continue;
                 }
             }
+        }
+        // Flashbots-compatible builder-relay bundle (the txpool backrun's
+        // slot): the TARGET's verbatim signed bytes + the signed backrun as
+        // one `eth_sendBundle` POSTed to every relay over HTTPS. Relief from
+        // auction-host paths entirely; any single relay acceptance submits
+        // the bundle. Signature is derived per relay batch from the exact
+        // JSON body (`X-Flashbots-Signature`).
+        if let SubmissionTarget::BuilderRelay {
+            relays,
+            target_raw,
+            block_number,
+        } = &target
+        {
+            let bundle = crate::relay::BuilderRelayBundle {
+                target_raw: target_raw.clone(),
+                backrun_raw: raw_signed.clone(),
+                block_number: *block_number,
+            };
+            let body = crate::relay::builder_bundle_request(&bundle);
+            let header = match crate::relay::flashbots_signature_header(signer, &body.to_string()) {
+                Ok(header) => header,
+                Err(e) => {
+                    degenbot_bot::telemetry::record_exception(
+                        degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+                        format_args!("path {} relay signature failed: {e}", candidate.path_id),
+                    );
+                    if let Some(p) = degenbot_bot::instruments::pipeline() {
+                        p.count_submit_outcome("skipped_broadcast_failed");
+                        p.add_profit_missed(candidate_net_wei(&candidate));
+                    }
+                    let _ = nonce_lane.release(&lease);
+                    outcome.records.push(SubmitRecord::Skipped {
+                        path_id: candidate.path_id,
+                        reason: SkipReason::BroadcastFailed(format!("relay sign failed: {e}")),
+                    });
+                    continue;
+                }
+            };
+            let outcomes = crate::relay::send_bundle_to_relays(relays, &body, &header).await;
+            let accepted = crate::relay::accepted_count(&outcomes);
+            if accepted > 0 {
+                let hash = alloy::primitives::keccak256(&raw_signed);
+                if let Some(p) = degenbot_bot::instruments::pipeline() {
+                    p.count_submit_outcome("builder_relay_accepted");
+                }
+                nonce_lane
+                    .authority()
+                    .record_broadcast(&lease)
+                    .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+                nonce_lane
+                    .ledger()
+                    .record_broadcast(nonce_lane.strategy(), lease.nonce())
+                    .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+                outcome.records.push(SubmitRecord::Submitted {
+                    path_id: candidate.path_id,
+                    tx_hash: hash,
+                    nonce,
+                });
+                continue;
+            }
+            // Every relay rejected the bundle: the typed skip + lease
+            // release, mirroring the raw fan-out's all-fail arm.
+            degenbot_bot::telemetry::record_exception(
+                degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+                format_args!(
+                    "path {} every builder relay rejected the bundle",
+                    candidate.path_id
+                ),
+            );
+            if let Some(p) = degenbot_bot::instruments::pipeline() {
+                p.count_submit_outcome("skipped_broadcast_failed");
+                p.add_profit_missed(candidate_net_wei(&candidate));
+            }
+            let _ = nonce_lane.release(&lease);
+            outcome.records.push(SubmitRecord::Skipped {
+                path_id: candidate.path_id,
+                reason: SkipReason::BroadcastFailed(
+                    "every builder relay rejected the bundle".to_string(),
+                ),
+            });
+            continue;
         }
         // Legacy raw fan-out (all other callers): the SAME signed bytes go
         // to every relay in `extra_broadcast` (the read provider is NOT

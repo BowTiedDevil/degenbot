@@ -22,12 +22,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::backrun::SubmissionSlot;
 use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
+use degenbot_rpc::txpool_feed::{TxpoolFeed, TxpoolFeedConfig};
 use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
 use degenbot_simulation::BlockSimHandle;
 use parking_lot::Mutex as ParkingMutex;
@@ -365,6 +367,7 @@ pub(super) async fn run_frame(
             tx_type: ev.tx_type,
             access_list: ev.access_list.clone(),
             received_unix_ms: ev.received_unix_ms,
+            raw_signed_tx: ev.raw_signed_tx.clone(),
         };
         let parked_count = quarantine.push(parked);
         let record = ParkRecord::new(ev, *expected, now_unix_ms());
@@ -480,11 +483,20 @@ pub(super) async fn run_frame(
             };
             // The submission slot decides both the target and the raw
             // fan-out: the MEVBlocker arm anchors a bundle and leads the
-            // fan-out with its private endpoint, the peer arm fans the signed
-            // bytes over the public relays. The reaction machinery above is
-            // identical for both.
+            // fan-out with its private endpoint, the builder-relay arm
+            // bundles the target's verbatim signed bytes, and the legacy
+            // public arm fans the signed bytes out. The reaction machinery
+            // above is identical for every arm.
             let broadcast_relays = build_broadcast_relays(cfg, provider).await;
-            let target = bid_submission_target(cfg, ev.hash, head + 1);
+            let Some(target) =
+                bid_submission_target(cfg, ev.hash, head + 1, ev.raw_signed_tx.as_ref())
+            else {
+                tracing::warn!(
+                    tx = %ev.hash,
+                    "builder-relay slot without the target raw signed bytes - refusing"
+                );
+                return FrameOutcome::Bid;
+            };
             match dispatch_and_submit(
                 vec![candidate],
                 dispatcher,
@@ -1270,9 +1282,60 @@ impl BackrunDriver {
     }
 }
 
+/// The loop's pending-tx pump: whichever feed the submission slot named.
+///
+/// Both pumps publish the hub's `PendingTx` vocabulary, so the drain surface
+/// is one typed vector regardless of the arm.
+enum PendingTxPump {
+    /// The `MEVBlocker` searcher feed (the mevblocker arm).
+    Mevblocker(BackrunFeed),
+    /// The chain-node txpool feed (the builder-relay arm).
+    Txpool(TxpoolFeed),
+}
+
+impl PendingTxPump {
+    fn drain(&self) -> Vec<degenbot_eventhub::PendingTx> {
+        match self {
+            Self::Mevblocker(feed) => feed.drain(),
+            Self::Txpool(feed) => feed.drain(),
+        }
+    }
+
+    /// The sampler snapshot (the `BackrunFeedStatus` field set both pumps
+    /// share; the txpool feed's extra `mine_misses` counter is pump-scoped
+    /// forensics, not an engine instrument).
+    fn status(&self) -> degenbot_rpc::backrun_feed::BackrunFeedStatus {
+        match self {
+            Self::Mevblocker(feed) => feed.status(),
+            Self::Txpool(feed) => {
+                let st = feed.status();
+                degenbot_rpc::backrun_feed::BackrunFeedStatus {
+                    connected: st.connected,
+                    accepted: st.accepted,
+                    dropped_ring: st.dropped_ring,
+                    rejected_chain_id: st.rejected_chain_id,
+                    rejected_parse: st.rejected_parse,
+                    reconnects: st.reconnects,
+                    last_event_unix_ms: st.last_event_unix_ms,
+                }
+            }
+        }
+    }
+
+    fn stop(&self) {
+        match self {
+            Self::Mevblocker(feed) => feed.stop(),
+            Self::Txpool(feed) => feed.stop(),
+        }
+    }
+}
+
 /// The driver loop. Everything here is loop-local: the replay handle borrows
 /// only the loop's own runtime, never a host handle.
-#[expect(clippy::too_many_lines, reason = "the driver loop reads top-to-bottom")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the driver loop reads top-to-bottom and the slot/feed selection rides here"
+)]
 async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<LoopShared>) {
     let LoopBoot {
         provider,
@@ -1366,18 +1429,44 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
     // resumes the parked set.
     let mut quarantine_journal = reload_quarantine(&mut quarantine, namespace_root.as_deref());
 
-    // Live mode: MEVBlocker feed. The hub owns the process-lifetime event
-    // channels; the feed registers its PendingTx drop-oldest ring on it and
-    // drains through the hub's typed receiver.
+    // Live mode: the submission slot names the pending-tx source. The
+    // `MEVBlocker` slot rebinds the MEVBlocker searcher feed; every other
+    // slot (the txpool arm's builder-relay composition among them) scans the
+    // CHAIN NODE's txpool and fetches each delivered hash in full. The hub
+    // owns the process-lifetime event channels; either feed registers its
+    // PendingTx drop-oldest ring on it and the loop drains the same typed
+    // events, so the frame pipeline stays feed-agnostic.
     let event_hub = Arc::clone(&hub);
-    let feed = BackrunFeed::spawn_on_hub(
-        &event_hub,
-        BackrunFeedConfig {
-            url: cfg.feed_url.clone(),
-            ..BackrunFeedConfig::for_mainnet()
-        },
-    )
-    .expect("fresh hub registers the pending-tx feed");
+    let feed: PendingTxPump = if matches!(cfg.submission, SubmissionSlot::Mevblocker { .. }) {
+        PendingTxPump::Mevblocker(
+            BackrunFeed::spawn_on_hub(
+                &event_hub,
+                BackrunFeedConfig {
+                    url: cfg.feed_url.clone(),
+                    ..BackrunFeedConfig::for_mainnet()
+                },
+            )
+            .expect("fresh hub registers the pending-tx feed"),
+        )
+    } else {
+        let Some(ref ws_url) = head_ws_url else {
+            tracing::error!(
+                "txpool feed requires the chain node WS endpoint                  (DEGENBOT_RPC_WS_CHAINID_1) - halting"
+            );
+            shared.mark_stopped();
+            return;
+        };
+        PendingTxPump::Txpool(
+            TxpoolFeed::spawn_on_hub(
+                &event_hub,
+                TxpoolFeedConfig {
+                    ws_url: ws_url.clone(),
+                    ..TxpoolFeedConfig::defaults()
+                },
+            )
+            .expect("fresh hub registers the pending-tx feed"),
+        )
+    };
 
     // Head source for the live loop: a `newHeads` subscription over a dedicated
     // WS endpoint (the MEVBlocker frame feed and the chain node are different

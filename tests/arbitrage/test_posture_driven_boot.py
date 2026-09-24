@@ -143,7 +143,7 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
     records = dict((name, state) for name, state, _halt in session.engine_registry.engine.strategies())
     for facet, active in (
         ("mevblocker_backrun", readiness.mevblocker_backrun_active),
-        ("peer_backrun", readiness.peer_backrun_active),
+        ("txpool_backrun", readiness.txpool_backrun_active),
     ):
         assert records[facet] == ("enabled" if active else "registered"), (
             f"{facet}: admission must follow strategy.{facet}.active"

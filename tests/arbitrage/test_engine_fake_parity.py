@@ -93,7 +93,7 @@ def test_fake_and_real_agree_on_default_registration_order() -> None:
     assert FakeEngine().strategies() == real.strategies() == [
         ("settlement", "registered", None),
         ("mevblocker_backrun", "registered", None),
-        ("peer_backrun", "registered", None),
+        ("txpool_backrun", "registered", None),
     ]
 
 
@@ -110,7 +110,7 @@ def test_fake_and_real_agree_on_enable_disable_vocabulary() -> None:
             for name, key in (
                 ("settlement", readiness().settlement_active),
                 ("mevblocker_backrun", readiness().mevblocker_backrun_active),
-                ("peer_backrun", readiness().peer_backrun_active),
+                ("txpool_backrun", readiness().txpool_backrun_active),
             )
             if key
         ),

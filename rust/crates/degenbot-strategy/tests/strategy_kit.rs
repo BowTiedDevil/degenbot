@@ -50,7 +50,7 @@ fn declared_rows_match_the_kit_composition() {
         StrategyKit::COMPOSED_CELLS,
         [StrategyCell::Provision, StrategyCell::Discovery]
     );
-    for name in [StrategyName::MevblockerBackrun, StrategyName::PeerBackrun] {
+    for name in [StrategyName::MevblockerBackrun, StrategyName::TxpoolBackrun] {
         assert_eq!(
             declared_cells(name).expect("row"),
             &StrategyKit::COMPOSED_CELLS[..],

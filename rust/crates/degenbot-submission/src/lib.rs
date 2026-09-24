@@ -71,6 +71,7 @@ pub mod error;
 pub mod fee;
 pub mod monitor;
 pub mod params;
+pub mod relay;
 pub mod signer;
 pub mod submission_ledger;
 pub mod submit;

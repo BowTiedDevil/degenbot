@@ -357,9 +357,9 @@ fn strategy_arms_round_trip() {
         })
     );
     assert_eq!(
-        resolve(&["degenbot", "strategy", "show", "peer_backrun"]),
+        resolve(&["degenbot", "strategy", "show", "txpool_backrun"]),
         Command::Strategy(StrategyCommand::Show {
-            facet: StrategyFacet::PeerBackrun,
+            facet: StrategyFacet::TxpoolBackrun,
         })
     );
     assert_eq!(

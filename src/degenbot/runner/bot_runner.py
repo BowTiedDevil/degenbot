@@ -634,11 +634,11 @@ class BotRunner:
         except ValueError as refusal:
             raise ActivationGateRefused(refusal) from refusal
         if not (
-            view.settlement_active or view.mevblocker_backrun_active or view.peer_backrun_active
+            view.settlement_active or view.mevblocker_backrun_active or view.txpool_backrun_active
         ):
             refusal = ValueError(
                 "no active strategy: activate at least one facet "
-                "(degenbot strategy activate settlement|mevblocker_backrun|peer_backrun)"
+                "(degenbot strategy activate settlement|mevblocker_backrun|txpool_backrun)"
             )
             raise ActivationGateRefused(refusal) from refusal
         if not view.settlement_active:
@@ -757,7 +757,7 @@ class BotRunner:
             enabled: list[str] = []
             for facet, active in (
                 ("mevblocker_backrun", view.mevblocker_backrun_active),
-                ("peer_backrun", view.peer_backrun_active),
+                ("txpool_backrun", view.txpool_backrun_active),
             ):
                 if active:
                     session.engine_registry.engine.enable_strategy(facet)

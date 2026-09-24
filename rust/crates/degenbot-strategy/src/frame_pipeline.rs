@@ -372,6 +372,7 @@ fn parse_frame_line(line: &str, now: u64) -> Option<BackrunFeedEvent> {
         access_list: serde_json::Value::Null,
         tx_type: u8::try_from(uget("tx_type").unwrap_or(2)).unwrap_or(2),
         received_unix_ms: uget("received_unix_ms").unwrap_or(now),
+        raw_signed_tx: None,
     })
 }
 

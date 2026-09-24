@@ -62,6 +62,7 @@ fn event(hash_byte: u8, nonce: u64, received_unix_ms: u64) -> BackrunFeedEvent {
         access_list: serde_json::json!([]),
         tx_type: 2,
         received_unix_ms,
+        raw_signed_tx: Some(Bytes::from(vec![0xde, 0xad])),
     }
 }
 

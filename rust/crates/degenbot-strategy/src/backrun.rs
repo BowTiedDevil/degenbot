@@ -47,12 +47,23 @@ pub enum SubmissionSlot {
         /// The public relay URLs, in fan-out order.
         relays: Vec<String>,
     },
+    /// The Flashbots-compatible builder-relay composition: the TARGET's
+    /// verbatim signed bytes + the signed backrun leave as ONE
+    /// `eth_sendBundle` POST to every relay over HTTPS — no auction host
+    /// in the path and deliberately NO public raw fan-out (the bundle POST
+    /// is the entire submission).
+    BuilderRelay {
+        /// The builder relay URLs, in fan-out order.
+        relays: Vec<String>,
+    },
 }
 
 impl SubmissionSlot {
     /// The ordered raw-broadcast relay URLs this slot names, private-first for
     /// the `MEVBlocker` slot. Empty means the submit leaf falls back to the read
-    /// provider alone.
+    /// provider alone. The `BuilderRelay` slot names none: its bundle POSTs
+    /// are the submission, so a stray raw broadcast would leak the backrun
+    /// outside the bundle.
     #[must_use]
     pub fn raw_relay_urls(&self) -> Vec<String> {
         match self {
@@ -60,10 +71,14 @@ impl SubmissionSlot {
                 private_url: Some(url),
                 ..
             } => vec![url.clone()],
+            Self::PublicFanOut { relays } => relays.clone(),
+            // Both auction-free-raw arms: the `MEVBlocker` slot without a
+            // private endpoint falls back to the read provider (empty list),
+            // and the builder-relay slot's bundle POST delivers itself.
             Self::Mevblocker {
                 private_url: None, ..
-            } => Vec::new(),
-            Self::PublicFanOut { relays } => relays.clone(),
+            }
+            | Self::BuilderRelay { .. } => Vec::new(),
         }
     }
 
@@ -86,7 +101,9 @@ impl SubmissionSlot {
 /// The key never leaves the signer — only `key_file` is named here.
 #[derive(Debug, Clone)]
 pub struct BackrunConfig {
-    /// The shared pending-transaction source: the `MEVBlocker` searcher feed.
+    /// The pending-transaction source: the `MEVBlocker` searcher feed (the
+    /// mevblocker arm; the txpool arm leaves it unused — its driver scans the
+    /// chain node's txpool).
     pub feed_url: String,
     pub rpc_url: String,
     pub key_file: Option<PathBuf>,
@@ -236,7 +253,7 @@ macro_rules! impl_backrun_facet {
 }
 
 impl_backrun_facet!(degenbot_config::StrategyMevblockerBackrunConfig);
-impl_backrun_facet!(degenbot_config::StrategyPeerBackrunConfig);
+impl_backrun_facet!(degenbot_config::StrategyTxpoolBackrunConfig);
 
 /// Project the config facet's `verify_ticks` enum onto the ingress policy.
 fn to_verify_level(v: degenbot_config::VerifyTicks) -> VerifyLevel {
@@ -264,14 +281,14 @@ impl BackrunKnobs {
         }
     }
 
-    /// The peer submission slot: the facet's public relay fan-out (or the
-    /// pinned default) with the read provider as fallback.
-    fn peer_slot(&self) -> SubmissionSlot {
-        SubmissionSlot::PublicFanOut {
+    /// The builder-relay submission slot: the facet's `eth_sendBundle` relay
+    /// list (or the pinned default set).
+    fn txpool_slot(&self) -> SubmissionSlot {
+        SubmissionSlot::BuilderRelay {
             relays: resolve_arm_endpoints(
-                "peer_backrun",
+                "txpool_backrun",
                 self.active_endpoints.as_deref(),
-                degenbot_config::DEFAULT_PEER_BACKRUN_RELAYS,
+                degenbot_config::DEFAULT_TXPOOL_BACKRUN_RELAYS,
             ),
         }
     }
@@ -374,39 +391,40 @@ impl Strategy for MevblockerBackrun {
     const NAME: StrategyName = StrategyName::MevblockerBackrun;
 }
 
-/// The public-mempool backrun strategy: the same pending-transaction reaction,
-/// submitting through the public relay fan-out instead of the `MEVBlocker`
-/// auction.
+/// The builder-relay backrun strategy: the same pending-transaction reaction,
+/// discovering targets in the chain node's txpool and submitting
+/// Flashbots-compatible `eth_sendBundle` bundles (target's verbatim signed
+/// bytes + the signed backrun) to every configured builder relay.
 ///
 /// | Slot | Binding |
 /// |---|---|
-/// | **source** | the MEVBlocker searcher pending-tx feed |
+/// | **source** | the node txpool feed (`newPendingTransactions` + by-hash fetch) |
 /// | **infrastructure** | the connector-index route registry |
 /// | **calculation** | the anchored-dfs WETH-closing solver |
 /// | **encoder** | the composed executor calldata |
 /// | **simulator** | the frame replay + `eth_callMany` oracle gate |
-/// | **submission** | the public relay fan-out, read-provider fallback |
+/// | **submission** | the Flashbots-compatible builder relay fan-out |
 #[derive(Debug, Clone)]
-pub struct PeerBackrun {
+pub struct TxpoolBackrun {
     composition: BackrunComposition,
 }
 
-impl PeerBackrun {
-    /// Build the composition from the loaded config's `strategy.peer_backrun`
+impl TxpoolBackrun {
+    /// Build the composition from the loaded config's `strategy.txpool_backrun`
     /// facet plus the chain-node join.
     #[must_use]
     pub fn from_config(cfg: &BotConfig, rpc_url: String) -> Self {
-        let facet = &cfg.strategy.peer_backrun;
+        let facet = &cfg.strategy.txpool_backrun;
         let knobs = facet.backrun_knobs();
-        let submission = knobs.peer_slot();
+        let submission = knobs.txpool_slot();
         Self {
             composition: BackrunComposition::new(knobs.into_config(cfg, rpc_url, submission)),
         }
     }
 }
 
-impl Strategy for PeerBackrun {
-    const NAME: StrategyName = StrategyName::PeerBackrun;
+impl Strategy for TxpoolBackrun {
+    const NAME: StrategyName = StrategyName::TxpoolBackrun;
 }
 
 macro_rules! impl_backrun_composition_accessors {
@@ -428,7 +446,7 @@ macro_rules! impl_backrun_composition_accessors {
 }
 
 impl_backrun_composition_accessors!(MevblockerBackrun);
-impl_backrun_composition_accessors!(PeerBackrun);
+impl_backrun_composition_accessors!(TxpoolBackrun);
 
 impl BackrunConfig {
     /// The bid-mode legality gate: explicit flag AND non-zero budget.
@@ -565,8 +583,8 @@ mod tests {
         }
 
         let mut cfg = BotConfig::default();
-        cfg.strategy.peer_backrun.verify_ticks = degenbot_config::VerifyTicks::Strict;
-        let c = PeerBackrun::from_config(&cfg, String::new()).into_config();
+        cfg.strategy.txpool_backrun.verify_ticks = degenbot_config::VerifyTicks::Strict;
+        let c = TxpoolBackrun::from_config(&cfg, String::new()).into_config();
         assert_eq!(c.verify_ticks, VerifyLevel::Strict, "peer facet wired too");
     }
 
@@ -763,29 +781,29 @@ mod tests {
         cfg.strategy.mevblocker_backrun.fixture_head = Some(123);
         cfg.strategy.mevblocker_backrun.stop_file = PathBuf::from("/tmp/stop");
 
-        cfg.strategy.peer_backrun.bid_mode = cfg.strategy.mevblocker_backrun.bid_mode;
-        cfg.strategy.peer_backrun.budget_wei = cfg.strategy.mevblocker_backrun.budget_wei;
-        cfg.strategy.peer_backrun.max_bundle_wei = cfg.strategy.mevblocker_backrun.max_bundle_wei;
-        cfg.strategy.peer_backrun.bribe_bips = cfg.strategy.mevblocker_backrun.bribe_bips;
-        cfg.strategy.peer_backrun.priority_fee_gwei =
+        cfg.strategy.txpool_backrun.bid_mode = cfg.strategy.mevblocker_backrun.bid_mode;
+        cfg.strategy.txpool_backrun.budget_wei = cfg.strategy.mevblocker_backrun.budget_wei;
+        cfg.strategy.txpool_backrun.max_bundle_wei = cfg.strategy.mevblocker_backrun.max_bundle_wei;
+        cfg.strategy.txpool_backrun.bribe_bips = cfg.strategy.mevblocker_backrun.bribe_bips;
+        cfg.strategy.txpool_backrun.priority_fee_gwei =
             cfg.strategy.mevblocker_backrun.priority_fee_gwei;
-        cfg.strategy.peer_backrun.bundle_gas_est = cfg.strategy.mevblocker_backrun.bundle_gas_est;
-        cfg.strategy.peer_backrun.gas_floor_wei = cfg.strategy.mevblocker_backrun.gas_floor_wei;
-        cfg.strategy.peer_backrun.verify_ticks = cfg.strategy.mevblocker_backrun.verify_ticks;
-        cfg.strategy.peer_backrun.dry_run = cfg.strategy.mevblocker_backrun.dry_run;
-        cfg.strategy.peer_backrun.key_file = cfg.strategy.mevblocker_backrun.key_file.clone();
-        cfg.strategy.peer_backrun.executor = cfg.strategy.mevblocker_backrun.executor.clone();
-        cfg.strategy.peer_backrun.operator = cfg.strategy.mevblocker_backrun.operator.clone();
-        cfg.strategy.peer_backrun.sim_url = cfg.strategy.mevblocker_backrun.sim_url.clone();
-        cfg.strategy.peer_backrun.rank_evidence = cfg.strategy.mevblocker_backrun.rank_evidence;
-        cfg.strategy.peer_backrun.connectors = cfg.strategy.mevblocker_backrun.connectors;
-        cfg.strategy.peer_backrun.cycle_max_hops = cfg.strategy.mevblocker_backrun.cycle_max_hops;
-        cfg.strategy.peer_backrun.fixture_head = cfg.strategy.mevblocker_backrun.fixture_head;
-        cfg.strategy.peer_backrun.stop_file = cfg.strategy.mevblocker_backrun.stop_file.clone();
+        cfg.strategy.txpool_backrun.bundle_gas_est = cfg.strategy.mevblocker_backrun.bundle_gas_est;
+        cfg.strategy.txpool_backrun.gas_floor_wei = cfg.strategy.mevblocker_backrun.gas_floor_wei;
+        cfg.strategy.txpool_backrun.verify_ticks = cfg.strategy.mevblocker_backrun.verify_ticks;
+        cfg.strategy.txpool_backrun.dry_run = cfg.strategy.mevblocker_backrun.dry_run;
+        cfg.strategy.txpool_backrun.key_file = cfg.strategy.mevblocker_backrun.key_file.clone();
+        cfg.strategy.txpool_backrun.executor = cfg.strategy.mevblocker_backrun.executor.clone();
+        cfg.strategy.txpool_backrun.operator = cfg.strategy.mevblocker_backrun.operator.clone();
+        cfg.strategy.txpool_backrun.sim_url = cfg.strategy.mevblocker_backrun.sim_url.clone();
+        cfg.strategy.txpool_backrun.rank_evidence = cfg.strategy.mevblocker_backrun.rank_evidence;
+        cfg.strategy.txpool_backrun.connectors = cfg.strategy.mevblocker_backrun.connectors;
+        cfg.strategy.txpool_backrun.cycle_max_hops = cfg.strategy.mevblocker_backrun.cycle_max_hops;
+        cfg.strategy.txpool_backrun.fixture_head = cfg.strategy.mevblocker_backrun.fixture_head;
+        cfg.strategy.txpool_backrun.stop_file = cfg.strategy.mevblocker_backrun.stop_file.clone();
 
         let rpc_url = "http://node.local".to_string();
         let mevblocker = MevblockerBackrun::from_config(&cfg, rpc_url.clone()).into_config();
-        let peer = PeerBackrun::from_config(&cfg, rpc_url).into_config();
+        let peer = TxpoolBackrun::from_config(&cfg, rpc_url).into_config();
 
         assert_eq!(mevblocker.bid_mode, peer.bid_mode);
         assert_eq!(mevblocker.budget_wei, peer.budget_wei);
@@ -918,22 +936,22 @@ mod tests {
         use degenbot_config::{BotConfigLoader, MapEnv};
 
         let raw = BTreeMap::from([
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_ACTIVE", "1"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_BID_MODE", "1"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_BUDGET_WEI", "42"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_MAX_BUNDLE_WEI", "99"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_BRIBE_BIPS", "9500"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_PRIORITY_FEE_GWEI", "7"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_BUNDLE_GAS_EST", "333000"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_DRY_RUN", "1"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_KEY_FILE", "/tmp/k.key"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_ACTIVE", "1"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BID_MODE", "1"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BUDGET_WEI", "42"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_MAX_BUNDLE_WEI", "99"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BRIBE_BIPS", "9500"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_PRIORITY_FEE_GWEI", "7"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BUNDLE_GAS_EST", "333000"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_DRY_RUN", "1"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_KEY_FILE", "/tmp/k.key"),
             (
-                "DEGENBOT_STRATEGY_PEER_BACKRUN_ENDPOINTS",
+                "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_ENDPOINTS",
                 "https://relay.one,https://relay.two",
             ),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_CONNECTORS", "5"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_CYCLE_MAX_HOPS", "5"),
-            ("DEGENBOT_STRATEGY_PEER_BACKRUN_STOP_FILE", "/tmp/stop"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_CONNECTORS", "5"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_CYCLE_MAX_HOPS", "5"),
+            ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_STOP_FILE", "/tmp/stop"),
         ])
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -942,12 +960,11 @@ mod tests {
             .with_env(Box::new(MapEnv::new(raw)))
             .load()
             .expect("typed load");
-        let c =
-            PeerBackrun::from_config(&loaded.config, "http://node.local".to_string()).into_config();
-        assert_eq!(c.feed_url, degenbot_config::DEFAULT_BACKRUN_STREAM_URL);
+        let c = TxpoolBackrun::from_config(&loaded.config, "http://node.local".to_string())
+            .into_config();
         assert_eq!(
             c.submission,
-            SubmissionSlot::PublicFanOut {
+            SubmissionSlot::BuilderRelay {
                 relays: vec![
                     String::from("https://relay.one"),
                     String::from("https://relay.two"),
@@ -956,10 +973,9 @@ mod tests {
         );
         assert_eq!(c.cycle_max_hops, 5);
         assert!(!c.submission.names_private_endpoint());
-        assert!(c
-            .submission
-            .raw_relay_urls()
-            .iter()
-            .all(|url| !url.contains("private")));
+        assert!(
+            c.submission.raw_relay_urls().is_empty(),
+            "the builder-relay slot names no raw fan-out"
+        );
     }
 }

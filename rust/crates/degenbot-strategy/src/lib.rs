@@ -72,7 +72,7 @@ pub mod strategy_plane;
 // The strategy plane's shared selection surface and the concrete compositions
 // it selects. Root re-exports so a consumer names `degenbot_strategy::StrategyName`
 // rather than threading the module path.
-pub use backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun, SubmissionSlot};
+pub use backrun::{BackrunConfig, MevblockerBackrun, SubmissionSlot, TxpoolBackrun};
 pub use candidate_projection::project_candidate;
 pub use cmd_executor_adapter::{
     CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome, CmdExecutorRejection,

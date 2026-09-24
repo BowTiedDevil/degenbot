@@ -153,7 +153,7 @@ class FakeEngine:
         self._strategy_records: list[tuple[str, str, str | None]] = [
             ("settlement", "registered", None),
             ("mevblocker_backrun", "registered", None),
-            ("peer_backrun", "registered", None),
+            ("txpool_backrun", "registered", None),
         ]
 
     # ── recording ──────────────────────────────────────────────────

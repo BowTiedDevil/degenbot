@@ -2,7 +2,7 @@
 //! the strategy facets.
 //!
 //! A strategy **facet** is one typed per-strategy config section
-//! (`strategy.settlement`, `strategy.mevblocker_backrun`, `strategy.peer_backrun`); each facet's `active` key
+//! (`strategy.settlement`, `strategy.mevblocker_backrun`, `strategy.txpool_backrun`); each facet's `active` key
 //! selects it (the retired single-arm selector could not express a
 //! two-strategy host). Activation settles an endpoint posture: EITHER an
 //! explicit `--endpoints` set OR the explicit `--endpoints-default` choice,
@@ -34,12 +34,16 @@ pub enum StrategyFacet {
     /// The MEVBlocker-ecosystem pending-transaction strategy.
     MevblockerBackrun,
     /// The public-mempool pending-transaction strategy.
-    PeerBackrun,
+    TxpoolBackrun,
 }
 
 impl StrategyFacet {
     /// Every facet, in declaration order.
-    pub const ALL: [Self; 3] = [Self::Settlement, Self::MevblockerBackrun, Self::PeerBackrun];
+    pub const ALL: [Self; 3] = [
+        Self::Settlement,
+        Self::MevblockerBackrun,
+        Self::TxpoolBackrun,
+    ];
 
     /// The canonical lowercase spelling.
     #[must_use]
@@ -47,7 +51,7 @@ impl StrategyFacet {
         match self {
             Self::Settlement => "settlement",
             Self::MevblockerBackrun => "mevblocker_backrun",
-            Self::PeerBackrun => "peer_backrun",
+            Self::TxpoolBackrun => "txpool_backrun",
         }
     }
 
@@ -56,7 +60,7 @@ impl StrategyFacet {
     pub const fn trigger_kind(self) -> &'static str {
         match self {
             Self::Settlement => "settled-block",
-            Self::MevblockerBackrun | Self::PeerBackrun => "pending-transaction",
+            Self::MevblockerBackrun | Self::TxpoolBackrun => "pending-transaction",
         }
     }
 
@@ -66,7 +70,7 @@ impl StrategyFacet {
         match self {
             Self::Settlement => "strategy.settlement",
             Self::MevblockerBackrun => "strategy.mevblocker_backrun",
-            Self::PeerBackrun => "strategy.peer_backrun",
+            Self::TxpoolBackrun => "strategy.txpool_backrun",
         }
     }
 
@@ -91,7 +95,7 @@ impl StrategyFacet {
             Self::MevblockerBackrun => {
                 std::slice::from_ref(&degenbot_config::DEFAULT_BACKRUN_STREAM_URL)
             }
-            Self::PeerBackrun => degenbot_config::DEFAULT_PEER_BACKRUN_RELAYS,
+            Self::TxpoolBackrun => degenbot_config::DEFAULT_TXPOOL_BACKRUN_RELAYS,
         };
         urls.iter().map(|url| (*url).to_string()).collect()
     }
@@ -105,10 +109,10 @@ impl StrategyFacet {
         match raw.trim().to_ascii_lowercase().as_str() {
             "settlement" => Ok(Self::Settlement),
             "mevblocker_backrun" => Ok(Self::MevblockerBackrun),
-            "peer_backrun" => Ok(Self::PeerBackrun),
+            "txpool_backrun" => Ok(Self::TxpoolBackrun),
             other => Err(CliError::InvalidArgument(format!(
                 "unknown strategy facet {other:?} (expected one of: settlement \
-                 mevblocker_backrun peer_backrun)"
+                 mevblocker_backrun txpool_backrun)"
             ))),
         }
     }
@@ -357,7 +361,7 @@ fn endpoint_summary(
     let active = match facet {
         StrategyFacet::Settlement => cfg.strategy.settlement.active,
         StrategyFacet::MevblockerBackrun => cfg.strategy.mevblocker_backrun.active,
-        StrategyFacet::PeerBackrun => cfg.strategy.peer_backrun.active,
+        StrategyFacet::TxpoolBackrun => cfg.strategy.txpool_backrun.active,
     };
     if !active {
         return EndpointSummary::Inactive;
@@ -367,7 +371,7 @@ fn endpoint_summary(
             let arm = match facet {
                 StrategyFacet::Settlement => &readiness.settlement,
                 StrategyFacet::MevblockerBackrun => &readiness.mevblocker_backrun,
-                StrategyFacet::PeerBackrun => &readiness.peer_backrun,
+                StrategyFacet::TxpoolBackrun => &readiness.txpool_backrun,
             };
             match arm {
                 Arm::Active(urls) => {
@@ -444,7 +448,7 @@ fn activate(
     let arm = match facet {
         StrategyFacet::Settlement => &readiness.settlement,
         StrategyFacet::MevblockerBackrun => &readiness.mevblocker_backrun,
-        StrategyFacet::PeerBackrun => &readiness.peer_backrun,
+        StrategyFacet::TxpoolBackrun => &readiness.txpool_backrun,
     };
     let Arm::Active(urls) = arm else {
         return Err(CliError::InvalidArgument(format!(
@@ -487,7 +491,7 @@ fn facet_has_settled_choice(
     let endpoints = match facet {
         StrategyFacet::Settlement => cfg.strategy.settlement.endpoints.as_deref(),
         StrategyFacet::MevblockerBackrun => cfg.strategy.mevblocker_backrun.endpoints.as_deref(),
-        StrategyFacet::PeerBackrun => cfg.strategy.peer_backrun.endpoints.as_deref(),
+        StrategyFacet::TxpoolBackrun => cfg.strategy.txpool_backrun.endpoints.as_deref(),
     };
     endpoints.is_some_and(|raw| raw.split(',').any(|s| !s.trim().is_empty()))
 }
@@ -604,8 +608,8 @@ mod tests {
             StrategyFacet::MevblockerBackrun
         );
         assert_eq!(
-            StrategyFacet::parse("peer_backrun").unwrap(),
-            StrategyFacet::PeerBackrun
+            StrategyFacet::parse("txpool_backrun").unwrap(),
+            StrategyFacet::TxpoolBackrun
         );
         assert!(
             StrategyFacet::parse("backrun").is_err(),
@@ -631,7 +635,7 @@ mod tests {
         .expect("activate mevblocker");
         execute(
             &StrategyCommand::Activate {
-                facet: StrategyFacet::PeerBackrun,
+                facet: StrategyFacet::TxpoolBackrun,
                 endpoints: None,
                 endpoints_default: true,
             },
@@ -645,11 +649,11 @@ mod tests {
             .load()
             .expect("config loads");
         assert!(loaded.config.strategy.mevblocker_backrun.active);
-        assert!(loaded.config.strategy.peer_backrun.active);
+        assert!(loaded.config.strategy.txpool_backrun.active);
         assert_eq!(
-            loaded.config.strategy.peer_backrun.endpoints.as_deref(),
+            loaded.config.strategy.txpool_backrun.endpoints.as_deref(),
             Some(
-                degenbot_config::DEFAULT_PEER_BACKRUN_RELAYS
+                degenbot_config::DEFAULT_TXPOOL_BACKRUN_RELAYS
                     .join(",")
                     .as_str()
             )

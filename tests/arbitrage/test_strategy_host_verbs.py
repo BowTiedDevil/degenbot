@@ -40,7 +40,7 @@ def _active_facet(engine: ArbitrageEngine) -> str:
     for facet, key in (
         ("settlement", readiness.settlement_active),
         ("mevblocker_backrun", readiness.mevblocker_backrun_active),
-        ("peer_backrun", readiness.peer_backrun_active),
+        ("txpool_backrun", readiness.txpool_backrun_active),
     ):
         if not key:
             continue
@@ -61,7 +61,7 @@ def test_default_boot_registers_all_strategies_unenabled(engine: ArbitrageEngine
     assert engine.strategies() == [
         ("settlement", "registered", None),
         ("mevblocker_backrun", "registered", None),
-        ("peer_backrun", "registered", None),
+        ("txpool_backrun", "registered", None),
     ]
 
 
@@ -99,8 +99,8 @@ def test_unknown_strategy_raises_a_typed_error(engine: ArbitrageEngine) -> None:
 def test_unconfigured_backrun_raises_a_typed_error(engine: ArbitrageEngine) -> None:
     """The default boot names no backrun keys, so enabling one fails loudly."""
     with pytest.raises(UnconfiguredStrategyError):
-        engine.enable_strategy("peer_backrun")
-    assert engine.strategies()[2] == ("peer_backrun", "registered", None)
+        engine.enable_strategy("txpool_backrun")
+    assert engine.strategies()[2] == ("txpool_backrun", "registered", None)
 
 
 def test_errors_share_the_strategy_host_base(engine: ArbitrageEngine) -> None:

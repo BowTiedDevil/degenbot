@@ -583,7 +583,7 @@ fn run() -> Result<(), String> {
         if let Some(msg) = strategy_arm_refusal(
             loaded.config.strategy.settlement.active,
             loaded.config.strategy.mevblocker_backrun.active,
-            loaded.config.strategy.peer_backrun.active,
+            loaded.config.strategy.txpool_backrun.active,
         ) {
             return Err(msg);
         }
@@ -1181,7 +1181,7 @@ fn strategy_arm_refusal(
         );
     }
     (mevblocker_active || peer_active).then(|| {
-        "an activated backrun facet (strategy.mevblocker_backrun / strategy.peer_backrun): this driver is the settled-block arm; the backrun arms boot as hosted drivers".to_string()
+        "an activated backrun facet (strategy.mevblocker_backrun / strategy.txpool_backrun): this driver is the settled-block arm; the backrun arms boot as hosted drivers".to_string()
     })
 }
 
@@ -1218,6 +1218,6 @@ mod arm_gate_tests {
     #[test]
     fn peer_arm_refuses_on_the_settlement_driver() {
         let msg = strategy_arm_refusal(true, false, true).expect("peer must refuse");
-        assert!(msg.contains("strategy.peer_backrun"));
+        assert!(msg.contains("strategy.txpool_backrun"));
     }
 }

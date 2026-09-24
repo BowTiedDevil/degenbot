@@ -624,6 +624,7 @@ mod tests {
 
     fn tx(nonce: u64) -> PendingTx {
         PendingTx {
+            raw_signed_tx: None,
             chain_id: 1,
             from: Address::ZERO,
             to: None,

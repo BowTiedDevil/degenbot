@@ -28,14 +28,14 @@ fn load(path: &PathBuf) -> Result<LoadedConfig, ConfigError> {
 fn section_paths_declare_every_facet() {
     assert!(SECTION_PATHS.contains(&"strategy.settlement"));
     assert!(SECTION_PATHS.contains(&"strategy.mevblocker_backrun"));
-    assert!(SECTION_PATHS.contains(&"strategy.peer_backrun"));
+    assert!(SECTION_PATHS.contains(&"strategy.txpool_backrun"));
 }
 
 #[test]
 fn empty_facet_tables_load() {
     let path = temp_toml(
         "empty",
-        "[strategy.settlement]\n[strategy.mevblocker_backrun]\n[strategy.peer_backrun]\n",
+        "[strategy.settlement]\n[strategy.mevblocker_backrun]\n[strategy.txpool_backrun]\n",
     );
     let loaded = load(&path);
     let _ = std::fs::remove_file(&path);

@@ -97,6 +97,25 @@ impl TxSigner {
         self.chain_id
     }
 
+    /// Sign an arbitrary message per EIP-191 `personal_sign` and return the
+    /// 65-byte `r||s||v` (legacy y-parity, `27 + v`) — the `X-Flashbots-Signature`
+    /// payload format the builder relays verify over the EXACT request body.
+    ///
+    /// Synchronous CPU-bound signing, mirroring [`sign_eip1559`](Self::sign_eip1559).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubmissionError::Sign`] if the ECDSA signing fails.
+    pub fn sign_message_eip191(&self, message: &[u8]) -> SubmissionResult<String> {
+        use alloy::signers::SignerSync;
+        let sig = self.signer.sign_message_sync(message)?;
+        let mut buf = [0u8; 65];
+        buf[..32].copy_from_slice(&sig.r().to_be_bytes::<32>());
+        buf[32..64].copy_from_slice(&sig.s().to_be_bytes::<32>());
+        buf[64] = 27 + u8::from(sig.v());
+        Ok(alloy::hex::encode(buf))
+    }
+
     /// Sign a type-2 EIP-1559 transaction and return the raw signed
     /// [`TxEnvelope`] bytes ready for `eth_sendRawTransaction`.
     ///

@@ -77,7 +77,7 @@ pub use loader::{
 };
 pub use readiness::{
     strategy_readiness, Arm, StrategyReadiness, StrategyReadinessError, DEFAULT_BACKRUN_STREAM_URL,
-    DEFAULT_PEER_BACKRUN_RELAYS, SETTLEMENT_DEFAULT_ENDPOINTS,
+    DEFAULT_TXPOOL_BACKRUN_RELAYS, SETTLEMENT_DEFAULT_ENDPOINTS,
 };
 pub use resolvers::{
     config_home, expand_state_path, expand_state_path_with, expand_tilde_path, node_http_env_name,
@@ -88,7 +88,7 @@ pub use resolvers::{
 };
 pub use schema::{
     AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyMevblockerBackrunConfig,
-    StrategyPeerBackrunConfig, StrategySettlementConfig, VerifyTicks,
+    StrategySettlementConfig, StrategyTxpoolBackrunConfig, VerifyTicks,
 };
 pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA, SECTION_PATHS};
 

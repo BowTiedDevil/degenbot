@@ -78,19 +78,33 @@ pub(super) async fn build_broadcast_relays(
 }
 
 /// The bid's submission target, bound by the composition's slot: the
-/// `MEVBlocker` arm anchors a bundle on its searcher WebSocket, the peer arm
-/// fans the signed bytes out over the public relays.
+/// `MEVBlocker` arm anchors a bundle on its searcher WebSocket, the
+/// builder-relay arm bundles the target's verbatim signed bytes with the
+/// signed backrun, and the legacy public arm fans the signed bytes out.
+///
+/// `Some(None)` semantics are folded into the `Option` return: a
+/// builder-relay slot whose frame lacks the target's raw signed bytes has no
+/// bundle to send (the caller logs a quiet skip — it is never broadcast raw,
+/// which would leak the backrun without its target).
 pub(super) fn bid_submission_target(
     cfg: &BackrunConfig,
     target_tx_hash: B256,
     block_number: u64,
-) -> SubmissionTarget {
+    target_raw: Option<&alloy::primitives::Bytes>,
+) -> Option<SubmissionTarget> {
     match &cfg.submission {
-        SubmissionSlot::Mevblocker { bundle_url, .. } => SubmissionTarget::Bundle(BundleTarget {
-            stream_url: bundle_url.clone(),
-            target_tx_hash,
+        SubmissionSlot::Mevblocker { bundle_url, .. } => {
+            Some(SubmissionTarget::Bundle(BundleTarget {
+                stream_url: bundle_url.clone(),
+                target_tx_hash,
+                block_number,
+            }))
+        }
+        SubmissionSlot::BuilderRelay { relays } => Some(SubmissionTarget::BuilderRelay {
+            relays: relays.clone(),
+            target_raw: target_raw?.clone(),
             block_number,
         }),
-        SubmissionSlot::PublicFanOut { .. } => SubmissionTarget::Public,
+        SubmissionSlot::PublicFanOut { .. } => Some(SubmissionTarget::Public),
     }
 }

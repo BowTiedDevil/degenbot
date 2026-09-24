@@ -9,7 +9,7 @@
 
 use degenbot_config::readiness::{strategy_readiness, Arm};
 use degenbot_config::{
-    BotConfig, BotConfigLoader, MapEnv, DEFAULT_BACKRUN_STREAM_URL, DEFAULT_PEER_BACKRUN_RELAYS,
+    BotConfig, BotConfigLoader, MapEnv, DEFAULT_BACKRUN_STREAM_URL, DEFAULT_TXPOOL_BACKRUN_RELAYS,
     SETTLEMENT_DEFAULT_ENDPOINTS,
 };
 
@@ -33,7 +33,7 @@ fn inactive_facets_have_no_endpoint_requirement() {
     let readiness = strategy_readiness(&BotConfig::default()).expect("inactive config is ready");
     assert_eq!(readiness.settlement, Arm::Inactive);
     assert_eq!(readiness.mevblocker_backrun, Arm::Inactive);
-    assert_eq!(readiness.peer_backrun, Arm::Inactive);
+    assert_eq!(readiness.txpool_backrun, Arm::Inactive);
 }
 
 #[test]
@@ -80,13 +80,13 @@ fn the_mevblocker_default_channel_resolves_when_stamped_as_endpoints() {
 
 #[test]
 fn the_peer_default_relays_resolve_when_stamped_as_endpoints() {
-    let pinned = DEFAULT_PEER_BACKRUN_RELAYS.join(",");
-    let cfg = activated("peer_backrun", Some(&pinned));
+    let pinned = DEFAULT_TXPOOL_BACKRUN_RELAYS.join(",");
+    let cfg = activated("txpool_backrun", Some(&pinned));
     let readiness = strategy_readiness(&cfg).expect("ready");
     assert_eq!(
-        readiness.peer_backrun,
+        readiness.txpool_backrun,
         Arm::Active(
-            DEFAULT_PEER_BACKRUN_RELAYS
+            DEFAULT_TXPOOL_BACKRUN_RELAYS
                 .iter()
                 .map(|url| (*url).to_string())
                 .collect()
@@ -106,10 +106,13 @@ fn mevblocker_explicit_endpoint_resolves() {
 
 #[test]
 fn peer_explicit_endpoints_resolve() {
-    let cfg = activated("peer_backrun", Some("https://relay.one,https://relay.two"));
+    let cfg = activated(
+        "txpool_backrun",
+        Some("https://relay.one,https://relay.two"),
+    );
     let readiness = strategy_readiness(&cfg).expect("ready");
     assert_eq!(
-        readiness.peer_backrun,
+        readiness.txpool_backrun,
         Arm::Active(vec![
             "https://relay.one".to_string(),
             "https://relay.two".to_string(),
@@ -119,7 +122,7 @@ fn peer_explicit_endpoints_resolve() {
 
 #[test]
 fn unset_or_blank_endpoints_on_an_active_facet_is_a_typed_refusal() {
-    for facet in ["settlement", "mevblocker_backrun", "peer_backrun"] {
+    for facet in ["settlement", "mevblocker_backrun", "txpool_backrun"] {
         for endpoints in [None, Some(""), Some("  ,  ")] {
             let cfg = activated(facet, endpoints);
             let error = strategy_readiness(&cfg).expect_err("blank endpoints must refuse");
@@ -172,7 +175,7 @@ fn peer_endpoint_shape_is_validated() {
         "ftp://relay.example",
         "relay.example",
     ] {
-        let cfg = activated("peer_backrun", Some(url));
+        let cfg = activated("txpool_backrun", Some(url));
         assert!(
             strategy_readiness(&cfg).is_err(),
             "non-http peer relay {url} must refuse"

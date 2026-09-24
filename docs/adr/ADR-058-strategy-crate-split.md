@@ -66,7 +66,7 @@ The bare word "strategy" was reserved for the top-level composition only:
 ### D4 — Per-ecosystem types, composition over sub-traits
 
 The backrun arm split into two distinct types (8888d85fc): `MevblockerBackrun`
-and `PeerBackrun`. Both parameterize the same reaction machinery (frame feed,
+and `TxpoolBackrun`. Both parameterize the same reaction machinery (frame feed,
 anchored discovery, decide gate, simulation, dispatch) by composition; they
 differ only in the value of their `SubmissionSlot`:
 
@@ -128,10 +128,10 @@ What actually moved differed from the plan:
   unconditional-`Configured` carve-out was kept and documented in
   `settlement.rs` rather than silently changed.
 - **The config hard cut.** `strategy.backrun` was replaced by
-  `strategy.mevblocker_backrun` and `strategy.peer_backrun` typed facets at the
+  `strategy.mevblocker_backrun` and `strategy.txpool_backrun` typed facets at the
   single declaration site, with env spellings
   `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_*` / `DEGENBOT_STRATEGY_PEER_BACKRUN_*`
-  and `StrategyName` becoming `Settlement | MevblockerBackrun | PeerBackrun`.
+  and `StrategyName` becoming `Settlement | MevblockerBackrun | TxpoolBackrun`.
   There are no aliases and no legacy parsing; readiness legality is per facet
   (MEVBlocker bid mode requires `key_file` and `mevblocker_url`). The retired
   single-arm `strategy.name` selector stays undeclared, pinned by

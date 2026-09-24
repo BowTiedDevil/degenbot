@@ -203,8 +203,8 @@ class StrategyReadinessView:
     settlement_endpoints: list[str]
     mevblocker_backrun_active: bool
     mevblocker_backrun_endpoints: list[str]
-    peer_backrun_active: bool
-    peer_backrun_endpoints: list[str]
+    txpool_backrun_active: bool
+    txpool_backrun_endpoints: list[str]
 
 def validate_strategy_readiness() -> StrategyReadinessView:
     """Resolve the strategy readiness of the installed typed config.

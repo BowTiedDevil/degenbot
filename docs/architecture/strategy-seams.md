@@ -127,7 +127,7 @@ now lands on top of it ([ADR-057](adr/ADR-057-strategy-host.md)).
 | Seam | Lives at |
 |---|---|
 | Strategy plane (`StrategyName`, `Strategy`, `SelectedStrategy`) | `degenbot-strategy/src/strategy_plane.rs` |
-| Concrete compositions (`MevblockerBackrun`, `PeerBackrun`, `Settlement`) | `degenbot-strategy/src/backrun.rs`, `degenbot-strategy/src/settlement.rs` |
+| Concrete compositions (`MevblockerBackrun`, `TxpoolBackrun`, `Settlement`) | `degenbot-strategy/src/backrun.rs`, `degenbot-strategy/src/settlement.rs` |
 | `MarketContext` (frame-surviving caches) | `degenbot-strategy/src/market_context.rs` |
 | `PendingTxReaction` + artifacts | `degenbot-strategy/src/pending_tx.rs` |
 | `BackrunStrategy` (reference composition) | `degenbot-strategy/src/backrun_strategy.rs` |

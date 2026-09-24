@@ -15,6 +15,10 @@ workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 alloy = { version = "^2.5", features = ["full", "signer-local", "network"] }
+# The relay POSTs (flashbots-compatible eth_sendBundle over HTTPS). Ordered
+# fan-out lives in relay.rs; rustls matches the bot crate's reqwest pinned
+# feature set (# no default-tls native openssl).
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 degenbot-core.workspace = true
 # The per-process event hub: the backrun driver registers the MEVBlocker feed's
 # PendingTx drop-oldest ring on it (Phase B1).

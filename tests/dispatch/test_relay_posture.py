@@ -267,14 +267,14 @@ def _view(
     *,
     settlement_active: bool = True,
     mevblocker_backrun_active: bool = False,
-    peer_backrun_active: bool = False,
+    txpool_backrun_active: bool = False,
 ) -> types.SimpleNamespace:
     """A readiness view stand-in with the settled-block arm on by default."""
     return types.SimpleNamespace(
         settlement_active=settlement_active,
         mevblocker_backrun_active=mevblocker_backrun_active,
-        peer_backrun_active=peer_backrun_active,
+        txpool_backrun_active=txpool_backrun_active,
         settlement_endpoints=[],
         mevblocker_backrun_endpoints=[],
-        peer_backrun_endpoints=[],
+        txpool_backrun_endpoints=[],
     )

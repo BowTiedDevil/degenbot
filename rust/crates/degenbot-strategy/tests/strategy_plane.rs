@@ -13,14 +13,14 @@
 
 use degenbot_config::BotConfig;
 use degenbot_strategy::{
-    MevblockerBackrun, PeerBackrun, SelectedStrategy, Settlement, Strategy, StrategyName,
+    MevblockerBackrun, SelectedStrategy, Settlement, Strategy, StrategyName, TxpoolBackrun,
 };
 
 #[test]
 fn strategy_name_registration_order_is_settlement_then_backruns() {
     assert_eq!(
         StrategyName::ALL.map(StrategyName::as_str),
-        ["settlement", "mevblocker_backrun", "peer_backrun"]
+        ["settlement", "mevblocker_backrun", "txpool_backrun"]
     );
     for name in StrategyName::ALL {
         assert_eq!(StrategyName::parse(name.as_str()), Some(name));
@@ -32,7 +32,7 @@ fn strategy_name_registration_order_is_settlement_then_backruns() {
 fn each_concrete_composition_declares_its_plane_name() {
     assert_eq!(Settlement::NAME, StrategyName::Settlement);
     assert_eq!(MevblockerBackrun::NAME, StrategyName::MevblockerBackrun);
-    assert_eq!(PeerBackrun::NAME, StrategyName::PeerBackrun);
+    assert_eq!(TxpoolBackrun::NAME, StrategyName::TxpoolBackrun);
 }
 
 #[test]
@@ -41,10 +41,10 @@ fn strategy_name_reads_the_facet_activation_flag() {
     assert!(!StrategyName::Settlement.is_active(&cfg));
     assert!(!StrategyName::MevblockerBackrun.is_active(&cfg));
     cfg.strategy.settlement.active = true;
-    cfg.strategy.peer_backrun.active = true;
+    cfg.strategy.txpool_backrun.active = true;
     assert!(StrategyName::Settlement.is_active(&cfg));
     assert!(!StrategyName::MevblockerBackrun.is_active(&cfg));
-    assert!(StrategyName::PeerBackrun.is_active(&cfg));
+    assert!(StrategyName::TxpoolBackrun.is_active(&cfg));
 }
 
 #[test]
@@ -65,11 +65,11 @@ fn every_strategy_selects_through_one_code_path() {
 
     // Peer alone.
     let mut cfg = BotConfig::default();
-    cfg.strategy.peer_backrun.active = true;
-    cfg.strategy.peer_backrun.endpoints = Some(String::from("http://relay.one.local"));
-    let selected = StrategyName::PeerBackrun.select(&cfg, String::from("http://node.local"));
-    assert!(matches!(selected, SelectedStrategy::PeerBackrun(_)));
-    assert_eq!(selected.name(), StrategyName::PeerBackrun);
+    cfg.strategy.txpool_backrun.active = true;
+    cfg.strategy.txpool_backrun.endpoints = Some(String::from("http://relay.one.local"));
+    let selected = StrategyName::TxpoolBackrun.select(&cfg, String::from("http://node.local"));
+    assert!(matches!(selected, SelectedStrategy::TxpoolBackrun(_)));
+    assert_eq!(selected.name(), StrategyName::TxpoolBackrun);
 
     // Mevblocker alone.
     let mut cfg = BotConfig::default();
@@ -84,9 +84,9 @@ fn every_strategy_selects_through_one_code_path() {
     cfg.strategy.settlement.active = true;
     cfg.strategy.settlement.endpoints = Some(String::from("https://rpc.flashbots.net?hint=hash"));
     let settlement = StrategyName::Settlement.select(&cfg, String::from("http://node.local"));
-    let peer = StrategyName::PeerBackrun.select(&cfg, String::from("http://node.local"));
+    let peer = StrategyName::TxpoolBackrun.select(&cfg, String::from("http://node.local"));
     assert_eq!(settlement.name(), StrategyName::Settlement);
-    assert_eq!(peer.name(), StrategyName::PeerBackrun);
+    assert_eq!(peer.name(), StrategyName::TxpoolBackrun);
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn all_three_strategies_register_and_enable_through_one_verb_surface() {
     );
 
     let settlement = StrategyId::new(StrategyName::Settlement.as_str());
-    let peer = StrategyId::new(StrategyName::PeerBackrun.as_str());
+    let peer = StrategyId::new(StrategyName::TxpoolBackrun.as_str());
     assert_eq!(host.enable(&settlement), Ok(DriverPose::Enabled));
     assert_eq!(
         host.state_of(&peer),

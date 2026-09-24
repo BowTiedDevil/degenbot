@@ -46,6 +46,7 @@ fn frame(nonce: u64, expected: u64) -> ParkedFrame {
         tx_type: 2,
         access_list: serde_json::json!([]),
         received_unix_ms: 1_700_000_000_000,
+        raw_signed_tx: None,
     }
 }
 
@@ -352,6 +353,7 @@ fn event(hash_byte: u8, nonce: u64) -> BackrunFeedEvent {
         access_list: serde_json::json!([]),
         tx_type: 2,
         received_unix_ms: 1_700_000_000_000,
+        raw_signed_tx: None,
     }
 }
 

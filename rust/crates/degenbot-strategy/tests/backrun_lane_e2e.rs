@@ -213,6 +213,7 @@ fn frame_event(value: U256, data: Bytes, nonce: u64) -> BackrunFeedEvent {
         access_list: serde_json::Value::Null,
         tx_type: 2,
         received_unix_ms: 0,
+        raw_signed_tx: None,
     }
 }
 

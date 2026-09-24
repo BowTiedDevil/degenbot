@@ -28,7 +28,7 @@ const SWEEP_ARTIFACTS: &[&str] = &[
     // the family wildcards in the facet-invariant tests' prefix assertions
     // (the schema owns the concrete per-ecosystem backrun keys).
     "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_",
-    "DEGENBOT_STRATEGY_PEER_BACKRUN_",
+    "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_",
     // ADR-051 D8: the family wildcard in the cli-core operator doc comment
     // (the loader owns the four concrete DEGENBOT_FLEET_CORDON_* keys).
     "DEGENBOT_FLEET_CORDON_",

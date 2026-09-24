@@ -66,13 +66,16 @@ const MEVBLOCKER_ENV: &[(&str, &str)] = &[
 ];
 
 const PEER_ENV: &[(&str, &str)] = &[
-    ("DEGENBOT_STRATEGY_PEER_BACKRUN_ACTIVE", "1"),
-    ("DEGENBOT_STRATEGY_PEER_BACKRUN_BID_MODE", "1"),
+    ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_ACTIVE", "1"),
+    ("DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BID_MODE", "1"),
     (
-        "DEGENBOT_STRATEGY_PEER_BACKRUN_ENDPOINTS",
+        "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_ENDPOINTS",
         "https://relay.one,https://relay.two",
     ),
-    ("DEGENBOT_STRATEGY_PEER_BACKRUN_STOP_FILE", "/tmp/peer-stop"),
+    (
+        "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_STOP_FILE",
+        "/tmp/peer-stop",
+    ),
 ];
 
 fn env_map(pairs: &[(&str, &str)]) -> MapEnv {
@@ -104,7 +107,7 @@ fn backrun_facets_collapse_to_declared_defaults() {
     assert_eq!(b.fixture_head, None);
     assert_eq!(b.mevblocker_url, None);
 
-    let p = &loaded.config.strategy.peer_backrun;
+    let p = &loaded.config.strategy.txpool_backrun;
     assert!(!p.bid_mode);
     assert_eq!(p.budget_wei, 0);
     assert_eq!(p.max_bundle_wei, 1_000_000_000_000_000);
@@ -115,7 +118,7 @@ fn backrun_facets_collapse_to_declared_defaults() {
         p.stop_file,
         std::path::PathBuf::from("/tmp/degenbot-sidecar-STOP")
     );
-    assert!(!BotConfig::default().strategy.peer_backrun.active);
+    assert!(!BotConfig::default().strategy.txpool_backrun.active);
 }
 
 #[test]
@@ -146,7 +149,7 @@ fn peer_facet_resolves_from_env() {
         .with_env(Box::new(env_map(PEER_ENV)))
         .load()
         .expect("env load");
-    let p = &loaded.config.strategy.peer_backrun;
+    let p = &loaded.config.strategy.txpool_backrun;
     assert!(p.active);
     assert!(p.bid_mode);
     assert_eq!(
@@ -190,8 +193,8 @@ fn cycle_max_hops_below_two_refuses_at_load_with_the_remedy() {
             "strategy.mevblocker_backrun.cycle_max_hops",
         ),
         (
-            "DEGENBOT_STRATEGY_PEER_BACKRUN_CYCLE_MAX_HOPS",
-            "strategy.peer_backrun.cycle_max_hops",
+            "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_CYCLE_MAX_HOPS",
+            "strategy.txpool_backrun.cycle_max_hops",
         ),
     ] {
         for bad in ["0", "1"] {

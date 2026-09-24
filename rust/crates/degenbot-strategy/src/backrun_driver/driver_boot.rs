@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun};
+use crate::backrun::{BackrunConfig, MevblockerBackrun, TxpoolBackrun};
 use crate::execution_context::ExecutionContext;
 use crate::strategy_kit::StrategyKit;
 use degenbot_bot::bot_core::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerifier, DbArm};
@@ -319,7 +319,7 @@ pub async fn resolve_backrun_boot(
                                 "connector index loaded"
                             );
                             if config.strategy.mevblocker_backrun.rank_evidence
-                                || config.strategy.peer_backrun.rank_evidence
+                                || config.strategy.txpool_backrun.rank_evidence
                             {
                                 match degenbot_bot::connector_index::deep_pair_ranking_evidence(
                                     next_registry.index(),
@@ -391,8 +391,9 @@ impl BackrunBootResources {
 pub enum BackrunEcosystem {
     /// The `MEVBlocker` private-auction composition.
     Mevblocker,
-    /// The public-mempool composition.
-    Peer,
+    /// The builder-relay composition: the chain node txpool feed plus the
+    /// Flashbots-compatible relay fan-out.
+    Txpool,
 }
 
 impl BackrunEcosystem {
@@ -401,7 +402,7 @@ impl BackrunEcosystem {
     fn config(self, cfg: &degenbot_config::BotConfig, rpc_url: String) -> BackrunConfig {
         match self {
             Self::Mevblocker => MevblockerBackrun::from_config(cfg, rpc_url).into_config(),
-            Self::Peer => PeerBackrun::from_config(cfg, rpc_url).into_config(),
+            Self::Txpool => TxpoolBackrun::from_config(cfg, rpc_url).into_config(),
         }
     }
 }
@@ -435,7 +436,7 @@ fn install_frame_trace_sink_under(root: Option<&Path>, ecosystem: &BackrunEcosys
     }
     let engine = match ecosystem {
         BackrunEcosystem::Mevblocker => "backrun-mevblocker",
-        BackrunEcosystem::Peer => "backrun-peer",
+        BackrunEcosystem::Txpool => "backrun-peer",
     };
     let run = match root {
         Some(root) => degenbot_runs::RunDirectory::create_in(root, engine),
@@ -513,7 +514,7 @@ mod trace_install_tests {
         );
         assert!(first.to_string_lossy().contains("backrun-mevblocker"));
 
-        install_frame_trace_sink_under(Some(root.path()), &BackrunEcosystem::Peer);
+        install_frame_trace_sink_under(Some(root.path()), &BackrunEcosystem::Txpool);
         let after = degenbot_runs::trace_jsonl_default()
             .map(std::path::Path::to_path_buf)
             .expect("the default stays installed");

@@ -244,8 +244,8 @@ pub(crate) fn boot_host() -> BootedHost {
                 degenbot_strategy::backrun_driver::BackrunEcosystem::Mevblocker,
             ),
             (
-                "peer_backrun",
-                degenbot_strategy::backrun_driver::BackrunEcosystem::Peer,
+                "txpool_backrun",
+                degenbot_strategy::backrun_driver::BackrunEcosystem::Txpool,
             ),
         ] {
             let id = StrategyId::new(name);
@@ -463,7 +463,7 @@ mod tests {
                 engine
                     .host
                     .lock()
-                    .has_spawn(&StrategyId::new("peer_backrun")),
+                    .has_spawn(&StrategyId::new("txpool_backrun")),
                 "the engine boot registers the peer backrun lane's spawn factory"
             );
             let id = StrategyId::new("settlement");
@@ -535,7 +535,7 @@ mod tests {
                 "the boot installs the mevblocker backrun head lane"
             );
             assert!(
-                lanes.contains_key(&StrategyId::new("peer_backrun")),
+                lanes.contains_key(&StrategyId::new("txpool_backrun")),
                 "the boot installs the peer backrun head lane"
             );
             drop(lanes);
@@ -565,7 +565,7 @@ mod tests {
                 "the mevblocker facet is registered on the host: {names:?}"
             );
             assert!(
-                names.contains(&"peer_backrun".to_string()),
+                names.contains(&"txpool_backrun".to_string()),
                 "the peer facet is registered on the host: {names:?}"
             );
         });
@@ -590,8 +590,8 @@ mod tests {
             (degenbot_strategy::StrategyName::MevblockerBackrun, |cfg| {
                 cfg.strategy.mevblocker_backrun.active = true;
             }),
-            (degenbot_strategy::StrategyName::PeerBackrun, |cfg| {
-                cfg.strategy.peer_backrun.active = true;
+            (degenbot_strategy::StrategyName::TxpoolBackrun, |cfg| {
+                cfg.strategy.txpool_backrun.active = true;
             }),
         ];
         for (name, activate) in name_and_active {

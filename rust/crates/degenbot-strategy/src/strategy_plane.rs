@@ -2,18 +2,18 @@
 //!
 //! A strategy is a top-level label for one kind of profit opportunity. Three
 //! concrete compositions exist — [`Settlement`], [`MevblockerBackrun`], and
-//! [`PeerBackrun`] — and the surface they demonstrably share is their identity:
+//! [`TxpoolBackrun`] — and the surface they demonstrably share is their identity:
 //! a facet name, a registration id (the same string), and selection through
 //! [`StrategyName`]. That is the whole contract; a slot with one consumer stays
 //! out of it.
 //!
 //! [`Settlement`]: crate::settlement::Settlement
 //! [`MevblockerBackrun`]: crate::backrun::MevblockerBackrun
-//! [`PeerBackrun`]: crate::backrun::PeerBackrun
+//! [`TxpoolBackrun`]: crate::backrun::TxpoolBackrun
 
 use degenbot_config::BotConfig;
 
-use crate::backrun::{MevblockerBackrun, PeerBackrun};
+use crate::backrun::{MevblockerBackrun, TxpoolBackrun};
 use crate::settlement::Settlement;
 
 /// One strategy's identity on the plane: its facet name and registration id,
@@ -25,12 +25,16 @@ pub enum StrategyName {
     /// The `MEVBlocker`-ecosystem pending-transaction arm.
     MevblockerBackrun,
     /// The public-mempool pending-transaction arm.
-    PeerBackrun,
+    TxpoolBackrun,
 }
 
 impl StrategyName {
     /// Every strategy, in registration order.
-    pub const ALL: [Self; 3] = [Self::Settlement, Self::MevblockerBackrun, Self::PeerBackrun];
+    pub const ALL: [Self; 3] = [
+        Self::Settlement,
+        Self::MevblockerBackrun,
+        Self::TxpoolBackrun,
+    ];
 
     /// The canonical spelling: the facet name and the host registration id.
     #[must_use]
@@ -38,7 +42,7 @@ impl StrategyName {
         match self {
             Self::Settlement => "settlement",
             Self::MevblockerBackrun => "mevblocker_backrun",
-            Self::PeerBackrun => "peer_backrun",
+            Self::TxpoolBackrun => "txpool_backrun",
         }
     }
 
@@ -48,7 +52,7 @@ impl StrategyName {
         match self {
             Self::Settlement => "strategy.settlement",
             Self::MevblockerBackrun => "strategy.mevblocker_backrun",
-            Self::PeerBackrun => "strategy.peer_backrun",
+            Self::TxpoolBackrun => "strategy.txpool_backrun",
         }
     }
 
@@ -65,7 +69,7 @@ impl StrategyName {
         match self {
             Self::Settlement => cfg.strategy.settlement.active,
             Self::MevblockerBackrun => cfg.strategy.mevblocker_backrun.active,
-            Self::PeerBackrun => cfg.strategy.peer_backrun.active,
+            Self::TxpoolBackrun => cfg.strategy.txpool_backrun.active,
         }
     }
 
@@ -75,7 +79,7 @@ impl StrategyName {
         match self {
             Self::Settlement => cfg.strategy.settlement.endpoints.as_deref(),
             Self::MevblockerBackrun => cfg.strategy.mevblocker_backrun.endpoints.as_deref(),
-            Self::PeerBackrun => cfg.strategy.peer_backrun.endpoints.as_deref(),
+            Self::TxpoolBackrun => cfg.strategy.txpool_backrun.endpoints.as_deref(),
         }
     }
 
@@ -92,8 +96,8 @@ impl StrategyName {
             Self::MevblockerBackrun => {
                 SelectedStrategy::MevblockerBackrun(MevblockerBackrun::from_config(cfg, rpc_url))
             }
-            Self::PeerBackrun => {
-                SelectedStrategy::PeerBackrun(PeerBackrun::from_config(cfg, rpc_url))
+            Self::TxpoolBackrun => {
+                SelectedStrategy::TxpoolBackrun(TxpoolBackrun::from_config(cfg, rpc_url))
             }
         }
     }
@@ -114,7 +118,7 @@ pub enum SelectedStrategy {
     /// The `MEVBlocker`-ecosystem backrun composition.
     MevblockerBackrun(MevblockerBackrun),
     /// The public-mempool backrun composition.
-    PeerBackrun(PeerBackrun),
+    TxpoolBackrun(TxpoolBackrun),
 }
 
 impl SelectedStrategy {
@@ -124,7 +128,7 @@ impl SelectedStrategy {
         match self {
             Self::Settlement(_) => StrategyName::Settlement,
             Self::MevblockerBackrun(_) => StrategyName::MevblockerBackrun,
-            Self::PeerBackrun(_) => StrategyName::PeerBackrun,
+            Self::TxpoolBackrun(_) => StrategyName::TxpoolBackrun,
         }
     }
 }

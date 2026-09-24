@@ -576,8 +576,8 @@ pub enum FacetArg {
     #[value(name = "mevblocker_backrun")]
     MevblockerBackrun,
     /// The public-mempool pending-transaction strategy.
-    #[value(name = "peer_backrun")]
-    PeerBackrun,
+    #[value(name = "txpool_backrun")]
+    TxpoolBackrun,
 }
 
 /// The [`CliContext`] the argv overrides describe (ADR-051 D8).
@@ -863,7 +863,7 @@ fn facet_of(arg: FacetArg) -> StrategyFacet {
     match arg {
         FacetArg::Settlement => StrategyFacet::Settlement,
         FacetArg::MevblockerBackrun => StrategyFacet::MevblockerBackrun,
-        FacetArg::PeerBackrun => StrategyFacet::PeerBackrun,
+        FacetArg::TxpoolBackrun => StrategyFacet::TxpoolBackrun,
     }
 }
 
