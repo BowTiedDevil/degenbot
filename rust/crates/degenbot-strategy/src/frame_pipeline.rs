@@ -97,7 +97,9 @@ pub use crate::market_context::MarketContext;
 /// The Uniswap V4 `PoolManager` singleton — the descriptor key for the
 /// explicitly-unsupported V4 family (frames touching ONLY this observe
 /// `v4_unsupported` instead of guessing a decode).
-const V4_POOL_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
+/// The session deployment identity used by the frame's V4 descriptor and the
+/// command-executor encode context.
+pub const V4_POOL_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
 
 // ─────────────────────────────────────────────────────────────────────────
 // Offline-review capture (moved verbatim from the bin: capture failures

@@ -13,19 +13,19 @@ use degenbot_bot::bot_core::{
 };
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_db::{DegenbotDb, V2PoolRowInput};
-use degenbot_executor::composers::{
-    encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
-};
-use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
+use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
+use degenbot_executor::composers::EncodeContext;
 use degenbot_pools::slot_layout::V2ReservesParts;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
 use degenbot_solvers::mixed::{HopType, MixedPoolRef};
 use degenbot_strategy::backrun_engine::{
-    compose_candidate, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily,
+    project_candidate_for_cmd_executor, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate,
+    LaneFamily,
 };
-use degenbot_strategy::backrun_strategy::admit_extracted;
+use degenbot_strategy::backrun_strategy::{admit_extracted, backrun_encode_options};
+use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::strategy_kit::StrategyKit;
 
@@ -154,36 +154,43 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
     let p_id = affected[0].workspace_pool_id;
 
     let amounts = (123, vec![5_893_000, 1_235], vec![123, 5_892_315]);
-    let backrun = compose_candidate(
-        &LaneCandidate {
-            hops: vec![
-                BackrunHopRef {
-                    pool_id: p_id,
-                    pool: POOL_P,
-                    token0: TOKEN0,
-                    token1: TOKEN1,
-                    zfo: false,
-                    family: LaneFamily::V2 { fees: p_fees },
-                },
-                BackrunHopRef {
-                    pool_id: q_id,
-                    pool: POOL_Q,
-                    token0: TOKEN0,
-                    token1: TOKEN1,
-                    zfo: true,
-                    family: LaneFamily::V2 { fees: q_fees },
-                },
-            ],
-            optimal_input: amounts.0,
-            hop_outputs: amounts.1.clone(),
-            consumed_inputs: amounts.2.clone(),
-            profit: 55,
-        },
+    let candidate = LaneCandidate {
+        hops: vec![
+            BackrunHopRef {
+                pool_id: p_id,
+                pool: POOL_P,
+                token0: TOKEN0,
+                token1: TOKEN1,
+                zfo: false,
+                family: LaneFamily::V2 { fees: p_fees },
+            },
+            BackrunHopRef {
+                pool_id: q_id,
+                pool: POOL_Q,
+                token0: TOKEN0,
+                token1: TOKEN1,
+                zfo: true,
+                family: LaneFamily::V2 { fees: q_fees },
+            },
+        ],
+        optimal_input: amounts.0,
+        hop_outputs: amounts.1.clone(),
+        consumed_inputs: amounts.2.clone(),
+        profit: 55,
+    };
+    let (backrun_path, backrun_result) = project_candidate_for_cmd_executor(&candidate);
+    let adapter = CmdExecutorAdapter::new(EncodeContext::new(
         POOL_P,
+        address!("000000000004444c5dc75cb358380d2e3de08a90"),
         TOKEN1,
-        1_000,
-    )
-    .expect("backrun composes through the shared hop projection");
+    ));
+    let CmdExecutorOutcome::Encoded(backrun) = adapter.compose(
+        &backrun_path,
+        &backrun_result,
+        backrun_encode_options(1_000),
+    ) else {
+        panic!("backrun composes through the shared hop projection")
+    };
 
     let mut core = BotState::new();
     let p = core
@@ -226,41 +233,33 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
         ],
     )
     .unwrap();
-    let settlement_request = EncodeRequest::new(
-        settlement_path,
-        amounts.0,
-        amounts.1,
-        amounts.2,
-        EncodeOptions {
-            erc6909_profit: false,
-            use_v4_batch: false,
-            funding: FundingSource::InPathFlash,
-            capture: ProfitCapture::Custody,
-            bribe: Bribe::None,
-        },
-    );
-    let commands = encode_cmd_stream(
-        &EncodeContext::new(
-            POOL_P,
-            address!("000000000004444c5dc75cb358380d2e3de08a90"),
-            TOKEN1,
-        ),
-        &settlement_request,
-    )
-    .unwrap();
-    let settlement = encode_execute_call(
-        POOL_P,
-        &commands,
-        (U256::from(1_000u64) << 8) | U256::from(1u8),
-    )
-    .unwrap();
+    let settlement_result = SolveResult {
+        path_id: 0,
+        hop_count: settlement_path.hops.len(),
+        optimal_input: U256::from(amounts.0),
+        hop_outputs: amounts.1.iter().copied().map(U256::from).collect(),
+        consumed_inputs: amounts.2.iter().copied().map(U256::from).collect(),
+        net_profit: U256::from(55),
+        hop_descriptors: settlement_path
+            .hops
+            .iter()
+            .map(HopDescriptor::from_hop_info)
+            .collect(),
+    };
+    let CmdExecutorOutcome::Encoded(settlement) = adapter.compose(
+        &settlement_path,
+        &settlement_result,
+        backrun_encode_options(1_000),
+    ) else {
+        panic!("settlement composes through the shared adapter")
+    };
 
-    assert_eq!(settlement.data, backrun, "shared V2 hop parity");
+    assert_eq!(settlement, backrun, "shared V2 hop parity");
     let expected = Bytes::from(
         alloy::hex::decode(
             "ab5898e80000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000003e801000000000000000000000000000000000000000000000000000000000000006200000000000000000000000000000000000000b002000000000000000000000000000000000000000aa1ff20fd0000000000000000000059eb88fd00072410010000000000000000000059eb88210001fd000510fefd00000000000000000000007b000000000000000000000000000000000000000000000000000000000000",
         )
         .expect("static expected hex"),
     );
-    assert_eq!(settlement.data, expected, "non-default fee bytes");
+    assert_eq!(settlement, expected, "non-default fee bytes");
 }

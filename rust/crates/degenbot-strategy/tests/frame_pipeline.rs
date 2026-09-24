@@ -29,15 +29,20 @@ use std::sync::Arc;
 
 use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
+use degenbot_executor::composers::EncodeContext;
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
-use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
-use degenbot_strategy::backrun_strategy::{
-    admit_extracted, cycle_refs, cycle_touched_legs, discover_trace_payload, net_bid,
-    solve_dfs_chains, BackrunIntents, CycleHop, WETH,
+use degenbot_strategy::backrun_engine::{
+    project_candidate_for_cmd_executor, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily,
 };
+use degenbot_strategy::backrun_strategy::{
+    admit_extracted, backrun_encode_options, cycle_refs, cycle_touched_legs,
+    discover_trace_payload, net_bid, solve_dfs_chains, BackrunIntents, CycleHop, WETH,
+};
+use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use degenbot_strategy::frame_pipeline::{
     build_descriptors, empty_frame_observe_reason, state_digest, MarketContext, PipelineConfig,
+    V4_POOL_MANAGER,
 };
 
 fn v2_fee_pair() -> V2FeePair {
@@ -308,13 +313,15 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     );
 
     // compose: the executable artifact builds from the solved hops.
-    let cd = degenbot_strategy::backrun_engine::build_candidate_calldata(
-        &best,
+    let (path, result) = project_candidate_for_cmd_executor(&best);
+    let CmdExecutorOutcome::Encoded(cd) = CmdExecutorAdapter::new(EncodeContext::new(
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
+        address!("000000000004444c5dc75cb358380d2e3de08a90"),
         WETH,
-        9_800,
-    )
-    .expect("the 2-hop V2 candidate composes");
+    ))
+    .compose(&path, &result, backrun_encode_options(9_800)) else {
+        panic!("the 2-hop V2 candidate composes")
+    };
     assert!(cd.len() > 4 + 32 * 3 + 64, "execute() calldata shape");
 
     // digest evidence for the JSONL extract trace.
@@ -571,7 +578,9 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
         gas_floor_wei: U256::ZERO,
         fixture_mode: false,
     };
-    let mut strategy = degenbot_strategy::backrun_strategy::BackrunStrategy::new();
+    let mut strategy = degenbot_strategy::backrun_strategy::BackrunStrategy::new(
+        EncodeContext::new(pl.exec, V4_POOL_MANAGER, WETH),
+    );
     let intents = BackrunIntents {
         chains: vec![chain],
         touched_legs: vec![1],
@@ -1063,7 +1072,11 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
 
     // Live mode needs no feed/signer/dispatcher: process frames directly.
     let mut runtime = market_context(None, None);
-    let mut strategy = BackrunStrategy::new();
+    let mut strategy = BackrunStrategy::new(EncodeContext::new(
+        address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
+        V4_POOL_MANAGER,
+        WETH,
+    ));
     let anchor_state = SimAnchorState::default();
     let mut handle = Option::from(
         build_block_handle(&provider, pin, &runtime.warm_cache, &anchor_state)
@@ -1250,13 +1263,15 @@ fn walker_three_hop_chain_solves_and_composes() {
         w_star
     );
 
-    let cd = degenbot_strategy::backrun_engine::build_candidate_calldata(
-        &best,
+    let (path, result) = project_candidate_for_cmd_executor(&best);
+    let CmdExecutorOutcome::Encoded(cd) = CmdExecutorAdapter::new(EncodeContext::new(
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
+        address!("000000000004444c5dc75cb358380d2e3de08a90"),
         WETH,
-        9_800,
-    )
-    .expect("the 3-hop walker candidate composes");
+    ))
+    .compose(&path, &result, backrun_encode_options(9_800)) else {
+        panic!("the 3-hop walker candidate composes")
+    };
     assert!(cd.len() > 4 + 32 * 3 + 64, "execute() calldata shape");
 }
 

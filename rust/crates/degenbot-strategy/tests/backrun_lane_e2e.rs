@@ -27,12 +27,13 @@ use std::sync::{Arc, OnceLock};
 
 use alloy::primitives::{address, keccak256, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorState;
+use degenbot_executor::composers::EncodeContext;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_strategy::backrun::{BackrunConfig, Decision, MevblockerBackrun};
 use degenbot_strategy::backrun_strategy::BackrunStrategy;
 use degenbot_strategy::frame_pipeline::{
-    build_block_handle, process_frame, MarketContext, PipelineConfig,
+    build_block_handle, process_frame, MarketContext, PipelineConfig, V4_POOL_MANAGER,
 };
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
@@ -307,7 +308,11 @@ async fn frame_pipeline_replay_staging_bids_with_composed_calldata() {
     let ev = dislocating_frame(300, nonce);
     println!("frame hash 0x{}", alloy::hex::encode(ev.hash));
 
-    let mut strategy = BackrunStrategy::new();
+    let mut strategy = BackrunStrategy::new(EncodeContext::new(
+        pl.exec,
+        V4_POOL_MANAGER,
+        degenbot_strategy::backrun_strategy::WETH,
+    ));
     let artifacts = process_frame(
         &mut strategy,
         &mut rt,
@@ -380,7 +385,11 @@ async fn frame_pipeline_reverted_target_observes_truthfully() {
     let nonce = live_nonce(&provider).await;
     let ev = reverting_frame(nonce);
 
-    let mut strategy = BackrunStrategy::new();
+    let mut strategy = BackrunStrategy::new(EncodeContext::new(
+        pl.exec,
+        V4_POOL_MANAGER,
+        degenbot_strategy::backrun_strategy::WETH,
+    ));
     let artifacts = process_frame(
         &mut strategy,
         &mut rt,

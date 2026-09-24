@@ -12,6 +12,7 @@
 //! job.
 
 use alloy::primitives::{Address, B256, U256};
+use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
@@ -468,164 +469,80 @@ impl BackrunSolver {
     }
 }
 
-/// Why [`compose_candidate`] refused a solved candidate: the typed `None` of
-/// the composer. The frame pipeline traces [`ComposeReject::label`] so a
-/// solved-but-uncomposable frame names the exact encoding seam it died at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComposeReject {
-    /// Fewer than two hops, or the per-hop amount vectors do not align with
-    /// the hop list.
-    UnsupportedHopShape,
-    /// A `V2_SWAP_COMPACT` amount reaches the uint96 wire width.
-    AmountExceedsUint96,
-    /// The command-stream encoder rejected the path.
-    StreamEncodingFailed,
-    /// The `execute(commands, config)` call could not be ABI-encoded.
-    ExecuteEncodingFailed,
-    /// V4 hops in one candidate name different `PoolManager` singletons; the
-    /// session's `EncodeContext` carries one manager, so a mixed path has no
-    /// single sentinel to resolve.
-    MixedPoolManagers,
-}
-
-impl ComposeReject {
-    /// The stable JSONL label (the offline-review contract).
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::UnsupportedHopShape => "unsupported_hop_shape",
-            Self::AmountExceedsUint96 => "amount_exceeds_uint96",
-            Self::StreamEncodingFailed => "encoding_failed:cmd_stream",
-            Self::ExecuteEncodingFailed => "encoding_failed:execute_call",
-            Self::MixedPoolManagers => "mixed_pool_managers",
-        }
-    }
-}
-
-/// The composed candidate bundle: the executor's `execute(commands, config)`
-/// calldata, ready for the exact-sim oracle + submission (DFYDYI B4).
+/// Project a lane candidate onto the generic command-encoder request values.
 ///
-/// Funding = in-path flash (the leading pool's swap callback extends entry
-/// credit, repaid by the path), capture = executor custody, and the bid is
-/// the executor's native coinbase bribe: config `bribe_bips` on the TRUE
-/// profit delta (check mode 1 = WETH+ETH), recipient 0 = coinbase, with
-/// WETH auto-unwrap built into the bribe payout.
-///
-/// # Errors
-///
-/// [`ComposeReject`] naming the encoding seam that refused the candidate.
-pub fn compose_candidate(
+/// The lane owns the V2/V3/V4 descriptors and solved amounts; the generic
+/// execution seam only receives its declared [`PathInfo`] and [`SolveResult`]
+/// view.
+#[must_use]
+pub fn project_candidate_for_cmd_executor(
     candidate: &LaneCandidate,
-    executor: Address,
-    weth: Address,
-    bribe_bips: u16,
-) -> Result<alloy::primitives::Bytes, ComposeReject> {
-    use degenbot_executor::composers::{
-        encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
-    };
-    use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
-
-    if candidate.hops.len() < 2
-        || candidate.hop_outputs.len() != candidate.hops.len()
-        || candidate.consumed_inputs.len() != candidate.hops.len()
-    {
-        return Err(ComposeReject::UnsupportedHopShape);
-    }
-    // V2_SWAP_COMPACT carries uint96 amounts.
-    let u96_max = u128::from(u64::MAX) * 0x1_0000_0000 + 0xFFFF_FFFF;
-    let too_big = |v: u128| v >= u96_max;
-    if too_big(candidate.optimal_input)
-        || candidate.hop_outputs.iter().any(|&v| too_big(v))
-        || candidate.consumed_inputs.iter().any(|&v| too_big(v))
-    {
-        return Err(ComposeReject::AmountExceedsUint96);
-    }
-
-    let mut hops = Vec::with_capacity(candidate.hops.len());
-    // The session's `EncodeContext` holds one PoolManager; source it from the
-    // candidate's V4 hops rather than a hardcoded deployment so a non-mainnet
-    // manager resolves its own sentinel. All V4 hops must agree (single-species
-    // is the documented scope); V2/V3-only candidates never read it.
-    let mut pool_manager: Option<Address> = None;
-    for h in &candidate.hops {
-        let hop = match h.family {
-            LaneFamily::V2 { fees } => {
-                v2_hop(h.pool, h.token0, h.token1, fees.direction(h.zfo), h.zfo)
-            }
-            LaneFamily::V3 { fee } => v3_hop(h.pool, h.token0, h.token1, fee, h.zfo),
-            LaneFamily::V4 {
-                fee,
-                pool_id,
-                tick_spacing,
-                hooks,
-            } => {
-                if pool_manager.is_some_and(|manager| manager != h.pool) {
-                    return Err(ComposeReject::MixedPoolManagers);
-                }
-                pool_manager = Some(h.pool);
-                v4_hop(
-                    h.pool,
+) -> (degenbot_executor::composers::PathInfo, SolveResult) {
+    let path = degenbot_executor::composers::PathInfo::new(
+        candidate
+            .hops
+            .iter()
+            .map(|hop| match hop.family {
+                LaneFamily::V2 { fees } => v2_hop(
+                    hop.pool,
+                    hop.token0,
+                    hop.token1,
+                    fees.direction(hop.zfo),
+                    hop.zfo,
+                ),
+                LaneFamily::V3 { fee } => v3_hop(hop.pool, hop.token0, hop.token1, fee, hop.zfo),
+                LaneFamily::V4 {
+                    fee,
                     pool_id,
-                    h.token0,
-                    h.token1,
+                    tick_spacing,
+                    hooks,
+                } => v4_hop(
+                    hop.pool,
+                    pool_id,
+                    hop.token0,
+                    hop.token1,
                     fee,
                     tick_spacing,
                     hooks,
-                    h.zfo,
-                )
-            }
-        };
-        hops.push(hop);
-    }
-    let req = EncodeRequest::new(
-        degenbot_executor::composers::PathInfo::new(hops),
-        candidate.optimal_input,
-        candidate.hop_outputs.clone(),
-        candidate.consumed_inputs.clone(),
-        EncodeOptions {
-            erc6909_profit: false,
-            use_v4_batch: false,
-            funding: FundingSource::InPathFlash,
-            capture: ProfitCapture::Custody,
-            bribe: Bribe::None,
-        },
+                    hop.zfo,
+                ),
+            })
+            .collect(),
     );
-    // V2/V3-only streams never read the manager (no V4 sentinel/table entry),
-    // so the canonical mainnet PoolManager keeps that context well-formed.
-    let ctx = EncodeContext::new(
-        executor,
-        pool_manager.unwrap_or(alloy::primitives::address!(
-            "000000000004444c5dc75cb358380d2e3de08a90"
-        )),
-        weth,
-    );
-    let commands = encode_cmd_stream(&ctx, &req).ok_or(ComposeReject::StreamEncodingFailed)?;
-    // check_mode 1 (WETH+ETH true-delta check) + coinbase bribe bips.
-    let config = (U256::from(bribe_bips) << 8) | U256::from(1u8);
-    encode_execute_call(executor, &commands, config)
-        .map(|call| alloy::primitives::Bytes::from(call.data.clone()))
-        .map_err(|_| ComposeReject::ExecuteEncodingFailed)
-}
-
-/// [`compose_candidate`] as the historical `Option` shape.
-#[must_use]
-pub fn build_candidate_calldata(
-    candidate: &LaneCandidate,
-    executor: Address,
-    weth: Address,
-    bribe_bips: u16,
-) -> Option<alloy::primitives::Bytes> {
-    compose_candidate(candidate, executor, weth, bribe_bips).ok()
+    let result = SolveResult {
+        path_id: 0,
+        hop_count: candidate.hops.len(),
+        optimal_input: U256::from(candidate.optimal_input),
+        hop_outputs: candidate
+            .hop_outputs
+            .iter()
+            .copied()
+            .map(U256::from)
+            .collect(),
+        consumed_inputs: candidate
+            .consumed_inputs
+            .iter()
+            .copied()
+            .map(U256::from)
+            .collect(),
+        net_profit: U256::from(candidate.profit),
+        hop_descriptors: path.hops.iter().map(HopDescriptor::from_hop_info).collect(),
+    };
+    (path, result)
 }
 
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "golden-reference tests: admitted fixtures are spec-valid by construction"
 )]
 mod tests {
     use super::*;
+    use crate::backrun_strategy::backrun_encode_options;
+    use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome};
     use alloy::primitives::{address, aliases::U112};
+    use degenbot_executor::composers::EncodeContext;
 
     /// The ladder reject is legible: each stage maps to a distinct JSONL
     /// `stage` label so a failed hop admission names the refused step
@@ -837,7 +754,16 @@ mod tests {
             consumed_inputs: vec![123, 5_892_315],
             profit: 55,
         };
-        let cd = build_candidate_calldata(&candidate, P, WETH, 1000).expect("composes");
+        let (path, result) = project_candidate_for_cmd_executor(&candidate);
+        let outcome = CmdExecutorAdapter::new(EncodeContext::new(
+            P,
+            address!("000000000004444c5dc75cb358380d2e3de08a90"),
+            WETH,
+        ))
+        .compose(&path, &result, backrun_encode_options(1_000));
+        let CmdExecutorOutcome::Encoded(cd) = outcome else {
+            panic!("golden candidate encodes")
+        };
         assert_eq!(&cd[0..4], &EXECUTE_SELECTOR[..]);
         // config = (1000 << 8) | 1 rides the head of the ABI tail; just
         // sanity the total size bounds (selector + 0x40 + words + bytes).
@@ -851,10 +777,7 @@ mod tests {
     #[test]
     fn settlement_and_backrun_project_v2_to_the_same_executor_bytes() {
         use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams};
-        use degenbot_executor::composers::{
-            encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
-        };
-        use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
+        use degenbot_executor::composers::EncodeContext;
         use degenbot_solvers::mixed::{HopType, MixedPoolRef};
 
         let mut core = BotState::new();
@@ -899,65 +822,66 @@ mod tests {
         )
         .expect("settlement projection succeeds");
         let amounts = (123, vec![5_893_000, 1_235], vec![123, 5_892_315]);
-        let settlement_request = EncodeRequest::new(
-            settlement_path,
-            amounts.0,
-            amounts.1.clone(),
-            amounts.2.clone(),
-            EncodeOptions {
-                erc6909_profit: false,
-                use_v4_batch: false,
-                funding: FundingSource::InPathFlash,
-                capture: ProfitCapture::Custody,
-                bribe: Bribe::None,
-            },
-        );
-        let settlement_context = EncodeContext::new(
+        let settlement_result = SolveResult {
+            path_id: 0,
+            hop_count: settlement_path.hops.len(),
+            optimal_input: U256::from(amounts.0),
+            hop_outputs: amounts.1.iter().copied().map(U256::from).collect(),
+            consumed_inputs: amounts.2.iter().copied().map(U256::from).collect(),
+            net_profit: U256::from(55),
+            hop_descriptors: settlement_path
+                .hops
+                .iter()
+                .map(HopDescriptor::from_hop_info)
+                .collect(),
+        };
+        let adapter = CmdExecutorAdapter::new(EncodeContext::new(
             P,
             address!("000000000004444c5dc75cb358380d2e3de08a90"),
             WETH,
-        );
-        let settlement_commands = encode_cmd_stream(&settlement_context, &settlement_request)
-            .expect("settlement commands encode");
-        let settlement_call = encode_execute_call(
-            P,
-            &settlement_commands,
-            (U256::from(1_000u64) << 8) | U256::from(1u8),
-        )
-        .expect("settlement execute call encodes");
+        ));
+        let CmdExecutorOutcome::Encoded(settlement_call) = adapter.compose(
+            &settlement_path,
+            &settlement_result,
+            backrun_encode_options(1_000),
+        ) else {
+            panic!("settlement execute call encodes")
+        };
 
-        let backrun_call = compose_candidate(
-            &LaneCandidate {
-                hops: vec![
-                    BackrunHopRef {
-                        pool_id: p_id,
-                        pool: P,
-                        token0: TOK,
-                        token1: WETH,
-                        zfo: false,
-                        family: LaneFamily::V2 { fees: v2_fees() },
-                    },
-                    BackrunHopRef {
-                        pool_id: q_id,
-                        pool: Q,
-                        token0: TOK,
-                        token1: WETH,
-                        zfo: true,
-                        family: LaneFamily::V2 { fees: v2_fees() },
-                    },
-                ],
-                optimal_input: amounts.0,
-                hop_outputs: amounts.1,
-                consumed_inputs: amounts.2,
-                profit: 55,
-            },
-            P,
-            WETH,
-            1_000,
-        )
-        .expect("backrun execute call encodes");
+        let candidate = LaneCandidate {
+            hops: vec![
+                BackrunHopRef {
+                    pool_id: p_id,
+                    pool: P,
+                    token0: TOK,
+                    token1: WETH,
+                    zfo: false,
+                    family: LaneFamily::V2 { fees: v2_fees() },
+                },
+                BackrunHopRef {
+                    pool_id: q_id,
+                    pool: Q,
+                    token0: TOK,
+                    token1: WETH,
+                    zfo: true,
+                    family: LaneFamily::V2 { fees: v2_fees() },
+                },
+            ],
+            optimal_input: amounts.0,
+            hop_outputs: amounts.1,
+            consumed_inputs: amounts.2,
+            profit: 55,
+        };
+        let (backrun_path, backrun_result) = project_candidate_for_cmd_executor(&candidate);
+        let CmdExecutorOutcome::Encoded(backrun_call) = adapter.compose(
+            &backrun_path,
+            &backrun_result,
+            backrun_encode_options(1_000),
+        ) else {
+            panic!("backrun execute call encodes")
+        };
 
-        assert_eq!(settlement_call.data, backrun_call);
+        assert_eq!(settlement_call, backrun_call);
     }
 
     /// A single V4→V2 lane candidate composes to `execute` calldata: the V4
@@ -1007,7 +931,15 @@ mod tests {
             consumed_inputs: vec![1_000_000_000_000_000_000, 1_000_000_000_000_000_000],
             profit: 1_000_000_000_000_000_000,
         };
-        let cd = compose_candidate(&candidate, P, WETH, 1000).expect("a V4 lane composes");
+        let (path, result) = project_candidate_for_cmd_executor(&candidate);
+        let outcome = CmdExecutorAdapter::new(EncodeContext::new(P, V4_MANAGER, WETH)).compose(
+            &path,
+            &result,
+            backrun_encode_options(1_000),
+        );
+        let CmdExecutorOutcome::Encoded(cd) = outcome else {
+            panic!("V4 lane encodes")
+        };
         assert_eq!(&cd[0..4], &EXECUTE_SELECTOR[..]);
         // Decode the `execute(bytes,uint256)` ABI tail: head slot 0 is the
         // offset (0x40) to the `bytes`, so the length word starts at 4+0x40.
@@ -1064,9 +996,16 @@ mod tests {
             consumed_inputs: vec![1_000, 990],
             profit: 10,
         };
+        let (path, result) = project_candidate_for_cmd_executor(&candidate);
+        let context = EncodeContext::new(
+            P,
+            address!("000000000000000000000000000000000000c0fe"),
+            WETH,
+        );
         assert_eq!(
-            compose_candidate(&candidate, P, WETH, 1000),
-            Err(ComposeReject::MixedPoolManagers)
+            CmdExecutorAdapter::new(context)
+                .compose(&path, &result, backrun_encode_options(1_000),),
+            CmdExecutorOutcome::Declined(CmdExecutorDecline::MixedPoolManagers)
         );
     }
 
@@ -1096,10 +1035,15 @@ mod tests {
             consumed_inputs: vec![1],
             profit: 1,
         };
-        assert!(build_candidate_calldata(&candidate, P, WETH, 1000).is_none());
+        let (path, result) = project_candidate_for_cmd_executor(&candidate);
         assert_eq!(
-            compose_candidate(&candidate, P, WETH, 1000),
-            Err(ComposeReject::UnsupportedHopShape)
+            CmdExecutorAdapter::new(EncodeContext::new(
+                P,
+                address!("000000000004444c5dc75cb358380d2e3de08a90"),
+                WETH,
+            ))
+            .compose(&path, &result, backrun_encode_options(1_000)),
+            CmdExecutorOutcome::Declined(CmdExecutorDecline::UnsupportedHopShape)
         );
     }
 
@@ -1129,9 +1073,15 @@ mod tests {
             consumed_inputs: vec![1, 1],
             profit: 1,
         };
+        let (path, result) = project_candidate_for_cmd_executor(&candidate);
         assert_eq!(
-            compose_candidate(&candidate, P, WETH, 1000).err(),
-            Some(ComposeReject::AmountExceedsUint96)
+            CmdExecutorAdapter::new(EncodeContext::new(
+                P,
+                address!("000000000004444c5dc75cb358380d2e3de08a90"),
+                WETH,
+            ))
+            .compose(&path, &result, backrun_encode_options(1_000)),
+            CmdExecutorOutcome::Declined(CmdExecutorDecline::AmountExceedsUint96)
         );
     }
 }

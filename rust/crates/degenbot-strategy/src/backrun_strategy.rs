@@ -10,13 +10,16 @@ use std::collections::HashSet;
 
 use crate::backrun::{decide, BackrunConfig, Decision};
 use crate::backrun_engine::{
-    compose_candidate, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily,
-    PathReject,
+    project_candidate_for_cmd_executor, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate,
+    LaneFamily, PathReject,
 };
+use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use alloy::primitives::{address, Address, U256};
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_decoders::target_class::TargetClass;
+use degenbot_executor::composers::{EncodeContext, EncodeOptions};
 use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
+use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::{slot_layout, TickInfo};
 use degenbot_rpc::provider::AlloyProvider;
@@ -94,6 +97,50 @@ pub fn net_bid(
         keep_wei: U256::from(gross) - bid_wei,
     })
 }
+
+/// The built-in command policy used at the strategy ceiling and again at the
+/// wallet-true net-bid share.
+#[must_use]
+pub const fn backrun_encode_options(bribe_bips: u16) -> EncodeOptions {
+    EncodeOptions {
+        erc6909_profit: false,
+        use_v4_batch: false,
+        funding: FundingSource::InPathFlash,
+        capture: ProfitCapture::Custody,
+        bribe: Bribe::Some {
+            bips: bribe_bips,
+            recipient_idx: 0,
+        },
+    }
+}
+
+#[expect(
+    clippy::panic,
+    reason = "a ledger rejection is a process-fatal invariant failure"
+)]
+fn cmd_executor_bytes(
+    outcome: CmdExecutorOutcome,
+    trace_tx: &str,
+) -> Option<alloy::primitives::Bytes> {
+    match outcome {
+        CmdExecutorOutcome::Encoded(bytes) => Some(bytes),
+        CmdExecutorOutcome::Declined(decline) => {
+            trace_jsonl(
+                "composed",
+                serde_json::json!({
+                    "tx": trace_tx,
+                    "composed": false,
+                    "reason": decline.label(),
+                }),
+            );
+            None
+        }
+        CmdExecutorOutcome::Rejected(rejection) => {
+            panic!("cmd_executor ledger validation rejected a derived plan: {rejection:?}")
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Workspace admission (frame-scoped scope; replayed state verbatim)
 // ─────────────────────────────────────────────────────────────────────────
@@ -875,13 +922,17 @@ async fn cycle_chain(
 /// One strategy that reacts to observed pending transactions by backrunning
 /// them: it settles a target's pool-state dislocation through a supported
 /// quote and bids the surplus.
-#[derive(Debug, Default)]
-pub struct BackrunStrategy;
+#[derive(Debug)]
+pub struct BackrunStrategy {
+    cmd_executor: CmdExecutorAdapter,
+}
 
 impl BackrunStrategy {
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(context: EncodeContext) -> Self {
+        Self {
+            cmd_executor: CmdExecutorAdapter::new(context),
+        }
     }
 }
 
@@ -1196,24 +1247,15 @@ impl PendingTxReaction for BackrunStrategy {
         trace_tx: &str,
     ) -> Option<ComposedIntent> {
         let best = evaluated.stats.best.clone()?;
-        match compose_candidate(&best, pl.exec, WETH, pl.bribe_bips) {
-            Ok(cd) => Some(ComposedIntent {
-                sim_calldata: cd,
-                profit_wei: best.profit,
-                optimal_input_wei: best.optimal_input,
-            }),
-            Err(reject) => {
-                trace_jsonl(
-                    "composed",
-                    serde_json::json!({
-                        "tx": trace_tx,
-                        "composed": false,
-                        "reason": reject.label(),
-                    }),
-                );
-                None
-            }
-        }
+        let (path, result) = project_candidate_for_cmd_executor(&best);
+        let outcome =
+            self.cmd_executor
+                .compose(&path, &result, backrun_encode_options(pl.bribe_bips));
+        cmd_executor_bytes(outcome, trace_tx).map(|sim_calldata| ComposedIntent {
+            sim_calldata,
+            profit_wei: best.profit,
+            optimal_input_wei: best.optimal_input,
+        })
     }
 
     fn decide(
@@ -1256,27 +1298,21 @@ impl PendingTxReaction for BackrunStrategy {
                         // ceiling the sim passed: a smaller bribe strictly
                         // eases the executor on-chain profit check, so the
                         // passed sim stays valid.
-                        match compose_candidate(best, pl.exec, WETH, nb.bribe_bips) {
-                            Ok(cd_net) => {
-                                requested_bid = nb.bid_wei.max(U256::from(1));
-                                submit_calldata = Some(cd_net);
-                                economics = Some(BidEconomics {
-                                    gross_profit_wei: best.profit,
-                                    wallet_gas_cost_wei: wallet_gas_cost,
-                                    bribe_bips: nb.bribe_bips,
-                                    bid_wei: nb.bid_wei,
-                                });
-                            }
-                            Err(reject) => {
-                                trace_jsonl(
-                                    "composed",
-                                    serde_json::json!({
-                                        "tx": trace_tx,
-                                        "composed": false,
-                                        "reason": reject.label(),
-                                    }),
-                                );
-                            }
+                        let (path, result) = project_candidate_for_cmd_executor(best);
+                        let outcome = self.cmd_executor.compose(
+                            &path,
+                            &result,
+                            backrun_encode_options(nb.bribe_bips),
+                        );
+                        if let Some(cd_net) = cmd_executor_bytes(outcome, trace_tx) {
+                            requested_bid = nb.bid_wei.max(U256::from(1));
+                            submit_calldata = Some(cd_net);
+                            economics = Some(BidEconomics {
+                                gross_profit_wei: best.profit,
+                                wallet_gas_cost_wei: wallet_gas_cost,
+                                bribe_bips: nb.bribe_bips,
+                                bid_wei: nb.bid_wei,
+                            });
                         }
                     } else {
                         net_gated = true;

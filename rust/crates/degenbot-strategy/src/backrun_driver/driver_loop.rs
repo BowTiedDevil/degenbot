@@ -25,6 +25,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_eventhub::{HeadSubscription, Hub};
+use degenbot_executor::composers::EncodeContext;
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
@@ -32,10 +33,10 @@ use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
 use degenbot_simulation::BlockSimHandle;
 use parking_lot::Mutex as ParkingMutex;
 
-use crate::backrun_strategy::BackrunStrategy;
+use crate::backrun_strategy::{BackrunStrategy, WETH};
 use crate::frame_pipeline::{
     build_block_handle, load_fixture_frames, process_frame_with_prefix, trace_jsonl, MarketContext,
-    PipelineConfig,
+    PipelineConfig, V4_POOL_MANAGER,
 };
 use crate::gap_quarantine::{NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{
@@ -1184,12 +1185,11 @@ impl BackrunDriver {
         // discovery handles; each frame gets a fresh planning Workspace scope
         // (see frame_pipeline's module doc for the split).
         let runtime = MarketContext::new(1, connector_db, kit, cfg.connectors, cfg.cycle_max_hops);
-        let strategy = BackrunStrategy::new();
-
         let exec: Address = cfg
             .executor
             .parse()
             .expect("the facet's executor is a valid address");
+        let strategy = BackrunStrategy::new(EncodeContext::new(exec, V4_POOL_MANAGER, WETH));
         // The sim oracle's caller identity: the executor is OWNER-gated
         // (`execute()` asserts msg.sender == OWNER_ADDR), so the simulated
         // call must come from the OPERATOR address -- never the target tx's
