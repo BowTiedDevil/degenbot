@@ -348,7 +348,7 @@ impl MissingHopReason {
         )
     }
 
-    /// The stable snake_case JSONL label (the offline-review contract for
+    /// The stable `snake_case` JSONL label (the offline-review contract for
     /// per-deficit reasons; the prose `Display` form stays for logs).
     #[must_use]
     pub(crate) const fn short_label(self) -> &'static str {

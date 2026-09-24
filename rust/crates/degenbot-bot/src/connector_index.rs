@@ -735,6 +735,10 @@ impl V2ConnectorIndex {
                 // (pinned by `v3_liquidity_slot_packs_low_128_bits`).
                 let stored =
                     u128::from_be_bytes(word.as_slice()[16..32].try_into().unwrap_or([0; 16]));
+                #[expect(
+                    clippy::match_same_arms,
+                    reason = "Conforms and Inconclusive are distinct layout verdicts; each comment records why it skips the sample"
+                )]
                 match layout_verdict(onchain, stored) {
                     LayoutVerdict::Conforms => {
                         mismatch = None;

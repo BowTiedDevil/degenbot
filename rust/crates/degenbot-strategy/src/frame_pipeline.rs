@@ -33,10 +33,10 @@
 //!
 //! Connector pools are read through the SAME layered chain view the frames
 //! replay over ([`ScratchEvm`] — its read-caches answer; cold misses count
-//! in the shared RPC counter), and raw RPC (`getReserves`, the V3 slot0/tick
-//! ladder) is only the fallback where the view read fails or returns no
-//! usable state. Nothing is fabricated: a zero/failed read skips or falls
-//! back, never guesses.
+//! in the shared RPC counter); a V2 view miss falls back to raw RPC
+//! (`getReserves`), and a V3 cold hop reads `slot0`/`liquidity` over RPC with
+//! its tick map staged by the ingress (`Db → Chain`). Nothing is fabricated:
+//! a zero/failed read skips or falls back, never guesses.
 //!
 //! # Envelope floor and the bid ladder (single bribe site)
 //!

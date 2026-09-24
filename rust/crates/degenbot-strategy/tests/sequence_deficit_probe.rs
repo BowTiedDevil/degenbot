@@ -1,9 +1,4 @@
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::doc_markdown,
-    clippy::print_stdout
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 //! Live capture+inject probe for the `sequence_unavailable` deficit on two
 //! HIGH-liquidity roster pools (2026-09-24) — both for the same unlisted
 //! token `0x8E870D67…89E1`, both on the canonical Uniswap V3 factory:
@@ -35,9 +30,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use alloy::primitives::{Address, U128, U256};
+use alloy::primitives::aliases::U128;
+use alloy::primitives::{Address, U256};
+use degenbot_bot::bot_core::pool_ingress::TickMapSource;
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
+use degenbot_db::discovery::V3PoolRowInput;
+use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::v3_state::RegisterV3PoolParams;
 use degenbot_pools::TickInfo;
@@ -46,10 +45,11 @@ use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
+use degenbot_strategy::backrun_engine::{
+    BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily, PathReject,
+};
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
-use degenbot_strategy::pending_tx::V3TickWindow;
 use hashbrown::HashMap as HbMap;
 
 /// Pool 1: the production-path target (token/WETH spacing 1) + its real
@@ -82,7 +82,7 @@ async fn capture(provider: &Arc<AlloyProvider>, pool: Address, spacing: i32) -> 
         .expect("slot0");
     let tick: i32 = tick_wide.try_into().expect("tick fits i32");
     let liquidity: u128 = liq_wide.try_into().expect("liquidity fits u128");
-    let word = (tick.div_euclid(spacing) >> 8) as i64;
+    let word = i64::from(tick.div_euclid(spacing) >> 8);
     let max_w = 887_272i64.div_euclid(i64::from(spacing)) >> 8;
     let mut ladder = BTreeMap::new();
     let mut wide = BTreeMap::new();
@@ -135,32 +135,69 @@ fn to_tickinfo(map: &BTreeMap<i32, (u128, i128)>, head: u64) -> HbMap<i32, TickI
         .collect()
 }
 
-/// A window backed by ONE captured map (the probe admits one pool).
-#[derive(Clone)]
-struct CapturedWindow(BTreeMap<i32, (u128, i128)>);
-
-impl V3TickWindow for CapturedWindow {
-    fn tick_window(
-        &self,
-        _pool: Address,
-        _layout: ClSlotLayout,
-        _spacing: i32,
-        _current_tick: i32,
-        head: u64,
-    ) -> HbMap<i32, TickInfo> {
-        to_tickinfo(&self.0, head)
+/// Seed a captured map into the in-memory DB as the pool's maintained tick
+/// ledger: the exact content production now stages (`Db` arm).
+fn seed_db_map(
+    db: &DegenbotDb,
+    pool: Address,
+    token: Address,
+    spacing: i32,
+    map: &BTreeMap<i32, (u128, i128)>,
+) {
+    let factory: Address = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+        .parse()
+        .unwrap();
+    db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
+    db.upsert_v3_pools(
+        1,
+        "uniswap_v3",
+        1,
+        1_000_000,
+        &[V3PoolRowInput {
+            address: pool,
+            token0_address: token,
+            token1_address: WETH,
+            fee: 100,
+            tick_spacing: i64::from(spacing),
+        }],
+    )
+    .unwrap();
+    let pool_s = pool.to_checksum(None);
+    let pool_id: i64 = {
+        let conn = db.lock();
+        conn.query_row(
+            "SELECT id FROM pools WHERE address = ?1 LIMIT 1",
+            [&pool_s],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    let mut tick_bitmap: HbMap<i32, ApplyBitmapAtWord> = HbMap::new();
+    let mut tick_data: HbMap<i32, ApplyLiquidityAtTick> = HbMap::new();
+    for (&tick, &(gross, net)) in map {
+        tick_data.insert(
+            tick,
+            ApplyLiquidityAtTick {
+                liquidity_gross: U128::from(gross),
+                liquidity_net: alloy::primitives::I256::try_from(net).unwrap(),
+                block: 0,
+            },
+        );
+        let compressed = tick.div_euclid(spacing);
+        let word = compressed >> 8;
+        let bit = compressed.rem_euclid(256) as u64;
+        tick_bitmap
+            .entry(word)
+            .or_insert_with(|| ApplyBitmapAtWord {
+                bitmap: U256::ZERO,
+                block: 0,
+            });
+        tick_bitmap.get_mut(&word).unwrap().bitmap |= U256::from(1u64) << bit;
     }
-
-    fn v4_tick_window(
-        &self,
-        _manager: Address,
-        _pool_id: alloy::primitives::B256,
-        _tick_spacing: i32,
-        _current_tick: i32,
-        _head: u64,
-    ) -> HbMap<i32, TickInfo> {
-        HbMap::new()
-    }
+    db.upsert_v3_liquidity_positions(pool_id, &tick_data)
+        .unwrap();
+    db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
+        .unwrap();
 }
 
 /// Solver-level injection: build the range sequences from a captured map.
@@ -211,6 +248,7 @@ fn runtime_for(
     spacing: i32,
     fee: u32,
     v2: Address,
+    map: &BTreeMap<i32, (u128, i128)>,
 ) -> MarketContext {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let tok_id = db
@@ -223,6 +261,7 @@ fn runtime_for(
         u64::try_from(tok_id).unwrap(),
         u64::try_from(weth_id).unwrap(),
     );
+    seed_db_map(&db, pool, token, spacing, map);
     let mut index = V2ConnectorIndex::default();
     index.push_v3_edge(V3Edge {
         pool_id: 301,
@@ -301,6 +340,7 @@ fn probe_chain(
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live network: capture + inject the two high-liquidity deficit pools"]
+#[expect(clippy::too_many_lines)]
 async fn sequence_deficit_pools_capture_inject_reproduce() {
     let provider = Arc::new(
         AlloyProvider::new(
@@ -374,23 +414,28 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
         );
     }
 
-    // INJECT 2 - production path. RED: production ladder window.
-    let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2);
+    // INJECT 2 - production path. RED: the production ladder modeled as the
+    // DB's maintained map (the narrow staging the defect produced).
+    let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2, &cap.ladder);
+    let staged = rt
+        .ingress
+        .v3_tick_map(pool, cap.tick, POOL_SPACING, head)
+        .expect("the ladder map stages");
+    assert_eq!(staged.source, TickMapSource::Db, "the Db arm stages first");
+    let staged_keys: Vec<i32> = {
+        let mut k: Vec<i32> = staged.ticks.keys().copied().collect();
+        k.sort_unstable();
+        k
+    };
+    let ladder_keys: Vec<i32> = cap.ladder.keys().copied().collect();
+    assert_eq!(
+        staged_keys, ladder_keys,
+        "production stages the DB's map content (ladder-window case)"
+    );
     let mut solver = BackrunSolver::new();
     let post = post_state(pool, cap.sqrt, cap.tick, cap.liquidity, POOL_SPACING);
-    let affected = admit_extracted(
-        &rt,
-        &mut solver,
-        &[post],
-        head,
-        "0xprobe-red",
-        Some(&CapturedWindow(cap.ladder.clone())),
-    );
-    assert_eq!(
-        affected.len(),
-        1,
-        "the anchor admits under the ladder window"
-    );
+    let affected = admit_extracted(&rt, &mut solver, &[post], head, "0xprobe-red", None);
+    assert_eq!(affected.len(), 1, "the anchor admits under the ladder map");
     let v2_id = solver
         .admit_v2(&BackrunV2Pool {
             address: v2,
@@ -410,29 +455,41 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
     );
     let stats = solve_dfs_chains(&mut solver, &[chain], U256::ZERO);
     println!(
-        "RED (production window): declared={} evaluated={} rejects={:?}",
+        "production (DB ladder map): declared={} evaluated={} rejects={:?}",
         stats.dfs_declared,
         stats.dfs_evaluated,
         stats
             .chains
             .iter()
-            .map(|c| c.reject.as_ref().map(|r| r.label()))
+            .map(|c| c.reject.as_ref().map(PathReject::label))
             .collect::<Vec<_>>()
     );
+    assert_eq!(
+        stats.dfs_evaluated, 1,
+        "production evaluates the Db-staged map (no clamped ladder seam remains)"
+    );
 
-    // GREEN: the wide capture through the same pipeline.
-    let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2);
+    // GREEN: the complete wide map as the DB's maintained map.
+    let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2, &cap.wide);
+    let staged = rt
+        .ingress
+        .v3_tick_map(pool, cap.tick, POOL_SPACING, head)
+        .expect("the wide map stages");
+    assert_eq!(staged.source, TickMapSource::Db, "the Db arm stages first");
+    let staged_keys: Vec<i32> = {
+        let mut k: Vec<i32> = staged.ticks.keys().copied().collect();
+        k.sort_unstable();
+        k
+    };
+    let wide_keys: Vec<i32> = cap.wide.keys().copied().collect();
+    assert_eq!(
+        staged_keys, wide_keys,
+        "production stages the DB's complete map content"
+    );
     let mut solver = BackrunSolver::new();
     let post = post_state(pool, cap.sqrt, cap.tick, cap.liquidity, POOL_SPACING);
-    let affected = admit_extracted(
-        &rt,
-        &mut solver,
-        &[post],
-        head,
-        "0xprobe-green",
-        Some(&CapturedWindow(cap.wide.clone())),
-    );
-    assert_eq!(affected.len(), 1, "the wide window admits the anchor");
+    let affected = admit_extracted(&rt, &mut solver, &[post], head, "0xprobe-green", None);
+    assert_eq!(affected.len(), 1, "the anchor admits under the wide map");
     let v2_id = solver
         .admit_v2(&BackrunV2Pool {
             address: v2,
@@ -452,15 +509,23 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
     );
     let stats = solve_dfs_chains(&mut solver, &[chain], U256::ZERO);
     println!(
-        "GREEN (wide window): declared={} evaluated={} best={:?} rejects={:?}",
+        "production (DB wide map): declared={} evaluated={} best={:?} rejects={:?}",
         stats.dfs_declared,
         stats.dfs_evaluated,
         stats.best.as_ref().map(|b| b.profit.to_string()),
         stats
             .chains
             .iter()
-            .map(|c| c.reject.as_ref().map(|r| r.label()))
+            .map(|c| c.reject.as_ref().map(PathReject::label))
             .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        stats.dfs_evaluated, 1,
+        "production evaluates the complete Db map"
+    );
+    assert!(
+        stats.best.is_some(),
+        "a real candidate is produced from the complete map"
     );
 }
 
@@ -514,5 +579,11 @@ async fn sequence_deficit_pool2_capture() {
     );
     println!(
         "pool2 sequence lens: ladder zfo={zfo_ladder:?} ofz={ofz_ladder:?} | wide zfo={zfo_wide:?} ofz={ofz_wide:?}"
+    );
+    // The fix's direction: the complete map models a sequence where the
+    // narrow ladder window does not — production now stages the DB's map.
+    assert!(
+        zfo_wide.is_some() || ofz_wide.is_some(),
+        "the complete wide map models a sequence (the production Db arm stages it)"
     );
 }

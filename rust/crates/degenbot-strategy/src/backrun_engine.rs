@@ -7,8 +7,9 @@
 //! them with the solvers' envelope-gated mixed solve (V2-V2 = the closed-form
 //! integer Mobius; no hand-composed pricing anywhere). Pool state arrives via
 //! the frame pipeline's replay-extracted post-states (`admit_v2`,
-//! `admit_v3_explicit`) or the RPC fetch ladders (`admit_v3_full`); discovery
-//! over the DB connector index is the pipeline's job.
+//! `admit_v3_explicit`) or the ingress-routed cold-hop ladder
+//! (`admit_v3_full`); discovery over the DB connector index is the pipeline's
+//! job.
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pathfinding::PoolKind;
@@ -20,6 +21,7 @@ use degenbot_bot::bot_core::planning::{
     ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace,
 };
 use degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags;
+use degenbot_bot::bot_core::pool_ingress::{IngressV3Params, PoolIngress};
 
 pub use degenbot_bot::bot_core::planning::PathReject;
 
@@ -38,8 +40,8 @@ pub struct BackrunV2Pool {
 /// planning [`Workspace`] (FORK-1 isolation — the scope's scratch state
 /// never touches the mainline pump's registry). Admission, staging,
 /// declaration, and evaluation delegate to the workspace; the lane owns the
-/// RPC fetch ladders that PRODUCE the explicit state (slot0/tick bootstrap,
-/// live reserves).
+/// slot0/liquidity reads and live reserves that PRODUCE the explicit state,
+/// while the V3 tick map comes from the ingress (`Db → Chain`).
 pub struct BackrunSolver {
     ws: Workspace,
 }
@@ -159,52 +161,13 @@ impl Default for BackrunSolver {
     }
 }
 
-/// Why a cold-connector V3 hop could not be raw-RPC admitted: the ladder
-/// fetch (`admit_v3_full`) names the refused step, so the per-hop JSONL
-/// trace distinguishes a network/spec failure from a registration refusal
-/// (an `AlreadyRegistered` duplicate is a different beast from a dead
+/// Why a cold-connector V3 hop could not be admitted: the ingress decline
+/// names the refused step (`slot0` fetch/width, the Db arm, the Chain-arm
+/// tick-map bootstrap, or registration), so the per-hop JSONL trace
+/// distinguishes a network/spec failure from a registration refusal (an
+/// `AlreadyRegistered` duplicate is a different beast from a dead
 /// archive-node call and must not share one opaque label).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum V3LadderReject {
-    /// The `slot0`/`liquidity` eth_call failed.
-    Slot0Fetch(String),
-    /// A slot0/liquidity value did not fit its wire type.
-    Slot0Width,
-    /// A tick-bitmap word fetch failed.
-    BitmapFetch { word: i16, detail: String },
-    /// An initialized-tick fetch failed.
-    TickFetch { tick: i32, detail: String },
-    /// The workspace refused the fetched state (spec violation,
-    /// `AlreadyRegistered`, ...).
-    Register(String),
-}
-
-impl V3LadderReject {
-    /// The stable JSONL `stage` label for the refused step.
-    #[must_use]
-    pub fn stage(&self) -> &'static str {
-        match self {
-            Self::Slot0Fetch(_) => "admit-v3-slot0-fetch",
-            Self::Slot0Width => "admit-v3-slot0-width",
-            Self::BitmapFetch { .. } => "admit-v3-bitmap-fetch",
-            Self::TickFetch { .. } => "admit-v3-tick-fetch",
-            Self::Register(_) => "admit-v3-register",
-        }
-    }
-
-    /// The step's error detail (empty for width refusals, whose identity is
-    /// the stage itself).
-    #[must_use]
-    pub fn detail(&self) -> String {
-        match self {
-            Self::Slot0Fetch(d)
-            | Self::BitmapFetch { detail: d, .. }
-            | Self::TickFetch { detail: d, .. }
-            | Self::Register(d) => d.clone(),
-            Self::Slot0Width => "slot0/liquidity value out of type range".into(),
-        }
-    }
-}
+pub use degenbot_bot::bot_core::pool_ingress::IngressDecline as V3LadderReject;
 
 /// One executable hop of a lane candidate (executor-composer input). Both
 /// the declared solver key (`pool_id`) and the composer identity (`pool`)
@@ -354,6 +317,7 @@ impl BackrunSolver {
         liquidity: u128,
         tick: i32,
         tick_data: hashbrown::HashMap<i32, TickInfo>,
+        coverage: PoolTickCoverage,
         seed_block: u64,
         slot_layout: ClSlotLayout,
     ) -> Option<u64> {
@@ -371,7 +335,7 @@ impl BackrunSolver {
                     fee,
                     tick_spacing,
                     tick_data,
-                    coverage: PoolTickCoverage::Sparse,
+                    coverage,
                     slot_layout,
                 },
                 seed_block,
@@ -436,11 +400,15 @@ impl BackrunSolver {
             .ok()
     }
 
-    /// Register a V3 pool at HEAD (via the connector edge's shared ladder
-    /// logic), optionally OVERRIDING `sqrt_price_x96` with the post-target
-    /// staged price (the V3-affected-pool path). Args are decoded-wire
-    /// semantics: `fee` in the v3 tier convention, `tick_spacing` from the
-    /// pool's immutables.
+    /// Register a V3 pool at HEAD through the ingress, optionally OVERRIDING
+    /// `sqrt_price_x96` with the post-target staged price (the
+    /// V3-affected-pool path). The slot0/liquidity scalars are read here
+    /// through the caller's `slot_layout`; the tick map is the ingress's
+    /// `Db → Chain` responsibility — this lane never reads a tick word.
+    ///
+    /// # Errors
+    ///
+    /// [`IngressDecline`] naming the refused staging or registration step.
     #[expect(
         clippy::too_many_arguments,
         reason = "pool identity + staged override describe distinct layers"
@@ -456,81 +424,29 @@ impl BackrunSolver {
         sqrt_override: Option<U256>,
         head: u64,
         slot_layout: ClSlotLayout,
+        ingress: &PoolIngress,
     ) -> Result<u64, V3LadderReject> {
-        use degenbot_rpc::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v3_slot0_liquidity};
-
-        let (sqrt_price_x96, tick, liquidity) = fetch_v3_slot0_liquidity(provider, &address, None)
-            .await
-            .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
-        let liquidity = u128::try_from(liquidity).map_err(|_| V3LadderReject::Slot0Width)?;
-
-        // Sparse coverage: the current word +- 1 (a 3-word window around the
-        // active range; the exact-sim oracle is the truth bar behind this).
-        let tick_i32 = i32::try_from(tick).map_err(|_| V3LadderReject::Slot0Width)?;
-        let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
-            tick_i32,
-            tick_spacing,
-        );
-        let word_i16 = i16::try_from(word).map_err(|_| V3LadderReject::Slot0Width)?;
-        let mut tick_data: hashbrown::HashMap<i32, TickInfo> = hashbrown::HashMap::new();
-        for w in [
-            word_i16.saturating_sub(1),
-            word_i16,
-            word_i16.saturating_add(1),
-        ] {
-            let bitmap = fetch_tick_bitmap(provider, &address, w, None)
+        let (sqrt_price_x96, tick, liquidity) =
+            degenbot_rpc::abi::fetch_v3_slot0_liquidity(provider, &address, None)
                 .await
-                .map_err(|e| V3LadderReject::BitmapFetch {
-                    word: w,
-                    detail: e.to_string(),
-                })?;
-            for bit in 0..256usize {
-                if !bitmap.bit(bit) {
-                    continue;
-                }
-                let active_tick = ((i32::from(w) << 8)
-                    + i32::try_from(bit).map_err(|_| V3LadderReject::BitmapFetch {
-                        word: w,
-                        detail: "bit index out of i32".into(),
-                    })?)
-                    * tick_spacing;
-                let (gross, net) = fetch_tick_data(provider, &address, active_tick, None)
-                    .await
-                    .map_err(|e| V3LadderReject::TickFetch {
-                        tick: active_tick,
-                        detail: e.to_string(),
-                    })?;
-                tick_data.insert(
-                    active_tick,
-                    TickInfo {
-                        liquidity_gross: gross,
-                        liquidity_net: net,
-                        block: head,
-                    },
-                );
-            }
-        }
-
-        self.ws
-            .register_with_state(
-                PlanningPoolParams {
-                    address,
-                    token0,
-                    token1,
-                },
-                ExplicitPoolState::V3 {
-                    sqrt_price_x96: sqrt_override.unwrap_or(sqrt_price_x96),
-                    liquidity,
-                    tick: tick_i32,
-                    fee,
-                    tick_spacing,
-                    tick_data,
-                    coverage: PoolTickCoverage::Sparse,
-                    slot_layout,
-                },
-                head,
-            )
-            .map_err(|e| V3LadderReject::Register(format!("{e:?}")))
+                .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
+        let liquidity = u128::try_from(liquidity).map_err(|_| V3LadderReject::Slot0Width)?;
+        let tick_i32 = i32::try_from(tick).map_err(|_| V3LadderReject::Slot0Width)?;
+        ingress.admit_v3(
+            &mut self.ws,
+            IngressV3Params {
+                address,
+                token0,
+                token1,
+                fee,
+                tick_spacing,
+                sqrt_price_x96: sqrt_override.unwrap_or(sqrt_price_x96),
+                liquidity,
+                tick: tick_i32,
+                slot_layout,
+            },
+            head,
+        )
     }
 }
 
@@ -716,20 +632,12 @@ mod tests {
         );
         assert_eq!(V3LadderReject::Slot0Width.stage(), "admit-v3-slot0-width");
         assert_eq!(
-            V3LadderReject::BitmapFetch {
-                word: -1,
-                detail: "revert".into()
-            }
-            .stage(),
-            "admit-v3-bitmap-fetch"
+            V3LadderReject::TickMapFetch("revert".into()).stage(),
+            "admit-v3-tick-map-fetch"
         );
         assert_eq!(
-            V3LadderReject::TickFetch {
-                tick: 60,
-                detail: "revert".into()
-            }
-            .stage(),
-            "admit-v3-tick-fetch"
+            V3LadderReject::Db("database is locked".into()).stage(),
+            "admit-v3-db"
         );
         let reg = V3LadderReject::Register("AlreadyRegistered { 0xb001 }".into());
         assert_eq!(reg.stage(), "admit-v3-register");

@@ -17,9 +17,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use alloy::primitives::Address;
+use degenbot_bot::bot_core::pool_ingress::PoolIngress;
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_db::connection::DegenbotDb;
+use degenbot_db::snapshot::TickMapDb;
+use degenbot_pools::tick_fetch::TickBootstrapRpc;
 use degenbot_simulation::WarmCodeCacheInner;
 use parking_lot::RwLock;
 
@@ -33,8 +36,13 @@ pub struct MarketContext {
     /// decoder mirror), shared by handle. `None` keeps the discovery fan shut
     /// (frames observe; connectors are never guessed).
     pub registry: Option<Arc<RouteRegistry>>,
-    /// The DB handle the index was loaded from (token id/address joins).
-    pub db: Option<DegenbotDb>,
+    /// The DB handle the index was loaded from (token id/address joins and
+    /// the ingress Db arm). Shared behind an `Arc` so the ingress and the
+    /// token joins read the same held connection.
+    pub db: Option<Arc<DegenbotDb>>,
+    /// The V3 pool-state ingress: `Db → Chain` tick-map precedence with a
+    /// per-block memo (the single home for backrun V3 admission).
+    pub ingress: PoolIngress,
     /// The discovery fan-out cap (`strategy.mevblocker_backrun`/`strategy.peer_backrun`).
     pub connector_cap: usize,
     /// The hop-depth cap per discovered cycle: the WETH-entry pin plus up to
@@ -61,6 +69,13 @@ impl MarketContext {
         connector_cap: usize,
         cycle_max_hops: usize,
     ) -> Self {
+        let db = db.map(Arc::new);
+        // The ingress reads the same held connection as the token joins; the
+        // Chain arm is attached later by the driver once the provider is
+        // resolved.
+        let ingress_db: Option<Arc<dyn TickMapDb>> =
+            db.clone().map(|d| -> Arc<dyn TickMapDb> { d });
+        let ingress = PoolIngress::new(ingress_db, None);
         Self {
             chain_id,
             // Built from the registry's index BEFORE the handle moves in: one
@@ -70,12 +85,20 @@ impl MarketContext {
                 .map(|r| AnchoredGraph::from_connector_index(r.index())),
             registry,
             db,
+            ingress,
             connector_cap,
             cycle_max_hops,
             warm_cache: WarmCodeCacheInner::shared_default(),
             token_ids: Mutex::new(HashMap::new()),
             token_addrs: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Attach the ingress Chain-arm RPC. Called by the driver after the
+    /// runtime is built; a Db miss then falls to the sparse single-word
+    /// bootstrap instead of staging an empty map.
+    pub fn set_chain_bootstrap(&mut self, chain: Arc<dyn TickBootstrapRpc>) {
+        self.ingress.set_chain(chain);
     }
 
     /// The frozen connector index behind the registry handle (`None` when the

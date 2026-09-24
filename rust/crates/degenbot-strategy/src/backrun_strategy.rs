@@ -19,7 +19,7 @@ use degenbot_decoders::target_class::TargetClass;
 use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::v3_state::ClSlotLayout;
-use degenbot_pools::{slot_layout, v3_storage_slots, v4_storage_slots, TickInfo};
+use degenbot_pools::{slot_layout, v4_storage_slots, TickInfo};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
@@ -279,13 +279,11 @@ pub fn admit_extracted(
                 // The replayed journal carries only ticks the target CROSSED;
                 // a shallow swap touches none, leaving a map too sparse to
                 // build a solver range sequence (every chain anchored on it
-                // then rejects `unusable_pool_state`, deficits=1). Merge the
-                // in-range initialized-tick window from the same chain view
-                // the frames replay over — swaps never change a tick's stored
-                // net/gross, so the window is valid post-frame. Replayed
-                // touched ticks win (they are the post-frame facts).
+                // then rejects `unusable_pool_state`, deficits=1). The ingress
+                // stages the rest with `Db → Chain` precedence — the complete
+                // per-tick map the pump maintains, else the sparse bootstrap.
+                // Replayed touched ticks win (they are the post-frame facts).
                 let crossed = touched_ticks.len();
-                let mut windowed = 0usize;
                 trace_jsonl(
                     "anchor_stage",
                     serde_json::json!({
@@ -294,19 +292,33 @@ pub fn admit_extracted(
                         "stage": "window-enter",
                     }),
                 );
-                if let Some(window) = tick_window {
-                    let window_view =
-                        window.tick_window(st.address, *layout, spacing, tk, seed_block);
-                    windowed = window_view.len();
-                    for (tick, info) in window_view {
-                        tick_data.entry(tick).or_insert(info);
+                let (windowed, source, coverage) = match rt
+                    .ingress
+                    .v3_tick_map(st.address, tk, spacing, seed_block)
+                {
+                    Ok(seed) => {
+                        let label = seed.source.label();
+                        let coverage = seed.coverage;
+                        let n = seed.ticks.len();
+                        for (tick, info) in seed.ticks {
+                            tick_data.entry(tick).or_insert(info);
+                        }
+                        (n, label, coverage)
                     }
-                }
-                // One probe line per staged anchor: crossed vs window tick
+                    Err(decline) => {
+                        // A Db/Chain read failure must never degrade to a
+                        // solver-unsafe empty map: refuse the admission and
+                        // name the refused arm in the per-hop witness.
+                        trace_admit_fail(trace_tx, st.address, decline.stage(), &decline.detail());
+                        skip(st.address, "v3-ingress");
+                        continue;
+                    }
+                };
+                // One probe line per staged anchor: crossed vs ingress tick
                 // counts + the staged floor. A staged map too small to build
                 // a solver range sequence shows up here as a small
                 // `merged` with a failing `windowed` void — discriminating
-                // an empty window (feed/replay hole) from a solver-side
+                // an empty arm (Db miss + feed/replay hole) from a solver-side
                 // sequence bug on a rich map.
                 trace_jsonl(
                     "anchor_ticks",
@@ -322,6 +334,7 @@ pub fn admit_extracted(
                         "crossed": crossed,
                         "windowed": windowed,
                         "merged": tick_data.len(),
+                        "source": source,
                     }),
                 );
                 trace_jsonl(
@@ -334,7 +347,7 @@ pub fn admit_extracted(
                 );
                 let Some(p_id) = solver.admit_v3_explicit(
                     st.address, token0, token1, edge.fee, spacing, sqrt, liq, tk, tick_data,
-                    seed_block, *layout,
+                    coverage, seed_block, *layout,
                 ) else {
                     skip(st.address, "v3-admit");
                     continue;
@@ -487,76 +500,11 @@ fn view_v2_reserves(
         })
 }
 
-/// Read a V3 pool's in-range tick window through a layered [`DatabaseRef`]
-/// view: the bitmap words at `current_tick` ± 1, then the initialized tick
-/// words those bitmaps select (the same window as the raw-RPC bootstrap
-/// ladder). Swaps never change a tick's stored net/gross, so this window is
-/// valid for both the pre-frame chain view and a replayed post-target tick.
-///
-/// The replayed journal only carries ticks the target CROSSED. A shallow
-/// target swap touches none, leaving a map too sparse to build a solver range
-/// sequence — anchor admission sources the window here instead.
-fn read_v3_tick_window(
-    ext: &ScratchDb<'_>,
-    pool: Address,
-    layout: ClSlotLayout,
-    tick_spacing: i32,
-    current_tick: i32,
-    head: u64,
-) -> HbMap<i32, TickInfo> {
-    let spacing = i64::from(tick_spacing.max(1));
-    let (word_pos, _) = floor_word_pos(current_tick, spacing);
-    let w0 = i64::from(word_pos).saturating_sub(1);
-    let w1 = i64::from(word_pos).saturating_add(1);
-    let mut tick_data = HbMap::default();
-    for w in w0..=w1 {
-        let Ok(word_pos_i16) = i16::try_from(w) else {
-            continue;
-        };
-        let slot = slot_layout::cl_tick_bitmap_word_slot(layout, word_pos_i16);
-        let Some(bitmap) = read_view_word(ext, pool, slot) else {
-            continue;
-        };
-        for bit in 0..256i64 {
-            let Ok(bit_u256) = U256::try_from(bit) else {
-                continue;
-            };
-            if (bitmap >> bit_u256) & U256::ONE != U256::ONE {
-                continue;
-            }
-            let tick = i64::from(word_pos_i16) * 256 + bit;
-            let Some(tick_scaled) = tick.checked_mul(spacing) else {
-                continue;
-            };
-            let Ok(tick_i32) = i32::try_from(tick_scaled) else {
-                continue;
-            };
-            let Some(word) = read_view_word(
-                ext,
-                pool,
-                slot_layout::cl_tick_mapping_slot(layout, tick_i32),
-            ) else {
-                continue;
-            };
-            let (gross, net) = slot_layout::decode_tick_word(word);
-            tick_data.insert(
-                tick_i32,
-                TickInfo {
-                    liquidity_gross: alloy::primitives::aliases::U128::from(gross),
-                    liquidity_net: net,
-                    block: head,
-                },
-            );
-        }
-    }
-    tick_data
-}
-
 /// Read a V4 pool's in-range tick window through a layered [`DatabaseRef`]
 /// view: the bitmap words at `current_tick` ± 1 at the `poolId`-derived
 /// `tickBitmap` base under the `PoolManager` singleton, then the initialized
-/// tick words those bitmaps select. The V4 twin of [`read_v3_tick_window`]:
-/// same window shape, manager-addressed `keccak` bases.
+/// tick words those bitmaps select. Same window shape as the retired V3
+/// scratch window, manager-addressed `keccak` bases.
 fn read_v4_tick_window(
     ext: &ScratchDb<'_>,
     manager: Address,
@@ -615,15 +563,17 @@ fn read_v4_tick_window(
 }
 
 impl V3TickWindow for ScratchDb<'_> {
+    /// The V3 anchor map arrives through the ingress (`Db → Chain`); this
+    /// scratch chain view serves the V4 anchor window only.
     fn tick_window(
         &self,
-        pool: Address,
-        layout: ClSlotLayout,
-        tick_spacing: i32,
-        current_tick: i32,
-        head: u64,
+        _pool: Address,
+        _layout: ClSlotLayout,
+        _tick_spacing: i32,
+        _current_tick: i32,
+        _head: u64,
     ) -> HbMap<i32, TickInfo> {
-        read_v3_tick_window(self, pool, layout, tick_spacing, current_tick, head)
+        HbMap::default()
     }
 
     fn v4_tick_window(
@@ -636,31 +586,6 @@ impl V3TickWindow for ScratchDb<'_> {
     ) -> HbMap<i32, TickInfo> {
         read_v4_tick_window(self, manager, pool_id, tick_spacing, current_tick, head)
     }
-}
-
-/// V3 CL state read through the frame-replay chain view: slot0, liquidity,
-/// and the in-range tick window (the same window as the RPC bootstrap
-/// ladder).
-///
-/// `None` on a failed read or a zero in-range liquidity (unsolvable CL state
-/// — the raw-RPC ladder decides).
-fn read_v3_view(
-    scratch: &mut ScratchEvm<ScratchDb<'_>>,
-    pool: Address,
-    layout: ClSlotLayout,
-    tick_spacing: i32,
-    head: u64,
-) -> Option<(U256, i32, u128, HbMap<i32, TickInfo>)> {
-    let slot0 = read_view_word(scratch.ext(), pool, U256::ZERO)?;
-    let parts = v3_storage_slots::decode_v3_slot0(slot0);
-    let liq_word = read_view_word(scratch.ext(), pool, U256::from(layout.liquidity_slot()))?;
-    let liquidity = (liq_word & U256::from(u128::MAX)).to::<u128>();
-    if liquidity == 0 {
-        return None;
-    }
-    let tick_data =
-        read_v3_tick_window(scratch.ext(), pool, layout, tick_spacing, parts.tick, head);
-    Some((parts.sqrt_price_x96, parts.tick, liquidity, tick_data))
 }
 
 /// `(word position, bit position)` per the CL bitmap layout —
@@ -852,45 +777,28 @@ async fn admit_hop_pool(
                 trace_admit_fail(trace_tx, address, "token-join", "V3 token id unresolved");
                 return None;
             };
-            if let Some((sqrt, tk, liq, tick_data)) =
-                read_v3_view(scratch, e.address, e.layout, e.tick_spacing, head)
-            {
-                solver.admit_v3_explicit(
+            match solver
+                .admit_v3_full(
+                    provider,
                     e.address,
                     token0,
                     token1,
                     e.fee,
                     e.tick_spacing,
-                    sqrt,
-                    liq,
-                    tk,
-                    tick_data,
+                    None,
                     head,
                     e.layout,
+                    &rt.ingress,
                 )
-            } else {
-                match solver
-                    .admit_v3_full(
-                        provider,
-                        e.address,
-                        token0,
-                        token1,
-                        e.fee,
-                        e.tick_spacing,
-                        None,
-                        head,
-                        e.layout,
-                    )
-                    .await
-                {
-                    Ok(id) => Some(id),
-                    Err(reject) => {
-                        // The refused step, not one lumped label: an archive
-                        // RPC failure, a width refusal, and an
-                        // AlreadyRegistered duplicate will not share a line.
-                        trace_admit_fail(trace_tx, address, reject.stage(), &reject.detail());
-                        None
-                    }
+                .await
+            {
+                Ok(id) => Some(id),
+                Err(reject) => {
+                    // The refused step, not one lumped label: a Db read failure,
+                    // an archive RPC failure, a width refusal, and an
+                    // AlreadyRegistered duplicate will not share a line.
+                    trace_admit_fail(trace_tx, address, reject.stage(), &reject.detail());
+                    None
                 }
             }
         }
@@ -990,7 +898,7 @@ struct CycleWalk {
 /// Resolve every hop of one WETH-entry cycle against the frame's workspace. A
 /// hop whose pool the frame already admitted (a touched pool) reuses its
 /// workspace id; every other hop is admitted from its index edge through the
-/// same [`admit_hop_pool`] ladder the mids use. A cycle whose resolution fails
+/// same [`admit_hop_pool`] ingress admission the mids use. A cycle whose resolution fails
 /// (unresolvable hop, unadmittable pool, non-closing traversal) yields no
 /// chain, never a guess.
 #[expect(
@@ -1362,7 +1270,7 @@ impl PendingTxReaction for BackrunStrategy {
                         "touched_legs": intents.touched_legs.get(i).copied().unwrap_or(0),
                         "evaluated": c.evaluated,
                         "profit_wei": c.profit_wei.map(|p| p.to_string()),
-                        "reject": c.reject.as_ref().map(|r| r.label()),
+                        "reject": c.reject.as_ref().map(PathReject::label),
                         "reject_deficits": match c.reject {
                             Some(PathReject::UnusablePoolState { deficits, .. }) => Some(deficits),
                             _ => None,

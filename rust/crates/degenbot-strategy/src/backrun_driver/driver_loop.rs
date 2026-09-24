@@ -29,6 +29,7 @@ use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
+use degenbot_rpc::AlloyTickBootstrapRpc;
 use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
 use degenbot_simulation::BlockSimHandle;
 use parking_lot::Mutex as ParkingMutex;
@@ -1191,13 +1192,16 @@ impl BackrunDriver {
         // The strategy runtime OWNS the frame-surviving caches (index, token
         // joins, warm-code cache); each frame gets a fresh planning Workspace
         // scope (see frame_pipeline's module doc for the split).
-        let runtime = MarketContext::new(
+        let mut runtime = MarketContext::new(
             1,
             route_registry,
             connector_db,
             cfg.connectors,
             cfg.cycle_max_hops,
         );
+        // The ingress Chain arm (sparse single-word bootstrap) rides the same
+        // provider the frames replay from; the Db arm is already wired.
+        runtime.set_chain_bootstrap(Arc::new(AlloyTickBootstrapRpc::new(provider.clone())));
         let strategy = BackrunStrategy::new();
 
         let exec: Address = cfg

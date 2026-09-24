@@ -24,11 +24,14 @@ use hashbrown::HashMap as HbMap;
 use crate::frame_pipeline::{BidEconomics, PipelineConfig};
 use crate::market_context::MarketContext;
 
-/// A V3 tick window source for anchor admission: connector state read from
-/// the same chain view the frames replay over. Implemented for the frame
-/// scratch DB (production) and by test mocks (offline pins).
+/// A CL tick-window source for anchor admission, read from the same chain
+/// view the frames replay over. Production V3 anchors no longer read here —
+/// their map arrives through the pool ingress (`Db → Chain`); this seam now
+/// serves the V4 anchor window (whose ingress cutover follows on the same
+/// seam) and offline test mocks.
 pub trait V3TickWindow {
-    /// The in-range initialized ticks around `current_tick`.
+    /// The in-range initialized ticks around `current_tick` (retained for
+    /// test mocks; production V3 routes through the ingress).
     fn tick_window(
         &self,
         pool: Address,

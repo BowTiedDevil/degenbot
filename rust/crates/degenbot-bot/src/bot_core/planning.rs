@@ -624,6 +624,7 @@ mod tests {
     /// count: the per-chain trace names WHY each hop could not project, so
     /// a declared-but-unsolved chain is legible without re-deriving a cause.
     #[test]
+    #[expect(clippy::panic)]
     fn evaluate_verdict_carries_deficit_reasons() {
         let mut w = Workspace::new();
         let p_id = admitted_v2(&mut w, P, 500_000, 1_000);
@@ -644,7 +645,7 @@ mod tests {
 
     /// Overlapping cycle sets must reuse a scope pool instead of re-admitting
     /// it: the id lookup survives a register and back-solves the funnel's
-    /// AlreadyRegistered cycle-drop.
+    /// `AlreadyRegistered` cycle-drop.
     #[test]
     fn workspace_pool_id_lookup_survives_registration() {
         let mut w = Workspace::new();

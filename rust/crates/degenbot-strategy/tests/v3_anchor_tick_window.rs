@@ -1,25 +1,26 @@
 //! Pin for the V3-anchor sparse-tick defect (`unusable_pool_state` on every
 //! declared chain): a target swap that crosses NO initialized tick leaves the
 //! replayed V3 post-state with an empty tick map, and a solver range sequence
-//! cannot be built from it. The fix sources the in-range initialized-tick
-//! window from the same chain view the frame replayed over, so a healthy
-//! anchor admits and solves while a genuinely unusable (ticks-less) anchor
-//! still rejects.
+//! cannot be built from it. The fix stages the anchor's tick map through the
+//! pool ingress (`Db → Chain` — the complete per-tick map the pump maintains),
+//! so a healthy wide/range anchor admits and solves while a genuinely
+//! unusable (ticks-less) anchor still rejects.
 
 #![expect(clippy::unwrap_used, clippy::panic)]
 
-use alloy::primitives::{address, Address, U128, U256};
+use alloy::primitives::aliases::U128;
+use alloy::primitives::{address, Address, I256, U256};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
+use degenbot_db::discovery::V3PoolRowInput;
+use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
 use degenbot_pools::v3_state::ClSlotLayout;
-use degenbot_pools::TickInfo;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
-use degenbot_strategy::pending_tx::V3TickWindow;
 use hashbrown::HashMap as HbMap;
 
 /// The V3 anchor's tokens (canonical order: TOK0 < WETH).
@@ -31,43 +32,69 @@ const MID: Address = address!("000000000000000000000000000000000000b002");
 const SEED: u64 = 7;
 const ANCHOR_FEE: u32 = 3_000;
 const ANCHOR_SPACING: i32 = 60;
+const FACTORY: Address = address!("00000000000000000000000000000000000000ff");
 /// `sqrt(1) * 2^96` — the tick-0 price.
 const SQRT_ONE: u128 = 79_228_162_514_264_337_593_543_950_336;
 
-/// The chain-view tick window the fix merges: two initialized ticks
-/// straddling tick 0 (the same fixture the CL projection tests use).
-struct TwoTickWindow;
-impl V3TickWindow for TwoTickWindow {
-    fn tick_window(
-        &self,
-        _pool: Address,
-        _layout: ClSlotLayout,
-        _tick_spacing: i32,
-        _current_tick: i32,
-        head: u64,
-    ) -> HbMap<i32, TickInfo> {
-        let mut m = HbMap::default();
-        m.insert(
-            120,
-            TickInfo {
-                liquidity_gross: U128::from(10_000),
-                liquidity_net: 5_000,
-                block: head,
+/// Seed the anchor pool row + its initialized ticks into the in-memory DB, the
+/// complete map the ingestion pump maintains. With no ticks the pool is a
+/// legitimately-empty `Tracked` anchor (the RED case).
+fn seed_anchor(db: &DegenbotDb, ticks: &[i32]) {
+    db.upsert_exchange(1, "uniswap_v3", FACTORY, None).unwrap();
+    db.upsert_v3_pools(
+        1,
+        "uniswap_v3",
+        1,
+        1_000_000,
+        &[V3PoolRowInput {
+            address: ANCHOR,
+            token0_address: TOK,
+            token1_address: WETH,
+            fee: i64::from(ANCHOR_FEE),
+            tick_spacing: i64::from(ANCHOR_SPACING),
+        }],
+    )
+    .unwrap();
+    let addr_s = ANCHOR.to_checksum(None);
+    let pool_id: i64 = {
+        let conn = db.lock();
+        conn.query_row(
+            "SELECT id FROM pools WHERE address = ?1 LIMIT 1",
+            [&addr_s],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    let mut tick_bitmap: HbMap<i32, ApplyBitmapAtWord> = HbMap::new();
+    let mut tick_data: HbMap<i32, ApplyLiquidityAtTick> = HbMap::new();
+    for &tick in ticks {
+        tick_data.insert(
+            tick,
+            ApplyLiquidityAtTick {
+                liquidity_gross: U128::from(10_000u64),
+                liquidity_net: I256::try_from(if tick > 0 { 5_000i128 } else { -4_000i128 })
+                    .unwrap(),
+                block: 0,
             },
         );
-        m.insert(
-            -120,
-            TickInfo {
-                liquidity_gross: U128::from(8_000),
-                liquidity_net: -4_000,
-                block: head,
-            },
-        );
-        m
+        let compressed = tick.div_euclid(ANCHOR_SPACING);
+        let word = compressed >> 8;
+        let bit = compressed.rem_euclid(256) as u64;
+        tick_bitmap
+            .entry(word)
+            .or_insert_with(|| ApplyBitmapAtWord {
+                bitmap: U256::ZERO,
+                block: 0,
+            });
+        tick_bitmap.get_mut(&word).unwrap().bitmap |= U256::from(1u64) << bit;
     }
+    db.upsert_v3_liquidity_positions(pool_id, &tick_data)
+        .unwrap();
+    db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
+        .unwrap();
 }
 
-fn runtime() -> (MarketContext, u64, u64) {
+fn runtime(ticks: &[i32]) -> (MarketContext, u64, u64) {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let tok_id = db
         .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
@@ -79,6 +106,7 @@ fn runtime() -> (MarketContext, u64, u64) {
         u64::try_from(tok_id).unwrap(),
         u64::try_from(weth_id).unwrap(),
     );
+    seed_anchor(&db, ticks);
     let mut index = V2ConnectorIndex::default();
     index.push_v3_edge(V3Edge {
         pool_id: 201,
@@ -87,7 +115,7 @@ fn runtime() -> (MarketContext, u64, u64) {
         address: ANCHOR,
         fee: ANCHOR_FEE,
         tick_spacing: ANCHOR_SPACING,
-        layout: degenbot_pools::v3_state::ClSlotLayout::UniswapV3,
+        layout: ClSlotLayout::UniswapV3,
     });
     index.push_edge(V2Edge {
         pool_id: 202,
@@ -164,12 +192,14 @@ fn admit_mid(solver: &mut BackrunSolver) -> u64 {
         .unwrap()
 }
 
-/// RED half reproduces the defect (no chain-view window), GREEN half pins the
-/// fix (window present). The gate stays for the genuinely unusable anchor.
+/// RED half pins the defect (an anchor with no DB ticks cannot project);
+/// GREEN half pins the fix (the Db-staged map makes the anchor modelable).
+/// The gate stays for the genuinely unusable anchor.
 #[test]
-fn v3_anchor_sparse_tick_window_admits_and_solves() {
-    // RED: the replayed state alone cannot project — the whole chain rejects.
-    let (rt, _tok, _weth) = runtime();
+fn v3_anchor_db_tick_map_admits_and_solves() {
+    // RED: the replayed state alone (a Db-registered but tick-less anchor)
+    // cannot project — the whole chain rejects.
+    let (rt, _tok, _weth) = runtime(&[]);
     let mut solver = BackrunSolver::new();
     let affected = admit_extracted(
         &rt,
@@ -200,9 +230,9 @@ fn v3_anchor_sparse_tick_window_admits_and_solves() {
         other => panic!("expected unusable_pool_state, got {other:?}"),
     }
 
-    // GREEN: the chain-view tick window fills the replayed map; the same
-    // healthy anchor + healthy V2 hop now solves.
-    let (rt, _tok, _weth) = runtime();
+    // GREEN: the Db-staged tick map fills the replayed map; the same healthy
+    // anchor + healthy V2 hop now solves.
+    let (rt, _tok, _weth) = runtime(&[120, -120]);
     let mut solver = BackrunSolver::new();
     let affected = admit_extracted(
         &rt,
@@ -210,7 +240,7 @@ fn v3_anchor_sparse_tick_window_admits_and_solves() {
         &[anchor_post_state()],
         SEED,
         "0xpin",
-        Some(&TwoTickWindow),
+        None,
     );
     assert_eq!(affected.len(), 1, "the V3 anchor admits");
     let mid_id = admit_mid(&mut solver);
@@ -222,30 +252,23 @@ fn v3_anchor_sparse_tick_window_admits_and_solves() {
     assert_eq!(stats.dfs_declared, 1);
     assert_eq!(
         stats.dfs_evaluated, 1,
-        "the chain-view window makes the anchor modelable"
+        "the Db-staged map makes the anchor modelable"
     );
     assert!(stats.chains[0].reject.is_none());
 }
 
 /// The `anchor_ticks` probe must tolerate u128-scale liquidity: real pools
-/// carry >> u64::MAX liquidity, and `serde_json::json!` errors ("number out
+/// carry >> `u64::MAX` liquidity, and `serde_json::json!` errors ("number out
 /// of range") on such u128s — which panicked the io-rt thread and stopped
-/// the feed live. Pinned by driving an u128::MAX anchor through admission.
+/// the feed live. Pinned by driving a `u128::MAX` anchor through admission.
 #[test]
 fn anchor_admission_survives_u128_liquidity() {
-    let (rt, _tok, _weth) = runtime();
+    let (rt, _tok, _weth) = runtime(&[120, -120]);
     let mut post = anchor_post_state();
     if let PoolPostKind::Typed(TypedPoolPost::V3 { liquidity, .. }) = &mut post.kind {
         *liquidity = Some(u128::MAX);
     }
-    let affected = admit_extracted(
-        &rt,
-        &mut BackrunSolver::new(),
-        &[post],
-        SEED,
-        "0xpin",
-        Some(&TwoTickWindow),
-    );
+    let affected = admit_extracted(&rt, &mut BackrunSolver::new(), &[post], SEED, "0xpin", None);
     assert_eq!(
         affected.len(),
         1,
@@ -253,11 +276,11 @@ fn anchor_admission_survives_u128_liquidity() {
     );
 }
 
-/// The merged window never overwrites a replayed touched tick (post-frame
-/// facts win) — pinned through the admission path's public behavior.
+/// The ingress map never overwrites a replayed touched tick (post-frame facts
+/// win) — pinned through the admission path's public behavior.
 #[test]
-fn replayed_touched_tick_wins_over_window() {
-    let (rt, _tok, _weth) = runtime();
+fn replayed_touched_tick_wins_over_ingress_map() {
+    let (rt, _tok, _weth) = runtime(&[120, -120]);
     let mut post = anchor_post_state();
     if let PoolPostKind::Typed(TypedPoolPost::V3 { touched_ticks, .. }) = &mut post.kind {
         touched_ticks.push(
@@ -269,14 +292,7 @@ fn replayed_touched_tick_wins_over_window() {
         );
     }
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(
-        &rt,
-        &mut solver,
-        &[post],
-        SEED,
-        "0xpin",
-        Some(&TwoTickWindow),
-    );
+    let affected = admit_extracted(&rt, &mut solver, &[post], SEED, "0xpin", None);
     assert_eq!(affected.len(), 1);
     // The pool's state is readable and the chain solves (the replayed tick
     // did not corrupt the merged map).
