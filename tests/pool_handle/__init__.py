@@ -1,0 +1,1 @@
+"""Structural Pool handle tests."""

@@ -5,7 +5,7 @@ End-to-end gate for the Rust→PyO3→Python fetcher bridge:
 * registering a V3 pool via ``Bot`` always creates a *sparse* pool (empty
   ``tick_data`` → no tick-bitmap words known), so the very first
   ``calculate_tokens_out`` must miss on the starting word and return ``0``;
-* ``LiquidityPool.calculate_tokens_out_with_fetch`` drives the Rust
+* ``Pool.calculate_tokens_out_with_fetch`` drives the Rust
   fetch+retry loop: on the miss it calls the injected Python fetcher
   ``fetcher(word, block) -> dict | None`` for the missing word, merges the
   returned tick data into ``BotState``, and retries;

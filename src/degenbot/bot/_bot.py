@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from degenbot._ffi import BlockStream, IntakeReceipt
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
     from degenbot.types.chain import ChecksummedAddress
@@ -977,7 +977,7 @@ class Bot(AccountQueryMixin):
     def _register_delegated_tokens(
         self,
         pool_class: type[AbstractLiquidityPool],
-        py_pool: LiquidityPool,
+        py_pool: Pool,
         *,
         address: str,
         chain_id: ChainId,
@@ -1239,7 +1239,7 @@ class Bot(AccountQueryMixin):
         pool_id_bytes: bytes,
         identity: _V4ResolvedIdentity,
         block: int | None,
-    ) -> tuple[LiquidityPool, int, int]:
+    ) -> tuple[Pool, int, int]:
         """Delegate the build to the Rust `PoolBuilder` and check identity parity.
 
         Core `build_v4` fetches slot0/liquidity FRESH + assembles the tick map

@@ -66,7 +66,7 @@ class V3PoolState:
         flag is retired; the V3/V4 state owns the read).
 
         """
-        return self._py_pool.coverage == "sparse"
+        return self._py_pool.concentrated_liquidity().coverage == "sparse"
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:

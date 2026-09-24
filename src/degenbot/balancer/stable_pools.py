@@ -20,7 +20,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.chain import ChecksummedAddress
 
 # Enum for deployed StableMath invariant versions.
@@ -63,7 +63,7 @@ class _HandleRateProviderAdapter:
     is ``_resolve_scaling_factors`` (which calls the handle directly).
     """
 
-    def __init__(self, py_pool: LiquidityPool) -> None:
+    def __init__(self, py_pool: Pool) -> None:
         self._py_pool = py_pool
 
     def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:
@@ -123,7 +123,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
     pool_id: bytes
     pool_specialization: int
     vault: ChecksummedAddress
-    _py_pool: LiquidityPool
+    _py_pool: Pool
     _tokens: tuple[Erc20Token, ...]
     scaling_factors: tuple[int, ...]
     fee: Fraction
@@ -137,13 +137,13 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         """Direct construction is forbidden.
 
         ``BalancerV2StablePool`` is a Python companion over a Rust-owned
-        ``LiquidityPool`` handle. Use the registered entry points instead:
+        ``Pool`` handle. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_balancer_stable_pool(...)``
 
         Both register the pool in Rust (including the optional rate provider
-        as the stored I/O trait object), obtain the ``LiquidityPool``
+        as the stored I/O trait object), obtain the ``Pool``
         handle, and wrap it via :meth:`_from_py_pool`.
 
         Raises:
@@ -154,13 +154,13 @@ class BalancerV2StablePool(AbstractLiquidityPool):
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or "
             "make_balancer_stable_pool(...) (tests) to register the pool in "
-            "Rust and obtain the LiquidityPool handle to wrap."
+            "Rust and obtain the Pool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
-        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: Pool) -> Self:
+        """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
         identity field (vault, pool_id, tokens, amp, scaling_factors,
@@ -182,7 +182,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
 
         if py_pool.pool_family != "balancer-stable":
             msg = (
-                "LiquidityPool handle is not a Balancer stable pool "
+                "Pool handle is not a Balancer stable pool "
                 f"(got pool_family {py_pool.pool_family!r})"
             )
             raise DegenbotValueError(message=msg)
@@ -263,12 +263,12 @@ class BalancerV2StablePool(AbstractLiquidityPool):
     def balances(self) -> tuple[int, ...]:
         """Balances.
 
-        Read from the Rust core via the ``LiquidityPool`` handle
+        Read from the Rust core via the ``Pool`` handle
         (ADR-005 slice 12d). Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple
         (one U256 per token, including BPT for Composable pools).
         """
-        return tuple(self._py_pool.balancer_stable_balances)
+        return tuple(self._py_pool.balance_vector().balances)
 
     @property
     def state(self) -> PoolState:
@@ -286,15 +286,15 @@ class BalancerV2StablePool(AbstractLiquidityPool):
                 unreachable for a companion built over a registered handle).
 
         """
-        snap = self._py_pool.snapshot_balancer_stable()
-        if snap is None:  # pragma: no cover - defensive, unreachable in practice
+        try:
+            view = self._py_pool.balance_vector()
+        except ValueError as exc:
             msg = f"No Balancer stable pool state available for {self.address}"
-            raise DegenbotValueError(message=msg)
-        balances, block = snap
+            raise DegenbotValueError(message=msg) from exc
         return BalancerV2PoolState(
             address=self.address,
-            balances=tuple(balances),
-            block=block,
+            balances=tuple(view.balances),
+            block=view.update_block,
         )
 
     @property
@@ -472,7 +472,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         """Apply an external state update with new balances.
 
         Delegates to the Rust core
-        (``LiquidityPool.apply_balancer_stable_balance_update``) which
+        (``Pool.apply_balancer_stable_balance_update``) which
         journals the prior balances (genesis-anchor V2-style discipline) and
         lands the new balances + ``update_block`` atomically
         (ADR-005 slice 12d). The ``_state_lock`` + double-check-after-acquire
@@ -488,7 +488,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         """
         if self.state.block is not None and update.block_number < self.state.block:
             return
-        applied = self._py_pool.apply_balancer_stable_balance_update(
+        applied = self._py_pool.apply_balances(
             list(update.balances),
             update.block_number,
         )

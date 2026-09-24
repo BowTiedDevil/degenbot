@@ -174,7 +174,7 @@ class BalancerBuilder(BalancerBuilderBase):
         pow_version = detect_pow_version(bytecode)
 
         # ADR-005 slice 12b: register the weighted pool in the Rust core +
-        # build the companion over the resulting LiquidityPool handle
+        # build the companion over the resulting Pool handle
         # (production-path twin of make_balancer_weighted_pool).
         scaling_factors = [_compute_scaling_factor(t) for t in tokens]
         fee_scaled_int = int(ctx.fee * BalancerV2Pool.FEE_DENOMINATOR)
@@ -258,7 +258,7 @@ class BalancerBuilder(BalancerBuilderBase):
         )
 
         # ADR-005 slice 12d: register the stable pool in the Rust core +
-        # build the companion over the resulting LiquidityPool handle
+        # build the companion over the resulting Pool handle
         # (production-path twin of make_balancer_stable_pool). Registers
         # immutable config (amp, scaling_factors, swap_fee, bpt_idx,
         # invariant_version) + registration balances + genesis journal delta;

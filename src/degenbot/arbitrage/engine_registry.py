@@ -66,7 +66,7 @@ class EngineRegistry:
         path_predicate: PathCompositionPredicate | None = None,
     ) -> None:
         # ADR-006 D1+D4: the engine adopts the Bot's shared BotState, so the
-        # engine reads/writes the SAME core that V2 LiquidityPool handles
+        # engine reads/writes the SAME core that V2 Pool handles
         # share — no dual-BotState split (rust-owned-bot.md §17 closure). The
         # registry takes the Bot directly (Python-side expression of ADR-006 D4:
         # Bot owns the engine; the user drives Bot) — never `bot._py_bot`.
@@ -223,7 +223,7 @@ class EngineRegistry:
             return self._v2_keys[pool.address]
         # ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
         # pool is ALREADY registered there by `bot.build_pool` (the V2 builder
-        # calls `py_bot.register_v2_pool` + hands back the LiquidityPool
+        # calls `py_bot.register_v2_pool` + hands back the Pool
         # handle). Re-registering via `engine.register_v2_pool` would panic on
         # the duplicate address. Cache the shared pool_id for path-building;
         # orient via zero_for_one at register_path time (no `fwd_key + 1` shim).
@@ -276,7 +276,7 @@ class EngineRegistry:
         """
         # ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V3
         # pool is ALREADY registered there by `bot.build_pool` (the V3 builder
-        # calls `py_bot.register_v3_pool` + hands back the LiquidityPool
+        # calls `py_bot.register_v3_pool` + hands back the Pool
         # handle). Re-registering via `engine.register_v3_pool` would PANIC the
         # Rust core on the duplicate address — taking the process down. Mirror
         # the V2 path: read the shared-core pool_id off the handle and cache it
@@ -316,7 +316,7 @@ class EngineRegistry:
         # ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V4
         # pool is ALREADY registered there by `bot.build_managed_pool` (the V4
         # builder calls `py_bot.register_v4_pool` + hands back the
-        # LiquidityPool handle). Re-registering via `engine.register_v4_pool`
+        # Pool handle). Re-registering via `engine.register_v4_pool`
         # would raise ValueError("V4 pool already registered") for every V4 hop
         # in every discovered path — and, since the cache is only set on
         # success, the same pool would trip it repeatedly. Mirror the V2 path:

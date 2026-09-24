@@ -4,7 +4,7 @@ Mirrors ``tests/helpers/curve_pool_factory.py`` (and ``v3_pool_factory.py``
 / ``v4_pool_factory.py``) — ADR-005 slice 12b (weighted) + 12d (stable):
 every direct ``BalancerV2Pool(...)`` / ``BalancerV2StablePool(...)``
 construction in the test suite routes through ``make_balancer_weighted_pool``
-/ ``make_balancer_stable_pool`` so the ``LiquidityPool`` handle is wired
+/ ``make_balancer_stable_pool`` so the ``Pool`` handle is wired
 through ``Bot::register_balancer_weighted_pool`` /
 ``register_balancer_stable_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow (ADR-005).
@@ -28,7 +28,7 @@ from degenbot.checksum_cache import get_checksum_address
 if TYPE_CHECKING:
     from degenbot.balancer.stable_pools import BalancerRateProvider
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
 
 
@@ -51,7 +51,7 @@ def make_balancer_weighted_pool(
     py_bot: Bot | None = None,
     pool_class: type[BalancerV2Pool] = BalancerV2Pool,
 ) -> BalancerV2Pool:
-    """Construct an I/O-free Balancer V2 weighted companion over a fresh LiquidityPool handle.
+    """Construct an I/O-free Balancer V2 weighted companion over a fresh Pool handle.
 
     Registers the pool in a short-lived ``Bot`` (the returned handle holds an
     ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
@@ -95,7 +95,7 @@ def make_balancer_weighted_pool(
         balances=list(balances),
         update_block=state_block_int,
     )
-    handle: LiquidityPool | None = bot.get_pool(pool_id_int)
+    handle: Pool | None = bot.get_pool(pool_id_int)
     assert handle is not None, "register_balancer_weighted_pool returned a pool_id with no handle"
 
     # ADR-005 sealed seam: register tokens in the same Bot as the pool.
@@ -123,7 +123,7 @@ def make_balancer_stable_pool(
     py_bot: Bot | None = None,
     pool_class: type[BalancerV2StablePool] = BalancerV2StablePool,
 ) -> BalancerV2StablePool:
-    """Construct an I/O-free Balancer V2 stable companion over a fresh LiquidityPool handle.
+    """Construct an I/O-free Balancer V2 stable companion over a fresh Pool handle.
 
     Production-path twin of ``BalancerBuilder._build_stable`` (ADR-005
     slice 12d): registers the pool in a short-lived ``Bot`` (the returned
@@ -178,7 +178,7 @@ def make_balancer_stable_pool(
         update_block=state_block_int,
         rate_provider=rate_provider,
     )
-    handle: LiquidityPool | None = bot.get_pool(pool_id_int)
+    handle: Pool | None = bot.get_pool(pool_id_int)
     assert handle is not None, "register_balancer_stable_pool returned a pool_id with no handle"
 
     return pool_class._from_py_pool(handle)

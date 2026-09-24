@@ -62,11 +62,11 @@ def _make_usdc() -> Erc20Token:
 
 
 class _DelegateSpy:
-    """Wraps a ``LiquidityPool`` to record ``calculate_tokens_out/in`` calls.
+    """Wraps a ``Pool`` to record ``calculate_tokens_out/in`` calls.
 
     ADR-005 slice 5 delegation-test for the V2 constant-product calc path:
     ``UniswapV2Pool.calculate_tokens_out_from_tokens_in`` (no override) routes
-    through ``LiquidityPool.calculate_tokens_out``. Pass-through for all other
+    through ``Pool.calculate_tokens_out``. Pass-through for all other
     handle methods via ``__getattr__``.
     """
 
@@ -88,10 +88,10 @@ class _DelegateSpy:
 
 
 class TestV2CalcDelegation:
-    """ADR-005 slice 5 - V2 calc delegation to ``LiquidityPool``.
+    """ADR-005 slice 5 - V2 calc delegation to ``Pool``.
 
     The constant-product calc math delegates to Rust's
-    ``LiquidityPool.calculate_tokens_out/in`` when no ``override_state`` is
+    ``Pool.calculate_tokens_out/in`` when no ``override_state`` is
     given (single read guard - no separate Python state read before the calc,
     so no pump-interleave risk). The override path calls the
     ``calc_exact_in/out_v2`` FFI seam against the override reserves so
@@ -117,7 +117,7 @@ class TestV2CalcDelegation:
         )
 
     def test_calculate_tokens_out_delegates_to_rust_no_override(self) -> None:
-        """No override_state: calc delegates to LiquidityPool.calculate_tokens_out."""
+        """No override_state: calc delegates to Pool.calculate_tokens_out."""
         pool = self._make_pool()
         weth = pool.token0
         spy = _DelegateSpy(pool._py_pool)
@@ -170,7 +170,7 @@ class TestV2CalcDelegation:
         )
 
     def test_calculate_tokens_in_delegates_to_rust_no_override(self) -> None:
-        """No override_state: calc delegates to LiquidityPool.calculate_tokens_in."""
+        """No override_state: calc delegates to Pool.calculate_tokens_in."""
         pool = self._make_pool()
         usdc = pool.token1
         spy = _DelegateSpy(pool._py_pool)

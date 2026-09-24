@@ -1,7 +1,7 @@
 """Rust handle exposes verified V3 identity (Fork A, P62DKO).
 
 `register_v3_pool` now resolves the JSON-sourced deployer + init_hash at
-registration and stores them on the pool identity. The `LiquidityPool`
+registration and stores them on the pool identity. The `Pool`
 handle exposes them via `init_hash` / `deployer` getters -- the source the
 V3 companion reads instead of the retired `UNISWAP_V3_MAINNET_POOL_INIT_HASH`
 ClassVar.
@@ -71,7 +71,7 @@ def _py_pool(bot: Bot, pool_id: int):
 
 
 class TestV3HandleIdentity:
-    """`LiquidityPool` exposes the verified V3 deployer + init_hash."""
+    """`Pool` exposes the verified V3 deployer + init_hash."""
 
     def test_uniswap_v3_init_hash_off_handle(self) -> None:
         bot = Bot(chain_id=1)
@@ -102,7 +102,7 @@ class TestV3HandleIdentity:
 
 
 class TestV2HandleIdentity:
-    """`LiquidityPool` exposes the verified V2 deployer + init_hash, and the
+    """`Pool` exposes the verified V2 deployer + init_hash, and the
     `dex` getter merges the per-(chain,factory) JSON identity."""
 
     def test_uniswap_v2_init_hash_off_handle(self) -> None:

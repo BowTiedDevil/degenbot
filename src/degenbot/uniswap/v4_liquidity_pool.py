@@ -1,6 +1,6 @@
-"""UniswapV4Pool: concentrated liquidity AMM companion over a LiquidityPool handle.
+"""UniswapV4Pool: concentrated liquidity AMM companion over a Pool handle.
 
-ADR-005 slice 9b — the V4 companion rewritten over the same `LiquidityPool`
+ADR-005 slice 9b — the V4 companion rewritten over the same `Pool`
 handle topology as the V3 companion. Rust `BotState` is the single source of
 truth for V4 mutable state (scalars, tick data, reorg journal); this companion
 reads it through `self._py_pool` (atomic `snapshot_v3()` for scalars — already
@@ -55,7 +55,7 @@ from degenbot.uniswap.v4_types import (
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.chain import ChecksummedAddress
 
 
@@ -133,7 +133,7 @@ class UniswapV4Pool(
     UniswapV4PoolCalc,
     ConcentratedLiquidityCompanion,
 ):
-    """A Uniswap V4 concentrated-liquidity pool companion over a ``LiquidityPool`` handle.
+    """A Uniswap V4 concentrated-liquidity pool companion over a ``Pool`` handle.
 
     Rust owns the mutable state (scalars + tick data + reorg journal) as
     ``V4PoolState``; this companion reads it through ``self._py_pool`` (one
@@ -157,7 +157,7 @@ class UniswapV4Pool(
     type PoolState = UniswapV4PoolState
 
     # Instance attributes set in `_from_py_pool` (the only construction seam).
-    _py_pool: LiquidityPool
+    _py_pool: Pool
     _pool_id: bytes
     _pool_manager_address: ChecksummedAddress
     hook_address: ChecksummedAddress
@@ -175,14 +175,14 @@ class UniswapV4Pool(
         """Direct construction is forbidden.
 
         ``UniswapV4Pool`` is a Python companion over a Rust-owned
-        ``LiquidityPool`` handle. The handle can only be produced by
+        ``Pool`` handle. The handle can only be produced by
         registering a pool in a ``Bot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_v4_pool(...)``
 
-        Both register the pool in Rust, obtain the ``LiquidityPool``
+        Both register the pool in Rust, obtain the ``Pool``
         handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
         ``_from_pydf`` seam).
 
@@ -194,13 +194,13 @@ class UniswapV4Pool(
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or make_v4_pool(...) "
             "(tests) to register the pool in Rust and obtain the "
-            "LiquidityPool handle to wrap."
+            "Pool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
-        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: Pool) -> Self:
+        """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
         handle is self-describing: every identity field (pool_manager,
@@ -227,7 +227,7 @@ class UniswapV4Pool(
         # Variant-family guard.
         if py_pool.pool_family != "v4":
             msg = (
-                "LiquidityPool handle is not a V4-family pool "
+                "Pool handle is not a V4-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
                 "UniswapV4Pool._from_py_pool requires a handle "
                 "registered via register_v4_pool"
@@ -255,11 +255,12 @@ class UniswapV4Pool(
         self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
         self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
 
+        view = py_pool.concentrated_liquidity()
         self._pool_key = UniswapV4PoolKey(
             currency0=self._token0.address,
             currency1=self._token1.address,
-            fee=py_pool.fee,
-            tick_spacing=py_pool.tick_spacing,
+            fee=view.fee,
+            tick_spacing=view.tick_spacing,
             hooks=self.hook_address,
         )
 
@@ -287,7 +288,7 @@ class UniswapV4Pool(
         # the seam defaults; the builder overrides after _from_py_pool.
         self.protocol_fee = ProtocolFee(zero_for_one=0, one_for_zero=0)
         self.lp_fee = self.pool_key.fee
-        self._initial_state_block = self._py_pool.update_block
+        self._initial_state_block = self._py_pool.concentrated_liquidity().update_block
 
         return self
 
@@ -596,7 +597,7 @@ class UniswapV4Pool(
             The current sqrt price as a Q64.96 value (from Rust).
 
         """
-        return self._py_pool.sqrt_price_x96
+        return self._py_pool.concentrated_liquidity().sqrt_price_x96
 
     @property
     def state(self) -> UniswapV4PoolState:
@@ -611,20 +612,20 @@ class UniswapV4Pool(
             DegenbotValueError: If the pool is not registered in Rust.
 
         """
-        snap = self._py_pool.snapshot_v3()
-        if snap is None:
+        try:
+            view = self._py_pool.concentrated_liquidity()
+        except ValueError as exc:
             msg = "No V4 pool state available (pool not registered in Rust)"
-            raise DegenbotValueError(message=msg)
-        sqrt_price_x96, liquidity, tick, block = snap
+            raise DegenbotValueError(message=msg) from exc
         return self.PoolState.__value__(
             id=self.pool_id,
             address=self._pool_manager_address,
-            liquidity=liquidity,
-            sqrt_price_x96=sqrt_price_x96,
-            tick=tick,
+            liquidity=view.liquidity,
+            sqrt_price_x96=view.sqrt_price_x96,
+            tick=view.tick,
             tick_bitmap=self.tick_bitmap,
             tick_data=self.tick_data,
-            block=block,
+            block=view.update_block,
         )
 
     @property

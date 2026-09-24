@@ -2,7 +2,7 @@
 
 Mirrors ``tests/helpers/erc20_factory.py`` (slice 3): every direct
 ``UniswapV2Pool(...)`` / V2-subclass construction in the test suite routes
-through ``make_v2_pool`` so the ``LiquidityPool`` handle is wired through
+through ``make_v2_pool`` so the ``Pool`` handle is wired through
 ``Bot::register_v2_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow.
 
@@ -24,7 +24,7 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 if TYPE_CHECKING:
     from degenbot._ffi.dex_identity import DexIdentity
     from degenbot.erc20 import Erc20Token
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.aliases import ChainId
 
 
@@ -61,7 +61,7 @@ def make_v2_pool(
     stable_swap: bool = False,
     fee_denominator: int | None = None,
 ) -> UniswapV2Pool:
-    """Construct an I/O-free V2-style pool companion over a fresh ``LiquidityPool`` handle.
+    """Construct an I/O-free V2-style pool companion over a fresh ``Pool`` handle.
 
     Each call creates its own short-lived ``Bot`` (the returned handle holds
     an ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``)
@@ -122,7 +122,7 @@ def make_v2_pool(
     # preset (if provided) or "uniswap-v2". ``stable_swap``/``fee_denominator``
     # default to False/None — callers building a Camelot stable pool pass them
     # explicitly. These flow into Rust as a ``V2PoolDescriptor`` on the
-    # ``LiquidityPool`` handle.
+    # ``Pool`` handle.
     resolved_variant = (
         variant if variant is not None else (dex.variant if dex is not None else "uniswap-v2")
     )
@@ -154,7 +154,7 @@ def make_v2_pool(
         if py_bot.get_token(tok.address) is None:
             py_bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
 
-    py_pool: LiquidityPool | None = py_bot.get_pool(pool_id)
+    py_pool: Pool | None = py_bot.get_pool(pool_id)
     assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
 
     return pool_class._from_py_pool(py_pool)

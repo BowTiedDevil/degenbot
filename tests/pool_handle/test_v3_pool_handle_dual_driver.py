@@ -28,7 +28,7 @@ def v3_pool():
         update_block=100,
         coverage="tracked",
     )
-    return bot.py_pool(pool_id)
+    return bot.get_pool(pool_id)
 
 
 def test_structure_and_identity(v3_pool) -> None:
@@ -78,7 +78,7 @@ def test_dex_name_resolved_from_known_uniswap_deployment() -> None:
         update_block=100,
         coverage="tracked",
     )
-    handle = bot.py_pool(pool_id)
+    handle = bot.get_pool(pool_id)
     assert handle is not None
     assert handle.dex_name == "uniswap"
 
@@ -103,6 +103,6 @@ def test_dex_name_unknown_deployment_is_none() -> None:
         update_block=100,
         coverage="tracked",
     )
-    handle = bot.py_pool(pool_id)
+    handle = bot.get_pool(pool_id)
     assert handle is not None
     assert handle.dex_name is None

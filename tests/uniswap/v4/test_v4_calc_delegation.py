@@ -1,10 +1,10 @@
-"""ADR-005 slice 9 — V4 calc delegation to ``LiquidityPool``.
+"""ADR-005 slice 9 — V4 calc delegation to ``Pool``.
 
 The V4 swap-calc path (``UniswapV4PoolCalc`` mixin is pricing-only by design;
 swap math lives on ``UniswapV4Pool``) routes both
 ``calculate_tokens_out_from_tokens_in`` and
 ``calculate_tokens_in_from_tokens_out`` through the Rust
-``LiquidityPool.simulate_swap_with_fetch`` /
+``Pool.simulate_swap_with_fetch`` /
 ``simulate_exact_output_swap_with_fetch`` seams.
 
 This is the **delegation-detection** counterpart to the parity tests in
@@ -75,7 +75,7 @@ def _make_tokens(py_bot: Bot, tag: str):
 
 
 class _DelegateSpy:
-    """Wraps a ``LiquidityPool`` to record V4 swap-seam calls.
+    """Wraps a ``Pool`` to record V4 swap-seam calls.
 
     Pass-through for all other handle methods via ``__getattr__``. Records
     ``simulate_swap_with_fetch`` (exact-input) and
@@ -152,7 +152,7 @@ class TestV4CalcDelegation:
 
     def test_calculate_tokens_out_delegates_to_rust_no_override(self) -> None:
         """No override_state: ``calculate_tokens_out_from_tokens_in`` routes
-        to ``LiquidityPool.simulate_swap_with_fetch`` (token0 in → zfo=True)."""
+        to ``Pool.simulate_swap_with_fetch`` (token0 in → zfo=True)."""
         py_bot = Bot()
         pool = _make_dense_v4_pool(py_bot)
         spy = _DelegateSpy(pool._py_pool)
@@ -184,7 +184,7 @@ class TestV4CalcDelegation:
 
     def test_calculate_tokens_in_delegates_to_rust_no_override(self) -> None:
         """No override_state: ``calculate_tokens_in_from_tokens_out`` routes
-        to ``LiquidityPool.simulate_exact_output_swap_with_fetch``
+        to ``Pool.simulate_exact_output_swap_with_fetch``
         (token1 out → zfo=True)."""
         py_bot = Bot()
         pool = _make_dense_v4_pool(py_bot)

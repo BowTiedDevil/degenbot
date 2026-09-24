@@ -11,7 +11,7 @@ This is the Python twin of that Rust `ConstructionIo` double. It validates the
 full seam no I/O-free test covers: `Bot` → `attach_construction_io`
 (AlloyRpcConstruction) → core detection choreography (coin discovery, A/fee/
 admin_fee, per-coin decimals, ramping/crypto/lending/lp/metapool probes) →
-`register_curve_pool` → `struct LiquidityPool` handle.
+`register_curve_pool` → `struct Pool` handle.
 
 Cassette semantics that differ from the Rust `FakeRpc` (selector stubs): the
 `OfflineProvider` keys `eth_call` by full `(to, calldata)` and treats an
@@ -323,7 +323,7 @@ def test_build_curve_pool_plain_over_offline_cassette() -> None:
     assert handle.curve_a_coefficient == 2000
     assert handle.curve_fee == 1_000_000
     assert handle.curve_admin_fee == 500_000_000
-    assert handle.balances == [1_000_000, 2_000_000]
+    assert handle.balance_vector().balances == [1_000_000, 2_000_000]
 
     r30 = 10**30
     r12 = 10**12
@@ -427,7 +427,7 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
     assert pool.a_coefficient == handle_a.curve_a_coefficient == 2000
     assert pool.fee == handle_a.curve_fee == 1_000_000
     assert pool.admin_fee == handle_a.curve_admin_fee == 500_000_000
-    assert tuple(pool.balances) == tuple(handle_a.balances) == (1_000_000, 2_000_000)
+    assert tuple(pool.balances) == tuple(handle_a.balance_vector().balances) == (1_000_000, 2_000_000)
     assert tuple(pool.rate_multipliers) == tuple(handle_a.curve_rate_multipliers)
     assert tuple(pool.precision_multipliers) == tuple(handle_a.curve_precision_multipliers)
     assert pool.rate_multipliers[0] == 10**30
@@ -567,4 +567,4 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
     assert pool.a_coefficient == handle_a.curve_a_coefficient == 500
     assert pool.fee == handle_a.curve_fee == 1_000_000
     assert pool.admin_fee == handle_a.curve_admin_fee == 500_000_000
-    assert tuple(pool.balances) == tuple(handle_a.balances)
+    assert tuple(pool.balances) == tuple(handle_a.balance_vector().balances)

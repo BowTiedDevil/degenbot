@@ -1,7 +1,7 @@
 """Factory helper for I/O-free Aerodrome V2 pool construction in tests.
 
 Every direct ``AerodromeV2Pool(...)`` construction in the test suite routes
-through ``make_aerodrome_v2_pool`` so the ``LiquidityPool`` handle is wired
+through ``make_aerodrome_v2_pool`` so the ``Pool`` handle is wired
 through ``Bot.register_aerodrome_pool`` → ``get_pool`` → companion, matching
 the ``Bot.build_pool()`` flow (ADR-005 Aerodrome state port).
 """
@@ -35,7 +35,7 @@ def make_aerodrome_v2_pool(
     py_bot: Bot | None = None,
     pool_class: type[AerodromeV2Pool] = AerodromeV2Pool,
 ) -> AerodromeV2Pool:
-    """Construct an I/O-free Aerodrome V2 companion over a fresh LiquidityPool handle.
+    """Construct an I/O-free Aerodrome V2 companion over a fresh Pool handle.
 
     Registers the pool in a short-lived ``Bot`` (the returned handle holds an
     ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``),

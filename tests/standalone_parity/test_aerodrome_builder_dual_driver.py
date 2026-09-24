@@ -101,5 +101,5 @@ def test_python_consumer_aerodrome_builder_identity_state_matches_fixture() -> N
     assert handle.aerodrome_token1_decimals == _TOKEN1_DECIMALS
 
     # State.
-    assert handle.aerodrome_reserve0 == _RESERVE0
-    assert handle.aerodrome_reserve1 == _RESERVE1
+    assert handle.reserve_pair().reserve0 == _RESERVE0
+    assert handle.reserve_pair().reserve1 == _RESERVE1

@@ -26,7 +26,7 @@ def v2_pool():
         stable_swap=False,
         fee_denominator=None,
     )
-    return bot.py_pool(pool_id)
+    return bot.get_pool(pool_id)
 
 
 def test_structure_and_identity(v2_pool) -> None:
@@ -71,7 +71,7 @@ def test_dex_name_resolved_from_known_sushiswap_deployment() -> None:
         stable_swap=False,
         fee_denominator=None,
     )
-    handle = bot.py_pool(pool_id)
+    handle = bot.get_pool(pool_id)
     assert handle is not None
     assert handle.dex_name == "sushiswap"
 
@@ -95,6 +95,6 @@ def test_dex_name_unknown_deployment_is_none() -> None:
         stable_swap=False,
         fee_denominator=None,
     )
-    handle = bot.py_pool(pool_id)
+    handle = bot.get_pool(pool_id)
     assert handle is not None
     assert handle.dex_name is None

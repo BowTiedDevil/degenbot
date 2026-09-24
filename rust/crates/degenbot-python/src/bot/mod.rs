@@ -1888,17 +1888,7 @@ impl PyBot {
     fn get_pool(&self, py: Python<'_>, pool_id: u64) -> Option<PyLiquidityPool> {
         // GIL hygiene: read guard acquired inside py.detach (inversion class).
         if self.with_state(py, |s| s.has_pool(pool_id)) {
-            Some(PyLiquidityPool::new(self.bot.state_arc(), pool_id))
-        } else {
-            None
-        }
-    }
-
-    /// Prototype structural pool handle (V2 slice).
-    fn py_pool(&self, py: Python<'_>, pool_id: u64) -> Option<crate::bot::pool::PyPool> {
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        if self.with_state(py, |s| s.has_pool(pool_id)) {
-            Some(crate::bot::pool::PyPool::new(
+            Some(PyLiquidityPool::new(
                 self.bot.state_arc(),
                 pool_id,
                 self.bot.chain_id(),

@@ -103,7 +103,7 @@ def test_register_v4_pool_seeds_tick_data_inline_without_update_tick_data(
         tick_data={-201000: (100, 1000, 18_000_000)},
     )
 
-    td = pool._py_pool.tick_data_snapshot()
+    td = pool._py_pool.concentrated_liquidity().tick_data
     assert td is not None, "V4 pool must be registered with tick data inline"
     assert -201000 in td, "the seeded tick must be present without a separate update_tick_data"
     assert td[-201000][0] == 100, "inline seed gross matches"
@@ -150,5 +150,5 @@ def test_release_python_state_keeps_rust_v4_pool_registered(tmp_path: pathlib.Pa
     bot.release_python_state()
 
     assert py_bot.pool_count() == 1, "V4 pool must stay registered in Rust after release"
-    td = pool._py_pool.tick_data_snapshot()
+    td = pool._py_pool.concentrated_liquidity().tick_data
     assert -201000 in td, "V4 tick data survives release"

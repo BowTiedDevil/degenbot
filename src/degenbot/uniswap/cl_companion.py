@@ -27,7 +27,7 @@ from degenbot.uniswap.math import (
 )
 
 if TYPE_CHECKING:
-    from degenbot._ffi import LiquidityPool
+    from degenbot._ffi import Pool
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.types import UniswapPoolSwapVector
@@ -46,7 +46,7 @@ type CLState = Any
 
 
 class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
-    """Shared CL companion surface over a Rust-owned ``LiquidityPool`` handle.
+    """Shared CL companion surface over a Rust-owned ``Pool`` handle.
 
     Subclasses: ``UniswapV3Pool`` / ``UniswapV4Pool`` (and anything built
     over the CL handle, e.g. ``AerodromeV3Pool``). The subclass state
@@ -55,7 +55,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     unified sparse-word backfill gate.
     """
 
-    _py_pool: LiquidityPool
+    _py_pool: Pool
     name: str
     _initial_state_block: int
     address: ChecksummedAddress
@@ -71,17 +71,17 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     @property
     def liquidity(self) -> int:
         """Liquidity. Returns: The current active liquidity (from Rust via the handle)."""
-        return self._py_pool.liquidity
+        return self._py_pool.concentrated_liquidity().liquidity
 
     @property
     def sqrt_price_x96(self) -> int:
         """Sqrt price x96. Returns: The current sqrt price as a Q64.96 value (from Rust)."""
-        return self._py_pool.sqrt_price_x96
+        return self._py_pool.concentrated_liquidity().sqrt_price_x96
 
     @property
     def tick(self) -> int:
         """Tick. Returns: The current tick (from Rust via the handle)."""
-        return self._py_pool.tick
+        return self._py_pool.concentrated_liquidity().tick
 
     @property
     def tick_bitmap(self) -> dict[int, BitmapAtWord]:
@@ -94,7 +94,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         present-but-zero — the fetch loop breaks). Tracked pools return the
         pure derivation (absent word = known-empty; the map is complete).
         """
-        raw = self._py_pool.tick_bitmap_snapshot()
+        raw = self._py_pool.concentrated_liquidity().tick_bitmap
         return {
             int(word): (
                 BitmapAtWord(bitmap=int(row[0]), block=int(row[1]))
@@ -112,7 +112,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         (``{tick: (liquidity_gross, liquidity_net, block)}`` lifted into
         immutable ``LiquidityAtTick`` rows).
         """
-        raw = self._py_pool.tick_data_snapshot()
+        raw = self._py_pool.concentrated_liquidity().tick_data
         return {
             int(tick): (
                 LiquidityAtTick(
@@ -129,7 +129,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     @property
     def update_block(self) -> BlockNumber:  # type: ignore[name-defined]
         """Update block. Returns: The block number of the most recent state update (from Rust)."""
-        return self._py_pool.update_block
+        return self._py_pool.concentrated_liquidity().update_block
 
     @property
     def initial_state_block(self) -> int:
@@ -166,7 +166,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     ) -> None:
         """Apply updated tick bitmap and data from the tick data fetcher.
 
-        Delegates to ``LiquidityPool.update_tick_data`` (replaces the
+        Delegates to ``Pool.update_tick_data`` (replaces the
         Rust-side ``tick_data`` HashMap; scalars unchanged). The
         ``tick_bitmap`` KEYS are the checked words: for Sparse pools the FFI
         records them in Rust ``known_bitmap_words`` (a checked word is never
@@ -203,7 +203,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     ) -> bool:
         """Process a family-external update (Swap event).
 
-        Delegates the scalar write to ``LiquidityPool.apply_swap`` (journals
+        Delegates the scalar write to ``Pool.apply_swap`` (journals
         the priors then lands the new ``sqrt_price_x96``/``liquidity``/
         ``tick`` at ``block_number`` in one write guard).
 
@@ -241,7 +241,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     ) -> None:
         """Apply an update to the liquidity map (Mint/Burn/ModifyLiquidity).
 
-        Delegates the tick mutation to ``LiquidityPool.apply_liquidity_update``
+        Delegates the tick mutation to ``Pool.apply_liquidity_update``
         (Rust does the tick bitmap + tick_data mutation under one write
         guard). The active ``liquidity`` scalar adjustment (when
         ``current_tick`` is in range) is then landed via a separate
@@ -264,7 +264,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         # rather than applying over an unknown word (the reorg journal's
         # priors for those ticks would be wrong). Tracked pools: inert (the
         # bitmap is complete; absent word = known-empty).
-        if self._py_pool.coverage == "sparse":
+        if self._py_pool.concentrated_liquidity().coverage == "sparse":
             for tick in (update.tick_lower, update.tick_upper):
                 word, _ = cl_get_tick_word_and_bit_position(tick, self.tick_spacing)
                 # Short-circuit: ensure_word_known is only called for a word
@@ -313,14 +313,14 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
 
         """
         try:
-            self._py_pool.discard_v3_before_block(block)
+            self._py_pool.discard_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
 
     def restore_state_before_block(self, block: BlockNumber) -> None:
         """Restore the last pool state recorded prior to a target block.
 
-        Delegates to ``LiquidityPool.restore_v3_before_block``
+        Delegates to ``Pool.restore_v3_before_block``
         (V3/V4-generic).
 
         Raises:
@@ -328,7 +328,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
 
         """
         try:
-            self._py_pool.restore_v3_before_block(block)
+            self._py_pool.restore_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
 

@@ -8,7 +8,7 @@ closure of the ``rust-owned-bot.md`` §17 stale-state caveat:
 - Pools register ONCE — via ``Bot.register_v2_pool`` (the same path
   ``Bot.build_pool`` takes). The engine does NOT re-register them; it reads
   them through the shared state via ``register_and_solve_path``.
-- A live-state write through the ``LiquidityPool`` handle
+- A live-state write through the ``Pool`` handle
   (``sync_reserves``) is immediately visible to a subsequent engine re-solve
   (``solve_all_paths``) — the engine reads the *current* shared state, not a
   stale copy. The dual-``BotState`` split (the §17 root cause) is gone.
@@ -48,7 +48,7 @@ V3_LIQUIDITY = 1_234_567_890
 
 # ─── V4 topology round-trip fixtures (RAJ3PP public-interface regression) ─
 # A V4 pool registered via ArbitrageEngine.register_v4_pool (with its core
-# shared from a Bot) and read back through a LiquidityPool handle. The
+# shared from a Bot) and read back through a Pool handle. The
 # handle is family-agnostic — the same getters/apply methods used for V3.
 V4_POOL_MANAGER = "0x" + "ee" * 20
 V4_POOL_ID_HEX = "0x" + "01" * 32
@@ -57,6 +57,25 @@ V4_TICK_SPACING = 60
 V4_SQRT_PRICE = V3_SQRT_PRICE
 V4_LIQUIDITY = V3_LIQUIDITY
 V4_TICK = V3_TICK
+
+
+def _cl_snapshot(handle: object) -> tuple[int, int, int, int]:
+    view = handle.concentrated_liquidity()  # type: ignore[attr-defined]
+    return (view.sqrt_price_x96, view.liquidity, view.tick, view.update_block)
+
+
+def _bv_snapshot(handle: object) -> tuple[list[int], int]:
+    view = handle.balance_vector()  # type: ignore[attr-defined]
+    return (list(view.balances), view.update_block)
+
+
+def _update_block(handle: object) -> int:
+    structure = handle.structure()  # type: ignore[attr-defined]
+    if structure == "reserve_pair":
+        return handle.reserve_pair().update_block  # type: ignore[attr-defined]
+    if structure == "concentrated_liquidity":
+        return handle.concentrated_liquidity().update_block  # type: ignore[attr-defined]
+    return handle.balance_vector().update_block  # type: ignore[attr-defined]
 
 
 def _v2_sync_log_data(reserve0: int, reserve1: int) -> str:
@@ -113,7 +132,7 @@ class TestSharedStateTopology:
         assert engine.path_count() == 1
 
     def test_live_state_write_is_visible_to_engine_re_solve(self) -> None:
-        """A ``LiquidityPool`` write is immediately read by the next engine solve.
+        """A ``Pool`` write is immediately read by the next engine solve.
 
         This is the §17 stale-state root cause's structural closure: with one
         shared ``BotState``, the engine re-solve reads the *current* state the
@@ -132,10 +151,10 @@ class TestSharedStateTopology:
         # Live write through the pool handle — updates the shared BotState.
         pool_handle = core.get_pool(pool_id_a)
         assert pool_handle is not None
-        assert pool_handle.reserve0 == 1_500_000 * USDC
-        pool_handle.sync_reserves(1_000_000 * USDC, 800 * WETH, block_number=2)
+        assert pool_handle.reserve_pair().reserve0 == 1_500_000 * USDC
+        pool_handle.apply_sync(1_000_000 * USDC, 800 * WETH, block_number=2)
         # The handle reads the live shared state immediately.
-        assert pool_handle.reserve0 == 1_000_000 * USDC
+        assert pool_handle.reserve_pair().reserve0 == 1_000_000 * USDC
 
         # Engine re-solve reads the UPDATED shared state → different profit.
         engine.solve_all_paths(2)
@@ -148,7 +167,7 @@ class TestSharedStateTopology:
     def test_dispatch_log_drives_full_pump_to_solve_loop(self) -> None:
         """A synthetic WS Sync log via `Bot.dispatch_log` reaches the engine.
 
-        This is the *full* §17 closure: not just that a `LiquidityPool` write
+        This is the *full* §17 closure: not just that a `Pool` write
         is visible to the engine (the prior test), but that the WS pump's own
         path — `dispatch_log` → `LogDispatcher` decode/apply → notify
         `EngineSubscriber` → engine dirties the pool → `solve_all_paths`
@@ -181,7 +200,7 @@ class TestSharedStateTopology:
         # the pool handle reads the dispatched reserves, not the registered ones.
         pool_handle = core.get_pool(pool_id_a)
         assert pool_handle is not None
-        assert pool_handle.reserve0 == 1_000_000 * USDC, (
+        assert pool_handle.reserve_pair().reserve0 == 1_000_000 * USDC, (
             "dispatch_log did not route through the LogDispatcher to BotState"
         )
 
@@ -196,16 +215,16 @@ class TestSharedStateTopology:
 
 
 class TestSharedStateTopologyV3:
-    """UniswapV3Pool over LiquidityPool — V3-specific §17 closure (plan-101 slice 8a).
+    """UniswapV3Pool over Pool — V3-specific §17 closure (plan-101 slice 8a).
 
     Mirrors the V2 topology tests but for the V3 family: a pool registered via
-    ``Bot.register_v3_pool`` is read through a ``LiquidityPool`` handle the
+    ``Bot.register_v3_pool`` is read through a ``Pool`` handle the
     engine shares — the V3 scalar state (sqrt_price_x96/liquidity/tick/update_block)
     lives in ``BotState``, not a Python-side state manager.
     """
 
     def test_v3_handle_reads_registered_scalars(self) -> None:
-        """A V3 pool registered on the shared Bot is read back via a LiquidityPool handle.
+        """A V3 pool registered on the shared Bot is read back via a Pool handle.
 
         The handle's V3 getters (``sqrt_price_x96``/``liquidity``/``tick``/
         ``update_block``/``fee``/``tick_spacing``) read the authoritative
@@ -225,25 +244,25 @@ class TestSharedStateTopologyV3:
             tick=V3_TICK,
         )
 
-        # The handle is family-agnostic — get_pool returns a LiquidityPool
+        # The handle is family-agnostic — get_pool returns a Pool
         # for a V3 pool_id the same way it does for V2.
         handle = core.get_pool(pool_id)
         assert handle is not None
         assert handle.pool_id == pool_id
 
         # V3 scalar getters read the shared BotState — not a Python-side state mgr.
-        assert handle.sqrt_price_x96 == V3_SQRT_PRICE
-        assert handle.liquidity == V3_LIQUIDITY
-        assert handle.tick == V3_TICK
-        assert handle.update_block == 0  # register_v3_pool hardcodes update_block=0 today
-        assert handle.fee == V3_FEE
-        assert handle.tick_spacing == V3_TICK_SPACING
+        assert handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
+        assert handle.concentrated_liquidity().liquidity == V3_LIQUIDITY
+        assert handle.concentrated_liquidity().tick == V3_TICK
+        assert _update_block(handle) == 0  # register_v3_pool hardcodes update_block=0 today
+        assert handle.concentrated_liquidity().fee == V3_FEE
+        assert handle.concentrated_liquidity().tick_spacing == V3_TICK_SPACING
 
     def test_v3_handle_apply_swap_is_visible_to_handle_reads(self) -> None:
         """A V3 ``apply_swap`` write through the handle is immediately readable.
 
         This is the deepest assertion of slice 8a: a write through
-        ``LiquidityPool.apply_swap`` lands on the shared ``BotState`` and the
+        ``Pool.apply_swap`` lands on the shared ``BotState`` and the
         next getter read sees the new scalars — the V3 family of the V2
         ``sync_reserves → reserve0`` visibility contract.
         """
@@ -275,10 +294,10 @@ class TestSharedStateTopologyV3:
 
         # All four written fields are immediately visible — proving the handle
         # reads the same shared BotState the mutation wrote to.
-        assert handle.sqrt_price_x96 == new_spx
-        assert handle.liquidity == new_liq
-        assert handle.tick == new_tick
-        assert handle.update_block == 5
+        assert handle.concentrated_liquidity().sqrt_price_x96 == new_spx
+        assert handle.concentrated_liquidity().liquidity == new_liq
+        assert handle.concentrated_liquidity().tick == new_tick
+        assert _update_block(handle) == 5
 
     def test_v3_handle_snapshot_is_atomic_under_one_read(self) -> None:
         """``snapshot_v3()`` returns spl/liquidity/tick/block atomically.
@@ -302,7 +321,7 @@ class TestSharedStateTopologyV3:
         handle = core.get_pool(pool_id)
         assert handle is not None
 
-        snap = handle.snapshot_v3()
+        snap = _cl_snapshot(handle)
         assert snap is not None
         spx, liq, tick, block = snap
         assert spx == V3_SQRT_PRICE
@@ -327,7 +346,8 @@ class TestSharedStateTopologyV3:
         )
         v2_handle = core.get_pool(v2_pool_id)
         assert v2_handle is not None
-        assert v2_handle.snapshot_v3() is None
+        with pytest.raises(ValueError, match="concentrated-liquidity"):
+            v2_handle.concentrated_liquidity()
 
     def test_v3_handle_restore_before_block_round_trips_journal(self) -> None:
         """apply_swap journals priors; restore_before_block rolls back.
@@ -360,11 +380,11 @@ class TestSharedStateTopologyV3:
         )
 
         # Restore to block 5 → in-place revert of the swap scalars.
-        handle.restore_v3_before_block(5)
+        handle.restore_before_block(5)
 
-        assert handle.sqrt_price_x96 == V3_SQRT_PRICE
-        assert handle.liquidity == V3_LIQUIDITY
-        assert handle.tick == V3_TICK
+        assert handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
+        assert handle.concentrated_liquidity().liquidity == V3_LIQUIDITY
+        assert handle.concentrated_liquidity().tick == V3_TICK
 
     def test_v3_handle_apply_liquidity_update_inits_ticks(self) -> None:
         """A V3 Mint via ``apply_liquidity_update`` initializes tick entries.
@@ -454,7 +474,7 @@ class TestSharedStateTopologyV3:
         )
         handle = core.get_pool(pool_id)
         assert handle is not None
-        assert handle.tick_data_snapshot() == {}
+        assert handle.concentrated_liquidity().tick_data == {}
 
         # Seed two ticks via apply_liquidity_update (the Mint/Burn event path).
         seeded_lower = V3_TICK - V3_TICK_SPACING
@@ -465,7 +485,7 @@ class TestSharedStateTopologyV3:
             liquidity_delta=7_500,
             block_number=3,
         )
-        assert set(handle.tick_data_snapshot().keys()) == {seeded_lower, seeded_upper}
+        assert set(handle.concentrated_liquidity().tick_data.keys()) == {seeded_lower, seeded_upper}
 
         # Full-sync a DIFFERENT tick set via update_tick_data — REPLACES the map.
         new_tick_a = V3_TICK - 2 * V3_TICK_SPACING
@@ -482,7 +502,7 @@ class TestSharedStateTopologyV3:
         assert applied, "update_tick_data should succeed on a registered V3 pool"
 
         # The tick map is REPLACED (the two apply_liquidity_update ticks gone).
-        snap = handle.tick_data_snapshot()
+        snap = handle.concentrated_liquidity().tick_data
         assert set(snap.keys()) == {new_tick_a, new_tick_b}
         gross_a, net_a, block_a = snap[new_tick_a]
         gross_b, net_b, _block_b = snap[new_tick_b]
@@ -495,20 +515,20 @@ class TestSharedStateTopologyV3:
         # Scalars UNCHANGED (update_tick_data is tick-only, not a scalar event) —
         # but the earlier apply_liquidity_update(+7500) position spans the current
         # tick, so the current-liquidity baseline is V3_LIQUIDITY + 7500.
-        assert handle.sqrt_price_x96 == V3_SQRT_PRICE
-        assert handle.liquidity == V3_LIQUIDITY + 7_500
-        assert handle.tick == V3_TICK
+        assert handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
+        assert handle.concentrated_liquidity().liquidity == V3_LIQUIDITY + 7_500
+        assert handle.concentrated_liquidity().tick == V3_TICK
         # OB7UNY two clocks: the tick-map full-sync advances only the LIQUIDITY
         # clock (tick_data_block); the PRICE clock (update_block) moves only on
         # scalar/liquidity events, so it stays at 3 (the apply_liquidity_update).
-        assert handle.tick_data_block == 9
-        assert handle.update_block == 3
+        assert handle.concentrated_liquidity().tick_data_block == 9
+        assert _update_block(handle) == 3
 
         # tick_bitmap_snapshot reflects the new tick keys (derived from keys).
         def word_of(tick: int) -> int:
             return (tick // V3_TICK_SPACING) >> 8
 
-        bitmap = handle.tick_bitmap_snapshot()
+        bitmap = handle.concentrated_liquidity().tick_bitmap
         assert set(bitmap.keys()) == {word_of(new_tick_a), word_of(new_tick_b)}
 
         # NOTE: a backward-block full-sync (sync block < current tick_data_block)
@@ -564,7 +584,7 @@ class TestSharedStateTopologyV3:
         assert handle is not None
 
         # Empty at registration.
-        assert handle.tick_data_snapshot() == {}
+        assert handle.concentrated_liquidity().tick_data == {}
 
         # Apply a liquidity update — two ticks gain gross/net entries.
         tick_lower = V3_TICK - V3_TICK_SPACING
@@ -577,7 +597,7 @@ class TestSharedStateTopologyV3:
             block_number=7,
         )
 
-        snap = handle.tick_data_snapshot()
+        snap = handle.concentrated_liquidity().tick_data
         assert set(snap.keys()) == {tick_lower, tick_upper}
         gross_lower, net_lower, block_lower = snap[tick_lower]
         gross_upper, net_upper, _block_upper = snap[tick_upper]
@@ -612,7 +632,7 @@ class TestSharedStateTopologyV3:
         handle = core.get_pool(pool_id)
         assert handle is not None
 
-        assert handle.tick_bitmap_snapshot() == {}
+        assert handle.concentrated_liquidity().tick_bitmap == {}
 
         tick_lower = V3_TICK - V3_TICK_SPACING
         tick_upper = V3_TICK + V3_TICK_SPACING
@@ -623,7 +643,7 @@ class TestSharedStateTopologyV3:
             block_number=7,
         )
 
-        bitmap = handle.tick_bitmap_snapshot()
+        bitmap = handle.concentrated_liquidity().tick_bitmap
         from degenbot.uniswap.math import get_tick_word_and_bit_position
 
         word_lower, bit_lower = get_tick_word_and_bit_position(tick_lower, V3_TICK_SPACING)
@@ -641,10 +661,10 @@ class TestSharedStateTopologyV3:
 
 
 class TestSharedStateTopologyV4:
-    """Uniswap V4 over LiquidityPool — V4-specific RAJ3PP closure.
+    """Uniswap V4 over Pool — V4-specific RAJ3PP closure.
 
     Mirrors ``TestSharedStateTopologyV3`` for the V4 family. The headline
-    regression: before RAJ3PP, ``LiquidityPool.apply_swap``/
+    regression: before RAJ3PP, ``Pool.apply_swap``/
     ``apply_liquidity_update`` routed unconditionally into V3-only
     ``apply_v3_*_by_pool_id`` methods that match ``PoolEntry::V3`` only and
     return ``None`` for ``PoolEntry::V4`` — so every Python-side V4 update
@@ -685,7 +705,7 @@ class TestSharedStateTopologyV4:
         """A V4 ``apply_swap`` through the handle lands on the shared BotState.
 
         RAJ3PP headline regression via the public interface: pre-fix,
-        ``LiquidityPool.apply_swap`` called ``apply_v3_swap_by_pool_id``
+        ``Pool.apply_swap`` called ``apply_v3_swap_by_pool_id``
         unconditionally, which no-op'd on a ``PoolEntry::V4`` and silently left
         the V4 scalars at their registration values. After the family-dispatch
         fix, the write is visible to the next handle read — the V4 family of
@@ -710,15 +730,15 @@ class TestSharedStateTopologyV4:
 
         # All four written fields are immediately visible — proving the handle
         # dispatched to the V4 apply path (not the V3-only no-op).
-        assert handle.sqrt_price_x96 == new_spx
-        assert handle.liquidity == new_liq
-        assert handle.tick == new_tick
-        assert handle.update_block == 5
+        assert handle.concentrated_liquidity().sqrt_price_x96 == new_spx
+        assert handle.concentrated_liquidity().liquidity == new_liq
+        assert handle.concentrated_liquidity().tick == new_tick
+        assert _update_block(handle) == 5
 
     def test_v4_handle_apply_liquidity_update_inits_ticks(self) -> None:
         """A V4 ``apply_liquidity_update`` through the handle inits tick entries.
 
-        The other half of RAJ3PP: pre-fix ``LiquidityPool.apply_liquidity_update``
+        The other half of RAJ3PP: pre-fix ``Pool.apply_liquidity_update``
         routed to ``apply_v3_liquidity_update_by_pool_id`` unconditionally, which
         no-op'd on ``PoolEntry::V4`` and silently dropped the ModifyLiquidity
         tick mutation. After the fix the dispatch reaches the V4 path and the
@@ -732,7 +752,7 @@ class TestSharedStateTopologyV4:
         handle = core.get_pool(pool_id)
         assert handle is not None
 
-        assert handle.tick_data_snapshot() == {}, "V4 pool starts with no ticks"
+        assert handle.concentrated_liquidity().tick_data == {}, "V4 pool starts with no ticks"
 
         tick_lower = V4_TICK - V4_TICK_SPACING
         tick_upper = V4_TICK + V4_TICK_SPACING
@@ -745,7 +765,7 @@ class TestSharedStateTopologyV4:
         )
         assert applied, "apply_liquidity_update should succeed on a registered V4 pool"
 
-        snap = handle.tick_data_snapshot()
+        snap = handle.concentrated_liquidity().tick_data
         assert set(snap.keys()) == {tick_lower, tick_upper}
         gross_lower, net_lower, block_lower = snap[tick_lower]
         gross_upper, net_upper, _block_upper = snap[tick_upper]
@@ -771,7 +791,7 @@ class TestSharedStateTopologyV4:
         pool_id = self._register_v4(core, engine)
         handle = core.get_pool(pool_id)
         assert handle is not None
-        assert handle.tick_data_snapshot() == {}
+        assert handle.concentrated_liquidity().tick_data == {}
 
         # Seed two ticks via the V4 Mint/Burn event path.
         seeded_lower = V4_TICK - V4_TICK_SPACING
@@ -782,7 +802,7 @@ class TestSharedStateTopologyV4:
             liquidity_delta=7_500,
             block_number=3,
         )
-        assert set(handle.tick_data_snapshot().keys()) == {seeded_lower, seeded_upper}
+        assert set(handle.concentrated_liquidity().tick_data.keys()) == {seeded_lower, seeded_upper}
 
         # Full-sync a DIFFERENT tick set — REPLACES the map (V4 family).
         new_tick_a = V4_TICK - 2 * V4_TICK_SPACING
@@ -798,7 +818,7 @@ class TestSharedStateTopologyV4:
         )
         assert applied, "update_tick_data should succeed on a registered V4 pool"
 
-        snap = handle.tick_data_snapshot()
+        snap = handle.concentrated_liquidity().tick_data
         assert set(snap.keys()) == {new_tick_a, new_tick_b}
         gross_a, net_a, block_a = snap[new_tick_a]
         assert gross_a == 12_000
@@ -810,11 +830,11 @@ class TestSharedStateTopologyV4:
         # V4_LIQUIDITY + 7500. OB7UNY two clocks: the full-sync advances the
         # LIQUIDITY clock (tick_data_block); the PRICE clock (update_block)
         # stays at 3 (the apply_liquidity_update).
-        assert handle.sqrt_price_x96 == V4_SQRT_PRICE
-        assert handle.liquidity == V4_LIQUIDITY + 7_500
-        assert handle.tick == V4_TICK
-        assert handle.tick_data_block == 9
-        assert handle.update_block == 3
+        assert handle.concentrated_liquidity().sqrt_price_x96 == V4_SQRT_PRICE
+        assert handle.concentrated_liquidity().liquidity == V4_LIQUIDITY + 7_500
+        assert handle.concentrated_liquidity().tick == V4_TICK
+        assert handle.concentrated_liquidity().tick_data_block == 9
+        assert _update_block(handle) == 3
 
 
 class TestSharedStateTopologyConcurrency:
@@ -822,7 +842,7 @@ class TestSharedStateTopologyConcurrency:
 
     The lock-ordering invariant is **engine-then-core**: every pump path holds
     the engine ``Mutex<ArbitrageEngine>`` and nests ``core.write()``/``core.read()``
-    inside; ``Bot``/``LiquidityPool`` methods take ``core`` alone and never
+    inside; ``Bot``/``Pool`` methods take ``core`` alone and never
     call into the engine (ADR-003's rule keeping the deadlock surface empty).
     These tests characterize that invariant under concurrent writer/reader
     threads — the pump-side write (``apply_swap``) interleaved with companion
@@ -882,7 +902,7 @@ class TestSharedStateTopologyConcurrency:
         )
         assert not errors, errors
         # The final write is visible (live read after the pump-side writes).
-        assert handle.update_block == self._ITERATIONS
+        assert _update_block(handle) == self._ITERATIONS
 
     def test_snapshot_v3_is_atomic_under_concurrent_writes(self) -> None:
         """``snapshot_v3()`` returns 4 coherent fields — no torn reads.
@@ -927,7 +947,7 @@ class TestSharedStateTopologyConcurrency:
 
         def reader() -> None:
             while not stop.is_set():
-                snap = handle.snapshot_v3()
+                snap = _cl_snapshot(handle)
                 if snap is None:
                     errors.append("snapshot_v3() returned None on a V3 pool")
                     return
@@ -988,9 +1008,9 @@ class TestSharedStateTopologyConcurrency:
             assert handle_a is not None
             try:
                 while not done.is_set():
-                    _ = handle_a.reserve0
-                    _ = handle_a.reserve1
-                    _ = handle_a.update_block
+                    _ = handle_a.reserve_pair().reserve0
+                    _ = handle_a.reserve_pair().reserve1
+                    _ = _update_block(handle_a)
             except BaseException as exc:  # ruff: ignore[blind-except]
                 errors.append(exc)
 
@@ -1010,7 +1030,7 @@ class TestSharedStateTopologyConcurrency:
 
 # ─── Curve topology round-trip fixtures (ADR-005 slice 11a state port) ────
 # A 3-coin Curve StableSwap pool registered via Bot.register_curve_pool
-# and read back through a LiquidityPool handle. This is the third family
+# and read back through a Pool handle. This is the third family
 # ported into PoolEntry — the ADR-003 "third family ports, now's the moment"
 # decision point. The slice-11a state-port foundation; the Python companion
 # rewrite + Rust math port follow in 11b/11c.
@@ -1027,7 +1047,7 @@ class TestSharedStateTopologyCurve:
     """Curve — the third ``PoolEntry`` family (ADR-005 slice 11a state port).
 
     Mirrors the V3/V4 topology class: register via ``Bot.register_curve_pool``,
-    read independently via a ``LiquidityPool`` handle, and prove a live
+    read independently via a ``Pool`` handle, and prove a live
     balance write (``apply_curve_balance_update``) is immediately visible to
     handle reads (the §17 live-read payoff, now extended to Curve).
 
@@ -1038,7 +1058,7 @@ class TestSharedStateTopologyCurve:
     """
 
     def test_curve_handle_reads_registered_balances(self) -> None:
-        """``LiquidityPool`` reads the registration balances + n_coins."""
+        """``Pool`` reads the registration balances + n_coins."""
         core = Bot()
         pool_id = core.register_curve_pool(
             address=CURVE_POOL_A,
@@ -1053,8 +1073,8 @@ class TestSharedStateTopologyCurve:
         )
         handle = core.get_pool(pool_id)
         assert handle is not None
-        assert handle.n_coins == 3
-        assert handle.balances == list(CURVE_BALANCES)
+        assert handle.balance_vector().n_tokens == 3
+        assert handle.balance_vector().balances == list(CURVE_BALANCES)
 
     def test_curve_apply_balance_update_is_visible_to_handle_reads(self) -> None:
         """A Curve ``apply_curve_balance_update`` write is immediately readable.
@@ -1080,12 +1100,12 @@ class TestSharedStateTopologyCurve:
         assert handle is not None
 
         new_balances = [b + 1 for b in CURVE_BALANCES]
-        applied = handle.apply_curve_balance_update(new_balances, 12)
+        applied = handle.apply_balances(new_balances, 12)
         assert applied, "apply_curve_balance_update should succeed on a Curve pool"
 
         # The write is immediately visible — same shared BotState.
-        assert handle.balances == new_balances
-        snap = handle.snapshot_curve()
+        assert handle.balance_vector().balances == new_balances
+        snap = _bv_snapshot(handle)
         assert snap is not None
         snap_balances, snap_block = snap
         assert snap_balances == new_balances
@@ -1114,7 +1134,7 @@ class TestSharedStateTopologyCurve:
         handle = core.get_pool(pool_id)
         assert handle is not None
 
-        snap = handle.snapshot_curve()
+        snap = _bv_snapshot(handle)
         assert snap is not None
         balances, block = snap
         assert balances == list(CURVE_BALANCES)
@@ -1140,11 +1160,11 @@ class TestSharedStateTopologyCurve:
         )
         v3_handle = core.get_pool(v3_pool_id)
         assert v3_handle is not None
-        applied = v3_handle.apply_curve_balance_update([1, 2, 3], 5)
-        assert applied is False, "Curve apply on a V3 pool must be a silent no-op"
+        with pytest.raises(ValueError, match="balance-vector"):
+            v3_handle.apply_balances([1, 2, 3], 5)
         # The V3 scalars are unchanged — no corruption.
-        assert v3_handle.sqrt_price_x96 == V3_SQRT_PRICE
-        assert v3_handle.liquidity == V3_LIQUIDITY
+        assert v3_handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
+        assert v3_handle.concentrated_liquidity().liquidity == V3_LIQUIDITY
 
     def test_curve_snapshot_returns_none_for_v3_pool(self) -> None:
         """``snapshot_curve()`` returns ``None`` on non-Curve pools."""
@@ -1162,19 +1182,19 @@ class TestSharedStateTopologyCurve:
         )
         v3_handle = core.get_pool(v3_pool_id)
         assert v3_handle is not None
-        assert v3_handle.snapshot_curve() is None
+        with pytest.raises(ValueError, match="balance-vector"):
+            v3_handle.balance_vector()
         # n_coins reads 0 on a non-Curve pool (defensive — does NOT crash).
-        assert v3_handle.n_coins == 0
+
         # balances returns an empty list (not None) so a V3 companion never
-        # crashes on `for b in handle.balances`.
-        assert v3_handle.balances == []
+        # crashes on `for b in handle.balance_vector().balances`.
 
 
 # ─── Balancer weighted topology round-trip fixtures
 #                   (ADR-005 slice 12a weighted state port) ──────────────
 # A 2-token Balancer V2 weighted pool registered via
 # Bot.register_balancer_weighted_pool and read back through a
-# LiquidityPool handle — the **fourth** ``PoolEntry`` family (alongside
+# Pool handle — the **fourth** ``PoolEntry`` family (alongside
 # V2/V3/V4/Curve). Mirrors the V3/V4/Curve topology class: register →
 # handle → live-write → atomic-snapshot visibility contract.
 BALANCER_VAULT = "0x" + "ba" * 20
@@ -1198,7 +1218,7 @@ class TestSharedStateTopologyBalancerWeighted:
 
     Mirrors the V3/V4/Curve topology class: register via
     ``Bot.register_balancer_weighted_pool``, read independently via a
-    ``LiquidityPool`` handle, and prove a live balance write
+    ``Pool`` handle, and prove a live balance write
     (``apply_balancer_weighted_balance_update``) is immediately visible to
     handle reads (the §17 live-read payoff, extended to the Balancer weighted
     family). The mutable slot is ``balances`` (one U256 per token);
@@ -1215,7 +1235,7 @@ class TestSharedStateTopologyBalancerWeighted:
     """
 
     def test_balancer_weighted_handle_reads_registered_balances(self) -> None:
-        """``LiquidityPool`` reads the registration balances + n_tokens."""
+        """``Pool`` reads the registration balances + n_tokens."""
         core = Bot()
         pool_id = core.register_balancer_weighted_pool(
             address=BALANCER_WEIGHTED_POOL_A,
@@ -1231,12 +1251,12 @@ class TestSharedStateTopologyBalancerWeighted:
         )
         handle = core.get_pool(pool_id)
         assert handle is not None
-        assert handle.n_balancer_tokens == 2
-        assert handle.balancer_balances == list(BALANCER_WEIGHTED_BALANCES)
+        assert handle.balance_vector().n_tokens == 2
+        assert handle.balance_vector().balances == list(BALANCER_WEIGHTED_BALANCES)
         # update_block falls through every family (V2/V3/V4/Curve/Balancer
         # weighted) — a 12a Balancer weighted slot is now read by the
         # family-falling-through getter too.
-        assert handle.update_block == 10
+        assert _update_block(handle) == 10
 
     def test_balancer_weighted_apply_balance_update_is_visible_to_handle_reads(self) -> None:
         """A Balancer weighted ``apply_balancer_weighted_balance_update`` write
@@ -1263,11 +1283,11 @@ class TestSharedStateTopologyBalancerWeighted:
         handle = core.get_pool(pool_id)
         assert handle is not None
         new_balances = [1_600_000 * WETH, 1_400_000 * WETH]
-        applied = handle.apply_balancer_weighted_balance_update(new_balances, 12)
+        applied = handle.apply_balances(new_balances, 12)
         assert applied, "apply_balancer_weighted_balance_update should succeed"
         # immediate visibility — the §17 contract.
-        assert handle.balancer_balances == new_balances
-        assert handle.update_block == 12
+        assert handle.balance_vector().balances == new_balances
+        assert _update_block(handle) == 12
 
     def test_balancer_weighted_snapshot_is_atomic(self) -> None:
         """``snapshot_balancer_weighted()`` returns ``(balances, block)``
@@ -1289,7 +1309,7 @@ class TestSharedStateTopologyBalancerWeighted:
         )
         handle = core.get_pool(pool_id)
         assert handle is not None
-        snap = handle.snapshot_balancer_weighted()
+        snap = _bv_snapshot(handle)
         assert snap is not None
         snap_balances, snap_block = snap
         assert snap_balances == list(BALANCER_WEIGHTED_BALANCES)
@@ -1317,14 +1337,11 @@ class TestSharedStateTopologyBalancerWeighted:
         )
         v3_handle = core.get_pool(v3_pool_id)
         assert v3_handle is not None
-        applied = v3_handle.apply_balancer_weighted_balance_update(
-            [1, 2, 3],
-            5,
-        )
-        assert applied is False, "Balancer weighted apply on a V3 pool must be a silent no-op"
+        with pytest.raises(ValueError, match="balance-vector"):
+            v3_handle.apply_balances([1, 2, 3], 5)
         # The V3 scalars are unchanged — no corruption.
-        assert v3_handle.sqrt_price_x96 == V3_SQRT_PRICE
-        assert v3_handle.liquidity == V3_LIQUIDITY
+        assert v3_handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
+        assert v3_handle.concentrated_liquidity().liquidity == V3_LIQUIDITY
 
     def test_balancer_weighted_snapshot_returns_none_for_curve_pool(self) -> None:
         """``snapshot_balancer_weighted()`` returns ``None`` on non-Balancer-
@@ -1343,20 +1360,14 @@ class TestSharedStateTopologyBalancerWeighted:
         )
         curve_handle = core.get_pool(curve_pool_id)
         assert curve_handle is not None
-        assert curve_handle.snapshot_balancer_weighted() is None
-        # n_balancer_tokens reads 0 on a non-Balancer-weighted pool
-        # (defensive — does NOT crash).
-        assert curve_handle.n_balancer_tokens == 0
-        # balancer_balances returns an empty list (not None) so a Curve
-        # companion never crashes on `for b in handle.balancer_balances`.
-        assert curve_handle.balancer_balances == []
+        assert curve_handle.structure() == "balance_vector"
 
 
 # ─── Balancer stable topology round-trip fixtures
 #                   (ADR-005 slice 12c stable state port) ───────────────
 # A 3-token ComposableStablePool registered via
 # Bot.register_balancer_stable_pool and read back through a
-# LiquidityPool handle — the **fifth** ``PoolEntry`` family (alongside
+# Pool handle — the **fifth** ``PoolEntry`` family (alongside
 # V2/V3/V4/Curve/BalancerWeighted). Mirrors the V3/V4/Curve/Weighted
 # topology class: register → handle → live-write → atomic-snapshot visibility
 # contract; plus the BPT-index + invariant_version round-trip tests (the
@@ -1385,7 +1396,7 @@ class TestSharedStateTopologyBalancerStable:
 
     Mirrors the V3/V4/Curve/BalancerWeighted topology class: register via
     ``Bot.register_balancer_stable_pool``, read independently via a
-    ``LiquidityPool`` handle, and prove a live balance write
+    ``Pool`` handle, and prove a live balance write
     (``apply_balancer_stable_balance_update``) is immediately visible to
     handle reads (the §17 live-read payoff, extended to the Balancer stable
     family). The mutable slot is ``balances`` (one U256 per token, including
@@ -1404,7 +1415,7 @@ class TestSharedStateTopologyBalancerStable:
     """
 
     def test_balancer_stable_handle_reads_registered_balances(self) -> None:
-        """``LiquidityPool`` reads the registration balances + stable seams."""
+        """``Pool`` reads the registration balances + stable seams."""
         core = Bot()
         pool_id = core.register_balancer_stable_pool(
             address=BALANCER_STABLE_POOL_A,
@@ -1421,8 +1432,8 @@ class TestSharedStateTopologyBalancerStable:
         )
         handle = core.get_pool(pool_id)
         assert handle is not None
-        assert handle.n_balancer_stable_tokens == 3
-        assert handle.balancer_stable_balances == list(BALANCER_STABLE_BALANCES)
+        assert handle.balance_vector().n_tokens == 3
+        assert handle.balance_vector().balances == list(BALANCER_STABLE_BALANCES)
         # BPT-index round-trip — Composable → Some(2).
         assert handle.balancer_bpt_index == BALANCER_STABLE_BPT_INDEX
         # invariant_version round-trip — V1 (always-roundDown).
@@ -1431,7 +1442,7 @@ class TestSharedStateTopologyBalancerStable:
         assert handle.balancer_amp == BALANCER_STABLE_AMP
         # update_block falls through every family — a 12c stable slot is now
         # read by the family-falling-through getter too.
-        assert handle.update_block == 10
+        assert _update_block(handle) == 10
 
     def test_balancer_stable_meta_stable_bpt_idx_is_none_and_v2(self) -> None:
         """MetaStablePool — `bpt_idx=None` + `invariant_version=V2`.
@@ -1484,11 +1495,11 @@ class TestSharedStateTopologyBalancerStable:
         handle = core.get_pool(pool_id)
         assert handle is not None
         new_balances = [1_600_000 * WETH, 1_400_000 * WETH, 1_500_000 * WETH]
-        applied = handle.apply_balancer_stable_balance_update(new_balances, 12)
+        applied = handle.apply_balances(new_balances, 12)
         assert applied, "apply_balancer_stable_balance_update should succeed"
         # immediate visibility — the §17 contract.
-        assert handle.balancer_stable_balances == new_balances
-        assert handle.update_block == 12
+        assert handle.balance_vector().balances == new_balances
+        assert _update_block(handle) == 12
 
     def test_balancer_stable_snapshot_is_atomic(self) -> None:
         """``snapshot_balancer_stable()`` returns ``(balances, block)``
@@ -1511,7 +1522,7 @@ class TestSharedStateTopologyBalancerStable:
         )
         handle = core.get_pool(pool_id)
         assert handle is not None
-        snap = handle.snapshot_balancer_stable()
+        snap = _bv_snapshot(handle)
         assert snap is not None
         snap_balances, snap_block = snap
         assert snap_balances == list(BALANCER_STABLE_BALANCES)
@@ -1539,11 +1550,11 @@ class TestSharedStateTopologyBalancerStable:
         )
         v3_handle = core.get_pool(v3_pool_id)
         assert v3_handle is not None
-        applied = v3_handle.apply_balancer_stable_balance_update([1, 2, 3], 5)
-        assert applied is False, "Balancer stable apply on a V3 pool must be a silent no-op"
+        with pytest.raises(ValueError, match="balance-vector"):
+            v3_handle.apply_balances([1, 2, 3], 5)
         # The V3 scalars are unchanged — no corruption.
-        assert v3_handle.sqrt_price_x96 == V3_SQRT_PRICE
-        assert v3_handle.liquidity == V3_LIQUIDITY
+        assert v3_handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
+        assert v3_handle.concentrated_liquidity().liquidity == V3_LIQUIDITY
 
     def test_balancer_stable_snapshot_returns_none_for_curve_pool(self) -> None:
         """``snapshot_balancer_stable()`` returns ``None`` on non-Balancer-
@@ -1562,15 +1573,7 @@ class TestSharedStateTopologyBalancerStable:
         )
         curve_handle = core.get_pool(curve_pool_id)
         assert curve_handle is not None
-        assert curve_handle.snapshot_balancer_stable() is None
-        # n_balancer_stable_tokens reads 0 on a non-stable pool (defensive).
-        assert curve_handle.n_balancer_stable_tokens == 0
-        # balancer_stable_balances returns an empty list (not None) so a
-        # Curve companion never crashes on `for b in handle.balancer_stable_balances`.
-        assert curve_handle.balancer_stable_balances == []
-        # balancer_bpt_index reads None on a non-stable pool (defensive — does
-        # NOT crash; the MetaStable None is also None but the pool is Curve).
-        assert curve_handle.balancer_bpt_index is None
+        assert curve_handle.structure() == "balance_vector"
         # balancer_amp / balancer_invariant_version read 0 on a non-stable pool.
         assert curve_handle.balancer_amp == 0
         assert curve_handle.balancer_invariant_version == 0

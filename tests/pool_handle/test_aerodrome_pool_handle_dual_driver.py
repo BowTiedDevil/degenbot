@@ -25,7 +25,7 @@ def aerodrome_pool():
         reserve1=2_000_000_000,
         update_block=100,
     )
-    return bot.py_pool(pool_id)
+    return bot.get_pool(pool_id)
 
 
 def test_structure_and_identity(aerodrome_pool) -> None:
@@ -77,7 +77,7 @@ def aerodrome_stable_pool():
         reserve1=1_000_000_000_000_000_000,
         update_block=100,
     )
-    return bot.py_pool(pool_id)
+    return bot.get_pool(pool_id)
 
 
 def test_aerodrome_stable_swap_matches_recorded_constant(aerodrome_stable_pool) -> None:

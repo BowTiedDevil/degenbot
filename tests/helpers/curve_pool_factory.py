@@ -2,7 +2,7 @@
 
 Mirrors ``tests/helpers/v3_pool_factory.py`` and ``v4_pool_factory.py``
 (ADR-005 slice 11b): every direct ``CurveStableswapPool(...)`` construction in
-the test suite routes through ``make_curve_pool`` so the ``LiquidityPool``
+the test suite routes through ``make_curve_pool`` so the ``Pool``
 handle is wired through ``Bot::register_curve_pool`` → ``get_pool`` →
 companion, matching the ``Bot.build_pool()`` flow (ADR-005).
 
@@ -24,7 +24,7 @@ from degenbot.curve.strategies import PoolStrategies
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveDataProvider
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
 
 
@@ -76,7 +76,7 @@ def make_curve_pool(
     py_bot: Bot | None = None,
     pool_class: type[CurveStableswapPool] = CurveStableswapPool,
 ) -> CurveStableswapPool:
-    """Construct an I/O-free Curve companion over a fresh ``LiquidityPool`` handle.
+    """Construct an I/O-free Curve companion over a fresh ``Pool`` handle.
 
     Registers the pool in a short-lived ``Bot`` (the returned handle holds an
     ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) —
@@ -164,7 +164,7 @@ def make_curve_pool(
         metapool_underlying_style=resolved_strategies.metapool_underlying_style.value,
         data_provider=data_provider,
     )
-    handle: LiquidityPool | None = bot.get_pool(pool_id)
+    handle: Pool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_curve_pool returned a pool_id with no handle"
 
     return pool_class._from_py_pool(handle)

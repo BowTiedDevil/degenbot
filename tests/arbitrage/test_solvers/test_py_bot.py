@@ -206,7 +206,7 @@ class TestPoolHandle:
         return core, pool_id
 
     def test_get_pool_returns_handle(self):
-        """get_pool() returns a LiquidityPool handle for a registered pool."""
+        """get_pool() returns a Pool handle for a registered pool."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -260,7 +260,7 @@ class TestPoolHandle:
 
 
 class TestPoolHandleState:
-    """LiquidityPool state read getters + per-handle mutations (ADR-005 slice 4 step 2)."""
+    """Pool state read getters + per-handle mutations (ADR-005 slice 4 step 2)."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -288,9 +288,10 @@ class TestPoolHandleState:
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
-        assert pool.reserve0 == 1000
-        assert pool.reserve1 == 2000
-        assert pool.update_block == 0  # update_block defaults to 0 at registration
+        view = pool.reserve_pair()
+        assert view.reserve0 == 1000
+        assert view.reserve1 == 2000
+        assert view.update_block == 0  # update_block defaults to 0 at registration
 
     def test_pool_snapshot_is_atomic(self):
         """snapshot() reads reserves+block under one read guard (atomicity).
@@ -302,10 +303,10 @@ class TestPoolHandleState:
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
-        pool.sync_reserves(reserve0=2000, reserve1=1000, block_number=10)
+        pool.apply_sync(reserve0=2000, reserve1=1000, block_number=10)
 
-        r0, r1, block = pool.snapshot()
-        assert (r0, r1, block) == (2000, 1000, 10)
+        view = pool.reserve_pair()
+        assert (view.reserve0, view.reserve1, view.update_block) == (2000, 1000, 10)
 
     def test_pool_snapshot_returns_none_for_v3(self):
         """snapshot() returns None for non-V2 pools (no V2 state to read)."""
@@ -323,7 +324,8 @@ class TestPoolHandleState:
         )
         pool = core.get_pool(pool_id)
         assert pool is not None
-        assert pool.snapshot() is None
+        with pytest.raises(ValueError, match="reserve-pair"):
+            pool.reserve_pair()
 
     def test_pool_sync_reserves_updates_state(self):
         """sync_reserves journals + lands the new state on the handle."""
@@ -332,10 +334,11 @@ class TestPoolHandleState:
         assert pool is not None
         assert pool.journal_len() == 1  # genesis
 
-        pool.sync_reserves(reserve0=2000, reserve1=1000, block_number=10)
-        assert pool.reserve0 == 2000
-        assert pool.reserve1 == 1000
-        assert pool.update_block == 10
+        pool.apply_sync(reserve0=2000, reserve1=1000, block_number=10)
+        view = pool.reserve_pair()
+        assert view.reserve0 == 2000
+        assert view.reserve1 == 1000
+        assert view.update_block == 10
         assert pool.journal_len() == 2  # genesis + block-10 transition
 
     def test_pool_handle_sync_is_equivalent_to_pybot_update(self):
@@ -343,7 +346,7 @@ class TestPoolHandleState:
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
-        pool.sync_reserves(reserve0=2000, reserve1=1000, block_number=10)
+        pool.apply_sync(reserve0=2000, reserve1=1000, block_number=10)
 
         core2 = Bot()
         pool_id2 = core2.register_v2_pool(
@@ -361,10 +364,10 @@ class TestPoolHandleState:
         core2.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
         pool2 = core2.get_pool(pool_id2)
         assert pool2 is not None
-        assert (pool.reserve0, pool.reserve1, pool.update_block) == (
-            pool2.reserve0,
-            pool2.reserve1,
-            pool2.update_block,
+        assert (pool.reserve_pair().reserve0, pool.reserve_pair().reserve1, pool.reserve_pair().update_block) == (
+            pool2.reserve_pair().reserve0,
+            pool2.reserve_pair().reserve1,
+            pool2.reserve_pair().update_block,
         )
 
     def test_pool_restore_lands_at_previous_block(self):
@@ -373,28 +376,23 @@ class TestPoolHandleState:
         pool = core.get_pool(pool_id)
         assert pool is not None
         # Genesis@0 (1000,2000); block-10 after (2000,1000); block-20 after (3000,500).
-        pool.sync_reserves(2000, 1000, 10)
-        pool.sync_reserves(3000, 500, 20)
+        pool.apply_sync(2000, 1000, 10)
+        pool.apply_sync(3000, 500, 20)
 
-        result = pool.restore_before_block(20)
-        assert result is not None
-        r0, r1, block = result
-        assert (r0, r1) == (2000, 1000)
-        assert block == 10
-        # State landed at block 10.
-        assert (pool.reserve0, pool.reserve1, pool.update_block) == (2000, 1000, 10)
+        pool.restore_before_block(20)
+        view = pool.reserve_pair()
+        assert (view.reserve0, view.reserve1, view.update_block) == (2000, 1000, 10)
 
     def test_pool_restore_noop_when_target_after_newest(self):
         """Handle.restore_before_block(N>newest) no-ops, returning current."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
-        pool.sync_reserves(2000, 1000, 10)
+        pool.apply_sync(2000, 1000, 10)
 
-        result = pool.restore_before_block(100)
-        assert result is not None
-        r0, r1, block = result
-        assert (r0, r1, block) == (2000, 1000, 10)
+        pool.restore_before_block(100)
+        view = pool.reserve_pair()
+        assert (view.reserve0, view.reserve1, view.update_block) == (2000, 1000, 10)
 
     def test_pool_restore_past_registration_raises(self):
         """Handle.restore at/before genesis raises ValueError (decision 3)."""
@@ -409,7 +407,7 @@ class TestPoolHandleState:
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
-        pool.sync_reserves(2000, 1000, 10)
+        pool.apply_sync(2000, 1000, 10)
         with pytest.raises(ValueError, match="No pool state known at or after block 100"):
             pool.discard_before_block(100)
 
@@ -418,9 +416,9 @@ class TestPoolHandleState:
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
-        pool.sync_reserves(2000, 1000, 10)
-        pool.sync_reserves(3000, 500, 20)
-        pool.sync_reserves(4000, 250, 30)
+        pool.apply_sync(2000, 1000, 10)
+        pool.apply_sync(3000, 500, 20)
+        pool.apply_sync(4000, 250, 30)
         assert pool.journal_len() == 4  # genesis + 10 + 20 + 30
 
         pool.discard_before_block(20)  # drops genesis@0 + block-10
@@ -834,12 +832,11 @@ class TestV3PoolState:
 
         # The seed landed inline — NO update_tick_data call was made. If the
         # seed were lost (pre-fix: empty tick_data), this snapshot is empty.
-        assert pool.tick_data_snapshot() == seed_rows
+        assert pool.concentrated_liquidity().tick_data == seed_rows
 
         # update_block advanced to the seed block (not the hardcoded 0).
-        assert pool.snapshot_v3() is not None
-        _, _, _, seeded_block = pool.snapshot_v3()  # type: ignore[misc]
-        assert seeded_block == 100
+        view = pool.concentrated_liquidity()
+        assert view.update_block == 100
 
     def test_register_v3_pool_inline_seed_survives_concurrent_update(self):
         """A pump liquidity update after the inline seed is NOT clobbered.
@@ -876,7 +873,7 @@ class TestV3PoolState:
             liquidity_delta=-500_000,
             block_number=150,
         )
-        snapshot = pool.tick_data_snapshot()
+        snapshot = pool.concentrated_liquidity().tick_data
         # The burn SURVIVED — tick 0's gross halved from the seed's 1_000_000
         # to 500_000 at the burn's block (150). If the seed had been applied
         # AFTER the burn (the pre-fix clobber), gross would still be 1_000_000

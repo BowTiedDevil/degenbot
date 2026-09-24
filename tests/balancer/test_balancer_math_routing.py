@@ -1,7 +1,7 @@
 """Balancer V2 math routing — delegation-detection gate.
 
 The weighted + stable companion swap paths are thin Python driver shells
-over the Rust core's pair-swap surface (``LiquidityPool.calculate_tokens_*_for_pair``).
+over the Rust core's pair-swap surface (``Pool.calculate_tokens_*_for_pair``).
 Token + scaling-factor resolution stays Python-side; the swap math in its
 entirety is Rust-owned.
 

@@ -24,7 +24,7 @@ from degenbot.uniswap.v2_types import (
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress
-    from degenbot.types import DexIdentity, LiquidityPool
+    from degenbot.types import DexIdentity, Pool
     from degenbot.types.aliases import BlockNumber
 
 
@@ -34,7 +34,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     variant: ClassVar[str | None] = None
 
     # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). The
-    # companion sets these as INSTANCE attrs off the `LiquidityPool` handle's
+    # companion sets these as INSTANCE attrs off the `Pool` handle's
     # `V2PoolDescriptor` (see `_from_py_pool`) — `stable_swap` selects the
     # stable calc branch for Camelot stable pools; False
     # otherwise. ``fee_denominator`` carries Camelot's integer fee scaling
@@ -47,7 +47,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     # Instance attributes set in `_from_py_pool` (the only construction seam —
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body
-    _py_pool: LiquidityPool
+    _py_pool: Pool
     dex: DexIdentity
     address: ChecksummedAddress
     factory: ChecksummedAddress
@@ -65,14 +65,14 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         """Direct construction is forbidden.
 
         ``UniswapV2Pool`` is a Python companion over a Rust-owned
-        ``LiquidityPool`` handle. The handle can only be produced by
+        ``Pool`` handle. The handle can only be produced by
         registering a pool in a ``Bot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_v2_pool(...)``
 
-        Both register the pool in Rust, obtain the ``LiquidityPool``
+        Both register the pool in Rust, obtain the ``Pool``
         handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
         ``_from_pydf`` seam).
 
@@ -84,13 +84,13 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or make_v2_pool(...) "
             "(tests) to register the pool in Rust and obtain the "
-            "LiquidityPool handle to wrap."
+            "Pool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
-        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: Pool) -> Self:
+        """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
         handle is self-describing: every identity field (address, factory,
@@ -136,7 +136,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         # non-V2 and can't serve as a cross-family guard).
         if py_pool.pool_family != "v2":
             msg = (
-                "LiquidityPool handle is not a V2-family pool "
+                "Pool handle is not a V2-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
                 "UniswapV2Pool._from_py_pool requires a handle registered via "
                 "register_v2_pool"
@@ -149,7 +149,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         dex = py_pool.dex
         if dex is None:  # pragma: no cover
             msg = (
-                "LiquidityPool handle has no DexIdentity preset; the pool "
+                "Pool handle has no DexIdentity preset; the pool "
                 "must be registered with a variant via register_v2_pool"
             )
             raise DegenbotValueError(message=msg)
@@ -222,7 +222,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
             The block number of the most recent state update (from Rust).
 
         """
-        return self._py_pool.update_block
+        return self._py_pool.reserve_pair().update_block
 
     @property
     def reserves_token0(self) -> int:
@@ -258,16 +258,16 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
                 V2 state to snapshot).
 
         """
-        snapshot = self._py_pool.snapshot()
-        if snapshot is None:
+        try:
+            view = self._py_pool.reserve_pair()
+        except ValueError as exc:
             msg = "No V2 pool state available (pool not registered in Rust)"
-            raise DegenbotValueError(message=msg)
-        reserve0, reserve1, block = snapshot
+            raise DegenbotValueError(message=msg) from exc
         return self.PoolState.__value__(
             address=self.address,
-            reserves_token0=reserve0,
-            reserves_token1=reserve1,
-            block=block,
+            reserves_token0=view.reserve0,
+            reserves_token1=view.reserve1,
+            block=view.update_block,
         )
 
     def external_update(
@@ -285,7 +285,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # ruff:ignore[line-too-long]
             )
 
-        self._py_pool.sync_reserves(
+        self._py_pool.apply_sync(
             reserve0=update.reserves_token0,
             reserve1=update.reserves_token1,
             block_number=update.block_number,
@@ -294,7 +294,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached V2 reorg journal deltas earlier than the given block.
 
-        Delegates to ``LiquidityPool.discard_before_block`` (Rust pops
+        Delegates to ``Pool.discard_before_block`` (Rust pops
         journal deltas strictly earlier than the target, keeping the genesis
         delta + everything at/after the target). The current state is
         unchanged when the target is at/after the newest delta.
@@ -312,7 +312,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     def restore_state_before_block(self, block: BlockNumber) -> None:
         """Restore the V2 pool to the landed-at state just before the target block.
 
-        Delegates to ``LiquidityPool.restore_before_block`` (Rust pops
+        Delegates to ``Pool.restore_before_block`` (Rust pops
         journal deltas at/after the target + reverse-applies them, writing
         back the pre-target reserves in one write guard). The journal's
         ``update_block`` lands at the oldest popped delta's block (the target

@@ -1,9 +1,9 @@
 """I/O-free `UniswapV4Pool` construction helper for tests (ADR-005 slice 9b).
 
 Mirror of `make_v3_pool` — registers the V4 pool in Rust (Bot) and wraps the
-returned `LiquidityPool` handle in the V4 companion. The companion owns NO
+returned `Pool` handle in the V4 companion. The companion owns NO
 mutable state (Rust is the source of truth); it carries the V4 identity
-(pool_id, pool_manager, pool_key, hook_address, fees) + the `LiquidityPool`
+(pool_id, pool_manager, pool_key, hook_address, fees) + the `Pool`
 handle. Construct via this helper; do NOT call `UniswapV4Pool(...)` directly in
 tests (the constructor takes a handle, not scalars).
 """
@@ -63,7 +63,7 @@ def make_v4_pool(
     Rust coverage flag (it is set at registration), so the sparse contract
     must be established at construction.
 
-    Returns the V4 companion over the `LiquidityPool` handle.
+    Returns the V4 companion over the `Pool` handle.
     """
     bot = py_bot or Bot()
     blk = state_block if state_block is not None else 0

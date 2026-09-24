@@ -118,7 +118,7 @@ class TestFromPyPoolSlimSeam:
             py_bot=py_bot,
         )
 
-        # ``_py_pool`` is the shared ``LiquidityPool`` handle type; the V3
+        # ``_py_pool`` is the shared ``Pool`` handle type; the V3
         # companion holds the same handle shape, so passing it to the V2 seam
         # is the misuse the ``pool_family`` assertion must catch.
         with pytest.raises(DegenbotValueError, match="V2-family"):

@@ -26,7 +26,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
     from degenbot.provider import AlloyProvider
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.types import UniswapPoolSwapVector
@@ -46,7 +46,7 @@ class AerodromeV2Pool(
     FEE_DENOMINATOR = 10_000
 
     # Instance attributes set in `_from_py_pool` (the only construction seam).
-    _py_pool: LiquidityPool
+    _py_pool: Pool
     address: ChecksummedAddress
     factory: ChecksummedAddress
     deployer_address: ChecksummedAddress
@@ -61,12 +61,12 @@ class AerodromeV2Pool(
         """Direct construction is forbidden.
 
         ``AerodromeV2Pool`` is a Python companion over a Rust-owned
-        ``LiquidityPool`` handle. Use the registered entry points instead:
+        ``Pool`` handle. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_aerodrome_v2_pool(...)``
 
-        Both register the pool in Rust, obtain the ``LiquidityPool``
+        Both register the pool in Rust, obtain the ``Pool``
         handle, and wrap it via :meth:`_from_py_pool`.
 
         Raises:
@@ -77,13 +77,13 @@ class AerodromeV2Pool(
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or "
             "make_aerodrome_v2_pool(...) (tests) to register the pool in "
-            "Rust and obtain the LiquidityPool handle to wrap."
+            "Rust and obtain the Pool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
-        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: Pool) -> Self:
+        """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
         identity field (address, tokens, factory, fee, stable, variant) is
@@ -103,8 +103,7 @@ class AerodromeV2Pool(
 
         if py_pool.pool_family != "aerodrome-v2":
             msg = (
-                "LiquidityPool handle is not an Aerodrome V2 pool "
-                f"(got pool_family {py_pool.pool_family!r})"
+                f"Pool handle is not an Aerodrome V2 pool (got pool_family {py_pool.pool_family!r})"
             )
             raise DegenbotValueError(message=msg)
 
@@ -132,7 +131,7 @@ class AerodromeV2Pool(
 
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # ruff:ignore[line-too-long]
 
-        self._initial_state_block = py_pool.update_block
+        self._initial_state_block = py_pool.reserve_pair().update_block
         return self
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -162,16 +161,16 @@ class AerodromeV2Pool(
             DegenbotValueError: If the Rust snapshot is absent.
 
         """
-        snap = self._py_pool.snapshot_aerodrome()
-        if snap is None:
+        try:
+            view = self._py_pool.reserve_pair()
+        except ValueError as exc:
             msg = f"No Aerodrome V2 pool state available for {self.address}"
-            raise DegenbotValueError(message=msg)
-        reserve0, reserve1, block = snap
+            raise DegenbotValueError(message=msg) from exc
         return self.PoolState.__value__(
             address=self.address,
-            reserves_token0=reserve0,
-            reserves_token1=reserve1,
-            block=block,
+            reserves_token0=view.reserve0,
+            reserves_token1=view.reserve1,
+            block=view.update_block,
         )
 
     @property
@@ -179,7 +178,7 @@ class AerodromeV2Pool(
         """Update block."""
         if TYPE_CHECKING:
             assert self.state.block is not None
-        return self.state.block
+        return self._py_pool.reserve_pair().update_block
 
     @staticmethod
     def swap_is_viable(
@@ -211,7 +210,7 @@ class AerodromeV2Pool(
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # ruff:ignore[line-too-long]
             )
 
-        self._py_pool.apply_aerodrome_sync(
+        self._py_pool.apply_sync(
             update.reserves_token0,
             update.reserves_token1,
             update.block_number,
@@ -315,7 +314,7 @@ class AerodromeV2Pool(
 
         """
         try:
-            self._py_pool.discard_aerodrome_before_block(block)
+            self._py_pool.discard_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
 
@@ -332,7 +331,7 @@ class AerodromeV2Pool(
 
         """
         try:
-            self._py_pool.restore_aerodrome_before_block(block)
+            self._py_pool.restore_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
 

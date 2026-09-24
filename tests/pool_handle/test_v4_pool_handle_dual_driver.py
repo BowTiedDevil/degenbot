@@ -29,7 +29,7 @@ def v4_pool():
         tick_data=tick_data,
         coverage="tracked",
     )
-    return bot.py_pool(pool_id)
+    return bot.get_pool(pool_id)
 
 
 def test_structure_and_identity(v4_pool) -> None:

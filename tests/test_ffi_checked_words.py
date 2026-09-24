@@ -1,6 +1,6 @@
 """T1 (3WTDFK): the FFI checked-word invariant — known words in, checked-empty words out.
 
-``LiquidityPool.update_tick_data`` (the FFI boundary) must record the checked
+``Pool.update_tick_data`` (the FFI boundary) must record the checked
 bitmap words the caller passes into Rust ``known_bitmap_words`` (Sparse pools
 only — a Tracked pool's bitmap is complete, so nothing is recorded) and
 tick_bitmap_snapshot() must surface a known-but-empty word as a ``(0, block)``
@@ -38,7 +38,7 @@ def _register_sparse_v3(bot: Bot, *, tick_data_fetcher=None) -> int:
 def _snapshot(pool: object) -> dict[int, tuple[int, int]]:
     """Normalize a `tick_bitmap_snapshot()` dict to plain python ints."""
     return {
-        int(word): (int(row[0]), int(row[1])) for word, row in pool.tick_bitmap_snapshot().items()
+        int(word): (int(row[0]), int(row[1])) for word, row in pool.concentrated_liquidity().tick_bitmap.items()
     }
 
 

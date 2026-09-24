@@ -2,7 +2,7 @@
 
 Mirrors ``tests/helpers/v2_pool_factory.py`` (ADR-005 slice 4): every direct
 ``UniswapV3Pool(...)`` construction in the test suite routes through
-``make_v3_pool`` so the ``LiquidityPool`` handle is wired through
+``make_v3_pool`` so the ``Pool`` handle is wired through
 ``Bot::register_v3_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow (ADR-005 slice 8b).
 
@@ -23,7 +23,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
 
 
@@ -32,7 +32,7 @@ def _tick_data_to_rust_rows(
 ) -> dict[int, tuple[int, int, int]]:
     """Convert ``{tick: LiquidityAtTick | tuple}`` to the Rust write shape.
 
-    Rust's ``LiquidityPool.update_tick_data`` expects
+    Rust's ``Pool.update_tick_data`` expects
     ``{tick: (liquidity_gross, liquidity_net, block)}`` (symmetric with
     ``tick_data_snapshot``'s read shape). The Python companion carries
     ``LiquidityAtTick(liquidity_net, liquidity_gross, block)`` — net before
@@ -86,7 +86,7 @@ def make_v3_pool(
     py_bot: Bot | None = None,
     pool_class: type[UniswapV3Pool] = UniswapV3Pool,
 ) -> UniswapV3Pool:
-    """Construct an I/O-free V3 companion over a fresh ``LiquidityPool`` handle.
+    """Construct an I/O-free V3 companion over a fresh ``Pool`` handle.
 
     Registers the pool in a short-lived ``Bot`` (the returned handle holds an
     ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) —
@@ -103,7 +103,7 @@ def make_v3_pool(
     common test case for the I/O-free scalar-only construction), the companion
     is built sparse (the fetcher backfills on demand, mirroring the engine's
     authority over tick data per plan-101). When ``tick_data`` is provided it
-    is seeded into Rust via ``LiquidityPool.update_tick_data`` and the
+    is seeded into Rust via ``Pool.update_tick_data`` and the
     companion is built non-sparse.
     """
     address_checksum = get_checksum_address(address)
@@ -131,7 +131,7 @@ def make_v3_pool(
         coverage=coverage,
         tick_data_fetcher=tick_data_fetcher,
     )
-    handle: LiquidityPool | None = bot.get_pool(pool_id)
+    handle: Pool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_v3_pool returned a pool_id with no handle"
 
     # ``apply_swap`` anchors the reorg genesis delta at state_block (mirrors

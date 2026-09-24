@@ -1,6 +1,6 @@
-"""UniswapV3Pool: concentrated liquidity AMM companion over a LiquidityPool handle.
+"""UniswapV3Pool: concentrated liquidity AMM companion over a Pool handle.
 
-ADR-005 slice 8b — the V3 companion rewritten over the same `LiquidityPool`
+ADR-005 slice 8b — the V3 companion rewritten over the same `Pool`
 handle topology as the V2 `UniswapV2Pool`. Rust `BotState` is the single
 source of truth for V3 mutable state (scalars, tick data, reorg journal);
 this companion reads it through `self._py_pool` (the atomic `snapshot_v3()`
@@ -45,7 +45,7 @@ from degenbot.uniswap.v3_types import (
 )
 
 if TYPE_CHECKING:
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
 
@@ -73,7 +73,7 @@ class UniswapV3Pool(
     UniswapV3PoolCalc,
     ConcentratedLiquidityCompanion,
 ):
-    """A Uniswap V3 concentrated-liquidity pool companion over a ``LiquidityPool`` handle.
+    """A Uniswap V3 concentrated-liquidity pool companion over a ``Pool`` handle.
 
     Rust owns the mutable state (scalars + tick data + reorg journal) as
     ``V3PoolState``; this companion reads it through ``self._py_pool`` (one
@@ -95,7 +95,7 @@ class UniswapV3Pool(
     # Instance attributes set in `_from_py_pool` (the only construction seam —
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body.
-    _py_pool: LiquidityPool
+    _py_pool: Pool
     address: ChecksummedAddress
     factory: ChecksummedAddress
     _fee: int
@@ -131,14 +131,14 @@ class UniswapV3Pool(
         """Direct construction is forbidden.
 
         ``UniswapV3Pool`` is a Python companion over a Rust-owned
-        ``LiquidityPool`` handle. The handle can only be produced by
+        ``Pool`` handle. The handle can only be produced by
         registering a pool in a ``Bot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_v3_pool(...)``
 
-        Both register the pool in Rust, obtain the ``LiquidityPool``
+        Both register the pool in Rust, obtain the ``Pool``
         handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
         ``_from_pydf`` seam).
 
@@ -150,13 +150,13 @@ class UniswapV3Pool(
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or make_v3_pool(...) "
             "(tests) to register the pool in Rust and obtain the "
-            "LiquidityPool handle to wrap."
+            "Pool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
-        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: Pool) -> Self:
+        """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
         handle is self-describing: every identity field (address, factory,
@@ -186,7 +186,7 @@ class UniswapV3Pool(
         # Variant-family guard (uniform precondition every seam uses).
         if py_pool.pool_family != "v3":
             msg = (
-                "LiquidityPool handle is not a V3-family pool "
+                "Pool handle is not a V3-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
                 "UniswapV3Pool._from_py_pool requires a handle "
                 "registered via register_v3_pool"
@@ -196,8 +196,9 @@ class UniswapV3Pool(
         # Identity — all read off the handle (no shadow kwargs).
         self.address = get_checksum_address(py_pool.address)
         self.factory = get_checksum_address(py_pool.factory)
-        self._fee = py_pool.fee
-        self._tick_spacing = py_pool.tick_spacing
+        view = py_pool.concentrated_liquidity()
+        self._fee = view.fee
+        self._tick_spacing = view.tick_spacing
 
         py_token0 = py_pool.get_token0()
         py_token1 = py_pool.get_token1()
@@ -220,7 +221,7 @@ class UniswapV3Pool(
         self.init_hash = self._py_pool.init_hash
 
         # The block of the registration snapshot (genesis journal delta).
-        self._initial_state_block = self._py_pool.update_block
+        self._initial_state_block = view.update_block
 
         self.name = (
             f"{self._token0}-{self._token1} ({self.__class__.__name__}, "
@@ -265,19 +266,19 @@ class UniswapV3Pool(
             DegenbotValueError: If the pool is not registered in Rust.
 
         """
-        snap = self._py_pool.snapshot_v3()
-        if snap is None:
+        try:
+            view = self._py_pool.concentrated_liquidity()
+        except ValueError as exc:
             msg = "No V3 pool state available (pool not registered in Rust)"
-            raise DegenbotValueError(message=msg)
-        sqrt_price_x96, liquidity, tick, block = snap
+            raise DegenbotValueError(message=msg) from exc
         return self.PoolState.__value__(
             address=self.address,
-            liquidity=liquidity,
-            sqrt_price_x96=sqrt_price_x96,
-            tick=tick,
+            liquidity=view.liquidity,
+            sqrt_price_x96=view.sqrt_price_x96,
+            tick=view.tick,
             tick_bitmap=self.tick_bitmap,
             tick_data=self.tick_data,
-            block=block,
+            block=view.update_block,
         )
 
     def simulate_exact_input_swap(

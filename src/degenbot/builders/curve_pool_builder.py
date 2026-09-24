@@ -17,7 +17,7 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from degenbot._ffi import BotIo
     from degenbot.builders.context import BuilderContext
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier
@@ -140,7 +140,7 @@ class CurvePoolBuilder:
 
     def _resolve_metapool_base(
         self,
-        handle: LiquidityPool,
+        handle: Pool,
         *,
         chain_id: ChainId,
         state_block: int,

@@ -4,7 +4,7 @@ The behavioral companion to `rust/crates/degenbot/tests/
 parity_balancer_stable_swap.rs`. Proves the **same** canonical fixture
 produces the **same** `amount_out` through both consumers: the Python
 companion path (`BalancerV2StablePool.calculate_tokens_out_from_tokens_in`,
-a thin shell delegating to `LiquidityPool.calculate_tokens_out_for_pair`
+a thin shell delegating to `Pool.calculate_tokens_out_for_pair`
 → `simulate_balancer_stable_swap_pair`) and the Rust core path
 (`BotState::calculate_tokens_out_miss_aware` → `simulate_swap` →
 `simulate_balancer_stable_swap` → `skip_bpt`).

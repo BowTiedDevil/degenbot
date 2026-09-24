@@ -27,10 +27,9 @@ degenbot._ffi.ConcentratedLiquidityView
 degenbot._ffi.Erc20Token
 degenbot._ffi.Erc20TokenRow
 degenbot._ffi.IntakeReceipt
-degenbot._ffi.LiquidityPool
+degenbot._ffi.Pool
 degenbot._ffi.PathBatchIterator
 degenbot._ffi.PathIterator
-degenbot._ffi.Pool
 degenbot._ffi.ReservePairView
 degenbot._ffi.RetryPolicyDefaults
 degenbot._ffi.cancel.CancelHandle

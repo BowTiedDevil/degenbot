@@ -30,7 +30,7 @@ def curve_pool():
         y_variant=1,  # STANDARD
         yd_variant=1,
     )
-    return bot.py_pool(pool_id)
+    return bot.get_pool(pool_id)
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def balancer_weighted_pool():
         balances=[1_000_000, 1_000_000],
         update_block=100,
     )
-    return bot.py_pool(pool_id)
+    return bot.get_pool(pool_id)
 
 
 def test_curve_structure_and_identity(curve_pool) -> None:
@@ -129,7 +129,7 @@ def balancer_stable_pool():
         balances=[1_000_000, 1_000_000],
         update_block=100,
     )
-    return bot.py_pool(pool_id)
+    return bot.get_pool(pool_id)
 
 
 def test_balancer_stable_structure_and_identity(balancer_stable_pool) -> None:

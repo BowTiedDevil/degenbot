@@ -36,14 +36,14 @@ from degenbot.types.abstract import AbstractLiquidityPool
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot.types import LiquidityPool
+    from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.rpc_types import BlockIdentifier
 
 
 class _HandleCurveDataProviderAdapter:
-    """Adapts a ``LiquidityPool`` handle as a stored ``CurveDataProvider``.
+    """Adapts a ``Pool`` handle as a stored ``CurveDataProvider``.
 
     The (BQM2OA) companion holds no Python data-provider object — the
     provider is the stored Rust trait object (ADR-005 JFGCHJ). This shim
@@ -54,7 +54,7 @@ class _HandleCurveDataProviderAdapter:
     handling applies unchanged.
     """
 
-    def __init__(self, py_pool: LiquidityPool) -> None:
+    def __init__(self, py_pool: Pool) -> None:
         self._py_pool = py_pool
 
     def block_number(self) -> int:
@@ -164,7 +164,7 @@ class _CryptoFeeCoefficients(NamedTuple):
     gamma: int
 
 
-def _read_crypto_fee_coefficients(py_pool: LiquidityPool) -> _CryptoFeeCoefficients:
+def _read_crypto_fee_coefficients(py_pool: Pool) -> _CryptoFeeCoefficients:
     """Normalize the handle's optional crypto-fee tuple (``None`` ⇔ 0).
 
     Standard stableswap pools store no crypto fees, so those slots come back
@@ -204,7 +204,7 @@ class CurveStableswapPool(
     # assigns these on `Self`; declare them at class scope so attribute reads
     # in helper/calc methods resolve (mirrors the Balancer/Aerodrome seams).
     address: ChecksummedAddress
-    _py_pool: LiquidityPool
+    _py_pool: Pool
     _tokens: tuple[Erc20Token, ...]
     _a_coefficient: int
     _fee: int
@@ -237,7 +237,7 @@ class CurveStableswapPool(
         """Direct construction is forbidden.
 
         A ``CurveStableswapPool`` is a companion over a Rust-owned
-        ``LiquidityPool`` handle. The handle can only be produced by
+        ``Pool`` handle. The handle can only be produced by
         registering a pool in a ``Bot`` (production: ``Bot.build_pool()``;
         tests: ``make_curve_pool``), then wrapping via
         :meth:`_from_py_pool`. Direct constructor calls are rejected so that
@@ -253,7 +253,7 @@ class CurveStableswapPool(
         """
         msg = (
             f"{type(self).__name__} cannot be constructed directly. "
-            "A LiquidityPool handle is wired by Bot.build_pool() "
+            "A Pool handle is wired by Bot.build_pool() "
             "(production) or make_curve_pool (tests); call "
             f"{type(self).__name__}._from_py_pool(handle) to wrap a "
             "registered handle."
@@ -261,8 +261,8 @@ class CurveStableswapPool(
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
-        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: Pool) -> Self:
+        """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Single-arg seam (ADR-005 BQM2OA): reads *every* identity field + the
         stored data-provider trait object off the handle. The cross-pool
@@ -284,9 +284,7 @@ class CurveStableswapPool(
         # Family assertion — a V2/V3/V4/Balancer handle must raise, not crash.
         family = py_pool.pool_family
         if family != "curve":
-            msg = (
-                f"LiquidityPool handle is not a Curve stableswap pool (got pool_family {family!r})"
-            )
+            msg = f"Pool handle is not a Curve stableswap pool (got pool_family {family!r})"
             raise DegenbotValueError(message=msg)
 
         self._py_pool = py_pool
@@ -392,7 +390,7 @@ class CurveStableswapPool(
 
         # The registration block (genesis journal delta). Used to pre-populate
         # base-cache virtual-price values for metapools at construction time.
-        registration_block = py_pool.update_block
+        registration_block = py_pool.balance_vector().update_block
         if self.base_pool is not None and registration_block != 0:
             with contextlib.suppress(Exception):
                 self._cache.get_cached_virtual_price(block_number=registration_block)
@@ -416,11 +414,11 @@ class CurveStableswapPool(
     def balances(self) -> tuple[int, ...]:
         """Balances.
 
-        Read from the Rust core via the ``LiquidityPool`` handle
+        Read from the Rust core via the ``Pool`` handle
         (ADR-005 slice 11b). Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
-        return tuple(self._py_pool.balances)
+        return tuple(self._py_pool.balance_vector().balances)
 
     @property
     def state(self) -> CurveStableswapPoolState:
@@ -436,24 +434,21 @@ class CurveStableswapPool(
                 companion built over a registered handle).
 
         """
-        snap = self._py_pool.snapshot_curve()
-        # snapshot_curve returns None only for a non-Curve pool_id; this
-        # companion is always built over a registered Curve handle, so the
-        # snapshot is always present. Defensive: treat None as no-state.
-        if snap is None:  # pragma: no cover - defensive, unreachable in practice
+        try:
+            view = self._py_pool.balance_vector()
+        except ValueError as exc:
             msg = f"No Curve pool state available for {self.address}"
-            raise DegenbotValueError(message=msg)
-        balances, block = snap
+            raise DegenbotValueError(message=msg) from exc
         return CurveStableswapPoolState(
             address=self.address,
-            balances=tuple(balances),
-            block=block,
+            balances=tuple(view.balances),
+            block=view.update_block,
         )
 
     @property
     def update_block(self) -> BlockNumber:
         """Update block (from Rust via the handle)."""
-        return self._py_pool.update_block
+        return self._py_pool.balance_vector().update_block
 
     @property
     def requires_io_at_calculation_time(self) -> bool:
@@ -484,7 +479,7 @@ class CurveStableswapPool(
     def external_update(self, update: CurveStableswapPoolExternalUpdate) -> None:
         """Apply an external state update with new balances.
 
-        Delegates to the Rust core (``LiquidityPool.apply_curve_balance_update``)
+        Delegates to the Rust core (``Pool.apply_curve_balance_update``)
         which journals the prior balances (genesis-anchor V2-style discipline)
         and lands the new balances + ``update_block`` atomically
         (ADR-005 slice 11b). The ``StateCache`` temporal-navigation layer it
@@ -496,7 +491,7 @@ class CurveStableswapPool(
                 built over a registered handle).
 
         """
-        applied = self._py_pool.apply_curve_balance_update(
+        applied = self._py_pool.apply_balances(
             list(update.balances),
             update.block_number,
         )
@@ -629,7 +624,7 @@ class CurveStableswapPool(
 
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
 
-        Delegates to the Rust-owned `LiquidityPool.curve_get_dy` (task
+        Delegates to the Rust-owned `Pool.curve_get_dy` (task
         `V5X2YP`): the I/O orchestration (amp/rates/xp + provider fetches) and
         the pure dy math both run in the Rust core, so this is a single handle
         call with no Python provider / cache / calculator on the swap path.
@@ -658,7 +653,7 @@ class CurveStableswapPool(
     ) -> int:
         """Metapool underlying `dy` — Rust-owned base-pool delegation.
 
-        Delegates to `LiquidityPool.curve_get_dy_underlying` (task
+        Delegates to `Pool.curve_get_dy_underlying` (task
         `V5X2YP`): the metapool snapshot + the base-pool `calc_token_amount` /
         `get_dy` / `calc_withdraw_one_coin` ops run through the Rust
         `BotCurveBasePoolPort`, retiring the Python `_LazyBasePool` go-between
@@ -827,7 +822,7 @@ class CurveStableswapPool(
 class _LazyBasePool:
     """Production adapter satisfying ``BasePoolPort`` for a metapool's base pool.
 
-    Holds the base pool's ``LiquidityPool`` handle (resolved by the Rust
+    Holds the base pool's ``Pool`` handle (resolved by the Rust
     go-between ``curve_base_pool()`` — same shared ``BotState`` core, no
     Python registry lookup) and memoises the base companion on first use.
     Defers construction so a metapool that never takes the base swap path
@@ -841,7 +836,7 @@ class _LazyBasePool:
 
     __slots__ = ("_built", "_handle")
 
-    def __init__(self, handle: LiquidityPool) -> None:
+    def __init__(self, handle: Pool) -> None:
         self._handle = handle
         self._built = None
 
