@@ -75,6 +75,9 @@ The load-bearing decisions behind the two-consumer architecture:
 | [056](ADR-056-retire-gated-serving-seam.md) | Retire the gated serving seam — refuted premise, membership to the boot registry | accepted |
 | [057](ADR-057-strategy-host.md) | The strategy host — one process, many drivers over one operator account | accepted |
 | [058](ADR-058-strategy-crate-split.md) | The strategy crate split — submission is mechanism, `degenbot-strategy` owns the plane | accepted |
+| [059](ADR-059-pool-family-kernel.md) | The pool family kernel — one taxonomy, capability tiers, species as data | accepted |
+| [060](ADR-060-collapse-v2-walk-representation-vs-interface.md) | Collapsing the V2 walk dispatch — representation vs interface | accepted |
+| [061](ADR-061-pool-ingress-plane-capability.md) | Pool-state provisioning is a plane capability — pool ingress, sealed seeds, the strategy kit | **proposed** |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 
