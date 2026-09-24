@@ -174,6 +174,63 @@ Enforced consequences:
   implementation-specific dependencies in the owning crate unless there is a
   deliberate shared policy.
 
+### External dependency duplication audit
+
+The locked workspace audit was captured on 2026-09-24 with Cargo 1.98.1. Reproduce
+it from the repository root with:
+
+```bash
+cargo tree --manifest-path rust/Cargo.toml --workspace --duplicates --locked
+```
+
+`--workspace` renders every workspace member as a root, and Cargo lists a package
+again when host/proc-macro and target feature contexts differ. Those repeated
+paths are not internal duplication: locked Cargo metadata contains exactly 33
+unique workspace package identities, with one `degenbot` path/version/source
+identity per member. The report names 39 external families. Seventeen are
+same-version multi-path/feature-context entries (including the Alloy
+1.7.3 components, `indexmap` 2.14.2, `serde` 1.0.229, and `winnow` 1.0.4); 22
+have real version splits:
+
+- `base64` 0.22/0.23; `digest`, `block-buffer`, `const-oid`, `cpufeatures`, and
+  `crypto-common`; `sha1`/`sha2` 0.10/0.11; and `getrandom` 0.2/0.3/0.4.
+- `rand` 0.8/0.9/0.10 plus the corresponding `rand_chacha` and `rand_core`
+  generations, and `syn` 2/3 with `darling` 0.23/0.24.
+- `hashbrown` 0.14/0.16/0.17, `itertools` 0.13/0.14,
+  `num-bigint` 0.4/0.5, and the WebSocket stack
+  `tokio-tungstenite`/`tungstenite` 0.29/0.30 plus `webpki-roots` 0.26/1.0.
+
+The direct-overlap decisions are intentional:
+
+- Workspace crates select `hashbrown` 0.17, which is already shared by Alloy,
+  Arkworks, `indexmap` 2.14, and `lru`; Dashmap, governor, and the SQLite VFS
+  retain their upstream 0.14/0.16 requirements. Selecting 0.16 would not remove
+  Dashmap's split and would move the workspace off its existing shared choice.
+- `degenbot-rpc`, `degenbot-bot`, and `degenbot_rs` use the `rand` 0.10 API.
+  Alloy/Arkworks and test/crypto stacks require 0.8/0.9, while upstream
+  `tungstenite` 0.30 and QUIC also require 0.10. A direct downgrade would change
+  source-facing traits without collapsing the resolved family.
+- `degenbot-solvers` exposes `num-bigint` 0.5 types in public coefficient
+  structs. Arkworks/revm retain 0.4; downgrading the solver would change its
+  public type identity and requires separate numerical-behavior validation, so it
+  is not a graph-only cleanup.
+- `sha2` 0.11 is a development-only artifact check; Alloy/revm retain 0.10 and
+  revm also uses 0.11. The direct WebSocket 0.30 choice coexists with Alloy's
+  upstream 0.29 requirement; this audit demonstrated no measured feature,
+  build-time, or binary-size benefit from changing it.
+
+The remaining families are semver/API splits reached through Alloy, Arkworks,
+revm, reqwest/serde_with, proc-macro stacks, or WebSocket roots, not duplicate
+internal crates or accidental second workspace declarations. The audit made no
+manifest or lockfile change. `rust/Cargo.lock` had SHA-256
+`35e6ae51d963a035a31e10bf4835ff0f100242b611b98540d881c745fb995031`;
+locked metadata resolved 645 package records, 504 with a declared `rust-version`
+and none above the workspace's Rust 1.97 MSRV. Packages without a declared
+`rust_version` still require the exact
+`cargo +1.97.0 check --manifest-path rust/Cargo.toml --workspace --all-targets --locked`
+CI gate. A future unification must first demonstrate a graph/feature improvement
+and measure clean build time and binary size on the declared lanes.
+
 ### Where should a new capability go?
 
 Use this order:
@@ -273,6 +330,7 @@ samples, and `--workspace` when a command must cover every member.
 | Purpose | Command |
 | --- | --- |
 | Inspect the authoritative graph | `cargo metadata --manifest-path rust/Cargo.toml --format-version 1 --no-deps --locked` |
+| Inspect duplicate versions in the locked workspace graph | `cargo tree --manifest-path rust/Cargo.toml --workspace --duplicates --locked` |
 | Build the two default Rust entry points | `cargo build --manifest-path rust/Cargo.toml` |
 | Check pure-Rust consumer defaults | `just check-rust-consumer` |
 | Check binding defaults without extension link mode | `just check-rust-binding-default` |
