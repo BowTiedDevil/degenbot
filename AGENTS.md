@@ -108,6 +108,43 @@ Prefer the full-suite gate (`just test-rust`, or `cargo test --workspace --manif
 
 Why: resolver v3 unifies features for `--workspace`, so its artifacts are the one warm, canonical set in `rust/target`. A `-p <crate>` selection unifies features differently (core crates lose the `pyo3` feature the binding layer enables; dep features like tokio's shrink), so cargo stores a second rlib set under different metadata hashes — alternating between the two rebuilds shared dependencies on every shared edit (measured: `-p degenbot-simulation` recompiled 6 just-built crates in ~1m; a leaf crate pays nothing). The workspace run also executes every crate's suite, catching cross-crate fallout (signature changes rippling into dependents, e.g. examples/settlement_bot) that a scoped run never sees.
 
+## Build-Artifact Housekeeping
+
+`rust/target` is the Cargo target root, but it contains several independently
+rebuildable cache families. `just gc-target` reports them separately and treats
+them differently:
+
+- **Normal Cargo** — `target/debug`, `target/release`, and
+  `target/rust-analyzer`. Direct children of `deps`, `examples`, `build`, and
+  `.fingerprint` are age-swept; `incremental` is always selected; old large
+  duplicate-hash test binaries are reduced to the newest variant.
+- **Maturin** — `target/maturin` is intentionally warm and is always protected
+  from housekeeping. Do not fold it into the normal Cargo sweep.
+- **Coverage** — `target/coverage` contains report output and the isolated
+  instrumented PyO3 build. Stale direct children and stale top-level LCOV,
+  profdata, profraw, and `coverage.xml` files are reclaimable.
+- **LLVM coverage** — `target/llvm-cov-target` is the isolated
+  `cargo-llvm-cov` Cargo target and is age-swept independently of normal Cargo.
+- **Criterion** — `target/criterion` holds benchmark history and is age-swept.
+- **Wheels** — `target/wheels` holds generated wheels and is age-swept.
+- **Documentation** — `target/doc` holds rustdoc output and is age-swept.
+
+Preview before cleanup:
+
+```bash
+DRY_RUN=1 just gc-target       # report candidates; delete nothing
+AGE=0 DRY_RUN=1 just gc-target  # include artifacts older than 24 hours
+AGE=7 just gc-target            # destructive seven-day sweep
+```
+
+`AGE=N` uses `find -mtime +N`, so `AGE=0` means older than one day rather than
+literally every file. Both modes print exact apparent bytes for each family,
+the selected reclaimable bytes, and the target size before and after. The
+repository-root `.build-number` receipt lives outside the Cargo target root and
+is therefore outside the deletion boundary; `target/maturin` is also rejected
+explicitly by the candidate selector. The housekeeping implementation is
+`scripts/gc-target.sh`.
+
 ## Rebuilding the Rust `.so` after edits
 `uv run maturin develop` and even `cargo clean -p <crate>` do **not** reliably force a from-source recompile of the PyO3 `.so` — maturin uses cached artifacts across different feature-flag hash variants and `uv sync` installs a pre-built wheel in milliseconds. An apparently successful rebuild (~0.3–6s compile, no errors) silently ships a **stale `.so`** that doesn't contain the changes. This has bitten multiple sessions.
 

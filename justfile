@@ -251,67 +251,20 @@ verify-build-fresh:
 
 # ========== Build-Artifact Housekeeping ==========
 
-# Reclaim disk space from the cargo build cache (rust/target). Incremental
-# caches are pure loss and are always removed; deps/examples/build/
-# .fingerprint entries with mtime older than {{age}} days are swept
-# cargo-sweep style - cargo transparently rebuilds anything still referenced
-# on its next use. `target/maturin` is NEVER touched so `uv run maturin
-# develop` stays warm (see the stale-`.so` rule in AGENTS.md before
-# forcing anything colder than that).
-# Running the recipe applies the defaults and frees the space immediately - no
-# preview/dry-run mode:
-#   just gc-target            # sweep artifacts older than the 7-day horizon
-#   AGE=0 just gc-target      # sweep everything except target/maturin
-# The sweep also removes duplicate-hash test binaries: cargo hashes metadata into
-# each artifact name, so feature-flag/env churn (extension-module, hotpath,
-# CI parity runs) leaves older variants of the same suite piling up at ~0.5 GiB
-# apiece. Only executables >= 10 MiB are considered, and the newest mtime in
-# each basename group is kept - anything else recompiles on its next use.
+# Reclaim disk space under the Cargo target root. Preview first; both modes
+# report every cache family and exact target/reclaimable byte counts:
+#   DRY_RUN=1 just gc-target     # report candidates; delete nothing
+#   AGE=7 just gc-target         # remove artifacts older than seven days
+#   AGE=0 DRY_RUN=1 just gc-target
+#
+# Normal Cargo caches age-sweep deps/examples/build/.fingerprint, always drop
+# incremental state, and dedupe old large test binaries. Separate rebuildable
+# families are age-swept too: coverage reports/builds, LLVM coverage, Criterion,
+# wheels, and rustdoc output. `target/maturin` is always protected, as is the
+# repository-root `.build-number` receipt outside the target root. See the
+# Build-Artifact Housekeeping section in AGENTS.md for the family policy.
 gc-target:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    age=${AGE:-7}
-    roots=(rust/target/debug rust/target/release rust/target/rust-analyzer/debug)
-    subtrees=(deps examples build .fingerprint)
-    total_kb=0
-    for root in "${roots[@]}"; do
-        [ -d "$root" ] || continue
-        inc="$root/incremental"
-        if [ -d "$inc" ]; then
-            kb=$(du -sk "$inc" | cut -f1)
-            total_kb=$((total_kb + kb))
-            rm -rf "$inc" 2>/dev/null || echo "WARN: could not fully remove $inc (a build may be writing into it)" >&2
-        fi
-        for sub in "${subtrees[@]}"; do
-            dir="$root/$sub"
-            if [ ! -d "$dir" ]; then continue; fi
-            stale=$(find "$dir" -mindepth 1 -maxdepth 1 -mtime +"${age}" 2>/dev/null || true)
-            if [ -z "$stale" ]; then continue; fi
-            kb=$(du -skc $stale 2>/dev/null | tail -1 | cut -f1)
-            total_kb=$((total_kb + kb))
-            rm -rf $stale 2>/dev/null || echo "WARN: partial removal in $dir" >&2
-        done
-    done
-    # Stale duplicate-hash variants (see the header comment). Only
-    # extensionless executables >= 10 MiB; the newest mtime per basename wins.
-    tmp=$(mktemp)
-    for dir in rust/target/debug/deps rust/target/debug/examples rust/target/release/deps rust/target/release/examples rust/target/rust-analyzer/debug/deps; do
-        if [ ! -d "$dir" ]; then continue; fi
-        find "$dir" -maxdepth 1 -type f -size +10M -printf '%T@ %f\n' \
-            | awk '{ b=$2; sub(/-[0-9a-f]{16}$/, "", b); if (b in newest) { if ($1 > newest[b]) { print path[b]; newest[b]=$1; path[b]=$2 } else print $2 } else { newest[b]=$1; path[b]=$2 } }' > "$tmp"
-        if [ -s "$tmp" ]; then
-            dupes_list=$(awk -v d="$dir" '{ print d "/" $0 }' "$tmp")
-            kb=$(du -skc $dupes_list 2>/dev/null | tail -1 | cut -f1)
-            n=$(wc -l < "$tmp")
-            rm -f $dupes_list
-            total_kb=$((total_kb + kb))
-            echo "deduped: $n stale variants in $dir"
-        fi
-    done
-    rm -f "$tmp"
-    freed=$(numfmt --to=iec "$((total_kb * 1024))" 2>/dev/null || echo "${total_kb} KiB")
-    now=$(du -sh rust/target 2>/dev/null | cut -f1 || true)
-    echo "swept: ~$freed freed at a ${age}-day horizon, dupes deduped (rust/target now: ${now:-n/a})"
+    scripts/gc-target.sh
 
 # ========== Python Development ==========
 
