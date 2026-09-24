@@ -166,7 +166,12 @@ jobs:
         run: just check-engine-impl-blocks
 
       - name: Run Clippy
-        run: just lint-rust
+        run: just lint-rust-check
+
+      - name: Assert Rust lint left the working tree clean
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
 
       - name: Run Tests
         run: just test-rust
@@ -178,8 +183,8 @@ jobs:
       - name: Run fleet budget-algebra + binding parity gates (FF-T5)
         run: |
           cd rust
-          cargo test -p degenbot-workers -- plan budget
-          cargo test -p degenbot-bot -- the_outcome_corpus lane_death
+          cargo test --locked -p degenbot-workers -- plan budget
+          cargo test --locked -p degenbot-bot -- the_outcome_corpus lane_death
 
       # Former standalone "Solver Golden Replay (F2 gate)" job; the golden
       # regression now fails the `rust` job.
@@ -193,9 +198,9 @@ jobs:
           # 25879435..25879446 by cl_capture_gen (see sidecars *.jsonl.block);
           # both the single-block offline anchor and the 156-row heavy corpus
           # gate here (2s combined).
-          cargo run -q -p degenbot-solvers --example cl_solve_replay -- \
+          cargo run --locked -q -p degenbot-solvers --example cl_solve_replay -- \
             crates/degenbot-solvers/tests/fixtures/cl_capture_offline.jsonl
-          cargo run -q -p degenbot-solvers --example cl_solve_replay -- \
+          cargo run --locked -q -p degenbot-solvers --example cl_solve_replay -- \
             crates/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl
 
         # NOTE: make THIS `rust` job the required check in branch protection
@@ -214,7 +219,7 @@ jobs:
       # pre-publish step plus the real `cargo publish` (always verified —
       # release policy forbids --no-verify on publishes).
       - name: Dry-run publish of all publishable members
-        run: cargo publish --workspace --dry-run --no-verify --allow-dirty --manifest-path rust/Cargo.toml
+        run: cargo publish --locked --workspace --dry-run --no-verify --allow-dirty --manifest-path rust/Cargo.toml
 
   cli-no-python:
     # ADR-051 D10 / ergo EA6DY7: the console must build and run with NO Python
@@ -267,7 +272,7 @@ jobs:
           echo "ok: no Python setup action or uv invocation in the cli-no-python job"
 
       - name: Build the console (Python-free)
-        run: cargo build -p degenbot-cli --manifest-path rust/Cargo.toml
+        run: cargo build --locked -p degenbot-cli --manifest-path rust/Cargo.toml
 
       - name: Run the no-Python console gate
         run: bash .github/workflows/cli-no-python-gate.sh

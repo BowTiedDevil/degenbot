@@ -42,9 +42,9 @@ bump-version version:
 # check failure, so this is the standalone-consumer gate. The example is a
 # `cargo add degenbot` showcase binary AND a CI-runnable assertion.
 test-standalone:
-    cargo run --manifest-path rust/Cargo.toml -p degenbot --example standalone_consumer
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --example standalone_consumer
     # MROOY7 5WTYYQ: the WS-ingestion crate's headless boot (no Python, no net).
-    cargo run --manifest-path rust/Cargo.toml -p degenbot-ingestion --example headless_boot
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-ingestion --example headless_boot
 
 # ========== Tests ==========
 #
@@ -107,7 +107,7 @@ test-rust: test-standalone
     # Python-tree registry file byte-for-byte (TGO5ZY: a crate can only
     # embed in-tarball files, so the embed uses the in-crate mirror)
     cmp -s src/degenbot/registry/deployments.json rust/crates/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
-    cargo test --manifest-path rust/Cargo.toml --workspace
+    cargo test --locked --manifest-path rust/Cargo.toml --workspace
 
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every publishable workspace member in dependency order.
@@ -116,17 +116,17 @@ publish-dry-run:
     #!/usr/bin/env bash
     set -euo pipefail
     cd rust
-    cargo publish --workspace --dry-run --allow-dirty
+    cargo publish --locked --workspace --dry-run --allow-dirty
 
 # Run Rust linter (clippy)
 lint-rust:
-    cargo clippy --fix --all-targets --all-features --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --locked --fix --all-targets --all-features --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
-# Lint Rust (check-only; non-mutating). Mirrors the clippy gate CI runs,
-# minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
-# CI's `lint-rust`: fails on any warning `--fix` would have auto-applied.
+# Lint Rust (check-only; non-mutating). This is the authoritative CI/pre-push
+# Clippy gate; it deliberately omits `--fix` so a gate run cannot dirty tracked
+# files. `lint-rust` above remains the explicit local fix command.
 lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity
-    cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --locked --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
 # outer #[allow] form; this closes the historical inner-attribute loophole it
@@ -135,7 +135,7 @@ lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-p
 check-no-inner-allow:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/degenbot/tests/architecture_gates.rs).
-    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_inner_allow_attributes --exact --nocapture
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_inner_allow_attributes --exact --nocapture
 
 # Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check:
@@ -146,12 +146,12 @@ fmt-check:
 check-no-pyo3-in-cores:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/degenbot/tests/architecture_gates.rs).
-    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- core_crates_are_pyo3_free_under_default_features --exact --nocapture
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- core_crates_are_pyo3_free_under_default_features --exact --nocapture
 
 check-cli-core-purity:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/degenbot/tests/architecture_gates.rs).
-    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_core_is_clap_and_indicatif_free --exact --nocapture
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_core_is_clap_and_indicatif_free --exact --nocapture
 
 # Enforce the ADR-051 D2 dependency charter for the argv facade: `degenbot-cli`
 # may name workspace members (the clap-free semantics crate + the sink crates)
@@ -163,7 +163,7 @@ check-cli-core-purity:
 check-cli-shell-purity:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/degenbot/tests/architecture_gates.rs).
-    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_shell_names_only_allowlisted_externals --exact --nocapture
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_shell_names_only_allowlisted_externals --exact --nocapture
 
 
 # Structural gate for epic 5TBT7L (arch review #11, candidate 2): the engine
@@ -182,11 +182,11 @@ check-cli-shell-purity:
 check-engine-impl-blocks:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/degenbot/tests/architecture_gates.rs).
-    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- one_engine_impl_block --exact --nocapture
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- one_engine_impl_block --exact --nocapture
 
 # Build Rust extension module (correct for Python extension)
 build-rust-extension:
-    cargo build -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
+    cargo build --locked -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 
 # Verify the installed degenbot._ffi extension was built from the current
 # Rust sources: compares the monotonic build number build.rs bakes into the
@@ -384,7 +384,7 @@ test-tier3 family='all':
         tier3-oracle/"$harness"
         python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
         export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        cargo test --manifest-path rust/Cargo.toml -p "$pkg" --test "$test"
+        cargo test --locked --manifest-path rust/Cargo.toml -p "$pkg" --test "$test"
     }
 
     if [ "{{ family }}" = "all" ]; then
@@ -797,7 +797,7 @@ setup-git-hooks:
 # anvil arm is opt-in via DEGENBOT_DUAL_DRIVER_GATE=1 + DEGENBOT_FORK_RPC
 # (tests/standalone_parity/dual_driver_gate.py --live).
 test-settlement-parity:
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-settlement-bot-example --test boot_gate
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-settlement-bot-example --test boot_gate
     uv run pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
     uv run python tests/standalone_parity/dual_driver_gate.py --recorded
 
@@ -823,7 +823,7 @@ test-settlement-parity:
 # Authoring aid only: DEGENBOT_CLI_GATE_DUMP_ACTUAL=1 prints the normalized
 # capture so the oracle can be regenerated deliberately.
 ci-no-python-cli-gate:
-    cargo build -p degenbot-cli --manifest-path rust/Cargo.toml
+    cargo build --locked -p degenbot-cli --manifest-path rust/Cargo.toml
     bash .github/workflows/cli-no-python-gate.sh
 
 # ADR-052 D6: Alembic is retired in-tree. No `alembic` reference may survive in any
@@ -832,7 +832,7 @@ ci-no-python-cli-gate:
 check-no-alembic:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/degenbot/tests/architecture_gates.rs).
-    cargo test --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_alembic_references --exact --nocapture
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_alembic_references --exact --nocapture
 
 # ========== Stub-to-Runtime Drift Gate (ADR-053, ergo XNEJRD) ==========
 #
