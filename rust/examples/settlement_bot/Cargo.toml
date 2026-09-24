@@ -4,6 +4,7 @@ description = "Rust-owned settlement-arbitrage bot — the external consumer's p
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false

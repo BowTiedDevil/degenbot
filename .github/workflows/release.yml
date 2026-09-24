@@ -81,11 +81,9 @@ jobs:
           args: --release --out dist --features pyo3/extension-module ${{ matrix.args }}
           sccache: 'true'
           # Pin the native (non-manylinux) legs to the same Rust as ci.yml's
-          # dtolnay jobs. Unpinned, each runner image builds with its own
-          # preinstalled rustc (the macos-14 image's older one left a
-          # `#[expect(dead_code)]` in degenbot-db unfulfilled and broke the
-          # wheel build under the workspace's `warnings = "deny"`).
-          rust-toolchain: stable
+          # dtolnay jobs. A floating stable toolchain would make release output
+          # depend on the runner image instead of the repository policy.
+          rust-toolchain: 1.98.1
           working-directory: .
 
       - name: Upload wheels
@@ -185,7 +183,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
 
       - name: Cache Cargo
         uses: actions/cache@v6

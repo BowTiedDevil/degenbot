@@ -26,6 +26,18 @@ Comments carry the *why* only if it outlives its lookup: no task/epic IDs (commi
 ## Commands
 See the justfile.
 
+## Rust toolchain policy
+
+The repository-root `rust-toolchain.toml` pins local development and release
+builds to Rust 1.98.1 with `clippy` and `rustfmt`. From the repository root,
+run `rustup show active-toolchain` to verify the override or `just toolchain`
+to print the active compiler and Cargo versions. The workspace MSRV remains
+Rust 1.97; the `MSRV (Rust 1.97)` CI job runs
+`cargo +1.97.0 check --manifest-path rust/Cargo.toml --workspace --all-targets --locked`.
+Release workflows use the same 1.98.1 development channel rather than floating
+`stable`. Do not raise the MSRV without an explicit dependency-compatibility
+decision and an update to this policy.
+
 ## Rust test scope
 
 Prefer the full-suite gate (`just test-rust`, or `cargo test --workspace --manifest-path rust/Cargo.toml`) to validate changes. Per-crate `cargo test -p <crate>` is fine inside a tight red-green loop, but re-run the workspace suite before declaring work done.

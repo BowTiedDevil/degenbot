@@ -36,6 +36,14 @@ bump-version version:
 
 # ========== Rust Development ==========
 
+# Print the active Rust toolchain and the repository policy. The root
+# rust-toolchain.toml pins development and release builds to Rust 1.98.1;
+# the workspace MSRV is Rust 1.97 and is checked separately in CI.
+toolchain:
+    @echo "Pinned Rust policy: 1.98.1 (workspace MSRV: 1.97)"
+    @rustc --version
+    @cargo --version
+
 # Run the standalone-Rust-consumer smoke (ADR-005 standalone claim). Proves a
 # `cargo add degenbot` consumer reaches BotState/DexIdentity/calc math with no
 # Python in the build graph. `examples/standalone_consumer.rs` panic!s on any

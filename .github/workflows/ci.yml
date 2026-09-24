@@ -43,6 +43,7 @@ jobs:
           filters: |
             rust:
               - 'rust/**'
+              - 'rust-toolchain.toml'
               - 'tier3-oracle/artifacts/**'
               # The no-Python console gate + its oracle: a gate/oracle edit must
               # re-run the `cli-no-python` job (ADR-051 D10 / ergo EA6DY7).
@@ -118,6 +119,26 @@ jobs:
       - name: Lint Markdown
         run: npx markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.venv/**" "!logs/**"
 
+  msrv:
+    name: MSRV (Rust 1.97)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust MSRV
+        uses: dtolnay/rust-toolchain@1.97.0
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: ci-rust-msrv
+
+      - name: Compile workspace at MSRV
+        run: cargo +1.97.0 check --manifest-path rust/Cargo.toml --workspace --all-targets --locked
+
   rust:
     # Consolidation of the former rust-check / rust-test /
     # solver-replay-golden / rust-build / publish-dry-run jobs, which each paid
@@ -132,7 +153,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy, rustfmt
 
@@ -238,7 +259,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -294,7 +315,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
 
       - name: Cache Cargo
         # Shared prefix so the jobs that survive the path gate chain off each
@@ -378,7 +399,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
 
       - name: Cache Cargo
         # Shared prefix so the jobs that survive the path gate chain off each
