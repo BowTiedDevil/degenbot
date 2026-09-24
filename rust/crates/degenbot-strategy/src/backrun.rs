@@ -103,6 +103,9 @@ pub struct BackrunConfig {
     pub bribe_bips: u16,
     /// Composed-bundle gas estimate priced into the net-of-gas bid gate.
     pub bundle_gas_est: u64,
+    /// The envelope gate's profit floor (wei): a declared chain whose solver
+    /// bound tops out below this skips without a simulation.
+    pub gas_floor_wei: u64,
     /// The operator's priority fee in gwei.
     pub priority_fee_gwei: u64,
     /// Bundle-sim endpoint; unset reuses the chain node.
@@ -139,6 +142,7 @@ struct BackrunKnobs {
     dry_run: bool,
     bribe_bips: u64,
     bundle_gas_est: u64,
+    gas_floor_wei: u64,
     priority_fee_gwei: u64,
     sim_url: Option<String>,
     rank_evidence: bool,
@@ -169,6 +173,7 @@ impl BackrunKnobs {
             dry_run: self.dry_run,
             bribe_bips: u16::try_from(self.bribe_bips.min(10_000)).unwrap_or(10_000),
             bundle_gas_est: self.bundle_gas_est,
+            gas_floor_wei: self.gas_floor_wei,
             priority_fee_gwei: self.priority_fee_gwei,
             sim_url: self.sim_url,
             rank_evidence: self.rank_evidence,
@@ -195,6 +200,7 @@ impl From<&degenbot_config::StrategyMevblockerBackrunConfig> for BackrunKnobs {
             dry_run: f.dry_run,
             bribe_bips: f.bribe_bips,
             bundle_gas_est: f.bundle_gas_est,
+            gas_floor_wei: f.gas_floor_wei,
             priority_fee_gwei: f.priority_fee_gwei,
             sim_url: f.sim_url.clone(),
             rank_evidence: f.rank_evidence,
@@ -219,6 +225,7 @@ impl From<&degenbot_config::StrategyPeerBackrunConfig> for BackrunKnobs {
             dry_run: f.dry_run,
             bribe_bips: f.bribe_bips,
             bundle_gas_est: f.bundle_gas_est,
+            gas_floor_wei: f.gas_floor_wei,
             priority_fee_gwei: f.priority_fee_gwei,
             sim_url: f.sim_url.clone(),
             rank_evidence: f.rank_evidence,
@@ -492,6 +499,19 @@ mod tests {
     use super::*;
     use alloy::primitives::address;
     use degenbot_decoders::target_class::{PoolProtocol, SwapLeg};
+
+    /// The facet knob reaches the driver config: the envelope-gate floor is
+    /// operator-tunable (the compiled-in 5e13 wei stance is retired), and the
+    /// declared default is 1 wei (solve-anything, gate at bid time).
+    #[test]
+    fn gas_floor_knob_flows_from_the_facet() {
+        let c = MevblockerBackrun::from_config(&BotConfig::default(), String::new()).into_config();
+        assert_eq!(c.gas_floor_wei, 1, "declared facet default");
+        let mut cfg = BotConfig::default();
+        cfg.strategy.mevblocker_backrun.gas_floor_wei = 123_456;
+        let c = MevblockerBackrun::from_config(&cfg, String::new()).into_config();
+        assert_eq!(c.gas_floor_wei, 123_456, "the knob is wired, not ignored");
+    }
 
     fn cfg() -> BackrunConfig {
         let mut c =

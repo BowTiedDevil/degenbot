@@ -51,7 +51,7 @@ use degenbot_submission::submit::{dispatch_and_submit, SubmitCandidate};
 use super::driver_boot::BackrunContext;
 use super::driver_policy::{
     bid_submission_target, build_broadcast_relays, initial_wallet_gas_cost, priority_fee_wei,
-    wallet_gas_cost_at, GAS_FLOOR_WEI,
+    wallet_gas_cost_at,
 };
 
 /// How long the live loop waits on the head watch before servicing the frame
@@ -1224,7 +1224,7 @@ impl BackrunDriver {
             owner,
             bribe_bips: cfg.bribe_bips,
             wallet_gas_cost_wei,
-            gas_floor_wei: U256::from(GAS_FLOOR_WEI),
+            gas_floor_wei: U256::from(cfg.gas_floor_wei),
             // Historical mode only when the dry-run actually pinned a head: the
             // live sim gate evaluates at `latest` and would diverge otherwise.
             fixture_mode: fixture_frames.is_some() && fixture_head.is_some(),

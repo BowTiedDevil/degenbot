@@ -381,6 +381,8 @@ crate::config_schema! {
                 doc = "The operator's priority fee in gwei, converted to wei when pricing the wallet's gas burn.";
             bundle_gas_est [u64] = 300_000, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUNDLE_GAS_EST", def = "300000",
                 doc = "Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it.";
+            gas_floor_wei [u64] = 1, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_GAS_FLOOR_WEI", def = "1",
+                doc = "The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles.";
             dry_run [bool] = false, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_DRY_RUN", def = "false",
                 doc = "Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted.";
             key_file [opt path] = None, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_KEY_FILE", def = "(unset)",
@@ -421,6 +423,8 @@ crate::config_schema! {
                 doc = "The operator's priority fee in gwei, converted to wei when pricing the wallet's gas burn.";
             bundle_gas_est [u64] = 300_000, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_BUNDLE_GAS_EST", def = "300000",
                 doc = "Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it.";
+            gas_floor_wei [u64] = 1, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_GAS_FLOOR_WEI", def = "1",
+                doc = "The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles.";
             dry_run [bool] = false, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_DRY_RUN", def = "false",
                 doc = "Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted.";
             key_file [opt path] = None, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_KEY_FILE", def = "(unset)",
@@ -799,6 +803,7 @@ mod tests {
                 "bribe_bips",
                 "priority_fee_gwei",
                 "bundle_gas_est",
+                "gas_floor_wei",
                 "dry_run",
                 "key_file",
                 "executor",
@@ -828,6 +833,7 @@ mod tests {
                 "bribe_bips",
                 "priority_fee_gwei",
                 "bundle_gas_est",
+                "gas_floor_wei",
                 "dry_run",
                 "key_file",
                 "executor",
@@ -872,6 +878,7 @@ mod tests {
             assert_eq!(b.bribe_bips, 9_800);
             assert_eq!(b.priority_fee_gwei, 2);
             assert_eq!(b.bundle_gas_est, 300_000);
+            assert_eq!(b.gas_floor_wei, 1);
             assert!(!b.dry_run);
             assert_eq!(b.key_file, None);
             assert_eq!(b.executor, "0x30b28ed8aa581fbc0191c3b532b0697773070e97");
@@ -910,6 +917,7 @@ mod tests {
         bribe_bips: u64,
         priority_fee_gwei: u64,
         bundle_gas_est: u64,
+        gas_floor_wei: u64,
         dry_run: bool,
         key_file: Option<std::path::PathBuf>,
         executor: String,
@@ -933,6 +941,7 @@ mod tests {
             bribe_bips: f.bribe_bips,
             priority_fee_gwei: f.priority_fee_gwei,
             bundle_gas_est: f.bundle_gas_est,
+            gas_floor_wei: f.gas_floor_wei,
             dry_run: f.dry_run,
             key_file: f.key_file,
             executor: f.executor,
@@ -957,6 +966,7 @@ mod tests {
             bribe_bips: f.bribe_bips,
             priority_fee_gwei: f.priority_fee_gwei,
             bundle_gas_est: f.bundle_gas_est,
+            gas_floor_wei: f.gas_floor_wei,
             dry_run: f.dry_run,
             key_file: f.key_file,
             executor: f.executor,

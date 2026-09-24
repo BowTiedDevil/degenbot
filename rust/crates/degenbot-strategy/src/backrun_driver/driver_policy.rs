@@ -15,10 +15,6 @@ use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 
 use degenbot_submission::submit::{BundleTarget, SubmissionTarget};
 
-/// The gas floor the envelope gate evaluates at (wei) - the composed strategy's
-/// standing economics (the env override did not exist upstream either).
-pub(super) const GAS_FLOOR_WEI: u64 = 50_000_000_000_000;
-
 /// The operator's priority fee converted from the facet's gwei to wei.
 pub(super) fn priority_fee_wei(cfg: &BackrunConfig) -> u128 {
     u128::from(cfg.priority_fee_gwei).saturating_mul(1_000_000_000u128)
