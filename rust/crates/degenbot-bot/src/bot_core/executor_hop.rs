@@ -17,7 +17,7 @@ pub fn v2_fee_bips(gamma: u64, denom: u64) -> u16 {
     let fee_numer = u128::from(denom - gamma);
     let fee_denom = u128::from(denom);
     let fee_bips = (fee_numer * 10_000) / fee_denom;
-    u16::try_from(fee_bips).expect("V2 fee bips are bounded by 10,000")
+    u16::try_from(fee_bips).unwrap_or(u16::MAX)
 }
 
 /// Build the executor descriptor for a V2 hop.
@@ -58,6 +58,10 @@ pub fn v3_hop(
 
 /// Build the executor descriptor for a V4 hop, including canonical pool-id
 /// formatting shared by every strategy.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the V4 executor identity is one atomic hop descriptor"
+)]
 #[must_use]
 pub fn v4_hop(
     pool_manager_address: Address,
@@ -101,30 +105,33 @@ mod tests {
         let manager = address!("0000000000000000000000000000000000000004");
         let pool_id = B256::new([0xabu8; 32]);
 
-        let HopInfo::V2(v2) = v2_hop(pool, token0, token1, 30, true) else {
-            panic!("expected V2 descriptor");
-        };
-        assert_eq!(v2.pool_address, pool);
-        assert_eq!(v2.fee, 30);
-        assert!(v2.zfo);
+        let v2_hop = v2_hop(pool, token0, token1, 30, true);
+        assert!(matches!(v2_hop, HopInfo::V2(_)));
+        if let HopInfo::V2(v2) = v2_hop {
+            assert_eq!(v2.pool_address, pool);
+            assert_eq!(v2.fee, 30);
+            assert!(v2.zfo);
+        }
 
-        let HopInfo::V3(v3) = v3_hop(pool, token0, token1, 500, false) else {
-            panic!("expected V3 descriptor");
-        };
-        assert_eq!(v3.pool_address, pool);
-        assert_eq!(v3.fee, 500);
-        assert!(!v3.zfo);
+        let v3_hop = v3_hop(pool, token0, token1, 500, false);
+        assert!(matches!(v3_hop, HopInfo::V3(_)));
+        if let HopInfo::V3(v3) = v3_hop {
+            assert_eq!(v3.pool_address, pool);
+            assert_eq!(v3.fee, 500);
+            assert!(!v3.zfo);
+        }
 
-        let HopInfo::V4(v4) = v4_hop(manager, pool_id, token0, token1, 500, 10, pool, true) else {
-            panic!("expected V4 descriptor");
-        };
-        assert_eq!(v4.pool_manager_address, manager);
-        assert_eq!(v4.pool_id_hex, format!("0x{}", "ab".repeat(32)));
-        assert_eq!(v4.currency0_address, token0);
-        assert_eq!(v4.currency1_address, token1);
-        assert_eq!(v4.fee, 500);
-        assert_eq!(v4.tick_spacing, 10);
-        assert_eq!(v4.hook_address, pool);
-        assert!(v4.zfo);
+        let v4_hop = v4_hop(manager, pool_id, token0, token1, 500, 10, pool, true);
+        assert!(matches!(v4_hop, HopInfo::V4(_)));
+        if let HopInfo::V4(v4) = v4_hop {
+            assert_eq!(v4.pool_manager_address, manager);
+            assert_eq!(v4.pool_id_hex, format!("0x{}", "ab".repeat(32)));
+            assert_eq!(v4.currency0_address, token0);
+            assert_eq!(v4.currency1_address, token1);
+            assert_eq!(v4.fee, 500);
+            assert_eq!(v4.tick_spacing, 10);
+            assert_eq!(v4.hook_address, pool);
+            assert!(v4.zfo);
+        }
     }
 }
