@@ -109,9 +109,6 @@ pub struct BackrunConfig {
     pub gas_floor_wei: u64,
     /// Chain-sample verification policy for ingress V3 tick-map admission.
     pub verify_ticks: VerifyLevel,
-    /// Max Db→head lag (blocks) the ingress closes by backfilling a pool's
-    /// Mint/Burn events before deferring to the sparse Chain arm.
-    pub ingress_backfill_max_blocks: u64,
     /// The operator's priority fee in gwei.
     pub priority_fee_gwei: u64,
     /// Bundle-sim endpoint; unset reuses the chain node.
@@ -150,7 +147,6 @@ struct BackrunKnobs {
     bundle_gas_est: u64,
     gas_floor_wei: u64,
     verify_ticks: VerifyLevel,
-    ingress_backfill_max_blocks: u64,
     priority_fee_gwei: u64,
     sim_url: Option<String>,
     rank_evidence: bool,
@@ -183,7 +179,6 @@ impl BackrunKnobs {
             bundle_gas_est: self.bundle_gas_est,
             gas_floor_wei: self.gas_floor_wei,
             verify_ticks: self.verify_ticks,
-            ingress_backfill_max_blocks: self.ingress_backfill_max_blocks,
             priority_fee_gwei: self.priority_fee_gwei,
             sim_url: self.sim_url,
             rank_evidence: self.rank_evidence,
@@ -212,7 +207,6 @@ impl From<&degenbot_config::StrategyMevblockerBackrunConfig> for BackrunKnobs {
             bundle_gas_est: f.bundle_gas_est,
             gas_floor_wei: f.gas_floor_wei,
             verify_ticks: to_verify_level(f.verify_ticks),
-            ingress_backfill_max_blocks: f.ingress_backfill_max_blocks,
             priority_fee_gwei: f.priority_fee_gwei,
             sim_url: f.sim_url.clone(),
             rank_evidence: f.rank_evidence,
@@ -248,7 +242,6 @@ impl From<&degenbot_config::StrategyPeerBackrunConfig> for BackrunKnobs {
             bundle_gas_est: f.bundle_gas_est,
             gas_floor_wei: f.gas_floor_wei,
             verify_ticks: to_verify_level(f.verify_ticks),
-            ingress_backfill_max_blocks: f.ingress_backfill_max_blocks,
             priority_fee_gwei: f.priority_fee_gwei,
             sim_url: f.sim_url.clone(),
             rank_evidence: f.rank_evidence,
@@ -561,30 +554,6 @@ mod tests {
         cfg.strategy.peer_backrun.verify_ticks = degenbot_config::VerifyTicks::Strict;
         let c = PeerBackrun::from_config(&cfg, String::new()).into_config();
         assert_eq!(c.verify_ticks, VerifyLevel::Strict, "peer facet wired too");
-    }
-
-    /// The ingress Db→head window cap reaches the driver config; the declared
-    /// default spans ~16h of mainnet blocks.
-    #[test]
-    fn ingress_backfill_max_blocks_knob_flows_from_the_facet() {
-        let c = MevblockerBackrun::from_config(&BotConfig::default(), String::new()).into_config();
-        assert_eq!(
-            c.ingress_backfill_max_blocks, 5_000,
-            "declared facet default"
-        );
-
-        let mut cfg = BotConfig::default();
-        cfg.strategy.mevblocker_backrun.ingress_backfill_max_blocks = 12_345;
-        let c = MevblockerBackrun::from_config(&cfg, String::new()).into_config();
-        assert_eq!(
-            c.ingress_backfill_max_blocks, 12_345,
-            "the knob is wired, not ignored"
-        );
-
-        let mut cfg = BotConfig::default();
-        cfg.strategy.peer_backrun.ingress_backfill_max_blocks = 321;
-        let c = PeerBackrun::from_config(&cfg, String::new()).into_config();
-        assert_eq!(c.ingress_backfill_max_blocks, 321, "peer facet wired too");
     }
 
     fn cfg() -> BackrunConfig {

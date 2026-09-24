@@ -428,8 +428,6 @@ crate::config_schema! {
                 doc = "The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles.";
             verify_ticks [enum VerifyTicks Strict Bootstrap Off] = VerifyTicks::Bootstrap, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_VERIFY_TICKS", def = "bootstrap",
                 doc = "Chain-sample verification policy for ingress V3 tick-map admission: strict verifies every admission, bootstrap verifies the first admission per pool per process then memoizes, off declares operator confidence and emits a loud boot entry. Integrity checks are unconditional under off.";
-            ingress_backfill_max_blocks [u64] = 5000, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_INGRESS_BACKFILL_MAX_BLOCKS", def = "5000",
-                doc = "Max Db-to-head lag (blocks) the ingress closes by backfilling a pool's V3 Mint/Burn events before deferring to the sparse Chain arm. A larger window stages the Chain arm and witnesses admit-v3-db-window-overflow once per block; the default spans ~16h at mainnet cadence.";
             dry_run [bool] = false, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_DRY_RUN", def = "false",
                 doc = "Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted.";
             key_file [opt path] = None, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_KEY_FILE", def = "(unset)",
@@ -474,8 +472,6 @@ crate::config_schema! {
                 doc = "The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles.";
             verify_ticks [enum VerifyTicks Strict Bootstrap Off] = VerifyTicks::Bootstrap, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_VERIFY_TICKS", def = "bootstrap",
                 doc = "Chain-sample verification policy for ingress V3 tick-map admission: strict verifies every admission, bootstrap verifies the first admission per pool per process then memoizes, off declares operator confidence and emits a loud boot entry. Integrity checks are unconditional under off.";
-            ingress_backfill_max_blocks [u64] = 5000, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_INGRESS_BACKFILL_MAX_BLOCKS", def = "5000",
-                doc = "Max Db-to-head lag (blocks) the ingress closes by backfilling a pool's V3 Mint/Burn events before deferring to the sparse Chain arm. A larger window stages the Chain arm and witnesses admit-v3-db-window-overflow once per block; the default spans ~16h at mainnet cadence.";
             dry_run [bool] = false, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_DRY_RUN", def = "false",
                 doc = "Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted.";
             key_file [opt path] = None, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_KEY_FILE", def = "(unset)",
@@ -856,7 +852,6 @@ mod tests {
                 "bundle_gas_est",
                 "gas_floor_wei",
                 "verify_ticks",
-                "ingress_backfill_max_blocks",
                 "dry_run",
                 "key_file",
                 "executor",
@@ -888,7 +883,6 @@ mod tests {
                 "bundle_gas_est",
                 "gas_floor_wei",
                 "verify_ticks",
-                "ingress_backfill_max_blocks",
                 "dry_run",
                 "key_file",
                 "executor",
@@ -935,7 +929,6 @@ mod tests {
             assert_eq!(b.bundle_gas_est, 300_000);
             assert_eq!(b.gas_floor_wei, 1);
             assert_eq!(b.verify_ticks, VerifyTicks::Bootstrap);
-            assert_eq!(b.ingress_backfill_max_blocks, 5_000);
             assert!(!b.dry_run);
             assert_eq!(b.key_file, None);
             assert_eq!(b.executor, "0x30b28ed8aa581fbc0191c3b532b0697773070e97");
@@ -976,7 +969,6 @@ mod tests {
         bundle_gas_est: u64,
         gas_floor_wei: u64,
         verify_ticks: VerifyTicks,
-        ingress_backfill_max_blocks: u64,
         dry_run: bool,
         key_file: Option<std::path::PathBuf>,
         executor: String,
@@ -1002,7 +994,6 @@ mod tests {
             bundle_gas_est: f.bundle_gas_est,
             gas_floor_wei: f.gas_floor_wei,
             verify_ticks: f.verify_ticks,
-            ingress_backfill_max_blocks: f.ingress_backfill_max_blocks,
             dry_run: f.dry_run,
             key_file: f.key_file,
             executor: f.executor,
@@ -1029,7 +1020,6 @@ mod tests {
             bundle_gas_est: f.bundle_gas_est,
             gas_floor_wei: f.gas_floor_wei,
             verify_ticks: f.verify_ticks,
-            ingress_backfill_max_blocks: f.ingress_backfill_max_blocks,
             dry_run: f.dry_run,
             key_file: f.key_file,
             executor: f.executor,

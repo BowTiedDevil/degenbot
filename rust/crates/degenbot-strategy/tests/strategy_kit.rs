@@ -88,20 +88,13 @@ fn absent_cells_stay_absent_everywhere() {
 
 #[test]
 fn resolved_kit_cells_track_the_wired_handles() {
-    let db_only = StrategyKit::resolve(None, None, None, VerifyLevel::default(), None, None, 5_000);
+    let db_only = StrategyKit::resolve(None, None, None, VerifyLevel::default(), None);
     assert_eq!(db_only.cells(), vec![StrategyCell::Provision]);
     assert!(db_only.dfs().is_none());
     assert!(db_only.registry().is_none());
 
-    let discovered = StrategyKit::resolve(
-        Some(registry()),
-        None,
-        None,
-        VerifyLevel::default(),
-        None,
-        None,
-        5_000,
-    );
+    let discovered =
+        StrategyKit::resolve(Some(registry()), None, None, VerifyLevel::default(), None);
     assert_eq!(
         discovered.cells(),
         vec![StrategyCell::Provision, StrategyCell::Discovery]

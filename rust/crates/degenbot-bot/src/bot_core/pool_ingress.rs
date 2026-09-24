@@ -96,11 +96,6 @@ impl VerifyLevel {
     }
 }
 
-/// The Db→head window the ingress will close by backfill before deferring to
-/// the Chain arm. Roughly 16 hours at mainnet cadence; the Db ledger's normal
-/// offset from the tip is well inside it.
-pub const DEFAULT_BACKFILL_MAX_BLOCKS: u64 = 5_000;
-
 /// The ingress's backfill witness sink: the strategy layer's per-hop JSONL
 /// capture, behind a trait so the ingress stays free of any capture
 /// implementation.
@@ -108,11 +103,30 @@ pub trait IngressWitness: Send + Sync {
     /// A Db-staged map was advanced from `from_block` to `to_block` by
     /// `events` decoded liquidity events.
     fn db_backfill(&self, pool_address: Address, from_block: u64, to_block: u64, events: usize);
+}
 
-    /// The Db→head window exceeded the cap (or no backfill transport is
-    /// wired), so the Chain arm stages this pool. Emitted at most once per
-    /// block.
-    fn db_window_overflow(&self, pool_address: Address, window: u64, cap: u64);
+/// A Db staging arm: the snapshot handle plus the transport that closes its
+/// lag to head.
+///
+/// The pairing is mandatory. A Db-staged map whose ledger sits behind `head`
+/// is ALWAYS advanced by the pool's decoded Mint/Burn events before
+/// admission; there is no window cap and no transport-less deferral, so a Db
+/// arm that cannot backfill is unrepresentable rather than a silent fall to
+/// the sparse Chain arm.
+pub struct DbArm {
+    db: Arc<dyn TickMapDb>,
+    backfill_source: Arc<dyn V3LiquidityLogSource>,
+}
+
+impl DbArm {
+    /// Pair a Db snapshot handle with the transport that backfills its lag.
+    #[must_use]
+    pub fn new(db: Arc<dyn TickMapDb>, backfill_source: Arc<dyn V3LiquidityLogSource>) -> Self {
+        Self {
+            db,
+            backfill_source,
+        }
+    }
 }
 
 /// A chain-sample verifier for a staged V3 tick map: the ingress composes it
@@ -257,11 +271,9 @@ struct BackfillStamp {
 /// The per-block memoized Db view: one frozen set of `LiquidityMap` reads plus
 /// the backfill windows that brought them to head (the `BotStateDb`
 /// storage-memo shape, bounded by the pools the frame touches).
-/// `overflow_reported` dedupes the once-per-block window-overflow witness.
 struct MapMemo {
     block: u64,
     maps: HashMap<Address, Option<StagedDbMap>>,
-    overflow_reported: bool,
 }
 
 impl MapMemo {
@@ -270,7 +282,6 @@ impl MapMemo {
         Self {
             block: u64::MAX,
             maps: HashMap::new(),
-            overflow_reported: false,
         }
     }
 }
@@ -278,7 +289,7 @@ impl MapMemo {
 /// The V3 pool ingress: `Db → Chain` tick-map precedence behind one interface,
 /// with a per-block memo of the Db reads.
 pub struct PoolIngress {
-    db: Option<Arc<dyn TickMapDb>>,
+    db: Option<DbArm>,
     chain: Option<Arc<dyn TickBootstrapRpc>>,
     memo: Mutex<MapMemo>,
     /// The chain-sample policy (default [`VerifyLevel::Bootstrap`]).
@@ -290,12 +301,6 @@ pub struct PoolIngress {
     /// The chain-sample verifier. Absent means the Chain arm is unconfigured
     /// and sampling is skipped (an RPC-less Db-only ingress cannot verify).
     verifier: Option<Arc<dyn TickMapSampleVerifier>>,
-    /// The Db→head backfill transport. Absent means a Db map with a non-empty
-    /// window cannot be brought current, so the Chain arm stages instead.
-    backfill_source: Option<Arc<dyn V3LiquidityLogSource>>,
-    /// The window cap: a Db→head lag larger than this defers to the Chain arm
-    /// rather than fetching a long event range.
-    backfill_max_blocks: u64,
     /// The backfill witness sink (the strategy's JSONL capture).
     witness: Option<Arc<dyn IngressWitness>>,
 }
@@ -303,9 +308,11 @@ pub struct PoolIngress {
 impl PoolIngress {
     /// Build an ingress over the Db and Chain arms. Either may be absent: no
     /// Db falls through to the Chain arm; no Chain yields an empty `Sparse`
-    /// map on a Db miss (never a fabricated word).
+    /// map on a Db miss (never a fabricated word). A [`DbArm`] carries its own
+    /// backfill transport, so the Db and its window-closing source cannot
+    /// drift apart.
     #[must_use]
-    pub fn new(db: Option<Arc<dyn TickMapDb>>, chain: Option<Arc<dyn TickBootstrapRpc>>) -> Self {
+    pub fn new(db: Option<DbArm>, chain: Option<Arc<dyn TickBootstrapRpc>>) -> Self {
         Self {
             db,
             chain,
@@ -313,8 +320,6 @@ impl PoolIngress {
             verify_level: VerifyLevel::default(),
             verified: Mutex::new(HashSet::new()),
             verifier: None,
-            backfill_source: None,
-            backfill_max_blocks: DEFAULT_BACKFILL_MAX_BLOCKS,
             witness: None,
         }
     }
@@ -349,18 +354,6 @@ impl PoolIngress {
         self.verifier = Some(verifier);
     }
 
-    /// Attach the Db→head backfill transport. Without one, a Db map that lags
-    /// head defers to the Chain arm instead of staging stale-but-authoritative
-    /// state.
-    pub fn set_backfill_source(&mut self, source: Arc<dyn V3LiquidityLogSource>) {
-        self.backfill_source = Some(source);
-    }
-
-    /// Set the Db→head window cap (default [`DEFAULT_BACKFILL_MAX_BLOCKS`]).
-    pub fn set_backfill_max_blocks(&mut self, max_blocks: u64) {
-        self.backfill_max_blocks = max_blocks;
-    }
-
     /// Attach the backfill witness sink.
     pub fn set_witness(&mut self, witness: Arc<dyn IngressWitness>) {
         self.witness = Some(witness);
@@ -379,9 +372,8 @@ impl PoolIngress {
     /// over the per-block memoized `fetch_liquidity_map`, advanced to `block`
     /// by the pool's decoded Mint/Burn events when the ledger sits behind head.
     /// A pool present in the Db with an empty map is a legitimately-empty
-    /// `Tracked` pool (never degraded to `Sparse`). A Db miss, an over-cap
-    /// window, or a missing backfill transport falls to the sync Chain arm; a
-    /// Chain miss mints an empty `Sparse` map through
+    /// `Tracked` pool (never degraded to `Sparse`). A Db miss falls to the
+    /// sync Chain arm; a Chain miss mints an empty `Sparse` map through
     /// [`chain_arm`](crate::bot_core::tick_assembly::chain_arm).
     ///
     /// # Errors
@@ -396,8 +388,7 @@ impl PoolIngress {
         block: u64,
     ) -> Result<TickMapSeed, IngressDecline> {
         // The Db arm is staged + backfilled to head under the per-block memo;
-        // a window that exceeds the cap (or has no backfill transport), a Db
-        // miss, or a corrupt map returns `None`, so the shared precedence
+        // a Db miss or a corrupt map returns `None`, so the shared precedence
         // falls to the Chain arm below.
         let staged = self.staged_db_arm(address, tick_spacing, block)?;
         let db_arm = resolve_tick_map_arm::<IngressDecline, _>(
@@ -498,9 +489,9 @@ impl PoolIngress {
 
     /// The per-block-memoized Db staging: fetch the pool's map + liquidity
     /// stamp, close the Db→head window by applying decoded Mint/Burn events,
-    /// and hand the map to the shared Tracked intake. A Db miss or an over-cap
-    /// window is `None` (the Chain arm stages instead); a map with no stamp is
-    /// staged verbatim, since its currency cannot be judged.
+    /// and hand the map to the shared Tracked intake. A Db miss is `None` (the
+    /// Chain arm stages instead); a map with no stamp is staged verbatim,
+    /// since its currency cannot be judged.
     ///
     /// # Errors
     ///
@@ -516,7 +507,6 @@ impl PoolIngress {
         if memo.block != block {
             memo.block = block;
             memo.maps.clear();
-            memo.overflow_reported = false;
         }
         if let Some(hit) = memo.maps.get(&address) {
             let hit = hit.clone();
@@ -524,16 +514,18 @@ impl PoolIngress {
             self.emit_backfill_witness(address, hit.as_ref());
             return Ok(hit);
         }
-        let Some(db) = self.db.as_ref() else {
+        let Some(arm) = self.db.as_ref() else {
             memo.maps.insert(address, None);
             return Ok(None);
         };
         // A missing stamp leaves the map's currency unknown: stage it verbatim
         // rather than inventing a zero window.
-        let stamp = db
+        let stamp = arm
+            .db
             .fetch_liquidity_update_block(address)
             .map_err(|e| IngressDecline::Db(e.to_string()))?;
-        let Some(map) = db
+        let Some(map) = arm
+            .db
             .fetch_liquidity_map(address)
             .map_err(|e| IngressDecline::Db(e.to_string()))?
         else {
@@ -545,48 +537,25 @@ impl PoolIngress {
                 map,
                 backfill: None,
             },
+            // Already at (or ahead of) head: nothing to close.
+            Some(update_block) if update_block >= block => StagedDbMap {
+                map,
+                backfill: None,
+            },
             Some(update_block) => {
-                let window = block.saturating_sub(update_block);
-                if window == 0 {
-                    StagedDbMap {
-                        map,
-                        backfill: None,
-                    }
-                } else if window > self.backfill_max_blocks {
-                    report_window_overflow_once(
-                        &mut memo,
-                        address,
-                        window,
-                        self.backfill_max_blocks,
-                        self.witness.as_deref(),
-                    );
-                    memo.maps.insert(address, None);
-                    return Ok(None);
-                } else {
-                    let Some(source) = self.backfill_source.as_ref() else {
-                        report_window_overflow_once(
-                            &mut memo,
-                            address,
-                            window,
-                            self.backfill_max_blocks,
-                            self.witness.as_deref(),
-                        );
-                        memo.maps.insert(address, None);
-                        return Ok(None);
-                    };
-                    let from_block = update_block + 1;
-                    let events = source
-                        .fetch_v3_liquidity_events(address, from_block, block)
-                        .map_err(IngressDecline::Db)?;
-                    let backfilled = backfill_liquidity_map(map, tick_spacing, &events)?;
-                    StagedDbMap {
-                        map: backfilled,
-                        backfill: Some(BackfillStamp {
-                            from_block,
-                            to_block: block,
-                            events: events.len(),
-                        }),
-                    }
+                let from_block = update_block + 1;
+                let events = arm
+                    .backfill_source
+                    .fetch_v3_liquidity_events(address, from_block, block)
+                    .map_err(IngressDecline::Db)?;
+                let backfilled = backfill_liquidity_map(map, tick_spacing, &events)?;
+                StagedDbMap {
+                    map: backfilled,
+                    backfill: Some(BackfillStamp {
+                        from_block,
+                        to_block: block,
+                        events: events.len(),
+                    }),
                 }
             }
         };
@@ -606,31 +575,6 @@ impl PoolIngress {
         ) {
             witness.db_backfill(address, stamp.from_block, stamp.to_block, stamp.events);
         }
-    }
-}
-
-/// Report an over-cap (or transport-less) Db→head window once per block: a
-/// loud WARN plus the witness. The memo's per-block dedup keeps a whole frame
-/// of stale pools to a single line.
-fn report_window_overflow_once(
-    memo: &mut MapMemo,
-    address: Address,
-    window: u64,
-    cap: u64,
-    witness: Option<&dyn IngressWitness>,
-) {
-    if memo.overflow_reported {
-        return;
-    }
-    memo.overflow_reported = true;
-    tracing::warn!(
-        pool = %address,
-        window,
-        cap,
-        "pool ingress: Db map lags head past the backfill cap (or no backfill transport is wired); the Chain arm stages this block"
-    );
-    if let Some(witness) = witness {
-        witness.db_window_overflow(address, window, cap);
     }
 }
 
@@ -767,7 +711,6 @@ mod tests {
 
     const CHAIN: i64 = 1;
     const POOL: Address = Address::new([0x11; 20]);
-    const POOL2: Address = Address::new([0x22; 20]);
 
     /// A `TickMapDb` fake with a per-call fetch counter (memo assertions).
     struct FakeDb {
@@ -880,9 +823,23 @@ mod tests {
         }
     }
 
+    /// An empty backfill transport for tests that never stage a window.
+    fn unused_source() -> Arc<FakeLogSource> {
+        Arc::new(FakeLogSource {
+            events: Vec::new(),
+            calls: Arc::new(AtomicUsize::new(0)),
+            ranges: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    /// Wrap a Db handle with its (never-invoked) backfill transport.
+    fn arm(db: Arc<dyn TickMapDb>) -> DbArm {
+        DbArm::new(db, unused_source())
+    }
+
     fn ingress_with(db: Option<Arc<dyn TickMapDb>>, fetches: &Arc<AtomicUsize>) -> PoolIngress {
         let _ = fetches;
-        PoolIngress::new(db, None)
+        PoolIngress::new(db.map(arm), None)
     }
 
     #[test]
@@ -953,7 +910,7 @@ mod tests {
             gross: 2_000,
             net: -700,
         });
-        let ingress = PoolIngress::new(Some(db), Some(chain));
+        let ingress = PoolIngress::new(Some(arm(db)), Some(chain));
         let seed = ingress.v3_tick_map(POOL, 0, 60, 100).expect("stages");
         assert_eq!(seed.source, TickMapSource::Chain);
         assert_eq!(seed.coverage, PoolTickCoverage::Sparse);
@@ -1044,14 +1001,19 @@ mod tests {
         }
     }
 
-    fn empty_db() -> (Arc<FakeDb>, Arc<AtomicUsize>) {
+    /// An empty Db arm: an empty snapshot paired with its never-invoked
+    /// backfill transport.
+    fn empty_db() -> (DbArm, Arc<AtomicUsize>) {
         let fetches = Arc::new(AtomicUsize::new(0));
         (
-            Arc::new(FakeDb {
-                maps: HashMap::new(),
-                fetches: Arc::clone(&fetches),
-                update_blocks: HashMap::new(),
-            }),
+            DbArm::new(
+                Arc::new(FakeDb {
+                    maps: HashMap::new(),
+                    fetches: Arc::clone(&fetches),
+                    update_blocks: HashMap::new(),
+                }),
+                unused_source(),
+            ),
             fetches,
         )
     }
@@ -1138,7 +1100,7 @@ mod tests {
             fetches: Arc::clone(&fetches),
             update_blocks: HashMap::new(),
         });
-        let mut ingress = PoolIngress::new(Some(db), None);
+        let mut ingress = PoolIngress::new(Some(arm(db)), None);
         ingress.set_verify_level(VerifyLevel::Off);
         let mut ws = a_new_workspace();
         let err = ingress
@@ -1190,11 +1152,10 @@ mod tests {
         }
     }
 
-    /// A witness fake recording every backfill and overflow event.
+    /// A witness fake recording every backfill event.
     #[derive(Default)]
     struct FakeWitness {
         backfills: Mutex<Vec<(Address, u64, u64, usize)>>,
-        overflows: Mutex<Vec<(Address, u64, u64)>>,
     }
 
     impl IngressWitness for FakeWitness {
@@ -1208,10 +1169,6 @@ mod tests {
             self.backfills
                 .lock()
                 .push((pool_address, from_block, to_block, events));
-        }
-
-        fn db_window_overflow(&self, pool_address: Address, window: u64, cap: u64) {
-            self.overflows.lock().push((pool_address, window, cap));
         }
     }
 
@@ -1249,8 +1206,7 @@ mod tests {
         let (db, _) = staged_db_with_window(100);
         let source_calls = Arc::new(AtomicUsize::new(0));
         let witness = Arc::new(FakeWitness::default());
-        let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_backfill_source(mint_source(&source_calls));
+        let mut ingress = PoolIngress::new(Some(DbArm::new(db, mint_source(&source_calls))), None);
         ingress.set_witness(Arc::clone(&witness) as Arc<dyn IngressWitness>);
 
         let seed = ingress.v3_tick_map(POOL, 0, 60, 102).expect("stages");
@@ -1274,7 +1230,6 @@ mod tests {
             &[(POOL, 101, 102, 1)],
             "the window is witnessed"
         );
-        assert!(witness.overflows.lock().is_empty());
 
         // The second admission in the same block reuses the memoized map but
         // re-witnesses the window (per-admission, not per-block).
@@ -1292,8 +1247,7 @@ mod tests {
         let (db, _) = staged_db_with_window(100);
         let source_calls = Arc::new(AtomicUsize::new(0));
         let witness = Arc::new(FakeWitness::default());
-        let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_backfill_source(mint_source(&source_calls));
+        let mut ingress = PoolIngress::new(Some(DbArm::new(db, mint_source(&source_calls))), None);
         ingress.set_witness(Arc::clone(&witness) as Arc<dyn IngressWitness>);
 
         let seed = ingress.v3_tick_map(POOL, 0, 60, 100).expect("stages");
@@ -1305,76 +1259,30 @@ mod tests {
             "window 0 never fetches logs"
         );
         assert!(witness.backfills.lock().is_empty());
-        assert!(witness.overflows.lock().is_empty());
     }
 
+    /// There is no window cap: a Db map whose ledger sits far behind head is
+    /// still advanced to head by its decoded events rather than deferred.
     #[test]
-    fn window_overflow_falls_to_the_chain_arm_with_one_witness() {
+    fn a_window_far_past_the_old_cap_still_backfills_to_head() {
         let (db, _) = staged_db_with_window(1);
         let source_calls = Arc::new(AtomicUsize::new(0));
         let witness = Arc::new(FakeWitness::default());
-        let chain = Arc::new(FakeChain {
-            tick: 120,
-            gross: 2_000,
-            net: -700,
-        });
-        let mut ingress = PoolIngress::new(Some(db), Some(chain));
-        ingress.set_backfill_source(mint_source(&source_calls));
+        let mut ingress = PoolIngress::new(Some(DbArm::new(db, mint_source(&source_calls))), None);
         ingress.set_witness(Arc::clone(&witness) as Arc<dyn IngressWitness>);
-        ingress.set_backfill_max_blocks(10);
 
-        let seed = ingress.v3_tick_map(POOL, 0, 60, 100).expect("stages");
-        assert_eq!(
-            seed.source,
-            TickMapSource::Chain,
-            "over-cap defers to Chain"
-        );
-        assert_eq!(seed.coverage, PoolTickCoverage::Sparse);
+        let seed = ingress.v3_tick_map(POOL, 0, 60, 100_000).expect("stages");
+        assert_eq!(seed.source, TickMapSource::Db, "no cap defers to Chain");
+        assert_eq!(seed.seed_block, 100_000, "the seed is stamped at head");
         assert_eq!(
             source_calls.load(Ordering::SeqCst),
-            0,
-            "an over-cap window does not fetch"
-        );
-        assert_eq!(
-            witness.overflows.lock().as_slice(),
-            &[(POOL, 99, 10)],
-            "the overflow is witnessed with window + cap"
-        );
-        assert!(witness.backfills.lock().is_empty());
-    }
-
-    #[test]
-    fn overflow_witness_is_once_per_block_across_pools() {
-        let fetches = Arc::new(AtomicUsize::new(0));
-        let mut maps = HashMap::new();
-        maps.insert(POOL, map_with_tick(120, 60));
-        maps.insert(POOL2, map_with_tick(120, 60));
-        let mut update_blocks = HashMap::new();
-        update_blocks.insert(POOL, 1i64);
-        update_blocks.insert(POOL2, 1i64);
-        let db = Arc::new(FakeDb {
-            maps,
-            fetches: Arc::clone(&fetches),
-            update_blocks,
-        });
-        let witness = Arc::new(FakeWitness::default());
-        let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_witness(Arc::clone(&witness) as Arc<dyn IngressWitness>);
-        ingress.set_backfill_max_blocks(10);
-
-        let _ = ingress.v3_tick_map(POOL, 0, 60, 100).expect("stages");
-        let _ = ingress.v3_tick_map(POOL2, 0, 60, 100).expect("stages");
-        assert_eq!(
-            witness.overflows.lock().len(),
             1,
-            "one overflow witness per block, not per pool"
+            "a ~100k-block window is fetched, not deferred"
         );
-
-        let _ = ingress.v3_tick_map(POOL, 0, 60, 101).expect("stages");
         assert_eq!(
-            witness.overflows.lock().len(),
-            2,
-            "a new block re-witnesses"
+            witness.backfills.lock().as_slice(),
+            &[(POOL, 2, 100_000, 1)],
+            "the whole window is witnessed"
         );
     }
 

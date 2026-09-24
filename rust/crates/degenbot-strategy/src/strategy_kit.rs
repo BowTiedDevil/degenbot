@@ -46,11 +46,9 @@
 use std::sync::Arc;
 
 use degenbot_bot::bot_core::pool_ingress::{
-    IngressWitness, PoolIngress, TickMapSampleVerifier, V3LiquidityLogSource, VerifyLevel,
+    DbArm, IngressWitness, PoolIngress, TickMapSampleVerifier, VerifyLevel,
 };
 use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_db::connection::DegenbotDb;
-use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::tick_fetch::TickBootstrapRpc;
 
 use crate::anchored_dfs::AnchoredGraph;
@@ -86,7 +84,7 @@ pub struct StrategyKit {
 }
 
 /// The ingress's backfill witness, written to the offline-review JSONL
-/// capture so a soak can count backfilled versus Chain-deferred pools.
+/// capture so a soak can count the pools the Db arm advanced to head.
 struct TraceBackfillWitness;
 
 impl IngressWitness for TraceBackfillWitness {
@@ -108,18 +106,6 @@ impl IngressWitness for TraceBackfillWitness {
             }),
         );
     }
-
-    fn db_window_overflow(&self, pool_address: alloy::primitives::Address, window: u64, cap: u64) {
-        crate::frame_pipeline::trace_jsonl(
-            "ingress_stage",
-            serde_json::json!({
-                "pool": format!("0x{}", alloy::hex::encode(pool_address)),
-                "stage": "admit-v3-db-window-overflow",
-                "window": window,
-                "cap": cap,
-            }),
-        );
-    }
 }
 
 impl StrategyKit {
@@ -130,32 +116,26 @@ impl StrategyKit {
     pub const COMPOSED_CELLS: [StrategyCell; 2] =
         [StrategyCell::Provision, StrategyCell::Discovery];
 
-    /// Resolve the kit once at boot: build the ingress over the held DB
-    /// connection, attach the chain arm and the chain-sample policy, and build
-    /// the discovery graph from the frozen registry.
+    /// Resolve the kit once at boot: build the ingress over the held DB arm
+    /// (whose paired transport closes any Db-to-head lag), attach the chain arm
+    /// and the chain-sample policy, and build the discovery graph from the
+    /// frozen registry.
     ///
     /// This is the ONE kit resolve site; a strategy composes the result and
     /// never its own ingress.
     #[must_use]
     pub fn resolve(
         registry: Option<Arc<RouteRegistry>>,
-        db: Option<Arc<DegenbotDb>>,
+        db: Option<DbArm>,
         chain: Option<Arc<dyn TickBootstrapRpc>>,
         verify: VerifyLevel,
         verifier: Option<Arc<dyn TickMapSampleVerifier>>,
-        backfill_source: Option<Arc<dyn V3LiquidityLogSource>>,
-        backfill_max_blocks: u64,
     ) -> Self {
-        let ingress_db: Option<Arc<dyn TickMapDb>> = db.map(|d| -> Arc<dyn TickMapDb> { d });
-        let mut ingress = PoolIngress::new(ingress_db, chain);
+        let mut ingress = PoolIngress::new(db, chain);
         ingress.set_verify_level(verify);
-        ingress.set_backfill_max_blocks(backfill_max_blocks);
         ingress.set_witness(Arc::new(TraceBackfillWitness));
         if let Some(verifier) = verifier {
             ingress.set_verifier(verifier);
-        }
-        if let Some(source) = backfill_source {
-            ingress.set_backfill_source(source);
         }
         let discovery = registry.map(|registry| DiscoveryHandles {
             dfs: AnchoredGraph::from_connector_index(registry.index()),

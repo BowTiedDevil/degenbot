@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun};
 use crate::strategy_kit::StrategyKit;
-use degenbot_bot::bot_core::pool_ingress::{AlloySampleVerifier, AlloyV3LiquidityLogSource};
+use degenbot_bot::bot_core::pool_ingress::{AlloySampleVerifier, AlloyV3LiquidityLogSource, DbArm};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
@@ -33,7 +33,7 @@ use super::driver_loop::BackrunDriver;
 pub const CHAIN_ID: u64 = 1;
 
 /// The `eth_getLogs` chunk size for the ingress's per-pool backfill fetch:
-/// the default ~5000-block window in ~1000-block requests.
+/// a long Db-to-head lag is closed in ~1000-block requests.
 const BACKFILL_LOG_CHUNK_BLOCKS: u64 = 1_000;
 
 /// The host-shared handles a driver start needs beyond its own config.
@@ -346,9 +346,18 @@ pub fn backrun_boot(
     // and build the discovery graph from the frozen registry. A strategy
     // composes this result and never constructs its own ingress.
     let connector_db = connector_db.map(Arc::new);
+    let db_arm = connector_db.clone().map(|db| {
+        DbArm::new(
+            db,
+            Arc::new(AlloyV3LiquidityLogSource::new(
+                Arc::clone(&join.provider),
+                BACKFILL_LOG_CHUNK_BLOCKS,
+            )),
+        )
+    });
     let kit = StrategyKit::resolve(
         route_registry,
-        connector_db.clone(),
+        db_arm,
         Some(Arc::new(AlloyTickBootstrapRpc::new(Arc::clone(
             &join.provider,
         )))),
@@ -356,11 +365,6 @@ pub fn backrun_boot(
         Some(Arc::new(AlloySampleVerifier::new(Arc::clone(
             &join.provider,
         )))),
-        Some(Arc::new(AlloyV3LiquidityLogSource::new(
-            Arc::clone(&join.provider),
-            BACKFILL_LOG_CHUNK_BLOCKS,
-        ))),
-        cfg.ingress_backfill_max_blocks,
     );
     let context = BackrunContext {
         connector_db,
