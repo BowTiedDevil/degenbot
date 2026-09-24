@@ -1514,8 +1514,7 @@ mod gate_tests {
             &[Some(hop)],
             &U256::from(x),
             &crate::runtime::SolveRuntimeConfig::default(),
-        )
-        .expect("Solidly volatile bound");
+        );
         let state = crate::mixed::SolidlyHopState {
             reserves_0: U256::from(r0),
             reserves_1: U256::from(r1),
@@ -1529,7 +1528,10 @@ mod gate_tests {
         };
         let true_out = simulate_solidly_hop(U256::from(x), &state);
         assert_eq!(true_out, U256::from(495u64));
-        assert!(bound >= true_out, "bound {bound} < true {true_out}");
+        assert!(
+            bound.is_some_and(|bound| bound >= true_out),
+            "Solidly volatile bound must dominate true output"
+        );
     }
 
     #[test]
