@@ -106,7 +106,7 @@ pub(crate) fn run_v3_registration_lifecycle<'py>(
 /// # Errors
 ///
 /// `ValueError` on a bad address/pool id; otherwise as V3. A tracked V4 pool
-/// with no `state_view` surfaces as `PyValueError` (D-C no-config fail-fast).
+/// with no verification provider surfaces as `VerificationRpcError`.
 pub(crate) fn run_v4_registration_lifecycle<'py>(
     py: Python<'py>,
     driver: &Arc<EngineDriver>,
@@ -200,8 +200,8 @@ pub(crate) fn map_driver_lifecycle_err(err: DriverError) -> PyErr {
                         .to_string(),
                 )
             }
-            RegistrationLifecycleError::MissingStateView => PyValueError::new_err(
-                "registration verify requires a StateView contract address for V4 pools".to_string(),
+            RegistrationLifecycleError::MissingTickSpacing => PyRuntimeError::new_err(
+                RegistrationLifecycleError::MissingTickSpacing.to_string(),
             ),
         },
         other => PyRuntimeError::new_err(other.to_string()),

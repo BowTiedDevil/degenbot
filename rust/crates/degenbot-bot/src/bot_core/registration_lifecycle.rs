@@ -47,35 +47,32 @@ use super::{BotState, PoolTickCoverage, TickInfo};
 ///   error. A [`LiquidityVerifyError::Mismatch`] is the **fatal tripwire** that
 ///   must block `Live` (never auto-repair); an [`LiquidityVerifyError::Rpc`] is
 ///   a transient transport failure.
-/// - [`RegistrationLifecycleError::MissingStateView`] is the D-C no-config
-///   fail-fast: a **tracked** V4 pool requires a `state_view` contract address
-///   (the `eth_call` target for V4 verification) and none was supplied. An
-///   unverifiable tracked pool must never reach `Live`.
 #[derive(Debug)]
 pub enum RegistrationLifecycleError {
     /// A seed or post-drain verify step failed (mismatch = fatal; rpc =
     /// transient).
     Verify(LiquidityVerifyError),
-    /// A tracked V4 pool needs a `state_view` address but none was supplied.
-    MissingStateView,
     /// A **tracked** pool needs a verify provider but none was configured
     /// (D-C fail-fast: no verify-disabled mode for tracked). Only fires when a
     /// Tracked pool actually reaches a verify step — Sparse / unregistered /
     /// no-pin no-op paths never need a provider.
     MissingProvider,
+    /// A registered pool's immutable tick spacing was unavailable at a verify
+    /// step. This is state corruption, never a reason to assume unit spacing.
+    MissingTickSpacing,
 }
 
 impl std::fmt::Display for RegistrationLifecycleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RegistrationLifecycleError::Verify(e) => write!(f, "registration verify failed: {e}"),
-            RegistrationLifecycleError::MissingStateView => write!(
-                f,
-                "registration verify requires a StateView contract address for V4 pools"
-            ),
             RegistrationLifecycleError::MissingProvider => write!(
                 f,
                 "registration verify requires an RPC provider for tracked pools — configure the bot's single provider"
+            ),
+            RegistrationLifecycleError::MissingTickSpacing => write!(
+                f,
+                "registration verify requires the registered pool's tick spacing"
             ),
         }
     }
@@ -108,6 +105,30 @@ impl StateLock<BotState> {
             return 0;
         };
         state.pool_tick_data_block(id)
+    }
+
+    /// V3: pool address → immutable tick spacing under one read.
+    #[must_use]
+    pub fn pool_tick_spacing_by_address(&self, address: &Address) -> Option<i32> {
+        let state = self.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let id = state.pool_id_by_address(address)?;
+        state
+            .get_v3_identity(id)
+            .map(|identity| identity.tick_spacing)
+    }
+
+    /// V4: `(pool_manager, pool_id)` → immutable tick spacing under one read.
+    #[must_use]
+    pub fn pool_tick_spacing_by_v4_key(
+        &self,
+        pool_manager: Address,
+        pool_id: &V4PoolId,
+    ) -> Option<i32> {
+        let state = self.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let id = state.v4_pool_id_by_key(pool_manager, pool_id)?;
+        state
+            .get_v4_identity(id)
+            .map(|identity| identity.pool_key.tick_spacing)
     }
 
     /// V4: `(pool_manager, pool_id)` → `pool_id` → `tick_data_block`
@@ -367,7 +388,10 @@ pub async fn run_v3_registration_lifecycle(
             let provider = provider.clone();
             async move {
                 let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
-                verify_v3_liquidity_map(&p, address, &seed, block, "seed")
+                let tick_spacing = core
+                    .pool_tick_spacing_by_address(&address)
+                    .ok_or(RegistrationLifecycleError::MissingTickSpacing)?;
+                verify_v3_liquidity_map(&p, address, &seed, tick_spacing, block, "seed")
                     .await
                     .map_err(RegistrationLifecycleError::Verify)
             }
@@ -376,7 +400,10 @@ pub async fn run_v3_registration_lifecycle(
             let provider = provider.clone();
             async move {
                 let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
-                verify_v3_liquidity_map(&p, address, &tick_data, block, "post-drain")
+                let tick_spacing = core
+                    .pool_tick_spacing_by_address(&address)
+                    .ok_or(RegistrationLifecycleError::MissingTickSpacing)?;
+                verify_v3_liquidity_map(&p, address, &tick_data, tick_spacing, block, "post-drain")
                     .await
                     .map_err(RegistrationLifecycleError::Verify)
             }
@@ -386,23 +413,20 @@ pub async fn run_v3_registration_lifecycle(
 }
 
 /// Concrete V4 registration-lifecycle: V4 twin of
-/// [`run_v3_registration_lifecycle`], with the `state_view` contract address
-/// required for the on-chain comparison. A **tracked** V4 pool with no
-/// `state_view` yields [`RegistrationLifecycleError::MissingStateView`] (D-C
-/// no-config fail-fast — a tracked pool never reaches `Live` unverified);
-/// Sparse pools never reach the verify step and never require `state_view`.
+/// [`run_v3_registration_lifecycle`]. Full-map reads target the canonical
+/// `PoolManager` and `PoolId`; `StateView` remains outside this verification
+/// seam.
 ///
 /// # Errors
 ///
 /// Returns [`RegistrationLifecycleError`]: *Verify* wraps the liquidity-verify
-/// error (mismatch = fatal tripwire), `MissingStateView` when a tracked V4
-/// pool is verified with no `state_view` supplied.
+/// error (mismatch = fatal tripwire), or `MissingProvider` when a tracked pool
+/// has no verification provider.
 pub async fn run_v4_registration_lifecycle(
     core: &StateLock<BotState>,
     provider: Option<&AlloyProvider>,
     pool_manager: Address,
     pool_id: V4PoolId,
-    state_view: Option<Address>,
     snapshot_block: Option<u64>,
 ) -> Result<(), RegistrationLifecycleError> {
     let provider = provider.cloned();
@@ -415,20 +439,40 @@ pub async fn run_v4_registration_lifecycle(
             let provider = provider.clone();
             async move {
                 let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
-                let state_view = state_view.ok_or(RegistrationLifecycleError::MissingStateView)?;
-                verify_v4_liquidity_map(&p, state_view, pool_id, &seed, block, "seed")
-                    .await
-                    .map_err(RegistrationLifecycleError::Verify)
+                let tick_spacing = core
+                    .pool_tick_spacing_by_v4_key(pool_manager, &pool_id)
+                    .ok_or(RegistrationLifecycleError::MissingTickSpacing)?;
+                verify_v4_liquidity_map(
+                    &p,
+                    pool_manager,
+                    pool_id,
+                    &seed,
+                    tick_spacing,
+                    block,
+                    "seed",
+                )
+                .await
+                .map_err(RegistrationLifecycleError::Verify)
             }
         },
         |tick_data, block| {
             let provider = provider.clone();
             async move {
                 let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
-                let state_view = state_view.ok_or(RegistrationLifecycleError::MissingStateView)?;
-                verify_v4_liquidity_map(&p, state_view, pool_id, &tick_data, block, "post-drain")
-                    .await
-                    .map_err(RegistrationLifecycleError::Verify)
+                let tick_spacing = core
+                    .pool_tick_spacing_by_v4_key(pool_manager, &pool_id)
+                    .ok_or(RegistrationLifecycleError::MissingTickSpacing)?;
+                verify_v4_liquidity_map(
+                    &p,
+                    pool_manager,
+                    pool_id,
+                    &tick_data,
+                    tick_spacing,
+                    block,
+                    "post-drain",
+                )
+                .await
+                .map_err(RegistrationLifecycleError::Verify)
             }
         },
     )
@@ -798,10 +842,10 @@ mod tests {
         );
     }
 
-    /// A missing `state_view` for a TRACKED V4 pool is the D-C no-config
-    /// fail-fast: the tripwire fires and the pool never reaches `Live`.
+    /// A missing provider for a TRACKED V4 pool is a no-config fail-fast:
+    /// the tripwire fires and the pool never reaches `Live`.
     #[tokio::test]
-    async fn tracked_v4_missing_state_view_blocks_live() {
+    async fn tracked_v4_missing_provider_blocks_live() {
         let core = new_core();
         let pm = Address::from([0x44u8; 20]);
         let pid = [0xbu8; 32];
@@ -809,25 +853,17 @@ mod tests {
             let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v4(&mut c, pm, pid, PoolTickCoverage::Tracked);
         }
-        // Emulate the production adapter's closure: no state_view → Err.
-        let result = run_cl_v4_lifecycle::<_, _, _, _, RegistrationLifecycleError>(
-            &core,
-            pm,
-            pid,
-            Some(42),
-            |_, _| async move { Err(RegistrationLifecycleError::MissingStateView) },
-            |_, _| async move { unreachable!("post-drain must not run after seed fail") },
-        )
-        .await;
+        let result =
+            crate::bot_core::run_v4_registration_lifecycle(&core, None, pm, pid, Some(42)).await;
         assert!(matches!(
             result,
-            Err(RegistrationLifecycleError::MissingStateView)
+            Err(RegistrationLifecycleError::MissingProvider)
         ));
         let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
         assert_eq!(
             c.v4_pool_id_by_key(pm, &pid).map(|id| lifecycle_v4(&c, id)),
             Some(RegistrationLifecycle::Quarantined),
-            "tracked V4 without state_view must stay Quarantined"
+            "tracked V4 without a provider must stay Quarantined"
         );
     }
 

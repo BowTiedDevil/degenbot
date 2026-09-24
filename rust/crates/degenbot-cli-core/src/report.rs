@@ -630,12 +630,11 @@ fn verification_lines(
                 expected,
                 actual,
             } => format!("  word {word}: BitmapWord expected={expected} actual={actual}"),
-            LiquidityDivergence::TickCallReverted { tick } => {
-                format!("  tick {tick}: TickCallReverted")
-            }
-            LiquidityDivergence::BitmapCallReverted { word } => {
-                format!("  word {word}: BitmapCallReverted")
-            }
+            LiquidityDivergence::TickPresence {
+                tick,
+                stored,
+                observed,
+            } => format!("  tick {tick}: TickPresence stored={stored} observed={observed}"),
         });
     }
     lines

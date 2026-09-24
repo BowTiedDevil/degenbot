@@ -24,6 +24,7 @@ pub mod backrun_feed;
 pub mod contract;
 pub mod fees;
 pub mod head_watch;
+pub mod liquidity_verifier;
 pub mod multicall3;
 pub mod offline;
 pub mod provider;

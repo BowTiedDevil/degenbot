@@ -364,13 +364,15 @@ fn divergences_to_dicts(
                 dict.set_item("expected", format!("{expected}")).unwrap();
                 dict.set_item("actual", format!("{actual}")).unwrap();
             }
-            LiquidityDivergence::TickCallReverted { tick } => {
-                dict.set_item("variant", "TickCallReverted").unwrap();
+            LiquidityDivergence::TickPresence {
+                tick,
+                stored,
+                observed,
+            } => {
+                dict.set_item("variant", "TickPresence").unwrap();
                 dict.set_item("tick", tick).unwrap();
-            }
-            LiquidityDivergence::BitmapCallReverted { word } => {
-                dict.set_item("variant", "BitmapCallReverted").unwrap();
-                dict.set_item("word", word).unwrap();
+                dict.set_item("stored", stored).unwrap();
+                dict.set_item("observed", observed).unwrap();
             }
         }
         out.push(dict.unbind());

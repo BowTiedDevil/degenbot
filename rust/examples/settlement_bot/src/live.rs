@@ -627,11 +627,9 @@ mod tests {
             .expect("test setup: register V2 pool")
     }
 
-    /// RSP-14: a V4 manager row carrying a `state_view` supplies the driver's
-    /// verify address. Before this, the live arm booted `driver.start` with
-    /// `verify_state_view = None`, so every V4 hop's verify folded the core
-    /// `RegistrationLifecycleError::MissingStateView` into a per-candidate
-    /// `register-fail` (the observed 46 612-member skip class).
+    /// A V4 manager row carrying a `state_view` supplies the driver's
+    /// scalar/bootstrap configuration. Full-map verification uses the manager
+    /// address and `PoolId`, so this setting does not select the RPC target.
     #[test]
     fn verify_state_view_resolves_from_the_first_v4_manager_row() {
         let view = Address::from([0x77u8; 20]);
@@ -642,9 +640,9 @@ mod tests {
         assert_eq!(resolve_verify_state_view(&[]), None);
     }
 
-    /// A V4 manager row without a `state_view` resolves to `None`: the driver
-    /// stays unconfigured and the core lifecycle reports its loud
-    /// `MissingStateView` refusal rather than a silently skipped verify.
+    /// A V4 manager row without a `state_view` resolves to `None`; this only
+    /// means optional scalar/bootstrap configuration is absent. Full-map
+    /// verification still targets the manager address and `PoolId`.
     #[test]
     fn verify_state_view_is_none_without_a_manager_state_view() {
         assert_eq!(

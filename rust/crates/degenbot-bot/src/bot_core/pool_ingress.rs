@@ -144,6 +144,7 @@ pub trait TickMapSampleVerifier: Send + Sync {
         &self,
         address: Address,
         ticks: &HashMap<i32, TickInfo>,
+        tick_spacing: i32,
         block: u64,
     ) -> Result<(), String>;
 }
@@ -168,11 +169,19 @@ impl TickMapSampleVerifier for AlloySampleVerifier {
         &self,
         address: Address,
         ticks: &HashMap<i32, TickInfo>,
+        tick_spacing: i32,
         block: u64,
     ) -> Result<(), String> {
-        verify_v3_liquidity_map(self.provider.as_ref(), address, ticks, block, "ingress")
-            .await
-            .map_err(|e| e.to_string())
+        verify_v3_liquidity_map(
+            self.provider.as_ref(),
+            address,
+            ticks,
+            tick_spacing,
+            block,
+            "ingress",
+        )
+        .await
+        .map_err(|e| e.to_string())
     }
 }
 
@@ -427,7 +436,8 @@ impl PoolIngress {
         head: u64,
     ) -> Result<u64, IngressDecline> {
         let seed = self.v3_tick_map(params.address, params.tick, params.tick_spacing, head)?;
-        self.verify_staged_v3(params.address, &seed).await?;
+        self.verify_staged_v3(params.address, params.tick_spacing, &seed)
+            .await?;
         Self::register_v3(ws, params, seed, head)
     }
 
@@ -466,6 +476,7 @@ impl PoolIngress {
     async fn verify_staged_v3(
         &self,
         address: Address,
+        tick_spacing: i32,
         seed: &TickMapSeed,
     ) -> Result<(), IngressDecline> {
         if self.verify_level == VerifyLevel::Off {
@@ -480,7 +491,7 @@ impl PoolIngress {
             return Ok(());
         }
         verifier
-            .verify_v3(address, &seed.ticks, seed.seed_block)
+            .verify_v3(address, &seed.ticks, tick_spacing, seed.seed_block)
             .await
             .map_err(IngressDecline::Verify)?;
         self.verified.lock().insert(address);
@@ -955,6 +966,7 @@ mod tests {
             &self,
             _address: Address,
             _ticks: &HashMap<i32, TickInfo>,
+            _tick_spacing: i32,
             _block: u64,
         ) -> Result<(), String> {
             self.calls.fetch_add(1, Ordering::SeqCst);

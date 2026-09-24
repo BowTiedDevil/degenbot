@@ -748,7 +748,6 @@ impl EngineDriver {
         pool_id: V4PoolId,
         snapshot_block: Option<u64>,
     ) -> Result<(), DriverError> {
-        let state_view = *self.verify_state_view.lock();
         let core = self.stages.core();
         let provider = self.verify_provider.lock().clone();
         let lifecycle_span = tracing::info_span!(
@@ -762,7 +761,6 @@ impl EngineDriver {
             provider.as_ref(),
             pool_manager,
             pool_id,
-            state_view,
             snapshot_block,
         )
         .instrument(lifecycle_span)

@@ -949,13 +949,9 @@ fn run() -> Result<(), String> {
             }
             None => None,
         };
-        // RSP-14: the V4 registration verify lifecycle needs a `StateView`
-        // contract address (`RegistrationLifecycleError::MissingStateView`
-        // otherwise). Python passes the chain deployment's address to
-        // `EngineRegistry.start(..., verify_state_view=...)`
-        // (`runner/bot_runner.py:470`); resolve the same fact from the
-        // enumerated `pool_managers` rows (the column the V4 build path
-        // already trusts) instead of hard-coding a chain constant.
+        // The V4 full-map verifier targets the `PoolManager` + `PoolId` from
+        // the enumerated `pool_managers` rows. `StateView` remains optional
+        // scalar/bootstrap configuration and is not a full-map target.
         let verify_state_view =
             live::resolve_verify_state_view(&discovered).map(|address| format!("{address:#x}"));
         match verify_state_view.as_deref() {
@@ -968,8 +964,8 @@ fn run() -> Result<(), String> {
                 );
             }
             None => println!(
-                "[registration] no V4 StateView in the enumeration; the V4 verify lifecycle \
-                 will refuse MissingStateView"
+                "[registration] no V4 StateView in the enumeration; full-map verification \
+                 will use the PoolManager target"
             ),
         }
         let w = driver
