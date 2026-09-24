@@ -32,6 +32,7 @@
 use alloy::primitives::{aliases::U112, Address, U256};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
+use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
 use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_pools::TickInfo;
@@ -76,6 +77,10 @@ pub enum ExplicitPoolState {
         tick_spacing: i32,
         tick_data: hashbrown::HashMap<i32, TickInfo>,
         coverage: PoolTickCoverage,
+        /// The fork's storage-slot family — the layout the producer READ;
+        /// registration stores it on the identity so every later slot-index
+        /// consumer agrees. Never defaulted (VERIFY2 T4).
+        slot_layout: ClSlotLayout,
     },
     /// V4 CL state with its manager-keyed identity: the shared
     /// [`PlanningPoolParams`] carries the generic `address` + token pair,
@@ -144,13 +149,21 @@ struct DeclaredPath {
 /// `None` of the envelope-gated solve. The frame pipeline traces this
 /// verbatim, so the per-chain dark half (declared but not solved) is legible
 /// without re-deriving a cause from a string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathReject {
     /// The declared index is out of range for this scope.
     NoSuchPath,
     /// Hop resolution left `deficits` hops unsatisfied: an unadmitted pool id
-    /// or explicit state the projection could not use.
-    UnusablePoolState { deficits: usize },
+    /// or explicit state the projection could not use. `reasons` carries the
+    /// per-hop [`crate::bot_core::resolve::MissingHopReason`] labels in hop
+    /// order so the per-chain trace names the cause, not just a count.
+    UnusablePoolState {
+        deficits: usize,
+        reasons: Vec<&'static str>,
+        /// The responsible pools' addresses (join for the per-hop labels;
+        /// the parity check cannot derive them from the declared chain).
+        pools: Vec<String>,
+    },
     /// The profit-envelope gate skipped the walk: `min_profit` sits above the
     /// path's rigorous profit bound.
     NoEnvelopeProfit,
@@ -161,7 +174,7 @@ pub enum PathReject {
 impl PathReject {
     /// The stable JSONL label (the offline-review contract).
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             Self::NoSuchPath => "no_such_path",
             Self::UnusablePoolState { .. } => "unusable_pool_state",
@@ -174,7 +187,7 @@ impl PathReject {
 /// The evaluate pipeline's verdict shapes, for observability + the gate.
 enum EvalVerbose {
     NoSuchPath,
-    Invalid(usize),
+    Invalid(Vec<(&'static str, u64)>),
     GateSkipped,
     Unsolved,
     Solved(SolvePathResult),
@@ -189,6 +202,15 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// The already-registered workspace pool id for `address`, if this scope
+    /// admitted it. A frame's cycle set can route through one pool in several
+    /// cycles; re-admission would refuse (`AlreadyRegistered`) and the caller
+    /// would wrongly drop the cycle — reuse the id instead.
+    #[must_use]
+    pub fn pool_id_by_address(&self, address: &Address) -> Option<u64> {
+        self.state.pool_id_by_address(address)
+    }
+
     /// A fresh, empty scope.
     #[must_use]
     pub fn new() -> Self {
@@ -245,6 +267,7 @@ impl Workspace {
                 tick_spacing,
                 tick_data,
                 coverage,
+                slot_layout,
             } => self
                 .state
                 .register_v3_pool(&RegisterV3PoolParams {
@@ -260,7 +283,11 @@ impl Workspace {
                     update_block: seed_block,
                     tick_data_block: None,
                     coverage,
-                    ..RegisterV3PoolParams::default()
+                    fetcher: None,
+                    factory: Address::ZERO,
+                    deployer: Address::ZERO,
+                    init_hash: alloy::primitives::B256::ZERO,
+                    slot_layout,
                 })
                 .map_err(PlanningAdmissionError::V3),
             ExplicitPoolState::V4 {
@@ -364,7 +391,19 @@ impl Workspace {
         match self.evaluate_verbose(path_idx, min_profit) {
             EvalVerbose::Solved(r) => Ok(r),
             EvalVerbose::NoSuchPath => Err(PathReject::NoSuchPath),
-            EvalVerbose::Invalid(deficits) => Err(PathReject::UnusablePoolState { deficits }),
+            EvalVerbose::Invalid(deficits) => {
+                let reasons = deficits.iter().map(|(label, _)| *label).collect();
+                let pools = deficits
+                    .iter()
+                    .filter_map(|(_, id)| self.state.pool_address_of(*id))
+                    .map(|a| format!("0x{}", alloy::hex::encode(a)))
+                    .collect();
+                Err(PathReject::UnusablePoolState {
+                    deficits: deficits.len(),
+                    reasons,
+                    pools,
+                })
+            }
             EvalVerbose::GateSkipped => Err(PathReject::NoEnvelopeProfit),
             EvalVerbose::Unsolved => Err(PathReject::Unsolved),
         }
@@ -376,7 +415,9 @@ impl Workspace {
     pub fn resolve_debug(&mut self, path_idx: usize) -> String {
         match self.evaluate_verbose(path_idx, U256::ZERO) {
             EvalVerbose::NoSuchPath => String::from("no-such-path"),
-            EvalVerbose::Invalid(deficits) => format!("invalid deficits={deficits}"),
+            EvalVerbose::Invalid(deficits) => {
+                format!("invalid deficits={} reasons={deficits:?}", deficits.len())
+            }
             EvalVerbose::GateSkipped => String::from("gate-skipped"),
             EvalVerbose::Unsolved => String::from("unsolved (solver returned None)"),
             EvalVerbose::Solved(r) => format!(
@@ -410,7 +451,12 @@ impl Workspace {
         let mut resolved = ResolvedMixedPath::default();
         let deficits = resolve_hops(&self.state, &refs, &mut resolved, &self.cache, None, true);
         if !deficits.is_empty() || !resolved.valid {
-            return EvalVerbose::Invalid(deficits.len());
+            return EvalVerbose::Invalid(
+                deficits
+                    .iter()
+                    .map(|d| (d.reason.short_label(), d.pool_key))
+                    .collect(),
+            );
         }
 
         let outcome = degenbot_solvers::mixed::solve_path_with_min_profit(
@@ -574,6 +620,39 @@ mod tests {
         assert!(w.evaluate(idx, U256::from(1_000_000u64)).is_none());
     }
 
+    /// The unusable-state reject carries per-hop deficit labels, not just a
+    /// count: the per-chain trace names WHY each hop could not project, so
+    /// a declared-but-unsolved chain is legible without re-deriving a cause.
+    #[test]
+    fn evaluate_verdict_carries_deficit_reasons() {
+        let mut w = Workspace::new();
+        let p_id = admitted_v2(&mut w, P, 500_000, 1_000);
+        let bad = w.declare(&golden_cycle(p_id, 999));
+        match w.evaluate_verdict(bad, U256::ZERO) {
+            Err(PathReject::UnusablePoolState {
+                deficits,
+                reasons,
+                pools,
+            }) => {
+                assert_eq!(deficits, 1, "one dead hop in a two-hop cycle");
+                assert_eq!(reasons, vec!["missing_state"]);
+                assert!(pools.is_empty(), "an unadmitted id has no address");
+            }
+            other => panic!("expected unusable_pool_state with reasons, got {other:?}"),
+        }
+    }
+
+    /// Overlapping cycle sets must reuse a scope pool instead of re-admitting
+    /// it: the id lookup survives a register and back-solves the funnel's
+    /// AlreadyRegistered cycle-drop.
+    #[test]
+    fn workspace_pool_id_lookup_survives_registration() {
+        let mut w = Workspace::new();
+        let p_id = admitted_v2(&mut w, P, 500_000, 1_000);
+        assert_eq!(w.pool_id_by_address(&P), Some(p_id));
+        assert_eq!(w.pool_id_by_address(&Address::new([0xEE; 20])), None);
+    }
+
     /// The typed reject surface: the gate skip and the unresolvable-path
     /// verdict keep distinct causes for the per-chain trace.
     #[test]
@@ -592,9 +671,7 @@ mod tests {
         // A hop naming an unadmitted pool leaves deficits: usable-state reject.
         let bad = w.declare(&golden_cycle(p_id, 999));
         assert_eq!(
-            w.evaluate_verdict(bad, U256::ZERO)
-                .err()
-                .map(PathReject::label),
+            w.evaluate_verdict(bad, U256::ZERO).err().map(|r| r.label()),
             Some("unusable_pool_state")
         );
     }

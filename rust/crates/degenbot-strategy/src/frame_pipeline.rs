@@ -75,7 +75,6 @@ use crate::backrun_engine::BackrunSolver;
 use alloy::primitives::{address, Address, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorOracle;
 use degenbot_bot::connector_index::V2ConnectorIndex;
-use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::frame_replay::{
@@ -460,7 +459,10 @@ pub fn build_descriptors(
             out.by_address.insert(
                 *addr,
                 PoolFamily::V3 {
-                    layout: ClSlotLayout::UniswapV3,
+                    // The edge carries the fork layout (W32CAU): a Pancake
+                    // pool replayed with Uniswap slots stages a garbage map
+                    // and every anchored chain dies sequence_unavailable.
+                    layout: e3.layout,
                     tick_spacing: e3.tick_spacing,
                     // The pre-tx hint is unknown to the pipeline; the
                     // journal's own slot0 carries the only anchor.
@@ -954,8 +956,10 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
                 "composed",
                 serde_json::json!({
                     "tx": tx_hex,
-                    "profit": c.profit_wei,
-                    "input": c.optimal_input_wei,
+                    // u128 wei values exceed serde_json's numeric range -
+                    // string them (same as the solve event's profit field).
+                    "profit": c.profit_wei.to_string(),
+                    "input": c.optimal_input_wei.to_string(),
                     "calldata": format!("0x{}", alloy::hex::encode(&c.sim_calldata)),
                     "sim": if sim_ok { "passed" } else { "failed" },
                 }),

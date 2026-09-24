@@ -424,6 +424,21 @@ impl BotState {
         self.pools.get(&pool_id)
     }
 
+    /// The registered address of a workspace pool id — the deficit trace's
+    /// id→address join so a per-hop reject names the responsible pool.
+    #[must_use]
+    pub fn pool_address_of(&self, pool_id: u64) -> Option<Address> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V2(p) => Some(p.0.address),
+            PoolEntry::V3(p) => Some(p.0.address),
+            PoolEntry::V4(p) => Some(p.0.pool_manager),
+            PoolEntry::Curve(p) => Some(p.0.address),
+            PoolEntry::BalancerWeighted(p) => Some(p.0.address),
+            PoolEntry::BalancerStable(p) => Some(p.0.address),
+            PoolEntry::AerodromeV2(p) => Some(p.0.address),
+        }
+    }
+
     /// The pool's per-mutation state nonce (AV42C7 staleness gate). Returns
     /// `0` for an unregistered pool (the dispatch seam treats an unknown
     /// pool as fresh — it will fail the path-validity check elsewhere).

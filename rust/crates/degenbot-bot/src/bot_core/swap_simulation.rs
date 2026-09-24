@@ -784,9 +784,10 @@ impl BotState {
                 tick: st.tick,
                 tick_data: st.tick_data.clone(),
                 update_block: st.update_block,
+                tick_data_block: None,
                 coverage: st.coverage,
                 fetcher: None,
-                ..Default::default()
+                slot_layout: identity.slot_layout,
             },
             self.journal_depth,
         )
@@ -935,9 +936,10 @@ impl BotState {
                                 tick: over.tick,
                                 tick_data: over.tick_data.clone(),
                                 update_block: state.update_block,
+                                tick_data_block: None,
                                 coverage: PoolTickCoverage::Sparse,
                                 fetcher: None,
-                                ..Default::default()
+                                slot_layout: identity.slot_layout,
                             },
                             self.journal_depth,
                         )
@@ -1079,9 +1081,10 @@ impl BotState {
                     tick: over.tick,
                     tick_data: over.tick_data.clone(),
                     update_block: state.update_block,
+                    tick_data_block: None,
                     coverage: PoolTickCoverage::Sparse,
                     fetcher: None,
-                    ..Default::default()
+                    slot_layout: identity.slot_layout,
                 };
                 let (_id, st) = V3PoolState::from_params(params, self.journal_depth);
                 TransientCl {

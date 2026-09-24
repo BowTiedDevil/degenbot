@@ -1069,10 +1069,31 @@ pub struct TokenEntry {
 #[cfg(test)]
 mod projection_tests {
     use super::*;
-    use crate::v3_state::{RegisterV3PoolParams, V3PoolState};
+    use crate::v3_state::{ClSlotLayout, RegisterV3PoolParams, V3PoolState};
 
     fn v3_entry() -> PoolEntry {
-        let (identity, state) = V3PoolState::from_params(RegisterV3PoolParams::default(), 8);
+        let (identity, state) = V3PoolState::from_params(
+            RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::ZERO,
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                slot_layout: ClSlotLayout::UniswapV3,
+            },
+            8,
+        );
         PoolEntry::V3(Box::new((identity, state)))
     }
 
@@ -1132,7 +1153,9 @@ mod known_word_tests {
                 tick_data_block: None,
                 coverage,
                 fetcher: None,
-                ..Default::default()
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                slot_layout: crate::v3_state::ClSlotLayout::UniswapV3,
             },
             8,
         );

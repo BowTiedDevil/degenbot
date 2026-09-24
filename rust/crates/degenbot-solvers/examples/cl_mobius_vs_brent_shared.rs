@@ -57,10 +57,11 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use alloy::primitives::{I256, U128, U256, U512};
+use alloy::primitives::{Address, I256, U128, U256, U512};
 use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::v3_state::{
-    v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapOutcome,
+    v3_simulate_swap, ClSlotLayout, PoolTickCoverage, RegisterV3PoolParams, V3PoolState,
+    V3SwapOutcome,
 };
 use degenbot_pools::TickInfo;
 use degenbot_solvers::bounded_brent::{minimize_scalar_bounded, BrentMinimize, DEFAULT_MAXFUN};
@@ -330,14 +331,23 @@ fn assemble_shared_pool(
     active: u128,
 ) -> SharedPool {
     let params = RegisterV3PoolParams {
+        address: Address::ZERO,
+        token0: Address::ZERO,
+        token1: Address::ZERO,
         fee,
         tick_spacing: spacing,
+        factory: Address::ZERO,
         sqrt_price_x96: sqrt_at(anchor),
         liquidity: active,
         tick: anchor,
         tick_data,
+        update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
-        ..Default::default()
+        fetcher: None,
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
+        slot_layout: ClSlotLayout::UniswapV3,
     };
     let (_identity, state) = V3PoolState::from_params(params, 8);
     let seq_zfo = state

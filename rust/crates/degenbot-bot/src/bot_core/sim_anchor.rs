@@ -494,6 +494,7 @@ mod tests {
             address: V3,
             fee: 3000,
             tick_spacing: 60,
+            layout: degenbot_pools::v3_state::ClSlotLayout::UniswapV3,
         });
         let registry = RouteRegistry::new(index);
 

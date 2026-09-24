@@ -475,6 +475,30 @@ pub fn verify_v2_pool_address(
     }
 }
 
+/// The boot layout probe's verdict for one sampled fork pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutVerdict {
+    /// The layout's liquidity slot holds the on-chain value.
+    Conforms,
+    /// Both sources read zero — a dead pool agrees with any layout, so this
+    /// sample proves nothing and must be skipped.
+    Inconclusive,
+    /// On-chain `liquidity()` and the layout's storage slot disagree — the
+    /// fork table label is dishonest.
+    Mismatch,
+}
+
+/// Classify one sampled pool: on-chain `liquidity()` vs the word read from
+/// the layout's liquidity slot (the caller pre-masks to the field width).
+#[must_use]
+pub fn layout_verdict(onchain_liq: u128, stored_liq: u128) -> LayoutVerdict {
+    match (onchain_liq, stored_liq) {
+        (0, 0) => LayoutVerdict::Inconclusive,
+        (a, b) if a == b => LayoutVerdict::Conforms,
+        _ => LayoutVerdict::Mismatch,
+    }
+}
+
 /// Recompute the V3 CREATE2 address for a pool registration against the
 /// JSON-sourced deployer + init hash. Mirrors [`verify_v2_pool_address`] with
 /// the V3 salt (tokens + fee).

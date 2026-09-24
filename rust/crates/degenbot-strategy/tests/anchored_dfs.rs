@@ -42,6 +42,7 @@ fn v3_edge(pool_id: u64, t0: u64, t1: u64, addr_seed: u8) -> V3Edge {
         address: Address::new([addr_seed; 20]),
         fee: 500,
         tick_spacing: 10,
+        layout: degenbot_pools::v3_state::ClSlotLayout::UniswapV3,
     }
 }
 

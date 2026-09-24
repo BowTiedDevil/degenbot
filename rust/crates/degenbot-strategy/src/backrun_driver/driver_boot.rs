@@ -173,6 +173,18 @@ pub async fn resolve_backrun_registry(
             return None;
         }
     };
+    // Fail-loud fork-table honesty check (Pancake replay bug class): a
+    // layout mislabel reads garbage and silently kills every anchored
+    // chain, so the lane refuses to serve until the probe agrees with the
+    // chain.
+    if let Err(probe) = ix.verify_sampled_layouts(provider).await {
+        tracing::error!(
+            probe = %probe,
+            "V3 fork layout probe FAILED - lane disabled until the fork table is fixed"
+        );
+        return None;
+    }
+    tracing::info!("v3 fork layout probe: sampled layouts agree with the chain");
     ix.set_ranker(Arc::new(OnChainLiquidityRanker::new(Arc::clone(provider))));
     let registry = Arc::new(RouteRegistry::new(ix));
     tracing::info!(edges = registry.index().len(), "connector index loaded");

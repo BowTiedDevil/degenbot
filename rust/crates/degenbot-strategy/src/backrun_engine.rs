@@ -12,7 +12,7 @@
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::v3_state::PoolTickCoverage;
+use degenbot_pools::v3_state::{ClSlotLayout, PoolTickCoverage};
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 use degenbot_solvers::mixed::SolvePathResult;
 
@@ -50,6 +50,15 @@ impl BackrunSolver {
         Self {
             ws: Workspace::new(),
         }
+    }
+
+    /// The already-registered workspace pool id for `address`, if this
+    /// frame's scope admitted it. Cycle sets overlap; a second cycle through
+    /// the same cold connector must reuse the admitted pool, not re-admit
+    /// it (`AlreadyRegistered` would otherwise drop the cycle).
+    #[must_use]
+    pub fn registered_pool_id(&self, address: &Address) -> Option<u64> {
+        self.ws.pool_id_by_address(address)
     }
 
     /// Admit a V2 pool with the canonical 0.3% fee preset. Per-exchange fee
@@ -147,6 +156,53 @@ impl BackrunSolver {
 impl Default for BackrunSolver {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Why a cold-connector V3 hop could not be raw-RPC admitted: the ladder
+/// fetch (`admit_v3_full`) names the refused step, so the per-hop JSONL
+/// trace distinguishes a network/spec failure from a registration refusal
+/// (an `AlreadyRegistered` duplicate is a different beast from a dead
+/// archive-node call and must not share one opaque label).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum V3LadderReject {
+    /// The `slot0`/`liquidity` eth_call failed.
+    Slot0Fetch(String),
+    /// A slot0/liquidity value did not fit its wire type.
+    Slot0Width,
+    /// A tick-bitmap word fetch failed.
+    BitmapFetch { word: i16, detail: String },
+    /// An initialized-tick fetch failed.
+    TickFetch { tick: i32, detail: String },
+    /// The workspace refused the fetched state (spec violation,
+    /// `AlreadyRegistered`, ...).
+    Register(String),
+}
+
+impl V3LadderReject {
+    /// The stable JSONL `stage` label for the refused step.
+    #[must_use]
+    pub fn stage(&self) -> &'static str {
+        match self {
+            Self::Slot0Fetch(_) => "admit-v3-slot0-fetch",
+            Self::Slot0Width => "admit-v3-slot0-width",
+            Self::BitmapFetch { .. } => "admit-v3-bitmap-fetch",
+            Self::TickFetch { .. } => "admit-v3-tick-fetch",
+            Self::Register(_) => "admit-v3-register",
+        }
+    }
+
+    /// The step's error detail (empty for width refusals, whose identity is
+    /// the stage itself).
+    #[must_use]
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Slot0Fetch(d)
+            | Self::BitmapFetch { detail: d, .. }
+            | Self::TickFetch { detail: d, .. }
+            | Self::Register(d) => d.clone(),
+            Self::Slot0Width => "slot0/liquidity value out of type range".into(),
+        }
     }
 }
 
@@ -299,6 +355,7 @@ impl BackrunSolver {
         tick: i32,
         tick_data: hashbrown::HashMap<i32, TickInfo>,
         seed_block: u64,
+        slot_layout: ClSlotLayout,
     ) -> Option<u64> {
         self.ws
             .register_with_state(
@@ -315,6 +372,7 @@ impl BackrunSolver {
                     tick_spacing,
                     tick_data,
                     coverage: PoolTickCoverage::Sparse,
+                    slot_layout,
                 },
                 seed_block,
             )
@@ -397,37 +455,51 @@ impl BackrunSolver {
         tick_spacing: i32,
         sqrt_override: Option<U256>,
         head: u64,
-    ) -> Option<u64> {
+        slot_layout: ClSlotLayout,
+    ) -> Result<u64, V3LadderReject> {
         use degenbot_rpc::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v3_slot0_liquidity};
 
         let (sqrt_price_x96, tick, liquidity) = fetch_v3_slot0_liquidity(provider, &address, None)
             .await
-            .ok()?;
-        let liquidity = u128::try_from(liquidity).ok()?;
+            .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
+        let liquidity = u128::try_from(liquidity).map_err(|_| V3LadderReject::Slot0Width)?;
 
         // Sparse coverage: the current word +- 1 (a 3-word window around the
         // active range; the exact-sim oracle is the truth bar behind this).
-        let tick_i32 = i32::try_from(tick).ok()?;
+        let tick_i32 = i32::try_from(tick).map_err(|_| V3LadderReject::Slot0Width)?;
         let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
             tick_i32,
             tick_spacing,
         );
-        let word_i16 = i16::try_from(word).ok()?;
+        let word_i16 = i16::try_from(word).map_err(|_| V3LadderReject::Slot0Width)?;
         let mut tick_data: hashbrown::HashMap<i32, TickInfo> = hashbrown::HashMap::new();
         for w in [
             word_i16.saturating_sub(1),
             word_i16,
             word_i16.saturating_add(1),
         ] {
-            let bitmap = fetch_tick_bitmap(provider, &address, w, None).await.ok()?;
+            let bitmap = fetch_tick_bitmap(provider, &address, w, None)
+                .await
+                .map_err(|e| V3LadderReject::BitmapFetch {
+                    word: w,
+                    detail: e.to_string(),
+                })?;
             for bit in 0..256usize {
                 if !bitmap.bit(bit) {
                     continue;
                 }
-                let active_tick = ((i32::from(w) << 8) + i32::try_from(bit).ok()?) * tick_spacing;
+                let active_tick = ((i32::from(w) << 8)
+                    + i32::try_from(bit).map_err(|_| V3LadderReject::BitmapFetch {
+                        word: w,
+                        detail: "bit index out of i32".into(),
+                    })?)
+                    * tick_spacing;
                 let (gross, net) = fetch_tick_data(provider, &address, active_tick, None)
                     .await
-                    .ok()?;
+                    .map_err(|e| V3LadderReject::TickFetch {
+                        tick: active_tick,
+                        detail: e.to_string(),
+                    })?;
                 tick_data.insert(
                     active_tick,
                     TickInfo {
@@ -454,10 +526,11 @@ impl BackrunSolver {
                     tick_spacing,
                     tick_data,
                     coverage: PoolTickCoverage::Sparse,
+                    slot_layout,
                 },
                 head,
             )
-            .ok()
+            .map_err(|e| V3LadderReject::Register(format!("{e:?}")))
     }
 }
 
@@ -630,6 +703,41 @@ pub fn build_candidate_calldata(
 mod tests {
     use super::*;
     use alloy::primitives::{address, aliases::U112};
+
+    /// The ladder reject is legible: each stage maps to a distinct JSONL
+    /// `stage` label so a failed hop admission names the refused step
+    /// (RPC fetch vs spec/width vs registration) instead of one lumped
+    /// opaque label.
+    #[test]
+    fn ladder_reject_stages_report_the_refused_step() {
+        assert_eq!(
+            V3LadderReject::Slot0Fetch("timeout".into()).stage(),
+            "admit-v3-slot0-fetch"
+        );
+        assert_eq!(V3LadderReject::Slot0Width.stage(), "admit-v3-slot0-width");
+        assert_eq!(
+            V3LadderReject::BitmapFetch {
+                word: -1,
+                detail: "revert".into()
+            }
+            .stage(),
+            "admit-v3-bitmap-fetch"
+        );
+        assert_eq!(
+            V3LadderReject::TickFetch {
+                tick: 60,
+                detail: "revert".into()
+            }
+            .stage(),
+            "admit-v3-tick-fetch"
+        );
+        let reg = V3LadderReject::Register("AlreadyRegistered { 0xb001 }".into());
+        assert_eq!(reg.stage(), "admit-v3-register");
+        assert!(
+            reg.detail().contains("AlreadyRegistered"),
+            "detail survives"
+        );
+    }
 
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     const TOK: Address = address!("0000000000000000000000000000000000000aa1");

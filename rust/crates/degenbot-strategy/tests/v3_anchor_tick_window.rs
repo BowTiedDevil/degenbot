@@ -87,6 +87,7 @@ fn runtime() -> (MarketContext, u64, u64) {
         address: ANCHOR,
         fee: ANCHOR_FEE,
         tick_spacing: ANCHOR_SPACING,
+        layout: degenbot_pools::v3_state::ClSlotLayout::UniswapV3,
     });
     index.push_edge(V2Edge {
         pool_id: 202,
@@ -190,9 +191,11 @@ fn v3_anchor_sparse_tick_window_admits_and_solves() {
         stats.dfs_evaluated, 0,
         "an anchor with no modelable tick ranges must not evaluate"
     );
-    match stats.chains[0].reject {
-        Some(degenbot_strategy::backrun_engine::PathReject::UnusablePoolState { deficits }) => {
-            assert!(deficits >= 1, "the unusable anchor is the deficit");
+    match &stats.chains[0].reject {
+        Some(degenbot_strategy::backrun_engine::PathReject::UnusablePoolState {
+            deficits, ..
+        }) => {
+            assert!(*deficits >= 1, "the unusable anchor is the deficit");
         }
         other => panic!("expected unusable_pool_state, got {other:?}"),
     }
@@ -222,6 +225,32 @@ fn v3_anchor_sparse_tick_window_admits_and_solves() {
         "the chain-view window makes the anchor modelable"
     );
     assert!(stats.chains[0].reject.is_none());
+}
+
+/// The `anchor_ticks` probe must tolerate u128-scale liquidity: real pools
+/// carry >> u64::MAX liquidity, and `serde_json::json!` errors ("number out
+/// of range") on such u128s — which panicked the io-rt thread and stopped
+/// the feed live. Pinned by driving an u128::MAX anchor through admission.
+#[test]
+fn anchor_admission_survives_u128_liquidity() {
+    let (rt, _tok, _weth) = runtime();
+    let mut post = anchor_post_state();
+    if let PoolPostKind::Typed(TypedPoolPost::V3 { liquidity, .. }) = &mut post.kind {
+        *liquidity = Some(u128::MAX);
+    }
+    let affected = admit_extracted(
+        &rt,
+        &mut BackrunSolver::new(),
+        &[post],
+        SEED,
+        "0xpin",
+        Some(&TwoTickWindow),
+    );
+    assert_eq!(
+        affected.len(),
+        1,
+        "u128 liquidity stages and traces cleanly"
+    );
 }
 
 /// The merged window never overwrites a replayed touched tick (post-frame

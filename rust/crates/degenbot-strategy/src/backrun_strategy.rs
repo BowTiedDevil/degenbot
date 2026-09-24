@@ -284,16 +284,57 @@ pub fn admit_extracted(
                 // the frames replay over — swaps never change a tick's stored
                 // net/gross, so the window is valid post-frame. Replayed
                 // touched ticks win (they are the post-frame facts).
+                let crossed = touched_ticks.len();
+                let mut windowed = 0usize;
+                trace_jsonl(
+                    "anchor_stage",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool": format!("0x{}", alloy::hex::encode(st.address)),
+                        "stage": "window-enter",
+                    }),
+                );
                 if let Some(window) = tick_window {
-                    for (tick, info) in
-                        window.tick_window(st.address, *layout, spacing, tk, seed_block)
-                    {
+                    let window_view =
+                        window.tick_window(st.address, *layout, spacing, tk, seed_block);
+                    windowed = window_view.len();
+                    for (tick, info) in window_view {
                         tick_data.entry(tick).or_insert(info);
                     }
                 }
+                // One probe line per staged anchor: crossed vs window tick
+                // counts + the staged floor. A staged map too small to build
+                // a solver range sequence shows up here as a small
+                // `merged` with a failing `windowed` void — discriminating
+                // an empty window (feed/replay hole) from a solver-side
+                // sequence bug on a rich map.
+                trace_jsonl(
+                    "anchor_ticks",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool": format!("0x{}", alloy::hex::encode(st.address)),
+                        "layout": format!("{layout:?}"),
+                        "spacing": spacing,
+                        "tick": tk,
+                        // u128 exceeds serde_json's numeric range on real
+                        // pools - string it like every other wei field.
+                        "liquidity": liq.to_string(),
+                        "crossed": crossed,
+                        "windowed": windowed,
+                        "merged": tick_data.len(),
+                    }),
+                );
+                trace_jsonl(
+                    "anchor_stage",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool": format!("0x{}", alloy::hex::encode(st.address)),
+                        "stage": "window-exit",
+                    }),
+                );
                 let Some(p_id) = solver.admit_v3_explicit(
                     st.address, token0, token1, edge.fee, spacing, sqrt, liq, tk, tick_data,
-                    seed_block,
+                    seed_block, *layout,
                 ) else {
                     skip(st.address, "v3-admit");
                     continue;
@@ -741,6 +782,20 @@ async fn admit_hop_pool(
     trace_tx: &str,
 ) -> Option<u64> {
     let address = *hop.address();
+    // Overlap reuse first: a pool this frame already admitted is usable NOW.
+    // Re-admitting it refuses (`AlreadyRegistered`) and dropping the cycle
+    // was the funnel's silent killer — every overlapping cycle died.
+    if let Some(id) = solver.registered_pool_id(&address) {
+        trace_jsonl(
+            "hop_reuse",
+            serde_json::json!({
+                "tx": trace_tx,
+                "pool": format!("0x{}", alloy::hex::encode(address)),
+                "workspace_pool_id": id,
+            }),
+        );
+        return Some(id);
+    }
     match hop {
         ResolvedHop::V2(e) => {
             // The frame-replay scratch serves a connector the replay already
@@ -797,13 +852,9 @@ async fn admit_hop_pool(
                 trace_admit_fail(trace_tx, address, "token-join", "V3 token id unresolved");
                 return None;
             };
-            if let Some((sqrt, tk, liq, tick_data)) = read_v3_view(
-                scratch,
-                e.address,
-                ClSlotLayout::UniswapV3,
-                e.tick_spacing,
-                head,
-            ) {
+            if let Some((sqrt, tk, liq, tick_data)) =
+                read_v3_view(scratch, e.address, e.layout, e.tick_spacing, head)
+            {
                 solver.admit_v3_explicit(
                     e.address,
                     token0,
@@ -815,9 +866,10 @@ async fn admit_hop_pool(
                     tk,
                     tick_data,
                     head,
+                    e.layout,
                 )
             } else {
-                let admitted = solver
+                match solver
                     .admit_v3_full(
                         provider,
                         e.address,
@@ -827,12 +879,19 @@ async fn admit_hop_pool(
                         e.tick_spacing,
                         None,
                         head,
+                        e.layout,
                     )
-                    .await;
-                if admitted.is_none() {
-                    trace_admit_fail(trace_tx, address, "admit-v3", "view + full ladder failed");
+                    .await
+                {
+                    Ok(id) => Some(id),
+                    Err(reject) => {
+                        // The refused step, not one lumped label: an archive
+                        // RPC failure, a width refusal, and an
+                        // AlreadyRegistered duplicate will not share a line.
+                        trace_admit_fail(trace_tx, address, reject.stage(), &reject.detail());
+                        None
+                    }
                 }
-                admitted
             }
         }
     }
@@ -1287,7 +1346,14 @@ impl PendingTxReaction for BackrunStrategy {
                     .chains
                     .iter()
                     .enumerate()
-                    .map(|(i, c)| serde_json::json!({
+                    .map(|(i, c)| {
+                        let deficit_reasons = match &c.reject {
+                            Some(PathReject::UnusablePoolState { reasons, .. }) => {
+                                (!reasons.is_empty()).then(|| reasons.clone())
+                            }
+                            _ => None,
+                        };
+                        serde_json::json!({
                         "pools": c
                             .pools
                             .iter()
@@ -1296,12 +1362,20 @@ impl PendingTxReaction for BackrunStrategy {
                         "touched_legs": intents.touched_legs.get(i).copied().unwrap_or(0),
                         "evaluated": c.evaluated,
                         "profit_wei": c.profit_wei.map(|p| p.to_string()),
-                        "reject": c.reject.map(PathReject::label),
+                        "reject": c.reject.as_ref().map(|r| r.label()),
                         "reject_deficits": match c.reject {
-                            Some(PathReject::UnusablePoolState { deficits }) => Some(deficits),
+                            Some(PathReject::UnusablePoolState { deficits, .. }) => Some(deficits),
                             _ => None,
                         },
-                    }))
+                        "reject_deficit_reasons": deficit_reasons,
+                        "reject_deficit_pools": match &c.reject {
+                            Some(PathReject::UnusablePoolState { pools, .. }) => {
+                                (!pools.is_empty()).then(|| pools.clone())
+                            }
+                            _ => None,
+                        },
+                        })
+                    })
                     .collect::<Vec<_>>(),
                 "best": aggregate.best.is_some(),
                 "best_profit_wei": aggregate.best.as_ref().map(|b| b.profit.to_string()),

@@ -158,13 +158,14 @@ impl crate::liquidity_event::LiquidityEvent for BufferedV3PoolEvent {
 /// 0x1ac1A8FE, VERIFY2 T4).
 ///
 /// The layout is immutable per pool → carried on [`V3PoolIdentity`].
-/// Defaults to [`ClSlotLayout::UniswapV3`] (the canonical mainnet layout;
-/// also the right default for test fixtures). Slot constants single-source
-/// the fork table in [`crate::v3_pancakeswap_storage_slots`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Deliberately NO `Default`: a fork slot layout must always be chosen
+/// explicitly by the caller (roster row, registration params, fixture) — an
+/// implicit Uniswap assumption is exactly how the Pancake V3 replay bug
+/// shipped. Slot constants single-source the fork table in
+/// [`crate::v3_pancakeswap_storage_slots`].
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum ClSlotLayout {
     /// Canonical Uniswap V3 — one-word slot0, liquidity@4, ticks@5.
-    #[default]
     UniswapV3,
     /// `PancakeSwap` V3 fork — two-word slot0, liquidity@5, ticks@6.
     PancakeV3,
@@ -204,7 +205,15 @@ impl ClSlotLayout {
 /// Parameters for registering a V3 pool with `BotState`.
 ///
 /// Bundles all fields to satisfy `clippy::too_many_arguments`.
-#[derive(Clone, Debug, Default)]
+///
+/// The struct-update default serves sim/fixture plumbing only: every
+/// PRODUCTION registration either flows through [`RegisterV3PoolParams`]
+/// built from a roster edge or a CREATE2-verified builder — both of which
+/// set `slot_layout` from the fork table — or through
+/// `degenbot_bot::bot_core::planning::ExplicitPoolState::V3`, whose
+/// `slot_layout` field is mandatory. A fixture defaulting to
+/// `ClSlotLayout::UniswapV3` must never reach a real fork pool.
+#[derive(Clone, Debug)]
 pub struct RegisterV3PoolParams {
     pub address: Address,
     pub token0: Address,
@@ -248,10 +257,39 @@ pub struct RegisterV3PoolParams {
     /// `UNISWAP_V3_MAINNET_INIT_HASH` fallback (the retired Python `ClassVar`'s
     /// documented default for non-JSON V3 pools).
     pub init_hash: B256,
-    /// The pool contract's storage-slot layout family (VERIFY2 T4). Defaults
-    /// to [`ClSlotLayout::UniswapV3`]; the Rust builder + the FFI register
-    /// resolve it from the deployment table / an explicit override.
+    /// The pool contract's storage-slot layout family (VERIFY2 T4). The
+    /// struct-update default is for fixtures only — production
+    /// registrations set it from the fork table
+    /// (`V3_VARIANTS` in `degenbot-bot::connector_index`).
     pub slot_layout: ClSlotLayout,
+}
+
+impl Default for RegisterV3PoolParams {
+    /// The fixture/struct-update base: fixture geometry is Uniswap-shaped.
+    /// PRODUCTION registrations must not rely on this — `slot_layout` is set
+    /// from the fork table by the roster edge or the CREATE2-verified
+    /// builder (see the type's doc).
+    fn default() -> Self {
+        Self {
+            address: Address::ZERO,
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: hashbrown::HashMap::new(),
+            update_block: 0,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
+            deployer: Address::ZERO,
+            init_hash: B256::ZERO,
+            slot_layout: ClSlotLayout::UniswapV3,
+        }
+    }
 }
 
 /// Typed rejection from [`crate::BotState::register_v3_pool`] (the

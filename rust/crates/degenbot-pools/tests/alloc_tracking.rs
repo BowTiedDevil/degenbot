@@ -16,12 +16,12 @@
 use degenbot_pools::registry::ConcentratedLiquidityPoolMut;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v2_state::V2PoolState;
-use degenbot_pools::v3_state::{RegisterV3PoolParams, V3PoolState};
+use degenbot_pools::v3_state::{ClSlotLayout, PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
 use degenbot_pools::TickInfo;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use alloy::primitives::{U128, U256};
+use alloy::primitives::{Address, U128, U256};
 use hashbrown::HashMap as HB;
 
 struct Tracking;
@@ -90,8 +90,23 @@ fn seeded_tick_map(initialized_ticks: usize) -> HB<i32, TickInfo> {
 
 fn v3_params_with(tick_data: HB<i32, TickInfo>) -> RegisterV3PoolParams {
     RegisterV3PoolParams {
+        address: Address::ZERO,
+        token0: Address::ZERO,
+        token1: Address::ZERO,
+        fee: 3000,
+        tick_spacing: 60,
+        factory: Address::ZERO,
+        sqrt_price_x96: U256::from(1u128) << 96,
+        liquidity: 10_000_000_000_000u128,
+        tick: 0,
         tick_data,
-        ..RegisterV3PoolParams::default()
+        update_block: 0,
+        tick_data_block: None,
+        coverage: PoolTickCoverage::Sparse,
+        fetcher: None,
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
+        slot_layout: ClSlotLayout::UniswapV3,
     }
 }
 

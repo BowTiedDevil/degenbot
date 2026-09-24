@@ -22,8 +22,10 @@ use async_trait::async_trait;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::error::DbError;
 use degenbot_pathfinding::PoolKind;
+use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_uniswap::deployments::{layout_verdict, LayoutVerdict};
 use parking_lot::RwLock;
 
 /// `keccak256("getReserves()")[..4]` — the V2 pair depth probe (asserted
@@ -593,6 +595,11 @@ pub struct V3Edge {
     /// The pool's fee, `bips` of 1e6 (3000 = 0.3%) -- the composer's unit.
     pub fee: u32,
     pub tick_spacing: i32,
+    /// The fork's storage-slot layout — the replay scratch reads
+    /// `liquidity`/tick words at layout-specific slots, so a mislabeled
+    /// Pancake edge stages a garbage map and every anchored chain dies
+    /// `sequence_unavailable`.
+    pub layout: ClSlotLayout,
 }
 
 impl V2ConnectorIndex {
@@ -603,22 +610,21 @@ impl V2ConnectorIndex {
     ///
     /// DB failures propagate (`DbError`).
     pub fn load_v3(&mut self, db: &DegenbotDb, chain_id: i64) -> Result<(), DbError> {
-        // Every supported V3 variant. The registry's `*-v3` pool types each
-        // get their own variant table with an IDENTICAL column shape
-        // (`fee_token0`/`fee_denominator` on one 1e6 denominator, so the fee
-        // reads directly); a missing table for an unsupported variant is a
-        // schema state this build never creates — refused via `?`, never
-        // skipped.
-        const V3_VARIANT_TABLES: [&str; 4] = [
-            "uniswap_v3_pools",
-            "pancakeswap_v3_pools",
-            "sushiswap_v3_pools",
-            "aerodrome_v3_pools",
+        // Every supported V3 variant, WITH its fork's storage-slot layout. A
+        // variant without a row here is unindexed — a fork added to this
+        // table MUST carry its layout, because a layout mislabel stages a
+        // garbage tick map and silently kills every anchored chain
+        // (`sequence_unavailable`). Adding a V3 fork = one row, one layout.
+        const V3_VARIANTS: &[(&str, ClSlotLayout)] = &[
+            ("uniswap_v3_pools", ClSlotLayout::UniswapV3),
+            ("pancakeswap_v3_pools", ClSlotLayout::PancakeV3),
+            ("sushiswap_v3_pools", ClSlotLayout::UniswapV3),
+            ("aerodrome_v3_pools", ClSlotLayout::UniswapV3),
         ];
         // The DB emits `0x`-prefixed checksum addresses; alloy parses those.
         // (rows::decode::decode_address is pub(crate) to degenbot-db.)
         let conn = db.lock();
-        for table in V3_VARIANT_TABLES {
+        for (table, layout) in V3_VARIANTS {
             let sql = format!(
                 "SELECT p.id, p.token0_id, p.token1_id, p.address, v.fee_token0, v.tick_spacing \
                  FROM pools p JOIN {table} v ON v.pool_id = p.id WHERE p.chain = ?1"
@@ -654,7 +660,105 @@ impl V2ConnectorIndex {
                     address,
                     fee,
                     tick_spacing,
+                    layout: *layout,
                 });
+            }
+        }
+        Ok(())
+    }
+
+    /// Boot-time provenance probe: for each fork layout in the loaded
+    /// roster, sample one pool and assert the layout's `liquidity` storage
+    /// slot actually holds the on-chain `liquidity()` value. A fork labeled
+    /// with the wrong layout reads garbage — the exact bug class that
+    /// silently killed every Pancake-anchored chain (`sequence_unavailable`)
+    /// — so the roster refuses to serve until the fork table is honest.
+    /// Verdicts: both-zero is inconclusive (a dead pool agrees with any
+    /// layout); one retry absorbs block-boundary races between the two
+    /// reads.
+    ///
+    /// # Errors
+    ///
+    /// A sampled layout mismatch (a String naming the pool). Transport
+    /// failures WARN and pass (an offline boot cannot verify); the caller
+    /// disables the lane on a mismatch (loud, never silent).
+    pub async fn verify_sampled_layouts(
+        &self,
+        provider: &Arc<AlloyProvider>,
+    ) -> Result<(), String> {
+        use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
+
+        // One deterministic sample per distinct layout (lowest pool_id).
+        let mut samples: hashbrown::HashMap<ClSlotLayout, &V3Edge> = hashbrown::HashMap::new();
+        for edge in &self.v3_edges {
+            match samples.get(&edge.layout) {
+                Some(best) if best.pool_id <= edge.pool_id => {}
+                _ => {
+                    samples.insert(edge.layout, edge);
+                }
+            }
+        }
+        for (layout, edge) in samples {
+            let mut mismatch = None;
+            for _ in 0..2 {
+                // Transport failure is INCONCLUSIVE at boot (a hermetic or
+                // offline boot has no node) — warn and continue; only a
+                // satisfy-both-reads MISMATCH refuses the lane.
+                let (_, _, onchain) =
+                    match fetch_v3_slot0_liquidity(provider, &edge.address, None).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(
+                                pool = %edge.address,
+                                error = %e,
+                                "layout probe: node unreachable - fork layouts UNVERIFIED this boot"
+                            );
+                            return Ok(());
+                        }
+                    };
+                let onchain = u128::try_from(onchain).unwrap_or(u128::MAX);
+                let word = match provider
+                    .get_storage_at(&edge.address, U256::from(layout.liquidity_slot()), None)
+                    .await
+                {
+                    Ok(w) => w,
+                    Err(e) => {
+                        tracing::warn!(
+                            pool = %edge.address,
+                            error = %e,
+                            "layout probe: node unreachable - fork layouts UNVERIFIED this boot"
+                        );
+                        return Ok(());
+                    }
+                };
+                // The liquidity field packs the LOW 128 bits of the word
+                // (pinned by `v3_liquidity_slot_packs_low_128_bits`).
+                let stored =
+                    u128::from_be_bytes(word.as_slice()[16..32].try_into().unwrap_or([0; 16]));
+                match layout_verdict(onchain, stored) {
+                    LayoutVerdict::Conforms => {
+                        mismatch = None;
+                        break;
+                    }
+                    // A dead pool agrees with any layout — skip the sample.
+                    LayoutVerdict::Inconclusive => {
+                        mismatch = None;
+                        break;
+                    }
+                    // Retry once (block-boundary races); then fail loud.
+                    LayoutVerdict::Mismatch => {
+                        mismatch = Some(format!(
+                            "on-chain liquidity()={onchain}, but storage at                              slot {} ({layout:?}.liquidity_slot) reads {stored}",
+                            layout.liquidity_slot(),
+                        ));
+                    }
+                }
+            }
+            if let Some(detail) = mismatch {
+                return Err(format!(
+                    "fork layout table is dishonest: sample {} ({layout:?}) {detail}",
+                    edge.address,
+                ));
             }
         }
         Ok(())
@@ -993,6 +1097,7 @@ mod tests {
             address: Address::new([12; 20]),
             fee: 500,
             tick_spacing: 10,
+            layout: ClSlotLayout::UniswapV3,
         });
 
         assert_eq!(ix.edge_degree(20, 10), 2);
@@ -1147,6 +1252,69 @@ mod tests {
         assert!(
             ix_base.v3_edge_by_address(aerodrome).is_some(),
             "the 8453 index carries the Aerodrome pool"
+        );
+    }
+
+    /// The edge carries the fork's slot layout (W32CAU replay twin): a
+    /// Pancake V3 pool indexed as Uniswap-layout stages a garbage tick map
+    /// in the frame scratch and every anchored chain dies
+    /// `sequence_unavailable`.
+    #[test]
+    fn load_v3_labels_the_pancake_layout() {
+        const TOK: Address = Address::new([0x11; 20]);
+        const OTHER: Address = Address::new([0x22; 20]);
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
+
+        let tok_id = db
+            .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
+            .unwrap();
+        let other_id = db
+            .get_or_create_erc20_token(1, &OTHER.to_checksum(None), None, None, None)
+            .unwrap();
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO exchanges (id, chain_id, name, active, last_update_block, factory) \
+             VALUES (1, 1, 'test', 0, NULL, '0x0000000000000000000000000000000000000001')",
+            [],
+        )
+        .unwrap();
+        for (i, kind) in ["uniswap_v3_pools", "pancakeswap_v3_pools"]
+            .iter()
+            .enumerate()
+        {
+            let id = 60 + i64::try_from(i).unwrap();
+            let addr = format!("{:?}", Address::new([u8::try_from(i).unwrap() + 0xC0; 20]));
+            conn.execute(
+                "INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) \
+                 VALUES (?1, ?2, 1, ?3, ?4, ?5, 1)",
+                rusqlite::params![id, addr, kind, tok_id, other_id],
+            )
+            .unwrap();
+            conn.execute(
+                &format!(
+                    "INSERT INTO {kind} (pool_id, tick_spacing, fee_token0, fee_token1, fee_denominator) \
+                     VALUES (?1, 10, 500, 500, 1000000)"
+                ),
+                rusqlite::params![id],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let mut ix = V2ConnectorIndex::load(&db, 1).unwrap();
+        ix.load_v3(&db, 1).unwrap();
+        let uni = ix
+            .v3_edge_by_address(Address::new([0xC0; 20]))
+            .expect("uni edge");
+        let pancake = ix
+            .v3_edge_by_address(Address::new([0xC1; 20]))
+            .expect("pancake edge");
+        assert_eq!(uni.layout, ClSlotLayout::UniswapV3, "uni variant layout");
+        assert_eq!(
+            pancake.layout,
+            ClSlotLayout::PancakeV3,
+            "pancake fork carries its divergent layout"
         );
     }
 
@@ -1348,6 +1516,7 @@ mod ranking_tests {
             address: Address::new([u8::try_from(pool_id).unwrap_or(0); 20]),
             fee: 500,
             tick_spacing: 10,
+            layout: ClSlotLayout::UniswapV3,
         }
     }
 

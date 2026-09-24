@@ -347,6 +347,25 @@ impl MissingHopReason {
             Self::TooFewTokens | Self::UnknownVariant | Self::OutOfRange
         )
     }
+
+    /// The stable snake_case JSONL label (the offline-review contract for
+    /// per-deficit reasons; the prose `Display` form stays for logs).
+    #[must_use]
+    pub(crate) const fn short_label(self) -> &'static str {
+        match self {
+            Self::MissingState => "missing_state",
+            Self::MissingIdentity => "missing_identity",
+            Self::MissingTokenPair => "missing_token_pair",
+            Self::TooFewTokens => "too_few_tokens",
+            Self::UnknownVariant => "unknown_variant",
+            Self::OutOfRange => "out_of_range",
+            Self::SequenceUnavailable => "sequence_unavailable",
+            Self::InvariantError => "invariant_error",
+            Self::NotViable => "not_viable",
+            Self::Quarantined => "quarantined",
+            Self::HookedPool => "hooked_pool",
+        }
+    }
 }
 
 /// Log a hop invalidation at `debug` (path context + hop index + reason).

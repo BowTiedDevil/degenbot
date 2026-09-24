@@ -19,8 +19,9 @@
     clippy::unreadable_literal
 )]
 
-use alloy::primitives::{U128, U256, U512};
+use alloy::primitives::{Address, U128, U256, U512};
 use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
 use degenbot_pools::TickInfo;
 use hashbrown::HashMap;
@@ -223,14 +224,23 @@ fn make_hop(
     }
 
     let params = RegisterV3PoolParams {
+        address: Address::ZERO,
+        token0: Address::ZERO,
+        token1: Address::ZERO,
         fee,
         tick_spacing: spacing,
+        factory: Address::ZERO,
         sqrt_price_x96: sqrt_at(current_tick),
         liquidity: active,
         tick: current_tick,
         tick_data,
+        update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
-        ..Default::default()
+        fetcher: None,
+        deployer: Address::ZERO,
+        init_hash: alloy::primitives::B256::ZERO,
+        slot_layout: ClSlotLayout::UniswapV3,
     };
     let (_identity, state) = V3PoolState::from_params(params, 8);
     let seq = state

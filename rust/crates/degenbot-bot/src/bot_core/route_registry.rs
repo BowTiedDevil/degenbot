@@ -118,6 +118,7 @@ mod tests {
             address,
             fee: 500,
             tick_spacing: 10,
+            layout: degenbot_pools::v3_state::ClSlotLayout::UniswapV3,
         }
     }
 
