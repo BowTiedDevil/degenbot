@@ -52,6 +52,20 @@ use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WET
 use degenbot_strategy::frame_pipeline::MarketContext;
 use hashbrown::HashMap as HbMap;
 
+fn market_context(
+    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
+) -> MarketContext {
+    let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
+        registry,
+        db.clone(),
+        None,
+        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        None,
+    );
+    MarketContext::new(1, db, kit, 8, 4)
+}
+
 /// Pool 1: the production-path target (token/WETH spacing 1) + its real
 /// WETH-quoted V2 connector — a natural WETH-entry cycle through the roster.
 const POOL: &str = "0x0BDDd19CEc6b6E614B7B8BfF380cE830D9b85Ba6";
@@ -278,12 +292,9 @@ fn runtime_for(
         token1_id: weth_id,
         address: v2,
     });
-    MarketContext::new(
-        1,
+    market_context(
         Some(Arc::new(degenbot_bot::bot_core::RouteRegistry::new(index))),
-        Some(db),
-        8,
-        4,
+        Some(Arc::new(db)),
     )
 }
 
@@ -418,7 +429,7 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
     // DB's maintained map (the narrow staging the defect produced).
     let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2, &cap.ladder);
     let staged = rt
-        .ingress
+        .ingress()
         .v3_tick_map(pool, cap.tick, POOL_SPACING, head)
         .expect("the ladder map stages");
     assert_eq!(staged.source, TickMapSource::Db, "the Db arm stages first");
@@ -472,7 +483,7 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
     // GREEN: the complete wide map as the DB's maintained map.
     let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2, &cap.wide);
     let staged = rt
-        .ingress
+        .ingress()
         .v3_tick_map(pool, cap.tick, POOL_SPACING, head)
         .expect("the wide map stages");
     assert_eq!(staged.source, TickMapSource::Db, "the Db arm stages first");

@@ -38,6 +38,21 @@ use degenbot_strategy::backrun_strategy::{
 use degenbot_strategy::frame_pipeline::{
     build_descriptors, empty_frame_observe_reason, state_digest, MarketContext, PipelineConfig,
 };
+
+fn market_context(
+    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
+) -> MarketContext {
+    let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
+        registry,
+        db.clone(),
+        None,
+        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        None,
+    );
+    MarketContext::new(1, db, kit, 8, 4)
+}
+
 use degenbot_strategy::pending_tx::PendingTxReaction;
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
@@ -104,14 +119,11 @@ fn runtime_fixture() -> (MarketContext, u64, u64) {
     });
     // The pipeline's sidecars quote chains of 1 (mainnet).
     (
-        MarketContext::new(
-            1,
+        market_context(
             Some(std::sync::Arc::new(
                 degenbot_bot::bot_core::RouteRegistry::new(index),
             )),
-            Some(db),
-            8,
-            4,
+            Some(std::sync::Arc::new(db)),
         ),
         u64::try_from(tok_id).unwrap(),
         u64::try_from(weth_id).unwrap(),
@@ -508,7 +520,6 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
         bribe_bips: 9_800,
         wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         gas_floor_wei: U256::ZERO,
-        verify_ticks: degenbot_bot::bot_core::pool_ingress::VerifyLevel::Bootstrap,
         fixture_mode: false,
     };
     let mut strategy = degenbot_strategy::backrun_strategy::BackrunStrategy::new();
@@ -610,14 +621,11 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
             address: addr,
         });
     }
-    let rt = MarketContext::new(
-        1,
+    let rt = market_context(
         Some(std::sync::Arc::new(
             degenbot_bot::bot_core::RouteRegistry::new(index),
         )),
-        Some(db),
-        8,
-        4,
+        Some(std::sync::Arc::new(db)),
     );
     let outcome = usdc_frame_replay_outcome();
 
@@ -980,7 +988,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     use degenbot_strategy::backrun::{Decision, MevblockerBackrun};
     use degenbot_strategy::backrun_strategy::BackrunStrategy;
     use degenbot_strategy::frame_pipeline::{
-        build_block_handle, load_fixture_frames, process_frame, MarketContext, PipelineConfig,
+        build_block_handle, load_fixture_frames, process_frame, PipelineConfig,
     };
 
     // Arm the guard for the WHOLE run (this target never calls classify).
@@ -1001,7 +1009,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
     let _ = degenbot_config::holder::install(std::sync::Arc::new(boot));
 
     // Live mode needs no feed/signer/dispatcher: process frames directly.
-    let mut runtime = MarketContext::new(1, None, None, 8, 4);
+    let mut runtime = market_context(None, None);
     let mut strategy = BackrunStrategy::new();
     let anchor_state = SimAnchorState::default();
     let mut handle = Option::from(
@@ -1020,7 +1028,6 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         bribe_bips: 9_800,
         wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(1_000_000_000_000)),
         gas_floor_wei: U256::from(50_000_000_000_000u64),
-        verify_ticks: degenbot_bot::bot_core::pool_ingress::VerifyLevel::Bootstrap,
         fixture_mode: false,
     };
     // The bundle-sim client points at the SAME node join (read/sim only, and

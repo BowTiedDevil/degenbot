@@ -30,6 +30,20 @@ use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::pending_tx::V3TickWindow;
 use hashbrown::HashMap as HbMap;
 
+fn market_context(
+    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
+) -> MarketContext {
+    let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
+        registry,
+        db.clone(),
+        None,
+        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        None,
+    );
+    MarketContext::new(1, db, kit, 8, 4)
+}
+
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");
 /// P: the V2 connector the V4 anchor settles its drift through.
 const P: Address = address!("000000000000000000000000000000000000b001");
@@ -66,14 +80,11 @@ fn runtime_fixture(v4_fee: u32) -> MarketContext {
         hooks: Address::ZERO,
         db_pool_id: V4_DB_POOL_ID,
     });
-    MarketContext::new(
-        1,
+    market_context(
         Some(std::sync::Arc::new(
             degenbot_bot::bot_core::RouteRegistry::new(index),
         )),
-        Some(db),
-        8,
-        4,
+        Some(std::sync::Arc::new(db)),
     )
 }
 

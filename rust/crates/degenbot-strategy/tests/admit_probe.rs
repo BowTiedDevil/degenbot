@@ -21,6 +21,20 @@ use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2P
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
 use degenbot_strategy::frame_pipeline::{build_block_handle, MarketContext};
 
+fn market_context(
+    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
+) -> MarketContext {
+    let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
+        registry,
+        db.clone(),
+        None,
+        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        None,
+    );
+    MarketContext::new(1, db, kit, 8, 4)
+}
+
 const ANCHOR: Address = address!("11b815efb8f581194ae79006d24e0d814b7697f6");
 const MID1: Address = address!("f641eafb5bce9568c4ff1079c58f36a7e8a6cd8d");
 const MID2: Address = address!("c5a788f63e5d9cf2c324621eed51a98f85ae373b");
@@ -49,14 +63,11 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
     index.set_ranker(Arc::new(
         degenbot_bot::connector_index::OnChainLiquidityRanker::new(Arc::clone(&provider)),
     ));
-    let rt = MarketContext::new(
-        1,
+    let rt = market_context(
         Some(std::sync::Arc::new(
             degenbot_bot::bot_core::RouteRegistry::new(index),
         )),
-        Some(db),
-        8,
-        4,
+        Some(std::sync::Arc::new(db)),
     );
     let head = provider.get_block_number().await.unwrap();
 

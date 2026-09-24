@@ -94,6 +94,20 @@ fn seed_anchor(db: &DegenbotDb, ticks: &[i32]) {
         .unwrap();
 }
 
+fn market_context(
+    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
+) -> MarketContext {
+    let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
+        registry,
+        db.clone(),
+        None,
+        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        None,
+    );
+    MarketContext::new(1, db, kit, 8, 4)
+}
+
 fn runtime(ticks: &[i32]) -> (MarketContext, u64, u64) {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let tok_id = db
@@ -124,14 +138,11 @@ fn runtime(ticks: &[i32]) -> (MarketContext, u64, u64) {
         address: MID,
     });
     (
-        MarketContext::new(
-            1,
+        market_context(
             Some(std::sync::Arc::new(
                 degenbot_bot::bot_core::RouteRegistry::new(index),
             )),
-            Some(db),
-            8,
-            4,
+            Some(std::sync::Arc::new(db)),
         ),
         tok_id,
         weth_id,

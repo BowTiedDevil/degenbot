@@ -13,12 +13,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun};
+use crate::strategy_kit::StrategyKit;
+use degenbot_bot::bot_core::pool_ingress::AlloySampleVerifier;
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_eventhub::Hub;
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::AlloyTickBootstrapRpc;
 
 use degenbot_submission::submission_ledger::NonceLane;
 
@@ -32,8 +35,12 @@ pub const CHAIN_ID: u64 = 1;
 /// The host-shared handles a driver start needs beyond its own config.
 pub struct BackrunContext {
     /// The boot DB handle behind the registry's token joins; `None` leaves
-    /// the discovery lane shut.
-    pub connector_db: Option<DegenbotDb>,
+    /// the discovery lane shut. The same held connection the kit's ingress
+    /// was built over.
+    pub connector_db: Option<Arc<DegenbotDb>>,
+    /// The boot-resolved strategy kit: the provisioning ingress with its
+    /// chain arm + chain-sample policy attached, and the discovery handles.
+    pub kit: StrategyKit,
     /// The chain node's `newHeads` WS endpoint; `None` polls.
     pub head_ws_url: Option<String>,
     /// The host's node join, shared so the boot ranker and the driver read one
@@ -90,8 +97,8 @@ pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> 
     Ok(BackrunNodeJoin { rpc_url, provider })
 }
 
-/// The driver's boot recipe: the process config, the host-owned hub and route
-/// registry, and the driver's run-artifact scope.
+/// The driver's boot recipe: the process config, the host-owned hub, and the
+/// boot-resolved strategy kit + run-artifact scope.
 ///
 /// The driver has exactly ONE boot path — [`Self::into_driver_future`]. The
 /// boot may poll it inline (a driver panic still unwinds the process)
@@ -101,7 +108,6 @@ pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> 
 pub struct BackrunBoot {
     cfg: BackrunConfig,
     hub: Arc<Hub>,
-    route_registry: Option<Arc<RouteRegistry>>,
     context: BackrunContext,
 }
 
@@ -110,14 +116,9 @@ impl BackrunBoot {
     /// terminal return and reports a clean stop to the host.
     #[must_use]
     pub fn into_driver_future(self) -> DriverFuture {
-        let Self {
-            cfg,
-            hub,
-            route_registry,
-            context,
-        } = self;
+        let Self { cfg, hub, context } = self;
         Box::pin(async move {
-            let handle = BackrunDriver::start(cfg, hub, route_registry, context).await;
+            let handle = BackrunDriver::start(cfg, hub, context).await;
             handle.wait().await;
             DriverExit::Stopped
         })
@@ -336,19 +337,31 @@ pub fn backrun_boot(
         degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
             .ok()
             .map(|resolved| resolved.value);
+    // The ONE kit resolve site: build the provisioning ingress over the held
+    // DB connection, attach the chain arm + the facet's chain-sample policy,
+    // and build the discovery graph from the frozen registry. A strategy
+    // composes this result and never constructs its own ingress.
+    let connector_db = connector_db.map(Arc::new);
+    let kit = StrategyKit::resolve(
+        route_registry,
+        connector_db.clone(),
+        Some(Arc::new(AlloyTickBootstrapRpc::new(Arc::clone(
+            &join.provider,
+        )))),
+        cfg.verify_ticks,
+        Some(Arc::new(AlloySampleVerifier::new(Arc::clone(
+            &join.provider,
+        )))),
+    );
     let context = BackrunContext {
         connector_db,
+        kit,
         head_ws_url,
         provider: join.provider,
         namespace_root,
         nonce_lane,
     };
-    BackrunBoot {
-        cfg,
-        hub,
-        route_registry,
-        context,
-    }
+    BackrunBoot { cfg, hub, context }
 }
 
 /// The spawn factory a `StrategyHost` registers for the backrun driver.

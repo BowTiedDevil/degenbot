@@ -2,9 +2,9 @@
 //! strategy composes must be nameable through the crate root.
 
 use degenbot_strategy::{
-    AssessRule, ComposeError, ComposerInputs, ExecutionAdapter, ExecutionResult, FeePolicy,
-    PayloadComposer, ProbeSpecs, SkipReason, SolveResult, SubmissionTarget, SubmitCandidate,
-    SubmitOutcome,
+    AssessRule, ComposeError, ComposerInputs, DiscoveryHandles, ExecutionAdapter, ExecutionResult,
+    FeePolicy, PayloadComposer, ProbeSpecs, ProvisionCell, SkipReason, SolveResult, StrategyCell,
+    StrategyKit, SubmissionTarget, SubmitCandidate, SubmitOutcome,
 };
 
 #[test]
@@ -18,6 +18,10 @@ fn capability_seams_are_reexported() {
         std::any::type_name::<SolveResult>(),
         std::any::type_name::<ComposeError>(),
         std::any::type_name::<SubmitCandidate>(),
+        std::any::type_name::<StrategyKit>(),
+        std::any::type_name::<StrategyCell>(),
+        std::any::type_name::<ProvisionCell>(),
+        std::any::type_name::<DiscoveryHandles>(),
         std::any::type_name::<SubmissionTarget>(),
         std::any::type_name::<SubmitOutcome>(),
         std::any::type_name::<SkipReason>(),

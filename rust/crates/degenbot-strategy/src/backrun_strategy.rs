@@ -293,7 +293,7 @@ pub fn admit_extracted(
                     }),
                 );
                 let (windowed, source, coverage) = match rt
-                    .ingress
+                    .ingress()
                     .v3_tick_map(st.address, tk, spacing, seed_block)
                 {
                     Ok(seed) => {
@@ -788,7 +788,7 @@ async fn admit_hop_pool(
                     None,
                     head,
                     e.layout,
-                    &rt.ingress,
+                    rt.ingress(),
                 )
                 .await
             {
@@ -1122,7 +1122,7 @@ impl PendingTxReaction for BackrunStrategy {
         let mut unsupported_hop = 0usize;
         let mut touched: Vec<AnchorPool> = Vec::with_capacity(affected.len());
         let mut admitted_cycles: Vec<DfsCycle> = Vec::new();
-        if let Some(graph) = ctx.dfs.as_ref() {
+        if let Some(graph) = ctx.dfs() {
             // Every touched pool pins on BOTH of its token pairs: a pool with
             // no WETH quote is still a legal mid-cycle hop.
             for a in affected {

@@ -35,6 +35,20 @@ use degenbot_strategy::frame_pipeline::{
     build_block_handle, process_frame, MarketContext, PipelineConfig,
 };
 
+fn market_context(
+    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
+) -> MarketContext {
+    let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
+        registry,
+        db.clone(),
+        None,
+        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        None,
+    );
+    MarketContext::new(1, db, kit, 8, 4)
+}
+
 const WETH: alloy::primitives::Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const USDC: alloy::primitives::Address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
 const UNISWAP_V2_ROUTER: alloy::primitives::Address =
@@ -105,7 +119,6 @@ fn bid_config() -> (BackrunConfig, PipelineConfig) {
             600_000_000_000,
         )),
         gas_floor_wei: U256::from(GAS_FLOOR_WEI),
-        verify_ticks: degenbot_bot::bot_core::pool_ingress::VerifyLevel::Bootstrap,
         fixture_mode: false,
     };
     (cfg, pl)
@@ -241,12 +254,9 @@ async fn runtime(
         "the canonical USDC/WETH pair must sit in the DB index"
     );
     let head = provider.get_block_number().await.unwrap();
-    let rt = MarketContext::new(
-        1,
+    let rt = market_context(
         Some(Arc::new(degenbot_bot::bot_core::RouteRegistry::new(index))),
-        Some(live_db()),
-        8,
-        4,
+        Some(Arc::new(live_db())),
     );
     (rt, head, ids)
 }

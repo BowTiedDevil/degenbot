@@ -1,48 +1,38 @@
 //! Process-lifetime shared caches for pending-transaction strategies.
 //!
 //! A [`MarketContext`] owns the services every pending-transaction strategy
-//! reads but none owns: the boot-time [`RouteRegistry`] handle (whose frozen
-//! connector index backs the token joins and the discovery graph), the DB
-//! handle behind the token id/address joins, the cross-block warm
-//! bytecode/account cache, and the startup discovery graph built from that
-//! index. Each is expensive to rebuild per transaction and safe to share
-//! process-wide; a per-frame refill would re-pay a DB query per pool and
-//! forfeit the index's memoized depth rankings.
+//! reads but none owns: the boot-resolved [`StrategyKit`] (the provisioning
+//! ingress, the frozen [`RouteRegistry`] handle whose connector index backs
+//! the token joins and the discovery graph, and the startup discovery graph),
+//! the DB handle behind the token id/address joins, the cross-block warm
+//! bytecode/account cache, and the token memos. The heavy handles are
+//! expensive to rebuild per transaction and safe to share process-wide; a
+//! per-frame refill would re-pay a DB query per pool and forfeit the index's
+//! memoized depth rankings.
 //!
 //! This is NOT strategy identity. A strategy's identity (which pools it
 //! reacts to, how it selects candidates, how it prices them) lives in the
-//! strategy that reads this context, not here.
+//! strategy that reads this context, not here. The kit is the composition
+//! surface; the context is the per-frame view onto it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use alloy::primitives::Address;
-use degenbot_bot::bot_core::pool_ingress::{PoolIngress, TickMapSampleVerifier, VerifyLevel};
+use degenbot_bot::bot_core::pool_ingress::PoolIngress;
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_db::connection::DegenbotDb;
-use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::tick_fetch::TickBootstrapRpc;
 use degenbot_simulation::WarmCodeCacheInner;
 use parking_lot::RwLock;
 
 use crate::anchored_dfs::AnchoredGraph;
+use crate::strategy_kit::StrategyKit;
 
 /// The process-lifetime caches shared by every pending-transaction strategy.
 pub struct MarketContext {
     /// The chain the connector index + DB id joins are keyed on.
     pub chain_id: i64,
-    /// The boot-time pool world-view (connector index + frozen pool set +
-    /// decoder mirror), shared by handle. `None` keeps the discovery fan shut
-    /// (frames observe; connectors are never guessed).
-    pub registry: Option<Arc<RouteRegistry>>,
-    /// The DB handle the index was loaded from (token id/address joins and
-    /// the ingress Db arm). Shared behind an `Arc` so the ingress and the
-    /// token joins read the same held connection.
-    pub db: Option<Arc<DegenbotDb>>,
-    /// The V3 pool-state ingress: `Db → Chain` tick-map precedence with a
-    /// per-block memo (the single home for backrun V3 admission).
-    pub ingress: PoolIngress,
     /// The discovery fan-out cap (`strategy.mevblocker_backrun`/`strategy.peer_backrun`).
     pub connector_cap: usize,
     /// The hop-depth cap per discovered cycle: the WETH-entry pin plus up to
@@ -52,72 +42,65 @@ pub struct MarketContext {
     /// Cross-block warm bytecode/account cache owner, shared into every
     /// per-block replay handle.
     pub warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
-    /// The startup-built discovery graph over the connector index's edge
-    /// set (V2 + V3; `None` exactly when the index is `None` — the walker
-    /// lane stays shut with it).
-    pub dfs: Option<AnchoredGraph>,
+    /// The DB handle the index was loaded from: the token id/address joins.
+    /// Shared behind an `Arc` so the ingress and the token joins read the same
+    /// held connection.
+    db: Option<Arc<DegenbotDb>>,
+    /// The boot-resolved composition the context views over.
+    kit: StrategyKit,
     token_ids: Mutex<HashMap<Address, u64>>,
     token_addrs: Mutex<HashMap<u64, Address>>,
 }
 
 impl MarketContext {
+    /// Build the per-frame view over the boot-resolved [`StrategyKit`].
+    ///
+    /// `db` is the same held connection the kit's ingress was constructed
+    /// from; the context's token joins read it directly.
     #[must_use]
     pub fn new(
         chain_id: i64,
-        registry: Option<Arc<RouteRegistry>>,
-        db: Option<DegenbotDb>,
+        db: Option<Arc<DegenbotDb>>,
+        kit: StrategyKit,
         connector_cap: usize,
         cycle_max_hops: usize,
     ) -> Self {
-        let db = db.map(Arc::new);
-        // The ingress reads the same held connection as the token joins; the
-        // Chain arm is attached later by the driver once the provider is
-        // resolved.
-        let ingress_db: Option<Arc<dyn TickMapDb>> =
-            db.clone().map(|d| -> Arc<dyn TickMapDb> { d });
-        let ingress = PoolIngress::new(ingress_db, None);
         Self {
             chain_id,
-            // Built from the registry's index BEFORE the handle moves in: one
-            // startup graph pass.
-            dfs: registry
-                .as_ref()
-                .map(|r| AnchoredGraph::from_connector_index(r.index())),
-            registry,
-            db,
-            ingress,
             connector_cap,
             cycle_max_hops,
             warm_cache: WarmCodeCacheInner::shared_default(),
+            db,
+            kit,
             token_ids: Mutex::new(HashMap::new()),
             token_addrs: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Attach the ingress Chain-arm RPC. Called by the driver after the
-    /// runtime is built; a Db miss then falls to the sparse single-word
-    /// bootstrap instead of staging an empty map.
-    pub fn set_chain_bootstrap(&mut self, chain: Arc<dyn TickBootstrapRpc>) {
-        self.ingress.set_chain(chain);
+    /// The provisioning ingress view (the kit's provision cell).
+    #[must_use]
+    pub fn ingress(&self) -> &PoolIngress {
+        self.kit.ingress()
     }
 
-    /// Wire the ingress's chain-sample policy and verifier. Called by the
-    /// driver at boot once the provider is resolved; `Off` emits its loud
-    /// declaration here.
-    pub fn set_ingress_verify(
-        &mut self,
-        level: VerifyLevel,
-        verifier: Arc<dyn TickMapSampleVerifier>,
-    ) {
-        self.ingress.set_verify_level(level);
-        self.ingress.set_verifier(verifier);
+    /// The frozen registry handle (`None` when the discovery fan is shut).
+    #[must_use]
+    pub fn registry(&self) -> Option<&Arc<RouteRegistry>> {
+        self.kit.registry()
+    }
+
+    /// The startup discovery graph (`None` exactly when the registry is `None`
+    /// — the walker lane stays shut with it).
+    #[must_use]
+    pub fn dfs(&self) -> Option<&AnchoredGraph> {
+        self.kit.dfs()
     }
 
     /// The frozen connector index behind the registry handle (`None` when the
     /// boot load failed or the DB was absent).
     #[must_use]
     pub fn index(&self) -> Option<&V2ConnectorIndex> {
-        self.registry.as_ref().map(|r| r.index())
+        self.registry().map(|r| r.index())
     }
 
     /// DB id for a token address (memoized across frames). `None` when the

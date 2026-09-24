@@ -63,6 +63,7 @@ pub mod gap_quarantine_journal;
 pub mod market_context;
 pub mod pending_tx;
 pub mod settlement;
+pub mod strategy_kit;
 pub mod strategy_plane;
 
 // The strategy plane's shared selection surface and the concrete compositions
@@ -70,4 +71,5 @@ pub mod strategy_plane;
 // rather than threading the module path.
 pub use backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun, SubmissionSlot};
 pub use settlement::{Settlement, SettlementConfig};
+pub use strategy_kit::{DiscoveryHandles, ProvisionCell, StrategyCell, StrategyKit};
 pub use strategy_plane::{SelectedStrategy, Strategy, StrategyName};

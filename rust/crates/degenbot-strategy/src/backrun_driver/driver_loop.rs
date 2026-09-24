@@ -24,13 +24,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
-use degenbot_bot::bot_core::pool_ingress::AlloySampleVerifier;
-use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
-use degenbot_rpc::AlloyTickBootstrapRpc;
 use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
 use degenbot_simulation::BlockSimHandle;
 use parking_lot::Mutex as ParkingMutex;
@@ -1129,18 +1126,10 @@ impl BackrunDriver {
     /// unreadable or malformed key file, an unparseable executor/owner
     /// address, or a failed head fetch), preserving the single-driver bin's
     /// loud-failure behavior.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the boot threads the host-minted handles and validates the config in one place"
-    )]
-    pub async fn start(
-        cfg: BackrunConfig,
-        hub: Arc<Hub>,
-        route_registry: Option<Arc<RouteRegistry>>,
-        ctx: BackrunContext,
-    ) -> DriverHandle {
+    pub async fn start(cfg: BackrunConfig, hub: Arc<Hub>, ctx: BackrunContext) -> DriverHandle {
         let BackrunContext {
             connector_db,
+            kit,
             head_ws_url,
             provider,
             namespace_root,
@@ -1190,19 +1179,11 @@ impl BackrunDriver {
             tracing::info!(fixture_head = ?fixture_head, "fixture head pinned");
         }
 
-        // The strategy runtime OWNS the frame-surviving caches (index, token
-        // joins, warm-code cache); each frame gets a fresh planning Workspace
-        // scope (see frame_pipeline's module doc for the split).
-        let mut runtime = MarketContext::new(
-            1,
-            route_registry,
-            connector_db,
-            cfg.connectors,
-            cfg.cycle_max_hops,
-        );
-        // The ingress Chain arm (sparse single-word bootstrap) rides the same
-        // provider the frames replay from; the Db arm is already wired.
-        runtime.set_chain_bootstrap(Arc::new(AlloyTickBootstrapRpc::new(provider.clone())));
+        // The strategy runtime OWNS the frame-surviving caches (token joins,
+        // warm-code cache) and views the boot-resolved kit for the ingress +
+        // discovery handles; each frame gets a fresh planning Workspace scope
+        // (see frame_pipeline's module doc for the split).
+        let runtime = MarketContext::new(1, connector_db, kit, cfg.connectors, cfg.cycle_max_hops);
         let strategy = BackrunStrategy::new();
 
         let exec: Address = cfg
@@ -1230,18 +1211,10 @@ impl BackrunDriver {
             bribe_bips: cfg.bribe_bips,
             wallet_gas_cost_wei,
             gas_floor_wei: U256::from(cfg.gas_floor_wei),
-            verify_ticks: cfg.verify_ticks,
             // Historical mode only when the dry-run actually pinned a head: the
             // live sim gate evaluates at `latest` and would diverge otherwise.
             fixture_mode: fixture_frames.is_some() && fixture_head.is_some(),
         };
-        // The ingress chain-sample policy + the provider-backed verifier it
-        // composes. `Off` logs its loud declaration here at boot.
-        runtime.set_ingress_verify(
-            pl.verify_ticks,
-            Arc::new(AlloySampleVerifier::new(provider.clone())),
-        );
-
         let fetched_head = provider.get_block_number().await.expect("head block fetch");
         // Fixture mode pins the dispatcher (and, below, the replay handle) to the
         // capture head so the scratch's reads answer the historical chain view.
@@ -1319,7 +1292,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
     // driver carries no engine state, so the divergence observer is inert.
     // The shared warm cache carries the cross-block bytecode/account caches
     // across rebuilds.
-    let oracle_holder = runtime.registry.clone();
+    let oracle_holder = runtime.registry().cloned();
     let oracle: &dyn degenbot_bot::bot_core::SimAnchorOracle = match oracle_holder.as_deref() {
         Some(registry) => registry,
         None => &degenbot_bot::bot_core::NO_SIM_ANCHOR,

@@ -20,6 +20,20 @@ use degenbot_strategy::backrun_engine::BackrunSolver;
 use degenbot_strategy::backrun_strategy::{admit_extracted, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
 
+fn market_context(
+    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
+) -> MarketContext {
+    let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
+        registry,
+        db.clone(),
+        None,
+        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        None,
+    );
+    MarketContext::new(1, db, kit, 8, 4)
+}
+
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");
 const P: Address = address!("000000000000000000000000000000000000b001");
 const V4_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
@@ -39,14 +53,11 @@ fn runtime_fixture() -> MarketContext {
         token1_id: u64::try_from(weth_id).unwrap(),
         address: P,
     });
-    MarketContext::new(
-        1,
+    market_context(
         Some(std::sync::Arc::new(
             degenbot_bot::bot_core::RouteRegistry::new(index),
         )),
-        Some(db),
-        8,
-        4,
+        Some(std::sync::Arc::new(db)),
     )
 }
 
