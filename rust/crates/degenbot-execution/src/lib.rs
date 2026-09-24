@@ -24,10 +24,11 @@
 //!   ordered; a built-in market-percentile default (TARGET_PROFIT_RATIO /
 //!   age-decay) is provided, overridable by a foreign searcher.
 //!
-//! `degenbot-arbitrage` implements [`ExecutionAdapter`] as the
-//! **default adapter** (stays Rust-canonical, ADR-019 R). A foreign user's
-//! crate implements it directly, or supplies a Python callable via the PyO3
-//! lift — both meet this same seam.
+//! The generic seam has no built-in `cmd_executor` policy. The concrete
+//! production `CmdExecutorAdapter` lives in `degenbot-strategy`, where it
+//! owns the canonical command-executor path; a foreign user's crate implements
+//! [`ExecutionAdapter`] directly, or supplies a Python callable via the PyO3
+//! lift — both foreign paths meet this same generic seam.
 //!
 //! `pyo3`-free (enforced by `just check-no-pyo3-in-cores`); consumable by both
 //! the standalone Rust path and the PyO3 driver shell. Dep graph is a DAG:

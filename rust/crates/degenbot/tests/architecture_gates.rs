@@ -248,6 +248,38 @@ fn no_inner_allow_attributes() {
 }
 
 #[test]
+fn cmd_executor_cutover_symbols_are_absent_from_strategy_callers() {
+    let strategy_root = workspace_root().join("crates/degenbot-strategy");
+    let retired_symbols = [
+        "compose_candidate",
+        "build_candidate_calldata",
+        "ComposeReject",
+    ];
+    let mut violations = Vec::new();
+
+    for directory in ["src", "tests"] {
+        for_each_rust_source(&strategy_root.join(directory), &mut |path, text| {
+            for (line_number, line) in text.lines().enumerate() {
+                for symbol in retired_symbols {
+                    if line.contains(symbol) {
+                        violations.push(format!(
+                            "{}:{}: {symbol}",
+                            path.display(),
+                            line_number + 1
+                        ));
+                    }
+                }
+            }
+        });
+    }
+
+    assert!(
+        violations.is_empty(),
+        "retired cmd_executor cutover symbols remain in canonical strategy callers/tests: {violations:?}"
+    );
+}
+
+#[test]
 fn no_alembic_references() {
     // ADR-052 D6: the in-tree Alembic chain is retired; no Python file may
     // reference it.

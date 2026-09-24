@@ -1,4 +1,4 @@
-# ADR-025: The `ExecutionStrategy` seam — a deep, user-owned execution layer over the thin engine
+# ADR-025: The `ExecutionAdapter` seam — a deep, user-owned execution layer over the thin engine
 
 **Status: accepted.** In response to a Candidate-1 architecture review of the
 composer explosion in `degenbot-executor/src/composers.rs`, grilling reframed
@@ -43,24 +43,22 @@ scope for the thin `degenbot-simulation` engine.
 
 ## Decision
 
-### D1 — A new `degenbot-execution` crate owns the `ExecutionStrategy` seam.
+### D1 — `degenbot-execution` owns the generic foreign-adapter seam.
 
-A dedicated, pyo3-free crate owns the `ExecutionStrategy` trait + its value
-types (the solve-result view, the gate protocol, `ExecutionResult`). It holds
-**no default strategy**. The constrain:
+The dedicated, pyo3-free `degenbot-execution` crate owns the generic
+`ExecutionAdapter` / `PayloadComposer` traits and their value types: the
+solve-result view, `ComposerInputs`, the probe/assess protocol, and
+`ExecutionResult`. Its `ComposerInputs` deliberately contains solver-driven
+amounts and adapter-agnostic options only; it does not carry command-executor
+addresses or `EncodeOptions`. The dependency direction remains a DAG, with
+`pyo3` confined to the binding layer.
 
-- It **cannot** live in `degenbot-simulation` — ADR-019's load-bearing
-  consequence forbids re-wedging strategy into the thin engine.
-- It **cannot** live in `degenbot-executor` — the executor is *the developer's
-  `cmd_executor` adapter* (ADR-025-a), not a general execution layer.
-- It **cannot** live in `degenbot-settlement-strategy` — that crate is one example
-  strategy; a foreign searcher's crate must not depend on it just to reach the
-  interface.
-
-`ExecutionStrategy` is the execution-side twin of ADR-015's `degenbot-solvers`
-relocation: a shared seam crate both the standalone-Rust path and the PyO3 shell
-consume. Dep graph stays a DAG (`execution → {executor, simulation, solvers}`),
-no cycles, pyo3 stays in the shell.
+The concrete production `cmd_executor` adapter is separate and lives in
+`degenbot-strategy`, not in this generic seam. `CmdExecutorAdapter` is the
+built-in adapter for the developer's `cmd_executor` contract, while a foreign
+searcher implements the generic seam in its own crate. This preserves the
+original requirement that an arbitrary user can target a contract without
+depending on the built-in strategy.
 
 ### D2 — The strategy decomposes into four obvious parts.
 
@@ -85,17 +83,24 @@ is user code; the mechanical parts (probes, fee) are data/defaults. Net profit
 is defined in terms of the pricing policy, so pricing is not independently
 orderable — it is folded into Assess.
 
-### D3 — Default stays Rust-canonical; the canonical dispatch is a wall.
+### D3 — The built-in command-executor path is strategy-owned and typed.
 
-`degenbot-settlement-strategy` implements `ExecutionStrategy` as the **default
-adapter** (stays Rust-canonical, per ADR-019 decision R). The canonical
-`dispatch_profitable_results` / `dispatch_profitable_py` **never reads a Python
-transform** — it uses the Rust default adapter only and returns
-`execute_calldata` exactly as today. This is what keeps Python from re-deriving
-the canonical 7-call bundle (ADR-019 R + AGENTS.md "driver shell, not a
-co-implementation"): the seam *adds* a foreign-contract path; it does not
-re-derive the canonical one. A foreign user's transform is their own searcher
-code over the thin engine, not a second implementation degenbot ships.
+`degenbot-strategy::CmdExecutorAdapter` is the production built-in adapter for
+the canonical `cmd_executor` path. It captures the session `EncodeContext`
+(the executor, `PoolManager`, and WETH addresses) at construction. Each call
+accepts `PathInfo`, `SolveResult`, and a per-call `EncodeOptions`; the options
+are deliberately not added to the generic `ComposerInputs`.
+
+The adapter returns `CmdExecutorOutcome::Encoded(Bytes)`,
+`CmdExecutorOutcome::Declined(CmdExecutorDecline)`, or
+`CmdExecutorOutcome::Rejected(CmdExecutorRejection)`. The five caller-facing
+JSONL decline labels are preserved exactly: `unsupported_hop_shape`,
+`amount_exceeds_uint96`, `encoding_failed:cmd_stream`,
+`encoding_failed:execute_call`, and `mixed_pool_managers`. A
+`CmdExecutorRejection::LedgerValidation` is always fatal under ADR-030 and is
+never collapsed into a routine decline. The adapter owns the production
+composition boundary; the lower-level `degenbot-executor` grammar and ABI
+primitives remain implementation details beneath it.
 
 ### D4 — The solve-result view protocol.
 
@@ -106,13 +111,22 @@ cross to Python on the clean path (`SimResult` carries pre-built
 `execute_calldata`, not the amounts). This is the one genuinely new surface;
 both consumer types stay symmetric (Rust uses the same two types directly).
 
-### D5 — The original Candidate-1 work becomes internals of the default adapter.
+### D5 — The production adapter is the hard cutover boundary.
 
-The legacy encoders are deleted (facet B) and the 27+8 combinatorial fan-out is
-collapsed behind `CmdExecutorComposer::compose` (facet A), as **internals of the
-default adapter** behind the `PayloadComposer` seam — all Red→Green against the
-existing golden-master vectors (`composers_parity.rs` / `composers_3hop_parity.rs` /
-`native_eth_3hop_bridge.rs`), which now pin the default adapter's output.
+The landed hard cutover routes canonical strategy composition through
+`CmdExecutorAdapter` and its typed outcome. The retired helper names
+`compose_candidate`, `build_candidate_calldata`, and `ComposeReject` are not
+compatibility aliases and do not exist in canonical strategy callers or tests.
+A mechanical umbrella architecture gate scans the strategy `src/` and
+`tests/` trees for those names, while a compile-time umbrella test pins the
+public paths `degenbot::CmdExecutorAdapter` and
+`degenbot::strategy::CmdExecutorAdapter`.
+
+The generic foreign-adapter surface remains available unchanged: Rust users
+implement `ExecutionAdapter` / `PayloadComposer` with their own contract, and
+Python users continue to supply a callable through the existing PyO3 lift.
+The production adapter is a concrete strategy implementation, not a new
+`ComposerInputs` policy or a second generic seam.
 
 ## Considered options (rejected)
 
@@ -135,14 +149,21 @@ existing golden-master vectors (`composers_parity.rs` / `composers_3hop_parity.r
 
 ## Consequences
 
-- A Rust user `impl ExecutionStrategy` in their own crate; a Python user passes
-  a callable + probe/assess spec via the PyO3 lift (`PyPayloadComposer` /
-  `PyExecutionStrategy`) — both meet the *same* seam in `degenbot-execution`.
-- `degenbot-executor` is repositioned as the developer's `cmd_executor` adapter;
-  the general execution contract is "solve result + `degenbot.abi`".
-- Canonical bot behavior is byte-identical (default adapter, golden-pinned);
-  canonical dispatch never sees a foreign transform, preserving ADR-019 R.
+- A Rust user `impl ExecutionAdapter` or `PayloadComposer` in their own crate;
+  a Python user passes a callable + probe/assess spec via the existing PyO3
+  lift. Both foreign paths meet the same generic seam in `degenbot-execution`.
+- The built-in production adapter is reachable from the umbrella as
+  `degenbot::CmdExecutorAdapter` and from its strategy namespace as
+  `degenbot::strategy::CmdExecutorAdapter`; it captures one session
+  `EncodeContext` and uses per-call `EncodeOptions`.
+- `degenbot-executor` remains the low-level command grammar and ABI support;
+  `degenbot-strategy` owns the canonical production adapter boundary. The
+  generic execution contract remains "solve result + `degenbot.abi`".
+- Canonical strategy behavior is routed through the typed
+  `Encoded` / `Declined` / `Rejected` outcomes and the five preserved caller
+  labels; ledger-validation rejection remains fatal.
 - `pyo3` stays out of all core crates; the lift lives in `degenbot-python`.
-- Low-ceremony: a new crate owning a trait + value types + no default. It
-  refines ADR-019 (names the seam), ADR-005 (canonical `enc_*` primitives stay
-  the single wire-format source), and ADR-015 (parallel seam shape).
+- The generic seam stays foreign-adapter-shaped, while the hard cutover keeps
+  the retired command-executor helper names out of canonical strategy callers
+  and tests. This refines ADR-019, ADR-005, and ADR-015 without adding a
+  compatibility layer.

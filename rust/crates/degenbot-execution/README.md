@@ -1,8 +1,23 @@
 # degenbot-execution
 
-The ExecutionAdapter seam (ADR-025) — a pyo3-free crate owning the user-owned execution layer: the ExecutionAdapter trait + its value types (solve-result view, gate protocol, ExecutionResult, ComposerInputs) and the PayloadComposer Encode part. No default strategy ships here.
+`degenbot-execution` is the generic foreign-adapter seam (ADR-025): a pyo3-free
+crate owning `ExecutionAdapter`, `PayloadComposer`, the solve-result view, and
+the probe/assess/fee value types used to build a payload for a user-defined
+execution contract. Its `ComposerInputs` intentionally carries only
+solver-driven amounts and adapter-agnostic options; it does not carry
+`cmd_executor` addresses or command-encoding options.
 
-The ExecutionAdapter seam (ADR-025): the trait and its value types (solve-result view, gate protocol, ExecutionResult, composer inputs) for user-owned execution layers. No default strategy ships here.
+The concrete built-in production adapter lives in `degenbot-strategy`, where
+`CmdExecutorAdapter` owns the canonical `cmd_executor` path. It captures one
+session `EncodeContext` and composes `PathInfo + SolveResult + EncodeOptions`
+per call. The result is typed as `Encoded`, `Declined`, or `Rejected`; the
+five routine decline labels remain the caller-facing JSONL labels, while a
+ledger-validation rejection is fatal.
+
+A pure-Rust consumer can reach the production adapter from the umbrella at
+`degenbot::CmdExecutorAdapter` or `degenbot::strategy::CmdExecutorAdapter`.
+Foreign adapters continue to implement the generic seam in
+`degenbot-execution` without depending on the built-in strategy adapter.
 
 ## Usage
 
@@ -10,6 +25,7 @@ The ExecutionAdapter seam (ADR-025): the trait and its value types (solve-result
 degenbot-execution = "0.6.0-alpha.5"
 ```
 
-Or: `cargo add degenbot-execution` (the pre-release version must be pinned explicitly, e.g. "0.6.0-alpha.5").
+Or: `cargo add degenbot-execution` (the pre-release version must be pinned
+explicitly, e.g. "0.6.0-alpha.5").
 
 Part of [degenbot](https://github.com/BowTiedDevil/degenbot) — a Rust-first MEV bot for EVM chains. The in-repo root README and `docs/` cover the full architecture; this crate is published standalone so you can depend on exactly the pieces you need.

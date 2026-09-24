@@ -5,17 +5,14 @@
 //! users implement [`PayloadComposer`] directly; Python users supply a callable
 //! that `degenbot-python` lifts into this same trait (`PyPayloadComposer`).
 //!
-//! **Decoupling note (ADR-025-a).** The canonical `cmd_executor` composer
-//! (`encode_cmd_stream` over `degenbot_executor::composers::ComposerInputs`) is
-//! the *developer's* adapter — its `ComposerInputs` carries
-//! `executor_address` / `pool_manager_address` / `weth_address` + a
-//! cmd-specific `opts: EncodeOptions`, all wedged to the Vyper contract. This
-//! seam's [`ComposerInputs`] deliberately carries **only the solver-driven
-//! amounts** (`optimal_input`, `hop_outputs`, `consumed_inputs`) + a
-//! decoupled generic [`ComposeOptions`] — no protocol addresses, no
-//! cmd-opcode knobs. A user's Encode part names its own contract; the
-//! default-adapter internals (cmd addresses/opts) stay on the other side of
-//! the seam.
+//! **Decoupling note (ADR-025-a).** The built-in `cmd_executor` adapter is a
+//! concrete production composition in `degenbot-strategy`; it captures the
+//! command-executor addresses and accepts its per-call `EncodeOptions` there.
+//! This seam's [`ComposerInputs`] deliberately carries **only the solver-driven
+//! amounts** (`optimal_input`, `hop_outputs`, `consumed_inputs`) + a decoupled
+//! generic [`ComposeOptions`] — no protocol addresses, no cmd-opcode knobs. A
+//! user's Encode part names its own contract; the built-in adapter keeps its
+//! command-specific policy on the other side of the seam.
 
 use alloy::primitives::{Bytes, U256};
 
@@ -43,7 +40,7 @@ pub struct ComposeOptions;
 /// convention) — decimal place matters, so they are never floats. The
 /// solve-result view ([`crate::SolveResult`]) carries the same amounts as
 /// `U256`; the caller narrows via `fits_int128`-style checks when building
-/// these, exactly as the default adapter does today.
+/// these, exactly as the production command adapter does today.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComposerInputs<'a> {
     /// The flash/optimal input amount (u128).
@@ -90,8 +87,10 @@ impl ComposeError {
 /// `bytes` for ONE execution contract (ADR-025 D2).
 ///
 /// Rust users implement this trait; Python users supply a callable lifted into
-/// it by `degenbot-python` (`PyPayloadComposer`). The canonical `cmd_executor`
-/// encoder is the **default adapter** implementing this seam.
+/// it by `degenbot-python` (`PyPayloadComposer`). The canonical
+/// `cmd_executor` encoder is the concrete production `CmdExecutorAdapter` in
+/// `degenbot-strategy`; it is not a foreign `PayloadComposer` implementation
+/// and does not widen this generic seam.
 pub trait PayloadComposer {
     /// Turn a solved path (`PathInfo` hop descriptors + [`ComposerInputs`]
     /// solver-driven amounts) into the `bytes` payload for the composer's

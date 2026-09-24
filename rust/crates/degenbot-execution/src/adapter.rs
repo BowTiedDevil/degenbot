@@ -12,10 +12,11 @@
 //! - **Fee** — the **defaulted pricing half of Assess** ([`FeePolicy`]), not a
 //!   fifth seam.
 //!
-//! This crate holds **no default strategy** — `degenbot-arbitrage`
-//! implements this trait as the default adapter; a foreign searcher implements
-//! it (or supplies a Python callable lifted into it by `degenbot-python`) for
-//! their own contract.
+//! This crate holds only the generic seam; it has no built-in
+//! `cmd_executor` policy. The concrete production `CmdExecutorAdapter` lives
+//! in `degenbot-strategy`; a foreign searcher implements this trait (or
+//! supplies a Python callable lifted into it by `degenbot-python`) for their
+//! own contract.
 
 use alloy::primitives::{Bytes, U256};
 
@@ -27,9 +28,10 @@ use crate::solve_result::SolveResult;
 
 /// The full four-part `ExecutionAdapter` seam (ADR-025 D2).
 ///
-/// Implement this (a) as the default adapter (`degenbot-arbitrage`, the
-/// canonical `cmd_executor` path), or (b) in a foreign searcher's own crate for
-/// their own execution contract — the exact same trait. A Python consumer
+/// Implement this in a foreign searcher's own crate for their own execution
+/// contract — the exact same trait. The built-in `cmd_executor` composition is
+/// the concrete `CmdExecutorAdapter` in `degenbot-strategy`, not a generic
+/// foreign-adapter implementation. A Python consumer
 /// instead supplies a callable + probe/assess spec, lifted into this seam by
 /// `degenbot-python` (`PyPayloadComposer`, exposed to Python as `PayloadComposer`).
 ///
@@ -136,7 +138,7 @@ pub trait ExecutionAdapter {
     /// Returns [`ComposeError`] when the payload cannot be encoded.
     fn compose_view(&self, path: &PathInfo, result: &SolveResult) -> Result<Bytes, ComposeError> {
         // `ComposerInputs` is a borrowed bundle over the view's u128-narrowed
-        // amounts; the default adapter narrows the same way (fits_int128).
+        // amounts; the generic seam narrows the same way (fits_int128).
         let optimal_input = crate::payload::narrow_u256_to_u128(result.optimal_input)
             .ok_or_else(|| ComposeError::encode("optimal_input does not fit int128"))?;
         let hop_outputs: Vec<u128> = result
