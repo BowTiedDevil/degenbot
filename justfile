@@ -128,13 +128,13 @@ publish-dry-run:
 
 # Run Rust linter (clippy)
 lint-rust:
-    cargo clippy --locked --fix --all-targets --all-features --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --locked --workspace --fix --all-targets --all-features --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Lint Rust (check-only; non-mutating). This is the authoritative CI/pre-push
 # Clippy gate; it deliberately omits `--fix` so a gate run cannot dirty tracked
 # files. `lint-rust` above remains the explicit local fix command.
 lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity
-    cargo clippy --locked --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
 # outer #[allow] form; this closes the historical inner-attribute loophole it

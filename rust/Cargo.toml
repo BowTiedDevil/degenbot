@@ -161,6 +161,13 @@ members = [
     # `degenbot` crate, mirroring an external `cargo add degenbot` consumer.
     "examples/settlement_bot",
 ]
+# Keep unqualified Cargo commands focused on the two first-class pure-Rust
+# entry points. The PyO3 binding and non-publishable samples remain workspace
+# members, but dedicated recipes must select them explicitly.
+default-members = [
+    "crates/degenbot",
+    "crates/degenbot-cli",
+]
 
 # Release profile.
 #

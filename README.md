@@ -1576,17 +1576,29 @@ The MEV workload — per-block re-solve of hundreds of cyclic paths, EVM-exact r
 
 ### Build Requirements
 
+Cargo commands without a package selector build only the two pure-Rust
+workspace defaults: the `degenbot` umbrella and the `degenbot-cli` console.
+The PyO3 extension and non-publishable sample crates remain workspace members
+for explicit recipes and the full workspace gate, but a plain `cargo build`
+does not compile them.
+
 The extension is pre-built in published packages. For source builds:
 
-- A recent stable Rust toolchain (CI tracks `@stable`)
+- Rust 1.98.1 (the workspace MSRV is Rust 1.97)
 - maturin (installed automatically with `uv sync`)
 
 ```bash
-# Build the extension (same as `just build-rust-extension`)
-cargo build -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
+# Build the two default pure-Rust entry points
+cargo build --manifest-path rust/Cargo.toml
 
-# Or use the justfile
-just dev  # Build and install Python extension
+# Build the extension (same as `just build-rust-extension`)
+cargo build --locked -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
+
+# Run the standalone smokes and canonical full Rust suite
+just test-rust
+
+# Build and install the Python extension
+just dev
 ```
 
 ## Documentation

@@ -26,6 +26,9 @@ Comments carry the *why* only if it outlives its lookup: no task/epic IDs (commi
 ## Commands
 See the justfile.
 
+## Web
+Use `agent-browser`.
+
 ## Rust toolchain policy
 
 The repository-root `rust-toolchain.toml` pins local development and release
@@ -37,6 +40,16 @@ Rust 1.97; the `MSRV (Rust 1.97)` CI job runs
 Release workflows use the same 1.98.1 development channel rather than floating
 `stable`. Do not raise the MSRV without an explicit dependency-compatibility
 decision and an update to this policy.
+
+## Rust workspace selection
+
+Cargo commands without a package selector use the workspace's two pure-Rust
+entry-point defaults: `degenbot` and `degenbot-cli`. Plain `cargo build` does not
+build the PyO3 `degenbot_rs` extension or non-publishable sample crates. Build
+the extension explicitly with
+`cargo build --locked --manifest-path rust/Cargo.toml -p degenbot_rs --features extension-module`;
+maturin is already pinned to that crate's manifest. Commands intended to cover
+every member must retain an explicit `--workspace` selector.
 
 ## Rust test scope
 
