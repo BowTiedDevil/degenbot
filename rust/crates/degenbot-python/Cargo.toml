@@ -16,7 +16,7 @@ workspace = true
 name = "degenbot_rs"
 crate-type = ["rlib", "cdylib"]
 
-# The PyO3 binding layer (cdylib) over the seven pyo3-free core crates. It is a
+# The PyO3 binding layer (cdylib) over the pyo3-free core crates. It is a
 # workspace member at `rust/crates/degenbot-python/` (a peer of the cores),
 # mirroring `polars-python`'s position in the `polars` workspace. The workspace
 # root `rust/Cargo.toml` is a pure virtual manifest (ADR-005 deferral —

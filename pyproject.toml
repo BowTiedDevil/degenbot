@@ -299,16 +299,16 @@ manifest-path = "rust/crates/degenbot-python/Cargo.toml"
 python-source = "src"
 module-name = "degenbot._ffi"
 bindings = "pyo3"
-# Dev/agent loop builds in the `dev` profile (opt-level 0, no LTO) so the
-# uv-sync cdylib rebuild that fires on every Rust edit (via [tool.uv]
-# cache-keys) is ~5x faster: 149s (release) → ~30s (dev). This setting is
-# consumed ONLY by the local editable-install build path (`uv sync` /
+# Dev/agent loop builds select the workspace [profile.dev] (opt-level 1, no
+# LTO or stripping, line-tables-only debug info). This intentionally favors
+# representative optimization over an unoptimized debug build while
+# keeping uv-sync cdylib rebuilds substantially cheaper than release. This
+# setting is consumed ONLY by the local editable-install build path (`uv sync` /
 # `maturin develop`); the published wheel is built by the PyO3/maturin-action
-# in .github/workflows/release.yml, which passes `--release`
-# explicitly and replaces this development feature list — so the shipped
-# artifact is unaffected by this setting and stays fully optimized. (The
-# detailed lever analysis lived in rust/PERF_RESULTS.md, dropped in
-# `f082db7a7`)
+# in .github/workflows/release.yml, which passes `--release` explicitly and
+# replaces this development feature list — so the shipped artifact uses the
+# workspace release profile (thin LTO, stripping, and its intentional
+# per-package codegen-unit policy) and is unaffected by this setting.
 profile = "dev"
 # Development wheels compile hotpath in (toggle at runtime via
 # DEGENBOT_HOTPATH=1 — see rust/crates/degenbot-bot/src/profiling.rs), plus its

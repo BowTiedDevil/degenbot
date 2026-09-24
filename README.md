@@ -1056,9 +1056,9 @@ driver, and the `start`/`stop`/`status` lifecycle:
 `--python` is the default and is byte-identical to the direct `uv run`
 invocation above. `--rust` builds
 `rust/target/$RUST_PROFILE/degenbot-settlement-bot-example` when the binary or
-workspace is stale (`RUST_PROFILE=release` by default — the profile the Python
-driver's `.so` is built with; `RUST_PROFILE=dev` opts into the debug profile
-for iteration) and arms the Rust example's live handshake by exporting
+workspace is stale (`RUST_PROFILE=release` by default; `RUST_PROFILE=dev` opts
+into the workspace `opt-level = 1` development profile for iteration) and arms
+the Rust example's live handshake by exporting
 `SMOKE_RPC_URL` from the same RPC cascade the Python driver resolves. `--live`
 is never implied — pass it explicitly after `--`. `stop`/`status` cover both
 driver process names plus the pidfile. The launcher-consolidation record, with
@@ -1587,6 +1587,16 @@ The extension is pre-built in published packages. For source builds:
 - Rust 1.98.1 (the workspace MSRV is Rust 1.97)
 - maturin (installed automatically with `uv sync`)
 
+Local Rust and maturin development builds intentionally use the workspace
+`[profile.dev]`: `opt-level = 1`, no LTO or stripping, and line-tables-only
+debug information. This favors representative optimization over an
+unoptimized debug build while keeping iterative rebuilds cheaper than
+release. Release wheels use `[profile.release]`: thin LTO, stripping, and
+`codegen-units = 1` for the final extension link. The selected core-library
+packages intentionally use `codegen-units = 16` to reduce release compile time;
+Cargo has no per-package LTO or strip override, and the final thin-LTO link
+reconverges those units.
+
 ```bash
 # Build the two default pure-Rust entry points
 cargo build --manifest-path rust/Cargo.toml
@@ -1625,11 +1635,14 @@ exhaustive build.
 | Diagnostic | Workspace `--all-features`, including test-only and mutually exclusive variants | `just check-rust-all-features` |
 
 The development-wheel list is the exact `[tool.maturin] features` list used by
-`uv sync`/`maturin develop`. Release wheels are built with
+`uv sync`/`maturin develop`, which select the workspace `opt-level = 1`
+development profile. Release wheels are built with
 `maturin --release --features pyo3/extension-module`; that release command
 replaces the development feature list and keeps the binding crate's defaults,
-while excluding the development-only features above. The extension-release
-recipe checks this same feature set with Cargo's release profile.
+while excluding the development-only features above. The release profile keeps
+thin LTO, stripping, and the intentional per-package codegen-unit policy; the
+extension-release recipe checks this same feature set with Cargo's release
+profile.
 
 ## Documentation
 

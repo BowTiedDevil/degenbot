@@ -51,6 +51,22 @@ the extension explicitly with
 maturin is already pinned to that crate's manifest. Commands intended to cover
 every member must retain an explicit `--workspace` selector.
 
+## Rust build profiles
+
+Local development uses the workspace `[profile.dev]` intentionally: `opt-level = 1`,
+no LTO or stripping, and line-tables-only debug information. This favors
+representative optimization over an unoptimized debug build while keeping
+`cargo test`, `just dev`, and editable-install rebuilds substantially cheaper
+than release. The development extension therefore exercises representative
+optimization rather than an unoptimized debug build.
+
+Release builds use the workspace `[profile.release]`: thin LTO, stripping, and
+`codegen-units = 1` for the final extension link. The listed core-library
+package overrides intentionally use `codegen-units = 16` to reduce compile time;
+Cargo has no per-package LTO or strip override, and the final thin-LTO link
+reconverges those units. Do not change these release values or the per-package
+policy without an explicit compatibility and build-time decision.
+
 ## Rust feature matrix
 
 Rust validation is split into named lanes rather than one `--all-features` gate:

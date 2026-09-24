@@ -2,8 +2,9 @@
 #
 # The workspace root holds ONLY the `[workspace]` declaration + the `[profile.*]`
 # blocks (Cargo only honors `[profile]` at the workspace root — keep them here).
-# The seven pyo3-free core crates + the `degenbot_rs` PyO3 binding layer are all
-# workspace *members* nested under `crates/`, mirroring the `polars` repo layout
+# The workspace contains 32 crates plus one example, including the pyo3-free
+# core crates and the `degenbot_rs` PyO3 binding layer, all nested under
+# `crates/` and `examples/`, mirroring the `polars` repo layout
 # where `polars-python` sits as a peer of `polars-core`/`-ops`/`-plan`/etc.
 # (ergo UG6FKN follow-up / ADR-005 deferral: the binding layer was lifted out of
 # the workspace root into `crates/degenbot-python/`.)
@@ -28,7 +29,7 @@ authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
 # Single source of truth for lint policy across all workspace members
 # (ADR: centralize per-crate [lints] duplication). Every member inherits these
 # via `[lints] workspace = true`, so adjusting a clippy group or adding a lint
-# is a one-line edit here instead of a 27-file sweep. This is the in-tree
+# is a one-line edit here instead of a per-crate sweep. This is the in-tree
 # POLICY; the push gate's `cargo clippy -- --deny warnings` is what escalates
 # the warn-level groups to hard failure at push/CI time.
 [workspace.lints.rust]
@@ -235,9 +236,13 @@ codegen-units = 16
 [profile.release.package.degenbot-submission]
 codegen-units = 16
 
-# Dev profile (default for `cargo test` / `just dev`): keep compilation fast.
-# No LTO, relaxed debug-info so the pure-Rust cores (`cargo test -p <crate>`)
-# rebuild quickly during the red-green loop.
+# Dev profile (default for `cargo test` / `just dev`): favor representative
+# optimization over a fully unoptimized debug build, while keeping iteration
+# substantially cheaper than release. No LTO or stripping; line-tables-only
+# debug info preserves useful backtraces without the full development DWARF cost.
+# This is intentionally opt-level 1: the development extension
+# should exercise representative optimized code, and release remains the only
+# profile that pays for thin LTO and stripping.
 [profile.dev]
 # More codegen units for faster incremental dev builds across all crates.
 opt-level = 1

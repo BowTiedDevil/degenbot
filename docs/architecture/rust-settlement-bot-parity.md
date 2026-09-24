@@ -234,8 +234,8 @@ itself stands — ADR-050 adds the `EngineDriver` *driver* seam above
   (package `degenbot-settlement-bot-example`, the `cargo add degenbot`
   consumer), built on demand from a cheap staleness probe;
   `cargo build -p degenbot-settlement-bot-example` owns the real incremental
-  work. `RUST_PROFILE` defaults to `release` (the profile the installed Python
-  `.so` is built with) and accepts `dev` for the debug profile.
+  work. `RUST_PROFILE` defaults to `release` and accepts `dev` for the workspace
+  `opt-level = 1` development profile.
 - `print-cmd` is the CI-verifiable surface: the resolved driver, the full
   command array (passthrough included), the effective `RUST_PROFILE`, and every
   export, printed without building or launching (rc 0).

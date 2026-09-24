@@ -21,7 +21,7 @@ version:
 # Bump every crate to a new SEMVER version in one atomic edit (ADR-009 lockstep).
 # cargo-edit updates the [workspace.package] literal, every inherited [package]
 # version, every internal [workspace.dependencies] requirement, and Cargo.lock —
-# the 1-vs-21 drift that felled the 0.6.0-alpha.6 crates.io publish is impossible
+# version drift that felled the 0.6.0-alpha.6 crates.io publish is impossible
 # here. Pass the crates.io SEMVER form (0.6.0-alpha.7), not the PEP440 tag form
 # (0.6.0a7). Requires cargo-edit: cargo install cargo-edit
 bump-version version:
@@ -35,6 +35,12 @@ bump-version version:
 # revision). Verify the publish chain with `just publish-dry-run`.
 
 # ========== Rust Development ==========
+
+# Local Cargo and maturin development builds intentionally use the workspace
+# [profile.dev]: opt-level = 1, no LTO or stripping, and line-tables-only debug
+# info. This favors representative optimization while keeping rebuilds cheaper
+# than release. Release builds keep thin LTO, stripping, and the intentional
+# per-package codegen-unit policy documented in rust/Cargo.toml.
 
 # Print the active Rust toolchain and the repository policy. The root
 # rust-toolchain.toml pins development and release builds to Rust 1.98.1;
@@ -227,9 +233,10 @@ check-engine-impl-blocks:
     # (rust/crates/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- one_engine_impl_block --exact --nocapture
 
-# Build Rust extension module in the release-equivalent feature set. This is
-# the debug-profile build used by local validation; the feature set is the same
-# as the release maturin invocation.
+# Build Rust extension module in the release-equivalent feature set. This uses
+# the workspace development profile (opt-level = 1, no LTO or stripping) for
+# local validation; the feature set is the same as the release maturin
+# invocation.
 build-rust-extension:
     cargo build --locked -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 
@@ -308,7 +315,9 @@ gc-target:
 
 # ========== Python Development ==========
 
-# Build and install Python extension in development mode
+# Build and install the Python extension in development mode. Maturin consumes
+# pyproject's `profile = "dev"` setting, which matches rust/Cargo.toml's
+# opt-level = 1 development profile (not an unoptimized debug build).
 dev:
     RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run maturin develop
 

@@ -164,9 +164,9 @@ export DEGENBOT_PUMP_DEBOUNCE_MS="${DEGENBOT_PUMP_DEBOUNCE_MS:-15}"
 #             (rust/examples/settlement_bot, package
 #             `degenbot-settlement-bot-example`), built on demand.
 #
-# RUST_PROFILE selects the cargo profile for --rust: `release` (default — the
-# same profile the Python driver's installed .so is built with; a COLD release
-# build takes minutes) or `dev` (the debug profile, for fast iteration).
+# RUST_PROFILE selects the cargo profile for --rust: `release` (default; a COLD
+# release build takes minutes) or `dev` (the workspace opt-level 1 development
+# profile, for fast iteration).
 # --------------------------------------------------------------------------
 RUST_PROFILE="${RUST_PROFILE:-release}"
 case "$RUST_PROFILE" in
