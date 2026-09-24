@@ -120,6 +120,49 @@ impl KeyDecl {
     }
 }
 
+/// The chain-sample verification policy shared by the two backrun facets.
+///
+/// Declared once here because facet keys reference an existing enum type
+/// rather than generating one; both `strategy.*_backrun.verify_ticks` keys use
+/// it. Values are parsed case-insensitively with `-`/`_` folded, matching the
+/// macro-generated enum convention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum VerifyTicks {
+    /// Sample-verify every admission.
+    Strict,
+    /// Verify the first admission per pool per process, then memoize.
+    #[default]
+    Bootstrap,
+    /// Operator-declared confidence; no chain sample.
+    Off,
+}
+
+impl fmt::Display for VerifyTicks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let rendered = match self {
+            Self::Strict => "strict",
+            Self::Bootstrap => "bootstrap",
+            Self::Off => "off",
+        };
+        f.write_str(rendered)
+    }
+}
+
+impl std::str::FromStr for VerifyTicks {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let want = s.trim().to_ascii_lowercase().replace('-', "_");
+        match want.as_str() {
+            "strict" => Ok(Self::Strict),
+            "bootstrap" => Ok(Self::Bootstrap),
+            "off" => Ok(Self::Off),
+            _ => Err(format!(
+                "invalid VerifyTicks value {s:?} (expected one of: Strict Bootstrap Off)"
+            )),
+        }
+    }
+}
+
 // ⚠ ONE DECLARATION SITE PER KEY BELOW. Do NOT add parallel env/TOML const
 // lists anywhere in the workspace; extend this list and regenerate the doc
 // (`REGEN_CONFIG_DOCS=1 cargo test -p degenbot-config`).
@@ -383,6 +426,8 @@ crate::config_schema! {
                 doc = "Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it.";
             gas_floor_wei [u64] = 1, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_GAS_FLOOR_WEI", def = "1",
                 doc = "The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles.";
+            verify_ticks [enum VerifyTicks Strict Bootstrap Off] = VerifyTicks::Bootstrap, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_VERIFY_TICKS", def = "bootstrap",
+                doc = "Chain-sample verification policy for ingress V3 tick-map admission: strict verifies every admission, bootstrap verifies the first admission per pool per process then memoizes, off declares operator confidence and emits a loud boot entry. Integrity checks are unconditional under off.";
             dry_run [bool] = false, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_DRY_RUN", def = "false",
                 doc = "Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted.";
             key_file [opt path] = None, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_KEY_FILE", def = "(unset)",
@@ -425,6 +470,8 @@ crate::config_schema! {
                 doc = "Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it.";
             gas_floor_wei [u64] = 1, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_GAS_FLOOR_WEI", def = "1",
                 doc = "The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles.";
+            verify_ticks [enum VerifyTicks Strict Bootstrap Off] = VerifyTicks::Bootstrap, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_VERIFY_TICKS", def = "bootstrap",
+                doc = "Chain-sample verification policy for ingress V3 tick-map admission: strict verifies every admission, bootstrap verifies the first admission per pool per process then memoizes, off declares operator confidence and emits a loud boot entry. Integrity checks are unconditional under off.";
             dry_run [bool] = false, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_DRY_RUN", def = "false",
                 doc = "Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted.";
             key_file [opt path] = None, env = "DEGENBOT_STRATEGY_PEER_BACKRUN_KEY_FILE", def = "(unset)",
@@ -804,6 +851,7 @@ mod tests {
                 "priority_fee_gwei",
                 "bundle_gas_est",
                 "gas_floor_wei",
+                "verify_ticks",
                 "dry_run",
                 "key_file",
                 "executor",
@@ -834,6 +882,7 @@ mod tests {
                 "priority_fee_gwei",
                 "bundle_gas_est",
                 "gas_floor_wei",
+                "verify_ticks",
                 "dry_run",
                 "key_file",
                 "executor",
@@ -879,6 +928,7 @@ mod tests {
             assert_eq!(b.priority_fee_gwei, 2);
             assert_eq!(b.bundle_gas_est, 300_000);
             assert_eq!(b.gas_floor_wei, 1);
+            assert_eq!(b.verify_ticks, VerifyTicks::Bootstrap);
             assert!(!b.dry_run);
             assert_eq!(b.key_file, None);
             assert_eq!(b.executor, "0x30b28ed8aa581fbc0191c3b532b0697773070e97");
@@ -918,6 +968,7 @@ mod tests {
         priority_fee_gwei: u64,
         bundle_gas_est: u64,
         gas_floor_wei: u64,
+        verify_ticks: VerifyTicks,
         dry_run: bool,
         key_file: Option<std::path::PathBuf>,
         executor: String,
@@ -942,6 +993,7 @@ mod tests {
             priority_fee_gwei: f.priority_fee_gwei,
             bundle_gas_est: f.bundle_gas_est,
             gas_floor_wei: f.gas_floor_wei,
+            verify_ticks: f.verify_ticks,
             dry_run: f.dry_run,
             key_file: f.key_file,
             executor: f.executor,
@@ -967,6 +1019,7 @@ mod tests {
             priority_fee_gwei: f.priority_fee_gwei,
             bundle_gas_est: f.bundle_gas_est,
             gas_floor_wei: f.gas_floor_wei,
+            verify_ticks: f.verify_ticks,
             dry_run: f.dry_run,
             key_file: f.key_file,
             executor: f.executor,

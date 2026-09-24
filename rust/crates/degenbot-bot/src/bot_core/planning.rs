@@ -52,6 +52,105 @@ pub struct PlanningPoolParams {
     pub token1: Address,
 }
 
+/// Provenance of a staged tick map: which arm produced it. `Db` and `Chain`
+/// seeds carry an invariant (state precedence and coverage semantics) and can
+/// be minted only inside `bot_core`; `Journal` is exact-replay post-state
+/// truth the backrun journal admission owns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickMapSource {
+    /// `TickMapDb::fetch_liquidity_map` supplied the complete map
+    /// (`Tracked`).
+    Db,
+    /// The sparse Chain bootstrap supplied one bitmap word (`Sparse`).
+    Chain,
+    /// Replayed post-frame journal tick words: exact-replay truth, not a
+    /// fabricated ladder.
+    Journal,
+}
+
+impl TickMapSource {
+    /// The stable JSONL label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Db => "Db",
+            Self::Chain => "Chain",
+            Self::Journal => "Journal",
+        }
+    }
+}
+
+/// A staged tick map plus the freshness stamp and provenance that must travel
+/// with it. `#[non_exhaustive]` seals construction to this crate: an external
+/// strategy cannot fabricate a seed (nor claim Db/Chain provenance) by struct
+/// literal. The `db`/`chain` constructors are additionally crate-private
+/// because Db/Chain provenance carries invariant-bearing state precedence —
+/// only `bot_core` provisioning may claim it. `journal` is public: a replayed
+/// journal's post-state words are exact-replay truth, and the backrun journal
+/// admission path owns them.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct TickMapSeed {
+    /// The per-tick liquidity cells (raw values; layout-agnostic).
+    pub ticks: hashbrown::HashMap<i32, TickInfo>,
+    /// The coverage tag the workspace registers with.
+    pub coverage: PoolTickCoverage,
+    /// The block the map is exact at (the liquidity clock).
+    pub seed_block: u64,
+    /// Which arm produced the map.
+    pub source: TickMapSource,
+}
+
+impl TickMapSeed {
+    /// A Db-arm seed. Crate-private: Db provenance is minted only by the
+    /// ingress.
+    #[must_use]
+    pub(crate) fn db(
+        ticks: hashbrown::HashMap<i32, TickInfo>,
+        coverage: PoolTickCoverage,
+        block: u64,
+    ) -> Self {
+        Self {
+            ticks,
+            coverage,
+            seed_block: block,
+            source: TickMapSource::Db,
+        }
+    }
+
+    /// A Chain-arm seed. Crate-private: a sparse ladder is minted only by the
+    /// ingress chain bootstrap.
+    #[must_use]
+    pub(crate) fn chain(
+        ticks: hashbrown::HashMap<i32, TickInfo>,
+        coverage: PoolTickCoverage,
+        block: u64,
+    ) -> Self {
+        Self {
+            ticks,
+            coverage,
+            seed_block: block,
+            source: TickMapSource::Chain,
+        }
+    }
+
+    /// A Journal-arm seed: exact-replay post-state tick words. Public so the
+    /// backrun journal admission path can mint it without an RPC ladder.
+    #[must_use]
+    pub fn journal(
+        ticks: hashbrown::HashMap<i32, TickInfo>,
+        coverage: PoolTickCoverage,
+        block: u64,
+    ) -> Self {
+        Self {
+            ticks,
+            coverage,
+            seed_block: block,
+            source: TickMapSource::Journal,
+        }
+    }
+}
+
 /// The typed pool state an admission carries — the value the fetch layer
 /// PRODUCES and the scope consumes verbatim. No event-driven fill-in exists:
 /// whatever is in here is the entire state the pool solves from.
@@ -75,8 +174,10 @@ pub enum ExplicitPoolState {
         tick: i32,
         fee: u32,
         tick_spacing: i32,
-        tick_data: hashbrown::HashMap<i32, TickInfo>,
-        coverage: PoolTickCoverage,
+        /// The staged tick map: ticks + coverage + freshness stamp +
+        /// provenance. Db/Chain provenance is minted only by the ingress;
+        /// Journal by the backrun replay admission.
+        seed: TickMapSeed,
         /// The fork's storage-slot family — the layout the producer READ;
         /// registration stores it on the identity so every later slot-index
         /// consumer agrees. Never defaulted (VERIFY2 T4).
@@ -98,11 +199,8 @@ pub enum ExplicitPoolState {
         sqrt_price_x96: U256,
         liquidity: u128,
         tick: i32,
-        tick_data: hashbrown::HashMap<i32, TickInfo>,
-        coverage: PoolTickCoverage,
-        /// The liquidity-clock seed. `None` falls back to the scope-stamped
-        /// `update_block` (see [`RegisterV4PoolParams::tick_data_block`]).
-        tick_data_block: Option<u64>,
+        /// The staged tick map. Its `seed_block` is the V4 liquidity clock.
+        seed: TickMapSeed,
     },
 }
 
@@ -265,8 +363,7 @@ impl Workspace {
                 tick,
                 fee,
                 tick_spacing,
-                tick_data,
-                coverage,
+                seed,
                 slot_layout,
             } => self
                 .state
@@ -279,10 +376,10 @@ impl Workspace {
                     sqrt_price_x96,
                     liquidity,
                     tick,
-                    tick_data,
+                    tick_data: seed.ticks,
                     update_block: seed_block,
                     tick_data_block: None,
-                    coverage,
+                    coverage: seed.coverage,
                     fetcher: None,
                     factory: Address::ZERO,
                     deployer: Address::ZERO,
@@ -300,9 +397,7 @@ impl Workspace {
                 sqrt_price_x96,
                 liquidity,
                 tick,
-                tick_data,
-                coverage,
-                tick_data_block,
+                seed,
             } => self
                 .state
                 .register_v4_pool(&RegisterV4PoolParams {
@@ -320,10 +415,10 @@ impl Workspace {
                     sqrt_price_x96,
                     liquidity,
                     tick,
-                    tick_data,
+                    tick_data: seed.ticks,
                     update_block: seed_block,
-                    tick_data_block,
-                    coverage,
+                    tick_data_block: Some(seed.seed_block),
+                    coverage: seed.coverage,
                     fetcher: None,
                 })
                 .map_err(PlanningAdmissionError::V4),
@@ -561,9 +656,7 @@ mod tests {
                 sqrt_price_x96: U256::from(1u128) << 96,
                 liquidity,
                 tick: 0,
-                tick_data: v4_ticks(),
-                coverage: PoolTickCoverage::Sparse,
-                tick_data_block: None,
+                seed: TickMapSeed::journal(v4_ticks(), PoolTickCoverage::Sparse, SEED),
             },
             SEED,
         )

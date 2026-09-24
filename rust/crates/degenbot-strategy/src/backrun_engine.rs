@@ -18,7 +18,7 @@ use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 use degenbot_solvers::mixed::SolvePathResult;
 
 use degenbot_bot::bot_core::planning::{
-    ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace,
+    ExplicitPoolState, PlanningHop, PlanningPoolParams, TickMapSeed, Workspace,
 };
 use degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags;
 use degenbot_bot::bot_core::pool_ingress::{IngressV3Params, PoolIngress};
@@ -334,8 +334,9 @@ impl BackrunSolver {
                     tick,
                     fee,
                     tick_spacing,
-                    tick_data,
-                    coverage,
+                    // Journal provenance: the caller's replayed post-state
+                    // tick words are exact-replay truth, not an RPC ladder.
+                    seed: TickMapSeed::journal(tick_data, coverage, seed_block),
                     slot_layout,
                 },
                 seed_block,
@@ -391,9 +392,8 @@ impl BackrunSolver {
                     sqrt_price_x96,
                     liquidity,
                     tick,
-                    tick_data,
-                    coverage: PoolTickCoverage::Sparse,
-                    tick_data_block: None,
+                    // Journal provenance: the replayed post-state tick words.
+                    seed: TickMapSeed::journal(tick_data, PoolTickCoverage::Sparse, seed_block),
                 },
                 seed_block,
             )
@@ -432,21 +432,23 @@ impl BackrunSolver {
                 .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
         let liquidity = u128::try_from(liquidity).map_err(|_| V3LadderReject::Slot0Width)?;
         let tick_i32 = i32::try_from(tick).map_err(|_| V3LadderReject::Slot0Width)?;
-        ingress.admit_v3(
-            &mut self.ws,
-            IngressV3Params {
-                address,
-                token0,
-                token1,
-                fee,
-                tick_spacing,
-                sqrt_price_x96: sqrt_override.unwrap_or(sqrt_price_x96),
-                liquidity,
-                tick: tick_i32,
-                slot_layout,
-            },
-            head,
-        )
+        ingress
+            .admit_v3_verified(
+                &mut self.ws,
+                IngressV3Params {
+                    address,
+                    token0,
+                    token1,
+                    fee,
+                    tick_spacing,
+                    sqrt_price_x96: sqrt_override.unwrap_or(sqrt_price_x96),
+                    liquidity,
+                    tick: tick_i32,
+                    slot_layout,
+                },
+                head,
+            )
+            .await
     }
 }
 

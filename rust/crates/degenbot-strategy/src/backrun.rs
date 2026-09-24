@@ -18,6 +18,7 @@
 use std::path::PathBuf;
 
 use alloy::primitives::U256;
+use degenbot_bot::bot_core::pool_ingress::VerifyLevel;
 use degenbot_config::BotConfig;
 use degenbot_decoders::target_class::TargetClass;
 
@@ -106,6 +107,8 @@ pub struct BackrunConfig {
     /// The envelope gate's profit floor (wei): a declared chain whose solver
     /// bound tops out below this skips without a simulation.
     pub gas_floor_wei: u64,
+    /// Chain-sample verification policy for ingress V3 tick-map admission.
+    pub verify_ticks: VerifyLevel,
     /// The operator's priority fee in gwei.
     pub priority_fee_gwei: u64,
     /// Bundle-sim endpoint; unset reuses the chain node.
@@ -143,6 +146,7 @@ struct BackrunKnobs {
     bribe_bips: u64,
     bundle_gas_est: u64,
     gas_floor_wei: u64,
+    verify_ticks: VerifyLevel,
     priority_fee_gwei: u64,
     sim_url: Option<String>,
     rank_evidence: bool,
@@ -174,6 +178,7 @@ impl BackrunKnobs {
             bribe_bips: u16::try_from(self.bribe_bips.min(10_000)).unwrap_or(10_000),
             bundle_gas_est: self.bundle_gas_est,
             gas_floor_wei: self.gas_floor_wei,
+            verify_ticks: self.verify_ticks,
             priority_fee_gwei: self.priority_fee_gwei,
             sim_url: self.sim_url,
             rank_evidence: self.rank_evidence,
@@ -201,6 +206,7 @@ impl From<&degenbot_config::StrategyMevblockerBackrunConfig> for BackrunKnobs {
             bribe_bips: f.bribe_bips,
             bundle_gas_est: f.bundle_gas_est,
             gas_floor_wei: f.gas_floor_wei,
+            verify_ticks: to_verify_level(f.verify_ticks),
             priority_fee_gwei: f.priority_fee_gwei,
             sim_url: f.sim_url.clone(),
             rank_evidence: f.rank_evidence,
@@ -210,6 +216,15 @@ impl From<&degenbot_config::StrategyMevblockerBackrunConfig> for BackrunKnobs {
             executor: f.executor.clone(),
             operator: f.operator.clone(),
         }
+    }
+}
+
+/// Project the config facet's `verify_ticks` enum onto the ingress policy.
+fn to_verify_level(v: degenbot_config::VerifyTicks) -> VerifyLevel {
+    match v {
+        degenbot_config::VerifyTicks::Strict => VerifyLevel::Strict,
+        degenbot_config::VerifyTicks::Bootstrap => VerifyLevel::Bootstrap,
+        degenbot_config::VerifyTicks::Off => VerifyLevel::Off,
     }
 }
 
@@ -226,6 +241,7 @@ impl From<&degenbot_config::StrategyPeerBackrunConfig> for BackrunKnobs {
             bribe_bips: f.bribe_bips,
             bundle_gas_est: f.bundle_gas_est,
             gas_floor_wei: f.gas_floor_wei,
+            verify_ticks: to_verify_level(f.verify_ticks),
             priority_fee_gwei: f.priority_fee_gwei,
             sim_url: f.sim_url.clone(),
             rank_evidence: f.rank_evidence,
@@ -511,6 +527,33 @@ mod tests {
         cfg.strategy.mevblocker_backrun.gas_floor_wei = 123_456;
         let c = MevblockerBackrun::from_config(&cfg, String::new()).into_config();
         assert_eq!(c.gas_floor_wei, 123_456, "the knob is wired, not ignored");
+    }
+
+    /// The chain-sample policy reaches the driver config and maps every facet
+    /// value onto the ingress policy; the default is `Bootstrap`.
+    #[test]
+    fn verify_ticks_knob_flows_from_the_facet() {
+        let c = MevblockerBackrun::from_config(&BotConfig::default(), String::new()).into_config();
+        assert_eq!(c.verify_ticks, VerifyLevel::Bootstrap, "declared default");
+
+        for (facet, expected) in [
+            (degenbot_config::VerifyTicks::Strict, VerifyLevel::Strict),
+            (
+                degenbot_config::VerifyTicks::Bootstrap,
+                VerifyLevel::Bootstrap,
+            ),
+            (degenbot_config::VerifyTicks::Off, VerifyLevel::Off),
+        ] {
+            let mut cfg = BotConfig::default();
+            cfg.strategy.mevblocker_backrun.verify_ticks = facet;
+            let c = MevblockerBackrun::from_config(&cfg, String::new()).into_config();
+            assert_eq!(c.verify_ticks, expected, "the knob is wired, not ignored");
+        }
+
+        let mut cfg = BotConfig::default();
+        cfg.strategy.peer_backrun.verify_ticks = degenbot_config::VerifyTicks::Strict;
+        let c = PeerBackrun::from_config(&cfg, String::new()).into_config();
+        assert_eq!(c.verify_ticks, VerifyLevel::Strict, "peer facet wired too");
     }
 
     fn cfg() -> BackrunConfig {

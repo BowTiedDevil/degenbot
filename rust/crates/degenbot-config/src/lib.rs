@@ -88,7 +88,7 @@ pub use resolvers::{
 };
 pub use schema::{
     AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyMevblockerBackrunConfig,
-    StrategyPeerBackrunConfig, StrategySettlementConfig,
+    StrategyPeerBackrunConfig, StrategySettlementConfig, VerifyTicks,
 };
 pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA, SECTION_PATHS};
 

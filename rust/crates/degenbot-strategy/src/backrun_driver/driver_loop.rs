@@ -24,6 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
+use degenbot_bot::bot_core::pool_ingress::AlloySampleVerifier;
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
@@ -1229,10 +1230,17 @@ impl BackrunDriver {
             bribe_bips: cfg.bribe_bips,
             wallet_gas_cost_wei,
             gas_floor_wei: U256::from(cfg.gas_floor_wei),
+            verify_ticks: cfg.verify_ticks,
             // Historical mode only when the dry-run actually pinned a head: the
             // live sim gate evaluates at `latest` and would diverge otherwise.
             fixture_mode: fixture_frames.is_some() && fixture_head.is_some(),
         };
+        // The ingress chain-sample policy + the provider-backed verifier it
+        // composes. `Off` logs its loud declaration here at boot.
+        runtime.set_ingress_verify(
+            pl.verify_ticks,
+            Arc::new(AlloySampleVerifier::new(provider.clone())),
+        );
 
         let fetched_head = provider.get_block_number().await.expect("head block fetch");
         // Fixture mode pins the dispatcher (and, below, the replay handle) to the

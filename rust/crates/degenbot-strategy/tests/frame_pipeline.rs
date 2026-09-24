@@ -508,6 +508,7 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
         bribe_bips: 9_800,
         wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         gas_floor_wei: U256::ZERO,
+        verify_ticks: degenbot_bot::bot_core::pool_ingress::VerifyLevel::Bootstrap,
         fixture_mode: false,
     };
     let mut strategy = degenbot_strategy::backrun_strategy::BackrunStrategy::new();
@@ -1019,6 +1020,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         bribe_bips: 9_800,
         wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(1_000_000_000_000)),
         gas_floor_wei: U256::from(50_000_000_000_000u64),
+        verify_ticks: degenbot_bot::bot_core::pool_ingress::VerifyLevel::Bootstrap,
         fixture_mode: false,
     };
     // The bundle-sim client points at the SAME node join (read/sim only, and

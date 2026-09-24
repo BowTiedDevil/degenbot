@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use alloy::primitives::Address;
-use degenbot_bot::bot_core::pool_ingress::PoolIngress;
+use degenbot_bot::bot_core::pool_ingress::{PoolIngress, TickMapSampleVerifier, VerifyLevel};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_db::connection::DegenbotDb;
@@ -99,6 +99,18 @@ impl MarketContext {
     /// bootstrap instead of staging an empty map.
     pub fn set_chain_bootstrap(&mut self, chain: Arc<dyn TickBootstrapRpc>) {
         self.ingress.set_chain(chain);
+    }
+
+    /// Wire the ingress's chain-sample policy and verifier. Called by the
+    /// driver at boot once the provider is resolved; `Off` emits its loud
+    /// declaration here.
+    pub fn set_ingress_verify(
+        &mut self,
+        level: VerifyLevel,
+        verifier: Arc<dyn TickMapSampleVerifier>,
+    ) {
+        self.ingress.set_verify_level(level);
+        self.ingress.set_verifier(verifier);
     }
 
     /// The frozen connector index behind the registry handle (`None` when the

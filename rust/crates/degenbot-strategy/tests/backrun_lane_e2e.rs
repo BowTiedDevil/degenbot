@@ -105,6 +105,7 @@ fn bid_config() -> (BackrunConfig, PipelineConfig) {
             600_000_000_000,
         )),
         gas_floor_wei: U256::from(GAS_FLOOR_WEI),
+        verify_ticks: degenbot_bot::bot_core::pool_ingress::VerifyLevel::Bootstrap,
         fixture_mode: false,
     };
     (cfg, pl)

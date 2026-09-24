@@ -89,6 +89,8 @@ use degenbot_simulation::{SimulationOverrideParams, WarmCodeCacheInner};
 use hashbrown::HashMap as HbMap;
 use parking_lot::RwLock;
 
+use degenbot_bot::bot_core::pool_ingress::VerifyLevel;
+
 use crate::pending_tx::PendingTxReaction;
 
 pub use crate::backrun_strategy::WETH;
@@ -165,6 +167,8 @@ pub struct PipelineConfig {
     pub wallet_gas_cost_wei: Arc<std::sync::atomic::AtomicU64>,
     /// The gas floor the envelope gate evaluates at (wei).
     pub gas_floor_wei: U256,
+    /// Chain-sample verification policy for ingress V3 tick-map admission.
+    pub verify_ticks: VerifyLevel,
     /// Offline fixture mode: the run replays captured frames against a
     /// pinned historical head, so the live `eth_callMany` sim gate (which
     /// evaluates at `latest`) would diverge. Set on the dry-run path when a

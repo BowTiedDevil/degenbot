@@ -42,6 +42,7 @@ use super::choreography::{self};
 use super::curve_choreography;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
+use crate::bot_core::planning::TickMapSeed;
 use crate::bot_core::{PoolTickCoverage, TickInfo};
 
 /// The on-chain family a `probe` resolves to (V4 is a separate
@@ -831,7 +832,7 @@ async fn assemble_db_or_chain_v3(
     tick: i32,
     tick_spacing: i32,
     block: u64,
-) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), PoolBuilderError> {
+) -> Result<TickMapSeed, PoolBuilderError> {
     if let Some(db) = db {
         if let Some(map) = db.fetch_liquidity_map(address)? {
             // The Tracked intake reconciliation (T3 OMDCIY) runs inside
@@ -841,7 +842,8 @@ async fn assemble_db_or_chain_v3(
                 // Non-empty snapshot → Tracked + populated.
                 Some(hit) => {
                     crate::bot_core::tick_assembly::dump_tick_map_seed(&format!("{address}"), &hit);
-                    return Ok(hit); // (ticks, Tracked)
+                    let (ticks, coverage) = hit;
+                    return Ok(TickMapSeed::db(ticks, coverage, block));
                 }
                 // Empty snapshot → a DB-registered pool with no mapped liquidity
                 // is a legitimately-empty Tracked pool (authoritative — it came
@@ -852,13 +854,19 @@ async fn assemble_db_or_chain_v3(
                 // As Tracked-empty a path using it is cleanly invalid, and a later
                 // ModifyLiquidity/Mint/Burn event reactivates it via the normal
                 // tracked tick-data path.
-                None => return Ok((HashMap::new(), PoolTickCoverage::Tracked)),
+                None => {
+                    return Ok(TickMapSeed::db(
+                        HashMap::new(),
+                        PoolTickCoverage::Tracked,
+                        block,
+                    ))
+                }
             }
         }
     }
     // DB miss / empty → Chain arm (Sparse).
     let (ticks, _) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block).await?;
-    Ok((ticks, PoolTickCoverage::Sparse))
+    Ok(TickMapSeed::chain(ticks, PoolTickCoverage::Sparse, block))
 }
 
 /// V4 twin of [`assemble_db_or_chain_v3`]: `TickMapDb.fetch_liquidity_map_v4`
@@ -873,7 +881,7 @@ async fn assemble_db_or_chain_v4(
     tick: i32,
     tick_spacing: i32,
     block: u64,
-) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), PoolBuilderError> {
+) -> Result<TickMapSeed, PoolBuilderError> {
     if let Some(db) = db {
         if let Some(map) = db.fetch_liquidity_map_v4(pool_manager, B256::from(pool_id))? {
             // Tracked intake reconciliation (T3 OMDCIY) — V4 twin of the V3
@@ -885,7 +893,8 @@ async fn assemble_db_or_chain_v4(
                         &alloy::hex::encode_prefixed(pool_id),
                         &hit,
                     );
-                    return Ok(hit); // (ticks, Tracked)
+                    let (ticks, coverage) = hit;
+                    return Ok(TickMapSeed::db(ticks, coverage, block));
                 }
                 // Empty snapshot → a DB-registered pool with no mapped liquidity
                 // is a legitimately-empty Tracked pool (authoritative — it came
@@ -897,14 +906,20 @@ async fn assemble_db_or_chain_v4(
                 // Tracked-empty a path using it is cleanly invalid, and a later
                 // ModifyLiquidity event reactivates it via the normal tracked
                 // tick-data path.
-                None => return Ok((HashMap::new(), PoolTickCoverage::Tracked)),
+                None => {
+                    return Ok(TickMapSeed::db(
+                        HashMap::new(),
+                        PoolTickCoverage::Tracked,
+                        block,
+                    ))
+                }
             }
         }
     }
     // DB miss / empty → Chain arm (Sparse).
     let (ticks, _) =
         bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block).await?;
-    Ok((ticks, PoolTickCoverage::Sparse))
+    Ok(TickMapSeed::chain(ticks, PoolTickCoverage::Sparse, block))
 }
 
 /// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3
@@ -1137,8 +1152,10 @@ pub async fn build_v3(
     let tick = i32::try_from(tick_i).unwrap_or(0);
     let update_block = block.unwrap_or(0);
 
-    let (tick_data, coverage) =
+    let seed =
         assemble_db_or_chain_v3(db, io, address, tick, imm.tick_spacing, update_block).await?;
+    let coverage = seed.coverage;
+    let tick_data = seed.ticks;
     // Two-stamp rule (regression 8c50e0cd): the PRICE clock
     // (`update_block`) stays at the fresh caller-supplied head read, but the
     // LIQUIDITY clock (`tick_data_block`) of a DB-seeded (`Tracked`) pool must
@@ -1329,7 +1346,7 @@ pub async fn build_v4(
     let tick = i32::try_from(tick_i).unwrap_or(0);
     let update_block = block.unwrap_or(0);
 
-    let (tick_data, coverage) = assemble_db_or_chain_v4(
+    let seed = assemble_db_or_chain_v4(
         db,
         io,
         id.pool_manager,
@@ -1340,6 +1357,8 @@ pub async fn build_v4(
         update_block,
     )
     .await?;
+    let coverage = seed.coverage;
+    let tick_data = seed.ticks;
     // Two-stamp rule (V4 twin of build_v3): a DB-seeded (`Tracked`) pool's
     // liquidity clock is its DB `liquidity_update_block`, not the head price
     // clock (regression 8c50e0cd).
