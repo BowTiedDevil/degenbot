@@ -33,11 +33,16 @@ use crate::mixed::{
 /// `solve_all` invoke `solve_path` from a rayon `par_iter` closure without
 /// borrowing `self` (which would conflict with the `&mut self` write to
 /// `self.results` that follows the solve).
-/// The mixed solve entry's whole return: result + returned walk telemetry
-/// (SU7MAE T2 — no frozen thread-locals on the read-back path).
-#[derive(Debug, Default)]
+/// The mixed solve entry's whole return: result + typed envelope verdict +
+/// returned walk telemetry (SU7MAE T2 — no frozen thread-locals on the
+/// read-back path).
+#[derive(Debug)]
 pub struct SolveOutcome {
     pub result: Option<SolvePathResult>,
+    /// The gate's typed fact, carried independently of walk telemetry.
+    /// Planning maps `Bound` at or below its floor to the no-envelope-profit
+    /// rejection; `Unsupported` remains solve-unscreened.
+    pub envelope: Envelope,
     pub stats: crate::cl::WalkStats,
 }
 
@@ -135,7 +140,8 @@ pub fn solve_path_with_min_profit(
             }
         })
         .collect();
-    match path_profit_bound_with_floor(&views, gate, min_profit) {
+    let envelope = path_profit_bound_with_floor(&views, gate, min_profit);
+    match envelope {
         // Unsupported families are SOLVED unscreened, never skipped — the
         // gate counts its own verdicts (evaluated / unsupported / cause).
         Envelope::Unsupported(_) => {}
@@ -146,7 +152,11 @@ pub fn solve_path_with_min_profit(
             // the walk.
             if bound <= min_profit {
                 gate_tls(|t| t.skipped += 1);
-                return SolveOutcome::default();
+                return SolveOutcome {
+                    result: None,
+                    envelope,
+                    stats: crate::cl::WalkStats::default(),
+                };
             }
         }
     }
@@ -158,7 +168,11 @@ pub fn solve_path_with_min_profit(
         None
     };
     let (result, stats) = solve_path_inner(resolved, gate, walk_env.as_ref());
-    SolveOutcome { result, stats }
+    SolveOutcome {
+        result,
+        envelope,
+        stats,
+    }
 }
 
 #[must_use]
@@ -1481,6 +1495,8 @@ mod gate_tests {
         assert_eq!(stats.skipped, 1, "skip must be counted");
         assert_eq!(stats.evaluated, 1);
         assert_eq!(stats.unsupported, 0);
+        assert!(matches!(r.envelope, Envelope::Bound(_)));
+        assert_eq!(r.stats.sims, 0, "gate skip carries no walk simulations");
     }
 
     #[test]

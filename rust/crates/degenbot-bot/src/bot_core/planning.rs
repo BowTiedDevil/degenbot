@@ -37,7 +37,7 @@ use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
 use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_pools::TickInfo;
 use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
-use degenbot_solvers::profit_envelope::GateDeps;
+use degenbot_solvers::profit_envelope::{Envelope, GateDeps};
 
 use super::resolve::{resolve_hops, HopProjectionCache};
 use super::BotState;
@@ -283,7 +283,7 @@ struct DeclaredPath {
 }
 
 /// Why [`Workspace::evaluate_verdict`] refused a declared path: the typed
-/// `None` of the envelope-gated solve. The frame pipeline traces this
+/// envelope-gated solve outcome. The frame pipeline traces this
 /// verbatim, so the per-chain dark half (declared but not solved) is legible
 /// without re-deriving a cause from a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -598,14 +598,21 @@ impl Workspace {
             min_profit,
             &GateDeps::offline(),
         );
-        match outcome.result {
-            Some(r) => EvalVerbose::Solved(r),
-            // Gate-skipped vs solver-None are indistinguishable at this
-            // seam; the walk stats tell them apart (a gate skip reports no
-            // walk steps at a non-zero bound).
-            None if outcome.stats.sims == 0 => EvalVerbose::GateSkipped,
-            None => EvalVerbose::Unsolved,
-        }
+        classify_verbose(outcome.result, outcome.envelope, min_profit)
+    }
+}
+
+/// Classify the solver's typed gate fact at the planning seam. Walk telemetry
+/// is deliberately absent: zero simulations is not evidence of a gate skip.
+fn classify_verbose(
+    result: Option<SolvePathResult>,
+    envelope: Envelope,
+    min_profit: U256,
+) -> EvalVerbose {
+    match (result, envelope) {
+        (Some(r), _) => EvalVerbose::Solved(r),
+        (None, Envelope::Bound(bound)) if bound <= min_profit => EvalVerbose::GateSkipped,
+        (None, _) => EvalVerbose::Unsolved,
     }
 }
 
@@ -793,6 +800,55 @@ mod tests {
         let p_id = admitted_v2(&mut w, P, 500_000, 1_000);
         assert_eq!(w.pool_id_by_address(&P), Some(p_id));
         assert_eq!(w.pool_id_by_address(&Address::new([0xEE; 20])), None);
+    }
+
+    /// An unsupported envelope is solve-unscreened, even when the solver
+    /// returns no result and the walk never records a simulation. The planning
+    /// verdict must not relabel that typed fact as a gate skip.
+    #[test]
+    fn unsupported_envelope_is_not_a_gate_skip() {
+        let mut w = Workspace::new();
+        let v4_id = admitted_v4(&mut w, 0, 0);
+        let p_id = admitted_v2(&mut w, P, 500_000, 1_000);
+        let idx = w.declare(&[
+            PlanningHop {
+                pool_id: v4_id,
+                hop_type: HopType::V4,
+                zero_for_one: true,
+            },
+            PlanningHop::v2(p_id, false),
+        ]);
+
+        assert_eq!(
+            w.evaluate_verdict(idx, U256::ZERO).as_ref().err(),
+            Some(&PathReject::Unsolved),
+            "Unsupported(cause) is not a no-envelope-profit rejection"
+        );
+    }
+
+    /// The planning seam maps the three typed solver facts independently of
+    /// walk statistics: a rejected bound, an unscreened unsupported path, and
+    /// an allowed-gate solver miss are not the same verdict.
+    #[test]
+    fn planning_classifies_typed_gate_facts_without_walk_statistics() {
+        assert!(matches!(
+            classify_verbose(None, Envelope::Bound(U256::from(5u64)), U256::from(5u64),),
+            EvalVerbose::GateSkipped
+        ));
+        assert!(matches!(
+            classify_verbose(
+                None,
+                Envelope::Unsupported(
+                    degenbot_solvers::profit_envelope::GateSkipCause::UnmappedHop,
+                ),
+                U256::ZERO,
+            ),
+            EvalVerbose::Unsolved
+        ));
+        assert!(matches!(
+            classify_verbose(None, Envelope::Bound(U256::from(1u64)), U256::ZERO,),
+            EvalVerbose::Unsolved
+        ));
     }
 
     /// The typed reject surface: the gate skip and the unresolvable-path
