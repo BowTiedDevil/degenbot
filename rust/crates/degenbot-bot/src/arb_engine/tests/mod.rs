@@ -33,6 +33,34 @@ fn weth(amount: u64) -> U112 {
 const GAMMA_03: u64 = 997;
 const FEE_DENOM_03: u64 = 1000;
 
+/// Compare every solution fact while excluding the optional debug capture.
+/// `solver_pool_states` is populated only when a process-global tracing
+/// subscriber enables the solver's DEBUG callsite, so its presence is not a
+/// property of the solve or resolve arm being compared.
+fn assert_functional_solve_parity(
+    path_id: u64,
+    actual: &SolvePathResult,
+    expected: &SolvePathResult,
+) {
+    assert_eq!(
+        (
+            &actual.optimal_input,
+            &actual.profit,
+            &actual.hop_outputs,
+            &actual.consumed_inputs,
+            &actual.state_nonces,
+        ),
+        (
+            &expected.optimal_input,
+            &expected.profit,
+            &expected.hop_outputs,
+            &expected.consumed_inputs,
+            &expected.state_nonces,
+        ),
+        "path {path_id} functional solve result diverged"
+    );
+}
+
 /// Common scaffolding: a 3-path V2→V2 engine (same live-corpus-shaped
 /// fixtures as the streaming test), with the slow path's hook injectable
 /// per test.

@@ -1044,10 +1044,7 @@ fn solve_all_parallel_fanout_matches_per_path_eager_baseline() {
         let got = results
             .get(pid)
             .unwrap_or_else(|| panic!("batch re-solve dropped path {pid}"));
-        assert_eq!(
-            got, expected,
-            "path {pid} diverged: parallel fan-out != serial eager baseline"
-        );
+        assert_functional_solve_parity(*pid, got, expected);
     }
 }
 /// ADR-006 slice 10 acceptance for the parallel solve fan-out

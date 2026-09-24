@@ -784,27 +784,32 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
         );
         let projections_delta = engine.cycle.hop_projection_count - projections_before;
         let (results, _block) = latest_results(&engine);
+        let hop_shapes: HashMap<u64, usize> = path_ids
+            .iter()
+            .map(|&(path_id, ..)| (path_id, engine.cycle.path_resolved[&path_id].hops.len()))
+            .collect();
         (
             results,
             engine.cycle.paths_same_state_this_cycle,
             projections_delta,
             path_ids,
+            hop_shapes,
         )
     };
-    let (serial_results, serial_same_state, serial_proj_delta, path_ids) = run(false);
-    let (par_results, par_same_state, par_proj_delta, _path_ids) = run(true);
+    let (serial_results, serial_same_state, serial_proj_delta, path_ids, serial_hop_shapes) =
+        run(false);
+    let (par_results, par_same_state, par_proj_delta, _path_ids, par_hop_shapes) = run(true);
     // the instance-stance cutover -> nothing process-global remains to restore.
     assert_eq!(path_ids.len(), N);
     for (path_id, _unique, _a, _b) in &path_ids {
         let sres = serial_results.get(path_id).expect("serial result");
         let pres = par_results.get(path_id).expect("parallel result");
+        assert_functional_solve_parity(*path_id, pres, sres);
+        let serial_shape = serial_hop_shapes[path_id];
+        let parallel_shape = par_hop_shapes[path_id];
+        assert_eq!(serial_shape, 3, "serial hop-state shape for path {path_id}");
         assert_eq!(
-            sres.profit, pres.profit,
-            "profit diverged for path {path_id}"
-        );
-        assert_eq!(
-            sres.solver_pool_states.len(),
-            pres.solver_pool_states.len(),
+            serial_shape, parallel_shape,
             "hop-state shape diverged for path {path_id}"
         );
     }
