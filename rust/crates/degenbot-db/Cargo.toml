@@ -17,7 +17,7 @@ workspace = true
 # SQLite lookups. Verified pyo3-free under default features by 
 # `just check-no-pyo3-in-cores`.
 [dependencies]
-alloy = { version = "^2.4" }
+alloy = { version = "^2.5" }
 # Species-manifest decode (ADR-059 D3): `serde`/`toml` parse the embedded
 # `species.toml` into typed structs with `deny_unknown_fields`, so a typo'd
 # species key fails at first use. `toml` already resolves in the workspace

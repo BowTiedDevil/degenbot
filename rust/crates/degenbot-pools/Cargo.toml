@@ -12,7 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.4" }
+alloy = { version = "^2.5" }
 thiserror = { version = "^2.0" }
 parking_lot = { version = "^0.12" }
 # Hot map type for tick liquidity (foldhash; see workspace.dependencies note).

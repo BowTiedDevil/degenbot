@@ -21,7 +21,7 @@ workspace = true
 # DOES pull pyo3; the umbrella never depends on it.
 [dependencies]
 parking_lot = { version = "^0.12" }
-alloy = { version = "^2.4", features = ["full"] }
+alloy = { version = "^2.5", features = ["full"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 degenbot-config.workspace = true
@@ -60,7 +60,7 @@ degenbot-uniswap.workspace = true
 # bounded priority dispatch, cordon posture — pyo3-free core for the
 # standalone Rust consumer.
 degenbot-workers.workspace = true
-degenbot-eventhub = { version = "0.6.0-alpha.12", path = "../degenbot-eventhub" }
+degenbot-eventhub = { version = "0.6.0-alpha.13", path = "../degenbot-eventhub" }
 
 [features]
 # OTel observability passthrough (Gap G6): forward
@@ -73,7 +73,7 @@ otel = ["degenbot-bot/otel"]
 
 [dev-dependencies]
 async-trait = "0.1"
-alloy = { version = "^2.4", features = ["full"] }
+alloy = { version = "^2.5", features = ["full"] }
 revm = { version = "^43.0", default-features = false }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
 serde = { version = "^1.0", features = ["derive"] }

@@ -30,7 +30,7 @@ degenbot-rpc.workspace = true
 degenbot-uniswap.workspace = true
 # Address/bytes primitives + the alloy `Provider` trait the block-tag
 # resolution path reads `eth_getBlockByNumber` through.
-alloy = { version = "^2.4", features = ["full"] }
+alloy = { version = "^2.5", features = ["full"] }
 # The updater cores own their runtime; the arms build a short-lived one only to
 # resolve a tag+offset block identifier (or drive an on-chain verify) before the
 # core's own runtime is built.

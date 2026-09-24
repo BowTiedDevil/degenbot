@@ -21,7 +21,7 @@ degenbot = { path = "../../crates/degenbot", features = ["otel"] }
 # `degenbot::arbitrage` fee seam and `degenbot::submission` seams name in
 # their signatures (a `cargo add degenbot` consumer naming those seams needs
 # it too). Nothing here bypasses a degenbot surface.
-alloy = { version = "^2.4", features = ["full"] }
+alloy = { version = "^2.5", features = ["full"] }
 toml = "^1"
 # serde_json is the driver-local JSON codec for the operator Unix-socket
 # channel (the Rust twin of Python's stdlib json). Like toml it is a
@@ -43,7 +43,7 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "s
 # the core optional deps pin.
 tracing = "^0.1"
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
-degenbot-eventhub = { version = "0.6.0-alpha.12", path = "../../crates/degenbot-eventhub" }
+degenbot-eventhub = { version = "0.6.0-alpha.13", path = "../../crates/degenbot-eventhub" }
 
 [dev-dependencies]
 # start_paused + tokio::time::advance give the session-watch tests a

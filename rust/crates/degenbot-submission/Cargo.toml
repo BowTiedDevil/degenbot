@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-alloy = { version = "^2.4", features = ["full", "signer-local", "network"] }
+alloy = { version = "^2.5", features = ["full", "signer-local", "network"] }
 degenbot-core.workspace = true
 # The per-process event hub: the backrun driver registers the MEVBlocker feed's
 # PendingTx drop-oldest ring on it (Phase B1).

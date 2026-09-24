@@ -43,7 +43,7 @@ revm = { version = "^43.0", default-features = false, features = [
 # The alloy umbrella (single source, matches degenbot-rpc's convention). The
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.
-alloy = { version = "^2.4", features = ["full"] }
+alloy = { version = "^2.5", features = ["full"] }
 # Tick-map fixtures mirror the pools hashbrown maps.
 hashbrown.workspace = true
 degenbot-core.workspace = true

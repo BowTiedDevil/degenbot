@@ -12,7 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.4" }
+alloy = { version = "^2.5" }
 degenbot-db.workspace = true
 # Tick-map types from degenbot-db are hashbrown maps.
 hashbrown.workspace = true
@@ -33,6 +33,6 @@ rusqlite = { version = "^0.40" }
 default = []
 
 [dev-dependencies]
-alloy = { version = "^2.4" }
+alloy = { version = "^2.5" }
 degenbot-rpc.workspace = true
 tempfile = { version = "^3.27" }

@@ -23,7 +23,7 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 degenbot-config.workspace = true
-alloy = { version = "^2.4", features = ["full", "transport-throttle"] }
+alloy = { version = "^2.5", features = ["full", "transport-throttle"] }
 # Path dependency enables the `pyo3` feature so `From<Error> for PyErr`
 # conversions from core are available at this binding layer.
 degenbot-rpc = { path = "../degenbot-rpc", optional = true }
@@ -85,7 +85,7 @@ serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 toml = "1.1.6"
-degenbot-eventhub = { version = "0.6.0-alpha.12", path = "../degenbot-eventhub" }
+degenbot-eventhub = { version = "0.6.0-alpha.13", path = "../degenbot-eventhub" }
 
 [features]
 # Per-domain binding-layer features. Each gates its optional
@@ -152,7 +152,7 @@ degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
 
 # Seam-C test seam: InMemorySpanExporter. Same version lock as
 # degenbot-bot (tracing-opentelemetry 0.33 <-> opentelemetry(-sdk) 0.32).
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "testing"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "testing"] }
 
 [[test]]
 name = "python_integration"
