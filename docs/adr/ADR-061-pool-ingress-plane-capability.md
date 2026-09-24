@@ -1,10 +1,11 @@
 # ADR-061: Pool-state provisioning is a plane capability — pool ingress, sealed seeds, the strategy kit
 
-**Status: accepted** (2026-09-23). Landed: a86825d6e + 5f8ed1dcb (D1
+**Status: accepted** (2026-09-23; closure verified 2026-09-24). Landed: a86825d6e + 5f8ed1dcb (D1
 ingress facade + backrun cutover), 5b4ab69b6 (D2 sealed `TickMapSeed`,
 `VerifyLevel`, `verify_ticks` facets), 1f8298af2 (D3 `StrategyKit` +
-`STRATEGY_CELLS` pin); the D1 tail (one shared tick-map precedence) landed
-with this closure. Basis: the mevblocker-backrun
+`STRATEGY_CELLS` pin), and 2e9fcf236c (D1 tail, one shared tick-map
+precedence). The reviewed integration closure is c43386c98, 695e6f0c9,
+b8036b373, f582ee1e5, and 90b2cce47. Basis: the mevblocker-backrun
 `sequence_unavailable` autopsy (the production handoff in
 `.scratch/backrun-v3-sequence-unavailable-handoff.md`), the affected-site
 survey recorded in Context, and the submission-lane precedent. Predecessors:
@@ -76,16 +77,23 @@ tick-map assembly (`tick_assembly`), registration
 deep interface:
 
 ```rust
-pub trait PoolIngress {
-    /// Admits-or-refuses a pool into a Workspace: identity probe
-    /// → Db→Chain tick-map assembly → register → coverage tag, with
-    /// the verify lifecycle attached. The caller never reads tick words.
-    async fn admit(&self, ws: &mut Workspace, address: Address, head: u64)
-        -> Result<u64, IngressDecline>;
-    /// The same assembly, journal-shaped, for the replay admission path.
-    fn seed_from_replay(&self, ...) -> ...;
-    /// The ledger view a fresh frame consults (D5).
-    fn ledger(&self) -> &dyn PoolLedger;
+pub struct PoolIngress { /* DbArm, Chain arm, memo, verifier, policy */ }
+
+impl PoolIngress {
+    pub async fn admit_v3_verified(
+        &self, ws: &mut Workspace, params: IngressV3Params, head: u64,
+    ) -> Result<u64, IngressDecline>;
+    pub async fn admit_v3_replay(
+        &self, ws: &mut Workspace, params: IngressV3Params,
+        overlay: HashMap<i32, TickInfo>, head: u64,
+    ) -> Result<u64, IngressDecline>;
+    pub async fn admit_v4_verified(
+        &self, ws: &mut Workspace, params: IngressV4Params, head: u64,
+    ) -> Result<u64, IngressDecline>;
+    pub async fn admit_v4_replay(
+        &self, ws: &mut Workspace, params: IngressV4Params,
+        overlay: HashMap<i32, TickInfo>, head: u64,
+    ) -> Result<u64, IngressDecline>;
 }
 ```
 
@@ -101,12 +109,15 @@ production stages; `dfs_evaluated` becomes 1).
 
 ### D2 — Sealed seed provenance
 
-`planning::ExplicitPoolState` gains a `TickMapSeed { ticks, coverage,
-seed_block, source }` whose constructor is crate-private to `bot_core`
-(`source: SeedSource::Db { block } | Chain`). A strategy cannot fabricate a
-sparse ladder: non-ingress staging is inexpressible, not merely unaudited.
-Enforcement doubles: the type system seals construction, and a name-pin test
-(the `nonce_issuer_unified` pattern) asserts no tick-word fetch lives on a
+`planning::ExplicitPoolState` carries a non-exhaustive
+`TickMapSeed { ticks, bitmaps, coverage, seed_block, source_block, identity,
+source }`. The `Db` and `Chain` constructors are crate-private to `bot_core`
+and minted by `PoolIngress`; the Journal constructor is retained only for
+capability tests. A strategy cannot fabricate a sparse ladder or bypass the
+workspace registration seam: replay facts enter through
+`PoolIngress::admit_v3_replay` / `admit_v4_replay`. Enforcement doubles: the
+type system seals construction, and a name-pin test (the `nonce_issuer_unified`
+pattern) asserts no tick-word fetch or seed construction lives on a
 registration path in `degenbot-strategy`. Freshness stamps (the two-stamp
 liquidity clock) ride in the seed, joining coverage and provenance at the one
 boundary.
@@ -118,13 +129,15 @@ factory; strategies compose cells, never constructors:
 
 ```rust
 pub struct StrategyKit {
-    pub provision: ProvisionCell,      // ingress + pool ledger + verify policy
+    pub provision: ProvisionCell,      // PoolIngress + VerifyLevel
     pub discovery: Option<DiscoveryHandles>,
-    pub simulate: BlockSimHandle,
-    pub submit: Option<SubmitCell>,    // NonceLane + target policy
-    pub react: ReactionFeeds,          // head tick + optional pending-tx ring
 }
 ```
+
+The landed composition deliberately has no `simulate`, `submit`, or `react`
+cell: simulation is loop-local, the submission lane is host-owned, and
+reaction feeds are registered at drive time. Those are not placeholder
+capabilities; they remain with their existing owners.
 
 Fields are concrete where variation is hypothetical and `dyn` only at real
 adapter seams (`TickMapDb`); `None` keeps its "lane shut" meaning, declared in
@@ -167,6 +180,11 @@ maintained stance and the per-frame stance's per-block memoized view (the
 funnel through the ingress (D1); the per-frame stance consults the ledger, it
 does not re-derive a third freshness model.
 
+**Implementation note:** the landed code expresses this seam as `PoolIngress`'s
+`DbArm` plus its per-block `MapMemo`; no separate public `PoolLedger` type is
+required by the current adapters. The invariant and locality decision remain
+the same: callers cannot introduce a third freshness model beside ingress.
+
 ### D6 — Reaction-kind dispatch stays strategy-owned
 
 Settled-block (`StageMachine`, payload-settlement-shaped) and
@@ -201,15 +219,43 @@ knob — `Off` never means "proceed on a self-contradictory map".
 - Adding a strategy family is: config facet + reaction-kind impl + kit
   composition + pins. `docs/architecture/adding-a-strategy.md` §0's gloss is
   replaced by a state-provisioning section, and `strategy-seams.md`'s
-  substrate table gains the ingress/kit rows, when the cutover lands.
-- `ExplicitPoolState` consumers adjust to the seeded provenance boundary; the
-  V4 anchor window stage follows the V3 cutover on the same seam.
+  substrate table carries the ingress/kit rows.
+- `ExplicitPoolState` consumers use the seeded provenance boundary; the V4
+  anchor admission now follows the V3 cutover on the same ingress seam.
 - Kit churn is accepted: a new shared capability edits the kit, the one resolve
   site, and the capability table in one diff.
 - The `sequence_deficit_probe`, `family_capabilities` declared==wired table,
   and the name-pin test are the enforcement pins; `StrategyKit`
   construction-site locality studies are out of scope until strategy family
   four exists.
+
+## Acceptance and closure (2026-09-24)
+
+The accepted sequence is closed against the implementation rather than merely
+re-described here. `pool_ingress::PoolIngress` is now the deep interface and
+module boundary for V3 and V4 production pool admission: it owns Db→Chain
+precedence, per-block locality, backfill, replay-overlay merge, sealed
+`TickMapSeed` provenance, `VerifyLevel` policy, and registration. The strategy
+plane consumes that interface; it does not open a second staging or workspace
+registration seam. The adapter boundary is deliberate: contract-facing full
+liquidity-map verification lives in `degenbot-rpc::liquidity_verifier`, while
+bot and updater modules retain only their lifecycle, error, and rollback policy.
+
+For V4, the verification target is the canonical `PoolManager` plus `PoolId`.
+`StateView` remains optional scalar/bootstrap configuration and is not the
+full-map target. The former private V4 tick-window seam and duplicate
+full-map verification implementations have no production caller; V3 staging
+through the raw public `v3_tick_map` shape is likewise no longer an ingress
+entry. The acceptance search therefore finds one shared verifier and one
+`PoolIngress` ownership path, with `VerifyLevel` and sealed seeds preserving the
+integrity boundary.
+
+The adjacent locality decisions reviewed in the same integration sequence are
+also closed: discovered V2 fees flow through the typed `V2FeePair`/`V2Fees`
+projection into the executable hop, and the typed `Envelope` verdict is carried
+through `SolveOutcome` to the planning seam instead of being re-derived from
+walk statistics. These are locality improvements, not new family or solver
+interfaces.
 
 ## Related
 
@@ -228,8 +274,8 @@ knob — `Off` never means "proceed on a self-contradictory map".
   provisioning.
 - **ADR-018** — the on-demand dispatch generalization D6 defers to.
 - `docs/architecture/strategy-seams.md`,
-  `docs/architecture/adding-a-strategy.md` — the substrate map and runbook
-  updated when the cutover lands.
+  `docs/architecture/adding-a-strategy.md` — the substrate map and runbook,
+  updated at the accepted cutover.
 - `.scratch/backrun-v3-sequence-unavailable-handoff.md` — the production
-  autopsy this ADR's Context rests on; its primary open item is D1/
-  D2's cutover.
+  autopsy this ADR's Context rests on; its D1/D2 cutover is closed by the
+  reviewed sequence recorded above.

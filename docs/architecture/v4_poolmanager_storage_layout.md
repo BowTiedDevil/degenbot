@@ -17,6 +17,17 @@ per-pool `Pool.State` struct value, reachable only via raw storage reads
 and the batched `extsload(bytes32[])` (selector `0xdbd035ff`). There is no
 public `ticks()`/`tickBitmap()` view.
 
+## Interface ownership and identity
+
+The contract-facing full liquidity-map verifier in
+`degenbot-rpc::liquidity_verifier` owns these slot reads for all callers. A
+V4 target is the canonical `PoolManager` address plus its `PoolId`; the
+`StateView` address is optional scalar/bootstrap configuration and is not a
+full-map verification target. The private V4 tick-window reader is retired.
+`PoolIngress` supplies the complete map to this shared verifier, and the
+storage slot derivation is an internal read adapter rather than a second
+verification implementation.
+
 ## Top-level `PoolManager` storage (slot assignment via `forge inspect`)
 
 `contract PoolManager is IPoolManager, ProtocolFees, NoDelegateCall,
@@ -90,10 +101,12 @@ Reading the TickInfo's first storage slot yields a packed `bytes32`:
 ## Read strategy (batched)
 
 One `extsload(bytes32[])` call — selector `0xdbd035ff`, calldata
-`selector || abi.encode(bytes32[] slots)` — covers every tick slot + bitmap-word
-slot for the pool in a single round trip. Decode the returned `bytes32[]` in
-order; tick slots yield the packed `(gross, net)` per the layout above, bitmap
-slots yield the raw `uint256` word.
+`selector || abi.encode(bytes32[] slots)` — covers the supplied tick and bitmap
+slots for the pool in a single round trip. If bitmap discovery finds
+on-chain-only ticks, the shared verifier performs one additional batched read
+for those rows. Decode the returned `bytes32[]` in order; tick slots yield the
+packed `(gross, net)` per the layout above, bitmap slots yield the raw
+`uint256` word.
 
 ## On-chain cross-check status
 

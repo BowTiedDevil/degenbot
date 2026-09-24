@@ -119,8 +119,10 @@ above:
 
 2. **Provider is closure-resolved, not pre-gated (D-C scoped to where it
    matters).** The concrete adapters take `Option<&AlloyProvider>` (the bot's
-   single provider, passed-in); `MissingProvider`/`MissingStateView` fire only
-   when a **Tracked** pool actually reaches a verify step. A Sparse /
+   single provider, passed-in); `MissingProvider`/`MissingTickSpacing` fire only
+   when a **Tracked** pool actually reaches a verify step. V4 full-map reads
+   target `PoolManager` + `PoolId`; `StateView` is optional scalar/bootstrap
+   configuration. A Sparse /
    unregistered / no-pin no-op never needs one, so a fresh
    `EngineRegistry(bot=bot)` that has not run `start()` can still register such
    pools — the fail-fast is only for the unverifiable-tracked case it protects.

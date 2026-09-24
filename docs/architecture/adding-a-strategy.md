@@ -47,22 +47,25 @@ Pool-state provisioning is a plane capability (ADR-061), not machinery a
 strategy builds. The boot resolves one `StrategyKit` per strategy
 (`StrategyKit::resolve`,
 `rust/crates/degenbot-strategy/src/strategy_kit.rs`) and hands it to the spawn
-factory; a strategy composes `kit.provision.ingress` (the one `Db → Chain` V3
-tick-map ingress) and `kit.discovery` (frozen registry + startup graph), and
+factory; a strategy composes `kit.provision.ingress` (the one V3/V4
+`PoolIngress` seam) and `kit.discovery` (frozen registry + startup graph), and
 never an ingress it constructed itself.
 
 Tick maps enter the planning sandbox only through the sealed `TickMapSeed`
 boundary (`rust/crates/degenbot-bot/src/bot_core/planning.rs`): the `Db` and
-`Chain` provenance constructors are crate-private to `bot_core` — the ingress
-mints them — while `TickMapSeed::journal` is the public exact-replay
-constructor the backrun journal admission owns. A strategy cannot fabricate a
-sparse ladder.
+`Chain` provenance constructors are crate-private to `bot_core` and minted by
+`PoolIngress`. Replay facts cross the ingress's `admit_v3_replay` /
+`admit_v4_replay` interface; a strategy cannot fabricate a sparse ladder or
+call `Workspace::register_with_state` directly.
 
 Verification is a typed policy on the provisioning cell: `VerifyLevel`
-(default `bootstrap`) with `strict` / `off` alternatives. Integrity is distinct
-from sampling and **unconditional** — the Tracked self-contradiction abort and
-the two-stamp liquidity clock run under every level, so `off` never means
-"proceed on a self-contradictory map".
+(default `bootstrap`) with `strict` / `off` alternatives. The shared full
+liquidity-map verifier is a deep module in `degenbot-rpc`; V4 verification
+targets `PoolManager` + `PoolId`, while `StateView` remains optional
+scalar/bootstrap configuration. Integrity is distinct from sampling and
+**unconditional** — the Tracked self-contradiction abort and the two-stamp
+liquidity clock run under every level, so `off` never means "proceed on a
+self-contradictory map".
 
 ## 1. Admission — the `StrategyHost` FSM
 

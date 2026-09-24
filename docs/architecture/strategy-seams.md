@@ -17,13 +17,13 @@ partitions, the config-facet additions, and the test-surface pattern.
 | Layer | Owner | Notes |
 |---|---|---|
 | Pool state + identity values | `degenbot-pools` | `PoolEntry`, family states, `slot_layout` (the one location table) |
-| Solver math + envelopes | `degenbot-solvers` | value-only; no chain, no async |
+| Solver math + envelopes | `degenbot-solvers` | value-only; no chain, no async; `SolveOutcome` carries the typed `Envelope` verdict to planning |
 | Path enumeration primitive | `degenbot-pathfinding` | leaf `PathGraph` DFS; both discovery styles build on it |
 | Simulation engine | `degenbot-simulation` | `BlockSimHandle`, `ScratchEvm`, replay seam, journal extraction (V2/V3/V4) |
 | Command grammar | `degenbot-executor` | `encode_cmd_stream`, `EncodeRequest` |
 | RPC spine | `degenbot-rpc` | provider, multicall3, head watch, pending-tx feeds, fee oracle |
 | State owner + admission | `degenbot-bot::bot_core` | live registry `BotState` (pump-fed) and the planning sandbox (`planning::Workspace` + `ExplicitPoolState`) |
-| Pool ingress (`Db → Chain` tick-map precedence, sealed seed, verify policy) | `degenbot-bot::bot_core::pool_ingress` | the one V3 pool-state admission home; Db/Chain `TickMapSeed` provenance is minted only here |
+| Pool ingress (`Db → Chain` tick-map precedence, sealed seed, verify policy) | `degenbot-bot::bot_core::pool_ingress` | the one V3/V4 pool-state admission seam; Db/Chain `TickMapSeed` provenance is minted only here, and V4 full-map verification targets `PoolManager` + `PoolId` rather than `StateView` |
 | Strategy kit (boot-resolved composition) | `degenbot-strategy/src/strategy_kit.rs` | `StrategyKit::resolve` — the provision cell (ingress) + discovery handles a strategy composes |
 | Strategy plane + concrete compositions | `degenbot-strategy` | the backrun reaction arm (frame pipeline, anchored DFS, gap quarantine, pending-tx driver) and the settlement composition; capability implementations re-exported, never moved; hosted families drive the boot-resolved `StrategyKit` cells (`strategy_kit.rs`) |
 | Submission machinery | `degenbot-submission` | signer, fee/params/bundle, dispatcher, monitor, submission ledger, finality-liveness FSM |
@@ -55,16 +55,19 @@ A strategy picks exactly ONE:
    (`StrategyKit::resolve`) and hands it in, so a strategy composes
    `kit.provision.ingress` / `kit.discovery` and never an ingress it built
    itself. Tick maps enter the sandbox only through the sealed `TickMapSeed`
-   boundary — Db/Chain seeds are minted inside `bot_core` alone, and
-   `TickMapSeed::journal` is the public explicit-replay constructor.
-   Verification is a typed `VerifyLevel` policy (default `bootstrap`) on the
-   provisioning cell; the Tracked intake reconciliation and the two-stamp
-   clock are unconditional integrity, never gated by the knob. Replay,
-   journal extraction, the pathfinding primitive, the sim executor, liveness,
-   and the submission channel are provided.
-2. V4 works out of the box: the sandbox admits V4 explicit state
-   (`ExplicitPoolState::V4`), the journal extracts V4 post-states for pools
-   whose identities your descriptors carry (`V4PoolSet`).
+   boundary — Db/Chain seeds are minted inside `bot_core` alone, and replay
+   admission is an ingress operation; strategies do not construct a seed or
+   register directly into the workspace. Verification is a typed `VerifyLevel`
+   policy (default `bootstrap`) on the provisioning cell; the Tracked intake
+   reconciliation and the two-stamp clock are unconditional integrity, never
+   gated by the knob. Replay, journal extraction, the pathfinding primitive,
+   the sim executor, liveness, and the submission channel are provided.
+2. V4 works out of the box: the journal extracts V4 post-states for pools
+   whose identities your descriptors carry (`V4PoolSet`), and
+   `PoolIngress::admit_v4_replay` owns staging, backfill, bitmap merge,
+   verification, and registration. The full-map verifier targets the
+   `PoolManager` and `PoolId`; `StateView` is optional scalar/bootstrap
+   configuration, not a verification target.
 3. Declare your strategy facet in the typed config (each `strategy.<name>`
    facet's `active` key is its activation — one declaration site).
 4. Choose your `SubmissionTarget` (`Bundle` / `Public`).
