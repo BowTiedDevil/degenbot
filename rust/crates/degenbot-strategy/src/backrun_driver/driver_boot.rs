@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun};
 use crate::strategy_kit::StrategyKit;
-use degenbot_bot::bot_core::pool_ingress::AlloySampleVerifier;
+use degenbot_bot::bot_core::pool_ingress::{AlloySampleVerifier, AlloyV3LiquidityLogSource};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
@@ -31,6 +31,10 @@ use super::driver_loop::BackrunDriver;
 /// `DEGENBOT_RPC_HTTP_CHAINID_<id>` / `DEGENBOT_RPC_WS_CHAINID_<id>` resolver
 /// suffixes both read it.
 pub const CHAIN_ID: u64 = 1;
+
+/// The `eth_getLogs` chunk size for the ingress's per-pool backfill fetch:
+/// the default ~5000-block window in ~1000-block requests.
+const BACKFILL_LOG_CHUNK_BLOCKS: u64 = 1_000;
 
 /// The host-shared handles a driver start needs beyond its own config.
 pub struct BackrunContext {
@@ -352,6 +356,11 @@ pub fn backrun_boot(
         Some(Arc::new(AlloySampleVerifier::new(Arc::clone(
             &join.provider,
         )))),
+        Some(Arc::new(AlloyV3LiquidityLogSource::new(
+            Arc::clone(&join.provider),
+            BACKFILL_LOG_CHUNK_BLOCKS,
+        ))),
+        cfg.ingress_backfill_max_blocks,
     );
     let context = BackrunContext {
         connector_db,

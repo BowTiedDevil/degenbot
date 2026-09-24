@@ -15,6 +15,7 @@
 //! need one — round-trip tests for them are integration-only).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256};
 use alloy::rpc::types::Log;
@@ -29,7 +30,7 @@ use degenbot_decoders::pool_created_decoder::{
 use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
 use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant};
-use degenbot_rpc::provider::LogFetcher;
+use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
 use crate::spec::ExchangeSpec;
 
@@ -530,6 +531,71 @@ async fn fetch_logs_with_topics(
 // (No trailing re-export — the fetchers above take `&LogFetcher` directly;
 // the chunk loop constructs the `LogFetcher` from the
 // provider + `max_blocks_per_request` pool config.)
+
+/// A synchronous bridge over the async per-pool V3 liquidity fetch.
+///
+/// The per-frame ingress stages tick maps on a synchronous path, so the
+/// backfill transport is expressed synchronously. A caller that does not stage
+/// synchronously can consume [`fetch_v3_liquidity_logs`] directly.
+pub trait V3LiquidityLogSource: Send + Sync {
+    /// This pool's decoded V3 `Mint`/`Burn` events over
+    /// `[from_block, to_block]`, ordered by `(block, log_index)`.
+    ///
+    /// # Errors
+    ///
+    /// A transport or filter failure, as a loud string.
+    fn fetch_v3_liquidity_events(
+        &self,
+        pool_address: Address,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<LiquidityUpdateEvent>, String>;
+}
+
+/// The [`LogFetcher`]-backed [`V3LiquidityLogSource`].
+///
+/// The fetch is dispatched onto the shared ambient runtime through a
+/// [`tokio::runtime::Handle`] and awaited over a channel: the synchronous
+/// staging path can already be running INSIDE that runtime's `block_on`
+/// (the hosted driver is driven from a `spawn_blocking` thread), so a nested
+/// `Runtime::block_on` would panic. Spawning keeps the work on the runtime's
+/// own workers while the caller blocks only its own (non-worker) thread.
+pub struct AlloyV3LiquidityLogSource {
+    fetcher: Arc<LogFetcher>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl AlloyV3LiquidityLogSource {
+    /// Build over a provider with the given `eth_getLogs` chunk size.
+    #[must_use]
+    pub fn new(provider: Arc<AlloyProvider>, max_blocks_per_request: u64) -> Self {
+        Self {
+            fetcher: Arc::new(LogFetcher::new(provider, max_blocks_per_request)),
+            runtime: degenbot_core::runtime::get_runtime().handle().clone(),
+        }
+    }
+}
+
+impl V3LiquidityLogSource for AlloyV3LiquidityLogSource {
+    fn fetch_v3_liquidity_events(
+        &self,
+        pool_address: Address,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<LiquidityUpdateEvent>, String> {
+        let fetcher = Arc::clone(&self.fetcher);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.runtime.spawn(async move {
+            let result =
+                fetch_v3_liquidity_logs(&fetcher, from_block, to_block, Some(pool_address))
+                    .await
+                    .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        rx.recv()
+            .map_err(|_| "backfill fetch task dropped before returning".to_string())?
+    }
+}
 
 #[expect(clippy::panic)]
 #[cfg(test)]

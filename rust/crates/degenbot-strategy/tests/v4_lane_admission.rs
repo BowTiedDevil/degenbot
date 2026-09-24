@@ -40,6 +40,8 @@ fn market_context(
         None,
         degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
         None,
+        None,
+        5_000,
     );
     MarketContext::new(1, db, kit, 8, 4)
 }

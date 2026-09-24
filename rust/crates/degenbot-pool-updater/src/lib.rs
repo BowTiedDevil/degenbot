@@ -35,7 +35,8 @@ pub use fetch::{
     decode_pool_created_log, decode_v3_liquidity_log, decode_v3_liquidity_log_with_pool,
     decode_v4_liquidity_log, decode_v4_liquidity_log_with_pool, fetch_pool_created_logs,
     fetch_pool_created_logs_for_spec, fetch_v3_liquidity_logs, fetch_v3_liquidity_logs_grouped,
-    fetch_v4_liquidity_logs, fetch_v4_liquidity_logs_grouped, DecodedPoolCreated, PoolFamily,
+    fetch_v4_liquidity_logs, fetch_v4_liquidity_logs_grouped, AlloyV3LiquidityLogSource,
+    DecodedPoolCreated, PoolFamily, V3LiquidityLogSource,
 };
 pub use run::{
     apply_chunk_writes_on_conn, map_pool_creation, run_pool_update, ChunkInputs, ChunkProgress,

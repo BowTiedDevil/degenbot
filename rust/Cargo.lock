@@ -2296,6 +2296,7 @@ dependencies = [
  "degenbot-ingestion",
  "degenbot-math",
  "degenbot-pathfinding",
+ "degenbot-pool-updater",
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-solvers",

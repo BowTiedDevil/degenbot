@@ -45,7 +45,9 @@
 
 use std::sync::Arc;
 
-use degenbot_bot::bot_core::pool_ingress::{PoolIngress, TickMapSampleVerifier, VerifyLevel};
+use degenbot_bot::bot_core::pool_ingress::{
+    IngressWitness, PoolIngress, TickMapSampleVerifier, V3LiquidityLogSource, VerifyLevel,
+};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::snapshot::TickMapDb;
@@ -83,6 +85,43 @@ pub struct StrategyKit {
     pub discovery: Option<DiscoveryHandles>,
 }
 
+/// The ingress's backfill witness, written to the offline-review JSONL
+/// capture so a soak can count backfilled versus Chain-deferred pools.
+struct TraceBackfillWitness;
+
+impl IngressWitness for TraceBackfillWitness {
+    fn db_backfill(
+        &self,
+        pool_address: alloy::primitives::Address,
+        from_block: u64,
+        to_block: u64,
+        events: usize,
+    ) {
+        crate::frame_pipeline::trace_jsonl(
+            "ingress_stage",
+            serde_json::json!({
+                "pool": format!("0x{}", alloy::hex::encode(pool_address)),
+                "stage": "admit-v3-db-backfill",
+                "from_block": from_block,
+                "to_block": to_block,
+                "events": events,
+            }),
+        );
+    }
+
+    fn db_window_overflow(&self, pool_address: alloy::primitives::Address, window: u64, cap: u64) {
+        crate::frame_pipeline::trace_jsonl(
+            "ingress_stage",
+            serde_json::json!({
+                "pool": format!("0x{}", alloy::hex::encode(pool_address)),
+                "stage": "admit-v3-db-window-overflow",
+                "window": window,
+                "cap": cap,
+            }),
+        );
+    }
+}
+
 impl StrategyKit {
     /// The cells this composition can carry, fixed by the struct shape.
     ///
@@ -104,12 +143,19 @@ impl StrategyKit {
         chain: Option<Arc<dyn TickBootstrapRpc>>,
         verify: VerifyLevel,
         verifier: Option<Arc<dyn TickMapSampleVerifier>>,
+        backfill_source: Option<Arc<dyn V3LiquidityLogSource>>,
+        backfill_max_blocks: u64,
     ) -> Self {
         let ingress_db: Option<Arc<dyn TickMapDb>> = db.map(|d| -> Arc<dyn TickMapDb> { d });
         let mut ingress = PoolIngress::new(ingress_db, chain);
         ingress.set_verify_level(verify);
+        ingress.set_backfill_max_blocks(backfill_max_blocks);
+        ingress.set_witness(Arc::new(TraceBackfillWitness));
         if let Some(verifier) = verifier {
             ingress.set_verifier(verifier);
+        }
+        if let Some(source) = backfill_source {
+            ingress.set_backfill_source(source);
         }
         let discovery = registry.map(|registry| DiscoveryHandles {
             dfs: AnchoredGraph::from_connector_index(registry.index()),

@@ -36,6 +36,7 @@ degenbot-rpc.workspace = true
 # the runtime consumes its IngestEvent/PoolEvent stream + fetch handle.
 degenbot-ingestion.workspace = true
 degenbot-pools.workspace = true
+degenbot-pool-updater.workspace = true
 degenbot-pathfinding.workspace = true
 degenbot-solvers.workspace = true
 degenbot-executor.workspace = true
