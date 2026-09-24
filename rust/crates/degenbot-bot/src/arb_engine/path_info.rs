@@ -240,6 +240,7 @@ fn v2_fee_bips(gamma: u64, denom: u64) -> u16 {
 #[cfg(test)]
 mod tests {
     use crate::arb_engine::lifecycle::register_path;
+    use crate::arb_engine::path_info::PathInfoBuildError;
     use crate::arb_engine::ArbitrageEngine;
     use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams};
     use ::degenbot_decoders::v4_swap_decoder::V4PoolId;
@@ -510,6 +511,23 @@ mod tests {
         assert_eq!(v4.hook_address, Address::ZERO);
         assert!(v4.zfo);
     }
+    #[test]
+    fn unsupported_hop_type_is_refused_by_the_encoder_projection() {
+        let core = crate::bot_core::BotState::new();
+        let pools = [::degenbot_solvers::mixed::MixedPoolRef {
+            hop_type: ::degenbot_solvers::mixed::HopType::SolidlyStable,
+            pool_key: 0,
+            zero_for_one: true,
+        }];
+        assert!(matches!(
+            super::build_path_info(&core, &pools),
+            Err(PathInfoBuildError::UnsupportedHopType {
+                hop_type: ::degenbot_solvers::mixed::HopType::SolidlyStable,
+                pool_id: 0,
+            })
+        ));
+    }
+
     /// Unknown `path_id` → `None` (matches "no Python `PathInfo` in the registry").
     #[test]
     fn unknown_path_id_returns_none() {

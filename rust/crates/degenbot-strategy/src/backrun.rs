@@ -726,6 +726,74 @@ mod tests {
     }
 
     #[test]
+    fn equivalent_backrun_facets_map_common_knobs_identically() {
+        let mut cfg = BotConfig::default();
+        cfg.strategy.mevblocker_backrun.bid_mode = true;
+        cfg.strategy.mevblocker_backrun.budget_wei = 42;
+        cfg.strategy.mevblocker_backrun.max_bundle_wei = 99;
+        cfg.strategy.mevblocker_backrun.bribe_bips = 9_500;
+        cfg.strategy.mevblocker_backrun.priority_fee_gwei = 7;
+        cfg.strategy.mevblocker_backrun.bundle_gas_est = 333_000;
+        cfg.strategy.mevblocker_backrun.gas_floor_wei = 123;
+        cfg.strategy.mevblocker_backrun.verify_ticks = degenbot_config::VerifyTicks::Strict;
+        cfg.strategy.mevblocker_backrun.dry_run = true;
+        cfg.strategy.mevblocker_backrun.key_file = Some(PathBuf::from("/tmp/shared.key"));
+        cfg.strategy.mevblocker_backrun.executor =
+            "0x00000000000000000000000000000000000000aa".to_string();
+        cfg.strategy.mevblocker_backrun.operator =
+            Some("0x00000000000000000000000000000000000000bb".to_string());
+        cfg.strategy.mevblocker_backrun.sim_url = Some("http://sim.local".to_string());
+        cfg.strategy.mevblocker_backrun.rank_evidence = true;
+        cfg.strategy.mevblocker_backrun.connectors = 5;
+        cfg.strategy.mevblocker_backrun.cycle_max_hops = 6;
+        cfg.strategy.mevblocker_backrun.fixture_head = Some(123);
+        cfg.strategy.mevblocker_backrun.stop_file = PathBuf::from("/tmp/stop");
+
+        cfg.strategy.peer_backrun.bid_mode = cfg.strategy.mevblocker_backrun.bid_mode;
+        cfg.strategy.peer_backrun.budget_wei = cfg.strategy.mevblocker_backrun.budget_wei;
+        cfg.strategy.peer_backrun.max_bundle_wei = cfg.strategy.mevblocker_backrun.max_bundle_wei;
+        cfg.strategy.peer_backrun.bribe_bips = cfg.strategy.mevblocker_backrun.bribe_bips;
+        cfg.strategy.peer_backrun.priority_fee_gwei =
+            cfg.strategy.mevblocker_backrun.priority_fee_gwei;
+        cfg.strategy.peer_backrun.bundle_gas_est = cfg.strategy.mevblocker_backrun.bundle_gas_est;
+        cfg.strategy.peer_backrun.gas_floor_wei = cfg.strategy.mevblocker_backrun.gas_floor_wei;
+        cfg.strategy.peer_backrun.verify_ticks = cfg.strategy.mevblocker_backrun.verify_ticks;
+        cfg.strategy.peer_backrun.dry_run = cfg.strategy.mevblocker_backrun.dry_run;
+        cfg.strategy.peer_backrun.key_file = cfg.strategy.mevblocker_backrun.key_file.clone();
+        cfg.strategy.peer_backrun.executor = cfg.strategy.mevblocker_backrun.executor.clone();
+        cfg.strategy.peer_backrun.operator = cfg.strategy.mevblocker_backrun.operator.clone();
+        cfg.strategy.peer_backrun.sim_url = cfg.strategy.mevblocker_backrun.sim_url.clone();
+        cfg.strategy.peer_backrun.rank_evidence = cfg.strategy.mevblocker_backrun.rank_evidence;
+        cfg.strategy.peer_backrun.connectors = cfg.strategy.mevblocker_backrun.connectors;
+        cfg.strategy.peer_backrun.cycle_max_hops = cfg.strategy.mevblocker_backrun.cycle_max_hops;
+        cfg.strategy.peer_backrun.fixture_head = cfg.strategy.mevblocker_backrun.fixture_head;
+        cfg.strategy.peer_backrun.stop_file = cfg.strategy.mevblocker_backrun.stop_file.clone();
+
+        let rpc_url = "http://node.local".to_string();
+        let mevblocker = MevblockerBackrun::from_config(&cfg, rpc_url.clone()).into_config();
+        let peer = PeerBackrun::from_config(&cfg, rpc_url).into_config();
+
+        assert_eq!(mevblocker.bid_mode, peer.bid_mode);
+        assert_eq!(mevblocker.budget_wei, peer.budget_wei);
+        assert_eq!(mevblocker.max_bundle_wei, peer.max_bundle_wei);
+        assert_eq!(mevblocker.bribe_bips, peer.bribe_bips);
+        assert_eq!(mevblocker.priority_fee_gwei, peer.priority_fee_gwei);
+        assert_eq!(mevblocker.bundle_gas_est, peer.bundle_gas_est);
+        assert_eq!(mevblocker.gas_floor_wei, peer.gas_floor_wei);
+        assert_eq!(mevblocker.verify_ticks, peer.verify_ticks);
+        assert_eq!(mevblocker.dry_run, peer.dry_run);
+        assert_eq!(mevblocker.key_file, peer.key_file);
+        assert_eq!(mevblocker.executor, peer.executor);
+        assert_eq!(mevblocker.operator, peer.operator);
+        assert_eq!(mevblocker.sim_url, peer.sim_url);
+        assert_eq!(mevblocker.rank_evidence, peer.rank_evidence);
+        assert_eq!(mevblocker.connectors, peer.connectors);
+        assert_eq!(mevblocker.cycle_max_hops, peer.cycle_max_hops);
+        assert_eq!(mevblocker.fixture_head, peer.fixture_head);
+        assert_eq!(mevblocker.stop_file, peer.stop_file);
+    }
+
+    #[test]
     #[expect(
         clippy::expect_used,
         reason = "test fixtures fail loudly on an unconstructible prerequisite"
