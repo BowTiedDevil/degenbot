@@ -56,6 +56,7 @@ pub mod backrun;
 pub mod backrun_driver;
 pub mod backrun_engine;
 pub mod backrun_strategy;
+pub mod cmd_executor_adapter;
 pub mod frame_pipeline;
 pub mod gap_probe;
 pub mod gap_quarantine;
@@ -70,6 +71,9 @@ pub mod strategy_plane;
 // it selects. Root re-exports so a consumer names `degenbot_strategy::StrategyName`
 // rather than threading the module path.
 pub use backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun, SubmissionSlot};
+pub use cmd_executor_adapter::{
+    CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome, CmdExecutorRejection,
+};
 pub use settlement::{Settlement, SettlementConfig};
 pub use strategy_kit::{DiscoveryHandles, ProvisionCell, StrategyCell, StrategyKit};
 pub use strategy_plane::{SelectedStrategy, Strategy, StrategyName};
