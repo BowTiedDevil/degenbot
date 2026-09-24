@@ -35,7 +35,6 @@
 //! solver-unsafe sparse state. [`IngressDecline`] carries the refused arm so
 //! the per-hop JSONL trace can name the stage.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U128, U256};
@@ -51,11 +50,13 @@ pub use degenbot_pool_updater::fetch::{AlloyV3LiquidityLogSource, V3LiquidityLog
 use degenbot_pools::tick_fetch::TickBootstrapRpc;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::TickInfo;
+use degenbot_rpc::liquidity_verifier::{
+    verify_liquidity_map, LiquidityMap as RpcLiquidityMap, LiquidityMapTarget,
+};
 use degenbot_rpc::provider::AlloyProvider;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
 
-use crate::bot_core::liquidity_verifier::verify_v3_liquidity_map;
 use crate::bot_core::planning::{ExplicitPoolState, PlanningPoolParams, Workspace};
 use crate::bot_core::tick_assembly::{chain_arm, resolve_tick_map_arm, TickMapAssemblyError};
 
@@ -144,6 +145,7 @@ pub trait TickMapSampleVerifier: Send + Sync {
         &self,
         address: Address,
         ticks: &HashMap<i32, TickInfo>,
+        bitmaps: &HashMap<i32, U256>,
         tick_spacing: i32,
         block: u64,
     ) -> Result<(), String>;
@@ -169,19 +171,28 @@ impl TickMapSampleVerifier for AlloySampleVerifier {
         &self,
         address: Address,
         ticks: &HashMap<i32, TickInfo>,
+        bitmaps: &HashMap<i32, U256>,
         tick_spacing: i32,
         block: u64,
     ) -> Result<(), String> {
-        verify_v3_liquidity_map(
+        let map =
+            RpcLiquidityMap::tracked_with_spacing(ticks.clone(), bitmaps.clone(), tick_spacing);
+        let facts = verify_liquidity_map(
             self.provider.as_ref(),
-            address,
-            ticks,
-            tick_spacing,
-            block,
-            "ingress",
+            LiquidityMapTarget::V3(address),
+            &map,
+            Some(block),
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        if facts.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "liquidity map verification returned {} divergences",
+                facts.len()
+            ))
+        }
     }
 }
 
@@ -303,10 +314,10 @@ pub struct PoolIngress {
     memo: Mutex<MapMemo>,
     /// The chain-sample policy (default [`VerifyLevel::Bootstrap`]).
     verify_level: VerifyLevel,
-    /// Pools whose staged map has already been sample-verified. Process-scoped
-    /// by design: the per-frame workspace is re-sized every frame, but the
-    /// verification result for a pool is a process-lifetime fact.
-    verified: Mutex<HashSet<Address>>,
+    /// Pool identity → the freshness block whose staged map was sampled.
+    /// Bootstrap memoization is process-scoped but never suppresses a later
+    /// admission whose seed block requires a fresh sample.
+    verified: Mutex<HashMap<Address, u64>>,
     /// The chain-sample verifier. Absent means the Chain arm is unconfigured
     /// and sampling is skipped (an RPC-less Db-only ingress cannot verify).
     verifier: Option<Arc<dyn TickMapSampleVerifier>>,
@@ -327,7 +338,7 @@ impl PoolIngress {
             chain,
             memo: Mutex::new(MapMemo::empty()),
             verify_level: VerifyLevel::default(),
-            verified: Mutex::new(HashSet::new()),
+            verified: Mutex::new(HashMap::new()),
             verifier: None,
             witness: None,
         }
@@ -389,7 +400,7 @@ impl PoolIngress {
     ///
     /// [`IngressDecline::Db`] on a Db read failure or a self-contradictory
     /// Tracked map; [`IngressDecline::TickMapFetch`] on a Chain-arm failure.
-    pub fn v3_tick_map(
+    fn stage_v3_tick_map(
         &self,
         address: Address,
         tick: i32,
@@ -414,10 +425,11 @@ impl PoolIngress {
             Some(chain) => chain
                 .bootstrap_v3_tick_word(&address.to_checksum(None), tick, tick_spacing, block)
                 .map_err(TickMapAssemblyError::Chain)?
-                .map(|word| word.ticks),
+                .map(|word| (word.ticks, HashMap::from([(word.word, word.bitmap)]))),
             None => None,
         };
-        Ok(chain_arm(chain_hit).into_seed(block))
+        let (ticks, bitmaps) = chain_hit.unwrap_or((HashMap::new(), HashMap::new()));
+        Ok(chain_arm(Some(ticks), bitmaps).into_seed(block))
     }
 
     /// Stage, chain-sample-verify (per [`VerifyLevel`]), then register a V3
@@ -435,7 +447,42 @@ impl PoolIngress {
         params: IngressV3Params,
         head: u64,
     ) -> Result<u64, IngressDecline> {
-        let seed = self.v3_tick_map(params.address, params.tick, params.tick_spacing, head)?;
+        let seed =
+            self.stage_v3_tick_map(params.address, params.tick, params.tick_spacing, head)?;
+        self.verify_staged_v3(params.address, params.tick_spacing, &seed)
+            .await?;
+        Self::register_v3(ws, params, seed, head)
+    }
+
+    /// Merge replay-provided touched rows into the Db/Chain seed, project those
+    /// post-state rows onto the seed's bitmap, verify the final map under the
+    /// active policy, and only then register it. Existing bitmap words and bits
+    /// are preserved, including words previously checked empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same typed [`IngressDecline`] stages as cold-hop admission.
+    pub async fn admit_v3_replay(
+        &self,
+        ws: &mut Workspace,
+        params: IngressV3Params,
+        overlay: HashMap<i32, TickInfo>,
+        head: u64,
+    ) -> Result<u64, IngressDecline> {
+        let mut seed =
+            self.stage_v3_tick_map(params.address, params.tick, params.tick_spacing, head)?;
+        for &tick in overlay.keys() {
+            let compressed = tick.div_euclid(params.tick_spacing);
+            let word = compressed >> 8;
+            let bit = usize::try_from(compressed.rem_euclid(256)).map_err(|_| {
+                IngressDecline::Db(format!("tick {tick} has an invalid V3 bitmap bit"))
+            })?;
+            seed.bitmaps
+                .entry(word)
+                .or_insert(U256::ZERO)
+                .set_bit(bit, true);
+        }
+        seed.ticks.extend(overlay);
         self.verify_staged_v3(params.address, params.tick_spacing, &seed)
             .await?;
         Self::register_v3(ws, params, seed, head)
@@ -487,14 +534,25 @@ impl PoolIngress {
         let Some(verifier) = self.verifier.as_ref() else {
             return Ok(());
         };
-        if self.verify_level == VerifyLevel::Bootstrap && self.verified.lock().contains(&address) {
+        if seed.coverage != degenbot_pools::v3_state::PoolTickCoverage::Tracked {
+            return Ok(());
+        }
+        if self.verify_level == VerifyLevel::Bootstrap
+            && self.verified.lock().get(&address) == Some(&seed.seed_block)
+        {
             return Ok(());
         }
         verifier
-            .verify_v3(address, &seed.ticks, tick_spacing, seed.seed_block)
+            .verify_v3(
+                address,
+                &seed.ticks,
+                &seed.bitmaps,
+                tick_spacing,
+                seed.seed_block,
+            )
             .await
             .map_err(IngressDecline::Verify)?;
-        self.verified.lock().insert(address);
+        self.verified.lock().insert(address, seed.seed_block);
         Ok(())
     }
 
@@ -796,7 +854,11 @@ mod tests {
                     block,
                 },
             );
-            Ok(Some(BootstrapTickWord { word: 0, ticks }))
+            Ok(Some(BootstrapTickWord {
+                bitmap: U256::from(1u8),
+                word: 0,
+                ticks,
+            }))
         }
 
         fn bootstrap_v4_tick_word(
@@ -864,7 +926,7 @@ mod tests {
             update_blocks: HashMap::new(),
         });
         let ingress = ingress_with(Some(db), &fetches);
-        let seed = ingress.v3_tick_map(POOL, 0, 60, 100).expect("stages");
+        let seed = ingress.stage_v3_tick_map(POOL, 0, 60, 100).expect("stages");
         assert_eq!(seed.source, TickMapSource::Db);
         assert_eq!(seed.coverage, PoolTickCoverage::Tracked);
         assert!(seed.ticks.contains_key(&120));
@@ -882,14 +944,14 @@ mod tests {
             update_blocks: HashMap::new(),
         });
         let ingress = ingress_with(Some(db), &fetches);
-        ingress.v3_tick_map(POOL, 0, 60, 100).unwrap();
-        ingress.v3_tick_map(POOL, 0, 60, 100).unwrap();
+        ingress.stage_v3_tick_map(POOL, 0, 60, 100).unwrap();
+        ingress.stage_v3_tick_map(POOL, 0, 60, 100).unwrap();
         assert_eq!(
             fetches.load(Ordering::SeqCst),
             1,
             "the second read in the same block is memoized"
         );
-        ingress.v3_tick_map(POOL, 0, 60, 101).unwrap();
+        ingress.stage_v3_tick_map(POOL, 0, 60, 101).unwrap();
         assert_eq!(fetches.load(Ordering::SeqCst), 2, "a new block re-reads");
     }
 
@@ -902,10 +964,38 @@ mod tests {
             update_blocks: HashMap::new(),
         });
         let ingress = ingress_with(Some(db), &fetches);
-        let seed = ingress.v3_tick_map(POOL, 0, 60, 100).expect("stages");
+        let seed = ingress.stage_v3_tick_map(POOL, 0, 60, 100).expect("stages");
         assert_eq!(seed.source, TickMapSource::Chain);
         assert_eq!(seed.coverage, PoolTickCoverage::Sparse);
         assert!(seed.ticks.is_empty(), "no word is fabricated on a miss");
+    }
+
+    #[tokio::test]
+    async fn sparse_chain_admission_is_bootstrap_only_and_never_sampled() {
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let db = Arc::new(FakeDb {
+            maps: HashMap::new(),
+            fetches: Arc::clone(&fetches),
+            update_blocks: HashMap::new(),
+        });
+        let chain = Arc::new(FakeChain {
+            tick: 120,
+            gross: 2_000,
+            net: -700,
+        });
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut ingress = PoolIngress::new(Some(arm(db)), Some(chain));
+        ingress.set_verify_level(VerifyLevel::Strict);
+        ingress.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::clone(&calls),
+            fail: true,
+        }));
+        let mut ws = a_new_workspace();
+        ingress
+            .admit_v3_verified(&mut ws, params(POOL), 100)
+            .await
+            .expect("sparse pools admit without claiming full verification");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -922,7 +1012,7 @@ mod tests {
             net: -700,
         });
         let ingress = PoolIngress::new(Some(arm(db)), Some(chain));
-        let seed = ingress.v3_tick_map(POOL, 0, 60, 100).expect("stages");
+        let seed = ingress.stage_v3_tick_map(POOL, 0, 60, 100).expect("stages");
         assert_eq!(seed.source, TickMapSource::Chain);
         assert_eq!(seed.coverage, PoolTickCoverage::Sparse);
         assert_eq!(
@@ -966,6 +1056,7 @@ mod tests {
             &self,
             _address: Address,
             _ticks: &HashMap<i32, TickInfo>,
+            _bitmaps: &HashMap<i32, U256>,
             _tick_spacing: i32,
             _block: u64,
         ) -> Result<(), String> {
@@ -1017,10 +1108,12 @@ mod tests {
     /// backfill transport.
     fn empty_db() -> (DbArm, Arc<AtomicUsize>) {
         let fetches = Arc::new(AtomicUsize::new(0));
+        let mut maps = HashMap::new();
+        maps.insert(POOL, LiquidityMap::default());
         (
             DbArm::new(
                 Arc::new(FakeDb {
-                    maps: HashMap::new(),
+                    maps,
                     fetches: Arc::clone(&fetches),
                     update_blocks: HashMap::new(),
                 }),
@@ -1028,6 +1121,130 @@ mod tests {
             ),
             fetches,
         )
+    }
+
+    #[tokio::test]
+    #[expect(clippy::items_after_statements, clippy::type_complexity)]
+    async fn replay_overlay_is_merged_before_sample_verification() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        struct RecordingVerifier {
+            calls: Arc<AtomicUsize>,
+            seen: Arc<Mutex<Vec<(HashMap<i32, TickInfo>, HashMap<i32, U256>, i32, u64)>>>,
+        }
+        #[async_trait::async_trait]
+        impl TickMapSampleVerifier for RecordingVerifier {
+            async fn verify_v3(
+                &self,
+                _address: Address,
+                ticks: &HashMap<i32, TickInfo>,
+                bitmaps: &HashMap<i32, U256>,
+                spacing: i32,
+                block: u64,
+            ) -> Result<(), String> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.seen
+                    .lock()
+                    .push((ticks.clone(), bitmaps.clone(), spacing, block));
+                Ok(())
+            }
+        }
+        let mut base_map = map_with_tick(120, 60);
+        base_map
+            .tick_bitmap
+            .insert(7, BitmapAtWord { bitmap: U256::ZERO });
+        let mut maps = HashMap::new();
+        maps.insert(POOL, base_map);
+        let db = Arc::new(FakeDb {
+            maps,
+            fetches: Arc::new(AtomicUsize::new(0)),
+            update_blocks: HashMap::new(),
+        });
+        let mut ingress = PoolIngress::new(Some(arm(db)), None);
+        ingress.set_verify_level(VerifyLevel::Strict);
+        ingress.set_verifier(Arc::new(RecordingVerifier {
+            calls: Arc::clone(&calls),
+            seen: Arc::clone(&seen),
+        }));
+        let mut ws = Workspace::new();
+        let mut overlay = HashMap::new();
+        overlay.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: U128::from(700u64),
+                liquidity_net: 500,
+                block: 100,
+            },
+        );
+        overlay.insert(
+            180,
+            TickInfo {
+                liquidity_gross: U128::from(2_000u64),
+                liquidity_net: -1_000,
+                block: 100,
+            },
+        );
+        ingress
+            .admit_v3_replay(&mut ws, params(POOL), overlay, 100)
+            .await
+            .expect("replay admission crosses the verifier");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let (ticks, bitmaps, spacing, block) = seen.lock().as_slice()[0].clone();
+        assert_eq!(bitmaps.get(&0), Some(&U256::from(12u8)));
+        assert_eq!(
+            bitmaps.get(&-1),
+            Some(&(U256::from(1u8) << 255usize)),
+            "negative compressed ticks use the signed word and non-negative bit"
+        );
+        assert_eq!(
+            bitmaps.get(&7),
+            Some(&U256::ZERO),
+            "overlay projection preserves checked-empty words"
+        );
+        assert_eq!(spacing, 60);
+        assert_eq!(block, 100);
+        assert!(ticks.contains_key(&120));
+        assert_eq!(ticks[&-60].liquidity_gross, U128::from(700u64));
+        assert_eq!(ticks[&180].liquidity_gross, U128::from(2_000u64));
+    }
+
+    #[tokio::test]
+    async fn replay_anchor_off_skips_sampling_but_still_registers() {
+        let (db, _) = empty_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut ingress = PoolIngress::new(Some(db), None);
+        ingress.set_verify_level(VerifyLevel::Off);
+        ingress.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::clone(&calls),
+            fail: true,
+        }));
+        let mut ws = a_new_workspace();
+        ingress
+            .admit_v3_replay(&mut ws, params(POOL), HashMap::new(), 100)
+            .await
+            .expect("Off admits the replay anchor without sampling");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn replay_anchor_bootstrap_resamples_when_freshness_advances() {
+        let (db, _) = empty_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut ingress = PoolIngress::new(Some(db), None);
+        ingress.set_verify_level(VerifyLevel::Bootstrap);
+        ingress.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::clone(&calls),
+            fail: false,
+        }));
+        ingress
+            .admit_v3_replay(&mut a_new_workspace(), params(POOL), HashMap::new(), 100)
+            .await
+            .expect("first replay anchor admits");
+        ingress
+            .admit_v3_replay(&mut a_new_workspace(), params(POOL), HashMap::new(), 101)
+            .await
+            .expect("later replay anchor admits");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -1059,8 +1276,8 @@ mod tests {
         let _ = ingress.admit_v3_verified(&mut ws, params(POOL), 101).await;
         assert_eq!(
             calls.load(Ordering::SeqCst),
-            1,
-            "the per-pool memo skips the second admission's sample"
+            2,
+            "a later freshness block is sampled again"
         );
     }
 
@@ -1221,7 +1438,7 @@ mod tests {
         let mut ingress = PoolIngress::new(Some(DbArm::new(db, mint_source(&source_calls))), None);
         ingress.set_witness(Arc::clone(&witness) as Arc<dyn IngressWitness>);
 
-        let seed = ingress.v3_tick_map(POOL, 0, 60, 102).expect("stages");
+        let seed = ingress.stage_v3_tick_map(POOL, 0, 60, 102).expect("stages");
         assert_eq!(seed.source, TickMapSource::Db);
         assert_eq!(seed.coverage, PoolTickCoverage::Tracked);
         assert_eq!(seed.seed_block, 102, "the seed is stamped at head");
@@ -1245,7 +1462,7 @@ mod tests {
 
         // The second admission in the same block reuses the memoized map but
         // re-witnesses the window (per-admission, not per-block).
-        let _ = ingress.v3_tick_map(POOL, 0, 60, 102).expect("stages");
+        let _ = ingress.stage_v3_tick_map(POOL, 0, 60, 102).expect("stages");
         assert_eq!(source_calls.load(Ordering::SeqCst), 1, "memoized");
         assert_eq!(
             witness.backfills.lock().len(),
@@ -1262,7 +1479,7 @@ mod tests {
         let mut ingress = PoolIngress::new(Some(DbArm::new(db, mint_source(&source_calls))), None);
         ingress.set_witness(Arc::clone(&witness) as Arc<dyn IngressWitness>);
 
-        let seed = ingress.v3_tick_map(POOL, 0, 60, 100).expect("stages");
+        let seed = ingress.stage_v3_tick_map(POOL, 0, 60, 100).expect("stages");
         assert_eq!(seed.source, TickMapSource::Db);
         assert_eq!(seed.seed_block, 100);
         assert_eq!(
@@ -1283,7 +1500,9 @@ mod tests {
         let mut ingress = PoolIngress::new(Some(DbArm::new(db, mint_source(&source_calls))), None);
         ingress.set_witness(Arc::clone(&witness) as Arc<dyn IngressWitness>);
 
-        let seed = ingress.v3_tick_map(POOL, 0, 60, 100_000).expect("stages");
+        let seed = ingress
+            .stage_v3_tick_map(POOL, 0, 60, 100_000)
+            .expect("stages");
         assert_eq!(seed.source, TickMapSource::Db, "no cap defers to Chain");
         assert_eq!(seed.seed_block, 100_000, "the seed is stamped at head");
         assert_eq!(

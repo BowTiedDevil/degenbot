@@ -12,6 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+degenbot-core.workspace = true
 degenbot-execution.workspace = true
 degenbot-submission.workspace = true
 degenbot-bot.workspace = true

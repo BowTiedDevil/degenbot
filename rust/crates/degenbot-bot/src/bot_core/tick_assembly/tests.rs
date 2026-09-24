@@ -466,6 +466,7 @@ fn v3_chain_hit_after_store_db_miss_returns_sparse_ticks() {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let addr = make_pool_addr();
     let chain_hit = BootstrapTickWord {
+        bitmap: U256::ZERO,
         word: 0,
         ticks: [(10, chain_tick_info(10)), (20, chain_tick_info(20))]
             .into_iter()
@@ -540,6 +541,7 @@ fn v4_chain_hit_after_store_db_miss_returns_sparse_ticks() {
     let pool_id = [0xee; 32];
     let mgr = make_manager();
     let chain_hit = BootstrapTickWord {
+        bitmap: U256::ZERO,
         word: 0,
         ticks: [(-10, chain_tick_info(-10)), (10, chain_tick_info(10))]
             .into_iter()

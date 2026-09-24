@@ -153,12 +153,31 @@ fn quote_orientations(rt: &MarketContext, token0: Address, token1: Address) -> V
 
 /// Admit every typed extracted post-state into the frame's fresh workspace
 /// scope. Returns the affected pools that BOTH admitted AND trade WETH.
+#[must_use]
+pub fn admit_extracted(
+    rt: &MarketContext,
+    solver: &mut BackrunSolver,
+    states: &[PoolPostState],
+    seed_block: u64,
+    trace_tx: &str,
+    tick_window: Option<&dyn V3TickWindow>,
+) -> Vec<AffectedPool> {
+    degenbot_core::runtime::get_runtime().block_on(admit_extracted_verified(
+        rt,
+        solver,
+        states,
+        seed_block,
+        trace_tx,
+        tick_window,
+    ))
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "the V2/V3/V4 admission arms read top-to-bottom per family"
 )]
 #[must_use]
-pub fn admit_extracted(
+pub async fn admit_extracted_verified(
     rt: &MarketContext,
     solver: &mut BackrunSolver,
     states: &[PoolPostState],
@@ -292,34 +311,30 @@ pub fn admit_extracted(
                         "stage": "window-enter",
                     }),
                 );
-                let (windowed, source, coverage) = match rt
-                    .ingress()
-                    .v3_tick_map(st.address, tk, spacing, seed_block)
+                let p_id = match solver
+                    .admit_v3_replay(
+                        st.address,
+                        token0,
+                        token1,
+                        edge.fee,
+                        spacing,
+                        sqrt,
+                        liq,
+                        tk,
+                        tick_data,
+                        seed_block,
+                        *layout,
+                        rt.ingress(),
+                    )
+                    .await
                 {
-                    Ok(seed) => {
-                        let label = seed.source.label();
-                        let coverage = seed.coverage;
-                        let n = seed.ticks.len();
-                        for (tick, info) in seed.ticks {
-                            tick_data.entry(tick).or_insert(info);
-                        }
-                        (n, label, coverage)
-                    }
+                    Ok(p_id) => p_id,
                     Err(decline) => {
-                        // A Db/Chain read failure must never degrade to a
-                        // solver-unsafe empty map: refuse the admission and
-                        // name the refused arm in the per-hop witness.
                         trace_admit_fail(trace_tx, st.address, decline.stage(), &decline.detail());
                         skip(st.address, "v3-ingress");
                         continue;
                     }
                 };
-                // One probe line per staged anchor: crossed vs ingress tick
-                // counts + the staged floor. A staged map too small to build
-                // a solver range sequence shows up here as a small
-                // `merged` with a failing `windowed` void — discriminating
-                // an empty arm (Db miss + feed/replay hole) from a solver-side
-                // sequence bug on a rich map.
                 trace_jsonl(
                     "anchor_ticks",
                     serde_json::json!({
@@ -328,30 +343,11 @@ pub fn admit_extracted(
                         "layout": format!("{layout:?}"),
                         "spacing": spacing,
                         "tick": tk,
-                        // u128 exceeds serde_json's numeric range on real
-                        // pools - string it like every other wei field.
                         "liquidity": liq.to_string(),
                         "crossed": crossed,
-                        "windowed": windowed,
-                        "merged": tick_data.len(),
-                        "source": source,
+                        "source": "ingress",
                     }),
                 );
-                trace_jsonl(
-                    "anchor_stage",
-                    serde_json::json!({
-                        "tx": trace_tx,
-                        "pool": format!("0x{}", alloy::hex::encode(st.address)),
-                        "stage": "window-exit",
-                    }),
-                );
-                let Some(p_id) = solver.admit_v3_explicit(
-                    st.address, token0, token1, edge.fee, spacing, sqrt, liq, tk, tick_data,
-                    coverage, seed_block, *layout,
-                ) else {
-                    skip(st.address, "v3-admit");
-                    continue;
-                };
                 let quotes = quote_orientations(rt, token0, token1);
                 if quotes.is_empty() {
                     skip(st.address, "no-supported-quote");
@@ -1080,7 +1076,7 @@ impl PendingTxReaction for BackrunStrategy {
         affected.is_empty()
     }
 
-    fn admit(
+    async fn admit(
         &mut self,
         ctx: &MarketContext,
         workspace: &mut BackrunSolver,
@@ -1089,7 +1085,7 @@ impl PendingTxReaction for BackrunStrategy {
         trace_tx: &str,
         tick_window: Option<&dyn V3TickWindow>,
     ) -> Self::Affected {
-        admit_extracted(ctx, workspace, states, seed_block, trace_tx, tick_window)
+        admit_extracted_verified(ctx, workspace, states, seed_block, trace_tx, tick_window).await
     }
 
     async fn discover(

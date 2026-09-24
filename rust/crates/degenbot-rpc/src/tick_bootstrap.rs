@@ -131,7 +131,11 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
                 }
             }
 
-            Ok(Some(BootstrapTickWord { word, ticks }))
+            Ok(Some(BootstrapTickWord {
+                bitmap,
+                word,
+                ticks,
+            }))
         })
     }
 
@@ -187,7 +191,11 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
                 }
             }
 
-            Ok(Some(BootstrapTickWord { word, ticks }))
+            Ok(Some(BootstrapTickWord {
+                bitmap,
+                word,
+                ticks,
+            }))
         })
     }
 }

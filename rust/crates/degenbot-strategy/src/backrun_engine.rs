@@ -7,7 +7,7 @@
 //! them with the solvers' envelope-gated mixed solve (V2-V2 = the closed-form
 //! integer Mobius; no hand-composed pricing anywhere). Pool state arrives via
 //! the frame pipeline's replay-extracted post-states (`admit_v2`,
-//! `admit_v3_explicit`) or the ingress-routed cold-hop ladder
+//! `admit_v3_replay`) or the ingress-routed cold-hop ladder
 //! (`admit_v3_full`); discovery over the DB connector index is the pipeline's
 //! job.
 
@@ -298,16 +298,19 @@ pub struct LaneCandidate {
 }
 
 impl BackrunSolver {
-    /// Admit a V3 pool with EXPLICIT journal-provided state — the frame
-    /// pipeline's no-RPC admission: post-target `slot0`/`liquidity` + the
-    /// replayed per-tick words land here verbatim (`Sparse` coverage; the
-    /// solver's projections fail loudly on missing words instead of guessing).
-    /// `None` on a spec-bound registration rejection (bad replayed state).
+    /// Admit a replayed V3 post-state through the policy-enforcing ingress.
+    /// The ingress owns Db/Chain staging, overlay merge, bitmap provenance,
+    /// verification, and registration; this method only carries the typed
+    /// replay facts and the workspace boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns the ingress's typed decline without registering a partial seed.
     #[expect(
         clippy::too_many_arguments,
-        reason = "explicit V3 state admission carries the full typed state"
+        reason = "replay identity + post-state + ingress describe distinct layers"
     )]
-    pub fn admit_v3_explicit(
+    pub async fn admit_v3_replay(
         &mut self,
         address: Address,
         token0: Address,
@@ -317,36 +320,33 @@ impl BackrunSolver {
         sqrt_price_x96: U256,
         liquidity: u128,
         tick: i32,
-        tick_data: hashbrown::HashMap<i32, TickInfo>,
-        coverage: PoolTickCoverage,
+        overlay: hashbrown::HashMap<i32, TickInfo>,
         seed_block: u64,
         slot_layout: ClSlotLayout,
-    ) -> Option<u64> {
-        self.ws
-            .register_with_state(
-                PlanningPoolParams {
+        ingress: &PoolIngress,
+    ) -> Result<u64, V3LadderReject> {
+        ingress
+            .admit_v3_replay(
+                &mut self.ws,
+                IngressV3Params {
                     address,
                     token0,
                     token1,
-                },
-                ExplicitPoolState::V3 {
+                    fee,
+                    tick_spacing,
                     sqrt_price_x96,
                     liquidity,
                     tick,
-                    fee,
-                    tick_spacing,
-                    // Journal provenance: the caller's replayed post-state
-                    // tick words are exact-replay truth, not an RPC ladder.
-                    seed: TickMapSeed::journal(tick_data, coverage, seed_block),
                     slot_layout,
                 },
+                overlay,
                 seed_block,
             )
-            .ok()
+            .await
     }
 
     /// Admit a V4 pool with EXPLICIT journal-provided state — the V4 twin of
-    /// [`BackrunSolver::admit_v3_explicit`]: post-target `slot0`/`liquidity` +
+    /// [`BackrunSolver::admit_v3_replay`]: post-target `slot0`/`liquidity` +
     /// the replayed per-tick words land here verbatim (`Sparse` coverage; the
     /// solver's projections fail loudly on missing words instead of guessing).
     /// `None` on a spec-bound registration rejection (bad replayed state).

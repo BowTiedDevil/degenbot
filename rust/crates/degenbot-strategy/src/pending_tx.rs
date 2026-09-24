@@ -94,7 +94,7 @@ pub trait PendingTxReaction {
 
     /// Admit what this strategy cares about from the recovered post-states
     /// into the trigger's fresh workspace.
-    fn admit(
+    async fn admit(
         &mut self,
         ctx: &MarketContext,
         workspace: &mut BackrunSolver,

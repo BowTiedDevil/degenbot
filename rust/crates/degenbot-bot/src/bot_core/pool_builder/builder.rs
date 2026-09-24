@@ -855,10 +855,12 @@ async fn assemble_db_or_chain_v3(
         return Ok(seed);
     }
     // DB miss -> Chain arm (Sparse).
-    let (ticks, _) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block)
+    let (ticks, bitmap) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block)
         .await
         .map_err(PoolBuilderError::Rpc)?;
-    Ok(chain_arm(Some(ticks)).into_seed(block))
+    let (word, _) =
+        degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
+    Ok(chain_arm(Some(ticks), HashMap::from([(word, bitmap)])).into_seed(block))
 }
 
 /// V4 twin of [`assemble_db_or_chain_v3`]: the shared Db arm over
@@ -890,10 +892,12 @@ async fn assemble_db_or_chain_v4(
         return Ok(seed);
     }
     // DB miss -> Chain arm (Sparse).
-    let (ticks, _) = bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block)
+    let (ticks, bitmap) = bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block)
         .await
         .map_err(PoolBuilderError::Rpc)?;
-    Ok(chain_arm(Some(ticks)).into_seed(block))
+    let (word, _) =
+        degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
+    Ok(chain_arm(Some(ticks), HashMap::from([(word, bitmap)])).into_seed(block))
 }
 
 /// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3
@@ -913,7 +917,7 @@ async fn bootstrap_v3_tick_map(
     tick: i32,
     tick_spacing: i32,
     block: u64,
-) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), ProviderError> {
+) -> Result<(HashMap<i32, TickInfo>, U256), ProviderError> {
     let (word, _) =
         degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
@@ -947,7 +951,7 @@ async fn bootstrap_v3_tick_map(
         }
     }
 
-    Ok((ticks, PoolTickCoverage::Sparse))
+    Ok((ticks, bitmap))
 }
 
 /// Assemble `build_curve_pool` params for a Curve `StableSwap` pool (the task
@@ -1204,7 +1208,7 @@ async fn bootstrap_v4_tick_map(
     tick: i32,
     tick_spacing: i32,
     block: u64,
-) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), ProviderError> {
+) -> Result<(HashMap<i32, TickInfo>, U256), ProviderError> {
     let (word, _) =
         degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
@@ -1238,7 +1242,7 @@ async fn bootstrap_v4_tick_map(
         }
     }
 
-    Ok((ticks, PoolTickCoverage::Sparse))
+    Ok((ticks, bitmap))
 }
 
 /// Caller-supplied V4 pool identity (mirrors the `register_v4_pool` argument

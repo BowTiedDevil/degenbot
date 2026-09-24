@@ -49,6 +49,9 @@ use crate::TickInfo;
 /// (see the chain-bootstrap-tick-map guide, removed in the stale-docs cleanup `71ec78b2`, §3).
 #[derive(Debug, Clone)]
 pub struct BootstrapTickWord {
+    /// The exact bitmap word returned by the contract. It is provenance for
+    /// full-map verification, not a value reconstructed from `ticks`.
+    pub bitmap: alloy::primitives::U256,
     /// The tick-bitmap word position that was fetched
     /// (`degenbot_math::cl::get_tick_word_and_bit_position(tick, spacing).0`).
     pub word: i32,
@@ -130,7 +133,7 @@ pub trait TickBootstrapRpc: Send + Sync + std::fmt::Debug {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::U128;
+    use alloy::primitives::{U128, U256};
 
     /// Fake `TickBootstrapRpc` impl mirroring the pattern of
     /// `degenbot-bot::bot_core::mod::tests::FakeFetcher` — exercises the trait
@@ -184,7 +187,13 @@ mod tests {
                     );
                 }
             }
-            Ok(Some(BootstrapTickWord { word, ticks }))
+            let mut bitmap_bytes = [0u8; 32];
+            bitmap_bytes[16..].copy_from_slice(&self.bitmap.to_be_bytes());
+            Ok(Some(BootstrapTickWord {
+                bitmap: U256::from_be_bytes(bitmap_bytes),
+                word,
+                ticks,
+            }))
         }
 
         fn bootstrap_v4_tick_word(

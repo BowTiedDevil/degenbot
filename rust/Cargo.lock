@@ -2668,6 +2668,7 @@ dependencies = [
  "alloy",
  "degenbot-bot",
  "degenbot-config",
+ "degenbot-core",
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-eventhub",

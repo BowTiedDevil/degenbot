@@ -897,14 +897,16 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     // ── stage: admission (fresh scope; replayed state verbatim) ──────────
     let t = Instant::now();
     let mut solver = BackrunSolver::new();
-    let affected = strategy.admit(
-        &*ctx,
-        &mut solver,
-        &extracted,
-        head,
-        &tx_hex,
-        Some(scratch.ext()),
-    );
+    let affected = strategy
+        .admit(
+            &*ctx,
+            &mut solver,
+            &extracted,
+            head,
+            &tx_hex,
+            Some(scratch.ext()),
+        )
+        .await;
     stages.admit_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
     if S::affected_is_empty(&affected) {
         return FrameArtifacts::observe("no_candidate", stages);

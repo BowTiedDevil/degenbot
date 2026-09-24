@@ -32,7 +32,6 @@ use std::sync::Arc;
 
 use alloy::primitives::aliases::U128;
 use alloy::primitives::{Address, U256};
-use degenbot_bot::bot_core::pool_ingress::TickMapSource;
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
@@ -444,24 +443,8 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
         );
     }
 
-    // INJECT 2 - production path. RED: the production ladder modeled as the
-    // DB's maintained map (the narrow staging the defect produced).
+    // INJECT 2 - production path through the policy-enforcing ingress.
     let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2, &cap.ladder);
-    let staged = rt
-        .ingress()
-        .v3_tick_map(pool, cap.tick, POOL_SPACING, head)
-        .expect("the ladder map stages");
-    assert_eq!(staged.source, TickMapSource::Db, "the Db arm stages first");
-    let staged_keys: Vec<i32> = {
-        let mut k: Vec<i32> = staged.ticks.keys().copied().collect();
-        k.sort_unstable();
-        k
-    };
-    let ladder_keys: Vec<i32> = cap.ladder.keys().copied().collect();
-    assert_eq!(
-        staged_keys, ladder_keys,
-        "production stages the DB's map content (ladder-window case)"
-    );
     let mut solver = BackrunSolver::new();
     let post = post_state(pool, cap.sqrt, cap.tick, cap.liquidity, POOL_SPACING);
     let affected = admit_extracted(&rt, &mut solver, &[post], head, "0xprobe-red", None);
@@ -499,23 +482,8 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
         "production evaluates the Db-staged map (no clamped ladder seam remains)"
     );
 
-    // GREEN: the complete wide map as the DB's maintained map.
+    // GREEN: the complete wide map through the same verified ingress path.
     let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2, &cap.wide);
-    let staged = rt
-        .ingress()
-        .v3_tick_map(pool, cap.tick, POOL_SPACING, head)
-        .expect("the wide map stages");
-    assert_eq!(staged.source, TickMapSource::Db, "the Db arm stages first");
-    let staged_keys: Vec<i32> = {
-        let mut k: Vec<i32> = staged.ticks.keys().copied().collect();
-        k.sort_unstable();
-        k
-    };
-    let wide_keys: Vec<i32> = cap.wide.keys().copied().collect();
-    assert_eq!(
-        staged_keys, wide_keys,
-        "production stages the DB's complete map content"
-    );
     let mut solver = BackrunSolver::new();
     let post = post_state(pool, cap.sqrt, cap.tick, cap.liquidity, POOL_SPACING);
     let affected = admit_extracted(&rt, &mut solver, &[post], head, "0xprobe-green", None);

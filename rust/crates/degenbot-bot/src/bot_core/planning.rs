@@ -93,6 +93,10 @@ impl TickMapSource {
 pub struct TickMapSeed {
     /// The per-tick liquidity cells (raw values; layout-agnostic).
     pub ticks: hashbrown::HashMap<i32, TickInfo>,
+    /// Bitmap words fetched with the tick rows. These are provenance, not a
+    /// value derived from rows: a tracked map must carry the exact words that
+    /// established its completeness.
+    pub bitmaps: hashbrown::HashMap<i32, U256>,
     /// The coverage tag the workspace registers with.
     pub coverage: PoolTickCoverage,
     /// The block the map is exact at (the liquidity clock).
@@ -107,11 +111,13 @@ impl TickMapSeed {
     #[must_use]
     pub(crate) fn db(
         ticks: hashbrown::HashMap<i32, TickInfo>,
+        bitmaps: hashbrown::HashMap<i32, U256>,
         coverage: PoolTickCoverage,
         block: u64,
     ) -> Self {
         Self {
             ticks,
+            bitmaps,
             coverage,
             seed_block: block,
             source: TickMapSource::Db,
@@ -123,11 +129,13 @@ impl TickMapSeed {
     #[must_use]
     pub(crate) fn chain(
         ticks: hashbrown::HashMap<i32, TickInfo>,
+        bitmaps: hashbrown::HashMap<i32, U256>,
         coverage: PoolTickCoverage,
         block: u64,
     ) -> Self {
         Self {
             ticks,
+            bitmaps,
             coverage,
             seed_block: block,
             source: TickMapSource::Chain,
@@ -144,6 +152,7 @@ impl TickMapSeed {
     ) -> Self {
         Self {
             ticks,
+            bitmaps: hashbrown::HashMap::new(),
             coverage,
             seed_block: block,
             source: TickMapSource::Journal,
