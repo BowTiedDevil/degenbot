@@ -17,7 +17,7 @@ workspace = true
 # config.toml cascade layers [rpc]/[ws]/[database]). If a core capability is
 # needed, it must become reachable through `degenbot` — the compile error IS
 # the gap-discovery mechanism (see the parity ledger).
-degenbot = { path = "../../crates/degenbot", features = ["otel"] }
+degenbot = { workspace = true, features = ["otel"] }
 # `alloy` is required for the U256/Address/Bytes value types the public
 # `degenbot::arbitrage` fee seam and `degenbot::submission` seams name in
 # their signatures (a `cargo add degenbot` consumer naming those seams needs
@@ -44,7 +44,7 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "s
 # the core optional deps pin.
 tracing = "^0.1"
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
-degenbot-eventhub = { version = "0.6.0-alpha.13", path = "../../crates/degenbot-eventhub" }
+degenbot-eventhub.workspace = true
 
 [dev-dependencies]
 # start_paused + tokio::time::advance give the session-watch tests a

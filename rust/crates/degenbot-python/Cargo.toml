@@ -25,44 +25,44 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 degenbot-config.workspace = true
 alloy = { version = "^2.5", features = ["full", "transport-throttle"] }
-# Path dependency enables the `pyo3` feature so `From<Error> for PyErr`
+# The workspace dependency enables the `pyo3` feature so `From<Error> for PyErr`
 # conversions from core are available at this binding layer.
-degenbot-rpc = { path = "../degenbot-rpc", optional = true }
+degenbot-rpc = { workspace = true, optional = true }
 
-degenbot-bot = { path = "../degenbot-bot", optional = true }
+degenbot-bot = { workspace = true, optional = true }
 # (5WTYYQ) The WS-ingestion event surface the bot-driven pump consumes.
-degenbot-ingestion = { path = "../degenbot-ingestion", optional = true }
-degenbot-solvers = { path = "../degenbot-solvers", optional = true }
-degenbot-pools = { path = "../degenbot-pools" }
-degenbot-decoders = { path = "../degenbot-decoders", optional = true }
-degenbot-uniswap = { path = "../degenbot-uniswap", optional = true }
-degenbot-abi = { path = "../degenbot-abi", optional = true }
-degenbot-math = { path = "../degenbot-math", optional = true }
-degenbot-db = { path = "../degenbot-db", optional = true }
-degenbot-pathfinding = { path = "../degenbot-pathfinding", optional = true }
-degenbot-price = { path = "../degenbot-price", optional = true, features = ["pyo3"] }
-degenbot-submission = { path = "../degenbot-submission", optional = true, features = ["pyo3"] }
+degenbot-ingestion = { workspace = true, optional = true }
+degenbot-solvers = { workspace = true, optional = true }
+degenbot-pools.workspace = true
+degenbot-decoders = { workspace = true, optional = true }
+degenbot-uniswap = { workspace = true, optional = true }
+degenbot-abi = { workspace = true, optional = true }
+degenbot-math = { workspace = true, optional = true }
+degenbot-db = { workspace = true, optional = true }
+degenbot-pathfinding = { workspace = true, optional = true }
+degenbot-price = { workspace = true, optional = true, features = ["pyo3"] }
+degenbot-submission = { workspace = true, optional = true, features = ["pyo3"] }
 # The concrete strategy compositions (the backrun arm) the hosted boot
 # registers on the strategy host. Reaches down into the core crates; nothing
 # outside the binding/CLI/umbrella depends on it.
-degenbot-strategy = { path = "../degenbot-strategy", optional = true }
-degenbot-simulation = { path = "../degenbot-simulation", optional = true }
-degenbot-workers = { path = "../degenbot-workers", optional = true }
+degenbot-strategy = { workspace = true, optional = true }
+degenbot-simulation = { workspace = true, optional = true }
+degenbot-workers = { workspace = true, optional = true }
 revm = { version = "^43.0", default-features = false }
-degenbot-arbitrage = { path = "../degenbot-arbitrage", optional = true, features = ["order-index"] }
-degenbot-executor = { path = "../degenbot-executor", optional = true }
-degenbot-execution = { path = "../degenbot-execution", optional = true }
-degenbot-fork = { path = "../degenbot-fork", optional = true }
-degenbot-pool-updater = { path = "../degenbot-pool-updater", optional = true }
-degenbot-aave = { path = "../degenbot-aave", optional = true }
-degenbot-core = { path = "../degenbot-core", features = ["pyo3"] }
+degenbot-arbitrage = { workspace = true, optional = true, features = ["order-index"] }
+degenbot-executor = { workspace = true, optional = true }
+degenbot-execution = { workspace = true, optional = true }
+degenbot-fork = { workspace = true, optional = true }
+degenbot-pool-updater = { workspace = true, optional = true }
+degenbot-aave = { workspace = true, optional = true }
+degenbot-core = { workspace = true, features = ["pyo3"] }
 # ADR-051 D3: the Python console is a passthrough, so the binding depends on
 # the argv facade (degenbot-cli, which owns the ONE clap tree + the console
 # sinks) and its clap-free semantics crate (degenbot-cli-core, for
 # CancelHandle + the single run_with_cancel entry). Both are pyo3-free cores;
 # the binding layer reaches UP into the console, never the reverse.
-degenbot-cli = { path = "../degenbot-cli" }
-degenbot-cli-core = { path = "../degenbot-cli-core" }
+degenbot-cli.workspace = true
+degenbot-cli-core.workspace = true
 dashmap = { version = "^6.2" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }
@@ -86,11 +86,11 @@ serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 toml = "1.1.6"
-degenbot-eventhub = { version = "0.6.0-alpha.13", path = "../degenbot-eventhub" }
+degenbot-eventhub.workspace = true
 
 [features]
 # Per-domain binding-layer features. Each gates its optional
-# core-crate path dep + the corresponding binding module/mod registrations, mirroring
+# optional core-crate dependency + the corresponding binding module/mod registrations, mirroring
 # how polars gates polars-python with features matching polars-core/-plan/etc.
 # Default = all-on (byte-equivalent to the pre-feature surface). Implicit coupling:
 # `bot` implies `rpc`+`decoders`+`uniswap`
@@ -149,7 +149,7 @@ proptest = "^1.11"
 # Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for
 # the root crate's tests. Production builds pull degenbot-rpc without this
 # feature.
-degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+degenbot-rpc = { workspace = true, features = ["test-utils"] }
 
 # Seam-C test seam: InMemorySpanExporter. Same version lock as
 # degenbot-bot (tracing-opentelemetry 0.33 <-> opentelemetry(-sdk) 0.32).

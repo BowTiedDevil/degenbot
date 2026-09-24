@@ -72,6 +72,7 @@ await_holding_lock = "deny"
 exit = "deny"
 
 [workspace.dependencies]
+degenbot = { version = "0.6.0-alpha.13", path = "crates/degenbot" }
 # Internal path deps carry explicit version requirements here so the 26
 # publishable crates pass cargo publish manifest validation. Keep these
 # version literals in sync with [workspace.package].version (lockstep, ADR-009).

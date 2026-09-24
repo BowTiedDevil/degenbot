@@ -16,8 +16,8 @@ workspace = true
 alloy = { version = "^2.5", features = ["signers"] }
 thiserror = { version = "^2.0" }
 # The seam itself — `PayloadComposer` / `ExecutionAdapter` + value types.
-degenbot-execution = { path = "../degenbot-execution" }
+degenbot-execution.workspace = true
 # `PathInfo` / `HopInfo` hop descriptors (the seam's Encode input).
-degenbot-executor = { path = "../degenbot-executor" }
+degenbot-executor.workspace = true
 # `SolvePathResult` amounts (the solve-result view's amount side).
-degenbot-solvers = { path = "../degenbot-solvers" }
+degenbot-solvers.workspace = true

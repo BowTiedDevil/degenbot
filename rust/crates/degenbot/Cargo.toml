@@ -61,7 +61,7 @@ degenbot-uniswap.workspace = true
 # bounded priority dispatch, cordon posture — pyo3-free core for the
 # standalone Rust consumer.
 degenbot-workers.workspace = true
-degenbot-eventhub = { version = "0.6.0-alpha.13", path = "../degenbot-eventhub" }
+degenbot-eventhub.workspace = true
 
 [features]
 # OTel observability passthrough (Gap G6): forward
