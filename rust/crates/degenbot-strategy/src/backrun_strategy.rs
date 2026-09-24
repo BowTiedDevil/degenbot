@@ -14,10 +14,11 @@ use crate::backrun_engine::{
     LaneFamily, PathReject,
 };
 use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
+use crate::execution_context::ExecutionContext;
 use alloy::primitives::{address, Address, U256};
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_decoders::target_class::TargetClass;
-use degenbot_executor::composers::{EncodeContext, EncodeOptions};
+use degenbot_executor::composers::EncodeOptions;
 use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
 use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
 use degenbot_pathfinding::PoolKind;
@@ -34,8 +35,8 @@ use crate::frame_pipeline::{honest_observe, trace_jsonl, BidEconomics, PipelineC
 use crate::market_context::MarketContext;
 use crate::pending_tx::{ComposedIntent, Decided, PendingTxReaction, V3TickWindow};
 
-/// The canonical mainnet WETH address — the base (settlement) quote.
-pub const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+use crate::execution_context::ETHEREUM_WETH as WETH;
+
 /// The canonical mainnet USDC address — a supported per-frame quote.
 pub const USDC: Address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
 /// The canonical mainnet USDT address — a supported per-frame quote.
@@ -929,7 +930,7 @@ pub struct BackrunStrategy {
 
 impl BackrunStrategy {
     #[must_use]
-    pub fn new(context: EncodeContext) -> Self {
+    pub fn new(context: ExecutionContext) -> Self {
         Self {
             cmd_executor: CmdExecutorAdapter::new(context),
         }

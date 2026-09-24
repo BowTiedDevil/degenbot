@@ -9,17 +9,16 @@ use std::sync::{atomic::AtomicU64, Arc};
 use alloy::primitives::{address, Address, B256};
 
 use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
-use degenbot_executor::composers::EncodeContext;
 use degenbot_strategy::backrun::{Decision, MevblockerBackrun};
 use degenbot_strategy::backrun_engine::{
     project_candidate_for_cmd_executor, BackrunHopRef, LaneCandidate, LaneFamily,
 };
 use degenbot_strategy::backrun_strategy::{BackrunEvaluated, BackrunStrategy};
 use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
-use degenbot_strategy::frame_pipeline::{PipelineConfig, V4_POOL_MANAGER};
+use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_WETH as WETH};
+use degenbot_strategy::frame_pipeline::PipelineConfig;
 use degenbot_strategy::pending_tx::PendingTxReaction;
 
-const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");
 const EXECUTOR: Address = address!("00000000000000000000000000000000000000e1");
 
@@ -72,7 +71,8 @@ fn candidate_projects_to_the_adapter_interface() {
 
 #[test]
 fn strategy_declines_v4_candidate_from_a_different_session_manager() {
-    let mut strategy = BackrunStrategy::new(EncodeContext::new(EXECUTOR, V4_POOL_MANAGER, WETH));
+    let execution = ExecutionContext::ethereum(EXECUTOR);
+    let mut strategy = BackrunStrategy::new(execution);
     let evaluated = BackrunEvaluated {
         stats: degenbot_strategy::backrun_strategy::SolveStats {
             best: Some(LaneCandidate {
@@ -108,7 +108,7 @@ fn strategy_declines_v4_candidate_from_a_different_session_manager() {
         },
     };
     let pipeline = PipelineConfig {
-        exec: EXECUTOR,
+        execution,
         owner: Address::ZERO,
         bribe_bips: 9_800,
         wallet_gas_cost_wei: Arc::new(AtomicU64::new(100_000_000)),
@@ -124,7 +124,8 @@ fn strategy_declines_v4_candidate_from_a_different_session_manager() {
 #[test]
 fn wallet_true_net_bid_recomposes_through_the_session_adapter() {
     let candidate = candidate();
-    let mut strategy = BackrunStrategy::new(EncodeContext::new(EXECUTOR, V4_POOL_MANAGER, WETH));
+    let execution = ExecutionContext::ethereum(EXECUTOR);
+    let mut strategy = BackrunStrategy::new(execution);
     let evaluated = BackrunEvaluated {
         stats: degenbot_strategy::backrun_strategy::SolveStats {
             best: Some(candidate),
@@ -132,7 +133,7 @@ fn wallet_true_net_bid_recomposes_through_the_session_adapter() {
         },
     };
     let pipeline = PipelineConfig {
-        exec: EXECUTOR,
+        execution,
         owner: Address::ZERO,
         bribe_bips: 9_800,
         wallet_gas_cost_wei: Arc::new(AtomicU64::new(100_000_000)),
@@ -175,8 +176,7 @@ fn wallet_true_net_bid_recomposes_through_the_session_adapter() {
     );
 
     let (path, result) = project_candidate_for_cmd_executor(evaluated.stats.best.as_ref().unwrap());
-    let context = degenbot_executor::composers::EncodeContext::new(EXECUTOR, V4_POOL_MANAGER, WETH);
-    let expected = CmdExecutorAdapter::new(context).compose(
+    let expected = CmdExecutorAdapter::new(execution).compose(
         &path,
         &result,
         degenbot_strategy::backrun_strategy::backrun_encode_options(economics.bribe_bips),

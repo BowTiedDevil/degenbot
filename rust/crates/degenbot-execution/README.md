@@ -9,14 +9,16 @@ solver-driven amounts and adapter-agnostic options; it does not carry
 
 The concrete built-in production adapter lives in `degenbot-strategy`, where
 `CmdExecutorAdapter` owns the canonical `cmd_executor` path. It captures one
-session `EncodeContext` and composes `PathInfo + SolveResult + EncodeOptions`
-per call. The result is typed as `Encoded`, `Declined`, or `Rejected`; the
-five routine decline labels remain the caller-facing JSONL labels, while a
-ledger-validation rejection is fatal.
+strategy `ExecutionContext` (executor, authoritative V4 `PoolManager`, and WETH)
+built at boot; frame simulation and V4 descriptor setup consume that same value.
+The adapter composes `PathInfo + SolveResult + EncodeOptions` per call. The
+result is typed as `Encoded`, `Declined`, or `Rejected`; the five routine decline
+labels remain the caller-facing JSONL labels, while a ledger-validation rejection
+is fatal.
 
-A pure-Rust consumer can reach the production adapter from the umbrella at
-`degenbot::CmdExecutorAdapter` or `degenbot::strategy::CmdExecutorAdapter`.
-Foreign adapters continue to implement the generic seam in
+A pure-Rust consumer can reach the production adapter and context from the
+umbrella at `degenbot::CmdExecutorAdapter` / `degenbot::ExecutionContext`, or
+under `degenbot::strategy`. Foreign adapters continue to implement the generic seam in
 `degenbot-execution` without depending on the built-in strategy adapter.
 
 ## Usage

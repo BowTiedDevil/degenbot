@@ -25,7 +25,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_eventhub::{HeadSubscription, Hub};
-use degenbot_executor::composers::EncodeContext;
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
@@ -33,10 +32,10 @@ use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
 use degenbot_simulation::BlockSimHandle;
 use parking_lot::Mutex as ParkingMutex;
 
-use crate::backrun_strategy::{BackrunStrategy, WETH};
+use crate::backrun_strategy::BackrunStrategy;
 use crate::frame_pipeline::{
     build_block_handle, load_fixture_frames, process_frame_with_prefix, trace_jsonl, MarketContext,
-    PipelineConfig, V4_POOL_MANAGER,
+    PipelineConfig,
 };
 use crate::gap_quarantine::{NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{
@@ -475,7 +474,7 @@ pub(super) async fn run_frame(
                 priority_fee,
                 base_fee_next,
                 execute_calldata: cd,
-                executor_address: pl.exec,
+                executor_address: pl.execution.executor(),
                 access_list: None,
                 path_pools: HashSet::new(),
             };
@@ -1096,6 +1095,7 @@ impl DriverHandle {
 /// signature readable and keeps the boot/loop split explicit.
 struct LoopBoot {
     provider: Arc<AlloyProvider>,
+    execution: crate::execution_context::ExecutionContext,
     runtime: MarketContext,
     strategy: BackrunStrategy,
     pl: PipelineConfig,
@@ -1129,6 +1129,7 @@ impl BackrunDriver {
     /// loud-failure behavior.
     pub async fn start(cfg: BackrunConfig, hub: Arc<Hub>, ctx: BackrunContext) -> DriverHandle {
         let BackrunContext {
+            execution,
             connector_db,
             kit,
             head_ws_url,
@@ -1185,11 +1186,7 @@ impl BackrunDriver {
         // discovery handles; each frame gets a fresh planning Workspace scope
         // (see frame_pipeline's module doc for the split).
         let runtime = MarketContext::new(1, connector_db, kit, cfg.connectors, cfg.cycle_max_hops);
-        let exec: Address = cfg
-            .executor
-            .parse()
-            .expect("the facet's executor is a valid address");
-        let strategy = BackrunStrategy::new(EncodeContext::new(exec, V4_POOL_MANAGER, WETH));
+        let strategy = BackrunStrategy::new(execution);
         // The sim oracle's caller identity: the executor is OWNER-gated
         // (`execute()` asserts msg.sender == OWNER_ADDR), so the simulated
         // call must come from the OPERATOR address -- never the target tx's
@@ -1206,7 +1203,7 @@ impl BackrunDriver {
             u64::try_from(initial_wallet_gas_cost(&provider, &cfg).await).unwrap_or(u64::MAX),
         ));
         let pl = PipelineConfig {
-            exec,
+            execution,
             owner,
             bribe_bips: cfg.bribe_bips,
             wallet_gas_cost_wei,
@@ -1245,6 +1242,7 @@ impl BackrunDriver {
 
         let boot = LoopBoot {
             provider,
+            execution,
             runtime,
             strategy,
             pl,
@@ -1272,6 +1270,7 @@ impl BackrunDriver {
 async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<LoopShared>) {
     let LoopBoot {
         provider,
+        execution,
         mut runtime,
         mut strategy,
         pl,
@@ -1301,8 +1300,14 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         .lock()
         .expect("dispatcher mutex poisoned")
         .current_block();
-    let mut handle: Option<BlockSimHandle<'_>> =
-        build_block_handle(&provider, current_block, &runtime.warm_cache, oracle).await;
+    let mut handle: Option<BlockSimHandle<'_>> = build_block_handle(
+        &provider,
+        current_block,
+        &execution,
+        &runtime.warm_cache,
+        oracle,
+    )
+    .await;
     if handle.is_none() {
         tracing::warn!(
             "replay handle build failed - frames observe replay_unavailable until it recovers"
@@ -1516,7 +1521,9 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                         .unwrap_or(u64::MAX),
                     std::sync::atomic::Ordering::Relaxed,
                 );
-                match build_block_handle(&provider, head, &runtime.warm_cache, oracle).await {
+                match build_block_handle(&provider, head, &execution, &runtime.warm_cache, oracle)
+                    .await
+                {
                     Some(h) => handle = Some(h),
                     None => {
                         tracing::warn!(

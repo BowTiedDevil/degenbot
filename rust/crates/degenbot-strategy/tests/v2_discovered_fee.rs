@@ -14,7 +14,6 @@ use degenbot_bot::bot_core::{
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_db::{DegenbotDb, V2PoolRowInput};
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
-use degenbot_executor::composers::EncodeContext;
 use degenbot_pools::slot_layout::V2ReservesParts;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
@@ -26,6 +25,7 @@ use degenbot_strategy::backrun_engine::{
 };
 use degenbot_strategy::backrun_strategy::{admit_extracted, backrun_encode_options};
 use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
+use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_V4_POOL_MANAGER};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::strategy_kit::StrategyKit;
 
@@ -179,9 +179,9 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
         profit: 55,
     };
     let (backrun_path, backrun_result) = project_candidate_for_cmd_executor(&candidate);
-    let adapter = CmdExecutorAdapter::new(EncodeContext::new(
+    let adapter = CmdExecutorAdapter::new(ExecutionContext::new(
         POOL_P,
-        address!("000000000004444c5dc75cb358380d2e3de08a90"),
+        ETHEREUM_V4_POOL_MANAGER,
         TOKEN1,
     ));
     let CmdExecutorOutcome::Encoded(backrun) = adapter.compose(

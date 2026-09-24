@@ -443,10 +443,16 @@ The per-path intake value the composer consumes: the path, the solver's amounts,
 operator's declared axes. It is the contract the CL overfeed-clamp invariant attaches to.
 _Avoid_: "command stream" (the bytes it encodes into), "payload", "EncodeOptions".
 
+**Execution context**:
+The strategy-session deployment value carrying the executor, authoritative V4
+`PoolManager`, and WETH identity to command composition, frame simulation, and V4
+descriptor/roster projection. The backrun boot constructs it once.
+_Avoid_: rebuilding it per adapter, frame, or candidate; a candidate-derived manager fallback.
+
 **Encode context**:
-The session-scoped bundle of deployment addresses shared by every encode request in a
-session.
-_Avoid_: folding it into the encode request (session scope restated per path).
+The low-level encode-intake value shared by command encoding calls in one session.
+_Avoid_: using it as the strategy-wide session context or folding it into the
+per-path encode request.
 
 **Command grammar**:
 The rules that derive a valid command stream for a shape class, including the ordering

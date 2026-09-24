@@ -3,16 +3,20 @@
     reason = "adapter fixtures are valid by construction"
 )]
 
-use alloy::primitives::{address, Address, Bytes, U256};
+use alloy::primitives::{address, Address, Bytes, B256, U256};
+use degenbot_bot::connector_index::{V2ConnectorIndex, V4Edge};
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions,
     EncodeRequest, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
 };
 use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
+use degenbot_simulation::sim::evm::journal_pools::{PoolFamily, V4PoolDescriptor};
 use degenbot_strategy::cmd_executor_adapter::{
     CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome, CmdExecutorRejection,
 };
+use degenbot_strategy::execution_context::ExecutionContext;
+use degenbot_strategy::frame_pipeline::build_descriptors;
 
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
@@ -69,11 +73,16 @@ fn v2_path() -> PathInfo {
 }
 
 fn reference_calldata(
-    ctx: EncodeContext,
+    execution: ExecutionContext,
     path: &PathInfo,
     result: &SolveResult,
     opts: EncodeOptions,
 ) -> Bytes {
+    let ctx = EncodeContext::new(
+        execution.executor(),
+        execution.pool_manager(),
+        execution.weth(),
+    );
     let request = EncodeRequest::new(
         path.clone(),
         u128::try_from(result.optimal_input).expect("fixture fits u128"),
@@ -127,7 +136,7 @@ fn composes_v3_calldata_through_session_adapter() {
         vec![999_999_999_999_999_999; 2],
     );
     let opts = options(500);
-    let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
+    let ctx = ExecutionContext::new(EXECUTOR, PM, WETH);
     let expected = reference_calldata(ctx, &path, &result, opts);
 
     let outcome = CmdExecutorAdapter::new(ctx).compose(&path, &result, opts);
@@ -170,7 +179,7 @@ fn composes_v4_calldata_using_the_session_pool_manager() {
         vec![999_999_999_999_999_999; 2],
     );
     let opts = options(250);
-    let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
+    let ctx = ExecutionContext::new(EXECUTOR, PM, WETH);
     let expected = reference_calldata(ctx, &path, &result, opts);
 
     let outcome = CmdExecutorAdapter::new(ctx).compose(&path, &result, opts);
@@ -179,8 +188,45 @@ fn composes_v4_calldata_using_the_session_pool_manager() {
 }
 
 #[test]
+fn known_secondary_v4_manager_is_described_but_not_executable() {
+    const SECONDARY_MANAGER: Address = address!("000000000000000000000000000000000000c0de");
+    let pool_id = B256::new([0x5a; 32]);
+    let mut index = V2ConnectorIndex::default();
+    index.push_v4_edge(V4Edge {
+        pool_hash: pool_id,
+        manager: SECONDARY_MANAGER,
+        state_view: None,
+        token0: WETH,
+        token1: USDC,
+        fee: 500,
+        fee_currency1: 500,
+        tick_spacing: 10,
+        hooks: Address::ZERO,
+        db_pool_id: 1,
+    });
+    let execution = ExecutionContext::new(EXECUTOR, PM, WETH);
+    let adapter = CmdExecutorAdapter::new(execution);
+
+    let descriptors =
+        build_descriptors(Some(&index), &[(SECONDARY_MANAGER, Vec::new())], &execution);
+    assert!(descriptors.hit_v4);
+    assert!(matches!(
+        descriptors.by_address.get(&SECONDARY_MANAGER),
+        Some(PoolFamily::V4PoolManager { pools })
+            if pools.as_slice() == [V4PoolDescriptor { pool_id, tick_spacing: 10 }]
+    ));
+
+    let path = v4_path(SECONDARY_MANAGER);
+    let result = solve_result(&path, 100, vec![100, 100], vec![99, 99]);
+    assert_eq!(
+        adapter.compose(&path, &result, options(0)),
+        CmdExecutorOutcome::Declined(CmdExecutorDecline::MixedPoolManagers)
+    );
+}
+
+#[test]
 fn routine_declines_keep_the_existing_jsonl_labels() {
-    let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
+    let ctx = ExecutionContext::new(EXECUTOR, PM, WETH);
     let adapter = CmdExecutorAdapter::new(ctx);
 
     let one_hop = PathInfo::new(vec![v2_path().hops[0].clone()]);
@@ -248,7 +294,7 @@ fn routine_declines_keep_the_existing_jsonl_labels() {
 fn validator_rejection_is_not_a_routine_decline() {
     let path = v2_path();
     let result = solve_result(&path, 100_000, vec![80_000, 60_000], vec![50_000, 80_000]);
-    let adapter = CmdExecutorAdapter::new(EncodeContext::new(EXECUTOR, PM, WETH));
+    let adapter = CmdExecutorAdapter::new(ExecutionContext::new(EXECUTOR, PM, WETH));
 
     assert_eq!(
         adapter.compose(&path, &result, options(0)),
@@ -265,7 +311,7 @@ fn same_session_adapter_recomposes_for_a_lower_bribe() {
         vec![1_000_000_000_000_000_000; 2],
         vec![999_999_999_999_999_999; 2],
     );
-    let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
+    let ctx = ExecutionContext::new(EXECUTOR, PM, WETH);
     let adapter = CmdExecutorAdapter::new(ctx);
     let high = options(1_000);
     let low = options(400);
@@ -291,7 +337,7 @@ fn composes_v2_calldata_through_session_adapter() {
         vec![999_999_999_999_999_999; 2],
     );
     let opts = options(1_000);
-    let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
+    let ctx = ExecutionContext::new(EXECUTOR, PM, WETH);
     let expected = reference_calldata(ctx, &path, &result, opts);
 
     let outcome = CmdExecutorAdapter::new(ctx).compose(&path, &result, opts);

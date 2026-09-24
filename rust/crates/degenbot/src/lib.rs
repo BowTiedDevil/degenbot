@@ -44,9 +44,9 @@ pub use degenbot_solvers as solvers;
 /// The strategy plane: the six-slot strategy vocabulary and the concrete
 /// executable strategies composed over the capability crates.
 pub use degenbot_strategy as strategy;
-/// The production `cmd_executor` adapter, also available as
-/// `degenbot::strategy::CmdExecutorAdapter`.
-pub use degenbot_strategy::CmdExecutorAdapter;
+/// The production `cmd_executor` adapter and its session deployment context,
+/// also available under `degenbot::strategy`.
+pub use degenbot_strategy::{CmdExecutorAdapter, ExecutionContext};
 
 /// The whole `degenbot-uniswap` crate (dex identity + V2 encoding + registry).
 pub use degenbot_uniswap as uniswap;

@@ -2,10 +2,11 @@
 
 use alloy::primitives::{Bytes, U256};
 
+use crate::execution_context::ExecutionContext;
 use degenbot_execution::SolveResult;
 use degenbot_executor::composers::{
-    config_for_options, encode_execute_call, ComposerInputs, EncodeContext, EncodeOptions,
-    EncodeRequest, HopInfo, PathInfo,
+    config_for_options, encode_execute_call, ComposerInputs, EncodeOptions, EncodeRequest, HopInfo,
+    PathInfo,
 };
 use degenbot_executor::grammar_shape::{derive_all_v2_detailed, derive_shape_detailed, Derive};
 
@@ -70,19 +71,19 @@ pub enum CmdExecutorOutcome {
 /// adapter without mutating shared state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CmdExecutorAdapter {
-    context: EncodeContext,
+    context: ExecutionContext,
 }
 
 impl CmdExecutorAdapter {
     /// Capture the session-scoped executor, `PoolManager`, and WETH addresses.
     #[must_use]
-    pub const fn new(context: EncodeContext) -> Self {
+    pub const fn new(context: ExecutionContext) -> Self {
         Self { context }
     }
 
     /// Return the session-scoped encode context.
     #[must_use]
-    pub const fn context(&self) -> &EncodeContext {
+    pub const fn context(&self) -> &ExecutionContext {
         &self.context
     }
 
@@ -107,9 +108,9 @@ impl CmdExecutorAdapter {
             opts,
         );
         let composer_inputs = ComposerInputs {
-            executor_address: self.context.executor,
-            pool_manager_address: self.context.pool_manager,
-            weth_address: self.context.weth,
+            executor_address: self.context.executor(),
+            pool_manager_address: self.context.pool_manager(),
+            weth_address: self.context.weth(),
             optimal_input: request.optimal_input,
             hop_outputs: &request.hop_outputs,
             consumed_inputs: &request.consumed_inputs,
@@ -133,7 +134,7 @@ impl CmdExecutorAdapter {
         let Ok(config) = config_for_options(opts, U256::ZERO) else {
             return CmdExecutorOutcome::Declined(CmdExecutorDecline::ExecuteCall);
         };
-        let Ok(call) = encode_execute_call(self.context.executor, &commands, config) else {
+        let Ok(call) = encode_execute_call(self.context.executor(), &commands, config) else {
             return CmdExecutorOutcome::Declined(CmdExecutorDecline::ExecuteCall);
         };
         CmdExecutorOutcome::Encoded(Bytes::from(call.data))
@@ -173,7 +174,7 @@ impl CmdExecutorAdapter {
             .collect::<Option<Vec<_>>>()?;
 
         if path.hops.iter().any(|hop| {
-            matches!(hop, HopInfo::V4(v4) if v4.pool_manager_address != self.context.pool_manager)
+            matches!(hop, HopInfo::V4(v4) if v4.pool_manager_address != self.context.pool_manager())
         }) {
             return None;
         }
@@ -187,7 +188,7 @@ impl CmdExecutorAdapter {
 
     fn classify_invalid(&self, path: &PathInfo, result: &SolveResult) -> CmdExecutorDecline {
         if path.hops.iter().any(|hop| {
-            matches!(hop, HopInfo::V4(v4) if v4.pool_manager_address != self.context.pool_manager)
+            matches!(hop, HopInfo::V4(v4) if v4.pool_manager_address != self.context.pool_manager())
         }) {
             CmdExecutorDecline::MixedPoolManagers
         } else if result.optimal_input >= U256::from(1u128 << 96)

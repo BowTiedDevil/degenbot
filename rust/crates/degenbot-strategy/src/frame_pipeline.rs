@@ -72,7 +72,7 @@ use std::time::Instant;
 
 use crate::backrun::{BackrunConfig, Decision};
 use crate::backrun_engine::BackrunSolver;
-use alloy::primitives::{address, Address, Bytes, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorOracle;
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
@@ -89,17 +89,10 @@ use degenbot_simulation::{SimulationOverrideParams, WarmCodeCacheInner};
 use hashbrown::HashMap as HbMap;
 use parking_lot::RwLock;
 
+use crate::execution_context::ExecutionContext;
 use crate::pending_tx::PendingTxReaction;
 
-pub use crate::backrun_strategy::WETH;
 pub use crate::market_context::MarketContext;
-
-/// The Uniswap V4 `PoolManager` singleton — the descriptor key for the
-/// explicitly-unsupported V4 family (frames touching ONLY this observe
-/// `v4_unsupported` instead of guessing a decode).
-/// The session deployment identity used by the frame's V4 descriptor and the
-/// command-executor encode context.
-pub const V4_POOL_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
 
 // ─────────────────────────────────────────────────────────────────────────
 // Offline-review capture (moved verbatim from the bin: capture failures
@@ -149,11 +142,13 @@ fn now_unix_ms() -> u64 {
 
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The per-frame strategy configuration the bin owns (executor/owner
-/// identity + economics).
+/// The per-frame strategy configuration the bin owns (session deployment,
+/// owner identity, and economics).
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
-    pub exec: Address,
+    /// The boot-owned execution deployment shared with the strategy adapter
+    /// and per-block frame simulation.
+    pub execution: ExecutionContext,
     pub owner: Address,
     /// The builder's bribe share of TRUE profit (bips of `10_000`) — the
     /// COMPETITIVENESS CEILING; the wallet gate can compose lower bips.
@@ -274,7 +269,8 @@ impl FrameArtifacts {
 // Per-block replay handle
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Build the per-block frame-replay handle pinning `head`: the scratch
+/// Build the per-block frame-replay handle pinning `head` under the boot-owned
+/// execution deployment: the scratch
 /// stack reads `BlockId::Number(head)` and its frames run in the NEXT
 /// block's env. State overrides are the ZERO set — a foreign frame must
 /// execute against chain state, not the strategy's simulated funding.
@@ -289,6 +285,7 @@ impl FrameArtifacts {
 pub async fn build_block_handle<'a>(
     provider: &AlloyProvider,
     head: u64,
+    execution: &ExecutionContext,
     warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
     oracle: &'a dyn SimAnchorOracle,
 ) -> Option<BlockSimHandle<'a>> {
@@ -305,8 +302,8 @@ pub async fn build_block_handle<'a>(
             erc6909_weth: U256::ZERO,
             erc6909_native: U256::ZERO,
         },
-        weth_address: WETH,
-        pool_manager_address: V4_POOL_MANAGER,
+        weth_address: execution.weth(),
+        pool_manager_address: execution.pool_manager(),
     };
     BlockSimHandle::build(
         provider,
@@ -404,7 +401,8 @@ impl TakeObject for serde_json::Value {
 pub struct FrameDescriptors {
     /// Supported-family descriptors, from the connector index only.
     pub by_address: HbMap<Address, PoolFamily>,
-    /// Whether the V4 `PoolManager` singleton named a touched account.
+    /// Whether the authoritative or a roster-known V4 `PoolManager` named a
+    /// touched account.
     pub hit_v4: bool,
     /// Touched addresses present in the DB under an unsupported family, with
     /// the `kind` discriminator. Excluded from `by_address` on purpose —
@@ -415,7 +413,8 @@ pub struct FrameDescriptors {
 
 /// Project the frame's touched set into the pool-descriptor map the journal
 /// extractor consumes: EVERY descriptor comes from the connector index (the
-/// tracked-pool registry) — V2 pair / V3 pool / the V4 `PoolManager` singleton
+/// tracked-pool registry) — V2 pair / V3 pool / the session context's
+/// authoritative V4 `PoolManager` and every manager with roster edges
 /// (descriptors exist so `v4_unsupported` is OBSERVABLE, never guessable).
 /// A touched address whose DB family the arm cannot type yields no descriptor
 /// but is returned in [`FrameDescriptors::unsupported`] so it observes loudly.
@@ -423,11 +422,12 @@ pub struct FrameDescriptors {
 pub fn build_descriptors(
     index: Option<&V2ConnectorIndex>,
     touched: &[(Address, Vec<U256>)],
+    execution: &ExecutionContext,
 ) -> FrameDescriptors {
     let mut out = FrameDescriptors::default();
     for (addr, _) in touched {
         let manager_edges = index.map(|idx| idx.v4_edges_for_manager(*addr));
-        let is_manager = *addr == V4_POOL_MANAGER
+        let is_manager = *addr == execution.pool_manager()
             || manager_edges
                 .as_ref()
                 .is_some_and(|edges| !edges.is_empty());
@@ -838,7 +838,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
 
     // ── stage: extract (journal post-states; descriptors from the index) ──
     let t = Instant::now();
-    let descriptors = build_descriptors(ctx.index(), &outcome.touched);
+    let descriptors = build_descriptors(ctx.index(), &outcome.touched, &pl.execution);
     if !descriptors.unsupported.is_empty() {
         // Loud, and legible alongside the closed `family-unsupported` reason:
         // the kind string never becomes a metric label, so it is named here
@@ -947,7 +947,14 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
             );
         } else {
             let t = Instant::now();
-            sim_ok = simulate_candidate(sim_client, ev, pl.exec, pl.owner, &c.sim_calldata).await;
+            sim_ok = simulate_candidate(
+                sim_client,
+                ev,
+                pl.execution.executor(),
+                pl.owner,
+                &c.sim_calldata,
+            )
+            .await;
             stages.sim_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
             trace_jsonl(
                 "composed",

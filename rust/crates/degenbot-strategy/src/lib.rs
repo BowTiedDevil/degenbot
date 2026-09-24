@@ -57,6 +57,7 @@ pub mod backrun_driver;
 pub mod backrun_engine;
 pub mod backrun_strategy;
 pub mod cmd_executor_adapter;
+pub mod execution_context;
 pub mod frame_pipeline;
 pub mod gap_probe;
 pub mod gap_quarantine;
@@ -74,6 +75,7 @@ pub use backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun, SubmissionSlot}
 pub use cmd_executor_adapter::{
     CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome, CmdExecutorRejection,
 };
+pub use execution_context::{ExecutionContext, ETHEREUM_V4_POOL_MANAGER, ETHEREUM_WETH};
 pub use settlement::{Settlement, SettlementConfig};
 pub use strategy_kit::{DiscoveryHandles, ProvisionCell, StrategyCell, StrategyKit};
 pub use strategy_plane::{SelectedStrategy, Strategy, StrategyName};

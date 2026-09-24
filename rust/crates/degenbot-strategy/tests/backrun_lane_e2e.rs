@@ -27,13 +27,13 @@ use std::sync::{Arc, OnceLock};
 
 use alloy::primitives::{address, keccak256, Bytes, U256};
 use degenbot_bot::bot_core::SimAnchorState;
-use degenbot_executor::composers::EncodeContext;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_strategy::backrun::{BackrunConfig, Decision, MevblockerBackrun};
 use degenbot_strategy::backrun_strategy::BackrunStrategy;
+use degenbot_strategy::execution_context::ExecutionContext;
 use degenbot_strategy::frame_pipeline::{
-    build_block_handle, process_frame, MarketContext, PipelineConfig, V4_POOL_MANAGER,
+    build_block_handle, process_frame, MarketContext, PipelineConfig,
 };
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
@@ -140,7 +140,7 @@ fn bid_config() -> (BackrunConfig, PipelineConfig) {
     cfg.max_bundle_wei = U256::from(1_000_000u128) * U256::from(10u64).pow(U256::from(18u8));
     cfg.stop_file = PathBuf::from("/nonexistent-frame-e2e-stop");
     let pl = PipelineConfig {
-        exec: EXECUTOR,
+        execution: ExecutionContext::ethereum(EXECUTOR),
         owner: OPERATOR,
         bribe_bips: BRIBE_BIPS,
         wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(
@@ -297,22 +297,18 @@ async fn frame_pipeline_replay_staging_bids_with_composed_calldata() {
     let _ = trace_sink(); // arm the pipeline's trace sink before any frame
     let provider = live_provider();
     let (mut rt, head, _ids) = runtime(&provider).await;
+    let (cfg, pl) = bid_config();
     let anchor = SimAnchorState::default();
     let mut handle = Some(
-        build_block_handle(&provider, head, &rt.warm_cache, &anchor)
+        build_block_handle(&provider, head, &pl.execution, &rt.warm_cache, &anchor)
             .await
             .expect("the per-block replay handle builds against the live chain"),
     );
-    let (cfg, pl) = bid_config();
     let nonce = live_nonce(&provider).await;
     let ev = dislocating_frame(300, nonce);
     println!("frame hash 0x{}", alloy::hex::encode(ev.hash));
 
-    let mut strategy = BackrunStrategy::new(EncodeContext::new(
-        pl.exec,
-        V4_POOL_MANAGER,
-        degenbot_strategy::backrun_strategy::WETH,
-    ));
+    let mut strategy = BackrunStrategy::new(pl.execution);
     let artifacts = process_frame(
         &mut strategy,
         &mut rt,
@@ -375,21 +371,17 @@ async fn frame_pipeline_reverted_target_observes_truthfully() {
     let _ = trace_sink(); // arm the pipeline's trace sink before any frame
     let provider = live_provider();
     let (mut rt, head, _ids) = runtime(&provider).await;
+    let (cfg, pl) = bid_config();
     let anchor = SimAnchorState::default();
     let mut handle = Some(
-        build_block_handle(&provider, head, &rt.warm_cache, &anchor)
+        build_block_handle(&provider, head, &pl.execution, &rt.warm_cache, &anchor)
             .await
             .expect("the per-block replay handle builds against the live chain"),
     );
-    let (cfg, pl) = bid_config();
     let nonce = live_nonce(&provider).await;
     let ev = reverting_frame(nonce);
 
-    let mut strategy = BackrunStrategy::new(EncodeContext::new(
-        pl.exec,
-        V4_POOL_MANAGER,
-        degenbot_strategy::backrun_strategy::WETH,
-    ));
+    let mut strategy = BackrunStrategy::new(pl.execution);
     let artifacts = process_frame(
         &mut strategy,
         &mut rt,

@@ -29,7 +29,6 @@ use std::sync::Arc;
 
 use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
-use degenbot_executor::composers::EncodeContext;
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
 use degenbot_strategy::backrun_engine::{
@@ -37,12 +36,14 @@ use degenbot_strategy::backrun_engine::{
 };
 use degenbot_strategy::backrun_strategy::{
     admit_extracted, backrun_encode_options, cycle_refs, cycle_touched_legs,
-    discover_trace_payload, net_bid, solve_dfs_chains, BackrunIntents, CycleHop, WETH,
+    discover_trace_payload, net_bid, solve_dfs_chains, BackrunIntents, CycleHop,
 };
 use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
+use degenbot_strategy::execution_context::{
+    ExecutionContext, ETHEREUM_V4_POOL_MANAGER, ETHEREUM_WETH as WETH,
+};
 use degenbot_strategy::frame_pipeline::{
     build_descriptors, empty_frame_observe_reason, state_digest, MarketContext, PipelineConfig,
-    V4_POOL_MANAGER,
 };
 
 fn v2_fee_pair() -> V2FeePair {
@@ -51,6 +52,29 @@ fn v2_fee_pair() -> V2FeePair {
 
 fn v2_fees() -> V2Fees {
     v2_fee_pair().resolve().expect("valid fixture fee")
+}
+
+fn test_execution() -> ExecutionContext {
+    ExecutionContext::ethereum(address!("00000000000000000000000000000000000000e1"))
+}
+
+/// The public adapter and frame-descriptor seams consume one session deployment
+/// value; neither reconstructs a manager identity from the touched frame.
+#[test]
+fn one_execution_context_names_the_authoritative_v4_manager() {
+    let executor = address!("00000000000000000000000000000000000000e1");
+    let execution = ExecutionContext::new(executor, ETHEREUM_V4_POOL_MANAGER, WETH);
+    let adapter = CmdExecutorAdapter::new(execution);
+
+    let descriptors =
+        build_descriptors(None, &[(ETHEREUM_V4_POOL_MANAGER, Vec::new())], &execution);
+
+    assert_eq!(adapter.context(), &execution);
+    assert!(descriptors.hit_v4);
+    assert!(matches!(
+        descriptors.by_address.get(&ETHEREUM_V4_POOL_MANAGER),
+        Some(PoolFamily::V4PoolManager { pools }) if pools.is_empty()
+    ));
 }
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
@@ -185,7 +209,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     let outcome = golden_replay_outcome();
 
     // descriptors: projected from the connector index (the tracked registry).
-    let descriptors = build_descriptors(rt.index(), &outcome.touched);
+    let descriptors = build_descriptors(rt.index(), &outcome.touched, &test_execution());
     assert!(
         !descriptors.hit_v4,
         "an all-V2 frame touches no PoolManager"
@@ -314,7 +338,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
 
     // compose: the executable artifact builds from the solved hops.
     let (path, result) = project_candidate_for_cmd_executor(&best);
-    let CmdExecutorOutcome::Encoded(cd) = CmdExecutorAdapter::new(EncodeContext::new(
+    let CmdExecutorOutcome::Encoded(cd) = CmdExecutorAdapter::new(ExecutionContext::new(
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         address!("000000000004444c5dc75cb358380d2e3de08a90"),
         WETH,
@@ -337,7 +361,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
 fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
     let (rt, _tok_id, _weth_id) = runtime_fixture();
     let outcome = golden_replay_outcome();
-    let descriptors = build_descriptors(rt.index(), &outcome.touched);
+    let descriptors = build_descriptors(rt.index(), &outcome.touched, &test_execution());
     let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
         &outcome,
         &descriptors.by_address,
@@ -570,17 +594,16 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
     let chain = cycle_refs(&hops, WETH).expect("the WETH-entry 4-hop cycle closes");
     assert_eq!(chain.len(), 4);
 
+    let execution = test_execution();
     let pl = PipelineConfig {
-        exec: address!("00000000000000000000000000000000000000e1"),
+        execution,
         owner: address!("00000000000000000000000000000000000000e2"),
         bribe_bips: 9_800,
         wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         gas_floor_wei: U256::ZERO,
         fixture_mode: false,
     };
-    let mut strategy = degenbot_strategy::backrun_strategy::BackrunStrategy::new(
-        EncodeContext::new(pl.exec, V4_POOL_MANAGER, WETH),
-    );
+    let mut strategy = degenbot_strategy::backrun_strategy::BackrunStrategy::new(execution);
     let intents = BackrunIntents {
         chains: vec![chain],
         touched_legs: vec![1],
@@ -688,7 +711,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
     );
     let outcome = usdc_frame_replay_outcome();
 
-    let descriptors = build_descriptors(rt.index(), &outcome.touched);
+    let descriptors = build_descriptors(rt.index(), &outcome.touched, &test_execution());
     let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
         &outcome,
         &descriptors.by_address,
@@ -788,7 +811,11 @@ fn unsupported_family_observes_loudly_not_silently() {
         "uniswap_v4 is supported and must not appear"
     );
 
-    let descriptors = build_descriptors(Some(&index), &[(P, Vec::new()), (LFJ, Vec::new())]);
+    let descriptors = build_descriptors(
+        Some(&index),
+        &[(P, Vec::new()), (LFJ, Vec::new())],
+        &test_execution(),
+    );
     assert!(
         matches!(
             descriptors.by_address.get(&P),
@@ -810,7 +837,7 @@ fn unsupported_family_observes_loudly_not_silently() {
         "family-unsupported"
     );
 
-    let only_unsupported = build_descriptors(Some(&index), &[(LFJ, Vec::new())]);
+    let only_unsupported = build_descriptors(Some(&index), &[(LFJ, Vec::new())], &test_execution());
     assert!(only_unsupported.by_address.is_empty());
     assert_eq!(
         empty_frame_observe_reason(&only_unsupported),
@@ -862,7 +889,7 @@ fn known_v4_roster_extracts_the_typed_post_state() {
         ],
     );
 
-    let descriptors = build_descriptors(Some(&index), &outcome.touched);
+    let descriptors = build_descriptors(Some(&index), &outcome.touched, &test_execution());
     let Some(PoolFamily::V4PoolManager { pools }) = descriptors.by_address.get(&V4_MANAGER) else {
         panic!("the touched manager must get a V4 descriptor");
     };
@@ -909,7 +936,7 @@ fn manager_without_roster_edges_stays_unsupported() {
         manager_journal_outcome(V4_MANAGER, &[(U256::from(0xdead_u64), U256::from(1u64))]);
     let index = degenbot_bot::connector_index::V2ConnectorIndex::default();
 
-    let descriptors = build_descriptors(Some(&index), &outcome.touched);
+    let descriptors = build_descriptors(Some(&index), &outcome.touched, &test_execution());
     let Some(PoolFamily::V4PoolManager { pools }) = descriptors.by_address.get(&V4_MANAGER) else {
         panic!("the singleton is a known manager even with an empty roster");
     };
@@ -1072,16 +1099,20 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
 
     // Live mode needs no feed/signer/dispatcher: process frames directly.
     let mut runtime = market_context(None, None);
-    let mut strategy = BackrunStrategy::new(EncodeContext::new(
-        address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
-        V4_POOL_MANAGER,
-        WETH,
-    ));
+    let execution =
+        ExecutionContext::ethereum(address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"));
+    let mut strategy = BackrunStrategy::new(execution);
     let anchor_state = SimAnchorState::default();
     let mut handle = Option::from(
-        build_block_handle(&provider, pin, &runtime.warm_cache, &anchor_state)
-            .await
-            .expect("live replay handle builds"),
+        build_block_handle(
+            &provider,
+            pin,
+            &execution,
+            &runtime.warm_cache,
+            &anchor_state,
+        )
+        .await
+        .expect("live replay handle builds"),
     );
 
     let mut knobs =
@@ -1089,7 +1120,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
             .into_config();
     knobs.stop_file = PathBuf::from("/nonexistent-wkpzqk");
     let pl = PipelineConfig {
-        exec: address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
+        execution,
         owner: address!("0x5c603b8a137a40426e0ddfa981ec10c245af080e"),
         bribe_bips: 9_800,
         wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(1_000_000_000_000)),
@@ -1264,7 +1295,7 @@ fn walker_three_hop_chain_solves_and_composes() {
     );
 
     let (path, result) = project_candidate_for_cmd_executor(&best);
-    let CmdExecutorOutcome::Encoded(cd) = CmdExecutorAdapter::new(EncodeContext::new(
+    let CmdExecutorOutcome::Encoded(cd) = CmdExecutorAdapter::new(ExecutionContext::new(
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         address!("000000000004444c5dc75cb358380d2e3de08a90"),
         WETH,

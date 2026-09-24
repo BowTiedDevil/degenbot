@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun};
+use crate::execution_context::ExecutionContext;
 use crate::strategy_kit::StrategyKit;
 use degenbot_bot::bot_core::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerifier, DbArm};
 use degenbot_bot::bot_core::RouteRegistry;
@@ -38,6 +39,9 @@ const BACKFILL_LOG_CHUNK_BLOCKS: u64 = 1_000;
 
 /// The host-shared handles a driver start needs beyond its own config.
 pub struct BackrunContext {
+    /// The one execution deployment built from the operator-configured
+    /// executor and the canonical Ethereum V4/WETH identities.
+    pub execution: ExecutionContext,
     /// The boot DB handle behind the registry's token joins; `None` leaves
     /// the discovery lane shut. The same held connection the kit's ingress
     /// was built over.
@@ -320,9 +324,18 @@ fn install_frame_trace_sink_under(root: Option<&Path>, ecosystem: &BackrunEcosys
 /// (the fallback when absent) resolves here. `namespace_root` scopes the driver's
 /// run-artifacts under a multi-strategy host's state root; `None` keeps the
 /// process-global root (standalone parity).
+///
+/// # Panics
+///
+/// Panics when the selected backrun facet's executor address is malformed.
+/// The driver preserves its existing loud-failure behavior for invalid config.
 #[expect(
     clippy::too_many_arguments,
     reason = "the boot handoff threads the host-minted handles explicitly"
+)]
+#[expect(
+    clippy::expect_used,
+    reason = "malformed executor config is a fatal driver boot error"
 )]
 #[must_use]
 pub fn backrun_boot(
@@ -337,6 +350,11 @@ pub fn backrun_boot(
 ) -> BackrunBoot {
     install_frame_trace_sink(&ecosystem);
     let cfg = ecosystem.config(config, join.rpc_url);
+    let executor = cfg
+        .executor
+        .parse()
+        .expect("the facet's executor is a valid address");
+    let execution = ExecutionContext::ethereum(executor);
     let head_ws_url =
         degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
             .ok()
@@ -367,6 +385,7 @@ pub fn backrun_boot(
         )))),
     );
     let context = BackrunContext {
+        execution,
         connector_db,
         kit,
         head_ws_url,

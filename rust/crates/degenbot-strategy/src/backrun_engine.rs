@@ -541,8 +541,8 @@ mod tests {
     use super::*;
     use crate::backrun_strategy::backrun_encode_options;
     use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome};
+    use crate::execution_context::ExecutionContext;
     use alloy::primitives::{address, aliases::U112};
-    use degenbot_executor::composers::EncodeContext;
 
     /// The ladder reject is legible: each stage maps to a distinct JSONL
     /// `stage` label so a failed hop admission names the refused step
@@ -755,7 +755,7 @@ mod tests {
             profit: 55,
         };
         let (path, result) = project_candidate_for_cmd_executor(&candidate);
-        let outcome = CmdExecutorAdapter::new(EncodeContext::new(
+        let outcome = CmdExecutorAdapter::new(ExecutionContext::new(
             P,
             address!("000000000004444c5dc75cb358380d2e3de08a90"),
             WETH,
@@ -776,8 +776,8 @@ mod tests {
     )]
     #[test]
     fn settlement_and_backrun_project_v2_to_the_same_executor_bytes() {
+        use crate::execution_context::ExecutionContext;
         use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams};
-        use degenbot_executor::composers::EncodeContext;
         use degenbot_solvers::mixed::{HopType, MixedPoolRef};
 
         let mut core = BotState::new();
@@ -835,7 +835,7 @@ mod tests {
                 .map(HopDescriptor::from_hop_info)
                 .collect(),
         };
-        let adapter = CmdExecutorAdapter::new(EncodeContext::new(
+        let adapter = CmdExecutorAdapter::new(ExecutionContext::new(
             P,
             address!("000000000004444c5dc75cb358380d2e3de08a90"),
             WETH,
@@ -932,7 +932,7 @@ mod tests {
             profit: 1_000_000_000_000_000_000,
         };
         let (path, result) = project_candidate_for_cmd_executor(&candidate);
-        let outcome = CmdExecutorAdapter::new(EncodeContext::new(P, V4_MANAGER, WETH)).compose(
+        let outcome = CmdExecutorAdapter::new(ExecutionContext::new(P, V4_MANAGER, WETH)).compose(
             &path,
             &result,
             backrun_encode_options(1_000),
@@ -997,7 +997,7 @@ mod tests {
             profit: 10,
         };
         let (path, result) = project_candidate_for_cmd_executor(&candidate);
-        let context = EncodeContext::new(
+        let context = ExecutionContext::new(
             P,
             address!("000000000000000000000000000000000000c0fe"),
             WETH,
@@ -1037,7 +1037,7 @@ mod tests {
         };
         let (path, result) = project_candidate_for_cmd_executor(&candidate);
         assert_eq!(
-            CmdExecutorAdapter::new(EncodeContext::new(
+            CmdExecutorAdapter::new(ExecutionContext::new(
                 P,
                 address!("000000000004444c5dc75cb358380d2e3de08a90"),
                 WETH,
@@ -1075,7 +1075,7 @@ mod tests {
         };
         let (path, result) = project_candidate_for_cmd_executor(&candidate);
         assert_eq!(
-            CmdExecutorAdapter::new(EncodeContext::new(
+            CmdExecutorAdapter::new(ExecutionContext::new(
                 P,
                 address!("000000000004444c5dc75cb358380d2e3de08a90"),
                 WETH,

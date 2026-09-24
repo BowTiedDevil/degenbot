@@ -86,10 +86,12 @@ orderable — it is folded into Assess.
 ### D3 — The built-in command-executor path is strategy-owned and typed.
 
 `degenbot-strategy::CmdExecutorAdapter` is the production built-in adapter for
-the canonical `cmd_executor` path. It captures the session `EncodeContext`
-(the executor, `PoolManager`, and WETH addresses) at construction. Each call
-accepts `PathInfo`, `SolveResult`, and a per-call `EncodeOptions`; the options
-are deliberately not added to the generic `ComposerInputs`.
+the canonical `cmd_executor` path. It captures the strategy-owned session
+`ExecutionContext` (the executor, authoritative V4 `PoolManager`, and WETH
+addresses) at construction. Backrun boot builds that context once and gives
+the same value to frame simulation and V4 descriptor/roster projection. Each
+adapter call accepts `PathInfo`, `SolveResult`, and a per-call `EncodeOptions`;
+the options are deliberately not added to the generic `ComposerInputs`.
 
 The adapter returns `CmdExecutorOutcome::Encoded(Bytes)`,
 `CmdExecutorOutcome::Declined(CmdExecutorDecline)`, or
@@ -152,10 +154,10 @@ The production adapter is a concrete strategy implementation, not a new
 - A Rust user `impl ExecutionAdapter` or `PayloadComposer` in their own crate;
   a Python user passes a callable + probe/assess spec via the existing PyO3
   lift. Both foreign paths meet the same generic seam in `degenbot-execution`.
-- The built-in production adapter is reachable from the umbrella as
-  `degenbot::CmdExecutorAdapter` and from its strategy namespace as
-  `degenbot::strategy::CmdExecutorAdapter`; it captures one session
-  `EncodeContext` and uses per-call `EncodeOptions`.
+- The built-in production adapter and its typed session context are reachable
+  from the umbrella as `degenbot::CmdExecutorAdapter` and
+  `degenbot::ExecutionContext`, and from the strategy namespace under
+  `degenbot::strategy`; the adapter uses per-call `EncodeOptions`.
 - `degenbot-executor` remains the low-level command grammar and ABI support;
   `degenbot-strategy` owns the canonical production adapter boundary. The
   generic execution contract remains "solve result + `degenbot.abi`".
