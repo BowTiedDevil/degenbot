@@ -47,7 +47,7 @@ use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submission_ledger::NonceLane;
 use degenbot_submission::submit::{dispatch_and_submit, SubmitCandidate};
 
-use super::driver_boot::BackrunContext;
+use super::driver_boot::BackrunStrategyBoot;
 use super::driver_policy::{
     bid_submission_target, build_broadcast_relays, initial_wallet_gas_cost, priority_fee_wei,
     wallet_gas_cost_at,
@@ -1115,8 +1115,8 @@ pub struct BackrunDriver;
 impl BackrunDriver {
     /// Boot the driver and return a handle whose [`DriverHandle::wait`] runs it.
     ///
-    /// The hub, registry, and node join are host-minted and only borrowed for
-    /// the driver's lifetime; boot failures panic exactly as the single-driver bin
+    /// The strategy-owned boot product and host-minted hub are consumed for the
+    /// driver's lifetime; boot failures panic exactly as the single-driver bin
     /// did, so the caller's panic behavior is unchanged. Only one driver may
     /// attach to a given hub: the feed registration panics on a second `start`
     /// sharing the same hub.
@@ -1127,16 +1127,22 @@ impl BackrunDriver {
     /// unreadable or malformed key file, an unparseable executor/owner
     /// address, or a failed head fetch), preserving the single-driver bin's
     /// loud-failure behavior.
-    pub async fn start(cfg: BackrunConfig, hub: Arc<Hub>, ctx: BackrunContext) -> DriverHandle {
-        let BackrunContext {
+    pub async fn start(
+        strategy: BackrunStrategyBoot,
+        hub: Arc<Hub>,
+        namespace_root: Option<PathBuf>,
+        nonce_lane: Arc<NonceLane>,
+    ) -> DriverHandle {
+        let BackrunStrategyBoot {
+            cfg,
             execution,
             connector_db,
             kit,
             head_ws_url,
             provider,
-            namespace_root,
-            nonce_lane,
-        } = ctx;
+            ..
+        } = strategy;
+        let provider = provider.expect("a resolved strategy boot carries its node join");
         // The bundle-sim client (the facet's `sim_url`, default: the chain
         // node the frames replay against). READ/SIM ONLY -- `eth_callMany` never
         // broadcasts, and this client is passed nothing else. The sim MUST run

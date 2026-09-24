@@ -263,14 +263,16 @@ registers `HubClass::PendingTx`; the mock pins exactly that
 A family's driver is a facade over three partitions, by invariant
 (`rust/crates/degenbot-strategy/src/backrun_driver.rs:1-42`, the three-way split):
 
-- `driver_boot` (`driver_boot.rs`) — the boot handoff and resolvers. It never
-  owns process boot. Entry points: `backrun_boot(...)` (`:227`),
-  `backrun_spawn_factory(...)` (`:264`), `resolve_backrun_registry` (`:139`),
-  `resolve_backrun_host_registry` (`:186`), `resolve_backrun_node_join` (`:78`).
+- `driver_boot` (`driver_boot.rs`) — the strategy-owned boot handoff. The one
+  `resolve_backrun_boot(...)` owner opens the connector DB once and returns
+  `BackrunBootResources`; each `BackrunStrategyBoot` derives its concrete kit
+  and verification policy over those shared facts. Entry points are
+  `backrun_boot(...)`, `backrun_spawn_factory(...)`, and
+  `resolve_backrun_node_join()`.
 - `driver_loop` (`driver_loop.rs`) — the loop and every runtime surface it
-  touches: `BackrunDriver::start(...)` (`:1114`) returns a `DriverHandle`
-  (`:1047`) driving `LoopPhase` (`:924`). The loop consumes the host-minted hub,
-  registry, and node join without owning them.
+  touches: `BackrunDriver::start(...)` returns a `DriverHandle` driving
+  `LoopPhase`. The loop consumes the strategy boot product and host-minted hub;
+  it does not reopen the DB or reconstruct a registry.
 - `driver_policy` (`driver_policy.rs`) — the bid's economics: price reads,
   relay fan-out, bundle target. Pure reads/derivations, never lifecycle moves.
 
@@ -284,8 +286,8 @@ state, and a policy module for its economics.
 
 - Evidence: the facade is `backrun_driver.rs:1-42`; the partition headers state
   each module's invariant surface.
-- Keeps: `backrun_boot`/`backrun_spawn_factory`/resolver names and the
-  standalone-vs-hosted shared resolver.
+- Keeps: `backrun_boot`/`backrun_spawn_factory` and the standalone-vs-hosted
+  shared `BackrunBootResources` product.
 - Retires: `lane_root` (now `namespace_root`), `LaneBoot` (now `LoopBoot`),
   `DriverLifecycle`/`LifecycleDecline`/`LifecycleShared` (now
   `LoopLifecycle`/`LoopDecline`/`LoopShared`) — all renamed by the vocabulary

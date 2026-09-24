@@ -37,32 +37,37 @@ pub const CHAIN_ID: u64 = 1;
 /// a long Db-to-head lag is closed in ~1000-block requests.
 const BACKFILL_LOG_CHUNK_BLOCKS: u64 = 1_000;
 
-/// The host-shared handles a driver start needs beyond its own config.
-pub struct BackrunContext {
+/// The strategy-owned boot product consumed by both runtime shapes.
+///
+/// It carries the held connector DB, frozen registry, discovery graph,
+/// `PoolIngress`, and the facet-selected verification policy as one concrete
+/// value. The generic host supplies only hub and nonce-lane runtime handles.
+pub struct BackrunStrategyBoot {
     /// The one execution deployment built from the operator-configured
     /// executor and the canonical Ethereum V4/WETH identities.
-    pub execution: ExecutionContext,
+    pub(crate) ecosystem: BackrunEcosystem,
+    pub(crate) cfg: BackrunConfig,
+    pub(crate) registry: Arc<RouteRegistry>,
+    pub(crate) execution: ExecutionContext,
     /// The boot DB handle behind the registry's token joins; `None` leaves
     /// the discovery lane shut. The same held connection the kit's ingress
     /// was built over.
-    pub connector_db: Option<Arc<DegenbotDb>>,
+    pub(crate) connector_db: Option<Arc<DegenbotDb>>,
     /// The boot-resolved strategy kit: the provisioning ingress with its
     /// chain arm + chain-sample policy attached, and the discovery handles.
-    pub kit: StrategyKit,
+    pub(crate) kit: StrategyKit,
     /// The chain node's `newHeads` WS endpoint; `None` polls.
-    pub head_ws_url: Option<String>,
-    /// The host's node join, shared so the boot ranker and the driver read one
-    /// connection pool.
-    pub provider: Arc<AlloyProvider>,
+    pub(crate) head_ws_url: Option<String>,
+    pub(crate) provider: Option<Arc<AlloyProvider>>,
     /// The driver's run-artifact root inside a multi-strategy host, so this
     /// driver's journal never collides with another strategy's. `None` keeps
     /// the process-global state root for the standalone single-strategy
     /// driver (strict parity with any direct caller).
-    pub namespace_root: Option<PathBuf>,
+
     /// The sign-time nonce seam: the one issuer every runtime shape stamps
     /// through. The boot is a host of size N around its
     /// own authority; a hosted driver receives the host's shared nonce lane.
-    pub nonce_lane: Arc<NonceLane>,
+    pub(crate) boot_error: Option<BackrunBootError>,
 }
 
 /// Why a backrun driver could not be booted.
@@ -82,6 +87,135 @@ pub struct BackrunNodeJoin {
     pub rpc_url: String,
     /// The shared node join.
     pub provider: Arc<AlloyProvider>,
+}
+
+impl BackrunStrategyBoot {
+    /// The held connector DB used by token joins and the ingress DB arm.
+    #[must_use]
+    pub fn connector_db(&self) -> Option<&Arc<DegenbotDb>> {
+        self.connector_db.as_ref()
+    }
+
+    /// The one frozen route registry used by discovery and membership.
+    #[must_use]
+    pub fn registry(&self) -> &Arc<RouteRegistry> {
+        &self.registry
+    }
+
+    /// The concrete strategy kit carried by this product.
+    #[must_use]
+    pub fn kit(&self) -> &StrategyKit {
+        &self.kit
+    }
+
+    /// The startup discovery graph derived from the registry.
+    #[must_use]
+    pub fn dfs(&self) -> Option<&crate::anchored_dfs::AnchoredGraph> {
+        self.kit.dfs()
+    }
+
+    /// The concrete provisioning ingress, including its verification policy.
+    #[must_use]
+    pub fn ingress(&self) -> &degenbot_bot::bot_core::pool_ingress::PoolIngress {
+        self.kit.ingress()
+    }
+
+    /// The verification policy selected by this strategy facet.
+    #[must_use]
+    pub fn verify_level(&self) -> degenbot_bot::bot_core::pool_ingress::VerifyLevel {
+        self.ingress().verify_level()
+    }
+}
+
+/// The shared, ecosystem-neutral facts resolved once before any driver starts.
+///
+/// Both concrete backrun compositions are built from this value. It owns the
+/// only connector DB handle and the only route registry for the process.
+pub struct BackrunBootResources {
+    config: Arc<degenbot_config::BotConfig>,
+    join: Option<BackrunNodeJoin>,
+    connector_db: Option<Arc<DegenbotDb>>,
+    registry: Arc<RouteRegistry>,
+    boot_error: Option<BackrunBootError>,
+}
+
+impl BackrunBootResources {
+    /// The registry the generic `StrategyHost` mints over.
+    #[must_use]
+    pub fn registry(&self) -> &Arc<RouteRegistry> {
+        &self.registry
+    }
+
+    /// The held DB shared by every concrete strategy product.
+    #[must_use]
+    pub fn connector_db(&self) -> Option<&Arc<DegenbotDb>> {
+        self.connector_db.as_ref()
+    }
+
+    /// Build one concrete ecosystem product over the shared facts.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the selected facet has a malformed executor address. The
+    /// boot preserves the existing loud-failure behavior for invalid config.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "invalid executor config remains a fatal boot error"
+    )]
+    pub fn strategy_boot(&self, ecosystem: BackrunEcosystem) -> BackrunStrategyBoot {
+        let rpc_url = self
+            .join
+            .as_ref()
+            .map_or_else(String::new, |join| join.rpc_url.clone());
+        let cfg = ecosystem.config(&self.config, rpc_url);
+        let provider = self.join.as_ref().map(|join| Arc::clone(&join.provider));
+        let db_arm = self
+            .connector_db
+            .clone()
+            .zip(provider.as_ref())
+            .map(|(db, provider)| {
+                DbArm::new(
+                    db,
+                    Arc::new(AlloyLiquidityLogSource::new(
+                        Arc::clone(provider),
+                        BACKFILL_LOG_CHUNK_BLOCKS,
+                    )),
+                )
+            });
+        let kit = StrategyKit::resolve(
+            Some(Arc::clone(&self.registry)),
+            db_arm,
+            provider
+                .as_ref()
+                .map(|provider| Arc::new(AlloyTickBootstrapRpc::new(Arc::clone(provider))) as _),
+            cfg.verify_ticks,
+            provider
+                .as_ref()
+                .map(|provider| Arc::new(AlloySampleVerifier::new(Arc::clone(provider))) as _),
+        );
+        let head_ws_url =
+            degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
+                .ok()
+                .map(|resolved| resolved.value);
+
+        let executor = cfg
+            .executor
+            .parse()
+            .expect("the facet's executor is a valid address");
+
+        BackrunStrategyBoot {
+            ecosystem,
+            cfg,
+            registry: Arc::clone(&self.registry),
+            execution: ExecutionContext::ethereum(executor),
+            connector_db: self.connector_db.clone(),
+            kit,
+            head_ws_url,
+            provider,
+            boot_error: self.boot_error.clone(),
+        }
+    }
 }
 
 /// Resolve the driver's node join from the process environment.
@@ -114,9 +248,10 @@ pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> 
 /// at the task boundary), so two boots cannot
 /// drift apart.
 pub struct BackrunBoot {
-    cfg: BackrunConfig,
+    strategy: BackrunStrategyBoot,
     hub: Arc<Hub>,
-    context: BackrunContext,
+    namespace_root: Option<PathBuf>,
+    nonce_lane: Arc<NonceLane>,
 }
 
 impl BackrunBoot {
@@ -124,126 +259,127 @@ impl BackrunBoot {
     /// terminal return and reports a clean stop to the host.
     #[must_use]
     pub fn into_driver_future(self) -> DriverFuture {
-        let Self { cfg, hub, context } = self;
+        let Self {
+            strategy,
+            hub,
+            namespace_root,
+            nonce_lane,
+        } = self;
         Box::pin(async move {
-            let handle = BackrunDriver::start(cfg, hub, context).await;
+            if let Some(error) = strategy.boot_error.clone() {
+                return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
+            }
+            let handle = BackrunDriver::start(strategy, hub, namespace_root, nonce_lane).await;
             handle.wait().await;
             DriverExit::Stopped
         })
     }
 }
 
-/// Resolve the boot route registry every backrun runtime discovers over, and
-/// the opened connector DB the driver's token joins borrow.
+/// Resolve every backrun boot fact once for a process.
 ///
-/// This is the ONE registry-construction seam: a standalone boot (a host
-/// of size one) and a hosted driver both hand it the resolved DB path and the
-/// driver's node join, so the two runtime shapes cannot drift apart. It opens
-/// `db_path` once, loads the V2 connector scan plus its V3 additions and V4
-/// roster, attaches
-/// the on-chain ranker, freezes the [`RouteRegistry`], and runs the live
-/// rank-evidence probe last when the operator asked for it. A missing or
-/// unopenable DB, or a failed index load, answers `None` — the discovery fan
-/// stays shut and frames observe, because connectors are never guessed.
+/// The connector DB is opened exactly once. The returned value owns the
+/// held handle and the frozen registry; concrete ecosystem products only
+/// derive their kit and policy over those shared facts.
 #[must_use]
-pub async fn resolve_backrun_registry(
-    config: &degenbot_config::BotConfig,
-    db_path: &Path,
-    provider: &Arc<AlloyProvider>,
-) -> Option<(Arc<RouteRegistry>, DegenbotDb)> {
-    if !db_path.is_file() {
+pub async fn resolve_backrun_boot(
+    config: Arc<degenbot_config::BotConfig>,
+    db_path: PathBuf,
+    join: BackrunNodeJoin,
+) -> BackrunBootResources {
+    let empty_registry = || Arc::new(RouteRegistry::new(V2ConnectorIndex::default()));
+    let mut connector_db = None;
+    let mut registry = empty_registry();
+
+    if db_path.is_file() {
+        match DegenbotDb::open(&db_path) {
+            Ok((db, _)) => {
+                match V2ConnectorIndex::load(&db, 1).and_then(|mut ix| {
+                    ix.load_v3(&db, 1)?;
+                    ix.load_v4(&db, 1)?;
+                    ix.load_unsupported(&db, 1)?;
+                    Ok(ix)
+                }) {
+                    Ok(mut ix) => {
+                        if let Err(probe) = ix.verify_sampled_layouts(&join.provider).await {
+                            tracing::error!(
+                                probe = %probe,
+                                "V3 fork layout probe FAILED - lane disabled until the fork table is fixed"
+                            );
+                        } else {
+                            tracing::info!(
+                                "v3 fork layout probe: sampled layouts agree with the chain"
+                            );
+                            ix.set_ranker(Arc::new(OnChainLiquidityRanker::new(Arc::clone(
+                                &join.provider,
+                            ))));
+                            let next_registry = Arc::new(RouteRegistry::new(ix));
+                            tracing::info!(
+                                edges = next_registry.index().len(),
+                                "connector index loaded"
+                            );
+                            if config.strategy.mevblocker_backrun.rank_evidence
+                                || config.strategy.peer_backrun.rank_evidence
+                            {
+                                match degenbot_bot::connector_index::deep_pair_ranking_evidence(
+                                    next_registry.index(),
+                                    &db,
+                                )
+                                .await
+                                {
+                                    Ok(()) => tracing::info!(
+                                        "rank evidence: deep USDC/WETH pair tops the ranking"
+                                    ),
+                                    Err(error) => {
+                                        tracing::warn!(evidence = %error, "rank evidence FAILED");
+                                    }
+                                }
+                            }
+                            registry = next_registry;
+                            connector_db = Some(Arc::new(db));
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "connector index load failed - lane disabled"
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    path = %db_path.display(),
+                    "DEGENBOT_DB_PATH unopenable - lane disabled"
+                );
+            }
+        }
+    } else {
         tracing::debug!(path = %db_path.display(), "connector DB absent - lane disabled");
-        return None;
     }
-    let (db, _) = match DegenbotDb::open(db_path) {
-        Ok(db) => db,
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
-                path = %db_path.display(),
-                "DEGENBOT_DB_PATH unopenable - lane disabled"
-            );
-            return None;
-        }
-    };
-    let mut ix = match V2ConnectorIndex::load(&db, 1).and_then(|mut ix| {
-        ix.load_v3(&db, 1)?;
-        // The live V4 roster populates the per-manager extraction descriptor
-        // set; without it every V4 frame extracts Unsupported.
-        ix.load_v4(&db, 1)?;
-        // A DB family the backrun arm cannot type must be known at boot so a
-        // frame touching it observes `family-unsupported`, never a silent drop.
-        ix.load_unsupported(&db, 1)?;
-        Ok(ix)
-    }) {
-        Ok(ix) => ix,
-        Err(error) => {
-            tracing::warn!(error = %error, "connector index load failed - lane disabled");
-            return None;
-        }
-    };
-    // Fail-loud fork-table honesty check (Pancake replay bug class): a
-    // layout mislabel reads garbage and silently kills every anchored
-    // chain, so the lane refuses to serve until the probe agrees with the
-    // chain.
-    if let Err(probe) = ix.verify_sampled_layouts(provider).await {
-        tracing::error!(
-            probe = %probe,
-            "V3 fork layout probe FAILED - lane disabled until the fork table is fixed"
-        );
-        return None;
+
+    BackrunBootResources {
+        config,
+        join: Some(join),
+        connector_db,
+        registry,
+        boot_error: None,
     }
-    tracing::info!("v3 fork layout probe: sampled layouts agree with the chain");
-    ix.set_ranker(Arc::new(OnChainLiquidityRanker::new(Arc::clone(provider))));
-    let registry = Arc::new(RouteRegistry::new(ix));
-    tracing::info!(edges = registry.index().len(), "connector index loaded");
-    if config.strategy.mevblocker_backrun.rank_evidence
-        || config.strategy.peer_backrun.rank_evidence
-    {
-        match degenbot_bot::connector_index::deep_pair_ranking_evidence(registry.index(), &db).await
-        {
-            Ok(()) => tracing::info!("rank evidence: deep USDC/WETH pair tops the ranking"),
-            Err(e) => tracing::warn!(evidence = %e, "rank evidence FAILED"),
-        }
-    }
-    Some((registry, db))
 }
 
-/// The route registry a hosted boot mints the strategy host over.
-///
-/// Delegates to [`resolve_backrun_registry`], so a hosted driver discovers over
-/// the same DB-backed snapshot a standalone boot builds. A process with
-/// no connector DB mints an empty snapshot instead; the driver then observes
-/// with discovery shut rather than guessing connectors.
-#[must_use]
-pub async fn resolve_backrun_host_registry(
-    config: &degenbot_config::BotConfig,
-    db_path: &Path,
-    provider: &Arc<AlloyProvider>,
-) -> Arc<RouteRegistry> {
-    resolve_backrun_registry(config, db_path, provider)
-        .await
-        .map_or_else(
-            || Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
-            |(registry, _db)| registry,
-        )
-}
-
-/// Open the connector DB behind the registry's token joins, exactly as the
-/// standalone boot does. A missing file leaves the discovery fan shut and
-/// frames observe — connectors are never guessed.
-#[must_use]
-pub fn resolve_backrun_connector_db() -> Option<DegenbotDb> {
-    let db_path = degenbot_config::resolve_database_path(&degenbot_config::ProcessEnv, None).value;
-    if !db_path.is_file() {
-        tracing::debug!(path = %db_path.display(), "connector DB absent - lane discovery shut");
-        return None;
-    }
-    match DegenbotDb::open(&db_path) {
-        Ok((db, _)) => Some(db),
-        Err(error) => {
-            tracing::warn!(%error, path = %db_path.display(), "connector DB unopenable - lane discovery shut");
-            None
+impl BackrunBootResources {
+    /// Build an unresolved product for a host whose node join is absent.
+    /// The host still receives a coherent empty registry, and the driver
+    /// reports the same typed node-join halt at its driving edge.
+    #[must_use]
+    pub fn unresolved(config: Arc<degenbot_config::BotConfig>, error: BackrunBootError) -> Self {
+        Self {
+            config,
+            join: None,
+            connector_db: None,
+            registry: Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
+            boot_error: Some(error),
         }
     }
 }
@@ -316,121 +452,42 @@ fn install_frame_trace_sink_under(root: Option<&Path>, ecosystem: &BackrunEcosys
     }
 }
 
-/// Assemble a driver's boot from an already-resolved node join.
+/// Assemble a runnable driver from the strategy-owned boot product.
 ///
-/// Both a standalone boot (which builds its DB-backed registry over the
-/// join) and a hosted driver call this, so the driver's config derivation and
-/// context shape have one definition. The chain node's `newHeads` WS endpoint
-/// (the fallback when absent) resolves here. `namespace_root` scopes the driver's
-/// run-artifacts under a multi-strategy host's state root; `None` keeps the
-/// process-global root (standalone parity).
-///
-/// # Panics
-///
-/// Panics when the selected backrun facet's executor address is malformed.
-/// The driver preserves its existing loud-failure behavior for invalid config.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the boot handoff threads the host-minted handles explicitly"
-)]
-#[expect(
-    clippy::expect_used,
-    reason = "malformed executor config is a fatal driver boot error"
-)]
+/// The standalone and hosted paths call this same function. It performs no
+/// registry, DB, node, or per-ecosystem resolution; those facts were already
+/// composed by [`resolve_backrun_boot`] and [`BackrunBootResources`].
 #[must_use]
 pub fn backrun_boot(
-    config: &degenbot_config::BotConfig,
-    ecosystem: BackrunEcosystem,
-    join: BackrunNodeJoin,
+    strategy: BackrunStrategyBoot,
     hub: Arc<Hub>,
-    route_registry: Option<Arc<RouteRegistry>>,
-    connector_db: Option<DegenbotDb>,
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
 ) -> BackrunBoot {
-    install_frame_trace_sink(&ecosystem);
-    let cfg = ecosystem.config(config, join.rpc_url);
-    let executor = cfg
-        .executor
-        .parse()
-        .expect("the facet's executor is a valid address");
-    let execution = ExecutionContext::ethereum(executor);
-    let head_ws_url =
-        degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
-            .ok()
-            .map(|resolved| resolved.value);
-    // The ONE kit resolve site: build the provisioning ingress over the held
-    // DB connection, attach the chain arm + the facet's chain-sample policy,
-    // and build the discovery graph from the frozen registry. A strategy
-    // composes this result and never constructs its own ingress.
-    let connector_db = connector_db.map(Arc::new);
-    let db_arm = connector_db.clone().map(|db| {
-        DbArm::new(
-            db,
-            Arc::new(AlloyLiquidityLogSource::new(
-                Arc::clone(&join.provider),
-                BACKFILL_LOG_CHUNK_BLOCKS,
-            )),
-        )
-    });
-    let kit = StrategyKit::resolve(
-        route_registry,
-        db_arm,
-        Some(Arc::new(AlloyTickBootstrapRpc::new(Arc::clone(
-            &join.provider,
-        )))),
-        cfg.verify_ticks,
-        Some(Arc::new(AlloySampleVerifier::new(Arc::clone(
-            &join.provider,
-        )))),
-    );
-    let context = BackrunContext {
-        execution,
-        connector_db,
-        kit,
-        head_ws_url,
-        provider: join.provider,
+    install_frame_trace_sink(&strategy.ecosystem);
+    BackrunBoot {
+        strategy,
+        hub,
         namespace_root,
         nonce_lane,
-    };
-    BackrunBoot { cfg, hub, context }
+    }
 }
 
-/// The spawn factory a `StrategyHost` registers for the backrun driver.
-///
-/// The driver resolves its node join and connector DB when the host drives the
-/// driver, not when the factory is attached, so a boot that never enables backrun
-/// pays for no node connection or DB handle. A join that cannot resolve becomes
-/// a `Halted` tombstone naming the missing layer rather than a host unwind; the
-/// host-computed lane namespace scopes the driver's artifacts.
+/// The spawn factory a `StrategyHost` registers for a concrete backrun
+/// strategy. The product is moved into the factory once; starting the driver
+/// never reopens the DB or reconstructs its registry.
 #[must_use]
 pub fn backrun_spawn_factory(
-    config: Arc<degenbot_config::BotConfig>,
-    ecosystem: BackrunEcosystem,
+    strategy: BackrunStrategyBoot,
     hub: Arc<Hub>,
-    route_registry: Option<Arc<RouteRegistry>>,
     nonce_lane: Arc<NonceLane>,
 ) -> DriverSpawnFactory {
     Box::new(move |namespace| {
+        let namespace_root = namespace.map(|ns| ns.root().to_path_buf());
         Box::pin(async move {
-            match resolve_backrun_node_join() {
-                Ok(join) => {
-                    let namespace_root = namespace.map(|ns| ns.root().to_path_buf());
-                    backrun_boot(
-                        &config,
-                        ecosystem,
-                        join,
-                        hub,
-                        route_registry,
-                        resolve_backrun_connector_db(),
-                        namespace_root,
-                        nonce_lane,
-                    )
-                    .into_driver_future()
-                    .await
-                }
-                Err(error) => DriverExit::Halted(format!("backrun driver boot refused: {error}")),
-            }
+            backrun_boot(strategy, hub, namespace_root, nonce_lane)
+                .into_driver_future()
+                .await
         })
     })
 }

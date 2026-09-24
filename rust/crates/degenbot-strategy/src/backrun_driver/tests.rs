@@ -20,15 +20,14 @@ use super::driver_loop::{
 };
 use super::driver_policy::{bid_submission_target, build_broadcast_relays};
 
-/// The boot registry has ONE construction seam: the standalone knobs's
-/// boot and the hosted boot both hand it a DB path and the lane's node
-/// join, and both read the same populated snapshot back. The fixture seeds
-/// the canonical USDC/WETH V2 connector plus a V3 connector, pinning the
-/// order -- the V2 scan, then its V3 additions, then the ranker and the
-/// frozen registry.
+/// The strategy boot product owns one DB-backed registry, and every concrete
+/// ecosystem composition views those same facts. The fixture seeds the
+/// canonical USDC/WETH V2 connector plus a V3 connector, pinning the order --
+/// the V2 scan, then its V3 additions, then the ranker and frozen registry.
 #[tokio::test]
-async fn the_boot_registry_resolver_populates_both_boot_paths() {
+async fn one_boot_product_shares_db_registry_graph_and_policy_facts() {
     use alloy::primitives::address;
+    use degenbot_bot::bot_core::pool_ingress::VerifyLevel;
     use degenbot_db::{V2PoolRowInput, V3PoolRowInput};
 
     const USDC_WETH_V2: Address = address!("b4e16d0168e52d35cacd2c6185b44281ec28c9dc");
@@ -83,32 +82,40 @@ async fn the_boot_registry_resolver_populates_both_boot_paths() {
             .await
             .expect("provider builds without a node"),
     );
-    let config = degenbot_config::BotConfig::default();
+    let mut config = degenbot_config::BotConfig::default();
+    config.strategy.mevblocker_backrun.verify_ticks = degenbot_config::VerifyTicks::Strict;
+    config.strategy.peer_backrun.verify_ticks = degenbot_config::VerifyTicks::Off;
 
-    let (registry, _db) = super::resolve_backrun_registry(&config, &db_path, &provider)
-        .await
-        .expect("the resolver yields a populated registry");
-    assert!(
-        registry.is_registered_pool(&USDC_WETH_V2),
-        "V2 connector landed"
-    );
-    assert!(
-        registry.is_registered_pool(&USDC_WETH_V3),
-        "V3 additions landed"
-    );
-    assert_eq!(
-        registry.registered_pool_count(),
-        2,
-        "both connector families landed"
-    );
+    let resources = super::resolve_backrun_boot(
+        Arc::new(config),
+        db_path,
+        super::BackrunNodeJoin {
+            rpc_url: "http://127.0.0.1:1".to_string(),
+            provider,
+        },
+    )
+    .await;
+    let mevblocker = resources.strategy_boot(super::BackrunEcosystem::Mevblocker);
+    let peer = resources.strategy_boot(super::BackrunEcosystem::Peer);
 
-    let hosted = super::resolve_backrun_host_registry(&config, &db_path, &provider).await;
-    assert_eq!(
-        hosted.registered_pool_count(),
-        registry.registered_pool_count(),
-        "the hosted boot reaches the same resolver"
+    assert!(mevblocker.registry().is_registered_pool(&USDC_WETH_V2));
+    assert!(mevblocker.registry().is_registered_pool(&USDC_WETH_V3));
+    assert_eq!(mevblocker.registry().registered_pool_count(), 2);
+    assert!(
+        Arc::ptr_eq(mevblocker.registry(), peer.registry()),
+        "both compositions consume the one frozen registry"
     );
-    assert!(hosted.is_registered_pool(&USDC_WETH_V2));
+    assert!(
+        Arc::ptr_eq(
+            mevblocker.connector_db().expect("held connector DB"),
+            peer.connector_db().expect("held connector DB"),
+        ),
+        "the hosted facets never reopen the same DB"
+    );
+    assert!(mevblocker.dfs().is_some());
+    assert!(peer.dfs().is_some());
+    assert_eq!(mevblocker.verify_level(), VerifyLevel::Strict);
+    assert_eq!(peer.verify_level(), VerifyLevel::Off);
 }
 
 /// The lifecycle FSM is total and closed: every state answers every verb

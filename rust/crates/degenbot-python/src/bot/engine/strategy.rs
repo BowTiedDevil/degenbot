@@ -13,8 +13,6 @@ use super::{Arc, PyArbEngine, StrategyHostError, UnconfiguredStrategyError, Unkn
 use crate::prelude::*;
 
 use degenbot_bot::arb_engine::EngineChannelHandles;
-use degenbot_bot::bot_core::route_registry::RouteRegistry;
-use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
 use degenbot_bot::strategy_host::{FacetStatus, HostError, HostHub, StrategyHost};
 
@@ -115,23 +113,21 @@ pub(crate) struct BootedHost {
     pub(crate) head_lanes: HeadLanes,
 }
 
-/// The route registry a hosted boot mints the strategy host over.
+/// Resolve the strategy-owned boot product once for the hosted process.
 ///
-/// Delegates to the shared submission resolver, so a hosted backrun lane
-/// discovers over the same DB-backed snapshot a hosted boot builds.
-/// A process with no connector DB (or no resolvable node join) mints an empty
-/// snapshot; the lane then observes with discovery shut rather than guessing
-/// connectors.
+/// This Rust binding only routes the resolved product into the generic host;
+/// it does not choose a registry, reopen a DB, or author a boot policy.
 #[cfg(feature = "submission")]
-fn hosted_route_registry() -> Arc<RouteRegistry> {
-    let config = degenbot_config::holder::config();
+fn backrun_boot_resources(
+    config: Arc<degenbot_config::schema::BotConfig>,
+) -> degenbot_strategy::backrun_driver::BackrunBootResources {
     let db_path = degenbot_config::resolve_database_path(&degenbot_config::ProcessEnv, None).value;
     match degenbot_strategy::backrun_driver::resolve_backrun_node_join() {
         Ok(join) => degenbot_core::runtime::get_runtime().block_on(
-            degenbot_strategy::backrun_driver::resolve_backrun_host_registry(
-                config,
-                &db_path,
-                &join.provider,
+            degenbot_strategy::backrun_driver::resolve_backrun_boot(
+                Arc::clone(&config),
+                db_path,
+                join,
             ),
         ),
         Err(error) => {
@@ -139,7 +135,7 @@ fn hosted_route_registry() -> Arc<RouteRegistry> {
                 %error,
                 "backrun node join unresolved - hosted registry discovery shut"
             );
-            Arc::new(RouteRegistry::new(V2ConnectorIndex::default()))
+            degenbot_strategy::backrun_driver::BackrunBootResources::unresolved(config, error)
         }
     }
 }
@@ -147,8 +143,10 @@ fn hosted_route_registry() -> Arc<RouteRegistry> {
 /// The registry a build without the submission feature mints: no hosted
 /// pending-transaction lane exists, so an empty snapshot answers membership.
 #[cfg(not(feature = "submission"))]
-fn hosted_route_registry() -> Arc<RouteRegistry> {
-    Arc::new(RouteRegistry::new(V2ConnectorIndex::default()))
+fn hosted_route_registry() -> Arc<degenbot_bot::bot_core::RouteRegistry> {
+    Arc::new(degenbot_bot::bot_core::RouteRegistry::new(
+        degenbot_bot::connector_index::V2ConnectorIndex::default(),
+    ))
 }
 
 /// The host's admission status for one strategy: configured iff its facet is
@@ -181,13 +179,21 @@ pub(crate) fn boot_host() -> BootedHost {
     // binding also pins pyo3-async to the shared runtime BEFORE any async
     // seam runs, the GOQWCL second-runtime obligation.
     crate::ambient_runtime::ensure_async_runtime_bound();
+    let cfg = degenbot_config::holder::config();
+
+    #[cfg(feature = "submission")]
+    let backrun_resources = backrun_boot_resources(degenbot_config::holder::config_arc().clone());
+    #[cfg(feature = "submission")]
+    let registry = Arc::clone(backrun_resources.registry());
+    #[cfg(not(feature = "submission"))]
+    let registry = hosted_route_registry();
+
     let (mut host, attached) = StrategyHost::mint(
-        hosted_route_registry(),
+        registry,
         Arc::new(NonceAuthority::new(0)),
         EngineChannelHandles::register_on,
     );
 
-    let cfg = degenbot_config::holder::config();
     // Register every strategy under its plane name, in plane order, derived
     // from its `strategy.<facet>.active` key — including settlement, whose
     // retired boot-time waiver ("a dry-run boot must still enable the arm")
@@ -228,8 +234,8 @@ pub(crate) fn boot_host() -> BootedHost {
         // stamps through the shared authority once the boot installs it.
         crate::submission::submit::install_settlement_lane(Arc::clone(&settlement_lane));
 
-        // Each per-ecosystem backrun gets its own lane and spawn factory; the
-        // two are independently activatable and may run together.
+        // Each per-ecosystem backrun gets its own lane and product. The
+        // products share the resolver's held DB and frozen registry.
         let mut lanes = HeadLanes::new();
         lanes.insert(settlement_id, settlement_lane);
         for (name, ecosystem) in [
@@ -251,10 +257,8 @@ pub(crate) fn boot_host() -> BootedHost {
             host.attach_spawn(
                 &id,
                 degenbot_strategy::backrun_driver::backrun_spawn_factory(
-                    Arc::clone(degenbot_config::holder::config_arc()),
-                    ecosystem,
+                    backrun_resources.strategy_boot(ecosystem),
                     Arc::clone(host.hub()),
-                    Some(Arc::clone(host.registry())),
                     Arc::clone(&lane),
                 ),
             )
