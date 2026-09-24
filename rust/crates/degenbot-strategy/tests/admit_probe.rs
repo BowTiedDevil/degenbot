@@ -1,17 +1,16 @@
-//! Live verification (`--ignored`) that the real frame scratch view fills a
-//! V3 anchor's empty replayed tick map and the production chain solves.
+//! Live verification (`--ignored`) that `PoolIngress` fills a V3 anchor's
+//! replayed tick map and the production chain solves.
 //!
 //! Run:
 //! ```text
 //! DEGENBOT_RPC_HTTP_CHAINID_1=... DEGENBOT_DB_PATH=~/.local/state/degenbot/db/degenbot.db \
 //!   cargo test -p degenbot-submission --test admit_probe -- --ignored --nocapture
 //! ```
-#![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
+#![expect(clippy::unwrap_used, clippy::print_stdout)]
 
 use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
-use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
@@ -19,17 +18,27 @@ use degenbot_simulation::sim::evm::journal_pools::{
 };
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
-use degenbot_strategy::frame_pipeline::{build_block_handle, MarketContext};
+use degenbot_strategy::frame_pipeline::MarketContext;
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
 /// `liquidity_update_block`, so no window is ever backfilled; an unexpected
 /// fetch declines loudly rather than staging stale state.
 struct NoBackfill;
 
-impl degenbot_bot::bot_core::pool_ingress::V3LiquidityLogSource for NoBackfill {
+impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
     fn fetch_v3_liquidity_events(
         &self,
         _pool: alloy::primitives::Address,
+        _from: u64,
+        _to: u64,
+    ) -> Result<Vec<degenbot_db::LiquidityUpdateEvent>, String> {
+        Err("this fixture wires no backfill transport".into())
+    }
+
+    fn fetch_v4_liquidity_events(
+        &self,
+        _manager: alloy::primitives::Address,
+        _pool_id: alloy::primitives::B256,
         _from: u64,
         _to: u64,
     ) -> Result<Vec<degenbot_db::LiquidityUpdateEvent>, String> {
@@ -68,12 +77,8 @@ fn live_provider() -> Arc<degenbot_rpc::provider::AlloyProvider> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "live network + DB: V3 anchor scratch tick-window verification"]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the live diagnostic reads top-to-bottom"
-)]
-async fn live_v3_anchor_scratch_window_solves_production_chain() {
+#[ignore = "live network + DB: V3 anchor PoolIngress verification"]
+async fn live_v3_anchor_ingress_solves_production_chain() {
     let provider = live_provider();
     let db_path = std::env::var("DEGENBOT_DB_PATH").unwrap();
     let (db, _state) = DegenbotDb::open(std::path::Path::new(&db_path)).unwrap();
@@ -96,13 +101,6 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
         .unwrap();
     let tick = i32::try_from(tick).unwrap();
 
-    // The anchor's frame-replay scratch: the same chain view the frames use.
-    let anchor_state = SimAnchorState::default();
-    let mut handle = build_block_handle(&provider, head, &rt.warm_cache, &anchor_state)
-        .await
-        .expect("replay handle builds");
-    let scratch = handle.scratch_evm().expect("scratch EVM");
-
     // Replayed post-state: price/liquidity staged, NO touched ticks.
     let post = PoolPostState {
         address: ANCHOR,
@@ -120,14 +118,7 @@ async fn live_v3_anchor_scratch_window_solves_production_chain() {
     };
 
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(
-        &rt,
-        &mut solver,
-        &[post],
-        head,
-        "0xlive",
-        Some(scratch.ext()),
-    );
+    let affected = admit_extracted(&rt, &mut solver, &[post], head, "0xlive", None);
     assert_eq!(affected.len(), 1, "the production V3 anchor admits");
     let a = &affected[0];
 

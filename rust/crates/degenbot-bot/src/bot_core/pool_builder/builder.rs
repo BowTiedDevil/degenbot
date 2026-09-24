@@ -42,7 +42,7 @@ use super::choreography::{self};
 use super::curve_choreography;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
-use crate::bot_core::planning::TickMapSeed;
+use crate::bot_core::planning::{TickMapPoolIdentity, TickMapSeed};
 use crate::bot_core::tick_assembly::{chain_arm, resolve_tick_map_arm};
 use crate::bot_core::{PoolTickCoverage, TickInfo};
 
@@ -842,6 +842,7 @@ async fn assemble_db_or_chain_v3(
 ) -> Result<TickMapSeed, PoolBuilderError> {
     let db_arm = resolve_tick_map_arm::<PoolBuilderError, _>(
         &format!("{address}"),
+        TickMapPoolIdentity::V3(address),
         tick_spacing,
         block,
         || match db {
@@ -860,7 +861,8 @@ async fn assemble_db_or_chain_v3(
         .map_err(PoolBuilderError::Rpc)?;
     let (word, _) =
         degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
-    Ok(chain_arm(Some(ticks), HashMap::from([(word, bitmap)])).into_seed(block))
+    Ok(chain_arm(Some(ticks), HashMap::from([(word, bitmap)]))
+        .into_seed(block, TickMapPoolIdentity::V3(address)))
 }
 
 /// V4 twin of [`assemble_db_or_chain_v3`]: the shared Db arm over
@@ -879,6 +881,10 @@ async fn assemble_db_or_chain_v4(
 ) -> Result<TickMapSeed, PoolBuilderError> {
     let db_arm = resolve_tick_map_arm::<PoolBuilderError, _>(
         &alloy::hex::encode_prefixed(pool_id),
+        TickMapPoolIdentity::V4 {
+            manager: pool_manager,
+            pool_id: B256::from(pool_id),
+        },
         tick_spacing,
         block,
         || match db {
@@ -897,7 +903,15 @@ async fn assemble_db_or_chain_v4(
         .map_err(PoolBuilderError::Rpc)?;
     let (word, _) =
         degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
-    Ok(chain_arm(Some(ticks), HashMap::from([(word, bitmap)])).into_seed(block))
+    Ok(
+        chain_arm(Some(ticks), HashMap::from([(word, bitmap)])).into_seed(
+            block,
+            TickMapPoolIdentity::V4 {
+                manager: pool_manager,
+                pool_id: B256::from(pool_id),
+            },
+        ),
+    )
 }
 
 /// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3

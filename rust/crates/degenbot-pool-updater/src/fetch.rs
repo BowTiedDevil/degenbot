@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256};
 use alloy::rpc::types::Log;
-use degenbot_core::errors::ProviderResult;
+use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_db::LiquidityUpdateEvent;
 use degenbot_decoders::pool_created_decoder::{
     decode_aerodrome_v2_pool_created_log, decode_v2_pair_created_log, decode_v3_pool_created_log,
@@ -425,17 +425,25 @@ pub async fn fetch_v3_liquidity_logs_grouped(
 /// this decode is the building block for that grouping.
 #[must_use]
 pub fn decode_v4_liquidity_log_with_pool(log: &Log) -> Option<(String, LiquidityUpdateEvent)> {
+    let (_, pool_id, event) = decode_v4_liquidity_log_with_identity(log)?;
+    Some((pool_id.to_string(), event))
+}
+
+/// Decode one V4 `ModifyLiquidity` log while preserving the full pool identity:
+/// the emitting `PoolManager` plus the indexed `PoolId`.
+#[must_use]
+pub fn decode_v4_liquidity_log_with_identity(
+    log: &Log,
+) -> Option<(Address, B256, LiquidityUpdateEvent)> {
     let event = decode_v4_modify_liquidity_log(log)?;
     if event.liquidity_delta.is_zero() {
         return None;
     }
     let block_number = log.block_number?;
     let log_index = log.log_index?;
-    // `V4PoolId` is `[u8; 32]`; widen to `B256` for the `0x`-hex `Display`
-    // (matches the Python `HexBytes(pool_id).to_0x_hex()` + the DB column form).
-    let pool_hash = B256::from(event.pool_id).to_string();
     Some((
-        pool_hash,
+        log.address(),
+        B256::from(event.pool_id),
         LiquidityUpdateEvent {
             block_number,
             log_index,
@@ -444,6 +452,24 @@ pub fn decode_v4_liquidity_log_with_pool(log: &Log) -> Option<(String, Liquidity
             liquidity_delta: event.liquidity_delta,
         },
     ))
+}
+
+/// Group decoded V4 liquidity logs by their full `(PoolManager, PoolId)`
+/// identity and order every group by `(block, log_index)`.
+#[must_use]
+pub fn group_v4_liquidity_logs(
+    logs: &[Log],
+) -> HashMap<(Address, B256), Vec<LiquidityUpdateEvent>> {
+    let mut grouped: HashMap<(Address, B256), Vec<LiquidityUpdateEvent>> = HashMap::new();
+    for log in logs {
+        if let Some((manager, pool_id, event)) = decode_v4_liquidity_log_with_identity(log) {
+            grouped.entry((manager, pool_id)).or_default().push(event);
+        }
+    }
+    for events in grouped.values_mut() {
+        events.sort_by_key(|event| (event.block_number, event.log_index));
+    }
+    grouped
 }
 
 /// Fetch V4 `ModifyLiquidity` events across a block range + group them by
@@ -478,13 +504,10 @@ pub async fn fetch_v4_liquidity_logs_grouped(
         Some(vec![modify_liquidity_topic]),
     )
     .await?;
-    let mut grouped: HashMap<String, Vec<LiquidityUpdateEvent>> = HashMap::new();
-    for log in &logs {
-        if let Some((pool_hash, event)) = decode_v4_liquidity_log_with_pool(log) {
-            grouped.entry(pool_hash).or_default().push(event);
-        }
-    }
-    Ok(grouped)
+    Ok(group_v4_liquidity_logs(&logs)
+        .into_iter()
+        .map(|((_, pool_id), events)| (pool_id.to_string(), events))
+        .collect())
 }
 
 // ── internal fetch helpers ───────────────────────────────────────────────
@@ -532,14 +555,13 @@ async fn fetch_logs_with_topics(
 // the chunk loop constructs the `LogFetcher` from the
 // provider + `max_blocks_per_request` pool config.)
 
-/// A synchronous bridge over the async per-pool V3 liquidity fetch.
+/// A synchronous bridge over the async per-pool V3/V4 liquidity fetches.
 ///
-/// The per-frame ingress stages tick maps on a synchronous path, so the
-/// backfill transport is expressed synchronously. A caller that does not stage
-/// synchronously can consume [`fetch_v3_liquidity_logs`] directly.
-pub trait V3LiquidityLogSource: Send + Sync {
-    /// This pool's decoded V3 `Mint`/`Burn` events over
-    /// `[from_block, to_block]`, ordered by `(block, log_index)`.
+/// The per-frame ingress stages tick maps on a synchronous path, so its
+/// backfill transport is expressed synchronously. Both methods preserve the
+/// updater's family-specific identity and `(block, log_index)` event order.
+pub trait LiquidityLogSource: Send + Sync {
+    /// Fetch one V3 pool's decoded `Mint`/`Burn` events over the block range.
     ///
     /// # Errors
     ///
@@ -550,22 +572,32 @@ pub trait V3LiquidityLogSource: Send + Sync {
         from_block: u64,
         to_block: u64,
     ) -> Result<Vec<LiquidityUpdateEvent>, String>;
+
+    /// Fetch one `(PoolManager, PoolId)`'s decoded `ModifyLiquidity` events.
+    ///
+    /// # Errors
+    ///
+    /// A transport or filter failure, as a loud string.
+    fn fetch_v4_liquidity_events(
+        &self,
+        pool_manager: Address,
+        pool_id: B256,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<LiquidityUpdateEvent>, String>;
 }
 
-/// The [`LogFetcher`]-backed [`V3LiquidityLogSource`].
+/// The [`LogFetcher`]-backed [`LiquidityLogSource`].
 ///
-/// The fetch is dispatched onto the shared ambient runtime through a
-/// [`tokio::runtime::Handle`] and awaited over a channel: the synchronous
-/// staging path can already be running INSIDE that runtime's `block_on`
-/// (the hosted driver is driven from a `spawn_blocking` thread), so a nested
-/// `Runtime::block_on` would panic. Spawning keeps the work on the runtime's
-/// own workers while the caller blocks only its own (non-worker) thread.
-pub struct AlloyV3LiquidityLogSource {
+/// Each fetch is dispatched onto the shared ambient runtime and awaited over a
+/// channel, so the synchronous frame-local path never nests a runtime
+/// `block_on` inside the hosted driver's own runtime.
+pub struct AlloyLiquidityLogSource {
     fetcher: Arc<LogFetcher>,
     runtime: tokio::runtime::Handle,
 }
 
-impl AlloyV3LiquidityLogSource {
+impl AlloyLiquidityLogSource {
     /// Build over a provider with the given `eth_getLogs` chunk size.
     #[must_use]
     pub fn new(provider: Arc<AlloyProvider>, max_blocks_per_request: u64) -> Self {
@@ -576,7 +608,7 @@ impl AlloyV3LiquidityLogSource {
     }
 }
 
-impl V3LiquidityLogSource for AlloyV3LiquidityLogSource {
+impl LiquidityLogSource for AlloyLiquidityLogSource {
     fn fetch_v3_liquidity_events(
         &self,
         pool_address: Address,
@@ -590,6 +622,41 @@ impl V3LiquidityLogSource for AlloyV3LiquidityLogSource {
                 fetch_v3_liquidity_logs(&fetcher, from_block, to_block, Some(pool_address))
                     .await
                     .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        rx.recv()
+            .map_err(|_| "backfill fetch task dropped before returning".to_string())?
+    }
+
+    fn fetch_v4_liquidity_events(
+        &self,
+        pool_manager: Address,
+        pool_id: B256,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<LiquidityUpdateEvent>, String> {
+        let fetcher = Arc::clone(&self.fetcher);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.runtime.spawn(async move {
+            let result = async {
+                let logs = fetch_logs_with_topics(
+                    &fetcher,
+                    from_block,
+                    to_block,
+                    Some(vec![pool_manager]),
+                    Some(vec![
+                        degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC,
+                    ]),
+                )
+                .await?;
+                Ok::<_, ProviderError>(
+                    group_v4_liquidity_logs(&logs)
+                        .remove(&(pool_manager, pool_id))
+                        .unwrap_or_default(),
+                )
+            }
+            .await
+            .map_err(|e| e.to_string());
             let _ = tx.send(result);
         });
         rx.recv()
@@ -1003,6 +1070,58 @@ mod tests {
     #[test]
     fn u256_compile_check() {
         let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v4_grouping_preserves_manager_pool_identity_and_log_order() {
+        let manager_a = Address::from([0xaa; 20]);
+        let manager_b = Address::from([0xbb; 20]);
+        let pool_a = B256::repeat_byte(0x11);
+        let pool_b = B256::repeat_byte(0x22);
+        let make = |manager: Address, pool: B256, block: u64, log_index: u64, delta: i64| {
+            let mut data = vec![0u8; 128];
+            data[0..32].copy_from_slice(&int24_word(-10).0);
+            data[32..64].copy_from_slice(&int24_word(10).0);
+            data[64..96].copy_from_slice(
+                &I256::try_from(i128::from(delta))
+                    .unwrap()
+                    .to_be_bytes::<32>(),
+            );
+            make_log(
+                manager,
+                vec![
+                    degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC,
+                    pool,
+                    Address::ZERO.into_word(),
+                ],
+                data,
+                block,
+                log_index,
+            )
+        };
+
+        let logs = vec![
+            make(manager_a, pool_a, 12, 4, -20),
+            make(manager_b, pool_a, 11, 9, 30),
+            make(manager_a, pool_b, 10, 7, 40),
+            make(manager_a, pool_a, 11, 2, 10),
+        ];
+        let grouped = group_v4_liquidity_logs(&logs);
+
+        let a_events = &grouped[&(manager_a, pool_a)];
+        assert_eq!(
+            a_events
+                .iter()
+                .map(|event| (event.block_number, event.log_index, event.liquidity_delta))
+                .collect::<Vec<_>>(),
+            vec![
+                (11, 2, I256::try_from(10_i64).unwrap()),
+                (12, 4, -I256::try_from(20_i64).unwrap()),
+            ]
+        );
+        assert_eq!(grouped[&(manager_b, pool_a)].len(), 1);
+        assert_eq!(grouped[&(manager_a, pool_b)].len(), 1);
+        assert_eq!(grouped.len(), 3, "manager and PoolId jointly isolate pools");
     }
 
     // ── pool-address-preserving decode ────────────────────────

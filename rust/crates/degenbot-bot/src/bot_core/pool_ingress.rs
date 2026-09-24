@@ -37,7 +37,7 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::{Address, I256, U128, U256};
+use alloy::primitives::{Address, B256, I256, U128, U256};
 use degenbot_db::snapshot::{
     BitmapAtWord as DbBitmapAtWord, LiquidityAtTick as DbLiquidityAtTick, LiquidityMap, TickMapDb,
 };
@@ -46,7 +46,7 @@ use degenbot_math::cl::liquidity_mapping::{
     apply_liquidity_mapping_update, BitmapAtWord as ApplyBitmapAtWord,
     LiquidityAtTick as ApplyLiquidityAtTick,
 };
-pub use degenbot_pool_updater::fetch::{AlloyV3LiquidityLogSource, V3LiquidityLogSource};
+pub use degenbot_pool_updater::fetch::{AlloyLiquidityLogSource, LiquidityLogSource};
 use degenbot_pools::tick_fetch::TickBootstrapRpc;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::TickInfo;
@@ -58,13 +58,14 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 
 use crate::bot_core::planning::{ExplicitPoolState, PlanningPoolParams, Workspace};
+use crate::bot_core::pool_builder::builder::derive_hook_flags;
 use crate::bot_core::tick_assembly::{chain_arm, resolve_tick_map_arm, TickMapAssemblyError};
 
 // The seed's provenance tag + value ride at the planning boundary; re-export
 // here so ingress consumers reach them through the provisioning module. Db and
 // Chain provenance constructors stay crate-private (minted only by this
-// module); `TickMapSeed::journal` is the public exact-replay constructor.
-pub use crate::bot_core::planning::{TickMapSeed, TickMapSource};
+// module); the Journal constructor is crate-private for capability tests.
+pub use crate::bot_core::planning::{TickMapPoolIdentity, TickMapSeed, TickMapSource};
 
 /// The chain-sample verification policy for ingress V3 admission.
 ///
@@ -103,7 +104,13 @@ impl VerifyLevel {
 pub trait IngressWitness: Send + Sync {
     /// A Db-staged map was advanced from `from_block` to `to_block` by
     /// `events` decoded liquidity events.
-    fn db_backfill(&self, pool_address: Address, from_block: u64, to_block: u64, events: usize);
+    fn db_backfill(
+        &self,
+        identity: TickMapPoolIdentity,
+        from_block: u64,
+        to_block: u64,
+        events: usize,
+    );
 }
 
 /// A Db staging arm: the snapshot handle plus the transport that closes its
@@ -116,13 +123,13 @@ pub trait IngressWitness: Send + Sync {
 /// the sparse Chain arm.
 pub struct DbArm {
     db: Arc<dyn TickMapDb>,
-    backfill_source: Arc<dyn V3LiquidityLogSource>,
+    backfill_source: Arc<dyn LiquidityLogSource>,
 }
 
 impl DbArm {
     /// Pair a Db snapshot handle with the transport that backfills its lag.
     #[must_use]
-    pub fn new(db: Arc<dyn TickMapDb>, backfill_source: Arc<dyn V3LiquidityLogSource>) -> Self {
+    pub fn new(db: Arc<dyn TickMapDb>, backfill_source: Arc<dyn LiquidityLogSource>) -> Self {
         Self {
             db,
             backfill_source,
@@ -130,23 +137,29 @@ impl DbArm {
     }
 }
 
-/// A chain-sample verifier for a staged V3 tick map: the ingress composes it
-/// behind [`VerifyLevel`] without knowing the RPC shape. The concrete
-/// [`AlloySampleVerifier`] delegates to the pump's own snapshot-block
-/// machinery (`liquidity_verifier`), not a reimplementation.
+/// The contract identity sampled for one complete tick map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickMapSampleTarget {
+    /// A V3 pool contract.
+    V3(Address),
+    /// A V4 pool's full-map storage owner and pool id.
+    V4 { manager: Address, pool_id: B256 },
+}
+
+/// A chain-sample verifier for a staged CL tick map. The concrete
+/// [`AlloySampleVerifier`] delegates both families to the shared full-map
+/// verifier; this seam exists only for ingress policy and test doubles.
 #[async_trait::async_trait]
 pub trait TickMapSampleVerifier: Send + Sync {
-    /// Verify `ticks` against on-chain state at `block`.
+    /// Verify one complete map against its contract target at `block`.
     ///
     /// # Errors
     ///
     /// A genuine mismatch or a transport failure, as a loud string.
-    async fn verify_v3(
+    async fn verify(
         &self,
-        address: Address,
-        ticks: &HashMap<i32, TickInfo>,
-        bitmaps: &HashMap<i32, U256>,
-        tick_spacing: i32,
+        target: TickMapSampleTarget,
+        map: &RpcLiquidityMap,
         block: u64,
     ) -> Result<(), String>;
 }
@@ -167,24 +180,22 @@ impl AlloySampleVerifier {
 
 #[async_trait::async_trait]
 impl TickMapSampleVerifier for AlloySampleVerifier {
-    async fn verify_v3(
+    async fn verify(
         &self,
-        address: Address,
-        ticks: &HashMap<i32, TickInfo>,
-        bitmaps: &HashMap<i32, U256>,
-        tick_spacing: i32,
+        target: TickMapSampleTarget,
+        map: &RpcLiquidityMap,
         block: u64,
     ) -> Result<(), String> {
-        let map =
-            RpcLiquidityMap::tracked_with_spacing(ticks.clone(), bitmaps.clone(), tick_spacing);
-        let facts = verify_liquidity_map(
-            self.provider.as_ref(),
-            LiquidityMapTarget::V3(address),
-            &map,
-            Some(block),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let target = match target {
+            TickMapSampleTarget::V3(address) => LiquidityMapTarget::V3(address),
+            TickMapSampleTarget::V4 { manager, pool_id } => LiquidityMapTarget::V4 {
+                pool_manager: manager,
+                pool_id,
+            },
+        };
+        let facts = verify_liquidity_map(self.provider.as_ref(), target, map, Some(block))
+            .await
+            .map_err(|e| e.to_string())?;
         if facts.is_empty() {
             Ok(())
         } else {
@@ -272,10 +283,29 @@ pub struct IngressV3Params {
     pub slot_layout: ClSlotLayout,
 }
 
+/// A V4 pool's admission payload. `state_view` is bootstrap-only; complete
+/// map verification always targets `manager` through the shared verifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IngressV4Params {
+    pub manager: Address,
+    pub state_view: Option<Address>,
+    pub pool_id: B256,
+    pub token0: Address,
+    pub token1: Address,
+    pub fee: u32,
+    pub tick_spacing: i32,
+    pub hooks: Address,
+    pub sqrt_price_x96: U256,
+    pub liquidity: u128,
+    pub tick: i32,
+}
+
 /// A Db-staged map plus the backfill window that brought it to head.
 #[derive(Clone)]
 struct StagedDbMap {
     map: LiquidityMap,
+    /// The Db map's own liquidity-clock stamp, before any backfill.
+    source_block: Option<u64>,
     /// `None` when the map already sat at head (window 0).
     backfill: Option<BackfillStamp>,
 }
@@ -293,7 +323,7 @@ struct BackfillStamp {
 /// storage-memo shape, bounded by the pools the frame touches).
 struct MapMemo {
     block: u64,
-    maps: HashMap<Address, Option<StagedDbMap>>,
+    maps: HashMap<TickMapPoolIdentity, Option<StagedDbMap>>,
 }
 
 impl MapMemo {
@@ -317,7 +347,7 @@ pub struct PoolIngress {
     /// Pool identity → the freshness block whose staged map was sampled.
     /// Bootstrap memoization is process-scoped but never suppresses a later
     /// admission whose seed block requires a fresh sample.
-    verified: Mutex<HashMap<Address, u64>>,
+    verified: Mutex<HashMap<TickMapPoolIdentity, u64>>,
     /// The chain-sample verifier. Absent means the Chain arm is unconfigured
     /// and sampling is skipped (an RPC-less Db-only ingress cannot verify).
     verifier: Option<Arc<dyn TickMapSampleVerifier>>,
@@ -410,14 +440,18 @@ impl PoolIngress {
         // The Db arm is staged + backfilled to head under the per-block memo;
         // a Db miss or a corrupt map returns `None`, so the shared precedence
         // falls to the Chain arm below.
-        let staged = self.staged_db_arm(address, tick_spacing, block)?;
+        let identity = TickMapPoolIdentity::V3(address);
+        let staged = self.staged_db_arm(identity, tick_spacing, block)?;
+        let source_block = staged.as_ref().and_then(|staged| staged.source_block);
         let db_arm = resolve_tick_map_arm::<IngressDecline, _>(
             &format!("{address}"),
+            identity,
             tick_spacing,
             block,
-            || Ok(staged.map(|s| s.map)),
+            || Ok(staged.map(|staged| staged.map)),
         )?;
-        if let Some(seed) = db_arm {
+        if let Some(mut seed) = db_arm {
+            seed.source_block = source_block;
             return Ok(seed);
         }
         // Chain arm: the Db missed (or no Db handle is wired).
@@ -429,7 +463,60 @@ impl PoolIngress {
             None => None,
         };
         let (ticks, bitmaps) = chain_hit.unwrap_or((HashMap::new(), HashMap::new()));
-        Ok(chain_arm(Some(ticks), bitmaps).into_seed(block))
+        Ok(chain_arm(Some(ticks), bitmaps).into_seed(block, identity))
+    }
+
+    /// Stage a V4 `(PoolManager, PoolId)` map with `Db → Chain` precedence.
+    #[cfg(test)]
+    fn stage_v4_tick_map(
+        &self,
+        manager: Address,
+        pool_id: B256,
+        tick: i32,
+        tick_spacing: i32,
+        block: u64,
+    ) -> Result<TickMapSeed, IngressDecline> {
+        self.stage_v4_tick_map_with_state_view(manager, pool_id, None, tick, tick_spacing, block)
+    }
+
+    fn stage_v4_tick_map_with_state_view(
+        &self,
+        manager: Address,
+        pool_id: B256,
+        state_view: Option<Address>,
+        tick: i32,
+        tick_spacing: i32,
+        block: u64,
+    ) -> Result<TickMapSeed, IngressDecline> {
+        let identity = TickMapPoolIdentity::V4 { manager, pool_id };
+        let staged = self.staged_db_arm(identity, tick_spacing, block)?;
+        let source_block = staged.as_ref().and_then(|staged| staged.source_block);
+        let db_arm = resolve_tick_map_arm::<IngressDecline, _>(
+            &alloy::hex::encode_prefixed(pool_id),
+            identity,
+            tick_spacing,
+            block,
+            || Ok(staged.map(|staged| staged.map)),
+        )?;
+        if let Some(mut seed) = db_arm {
+            seed.source_block = source_block;
+            return Ok(seed);
+        }
+        let chain_hit = match (self.chain.as_deref(), state_view) {
+            (Some(chain), Some(state_view)) => chain
+                .bootstrap_v4_tick_word(
+                    &state_view.to_checksum(None),
+                    &pool_id.0,
+                    tick,
+                    tick_spacing,
+                    block,
+                )
+                .map_err(TickMapAssemblyError::Chain)?
+                .map(|word| (word.ticks, HashMap::from([(word.word, word.bitmap)]))),
+            _ => None,
+        };
+        let (ticks, bitmaps) = chain_hit.unwrap_or((HashMap::new(), HashMap::new()));
+        Ok(chain_arm(Some(ticks), bitmaps).into_seed(block, identity))
     }
 
     /// Stage, chain-sample-verify (per [`VerifyLevel`]), then register a V3
@@ -449,8 +536,12 @@ impl PoolIngress {
     ) -> Result<u64, IngressDecline> {
         let seed =
             self.stage_v3_tick_map(params.address, params.tick, params.tick_spacing, head)?;
-        self.verify_staged_v3(params.address, params.tick_spacing, &seed)
-            .await?;
+        self.verify_staged(
+            TickMapPoolIdentity::V3(params.address),
+            params.tick_spacing,
+            &seed,
+        )
+        .await?;
         Self::register_v3(ws, params, seed, head)
     }
 
@@ -471,20 +562,13 @@ impl PoolIngress {
     ) -> Result<u64, IngressDecline> {
         let mut seed =
             self.stage_v3_tick_map(params.address, params.tick, params.tick_spacing, head)?;
-        for &tick in overlay.keys() {
-            let compressed = tick.div_euclid(params.tick_spacing);
-            let word = compressed >> 8;
-            let bit = usize::try_from(compressed.rem_euclid(256)).map_err(|_| {
-                IngressDecline::Db(format!("tick {tick} has an invalid V3 bitmap bit"))
-            })?;
-            seed.bitmaps
-                .entry(word)
-                .or_insert(U256::ZERO)
-                .set_bit(bit, true);
-        }
-        seed.ticks.extend(overlay);
-        self.verify_staged_v3(params.address, params.tick_spacing, &seed)
-            .await?;
+        merge_replay_overlay(&mut seed, overlay, params.tick_spacing, "V3")?;
+        self.verify_staged(
+            TickMapPoolIdentity::V3(params.address),
+            params.tick_spacing,
+            &seed,
+        )
+        .await?;
         Self::register_v3(ws, params, seed, head)
     }
 
@@ -520,17 +604,15 @@ impl PoolIngress {
     /// already ran inside staging (the Tracked self-contradiction abort is
     /// upstream of this method and unconditional); this is the chain SAMPLE
     /// only.
-    async fn verify_staged_v3(
+    async fn verify_staged(
         &self,
-        address: Address,
+        identity: TickMapPoolIdentity,
         tick_spacing: i32,
         seed: &TickMapSeed,
     ) -> Result<(), IngressDecline> {
         if self.verify_level == VerifyLevel::Off {
             return Ok(());
         }
-        // No verifier means no chain arm is wired: there is nothing to sample
-        // against, so the Db-only ingress proceeds.
         let Some(verifier) = self.verifier.as_ref() else {
             return Ok(());
         };
@@ -538,22 +620,123 @@ impl PoolIngress {
             return Ok(());
         }
         if self.verify_level == VerifyLevel::Bootstrap
-            && self.verified.lock().get(&address) == Some(&seed.seed_block)
+            && self.verified.lock().get(&identity) == Some(&seed.seed_block)
         {
             return Ok(());
         }
+        let target = match identity {
+            TickMapPoolIdentity::V3(address) => TickMapSampleTarget::V3(address),
+            TickMapPoolIdentity::V4 { manager, pool_id } => {
+                TickMapSampleTarget::V4 { manager, pool_id }
+            }
+        };
+        let map = RpcLiquidityMap::tracked_with_spacing(
+            seed.ticks.clone(),
+            seed.bitmaps.clone(),
+            tick_spacing,
+        );
         verifier
-            .verify_v3(
-                address,
-                &seed.ticks,
-                &seed.bitmaps,
-                tick_spacing,
-                seed.seed_block,
-            )
+            .verify(target, &map, seed.seed_block)
             .await
             .map_err(IngressDecline::Verify)?;
-        self.verified.lock().insert(address, seed.seed_block);
+        self.verified.lock().insert(identity, seed.seed_block);
         Ok(())
+    }
+
+    /// Stage, policy-sample, and register explicit V4 state without replay
+    /// overlay. This is the cold-hop/explicit-state ingress behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed staging, verification, or registration decline.
+    pub async fn admit_v4_verified(
+        &self,
+        ws: &mut Workspace,
+        params: IngressV4Params,
+        head: u64,
+    ) -> Result<u64, IngressDecline> {
+        let seed = self.stage_v4_tick_map_with_state_view(
+            params.manager,
+            params.pool_id,
+            params.state_view,
+            params.tick,
+            params.tick_spacing,
+            head,
+        )?;
+        self.verify_staged(
+            TickMapPoolIdentity::V4 {
+                manager: params.manager,
+                pool_id: params.pool_id,
+            },
+            params.tick_spacing,
+            &seed,
+        )
+        .await?;
+        Self::register_v4(ws, params, seed, head)
+    }
+
+    /// Merge replay-provided V4 rows into the Db/Chain seed using the pool's
+    /// real spacing, verify the final bitmap+tick map, then register it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same typed staging, verification, or registration declines
+    /// as explicit V4 admission.
+    pub async fn admit_v4_replay(
+        &self,
+        ws: &mut Workspace,
+        params: IngressV4Params,
+        overlay: HashMap<i32, TickInfo>,
+        head: u64,
+    ) -> Result<u64, IngressDecline> {
+        let mut seed = self.stage_v4_tick_map_with_state_view(
+            params.manager,
+            params.pool_id,
+            params.state_view,
+            params.tick,
+            params.tick_spacing,
+            head,
+        )?;
+        merge_replay_overlay(&mut seed, overlay, params.tick_spacing, "V4")?;
+        self.verify_staged(
+            TickMapPoolIdentity::V4 {
+                manager: params.manager,
+                pool_id: params.pool_id,
+            },
+            params.tick_spacing,
+            &seed,
+        )
+        .await?;
+        Self::register_v4(ws, params, seed, head)
+    }
+
+    fn register_v4(
+        ws: &mut Workspace,
+        params: IngressV4Params,
+        seed: TickMapSeed,
+        head: u64,
+    ) -> Result<u64, IngressDecline> {
+        ws.register_with_state(
+            PlanningPoolParams {
+                address: params.manager,
+                token0: params.token0,
+                token1: params.token1,
+            },
+            ExplicitPoolState::V4 {
+                pool_id: params.pool_id.0,
+                fee: params.fee,
+                tick_spacing: params.tick_spacing,
+                hooks: params.hooks,
+                hook_flags: derive_hook_flags(params.hooks),
+                protocol_fee: 0,
+                sqrt_price_x96: params.sqrt_price_x96,
+                liquidity: params.liquidity,
+                tick: params.tick,
+                seed,
+            },
+            head,
+        )
+        .map_err(|error| IngressDecline::Register(format!("{error:?}")))
     }
 
     /// The per-block-memoized Db staging: fetch the pool's map + liquidity
@@ -568,7 +751,7 @@ impl PoolIngress {
     /// failure, or a tick/word outside its representable range.
     fn staged_db_arm(
         &self,
-        address: Address,
+        identity: TickMapPoolIdentity,
         tick_spacing: i32,
         block: u64,
     ) -> Result<Option<StagedDbMap>, IngressDecline> {
@@ -577,49 +760,65 @@ impl PoolIngress {
             memo.block = block;
             memo.maps.clear();
         }
-        if let Some(hit) = memo.maps.get(&address) {
+        if let Some(hit) = memo.maps.get(&identity) {
             let hit = hit.clone();
             drop(memo);
-            self.emit_backfill_witness(address, hit.as_ref());
+            self.emit_backfill_witness(identity, hit.as_ref());
             return Ok(hit);
         }
         let Some(arm) = self.db.as_ref() else {
-            memo.maps.insert(address, None);
+            memo.maps.insert(identity, None);
             return Ok(None);
         };
-        // A missing stamp leaves the map's currency unknown: stage it verbatim
-        // rather than inventing a zero window.
-        let stamp = arm
-            .db
-            .fetch_liquidity_update_block(address)
-            .map_err(|e| IngressDecline::Db(e.to_string()))?;
-        let Some(map) = arm
-            .db
-            .fetch_liquidity_map(address)
-            .map_err(|e| IngressDecline::Db(e.to_string()))?
-        else {
-            memo.maps.insert(address, None);
+        let (stamp, map) = match identity {
+            TickMapPoolIdentity::V3(address) => (
+                arm.db
+                    .fetch_liquidity_update_block(address)
+                    .map_err(|e| IngressDecline::Db(e.to_string()))?,
+                arm.db
+                    .fetch_liquidity_map(address)
+                    .map_err(|e| IngressDecline::Db(e.to_string()))?,
+            ),
+            TickMapPoolIdentity::V4 { manager, pool_id } => (
+                arm.db
+                    .fetch_liquidity_update_block_v4(manager, pool_id)
+                    .map_err(|e| IngressDecline::Db(e.to_string()))?,
+                arm.db
+                    .fetch_liquidity_map_v4(manager, pool_id)
+                    .map_err(|e| IngressDecline::Db(e.to_string()))?,
+            ),
+        };
+        let Some(map) = map else {
+            memo.maps.insert(identity, None);
             return Ok(None);
         };
-        let staged = match stamp.and_then(|s| u64::try_from(s).ok()) {
+        let source_block = stamp.and_then(|source| u64::try_from(source).ok());
+        let staged = match source_block {
             None => StagedDbMap {
                 map,
+                source_block,
                 backfill: None,
             },
-            // Already at (or ahead of) head: nothing to close.
             Some(update_block) if update_block >= block => StagedDbMap {
                 map,
+                source_block,
                 backfill: None,
             },
             Some(update_block) => {
                 let from_block = update_block + 1;
-                let events = arm
-                    .backfill_source
-                    .fetch_v3_liquidity_events(address, from_block, block)
-                    .map_err(IngressDecline::Db)?;
+                let events = match identity {
+                    TickMapPoolIdentity::V3(address) => arm
+                        .backfill_source
+                        .fetch_v3_liquidity_events(address, from_block, block),
+                    TickMapPoolIdentity::V4 { manager, pool_id } => arm
+                        .backfill_source
+                        .fetch_v4_liquidity_events(manager, pool_id, from_block, block),
+                }
+                .map_err(IngressDecline::Db)?;
                 let backfilled = backfill_liquidity_map(map, tick_spacing, &events)?;
                 StagedDbMap {
                     map: backfilled,
+                    source_block,
                     backfill: Some(BackfillStamp {
                         from_block,
                         to_block: block,
@@ -629,22 +828,43 @@ impl PoolIngress {
             }
         };
         let for_witness = staged.clone();
-        memo.maps.insert(address, Some(staged));
+        memo.maps.insert(identity, Some(staged));
         drop(memo);
-        self.emit_backfill_witness(address, Some(&for_witness));
+        self.emit_backfill_witness(identity, Some(&for_witness));
         Ok(Some(for_witness))
     }
 
     /// Emit the per-admission backfill witness when `staged` carried a
     /// non-empty window (the window is what proves the map is current).
-    fn emit_backfill_witness(&self, address: Address, staged: Option<&StagedDbMap>) {
+    fn emit_backfill_witness(&self, identity: TickMapPoolIdentity, staged: Option<&StagedDbMap>) {
         if let (Some(stamp), Some(witness)) = (
-            staged.and_then(|s| s.backfill.as_ref()),
+            staged.and_then(|staged| staged.backfill.as_ref()),
             self.witness.as_ref(),
         ) {
-            witness.db_backfill(address, stamp.from_block, stamp.to_block, stamp.events);
+            witness.db_backfill(identity, stamp.from_block, stamp.to_block, stamp.events);
         }
     }
+}
+
+fn merge_replay_overlay(
+    seed: &mut TickMapSeed,
+    overlay: HashMap<i32, TickInfo>,
+    tick_spacing: i32,
+    family: &str,
+) -> Result<(), IngressDecline> {
+    for &tick in overlay.keys() {
+        let compressed = tick.div_euclid(tick_spacing);
+        let word = compressed >> 8;
+        let bit = usize::try_from(compressed.rem_euclid(256)).map_err(|_| {
+            IngressDecline::Db(format!("tick {tick} has an invalid {family} bitmap bit"))
+        })?;
+        seed.bitmaps
+            .entry(word)
+            .or_insert(U256::ZERO)
+            .set_bit(bit, true);
+    }
+    seed.ticks.extend(overlay);
+    Ok(())
 }
 
 /// Apply decoded liquidity events to a Db-staged map, sharing the updater's
@@ -772,9 +992,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use alloy::primitives::{aliases::U128, B256};
+    use degenbot_db::connection::DegenbotDb;
     use degenbot_db::error::DbError;
     use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick};
-    use degenbot_db::ExchangeFamily;
+    use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick, ExchangeFamily};
     use degenbot_pools::tick_fetch::{BootstrapTickError, BootstrapTickWord};
     use degenbot_pools::v3_state::PoolTickCoverage;
 
@@ -1052,12 +1273,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl TickMapSampleVerifier for FakeVerifier {
-        async fn verify_v3(
+        async fn verify(
             &self,
-            _address: Address,
-            _ticks: &HashMap<i32, TickInfo>,
-            _bitmaps: &HashMap<i32, U256>,
-            _tick_spacing: i32,
+            _target: TickMapSampleTarget,
+            _map: &RpcLiquidityMap,
             _block: u64,
         ) -> Result<(), String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -1134,18 +1353,19 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl TickMapSampleVerifier for RecordingVerifier {
-            async fn verify_v3(
+            async fn verify(
                 &self,
-                _address: Address,
-                ticks: &HashMap<i32, TickInfo>,
-                bitmaps: &HashMap<i32, U256>,
-                spacing: i32,
+                _target: TickMapSampleTarget,
+                map: &RpcLiquidityMap,
                 block: u64,
             ) -> Result<(), String> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
-                self.seen
-                    .lock()
-                    .push((ticks.clone(), bitmaps.clone(), spacing, block));
+                self.seen.lock().push((
+                    map.ticks.clone(),
+                    map.bitmaps.clone(),
+                    map.tick_spacing,
+                    block,
+                ));
                 Ok(())
             }
         }
@@ -1366,7 +1586,7 @@ mod tests {
         ranges: Arc<Mutex<Vec<(Address, u64, u64)>>>,
     }
 
-    impl V3LiquidityLogSource for FakeLogSource {
+    impl LiquidityLogSource for FakeLogSource {
         fn fetch_v3_liquidity_events(
             &self,
             pool_address: Address,
@@ -1379,25 +1599,35 @@ mod tests {
                 .push((pool_address, from_block, to_block));
             Ok(self.events.clone())
         }
+
+        fn fetch_v4_liquidity_events(
+            &self,
+            _manager: Address,
+            _pool_id: B256,
+            _from_block: u64,
+            _to_block: u64,
+        ) -> Result<Vec<LiquidityUpdateEvent>, String> {
+            Err("unexpected V4 fetch".into())
+        }
     }
 
     /// A witness fake recording every backfill event.
     #[derive(Default)]
     struct FakeWitness {
-        backfills: Mutex<Vec<(Address, u64, u64, usize)>>,
+        backfills: Mutex<Vec<(TickMapPoolIdentity, u64, u64, usize)>>,
     }
 
     impl IngressWitness for FakeWitness {
         fn db_backfill(
             &self,
-            pool_address: Address,
+            identity: TickMapPoolIdentity,
             from_block: u64,
             to_block: u64,
             events: usize,
         ) {
             self.backfills
                 .lock()
-                .push((pool_address, from_block, to_block, events));
+                .push((identity, from_block, to_block, events));
         }
     }
 
@@ -1456,7 +1686,7 @@ mod tests {
         );
         assert_eq!(
             witness.backfills.lock().as_slice(),
-            &[(POOL, 101, 102, 1)],
+            &[(TickMapPoolIdentity::V3(POOL), 101, 102, 1)],
             "the window is witnessed"
         );
 
@@ -1512,8 +1742,558 @@ mod tests {
         );
         assert_eq!(
             witness.backfills.lock().as_slice(),
-            &[(POOL, 2, 100_000, 1)],
+            &[(TickMapPoolIdentity::V3(POOL), 2, 100_000, 1)],
             "the whole window is witnessed"
+        );
+    }
+
+    struct FakeV4Db {
+        map: Option<LiquidityMap>,
+        update_block: i64,
+    }
+
+    impl TickMapDb for FakeV4Db {
+        fn fetch_liquidity_map(
+            &self,
+            _pool_address: Address,
+        ) -> Result<Option<LiquidityMap>, DbError> {
+            Ok(None)
+        }
+
+        fn fetch_liquidity_map_v4(
+            &self,
+            pool_manager: Address,
+            pool_id: B256,
+        ) -> Result<Option<LiquidityMap>, DbError> {
+            if pool_manager != V4_MANAGER || pool_id != V4_POOL_ID {
+                return Err(DbError::Decode("unexpected V4 Db identity".into()));
+            }
+            Ok(self.map.clone())
+        }
+
+        fn fetch_newest_update_block(
+            &self,
+            _chain: i64,
+            _family: ExchangeFamily,
+        ) -> Result<Option<i64>, DbError> {
+            Ok(None)
+        }
+
+        fn fetch_liquidity_update_block(
+            &self,
+            _pool_address: Address,
+        ) -> Result<Option<i64>, DbError> {
+            Ok(None)
+        }
+
+        fn fetch_liquidity_update_block_v4(
+            &self,
+            _pool_manager: Address,
+            _pool_id: B256,
+        ) -> Result<Option<i64>, DbError> {
+            Ok(Some(self.update_block))
+        }
+    }
+
+    type V4SourceCalls = Arc<Mutex<Vec<(Address, B256, u64, u64)>>>;
+
+    struct FakeV4Source {
+        calls: V4SourceCalls,
+    }
+
+    impl LiquidityLogSource for FakeV4Source {
+        fn fetch_v3_liquidity_events(
+            &self,
+            _pool: Address,
+            _from: u64,
+            _to: u64,
+        ) -> Result<Vec<LiquidityUpdateEvent>, String> {
+            Err("unexpected V3 fetch".into())
+        }
+
+        fn fetch_v4_liquidity_events(
+            &self,
+            manager: Address,
+            pool_id: B256,
+            from: u64,
+            to: u64,
+        ) -> Result<Vec<LiquidityUpdateEvent>, String> {
+            self.calls.lock().push((manager, pool_id, from, to));
+            Ok(vec![
+                LiquidityUpdateEvent {
+                    block_number: 201,
+                    log_index: 0,
+                    tick_lower: -10,
+                    tick_upper: 10,
+                    liquidity_delta: I256::try_from(500_i64).unwrap(),
+                },
+                LiquidityUpdateEvent {
+                    block_number: 202,
+                    log_index: 0,
+                    tick_lower: -10,
+                    tick_upper: 10,
+                    liquidity_delta: -I256::try_from(200_i64).unwrap(),
+                },
+            ])
+        }
+    }
+
+    struct FailingV4Source;
+
+    impl LiquidityLogSource for FailingV4Source {
+        fn fetch_v3_liquidity_events(
+            &self,
+            _pool: Address,
+            _from: u64,
+            _to: u64,
+        ) -> Result<Vec<LiquidityUpdateEvent>, String> {
+            Err("unexpected V3 fetch".into())
+        }
+
+        fn fetch_v4_liquidity_events(
+            &self,
+            _manager: Address,
+            _pool_id: B256,
+            _from: u64,
+            _to: u64,
+        ) -> Result<Vec<LiquidityUpdateEvent>, String> {
+            Err("archive node unavailable".into())
+        }
+    }
+
+    const V4_MANAGER: Address = Address::new([0x44; 20]);
+    const V4_POOL_ID: B256 = B256::new([0x55; 32]);
+
+    fn v4_params() -> IngressV4Params {
+        IngressV4Params {
+            manager: V4_MANAGER,
+            state_view: Some(Address::new([0x77; 20])),
+            pool_id: V4_POOL_ID,
+            token0: Address::new([0x02; 20]),
+            token1: Address::new([0x03; 20]),
+            fee: 500,
+            tick_spacing: 10,
+            hooks: Address::ZERO,
+            sqrt_price_x96: U256::from(1_u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+        }
+    }
+
+    fn tracked_v4_map() -> LiquidityMap {
+        let mut bitmap = U256::ZERO;
+        bitmap.set_bit(12, true);
+        LiquidityMap {
+            tick_bitmap: HashMap::from([
+                (0, BitmapAtWord { bitmap }),
+                (7, BitmapAtWord { bitmap: U256::ZERO }),
+            ]),
+            tick_data: HashMap::from([(
+                120,
+                LiquidityAtTick {
+                    liquidity_gross: U256::from(1_000_u64),
+                    liquidity_net: 1_000,
+                },
+            )]),
+        }
+    }
+
+    #[tokio::test]
+    async fn v4_backfill_and_verifier_failures_are_typed_refusals() {
+        let base_bitmap = U256::from(1_u8) << 255;
+        let stale_db = || {
+            Arc::new(FakeV4Db {
+                map: Some(LiquidityMap {
+                    tick_bitmap: HashMap::from([(
+                        -1,
+                        BitmapAtWord {
+                            bitmap: base_bitmap,
+                        },
+                    )]),
+                    tick_data: HashMap::from([(
+                        -10,
+                        LiquidityAtTick {
+                            liquidity_gross: U256::from(1_000_u64),
+                            liquidity_net: 1_000,
+                        },
+                    )]),
+                }),
+                update_block: 200,
+            })
+        };
+        let mut backfill = PoolIngress::new(
+            Some(DbArm::new(stale_db(), Arc::new(FailingV4Source))),
+            None,
+        );
+        backfill.set_verify_level(VerifyLevel::Off);
+        let err = backfill
+            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .await
+            .expect_err("backfill failure is loud");
+        assert!(matches!(err, IngressDecline::Db(detail) if detail.contains("archive node")));
+
+        let mut verifier = PoolIngress::new(
+            Some(DbArm::new(
+                Arc::new(FakeV4Db {
+                    map: Some(tracked_v4_map()),
+                    update_block: 202,
+                }),
+                Arc::new(FakeV4Source {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )),
+            None,
+        );
+        verifier.set_verify_level(VerifyLevel::Strict);
+        verifier.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::new(AtomicUsize::new(0)),
+            fail: true,
+        }));
+        let err = verifier
+            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .await
+            .expect_err("verification failure is loud");
+        assert!(matches!(err, IngressDecline::Verify(detail) if detail.contains("mismatch")));
+    }
+
+    #[tokio::test]
+    async fn v4_replay_overlay_updates_real_spacing_bitmap_before_pool_manager_verification() {
+        struct RecordingVerifier {
+            seen: Arc<Mutex<Option<(TickMapSampleTarget, RpcLiquidityMap)>>>,
+        }
+        #[async_trait::async_trait]
+        impl TickMapSampleVerifier for RecordingVerifier {
+            async fn verify(
+                &self,
+                target: TickMapSampleTarget,
+                map: &RpcLiquidityMap,
+                _block: u64,
+            ) -> Result<(), String> {
+                *self.seen.lock() = Some((target, map.clone()));
+                Ok(())
+            }
+        }
+
+        let db = Arc::new(FakeV4Db {
+            map: Some(tracked_v4_map()),
+            update_block: 202,
+        });
+        let seen = Arc::new(Mutex::new(None));
+        let mut ingress = PoolIngress::new(
+            Some(DbArm::new(
+                db,
+                Arc::new(FakeV4Source {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )),
+            None,
+        );
+        ingress.set_verify_level(VerifyLevel::Strict);
+        ingress.set_verifier(Arc::new(RecordingVerifier {
+            seen: Arc::clone(&seen),
+        }));
+        let mut overlay = HashMap::new();
+        overlay.insert(
+            -10,
+            TickInfo {
+                liquidity_gross: U128::from(500_u64),
+                liquidity_net: 500,
+                block: 202,
+            },
+        );
+        overlay.insert(
+            130,
+            TickInfo {
+                liquidity_gross: U128::from(700_u64),
+                liquidity_net: -700,
+                block: 202,
+            },
+        );
+        ingress
+            .admit_v4_replay(&mut Workspace::new(), v4_params(), overlay, 202)
+            .await
+            .expect("V4 replay crosses the shared sample seam");
+
+        let (target, map) = seen.lock().clone().expect("verifier observed final map");
+        assert_eq!(
+            target,
+            TickMapSampleTarget::V4 {
+                manager: V4_MANAGER,
+                pool_id: V4_POOL_ID,
+            }
+        );
+        assert_eq!(map.tick_spacing, 10);
+        assert_eq!(
+            map.bitmaps[&0],
+            (U256::from(1_u8) << 12) | (U256::from(1_u8) << 13)
+        );
+        assert_eq!(map.bitmaps[&-1], U256::from(1_u8) << 255);
+        assert_eq!(map.bitmaps[&7], U256::ZERO);
+        assert!(map.ticks.contains_key(&-10));
+        assert!(map.ticks.contains_key(&130));
+    }
+
+    #[tokio::test]
+    async fn v4_strict_bootstrap_off_and_sparse_follow_the_shared_policy() {
+        let strict_calls = Arc::new(AtomicUsize::new(0));
+        let mut strict = PoolIngress::new(
+            Some(DbArm::new(
+                Arc::new(FakeV4Db {
+                    map: Some(tracked_v4_map()),
+                    update_block: 202,
+                }),
+                Arc::new(FakeV4Source {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )),
+            None,
+        );
+        strict.set_verify_level(VerifyLevel::Strict);
+        strict.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::clone(&strict_calls),
+            fail: false,
+        }));
+        strict
+            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .await
+            .unwrap();
+        strict
+            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .await
+            .unwrap();
+        assert_eq!(strict_calls.load(Ordering::SeqCst), 2);
+
+        let bootstrap_calls = Arc::new(AtomicUsize::new(0));
+        let mut bootstrap = PoolIngress::new(
+            Some(DbArm::new(
+                Arc::new(FakeV4Db {
+                    map: Some(tracked_v4_map()),
+                    update_block: 202,
+                }),
+                Arc::new(FakeV4Source {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )),
+            None,
+        );
+        bootstrap.set_verify_level(VerifyLevel::Bootstrap);
+        bootstrap.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::clone(&bootstrap_calls),
+            fail: false,
+        }));
+        bootstrap
+            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .await
+            .unwrap();
+        bootstrap
+            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .await
+            .unwrap();
+        assert_eq!(bootstrap_calls.load(Ordering::SeqCst), 1);
+
+        let off_calls = Arc::new(AtomicUsize::new(0));
+        let mut off = PoolIngress::new(
+            Some(DbArm::new(
+                Arc::new(FakeV4Db {
+                    map: Some(tracked_v4_map()),
+                    update_block: 202,
+                }),
+                Arc::new(FakeV4Source {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )),
+            None,
+        );
+        off.set_verify_level(VerifyLevel::Off);
+        off.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::clone(&off_calls),
+            fail: true,
+        }));
+        off.admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .await
+            .unwrap();
+        assert_eq!(off_calls.load(Ordering::SeqCst), 0);
+
+        let sparse_calls = Arc::new(AtomicUsize::new(0));
+        let mut sparse = PoolIngress::new(
+            Some(DbArm::new(
+                Arc::new(FakeV4Db {
+                    map: None,
+                    update_block: 202,
+                }),
+                Arc::new(FakeV4Source {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )),
+            None,
+        );
+        sparse.set_verify_level(VerifyLevel::Strict);
+        sparse.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::clone(&sparse_calls),
+            fail: true,
+        }));
+        sparse
+            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .await
+            .unwrap();
+        assert_eq!(sparse_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn v4_db_to_head_map_equals_existing_db_updater_compute_result() {
+        let (db, _) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        {
+            let conn = db.lock();
+            conn.execute_batch(&format!(
+                "PRAGMA foreign_keys=OFF;
+                 INSERT INTO exchanges (id, chain_id, name, active, factory) VALUES
+                    (1, 1, 'uniswap_v4', 1, '{V4_MANAGER}');
+                 INSERT INTO pool_managers
+                    (id, address, chain, kind, state_view, exchange_id)
+                 VALUES (1, '{V4_MANAGER}', 1, 'uniswap_v4', NULL, 1);
+                 INSERT INTO managed_pools (id, kind, manager_id)
+                 VALUES (902, 'uniswap_v4', 1);
+                 INSERT INTO uniswap_v4_pools
+                    (managed_pool_id, pool_hash, hooks, currency0_id, currency1_id,
+                     fee_currency0, fee_currency1, fee_denominator, tick_spacing,
+                     liquidity_update_block)
+                 VALUES (902, '{V4_POOL_ID}', '{}', 1, 2, 500, 500, 1000000, 10, 200);",
+                Address::ZERO.to_checksum(None),
+            ))
+            .unwrap();
+        }
+        let mut ticks = HashMap::new();
+        ticks.insert(
+            -10,
+            ApplyLiquidityAtTick {
+                liquidity_net: I256::try_from(1_000_i64).unwrap(),
+                liquidity_gross: U128::from(1_000_u64),
+                block: 0,
+            },
+        );
+        let mut bitmaps = HashMap::new();
+        bitmaps.insert(
+            -1,
+            ApplyBitmapAtWord {
+                bitmap: U256::from(1_u8) << 255,
+                block: 0,
+            },
+        );
+        db.upsert_v4_liquidity_positions(902, &ticks).unwrap();
+        db.upsert_v4_initialization_maps(902, &bitmaps).unwrap();
+        let events = vec![
+            LiquidityUpdateEvent {
+                block_number: 201,
+                log_index: 0,
+                tick_lower: -10,
+                tick_upper: 10,
+                liquidity_delta: I256::try_from(500_i64).unwrap(),
+            },
+            LiquidityUpdateEvent {
+                block_number: 202,
+                log_index: 0,
+                tick_lower: -10,
+                tick_upper: 10,
+                liquidity_delta: -I256::try_from(200_i64).unwrap(),
+            },
+        ];
+        let conn = db.lock();
+        let expected = DegenbotDb::compute_v4_liquidity_update_on_conn(
+            &conn,
+            &V4_POOL_ID.to_string(),
+            1,
+            &events,
+        )
+        .unwrap()
+        .expect("seeded managed pool computes");
+        drop(conn);
+
+        let db = Arc::new(db);
+        let ingress = PoolIngress::new(
+            Some(DbArm::new(
+                db,
+                Arc::new(FakeV4Source {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )),
+            None,
+        );
+        let actual = ingress
+            .stage_v4_tick_map(V4_MANAGER, V4_POOL_ID, 0, 10, 202)
+            .expect("stages through PoolIngress");
+
+        assert_eq!(actual.ticks.len(), expected.tick_data.len());
+        for (tick, expected_tick) in expected.tick_data {
+            let actual_tick = actual.ticks.get(&tick).expect("tick row");
+            assert_eq!(actual_tick.liquidity_gross, expected_tick.liquidity_gross);
+            assert_eq!(
+                actual_tick.liquidity_net,
+                i128::try_from(expected_tick.liquidity_net).unwrap()
+            );
+        }
+        assert_eq!(actual.bitmaps.len(), expected.tick_bitmap.len());
+        for (word, expected_word) in expected.tick_bitmap {
+            assert_eq!(actual.bitmaps[&word], expected_word.bitmap);
+        }
+    }
+
+    #[test]
+    fn v4_db_to_head_seed_matches_existing_updater_math_with_full_provenance() {
+        let mut base_bitmap = U256::ZERO;
+        base_bitmap.set_bit(255, true);
+        let db = Arc::new(FakeV4Db {
+            map: Some(LiquidityMap {
+                tick_bitmap: HashMap::from([(
+                    -1,
+                    BitmapAtWord {
+                        bitmap: base_bitmap,
+                    },
+                )]),
+                tick_data: HashMap::from([(
+                    -10,
+                    LiquidityAtTick {
+                        liquidity_gross: U256::from(1_000_u64),
+                        liquidity_net: 1_000,
+                    },
+                )]),
+            }),
+            update_block: 200,
+        });
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let ingress = PoolIngress::new(
+            Some(DbArm::new(
+                db,
+                Arc::new(FakeV4Source {
+                    calls: Arc::clone(&calls),
+                }),
+            )),
+            None,
+        );
+
+        let seed = ingress
+            .stage_v4_tick_map(V4_MANAGER, V4_POOL_ID, 0, 10, 202)
+            .expect("V4 Db map advances to head");
+
+        assert_eq!(seed.source, TickMapSource::Db);
+        assert_eq!(seed.coverage, PoolTickCoverage::Tracked);
+        assert_eq!(
+            seed.identity,
+            TickMapPoolIdentity::V4 {
+                manager: V4_MANAGER,
+                pool_id: V4_POOL_ID,
+            }
+        );
+        assert_eq!(seed.source_block, Some(200));
+        assert_eq!(seed.seed_block, 202);
+        assert_eq!(seed.ticks[&-10].liquidity_gross, U128::from(1_300_u64));
+        assert_eq!(seed.ticks[&-10].liquidity_net, 1_300);
+        assert_eq!(seed.ticks[&10].liquidity_gross, U128::from(300_u64));
+        assert_eq!(seed.ticks[&10].liquidity_net, -300);
+        assert_eq!(seed.bitmaps[&0], U256::from(2_u8));
+        assert_eq!(seed.bitmaps[&-1], U256::from(1_u8) << 255usize);
+        assert_eq!(
+            calls.lock().as_slice(),
+            &[(V4_MANAGER, V4_POOL_ID, 201, 202)]
         );
     }
 

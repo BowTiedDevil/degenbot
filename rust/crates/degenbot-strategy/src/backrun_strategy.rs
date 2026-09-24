@@ -13,13 +13,12 @@ use crate::backrun_engine::{
     compose_candidate, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily,
     PathReject,
 };
-use alloy::primitives::{address, Address, B256, U256};
+use alloy::primitives::{address, Address, U256};
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_decoders::target_class::TargetClass;
 use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::v3_state::ClSlotLayout;
-use degenbot_pools::{slot_layout, v4_storage_slots, TickInfo};
+use degenbot_pools::{slot_layout, TickInfo};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
@@ -183,7 +182,7 @@ pub async fn admit_extracted_verified(
     states: &[PoolPostState],
     seed_block: u64,
     trace_tx: &str,
-    tick_window: Option<&dyn V3TickWindow>,
+    _tick_window: Option<&dyn V3TickWindow>,
 ) -> Vec<AffectedPool> {
     let mut out = Vec::new();
     let Some(idx) = rt.index() else {
@@ -408,37 +407,31 @@ pub async fn admit_extracted_verified(
                         },
                     );
                 }
-                // The V4 twin of the V3 anchor merge: the replayed journal
-                // carries only the ticks the target CROSSED, so seed the
-                // in-range window from the same chain view the frames replay
-                // over (manager-addressed `poolId`-derived bases).
-                if let Some(window) = tick_window {
-                    for (tick, info) in window.v4_tick_window(
+                let p_id = match solver
+                    .admit_v4_replay(
                         st.address,
+                        edge.state_view,
+                        edge.token0,
+                        edge.token1,
                         *pool_id,
+                        edge.fee,
                         edge.tick_spacing,
+                        edge.hooks,
+                        sqrt,
+                        liq,
                         tk,
+                        tick_data,
                         seed_block,
-                    ) {
-                        tick_data.entry(tick).or_insert(info);
+                        rt.ingress(),
+                    )
+                    .await
+                {
+                    Ok(pool_id) => pool_id,
+                    Err(decline) => {
+                        trace_admit_fail(trace_tx, st.address, decline.stage(), &decline.detail());
+                        skip(st.address, "v4-ingress");
+                        continue;
                     }
-                }
-                let Some(p_id) = solver.admit_v4_explicit(
-                    st.address,
-                    edge.token0,
-                    edge.token1,
-                    *pool_id,
-                    edge.fee,
-                    edge.tick_spacing,
-                    edge.hooks,
-                    sqrt,
-                    liq,
-                    tk,
-                    tick_data,
-                    seed_block,
-                ) else {
-                    skip(st.address, "v4-admit");
-                    continue;
                 };
                 let quotes = quote_orientations(rt, edge.token0, edge.token1);
                 if quotes.is_empty() {
@@ -496,115 +489,6 @@ fn view_v2_reserves(
         })
 }
 
-/// Read a V4 pool's in-range tick window through a layered [`DatabaseRef`]
-/// view: the bitmap words at `current_tick` ± 1 at the `poolId`-derived
-/// `tickBitmap` base under the `PoolManager` singleton, then the initialized
-/// tick words those bitmaps select. Same window shape as the retired V3
-/// scratch window, manager-addressed `keccak` bases.
-fn read_v4_tick_window(
-    ext: &ScratchDb<'_>,
-    manager: Address,
-    pool_id: B256,
-    tick_spacing: i32,
-    current_tick: i32,
-    head: u64,
-) -> HbMap<i32, TickInfo> {
-    let base = v4_storage_slots::v4_pool_state_base_slot(pool_id);
-    let spacing = i64::from(tick_spacing.max(1));
-    let (word_pos, _) = floor_word_pos(current_tick, spacing);
-    let w0 = i64::from(word_pos).saturating_sub(1);
-    let w1 = i64::from(word_pos).saturating_add(1);
-    let mut tick_data = HbMap::default();
-    for w in w0..=w1 {
-        let Ok(word_pos_i16) = i16::try_from(w) else {
-            continue;
-        };
-        let slot = v4_storage_slots::v4_tick_bitmap_word_slot(word_pos_i16, base);
-        let Some(bitmap) = read_view_word(ext, manager, slot) else {
-            continue;
-        };
-        for bit in 0..256i64 {
-            let Ok(bit_u256) = U256::try_from(bit) else {
-                continue;
-            };
-            if (bitmap >> bit_u256) & U256::ONE != U256::ONE {
-                continue;
-            }
-            let tick = i64::from(word_pos_i16) * 256 + bit;
-            let Some(tick_scaled) = tick.checked_mul(spacing) else {
-                continue;
-            };
-            let Ok(tick_i32) = i32::try_from(tick_scaled) else {
-                continue;
-            };
-            let Some(word) = read_view_word(
-                ext,
-                manager,
-                v4_storage_slots::v4_tick_mapping_slot(tick_i32, base),
-            ) else {
-                continue;
-            };
-            let (gross, net) = slot_layout::decode_tick_word(word);
-            tick_data.insert(
-                tick_i32,
-                TickInfo {
-                    liquidity_gross: alloy::primitives::aliases::U128::from(gross),
-                    liquidity_net: net,
-                    block: head,
-                },
-            );
-        }
-    }
-    tick_data
-}
-
-impl V3TickWindow for ScratchDb<'_> {
-    /// The V3 anchor map arrives through the ingress (`Db → Chain`); this
-    /// scratch chain view serves the V4 anchor window only.
-    fn tick_window(
-        &self,
-        _pool: Address,
-        _layout: ClSlotLayout,
-        _tick_spacing: i32,
-        _current_tick: i32,
-        _head: u64,
-    ) -> HbMap<i32, TickInfo> {
-        HbMap::default()
-    }
-
-    fn v4_tick_window(
-        &self,
-        manager: Address,
-        pool_id: B256,
-        tick_spacing: i32,
-        current_tick: i32,
-        head: u64,
-    ) -> HbMap<i32, TickInfo> {
-        read_v4_tick_window(self, manager, pool_id, tick_spacing, current_tick, head)
-    }
-}
-
-/// `(word position, bit position)` per the CL bitmap layout —
-/// `compressed = floor_div(tick / spacing)`; `word = compressed >> 8`,
-/// `bit = compressed & 0xFF`. Local floor-division twin of
-/// `degenbot_math::cl::liquidity_mapping` (kept inline so this crate needs
-/// no extra edge).
-fn floor_word_pos(tick: i32, spacing: i64) -> (i16, u16) {
-    let compressed = floor_div_i64(i64::from(tick), spacing);
-    (
-        i16::try_from(compressed >> 8).unwrap_or(0),
-        u16::try_from(compressed & 0xFF).unwrap_or(0),
-    )
-}
-
-fn floor_div_i64(a: i64, b: i64) -> i64 {
-    let q = a / b;
-    if a % b != 0 && ((a < 0) != (b < 0)) {
-        q - 1
-    } else {
-        q
-    }
-}
 // ─────────────────────────────────────────────────────────────────────────
 // Discovery + solve
 // ─────────────────────────────────────────────────────────────────────────

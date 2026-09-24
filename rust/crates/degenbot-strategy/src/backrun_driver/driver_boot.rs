@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun};
 use crate::strategy_kit::StrategyKit;
-use degenbot_bot::bot_core::pool_ingress::{AlloySampleVerifier, AlloyV3LiquidityLogSource, DbArm};
+use degenbot_bot::bot_core::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerifier, DbArm};
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
@@ -349,7 +349,7 @@ pub fn backrun_boot(
     let db_arm = connector_db.clone().map(|db| {
         DbArm::new(
             db,
-            Arc::new(AlloyV3LiquidityLogSource::new(
+            Arc::new(AlloyLiquidityLogSource::new(
                 Arc::clone(&join.provider),
                 BACKFILL_LOG_CHUNK_BLOCKS,
             )),

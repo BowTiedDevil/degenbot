@@ -46,7 +46,7 @@
 use std::sync::Arc;
 
 use degenbot_bot::bot_core::pool_ingress::{
-    DbArm, IngressWitness, PoolIngress, TickMapSampleVerifier, VerifyLevel,
+    DbArm, IngressWitness, PoolIngress, TickMapPoolIdentity, TickMapSampleVerifier, VerifyLevel,
 };
 use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_pools::tick_fetch::TickBootstrapRpc;
@@ -90,16 +90,32 @@ struct TraceBackfillWitness;
 impl IngressWitness for TraceBackfillWitness {
     fn db_backfill(
         &self,
-        pool_address: alloy::primitives::Address,
+        identity: TickMapPoolIdentity,
         from_block: u64,
         to_block: u64,
         events: usize,
     ) {
+        let (family, pool) = match identity {
+            TickMapPoolIdentity::V3(pool) => ("v3", pool),
+            TickMapPoolIdentity::V4 { manager, pool_id } => {
+                return crate::frame_pipeline::trace_jsonl(
+                    "ingress_stage",
+                    serde_json::json!({
+                        "pool": format!("0x{}", alloy::hex::encode(manager)),
+                        "pool_id": pool_id,
+                        "stage": "admit-v4-db-backfill",
+                        "from_block": from_block,
+                        "to_block": to_block,
+                        "events": events,
+                    }),
+                );
+            }
+        };
         crate::frame_pipeline::trace_jsonl(
             "ingress_stage",
             serde_json::json!({
-                "pool": format!("0x{}", alloy::hex::encode(pool_address)),
-                "stage": "admit-v3-db-backfill",
+                "pool": format!("0x{}", alloy::hex::encode(pool)),
+                "stage": format!("admit-{family}-db-backfill"),
                 "from_block": from_block,
                 "to_block": to_block,
                 "events": events,

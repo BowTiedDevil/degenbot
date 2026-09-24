@@ -14,20 +14,22 @@
     clippy::similar_names
 )]
 
-use alloy::primitives::{address, aliases::U112, Address, B256, U128, U256};
+use alloy::primitives::{address, aliases::U112, Address, B256, I256, U256};
 
+use degenbot_bot::bot_core::pool_ingress::{
+    TickMapSampleTarget, TickMapSampleVerifier, VerifyLevel,
+};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V4Edge};
 use degenbot_db::connection::DegenbotDb;
+use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
 use degenbot_pools::slot_layout::V2ReservesParts;
-use degenbot_pools::v3_state::ClSlotLayout;
-use degenbot_pools::TickInfo;
+use degenbot_rpc::liquidity_verifier::LiquidityMap as RpcLiquidityMap;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord, TypedPoolPost, V4PoolSet,
 };
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
-use degenbot_strategy::pending_tx::V3TickWindow;
 use hashbrown::HashMap as HbMap;
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
@@ -35,10 +37,20 @@ use hashbrown::HashMap as HbMap;
 /// fetch declines loudly rather than staging stale state.
 struct NoBackfill;
 
-impl degenbot_bot::bot_core::pool_ingress::V3LiquidityLogSource for NoBackfill {
+impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
     fn fetch_v3_liquidity_events(
         &self,
         _pool: alloy::primitives::Address,
+        _from: u64,
+        _to: u64,
+    ) -> Result<Vec<degenbot_db::LiquidityUpdateEvent>, String> {
+        Err("this fixture wires no backfill transport".into())
+    }
+
+    fn fetch_v4_liquidity_events(
+        &self,
+        _manager: alloy::primitives::Address,
+        _pool_id: alloy::primitives::B256,
         _from: u64,
         _to: u64,
     ) -> Result<Vec<degenbot_db::LiquidityUpdateEvent>, String> {
@@ -49,16 +61,14 @@ impl degenbot_bot::bot_core::pool_ingress::V3LiquidityLogSource for NoBackfill {
 fn market_context(
     registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
     db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
+    verify: VerifyLevel,
+    verifier: Option<std::sync::Arc<dyn TickMapSampleVerifier>>,
 ) -> MarketContext {
     let db_arm = db.clone().map(|db| {
         degenbot_bot::bot_core::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
     });
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
-        registry,
-        db_arm,
-        None,
-        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
-        None,
+        registry, db_arm, None, verify, verifier,
     );
     MarketContext::new(1, db, kit, 8, 4)
 }
@@ -74,6 +84,14 @@ fn v4_pool_hash() -> B256 {
 }
 
 fn runtime_fixture(v4_fee: u32) -> MarketContext {
+    runtime_fixture_with(v4_fee, VerifyLevel::default(), None)
+}
+
+fn runtime_fixture_with(
+    v4_fee: u32,
+    verify: VerifyLevel,
+    verifier: Option<std::sync::Arc<dyn TickMapSampleVerifier>>,
+) -> MarketContext {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let tok_id = db
         .get_or_create_erc20_token(1, &TOK.to_checksum(None), None, None, None)
@@ -91,6 +109,7 @@ fn runtime_fixture(v4_fee: u32) -> MarketContext {
     index.push_v4_edge(V4Edge {
         pool_hash: v4_pool_hash(),
         manager: V4_MANAGER,
+        state_view: None,
         token0: TOK,
         token1: WETH,
         fee: v4_fee,
@@ -99,11 +118,73 @@ fn runtime_fixture(v4_fee: u32) -> MarketContext {
         hooks: Address::ZERO,
         db_pool_id: V4_DB_POOL_ID,
     });
+    {
+        let conn = db.lock();
+        conn.execute_batch(&format!(
+            "PRAGMA foreign_keys=OFF;
+             INSERT INTO exchanges (id, chain_id, name, active, factory) VALUES
+                (1, 1, 'uniswap_v4', 1, '{V4_MANAGER}');
+             INSERT INTO pool_managers (id, address, chain, kind, state_view, exchange_id) VALUES
+                (1, '{}', 1, 'uniswap_v4', NULL, 1);
+             INSERT INTO managed_pools (id, kind, manager_id) VALUES
+                ({V4_DB_POOL_ID}, 'uniswap_v4', 1);
+             INSERT INTO uniswap_v4_pools
+                (managed_pool_id, pool_hash, hooks, currency0_id, currency1_id,
+                 fee_currency0, fee_currency1, fee_denominator, tick_spacing)
+             VALUES ({V4_DB_POOL_ID}, '{}', '{}', {}, {}, {}, {}, 1000000, 10);",
+            V4_MANAGER.to_checksum(None),
+            v4_pool_hash(),
+            Address::ZERO.to_checksum(None),
+            tok_id,
+            weth_id,
+            v4_fee,
+            v4_fee,
+        ))
+        .unwrap();
+    }
+    let mut ticks = HbMap::new();
+    ticks.insert(
+        -120,
+        ApplyLiquidityAtTick {
+            liquidity_net: I256::try_from(-4_000_i64).unwrap(),
+            liquidity_gross: alloy::primitives::U128::from(8_000_u64),
+            block: 0,
+        },
+    );
+    ticks.insert(
+        120,
+        ApplyLiquidityAtTick {
+            liquidity_net: I256::try_from(5_000_i64).unwrap(),
+            liquidity_gross: alloy::primitives::U128::from(10_000_u64),
+            block: 0,
+        },
+    );
+    let mut bitmaps = HbMap::new();
+    bitmaps.insert(
+        -1,
+        ApplyBitmapAtWord {
+            bitmap: U256::from(1_u8) << 244,
+            block: 0,
+        },
+    );
+    bitmaps.insert(
+        0,
+        ApplyBitmapAtWord {
+            bitmap: U256::from(1_u8) << 12,
+            block: 0,
+        },
+    );
+    db.upsert_v4_liquidity_positions(i64::try_from(V4_DB_POOL_ID).unwrap(), &ticks)
+        .unwrap();
+    db.upsert_v4_initialization_maps(i64::try_from(V4_DB_POOL_ID).unwrap(), &bitmaps)
+        .unwrap();
     market_context(
         Some(std::sync::Arc::new(
             degenbot_bot::bot_core::RouteRegistry::new(index),
         )),
         Some(std::sync::Arc::new(db)),
+        verify,
+        verifier,
     )
 }
 
@@ -151,48 +232,20 @@ fn v2_post() -> PoolPostState {
     }
 }
 
-/// The chain view's V4 in-range window: two initialized ticks straddling
-/// tick 0 (the slack a shallow target swap leaves untracked).
-struct V4TwoTickWindow;
+struct CountingVerifier {
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
 
-impl V3TickWindow for V4TwoTickWindow {
-    fn tick_window(
+#[async_trait::async_trait]
+impl TickMapSampleVerifier for CountingVerifier {
+    async fn verify(
         &self,
-        _pool: Address,
-        _layout: ClSlotLayout,
-        _tick_spacing: i32,
-        _current_tick: i32,
-        _head: u64,
-    ) -> HbMap<i32, TickInfo> {
-        HbMap::default()
-    }
-
-    fn v4_tick_window(
-        &self,
-        _manager: Address,
-        _pool_id: B256,
-        _tick_spacing: i32,
-        _current_tick: i32,
-        head: u64,
-    ) -> HbMap<i32, TickInfo> {
-        let mut m = HbMap::default();
-        m.insert(
-            120,
-            TickInfo {
-                liquidity_gross: U128::from(10_000),
-                liquidity_net: 5_000,
-                block: head,
-            },
-        );
-        m.insert(
-            -120,
-            TickInfo {
-                liquidity_gross: U128::from(8_000),
-                liquidity_net: -4_000,
-                block: head,
-            },
-        );
-        m
+        _target: TickMapSampleTarget,
+        _map: &RpcLiquidityMap,
+        _block: u64,
+    ) -> Result<(), String> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
     }
 }
 
@@ -263,29 +316,31 @@ fn typed_v4_post_admits_and_declares_a_v4_v2_solve() {
 }
 
 #[test]
-fn v4_anchor_merges_the_chain_view_tick_window() {
-    // The target crossed no initialized tick: the replayed V4 post carries no
-    // touched ticks, so the cleared chain view must supply the in-range
-    // window or the projection cannot build a range sequence.
-    let rt = runtime_fixture(500);
+fn v4_anchor_with_no_crossed_ticks_uses_and_samples_the_real_pool_ingress() {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = runtime_fixture_with(
+        500,
+        VerifyLevel::Strict,
+        Some(std::sync::Arc::new(CountingVerifier {
+            calls: std::sync::Arc::clone(&calls),
+        })),
+    );
     let mut solver = BackrunSolver::new();
     let mut v4 = v4_post();
     let PoolPostKind::Typed(TypedPoolPost::V4 { touched_ticks, .. }) = &mut v4.kind else {
         panic!("fixture is a typed V4 post");
     };
     touched_ticks.clear();
-    let affected = admit_extracted(
-        &rt,
-        &mut solver,
-        &[v4, v2_post()],
+    let affected = admit_extracted(&rt, &mut solver, &[v4, v2_post()], 1, "0xtest", None);
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
         1,
-        "0xtest",
-        Some(&V4TwoTickWindow),
+        "the anchor must cross PoolIngress's tracked-map sample"
     );
     let v4 = affected
         .iter()
         .find(|a| a.address == V4_MANAGER)
-        .expect("the V4 post admits with the window");
+        .expect("the V4 Db map makes the anchor solvable");
     let p = affected
         .iter()
         .find(|a| a.address == P)
@@ -312,7 +367,7 @@ fn v4_anchor_merges_the_chain_view_tick_window() {
     let idx = solver.declare_hops(&chain);
     let solved = solver
         .evaluate_verdict(idx, U256::ZERO)
-        .expect("the merged window makes the V4 anchor solvable");
+        .expect("the Db-backed V4 anchor reaches the solver");
     assert_eq!(solved.optimal_input, U256::from(21_394u64));
     assert_eq!(solved.profit, U256::from(456_202u64));
 }

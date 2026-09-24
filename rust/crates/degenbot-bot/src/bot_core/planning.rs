@@ -29,7 +29,7 @@
 //! with the offline gate deps, so a workspace verdict and an engine verdict
 //! for identical state are one verdict.
 
-use alloy::primitives::{aliases::U112, Address, U256};
+use alloy::primitives::{aliases::U112, Address, B256, U256};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::ClSlotLayout;
@@ -52,10 +52,24 @@ pub struct PlanningPoolParams {
     pub token1: Address,
 }
 
+/// The family-specific pool identity carried by every staged tick map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TickMapPoolIdentity {
+    /// A V3 pool contract.
+    V3(Address),
+    /// A V4 pool's manager-keyed identity.
+    V4 {
+        /// The shared storage owner and event emitter.
+        manager: Address,
+        /// The pool id carried by `ModifyLiquidity` topic 1.
+        pool_id: B256,
+    },
+}
+
 /// Provenance of a staged tick map: which arm produced it. `Db` and `Chain`
 /// seeds carry an invariant (state precedence and coverage semantics) and can
 /// be minted only inside `bot_core`; `Journal` is exact-replay post-state
-/// truth the backrun journal admission owns.
+/// truth owned by the same provisioning boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickMapSource {
     /// `TickMapDb::fetch_liquidity_map` supplied the complete map
@@ -101,6 +115,10 @@ pub struct TickMapSeed {
     pub coverage: PoolTickCoverage,
     /// The block the map is exact at (the liquidity clock).
     pub seed_block: u64,
+    /// The source block before any frame-local backfill, when known.
+    pub source_block: Option<u64>,
+    /// The pool identity to which every tick and bitmap word belongs.
+    pub identity: TickMapPoolIdentity,
     /// Which arm produced the map.
     pub source: TickMapSource,
 }
@@ -114,12 +132,16 @@ impl TickMapSeed {
         bitmaps: hashbrown::HashMap<i32, U256>,
         coverage: PoolTickCoverage,
         block: u64,
+        source_block: Option<u64>,
+        identity: TickMapPoolIdentity,
     ) -> Self {
         Self {
             ticks,
             bitmaps,
             coverage,
             seed_block: block,
+            source_block,
+            identity,
             source: TickMapSource::Db,
         }
     }
@@ -132,29 +154,37 @@ impl TickMapSeed {
         bitmaps: hashbrown::HashMap<i32, U256>,
         coverage: PoolTickCoverage,
         block: u64,
+        identity: TickMapPoolIdentity,
     ) -> Self {
         Self {
             ticks,
             bitmaps,
             coverage,
             seed_block: block,
+            source_block: None,
+            identity,
             source: TickMapSource::Chain,
         }
     }
 
-    /// A Journal-arm seed: exact-replay post-state tick words. Public so the
-    /// backrun journal admission path can mint it without an RPC ladder.
+    /// A Journal-arm seed for exact-replay tests inside the capability crate.
+    /// Production provisioning mints Db/Chain seeds through `PoolIngress`.
+    #[cfg(test)]
     #[must_use]
-    pub fn journal(
+    pub(crate) fn journal(
+        identity: TickMapPoolIdentity,
         ticks: hashbrown::HashMap<i32, TickInfo>,
+        bitmaps: hashbrown::HashMap<i32, U256>,
         coverage: PoolTickCoverage,
         block: u64,
     ) -> Self {
         Self {
             ticks,
-            bitmaps: hashbrown::HashMap::new(),
+            bitmaps,
             coverage,
             seed_block: block,
+            source_block: None,
+            identity,
             source: TickMapSource::Journal,
         }
     }
@@ -665,7 +695,16 @@ mod tests {
                 sqrt_price_x96: U256::from(1u128) << 96,
                 liquidity,
                 tick: 0,
-                seed: TickMapSeed::journal(v4_ticks(), PoolTickCoverage::Sparse, SEED),
+                seed: TickMapSeed::journal(
+                    TickMapPoolIdentity::V4 {
+                        manager: PM,
+                        pool_id: B256::from(V4_POOL_ID),
+                    },
+                    v4_ticks(),
+                    hashbrown::HashMap::new(),
+                    PoolTickCoverage::Sparse,
+                    SEED,
+                ),
             },
             SEED,
         )

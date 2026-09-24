@@ -53,6 +53,8 @@ pub struct V4Edge {
     pub pool_hash: B256,
     /// The `PoolManager` singleton address (`pool_managers.address`).
     pub manager: Address,
+    /// The manager's `StateView`, used only for sparse tick bootstrap.
+    pub state_view: Option<Address>,
     /// `currency0` (V4's sorted-lower currency) token address.
     pub token0: Address,
     /// `currency1` token address.
@@ -879,6 +881,7 @@ impl V2ConnectorIndex {
             self.push_v4_edge(V4Edge {
                 pool_hash: row.pool_hash,
                 manager: row.manager.address,
+                state_view: row.manager.state_view,
                 token0: row.token0.address,
                 token1: row.token1.address,
                 fee,

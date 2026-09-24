@@ -62,7 +62,12 @@ fn no_tick_word_fetch_lives_in_the_strategy_crate() {
 fn strategy_crate_cannot_mint_db_or_chain_seed_provenance() {
     for file in strategy_sources() {
         let text = fs::read_to_string(&file).expect("a strategy source is utf-8");
-        for token in ["TickMapSeed::db(", "TickMapSeed::chain(", "TickMapSeed {"] {
+        for token in [
+            "TickMapSeed::db(",
+            "TickMapSeed::chain(",
+            "TickMapSeed::journal(",
+            "TickMapSeed {",
+        ] {
             assert!(
                 !text.contains(token),
                 "{} claims Db/Chain seed provenance ({token}); only bot_core::pool_ingress may mint it",

@@ -82,7 +82,7 @@ use degenbot_decoders::v4_swap_decoder::V4PoolId;
 // this submodule to `degenbot_pools::v3_state`'s private path.
 use degenbot_pools::tick_fetch::{BootstrapTickError, TickBootstrapRpc};
 
-use crate::bot_core::planning::TickMapSeed;
+use crate::bot_core::planning::{TickMapPoolIdentity, TickMapSeed};
 use crate::bot_core::{PoolTickCoverage, TickInfo};
 
 /// The helper's error envelope: a `DbError` from the Db arm OR a
@@ -176,17 +176,20 @@ impl TickMapArm {
     /// arms: Db provenance, Chain provenance, and the `ChainMiss` → empty
     /// `Sparse` semantics cannot drift between transports.
     #[must_use]
-    pub(crate) fn into_seed(self, block: u64) -> TickMapSeed {
+    pub(crate) fn into_seed(self, block: u64, identity: TickMapPoolIdentity) -> TickMapSeed {
         match self {
-            Self::Db(ticks, bitmaps, coverage) => TickMapSeed::db(ticks, bitmaps, coverage, block),
+            Self::Db(ticks, bitmaps, coverage) => {
+                TickMapSeed::db(ticks, bitmaps, coverage, block, Some(block), identity)
+            }
             Self::Chain(ticks, bitmaps) => {
-                TickMapSeed::chain(ticks, bitmaps, PoolTickCoverage::Sparse, block)
+                TickMapSeed::chain(ticks, bitmaps, PoolTickCoverage::Sparse, block, identity)
             }
             Self::ChainMiss => TickMapSeed::chain(
                 HashMap::new(),
                 HashMap::new(),
                 PoolTickCoverage::Sparse,
                 block,
+                identity,
             ),
         }
     }
@@ -228,6 +231,7 @@ impl TickMapArm {
 /// reconciliation, mapped through `E`.
 pub(crate) fn resolve_tick_map_arm<E, FDb>(
     pool_ident: &str,
+    identity: TickMapPoolIdentity,
     tick_spacing: i32,
     block: u64,
     db_read: FDb,
@@ -251,7 +255,7 @@ where
         }
         None => TickMapArm::Db(HashMap::new(), bitmaps, PoolTickCoverage::Tracked),
     };
-    Ok(Some(arm.into_seed(block)))
+    Ok(Some(arm.into_seed(block, identity)))
 }
 
 /// Mint the Chain arm from a transport's raw hit: `Some(ticks)` is a `Sparse`
@@ -297,6 +301,7 @@ pub fn assemble_v3_tick_map(
 ) -> TickMapAssemblyResult {
     let db_arm = resolve_tick_map_arm::<TickMapAssemblyError, _>(
         &format!("{address}"),
+        TickMapPoolIdentity::V3(address),
         tick_spacing,
         block,
         || match db {
@@ -358,6 +363,10 @@ pub fn assemble_v4_tick_map(
     let pool_id_hash = alloy::primitives::B256::from(pool_id);
     let db_arm = resolve_tick_map_arm::<TickMapAssemblyError, _>(
         &alloy::hex::encode_prefixed(pool_id),
+        TickMapPoolIdentity::V4 {
+            manager: pool_manager,
+            pool_id: pool_id_hash,
+        },
         tick_spacing,
         block,
         || match db {

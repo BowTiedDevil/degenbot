@@ -38,6 +38,7 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "sync", "time", "mac
 tracing = { version = "^0.1" }
 
 [dev-dependencies]
+async-trait = "0.1"
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 proptest = "^1.11"
 revm = { version = "^43.0", default-features = false, features = ["std"] }

@@ -898,14 +898,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     let t = Instant::now();
     let mut solver = BackrunSolver::new();
     let affected = strategy
-        .admit(
-            &*ctx,
-            &mut solver,
-            &extracted,
-            head,
-            &tx_hex,
-            Some(scratch.ext()),
-        )
+        .admit(&*ctx, &mut solver, &extracted, head, &tx_hex, None)
         .await;
     stages.admit_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
     if S::affected_is_empty(&affected) {

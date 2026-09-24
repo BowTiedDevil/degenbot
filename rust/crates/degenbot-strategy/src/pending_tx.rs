@@ -13,7 +13,7 @@
 
 use crate::backrun::BackrunConfig;
 use crate::backrun_engine::BackrunSolver;
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::provider::AlloyProvider;
@@ -24,11 +24,8 @@ use hashbrown::HashMap as HbMap;
 use crate::frame_pipeline::{BidEconomics, PipelineConfig};
 use crate::market_context::MarketContext;
 
-/// A CL tick-window source for anchor admission, read from the same chain
-/// view the frames replay over. Production V3 anchors no longer read here —
-/// their map arrives through the pool ingress (`Db → Chain`); this seam now
-/// serves the V4 anchor window (whose ingress cutover follows on the same
-/// seam) and offline test mocks.
+/// A test/legacy CL tick-window source. Production V3 and V4 anchors receive
+/// their complete or sparse maps through `PoolIngress`, never this seam.
 pub trait V3TickWindow {
     /// The in-range initialized ticks around `current_tick` (retained for
     /// test mocks; production V3 routes through the ingress).
@@ -40,20 +37,6 @@ pub trait V3TickWindow {
         current_tick: i32,
         head: u64,
     ) -> HbMap<i32, TickInfo>;
-
-    /// The V4 twin: the in-range initialized ticks around `current_tick`,
-    /// read at the `PoolManager` singleton through the `poolId`-derived
-    /// bases. The default is empty so offline mocks need no V4 state.
-    fn v4_tick_window(
-        &self,
-        _manager: Address,
-        _pool_id: B256,
-        _tick_spacing: i32,
-        _current_tick: i32,
-        _head: u64,
-    ) -> HbMap<i32, TickInfo> {
-        HbMap::default()
-    }
 }
 
 /// The candidate the driver simulates: the solved best composed at the

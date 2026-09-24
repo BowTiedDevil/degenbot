@@ -13,16 +13,15 @@
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::v3_state::{ClSlotLayout, PoolTickCoverage};
+use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 use degenbot_solvers::mixed::SolvePathResult;
 
 use degenbot_bot::bot_core::executor_hop::{v2_fee_bips, v2_hop, v3_hop, v4_hop};
 use degenbot_bot::bot_core::planning::{
-    ExplicitPoolState, PlanningHop, PlanningPoolParams, TickMapSeed, Workspace,
+    ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace,
 };
-use degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags;
-use degenbot_bot::bot_core::pool_ingress::{IngressV3Params, PoolIngress};
+use degenbot_bot::bot_core::pool_ingress::{IngressV3Params, IngressV4Params, PoolIngress};
 
 pub use degenbot_bot::bot_core::planning::PathReject;
 
@@ -345,25 +344,22 @@ impl BackrunSolver {
             .await
     }
 
-    /// Admit a V4 pool with EXPLICIT journal-provided state — the V4 twin of
-    /// [`BackrunSolver::admit_v3_replay`]: post-target `slot0`/`liquidity` +
-    /// the replayed per-tick words land here verbatim (`Sparse` coverage; the
-    /// solver's projections fail loudly on missing words instead of guessing).
-    /// `None` on a spec-bound registration rejection (bad replayed state).
+    /// Admit a replayed V4 post-state through the policy-enforcing ingress.
+    /// The ingress owns Db→Chain staging, Db-to-head backfill, bitmap merge,
+    /// verification, and registration; this method carries only typed replay
+    /// facts and the workspace boundary.
     ///
-    /// `hook_flags` is derived from `hooks` (the hook contract address is the
-    /// single source of truth for the low-16-bit mask). `protocol_fee` is
-    /// admitted as `0`: the manager's live value is not consumed by backrun
-    /// state math today — settlement's gate reads it from the manager settings,
-    /// so a nonzero protocol fee would need that integration before live
-    /// execution decisions.
+    /// # Errors
+    ///
+    /// Returns the ingress's typed decline without registering a partial seed.
     #[expect(
         clippy::too_many_arguments,
-        reason = "explicit V4 state admission carries the full typed state"
+        reason = "replay identity + post-state + ingress describe distinct layers"
     )]
-    pub fn admit_v4_explicit(
+    pub async fn admit_v4_replay(
         &mut self,
         manager: Address,
+        state_view: Option<Address>,
         token0: Address,
         token1: Address,
         pool_id: B256,
@@ -373,32 +369,30 @@ impl BackrunSolver {
         sqrt_price_x96: U256,
         liquidity: u128,
         tick: i32,
-        tick_data: hashbrown::HashMap<i32, TickInfo>,
+        overlay: hashbrown::HashMap<i32, TickInfo>,
         seed_block: u64,
-    ) -> Option<u64> {
-        self.ws
-            .register_with_state(
-                PlanningPoolParams {
-                    address: manager,
+        ingress: &PoolIngress,
+    ) -> Result<u64, V3LadderReject> {
+        ingress
+            .admit_v4_replay(
+                &mut self.ws,
+                IngressV4Params {
+                    manager,
+                    state_view,
+                    pool_id,
                     token0,
                     token1,
-                },
-                ExplicitPoolState::V4 {
-                    pool_id: pool_id.0,
                     fee,
                     tick_spacing,
                     hooks,
-                    hook_flags: derive_hook_flags(hooks),
-                    protocol_fee: 0,
                     sqrt_price_x96,
                     liquidity,
                     tick,
-                    // Journal provenance: the replayed post-state tick words.
-                    seed: TickMapSeed::journal(tick_data, PoolTickCoverage::Sparse, seed_block),
                 },
+                overlay,
                 seed_block,
             )
-            .ok()
+            .await
     }
 
     /// Register a V3 pool at HEAD through the ingress, optionally OVERRIDING

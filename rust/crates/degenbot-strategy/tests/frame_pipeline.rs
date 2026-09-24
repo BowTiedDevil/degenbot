@@ -44,10 +44,20 @@ use degenbot_strategy::frame_pipeline::{
 /// fetch declines loudly rather than staging stale state.
 struct NoBackfill;
 
-impl degenbot_bot::bot_core::pool_ingress::V3LiquidityLogSource for NoBackfill {
+impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
     fn fetch_v3_liquidity_events(
         &self,
         _pool: alloy::primitives::Address,
+        _from: u64,
+        _to: u64,
+    ) -> Result<Vec<degenbot_db::LiquidityUpdateEvent>, String> {
+        Err("this fixture wires no backfill transport".into())
+    }
+
+    fn fetch_v4_liquidity_events(
+        &self,
+        _manager: alloy::primitives::Address,
+        _pool_id: alloy::primitives::B256,
         _from: u64,
         _to: u64,
     ) -> Result<Vec<degenbot_db::LiquidityUpdateEvent>, String> {
@@ -796,6 +806,7 @@ fn known_v4_roster_extracts_the_typed_post_state() {
     index.push_v4_edge(degenbot_bot::connector_index::V4Edge {
         pool_hash,
         manager: V4_MANAGER,
+        state_view: None,
         token0: TOK,
         token1: WETH,
         fee: 3000,
