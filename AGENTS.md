@@ -51,6 +51,34 @@ the extension explicitly with
 maturin is already pinned to that crate's manifest. Commands intended to cover
 every member must retain an explicit `--workspace` selector.
 
+## Rust feature matrix
+
+Rust validation is split into named lanes rather than one `--all-features` gate:
+
+- `just lint-rust-check` / `just check-rust-default`: workspace Clippy/check
+  with each crate's declared default features and no `--all-features`.
+- `just check-rust-consumer`: the pure-Rust `degenbot` umbrella and its
+  standalone consumer examples, without the PyO3 binding crate.
+- `just check-rust-binding-default`: `degenbot_rs` with its intentionally broad
+  default domain surface, but without `extension-module`.
+- `just check-rust-dev-features`: the exact development-wheel feature list:
+  `extension-module`, `degenbot-bot/hotpath`,
+  `degenbot-bot/hotpath-prometheus`, `degenbot-solvers/hotpath`,
+  `degenbot-bot/allocator-ctrl`, `otel`, and `mimalloc`.
+- `just check-rust-extension-release` / `just build-rust-extension`: the
+  release-equivalent extension set, `extension-module` (forwarding to
+  `pyo3/extension-module`) plus binding defaults. Release wheels use
+  `maturin --release --features pyo3/extension-module` and exclude all
+  development-only profiling, telemetry, allocator-control, and mimalloc
+  features.
+- `just check-rust-all-features`: exhaustive workspace compilation as an
+  explicit diagnostic/secondary gate only. It is not the default gate because
+  it enables test-only and mutually exclusive build variants.
+
+CI runs the default, consumer, binding-default, development-only, and release
+feature checks before the all-features diagnostic. The default gate therefore
+remains meaningful even when the diagnostic is enabled.
+
 ## Rust test scope
 
 Prefer the full-suite gate (`just test-rust`, or `cargo test --workspace --manifest-path rust/Cargo.toml`) to validate changes. Per-crate `cargo test -p <crate>` is fine inside a tight red-green loop, but re-run the workspace suite before declaring work done.

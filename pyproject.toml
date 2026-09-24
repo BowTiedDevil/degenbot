@@ -305,17 +305,20 @@ bindings = "pyo3"
 # consumed ONLY by the local editable-install build path (`uv sync` /
 # `maturin develop`); the published wheel is built by the PyO3/maturin-action
 # in .github/workflows/release.yml, which passes `--release`
-# explicitly and OVERRIDES the features list — so the shipped artifact is
-# unaffected by this setting and stays fully optimized. (The detailed lever
-# analysis lived in rust/PERF_RESULTS.md, dropped in `f082db7a7`)
+# explicitly and replaces this development feature list — so the shipped
+# artifact is unaffected by this setting and stays fully optimized. (The
+# detailed lever analysis lived in rust/PERF_RESULTS.md, dropped in
+# `f082db7a7`)
 profile = "dev"
-# Dev builds compile hotpath in (toggle at runtime via DEGENBOT_HOTPATH=1 —
-# see rust/crates/degenbot-bot/src/profiling.rs), plus its Prometheus exporter
-# (guard-enabled runs serve profiler /metrics on :6772, see
-# docs/grafana/ALERTS.md). Release wheels override this
-# list with `--features pyo3/extension-module` (see
-# .github/workflows/release.yml) so the shipped artifact excludes
-# hotpath — macros are no-op `lib_off`, zero runtime penalty.
+# Development wheels compile hotpath in (toggle at runtime via
+# DEGENBOT_HOTPATH=1 — see rust/crates/degenbot-bot/src/profiling.rs), plus its
+# Prometheus exporter (guard-enabled runs serve profiler /metrics on :6772, see
+# docs/grafana/ALERTS.md), OTel, allocator control, and mimalloc. Release
+# wheels use `--release --features pyo3/extension-module` (see
+# .github/workflows/release.yml), which replaces this list and keeps only the
+# binding crate defaults plus PyO3's extension-module mode. Thus shipped
+# artifacts exclude hotpath — its macros are no-op `lib_off`, zero runtime
+# penalty — as well as the other development-only features.
 features = ["pyo3/extension-module", "degenbot-bot/hotpath", "degenbot-bot/hotpath-prometheus", "degenbot-solvers/hotpath", "degenbot-bot/allocator-ctrl", "otel", "mimalloc"]
 python-packages = ["degenbot"]
 

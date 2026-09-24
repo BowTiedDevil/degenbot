@@ -1601,6 +1601,28 @@ just test-rust
 just dev
 ```
 
+### Rust feature matrix
+
+The Rust workspace is checked by named feature lanes. The default lane never
+uses `--all-features`, so a default-feature regression cannot be hidden by an
+exhaustive build.
+
+| Lane | Feature set | Recipe |
+| --- | --- | --- |
+| Workspace defaults | Every workspace member with its declared default features; no `--all-features` | `just lint-rust-check` or `just check-rust-default` |
+| Pure-Rust consumer | `degenbot` and its examples, with the umbrella's defaults and no PyO3 binding | `just check-rust-consumer` |
+| Binding defaults | `degenbot_rs` with its broad default domain features, without `extension-module` | `just check-rust-binding-default` |
+| Development wheel | `extension-module`, `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`, `degenbot-solvers/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and `mimalloc` | `just check-rust-dev-features` |
+| Release wheel | `extension-module` (forwards to `pyo3/extension-module`) plus `degenbot_rs` defaults; no dev-only profiling, telemetry, allocator-control, or mimalloc features | `just check-rust-extension-release` or `just build-rust-extension` |
+| Diagnostic | Workspace `--all-features`, including test-only and mutually exclusive variants | `just check-rust-all-features` |
+
+The development-wheel list is the exact `[tool.maturin] features` list used by
+`uv sync`/`maturin develop`. Release wheels are built with
+`maturin --release --features pyo3/extension-module`; that release command
+replaces the development feature list and keeps the binding crate's defaults,
+while excluding the development-only features above. The extension-release
+recipe checks this same feature set with Cargo's release profile.
+
 ## Documentation
 
 Additional documentation is available in the [`docs/`](docs/) directory:

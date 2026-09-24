@@ -126,15 +126,50 @@ publish-dry-run:
     cd rust
     cargo publish --locked --workspace --dry-run --allow-dirty
 
-# Run Rust linter (clippy)
+# Run Rust linter (clippy) with each workspace member's declared default features.
+# This is the local fix command; `lint-rust-check` below is the non-mutating gate.
 lint-rust:
-    cargo clippy --locked --workspace --fix --all-targets --all-features --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --locked --workspace --fix --all-targets --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Lint Rust (check-only; non-mutating). This is the authoritative CI/pre-push
-# Clippy gate; it deliberately omits `--fix` so a gate run cannot dirty tracked
-# files. `lint-rust` above remains the explicit local fix command.
+# Clippy gate. It deliberately checks default features without `--all-features`,
+# so test-only and mutually exclusive build variants cannot hide a default
+# regression. `lint-rust` above remains the explicit local fix command.
 lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity
-    cargo clippy --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml -- --deny warnings
+
+# Check every workspace member with its declared default features. This is the
+# independent default-feature check; it is not an all-features build.
+check-rust-default:
+    cargo check --locked --workspace --all-targets --manifest-path rust/Cargo.toml
+
+# Check the pure-Rust umbrella consumer surface, including its standalone
+# examples, without selecting the PyO3 binding crate.
+check-rust-consumer:
+    cargo check --locked -p degenbot --all-targets --manifest-path rust/Cargo.toml
+
+# Check the binding crate with its intentionally broad default domain surface,
+# but without the extension-module link mode.
+check-rust-binding-default:
+    cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml
+
+# Check the dev-wheel feature set. Keep this explicit: these profiling,
+# telemetry, allocator, and allocator-selection features are development-only
+# and are not part of the release-wheel or standalone-default matrix.
+check-rust-dev-features:
+    cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --features "extension-module,degenbot-bot/hotpath,degenbot-bot/hotpath-prometheus,degenbot-solvers/hotpath,degenbot-bot/allocator-ctrl,otel,mimalloc"
+
+# Check the release-equivalent extension feature set in the release profile.
+# The release maturin command uses `pyo3/extension-module`; this package feature
+# forwards to the same PyO3 feature while retaining the binding crate defaults.
+check-rust-extension-release:
+    cargo check --locked --release -p degenbot_rs --lib --manifest-path rust/Cargo.toml --features extension-module
+
+# Exhaustive all-features compilation is an explicit diagnostic, not the
+# default gate. It intentionally includes test-only and mutually exclusive
+# variants and must never be used to validate default or release behavior.
+check-rust-all-features:
+    cargo check --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml
 
 # Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
 # outer #[allow] form; this closes the historical inner-attribute loophole it
@@ -192,7 +227,9 @@ check-engine-impl-blocks:
     # (rust/crates/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- one_engine_impl_block --exact --nocapture
 
-# Build Rust extension module (correct for Python extension)
+# Build Rust extension module in the release-equivalent feature set. This is
+# the debug-profile build used by local validation; the feature set is the same
+# as the release maturin invocation.
 build-rust-extension:
     cargo build --locked -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 

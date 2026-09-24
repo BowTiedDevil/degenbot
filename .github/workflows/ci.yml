@@ -186,8 +186,26 @@ jobs:
       - name: Check engine impl-block gate
         run: just check-engine-impl-blocks
 
-      - name: Run Clippy
+      - name: Run Clippy (workspace defaults)
         run: just lint-rust-check
+
+      - name: Check workspace default features independently
+        run: just check-rust-default
+
+      - name: Check pure-Rust consumer features
+        run: just check-rust-consumer
+
+      - name: Check binding-default features
+        run: just check-rust-binding-default
+
+      - name: Check dev-only extension features
+        run: just check-rust-dev-features
+
+      - name: Check release-equivalent extension features
+        run: just check-rust-extension-release
+
+      - name: Check all features (diagnostic only)
+        run: just check-rust-all-features
 
       - name: Assert Rust lint left the working tree clean
         run: |
