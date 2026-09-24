@@ -316,6 +316,30 @@ fn split_arm_endpoints(
     }
 }
 
+/// Shared storage/access surface for the two public backrun compositions.
+///
+/// The ecosystem-specific wrappers below retain their identities and
+/// submission-slot construction; only the common `BackrunConfig` ownership is
+/// factored out here.
+#[derive(Debug, Clone)]
+struct BackrunComposition {
+    config: BackrunConfig,
+}
+
+impl BackrunComposition {
+    fn new(config: BackrunConfig) -> Self {
+        Self { config }
+    }
+
+    fn config(&self) -> &BackrunConfig {
+        &self.config
+    }
+
+    fn into_config(self) -> BackrunConfig {
+        self.config
+    }
+}
+
 /// The MEVBlocker-ecosystem backrun strategy: the shared pending-transaction
 /// reaction composed over per-ecosystem facets.
 ///
@@ -329,7 +353,7 @@ fn split_arm_endpoints(
 /// | **submission** | the MEVBlocker searcher bundle, private broadcast first |
 #[derive(Debug, Clone)]
 pub struct MevblockerBackrun {
-    config: BackrunConfig,
+    composition: BackrunComposition,
 }
 
 impl MevblockerBackrun {
@@ -341,20 +365,20 @@ impl MevblockerBackrun {
         let knobs = facet.backrun_knobs();
         let submission = knobs.mevblocker_slot(facet);
         Self {
-            config: knobs.into_config(cfg, rpc_url, submission),
+            composition: BackrunComposition::new(knobs.into_config(cfg, rpc_url, submission)),
         }
     }
 
     /// The composed driver config.
     #[must_use]
     pub fn config(&self) -> &BackrunConfig {
-        &self.config
+        self.composition.config()
     }
 
     /// Consume the composition into the driver config.
     #[must_use]
     pub fn into_config(self) -> BackrunConfig {
-        self.config
+        self.composition.into_config()
     }
 }
 
@@ -376,7 +400,7 @@ impl Strategy for MevblockerBackrun {
 /// | **submission** | the public relay fan-out, read-provider fallback |
 #[derive(Debug, Clone)]
 pub struct PeerBackrun {
-    config: BackrunConfig,
+    composition: BackrunComposition,
 }
 
 impl PeerBackrun {
@@ -388,20 +412,20 @@ impl PeerBackrun {
         let knobs = facet.backrun_knobs();
         let submission = knobs.peer_slot();
         Self {
-            config: knobs.into_config(cfg, rpc_url, submission),
+            composition: BackrunComposition::new(knobs.into_config(cfg, rpc_url, submission)),
         }
     }
 
     /// The composed driver config.
     #[must_use]
     pub fn config(&self) -> &BackrunConfig {
-        &self.config
+        self.composition.config()
     }
 
     /// Consume the composition into the driver config.
     #[must_use]
     pub fn into_config(self) -> BackrunConfig {
-        self.config
+        self.composition.into_config()
     }
 }
 
