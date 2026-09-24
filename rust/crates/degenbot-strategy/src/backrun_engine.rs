@@ -783,6 +783,10 @@ mod tests {
         assert!(cd.len() > 4 + 32 * 3 + 64);
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the parity test keeps both public encoder pipelines visible"
+    )]
     #[test]
     fn settlement_and_backrun_project_v2_to_the_same_executor_bytes() {
         use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams};
