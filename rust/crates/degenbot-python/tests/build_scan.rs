@@ -26,6 +26,7 @@ fn workspace(tag: &str) -> PathBuf {
     fs::write(root.join("Cargo.lock"), "# lock\n").unwrap();
     fs::write(app.join("Cargo.toml"), "[package]\nname = \"app\"\n").unwrap();
     fs::write(app.join("build.rs"), "fn main() {}\n").unwrap();
+    fs::write(app.join("build_scan.rs"), "fn scanner() {}\n").unwrap();
     fs::write(app.join("src/lib.rs"), "pub fn app() {}\n").unwrap();
     fs::write(dep.join("Cargo.toml"), "[package]\nname = \"dep\"\n").unwrap();
     fs::write(dep.join("src/lib.rs"), "pub fn dep() {}\n").unwrap();
@@ -63,6 +64,61 @@ fn dep_only_edit_moves_fingerprint_and_is_a_rerun_trigger() {
         after.files.iter().any(|f| f.path == dep_file),
         "the edited dependency file must be a rerun trigger"
     );
+}
+
+#[test]
+fn scanner_self_edit_moves_fingerprint_and_is_a_rerun_trigger() {
+    let root = workspace("scanner-edit");
+    let scanner = root.join("crates/app/build_scan.rs");
+
+    let before = scan_app(&root);
+    assert!(
+        before.files.iter().any(|f| f.path == scanner),
+        "the included scanner source must be folded into the fingerprint"
+    );
+
+    fs::write(&scanner, "fn scanner() { let _ = 1; }\n").unwrap();
+    let after = scan_app(&root);
+
+    assert_ne!(
+        before.fingerprint, after.fingerprint,
+        "a scanner self-edit must move the fingerprint"
+    );
+    assert!(
+        after.files.iter().any(|f| f.path == scanner),
+        "the scanner source must be a rerun trigger"
+    );
+}
+
+#[test]
+fn build_inputs_move_fingerprint_and_are_rerun_triggers() {
+    let root = workspace("build-inputs");
+    let cargo_config_dir = root.join(".cargo");
+    fs::create_dir_all(&cargo_config_dir).unwrap();
+    let cargo_config = cargo_config_dir.join("config.toml");
+    fs::write(&cargo_config, "[build]\nrustflags = []\n").unwrap();
+    let sibling_build = root.join("crates/dep/build.rs");
+    fs::write(&sibling_build, "fn main() {}\n").unwrap();
+
+    let before = scan_app(&root);
+    assert!(before.files.iter().any(|f| f.path == cargo_config));
+    assert!(before.files.iter().any(|f| f.path == sibling_build));
+    assert!(before.dirs.contains(&cargo_config_dir));
+
+    fs::write(
+        &cargo_config,
+        "[build]\nrustflags = [\"--cfg\", \"test_cfg\"]\n",
+    )
+    .unwrap();
+    fs::write(&sibling_build, "fn main() { println!(\"rerun\"); }\n").unwrap();
+    let after = scan_app(&root);
+
+    assert_ne!(
+        before.fingerprint, after.fingerprint,
+        "Cargo config and sibling build scripts must move the fingerprint"
+    );
+    assert!(after.files.iter().any(|f| f.path == cargo_config));
+    assert!(after.files.iter().any(|f| f.path == sibling_build));
 }
 
 #[test]

@@ -4,7 +4,8 @@
 // `cargo:rerun-if-changed` triggers of everything that can link into the
 // shipped cdylib) and by `tests/build_scan.rs` (to pin the behavior that a
 // dependency-only source edit both moves the fingerprint and appears in the
-// rerun-trigger set). std-only, and free of inner attributes: `include!`
+// rerun-trigger set). The included scanner source is itself an input and is
+// scanned explicitly. std-only, and free of inner attributes: `include!`
 // splices these items into the build script's crate root, where `//!` is
 // illegal.
 
@@ -128,10 +129,16 @@ pub fn scan_workspace(crate_dir: &Path) -> Option<WorkspaceScan> {
     let mut files = Vec::new();
     let mut dirs = Vec::new();
 
-    // This crate: build.rs + manifest + src tree.
+    // This crate: build.rs, the included scanner, manifest, and src tree.
     if let Some(file) = read_file(
         &crate_dir.join("build.rs"),
         &format!("crates/{own_name}/build.rs"),
+    ) {
+        files.push(file);
+    }
+    if let Some(file) = read_file(
+        &crate_dir.join("build_scan.rs"),
+        &format!("crates/{own_name}/build_scan.rs"),
     ) {
         files.push(file);
     }

@@ -9,9 +9,14 @@ changes). Any installed extension whose fingerprint differs from the repo
 receipt predates the latest build.
 """
 
+import tomllib
+from pathlib import Path
+
 import pytest
 
 from degenbot.build_info import installed_build_number, read_receipt, verify_build_fresh
+
+REPO_ROOT = Path(__file__).parents[1]
 
 
 def test_build_number_is_positive() -> None:
@@ -29,3 +34,29 @@ def test_installed_extension_is_fresh() -> None:
     if read_receipt() is None:
         pytest.skip("no .build-number receipt (non-editable install)")
     verify_build_fresh()
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        Path("rust/Cargo.toml"),
+        Path("rust/Cargo.lock"),
+        Path(".cargo/config.toml"),
+        Path("rust/crates/degenbot/src/lib.rs"),
+        Path("rust/crates/degenbot/src/investigation/mod.rs"),
+        Path("rust/crates/degenbot-cli/build.rs"),
+        Path("rust/crates/degenbot-python/build.rs"),
+        Path("rust/crates/degenbot-python/build_scan.rs"),
+    ],
+)
+def test_uv_cache_keys_cover_rust_build_inputs(relative_path: Path) -> None:
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    cache_keys = pyproject["tool"]["uv"]["cache-keys"]
+    input_path = REPO_ROOT / relative_path
+
+    matched = any(
+        input_path == REPO_ROOT / match
+        for key in cache_keys
+        for match in REPO_ROOT.glob(key["file"])
+    )
+    assert matched, f"{relative_path} must invalidate the Python build cache"

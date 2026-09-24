@@ -283,11 +283,15 @@ paths = ["src/degenbot"]
 exclude-newer = "14 days"
 link-mode = "copy"
 cache-keys = [
+    # Keep this boundary aligned with build_scan::scan_workspace: every Rust
+    # source/build input that can affect the cdylib must invalidate the wheel
+    # cache, while unrelated Python and generated files need not.
     {file = "rust/**/Cargo.toml"},
-    {file = "rust/crates/*/src/**/*.rs"},
-    # build.rs bakes the stale-.so counter (DEGENBOT_BUILD_NUMBER); a change
-    # to it must invalidate the wheel cache like any other Rust source.
-    {file = "rust/crates/degenbot-python/build.rs"},
+    {file = "rust/Cargo.lock"},
+    {file = "rust/crates/**/src/**/*.rs"},
+    {file = "rust/crates/**/build.rs"},
+    {file = "rust/crates/degenbot-python/build_scan.rs"},
+    {file = ".cargo/config.toml"},
 ]
 
 [tool.maturin]

@@ -9,7 +9,10 @@
 //! The fingerprint covers EVERY workspace source that can link into (or
 //! configure the build of) the shipped cdylib — this crate, every sibling
 //! crate under `rust/crates`, the workspace manifests, and any `.cargo`
-//! config — not just this crate's own files. This script also emits a
+//! config — not just this crate's own files. The Python uv cache-key boundary
+//! mirrors these inputs, including this included scanner and sibling build
+//! scripts, so a cached wheel cannot outlive a change to its build identity.
+//! This script also emits a
 //! `cargo:rerun-if-changed` per scanned file plus each scanned tree (so added
 //! files are caught). Emitting directives narrows cargo's watch from the whole
 //! package to exactly those paths, so the scan must stay complete; but the
