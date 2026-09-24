@@ -10,11 +10,11 @@ use std::collections::HashSet;
 
 use crate::backrun::{decide, BackrunConfig, Decision};
 use crate::backrun_engine::{
-    project_candidate_for_cmd_executor, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate,
-    LaneFamily, PathReject,
+    BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily, PathReject,
 };
 use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use crate::execution_context::ExecutionContext;
+use crate::project_candidate;
 use alloy::primitives::{address, Address, U256};
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_decoders::target_class::TargetClass;
@@ -620,6 +620,7 @@ pub fn solve_dfs_chains(
             continue;
         }
         stats.best = Some(LaneCandidate {
+            path_id: u64::try_from(idx).unwrap_or(u64::MAX),
             hops: chain.clone(),
             optimal_input: res.optimal_input.to::<u128>(),
             hop_outputs: res.hop_outputs.iter().map(|v| v.to::<u128>()).collect(),
@@ -1248,7 +1249,7 @@ impl PendingTxReaction for BackrunStrategy {
         trace_tx: &str,
     ) -> Option<ComposedIntent> {
         let best = evaluated.stats.best.clone()?;
-        let (path, result) = project_candidate_for_cmd_executor(&best);
+        let (path, result) = project_candidate(&best);
         let outcome =
             self.cmd_executor
                 .compose(&path, &result, backrun_encode_options(pl.bribe_bips));
@@ -1299,7 +1300,7 @@ impl PendingTxReaction for BackrunStrategy {
                         // ceiling the sim passed: a smaller bribe strictly
                         // eases the executor on-chain profit check, so the
                         // passed sim stays valid.
-                        let (path, result) = project_candidate_for_cmd_executor(best);
+                        let (path, result) = project_candidate(best);
                         let outcome = self.cmd_executor.compose(
                             &path,
                             &result,

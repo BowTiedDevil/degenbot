@@ -31,9 +31,7 @@ use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
-use degenbot_strategy::backrun_engine::{
-    project_candidate_for_cmd_executor, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily,
-};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{
     admit_extracted, backrun_encode_options, cycle_refs, cycle_touched_legs,
     discover_trace_payload, net_bid, solve_dfs_chains, BackrunIntents, CycleHop,
@@ -45,6 +43,7 @@ use degenbot_strategy::execution_context::{
 use degenbot_strategy::frame_pipeline::{
     build_descriptors, empty_frame_observe_reason, state_digest, MarketContext, PipelineConfig,
 };
+use degenbot_strategy::project_candidate;
 
 fn v2_fee_pair() -> V2FeePair {
     V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
@@ -337,7 +336,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     );
 
     // compose: the executable artifact builds from the solved hops.
-    let (path, result) = project_candidate_for_cmd_executor(&best);
+    let (path, result) = project_candidate(&best);
     let CmdExecutorOutcome::Encoded(cd) = CmdExecutorAdapter::new(ExecutionContext::new(
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         address!("000000000004444c5dc75cb358380d2e3de08a90"),
@@ -428,10 +427,23 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
     let new_stats = solve_dfs_chains(&mut solver, std::slice::from_ref(&new_chain), U256::ZERO);
     let committed_stats =
         solve_dfs_chains(&mut solver, std::slice::from_ref(&committed), U256::ZERO);
-    assert_eq!(
-        new_stats.best, committed_stats.best,
-        "the dominant two-hop candidate is unchanged"
-    );
+    let new_best = new_stats.best.expect("the rotated cycle solves");
+    let committed_best = committed_stats.best.expect("the committed cycle solves");
+    assert_eq!(new_best.hops, committed_best.hops);
+    assert_eq!(new_best.optimal_input, committed_best.optimal_input);
+    assert_eq!(new_best.hop_outputs, committed_best.hop_outputs);
+    assert_eq!(new_best.consumed_inputs, committed_best.consumed_inputs);
+    assert_eq!(new_best.profit, committed_best.profit);
+    assert_ne!(new_best.path_id, committed_best.path_id);
+    let (new_path, new_result) = project_candidate(&new_best);
+    let (committed_path, committed_result) = project_candidate(&committed_best);
+    assert_eq!(new_path.hops.len(), committed_path.hops.len());
+    assert_eq!(new_result.hop_descriptors, committed_result.hop_descriptors);
+    assert_eq!(new_result.optimal_input, committed_result.optimal_input);
+    assert_eq!(new_result.hop_outputs, committed_result.hop_outputs);
+    assert_eq!(new_result.consumed_inputs, committed_result.consumed_inputs);
+    assert_eq!(new_result.path_id, new_best.path_id);
+    assert_eq!(committed_result.path_id, committed_best.path_id);
 }
 
 /// Touched-set discovery: a touched pool that never quotes WETH rides a
@@ -1294,7 +1306,7 @@ fn walker_three_hop_chain_solves_and_composes() {
         w_star
     );
 
-    let (path, result) = project_candidate_for_cmd_executor(&best);
+    let (path, result) = project_candidate(&best);
     let CmdExecutorOutcome::Encoded(cd) = CmdExecutorAdapter::new(ExecutionContext::new(
         address!("0x30b28ed8aa581fbc0191c3b532b0697773070e97"),
         address!("000000000004444c5dc75cb358380d2e3de08a90"),

@@ -20,13 +20,13 @@ use degenbot_simulation::sim::evm::journal_pools::{
 };
 use degenbot_solvers::mixed::{HopType, MixedPoolRef};
 use degenbot_strategy::backrun_engine::{
-    project_candidate_for_cmd_executor, BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate,
-    LaneFamily,
+    BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily,
 };
 use degenbot_strategy::backrun_strategy::{admit_extracted, backrun_encode_options};
 use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_V4_POOL_MANAGER};
 use degenbot_strategy::frame_pipeline::MarketContext;
+use degenbot_strategy::project_candidate;
 use degenbot_strategy::strategy_kit::StrategyKit;
 
 const TOKEN0: Address = address!("0000000000000000000000000000000000000aa1");
@@ -155,6 +155,7 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
 
     let amounts = (123, vec![5_893_000, 1_235], vec![123, 5_892_315]);
     let candidate = LaneCandidate {
+        path_id: 17,
         hops: vec![
             BackrunHopRef {
                 pool_id: p_id,
@@ -178,7 +179,7 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
         consumed_inputs: amounts.2.clone(),
         profit: 55,
     };
-    let (backrun_path, backrun_result) = project_candidate_for_cmd_executor(&candidate);
+    let (backrun_path, backrun_result) = project_candidate(&candidate);
     let adapter = CmdExecutorAdapter::new(ExecutionContext::new(
         POOL_P,
         ETHEREUM_V4_POOL_MANAGER,

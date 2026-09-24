@@ -10,14 +10,13 @@ use alloy::primitives::{address, Address, B256};
 
 use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_strategy::backrun::{Decision, MevblockerBackrun};
-use degenbot_strategy::backrun_engine::{
-    project_candidate_for_cmd_executor, BackrunHopRef, LaneCandidate, LaneFamily,
-};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, LaneCandidate, LaneFamily};
 use degenbot_strategy::backrun_strategy::{BackrunEvaluated, BackrunStrategy};
 use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_WETH as WETH};
 use degenbot_strategy::frame_pipeline::PipelineConfig;
 use degenbot_strategy::pending_tx::PendingTxReaction;
+use degenbot_strategy::project_candidate;
 
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");
 const EXECUTOR: Address = address!("00000000000000000000000000000000000000e1");
@@ -30,6 +29,7 @@ fn fees() -> V2Fees {
 
 fn candidate() -> LaneCandidate {
     LaneCandidate {
+        path_id: 17,
         hops: vec![
             BackrunHopRef {
                 pool_id: 1,
@@ -58,7 +58,7 @@ fn candidate() -> LaneCandidate {
 #[test]
 fn candidate_projects_to_the_adapter_interface() {
     let candidate = candidate();
-    let (path, result) = project_candidate_for_cmd_executor(&candidate);
+    let (path, result) = project_candidate(&candidate);
 
     assert_eq!(path.hops.len(), 2);
     assert_eq!(result.hop_count, 2);
@@ -76,6 +76,7 @@ fn strategy_declines_v4_candidate_from_a_different_session_manager() {
     let evaluated = BackrunEvaluated {
         stats: degenbot_strategy::backrun_strategy::SolveStats {
             best: Some(LaneCandidate {
+                path_id: 17,
                 hops: vec![
                     BackrunHopRef {
                         pool_id: 1,
@@ -175,7 +176,7 @@ fn wallet_true_net_bid_recomposes_through_the_session_adapter() {
         "wallet-true bips replace the ceiling config"
     );
 
-    let (path, result) = project_candidate_for_cmd_executor(evaluated.stats.best.as_ref().unwrap());
+    let (path, result) = project_candidate(evaluated.stats.best.as_ref().unwrap());
     let expected = CmdExecutorAdapter::new(execution).compose(
         &path,
         &result,

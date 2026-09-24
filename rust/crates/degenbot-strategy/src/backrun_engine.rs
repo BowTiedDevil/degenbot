@@ -12,15 +12,12 @@
 //! job.
 
 use alloy::primitives::{Address, B256, U256};
-use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 use degenbot_solvers::mixed::SolvePathResult;
 
-use degenbot_bot::bot_core::executor_hop::{
-    v2_hop, v3_hop, v4_hop, V2FeePair, V2FeeRefusal, V2Fees,
-};
+use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2FeeRefusal, V2Fees};
 use degenbot_bot::bot_core::planning::{
     ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace,
 };
@@ -310,6 +307,8 @@ impl LaneFamily {
 /// sim need (epic DFYDYI B4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaneCandidate {
+    /// The workspace declaration index that identifies this solved path.
+    pub path_id: u64,
     pub hops: Vec<BackrunHopRef>,
     pub optimal_input: u128,
     pub hop_outputs: Vec<u128>,
@@ -469,68 +468,6 @@ impl BackrunSolver {
     }
 }
 
-/// Project a lane candidate onto the generic command-encoder request values.
-///
-/// The lane owns the V2/V3/V4 descriptors and solved amounts; the generic
-/// execution seam only receives its declared [`PathInfo`] and [`SolveResult`]
-/// view.
-#[must_use]
-pub fn project_candidate_for_cmd_executor(
-    candidate: &LaneCandidate,
-) -> (degenbot_executor::composers::PathInfo, SolveResult) {
-    let path = degenbot_executor::composers::PathInfo::new(
-        candidate
-            .hops
-            .iter()
-            .map(|hop| match hop.family {
-                LaneFamily::V2 { fees } => v2_hop(
-                    hop.pool,
-                    hop.token0,
-                    hop.token1,
-                    fees.direction(hop.zfo),
-                    hop.zfo,
-                ),
-                LaneFamily::V3 { fee } => v3_hop(hop.pool, hop.token0, hop.token1, fee, hop.zfo),
-                LaneFamily::V4 {
-                    fee,
-                    pool_id,
-                    tick_spacing,
-                    hooks,
-                } => v4_hop(
-                    hop.pool,
-                    pool_id,
-                    hop.token0,
-                    hop.token1,
-                    fee,
-                    tick_spacing,
-                    hooks,
-                    hop.zfo,
-                ),
-            })
-            .collect(),
-    );
-    let result = SolveResult {
-        path_id: 0,
-        hop_count: candidate.hops.len(),
-        optimal_input: U256::from(candidate.optimal_input),
-        hop_outputs: candidate
-            .hop_outputs
-            .iter()
-            .copied()
-            .map(U256::from)
-            .collect(),
-        consumed_inputs: candidate
-            .consumed_inputs
-            .iter()
-            .copied()
-            .map(U256::from)
-            .collect(),
-        net_profit: U256::from(candidate.profit),
-        hop_descriptors: path.hops.iter().map(HopDescriptor::from_hop_info).collect(),
-    };
-    (path, result)
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -542,7 +479,9 @@ mod tests {
     use crate::backrun_strategy::backrun_encode_options;
     use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome};
     use crate::execution_context::ExecutionContext;
+    use crate::project_candidate;
     use alloy::primitives::{address, aliases::U112};
+    use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 
     /// The ladder reject is legible: each stage maps to a distinct JSONL
     /// `stage` label so a failed hop admission names the refused step
@@ -730,6 +669,7 @@ mod tests {
         // canonical order: TOK (0x..aa1) < WETH -> token0 = TOK
         let token0 = TOK;
         let candidate = LaneCandidate {
+            path_id: 17,
             hops: vec![
                 BackrunHopRef {
                     pool_id: 1,
@@ -754,7 +694,7 @@ mod tests {
             consumed_inputs: vec![123, 5_892_315],
             profit: 55,
         };
-        let (path, result) = project_candidate_for_cmd_executor(&candidate);
+        let (path, result) = project_candidate(&candidate);
         let outcome = CmdExecutorAdapter::new(ExecutionContext::new(
             P,
             address!("000000000004444c5dc75cb358380d2e3de08a90"),
@@ -823,7 +763,7 @@ mod tests {
         .expect("settlement projection succeeds");
         let amounts = (123, vec![5_893_000, 1_235], vec![123, 5_892_315]);
         let settlement_result = SolveResult {
-            path_id: 0,
+            path_id: 17,
             hop_count: settlement_path.hops.len(),
             optimal_input: U256::from(amounts.0),
             hop_outputs: amounts.1.iter().copied().map(U256::from).collect(),
@@ -849,6 +789,7 @@ mod tests {
         };
 
         let candidate = LaneCandidate {
+            path_id: 17,
             hops: vec![
                 BackrunHopRef {
                     pool_id: p_id,
@@ -872,7 +813,7 @@ mod tests {
             consumed_inputs: amounts.2,
             profit: 55,
         };
-        let (backrun_path, backrun_result) = project_candidate_for_cmd_executor(&candidate);
+        let (backrun_path, backrun_result) = project_candidate(&candidate);
         let CmdExecutorOutcome::Encoded(backrun_call) = adapter.compose(
             &backrun_path,
             &backrun_result,
@@ -901,6 +842,7 @@ mod tests {
         // PoolManager from the V4 hop, not the hardcoded mainnet const.
         const V4_MANAGER: Address = address!("000000000000000000000000000000000000c0fe");
         let candidate = LaneCandidate {
+            path_id: 17,
             hops: vec![
                 BackrunHopRef {
                     pool_id: 1,
@@ -931,7 +873,7 @@ mod tests {
             consumed_inputs: vec![1_000_000_000_000_000_000, 1_000_000_000_000_000_000],
             profit: 1_000_000_000_000_000_000,
         };
-        let (path, result) = project_candidate_for_cmd_executor(&candidate);
+        let (path, result) = project_candidate(&candidate);
         let outcome = CmdExecutorAdapter::new(ExecutionContext::new(P, V4_MANAGER, WETH)).compose(
             &path,
             &result,
@@ -987,6 +929,7 @@ mod tests {
             },
         };
         let candidate = LaneCandidate {
+            path_id: 17,
             hops: vec![
                 v4_hop(1, address!("000000000000000000000000000000000000c0fe")),
                 v4_hop(2, address!("000000000000000000000000000000000000dead")),
@@ -996,7 +939,7 @@ mod tests {
             consumed_inputs: vec![1_000, 990],
             profit: 10,
         };
-        let (path, result) = project_candidate_for_cmd_executor(&candidate);
+        let (path, result) = project_candidate(&candidate);
         let context = ExecutionContext::new(
             P,
             address!("000000000000000000000000000000000000c0fe"),
@@ -1012,6 +955,7 @@ mod tests {
     #[test]
     fn candidate_rejects_misaligned_hops() {
         let candidate = LaneCandidate {
+            path_id: 17,
             hops: vec![
                 BackrunHopRef {
                     pool_id: 1,
@@ -1035,7 +979,7 @@ mod tests {
             consumed_inputs: vec![1],
             profit: 1,
         };
-        let (path, result) = project_candidate_for_cmd_executor(&candidate);
+        let (path, result) = project_candidate(&candidate);
         assert_eq!(
             CmdExecutorAdapter::new(ExecutionContext::new(
                 P,
@@ -1050,6 +994,7 @@ mod tests {
     #[test]
     fn compose_reject_names_amount_overflow() {
         let candidate = LaneCandidate {
+            path_id: 17,
             hops: vec![
                 BackrunHopRef {
                     pool_id: 1,
@@ -1073,7 +1018,7 @@ mod tests {
             consumed_inputs: vec![1, 1],
             profit: 1,
         };
-        let (path, result) = project_candidate_for_cmd_executor(&candidate);
+        let (path, result) = project_candidate(&candidate);
         assert_eq!(
             CmdExecutorAdapter::new(ExecutionContext::new(
                 P,

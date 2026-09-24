@@ -56,6 +56,7 @@ pub mod backrun;
 pub mod backrun_driver;
 pub mod backrun_engine;
 pub mod backrun_strategy;
+mod candidate_projection;
 pub mod cmd_executor_adapter;
 pub mod execution_context;
 pub mod frame_pipeline;
@@ -72,6 +73,7 @@ pub mod strategy_plane;
 // it selects. Root re-exports so a consumer names `degenbot_strategy::StrategyName`
 // rather than threading the module path.
 pub use backrun::{BackrunConfig, MevblockerBackrun, PeerBackrun, SubmissionSlot};
+pub use candidate_projection::project_candidate;
 pub use cmd_executor_adapter::{
     CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome, CmdExecutorRejection,
 };
