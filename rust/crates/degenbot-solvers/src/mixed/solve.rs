@@ -1500,6 +1500,39 @@ mod gate_tests {
     }
 
     #[test]
+    fn m6776w_solidly_volatile_fee_floor_counterexample_is_bounded() {
+        let r0 = 502_363u64;
+        let r1 = 7_772_466u64;
+        let x = 32u64;
+        let hop = HopMath::SolidlyVolatile {
+            reserve_in: U256::from(r0),
+            reserve_out: U256::from(r1),
+            gamma_numer: U256::from(997u64),
+            fee_denom: U256::from(1_000u64),
+        };
+        let bound = path_output_bound_at(
+            &[Some(hop)],
+            &U256::from(x),
+            &crate::runtime::SolveRuntimeConfig::default(),
+        )
+        .expect("Solidly volatile bound");
+        let state = crate::mixed::SolidlyHopState {
+            reserves_0: U256::from(r0),
+            reserves_1: U256::from(r1),
+            decimals_0: U256::from(1_000_000u64),
+            decimals_1: U256::from(1_000_000u64),
+            token_in: 0,
+            fee_numer: U256::from(3u64),
+            fee_denom: U256::from(1_000u64),
+            stable: false,
+            variant: DexVariant::AerodromeV2Volatile,
+        };
+        let true_out = simulate_solidly_hop(U256::from(x), &state);
+        assert_eq!(true_out, U256::from(495u64));
+        assert!(bound >= true_out, "bound {bound} < true {true_out}");
+    }
+
+    #[test]
     fn gate_zero_floor_skips_provably_unprofitable_path() {
         // Identical V2 pools both ways: fees guarantee the round trip can
         // never net positive, so the envelope bound must be ZERO and the

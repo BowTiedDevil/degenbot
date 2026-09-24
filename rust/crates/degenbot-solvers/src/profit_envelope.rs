@@ -419,17 +419,18 @@ impl<'a> HopMath<'a> {
 /// Build the line set for a constant-product (Möbius) hop:
 /// `[rise_feeless, rise_fee'd, flat]`.
 ///
-/// The real output curve `γ·r_out·x / (fee_denom·r_in + γ·x)` is concave in
-/// the gross input (diminishing marginal rate), so its tangent at zero —
-/// slope `γ·r_out/(fee_denom·r_in)` — is exact at entry and, by the
-/// tangent-line property of concave functions, never below the curve; the
-/// fee-agnostic `r_out/r_in·x` also bounds it because `r_in + x ≥ r_in`.
-/// Keeping both rises plus the flat `r_out` cap and taking the point-wise
-/// minimum stays a rigorous upper bound, strictly tighter than the feeless
-/// pair alone.
+/// The integer leaf retains `q = x - floor(x·fee_numer/fee_denom)`,
+/// equivalently `q = ceil(γ·x/fee_denom)`. The rounding term matters: the
+/// fee'd rise must bound the integer-retained amount, not just the continuous
+/// retained fraction. Since `q ≤ (γ·x + fee_denom - 1) / fee_denom`, the
+/// following affine line dominates the real output:
+/// `(γ·x + fee_denom - 1)·r_out / (fee_denom·r_in + γ·x + fee_denom - 1)`.
+/// The fee-agnostic `r_out/r_in·x` also bounds the curve because `r_in + x ≥
+/// r_in`. Keeping both rises plus the flat `r_out` cap and taking the
+/// point-wise minimum stays a rigorous upper bound.
 ///
 /// The fee'd rise is dropped (not fatal) when its exact coefficients exceed
-/// `I512` or `fee_denom·r_in` is zero: the fee-agnostic rise still bounds the
+/// `I512` or its denominator is zero: the fee-agnostic rise still bounds the
 /// curve, so the result merely loosens. Returns `None` when the feeless
 /// coefficients do not fit — no rigorous line, caller treats it as degenerate.
 fn mobius_lines(
@@ -450,15 +451,19 @@ fn mobius_lines(
     };
     let mut lines = Vec::with_capacity(3);
     lines.push(rise_feeless);
+    let fee_rounding = fee_denom.saturating_sub(U256::ONE);
+    let a_fee = U512::from(fee_rounding).saturating_mul(U512::from(r_out));
     let b_fee = U512::from(gamma_numer).saturating_mul(U512::from(r_out));
-    let c_fee = U512::from(fee_denom).saturating_mul(U512::from(r_in));
+    let c_fee = U512::from(fee_denom)
+        .saturating_mul(U512::from(r_in))
+        .saturating_add(U512::from(fee_rounding));
     if !c_fee.is_zero() {
-        if let (Ok(b), Ok(c)) = (I512::try_from(b_fee), I512::try_from(c_fee)) {
-            lines.push(Line {
-                a: I512::ZERO,
-                b,
-                c,
-            });
+        if let (Ok(a), Ok(b), Ok(c)) = (
+            I512::try_from(a_fee),
+            I512::try_from(b_fee),
+            I512::try_from(c_fee),
+        ) {
+            lines.push(Line { a, b, c });
         }
     }
     lines.push(flat);
@@ -3740,17 +3745,20 @@ mod tests {
         }
     }
 
-    /// The exact-fee rise must share the feeless rise's entry intercept and
-    /// differ by exactly the fee factor: at x→0 the fee'd slope is
-    /// `gamma/fee_denom` of the feeless slope, so the fee'd line beats (is
-    /// strictly below) the feeless line and the point-wise min tightens.
+    /// The exact-fee rise must include the integer fee-floor rounding term in
+    /// both its intercept and denominator, while retaining the exact
+    /// `gamma/fee_denom` slope of the continuous fee curve.
     fn assert_fee_d_rise(lines: &[Line], r_in: U256, r_out: U256, gamma: u64, fee_denom: u64) {
         assert_eq!(lines.len(), 3, "feeless rise + fee'd rise + flat");
         let feeless = &lines[0];
         let feed = &lines[1];
         let flat = &lines[2];
+        let fee_rounding = fee_denom - 1;
         assert_eq!(feeless.a, I512::ZERO);
-        assert_eq!(feed.a, I512::ZERO);
+        assert_eq!(
+            feed.a,
+            I512::try_from(U512::from(fee_rounding) * U512::from(r_out)).expect("small")
+        );
         assert_eq!(feeless.b, I512::try_from(U512::from(r_out)).expect("small"));
         assert_eq!(feeless.c, I512::try_from(U512::from(r_in)).expect("small"));
         assert_eq!(
@@ -3759,12 +3767,9 @@ mod tests {
         );
         assert_eq!(
             feed.c,
-            I512::try_from(U512::from(fee_denom) * U512::from(r_in)).expect("small")
+            I512::try_from(U512::from(fee_denom) * U512::from(r_in) + U512::from(fee_rounding))
+                .expect("small")
         );
-        // Exact slope ratio `gamma/fee_denom` at x→0, cross-multiplied.
-        let lhs = U512::from(feed.b) * U512::from(feeless.c) * U512::from(fee_denom);
-        let rhs = U512::from(feeless.b) * U512::from(feed.c) * U512::from(gamma);
-        assert_eq!(lhs, rhs, "fee'd slope must be the exact-fee tangent");
         assert!(
             U512::from(feed.b) * U512::from(feeless.c) < U512::from(feeless.b) * U512::from(feed.c),
             "fee'd rise slope must be strictly tighter"
