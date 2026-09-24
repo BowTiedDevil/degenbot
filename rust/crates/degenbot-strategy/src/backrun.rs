@@ -368,18 +368,6 @@ impl MevblockerBackrun {
             composition: BackrunComposition::new(knobs.into_config(cfg, rpc_url, submission)),
         }
     }
-
-    /// The composed driver config.
-    #[must_use]
-    pub fn config(&self) -> &BackrunConfig {
-        self.composition.config()
-    }
-
-    /// Consume the composition into the driver config.
-    #[must_use]
-    pub fn into_config(self) -> BackrunConfig {
-        self.composition.into_config()
-    }
 }
 
 impl Strategy for MevblockerBackrun {
@@ -415,23 +403,32 @@ impl PeerBackrun {
             composition: BackrunComposition::new(knobs.into_config(cfg, rpc_url, submission)),
         }
     }
-
-    /// The composed driver config.
-    #[must_use]
-    pub fn config(&self) -> &BackrunConfig {
-        self.composition.config()
-    }
-
-    /// Consume the composition into the driver config.
-    #[must_use]
-    pub fn into_config(self) -> BackrunConfig {
-        self.composition.into_config()
-    }
 }
 
 impl Strategy for PeerBackrun {
     const NAME: StrategyName = StrategyName::PeerBackrun;
 }
+
+macro_rules! impl_backrun_composition_accessors {
+    ($composition:ty) => {
+        impl $composition {
+            /// The composed driver config.
+            #[must_use]
+            pub fn config(&self) -> &BackrunConfig {
+                self.composition.config()
+            }
+
+            /// Consume the composition into the driver config.
+            #[must_use]
+            pub fn into_config(self) -> BackrunConfig {
+                self.composition.into_config()
+            }
+        }
+    };
+}
+
+impl_backrun_composition_accessors!(MevblockerBackrun);
+impl_backrun_composition_accessors!(PeerBackrun);
 
 impl BackrunConfig {
     /// The bid-mode legality gate: explicit flag AND non-zero budget.
