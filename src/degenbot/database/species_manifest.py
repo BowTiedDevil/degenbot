@@ -57,7 +57,7 @@ LFJ_POOLS = "lfj_pools"
 DECLARED_UNSUPPORTED_KINDS: frozenset[str] = frozenset({"lfj_binned"})
 
 #: The repo-relative location of the Rust-owned manifest.
-_MANIFEST_RELATIVE = Path("rust") / "crates" / "degenbot-db" / "src" / "species.toml"
+_MANIFEST_RELATIVE = Path("rust") / "crates" / "foundation" / "degenbot-db" / "src" / "species.toml"
 
 _MANIFEST_KEYS = frozenset({"species"})
 _SPECIES_KEYS = frozenset(

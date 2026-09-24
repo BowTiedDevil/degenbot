@@ -16,6 +16,7 @@ mismatch error (a class cannot be faked in a TOML fixture).
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -125,12 +126,27 @@ def test_subclass_table_for_kind_projects_the_manifest() -> None:
     assert manifest.subclass_table_for_kind("unsiwap_v2") is None
 
 
-def test_shipped_manifest_reader_targets_the_rust_source_file() -> None:
+def test_shipped_manifest_reader_targets_relocated_foundation_manifest() -> None:
     path = sm.shipped_manifest_path()
+    repo_root = Path(__file__).resolve().parents[2]
+    expected = repo_root / "rust" / "crates" / "foundation" / "degenbot-db" / "src" / "species.toml"
+    assert path == expected
     assert path.is_file()
     assert path.name == "species.toml"
-    assert "degenbot-db" in str(path)
     assert sm.parse_manifest(path.read_text(encoding="utf-8")).species[0].kind == "uniswap_v2"
+
+
+def test_shipped_manifest_path_falls_back_to_repo_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    monkeypatch.setattr(sm, "__file__", str(tmp_path / "package" / "species_manifest.py"))
+    monkeypatch.chdir(repo_root)
+
+    assert sm.shipped_manifest_path() == (
+        repo_root / "rust" / "crates" / "foundation" / "degenbot-db" / "src" / "species.toml"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────
