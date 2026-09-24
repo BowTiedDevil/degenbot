@@ -23,7 +23,9 @@ partitions, the config-facet additions, and the test-surface pattern.
 | Command grammar | `degenbot-executor` | `encode_cmd_stream`, `EncodeRequest` |
 | RPC spine | `degenbot-rpc` | provider, multicall3, head watch, pending-tx feeds, fee oracle |
 | State owner + admission | `degenbot-bot::bot_core` | live registry `BotState` (pump-fed) and the planning sandbox (`planning::Workspace` + `ExplicitPoolState`) |
-| Strategy plane + concrete compositions | `degenbot-strategy` | the backrun reaction arm (frame pipeline, anchored DFS, gap quarantine, pending-tx driver) and the settlement composition; capability implementations re-exported, never moved |
+| Pool ingress (`Db → Chain` tick-map precedence, sealed seed, verify policy) | `degenbot-bot::bot_core::pool_ingress` | the one V3 pool-state admission home; Db/Chain `TickMapSeed` provenance is minted only here |
+| Strategy kit (boot-resolved composition) | `degenbot-strategy/src/strategy_kit.rs` | `StrategyKit::resolve` — the provision cell (ingress) + discovery handles a strategy composes |
+| Strategy plane + concrete compositions | `degenbot-strategy` | the backrun reaction arm (frame pipeline, anchored DFS, gap quarantine, pending-tx driver) and the settlement composition; capability implementations re-exported, never moved; hosted families drive the boot-resolved `StrategyKit` cells (`strategy_kit.rs`) |
 | Submission machinery | `degenbot-submission` | signer, fee/params/bundle, dispatcher, monitor, submission ledger, finality-liveness FSM |
 
 ## The two reaction kinds
@@ -47,10 +49,19 @@ A strategy picks exactly ONE:
 1. Write one `PendingTxReaction` impl in `degenbot-strategy`: your
    `admit` selection (from recovered pool post-states), `discover`
    (anchored DFS over the connector index, or otherwise), `evaluate`
-   pricing, `compose` payload policy, `decide` gate. The runtime caches
-   (`MarketContext`), replay, journal extraction, sandbox admission, the
-   pathfinding primitive, the sim executor, liveness, and the submission
-   channel are provided.
+   pricing, `compose` payload policy, `decide` gate. **State provisioning is
+   a plane capability, not a private one** (ADR-061; `adding-a-strategy.md`
+   §0.1): the boot resolves a `StrategyKit` once per strategy
+   (`StrategyKit::resolve`) and hands it in, so a strategy composes
+   `kit.provision.ingress` / `kit.discovery` and never an ingress it built
+   itself. Tick maps enter the sandbox only through the sealed `TickMapSeed`
+   boundary — Db/Chain seeds are minted inside `bot_core` alone, and
+   `TickMapSeed::journal` is the public explicit-replay constructor.
+   Verification is a typed `VerifyLevel` policy (default `bootstrap`) on the
+   provisioning cell; the Tracked intake reconciliation and the two-stamp
+   clock are unconditional integrity, never gated by the knob. Replay,
+   journal extraction, the pathfinding primitive, the sim executor, liveness,
+   and the submission channel are provided.
 2. V4 works out of the box: the sandbox admits V4 explicit state
    (`ExplicitPoolState::V4`), the journal extracts V4 post-states for pools
    whose identities your descriptors carry (`V4PoolSet`).

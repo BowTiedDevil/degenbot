@@ -41,6 +41,29 @@ a strategy trait object. `StrategyHost` never names a family
 - Retires: describing the strategy unit as a "lane" or "sidecar"
   (`strategy-seams.md:1-10`).
 
+## 0.1 State provisioning — the boot-resolved `StrategyKit`
+
+Pool-state provisioning is a plane capability (ADR-061), not machinery a
+strategy builds. The boot resolves one `StrategyKit` per strategy
+(`StrategyKit::resolve`,
+`rust/crates/degenbot-strategy/src/strategy_kit.rs`) and hands it to the spawn
+factory; a strategy composes `kit.provision.ingress` (the one `Db → Chain` V3
+tick-map ingress) and `kit.discovery` (frozen registry + startup graph), and
+never an ingress it constructed itself.
+
+Tick maps enter the planning sandbox only through the sealed `TickMapSeed`
+boundary (`rust/crates/degenbot-bot/src/bot_core/planning.rs`): the `Db` and
+`Chain` provenance constructors are crate-private to `bot_core` — the ingress
+mints them — while `TickMapSeed::journal` is the public exact-replay
+constructor the backrun journal admission owns. A strategy cannot fabricate a
+sparse ladder.
+
+Verification is a typed policy on the provisioning cell: `VerifyLevel`
+(default `bootstrap`) with `strict` / `off` alternatives. Integrity is distinct
+from sampling and **unconditional** — the Tracked self-contradiction abort and
+the two-stamp liquidity clock run under every level, so `off` never means
+"proceed on a self-contradictory map".
+
 ## 1. Admission — the `StrategyHost` FSM
 
 A family is admitted as a driver FSM instance. The operator-facing verbs

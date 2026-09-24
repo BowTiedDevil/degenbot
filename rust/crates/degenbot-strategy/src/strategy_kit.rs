@@ -1,8 +1,9 @@
 //! ADR-061 D3: the strategy kit — one boot-resolved composition of the
 //! clustered cells a strategy drives.
 //!
-//! The six-slot Strategy vocabulary is a pure-Python taxonomy of `slot ->
-//! meaning`; this module is where the *shared machinery* a strategy actually
+//! The six-slot Strategy vocabulary is the ADR-058 D3 plane construct — a
+//! Rust-typed taxonomy of `slot -> meaning`, not a Python-only list; this
+//! module is where the *shared machinery* a strategy actually
 //! composes is named as a concrete struct. A strategy receives one
 //! [`StrategyKit`] from the boot rather than constructing its own ingress,
 //! discovery graph, or verifier, so "which strategies compose what" is a

@@ -1,6 +1,10 @@
 # ADR-061: Pool-state provisioning is a plane capability — pool ingress, sealed seeds, the strategy kit
 
-**Status: proposed** (2026-09-23). Basis: the mevblocker-backrun
+**Status: accepted** (2026-09-23). Landed: a86825d6e + 5f8ed1dcb (D1
+ingress facade + backrun cutover), 5b4ab69b6 (D2 sealed `TickMapSeed`,
+`VerifyLevel`, `verify_ticks` facets), 1f8298af2 (D3 `StrategyKit` +
+`STRATEGY_CELLS` pin); the D1 tail (one shared tick-map precedence) landed
+with this closure. Basis: the mevblocker-backrun
 `sequence_unavailable` autopsy (the production handoff in
 `.scratch/backrun-v3-sequence-unavailable-handoff.md`), the affected-site
 survey recorded in Context, and the submission-lane precedent. Predecessors:

@@ -43,6 +43,7 @@ use super::curve_choreography;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
 use crate::bot_core::planning::TickMapSeed;
+use crate::bot_core::tick_assembly::{chain_arm, resolve_tick_map_arm};
 use crate::bot_core::{PoolTickCoverage, TickInfo};
 
 /// The on-chain family a `probe` resolves to (V4 is a separate
@@ -812,18 +813,24 @@ pub async fn build_balancer_stable(
     })
 }
 
-/// Assemble a V3 pool's tick map with **DB-first** coverage: a `TickMapDb`
-/// hit (both `tick_bitmap` AND
-/// `tick_data` populated) yields [`PoolTickCoverage::Tracked`]; a DB miss or
-/// empty map falls back to the Chain-arm single-word bootstrap →
-/// [`PoolTickCoverage::Sparse`]. Mirrors `tick_assembly::assemble_v3_tick_map`'s
-/// `Db → Chain` precedence but is written async-native (the builder runs on the
-/// async registration runtime, so it cannot `block_on` the sync assemble
-/// helper — the nested-block_on deadlock class).
+/// Assemble a V3 pool's tick map with **DB-first** coverage.
+///
+/// The Db arm routes through the shared
+/// [`resolve_tick_map_arm`](crate::bot_core::tick_assembly::resolve_tick_map_arm)
+/// (so the `Tracked`/`Sparse` precedence, the Tracked intake reconciliation,
+/// and the Db-empty semantics are identical to
+/// `tick_assembly::assemble_v3_tick_map`), then runs the async-native Chain
+/// transport only on a Db miss. This module's `bootstrap_v3_tick_map` is the
+/// builder's own Chain adapter: it cannot `block_on` the sync
+/// [`TickBootstrapRpc`] trait object from the async registration runtime (the
+/// nested-`block_on` deadlock class). Both arms mint through the shared
+/// [`chain_arm`](crate::bot_core::tick_assembly::chain_arm) /
+/// `resolve_tick_map_arm` seed vocabulary.
 ///
 /// # Errors
 ///
-/// Returns [`PoolBuilderError::Db`] on a DB read failure or
+/// Returns [`PoolBuilderError::Db`] on a DB read failure,
+/// [`PoolBuilderError::TickAssembly`] on a self-contradictory Tracked map, or
 /// [`PoolBuilderError::Rpc`] on a Chain-arm failure.
 async fn assemble_db_or_chain_v3(
     db: Option<&dyn TickMapDb>,
@@ -833,44 +840,30 @@ async fn assemble_db_or_chain_v3(
     tick_spacing: i32,
     block: u64,
 ) -> Result<TickMapSeed, PoolBuilderError> {
-    if let Some(db) = db {
-        if let Some(map) = db.fetch_liquidity_map(address)? {
-            // The Tracked intake reconciliation (T3 OMDCIY) runs inside
-            // `liquidity_map_to_tick_info` — a self-contradictory snapshot
-            // aborts the build with a typed error, never registers.
-            match crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)? {
-                // Non-empty snapshot → Tracked + populated.
-                Some(hit) => {
-                    crate::bot_core::tick_assembly::dump_tick_map_seed(&format!("{address}"), &hit);
-                    let (ticks, coverage) = hit;
-                    return Ok(TickMapSeed::db(ticks, coverage, block));
-                }
-                // Empty snapshot → a DB-registered pool with no mapped liquidity
-                // is a legitimately-empty Tracked pool (authoritative — it came
-                // from the DB). Do NOT fall through to the Sparse Chain arm: that
-                // would fire a single-word RPC probe, mark the pool Sparse, and
-                // (because a resolve that cannot build an int sequence never
-                // reaches simulation) leave it never backfilled nor reactivatable.
-                // As Tracked-empty a path using it is cleanly invalid, and a later
-                // ModifyLiquidity/Mint/Burn event reactivates it via the normal
-                // tracked tick-data path.
-                None => {
-                    return Ok(TickMapSeed::db(
-                        HashMap::new(),
-                        PoolTickCoverage::Tracked,
-                        block,
-                    ))
-                }
-            }
-        }
+    let db_arm = resolve_tick_map_arm::<PoolBuilderError, _>(
+        &format!("{address}"),
+        tick_spacing,
+        block,
+        || match db {
+            Some(db) => db
+                .fetch_liquidity_map(address)
+                .map_err(PoolBuilderError::Db),
+            None => Ok(None),
+        },
+    )?;
+    if let Some(seed) = db_arm {
+        return Ok(seed);
     }
-    // DB miss / empty → Chain arm (Sparse).
-    let (ticks, _) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block).await?;
-    Ok(TickMapSeed::chain(ticks, PoolTickCoverage::Sparse, block))
+    // DB miss -> Chain arm (Sparse).
+    let (ticks, _) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block)
+        .await
+        .map_err(PoolBuilderError::Rpc)?;
+    Ok(chain_arm(Some(ticks)).into_seed(block))
 }
 
-/// V4 twin of [`assemble_db_or_chain_v3`]: `TickMapDb.fetch_liquidity_map_v4`
-/// hit → [`PoolTickCoverage::Tracked`]; miss → Chain-arm → Sparse.
+/// V4 twin of [`assemble_db_or_chain_v3`]: the shared Db arm over
+/// `TickMapDb.fetch_liquidity_map_v4`, then the async V4 Chain transport on a
+/// miss. Same semantics — see [`assemble_db_or_chain_v3`].
 #[expect(clippy::too_many_arguments)]
 async fn assemble_db_or_chain_v4(
     db: Option<&dyn TickMapDb>,
@@ -882,44 +875,25 @@ async fn assemble_db_or_chain_v4(
     tick_spacing: i32,
     block: u64,
 ) -> Result<TickMapSeed, PoolBuilderError> {
-    if let Some(db) = db {
-        if let Some(map) = db.fetch_liquidity_map_v4(pool_manager, B256::from(pool_id))? {
-            // Tracked intake reconciliation (T3 OMDCIY) — V4 twin of the V3
-            // guard above.
-            match crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)? {
-                // Non-empty snapshot → Tracked + populated.
-                Some(hit) => {
-                    crate::bot_core::tick_assembly::dump_tick_map_seed(
-                        &alloy::hex::encode_prefixed(pool_id),
-                        &hit,
-                    );
-                    let (ticks, coverage) = hit;
-                    return Ok(TickMapSeed::db(ticks, coverage, block));
-                }
-                // Empty snapshot → a DB-registered pool with no mapped liquidity
-                // is a legitimately-empty Tracked pool (authoritative — it came
-                // from the DB's uniswap_v4_pools/managed_pool_liquidity_positions).
-                // Do NOT fall through to the Sparse Chain arm: that would fire a
-                // single-word RPC probe, mark the pool Sparse, and (because a
-                // resolve that cannot build an int sequence never reaches
-                // simulation) leave it never backfilled nor reactivatable. As
-                // Tracked-empty a path using it is cleanly invalid, and a later
-                // ModifyLiquidity event reactivates it via the normal tracked
-                // tick-data path.
-                None => {
-                    return Ok(TickMapSeed::db(
-                        HashMap::new(),
-                        PoolTickCoverage::Tracked,
-                        block,
-                    ))
-                }
-            }
-        }
+    let db_arm = resolve_tick_map_arm::<PoolBuilderError, _>(
+        &alloy::hex::encode_prefixed(pool_id),
+        tick_spacing,
+        block,
+        || match db {
+            Some(db) => db
+                .fetch_liquidity_map_v4(pool_manager, B256::from(pool_id))
+                .map_err(PoolBuilderError::Db),
+            None => Ok(None),
+        },
+    )?;
+    if let Some(seed) = db_arm {
+        return Ok(seed);
     }
-    // DB miss / empty → Chain arm (Sparse).
-    let (ticks, _) =
-        bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block).await?;
-    Ok(TickMapSeed::chain(ticks, PoolTickCoverage::Sparse, block))
+    // DB miss -> Chain arm (Sparse).
+    let (ticks, _) = bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block)
+        .await
+        .map_err(PoolBuilderError::Rpc)?;
+    Ok(chain_arm(Some(ticks)).into_seed(block))
 }
 
 /// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3

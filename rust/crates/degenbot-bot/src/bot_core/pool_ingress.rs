@@ -41,7 +41,7 @@ use std::sync::Arc;
 use alloy::primitives::{Address, U256};
 use degenbot_db::snapshot::{LiquidityMap, TickMapDb};
 use degenbot_pools::tick_fetch::TickBootstrapRpc;
-use degenbot_pools::v3_state::{ClSlotLayout, PoolTickCoverage};
+use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::provider::AlloyProvider;
 use hashbrown::HashMap;
@@ -49,9 +49,7 @@ use parking_lot::Mutex;
 
 use crate::bot_core::liquidity_verifier::verify_v3_liquidity_map;
 use crate::bot_core::planning::{ExplicitPoolState, PlanningPoolParams, Workspace};
-use crate::bot_core::tick_assembly::{
-    assemble_v3_tick_map, liquidity_map_to_tick_info, TickMapAssemblyError,
-};
+use crate::bot_core::tick_assembly::{chain_arm, resolve_tick_map_arm, TickMapAssemblyError};
 
 // The seed's provenance tag + value ride at the planning boundary; re-export
 // here so ingress consumers reach them through the provisioning module. Db and
@@ -302,11 +300,13 @@ impl PoolIngress {
 
     /// Stage a V3 tick map with `Db → Chain` precedence.
     ///
-    /// The Db arm is a per-block memoized `fetch_liquidity_map` conversion; a
-    /// pool present in the Db with an empty map is a legitimately-empty
-    /// `Tracked` pool (never degraded to `Sparse`). A Db miss falls to the
-    /// Chain arm (`tick_assembly`'s sparse single-word bootstrap); a Chain
-    /// miss yields an empty `Sparse` map.
+    /// The Db arm routes through the shared
+    /// [`resolve_tick_map_arm`](crate::bot_core::tick_assembly::resolve_tick_map_arm)
+    /// over the per-block memoized `fetch_liquidity_map`; a pool present in the
+    /// Db with an empty map is a legitimately-empty `Tracked` pool (never
+    /// degraded to `Sparse`). A Db miss falls to the sync Chain arm; a Chain
+    /// miss mints an empty `Sparse` map through
+    /// [`chain_arm`](crate::bot_core::tick_assembly::chain_arm).
     ///
     /// # Errors
     ///
@@ -319,29 +319,27 @@ impl PoolIngress {
         tick_spacing: i32,
         block: u64,
     ) -> Result<TickMapSeed, IngressDecline> {
-        if let Some(db) = self.db.as_ref() {
-            if let Some(map) = self.memoized_map(address, block, db.as_ref())? {
-                let seed = match liquidity_map_to_tick_info(map, tick_spacing)? {
-                    Some((ticks, coverage)) => TickMapSeed::db(ticks, coverage, block),
-                    None => TickMapSeed::db(HashMap::new(), PoolTickCoverage::Tracked, block),
-                };
-                return Ok(seed);
-            }
-        }
-        // Chain arm: `db=None` short-circuits `assemble_v3_tick_map`'s Db arm
-        // so the precedence helper's Chain path runs unchanged.
-        let chain_hit = assemble_v3_tick_map(
-            None,
-            address,
-            tick,
+        let db_arm = resolve_tick_map_arm::<IngressDecline, _>(
+            &format!("{address}"),
             tick_spacing,
             block,
-            self.chain.as_deref(),
+            || match self.db.as_ref() {
+                Some(db) => self.memoized_map(address, block, db.as_ref()),
+                None => Ok(None),
+            },
         )?;
-        Ok(match chain_hit {
-            Some((ticks, coverage)) => TickMapSeed::chain(ticks, coverage, block),
-            None => TickMapSeed::chain(HashMap::new(), PoolTickCoverage::Sparse, block),
-        })
+        if let Some(seed) = db_arm {
+            return Ok(seed);
+        }
+        // Chain arm: the Db missed (or no Db handle is wired).
+        let chain_hit = match self.chain.as_deref() {
+            Some(chain) => chain
+                .bootstrap_v3_tick_word(&address.to_checksum(None), tick, tick_spacing, block)
+                .map_err(TickMapAssemblyError::Chain)?
+                .map(|word| word.ticks),
+            None => None,
+        };
+        Ok(chain_arm(chain_hit).into_seed(block))
     }
 
     /// Stage, chain-sample-verify (per [`VerifyLevel`]), then register a V3
@@ -455,6 +453,7 @@ mod tests {
     use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick};
     use degenbot_db::ExchangeFamily;
     use degenbot_pools::tick_fetch::{BootstrapTickError, BootstrapTickWord};
+    use degenbot_pools::v3_state::PoolTickCoverage;
 
     const CHAIN: i64 = 1;
     const POOL: Address = Address::new([0x11; 20]);

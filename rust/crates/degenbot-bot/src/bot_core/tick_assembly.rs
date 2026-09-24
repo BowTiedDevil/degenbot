@@ -1,13 +1,24 @@
-//! Tick-map assembly: `Db → Chain` precedence helper.
+//! Tick-map assembly: the one `Db → Chain` precedence for CL pools.
 //!
-//! One free function per CL family (`assemble_v3_tick_map` /
-//! `assemble_v4_tick_map`) that reads the tick map from a per-pool
-//! `TickMapDb::fetch_liquidity_map` read (the held `SnapshotDb` tx for the
-//! DB path, a per-call `DegenbotDb` otherwise), then on a miss falls back to
-//! the **Chain arm** — a sparse-RPC word read via [`TickBootstrapRpc`]
-//! (`Db → Chain` precedence). The former `Store` arm was retired
-//! (the in-memory `SnapshotStore` is replaced by a WAL held read transaction
-//! so every per-pool read during `build_paths` shares one frozen DB cut).
+//! [`resolve_tick_map_arm`] is the single precedence decision — the Db read
+//! first, then (on a Db miss) the Chain transport — shared by every caller:
+//! the sync `assemble_v3_tick_map` / `assemble_v4_tick_map` wrappers, the
+//! async-native `pool_builder` registration arms, and the per-frame
+//! `pool_ingress`. Db conversion via [`liquidity_map_to_tick_info`], the
+//! Tracked intake reconciliation, Tracked-empty handling, coverage tagging,
+//! and the forensic dump live only here, and both arms mint their
+//! [`TickMapSeed`] through [`TickMapArm::into_seed`], so no transport can
+//! drift the semantics.
+//!
+//! The Chain transport deliberately keeps two adapters: the sync
+//! [`TickBootstrapRpc`] trait object (used by the sync wrappers and the
+//! per-frame ingress) and the builder's async-native `ConstructionIo`
+//! bootstrap. The builder runs on the async registration runtime and cannot
+//! `block_on` the sync helper (the nested-`block_on` deadlock class), so the
+//! transport forks while the precedence does not. The former `Store` arm was
+//! retired (the in-memory `SnapshotStore` is replaced by a WAL held read
+//! transaction so every per-pool read during `build_paths` shares one frozen
+//! DB cut).
 //!
 //! # Chain arm coverage semantics
 //!
@@ -71,6 +82,7 @@ use degenbot_decoders::v4_swap_decoder::V4PoolId;
 // this submodule to `degenbot_pools::v3_state`'s private path.
 use degenbot_pools::tick_fetch::{BootstrapTickError, TickBootstrapRpc};
 
+use crate::bot_core::planning::TickMapSeed;
 use crate::bot_core::{PoolTickCoverage, TickInfo};
 
 /// The helper's error envelope: a `DbError` from the Db arm OR a
@@ -108,41 +120,12 @@ pub enum TickMapAssemblyError {
 }
 
 /// The helper's return shape: an optional hit (`Some((ticks, coverage))` on
-/// Store, Db, or Chain success) or a miss (`None`), with
+/// Db or Chain success) or a miss (`None`), with
 /// [`TickMapAssemblyError`] propagated from the Db + Chain arms. A type alias
 /// keeps the four call sites readable and silences `clippy::type_complexity`.
 pub type TickMapAssemblyResult =
     Result<Option<(HashMap<i32, TickInfo>, PoolTickCoverage)>, TickMapAssemblyError>;
 
-/// Assemble a V3 pool's tick map with `Db → Chain` precedence.
-///
-/// 1. **Db arm**: `db.fetch_liquidity_map(address)` is queried. A non-empty
-///    map (both `tick_bitmap` AND `tick_data` populated — mirrors Python's
-///    `if not init_maps or not liq_positions` heuristic) converts to `TickInfo`
-///    with `Tracked` coverage. A pool **found in the Db but with no mapped
-///    liquidity** converts to a **legitimately-empty Tracked** pool
-///    (authoritative: it is registered in the Db, so no Chain/RPC probe — a
-///    later liquidity event reactivates it) rather than degrading to Sparse.
-///    Only a pool-not-found (`Ok(None)`) falls through to the Chain arm; an
-///    `Err(DbError)` is **propagated** (Decision 8 (A)).
-/// 2. **Chain arm**: only on a Db miss AND `chain = Some`. Calls
-///    [`TickBootstrapRpc::bootstrap_v3_tick_word`] for the word containing
-///    `tick`; a hit returns `(ticks, Sparse)` (only one word seeded — the
-///    live-pump miss-detection backfills neighbours); `None` (all-zero bitmap)
-///    → helper returns `Ok(None)`; `Err(BootstrapTickError)` is **propagated**
-///    as [`TickMapAssemblyError::Chain`] (Decision 8 (A) — same loud-failure
-///    posture as the Db arm).
-/// 3. `chain = None` (no RPC bootstrap wired): Db only — a Db miss returns
-///    `Ok(None)`. `db = None` (cold-start, no Db handle): Chain only.
-///
-/// Returns `Ok(Some((ticks, coverage)))` on a hit (Db=`Tracked`, Chain=
-/// `Sparse`), `Ok(None)` on a miss, `Err(_)` on a Db or Chain read failure.
-///
-/// # Errors
-///
-/// Propagates [`TickMapAssemblyError::Db`] from `fetch_liquidity_map` and
-/// [`TickMapAssemblyError::Chain`] from `bootstrap_v3_tick_word` (Decision 8
-/// (A) — neither is swallowed).
 /// Compact serialize of a `HashMap<i32, TickInfo>` (ascending tick) into
 /// `tick:gross,net;...`, for the snapshot-seed dump (ADR-021
 /// re-assembly aid).
@@ -175,15 +158,117 @@ pub(crate) fn dump_tick_map_seed(
     );
 }
 
-/// Assemble a V3 pool's tick map with `Db → Chain` precedence.
+/// Which arm supplied a resolved CL tick map — the precedence decision before
+/// the seed vocabulary stamps provenance.
+pub(crate) enum TickMapArm {
+    /// A Db hit: the complete map, or a legitimately-empty `Tracked` pool.
+    Db(HashMap<i32, TickInfo>, PoolTickCoverage),
+    /// A Chain hit: the single bitmap word the transport returned, always
+    /// `Sparse`.
+    Chain(HashMap<i32, TickInfo>),
+    /// The Chain transport ran and returned no word (all-zero bitmap), or no
+    /// Chain transport is wired.
+    ChainMiss,
+}
+
+impl TickMapArm {
+    /// Stamp this arm into the single seed vocabulary. The one mint for BOTH
+    /// arms: Db provenance, Chain provenance, and the `ChainMiss` → empty
+    /// `Sparse` semantics cannot drift between transports.
+    #[must_use]
+    pub(crate) fn into_seed(self, block: u64) -> TickMapSeed {
+        match self {
+            Self::Db(ticks, coverage) => TickMapSeed::db(ticks, coverage, block),
+            Self::Chain(ticks) => TickMapSeed::chain(ticks, PoolTickCoverage::Sparse, block),
+            Self::ChainMiss => TickMapSeed::chain(HashMap::new(), PoolTickCoverage::Sparse, block),
+        }
+    }
+
+    /// Project this arm onto the historical sync `assemble_*_tick_map`
+    /// contract, which reports a Chain miss as `None`.
+    #[must_use]
+    fn into_sync_hit(self) -> Option<(HashMap<i32, TickInfo>, PoolTickCoverage)> {
+        match self {
+            Self::Db(ticks, coverage) => Some((ticks, coverage)),
+            Self::Chain(ticks) => Some((ticks, PoolTickCoverage::Sparse)),
+            Self::ChainMiss => None,
+        }
+    }
+}
+
+/// The one `Db → Chain` precedence decision for CL tick maps.
 ///
-/// Tries the DB snapshot arm first; if absent, falls back to RPC bootstrap.
+/// The Db read is always attempted first, and its outcome alone decides
+/// whether the Chain transport runs. `Ok(Some(seed))` means the Db arm is
+/// authoritative — a complete map, or a Db-registered pool with no mapped
+/// liquidity ("legitimately-empty `Tracked`", never degraded to `Sparse`).
+/// `Ok(None)` means the pool is absent from the Db, so the caller runs its
+/// Chain transport and mints through [`TickMapArm::into_seed`].
+///
+/// Db conversion ([`liquidity_map_to_tick_info`]), the Tracked intake
+/// reconciliation, coverage tagging, the forensic dump, and the loud error
+/// posture all live here, so every transport shares identical semantics. The
+/// Chain transport stays outside because it keeps two adapters — the sync
+/// [`TickBootstrapRpc`] trait object and the builder's async-native
+/// `ConstructionIo`, which cannot `block_on` the sync helper (the
+/// nested-`block_on` deadlock class; see the module doc). Both mint through
+/// [`TickMapArm::into_seed`].
 ///
 /// # Errors
 ///
-/// Propagates the DB fetch error from the snapshot arm, or the
-/// [`TickBootstrapRpc`] bootstrap
-/// error when the chain arm is exercised.
+/// Propagates the caller's Db read error and
+/// [`TickMapAssemblyError::InconsistentTickMap`] from the Tracked intake
+/// reconciliation, mapped through `E`.
+pub(crate) fn resolve_tick_map_arm<E, FDb>(
+    pool_ident: &str,
+    tick_spacing: i32,
+    block: u64,
+    db_read: FDb,
+) -> Result<Option<TickMapSeed>, E>
+where
+    E: From<TickMapAssemblyError>,
+    FDb: FnOnce() -> Result<Option<LiquidityMap>, E>,
+{
+    // 1. Db arm — held `SnapshotDb` tx (or per-call `DegenbotDb`), no BotState
+    // guard.
+    let Some(map) = db_read()? else {
+        return Ok(None); // pool not in Db -> caller runs the Chain transport
+    };
+    // Pool IS in the Db: a non-empty map -> Tracked + populated; an empty map
+    // -> legitimately-empty Tracked (authoritative — it came from the Db).
+    let arm = match liquidity_map_to_tick_info(map, tick_spacing).map_err(E::from)? {
+        Some(hit) => {
+            dump_tick_map_seed(pool_ident, &hit);
+            TickMapArm::Db(hit.0, hit.1)
+        }
+        None => TickMapArm::Db(HashMap::new(), PoolTickCoverage::Tracked),
+    };
+    Ok(Some(arm.into_seed(block)))
+}
+
+/// Mint the Chain arm from a transport's raw hit: `Some(ticks)` is a `Sparse`
+/// word, `None` is a miss (all-zero bitmap, or no transport wired). The shared
+/// chain-side mint for both transports.
+#[must_use]
+pub(crate) fn chain_arm(ticks: Option<HashMap<i32, TickInfo>>) -> TickMapArm {
+    match ticks {
+        Some(ticks) => TickMapArm::Chain(ticks),
+        None => TickMapArm::ChainMiss,
+    }
+}
+
+/// Assemble a V3 pool's tick map with `Db → Chain` precedence.
+///
+/// Tries the Db snapshot arm first (through [`resolve_tick_map_arm`]); on a Db
+/// miss, falls back to the sync [`TickBootstrapRpc`] Chain transport and mints
+/// a `Sparse` seed. A Chain miss (all-zero bitmap / no transport) is reported
+/// as `None`, the historical sync contract.
+///
+/// # Errors
+///
+/// Propagates [`TickMapAssemblyError::Db`] from the Db arm and
+/// [`TickMapAssemblyError::Chain`] from the Chain arm — neither is swallowed
+/// (Decision 8 (A)).
 pub fn assemble_v3_tick_map(
     db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     address: Address,
@@ -192,22 +277,30 @@ pub fn assemble_v3_tick_map(
     block: u64,
     chain: Option<&dyn TickBootstrapRpc>,
 ) -> TickMapAssemblyResult {
-    // 1. Db arm — held `SnapshotDb` tx (or per-call `DegenbotDb`), no BotState
-    // guard.
-    if let Some(db) = db {
-        if let Some(db_hit) = fetch_v3_tick_map_from_db(db, address, tick_spacing)? {
-            dump_tick_map_seed(&format!("{address}"), &db_hit);
-            return Ok(Some(db_hit));
-        }
+    let db_arm = resolve_tick_map_arm::<TickMapAssemblyError, _>(
+        &format!("{address}"),
+        tick_spacing,
+        block,
+        || match db {
+            Some(db) => db
+                .fetch_liquidity_map(address)
+                .map_err(TickMapAssemblyError::Db),
+            None => Ok(None),
+        },
+    )?;
+    if let Some(seed) = db_arm {
+        return Ok(Some((seed.ticks, seed.coverage)));
     }
-    // 2. Chain arm — RPC trait object, no BotState guard. `chain=None` short-
-    // circuits (no RPC bootstrap wired).
-    let Some(chain) = chain else {
-        return Ok(None);
+    // 2. Chain arm — RPC trait object, no BotState guard. `chain=None`
+    // short-circuits (no RPC bootstrap wired).
+    let chain_hit = match chain {
+        Some(chain) => chain
+            .bootstrap_v3_tick_word(&address.to_checksum(None), tick, tick_spacing, block)
+            .map_err(TickMapAssemblyError::Chain)?
+            .map(|word| word.ticks),
+        None => None,
     };
-    let addr_str = address.to_checksum(None);
-    let chain_hit = chain.bootstrap_v3_tick_word(&addr_str, tick, tick_spacing, block)?;
-    Ok(chain_hit.map(|bt_word| (bt_word.ticks, PoolTickCoverage::Sparse)))
+    Ok(chain_arm(chain_hit).into_sync_hit())
 }
 
 /// Assemble a V4 pool's tick map with `Db → Chain` precedence.
@@ -215,10 +308,10 @@ pub fn assemble_v3_tick_map(
 /// V4 twin of [`assemble_v3_tick_map`]: the Db arm calls
 /// `db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)`, and the Chain arm
 /// calls [`TickBootstrapRpc::bootstrap_v4_tick_word`] with `(state_view,
-/// pool_id)` — `state_view` is the V4 `StateView` contract address (the contract
-/// exposing `getTickBitmap`/`getTickLiquidity`, NOT the `PoolManager`).
-/// Identical hit/miss/error semantics — see [`assemble_v3_tick_map`] for the
-/// full contract.
+/// pool_id)` — `state_view` is the V4 `StateView` contract address (the
+/// contract exposing `getTickBitmap`/`getTickLiquidity`, NOT the
+/// `PoolManager`). Identical hit/miss/error semantics; both arms share
+/// [`resolve_tick_map_arm`] and [`TickMapArm::into_seed`].
 ///
 /// # Errors
 ///
@@ -238,62 +331,39 @@ pub fn assemble_v4_tick_map(
     block: u64,
     chain: Option<&dyn TickBootstrapRpc>,
 ) -> TickMapAssemblyResult {
-    // 1. Db arm.
-    if let Some(db) = db {
-        if let Some(db_hit) = fetch_v4_tick_map_from_db(db, pool_manager, pool_id, tick_spacing)? {
-            dump_tick_map_seed(&format!("{pool_id:?}"), &db_hit);
-            return Ok(Some(db_hit));
-        }
+    // `fetch_liquidity_map_v4` takes a `B256`; `V4PoolId` is `[u8; 32]` and
+    // `B256` is `FixedBytes<32>` — same layout, so the conversion is
+    // infallible.
+    let pool_id_hash = alloy::primitives::B256::from(pool_id);
+    let db_arm = resolve_tick_map_arm::<TickMapAssemblyError, _>(
+        &alloy::hex::encode_prefixed(pool_id),
+        tick_spacing,
+        block,
+        || match db {
+            Some(db) => db
+                .fetch_liquidity_map_v4(pool_manager, pool_id_hash)
+                .map_err(TickMapAssemblyError::Db),
+            None => Ok(None),
+        },
+    )?;
+    if let Some(seed) = db_arm {
+        return Ok(Some((seed.ticks, seed.coverage)));
     }
     // 2. Chain arm.
-    let Some(chain) = chain else {
-        return Ok(None);
+    let chain_hit = match chain {
+        Some(chain) => chain
+            .bootstrap_v4_tick_word(
+                &state_view.to_checksum(None),
+                &pool_id,
+                tick,
+                tick_spacing,
+                block,
+            )
+            .map_err(TickMapAssemblyError::Chain)?
+            .map(|word| word.ticks),
+        None => None,
     };
-    let mgr_str = state_view.to_checksum(None);
-    let chain_hit = chain.bootstrap_v4_tick_word(&mgr_str, &pool_id, tick, tick_spacing, block)?;
-    Ok(chain_hit.map(|bt_word| (bt_word.ticks, PoolTickCoverage::Sparse)))
-}
-
-/// Db arm for V3: convert a `LiquidityMap` into the helper's hit/miss shape,
-/// rejecting a self-inconsistent Tracked snapshot (T3 OMDCIY). Returns
-/// `Ok(None)` on an empty map (falls through to the Chain arm).
-fn fetch_v3_tick_map_from_db(
-    db: &dyn degenbot_db::snapshot::TickMapDb,
-    address: Address,
-    tick_spacing: i32,
-) -> TickMapAssemblyResult {
-    let Some(map) = db.fetch_liquidity_map(address)? else {
-        return Ok(None); // pool not in Db -> Chain arm (new chain-discovered pool)
-    };
-    // Pool IS in the Db. A non-empty map -> Tracked + populated; an empty map
-    // -> legitimately-empty Tracked (no liquidity on a registered pool is
-    // authoritative, not Sparse — it stays reactivatable via liquidity events).
-    Ok(Some(match liquidity_map_to_tick_info(map, tick_spacing)? {
-        Some(hit) => hit,
-        None => (HashMap::new(), PoolTickCoverage::Tracked),
-    }))
-}
-
-/// Db arm for V4: identical to V3 but routes through the V4 fetch.
-/// Returns `Ok(None)` on an empty map (falls through to the Chain arm).
-fn fetch_v4_tick_map_from_db(
-    db: &dyn degenbot_db::snapshot::TickMapDb,
-    pool_manager: Address,
-    pool_id: V4PoolId,
-    tick_spacing: i32,
-) -> TickMapAssemblyResult {
-    // `fetch_liquidity_map_v4` takes a `B256`; `V4PoolId` is `[u8; 32]` and
-    // `B256` is `FixedBytes<32>` — same layout, so the conversion is infallible.
-    let pool_id_hash = alloy::primitives::B256::from(pool_id);
-    let Some(map) = db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)? else {
-        return Ok(None); // pool not in Db -> Chain arm (new chain-discovered pool)
-    };
-    // Pool IS in the Db: a non-empty map -> Tracked + populated; an empty map
-    // -> legitimately-empty Tracked (V4 twin of the V3 arm above).
-    Ok(Some(match liquidity_map_to_tick_info(map, tick_spacing)? {
-        Some(hit) => hit,
-        None => (HashMap::new(), PoolTickCoverage::Tracked),
-    }))
+    Ok(chain_arm(chain_hit).into_sync_hit())
 }
 
 /// Convert a Db `LiquidityMap` into the helper's hit/miss shape.
