@@ -141,9 +141,9 @@ run_pyo3_arm() {
 
     # Instrumented cdylib build with the same feature set the dev install
     # uses (pyproject [tool.maturin] features), into an isolated target dir so
-    # the normal cargo/maturin caches stay untouched. RUSTFLAGS must repeat
-    # .cargo/config.toml's --cfg tokio_unstable: RUSTFLAGS replaces config
-    # rustflags entirely.
+    # the normal cargo/maturin caches stay untouched. RUSTFLAGS supplies the
+    # scoped --cfg tokio_unstable required by hotpath's full RuntimeMetrics
+    # getters; it is not a repository-wide Cargo setting.
     # LLVM_PROFILE_FILE must cover the BUILD itself, not just pytest: the
     # workspace's build scripts are also compiled with instrument-coverage and
     # write default_<...>.profraw into each crate dir at build time.

@@ -1597,8 +1597,16 @@ cargo build --locked -p degenbot_rs --features extension-module --manifest-path 
 # Run the standalone smokes and canonical full Rust suite
 just test-rust
 
-# Build and install the Python extension
+# Build and install the Python extension (the recipe adds the hotpath cfg)
 just dev
+
+# Direct maturin/uv hotpath build: full Tokio RuntimeMetrics need the cfg in
+# the environment because the repository intentionally has no global rustflags.
+RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run maturin develop
+
+# Direct Cargo hotpath test/build (same requirement):
+RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo test --locked \
+  -p degenbot-bot --features hotpath --lib profiling:: -- --ignored --nocapture
 ```
 
 ### Rust feature matrix
@@ -1612,7 +1620,7 @@ exhaustive build.
 | Workspace defaults | Every workspace member with its declared default features; no `--all-features` | `just lint-rust-check` or `just check-rust-default` |
 | Pure-Rust consumer | `degenbot` and its examples, with the umbrella's defaults and no PyO3 binding | `just check-rust-consumer` |
 | Binding defaults | `degenbot_rs` with its broad default domain features, without `extension-module` | `just check-rust-binding-default` |
-| Development wheel | `extension-module`, `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`, `degenbot-solvers/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and `mimalloc` | `just check-rust-dev-features` |
+| Development wheel | `extension-module`, `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`, `degenbot-solvers/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and `mimalloc`; the recipe adds `RUSTFLAGS=--cfg tokio_unstable` for full Tokio runtime metrics | `just check-rust-dev-features` |
 | Release wheel | `extension-module` (forwards to `pyo3/extension-module`) plus `degenbot_rs` defaults; no dev-only profiling, telemetry, allocator-control, or mimalloc features | `just check-rust-extension-release` or `just build-rust-extension` |
 | Diagnostic | Workspace `--all-features`, including test-only and mutually exclusive variants | `just check-rust-all-features` |
 

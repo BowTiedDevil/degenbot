@@ -79,6 +79,13 @@ CI runs the default, consumer, binding-default, development-only, and release
 feature checks before the all-features diagnostic. The default gate therefore
 remains meaningful even when the diagnostic is enabled.
 
+Hotpath's full Tokio `RuntimeMetrics` getters are behind Tokio's unstable API.
+The repository `.cargo/config.toml` intentionally has no global rustflag;
+`just check-rust-dev-features`, `just check-rust-all-features`, and `just dev`
+set `RUSTFLAGS=--cfg tokio_unstable` on those hotpath build paths. Direct hotpath
+Cargo/maturin builds must provide the same environment explicitly, for example
+`RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo test -p degenbot-bot --features hotpath`.
+
 ## Rust test scope
 
 Prefer the full-suite gate (`just test-rust`, or `cargo test --workspace --manifest-path rust/Cargo.toml`) to validate changes. Per-crate `cargo test -p <crate>` is fine inside a tight red-green loop, but re-run the workspace suite before declaring work done.

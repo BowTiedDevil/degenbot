@@ -33,7 +33,7 @@ curl -s http://127.0.0.1:6772/metrics | head
 Standalone proof without the bot:
 
 ```
-cd rust && DEGENBOT_HOTPATH=1 cargo run -p degenbot-bot \
+cd rust && DEGENBOT_HOTPATH=1 RUSTFLAGS=--cfg tokio_unstable cargo run -p degenbot-bot \
     --features hotpath-prometheus --example hotpath_prometheus_probe
 ```
 
@@ -119,8 +119,8 @@ Rules that hold in both modes:
 - **Process & runtime** — `hotpath_build_info`, `hotpath_uptime_seconds`,
   `hotpath_rss_bytes`, `hotpath_threads`, `hotpath_thread_cpu_percent{,_max}`.
 - **Tokio runtime** (ergo 2N6UKZ: `tokio_runtime!` in the pump loop +
-  workspace `tokio_unstable` rustflag) — alive tasks / workers / global
-  queue depth always; steals / worker-local queue / polls export when
+  `RUSTFLAGS=--cfg tokio_unstable` on hotpath builds) — alive tasks / workers /
+  global queue depth always; steals / worker-local queue / polls export when
   nonzero; the blocking pool exports once spawn_blocking work exists.
 - **Function & concurrency profiling** — per-function duration p99/avg/calls/
   alloc rates, future poll duration (`assert_ws_block_complete`, the

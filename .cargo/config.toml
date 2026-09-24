@@ -1,9 +1,9 @@
 # Cargo config for the degenbot workspace builds (cargo/maturin/uv all run
 # from the repo root, so this file is discovered by every build path incl.
 # the PyO3 cdylib rebuild and rust-analyzer's isolated target dir).
-[build]
-# hotpath's tokio runtime monitor reads tokio::runtime::RuntimeMetrics fields
-# that tokio only ships under its unstable cfg (ergo task 2N6UKZ). harmless
-# elsewhere: it only widens tokio's own API surface. One-time full-rebuild
-# cost when introduced; afterwards cached.
-rustflags = ["--cfg", "tokio_unstable"]
+#
+# Keep this file free of repository-wide rustflags. The full Tokio runtime
+# metrics exposed by hotpath use tokio's unstable `RuntimeMetrics` getters;
+# hotpath build recipes opt into that API with `RUSTFLAGS=--cfg tokio_unstable`
+# only for the feature lanes that enable hotpath. This keeps default and
+# downstream pure-Rust builds on the stable Tokio API surface.

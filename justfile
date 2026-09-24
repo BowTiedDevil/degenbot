@@ -157,7 +157,7 @@ check-rust-binding-default:
 # telemetry, allocator, and allocator-selection features are development-only
 # and are not part of the release-wheel or standalone-default matrix.
 check-rust-dev-features:
-    cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --features "extension-module,degenbot-bot/hotpath,degenbot-bot/hotpath-prometheus,degenbot-solvers/hotpath,degenbot-bot/allocator-ctrl,otel,mimalloc"
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --features "extension-module,degenbot-bot/hotpath,degenbot-bot/hotpath-prometheus,degenbot-solvers/hotpath,degenbot-bot/allocator-ctrl,otel,mimalloc"
 
 # Check the release-equivalent extension feature set in the release profile.
 # The release maturin command uses `pyo3/extension-module`; this package feature
@@ -169,7 +169,7 @@ check-rust-extension-release:
 # default gate. It intentionally includes test-only and mutually exclusive
 # variants and must never be used to validate default or release behavior.
 check-rust-all-features:
-    cargo check --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo check --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml
 
 # Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
 # outer #[allow] form; this closes the historical inner-attribute loophole it
@@ -310,7 +310,7 @@ gc-target:
 
 # Build and install Python extension in development mode
 dev:
-    uv run maturin develop
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run maturin develop
 
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the

@@ -109,8 +109,8 @@ otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", 
 # mixed.solve_path_inner) instrument too — the crate-level hotpath dep unifies
 # at package level, but the explicit forward keeps the intent durable.
 # `tokio` backend: the tokio_runtime! monitor (hotpath_tokio_* families; the
-# interesting RuntimeMetrics getters additionally need --cfg tokio_unstable,
-# which the repo-root .cargo/config.toml applies workspace-wide).
+# full RuntimeMetrics getters additionally need --cfg tokio_unstable, which
+# hotpath build recipes set in RUSTFLAGS for this feature lane).
 hotpath = ["hotpath/hotpath", "hotpath/threads", "hotpath/tokio", "degenbot-solvers/hotpath"]
 hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]

@@ -88,9 +88,9 @@ impl BlockPump {
         let _hotpath_guard = crate::profiling::hotpath_guard("block_pump");
         // hotpath tokio-runtime monitor (hotpath_tokio_* families): must run
         // inside the ambient I/O runtime, which this is. The interesting
-        // getters need --cfg tokio_unstable (root .cargo/config.toml); without
-        // it the monitor emits only the unstable-free subset. No-op when the
-        // hotpath feature is off.
+        // getters need --cfg tokio_unstable, which the hotpath build recipes
+        // set in RUSTFLAGS; without it the monitor emits only the stable
+        // subset. No-op when the hotpath feature is off.
         #[cfg(feature = "hotpath")]
         hotpath::tokio_runtime!(&tokio::runtime::Handle::current());
         // apply any fixed DEGENBOT_MIMALLOC_PURGE_DELAY_MS and
