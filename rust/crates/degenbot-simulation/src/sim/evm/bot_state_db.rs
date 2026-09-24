@@ -407,6 +407,11 @@ mod tests {
             token0_id: 10,
             token1_id: 20,
             address: POOL,
+            fees: degenbot_bot::bot_core::executor_hop::V2FeePair::from_discovered(
+                Some(3),
+                Some(3),
+                Some(1_000),
+            ),
         });
         RouteRegistry::new(index)
     }

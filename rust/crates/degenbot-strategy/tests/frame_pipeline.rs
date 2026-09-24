@@ -27,6 +27,7 @@ use degenbot_simulation::sim::evm::journal_pools::{
 };
 use std::sync::Arc;
 
+use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
@@ -38,6 +39,14 @@ use degenbot_strategy::backrun_strategy::{
 use degenbot_strategy::frame_pipeline::{
     build_descriptors, empty_frame_observe_reason, state_digest, MarketContext, PipelineConfig,
 };
+
+fn v2_fee_pair() -> V2FeePair {
+    V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+}
+
+fn v2_fees() -> V2Fees {
+    v2_fee_pair().resolve().expect("valid fixture fee")
+}
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
 /// `liquidity_update_block`, so no window is ever backfilled; an unexpected
@@ -139,12 +148,14 @@ fn runtime_fixture() -> (MarketContext, u64, u64) {
         token0_id: u64::try_from(tok_id).unwrap(),
         token1_id: u64::try_from(weth_id).unwrap(),
         address: P,
+        fees: v2_fee_pair(),
     });
     index.push_edge(degenbot_bot::connector_index::V2Edge {
         pool_id: 102,
         token0_id: u64::try_from(tok_id).unwrap(),
         token1_id: u64::try_from(weth_id).unwrap(),
         address: Q,
+        fees: v2_fee_pair(),
     });
     // The pipeline's sidecars quote chains of 1 (mainnet).
     (
@@ -214,7 +225,10 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture", None);
     assert_eq!(affected.len(), 1, "P admits and trades WETH");
     assert_eq!(affected[0].address, P);
-    assert_eq!(affected[0].family, LaneFamily::V2);
+    assert_eq!(
+        affected[0].family.tag(),
+        LaneFamily::V2 { fees: v2_fees() }.tag()
+    );
 
     // Admit the connector the walker would have discovered (the admission
     // shape is unchanged; the discovery traversal itself is exercised in the
@@ -226,6 +240,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
             token1: affected[0].token1,
             reserve0: 200_000,
             reserve1: 900,
+            fees: v2_fee_pair(),
         })
         .expect("connector admits");
 
@@ -240,7 +255,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
         token0: t0,
         token1: t1,
         zfo: t0 == WETH,
-        family: LaneFamily::V2,
+        family: LaneFamily::V2 { fees: v2_fees() },
     };
     let mid_consuming_tok = BackrunHopRef {
         pool_id: q_id,
@@ -248,7 +263,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
         token0: t0,
         token1: t1,
         zfo: tok == t0,
-        family: LaneFamily::V2,
+        family: LaneFamily::V2 { fees: v2_fees() },
     };
     let mid_consuming_weth = BackrunHopRef {
         pool_id: q_id,
@@ -256,7 +271,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
         token0: t0,
         token1: t1,
         zfo: t0 == WETH,
-        family: LaneFamily::V2,
+        family: LaneFamily::V2 { fees: v2_fees() },
     };
     let anchor_consuming_tok = BackrunHopRef {
         pool_id: affected[0].workspace_pool_id,
@@ -264,7 +279,7 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
         token0: t0,
         token1: t1,
         zfo: tok == t0,
-        family: LaneFamily::V2,
+        family: LaneFamily::V2 { fees: v2_fees() },
     };
     let stats = solve_dfs_chains(
         &mut solver,
@@ -330,6 +345,7 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
             token1: affected[0].token1,
             reserve0: 200_000,
             reserve1: 900,
+            fees: v2_fee_pair(),
         })
         .expect("connector admits");
 
@@ -347,7 +363,7 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
             pool: Q,
             token0: a.token0,
             token1: a.token1,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
     ];
     let new_chain = cycle_refs(&hops, WETH).expect("the WETH-entry two-hop cycle closes");
@@ -362,7 +378,7 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
             token0: t0,
             token1: t1,
             zfo: t0 == WETH,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
         BackrunHopRef {
             pool_id: q_id,
@@ -370,7 +386,7 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
             token0: t0,
             token1: t1,
             zfo: tok == t0,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
     ];
     assert_eq!(
@@ -418,24 +434,28 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
         token0_id: A_ID,
         token1_id: WETH_ID,
         address: P1,
+        fees: v2_fee_pair(),
     });
     index.push_edge(V2Edge {
         pool_id: 202,
         token0_id: A_ID,
         token1_id: B_ID,
         address: P2,
+        fees: v2_fee_pair(),
     });
     index.push_edge(V2Edge {
         pool_id: 203,
         token0_id: B_ID,
         token1_id: C_ID,
         address: P3,
+        fees: v2_fee_pair(),
     });
     index.push_edge(V2Edge {
         pool_id: 204,
         token0_id: C_ID,
         token1_id: WETH_ID,
         address: P4,
+        fees: v2_fee_pair(),
     });
     let graph = AnchoredGraph::from_connector_index(&index);
 
@@ -516,28 +536,28 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
             pool: P1,
             token0: A,
             token1: WETH,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
         CycleHop {
             workspace_pool_id: p2_id,
             pool: P2,
             token0: A,
             token1: B,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
         CycleHop {
             workspace_pool_id: p3_id,
             pool: P3,
             token0: B,
             token1: C,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
         CycleHop {
             workspace_pool_id: p4_id,
             pool: P4,
             token0: C,
             token1: WETH,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
     ];
     let chain = cycle_refs(&hops, WETH).expect("the WETH-entry 4-hop cycle closes");
@@ -648,6 +668,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
             token0_id: t0,
             token1_id: t1,
             address: addr,
+            fees: v2_fee_pair(),
         });
     }
     let rt = market_context(
@@ -736,6 +757,7 @@ fn unsupported_family_observes_loudly_not_silently() {
         token0_id: tok_id,
         token1_id: weth_id,
         address: P,
+        fees: v2_fee_pair(),
     });
     index.load_unsupported(&db, 1).unwrap();
     assert_eq!(
@@ -974,6 +996,7 @@ fn admitted_pair(
             token1,
             reserve0: r0,
             reserve1: r1,
+            fees: v2_fee_pair(),
         })
         .unwrap()
 }
@@ -1175,7 +1198,7 @@ fn walker_three_hop_chain_solves_and_composes() {
             token0: TOK,
             token1: WETH,
             zfo: false, // entry WETH = token1
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
         BackrunHopRef {
             pool_id: c1_id,
@@ -1183,7 +1206,7 @@ fn walker_three_hop_chain_solves_and_composes() {
             token0: TOK,
             token1: M,
             zfo: true, // input TOK = token0
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
         BackrunHopRef {
             pool_id: c2_id,
@@ -1191,7 +1214,7 @@ fn walker_three_hop_chain_solves_and_composes() {
             token0: M,
             token1: WETH,
             zfo: true, // input M = token0
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
     ]];
 

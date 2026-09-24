@@ -6,10 +6,11 @@
 //! so a healthy wide/range anchor admits and solves while a genuinely
 //! unusable (ticks-less) anchor still rejects.
 
-#![expect(clippy::unwrap_used, clippy::panic)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use alloy::primitives::aliases::U128;
 use alloy::primitives::{address, Address, I256, U256};
+use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
@@ -22,6 +23,14 @@ use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2P
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use hashbrown::HashMap as HbMap;
+
+fn v2_fee_pair() -> V2FeePair {
+    V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+}
+
+fn v2_fees() -> V2Fees {
+    v2_fee_pair().resolve().expect("valid fixture fee")
+}
 
 /// The V3 anchor's tokens (canonical order: TOK0 < WETH).
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");
@@ -165,6 +174,7 @@ fn runtime(ticks: &[i32]) -> (MarketContext, u64, u64) {
         token0_id: tok_id,
         token1_id: weth_id,
         address: MID,
+        fees: v2_fee_pair(),
     });
     (
         market_context(
@@ -215,7 +225,7 @@ fn chain_refs(anchor_id: u64, mid_id: u64) -> Vec<BackrunHopRef> {
             token1: WETH,
             // Now holding TOK: the mid consumes TOK = token0.
             zfo: true,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
     ]
 }
@@ -228,6 +238,7 @@ fn admit_mid(solver: &mut BackrunSolver) -> u64 {
             token1: WETH,
             reserve0: 2_000,
             reserve1: 400_000,
+            fees: v2_fee_pair(),
         })
         .unwrap()
 }

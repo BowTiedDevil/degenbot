@@ -17,7 +17,9 @@ use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 use degenbot_solvers::mixed::SolvePathResult;
 
-use degenbot_bot::bot_core::executor_hop::{v2_fee_bips, v2_hop, v3_hop, v4_hop};
+use degenbot_bot::bot_core::executor_hop::{
+    v2_hop, v3_hop, v4_hop, V2FeePair, V2FeeRefusal, V2Fees,
+};
 use degenbot_bot::bot_core::planning::{
     ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace,
 };
@@ -34,6 +36,21 @@ pub struct BackrunV2Pool {
     pub token1: Address,
     pub reserve0: u128,
     pub reserve1: u128,
+    /// Direction-specific discovered fees, including typed refusals.
+    pub fees: V2FeePair,
+}
+
+/// Why a V2 pool could not enter solver admission.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum V2AdmissionError {
+    #[error("discovered V2 fee is unusable: {0}")]
+    Fee(#[from] V2FeeRefusal),
+    #[error("reserve0 out of uint112: {0}")]
+    Reserve0Width(u128),
+    #[error("reserve1 out of uint112: {0}")]
+    Reserve1Width(u128),
+    #[error("V2 workspace registration failed: {0}")]
+    Registration(String),
 }
 
 /// The standalone frame solver: the backrun lane's driver shell over a
@@ -63,18 +80,20 @@ impl BackrunSolver {
         self.ws.pool_id_by_address(address)
     }
 
-    /// Admit a V2 pool with the canonical 0.3% fee preset. Per-exchange fee
-    /// variants enter with the CL/fee-lane work (B2 follow-up).
+    /// Admit a V2 pool with the discovered directional fees. Fee refusal is
+    /// resolved before any workspace mutation.
     ///
     /// # Errors
     ///
-    /// Registration rejections (spec-bound reserve violations).
-    pub fn admit_v2(&mut self, p: &BackrunV2Pool) -> Result<u64, String> {
+    /// Returns a typed fee/reserve refusal or the workspace registration
+    /// rejection.
+    pub fn admit_v2(&mut self, p: &BackrunV2Pool) -> Result<u64, V2AdmissionError> {
+        let fees = p.fees.resolve()?;
         let Ok(reserve0) = p.reserve0.try_into() else {
-            return Err(format!("reserve0 out of uint112: {}", p.reserve0));
+            return Err(V2AdmissionError::Reserve0Width(p.reserve0));
         };
         let Ok(reserve1) = p.reserve1.try_into() else {
-            return Err(format!("reserve1 out of uint112: {}", p.reserve1));
+            return Err(V2AdmissionError::Reserve1Width(p.reserve1));
         };
         self.ws
             .register_with_state(
@@ -86,12 +105,12 @@ impl BackrunSolver {
                 ExplicitPoolState::V2 {
                     reserve0,
                     reserve1,
-                    fee_token0: (997, 1000),
-                    fee_token1: (997, 1000),
+                    fee_token0: fees.token0.retained_fraction(),
+                    fee_token1: fees.token1.retained_fraction(),
                 },
                 1,
             )
-            .map_err(|e| format!("v2 admission failed: {e:?}"))
+            .map_err(|e| V2AdmissionError::Registration(format!("{e:?}")))
     }
 
     /// Declare a path from admitted pool ids + directions; returns its index.
@@ -187,7 +206,9 @@ pub struct BackrunHopRef {
 /// The lane hop's protocol family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneFamily {
-    V2,
+    V2 {
+        fees: V2Fees,
+    },
     /// Concentrated liquidity carrying the pool's 1e6-convention fee.
     V3 {
         fee: u32,
@@ -272,7 +293,7 @@ impl LaneFamily {
     #[must_use]
     pub const fn tag(self) -> LaneFamilyTag {
         match self {
-            Self::V2 => LaneFamilyTag::V2,
+            Self::V2 { .. } => LaneFamilyTag::V2,
             Self::V3 { .. } => LaneFamilyTag::V3,
             Self::V4 { .. } => LaneFamilyTag::V4,
         }
@@ -528,7 +549,9 @@ pub fn compose_candidate(
     let mut pool_manager: Option<Address> = None;
     for h in &candidate.hops {
         let hop = match h.family {
-            LaneFamily::V2 => v2_hop(h.pool, h.token0, h.token1, v2_fee_bips(997, 1_000), h.zfo),
+            LaneFamily::V2 { fees } => {
+                v2_hop(h.pool, h.token0, h.token1, fees.direction(h.zfo), h.zfo)
+            }
             LaneFamily::V3 { fee } => v3_hop(h.pool, h.token0, h.token1, fee, h.zfo),
             LaneFamily::V4 {
                 fee,
@@ -637,6 +660,50 @@ mod tests {
     const P: Address = address!("000000000000000000000000000000000000b001");
     /// Q: the DB-discovered connector pool (cheaper TOK than staged P).
     const Q: Address = address!("000000000000000000000000000000000000b002");
+
+    fn v2_fees() -> V2Fees {
+        V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+            .resolve()
+            .expect("valid fixture fee")
+    }
+
+    #[test]
+    fn v2_admission_typed_refuses_missing_and_unrepresentable_fees_before_registration() {
+        let mut solver = BackrunSolver::new();
+        let result = solver.admit_v2(&BackrunV2Pool {
+            address: P,
+            token0: TOK,
+            token1: WETH,
+            reserve0: 500_000,
+            reserve1: 1_000,
+            fees: degenbot_bot::bot_core::executor_hop::V2FeePair::from_discovered(
+                Some(3),
+                Some(3),
+                Some(0),
+            ),
+        });
+        assert_eq!(
+            result,
+            Err(V2AdmissionError::Fee(
+                degenbot_bot::bot_core::executor_hop::V2FeeRefusal::ZeroDenominator
+            ))
+        );
+        let missing = solver.admit_v2(&BackrunV2Pool {
+            address: Q,
+            token0: TOK,
+            token1: WETH,
+            reserve0: 200_000,
+            reserve1: 900,
+            fees: V2FeePair::missing(),
+        });
+        assert_eq!(missing, Err(V2AdmissionError::Fee(V2FeeRefusal::Missing)));
+        assert_eq!(
+            solver.registered_pool_id(&P),
+            None,
+            "the refused fee must not enter the workspace"
+        );
+        assert_eq!(solver.registered_pool_id(&Q), None);
+    }
 
     /// Admit a V2 fixture into a workspace scope with the canonical 0.3%
     /// fee preset (the lane's admission params, inlined per fixture).
@@ -753,7 +820,7 @@ mod tests {
                     token0,
                     token1: WETH,
                     zfo: false,
-                    family: LaneFamily::V2,
+                    family: LaneFamily::V2 { fees: v2_fees() },
                 },
                 BackrunHopRef {
                     pool_id: 2,
@@ -761,7 +828,7 @@ mod tests {
                     token0,
                     token1: WETH,
                     zfo: true,
-                    family: LaneFamily::V2,
+                    family: LaneFamily::V2 { fees: v2_fees() },
                 },
             ],
             // The golden solve's numbers, via a scoped solver eval:
@@ -868,7 +935,7 @@ mod tests {
                         token0: TOK,
                         token1: WETH,
                         zfo: false,
-                        family: LaneFamily::V2,
+                        family: LaneFamily::V2 { fees: v2_fees() },
                     },
                     BackrunHopRef {
                         pool_id: q_id,
@@ -876,7 +943,7 @@ mod tests {
                         token0: TOK,
                         token1: WETH,
                         zfo: true,
-                        family: LaneFamily::V2,
+                        family: LaneFamily::V2 { fees: v2_fees() },
                     },
                 ],
                 optimal_input: amounts.0,
@@ -932,7 +999,7 @@ mod tests {
                     token1: WETH,
                     // input token0=TOK, output token1=WETH
                     zfo: true,
-                    family: LaneFamily::V2,
+                    family: LaneFamily::V2 { fees: v2_fees() },
                 },
             ],
             optimal_input: 1_000_000_000_000_000_000,
@@ -1013,7 +1080,7 @@ mod tests {
                     token0: TOK,
                     token1: WETH,
                     zfo: false,
-                    family: LaneFamily::V2,
+                    family: LaneFamily::V2 { fees: v2_fees() },
                 },
                 BackrunHopRef {
                     pool_id: 2,
@@ -1021,7 +1088,7 @@ mod tests {
                     token0: TOK,
                     token1: WETH,
                     zfo: true,
-                    family: LaneFamily::V2,
+                    family: LaneFamily::V2 { fees: v2_fees() },
                 },
             ],
             optimal_input: 1,
@@ -1046,7 +1113,7 @@ mod tests {
                     token0: TOK,
                     token1: WETH,
                     zfo: false,
-                    family: LaneFamily::V2,
+                    family: LaneFamily::V2 { fees: v2_fees() },
                 },
                 BackrunHopRef {
                     pool_id: 2,
@@ -1054,7 +1121,7 @@ mod tests {
                     token0: TOK,
                     token1: WETH,
                     zfo: true,
-                    family: LaneFamily::V2,
+                    family: LaneFamily::V2 { fees: v2_fees() },
                 },
             ],
             optimal_input: u128::MAX,
@@ -1070,18 +1137,26 @@ mod tests {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used)]
 mod taxonomy_tests {
     //! ADR-059 D1 parity: the lane vocabulary projects from the pool taxonomy,
     //! and the lane tag drives both the solver hop engine and the discovery
     //! graph kind. The lagging (unsupported) legs are pinned here too.
     use super::{LaneFamily, LaneFamilyTag};
     use alloy::primitives::{Address, B256};
+    use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
     use degenbot_pathfinding::PoolKind;
     use degenbot_pools::{
         BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
         ReservePairVariant,
     };
     use degenbot_solvers::mixed::HopType;
+
+    fn v2_fees() -> V2Fees {
+        V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+            .resolve()
+            .expect("valid fixture fee")
+    }
 
     fn reserve_pair(variant: ReservePairVariant) -> Identity {
         Identity::ReservePair { variant, dex: None }
@@ -1097,7 +1172,7 @@ mod taxonomy_tests {
 
     #[test]
     fn tag_covers_every_data_carrying_lane_family() {
-        assert_eq!(LaneFamily::V2.tag(), LaneFamilyTag::V2);
+        assert_eq!(LaneFamily::V2 { fees: v2_fees() }.tag(), LaneFamilyTag::V2);
         assert_eq!(LaneFamily::V3 { fee: 500 }.tag(), LaneFamilyTag::V3);
         assert_eq!(
             LaneFamily::V4 {

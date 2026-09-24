@@ -486,6 +486,11 @@ mod tests {
             token0_id: 10,
             token1_id: 20,
             address: V2,
+            fees: crate::bot_core::executor_hop::V2FeePair::from_discovered(
+                Some(3),
+                Some(3),
+                Some(1_000),
+            ),
         });
         index.push_v3_edge(V3Edge {
             pool_id: 2,

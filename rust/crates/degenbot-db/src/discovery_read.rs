@@ -213,8 +213,23 @@ const V2V3_JOINS: &str = "FROM pools p \
 /// Build the one-statement V2/V3 discovery SELECT (`UNION ALL` over every
 /// subclass table so a single query covers all V2 + V3 families).
 fn v2v3_select() -> String {
+    discovery_v2v3_select(true)
+}
+
+/// Build the V2-only projection used by the connector identity index. It is
+/// the same manifest-driven SELECT and decoder as full discovery, without
+/// decoding unrelated V3 rows.
+fn v2_select() -> String {
+    discovery_v2v3_select(false)
+}
+
+fn discovery_v2v3_select(include_v3: bool) -> String {
     let v2 = v2_families();
-    let v3 = v3_families();
+    let v3 = if include_v3 {
+        v3_families()
+    } else {
+        Vec::new()
+    };
     let mut branches: Vec<String> = Vec::with_capacity(v2.len() + v3.len());
     for (kind, table, aerodrome) in v2 {
         let stable = if aerodrome { "s.stable" } else { "NULL" };
@@ -328,7 +343,77 @@ fn decode_v4_row(row: &Row<'_>) -> Result<DiscoveryV4Row, DbError> {
     })
 }
 
+/// Decode one V2/V3 union row from the shared SELECT layout.
+fn decode_v2_v3_row(row: &Row<'_>) -> Result<DiscoveryPoolRow, DbError> {
+    let kind: String = row.get(3)?;
+    let pool = decode_pool_base(row)?;
+    let token0 = decode_token(row, 7)?;
+    let token1 = decode_token(row, 13)?;
+    let exchange = decode_exchange(row, 19)?;
+    let fee_token0: i64 = row.get(26)?;
+    let fee_token1: i64 = row.get(27)?;
+    let fee_denominator: i64 = row.get(28)?;
+    if crate::schema::table::is_v2_kind(&kind) {
+        return Ok(DiscoveryPoolRow::V2(DiscoveryV2Row {
+            pool,
+            exchange,
+            token0,
+            token1,
+            fee_token0,
+            fee_token1,
+            fee_denominator,
+            stable: row.get(29)?,
+        }));
+    }
+    if crate::schema::table::is_v3_kind(&kind) {
+        return Ok(DiscoveryPoolRow::V3(DiscoveryV3Row {
+            pool,
+            exchange,
+            token0,
+            token1,
+            fee_token0,
+            fee_token1,
+            fee_denominator,
+            tick_spacing: row.get(30)?,
+            liquidity_update_block: row.get(31)?,
+            liquidity_update_log_index: row.get(32)?,
+        }));
+    }
+    Err(DbError::Decode(format!(
+        "discovery select returned unrecognized pool kind {kind:?}"
+    )))
+}
+
 // ── the read surface ───────────────────────────────────────────────────────
+
+/// Read the canonical discovered V2-family rows for `chain_id` on a borrowed
+/// connection. This is the V2-only half of the manifest-driven discovery
+/// query, not a second fee source.
+///
+/// # Errors
+///
+/// Returns [`DbError::Sqlite`] on query failure or [`DbError::Decode`] on a
+/// malformed V2 discovery column.
+pub fn fetch_v2_discovery_rows_on_conn(
+    conn: &Connection,
+    chain_id: i64,
+) -> Result<Vec<DiscoveryV2Row>, DbError> {
+    let sql = v2_select();
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params![chain_id])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        match decode_v2_v3_row(row)? {
+            DiscoveryPoolRow::V2(row) => out.push(row),
+            DiscoveryPoolRow::V3(_) | DiscoveryPoolRow::V4(_) => {
+                return Err(DbError::Decode(
+                    "V2 discovery select returned a non-V2 row".into(),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
 
 /// Read every candidate pool for `chain_id` on a borrowed connection.
 ///
@@ -356,43 +441,7 @@ pub fn fetch_discovery_rows_on_conn(
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params![chain_id])?;
         while let Some(row) = rows.next()? {
-            let kind: String = row.get(3)?;
-            let pool = decode_pool_base(row)?;
-            let token0 = decode_token(row, 7)?;
-            let token1 = decode_token(row, 13)?;
-            let exchange = decode_exchange(row, 19)?;
-            let fee_token0: i64 = row.get(26)?;
-            let fee_token1: i64 = row.get(27)?;
-            let fee_denominator: i64 = row.get(28)?;
-            if crate::schema::table::is_v2_kind(&kind) {
-                out.push(DiscoveryPoolRow::V2(DiscoveryV2Row {
-                    pool,
-                    exchange,
-                    token0,
-                    token1,
-                    fee_token0,
-                    fee_token1,
-                    fee_denominator,
-                    stable: row.get(29)?,
-                }));
-            } else if crate::schema::table::is_v3_kind(&kind) {
-                out.push(DiscoveryPoolRow::V3(DiscoveryV3Row {
-                    pool,
-                    exchange,
-                    token0,
-                    token1,
-                    fee_token0,
-                    fee_token1,
-                    fee_denominator,
-                    tick_spacing: row.get(30)?,
-                    liquidity_update_block: row.get(31)?,
-                    liquidity_update_log_index: row.get(32)?,
-                }));
-            } else {
-                return Err(DbError::Decode(format!(
-                    "discovery select returned unrecognized pool kind {kind:?}"
-                )));
-            }
+            out.push(decode_v2_v3_row(row)?);
         }
     }
 
@@ -433,6 +482,17 @@ pub fn fetch_v4_discovery_rows_on_conn(
 }
 
 impl DegenbotDb {
+    /// Read the canonical discovered V2-family rows for `chain_id`,
+    /// self-locking on this handle's connection.
+    ///
+    /// # Errors
+    ///
+    /// Same error conditions as [`fetch_v2_discovery_rows_on_conn`].
+    pub fn fetch_v2_discovery_rows(&self, chain_id: i64) -> Result<Vec<DiscoveryV2Row>, DbError> {
+        let conn = self.lock();
+        fetch_v2_discovery_rows_on_conn(&conn, chain_id)
+    }
+
     /// Read every candidate pool for `chain_id` — the `build_paths.py`
     /// enumeration surface, self-locking on this handle's connection.
     ///

@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 use alloy::primitives::aliases::U128;
 use alloy::primitives::{Address, U256};
+use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
@@ -50,6 +51,14 @@ use degenbot_strategy::backrun_engine::{
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use hashbrown::HashMap as HbMap;
+
+fn v2_fee_pair() -> V2FeePair {
+    V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+}
+
+fn v2_fees() -> V2Fees {
+    v2_fee_pair().resolve().expect("valid fixture fee")
+}
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
 /// `liquidity_update_block`, so no window is ever backfilled; an unexpected
@@ -319,6 +328,7 @@ fn runtime_for(
         token0_id: tok_id,
         token1_id: weth_id,
         address: v2,
+        fees: v2_fee_pair(),
     });
     market_context(
         Some(Arc::new(degenbot_bot::bot_core::RouteRegistry::new(index))),
@@ -372,7 +382,7 @@ fn probe_chain(
             token0: token,
             token1: WETH,
             zfo: true,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         },
     ]
 }
@@ -466,6 +476,7 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
             token1: WETH,
             reserve0: 100_000_000_000u128,
             reserve1: 100_000_000_000u128,
+            fees: v2_fee_pair(),
         })
         .expect("the WETH-quoted V2 connector admits");
     let chain = probe_chain(
@@ -505,6 +516,7 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
             token1: WETH,
             reserve0: 100_000_000_000u128,
             reserve1: 100_000_000_000u128,
+            fees: v2_fee_pair(),
         })
         .expect("the WETH-quoted V2 connector admits");
     let chain = probe_chain(

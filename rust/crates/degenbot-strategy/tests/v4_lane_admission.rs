@@ -16,6 +16,7 @@
 
 use alloy::primitives::{address, aliases::U112, Address, B256, I256, U256};
 
+use degenbot_bot::bot_core::executor_hop::V2FeePair;
 use degenbot_bot::bot_core::pool_ingress::{
     TickMapSampleTarget, TickMapSampleVerifier, VerifyLevel,
 };
@@ -31,6 +32,10 @@ use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily
 use degenbot_strategy::backrun_strategy::{admit_extracted, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use hashbrown::HashMap as HbMap;
+
+fn v2_fee_pair() -> V2FeePair {
+    V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+}
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
 /// `liquidity_update_block`, so no window is ever backfilled; an unexpected
@@ -105,6 +110,7 @@ fn runtime_fixture_with(
         token0_id: u64::try_from(tok_id).unwrap(),
         token1_id: u64::try_from(weth_id).unwrap(),
         address: P,
+        fees: v2_fee_pair(),
     });
     index.push_v4_edge(V4Edge {
         pool_hash: v4_pool_hash(),

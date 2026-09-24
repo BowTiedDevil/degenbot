@@ -29,7 +29,7 @@
 //! (out of scope for the flatten — a future `HopInfo::Solidly` /
 //! `HopInfo::Balancer` task).
 use super::ArbitrageEngine;
-use crate::bot_core::executor_hop::{v2_fee_bips, v2_hop, v3_hop, v4_hop};
+use crate::bot_core::executor_hop::{v2_hop, v3_hop, v4_hop, V2Fee, V2FeeRefusal};
 use crate::bot_core::BotState;
 use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
 use degenbot_executor::composers::{HopInfo, PathInfo};
@@ -46,6 +46,13 @@ pub enum PathInfoBuildError {
         "hop_type {hop_type:?} (pool_id {pool_id}) is not supported by the command-stream encoder"
     )]
     UnsupportedHopType { hop_type: HopType, pool_id: u64 },
+    /// The registered V2 fee cannot be represented by the executor.
+    #[error("pool_id {pool_id} has an invalid V2 fee: {reason}")]
+    InvalidV2Fee {
+        pool_id: u64,
+        #[source]
+        reason: V2FeeRefusal,
+    },
 }
 /// Build the `composers::PathInfo` for a hop list straight off the shared
 /// core — the ENGINE-LOCK-FREE form (SIMPIPE2 T4): the inline-sim hook runs
@@ -158,7 +165,12 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
             } else {
                 id.fee_token1
             };
-            let fee = v2_fee_bips(gamma, denom);
+            let fee = V2Fee::from_retained(gamma, denom).map_err(|reason| {
+                PathInfoBuildError::InvalidV2Fee {
+                    pool_id: pool_ref.pool_key,
+                    reason,
+                }
+            })?;
             Ok(v2_hop(
                 id.address,
                 id.token0,

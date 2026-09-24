@@ -225,12 +225,20 @@ pub async fn admit_extracted_verified(
                     u112_to_u128(reserves.reserve0),
                     u112_to_u128(reserves.reserve1),
                 );
+                let Ok(fees) = edge.fees.resolve() else {
+                    skip(st.address, "v2-fee");
+                    continue;
+                };
                 let Ok(p_id) = solver.admit_v2(&BackrunV2Pool {
                     address: st.address,
                     token0,
                     token1,
                     reserve0: r0,
                     reserve1: r1,
+                    fees: degenbot_bot::bot_core::executor_hop::V2FeePair::new(
+                        fees.token0,
+                        fees.token1,
+                    ),
                 }) else {
                     skip(st.address, "v2-admit");
                     continue;
@@ -246,7 +254,7 @@ pub async fn admit_extracted_verified(
                         token0,
                         token1,
                         quotes,
-                        family: LaneFamily::V2,
+                        family: LaneFamily::V2 { fees },
                     });
                 }
             }
@@ -642,10 +650,11 @@ async fn admit_hop_pool(
                 token1,
                 reserve0: reserves.0,
                 reserve1: reserves.1,
+                fees: e.fees,
             }) {
                 Ok(id) => Some(id),
                 Err(reason) => {
-                    trace_admit_fail(trace_tx, address, "admit-v2", &reason);
+                    trace_admit_fail(trace_tx, address, "admit-v2", &reason.to_string());
                     None
                 }
             }
@@ -845,7 +854,12 @@ async fn cycle_chain(
             token0,
             token1,
             family: match h {
-                ResolvedHop::V2(_) => LaneFamily::V2,
+                ResolvedHop::V2(e) => {
+                    let Ok(fees) = e.fees.resolve() else {
+                        return walk;
+                    };
+                    LaneFamily::V2 { fees }
+                }
                 ResolvedHop::V3(e) => LaneFamily::V3 { fee: e.fee },
             },
         });

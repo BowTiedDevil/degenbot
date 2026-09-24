@@ -10,6 +10,7 @@
 
 use alloy::primitives::{address, aliases::U112, Address};
 
+use degenbot_bot::bot_core::executor_hop::V2FeePair;
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::slot_layout::V2ReservesParts;
@@ -19,6 +20,10 @@ use degenbot_simulation::sim::evm::journal_pools::{
 use degenbot_strategy::backrun_engine::BackrunSolver;
 use degenbot_strategy::backrun_strategy::{admit_extracted, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
+
+fn v2_fee_pair() -> V2FeePair {
+    V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+}
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
 /// `liquidity_update_block`, so no window is ever backfilled; an unexpected
@@ -81,6 +86,7 @@ fn runtime_fixture() -> MarketContext {
         token0_id: u64::try_from(tok_id).unwrap(),
         token1_id: u64::try_from(weth_id).unwrap(),
         address: P,
+        fees: v2_fee_pair(),
     });
     market_context(
         Some(std::sync::Arc::new(

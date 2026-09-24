@@ -98,6 +98,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::bot_core::executor_hop::V2FeePair;
     use crate::bot_core::log_dispatcher::LogDispatcher;
     use crate::connector_index::V3Edge;
 
@@ -107,6 +108,7 @@ mod tests {
             token0_id: 10,
             token1_id: 20,
             address,
+            fees: V2FeePair::from_discovered(Some(3), Some(3), Some(1_000)),
         }
     }
 

@@ -15,6 +15,7 @@
 #![expect(clippy::unwrap_used)]
 
 use alloy::primitives::Address;
+use degenbot_bot::bot_core::executor_hop::V2FeePair;
 use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{
@@ -25,12 +26,17 @@ use proptest::prelude::*;
 const QUOTE_ID: u64 = 20; // the WETH DB id in every fixture
 const TOK_ID: u64 = 10;
 
+fn v2_fee_pair() -> V2FeePair {
+    V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+}
+
 fn edge(pool_id: u64, t0: u64, t1: u64, addr_seed: u8) -> V2Edge {
     V2Edge {
         pool_id,
         token0_id: t0,
         token1_id: t1,
         address: Address::new([addr_seed; 20]),
+        fees: v2_fee_pair(),
     }
 }
 

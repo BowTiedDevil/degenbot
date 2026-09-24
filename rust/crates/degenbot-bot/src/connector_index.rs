@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::bot_core::executor_hop::V2FeePair;
 use alloy::primitives::{address, Address, Bytes, B256, U256};
 use async_trait::async_trait;
 use degenbot_db::connection::DegenbotDb;
@@ -43,6 +44,8 @@ pub struct V2Edge {
     pub token0_id: u64,
     pub token1_id: u64,
     pub address: Address,
+    /// Direction-specific discovered species fees projected from the pool row.
+    pub fees: V2FeePair,
 }
 
 /// One V4 managed-pool edge of the connector index — the identity the backrun
@@ -367,52 +370,25 @@ impl V2ConnectorIndex {
     /// skipped here — the unsupported-family roster captures it — so an
     /// unrecognized row cannot disable the lane at boot.
     pub fn load(db: &DegenbotDb, chain_id: i64) -> Result<Self, DbError> {
-        let rows = db.fetch_connector_pool_rows(chain_id)?;
-        let mut data = degenbot_db::pathfinding::PathGraphData::default();
-        for row in rows {
-            if !degenbot_db::schema::table::is_v2_kind(&row.kind) {
-                continue;
-            }
-            // The DB emits `0x`-prefixed checksum addresses; `parse` accepts
-            // those and the lowercase fixture form alike.
-            let Ok(address) = row.address.parse::<Address>() else {
-                continue;
-            };
-            data.edges
-                .push((row.token0_id, row.token1_id, row.pool_id, PoolKind::V2));
-            data.v2v3_addresses.insert(row.pool_id, address);
-        }
-        Self::from_graph_data(&data)
-    }
-
-    /// Build the V2 index from an already-fetched graph snapshot (the body of
-    /// [`Self::load`], split so the V2-only admission runs without a DB).
-    ///
-    /// # Errors
-    ///
-    /// [`DbError::UnknownPoolKind`] when the snapshot carries a non-V2 edge:
-    /// [`Self::load`] only ever pushes V2 edges, so a violation means the edge
-    /// source and this loader disagree — refused, never dropped.
-    fn from_graph_data(data: &degenbot_db::pathfinding::PathGraphData) -> Result<Self, DbError> {
         let mut index = Self::default();
-        index.edges.reserve(data.edges.len());
-        // PathEdge is (token0_id, token1_id, pool_id, kind) -- the pool id
-        // rides THIRD (see fetch_path_graph_edges' push order).
-        for (t0, t1, pool_id, kind) in &data.edges {
-            if *kind != PoolKind::V2 {
-                return Err(DbError::UnknownPoolKind {
-                    kind: format!("{kind:?}"),
-                    pool_id: i64::try_from(*pool_id).unwrap_or(i64::MAX),
-                });
-            }
-            let Some(&address) = data.v2v3_addresses.get(pool_id) else {
+        for row in db.fetch_v2_discovery_rows(chain_id)? {
+            let (Ok(pool_id), Ok(token0_id), Ok(token1_id)) = (
+                u64::try_from(row.pool.id),
+                u64::try_from(row.pool.token0_id),
+                u64::try_from(row.pool.token1_id),
+            ) else {
                 continue;
             };
             index.push_edge(V2Edge {
-                pool_id: *pool_id,
-                token0_id: *t0,
-                token1_id: *t1,
-                address,
+                pool_id,
+                token0_id,
+                token1_id,
+                address: row.pool.address,
+                fees: V2FeePair::from_discovered(
+                    Some(row.fee_token0),
+                    Some(row.fee_token1),
+                    Some(row.fee_denominator),
+                ),
             });
         }
         Ok(index)
@@ -1059,6 +1035,7 @@ mod tests {
             token0_id: t0,
             token1_id: t1,
             address: Address::new([u8::try_from(pool_id).unwrap_or(0); 20]),
+            fees: V2FeePair::from_discovered(Some(3), Some(3), Some(1_000)),
         }
     }
 
@@ -1157,6 +1134,12 @@ mod tests {
                 )
                 .unwrap();
             }
+            conn.execute(
+                "INSERT INTO uniswap_v2_pools \
+                 (pool_id, fee_token0, fee_token1, fee_denominator) VALUES (1, 3, 3, 1000)",
+                [],
+            )
+            .unwrap();
         }
 
         let mut ix =
@@ -1171,6 +1154,51 @@ mod tests {
             degenbot_db::schema::table::is_lfj_kind("lfj_binned"),
             "the D8 roster kind is a DECLARED graph kind, not unclassifiable"
         );
+    }
+
+    /// A discovered V2 species fee is projected onto its connector edge.
+    /// Aerodrome volatile pools are per-pool, so a 0.05% row must remain 0.05%
+    /// instead of inheriting the historical 0.3% V2 lane default.
+    #[test]
+    fn load_projects_the_discovered_non_default_v2_fee_onto_the_edge() {
+        use degenbot_db::V2PoolRowInput;
+
+        const TOKEN0: Address = Address::new([0x41; 20]);
+        const TOKEN1: Address = Address::new([0x42; 20]);
+        const PAIR: Address = Address::new([0x43; 20]);
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_in_memory_for_writes().unwrap();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO exchanges (id, chain_id, name, active, last_update_block, factory) \
+                 VALUES (1, 8453, 'aerodrome_v2', 1, NULL, \
+                 '0x420DD381b31aEf6683db6B902084cB0FFECe40Da')",
+                [],
+            )
+            .unwrap();
+        }
+        db.upsert_v2_pools(
+            8453,
+            "aerodrome_v2",
+            1,
+            10_000,
+            &[V2PoolRowInput {
+                address: PAIR,
+                token0_address: TOKEN0,
+                token1_address: TOKEN1,
+                fee_token0: 5,
+                fee_token1: 7,
+                stable: Some(false),
+            }],
+        )
+        .unwrap();
+
+        let index = V2ConnectorIndex::load(&db, 8453).unwrap();
+        let edge = index.edge_by_address(PAIR).expect("discovered edge");
+        let fees = edge.fees.resolve().expect("representable discovered fee");
+        assert_eq!(fees.token0.executor_bips(), 5);
+        assert_eq!(fees.token1.executor_bips(), 7);
     }
 
     /// Every supported V3 variant table feeds `load_v3`, chain-filtered.
@@ -1322,21 +1350,6 @@ mod tests {
             pancake.layout,
             ClSlotLayout::PancakeV3,
             "pancake fork carries its divergent layout"
-        );
-    }
-
-    /// A non-V2 edge in a V2-only snapshot is refused, not silently filtered.
-    #[test]
-    fn non_v2_edge_from_a_v2_query_is_refused() {
-        let mut data = degenbot_db::pathfinding::PathGraphData::default();
-        data.edges.push((10, 20, 1, PoolKind::V3));
-        data.v2v3_addresses.insert(1, Address::ZERO);
-        assert!(
-            matches!(
-                V2ConnectorIndex::from_graph_data(&data),
-                Err(DbError::UnknownPoolKind { ref kind, pool_id: 1 }) if kind == "V3"
-            ),
-            "a non-V2 edge must be refused with UnknownPoolKind(V3)"
         );
     }
 
@@ -1512,6 +1525,7 @@ mod ranking_tests {
             token0_id: t0,
             token1_id: t1,
             address: Address::new([u8::try_from(pool_id).unwrap_or(0); 20]),
+            fees: V2FeePair::from_discovered(Some(3), Some(3), Some(1_000)),
         }
     }
 

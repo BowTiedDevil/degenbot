@@ -6,11 +6,12 @@
 //! DEGENBOT_RPC_HTTP_CHAINID_1=... DEGENBOT_DB_PATH=~/.local/state/degenbot/db/degenbot.db \
 //!   cargo test -p degenbot-submission --test admit_probe -- --ignored --nocapture
 //! ```
-#![expect(clippy::unwrap_used, clippy::print_stdout)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 
 use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
+use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
@@ -19,6 +20,14 @@ use degenbot_simulation::sim::evm::journal_pools::{
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains, WETH};
 use degenbot_strategy::frame_pipeline::MarketContext;
+
+fn v2_fee_pair() -> V2FeePair {
+    V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
+}
+
+fn v2_fees() -> V2Fees {
+    v2_fee_pair().resolve().expect("valid fixture fee")
+}
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
 /// `liquidity_update_block`, so no window is ever backfilled; an unexpected
@@ -150,6 +159,7 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
                 token1: m1,
                 reserve0: u128::try_from(r0).unwrap(),
                 reserve1: u128::try_from(r1).unwrap(),
+                fees: v2_fee_pair(),
             })
             .unwrap();
         let (zfo, out_id) = if edge.token0_id == in_id {
@@ -163,7 +173,7 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
             token0: m0,
             token1: m1,
             zfo,
-            family: LaneFamily::V2,
+            family: LaneFamily::V2 { fees: v2_fees() },
         });
         in_id = out_id;
     }
