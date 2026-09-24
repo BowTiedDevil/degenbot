@@ -193,31 +193,50 @@ impl BackrunKnobs {
     }
 }
 
-impl From<&degenbot_config::StrategyMevblockerBackrunConfig> for BackrunKnobs {
-    fn from(f: &degenbot_config::StrategyMevblockerBackrunConfig) -> Self {
-        Self {
-            active_endpoints: f.endpoints.clone(),
-            key_file: f.key_file.clone(),
-            bid_mode: f.bid_mode,
-            budget_wei: f.budget_wei,
-            max_bundle_wei: f.max_bundle_wei,
-            stop_file: f.stop_file.clone(),
-            dry_run: f.dry_run,
-            bribe_bips: f.bribe_bips,
-            bundle_gas_est: f.bundle_gas_est,
-            gas_floor_wei: f.gas_floor_wei,
-            verify_ticks: to_verify_level(f.verify_ticks),
-            priority_fee_gwei: f.priority_fee_gwei,
-            sim_url: f.sim_url.clone(),
-            rank_evidence: f.rank_evidence,
-            connectors: f.connectors,
-            cycle_max_hops: f.cycle_max_hops,
-            fixture_head: f.fixture_head,
-            executor: f.executor.clone(),
-            operator: f.operator.clone(),
-        }
-    }
+/// The shared facet projection seam. The public config structs remain
+/// separate operator surfaces, while this trait owns the one field mapping
+/// into the runtime knobs consumed by both backrun compositions.
+trait BackrunFacet {
+    fn backrun_knobs(&self) -> BackrunKnobs;
 }
+
+/// Generate the common projection once for both generated config types.
+///
+/// The schema intentionally keeps two public facet namespaces, but adding a
+/// shared runtime knob must not require maintaining two hand-written field
+/// lists in this module.
+macro_rules! impl_backrun_facet {
+    ($facet:ty) => {
+        impl BackrunFacet for $facet {
+            fn backrun_knobs(&self) -> BackrunKnobs {
+                BackrunKnobs {
+                    active_endpoints: self.endpoints.clone(),
+                    key_file: self.key_file.clone(),
+                    bid_mode: self.bid_mode,
+                    budget_wei: self.budget_wei,
+                    max_bundle_wei: self.max_bundle_wei,
+                    stop_file: self.stop_file.clone(),
+                    dry_run: self.dry_run,
+                    bribe_bips: self.bribe_bips,
+                    bundle_gas_est: self.bundle_gas_est,
+                    gas_floor_wei: self.gas_floor_wei,
+                    verify_ticks: to_verify_level(self.verify_ticks),
+                    priority_fee_gwei: self.priority_fee_gwei,
+                    sim_url: self.sim_url.clone(),
+                    rank_evidence: self.rank_evidence,
+                    connectors: self.connectors,
+                    cycle_max_hops: self.cycle_max_hops,
+                    fixture_head: self.fixture_head,
+                    executor: self.executor.clone(),
+                    operator: self.operator.clone(),
+                }
+            }
+        }
+    };
+}
+
+impl_backrun_facet!(degenbot_config::StrategyMevblockerBackrunConfig);
+impl_backrun_facet!(degenbot_config::StrategyPeerBackrunConfig);
 
 /// Project the config facet's `verify_ticks` enum onto the ingress policy.
 fn to_verify_level(v: degenbot_config::VerifyTicks) -> VerifyLevel {
@@ -225,32 +244,6 @@ fn to_verify_level(v: degenbot_config::VerifyTicks) -> VerifyLevel {
         degenbot_config::VerifyTicks::Strict => VerifyLevel::Strict,
         degenbot_config::VerifyTicks::Bootstrap => VerifyLevel::Bootstrap,
         degenbot_config::VerifyTicks::Off => VerifyLevel::Off,
-    }
-}
-
-impl From<&degenbot_config::StrategyPeerBackrunConfig> for BackrunKnobs {
-    fn from(f: &degenbot_config::StrategyPeerBackrunConfig) -> Self {
-        Self {
-            active_endpoints: f.endpoints.clone(),
-            key_file: f.key_file.clone(),
-            bid_mode: f.bid_mode,
-            budget_wei: f.budget_wei,
-            max_bundle_wei: f.max_bundle_wei,
-            stop_file: f.stop_file.clone(),
-            dry_run: f.dry_run,
-            bribe_bips: f.bribe_bips,
-            bundle_gas_est: f.bundle_gas_est,
-            gas_floor_wei: f.gas_floor_wei,
-            verify_ticks: to_verify_level(f.verify_ticks),
-            priority_fee_gwei: f.priority_fee_gwei,
-            sim_url: f.sim_url.clone(),
-            rank_evidence: f.rank_evidence,
-            connectors: f.connectors,
-            cycle_max_hops: f.cycle_max_hops,
-            fixture_head: f.fixture_head,
-            executor: f.executor.clone(),
-            operator: f.operator.clone(),
-        }
     }
 }
 
@@ -345,7 +338,7 @@ impl MevblockerBackrun {
     #[must_use]
     pub fn from_config(cfg: &BotConfig, rpc_url: String) -> Self {
         let facet = &cfg.strategy.mevblocker_backrun;
-        let knobs = BackrunKnobs::from(facet);
+        let knobs = facet.backrun_knobs();
         let submission = knobs.mevblocker_slot(facet);
         Self {
             config: knobs.into_config(cfg, rpc_url, submission),
@@ -392,7 +385,7 @@ impl PeerBackrun {
     #[must_use]
     pub fn from_config(cfg: &BotConfig, rpc_url: String) -> Self {
         let facet = &cfg.strategy.peer_backrun;
-        let knobs = BackrunKnobs::from(facet);
+        let knobs = facet.backrun_knobs();
         let submission = knobs.peer_slot();
         Self {
             config: knobs.into_config(cfg, rpc_url, submission),
