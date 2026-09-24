@@ -127,8 +127,9 @@ Workflow after any Rust edit — verify, don't guess:
 ### Verifying freshness with the build receipt
 
 Do not trust a silent "successful" rebuild — verify it. Every compile of
-`degenbot_rs` runs `rust/crates/degenbot-python/build.rs`, which fingerprints
-the crate's sources **plus every sibling crate under `rust/crates` and the
+`degenbot_rs` runs `rust/crates/shells/degenbot-python/build.rs`, which fingerprints
+the shell's sources **plus every crate under the explicit
+`rust/crates/{foundation,engine,integrations,shells,facade}` roles and the
 workspace manifests / repo-root `.cargo` config that its build could link**
 (via the shared `build_scan.rs` scanner, with per-file+per-tree
 `cargo:rerun-if-changed` re-triggering — the pre-63a362961 build emitted

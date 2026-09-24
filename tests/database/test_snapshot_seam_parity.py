@@ -16,7 +16,7 @@ import pytest
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 
-FIXTURE_DIR = pathlib.Path("rust/crates/degenbot-db/tests/fixtures")
+FIXTURE_DIR = pathlib.Path("rust/crates/foundation/degenbot-db/tests/fixtures")
 DB_PATH = FIXTURE_DIR / "parity.db"
 EXPECTED_PATH = FIXTURE_DIR / "parity_expected.json"
 

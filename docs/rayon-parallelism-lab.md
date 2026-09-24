@@ -150,7 +150,7 @@ solving, correlates with walk combinatorics). The per-drain solve then uses
 
 ## 6. Artifacts
 
-- Harness: `rust/crates/degenbot-solvers/examples/rayon_scale_probe.rs`
-- Fixture: `rust/crates/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl`
+- Harness: `rust/crates/engine/degenbot-solvers/examples/rayon_scale_probe.rs`
+- Fixture: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl`
 - Raw CSV: `/tmp/raypar80.csv` (80-path), smoke run inline (40-path).
 - ergo: epic 7MKIR7, task 5A3C2P (harness), task QXEVGN (this report).

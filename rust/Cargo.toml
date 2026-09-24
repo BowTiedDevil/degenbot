@@ -2,21 +2,21 @@
 #
 # The workspace root holds ONLY the `[workspace]` declaration + the `[profile.*]`
 # blocks (Cargo only honors `[profile]` at the workspace root — keep them here).
-# The workspace contains 32 crates plus one example, including the pyo3-free
-# core crates and the `degenbot_rs` PyO3 binding layer, all nested under
-# `crates/` and `examples/`, mirroring the `polars` repo layout
-# where `polars-python` sits as a peer of `polars-core`/`-ops`/`-plan`/etc.
-# (ergo UG6FKN follow-up / ADR-005 deferral: the binding layer was lifted out of
-# the workspace root into `crates/degenbot-python/`.)
+# The workspace contains 31 crates plus two non-publishable examples. Crates are
+# explicitly grouped by architectural role under
+# `crates/{foundation,engine,integrations,shells,facade}/`; examples live under
+# `examples/`. The Python binding is a shell beside the Rust-facing core rather
+# than an implementation peer.
 #
-# Cores are pyo3-free under their default features; `degenbot-python` enables each
-# core's `pyo3` feature so the `From<Error> for PyErr` conversions are available
-# at the binding layer. Verify with `just check-no-pyo3-in-cores`.
+# Engine and foundation crates are pyo3-free under their default features;
+# `degenbot_rs` enables selected crates' `pyo3` features so the
+# `From<Error> for PyErr` conversions are available at the binding layer. Verify
+# with `just check-no-pyo3-in-cores`.
 
 # Shared package metadata inherited by every member crate via `<field>.workspace
 # = true` (ADR-009 single-source-of-truth versioning). The version literal here
 # is the *only* version in the Rust tree; the binding crate `degenbot_rs`
-# (`crates/degenbot-python/`) inherits it, and maturin reads that crate's
+# (`crates/shells/degenbot-python/`) inherits it, and maturin reads that crate's
 # version to set the published wheel's — so one edit moves both halves.
 [workspace.package]
 version = "0.6.0-alpha.13"
@@ -72,39 +72,39 @@ await_holding_lock = "deny"
 exit = "deny"
 
 [workspace.dependencies]
-degenbot = { version = "0.6.0-alpha.13", path = "crates/degenbot" }
-# Internal path deps carry explicit version requirements here so the 26
+degenbot = { version = "0.6.0-alpha.13", path = "crates/facade/degenbot" }
+# Internal path deps carry explicit version requirements here so the 30
 # publishable crates pass cargo publish manifest validation. Keep these
 # version literals in sync with [workspace.package].version (lockstep, ADR-009).
-degenbot-aave = { version = "0.6.0-alpha.13", path = "crates/degenbot-aave" }
-degenbot-abi = { version = "0.6.0-alpha.13", path = "crates/degenbot-abi" }
-degenbot-arbitrage = { version = "0.6.0-alpha.13", path = "crates/degenbot-arbitrage" }
-degenbot-bot = { version = "0.6.0-alpha.13", path = "crates/degenbot-bot" }
-degenbot-cli = { version = "0.6.0-alpha.13", path = "crates/degenbot-cli" }
-degenbot-cli-core = { version = "0.6.0-alpha.13", path = "crates/degenbot-cli-core" }
-degenbot-core = { version = "0.6.0-alpha.13", path = "crates/degenbot-core" }
-degenbot-config = { version = "0.6.0-alpha.13", path = "crates/degenbot-config" }
-degenbot-db = { version = "0.6.0-alpha.13", path = "crates/degenbot-db" }
-degenbot-decoders = { version = "0.6.0-alpha.13", path = "crates/degenbot-decoders" }
-degenbot-execution = { version = "0.6.0-alpha.13", path = "crates/degenbot-execution" }
-degenbot-executor = { version = "0.6.0-alpha.13", path = "crates/degenbot-executor" }
-degenbot-eventhub = { version = "0.6.0-alpha.13", path = "crates/degenbot-eventhub" }
-degenbot-fork = { version = "0.6.0-alpha.13", path = "crates/degenbot-fork" }
-degenbot-ingestion = { version = "0.6.0-alpha.13", path = "crates/degenbot-ingestion" }
-degenbot-math = { version = "0.6.0-alpha.13", path = "crates/degenbot-math" }
-degenbot-order-index = { version = "0.6.0-alpha.13", path = "crates/degenbot-order-index" }
-degenbot-pathfinding = { version = "0.6.0-alpha.13", path = "crates/degenbot-pathfinding" }
-degenbot-pool-updater = { version = "0.6.0-alpha.13", path = "crates/degenbot-pool-updater" }
-degenbot-pools = { version = "0.6.0-alpha.13", path = "crates/degenbot-pools" }
-degenbot-price = { version = "0.6.0-alpha.13", path = "crates/degenbot-price" }
-degenbot-rpc = { version = "0.6.0-alpha.13", path = "crates/degenbot-rpc" }
-degenbot-runs = { version = "0.6.0-alpha.13", path = "crates/degenbot-runs" }
-degenbot-simulation = { version = "0.6.0-alpha.13", path = "crates/degenbot-simulation" }
-degenbot-solvers = { version = "0.6.0-alpha.13", path = "crates/degenbot-solvers" }
-degenbot-strategy = { version = "0.6.0-alpha.13", path = "crates/degenbot-strategy" }
-degenbot-submission = { version = "0.6.0-alpha.13", path = "crates/degenbot-submission" }
-degenbot-uniswap = { version = "0.6.0-alpha.13", path = "crates/degenbot-uniswap" }
-degenbot-workers = { version = "0.6.0-alpha.13", path = "crates/degenbot-workers" }
+degenbot-aave = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-aave" }
+degenbot-abi = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-abi" }
+degenbot-arbitrage = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-arbitrage" }
+degenbot-bot = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-bot" }
+degenbot-cli = { version = "0.6.0-alpha.13", path = "crates/shells/degenbot-cli" }
+degenbot-cli-core = { version = "0.6.0-alpha.13", path = "crates/shells/degenbot-cli-core" }
+degenbot-core = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-core" }
+degenbot-config = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-config" }
+degenbot-db = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-db" }
+degenbot-decoders = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-decoders" }
+degenbot-execution = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-execution" }
+degenbot-executor = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-executor" }
+degenbot-eventhub = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-eventhub" }
+degenbot-fork = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-fork" }
+degenbot-ingestion = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-ingestion" }
+degenbot-math = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-math" }
+degenbot-order-index = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-order-index" }
+degenbot-pathfinding = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-pathfinding" }
+degenbot-pool-updater = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-pool-updater" }
+degenbot-pools = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-pools" }
+degenbot-price = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-price" }
+degenbot-rpc = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-rpc" }
+degenbot-runs = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-runs" }
+degenbot-simulation = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-simulation" }
+degenbot-solvers = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-solvers" }
+degenbot-strategy = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-strategy" }
+degenbot-submission = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-submission" }
+degenbot-uniswap = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-uniswap" }
+degenbot-workers = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-workers" }
 # hashbrown: foldhash-based HashMap/HashSet for the hot maps (small int/string
 # keys generated in-process — no DoS surface). 0.17.1 + foldhash 0.2.0 already
 # resolve transitively (indexmap 2.14 / lru 0.18), so this direct dependency
@@ -125,50 +125,49 @@ zstd = { version = "0.14", default-features = false, features = ["arrays"] }
 [workspace]
 resolver = "3"
 members = [
-    "crates/degenbot",
-    "crates/degenbot-aave",
-    "crates/degenbot-abi",
-    "crates/degenbot-bot",
-    "crates/degenbot-cli",
-    "crates/degenbot-cli-core",
-    "crates/degenbot-config",
-    "crates/degenbot-core",
-    "crates/degenbot-db",
-    "crates/degenbot-decoders",
-    "crates/degenbot-execution",
-    "crates/degenbot-execution-sample",
-    "crates/degenbot-executor",
-    "crates/degenbot-eventhub",
-    "crates/degenbot-fork",
-    "crates/degenbot-ingestion",
-    "crates/degenbot-math",
-    "crates/degenbot-pathfinding",
-    "crates/degenbot-pool-updater",
-    "crates/degenbot-pools",
-    "crates/degenbot-price",
-    "crates/degenbot-python",
-    "crates/degenbot-rpc",
-    "crates/degenbot-runs",
-    "crates/degenbot-simulation",
-    "crates/degenbot-arbitrage",
-    "crates/degenbot-solvers",
-    "crates/degenbot-strategy",
-    "crates/degenbot-submission",
-    "crates/degenbot-uniswap",
-    "crates/degenbot-order-index",
-    "crates/degenbot-workers",
-    # The Rust-owned settlement-arbitrage bot example — the pure-Rust parity
-    # twin of examples/eth_settlement_arbitrage_v2_v3_v4_rust.py (epic RGZG4S).
-    # Lives outside rust/crates/ deliberately: it depends ONLY on the umbrella
-    # `degenbot` crate, mirroring an external `cargo add degenbot` consumer.
+    "crates/facade/degenbot",
+    "crates/foundation/degenbot-abi",
+    "crates/foundation/degenbot-config",
+    "crates/foundation/degenbot-core",
+    "crates/foundation/degenbot-db",
+    "crates/foundation/degenbot-decoders",
+    "crates/foundation/degenbot-eventhub",
+    "crates/foundation/degenbot-executor",
+    "crates/foundation/degenbot-math",
+    "crates/foundation/degenbot-order-index",
+    "crates/foundation/degenbot-pathfinding",
+    "crates/foundation/degenbot-pools",
+    "crates/foundation/degenbot-rpc",
+    "crates/foundation/degenbot-uniswap",
+    "crates/engine/degenbot-arbitrage",
+    "crates/engine/degenbot-bot",
+    "crates/engine/degenbot-execution",
+    "crates/engine/degenbot-simulation",
+    "crates/engine/degenbot-solvers",
+    "crates/engine/degenbot-strategy",
+    "crates/engine/degenbot-submission",
+    "crates/engine/degenbot-workers",
+    "crates/integrations/degenbot-aave",
+    "crates/integrations/degenbot-fork",
+    "crates/integrations/degenbot-ingestion",
+    "crates/integrations/degenbot-pool-updater",
+    "crates/integrations/degenbot-price",
+    "crates/integrations/degenbot-runs",
+    "crates/shells/degenbot-cli",
+    "crates/shells/degenbot-cli-core",
+    "crates/shells/degenbot-python",
+    # Non-publishable samples live outside the role-grouped product crates.
+    "examples/degenbot-execution-sample",
+    # The external umbrella-consumer example depends through `degenbot` like an
+    # out-of-workspace `cargo add degenbot` user.
     "examples/settlement_bot",
 ]
 # Keep unqualified Cargo commands focused on the two first-class pure-Rust
 # entry points. The PyO3 binding and non-publishable samples remain workspace
 # members, but dedicated recipes must select them explicitly.
 default-members = [
-    "crates/degenbot",
-    "crates/degenbot-cli",
+    "crates/facade/degenbot",
+    "crates/shells/degenbot-cli",
 ]
 
 # Release profile.
@@ -186,7 +185,7 @@ default-members = [
 # Their binary's LTO/codegen is theirs to own, not this file's.
 #
 # Within this workspace, the only shipped runtime artifact is the `degenbot_rs`
-# cdylib (the Python extension, built from `crates/degenbot-python`), and it
+# cdylib (the Python extension, built from `crates/shells/degenbot-python`), and it
 # gets the heavy optimizations — `lto = "thin"` + `strip` + `codegen-units = 1`.
 # `lto`/`strip` are profile-level (Cargo has no per-package `lto`), so they
 # apply workspace-wide, but the final thin-LTO link only spans codegen units

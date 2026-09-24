@@ -34,7 +34,7 @@ Measured on the live dry-run bot, 8-core cgroup quota:
 
 ## 2. Decisions at a glance
 
-1. **Crate home:** new standalone crate `rust/crates/degenbot-workers`; depends
+1. **Crate home:** new standalone crate `rust/crates/engine/degenbot-workers`; depends
    on `degenbot-core` (cgroup detection) only for budget input. Engine-agnostic:
    `degenbot-bot` plugs roles in; future roles (pool-state updater, registrar,
    verifier, submitter) must live below the engine, which rules out an

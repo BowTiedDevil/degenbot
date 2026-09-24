@@ -76,7 +76,7 @@ The `degenbot aave update` command is designed to rebuild a complete database of
 
 ## Commands
 
-The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/degenbot-cli/src/argv.rs) declares it over `degenbot-cli-core`'s [aave arms](../../rust/crates/degenbot-cli-core/src/aave.rs). The authoritative flag/exit-code reference is the [Rust CLI page](../rust-cli.md); the domain behaviour below is unchanged.
+The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/shells/degenbot-cli/src/argv.rs) declares it over `degenbot-cli-core`'s [aave arms](../../rust/crates/shells/degenbot-cli-core/src/aave.rs). The authoritative flag/exit-code reference is the [Rust CLI page](../rust-cli.md); the domain behaviour below is unchanged.
 
 ### `degenbot aave update`
 
@@ -369,7 +369,7 @@ the mode per token revision + operation.
 
 ## Writer implementation
 
-The Aave V3 writer is **Rust-owned** (`degenbot-aave` core crate). The per-market chunk loop, RPC fetch+decode, DB writes, the per-chunk transaction, and the on-chain-truth verification all live in the Rust core, driven from the `degenbot aave update` arm of the Rust console (`degenbot-cli-core`; the Python driver reaches the same work through the `run_aave_update` PyO3 seam). The former Python writer pipeline (`update_aave_market`, `event_handlers._process_*`, `transaction_processor`/`operations_parser`/`token_processor`, `db_*.py`, the `verify_*` Python invariants) was retired by the §4.2 cutover (task `CZM7TI`) after the Rust path was proven GREEN to the live chain tip with full verification. The `Event Processing Details` and `Algorithm Details` sections above describe domain behavior that remains accurate; the implementation now lives in `rust/crates/degenbot-aave/`.
+The Aave V3 writer is **Rust-owned** (`degenbot-aave` core crate). The per-market chunk loop, RPC fetch+decode, DB writes, the per-chunk transaction, and the on-chain-truth verification all live in the Rust core, driven from the `degenbot aave update` arm of the Rust console (`degenbot-cli-core`; the Python driver reaches the same work through the `run_aave_update` PyO3 seam). The former Python writer pipeline (`update_aave_market`, `event_handlers._process_*`, `transaction_processor`/`operations_parser`/`token_processor`, `db_*.py`, the `verify_*` Python invariants) was retired by the §4.2 cutover (task `CZM7TI`) after the Rust path was proven GREEN to the live chain tip with full verification. The `Event Processing Details` and `Algorithm Details` sections above describe domain behavior that remains accurate; the implementation now lives in `rust/crates/integrations/degenbot-aave/`.
 
 ## Configuration
 
@@ -402,7 +402,7 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 
 ## Solidity Reference
 
-The CLI interacts with Aave V3 contracts. Key implementation details in `rust/crates/degenbot-aave/src/updater/` + `degenbot-aave::wad_ray_math`:
+The CLI interacts with Aave V3 contracts. Key implementation details in `rust/crates/integrations/degenbot-aave/src/updater/` + `degenbot-aave::wad_ray_math`:
 
 ### Scaled Balance Pattern
 

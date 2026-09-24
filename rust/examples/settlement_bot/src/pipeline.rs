@@ -504,7 +504,7 @@ mod tests {
     fn fixture_path() -> String {
         concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../crates/degenbot-db/tests/fixtures/parity.db"
+            "/../../crates/foundation/degenbot-db/tests/fixtures/parity.db"
         )
         .to_string()
     }

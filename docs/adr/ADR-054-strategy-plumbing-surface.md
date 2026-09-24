@@ -139,7 +139,7 @@ relation between collateral and debt persists" (economics).
   binary, not a Python driver.
 - AGENTS.md — "Rust is the engine; Python is a driver shell" is the
   interpretation under which these seams are promoted: every other
-  strategy lives purely in `rust/crates/degenbot-submission` and
+  strategy lives purely in `rust/crates/engine/degenbot-submission` and
   `degenbot-bot`/`degenbot-simulation`, driving the strategy exclusively
   from this surface.
 - `logs/backrun/replay_soak.md` — the live evidence that these are the

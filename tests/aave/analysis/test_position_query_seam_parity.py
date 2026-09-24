@@ -16,7 +16,7 @@ import pytest
 
 from degenbot.aave.analysis.orchestrator import DatabasePositionQuery
 
-FIXTURE_DIR = pathlib.Path("rust/crates/degenbot-db/tests/fixtures")
+FIXTURE_DIR = pathlib.Path("rust/crates/foundation/degenbot-db/tests/fixtures")
 DB_PATH = FIXTURE_DIR / "aave_parity.db"
 EXPECTED_PATH = FIXTURE_DIR / "aave_parity_expected.json"
 

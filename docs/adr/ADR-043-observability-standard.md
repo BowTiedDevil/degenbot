@@ -19,7 +19,7 @@ vocabulary. Four planes were in play:
 
 1. **Rust `tracing`** — forwarded to Python `logging` through
    `tracing_log::LogTracer` + `PythonLogLayer`
-   (`rust/crates/degenbot-python/src/python_log_layer.rs`), plus an optional
+   (`rust/crates/shells/degenbot-python/src/python_log_layer.rs`), plus an optional
    stderr `fmt` layer. Inventory: ~121 `info!`, 74 `warn!`, 50 `error!`,
    35 `debug!`, 55 `info_span!`, 6 `tracing::instrument`.
 2. **Python `logging`** (`src/degenbot/logging.py`): ~58 `info`, 25
@@ -193,7 +193,7 @@ domain or to the forensic sink, so the migration is mechanical and auditable:
 | `aave_tx_trace` | `aave` | DEBUG |
 
 Four of these default **TRUE** today
-(`rust/crates/degenbot-config/src/schema.rs`: `verify_dbg` :315,
+(`rust/crates/foundation/degenbot-config/src/schema.rs`: `verify_dbg` :315,
 `v2_calc_trace` :225, `dump_call_trace` :211,
 `sim_log_reverted_swaps` :328). They are **not** preserved by seeding the
 `diag` map — that map is the console escalation knob, and seeding it would put

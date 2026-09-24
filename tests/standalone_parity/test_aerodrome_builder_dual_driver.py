@@ -1,6 +1,6 @@
 """Tier-2 behavioral dual-driver parity — Aerodrome V2 builder identity+state (SSSXG6).
 
-The behavioral companion to `rust/crates/degenbot/tests/parity_aerodrome_builder.rs`.
+The behavioral companion to `rust/crates/facade/degenbot/tests/parity_aerodrome_builder.rs`.
 Proves the **same** canonical Aerodrome V2 identity+state fixture, driven through
 the **Python consumer** (`Bot`/`register_aerodrome_pool` — the PyO3 binding,
 the same `RegisterAerodromeV2PoolParams` the Rust `PoolBuilder.build_aerodrome_v2`

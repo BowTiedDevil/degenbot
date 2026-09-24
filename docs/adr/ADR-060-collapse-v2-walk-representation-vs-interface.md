@@ -1,7 +1,7 @@
 # ADR-060: Collapsing the V2 walk dispatch — representation vs interface
 
 **Status: accepted** (2026-09-23). Basis: the affected-site survey of
-`rust/crates/degenbot-solvers` recorded in Context below, and the
+`rust/crates/engine/degenbot-solvers` recorded in Context below, and the
 rounding-parity analysis of `IntHopState::swap` against
 `compute_swap_step_v3`. The deciding empirical evidence (a byte-parity
 probe over captured paths) is a later task; this ADR fixes the decision

@@ -4,7 +4,7 @@ The behavioral companion to the Rust `parity_v2_swap.rs` test. Proves the
 **same** canonical fixture driven through the **Python consumer** path
 (`Bot`, the PyO3 binding) produces the **same** `amount_out` as the
 closed-form Uniswap V2 `getAmountOut` reference — which the Rust consumer
-test (`rust/crates/degenbot/tests/parity_v2_swap.rs`) independently also
+test (`rust/crates/facade/degenbot/tests/parity_v2_swap.rs`) independently also
 asserts.
 
 Both consumers hit the same `BotState::register_v2_pool` +
@@ -17,7 +17,7 @@ that Tier-1 reachability can't catch (reachability proves the symbol is
 
 ## The shared contract
 
-The fixture constants below MUST mirror `rust/crates/degenbot/tests/
+The fixture constants below MUST mirror `rust/crates/facade/degenbot/tests/
 parity_v2_swap.rs` exactly. The expected output is the closed-form V2
 `getAmountOut`:
 
@@ -88,7 +88,7 @@ def test_python_consumer_matches_closed_form() -> None:
     """The Bot Python driver reproduces the closed-form V2 getAmountOut.
 
     This is the Python side of the Tier-2 dual-driver gate. The Rust side
-    (`rust/crates/degenbot/tests/parity_v2_swap.rs`) drives the same fixture
+    (`rust/crates/facade/degenbot/tests/parity_v2_swap.rs`) drives the same fixture
     through `BotState` directly; both must equal `_EXPECTED_AMOUNT_OUT`.
     Divergence = a lossy FFI seam (arg extraction, rounding, or direction
     flag), which the static reachability gate cannot detect.

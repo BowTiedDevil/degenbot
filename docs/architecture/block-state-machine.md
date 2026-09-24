@@ -7,7 +7,7 @@ of work.
 
 > **Superseded (epic `MROOY7`, [ADR-041](block-epoch-pipeline.md)):** the standalone
 > `BlockClock` machine this note designs was folded into the one `StageMachine`
-> (`rust/crates/degenbot-bot/src/bot_core/stage_machine.rs`) and the type deleted
+> (`rust/crates/engine/degenbot-bot/src/bot_core/stage_machine.rs`) and the type deleted
 > (hard cutover, `SZJUKL`). Kept as the design history of ADR-008's D1–D3 decisions;
 > the as-built pipeline record is [block-epoch-pipeline.md](block-epoch-pipeline.md).
 

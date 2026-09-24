@@ -39,7 +39,7 @@ carrying an obligation they had no authority over.
 `register_v2_pool`, `register_v3_pool`, and `register_v4_pool` accept
 *spec-bound* state and reject *out-of-spec* state with a typed error
 before storing it. The validation helpers live in
-`rust/crates/degenbot-bot/src/bot_core/spec_bounds.rs`:
+`rust/crates/engine/degenbot-bot/src/bot_core/spec_bounds.rs`:
 `validate_v2_reserve`, `validate_sqrt_price`, `validate_tick`,
 `validate_v3_fee`, `validate_tick_spacing`. Each returns a
 `SpecViolation` carrying the offending field name so callers (and the

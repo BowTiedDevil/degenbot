@@ -103,14 +103,14 @@ gauge: a held backlog is visible and must be driven to zero by the backstop.
 
 ## References
 
-- `rust/crates/degenbot-bot/src/arb_engine/seat_host.rs` — `HostPump`
+- `rust/crates/engine/degenbot-bot/src/arb_engine/seat_host.rs` — `HostPump`
   (`run`/`apply_host_msg`/`pump`), backlog, wake discipline, properties.
-- `rust/crates/degenbot-workers/src/posture.rs` — `PostureOwner`/
+- `rust/crates/engine/degenbot-workers/src/posture.rs` — `PostureOwner`/
   `PostureWatch`, `LaneDeath` latch, feeder-site contract.
-- `rust/crates/degenbot-workers/src/dispatcher.rs` — `FleetHost`,
+- `rust/crates/engine/degenbot-workers/src/dispatcher.rs` — `FleetHost`,
   `try_enqueue` (`PostureHeld`), `posture_admits_role`.
-- `rust/crates/degenbot-bot/src/arb_engine/fleet_wake.rs` — bot-side waker.
-- `rust/crates/degenbot-bot/src/bot_core/block_pump.rs` — per-header posture
+- `rust/crates/engine/degenbot-bot/src/arb_engine/fleet_wake.rs` — bot-side waker.
+- `rust/crates/engine/degenbot-bot/src/bot_core/block_pump.rs` — per-header posture
   feed.
 - `src/degenbot/runner/build_paths.py` — `run_registration` window,
   `_consume` operator path.

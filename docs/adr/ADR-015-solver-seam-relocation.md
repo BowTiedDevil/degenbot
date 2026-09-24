@@ -207,7 +207,7 @@ constraints, so a future review does not re-derive them:
    > resolve**, never recomputed per golden-section iteration (the solve
    > reads the frozen hop-state field). The digest is paid once per *path*
    > per resolve, not once per golden-section probe. Measured
-   > (`rust/crates/degenbot-solvers/benches/digest.rs`, criterion): Balancer
+   > (`rust/crates/engine/degenbot-solvers/benches/digest.rs`, criterion): Balancer
    > stable `D` = 1.0–1.6 µs/pool, Curve `xp` = 63–114 ns/pool; vs Phase B
    > solve = 82 µs (balancer) / 144 µs (curve) per 2-hop path. The digest is
    > **0.04–4% of the per-path budget** — solve dominates entirely. CL is
@@ -303,7 +303,7 @@ findings settle the question end-to-end:
    framing (constraint #1 above) was empirically wrong — the digest is
    baked into the hop-state struct **once at resolve**, never recomputed
    per golden-section iteration. The digest bench
-   (`rust/crates/degenbot-solvers/benches/digest.rs`, ergo 77LOQT)
+   (`rust/crates/engine/degenbot-solvers/benches/digest.rs`, ergo 77LOQT)
    measured Balancer stable `D` at 1.0–1.6 µs and Curve `xp` at 63–114 ns
    vs Phase B solves of 82/144 µs — **digest is 0.04–4% of the per-path
    budget**. The cross-path memoization candidate is empirically rejected

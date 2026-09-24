@@ -113,8 +113,8 @@ def test_errors_share_the_strategy_host_base(engine: ArbitrageEngine) -> None:
 # two Rust sources as text so the parity test binds the Python-facing names to
 # the Rust enum rather than re-encoding them as a second hardcoded literal.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_STRATEGY_HOST_RS = _REPO_ROOT / "rust/crates/degenbot-bot/src/strategy_host.rs"
-_PY_STRATEGY_RS = _REPO_ROOT / "rust/crates/degenbot-python/src/bot/engine/strategy.rs"
+_STRATEGY_HOST_RS = _REPO_ROOT / "rust/crates/engine/degenbot-bot/src/strategy_host.rs"
+_PY_STRATEGY_RS = _REPO_ROOT / "rust/crates/shells/degenbot-python/src/bot/engine/strategy.rs"
 
 
 def _rust_driver_pose_variants() -> set[str]:

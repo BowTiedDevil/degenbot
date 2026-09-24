@@ -1,5 +1,5 @@
 {
-  "_comment": "Tier-2 dual-driver Curve get_dy parity (epic TV72EG, task SGJR2W). Shared fixture loaded by BOTH rust/crates/degenbot/tests/parity_curve_swap.rs and tests/standalone_parity/test_curve_swap_dual_driver.py — a drift in any expected output fails BOTH sides mechanically (HRT356 single-source-of-truth shape). Big integers are decimal strings. Each probe carries the full DyCalculationInputs snapshot the pure calculate_dy consumes.",
+  "_comment": "Tier-2 dual-driver Curve get_dy parity (epic TV72EG, task SGJR2W). Shared fixture loaded by BOTH rust/crates/facade/degenbot/tests/parity_curve_swap.rs and tests/standalone_parity/test_curve_swap_dual_driver.py — a drift in any expected output fails BOTH sides mechanically (HRT356 single-source-of-truth shape). Big integers are decimal strings. Each probe carries the full DyCalculationInputs snapshot the pure calculate_dy consumes.",
   "probes": [
     {
       "name": "standard_plain",

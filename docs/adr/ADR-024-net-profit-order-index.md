@@ -1,6 +1,6 @@
 # ADR-024: net-profit order index (`degenbot-order-index`)
 
-**Status: accepted.** Records the design of `rust/crates/degenbot-order-index`
+**Status: accepted.** Records the design of `rust/crates/foundation/degenbot-order-index`
 (epic `DCABJT`): a convex-hull order index that ranks large sets of path results
 by net profit under a per-block gas price. Covers the data model, the
 hot/cold-split correctness argument, the Alloy-type seam guard, dynamic

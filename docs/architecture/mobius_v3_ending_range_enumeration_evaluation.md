@@ -42,11 +42,11 @@ walker, after `7J22EQ`).
 
 Hot path: `arb_engine/solve_cycle.rs` resolves each hop; V3/V4 hops call
 `V3PoolState::build_int_v3_sequence(tick_spacing, fee, zfo, 10)`
-(`rust/crates/degenbot-pools/src/v3_state.rs`), which slices
+(`rust/crates/foundation/degenbot-pools/src/v3_state.rs`), which slices
 `get_cached_tick_ranges(..., max_ranges=15)` (`compute_tick_ranges` in
 `tick_bitmap.rs`) down to an `IntV3TickRangeSequence`
-(`rust/crates/degenbot-pools/src/int_v3_hop.rs`). The all-CL dispatcher calls
-`int_solve_cl_path` (`rust/crates/degenbot-solvers/src/mobius_v3_int.rs`);
+(`rust/crates/foundation/degenbot-pools/src/int_v3_hop.rs`). The all-CL dispatcher calls
+`int_solve_cl_path` (`rust/crates/engine/degenbot-solvers/src/mobius_v3_int.rs`);
 mixed V2+CL paths go through `exact_solve_mixed_path_n` /
 `exact_solve_mixed_v2_v3_sequence`. All of these enumerate ending-range
 tuples: `max_candidates = 10` per CL hop, mixed-radix counter, per-tuple
@@ -392,14 +392,14 @@ green; clippy `-D warnings` clean.
   `BQ43DK` (Tier-3 enforcement).
 - Fixture: `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md` (a gitignored
   logs/ artifact, since removed).
-- Code: `rust/crates/degenbot-solvers/src/mobius_v3_int.rs`,
-  `rust/crates/degenbot-solvers/src/mobius_int_exact.rs`,
-  `rust/crates/degenbot-solvers/src/mobius_int.rs`,
-  `rust/crates/degenbot-pools/src/int_v3_hop.rs`,
-  `rust/crates/degenbot-pools/src/tick_bitmap.rs`,
-  `rust/crates/degenbot-pools/src/v3_state.rs`
+- Code: `rust/crates/engine/degenbot-solvers/src/mobius_v3_int.rs`,
+  `rust/crates/engine/degenbot-solvers/src/mobius_int_exact.rs`,
+  `rust/crates/engine/degenbot-solvers/src/mobius_int.rs`,
+  `rust/crates/foundation/degenbot-pools/src/int_v3_hop.rs`,
+  `rust/crates/foundation/degenbot-pools/src/tick_bitmap.rs`,
+  `rust/crates/foundation/degenbot-pools/src/v3_state.rs`
   (`build_int_v3_sequence`, `v3_simulate_swap`),
-  `rust/crates/degenbot-concentrated-liquidity-math/src/swap_math.rs`.
+  `rust/crates/foundation/degenbot-math/src/cl/`.
 - Prior diagnosis doc: `docs/architecture/sim_v4_swap_step_rounding.md` (removed in
   the stale-docs cleanup `71ec78b2`)
   (the `int_simulate_v3_swap` 2-range approximation finding — `PXSY47`

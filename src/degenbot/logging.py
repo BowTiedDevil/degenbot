@@ -9,7 +9,7 @@ This module owns two concerns:
 Rust ``tracing`` events — and ``log::`` records, bridged into ``tracing`` by
 ``tracing_log::LogTracer`` — are forwarded to Python ``logging`` by the
 ``PythonLogLayer`` installed by ``init_logging_subscriber`` in
-``rust/crates/degenbot-python/src/python_log_layer.rs`` during the explicit
+``rust/crates/shells/degenbot-python/src/python_log_layer.rs`` during the explicit
 ``driver_boot()`` call (module init registers symbols only, and ``Bot``
 triggers the boot at construction). The layer derives each record's Python
 logger name from the Rust
@@ -160,7 +160,7 @@ logger.addHandler(_QUEUED_HANDLER)
 RUST_BRIDGE_LOGGER_NAMES = (
     "degenbot_bot",
     "degenbot_core",
-    # The PyO3 binding crate lives in ``crates/degenbot-python/`` but its
+    # The PyO3 binding crate lives in ``crates/shells/degenbot-python/`` but its
     # Cargo ``name`` is ``degenbot_rs`` (set in its ``Cargo.toml``), so every
     # bare ``log::info!`` in that crate (``verify.rs``, ``register.rs``,
     # ``json.rs``) emits under ``degenbot_rs::...`` → Python logger

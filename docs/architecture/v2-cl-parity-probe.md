@@ -1,6 +1,6 @@
 # V2-as-degenerate-CL swap-step parity probe
 
-Probe harness: `rust/crates/degenbot-solvers/examples/v2_cl_parity_probe.rs`
+Probe harness: `rust/crates/engine/degenbot-solvers/examples/v2_cl_parity_probe.rs`
 Run: `cargo run -p degenbot-solvers --example v2_cl_parity_probe`
 
 This probe answers the decision question in ADR-060 ("Collapse the V2 walk

@@ -49,8 +49,8 @@ cd "$repo_root"
 
 bin="${DEGENBOT_CLI_BIN:-rust/target/debug/degenbot}"
 oracle=".github/workflows/cli-no-python-expected.txt"
-head_fixture="rust/crates/degenbot-db/tests/fixtures/alembic_revs/2606a6c7f5ee.db"
-stale_fixture="rust/crates/degenbot-db/tests/fixtures/alembic_revs/e0aaad8ad486.db"
+head_fixture="rust/crates/foundation/degenbot-db/tests/fixtures/alembic_revs/2606a6c7f5ee.db"
+stale_fixture="rust/crates/foundation/degenbot-db/tests/fixtures/alembic_revs/e0aaad8ad486.db"
 
 if [ ! -x "$bin" ]; then
     echo "cli-no-python gate: binary not found or not executable: $bin" >&2

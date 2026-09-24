@@ -7,13 +7,13 @@
 > single `build_walk` pipeline; no hand-written per-family producer exists.**
 >
 > **Code:**
-> - `rust/crates/degenbot-executor/src/grammar.rs` — the production entry points.
-> - `rust/crates/degenbot-executor/src/grammar_shape.rs` — `derive_shape` / `derive_shape_detailed` (`recognized_key` gate → `build_walk` → `LedgerValidator` → bytes; the ADR-030 tri-state) + the shared Plan-building helpers (`v4_scaffold_table`, `v4_hop_currencies`, `v4_terminal_capture_steps`, `v4_bridge_steps`, `native_capture_declines`).
-> - `rust/crates/degenbot-executor/src/grammar_walker.rs` + `grammar_walker/shapes/` — the walker: `HopFacts` + the position-scoped axis enums (`terminal_form`, `repay_mechanism`, `seed_delivery`), `mod mechanics`, `facts_for` (the per-family classifier — the only per-family keyed data), and `derive_plan` (the `(len, repay-sequence)`-gated enclosure dispatch). Shapes: `three_hop.rs` (three topology rule walkers), `two_hop_uniswap_only.rs`, `two_hop_v4_led.rs`, `two_hop_seed_v4.rs`, `all_v2_chain.rs`, `tag_residual.rs`.
-> - `rust/crates/degenbot-executor/src/grammar_plan.rs` — the `Plan` IR (`PlanStep` variants) and its two consumers (`plan_to_bytes`, `plan_to_ledger_ops`).
-> - `rust/crates/degenbot-executor/src/grammar_ledger.rs` — the axis types + `LedgerValidator`.
-> - `rust/crates/degenbot-executor/src/composers.rs` — `PathInfo`/`HopInfo`, `EncodeOptions`, the top-level `encode_cmd_stream`, and the `config_for_options` axis→config builder.
-> - `rust/crates/degenbot-executor/src/config.rs` — the `execute(commands, config)` `uint256` config packing.
+> - `rust/crates/foundation/degenbot-executor/src/grammar.rs` — the production entry points.
+> - `rust/crates/foundation/degenbot-executor/src/grammar_shape.rs` — `derive_shape` / `derive_shape_detailed` (`recognized_key` gate → `build_walk` → `LedgerValidator` → bytes; the ADR-030 tri-state) + the shared Plan-building helpers (`v4_scaffold_table`, `v4_hop_currencies`, `v4_terminal_capture_steps`, `v4_bridge_steps`, `native_capture_declines`).
+> - `rust/crates/foundation/degenbot-executor/src/grammar_walker.rs` + `grammar_walker/shapes/` — the walker: `HopFacts` + the position-scoped axis enums (`terminal_form`, `repay_mechanism`, `seed_delivery`), `mod mechanics`, `facts_for` (the per-family classifier — the only per-family keyed data), and `derive_plan` (the `(len, repay-sequence)`-gated enclosure dispatch). Shapes: `three_hop.rs` (three topology rule walkers), `two_hop_uniswap_only.rs`, `two_hop_v4_led.rs`, `two_hop_seed_v4.rs`, `all_v2_chain.rs`, `tag_residual.rs`.
+> - `rust/crates/foundation/degenbot-executor/src/grammar_plan.rs` — the `Plan` IR (`PlanStep` variants) and its two consumers (`plan_to_bytes`, `plan_to_ledger_ops`).
+> - `rust/crates/foundation/degenbot-executor/src/grammar_ledger.rs` — the axis types + `LedgerValidator`.
+> - `rust/crates/foundation/degenbot-executor/src/composers.rs` — `PathInfo`/`HopInfo`, `EncodeOptions`, the top-level `encode_cmd_stream`, and the `config_for_options` axis→config builder.
+> - `rust/crates/foundation/degenbot-executor/src/config.rs` — the `execute(commands, config)` `uint256` config packing.
 >
 > **Decision records:** [ADR-029](../adr/ADR-029-executor-command-grammar-axes.md)
 > (the axes + the validator), [ADR-030](../adr/ADR-030-derivation-outcome-tri-state.md)
@@ -233,7 +233,7 @@ survives only as a `#[doc(hidden)]` test shim over `encode_grammar`.)
 ## The runtime matrix is the source of truth (ADR-029 D5)
 
 Correctness is judged by **actual execution through the on-chain contract**:
-the runtime harness (`rust/crates/degenbot-simulation/tests/harness_declarative.rs`)
+the runtime harness (`rust/crates/engine/degenbot-simulation/tests/harness_declarative.rs`)
 runs the production encoder methods, executes the stream in revm, and asserts
 `actual_delta == predicted` exactly. The matrix **also validates every produced
 Plan through the ledger validator** (`Plan → LedgerOp` depth-first walk, then

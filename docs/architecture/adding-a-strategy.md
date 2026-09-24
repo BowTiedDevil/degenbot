@@ -10,7 +10,7 @@ evidence seams), [ADR-057](../adr/ADR-057-strategy-host.md) (the strategy host),
 and the substrate map in
 [strategy-seams.md](strategy-seams.md). The proof-gate mock that exercises this
 runbook's host path lives at
-`rust/crates/degenbot-submission/tests/mock_third_family.rs`.
+`rust/crates/engine/degenbot-submission/tests/mock_third_family.rs`.
 
 ## 0. Pick the reaction kind first
 
@@ -18,7 +18,7 @@ A strategy picks exactly one reaction kind (ADR-055; `CONTEXT.md`
 "Strategy reaction kinds").
 
 - **Pending-transaction**: implement `PendingTxReaction`
-  (`rust/crates/degenbot-strategy/src/pending_tx.rs:68`). Its stages are
+  (`rust/crates/engine/degenbot-strategy/src/pending_tx.rs:68`). Its stages are
   `admit` (`:80`), `discover` (`:99`), `evaluate` (`:111`), `compose` (`:121`),
   `decide` (`:134`), threaded by the neutral artifacts `ComposedIntent` (`:45`)
   and `Decided` (`:56`). `BackrunStrategy` is the reference.
@@ -46,13 +46,13 @@ a strategy trait object. `StrategyHost` never names a family
 Pool-state provisioning is a plane capability (ADR-061), not machinery a
 strategy builds. The boot resolves one `StrategyKit` per strategy
 (`StrategyKit::resolve`,
-`rust/crates/degenbot-strategy/src/strategy_kit.rs`) and hands it to the spawn
+`rust/crates/engine/degenbot-strategy/src/strategy_kit.rs`) and hands it to the spawn
 factory; a strategy composes `kit.provision.ingress` (the one V3/V4
 `PoolIngress` seam) and `kit.discovery` (frozen registry + startup graph), and
 never an ingress it constructed itself.
 
 Tick maps enter the planning sandbox only through the sealed `TickMapSeed`
-boundary (`rust/crates/degenbot-bot/src/bot_core/planning.rs`): the `Db` and
+boundary (`rust/crates/engine/degenbot-bot/src/bot_core/planning.rs`): the `Db` and
 `Chain` provenance constructors are crate-private to `bot_core` and minted by
 `PoolIngress`. Replay facts cross the ingress's `admit_v3_replay` /
 `admit_v4_replay` interface; a strategy cannot fabricate a sparse ladder or
@@ -70,7 +70,7 @@ self-contradictory map".
 ## 1. Admission — the `StrategyHost` FSM
 
 A family is admitted as a driver FSM instance. The operator-facing verbs
-(`rust/crates/degenbot-bot/src/strategy_host.rs`):
+(`rust/crates/engine/degenbot-bot/src/strategy_host.rs`):
 
 ```rust
 pub fn register(&mut self, id: impl Into<StrategyId>, facet: FacetStatus)
@@ -111,7 +111,7 @@ Registered/Enabled/Running/Stopped ──disable()──► Disabled
 **Evidence / Keeps / Retires**
 
 - Evidence: `DriverPose` at `strategy_host.rs:41`; the Python-facing vocabulary
-  is mapped in `rust/crates/degenbot-python/src/bot/engine/strategy.rs:30-40`.
+  is mapped in `rust/crates/shells/degenbot-python/src/bot/engine/strategy.rs:30-40`.
 - Keeps: the operator state names `registered`/`enabled`/`running`/`stopped`/
   `halted`/`disabled`, and the frozen-tombstone rule.
 - Retires: `DriverState` as a type name (it survives only in ADR-057 prose);
@@ -140,7 +140,7 @@ skipped, not failed — the settlement pump arm is its own driver.
 
 - Evidence: factory/host split at `strategy_host.rs:845-925`; the ambient-runtime
   reason is pinned by
-  `rust/crates/degenbot-submission/tests/hosted_driver_ambient_runtime.rs`.
+  `rust/crates/engine/degenbot-submission/tests/hosted_driver_ambient_runtime.rs`.
 - Keeps: "the host decides which drivers run; a driver owns its loop".
 - Retires: booting a driver inline on a dedicated current-thread runtime (it
   fails `WrapDatabaseAsync::new`).
@@ -148,7 +148,7 @@ skipped, not failed — the settlement pump arm is its own driver.
 ## 3. The nonce lane — sign-time issuance over one authority
 
 There is **no** `NonceAuthority::lane_for`. The landed seam binds a lane with
-`NonceLane::new` (`rust/crates/degenbot-submission/src/submission_ledger.rs:362`):
+`NonceLane::new` (`rust/crates/engine/degenbot-submission/src/submission_ledger.rs:362`):
 
 ```rust
 pub fn new(authority: Arc<NonceAuthority>, ledger: Arc<SubmissionLedger>,
@@ -162,7 +162,7 @@ pub fn observe_chain_nonce(&self, confirmed: u64);             // :474
 ```
 
 `stamp()` is the only issuance entry. It calls `NonceAuthority::lease`
-(`rust/crates/degenbot-bot/src/nonce_authority.rs:295`), which returns the
+(`rust/crates/engine/degenbot-bot/src/nonce_authority.rs:295`), which returns the
 **lowest free nonce at or above the confirmed chain nonce** so leases and
 broadcasts stay a contiguous prefix. One outstanding lease per strategy
 (`DeclineKind::StrategyLeaseOutstanding`); a tracked reservation below the
@@ -233,7 +233,7 @@ re-bid itself stays with the caller.
 
 There is **no** `ReactionKind::EachPoll`. The typed reaction vocabulary is the
 hub class plus its declared overflow policy
-(`rust/crates/degenbot-eventhub/src/`):
+(`rust/crates/foundation/degenbot-eventhub/src/`):
 
 - `HubClass` (`event.rs`): `NewHead | PoolEvent | PendingTx`.
 - `OverflowPolicy` (`policy.rs`): `DropOldestCounted { name } | LatestOnly |
@@ -261,7 +261,7 @@ registers `HubClass::PendingTx`; the mock pins exactly that
 ## 6. The three driver partitions (boot / loop / policy)
 
 A family's driver is a facade over three partitions, by invariant
-(`rust/crates/degenbot-strategy/src/backrun_driver.rs:1-42`, the three-way split):
+(`rust/crates/engine/degenbot-strategy/src/backrun_driver.rs:1-42`, the three-way split):
 
 - `driver_boot` (`driver_boot.rs`) — the strategy-owned boot handoff. The one
   `resolve_backrun_boot(...)` owner opens the connector DB once and returns
@@ -296,7 +296,7 @@ state, and a policy module for its economics.
 ## 7. Config — one facet per family
 
 A family's operator surface is a typed schema facet, declared once
-(`rust/crates/degenbot-config/src/schema.rs`):
+(`rust/crates/foundation/degenbot-config/src/schema.rs`):
 
 ```text
 strategy StrategyConfig {
@@ -329,7 +329,7 @@ on a name the config never configured.
 ## 8. Python thinness rules
 
 The PyO3 layer translates, never decides
-(`rust/crates/degenbot-python/src/bot/engine/strategy.rs:1-20`):
+(`rust/crates/shells/degenbot-python/src/bot/engine/strategy.rs:1-20`):
 
 - Every admission/configured-ness/FSM decision is the Rust host's. A typed
   refusal maps to a typed exception (`map_host_error`, `:42`).

@@ -1,7 +1,7 @@
 # StateView mechanism feasibility — block-epoch pipeline
 
 **Spike:** ergo `KWKEVV` (epic `MROOY7` block-epoch pipeline / ADR-041)
-**Worker:** spike-worker-3@worktree-stateview, 2026-09-07. Adopted the working harness left uncommitted by the failed `spike-worker` attempt (`rust/crates/degenbot-solvers/examples/stateview_feasibility_probe.rs`); re-ran it twice for stability and completed the live-bot scrape the predecessor did not finish.
+**Worker:** spike-worker-3@worktree-stateview, 2026-09-07. Adopted the working harness left uncommitted by the failed `spike-worker` attempt (`rust/crates/engine/degenbot-solvers/examples/stateview_feasibility_probe.rs`); re-ran it twice for stability and completed the live-bot scrape the predecessor did not finish.
 
 ## Decision (per the pre-committed rule in the task body)
 
@@ -18,7 +18,7 @@
 
 ### 1.1 Corpus locations (confirmed on disk)
 
-- Heavy-CL solver-replay corpus: `rust/crates/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl.zst` (420 paths / 87 MB decoded; packaged 80 KB), referenced by `docs/rayon-parallelism-lab.md` and read transparently via `rust/crates/degenbot-solvers/src/capture_fixture.rs` (`read_fixture`, `DEGENBOT_SOLVER_CAPTURE_*` producer knobs in `rust/crates/degenbot-bot/src/arb_engine/solver_capture.rs`).
+- Heavy-CL solver-replay corpus: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl.zst` (420 paths / 87 MB decoded; packaged 80 KB), referenced by `docs/rayon-parallelism-lab.md` and read transparently via `rust/crates/engine/degenbot-solvers/src/capture_fixture.rs` (`read_fixture`, `DEGENBOT_SOLVER_CAPTURE_*` producer knobs in `rust/crates/engine/degenbot-bot/src/arb_engine/solver_capture.rs`).
 - Other committed captures: `heavy_mixed_solve_captures.jsonl.zst`, `live_capture_loop13/17.jsonl.zst`, `live_gatebursts_mixed.jsonl`, `cl_capture_offline.jsonl` (same fixture dir).
 - **Tickmap size distribution has no producer-side capture:** the solver captures record precomputed tick-*range* views, not raw map cardinalities. The authoritative size/mix source is therefore the live registry the captures are drawn from: the running bot's pool database (below), read `-readonly` beside the live WAL.
 
@@ -49,7 +49,7 @@ cargo build --release --manifest-path rust/Cargo.toml -p degenbot-solvers --exam
 rust/target/release/examples/stateview_feasibility_probe
 ```
 
-Harness: `rust/crates/degenbot-solvers/examples/stateview_feasibility_probe.rs` (throwaway; synthetic `HashMap<i32, TickInfo>` of the exact production entry type, 1001 timed reps per size, percentile = ceil-index). `TickInfo = { U128, i128, u64 }` = 48 B; `V3BlockDelta = 144 B`.
+Harness: `rust/crates/engine/degenbot-solvers/examples/stateview_feasibility_probe.rs` (throwaway; synthetic `HashMap<i32, TickInfo>` of the exact production entry type, 1001 timed reps per size, percentile = ceil-index). `TickInfo = { U128, i128, u64 }` = 48 B; `V3BlockDelta = 144 B`.
 
 ### 2.1 M1 — tickmap clone cost sweep vs N (mechanism (c) worst case: a full per-epoch map clone)
 

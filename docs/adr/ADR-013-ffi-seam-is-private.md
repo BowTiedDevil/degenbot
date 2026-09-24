@@ -161,7 +161,7 @@ out.)
 
 ### Does not change
 
-- The Rust crate structure (`rust/crates/degenbot-*`) is unchanged.
+- The Rust crate structure remains role-grouped under `rust/crates/`.
   This ADR is about **the Python side of the FFI seam**, not the Rust
   crate topology. The standalone-Rust-core constraint (ADR-005) is
   unaffected: Rust owns everything; Python is a driver shell.

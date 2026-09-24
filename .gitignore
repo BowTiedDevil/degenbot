@@ -6,7 +6,7 @@ __pycache__
 # C extensions
 *.so
 
-# Build-identity counter written by rust/crates/degenbot-python/build.rs at
+# Build-identity counter written by rust/crates/shells/degenbot-python/build.rs at
 # every compile of degenbot_rs (stale-.so detector, see AGENTS.md). Per-clone
 # local state: never commit it, and never put it under rust/target/ (a cargo
 # clean or gc-target sweep must not roll it back).
@@ -195,14 +195,14 @@ cython_debug/
 # liquidity_updater_parity) on CI. The alembic_revs subdirectory carries the
 # per-released-revision injury fixtures the auto_heal_matrix sweeps (ADR-052 D5,
 # ergo V4CDHP) — same rule, explicitly extended to the subdirectory.
-!rust/crates/degenbot-db/tests/fixtures/*.db
+!rust/crates/foundation/degenbot-db/tests/fixtures/*.db
 # Python-pathfinding parity snapshot — built by
 # tests/pathfinding/fixtures/generate_mainnet_snapshot.py and intentionally
 # checked in (see that script's docstring): the generator is deterministic, so
 # a fresh clone can rebuild it, but committing it keeps the lossless baselines
 # runnable without the ~600k-pool live operator DB.
 !tests/pathfinding/fixtures/mainnet_snapshot.db
-!rust/crates/degenbot-db/tests/fixtures/alembic_revs/*.db
+!rust/crates/foundation/degenbot-db/tests/fixtures/alembic_revs/*.db
 
 # Foundry build artifacts (Aave test contracts)
 tests/aave/libraries/contracts/.foundryrust/proptest-regressions/

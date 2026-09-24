@@ -99,7 +99,7 @@ sample-of-one ruling still holds. Instead:
 - ADR-005 — Polars-inspired three-layer FFI (the standalone-Rust-core
   constraint the `solvers-core` extraction would restore for the solve
   surface).
-- `rust/crates/degenbot-bot/src/lib.rs` — the module doc referencing this
+- `rust/crates/engine/degenbot-bot/src/lib.rs` — the module doc referencing this
   ADR.
 - the `three-layer-transition.md` rubric (removed in the stale-docs cleanup `71ec78b2`; recoverable from git
   history) — its "Dispositions" section carried the `partial` entry for

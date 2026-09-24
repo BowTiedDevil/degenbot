@@ -58,7 +58,7 @@ These classes serve as building blocks for the lessons published by [BowTiedDevi
 
 ## Architecture: The Python-Rust Split
 
-Ownership is strict, which is what makes both consumption paths first-class: the Rust core owns everything stateful and performance-critical — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python side owns the user-facing API, orchestration, and configuration. The core crates contain **no PyO3 code at all**, so a pure-Rust bot (`cargo add degenbot`) runs without any Python machinery; an in-repo proof is `rust/crates/degenbot/examples/standalone_consumer.rs`. Architectural decisions — state ownership (ADR-003), FFI topology (ADR-005), schema cutover (ADR-010) — are recorded in the [ADR design log](docs/adr/), with the crate sources as the last word.
+Ownership is strict, which is what makes both consumption paths first-class: the Rust core owns everything stateful and performance-critical — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python side owns the user-facing API, orchestration, and configuration. The core crates contain **no PyO3 code at all**, so a pure-Rust bot (`cargo add degenbot`) runs without any Python machinery; an in-repo proof is `rust/crates/facade/degenbot/examples/standalone_consumer.rs`. Architectural decisions — state ownership (ADR-003), FFI topology (ADR-005), schema cutover (ADR-010) — are recorded in the [ADR design log](docs/adr/), with the crate sources as the last word.
 
 ## Installation
 
@@ -1401,7 +1401,7 @@ table.
 
 ## The Rust Core (`degenbot_rs` Rust crate, `degenbot._ffi` Python module)
 
-The Rust core is the engine of degenbot — it owns all performance-critical and stateful logic. Python reaches it through the `degenbot._ffi` extension module, a thin PyO3 binding layer (`rust/crates/degenbot-python/`) that translates Python calls into Rust calls with no business logic of its own. The underlying core crates are pyo3-free by default and are consumable directly from pure Rust through the umbrella `degenbot` crate — currently via a git/path dependency (the crates are not yet published to crates.io); the in-repo proof is `rust/crates/degenbot/examples/standalone_consumer.rs`, gated by `just test-standalone`.
+The Rust core is the engine of degenbot — it owns all performance-critical and stateful logic. Python reaches it through the `degenbot._ffi` extension module, a thin PyO3 binding layer (`rust/crates/shells/degenbot-python/`) that translates Python calls into Rust calls with no business logic of its own. The underlying core crates are pyo3-free by default and are consumable directly from pure Rust through the umbrella `degenbot` crate — currently via a git/path dependency (the crates are not yet published to crates.io); the in-repo proof is `rust/crates/facade/degenbot/examples/standalone_consumer.rs`, gated by `just test-standalone`.
 
 The extension is built automatically during installation using [maturin](https://www.maturin.rs/) (or `uv sync`, which invokes maturin under the hood).
 

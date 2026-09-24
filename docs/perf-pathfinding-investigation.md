@@ -399,11 +399,11 @@ the NetworkX dependency.
 
 The port follows the ADR-005 three-layer pattern:
 
-1. **Core leaf** (`rust/crates/degenbot-pathfinding/`) — zero-dependency
+1. **Core leaf** (`rust/crates/foundation/degenbot-pathfinding/`) — zero-dependency
    pure Rust. Defines `PathGraph` (HashMap adjacency list), iterative DFS
    with cycle detection, per-depth pool-type filtering, and lookahead
    pruning. Independently tested with 17 unit tests.
-2. **PyO3 binding** (`rust/crates/degenbot-python/src/pathfinding/`) — thin
+2. **PyO3 binding** (`rust/crates/shells/degenbot-python/src/pathfinding/`) — thin
    translator: extract flat int tuples from Python, build the graph, return a
    lazy `PathIterator` pyclass.
 3. **Python orchestration** (`src/degenbot/pathfinding.py`) — DB queries,
@@ -446,10 +446,10 @@ these entirely with bulk address preloading.
 
 | File | Changes |
 |---------|---------|
-| `rust/crates/degenbot-pathfinding/src/graph.rs` | `PathGraph`, `PathFinder<'a>`, `OwnedPathFinder`, `PoolKind`, `Edge` types; graph construction, dead-end pruning, node-valid-depths computation, lazy DFS iterator |
-| `rust/crates/degenbot-pathfinding/src/lib.rs` | Exports `PathGraph`, `PathFinder`, `OwnedPathFinder`, `PoolKind` |
-| `rust/crates/degenbot-python/src/pathfinding/mod.rs` | `find_paths_rust` pyfunction returning `PathIterator`; `PathIterator` pyclass with `__iter__`/`__next__` |
-| `rust/crates/degenbot-python/src/c_api.rs` | Register `find_paths_rust` + `PathIterator` |
+| `rust/crates/foundation/degenbot-pathfinding/src/graph.rs` | `PathGraph`, `PathFinder<'a>`, `OwnedPathFinder`, `PoolKind`, `Edge` types; graph construction, dead-end pruning, node-valid-depths computation, lazy DFS iterator |
+| `rust/crates/foundation/degenbot-pathfinding/src/lib.rs` | Exports `PathGraph`, `PathFinder`, `OwnedPathFinder`, `PoolKind` |
+| `rust/crates/shells/degenbot-python/src/pathfinding/mod.rs` | `find_paths_rust` pyfunction returning `PathIterator`; `PathIterator` pyclass with `__iter__`/`__next__` |
+| `rust/crates/shells/degenbot-python/src/c_api.rs` | Register `find_paths_rust` + `PathIterator` |
 | `src/degenbot/pathfinding.py` | Rewritten — Rust-backed DFS, bulk address preloading, `_PreparedGraph` struct; deleted old NetworkX `_dfs`/`_dfs_async`/`_prepare_graph` |
 | `src/degenbot/degenbot_rs.pyi` | Type stub for `find_paths_rust` + `PathIterator` |
 | `pyproject.toml` | Removed `networkx` dependency |

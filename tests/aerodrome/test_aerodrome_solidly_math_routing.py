@@ -17,7 +17,7 @@ Python callable). The Python oracle's ``calc_d`` / ``calc_k`` /
 work in ``test_aerodrome_v2_onchain_parity.py``.
 
 The leaf is byte-for-byte cross-checked vs the Python oracle by the frozen
-``rust/crates/degenbot-solidly-math/tests/oracle_crosscheck.rs`` snapshot at
+``rust/crates/foundation/degenbot-math/tests/oracle_crosscheck_solidly.rs`` snapshot at
 the unit level; per §4.5 this module is the orchestration-level gate that
 spies on the Rust seam to prove the routed path hits it with the right
 arguments ('the parity tests already cover the math').

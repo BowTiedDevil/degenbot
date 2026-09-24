@@ -273,9 +273,9 @@ Two targets are deferred, both consequences of this ADR's standalone-core direct
   `pyo3` — a packaging change, not a rewrite (core structs like `Bot`/`V3PoolState`
   already import no `pyo3`). **The mechanical relocation + virtual-manifest workspace
   restructure is DONE** (the `degenbot_rs` binding layer now lives at
-  `rust/crates/degenbot-python/` as a peer of the pyo3-free cores; `rust/Cargo.toml`
+  `rust/crates/shells/degenbot-python/` as a peer of the pyo3-free cores; `rust/Cargo.toml`
   is a pure virtual manifest — see ergo `DPSVCH`). The umbrella Rust crate
-  `degenbot` (`rust/crates/degenbot/`) re-exports the cores with zero `pyo3`, and
+  `degenbot` (`rust/crates/facade/degenbot/`) re-exports the cores with zero `pyo3`, and
   `examples/standalone_consumer.rs` is the standalone-Rust-consumer smoke test
   (constructs a `BotState`, registers a V2 pool via the `UNISWAP_V2` preset, runs a
   swap calc — no Python in the build) — see ergo `KWTAXJ`. **Remains deferred:**

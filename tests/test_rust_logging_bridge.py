@@ -23,7 +23,7 @@ import degenbot  # ruff: ignore[unused-import]  (import triggers base config)
 RUST_BRIDGE_LOGGER_NAMES = (
     "degenbot_bot",
     "degenbot_core",
-    # The PyO3 binding crate lives in ``crates/degenbot-python/`` but its
+    # The PyO3 binding crate lives in ``crates/shells/degenbot-python/`` but its
     # Cargo ``name`` is ``degenbot_rs`` (set in its ``Cargo.toml``), so every
     # bare ``log::info!`` in that crate emits under ``degenbot_rs::...`` →
     # Python logger ``degenbot._ffi.<...>``. The directory name ``degenbot_python``

@@ -17,7 +17,7 @@ cannot catch.
 
 The fixture + expected output are loaded from the SHARED file
 `tests/standalone_parity/fixtures/v3_swap.json`, which the Rust parity test
-(`rust/crates/degenbot/tests/parity_v3_swap.rs`) ALSO loads. A fixture edit
+(`rust/crates/facade/degenbot/tests/parity_v3_swap.rs`) ALSO loads. A fixture edit
 that drifts the expected output fails BOTH sides mechanically — closing the
 V3/V4 fixture-drift gap documented in AGENTS.md "Known gap — V3/V4 fixture
 drift" (where the constants were previously copied between the two sides with
@@ -84,7 +84,7 @@ def test_python_consumer_v3_swap_matches_recorded_constant() -> None:
     """The Bot Python driver reproduces the recorded V3 swap constant.
 
     Python side of the Tier-2 dual-driver gate (V3 CL path). The Rust side
-    (`rust/crates/degenbot/tests/parity_v3_swap.rs`) loads the same fixture
+    (`rust/crates/facade/degenbot/tests/parity_v3_swap.rs`) loads the same fixture
     file and drives it through `BotState` directly; both MUST equal
     `_EXPECTED_AMOUNT_OUT_ZFO`. Divergence = a lossy FFI seam on the CL swap
     path.

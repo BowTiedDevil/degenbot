@@ -138,7 +138,7 @@ relay. Acceptance: see S7.
 1. **Revert shield (relay submission).** Failed/raced attempts cost zero gas.
 2. **On-chain seatbelt (executor `config` param).** `pack_config` supports
    `check_mode` 1/2/3 with an `expected_value` (pre-tx balance) and optional
-   builder bribe bips (`rust/crates/degenbot-executor/src/config.rs`). Every
+   builder bribe bips (`rust/crates/foundation/degenbot-executor/src/config.rs`). Every
    live submission MUST carry a non-zero `check_mode` — acceptance criterion
    S6 decodes a submitted tx's calldata to prove it. Verified in code
    (2026-09-16): the composer's default is `check_mode=1` (custody capture →

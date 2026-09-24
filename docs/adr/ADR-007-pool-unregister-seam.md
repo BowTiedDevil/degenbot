@@ -40,7 +40,7 @@ super_new_v2_weth_wbtc_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(...)  #
 
 `PoolRegistry.remove` (`src/degenbot/registry/pool.py:156`) deletes only the Python wrapper.
 `BotState` retains the entry in `pool_addresses: HashMap<Address, u64>` and `pools: HashMap<u64,
-PoolEntry>` (`rust/crates/degenbot-bot/src/bot_core/mod.rs:225-227`), because `BotState` has
+PoolEntry>` (`rust/crates/engine/degenbot-bot/src/bot_core/mod.rs:225-227`), because `BotState` has
 `register_v2/v3/v4_pool` but **no `unregister`**. Re-`build_pool` calls `register_v2_pool` again
 and panics: `pyo3_runtime.PanicException: pool already registered` (the `assert!` at
 `bot_core/mod.rs:285` and `:348`). Confirmed pre-existing at clean HEAD; the two halves of the
@@ -132,7 +132,7 @@ Disposal rules:
   retired ids are never scanned).
 
 The `v3_buffer` / `v4_buffer` are `LiquidityEventBuffer<K, U>`
-(`rust/crates/degenbot-bot/src/optimizers/liquidity_event_buffer.rs`). It exposes
+(`rust/crates/engine/degenbot-bot/src/optimizers/liquidity_event_buffer.rs`). It exposes
 `buffer_backfill`/`buffer_pump`/`drain_backfill`/`drain_pump`/`event_count`/`flush`/`expire` but
 **no per-key discard**. U3 adds one: `discard_for(&mut self, key: &K)` — drops all buffered
 events for a single key (used by unregister). It is the symmetric inverse of `buffer_pump(key, …)`

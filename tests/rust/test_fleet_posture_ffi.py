@@ -2,7 +2,7 @@
 
 The validation rules live ONCE in the Rust core
 (`PosturePolicyPatch::validate`, unit-tested in
-`rust/crates/degenbot-workers/src/posture.rs`); this file exercises them
+`rust/crates/engine/degenbot-workers/src/posture.rs`); this file exercises them
 through the compiled `degenbot._ffi.fleet` verb — the Python surface of the
 same rules (typed `PostureRetuneError`, partial-patch merge, the tri-state
 sim-intake floor, and the effective-policy echo shape).

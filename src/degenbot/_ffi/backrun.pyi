@@ -1,7 +1,7 @@
 """Type stubs for the degenbot Rust backrun seam.
 
 Python module: `degenbot._ffi.backrun`
-Rust: `crates/degenbot-python/src/rpc/backrun_py.rs`
+Rust: `crates/shells/degenbot-python/src/rpc/backrun_py.rs`
 
 The live `MEVBlocker` searcher feed handle (RSUB-2 / NYVL2F): a PyO3
 wrapper owning the `degenbot-rpc` feed pump. `drain()` returns plain

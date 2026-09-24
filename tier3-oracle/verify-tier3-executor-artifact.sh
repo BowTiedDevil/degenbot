@@ -11,7 +11,7 @@
 # REQUIRES the toolchain: the in-repo `executor/` uv project (vyper
 # ==0.5.0a3, SRMMM7) + solc 0.7.6 (svm cache). Runs in the CI `tier3-oracle`
 # job, NOT the default cargo-test path. The default cargo-test path is guarded toolchain-free by
-# `rust/crates/degenbot-simulation/tests/tier3_executor_artifacts.rs`.
+# `rust/crates/engine/degenbot-simulation/tests/tier3_executor_artifacts.rs`.
 set -euo pipefail
 TD="$(cd "$(dirname "$0")" && pwd)"
 cd "${TD}"

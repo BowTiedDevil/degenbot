@@ -14,7 +14,7 @@ exhaustion.
 
 Modeled 1:1 on `capture_fee1_v3v4v3_fixture.py` (DB liquidity snapshot + cast
 on-chain scalars at TARGET). The output JSON feeds
-`path73385_v4_gas_probe` (rust/crates/degenbot/examples).
+`path73385_v4_gas_probe` (rust/crates/facade/degenbot/examples).
 
 Usage (overrides come from env, see below):
 

@@ -113,7 +113,7 @@ list (below). The retirement:
   dependencies from `pyproject.toml`;
 - deletes `src/degenbot/migrations/`;
 - removes the `ALEMBIC_HEAD` constant in
-  `rust/crates/degenbot-db/src/schema.rs` and the `alembic_version`-reading
+  `rust/crates/foundation/degenbot-db/src/schema.rs` and the `alembic_version`-reading
   branch of `ensure_schema`;
 - removes the `database upgrade` Alembic fall-back path (the
   `DatabaseSchemaStale` → `alembic.command.upgrade` shell);
@@ -128,9 +128,9 @@ No change before the 0.7 retirement task (`JFFQV2`) may delete or stub any of:
 - the `alembic` and `sqlalchemy` entries in `pyproject.toml`;
 - `DatabaseSessionManager` and the SQLAlchemy `src/degenbot/database/models/`
   package;
-- the `ALEMBIC_HEAD` constant in `rust/crates/degenbot-db/src/schema.rs`;
+- the `ALEMBIC_HEAD` constant in `rust/crates/foundation/degenbot-db/src/schema.rs`;
 - the `alembic_version`-reading branch of
-  `rust/crates/degenbot-db/src/migrate.rs::ensure_schema`;
+  `rust/crates/foundation/degenbot-db/src/migrate.rs::ensure_schema`;
 - the `PRAGMA query_only=on` setting on the `AlembicCurrent` path in
   `DegenbotDb::open`.
 
@@ -194,7 +194,7 @@ retirement task's exclusive responsibility.
 - **`docs/adr/ADR-003-botcore-state-layer.md`** — `Bot` as the single Rust
   state owner; schema ownership is the persistence half of the same
   principle.
-- **`rust/crates/degenbot-db/src/migrate.rs`** — `ensure_schema` and the
+- **`rust/crates/foundation/degenbot-db/src/migrate.rs`** — `ensure_schema` and the
   state machine this ADR extends; the doc comment there already names the
   hybrid period as a "HARD REQUIREMENT."
 - **Epic `2Z3Y46`** (its `.ergo/plan-cli-db-migration.md` plan file has since been removed) — the task graph that

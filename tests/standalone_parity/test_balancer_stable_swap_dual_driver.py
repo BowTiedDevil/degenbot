@@ -1,6 +1,6 @@
 """Tier-2 behavioral dual-driver parity — Balancer V2 stable swap, ComposableStable `bpt_idx` path.
 
-The behavioral companion to `rust/crates/degenbot/tests/
+The behavioral companion to `rust/crates/facade/degenbot/tests/
 parity_balancer_stable_swap.rs`. Proves the **same** canonical fixture
 produces the **same** `amount_out` through both consumers: the Python
 companion path (`BalancerV2StablePool.calculate_tokens_out_from_tokens_in`,
@@ -10,7 +10,7 @@ a thin shell delegating to `Pool.calculate_tokens_out_for_pair`
 `simulate_balancer_stable_swap` → `skip_bpt`).
 
 The MetaStable (`bpt_idx = None`) counterpart in
-`rust/crates/degenbot-pools/tests/pool_handle_balance_vector.rs` records the
+`rust/crates/foundation/degenbot-pools/tests/pool_handle_balance_vector.rs` records the
 same oracle value.
 
 ## The BPT-drop equivalence (the oracle)
@@ -33,7 +33,7 @@ The `bpt_idx = 1` (BPT in the MIDDLE) `token0 → token2` case — one index
 PAST the BPT — is not exercised here: this fixture keeps the BPT at the END
 so the swap runs `0 ↔ 1` on both paths. The "index PAST the BPT" rebase
 branch of `skip_bpt` is covered by a direct unit test in
-`rust/crates/degenbot-pools/src/simulate_swap.rs`.
+`rust/crates/foundation/degenbot-pools/src/simulate_swap.rs`.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ _AMOUNT_IN = 1_000  # matches the MetaStable fixture's probe amount
 # Canonical expected output. Equal to the MetaStable (`bpt_idx = None`)
 # fixture's recorded `989` because the BPT is dropped from the invariant,
 # leaving an identical 2-token stable swap. Independently re-derived by the
-# Rust parity test (`rust/crates/degenbot/tests/parity_balancer_stable_swap.rs`).
+# Rust parity test (`rust/crates/facade/degenbot/tests/parity_balancer_stable_swap.rs`).
 _EXPECTED_AMOUNT_OUT = 989
 
 

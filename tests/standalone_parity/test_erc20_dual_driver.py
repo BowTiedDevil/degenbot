@@ -1,6 +1,6 @@
 """Tier-2 behavioral dual-driver parity — ERC-20 metadata resolution.
 
-The behavioral companion to the Rust `rust/crates/degenbot/tests/parity_erc20.rs`
+The behavioral companion to the Rust `rust/crates/facade/degenbot/tests/parity_erc20.rs`
 test. Proves the **same** canonical ERC-20 fixture driven through the **Python
 consumer** (`Bot.build_erc20_token`, the PyO3 binding) resolves the **same**
 `(name, symbol, decimals)` as the Rust consumer (`build_erc20_metadata` against

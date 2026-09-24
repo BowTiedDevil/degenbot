@@ -161,7 +161,7 @@ and the gate and the fee default to the market-shaped behavior.
 
 Concrete, green, golden-pinned references ship in this repo:
 
-- **Rust** — `rust/crates/degenbot-execution-sample` (a foreign `SimpleExecutor`
+- **Rust** — `rust/examples/degenbot-execution-sample` (a foreign `SimpleExecutor`
   strategy wiring all four parts; its recorded expected-bytes corpus is pinned
   as its own golden, distinct from `cmd_executor`).
 - **Python** — `examples/execution_strategy_foreign.py` (the Encode blob over

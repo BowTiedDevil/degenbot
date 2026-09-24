@@ -5,7 +5,7 @@ Thin delegation shim over the Rust ``degenbot-core`` core, exposed via the
 ``degenbot_rs``). The pure-Python implementation has been retired
 (per ADR-005 sub-step C, the §3.3 transition rubric in the
 three-layer-transition guide, removed in the stale-docs cleanup `71ec78b2`);
-the Rust core (``rust/crates/degenbot-core/src/libzip.rs``) is the single
+the Rust core (``rust/crates/foundation/degenbot-core/src/libzip.rs``) is the single
 implementation, ``#[cfg(test)]`` corpus the regression set.
 """
 

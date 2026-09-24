@@ -6,10 +6,10 @@ tags:
   - rust-owned
   - database
 related_files:
-  - ../rust/crates/degenbot-cli/src/argv.rs
-  - ../rust/crates/degenbot-cli-core/src/command.rs
-  - ../rust/crates/degenbot-cli-core/src/error.rs
-  - ../rust/crates/degenbot-config/src/resolvers.rs
+  - ../rust/crates/shells/degenbot-cli/src/argv.rs
+  - ../rust/crates/shells/degenbot-cli-core/src/command.rs
+  - ../rust/crates/shells/degenbot-cli-core/src/error.rs
+  - ../rust/crates/foundation/degenbot-config/src/resolvers.rs
 complexity: standard
 ---
 
@@ -17,8 +17,8 @@ complexity: standard
 
 The `degenbot` console is a **Rust binary** (ADR-051). One argv declaration
 exists — the clap v4 tree in `degenbot-cli`
-(`rust/crates/degenbot-cli/src/argv.rs`) over the clap-free command model in
-`degenbot-cli-core` (`rust/crates/degenbot-cli-core/src/command.rs`). The
+(`rust/crates/shells/degenbot-cli/src/argv.rs`) over the clap-free command model in
+`degenbot-cli-core` (`rust/crates/shells/degenbot-cli-core/src/command.rs`). The
 Python console script is a five-line passthrough to the same binary
 (`degenbot._ffi.cli_main`), so Python and Rust operators run the same program
 with the same vocabulary. Rendering, prompting, progress, and SIGINT are the
@@ -43,7 +43,7 @@ Accepted before **or** after the subcommand (clap `global = true`).
 | `-V, --version` | Print the workspace version plus the shared build receipt and exit 0. |
 
 The four value options are the **driver-domain resolvers** (ADR-051 D8), owned
-by `degenbot-config` (`rust/crates/degenbot-config/src/resolvers.rs`): each is a
+by `degenbot-config` (`rust/crates/foundation/degenbot-config/src/resolvers.rs`): each is a
 CLI-over-env cascade with a provenance tag, and the retired
 `[rpc]`/`[ws]`/`[database]`/`default_chain_id` file keys are deliberately
 **not** consulted (see [config-migration](config-migration.md)).
@@ -109,7 +109,7 @@ bot's `OperatorServer` is the authority. `--socket` resolves through
 ## Exit codes
 
 Execution returns typed results and cli-core declares the one
-`CliError → ExitCode` site (`rust/crates/degenbot-cli-core/src/error.rs`); the
+`CliError → ExitCode` site (`rust/crates/shells/degenbot-cli-core/src/error.rs`); the
 façade returns the code (`exit = "deny"` — a library never aborts the host).
 
 | Code | Meaning |

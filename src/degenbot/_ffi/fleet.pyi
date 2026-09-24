@@ -1,7 +1,7 @@
 """Type stubs for the degenbot Rust fleet seam.
 
 Python module: `degenbot._ffi.fleet`
-Rust: `crates/degenbot-python/src/fleet.rs` (feature = "simulation")
+Rust: `crates/shells/degenbot-python/src/fleet.rs` (feature = "simulation")
 
 The JCI2FW Part B operator re-tune channel over the ONE process-level fleet
 posture owner (`degenbot_workers::posture::process`). The Python mirror

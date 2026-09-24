@@ -30,7 +30,7 @@ Three families, three shapes of the same gap:
 
 ### Reserve-pair family (`V2PoolState`, `AerodromeV2PoolState`)
 
-`V2PoolState::apply_sync` (`rust/crates/degenbot-pools/src/v2_state.rs`) and
+`V2PoolState::apply_sync` (`rust/crates/foundation/degenbot-pools/src/v2_state.rs`) and
 `AerodromeV2PoolState::apply_sync` (`aerodrome_v2_state.rs`) are
 **byte-identical inherent methods** — both push a `V2BlockDelta` (`before`
 = pre-sync reserves, `after` = new reserves, at `block_number`), overwrite
@@ -56,7 +56,7 @@ twins (V4's doc-string still says "the CL mut trait (ADR-014 D2) will dedup
 these twins"); same for `V3PoolState::apply_liquidity_update` /
 `V4PoolState::apply_liquidity_update`. Both return `()`. The
 `ConcentratedLiquidityPoolMut` trait (ADR-014 D2b) exists
-(`rust/crates/degenbot-pools/src/registry.rs`) but currently carries only
+(`rust/crates/foundation/degenbot-pools/src/registry.rs`) but currently carries only
 `replace_tick_data` — the apply twins are not members and remain as
 inherent methods.
 

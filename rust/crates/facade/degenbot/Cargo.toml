@@ -1,0 +1,81 @@
+[package]
+name = "degenbot"
+description = "Umbrella Rust crate: re-exports the pyo3-free degenbot core surface (Bot state, DexIdentity presets, calc math) for standalone Rust consumers."
+keywords = ["mev", "arbitrage", "evm", "uniswap", "bot"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+# The umbrella is pure-Rust: it pulls ONLY the pyo3-free core crates and
+# re-exports them. It has NO `pyo3` dependency (verified by
+# `rg 'use pyo3' rust/crates/facade/degenbot` — empty). A standalone Rust consumer
+# `cargo add degenbot` gets `BotState`/`DexIdentity`/presets/calc with zero
+# Python in the build graph (ADR-005 standalone claim, made concrete by
+# `examples/standalone_consumer.rs`). The binding layer (`degenbot_rs` cdylib,
+# built from `crates/shells/degenbot-python/`) is a separate workspace member that
+# DOES pull pyo3; the umbrella never depends on it.
+[dependencies]
+parking_lot = { version = "^0.12" }
+alloy = { version = "^2.5", features = ["full"] }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+degenbot-config.workspace = true
+degenbot-aave.workspace = true
+degenbot-abi.workspace = true
+degenbot-math.workspace = true
+hashbrown.workspace = true
+degenbot-bot.workspace = true
+degenbot-core.workspace = true
+degenbot-ingestion.workspace = true
+degenbot-db.workspace = true
+degenbot-decoders.workspace = true
+degenbot-execution.workspace = true
+degenbot-executor.workspace = true
+degenbot-fork.workspace = true
+# The net-profit order index — re-exported for standalone consumers; the
+# `degenbot-arbitrage` edge below enables its `order-index` feature so
+# `dispatch_profitable` gets the deterministic pre-sim selection in every
+# umbrella build (B5L2XA; ADR-024).
+degenbot-order-index.workspace = true
+degenbot-pathfinding.workspace = true
+degenbot-pool-updater.workspace = true
+degenbot-pools.workspace = true
+degenbot-price.workspace = true
+degenbot-rpc.workspace = true
+# Per-session run artifacts (stdout log + trace JSONL) - engine-general and
+# pyo3-free; standalone consumers reach it as `degenbot::runs`.
+degenbot-runs.workspace = true
+degenbot-simulation.workspace = true
+degenbot-arbitrage = { workspace = true, features = ["order-index"] }
+degenbot-solvers.workspace = true
+degenbot-strategy.workspace = true
+degenbot-submission.workspace = true
+degenbot-uniswap.workspace = true
+# The role-switching worker fleet (ADR-042): FSM, budget authority,
+# bounded priority dispatch, cordon posture — pyo3-free core for the
+# standalone Rust consumer.
+degenbot-workers.workspace = true
+degenbot-eventhub.workspace = true
+
+[features]
+# OTel observability passthrough (Gap G6): forward
+# `degenbot-bot/otel` so a `cargo add degenbot, features = ["otel"]`
+# consumer reaches `degenbot::bot::{otel, metrics, instruments}`. Those
+# modules are `#[cfg(feature = "otel")]` in degenbot-bot, so without this
+# passthrough they are unreachable through the umbrella — the gap that left
+# the pure-Rust settlement-bot example with no telemetry at all.
+otel = ["degenbot-bot/otel"]
+
+[dev-dependencies]
+async-trait = "0.1"
+alloy = { version = "^2.5", features = ["full"] }
+revm = { version = "^43.0", default-features = false }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }

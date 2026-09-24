@@ -1,6 +1,6 @@
 // Slice-1 driver has no panic/unwrap surfaces yet; keep only the lint
 // expectation the operator binary actually triggers (stdout diagnostics),
-// mirroring rust/crates/degenbot/examples/standalone_consumer.rs.
+// mirroring rust/crates/facade/degenbot/examples/standalone_consumer.rs.
 #![expect(
     clippy::print_stdout,
     reason = "standalone-driver binary whose boot/config/ledger diagnostics are read by the operator"

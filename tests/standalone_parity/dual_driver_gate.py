@@ -44,7 +44,7 @@ _HERE = Path(__file__).resolve().parent
 _FIXTURE_DIR = _HERE / "fixtures"
 _DECISIONS_FIXTURE = _FIXTURE_DIR / "dual_driver_decisions.json"
 _BOOT_ORACLE = _FIXTURE_DIR / "settlement_bot_boot.json"
-_DB_PATH = _HERE.parent.parent / "rust/crates/degenbot-db/tests/fixtures/parity.db"
+_DB_PATH = _HERE.parent.parent / "rust/crates/foundation/degenbot-db/tests/fixtures/parity.db"
 
 GATE_ENV = "DEGENBOT_DUAL_DRIVER_GATE"
 FORK_ENV = "DEGENBOT_FORK_RPC"

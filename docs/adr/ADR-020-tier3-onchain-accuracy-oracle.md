@@ -214,8 +214,8 @@ Two fixture shapes, in that order:
 ## Addendum (2026-08-20 — 5D3YVK: CL parity oracles relocated to the landing zone)
 The Tier-3 CL parity oracles (`tier3_v3_pool_swap_vs_revm`,
 `tier3_v4_pool_swap_vs_revm`, `tier3_pancake_v3_swap_vs_revm`, and the shared
-`tier3_v3_common` driver) moved from `rust/crates/degenbot-pools/tests/` to
-`rust/crates/degenbot-simulation/tests/`, completing ADR-020's landing-zone
+`tier3_v3_common` driver) moved from `rust/crates/foundation/degenbot-pools/tests/` to
+`rust/crates/engine/degenbot-simulation/tests/`, completing ADR-020's landing-zone
 design: the oracles now co-reside with the `degenbot_simulation::oracle`
 driver they call. Driver of the change: the dev-dependency
 `degenbot-pools -> degenbot-simulation` is a publish-blocking cycle (pools ->

@@ -363,7 +363,7 @@ consumer, and the read-only naming half already landed.
 
 An integrator can add a strategy family using the landed seams alone. The proof
 is a mock third family integration test
-(`rust/crates/degenbot-submission/tests/mock_third_family.rs`) that registers,
+(`rust/crates/engine/degenbot-submission/tests/mock_third_family.rs`) that registers,
 enables, runs, and stops through the real host/seam paths without touching
 production code.
 

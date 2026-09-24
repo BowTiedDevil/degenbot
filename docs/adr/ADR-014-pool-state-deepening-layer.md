@@ -10,7 +10,7 @@ balance-vector families.
 
 ## Context
 
-`BotState` (`rust/crates/degenbot-bot/src/bot_core/mod.rs`) is a ~6 837-line
+`BotState` (`rust/crates/engine/degenbot-bot/src/bot_core/mod.rs`) is a ~6 837-line
 god-object holding a single `pools: HashMap<u64, PoolEntry>` registry and
 ~200 methods dispatching via `match` on the `PoolEntry` sum type. The
 per-family value *structs* were already relocated to `degenbot-pools`

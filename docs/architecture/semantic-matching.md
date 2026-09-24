@@ -328,7 +328,7 @@ for other_ev in events:
 - **Issue 0029**: Multi-Asset Liquidation Missing Secondary Debt Burns Fix
 - **Issue 0028**: Multi-Asset Debt Liquidation Missing Secondary Debt Burns
 - **Contract**: `Pool.rev_7.sol:executeLiquidationCall()`
-- **File**: `rust/crates/degenbot-aave-updater/src/transaction_processor.rs`
+- **File**: `rust/crates/integrations/degenbot-aave/src/updater/transaction_processor.rs`
 
 ## Related Patterns
 

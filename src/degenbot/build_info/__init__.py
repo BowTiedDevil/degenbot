@@ -1,6 +1,6 @@
 """Build identity for the Rust extension — the stale-`.so` detector.
 
-Every compile of `degenbot_rs` runs `rust/crates/degenbot-python/build.rs`,
+Every compile of `degenbot_rs` runs `rust/crates/shells/degenbot-python/build.rs`,
 which computes a fingerprint (content hash) of the crate's sources and embeds
 `<counter, fingerprint>` — the counter advancing only when the fingerprint
 changes — into both the compiled library and the repo receipt file
@@ -31,7 +31,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Receipt file written by rust/crates/degenbot-python/build.rs. Keep the name
+# Receipt file written by rust/crates/shells/degenbot-python/build.rs. Keep the name
 # and the "<count> <fingerprint-hex>" format in sync with that script (and the
 # .gitignore entry).
 _COUNTER_NAME = ".build-number"

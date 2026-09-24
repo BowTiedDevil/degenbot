@@ -57,7 +57,7 @@ forward version-lock and the heal-at-open contract.
 
 ## Commands
 
-The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/degenbot-cli/src/argv.rs) declares it over `degenbot-cli-core`'s [database arms](../../rust/crates/degenbot-cli-core/src/database.rs). The authoritative flag/exit-code reference is the [Rust CLI page](../rust-cli.md); the domain behaviour below is unchanged.
+The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/shells/degenbot-cli/src/argv.rs) declares it over `degenbot-cli-core`'s [database arms](../../rust/crates/shells/degenbot-cli-core/src/database.rs). The authoritative flag/exit-code reference is the [Rust CLI page](../rust-cli.md); the domain behaviour below is unchanged.
 
 ### `degenbot database backup`
 

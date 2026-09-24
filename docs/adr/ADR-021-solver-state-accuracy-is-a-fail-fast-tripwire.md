@@ -166,7 +166,7 @@ to scalar-state repair.
 - `docs/exploration-live-debug-session.md` (file since removed)
   — the 2026-08-02 slow-connected-WS failure class and the "open discriminator"
   gap this ADR's D2 closes.
-- `rust/crates/degenbot-bot/src/bot_core/solver_state_tripwire.rs` (renamed from
+- `rust/crates/engine/degenbot-bot/src/bot_core/solver_state_tripwire.rs` (renamed from
   `solver_state_verifier.rs` at the D3 cutover) + `block_pump.rs
   (solver_state_verify_loop + trip_and_exit) — the AV42C7 gate the posture
   governs.

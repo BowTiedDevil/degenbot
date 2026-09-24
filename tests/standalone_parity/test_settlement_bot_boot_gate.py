@@ -38,7 +38,7 @@ from degenbot._ffi import Bot, PoolKind, build_path_graph
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _ORACLE_PATH = _FIXTURE_DIR / "settlement_bot_boot.json"
-_DB_PATH = Path("rust/crates/degenbot-db/tests/fixtures/parity.db")
+_DB_PATH = Path("rust/crates/foundation/degenbot-db/tests/fixtures/parity.db")
 _DISCOVERY_CHAIN_ID = 8453
 _ALLOWED_STATUSES = {
     "REACHABLE",

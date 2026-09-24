@@ -41,7 +41,7 @@ impl covers 2-tuples `(L, R)` only
 `CallTraceInspector`/`SwapEventCaptureInspector` pair is `R`. The prototype's
 `inspectors/mod.rs::SimInspector` alias already encodes this shape.
 
-**Wiring:** `rust/crates/degenbot-simulation/src/sim/evm/simulator.rs::BlockEvm`
+**Wiring:** `rust/crates/engine/degenbot-simulation/src/sim/evm/simulator.rs::BlockEvm`
 type parameter flips from `AccessListCollector` to `SimInspector`. The
 strategy's `simulate_path_on_evm` constructs the composed tuple via
 `AccessListCollector::new()` + `CallTraceInspector::new()` +
@@ -97,7 +97,7 @@ implementation task, not a prototype re-spin.
 
 ## 3. The `SimFailure` deepening (revert attribution)
 
-`rust/crates/degenbot-arbitrage/src/simulator.rs::SimFailure` today:
+`rust/crates/engine/degenbot-arbitrage/src/simulator.rs::SimFailure` today:
 
 ```rust
 pub struct SimFailure {
@@ -134,7 +134,7 @@ walk (deepest `Revert` frame + `classify_revert`).
 
 ## 4. The `diagnostic.rs` retirement boundary
 
-`rust/crates/degenbot-bot/src/arb_engine/diagnostic.rs` (the
+`rust/crates/engine/degenbot-bot/src/arb_engine/diagnostic.rs` (the
 "mixed Uniswap arbitrage engine" diagnostic path) splits cleanly:
 
 **DELETE (the onchain-recompute half — replaced by swap-event capture):**
@@ -184,7 +184,7 @@ parity pair:
   `emitter`, `family`) + the expected reverting-frame attribution (depth,
   target, selector, label). Both sides read this file for inputs AND expected
   outputs (per the V3/V4 fixture-drift resolution — no copied constants).
-- **Rust half:** `rust/crates/degenbot/tests/parity_inspector.rs` — drives the
+- **Rust half:** `rust/crates/facade/degenbot/tests/parity_inspector.rs` — drives the
   composed `SimInspector` via `BotState`, asserts the captured swaps + the
   reverting frame match the fixture.
 - **Python half:** `tests/standalone_parity/test_inspector_dual_driver.py` —
@@ -308,7 +308,7 @@ retained for provenance:_
    fixture the Rust smoke test uses. Shared JSON fixture
    (`tests/standalone_parity/fixtures/inspector_cafebabe_revert.json`) carries
    the recorded expected output (reverting_frame depth/target/selector/label,
-   captured_swaps=[], bucket) — both `rust/crates/degenbot/tests/parity_inspector.rs`
+   captured_swaps=[], bucket) — both `rust/crates/facade/degenbot/tests/parity_inspector.rs`
    (Rust consumer) + `tests/standalone_parity/test_inspector_dual_driver.py`
    (Python consumer) load it + assert byte-exact. A deliberately-wrong fixture
    edit fails BOTH halves (RED-verified). The oracle is a recorded constant
@@ -322,7 +322,7 @@ retained for provenance:_
 paths" gate SATISFIED)
 
 The `swap_capture_correctness` example binary
-   (`rust/crates/degenbot-simulation/examples/swap_capture_correctness.rs`,
+   (`rust/crates/engine/degenbot-simulation/examples/swap_capture_correctness.rs`,
    commit `e7c88cda`) replays real mainnet swap transactions through a
    `CacheDB<WrapDatabaseAsync<AlloyDB>>` EVM pinned at the parent block with
    the `SwapEventCaptureInspector` attached, asserting the captured swap

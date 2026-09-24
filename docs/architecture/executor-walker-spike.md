@@ -11,7 +11,7 @@
 > cleanup `71ec78b2`; the landed design is recorded in ADR-031's Resolution
 > paragraph, the `CONTEXT.md` walker glossary, and the rule walkers themselves
 > (with the R1–R3 rules stated on each walker fn) in
-> `rust/crates/degenbot-execitor/src/grammar_walker/shapes/three_hop.rs`. The
+> `rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/three_hop.rs`. The
 > frozen A1 schema below is historical.
 
 ## Why this spike
@@ -20,7 +20,7 @@ ADR-031 deepens the executor by replacing the 30 hand-written per-family `build_
 
 ## What was built (behind `--features walk`)
 
-`rust/crates/degenbot-executor/src/grammar_walker.rs`:
+`rust/crates/foundation/degenbot-executor/src/grammar_walker.rs`:
 
 - **`HopFacts`** — the per-protocol declarative data half (ADR-031 D4). Fields: `prot`, `zfo` (direction), `swap_fee`, `tick_spacing`, `out_currency`, `in_currency`, `out_dest` (Executor / PoolManager / take-to-pool-repay), `repay` (`SelfRefund` / `Offstream` / `NetZero`).
 - **`mod mechanics`** — the per-protocol *code* half: `v3_flash` builds a V3 `FlashSwap` from facts (`out_dest` picks the recipient routing). A2 adds the V4/V2 mechanics.

@@ -163,7 +163,7 @@ retirement `SZJUKL`, transport extraction `5WTYYQ`, final integration `PLRGIN`.
 
 **`degenbot-ingestion` — the pyo3-free WS transport** (boundary contract: *ingestion
 emits, the runtime decides* — the crate knows nothing about `BotState` or the stage
-machine). Source: `rust/crates/degenbot-ingestion/src/`
+machine). Source: `rust/crates/integrations/degenbot-ingestion/src/`
 
 - `ingestor.rs` — `WsIngestor`: one WS connection; `newHeads` + **unfiltered** `logs`
   merged into one `IngestEvent` stream (`stream_select`, fair interleave).

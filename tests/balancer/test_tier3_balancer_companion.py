@@ -2,7 +2,7 @@
 
 The rust engine (degenbot-pools simulate_balancer_weighted/stable_swap) is
 pinned byte-for-byte to canonical Solidity (balancer-v2-monorepo cores
-vendored @ f8b6f44) by rust/crates/degenbot-pools/tests/
+vendored @ f8b6f44) by rust/crates/foundation/degenbot-pools/tests/
 tier3_balancer_swap_vs_revm.rs. This gate pins the PYTHON companion methods
 to that same engine across a decimals/weights/fee/pow-version/amount grid,
 which transitively pins them to canonical Solidity.

@@ -8,7 +8,7 @@ the Rust `db_upsert_v2/v3/v4_pools` seam) + asserts the resulting
 rows + the `ExchangeTable.last_update_block` stamp match the expected
 polymorphic-insert state.
 
-The Rust-internal trajectory is pinned by `rust/crates/degenbot-db/tests/
+The Rust-internal trajectory is pinned by `rust/crates/foundation/degenbot-db/tests/
 discovery_parity.rs` (8 tests); this test proves the Python shell decode +
 delegation reach the same Rust result end-to-end (the V2/V3 `PoolCreated`
 ABI topic/data decode, the V4 `pool_hash`/`hooks` decode, the Aerodrome stable

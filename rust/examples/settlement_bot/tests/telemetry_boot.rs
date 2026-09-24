@@ -22,7 +22,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
-const DB_REL: &str = "../../crates/degenbot-db/tests/fixtures/parity.db";
+const DB_REL: &str = "../../crates/foundation/degenbot-db/tests/fixtures/parity.db";
 
 fn db_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DB_REL)

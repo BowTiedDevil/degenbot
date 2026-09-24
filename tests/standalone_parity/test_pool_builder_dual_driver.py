@@ -1,6 +1,6 @@
 """Tier-2 behavioral dual-driver parity — Rust pool builder identity+state (A2QRWO).
 
-The behavioral companion to `rust/crates/degenbot/tests/parity_pool_builder.rs`.
+The behavioral companion to `rust/crates/facade/degenbot/tests/parity_pool_builder.rs`.
 Proves the **same** canonical V3 identity+state fixture, driven through the
 **Python consumer** (`Bot`/`register_v3_pool` — the PyO3 binding, the same
 `RegisterV3PoolParams` the Rust `PoolBuilder.build_v3` emits after its I/O),

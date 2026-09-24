@@ -13,7 +13,7 @@ or D6 — those stand.
 
 ## Context
 
-`BotState` (`rust/crates/degenbot-bot/src/bot_core/mod.rs`, ~6558 lines,
+`BotState` (`rust/crates/engine/degenbot-bot/src/bot_core/mod.rs`, ~6558 lines,
 one `impl BotState`) exposes reorg dispatchers duplicated seven ways:
 
 - `<family>_journal_len`, `<family>_discard_before_block`,
@@ -32,10 +32,10 @@ field-write is the residue D3 did not collapse.
 A Red/Green spike validated this decision on the three balance-vector
 structs (`CurvePoolState`, `BalancerWeightedPoolState`, `BalancerStablePoolState`):
 
-- `rust/crates/degenbot-pools/src/state_history.rs` — the `ReorgPoolState` trait.
+- `rust/crates/foundation/degenbot-pools/src/state_history.rs` — the `ReorgPoolState` trait.
 - byte-identical impls on all three structs (verified via `diff`;
   only the `impl … for X` line differs).
-- `rust/crates/degenbot-pools/tests/reorg_pool_state_trait.rs` — 12 tests
+- `rust/crates/foundation/degenbot-pools/tests/reorg_pool_state_trait.rs` — 12 tests
   (landed-at restore, no-op branch, hard-error past genesis, discard)
   over all three siblings.
 

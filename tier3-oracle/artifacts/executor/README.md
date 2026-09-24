@@ -49,4 +49,4 @@ the V4 path), and (c) direct source inspection of the V4 custody flow
 - Authoritative compile-vs-use (real vyper 0.5.0a3, CI tier3-oracle job):
   `just verify-tier3-executor-artifact` (= `verify-tier3-executor-artifact.sh`).
 - Toolchain-free drift guard (default cargo-test path):
-  `rust/crates/degenbot-simulation/tests/tier3_executor_artifacts.rs`.
+  `rust/crates/engine/degenbot-simulation/tests/tier3_executor_artifacts.rs`.

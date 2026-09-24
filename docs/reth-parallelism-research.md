@@ -422,4 +422,4 @@ follow-up section above now describes history, not the shipped tree.
   `cli/runner/src/lib.rs`, `net/p2p/src/lib.rs`, `net/downloaders/src/*` (listing).
 - All claims carry their file citation inline; constants carry their line numbers.
 - Local cross-references: `docs/rayon-parallelism-lab.md` (RAYPAR), ADR-042 /
-  `rust/crates/degenbot-workers/src/lib.rs`, `rust/crates/degenbot-core/src/runtime.rs`.
+  `rust/crates/engine/degenbot-workers/src/lib.rs`, `rust/crates/foundation/degenbot-core/src/runtime.rs`.

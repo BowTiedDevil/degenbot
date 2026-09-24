@@ -15,7 +15,7 @@ exact semantics and blast radius before VXP27K is implemented.
 
 ## 2. The hang mechanism (the root of the blast radius)
 
-`PyIntakeReceipt` (`rust/crates/degenbot-python/src/bot/intake.rs`) is filled
+`PyIntakeReceipt` (`rust/crates/shells/degenbot-python/src/bot/intake.rs`) is filled
 **only inside the submitted closure**:
 
 ```rust
@@ -113,11 +113,11 @@ distinct summary line.
 
 | Layer | File | Change |
 |---|---|---|
-| Rust port | `rust/crates/degenbot-bot/src/arb_engine/fleet_intake.rs` | fault handle (S2) **or** per-unit terminal hook (S1) |
-| Rust host | `rust/crates/degenbot-bot/src/arb_engine/seat_host.rs` | Faulted arm drains backlog + role queue + in-flight, resolves each |
-| Rust executor | `rust/crates/degenbot-bot/src/arb_engine/fleet_registration_executor.rs` | expose the fault state / wire the drain |
-| Rust policy | `rust/crates/degenbot-bot/src/arb_engine/executor.rs` | reuse `drain_death_response` shape (counter + sticky cause + loud log) |
-| pyo3 | `rust/crates/degenbot-python/src/bot/intake.rs` | receipt watches fault; `wait_async`/`wait`/`result` resolve terminally; map the typed error |
+| Rust port | `rust/crates/engine/degenbot-bot/src/arb_engine/fleet_intake.rs` | fault handle (S2) **or** per-unit terminal hook (S1) |
+| Rust host | `rust/crates/engine/degenbot-bot/src/arb_engine/seat_host.rs` | Faulted arm drains backlog + role queue + in-flight, resolves each |
+| Rust executor | `rust/crates/engine/degenbot-bot/src/arb_engine/fleet_registration_executor.rs` | expose the fault state / wire the drain |
+| Rust policy | `rust/crates/engine/degenbot-bot/src/arb_engine/executor.rs` | reuse `drain_death_response` shape (counter + sticky cause + loud log) |
+| pyo3 | `rust/crates/shells/degenbot-python/src/bot/intake.rs` | receipt watches fault; `wait_async`/`wait`/`result` resolve terminally; map the typed error |
 | Python driver | `src/degenbot/runner/build_paths.py` | `run_registration` (`_resolve` + drain) and `_consume` (operator) policy |
 | Python API | `src/degenbot/bot/_bot.py` | `submit_registration_unit` surface unchanged (docstring only) |
 

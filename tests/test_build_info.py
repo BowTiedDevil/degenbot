@@ -3,7 +3,7 @@
 Background (AGENTS.md "Rebuilding the Rust `.so` after edits"): maturin/uv have
 repeatedly served a stale cached artifact for `degenbot._ffi` after Rust edits
 while reporting a successful rebuild. Every compile of `degenbot_rs` runs
-`rust/crates/degenbot-python/build.rs`, which embeds a `<count, fingerprint>`
+`rust/crates/shells/degenbot-python/build.rs`, which embeds a `<count, fingerprint>`
 build identity (the counter advancing only when the crate's source content
 changes). Any installed extension whose fingerprint differs from the repo
 receipt predates the latest build.
@@ -42,11 +42,11 @@ def test_installed_extension_is_fresh() -> None:
         Path("rust/Cargo.toml"),
         Path("rust/Cargo.lock"),
         Path(".cargo/config.toml"),
-        Path("rust/crates/degenbot/src/lib.rs"),
-        Path("rust/crates/degenbot/src/investigation/mod.rs"),
-        Path("rust/crates/degenbot-cli/build.rs"),
-        Path("rust/crates/degenbot-python/build.rs"),
-        Path("rust/crates/degenbot-python/build_scan.rs"),
+        Path("rust/crates/facade/degenbot/src/lib.rs"),
+        Path("rust/crates/facade/degenbot/src/investigation/mod.rs"),
+        Path("rust/crates/shells/degenbot-cli/build.rs"),
+        Path("rust/crates/shells/degenbot-python/build.rs"),
+        Path("rust/crates/shells/degenbot-python/build_scan.rs"),
     ],
 )
 def test_uv_cache_keys_cover_rust_build_inputs(relative_path: Path) -> None:

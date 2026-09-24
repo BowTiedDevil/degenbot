@@ -21,7 +21,7 @@ Two gates must both be on:
    `uv sync --reinstall-package degenbot` (see AGENTS.md — maturin caching
    otherwise silently ships a stale `.so`).
 2. **Runtime gate**: `DEGENBOT_HOTPATH=1`. The guard is constructed by
-   `BlockPump::run_with_stream` (`rust/crates/degenbot-bot/src/profiling.rs`);
+   `BlockPump::run_with_stream` (`rust/crates/engine/degenbot-bot/src/profiling.rs`);
    hotpath starts the exporter automatically with the guard — there is no
    separate exporter flag.
 

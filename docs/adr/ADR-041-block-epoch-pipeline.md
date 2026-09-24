@@ -9,7 +9,7 @@ the epic's tasks and validated by the final-integration gate: capture-replay
 regression sweep (zero divergences; see PLRGIN result) and the live Jaeger
 soak A/B against the pre-epic operator baselines
 (../architecture/stateview-feasibility.md §3). The unified `StageMachine`
-lives at `rust/crates/degenbot-bot/src/bot_core/stage_machine.rs` (ergo
+lives at `rust/crates/engine/degenbot-bot/src/bot_core/stage_machine.rs` (ergo
 `7NFYQW`); the retired `DrainSink`/`Engine`/`SolveCoordinator`/
 `DispatchOwner`/`DirtySets`/`EngineSubscriber` seams are gone (SZJUKL).
 
@@ -21,8 +21,8 @@ them:
 
 - `EnginePhase`, `BlockClock` (ADR-008), `PumpFSM` (ADR-028), the registration
   verify-lifecycle (ADR-022), the path lifecycle, and the delivery lifecycle —
-  living in `rust/crates/degenbot-bot/src/bot_core/{block_pump.rs,pump_fsm.rs,block_clock.rs}`
-  and `rust/crates/degenbot-bot/src/arb_engine/{mod.rs,lifecycle.rs,path_lifecycle.rs,delivery_lifecycle.rs}`.
+  living in `rust/crates/engine/degenbot-bot/src/bot_core/{block_pump.rs,pump_fsm.rs,block_clock.rs}`
+  and `rust/crates/engine/degenbot-bot/src/arb_engine/{mod.rs,lifecycle.rs,path_lifecycle.rs,delivery_lifecycle.rs}`.
   Each is pure (the ADR-028 producer/driver family), but their interaction is
   opaque: which machine may advance in a given block, and in what order, has
   no single owner.

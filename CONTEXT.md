@@ -153,9 +153,9 @@ _Avoid_: "retry policy", "rebroadcast policy".
 ## System layers
 
 **Rust core**:
-The pyo3-free crates under `rust/crates/degenbot-*` owning all state, math, I/O
-orchestration, simulation, and submission — everything a standalone pure-Rust MEV bot
-needs.
+The pyo3-free crates in the `foundation`, `engine`, and `integrations` roles
+under `rust/crates/` own all state, math, I/O orchestration, simulation, and
+submission — everything a standalone pure-Rust MEV bot needs.
 
 **PyO3 wrapper**:
 The thin `#[pyclass]`/`#[pyfunction]` layer that translates Python calls into core calls.

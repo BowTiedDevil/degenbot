@@ -1,6 +1,6 @@
 """Typed Python reader for the Rust-owned species manifest (ADR-059 D3).
 
-``rust/crates/degenbot-db/src/species.toml`` is the single source of fork /
+``rust/crates/foundation/degenbot-db/src/species.toml`` is the single source of fork /
 manager-deployment identity: one row per species carries the DB ``kind``
 discriminator, subclass ``table``, family, fee denominator, V3 storage layout,
 and the per-chain factory / CREATE2 init-codehash (or V4 manager). The Rust

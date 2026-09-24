@@ -78,7 +78,7 @@ jobs:
           # mimalloc for local development) so the shipped wheel retains the
           # binding defaults and extension-module mode only. Its hotpath macros
           # expand to no-op `lib_off` stubs, with zero runtime penalty. See
-          # rust/crates/degenbot-bot/src/profiling.rs.
+          # rust/crates/engine/degenbot-bot/src/profiling.rs.
           args: --release --out dist --features pyo3/extension-module ${{ matrix.args }}
           sccache: 'true'
           # Pin the native (non-manylinux) legs to the same Rust as ci.yml's

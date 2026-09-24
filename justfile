@@ -120,7 +120,7 @@ test-rust: test-standalone
     # vendored deployments.json (degenbot-uniswap) must match the canonical
     # Python-tree registry file byte-for-byte (TGO5ZY: a crate can only
     # embed in-tarball files, so the embed uses the in-crate mirror)
-    cmp -s src/degenbot/registry/deployments.json rust/crates/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
+    cmp -s src/degenbot/registry/deployments.json rust/crates/foundation/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
     cargo test --locked --manifest-path rust/Cargo.toml --workspace
 
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
@@ -183,7 +183,7 @@ check-rust-all-features:
 # the legitimate cross-target conditional suppressions #[expect] cannot express.
 check-no-inner-allow:
     # C7: the gate body lives as a cargo test on the umbrella crate
-    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_inner_allow_attributes --exact --nocapture
 
 # Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
@@ -194,12 +194,12 @@ fmt-check:
 # not depend on pyo3 under their default features. Add new core crates here.
 check-no-pyo3-in-cores:
     # C7: the gate body lives as a cargo test on the umbrella crate
-    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- core_crates_are_pyo3_free_under_default_features --exact --nocapture
 
 check-cli-core-purity:
     # C7: the gate body lives as a cargo test on the umbrella crate
-    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_core_is_clap_and_indicatif_free --exact --nocapture
 
 # Enforce the ADR-051 D2 dependency charter for the argv facade: `degenbot-cli`
@@ -211,7 +211,7 @@ check-cli-core-purity:
 # on its own. Mirrors check-cli-core-purity / check-no-pyo3-in-cores.
 check-cli-shell-purity:
     # C7: the gate body lives as a cargo test on the umbrella crate
-    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_shell_names_only_allowlisted_externals --exact --nocapture
 
 
@@ -230,7 +230,7 @@ check-cli-shell-purity:
 #      Python-API name exemption). Any other hit is a seam regression.
 check-engine-impl-blocks:
     # C7: the gate body lives as a cargo test on the umbrella crate
-    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- one_engine_impl_block --exact --nocapture
 
 # Build Rust extension module in the release-equivalent feature set. This uses
@@ -803,7 +803,7 @@ update-deps:
 env-inventory:
     #!/usr/bin/env bash
     set -euo pipefail
-    target="rust/crates/degenbot-config/tests/degenbot_env_inventory.txt"
+    target="rust/crates/foundation/degenbot-config/tests/degenbot_env_inventory.txt"
     rg -o 'DEGENBOT_[A-Z_]+' rust/crates --no-filename \
         -g '!**/degenbot_env_inventory.txt' \
         -g '!**/degenbot-config/tests/**' | sort -u > "$target"
@@ -885,7 +885,7 @@ ci-no-python-cli-gate:
 # Mirrors check-no-pyo3-in-cores: a permanent, mechanical sweep gate.
 check-no-alembic:
     # C7: the gate body lives as a cargo test on the umbrella crate
-    # (rust/crates/degenbot/tests/architecture_gates.rs).
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_alembic_references --exact --nocapture
 
 # ========== Stub-to-Runtime Drift Gate (ADR-053, ergo XNEJRD) ==========

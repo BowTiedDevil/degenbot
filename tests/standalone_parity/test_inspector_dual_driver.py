@@ -6,7 +6,7 @@ The behavioral companion to the Rust `parity_inspector.rs` test. Proves the
 consumer** path (the `simulate_in_process_revert_probe` PyO3 binding)
 produces the **same** reverting-frame + captured-swaps + bucket output
 recorded in the shared fixture JSON — which the Rust consumer test
-(`rust/crates/degenbot/tests/parity_inspector.rs`) independently also
+(`rust/crates/facade/degenbot/tests/parity_inspector.rs`) independently also
 asserts.
 
 Both consumers hit the same `simulate_in_process_with_db` + `SimInspector`

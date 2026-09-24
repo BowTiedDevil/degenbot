@@ -24,7 +24,7 @@ a metric, because OTel can be unavailable when it matters.
 
 The Rust core reaches Python `logging` and the stderr `fmt` writer through one
 `tracing` subscriber (`init_logging_subscriber` in
-`rust/crates/degenbot-python/src/python_log_layer.rs`); `log::` records are
+`rust/crates/shells/degenbot-python/src/python_log_layer.rs`); `log::` records are
 bridged in by `tracing_log::LogTracer`. Prometheus metrics are declared in
 `degenbot-bot/src/instruments.rs`.
 

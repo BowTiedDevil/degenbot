@@ -11,7 +11,7 @@ the PyO3 binding) produces the **same** `amount_out` as the Rust consumer
 
 The fixture + expected output are loaded from the SHARED file
 `tests/standalone_parity/fixtures/v4_swap.json`, which the Rust parity test
-(`rust/crates/degenbot/tests/parity_v4_swap.rs`) ALSO loads. A fixture edit
+(`rust/crates/facade/degenbot/tests/parity_v4_swap.rs`) ALSO loads. A fixture edit
 that drifts the expected output fails BOTH sides mechanically — closing the
 V3/V4 fixture-drift gap documented in AGENTS.md "Known gap — V3/V4 fixture
 drift" (the V4 constants were previously copied between the two sides with no
@@ -86,7 +86,7 @@ def test_python_consumer_v4_swap_matches_recorded_constant() -> None:
     """The Bot Python driver reproduces the recorded V4 swap constant.
 
     Python side of the Tier-2 dual-driver gate (V4 CL path). The Rust side
-    (`rust/crates/degenbot/tests/parity_v4_swap.rs`) loads the same fixture file
+    (`rust/crates/facade/degenbot/tests/parity_v4_swap.rs`) loads the same fixture file
     and drives it through `BotState` directly; both MUST equal
     `_EXPECTED_AMOUNT_OUT_ZFO`. Catches a lossy FFI seam on the V4 sign-flipped
     path.

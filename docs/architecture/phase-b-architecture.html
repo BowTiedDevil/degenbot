@@ -241,11 +241,11 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
   <tr><td>Frame artifacts</td><td><code>MarketContext</code></td><td><code>degenbot-strategy/src/market_context.rs</code></td><td>frame-surviving caches handed into the strategy</td></tr>
   <tr><td>Submission routing</td><td><code>SubmissionTarget</code> enum</td><td><code>degenbot-submission</code></td><td>Bundle (auction) / Public fan-out; strategy declares intent, never the wire</td></tr>
   <tr><td>Python drive</td><td>PyO3 register/result channels</td><td><code>degenbot-python</code></td><td>thin shell: attach the driver, consume, dispatch</td></tr>
-  <tr><td>Standalone Rust</td><td><code>degenbot</code> umbrella</td><td><code>rust/crates/degenbot</code></td><td>every crate re-exported (reachability-gated); example proves the path</td></tr>
+  <tr><td>Standalone Rust</td><td><code>degenbot</code> umbrella</td><td><code>rust/crates/facade/degenbot</code></td><td>every crate re-exported (reachability-gated); example proves the path</td></tr>
 </table>
 
 <h2>Phase C overlay — the strategy host</h2>
-<p class="sub">One process, many drivers, one operator account. The host owns the shared services; each driver attaches. ADR-057, <code>rust/crates/degenbot-bot/src/strategy_host.rs</code>.</p>
+<p class="sub">One process, many drivers, one operator account. The host owns the shared services; each driver attaches. ADR-057, <code>rust/crates/engine/degenbot-bot/src/strategy_host.rs</code>.</p>
 <table>
   <tr><th>Component</th><th>Owner</th><th>Driver-facing contract</th></tr>
   <tr><td>Event hub</td><td>host (<code>StrategyHost::mint</code> → <code>HostHub&lt;T&gt;</code>)</td><td>engine named channels are registered before the hub is shared; drivers subscribe by class. One driver per hub.</td></tr>

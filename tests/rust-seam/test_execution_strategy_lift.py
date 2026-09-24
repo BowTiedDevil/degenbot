@@ -10,7 +10,7 @@ foreign-contract path: nothing here is wired into the canonical
 surface + the thin-translate contract, not any strategy logic.
 
 The functional encode round-trip (compose → Python callable → payload bytes) is
-proven Rust-side in ``crates/degenbot-python/src/execution/mod.rs`` unit tests
+proven Rust-side in ``crates/shells/degenbot-python/src/execution/mod.rs`` unit tests
 (``cargo test -p degenbot_rs``).
 """
 

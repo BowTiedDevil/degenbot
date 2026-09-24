@@ -2,7 +2,7 @@
 
 This locks in the ``module = "..."`` annotation on every ``#[pyclass]`` and
 ``create_exception!`` in the PyO3 binding crate
-(``rust/crates/degenbot-python``). Without that annotation pyo3 bakes the
+(``rust/crates/shells/degenbot-python``). Without that annotation pyo3 bakes the
 internal cdylib crate name (``degenbot_rs``) or ``builtins`` into the type
 object's ``__module__``, which leaks the Rust crate name across the FFI
 boundary into ``repr(type)`` / pickle / IDE introspection.

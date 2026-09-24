@@ -42,7 +42,7 @@ use std::process::Command;
 use serde_json::Value;
 
 const ORACLE_REL: &str = "../../../tests/standalone_parity/fixtures/settlement_bot_boot.json";
-const DB_REL: &str = "../../crates/degenbot-db/tests/fixtures/parity.db";
+const DB_REL: &str = "../../crates/foundation/degenbot-db/tests/fixtures/parity.db";
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

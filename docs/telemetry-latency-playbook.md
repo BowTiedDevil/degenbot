@@ -8,12 +8,12 @@ the Jaeger-side investigation guide.
 
 Sources of truth:
 
-- Spans/events: `rust/crates/degenbot-bot/src/arb_engine/solve_cycle.rs`
+- Spans/events: `rust/crates/engine/degenbot-bot/src/arb_engine/solve_cycle.rs`
   (the `[solve-phase]` family), `bot_core/block_pump.rs` (`degenbot.epoch.run` root + pre-solve
   gap fields), `bot_core/stage_telemetry.rs` (`degenbot.stage.*` per-transition spans),
   `arb_engine/engine_handle.rs` (`degenbot.arb.solve`).
-- Metrics: `rust/crates/degenbot-bot/src/instruments.rs` (`degenbot_*` families).
-- OTel setup (event cap, exporter): `rust/crates/degenbot-bot/src/otel.rs`.
+- Metrics: `rust/crates/engine/degenbot-bot/src/instruments.rs` (`degenbot_*` families).
+- OTel setup (event cap, exporter): `rust/crates/engine/degenbot-bot/src/otel.rs`.
 
 Incident shorthand used below: `745f21` = trace `745f2122...` (4.6s solve,
 pre-viability-gate), `d3d15a` = `d3d15a5b` (2.2s, first instrumented),

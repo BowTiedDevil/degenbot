@@ -39,7 +39,7 @@ by a bespoke AST gate.
 
 ### Measured shape of the Rust registration surface
 
-`rust/crates/degenbot-python/src/`:
+`rust/crates/shells/degenbot-python/src/`:
 
 - **70** `#[pyclass]`, **153** `#[pyfunction]`, **0** `#[pyenum]`,
   **74** `#[pymethods]` blocks, **223** `#[getter]`, **31** `#[setter]`,

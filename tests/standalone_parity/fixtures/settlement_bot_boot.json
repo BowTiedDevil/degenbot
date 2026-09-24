@@ -2,7 +2,7 @@
   "schema": 1,
   "description": "RSP-8 fixture boot gate (ergo 23DLCY): the EXPECTED offline boot decisions of the Rust settlement-bot example (rust/examples/settlement_bot) run against the frozen degenbot-db parity.db fixture with no RPC. Shared oracle read by rust/examples/settlement_bot/tests/boot_gate.rs (Rust consumer) and tests/standalone_parity/test_settlement_bot_boot_gate.py (Python consumer, python_reachable subset). Captured from the byte-exact offline boot; a seeded divergence must fail the comparator.",
   "fixture": {
-    "db": "rust/crates/degenbot-db/tests/fixtures/parity.db",
+    "db": "rust/crates/foundation/degenbot-db/tests/fixtures/parity.db",
     "discovery_chain_id": 8453,
     "args": [
       "--smoke-offline"

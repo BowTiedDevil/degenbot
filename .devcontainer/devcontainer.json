@@ -117,7 +117,7 @@
     "9464:9464",
     // hotpath profiler Prometheus exporter (epic 5GXLG5): serves GET /metrics
     // on HOTPATH_PROMETHEUS_PORT (default 6772) whenever a DEGENBOT_HOTPATH=1
-    // run constructs the guard (rust/crates/degenbot-bot/src/profiling.rs).
+    // run constructs the guard (rust/crates/engine/degenbot-bot/src/profiling.rs).
     // Publish mirrors the 9464 pattern so host-side Prometheus + VS Code
     // forwarding reach the exporter through pasta. CREATE-TIME field: the
     // publish only goes live after a rebuild.sh (see the edit-drift warning).

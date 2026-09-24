@@ -53,7 +53,7 @@ V4 uses separate `ManagedPool` database tables with PoolManager contract referen
 
 ## Commands
 
-The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/degenbot-cli/src/argv.rs) declares it over `degenbot-cli-core`'s [pool](../../rust/crates/degenbot-cli-core/src/pool.rs) and [exchange](../../rust/crates/degenbot-cli-core/src/exchange.rs) arms. The authoritative flag/exit-code reference is the [Rust CLI page](../rust-cli.md); the domain behaviour below is unchanged.
+The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/shells/degenbot-cli/src/argv.rs) declares it over `degenbot-cli-core`'s [pool](../../rust/crates/shells/degenbot-cli-core/src/pool.rs) and [exchange](../../rust/crates/shells/degenbot-cli-core/src/exchange.rs) arms. The authoritative flag/exit-code reference is the [Rust CLI page](../rust-cli.md); the domain behaviour below is unchanged.
 
 ### `degenbot pool update`
 

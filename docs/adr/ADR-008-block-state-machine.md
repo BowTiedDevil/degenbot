@@ -13,7 +13,7 @@ this ADR records the settled shape only.
 
 ## Implementation status
 
-Implemented in `rust/crates/degenbot-bot/src/bot_core/` (commits `5673f8ce`, `440b848`,
+Implemented in `rust/crates/engine/degenbot-bot/src/bot_core/` (commits `5673f8ce`, `440b848`,
 `c4d21b1e`, `cdac7363`, `0baed1e`):
 
 - **D1 (tombstone via successor log)** — `BlockClock` + pump wiring. A `newHeads` header
@@ -249,5 +249,5 @@ family-specific work — the SM is family-agnostic (it's about block completenes
 - `docs/architecture/block-state-machine.md` — full design note and rationale.
 - `docs/adr/ADR-006-bot-as-per-chain-orchestrator.md` — `Bot` as state owner; the SM is the
   per-block clock layer above `SolveCoordinator`.
-- `rust/crates/degenbot-bot/src/bot_core/block_pump.rs` (line refs in the design note) —
+- `rust/crates/engine/degenbot-bot/src/bot_core/block_pump.rs` (line refs in the design note) —
   current scattered-boolean invariants the SM replaces.

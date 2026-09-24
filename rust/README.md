@@ -2,9 +2,9 @@
 
 This map is the contributor's short guide to the Rust workspace. The
 [workspace manifest](Cargo.toml), crate manifests, and
-[architecture-gate tests](crates/degenbot/tests/architecture_gates.rs) are
+[architecture-gate tests](crates/facade/degenbot/tests/architecture_gates.rs) are
 authoritative when this document and the code disagree. The workspace currently
-contains **32 crates under `crates/` plus one external-consumer example**.
+contains **31 crates under the five role directories plus two non-publishable examples**.
 
 For the product-level rule, read [AGENTS.md](../AGENTS.md): **Rust is the engine;
 Python is a driver shell, not a co-implementation.** The original split is
@@ -26,15 +26,15 @@ operators and as the argv passthrough for Python.
 
 | Surface | Package and path | Owns | Publication and build entry |
 | --- | --- | --- | --- |
-| Pure-Rust product facade | `degenbot` — `crates/degenbot/` | Stable umbrella API: re-exports the PyO3-free product crates. It contains no PyO3 dependency. | Publishable and a workspace `default-member`; `cargo build --manifest-path rust/Cargo.toml` builds it. |
-| Python driver shell | `degenbot_rs` — `crates/degenbot-python/` | PyO3 classes, conversions, module registration, GIL-safe calls, and selection of the Python-facing domain surface. It translates calls; it does not own MEV business logic. | `publish = false`; select it explicitly with `-p degenbot_rs`. Wheels are built by maturin/`uv`; use `extension-module` for the extension link. |
-| No-Python console shell | `degenbot-cli` — `crates/degenbot-cli/` | The single clap argv tree, `degenbot` binary, rendering/progress, signal policy, and console sinks. | Publishable and a workspace `default-member`; built by the default Cargo command. |
-| Console semantics | `degenbot-cli-core` — `crates/degenbot-cli-core/` | Typed `Command` values, command execution, reports, prompts, cancellation, and command error-to-exit mapping. It is shared by the Rust binary and Python passthrough. | Publishable; it is a library, not the binary entry point. |
+| Pure-Rust product facade | `degenbot` — `crates/facade/degenbot/` | Stable umbrella API: re-exports the PyO3-free product crates. It contains no PyO3 dependency. | Publishable and a workspace `default-member`; `cargo build --manifest-path rust/Cargo.toml` builds it. |
+| Python driver shell | `degenbot_rs` — `crates/shells/degenbot-python/` | PyO3 classes, conversions, module registration, GIL-safe calls, and selection of the Python-facing domain surface. It translates calls; it does not own MEV business logic. | `publish = false`; select it explicitly with `-p degenbot_rs`. Wheels are built by maturin/`uv`; use `extension-module` for the extension link. |
+| No-Python console shell | `degenbot-cli` — `crates/shells/degenbot-cli/` | The single clap argv tree, `degenbot` binary, rendering/progress, signal policy, and console sinks. | Publishable and a workspace `default-member`; built by the default Cargo command. |
+| Console semantics | `degenbot-cli-core` — `crates/shells/degenbot-cli-core/` | Typed `Command` values, command execution, reports, prompts, cancellation, and command error-to-exit mapping. It is shared by the Rust binary and Python passthrough. | Publishable; it is a library, not the binary entry point. |
 | External Rust consumer example | `degenbot-settlement-bot-example` — `examples/settlement_bot/` | A complete settlement-arbitrage driver. Its MEV/domain capabilities enter through the `degenbot` umbrella; it directly names `degenbot-eventhub` for operator event types as the current reachability exception. Format codecs, async runtime, and tracing remain driver-local. | `publish = false`; excluded from `default-members`, so select it explicitly. |
 
 Two smoke programs protect the consumer boundaries:
 
-- `crates/degenbot/examples/standalone_consumer.rs` is the Tier-0 proof that
+- `crates/facade/degenbot/examples/standalone_consumer.rs` is the Tier-0 proof that
   the public umbrella can construct state, register a pool, and calculate a
   swap without Python. Run it through `just test-standalone`.
 - `examples/settlement_bot/` is the executable external-consumer example. Its
@@ -51,6 +51,9 @@ the crate that provides the capability.
 
 ### Product facade and shells
 
+The outward API lives in `crates/facade/`; user-facing adaptations live in
+`crates/shells/`.
+
 | Crate | Home for |
 | --- | --- |
 | `degenbot` | The public Rust product surface. A new capability required by an external bot belongs in an underlying core and must be re-exported here. |
@@ -58,10 +61,11 @@ the crate that provides the capability.
 | `degenbot-cli` | Argv spelling, interaction, rendering, progress, SIGINT handling, and sink installation. It must not re-encode domain behavior. |
 | `degenbot-cli-core` | What every console command means and returns. It is deliberately independent of clap and indicatif. |
 
-### Integration and domain crates
+### Engine crates
 
-These crates compose shared capabilities into stateful or operational domain
-behavior.
+`crates/engine/` owns the MEV lifecycle: state, strategy, solve, simulate,
+compose, and submit. These crates are stateful or coordinate multiple
+foundation capabilities.
 
 | Crate | Capability ownership |
 | --- | --- |
@@ -72,12 +76,6 @@ behavior.
 | `degenbot-solvers` | Value-only multi-hop solve math over injected hop state. |
 | `degenbot-execution` | The user-owned execution-adapter seam and its value/protocol types; it ships no default strategy. |
 | `degenbot-submission` | EIP-1559 signing, fee finalization, and typed transaction envelopes. |
-| `degenbot-ingestion` | WebSocket block/log intake, filtering, backfill, and watchdog policy. |
-| `degenbot-pool-updater` | Typed pool-event fetching and transactional chunk application. |
-| `degenbot-aave` | Aave V3 updater, position analysis, and Aave fixed-point math integration. |
-| `degenbot-price` | On-chain Chainlink and Aave-oracle price readers. |
-| `degenbot-fork` | Anvil fork lifecycle and development RPC support. |
-| `degenbot-runs` | Per-session run artifacts (stdout log and trace JSONL). |
 | `degenbot-workers` | Worker-role state machine, budget authority, priority dispatch, and cordon posture. |
 
 Strategy and engine ownership is intentionally separate. See
@@ -85,11 +83,25 @@ Strategy and engine ownership is intentionally separate. See
 the simulation executor stays generic, while searcher policy belongs to the
 strategy layer.
 
-### Foundation and shared domain substrate
+### Integration crates
 
-These crates provide reusable values, codecs, state substrates, and protocol or
-storage services. They are the normal home for a capability that is meaningful
-without a complete bot runtime.
+`crates/integrations/` adapts the engine and foundation to external services,
+on-chain systems, and operator infrastructure.
+
+| Crate | Capability ownership |
+| --- | --- |
+| `degenbot-ingestion` | WebSocket block/log intake, filtering, backfill, and watchdog policy. |
+| `degenbot-pool-updater` | Typed pool-event fetching and transactional chunk application. |
+| `degenbot-aave` | Aave V3 updater, position analysis, and Aave fixed-point math integration. |
+| `degenbot-price` | On-chain Chainlink and Aave-oracle price readers. |
+| `degenbot-fork` | Anvil fork lifecycle and development RPC support. |
+| `degenbot-runs` | Per-session run artifacts (stdout log and trace JSONL). |
+
+### Foundation crates
+
+`crates/foundation/` provides reusable values, codecs, state substrates, and
+protocol or storage services. It is the normal home for a capability that is
+meaningful without a complete bot runtime.
 
 | Crate | Capability ownership |
 | --- | --- |
@@ -107,12 +119,12 @@ without a complete bot runtime.
 | `degenbot-executor` | Cmd-executor domain layout and storage math. |
 | `degenbot-eventhub` | Transport-pure event vocabulary and overflow policy for in-process fan-out. |
 
-### Non-publishable samples
+### Non-publishable examples
 
-| Package | Purpose |
+| Package and path | Purpose |
 | --- | --- |
-| `degenbot-execution-sample` | A standalone user-defined `ExecutionAdapter` for a foreign executor contract. It demonstrates the execution seam and is not a product dependency. |
-| `degenbot-settlement-bot-example` | The complete external-consumer bot described above. |
+| `degenbot-execution-sample` — `examples/degenbot-execution-sample/` | A standalone user-defined `ExecutionAdapter` for a foreign executor contract. It demonstrates the execution seam and is not a product dependency. |
+| `degenbot-settlement-bot-example` — `examples/settlement_bot/` | The complete external-consumer bot described above. |
 
 All other current workspace members are publishable. Internal path
 dependencies carry a version requirement in `[workspace.dependencies]`, in
@@ -171,8 +183,9 @@ Use this order:
    `degenbot-decoders`, `degenbot-rpc`, `degenbot-db`, and so on). Create a
    focused crate only when the capability has a coherent public API and clear
    dependency direction.
-2. **Stateful engine or cross-crate workflow:** put it in the integration crate
-   that owns the lifecycle. Keep lower-level mechanisms in foundation crates.
+2. **Stateful MEV lifecycle or cross-crate workflow:** put it in the engine
+   crate that owns the lifecycle. Put adapters to external services in
+   `integrations/`; keep lower-level mechanisms in foundation crates.
 3. **Product capability needed by a Rust consumer:** implement it in a core
    crate and re-export it from `degenbot`. Prove reachability with the umbrella
    smoke or the external-consumer example.
@@ -283,7 +296,7 @@ telemetry, allocator-control, and allocator-selection features.
 ### Architecture gates
 
 The gate bodies live in
-[`crates/degenbot/tests/architecture_gates.rs`](crates/degenbot/tests/architecture_gates.rs).
+[`crates/facade/degenbot/tests/architecture_gates.rs`](crates/facade/degenbot/tests/architecture_gates.rs).
 The recipes make the following rules executable:
 
 | Recipe | Rule |
@@ -304,8 +317,10 @@ regression.
 After a Rust source change, do not trust a fast or cached maturin/uv build by
 itself. Run `just verify-build-fresh`. The `degenbot_rs` build script writes the
 repo-root `.build-number` receipt and fingerprints its own sources, every
-sibling crate under `rust/crates`, the workspace manifests/lockfile, and Cargo
-configuration. The installed extension carries the same values, allowing
+crate under the explicit
+`rust/crates/{foundation,engine,integrations,shells,facade}` roles, the workspace
+manifests/lockfile, and Cargo configuration. The installed extension carries the
+same values, allowing
 `just verify-build-fresh` to detect stale cached wheels.
 
 If the check reports staleness, rebuild with:

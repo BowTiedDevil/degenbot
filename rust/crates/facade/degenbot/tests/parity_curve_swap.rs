@@ -1,0 +1,229 @@
+#![expect(clippy::expect_used, clippy::panic)]
+//! Tier-2 behavioral dual-driver parity — Curve `get_dy` (ADR-005 standalone
+//! claim, the behavioral tier).
+//!
+//! The Curve StableSwap dy math has no simple closed form (`stableswap_get_y`
+//! is a Newton solve), so — like the V3/V4 CL tests — this asserts the direct
+//! **FFI-seam-lossless claim**: the **same** canonical fixture driven through
+//! the **Rust consumer** (`degenbot_math::curve::calculate_dy`, as a `cargo add
+//! degenbot` user) produces the **same** `dy` as the **Python consumer**
+//! (`degenbot.curve.dy.calculate_dy`, the PyO3 binding). The shared oracle is
+//! the recorded constant in the shared fixture file.
+//!
+//! ## Fixture (single source of truth — HRT356)
+//!
+//! Loaded from the SHARED file `tests/standalone_parity/fixtures/curve_swap.json`,
+//! which the Python dual-driver test
+//! (`tests/standalone_parity/test_curve_swap_dual_driver.py`) ALSO loads. A
+//! fixture edit that drifts an expected output fails BOTH sides mechanically.
+//!
+//! Oracle strength: the seed constants are recorded (the Curve invariant has
+//! no closed form), so the parity claim is Rust-consumer == Python-consumer ==
+//! recorded constant — the shared-bug-breaking re-derivation is the Tier-3
+//! on-chain oracle (SWAP event byte-parity), tracked as a follow-on.
+
+#![expect(clippy::doc_markdown)]
+
+use alloy::primitives::U256;
+use degenbot::{BotState, RegisterCurvePoolParams};
+use degenbot_math::curve::curve_dy_calculator::{calculate_dy, DyCalculationInputs};
+use degenbot_math::curve::{DVariant, YVariant};
+
+/// Path to the shared Curve fixture (loaded by both this Rust test and the
+/// Python dual-driver test — HRT356, the single source of truth).
+const FIXTURE_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/standalone_parity/fixtures/curve_swap.json"
+);
+
+/// One dual-driver probe: a full `DyCalculationInputs` snapshot + (i, j, dx)
+/// + the recorded expected dy.
+#[derive(Debug, serde::Deserialize)]
+struct Probe {
+    name: String,
+    inputs: ProbeInputs,
+    #[serde(rename = "probe")]
+    args: ProbeArgs,
+    expected: ProbeExpected,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProbeInputs {
+    precision: String,
+    fee_denominator: String,
+    fee: String,
+    n_coins: usize,
+    balances: Vec<String>,
+    rate_multipliers: Vec<String>,
+    precision_multipliers: Vec<String>,
+    resolved_rates: Vec<String>,
+    xp: Vec<String>,
+    amp: String,
+    a_precision: String,
+    d_variant: u8,
+    y_variant: u8,
+    swap_style: u8,
+    metapool: bool,
+    metapool_rate_style: u8,
+    metapool_underlying_style: u8,
+    virtual_price: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProbeArgs {
+    i: usize,
+    j: usize,
+    dx: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProbeExpected {
+    dy: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct FixtureFile {
+    probes: Vec<Probe>,
+}
+
+/// Load + parse the shared fixture. Panics on any parse/IO failure.
+fn load_shared_curve_fixture() -> FixtureFile {
+    let text = std::fs::read_to_string(FIXTURE_PATH)
+        .unwrap_or_else(|e| panic!("read shared Curve fixture {FIXTURE_PATH}: {e}"));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("parse shared Curve fixture {FIXTURE_PATH}: {e}"))
+}
+
+fn u256(s: &str) -> U256 {
+    s.parse().unwrap_or_else(|e| panic!("bad u256 {s}: {e}"))
+}
+
+fn u256_vec(v: &[String]) -> Vec<U256> {
+    v.iter().map(|s| u256(s)).collect()
+}
+
+fn build_inputs(p: &ProbeInputs) -> DyCalculationInputs {
+    DyCalculationInputs {
+        precision: u256(&p.precision),
+        fee_denominator: u256(&p.fee_denominator),
+        fee: u256(&p.fee),
+        n_coins: p.n_coins,
+        balances: u256_vec(&p.balances),
+        rate_multipliers: u256_vec(&p.rate_multipliers),
+        precision_multipliers: u256_vec(&p.precision_multipliers),
+        offpeg_fee_multiplier: U256::ZERO,
+        fee_gamma: U256::ZERO,
+        mid_fee: U256::ZERO,
+        out_fee: U256::ZERO,
+        address: alloy::primitives::Address::ZERO,
+        resolved_rates: u256_vec(&p.resolved_rates),
+        xp: u256_vec(&p.xp),
+        block_number: 0,
+        block_timestamp: 0,
+        amp: u256(&p.amp),
+        d_variant: DVariant::try_from_u8(p.d_variant).expect("valid d_variant"),
+        y_variant: YVariant::try_from_u8(p.y_variant).expect("valid y_variant"),
+        a_precision: u256(&p.a_precision),
+        swap_style: p.swap_style,
+        metapool: p.metapool,
+        metapool_rate_style: p.metapool_rate_style,
+        metapool_underlying_style: p.metapool_underlying_style,
+        d: None,
+        gamma: None,
+        price_scale: None,
+        live_balances: None,
+        admin_balances: None,
+        effective_balances: None,
+        virtual_price: p.virtual_price.as_deref().map(u256),
+        scaled_redemption_price: None,
+    }
+}
+
+#[test]
+fn standalone_rust_consumer_curve_dy_matches_recorded_constant() {
+    // Tier-2 dual-driver gate — Rust consumer side (Curve get_dy path).
+    //
+    // A `cargo add degenbot` standalone consumer, driving the canonical Curve
+    // fixture (loaded from the shared file), MUST reproduce every recorded
+    // `dy`. The Python side drives the SAME file through the PyO3 seam and
+    // asserts the same constants. Divergence = a lossy FFI seam on the Curve
+    // swap-arg extraction.
+    let fx = load_shared_curve_fixture();
+    assert!(!fx.probes.is_empty(), "fixture must contain probes");
+
+    for probe in &fx.probes {
+        let inputs = build_inputs(&probe.inputs);
+        let dx = u256(&probe.args.dx);
+        let expected = u256(&probe.expected.dy);
+        let dy = calculate_dy(probe.args.i, probe.args.j, dx, &inputs)
+            .unwrap_or_else(|e| panic!("{}: calculate_dy failed: {e:?}", probe.name));
+        assert_eq!(
+            dy, expected,
+            "Rust consumer dy mismatch for probe `{}`",
+            probe.name
+        );
+    }
+}
+
+/// Tier-2 gateway for the **Rust-owned orchestrated** `curve_get_dy` entry
+/// . This is the ADR-005 claim at the orchestration layer: a
+/// `cargo add degenbot` consumer registering a Curve pool into a `BotState`
+/// and calling `BotState::curve_get_dy` (identity + balances + optional
+/// provider → `resolve_dy_inputs` → `calculate_dy`) MUST reproduce the same
+/// recorded `dy` as the Python consumer driving `PyBot.curve_get_dy` with the
+/// same registration. Both sides read the shared `standard_plain` fixture for
+/// the expected constant.
+#[test]
+fn standalone_rust_consumer_curve_get_dy_equals_recorded_constant() {
+    use alloy::primitives::Address;
+
+    let fx = load_shared_curve_fixture();
+    let plain = fx
+        .probes
+        .iter()
+        .find(|p| p.name == "standard_plain")
+        .expect("standard_plain probe");
+
+    let mut state = BotState::new();
+    let pool_id = state.register_curve_pool(&RegisterCurvePoolParams {
+        address: Address::with_last_byte(0xcc),
+        tokens: vec![Address::ZERO, Address::with_last_byte(0x01)],
+        a_coefficient: 100,
+        a_precision: 100,
+        fee: 500_000,
+        admin_fee: 0,
+        rate_multipliers: u256_vec(&plain.inputs.rate_multipliers),
+        balances: u256_vec(&plain.inputs.balances),
+        update_block: 0,
+        swap_style: 1,         // STANDARD
+        lending_rate_style: 1, // NONE
+        d_variant: 1,
+        y_variant: 1,
+        yd_variant: 1,
+        base_pool: None,
+        initial_a_coefficient: None,
+        future_a_coefficient: None,
+        initial_a_coefficient_time: None,
+        future_a_coefficient_time: None,
+        create_timestamp: None,
+        fee_gamma: None,
+        mid_fee: None,
+        offpeg_fee_multiplier: None,
+        out_fee: None,
+        gamma: None,
+        lp_token: None,
+        use_lending: Vec::new(),
+        precision_multipliers: u256_vec(&plain.inputs.precision_multipliers),
+        tokens_underlying: None,
+        metapool_rate_style: 1,
+        metapool_underlying_style: 1,
+        data_provider: None,
+    });
+
+    let dx = u256(&plain.args.dx);
+    let expected = u256(&plain.expected.dy);
+    let dy = state
+        .curve_get_dy(pool_id, plain.args.i, plain.args.j, dx, 0, None)
+        .unwrap_or_else(|e| panic!("BotState::curve_get_dy failed: {e:?}"));
+    assert_eq!(dy, expected, "Rust-consumer curve_get_dy mismatch");
+}

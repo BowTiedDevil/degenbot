@@ -14,7 +14,7 @@ architecture review must not re-suggest a third bespoke channel or a single-bus 
 
 ## Context
 
-`BlockPump::run_with_stream` (rust/crates/degenbot-bot/src/bot_core/block_pump.rs) drives the
+`BlockPump::run_with_stream` (rust/crates/engine/degenbot-bot/src/bot_core/block_pump.rs) drives the
 block pump's drain loop. Its hand-offs were ad-hoc and coupled:
 
 - The **drain pipe** sent `Drain`/`Finalize`/`Publish`/`Notify` through one `mpsc` to a
@@ -33,7 +33,7 @@ correct twice.
 
 ## Decision
 
-One **dispatch owner** module (`rust/crates/degenbot-bot/src/bot_core/event_dispatch.rs`,
+One **dispatch owner** module (`rust/crates/engine/degenbot-bot/src/bot_core/event_dispatch.rs`,
 `DispatchOwner`) owns all three pipes and coordinates ordering/liveness in one place. It is
 a coordinated home — **NOT a single bus**; each pipe keeps the delivery semantics its task
 needs ("one owner, multiple application-specific pipes").

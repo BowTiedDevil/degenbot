@@ -57,7 +57,7 @@ replaces per-era mechanisms with one host.
 
 ### 1. One fleet host in a new crate: `degenbot-workers`
 
-A new standalone crate `rust/crates/degenbot-workers` owns the fleet host, the
+A new standalone crate `rust/crates/engine/degenbot-workers` owns the fleet host, the
 `WorkerRole` state machine, and the budget authority. It depends on
 `degenbot-core` (cgroup detection) and *nothing engine-specific*; `degenbot-bot`
 plugs roles in as closures/tasks. It must be lower in the dependency graph

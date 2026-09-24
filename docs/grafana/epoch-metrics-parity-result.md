@@ -2,7 +2,7 @@
 
 ## Metric-name parity (instruments <-> dashboard <-> alerts)
 - Model: unit-aware rendering of all 55 instrument declarations in
-  rust/crates/degenbot-bot/src/instruments.rs (counters -> _total,
+  rust/crates/engine/degenbot-bot/src/instruments.rs (counters -> _total,
   histograms -> _seconds/{,_bucket,_sum,_count} by unit; By -> _bytes;
   unit "1" -> _ratio; weiless histograms unsuffixed).
 - Compared against ALL 106 PromQL target exprs in docs/grafana/degenbot-overview.json

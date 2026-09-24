@@ -36,7 +36,7 @@ edition = "2021"
 
 [dependencies]
 # The genuinely reusable revm fixture driver (deploy -> seed -> call -> classify).
-degenbot-simulation = { path = "../../rust/crates/degenbot-simulation" }
+degenbot-simulation = { path = "../../rust/crates/engine/degenbot-simulation" }
 # alloy primitives (Address / U256 / Bytes) used in the harness body.
 alloy = { version = "^2.3", features = ["full"] }
 """

@@ -13,7 +13,7 @@ Why this file stays (and the shell half went): the pyfunction is a
 Python-reachable Rust-core surface, not a private helper of the deleted shell.
 Retiring it would strand the basket solver behind a Python wall and delete the
 only FFI seam. The Rust `#[cfg(test)]` corpus in
-`rust/crates/degenbot-solvers/src/basket.rs` is the math regression set; this
+`rust/crates/engine/degenbot-solvers/src/basket.rs` is the math regression set; this
 module is the arg-marshalling + result-shaping seam.
 
 Fixture: 3-token WETH/USDC/DAI 50/25/25 weighted pool (the QuantAMM doctest).

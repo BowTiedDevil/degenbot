@@ -1,7 +1,7 @@
 """Python-side parity test for the V3/V4 DB-aware liquidity updater seam (QJSCA5 §4.3).
 
 Loads the §4.2 fixture DBs (committed by
-`rust/crates/degenbot-db/tests/fixtures/generate_liquidity_updater_parity.py`),
+`rust/crates/foundation/degenbot-db/tests/fixtures/generate_liquidity_updater_parity.py`),
 applies the SAME event sequence through the Python `updater/pool_updater_configs.py` apply shells
 (now delegating to the Rust seam), + asserts the resulting
 `liquidity_positions` / `initialization_maps` rows + the
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / (
-    "rust/crates/degenbot-db/tests/fixtures"
+    "rust/crates/foundation/degenbot-db/tests/fixtures"
 )
 
 # Fixture constants (must mirror `generate_liquidity_updater_parity.py`).

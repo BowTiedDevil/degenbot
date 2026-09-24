@@ -6,7 +6,7 @@ The behavioral companion to the Rust `parity_evm_sim.rs` test. Proves the
 `CacheDB<EmptyDB>`) driven through the **Python consumer** path (the
 `simulate_in_process_success_probe` PyO3 binding) produces the **same**
 `SimResult` (gross/net/gas/priority_fee) recorded in the shared fixture JSON
-— which the Rust consumer test (`rust/crates/degenbot/tests/parity_evm_sim.rs`)
+— which the Rust consumer test (`rust/crates/facade/degenbot/tests/parity_evm_sim.rs`)
 independently also asserts.
 
 Both consumers hit the same `simulate_in_process_with_db` core. The recorded

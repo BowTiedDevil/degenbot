@@ -31,7 +31,7 @@ The harness reproduces the fee/scaling/direction sequence of the Rust engine
 `simulate_balancer_stable_swap`), which is the sole owner of Balancer swap
 math; the Python companions are thin shells over it. Byte-exact parity is
 asserted in
-`rust/crates/degenbot-pools/tests/tier3_balancer_swap_vs_revm.rs`
+`rust/crates/foundation/degenbot-pools/tests/tier3_balancer_swap_vs_revm.rs`
 (`just test-tier3 balancer`); artifact integrity is enforced by
 `tier3_harness_artifacts.rs` + `verify-tier3-artifacts.sh`.
 

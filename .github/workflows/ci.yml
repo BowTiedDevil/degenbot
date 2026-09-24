@@ -238,9 +238,9 @@ jobs:
           # both the single-block offline anchor and the 156-row heavy corpus
           # gate here (2s combined).
           cargo run --locked -q -p degenbot-solvers --example cl_solve_replay -- \
-            crates/degenbot-solvers/tests/fixtures/cl_capture_offline.jsonl
+            crates/engine/degenbot-solvers/tests/fixtures/cl_capture_offline.jsonl
           cargo run --locked -q -p degenbot-solvers --example cl_solve_replay -- \
-            crates/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl
+            crates/engine/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl
 
         # NOTE: make THIS `rust` job the required check in branch protection
         # (it replaces the former "Solver Golden Replay (F2 gate)" check — see
