@@ -17,6 +17,7 @@ use degenbot_pools::v3_state::{ClSlotLayout, PoolTickCoverage};
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 use degenbot_solvers::mixed::SolvePathResult;
 
+use degenbot_bot::bot_core::executor_hop::{v2_fee_bips, v2_hop, v3_hop, v4_hop};
 use degenbot_bot::bot_core::planning::{
     ExplicitPoolState, PlanningHop, PlanningPoolParams, TickMapSeed, Workspace,
 };
@@ -506,7 +507,6 @@ pub fn compose_candidate(
 ) -> Result<alloy::primitives::Bytes, ComposeReject> {
     use degenbot_executor::composers::{
         encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
-        HopInfo, V2HopInfo, V3HopInfo, V4HopInfo,
     };
     use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
 
@@ -534,20 +534,8 @@ pub fn compose_candidate(
     let mut pool_manager: Option<Address> = None;
     for h in &candidate.hops {
         let hop = match h.family {
-            LaneFamily::V2 => HopInfo::V2(V2HopInfo {
-                pool_address: h.pool,
-                token0_address: h.token0,
-                token1_address: h.token1,
-                fee: 30,
-                zfo: h.zfo,
-            }),
-            LaneFamily::V3 { fee } => HopInfo::V3(V3HopInfo {
-                pool_address: h.pool,
-                token0_address: h.token0,
-                token1_address: h.token1,
-                fee,
-                zfo: h.zfo,
-            }),
+            LaneFamily::V2 => v2_hop(h.pool, h.token0, h.token1, v2_fee_bips(997, 1_000), h.zfo),
+            LaneFamily::V3 { fee } => v3_hop(h.pool, h.token0, h.token1, fee, h.zfo),
             LaneFamily::V4 {
                 fee,
                 pool_id,
@@ -558,16 +546,16 @@ pub fn compose_candidate(
                     return Err(ComposeReject::MixedPoolManagers);
                 }
                 pool_manager = Some(h.pool);
-                HopInfo::V4(V4HopInfo {
-                    pool_manager_address: h.pool,
-                    pool_id_hex: format!("0x{}", alloy::hex::encode(pool_id)),
-                    currency0_address: h.token0,
-                    currency1_address: h.token1,
+                v4_hop(
+                    h.pool,
+                    pool_id,
+                    h.token0,
+                    h.token1,
                     fee,
                     tick_spacing,
-                    hook_address: hooks,
-                    zfo: h.zfo,
-                })
+                    hooks,
+                    h.zfo,
+                )
             }
         };
         hops.push(hop);
@@ -793,6 +781,118 @@ mod tests {
         // config = (1000 << 8) | 1 rides the head of the ABI tail; just
         // sanity the total size bounds (selector + 0x40 + words + bytes).
         assert!(cd.len() > 4 + 32 * 3 + 64);
+    }
+
+    #[test]
+    fn settlement_and_backrun_project_v2_to_the_same_executor_bytes() {
+        use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams};
+        use degenbot_executor::composers::{
+            encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions, EncodeRequest,
+        };
+        use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
+        use degenbot_solvers::mixed::{HopType, MixedPoolRef};
+
+        let mut core = BotState::new();
+        let p_id = core
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: P,
+                token0: TOK,
+                token1: WETH,
+                reserve0: U112::from(500_000),
+                reserve1: U112::from(1_000),
+                fee_token0: (997, 1_000),
+                fee_token1: (997, 1_000),
+                ..Default::default()
+            })
+            .expect("registers settlement P");
+        let q_id = core
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: Q,
+                token0: TOK,
+                token1: WETH,
+                reserve0: U112::from(200_000),
+                reserve1: U112::from(900),
+                fee_token0: (997, 1_000),
+                fee_token1: (997, 1_000),
+                ..Default::default()
+            })
+            .expect("registers settlement Q");
+        let settlement_path = degenbot_bot::arb_engine::path_info::build_path_info(
+            &core,
+            &[
+                MixedPoolRef {
+                    hop_type: HopType::V2,
+                    pool_key: p_id,
+                    zero_for_one: false,
+                },
+                MixedPoolRef {
+                    hop_type: HopType::V2,
+                    pool_key: q_id,
+                    zero_for_one: true,
+                },
+            ],
+        )
+        .expect("settlement projection succeeds");
+        let amounts = (123, vec![5_893_000, 1_235], vec![123, 5_892_315]);
+        let settlement_request = EncodeRequest::new(
+            settlement_path,
+            amounts.0,
+            amounts.1.clone(),
+            amounts.2.clone(),
+            EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: false,
+                funding: FundingSource::InPathFlash,
+                capture: ProfitCapture::Custody,
+                bribe: Bribe::None,
+            },
+        );
+        let settlement_context = EncodeContext::new(
+            P,
+            address!("000000000004444c5dc75cb358380d2e3de08a90"),
+            WETH,
+        );
+        let settlement_commands = encode_cmd_stream(&settlement_context, &settlement_request)
+            .expect("settlement commands encode");
+        let settlement_call = encode_execute_call(
+            P,
+            &settlement_commands,
+            (U256::from(1_000u64) << 8) | U256::from(1u8),
+        )
+        .expect("settlement execute call encodes");
+
+        let backrun_call = compose_candidate(
+            &LaneCandidate {
+                hops: vec![
+                    BackrunHopRef {
+                        pool_id: p_id,
+                        pool: P,
+                        token0: TOK,
+                        token1: WETH,
+                        zfo: false,
+                        family: LaneFamily::V2,
+                    },
+                    BackrunHopRef {
+                        pool_id: q_id,
+                        pool: Q,
+                        token0: TOK,
+                        token1: WETH,
+                        zfo: true,
+                        family: LaneFamily::V2,
+                    },
+                ],
+                optimal_input: amounts.0,
+                hop_outputs: amounts.1,
+                consumed_inputs: amounts.2,
+                profit: 55,
+            },
+            P,
+            WETH,
+            1_000,
+        )
+        .expect("backrun execute call encodes");
+
+        assert_eq!(settlement_call.data, backrun_call);
     }
 
     /// A single V4→V2 lane candidate composes to `execute` calldata: the V4

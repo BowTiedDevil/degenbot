@@ -29,9 +29,10 @@
 //! (out of scope for the flatten — a future `HopInfo::Solidly` /
 //! `HopInfo::Balancer` task).
 use super::ArbitrageEngine;
+use crate::bot_core::executor_hop::{v2_fee_bips, v2_hop, v3_hop, v4_hop};
 use crate::bot_core::BotState;
 use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
-use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
+use degenbot_executor::composers::{HopInfo, PathInfo};
 use thiserror::Error;
 /// Why [`ArbitrageEngine::path_info_for`] could not build a `PathInfo`.
 #[derive(Debug, Error)]
@@ -158,13 +159,13 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
                 id.fee_token1
             };
             let fee = v2_fee_bips(gamma, denom);
-            Ok(HopInfo::V2(V2HopInfo {
-                pool_address: id.address,
-                token0_address: id.token0,
-                token1_address: id.token1,
+            Ok(v2_hop(
+                id.address,
+                id.token0,
+                id.token1,
                 fee,
-                zfo: pool_ref.zero_for_one,
-            }))
+                pool_ref.zero_for_one,
+            ))
         }
         HopType::V3 => {
             let id = core.get_v3_identity(pool_ref.pool_key).ok_or(
@@ -172,13 +173,13 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
                     pool_id: pool_ref.pool_key,
                 },
             )?;
-            Ok(HopInfo::V3(V3HopInfo {
-                pool_address: id.address,
-                token0_address: id.token0,
-                token1_address: id.token1,
-                fee: id.fee,
-                zfo: pool_ref.zero_for_one,
-            }))
+            Ok(v3_hop(
+                id.address,
+                id.token0,
+                id.token1,
+                id.fee,
+                pool_ref.zero_for_one,
+            ))
         }
         HopType::V4 => {
             let id = core.get_v4_identity(pool_ref.pool_key).ok_or(
@@ -186,21 +187,16 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
                     pool_id: pool_ref.pool_key,
                 },
             )?;
-            // `0x` + 64 lowercase hex chars — the canonical `V4PoolId` form,
-            // matching `diagnostic::format_v4_pool_id` + the Python
-            // `pool.pool_id.to_0x_hex()`. The encoder parses this back to the
-            // 32-byte salted pool id.
-            let pool_id_hex = format!("0x{}", alloy::hex::encode(id.pool_id));
-            Ok(HopInfo::V4(V4HopInfo {
-                pool_manager_address: id.pool_manager,
-                pool_id_hex,
-                currency0_address: id.pool_key.currency0,
-                currency1_address: id.pool_key.currency1,
-                fee: id.pool_key.fee,
-                tick_spacing: id.pool_key.tick_spacing,
-                hook_address: id.pool_key.hooks,
-                zfo: pool_ref.zero_for_one,
-            }))
+            Ok(v4_hop(
+                id.pool_manager,
+                alloy::primitives::B256::new(id.pool_id),
+                id.pool_key.currency0,
+                id.pool_key.currency1,
+                id.pool_key.fee,
+                id.pool_key.tick_spacing,
+                id.pool_key.hooks,
+                pool_ref.zero_for_one,
+            ))
         }
         HopType::SolidlyStable
         | HopType::BalancerWeighted
@@ -210,31 +206,6 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
             pool_id: pool_ref.pool_key,
         }),
     }
-}
-/// V2 fee in bips-of-10000 from the `(gamma_numer, fee_denom)` retained
-/// fraction. Mirrors `int(Fraction(denom - gamma, denom) * 10000)` (Python
-/// `int()` truncates toward zero).
-///
-/// `fee_denom == 0` is guarded: a registered V2 pool always has a non-zero
-/// denominator (validated at registration), so this branch is diagnostic
-/// only — it yields `0` rather than panicking, preserving the "never crash
-/// the pump on a malformed identity" contract.
-fn v2_fee_bips(gamma: u64, denom: u64) -> u16 {
-    if denom == 0 || gamma > denom {
-        return 0;
-    }
-    let fee_numer = u128::from(denom - gamma);
-    let fee_denom = u128::from(denom);
-    // `fee_bips = (1 − gamma/denom) × 10_000`. With `gamma ≤ denom` (guarded
-    // above), `fee_bips ≤ 10_000 ≤ u16::MAX`, so `try_into` cannot fail on a
-    // valid path; `.expect` surfaces a real invariant break loudly rather than
-    // masking to `u16::MAX` (the prior `.unwrap_or(u16::MAX)` would have
-    // surfaced a bogus 65535 fee tier if `gamma > denom` ever slipped past the
-    // guard, hiding the bug instead of failing).
-    #[expect(clippy::expect_used)] // fee_bips <= 10000 under the guard (documented)
-    let fee_bips = u16::try_from((fee_numer * 10_000) / fee_denom)
-        .expect("fee_bips <= 10000 <= u16::MAX under the gamma <= denom guard");
-    fee_bips
 }
 #[expect(clippy::expect_used, clippy::panic, clippy::similar_names)]
 #[cfg(test)]

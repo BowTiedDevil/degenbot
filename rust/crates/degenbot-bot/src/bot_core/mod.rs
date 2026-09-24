@@ -26,6 +26,7 @@ pub mod curve_state;
 pub mod divergence_probe;
 pub mod epoch;
 pub mod epoch_delta;
+pub mod executor_hop;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
 pub mod planning;
