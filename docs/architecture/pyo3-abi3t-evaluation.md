@@ -1,7 +1,7 @@
 # Evaluation: PyO3 `abi3t` feature for wheel distribution
 
 **Status: decided — do not adopt now.** Revisit when the project drops
-Python 3.12–3.14 and the free-threading audit (see below) is complete.
+Python 3.12–3.15 and the free-threading audit (see below) is complete.
 
 Filed as `ergo` task `DRZBPR`. PyO3 0.29 (current `rust/Cargo.toml`)
 introduces the `abi3t` / `abi3t-py315` features, targeting PEP 803's
@@ -20,11 +20,10 @@ pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"] }
 requires-python = ">=3.12"
 [tool.maturin]
 bindings = "pyo3"
-module-name = "degenbot.degenbot_rs"
-features = ["pyo3/extension-module"]
+module-name = "degenbot._ffi"
 ```
 
-CI matrix: Python 3.12, 3.13, 3.14 (`.github/workflows/*.yml`).
+CI matrix: Python 3.12, 3.13, 3.14, 3.15 (`.github/workflows/*.yml`).
 
 ## Findings against the three checklist items
 
@@ -95,7 +94,7 @@ not maturin.
 `abi3-py312` because:
 
 1. It requires **minimum Python 3.15**, but the package declares
-   `requires-python = ">=3.12"` and CI tests 3.12–3.14. Switching would
+   `requires-python = ">=3.12"` and CI tests 3.12–3.15. Switching would
    drop support for every supported Python.
 2. It forces `Py_GIL_DISABLED` (free-threaded), which the crate has not
    been fully audited for.

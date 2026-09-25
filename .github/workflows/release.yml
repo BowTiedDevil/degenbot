@@ -73,10 +73,9 @@ jobs:
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          # `--features pyo3/extension-module` replaces the dev `[tool.maturin]`
-          # feature list (which adds hotpath, OTel, allocator control, and
-          # mimalloc for local development) so the shipped wheel retains the
-          # binding defaults and extension-module mode only. Its hotpath macros
+          # `--features pyo3/extension-module` explicitly selects only extension
+          # mode for the shipped wheel; the binding's `dev-features` alias is
+          # never selected here. Its hotpath macros
           # expand to no-op `lib_off` stubs, with zero runtime penalty. See
           # rust/crates/engine/degenbot-bot/src/profiling.rs.
           args: --release --out dist --features pyo3/extension-module ${{ matrix.args }}
@@ -249,11 +248,11 @@ jobs:
         # degenbot_rs + degenbot-execution-sample, are skipped by cargo).
         # A fresh CI runner has no stale local-registry state, so this is a
         # clean verification of the tag's exact tree.
-        run: cargo publish --workspace --dry-run --allow-dirty --manifest-path rust/Cargo.toml
+        run: cargo publish --locked --workspace --dry-run --allow-dirty --manifest-path rust/Cargo.toml
 
       - name: Publish (cargo-native order + waits; new-crate rate-limit retry rounds)
         # First-release mechanics: docs/releases/2026-08-19-first-crates-io-release.md.
-        # `cargo publish --workspace` orders the publishable members itself (dependency
+        # `cargo publish --locked --workspace` orders the publishable members itself (dependency
         # order) and polls the registry until each crate AND its local deps are
         # index-visible before proceeding — no hand-rolled topo list, no curl index
         # polling. crates.io's PublishNew bucket (1 NEW NAME per 10 min, burst 5)
@@ -291,7 +290,7 @@ jobs:
               exit 0
             fi
             echo "=== round $round: $live/${#members[@]} members already live at $ver — publishing the rest ==="
-            if cargo publish --workspace --allow-dirty "${excludes[@]}" >>"$log" 2>&1; then
+            if cargo publish --locked --workspace --allow-dirty "${excludes[@]}" >>"$log" 2>&1; then
               echo "=== publish complete at $ver ==="; exit 0
             fi
             # `|| true` matters: the loop runs under `bash -e`, and a missing 429

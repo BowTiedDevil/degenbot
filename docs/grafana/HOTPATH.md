@@ -14,12 +14,12 @@ within ~15 s).
 
 Two gates must both be on:
 
-1. **Build feature** (dev builds already carry it): `pyproject.toml`
-   `[tool.maturin]` features include `degenbot-bot/hotpath-prometheus`.
-   Release wheels override the feature list, so shipped artifacts have zero
-   hotpath footprint. After any Rust-source change rebuild with
-   `uv sync --reinstall-package degenbot` (see AGENTS.md — maturin caching
-   otherwise silently ships a stale `.so`).
+1. **Build feature**: the binding manifest's canonical `dev-features` alias
+   includes `degenbot-bot/hotpath-prometheus`; `just bootstrap` and `just dev`
+   select it explicitly. Release wheels use only
+   `--release --features pyo3/extension-module`, so shipped artifacts have
+   zero hotpath footprint. After any Rust-source change run `just dev`, then
+   `just verify-build-fresh` (see AGENTS.md).
 2. **Runtime gate**: `DEGENBOT_HOTPATH=1`. The guard is constructed by
    `BlockPump::run_with_stream` (`rust/crates/engine/degenbot-bot/src/profiling.rs`);
    hotpath starts the exporter automatically with the guard — there is no

@@ -78,7 +78,7 @@ pip install degenbot
 ```bash
 git clone https://github.com/BowTiedDevil/degenbot.git
 cd degenbot
-uv sync  # or: pip install -e .
+just bootstrap  # or: pip install -e . for release-equivalent defaults
 ```
 
 ## Quick Start
@@ -1607,12 +1607,13 @@ cargo build --locked -p degenbot_rs --features extension-module --manifest-path 
 # Run the standalone smokes and canonical full Rust suite
 just test-rust
 
-# Build and install the Python extension (the recipe adds the hotpath cfg)
-just dev
+# Bootstrap locked Python dependencies, then build/install the explicit
+# development feature set through the canonical extension path.
+just bootstrap
 
-# Direct maturin/uv hotpath build: full Tokio RuntimeMetrics need the cfg in
-# the environment because the repository intentionally has no global rustflags.
-RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run maturin develop
+# Rebuild only after Rust edits; verify the receipt before using the .so.
+just dev
+just verify-build-fresh
 
 # Direct Cargo hotpath test/build (same requirement):
 RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo test --locked \
@@ -1634,10 +1635,11 @@ exhaustive build.
 | Release wheel | `extension-module` (forwards to `pyo3/extension-module`) plus `degenbot_rs` defaults; no dev-only profiling, telemetry, allocator-control, or mimalloc features | `just check-rust-extension-release` or `just build-rust-extension` |
 | Diagnostic | Workspace `--all-features`, including test-only and mutually exclusive variants | `just check-rust-all-features` |
 
-The development-wheel list is the exact `[tool.maturin] features` list used by
-`uv sync`/`maturin develop`, which select the workspace `opt-level = 1`
-development profile. Release wheels are built with
-`maturin --release --features pyo3/extension-module`; that release command
+The development-wheel list is the binding manifest's canonical `dev-features`
+alias selected by `just dev`; `just bootstrap` installs locked Python
+dependencies without building the project through a second path. Release wheels
+are built with `maturin --release --features pyo3/extension-module`; that
+release command
 replaces the development feature list and keeps the binding crate's defaults,
 while excluding the development-only features above. The release profile keeps
 thin LTO, stripping, and the intentional per-package codegen-unit policy; the
@@ -1680,14 +1682,14 @@ Contributions are welcome! Please submit issues and pull requests to the [GitHub
 ```bash
 git clone https://github.com/BowTiedDevil/degenbot.git
 cd degenbot
-uv sync
+just bootstrap
 
 # Run the full gate: standalone-Rust smoke + cargo workspace + full pytest
 just test
 
 # Individual tracks:
 just test-rust    # cargo workspace + just test-standalone
-just test-python  # uv run pytest
+just test-python  # uv run --no-sync pytest
 ```
 
 ## License

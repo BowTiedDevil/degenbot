@@ -428,11 +428,11 @@ jobs:
           workspaces: rust
           shared-key: ci-rust
 
-      - name: Sync dependencies
-        run: uv sync --locked --dev --all-extras
-
       - name: Install just
         uses: extractions/setup-just@v4
+
+      - name: Bootstrap development environment
+        run: just bootstrap
 
       # Foundry provides `anvil` so the standalone-anvil (T1) tier executes on
       # the floor leg (no RPC secret is ever plumbed: standalone-anvil tests
@@ -441,9 +441,6 @@ jobs:
       - name: Install Foundry (anvil)
         if: matrix.python-version == '3.12'
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Build and install Rust extension
-        run: just dev
 
       # Former python-lint job (same pinned 3.12 uv environment as this leg).
       - name: Check Python formatting

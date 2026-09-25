@@ -384,7 +384,7 @@ same values, allowing
 If the check reports staleness, rebuild with:
 
 ```bash
-uv sync --reinstall-package degenbot
+just dev
 just verify-build-fresh
 ```
 

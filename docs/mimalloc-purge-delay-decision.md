@@ -38,7 +38,8 @@ solve-phase p95.
 ## Mechanism
 
 `degenbot-bot/src/allocator_ctrl.rs` (cargo feature `allocator-ctrl`, dev-only
-via pyproject maturin features): a pure `CadenceState` tracker turned RED->
+via the binding manifest's `dev-features` alias): a pure `CadenceState`
+tracker turned RED->
 GREEN via TDD; `mi_option_set(_enabled)` against vendored mimalloc
 (v2/v3-shared indices - `purge_delay` 15, `purge_decommits` 5), single-writer
 from the pump header arm, `mi_version()`-gated. Env knobs: fixed

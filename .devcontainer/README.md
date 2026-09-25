@@ -208,12 +208,13 @@ tmux show -gv terminal-overrides         # expect *:Tc present
   `/home/dev/...` paths that are never read by the host. The host keeps its own
   in-repo `.venv` with `/home/btd/...` paths. The two venvs never poison each
   other. A `--remove-existing-container` rebuild wipes the container venv;
-  `post-create.sh` recreates it via `uv sync`.
+  `post-create.sh` recreates it via `just bootstrap`.
 - **PyO3 needs `libpython.so`**: provided by dnf's `python3-devel`. Don't remove
   `python3-devel` from the Dockerfile or the extension build will fail.
-- **`maturin develop` not run on create**: `uv sync` builds the extension via
-  PEP 517 (maturin backend) as the editable install. Run `just dev` only for a
-  one-shot rebuild after changing Rust sources without wanting a full sync.
+- **Canonical extension build**: `post-create.sh` runs `just bootstrap`, which
+  installs locked Python dependencies without a duplicate project build and
+  then selects the explicit `dev-features` alias. Run `just dev` for a
+  one-shot rebuild after changing Rust sources.
 - **Foundry is "latest"**: `foundryup` runs without a pin, so rebuilds may pick
   up newer Foundry releases.
 - **Podman, not Docker**: mounts are plain `type=bind` (no `consistency=cached`,

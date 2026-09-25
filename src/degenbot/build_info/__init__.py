@@ -153,7 +153,7 @@ def verify_build_fresh() -> None:
         )
         msg = (
             f"stale Rust extension: installed {installed}, latest build "
-            f"{expected} — rebuild with 'uv sync --reinstall-package degenbot'"
+            f"{expected} — rebuild with 'just dev'"
         )
         raise BuildStaleError(msg)
 

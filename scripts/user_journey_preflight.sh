@@ -50,7 +50,7 @@ fi
 if uv run --no-sync python -m degenbot.build_info >/dev/null 2>&1; then
   ok "build fresh (receipt matches)"
 else
-  bad "stale build — run: uv sync --reinstall-package degenbot"
+  bad "stale build — run: just dev"
 fi
 
 # 6. DB warm + gap modest

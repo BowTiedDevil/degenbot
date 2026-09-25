@@ -87,8 +87,8 @@ libmimalloc-sys = { version = "^0.1", optional = true }
 [features]
 # Runtime allocator tuning from observed block cadence: lets the
 # engine call mi_option_set on mimalloc's purge delay. Optional + off-by-default:
-# same policy as hotpath/otel, pyproject [tool.maturin] features enable it in
-# dev; release wheels ship without it.
+# same policy as hotpath/otel, the binding's `dev-features` alias enables it
+# in dev; release wheels ship without it.
 allocator-ctrl = ["dep:libmimalloc-sys", "libmimalloc-sys/extended"]
 # OpenTelemetry tracer bullet (see src/otel.rs). Enable with --features otel.
 # Unlike the hotpath bullet this feature has no env gate: init_otel_tracing()

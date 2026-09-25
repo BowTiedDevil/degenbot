@@ -77,10 +77,10 @@ Rust validation is split into named lanes rather than one `--all-features` gate:
   standalone consumer examples, without the PyO3 binding crate.
 - `just check-rust-binding-default`: `degenbot_rs` with its intentionally broad
   default domain surface, but without `extension-module`.
-- `just check-rust-dev-features`: the exact development-wheel feature list:
-  `extension-module`, `degenbot-bot/hotpath`,
-  `degenbot-bot/hotpath-prometheus`, `degenbot-solvers/hotpath`,
-  `degenbot-bot/allocator-ctrl`, `otel`, and `mimalloc`.
+- `just check-rust-dev-features`: the binding manifest's canonical
+  `dev-features` alias (extension-module, hotpath, Prometheus hotpath,
+  solver hotpath, allocator control, OTel, and mimalloc). The alias is
+  intentionally outside the package defaults.
 - `just check-rust-extension-release` / `just build-rust-extension`: the
   release-equivalent extension set, `extension-module` (forwarding to
   `pyo3/extension-module`) plus binding defaults. Release wheels use
@@ -146,20 +146,18 @@ explicitly by the candidate selector. The housekeeping implementation is
 `scripts/gc-target.sh`.
 
 ## Rebuilding the Rust `.so` after edits
-`uv run maturin develop` and even `cargo clean -p <crate>` do **not** reliably force a from-source recompile of the PyO3 `.so` — maturin uses cached artifacts across different feature-flag hash variants and `uv sync` installs a pre-built wheel in milliseconds. An apparently successful rebuild (~0.3–6s compile, no errors) silently ships a **stale `.so`** that doesn't contain the changes. This has bitten multiple sessions.
-
-The only reliable way to force the `.so` to pick up Rust source changes:
-
-```bash
-uv sync --reinstall-package degenbot
-```
+The canonical local bootstrap path is `just bootstrap`; it calls `just dev`,
+which uses `uv run --no-sync maturin develop --features dev-features`.
+Maturin and Cargo can serve cached artifacts, so an apparently successful
+rebuild can still ship a **stale `.so`**. Use the receipt check rather than
+inferring freshness from command output.
 
 Workflow after any Rust edit — verify, don't guess:
 
 1. `just verify-build-fresh`. Exit 0 ⇒ the installed extension already
    contains your edits; no rebuild needed.
-2. Exit 1 ⇒ run the reinstall above, then verify again. Only trust a bot run
-   (or a pytest suite) once the check exits 0.
+2. Exit 1 ⇒ run `just dev`, then verify again. Only trust a bot run (or a
+   pytest suite) once the check exits 0.
 
 ### Verifying freshness with the build receipt
 
@@ -191,8 +189,8 @@ cached-wheel failure mode) is caught, and no-change recompiles stay fresh.
 `pytest tests/test_build_info.py` gates on this too — a stale `.so` fails the
 suite. The receipt lives outside `rust/target` so `cargo clean` and
 `just gc-target` can never roll it back. After Rust edits expect the gate to
-flag staleness until you rebuild the wheel (`uv sync --reinstall-package
-degenbot`) — that is the detector working, so run the rebuild, not a skip. A
+flag staleness until you rebuild the extension (`just dev`) — that is the
+detector working, so run the rebuild, not a skip. A
 reported number of 0 (or a missing fingerprint) means `build.rs` did not run —
 investigate before trusting the build.
 

@@ -163,7 +163,7 @@ check-rust-binding-default:
 # telemetry, allocator, and allocator-selection features are development-only
 # and are not part of the release-wheel or standalone-default matrix.
 check-rust-dev-features:
-    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --features "extension-module,degenbot-bot/hotpath,degenbot-bot/hotpath-prometheus,degenbot-solvers/hotpath,degenbot-bot/allocator-ctrl,otel,mimalloc"
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --features dev-features
 
 # Check the release-equivalent extension feature set in the release profile.
 # The release maturin command uses `pyo3/extension-module`; this package feature
@@ -268,19 +268,28 @@ gc-target:
 
 # ========== Python Development ==========
 
+# Install the locked Python environment without building the project a second
+# time. `dev` is the sole editable-extension install path and selects the
+# canonical Cargo `dev-features` alias explicitly.
+bootstrap:
+    uv sync --locked --dev --no-install-project
+    just dev
+
 # Build and install the Python extension in development mode. Maturin consumes
 # pyproject's `profile = "dev"` setting, which matches rust/Cargo.toml's
-# opt-level = 1 development profile (not an unoptimized debug build).
+# opt-level = 1 development profile (not an unoptimized debug build). Run
+# `just bootstrap` first; `--no-sync` keeps this build from silently replacing
+# the explicit development feature set with ordinary package defaults.
 dev:
-    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run maturin develop
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run --no-sync maturin develop --features dev-features
 
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the
 # default offline marker filter (`-m "not slow and not base and not online_rpc"`)
 # this covers the PyO3 seam, golden on-chain-oracle replay, AND the wrapped
-# `tests/rust` suite. A focused parity-only run is `uv run pytest -m onchain_oracle`.
+# `tests/rust` suite. A focused parity-only run is `uv run --no-sync pytest -m onchain_oracle`.
 test-python:
-    uv run pytest -x -q --no-header
+    uv run --no-sync pytest -x -q --no-header
 
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
 # fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:
@@ -290,7 +299,7 @@ test-python:
 # the shared file (last-writer-wins, losing keys). Replay is read-only and safe
 # under xdist, but record accumulates writes.
 record-golden *args:
-    DEGENBOT_GOLDEN_MODE=record uv run pytest -m onchain_oracle -q --no-header -n0 {{ args }}
+    DEGENBOT_GOLDEN_MODE=record uv run --no-sync pytest -m onchain_oracle -q --no-header -n0 {{ args }}
 
 # Verify every shipped deployment address is actually deployed on-chain (cast).
 # Tier 1 (bytecode presence) by default; escalate via the env var:
@@ -300,7 +309,7 @@ record-golden *args:
 # Requires a reachable RPC per chain (tests.env / env vars). Deselected from the
 # default `test-python` run (online_rpc marker) — run on demand only.
 verify-deployments *args:
-    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run --no-sync pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # Re-populate the golden deployment-verification capture (tiers 1/2/4 facts for
 # every factory row on a reachable chain) consumed by the hermetic replay
@@ -309,7 +318,7 @@ verify-deployments *args:
 # unreachable chains contribute no rows. Tier 4 is asserted live while
 # recording, so a capture is only committed when every recorded row verified.
 record-deployment-golden *args:
-    DEGENBOT_GOLDEN_MODE=record DEGENBOT_VERIFY_DEPLOYMENTS=4 uv run pytest -m online_rpc -q --no-header -p no:randomly -n0 {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_GOLDEN_MODE=record DEGENBOT_VERIFY_DEPLOYMENTS=4 uv run --no-sync pytest -m online_rpc -q --no-header -p no:randomly -n0 {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # ========== Tier-3 On-Chain Oracles ==========
 #
@@ -499,8 +508,9 @@ crap_packages := env_var_or_default("CRAP_PACKAGES", "")
 
 # Features for the coverage build. Only degenbot-bot/otel: it compiles the
 # telemetry modules the walker would otherwise see as never-built. Deliberately
-# NOT pyproject's [tool.maturin] dev list — `pyo3/extension-module` must never
-# be set on a test build, and hotpath/allocator-ctrl gate no walked source file.
+# The coverage build intentionally enables only `degenbot-bot/otel`; it is not
+# the development-wheel alias. `pyo3/extension-module` must never be set on a
+# test build, and hotpath/allocator-ctrl gate no walked source file.
 crap_features := env_var_or_default("CRAP_FEATURES", "degenbot-bot/otel")
 
 # CRAP score at or above which `crap-gate` fails. CRAP_THRESHOLD=50 just crap-gate
@@ -645,8 +655,8 @@ lint-markdown:
 
 # Lint Python files
 lint-python:
-    uv run ruff check --fix src/ 
-    uv run ty check --fix --no-progress src/
+    uv run --no-sync ruff check --fix src/
+    uv run --no-sync ty check --fix --no-progress src/
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -655,8 +665,8 @@ lint-comment-hygiene:
     scripts/hooks/comment-hygiene.sh
 
 lint-python-check:
-    uv run ruff check src/
-    uv run ty check --no-progress src/
+    uv run --no-sync ruff check src/
+    uv run --no-sync ty check --no-progress src/
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see
@@ -667,7 +677,7 @@ lint-python-check:
 # Complements ruff: ruff's F401 rule exempts `if TYPE_CHECKING:` imports
 # and there is no ruff unreachable-code rule, so vulture catches both.
 dead-code:
-    uv run vulture src/degenbot vulture_whitelist.py --min-confidence 80
+    uv run --no-sync vulture src/degenbot vulture_whitelist.py --min-confidence 80
 
 # Deeper dead-code sweep — catches unused functions/methods/classes too
 # (the 80% tier only catches unused variables, imports, unreachable code).
@@ -676,11 +686,11 @@ dead-code:
 # for intentional dead-code audits; not a routine gate. Generate whitelist
 # candidates with: vulture src/degenbot --min-confidence 60 --make-whitelist
 dead-code-deep:
-    uv run vulture src/degenbot --min-confidence 60 --make-whitelist
+    uv run --no-sync vulture src/degenbot --min-confidence 60 --make-whitelist
 
 # Check Python formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check-python:
-    uv run ruff format --check src/
+    uv run --no-sync ruff format --check src/
 
 # Lint commit messages across a range (default: everything not yet pushed).
 # Examples: just lint-commits              # @{push}..HEAD
@@ -705,7 +715,7 @@ lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
 
 # Format all code
 format:
-    uv run ruff format src/
+    uv run --no-sync ruff format src/
     cargo fmt --manifest-path rust/Cargo.toml --all
 
 # ========== Dependency Updates ==========
@@ -741,7 +751,7 @@ format:
 update-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run python scripts/bump_python_deps.py
+    uv run --no-sync python scripts/bump_python_deps.py
     uv lock --upgrade
     uv sync
     cargo upgrade --manifest-path rust/Cargo.toml --incompatible
@@ -805,8 +815,8 @@ setup-git-hooks:
 # (tests/standalone_parity/dual_driver_gate.py --live).
 test-settlement-parity:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-settlement-bot-example --test boot_gate
-    uv run pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
-    uv run python tests/standalone_parity/dual_driver_gate.py --recorded
+    uv run --no-sync pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
+    uv run --no-sync python tests/standalone_parity/dual_driver_gate.py --recorded
 
 # ========== No-Python Console Gate (ADR-051 D10 / ergo EA6DY7) ==========
 #

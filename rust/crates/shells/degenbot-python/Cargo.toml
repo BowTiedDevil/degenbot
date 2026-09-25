@@ -102,6 +102,18 @@ degenbot-eventhub.workspace = true
 # descending pre-sim selection inside `dispatch_profitable`.
 default = ["auto-initialize", "bot", "rpc", "price", "submission", "simulation", "abi", "concentrated-liquidity-math", "balancer-math", "curve-math", "solidly-math", "v2-math", "uniswap", "pathfinding", "async", "db", "executor", "execution", "pool", "aave-updater", "fork"]
 extension-module = ["pyo3/extension-module"]
+# Canonical local development-wheel feature set. Keep this alias out of the
+# package defaults: ordinary Python package builds remain release-equivalent,
+# while `just dev` selects this complete set explicitly.
+dev-features = [
+    "pyo3/extension-module",
+    "degenbot-bot/hotpath",
+    "degenbot-bot/hotpath-prometheus",
+    "degenbot-solvers/hotpath",
+    "degenbot-bot/allocator-ctrl",
+    "otel",
+    "mimalloc",
+]
 auto-initialize = ["pyo3/auto-initialize"]
 # FF-T1: `bot` also names degenbot-workers — the intake seam maps
 # the workers' typed BootError family onto the BootRefused exception at
@@ -140,7 +152,7 @@ mimalloc = ["dep:mimalloc", "mimalloc/local_dynamic_tls"]
 # OTel span export for the Python-driven path: pulls degenbot-bot
 # with its `otel` feature (OTLP exporter + layer). NOT in `default` -
 # release/CI wheels must not ship the OTLP client footprint (same
-# exclusion story as hotpath; pyproject [tool.maturin] dev builds enable it).
+# exclusion story as hotpath; the binding's `dev-features` alias enables it).
 otel = ['bot', 'degenbot-bot/otel']
 
 [dev-dependencies]

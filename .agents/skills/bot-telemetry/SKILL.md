@@ -26,7 +26,7 @@ Done when you hold one fresh trace ID and one non-empty metrics sample. If empty
 
 | Symptom | Check |
 |---|---|
-| No service in Jaeger | Dev builds compile the OTel layer by default; release wheels ship without it (`otel` is dev-only via `[tool.maturin] features`). `DEGENBOT_OTEL=0` opts out at runtime — verify it is unset. Endpoint precedence: `OTEL_EXPORTER_OTLP_ENDPOINT` env > `otel.endpoint` in `~/.config/degenbot/config.toml` > `http://localhost:4318`. From inside the devcontainer use `host.docker.internal`, not localhost. |
+| No service in Jaeger | The explicit `dev-features` alias compiles the OTel layer; release wheels ship without it. `DEGENBOT_OTEL=0` opts out at runtime — verify it is unset. Endpoint precedence: `OTEL_EXPORTER_OTLP_ENDPOINT` env > `otel.endpoint` in `~/.config/degenbot/config.toml` > `http://localhost:4318`. From inside the devcontainer use `host.docker.internal`, not localhost. |
 | Empty metrics response | The scrape endpoint only starts when the OTel layer is active, same gate as above. Address precedence: `DEGENBOT_METRICS_ADDR` env > `otel.metrics_addr` config > `127.0.0.1:9464`. Host-side Prometheus must also be scraping that address before Grafana shows anything. |
 | Service exists but few spans | Sparse capture was the historical baseline — most spans were added deliberately. Check which sites exist (Step 3) before concluding data is lost. |
 

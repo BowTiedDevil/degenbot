@@ -6,7 +6,7 @@
 # tmux, git) AND the curl/npm-installed tools (foundry, pi) are all baked into
 # the Dockerfile image. This script handles only the workspace-dependent wiring
 # that CANNOT be baked into the image (it needs the bind-mounted repo):
-#   - venv + uv sync (builds the degenbot_rs PyO3 extension)
+#   - venv + `just bootstrap` (installs dependencies and the dev extension)
 #   - commitlint git hooks
 # foundry/pi used to live here but were moved into the Dockerfile because the
 # entry point (attach.sh) does `podman start`+`exec`, which does NOT
@@ -27,11 +27,12 @@ echo ">>> creating container-local venv (UV_PROJECT_ENVIRONMENT) and syncing pro
 # eliminating the shared-venv poisoning between differing container/host paths.
 # `--allow-existing` makes `uv venv` idempotent: a no-op if the venv is already
 # there (warm venv survives a podman stop/start), creates it fresh otherwise
-# (a --remove-existing-container rebuild wipes it). `uv sync` then installs
-# packages (and builds the PyO3 extension) into whichever state it finds.
+# (a --remove-existing-container rebuild wipes it). `just bootstrap` then
+# installs locked Python dependencies and builds the explicitly featured
+# development extension into whichever state it finds.
 cd /workspaces/degenbot
 uv venv --allow-existing "$UV_PROJECT_ENVIRONMENT"
-uv sync
+just bootstrap
 
 # Self-heal the VS Code Server persisted install. The `vscode` podman volume
 # is auto-mounted at /vscode by the Dev Containers extension (NOT declared in
@@ -54,13 +55,14 @@ sudo chown dev:dev /home/dev/.config 2>/dev/null || true
 # there but /workspaces/degenbot here) carries a `.pth` whose path is dead in
 # this container, so uv's "is it fresh?" check silently short-circuits and
 # `uv run` loads whatever stale .so sits in the source tree. Detect that drift
-# and force a clean reinstall so the .pth is re-pointed correctly.
+# and force the canonical development rebuild so the .pth is re-pointed
+# correctly.
 LIVE_SRC="/workspaces/degenbot/src"
 while read -r pth; do
 	if ! grep -qxF "$LIVE_SRC" "$pth"; then
 		echo ">>> editable .pth is stale/mispointed; repairing editable install"
 		echo "    offending: $pth -> $(cat "$pth")"
-		uv sync --reinstall-package degenbot
+		just dev
 		break
 	fi
 done < <(find "$UV_PROJECT_ENVIRONMENT" -name degenbot.pth -type f 2>/dev/null)

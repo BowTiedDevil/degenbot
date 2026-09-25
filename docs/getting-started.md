@@ -20,7 +20,7 @@ pip install degenbot
 ```bash
 git clone https://github.com/BowTiedDevil/degenbot.git
 cd degenbot
-uv sync    # or: pip install -e .
+just bootstrap    # or: pip install -e . for release-equivalent defaults
 ```
 
 **Rust only** (no Python machinery in the build graph):
