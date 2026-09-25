@@ -148,9 +148,11 @@ The PyO3 wrapper holds `Arc<EngineDriver>` and delegates `start`/`subscribe`/`re
 
 The once-per-pool key maps and the `VerifyClaims` TOCTOU dance remain `XFEJUG`'s to lift or keep per the sweep; this ADR only fixes the **driver seam** they attach to.
 
-### D10 — 0.7 kill list untouched
+### D10 — Historical snapshot: the 0.7 kill list was untouched by this decision
 
-This decision changes only `degenbot-bot` and `degenbot-python`. It deletes nothing on the AGENTS.md 0.7 kill list: `src/degenbot/migrations/`, the `alembic`/`sqlalchemy` dependencies, `DatabaseSessionManager`, the SQLAlchemy models package, `ALEMBIC_HEAD`, the `ensure_schema` Alembic branch, and the `query_only` pragma all remain exactly as they are.
+At the time of this decision, the change was limited to `degenbot-bot` and `degenbot-python`. It deleted nothing on the AGENTS.md 0.7 kill list: `src/degenbot/migrations/`, the `alembic`/`sqlalchemy` dependencies, `DatabaseSessionManager`, the SQLAlchemy models package, `ALEMBIC_HEAD`, the `ensure_schema` Alembic branch, and the `query_only` pragma all remained exactly as they were.
+
+**Current status:** this D10 snapshot is historical. CPBCNS subsequently completed the SQLAlchemy retirement recorded in ADR-052 D7; the ORM dependency, `DatabaseSessionManager`, and models package are no longer part of the Python database surface.
 
 ## Retired shape
 

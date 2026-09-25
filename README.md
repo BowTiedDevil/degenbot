@@ -52,7 +52,7 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 
 Degenbot abstracts the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens into a set of Rust core crates exposed to Python through a thin PyO3 binding layer. The Rust core owns all performance-critical and stateful logic — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python companion provides the user-facing API, docstrings, and I/O orchestration.
 
-As of the 0.6.x series the Rust core also owns the operator-facing infrastructure: the settlement-arbitrage engine and pump loop, the in-process revm simulation engine, on-chain price readers, the DB-aware pool/Aave updaters, EIP-1559 transaction signing and submission, and WS/HTTP pub-sub. Python still owns the user-facing API, config, and registries, and — until the ADR-010 0.7 cutover — the SQLAlchemy ORM with its Alembic-stamped session; the Rust `degenbot-db` crate already owns the schema DDL and file operations behind it (see `degenbot database cutover` / `degenbot database heal`).
+The Rust core also owns the operator-facing infrastructure: the settlement-arbitrage engine and pump loop, the in-process revm simulation engine, on-chain price readers, the DB-aware pool/Aave updaters, EIP-1559 transaction signing and submission, and WS/HTTP pub-sub. Python remains the user-facing API, configuration, and registry driver, while the Rust `degenbot-db` crate owns the SQLite schema, file lifecycle, and read/write operations. Python consumers use the stable typed mirror in `degenbot.db`; there is no Python SQLAlchemy session or ORM layer.
 
 These classes serve as building blocks for the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
 
@@ -208,9 +208,10 @@ approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415
 - `bot.pools` - PoolRegistry for created pools
 - `bot.tokens` - TokenRegistry for created tokens
 - `bot.managed_pools` - ManagedPoolRegistry for V4 pools
-- `bot.db` - DatabaseSessionManager for state snapshots
+- `bot.database_path` - the SQLite path used by the Rust-owned database core
+- `degenbot.db` - the stable Python mirror for Rust-backed database operations and row types
 
-**Lifecycle & refresh:** `Bot` is a context manager — `with degenbot.Bot(config=...) as bot:` (or an explicit, idempotent `bot.close()`) tears down the provider, the scoped DB session, and the Rust engine handles. `bot.update(pool, block_number=...)` is the canonical refresh entry point for the V2/V3/V4 families: it fetches current chain state from the Rust core and pushes `pool.external_update()` (returns `True` only when state changed). `bot.release_python_state()` drops the Python-side tracker/snapshot caches once the Rust engine owns canonical state. Builders are internal to Bot and not exposed publicly. All pool/token creation goes through `Bot.build_pool()`.
+**Lifecycle & refresh:** `Bot` is a context manager — `with degenbot.Bot(config=...) as bot:` (or an explicit, idempotent `bot.close()`) tears down the provider, the Rust database snapshot, and the Rust engine handles. `bot.update(pool, block_number=...)` is the canonical refresh entry point for the V2/V3/V4 families: it fetches current chain state from the Rust core and pushes `pool.external_update()` (returns `True` only when state changed). `bot.release_python_state()` drops the Python-side tracker/snapshot caches once the Rust engine owns canonical state. Builders are internal to Bot and not exposed publicly. All pool/token creation goes through `Bot.build_pool()`.
 
 ### Pool Types and Builders
 
@@ -1200,10 +1201,10 @@ provider = bot.provider
 existing_pool = bot.pools.get(chain_id=1, pool_address="0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 existing_token = bot.tokens.get(token_address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", chain_id=1)
 
-# Database session
-with bot.db() as session:
-    # SQLAlchemy operations
-    pass
+# Rust-backed database state; use the stable degenbot.db mirror
+from degenbot.db import db_inspect_schema_state
+
+schema_state = db_inspect_schema_state(str(bot.database_path))
 ```
 
 ### Chainlink Price Feeds

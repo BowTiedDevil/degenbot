@@ -171,7 +171,7 @@ def activate_aave_market(
 
     The ONE-TIME setup the chunk loop's ``run_aave_update`` bootstraps from.
     Rust-owned replacement for the Python ``activate_ethereum_aave_v3``
-    (commands.py) — the last ORM writer on the Aave path after the §4.2
+    (commands.py) — the last legacy writer on the Aave path after the §4.2
     retirement (CZM7TI). RPC-fetches ``getMarketId()`` on the pool address
     provider + the GHO token's ``name()``/``symbol()``/``decimals()``, then
     seeds — in ONE transaction — the ``aave_v3_markets`` row, the

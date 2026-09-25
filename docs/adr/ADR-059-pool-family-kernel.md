@@ -35,14 +35,19 @@ different granularity with no compile-time relationship:
 The strategy arms draw different amounts from this set: settlement
 (arb_engine) solves 7 families and composes V4; the backrun arm is
 V2/V3-only end to end, with V4 extraction stopping at a `v4_unsupported`
-observe. Fork knowledge is additionally duplicated as per-language
-constants (Rust `V3_FAMILIES`/`v2_v3_subclass_table`/`V3_VARIANT_TABLES`,
-Python SQLAlchemy subclasses, trackers, two byte-compared
-deployments.json copies). Adding LFJ by hand across these surfaces is
-counted in the survey at ~14 Rust regions plus 6 Python ones; adding a
-V4 species touches fewer but includes a structural gap (deployments are
-factory-keyed, V4 managers are not) and the backrun arm's absent V4
-capability.
+observe. In the 2026-09-22 survey, fork knowledge was additionally
+duplicated as per-language constants (Rust
+`V3_FAMILIES`/`v2_v3_subclass_table`/`V3_VARIANT_TABLES`, Python SQLAlchemy
+subclasses, trackers, two byte-compared deployments.json copies). Adding
+LFJ by hand across these surfaces was counted in the survey at ~14 Rust
+regions plus 6 Python ones; adding a V4 species touches fewer but includes
+a structural gap (deployments are factory-keyed, V4 managers are not) and
+the backrun arm's absent V4 capability.
+
+**Current status:** the Python pathfinding and operator surfaces now use
+typed `PoolKind`. CPBCNS retired the Python SQLAlchemy ORM side, so the ORM
+subclasses named above are historical survey context rather than current
+duplication.
 
 The on-chain executor contract is a hard floor no abstraction removes:
 compose can only emit opcodes `cmd_executor` embeds. LFJ needs new

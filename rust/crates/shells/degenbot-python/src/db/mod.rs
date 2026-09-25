@@ -6,10 +6,8 @@
 //! from Python, release the GIL via `py.detach(...)`, then map [`DbError`] to a
 //! Python `ValueError`. No business logic (three-layer architecture, ADR-005).
 //!
-//! The CLI (`src/degenbot/cli/database.py`'s `backup`/`reset`/`upgrade`/
-//! `compact`) delegates here; the inline `create_engine`/`sqlite3.connect`/
-//! `command.upgrade` bodies in `src/degenbot/database/operations.py` are
-//! retired in favor of these Rust-backed wrappers.
+//! The Rust CLI and the stable `degenbot.db` mirror delegate here; Python
+//! consumers use the typed wrappers rather than opening SQLite directly.
 
 pub mod aave;
 #[cfg(feature = "aave-updater")]
@@ -100,8 +98,7 @@ fn db_upgrade_database(py: Python<'_>, path: &str) -> PyResult<String> {
 
 /// `degenbot._ffi.db.db_inspect_schema_state(database_path: str) -> str`
 ///
-/// The read-only dry-run companion to `db_convert_alembic_to_rust_owned`:
-/// reports the schema state WITHOUT writing. Never refuses (reports even
+/// Reports the schema state WITHOUT writing. Never refuses (reports even
 /// legacy / unrecognized states). Returns one of `"legacy_alembic"`,
 /// `"fresh_standalone"`, `"rust_owned"`, `"unrecognized"`.
 /// Raises `ValueError` only on a genuine `SQLite` open/query failure.
@@ -112,35 +109,6 @@ fn db_inspect_schema_state(py: Python<'_>, database_path: &str) -> PyResult<Stri
         .detach(|| ops::inspect_schema_state(&path))
         .map_err(|e| db_err_to_py(&e))?;
     Ok(schema_state_label(&state).to_string())
-}
-
-/// `degenbot._ffi.db.db_convert_alembic_to_rust_owned(database_path: str) -> str`
-///
-/// The opt-in one-way cutover (ADR-010): flip a legacy
-/// `alembic_version`-marked DB into Rust ownership — `DROP`s the marker table,
-/// stamps `_degenbot_db_schema_version`. Returns `"converted"` (was
-/// `LegacyAlembic`) or `"already_rust_owned"` (was already Rust-owned →
-/// idempotent no-op). Raises `ValueError` for an unrecognized (foreign) file.
-#[pyfunction]
-fn db_convert_alembic_to_rust_owned(py: Python<'_>, database_path: &str) -> PyResult<String> {
-    let path = PathBuf::from(database_path);
-    // Inspect the PRE-cutover state first (to distinguish a real cutover from
-    // an idempotent no-op on an already-Rust-owned DB). classify_schema reads
-    // without writing.
-    let pre = py
-        .detach(|| ops::inspect_schema_state(&path))
-        .map_err(|e| db_err_to_py(&e))?;
-    // Run the cutover. Refuses Unrecognized via DbError.
-    py.detach(|| ops::convert_alembic_to_rust_owned(&path))
-        .map_err(|e| db_err_to_py(&e))?;
-    Ok(match pre {
-        degenbot_db::SchemaState::RustOwned { .. } => "already_rust_owned",
-        // FreshStandalone would also re-stamp, but the cutover op is meant for
-        // LegacyAlembic DBs; treat any non-RustOwned pre-state as a real
-        // cutover (the substrate stamps regardless).
-        _ => "converted",
-    }
-    .to_string())
 }
 
 /// `degenbot._ffi.db.db_heal_database(database_path: str) -> dict`
@@ -279,7 +247,6 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_function(wrap_pyfunction!(db_schema_version, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_upgrade_database, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_inspect_schema_state, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(db_convert_alembic_to_rust_owned, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_heal_database, &submod)?)?;
     submod.add_function(wrap_pyfunction!(
         liquidity_updater::db_apply_v3_liquidity_updates,

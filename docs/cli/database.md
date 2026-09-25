@@ -7,9 +7,8 @@ tags:
   - cli
 related_files:
   - ../rust-cli.md
-  - ../../src/degenbot/database/operations.py
-  - ../../src/degenbot/database/__init__.py
-  - ../../src/degenbot/database/models/base.py
+  - ../../src/degenbot/db/__init__.py
+  - ../../src/degenbot/_ffi/db.pyi
 complexity: standard
 ---
 
@@ -34,15 +33,15 @@ Degenbot uses SQLite with **WAL mode** for improved concurrency and performance:
 
 The database contains multiple tables organized by domain:
 
-- **ERC20 tokens**: `Erc20TokenTable` - Token metadata for all tracked assets
-- **Pools**: `LiquidityPoolTable` and subclass tables for V2/V3/V4 pool metadata
-- **Liquidity positions**: `LiquidityPositionTable` and subclass tables for tick-level data
-- **Initialization maps**: `InitializationMapTable` for tick bitmaps
-- **Aave V3**: `AaveV3MarketTable`, `AaveV3AssetsTable`, `AaveV3UsersTable`, `AaveV3CollateralPositionsTable`, `AaveV3DebtPositionsTable`, `AaveV3ContractsTable`
-- **Exchanges**: `ExchangeTable` for tracking active DEX deployments
-- **Pool managers**: `PoolManagerTable` for Uniswap V4 pool managers
+- **ERC20 tokens**: `erc20_tokens` - Token metadata for all tracked assets
+- **Pools**: `pools` plus the family-specific V2/V3/V4 tables for pool metadata
+- **Liquidity positions**: `liquidity_positions` and managed-pool position tables for tick-level data
+- **Initialization maps**: `initialization_maps` for tick bitmaps
+- **Aave V3**: `aave_v3_markets`, `aave_v3_assets`, `aave_v3_users`, position tables, and `aave_v3_contracts`
+- **Exchanges**: `exchanges` for tracking active DEX deployments
+- **Pool managers**: `pool_managers` for Uniswap V4 pool managers
 
-All database models are defined in `src/degenbot/database/models/`.
+The Rust `degenbot-db` crate owns the schema and its typed row representations. Python callers use the stable mirror in `src/degenbot/db/`; there is no Python ORM or session layer.
 
 ### Schema ownership (Rust-owned)
 
@@ -159,9 +158,9 @@ Alembic stamp:
 5. `VACUUM` once for a compact initial file.
 6. Stamp `_degenbot_db_schema_version` with `SCHEMA_HEAD`.
 
-The Python wrappers in
-[`src/degenbot/database/operations.py`](../../src/degenbot/database/operations.py)
-delegate to the same Rust ops over the `degenbot._ffi.db_*` seam.
+The stable Python mirror in
+[`src/degenbot/db/__init__.py`](../../src/degenbot/db/__init__.py)
+delegates to the same Rust ops over the `degenbot._ffi.db_*` seam.
 
 ## Database Schema Changes
 
@@ -196,63 +195,34 @@ A stale Alembic-era file is healed at open instead (ADR-052 D1).
 
 ## Related Functions
 
-### Database Operations
+### Database operations and typed reads
 
-The Python wrappers in [`src/degenbot/database/operations.py`](../../src/degenbot/database/operations.py) are thin delegations to the Rust `degenbot-db` ops:
+The stable Python mirror in [`src/degenbot/db/__init__.py`](../../src/degenbot/db/__init__.py) is a thin delegation to the Rust `degenbot-db` operations:
 
-- `backup_sqlite_database(db_path)` - Create backup of database
-- `create_new_sqlite_database(db_path)` - Create new database at the Rust schema head
-- `compact_sqlite_database(db_path)` - Reclaim free space with VACUUM
-- `heal_database(database_path)` - Out-of-place dump-and-restore rebuild (ADR-011)
-- `get_scoped_sqlite_session(database_path)` - Get thread-safe SQLAlchemy session
+- `db_backup_database(src, dst)` - Create an online backup of a database
+- `db_create_new_database(path)` - Create a new database at the Rust schema head
+- `db_compact_database(path)` - Reclaim free space with `VACUUM`
+- `db_heal_database(path)` - Perform an out-of-place dump-and-restore rebuild (ADR-011)
+- `db_inspect_schema_state(path)` - Inspect schema ownership without writing
 
-The Alembic `upgrade_existing_sqlite_database()` / `get_alembic_config()`
-helpers were retired with the migration tree (ADR-052 D6); the schema upgrades
-itself at open.
-
-### Database Session
-
-**Deprecated singleton pattern (legacy support):**
-
-The global database session is available in [`src/degenbot/database/__init__.py`](../../src/degenbot/database/__init__.py):
+For a typed read, pass the database path and chain-scoped key directly to the
+mirror. The result is a Rust-backed row, not an ORM instance:
 
 ```python
-# OLD: Global singleton (deprecated)
-from degenbot.database import db_session
+from degenbot.db import db_fetch_pool_row, db_inspect_schema_state
 
-with db_session() as session:
-    result = session.execute(query)
+schema_state = db_inspect_schema_state(database_path)
+pool_row = db_fetch_pool_row(database_path, chain_id, pool_address)
 ```
 
-**Recommended Bot pattern:**
-
-Use the `Bot` class to manage database sessions:
-
-```python
-# NEW: Bot manages database lifecycle
-import degenbot
-
-bot = degenbot.Bot.from_config_file()
-
-with bot.db() as session:
-    result = session.execute(query)
-
-# Or in CLI commands, use Bot's database for model queries
-from degenbot.database.models.pools import LiquidityPoolTable
-
-with bot.db() as session:
-    pool = session.scalar(
-        select(LiquidityPoolTable).where(
-            LiquidityPoolTable.address == pool_address,
-            LiquidityPoolTable.chain == chain_id,
-        )
-    )
-```
+There is no `bot.db()` session API. The database schema upgrades itself at
+open, and the `degenbot.db` mirror is the only supported Python database
+interface.
 
 ## Dependencies
 
 - **Database**: SQLite 3.x
-- **ORM**: SQLAlchemy (nominal models; schema DDL is Rust-owned)
+- **Python interface**: stable `degenbot.db` typed mirror over Rust `degenbot-db`
 - **Schema**: Rust `degenbot-db` (`SCHEMA_HEAD`, heal-at-open, forward version-lock)
 - **CLI**: the Rust `degenbot` console (`degenbot-cli`)
 - **Logging**: degenbot logging module

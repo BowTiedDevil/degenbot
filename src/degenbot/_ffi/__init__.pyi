@@ -755,8 +755,8 @@ class BalanceVectorView:
 class Erc20TokenRow:
     """A typed `erc20_tokens` DB row (QVMWQC).
 
-    Returned by `BotIo.fetch_erc20_token`; mirrors the SQLAlchemy
-    `Erc20TokenTable` ORM attributes the builders read.
+    Returned by `BotIo.fetch_erc20_token`; exposes the Rust-owned
+    `erc20_tokens` row attributes the builders read.
     """
 
     @property

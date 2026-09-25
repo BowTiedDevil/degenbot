@@ -69,9 +69,8 @@ def db_upgrade_database(path: str) -> str:
 def db_inspect_schema_state(database_path: str) -> str:
     """Inspect the schema state WITHOUT writing.
 
-    The read-only dry-run companion to
-    :func:`db_convert_alembic_to_rust_owned`. Never refuses (reports even
-    legacy / unrecognized states). Returns one of ``"legacy_alembic"``,
+    Never refuses (reports even legacy / unrecognized states). Returns one of
+    ``"legacy_alembic"``,
     ``"fresh_standalone"``, ``"rust_owned"``, ``"unrecognized"``.
 
     Args:
@@ -82,24 +81,6 @@ def db_inspect_schema_state(database_path: str) -> str:
 
     Raises:
         ValueError: On an open / query failure.
-
-    """
-
-def db_convert_alembic_to_rust_owned(database_path: str) -> str:
-    """Perform the opt-in one-way cutover (ADR-010).
-
-    Flip a legacy ``alembic_version``-marked DB into Rust ownership — drops
-    the marker table, stamps ``_degenbot_db_schema_version``.
-
-    Args:
-        database_path: Database path
-
-    Returns:
-        ``"converted"`` (was legacy-marked) or ``"already_rust_owned"``
-        (was already Rust-owned → idempotent no-op).
-
-    Raises:
-        ValueError: For an unrecognized (foreign) file or I/O failure.
 
     """
 
@@ -175,8 +156,8 @@ def db_fetch_exchange(
 
     The Rust-backed pool-updater discovery loop reads `last_update_block`
     ground-truth here (a fresh connection → fresh WAL snapshot) rather than
-    trusting the long-lived SQLAlchemy session's stale ORM cache, since the
-    stamp is written by the Rust `db_set_exchange_last_update_block` seam on
+    trusting a stale Python-side cache, since the stamp is written by the Rust
+    `db_set_exchange_last_update_block` seam on
     its own connection. Raises ``ValueError`` on a DB failure.
     """
 
@@ -571,7 +552,6 @@ __all__ = [
     "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
-    "db_convert_alembic_to_rust_owned",
     "db_create_new_database",
     "db_fetch_exchange",
     "db_fetch_exchange_by_name",

@@ -38,7 +38,7 @@ Verified by searching the working tree at HEAD `2ccb1f8ee`:
 | Binned-liquidity taxonomy arm | present | `rust/crates/foundation/degenbot-pools/src/pool.rs` (`Structure::BinnedLiquidity`, `BinnedLiquidityVariant::Lfj`) |
 | Capability family + NONE rows | present, all-false | `rust/crates/foundation/degenbot-pools/src/capability.rs` (`Family::LfjBinned`) |
 | Journal extraction arm | present, declines to decode | `rust/crates/engine/degenbot-simulation/src/sim/evm/journal_pools.rs` |
-| DB kind / subclass table | present | `rust/crates/foundation/degenbot-db/src/{schema.rs,schema_head.sql}`, `src/degenbot/database/models/pools.py` (`lfj_pools`, kind `lfj_binned`) |
+| DB kind / subclass table | present | `rust/crates/foundation/degenbot-db/src/{schema.rs,schema_head.sql}` (`lfj_pools`, kind `lfj_binned`); Python consumers use the typed `degenbot.db` mirror |
 | Loud unsupported marker (D8) | present | `rust/crates/engine/degenbot-bot/src/connector_index.rs` (`unsupported_kind`) |
 | **`LBPair` event ABI / topic constants** | **absent** | no `lfj_*` module in `rust/crates/foundation/degenbot-decoders/src/` |
 | **`LBPair` deployed address** | **absent** | `src/degenbot/registry/deployments.json`, `rust/crates/foundation/degenbot-db/src/species.toml` carry no LFJ/Trader Joe row; the species shape test uses a placeholder factory `0x…dead` |

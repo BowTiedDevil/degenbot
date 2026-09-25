@@ -180,9 +180,9 @@ def _update_pool(
 class Bot(AccountQueryMixin):
     """Explicit session object that owns the runtime state for a degenbot run.
 
-    Replaces the four module-level singletons (`config`, `db_session`,
-    `connection_manager`, `pool_registry`/`token_registry`/`managed_pool_registry`)
-    with per-session instances owned by this class.
+    Owns the per-session configuration, Rust database path, provider,
+    registries, and engine handles instead of exposing module-level
+    singletons.
 
     Bot is:
     - **Factory** — creates pools/tokens via managers, doing all I/O to fetch data

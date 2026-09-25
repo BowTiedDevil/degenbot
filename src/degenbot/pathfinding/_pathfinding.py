@@ -265,7 +265,7 @@ async def find_paths_async(
     """Async `find_paths`, driving the Rust batched async iterator.
 
     The one-time prep runs on the shared tokio blocking pool, so neither the
-    ORM token resolution nor the Rust bulk read stalls the event loop.
+    database resolution nor the Rust bulk read stalls the event loop.
 
     Args:
         request: The graph scope + traversal constraints for this search.

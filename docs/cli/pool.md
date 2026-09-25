@@ -13,8 +13,8 @@ tags:
   - liquidity
 related_files:
   - ../rust-cli.md
-  - ../../src/degenbot/database/models/pools.py
-  - ../../src/degenbot/database/models/base.py
+  - ../../src/degenbot/db/__init__.py
+  - ../../rust/crates/foundation/degenbot-db/src/schema.rs
   - ../../src/degenbot/uniswap/v3_liquidity_pool.py
   - ../../src/degenbot/uniswap/v4_liquidity_pool.py
 complexity: complex
@@ -107,7 +107,7 @@ degenbot exchange activate --chain <CHAIN> --name <NAME>
 `CHAIN` is a chain slug (`base`, `ethereum`) or a numeric chain id; `NAME` is the
 DEX slug (`aerodrome_v2`, `uniswap_v3`, `uniswap_v4`, …). ADR-051 D5 collapses
 the retired per-`(chain, DEX)` click verbs onto this one data-driven pair.
-V4 exchanges additionally create a `PoolManagerTable` entry.
+V4 exchanges additionally create a `pool_managers` row.
 
 ### `degenbot exchange deactivate`
 
@@ -203,19 +203,20 @@ Mock pool classes (`MockV3LiquidityPool`, `MockV4LiquidityPool`) are lightweight
 
 ## Data Model Updates
 
-All database models are defined in [`src/degenbot/database/models/pools.py`](../../src/degenbot/database/models/pools.py) and [`src/degenbot/database/models/base.py`](../../src/degenbot/database/models/base.py):
+The Rust `degenbot-db` schema owns the tables below. Python callers receive typed
+row mirrors from `degenbot.db`; the updater writes through Rust-owned seams:
 
 | Table | Fields Updated | Notes |
 |-------|----------------|-------|
-| `ExchangeTable` | `last_update_block` | After each chunk completes |
-| `Erc20TokenTable` | New rows created | For token0/token1/currency0/currency1 |
-| `LiquidityPoolTable` | New rows created | V2/V3 pool metadata from factory events |
-| `UniswapV4PoolTable` | New rows created | V4 pool metadata from manager events |
-| `PoolManagerTable` | New rows created | V4 manager metadata (on activate) |
-| `LiquidityPositionTable` | `liquidity_net`, `liquidity_gross` | Upsert from V3 liquidity events |
-| `InitializationMapTable` | `bitmap` | Upsert from V3 tick bitmap updates |
-| `ManagedPoolLiquidityPositionTable` | `liquidity_net`, `liquidity_gross` | Upsert from V4 liquidity events |
-| `ManagedPoolInitializationMapTable` | `bitmap` | Upsert from V4 tick bitmap updates |
+| `exchanges` | `last_update_block` | After each chunk completes |
+| `erc20_tokens` | New rows created | For token0/token1/currency0/currency1 |
+| `pools` | New rows created | V2/V3 pool metadata from factory events |
+| `uniswap_v4_pools` | New rows created | V4 pool metadata from manager events |
+| `pool_managers` | New rows created | V4 manager metadata (on activate) |
+| `liquidity_positions` | `liquidity_net`, `liquidity_gross` | Upsert from V3 liquidity events |
+| `initialization_maps` | `bitmap` | Upsert from V3 tick bitmap updates |
+| `managed_pool_liquidity_positions` | `liquidity_net`, `liquidity_gross` | Upsert from V4 liquidity events |
+| `managed_pool_initialization_maps` | `bitmap` | Upsert from V4 tick bitmap updates |
 
 ## Algorithm Details
 
@@ -269,6 +270,6 @@ The command uses Web3 connections from degenbot config file. Each active chain m
 
 ## Dependencies
 
-- **Database**: SQLAlchemy ORM (nominal models; the updater's writes are Rust-owned)
+- **Database**: Rust `degenbot-db` owner, consumed through the stable `degenbot.db` Python mirror
 - **Blockchain**: Rust `degenbot-rpc` / `degenbot-pool-updater` for RPC calls
 - **Math**: Rust `degenbot-math` + `degenbot-pools` (tick bitmap, tick math, liquidity math)

@@ -6,7 +6,8 @@ tags:
   - liquidity
 related_files:
   - ../rust-cli.md
-  - ../../src/degenbot/database/models/aave.py
+  - ../../src/degenbot/db/__init__.py
+  - ../../rust/crates/foundation/degenbot-db/src/schema.rs
 complexity: complex
 ---
 
@@ -169,7 +170,7 @@ Tracked from PoolConfigurator contract. Creates new asset entry with:
 - aToken and vToken addresses
 - Token implementation revisions (for encoding compatibility)
 
-**Data models updated**: `Erc20TokenTable`, `AaveV3AssetsTable`
+**Rust tables updated**: `erc20_tokens`, `aave_v3_assets`
 
 ### Reserve Data Update (`ReserveDataUpdated`)
 
@@ -180,13 +181,13 @@ Emitted from Pool when interest rates change. Updates:
 - `borrow_index`: Index for converting debt scaled balances
 - `last_update_block`: Block of last rate update
 
-**Data model updated**: `AaveV3AssetsTable`
+**Rust table updated**: `aave_v3_assets`
 
 ### User E-Mode Set (`UserEModeSet`)
 
 Emitted when user changes their efficiency mode category.
 
-**Data model updated**: `AaveV3UsersTable.e_mode`
+**Rust table updated**: `aave_v3_users.e_mode`
 
 ### Scaled Token Mint (`Mint`)
 
@@ -214,7 +215,7 @@ else:                             # _mintScaled - user action (supply/borrow)
 - `_burnScaled`: Add `event_value` directly as interest
 - All sources create user/position if needed
 
-**Data models**: `AaveV3UsersTable`, position tables, `AaveGhoTokenTable` for GHO
+**Rust tables**: `aave_v3_users`, position tables, and `aave_gho_tokens` for GHO
 
 ### Scaled Token Burn (`Burn`)
 
@@ -236,28 +237,28 @@ Only occurs for aTokens (collateral). Transfers scaled amount directly:
 - Increments recipient's collateral balance (creates user/position if needed)
 - Deletes sender's position if balance reaches zero
 
-**Data models updated**: `AaveV3UsersTable`, `AaveV3CollateralPositionsTable`
+**Rust tables updated**: `aave_v3_users`, `aave_v3_collateral_positions`
 
 ### Token Upgrade (`Upgraded`)
 
 When aToken or vToken implementation changes:
 - Detects which token type (aToken or vToken)
 - Queries new implementation for revision number
-- Updates revision in `AaveV3AssetsTable`
+- Updates revision in `aave_v3_assets`
 
-**Data model updated**: `AaveV3AssetsTable.a_token_revision` or `AaveV3AssetsTable.v_token_revision`
+**Rust table updated**: `aave_v3_assets.a_token_revision` or `aave_v3_assets.v_token_revision`
 
 ### GHO Discount Token Updated (`DiscountTokenUpdated`)
 
 Emitted when the discount token for GHO vToken changes.
 
-**Data model updated**: `AaveGhoTokenTable.v_gho_discount_token`
+**Rust table updated**: `aave_gho_tokens.v_gho_discount_token`
 
 ### GHO Discount Rate Strategy Updated (`DiscountRateStrategyUpdated`)
 
 Emitted when the discount rate strategy for GHO vToken changes. The strategy calculates discount percentages based on user's GHO debt and discount token balances.
 
-**Data model updated**: `AaveGhoTokenTable.v_gho_discount_rate_strategy`
+**Rust table updated**: `aave_gho_tokens.v_gho_discount_rate_strategy`
 
 ## Error Handling & Validation
 
@@ -394,7 +395,7 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 
 ## Dependencies
 
-- **Database**: SQLAlchemy ORM (see `src/degenbot/database/models/aave.py`)
+- **Database**: Rust `degenbot-db` owner, consumed through the stable `degenbot.db` Python mirror
 - **Blockchain**: Web3.py for RPC calls
 - **Math**: Rust `degenbot-aave::wad_ray_math` for scaled balance calculations with rounding mode support (the former Python `aave/libraries/` package was retired)
 - **Logging**: the Rust console (`degenbot-cli`) renders operator output; the Rust core emits throttled `log`-level operator progress lines
