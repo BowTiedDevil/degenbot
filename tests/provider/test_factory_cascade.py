@@ -10,9 +10,10 @@ with a connection refused even though the devcontainer exported the canonical
 
 These tests pin (a) the factory delegates endpoint selection to the resolver
 (building from the resolved URI, never ``config.rpc``), (b) it constructs an
-alloy provider unconditionally (no web3 branches), and (c) it raises the
-cascade's ``RpcNotConfiguredError`` (naming the chain-id envvar) when no source
-is configured — proving the env layer is consulted.
+alloy provider unconditionally (no web3 branches) and hands it the resolved
+chain (the core enforces ``eth_chainId``), and (c) it raises the cascade's
+``RpcNotConfiguredError`` (naming the chain-id envvar) when no source is
+configured — proving the env layer is consulted.
 """
 
 from __future__ import annotations
@@ -34,11 +35,16 @@ def _empty_config() -> DegenbotConfig:
 
 
 class _FakeAlloy:
-    """Stand-in for the Rust AlloyProvider pyclass."""
+    """Stand-in for the Rust AlloyProvider pyclass.
 
-    def __init__(self, endpoint: str, *, chain_id: int = 1) -> None:
+    It records the chain the factory bound the endpoint to (``bound_to``) —
+    the handoff the real pyclass turns into the core's ``eth_chainId`` check.
+    """
+
+    def __init__(self, endpoint: str, *, chain_id: int | None = None) -> None:
         self.endpoint = endpoint
-        self._chain_id = chain_id
+        self.bound_to = chain_id
+        self._chain_id = chain_id if chain_id is not None else 1
 
     def get_chain_id(self) -> int:
         return self._chain_id
@@ -67,25 +73,29 @@ class TestFactoryDelegatesToCascade:
 
         monkeypatch.setattr(factory_mod, "resolve_http_rpc_uri", fake_resolve)
 
-        constructed: list[str] = []
+        constructed: list[tuple[str, int | None]] = []
 
-        def fake_alloy(endpoint: str) -> _FakeAlloy:
-            constructed.append(endpoint)
-            return _FakeAlloy(endpoint, chain_id=1)
+        def fake_alloy(endpoint: str, *, chain_id: int | None = None) -> _FakeAlloy:
+            constructed.append((endpoint, chain_id))
+            return _FakeAlloy(endpoint, chain_id=chain_id)
 
         monkeypatch.setattr(provider_mod, "AlloyProvider", fake_alloy)
 
         result = get_provider_from_config(chain_id=1, config=config)
 
         assert resolved == ["called"]
-        assert constructed == ["http://from-resolver.example"]
+        assert constructed == [("http://from-resolver.example", 1)]
         assert isinstance(result, _FakeAlloy)
         assert result.endpoint == "http://from-resolver.example"
 
-    def test_raises_value_error_on_chain_id_mismatch(
+    def test_the_chain_id_reaches_the_core_that_enforces_it(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # The `eth_chainId` check now lives in the Rust core: the factory's
+        # part is handing the resolved chain to the provider, so this test
+        # pins the HANDOFF. The refusal itself is the core's, exercised
+        # end-to-end in ``tests/provider/test_chain_binding.py``.
         monkeypatch.delenv(_HTTP_ENV, raising=False)
         config = _empty_config()
 
@@ -96,11 +106,12 @@ class TestFactoryDelegatesToCascade:
         monkeypatch.setattr(
             provider_mod,
             "AlloyProvider",
-            lambda endpoint: _FakeAlloy(endpoint, chain_id=999),
+            lambda endpoint, *, chain_id=None: _FakeAlloy(endpoint, chain_id=chain_id),
         )
 
-        with pytest.raises(ValueError, match="999"):
-            get_provider_from_config(chain_id=1, config=config)
+        result = get_provider_from_config(chain_id=1, config=config)
+
+        assert result.bound_to == 1
 
 
 class TestFactoryRaisesWhenNoSource:

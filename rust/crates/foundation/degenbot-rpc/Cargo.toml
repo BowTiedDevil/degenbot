@@ -39,6 +39,8 @@ tokio-tungstenite = { version = "^0.30", default-features = false, features = ["
 tower = { version = "^0.5", default-features = false }
 
 [dev-dependencies]
+# The IPC guard test binds a fake node on a real Unix socket.
+tempfile = { version = "^3.27" }
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry"] }
 
 [features]

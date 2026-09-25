@@ -27,6 +27,7 @@ class AlloyProvider:
         max_blocks_per_request: int = 5000,
         requests_per_second: int | None = None,
         burst: int | None = None,
+        chain_id: int | None = None,
     ) -> None: ...
     @property
     def rpc_url(self) -> str: ...
@@ -130,6 +131,7 @@ class AsyncAlloyProvider:
         max_blocks_per_request: int = 5000,
         requests_per_second: int | None = None,
         burst: int | None = None,
+        chain_id: int | None = None,
     ) -> Coroutine[Any, Any, AsyncAlloyProvider]: ...
     @property
     def rpc_url(self) -> str: ...

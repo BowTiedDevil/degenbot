@@ -113,8 +113,12 @@ impl PyAlloyProvider {
     /// overwhelming the RPC endpoint. `requests_per_second` controls the sustained
     /// rate, while `burst` allows temporary spikes. Both must be provided together
     /// to activate throttling. These parameters are ignored for WS/IPC transports.
+    ///
+    /// `chain_id` binds the endpoint to a chain: the core reads `eth_chainId`
+    /// once at construction and raises `ValueError` when the endpoint serves
+    /// another chain. `None` constructs the provider with no binding.
     #[new]
-    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=None, burst=None))]
+    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=None, burst=None, chain_id=None))]
     fn new(
         py: Python<'_>,
         rpc_url: &str,
@@ -122,6 +126,7 @@ impl PyAlloyProvider {
         max_blocks_per_request: u64,
         requests_per_second: Option<u32>,
         burst: Option<u32>,
+        chain_id: Option<u64>,
     ) -> PyResult<Self> {
         /// Default burst size for rate limiting (guaranteed non-zero)
         const DEFAULT_BURST: std::num::NonZeroU32 = std::num::NonZeroU32::new(1).unwrap();
@@ -146,7 +151,28 @@ impl PyAlloyProvider {
         let provider = py
             .detach(|| {
                 get_runtime().block_on(async {
-                    AlloyProvider::build_provider(&rpc_url, max_retries, rate_limit).await
+                    // A declared chain is enforced by the core at bind time, so
+                    // a Python caller cannot skip the check the Rust consumers
+                    // get; without one there is nothing to check against.
+                    let provider = match (chain_id, rate_limit) {
+                        (None, rate_limit) => {
+                            AlloyProvider::build_provider(&rpc_url, max_retries, rate_limit).await
+                        }
+                        (Some(chain_id), None) => {
+                            AlloyProvider::for_chain(&rpc_url, chain_id, max_retries).await
+                        }
+                        (Some(chain_id), Some((rps, burst))) => {
+                            AlloyProvider::for_chain_with_rate_limit(
+                                &rpc_url,
+                                chain_id,
+                                max_retries,
+                                rps,
+                                burst,
+                            )
+                            .await
+                        }
+                    }?;
+                    Ok::<AlloyProvider, degenbot_core::errors::ProviderError>(provider)
                 })
             })
             .map_err(Into::<PyErr>::into)?;

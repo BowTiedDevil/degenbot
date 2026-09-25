@@ -215,19 +215,27 @@ fn verify(
         let conn = db.lock();
         fetch_verify_state(&conn, chain_id, pool, family, pool_manager)?
     };
+    // The arm verifies a row stored for `chain_id` against the node, so the
+    // provider is bound to that chain: an endpoint serving another chain is
+    // refused before any on-chain comparison reports phantom divergences.
+    let chain = u64::try_from(chain_id).map_err(|_| {
+        CliError::InvalidArgument(format!("chain id {chain_id} is not a valid chain"))
+    })?;
     let divergences = match target {
         VerifyTarget::V3(address) => crate::block::block_on(async {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(rpc_url, RPC_MAX_RETRIES)
-                .await
-                .map_err(|err| CliError::BlockResolution(err.to_string()))?;
+            let provider =
+                degenbot_rpc::provider::AlloyProvider::for_chain(rpc_url, chain, RPC_MAX_RETRIES)
+                    .await
+                    .map_err(|err| CliError::BlockResolution(err.to_string()))?;
             verify_v3_liquidity_map_on_chain(&provider, address, &computed, block_number)
                 .await
                 .map_err(CliError::PoolUpdate)
         })??,
         VerifyTarget::V4 { manager, pool_id } => crate::block::block_on(async {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(rpc_url, RPC_MAX_RETRIES)
-                .await
-                .map_err(|err| CliError::BlockResolution(err.to_string()))?;
+            let provider =
+                degenbot_rpc::provider::AlloyProvider::for_chain(rpc_url, chain, RPC_MAX_RETRIES)
+                    .await
+                    .map_err(|err| CliError::BlockResolution(err.to_string()))?;
             verify_v4_liquidity_map_on_chain(&provider, manager, pool_id, &computed, block_number)
                 .await
                 .map_err(CliError::PoolUpdate)

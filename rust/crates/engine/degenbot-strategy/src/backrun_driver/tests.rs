@@ -1147,3 +1147,85 @@ fn seed_v2_connector(
     )
     .expect("seed v2 connector");
 }
+
+/// A node that answers `eth_chainId` with `served_chain_id` and nothing else,
+/// so a join over it exercises the boot's chain binding without a live node.
+fn join_over_node(chain_id: u64, served_chain_id: u64) -> super::BackrunNodeJoin {
+    use alloy::network::Ethereum;
+    use alloy::providers::{Provider, ProviderBuilder};
+    use alloy::rpc::client::ClientBuilder;
+    use alloy::transports::mock::{Asserter, MockTransport};
+
+    let asserter = Asserter::new();
+    for _ in 0..2 {
+        asserter.push_success(&format!("0x{served_chain_id:x}"));
+    }
+    let client = ClientBuilder::default().transport(MockTransport::new(asserter), true);
+    let inner = ProviderBuilder::new().connect_client(client).erased();
+    super::BackrunNodeJoin {
+        rpc_url: format!("http://node.local:{served_chain_id}"),
+        provider: Arc::new(AlloyProvider::from_provider(
+            Arc::new(inner) as Arc<dyn Provider<Ethereum>>
+        )),
+        chain_id,
+    }
+}
+
+/// A boot whose endpoint serves a different chain than the join named is a
+/// typed refusal that names BOTH chain ids. The boot compares against
+/// `join.chain_id` — the chain it already resolved — so the guard and the boot
+/// can never disagree about which chain this session is.
+#[tokio::test]
+async fn a_node_serving_another_chain_refuses_the_boot_and_names_both() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let resources = super::resolve_backrun_boot(
+        Arc::new(degenbot_config::BotConfig::default()),
+        dir.path().join("connectors.db"),
+        join_over_node(1, 8453),
+    )
+    .await;
+
+    let error = resources
+        .boot_error()
+        .expect("a node serving another chain never boots")
+        .clone();
+
+    assert!(
+        matches!(error, super::BackrunBootError::ChainMismatch { .. }),
+        "a wrong-chain endpoint is the chain refusal, not a connector-index one: {error:?}"
+    );
+
+    let message = error.to_string();
+    assert!(
+        message.contains('1') && message.contains("8453"),
+        "the refusal names the resolved chain and the served one: {message}"
+    );
+
+    let strategy = resources.strategy_boot(super::BackrunEcosystem::Txpool);
+    assert_eq!(
+        strategy.registry().registered_pool_count(),
+        0,
+        "a refused boot opens no lane"
+    );
+}
+
+/// The matching node boots: the guard refuses a disagreement, not a working
+/// endpoint.
+#[tokio::test]
+async fn a_node_serving_the_resolved_chain_boots() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let resources = super::resolve_backrun_boot(
+        Arc::new(degenbot_config::BotConfig::default()),
+        dir.path().join("connectors.db"),
+        join_over_node(8453, 8453),
+    )
+    .await;
+
+    assert!(
+        resources.boot_error().is_none(),
+        "an endpoint that serves the boot's chain is not a refusal: {:?}",
+        resources.boot_error()
+    );
+}

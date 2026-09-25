@@ -71,8 +71,10 @@ impl PyAsyncAlloyProvider {
     /// * `max_retries` - Maximum retry attempts (default: 10)
     /// * `requests_per_second` - Rate limit for HTTP connections (opt-in, must pair with `burst`)
     /// * `burst` - Burst size for rate limiting (opt-in, must pair with `requests_per_second`)
+    /// * `chain_id` - Chain the endpoint is bound to; the core reads
+    ///   `eth_chainId` once and raises `ValueError` on a disagreement
     #[staticmethod]
-    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=None, burst=None))]
+    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=None, burst=None, chain_id=None))]
     fn create(
         py: Python<'_>,
         rpc_url: String,
@@ -80,6 +82,7 @@ impl PyAsyncAlloyProvider {
         max_blocks_per_request: u64,
         requests_per_second: Option<u32>,
         burst: Option<u32>,
+        chain_id: Option<u64>,
     ) -> PyResult<Bound<'_, PyAny>> {
         /// Default burst size for rate limiting (guaranteed non-zero)
         const DEFAULT_BURST: std::num::NonZeroU32 = std::num::NonZeroU32::new(1).unwrap();
@@ -98,9 +101,27 @@ impl PyAsyncAlloyProvider {
         };
 
         future_into_py(py, async move {
-            let provider = AlloyProvider::build_provider(&rpc_url, max_retries, rate_limit)
-                .await
-                .map_err(Into::<PyErr>::into)?;
+            // The same core binding the sync pyclass uses, awaited on the
+            // caller's event loop: a declared chain is checked once, here.
+            let provider = match (chain_id, rate_limit) {
+                (None, rate_limit) => {
+                    AlloyProvider::build_provider(&rpc_url, max_retries, rate_limit).await
+                }
+                (Some(chain_id), None) => {
+                    AlloyProvider::for_chain(&rpc_url, chain_id, max_retries).await
+                }
+                (Some(chain_id), Some((rps, burst))) => {
+                    AlloyProvider::for_chain_with_rate_limit(
+                        &rpc_url,
+                        chain_id,
+                        max_retries,
+                        rps,
+                        burst,
+                    )
+                    .await
+                }
+            }
+            .map_err(Into::<PyErr>::into)?;
 
             Ok(Self {
                 provider: Arc::new(provider),

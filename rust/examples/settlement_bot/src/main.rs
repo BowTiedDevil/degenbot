@@ -982,8 +982,11 @@ fn run() -> Result<(), String> {
         // Per-candidate pool build through the core `ConstructionIo`, BotState
         // registration, the ADR-022 verify lifecycle under the tokio claim
         // table + retry dance, then `register_and_solve_path`.
-        let provider = degenbot::rpc::provider::AlloyProvider::new(
+        // Bound to the chain this example signs for: a live node on another
+        // chain is refused before the crawl reads a single pool.
+        let provider = degenbot::rpc::provider::AlloyProvider::for_chain(
             &http,
+            CHAIN_ID,
             degenbot::rpc::provider::DEFAULT_MAX_RETRIES,
         )
         .await

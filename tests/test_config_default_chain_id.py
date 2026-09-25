@@ -1,9 +1,12 @@
 """Tests for the ``default_chain_id`` config field (ADR-006 D5).
 
-One Bot per chain — the chain identity lives in the config object. ``Bot``
-reads it at construction and enforces the connected RPC's ``eth_chainId``
-matches it. These tests cover the config-field mechanics offline; the
-RPC-enforcement behavior is exercised by the fork-backed `get_provider_from_config`
+One Bot per chain — the chain identity lives in the config object. The
+connected RPC's ``eth_chainId`` is enforced by the Rust core, which reads it
+once when a provider is bound to a chain, so the check is the same for the
+console, a pure-Rust consumer, and the Python bindings. These tests cover the
+config-field mechanics offline; the binding enforcement is exercised against
+fake nodes in ``tests/provider/test_chain_binding.py``, and ``Bot``'s own
+config/chain alignment is covered in ``tests/test_bot.py``.
 """
 
 from pathlib import Path

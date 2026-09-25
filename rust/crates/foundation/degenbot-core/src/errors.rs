@@ -230,6 +230,22 @@ pub enum ProviderError {
     #[error("Subscription not supported: {message}")]
     SubscriptionNotSupported { message: String },
 
+    /// The endpoint serves a different chain than the one it was bound to.
+    ///
+    /// Binding an endpoint to a chain reads `eth_chainId` once and refuses a
+    /// disagreement here, before any pool or token I/O runs against a node
+    /// that is not the chain the session declared. Not retryable: the same
+    /// endpoint will keep answering with the same chain.
+    #[error("endpoint {endpoint} reports chain id {actual}, not the expected {expected}")]
+    ChainMismatch {
+        /// The chain the endpoint was bound to.
+        expected: u64,
+        /// The chain the endpoint actually serves.
+        actual: u64,
+        /// The endpoint that was bound.
+        endpoint: String,
+    },
+
     /// Other error.
     #[error("{message}")]
     Other { message: String },
@@ -257,6 +273,12 @@ impl From<ProviderError> for PyErr {
             ProviderError::Timeout { .. } => Self::new::<pyo3::exceptions::PyTimeoutError, _>(msg),
             ProviderError::ConnectionFailed { .. } => {
                 Self::new::<pyo3::exceptions::PyConnectionError, _>(msg)
+            }
+            // A wrong-chain endpoint is a configuration disagreement, so it
+            // raises as a ValueError — the shape every Python caller already
+            // handles for a misconfigured provider.
+            ProviderError::ChainMismatch { .. } => {
+                Self::new::<pyo3::exceptions::PyValueError, _>(msg)
             }
             ProviderError::SubscriptionNotSupported { .. }
             | ProviderError::RateLimited { .. }

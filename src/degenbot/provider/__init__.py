@@ -570,6 +570,10 @@ class AlloyProvider(
         rpc_url: HTTP/HTTPS endpoint URL
         max_retries: Maximum retry attempts (default: 10)
         max_blocks_per_request: Maximum logs per request (default: 5000)
+        chain_id: Chain to bind the endpoint to. The Rust core reads
+            ``eth_chainId`` once at construction and raises :class:`ValueError`
+            when the endpoint serves another chain; ``None`` constructs the
+            provider with no binding.
 
     Example:
         >>> provider = AlloyProvider("https://eth-mainnet.example.com")
@@ -591,6 +595,7 @@ class AlloyProvider(
         rpc_url: str,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
+        chain_id: int | None = None,
     ) -> None:
         """Initialize the instance."""
         # Initialize Rust provider
@@ -598,6 +603,7 @@ class AlloyProvider(
             rpc_url=rpc_url,
             max_retries=max_retries,
             max_blocks_per_request=max_blocks_per_request,
+            chain_id=chain_id,
         )
 
 
@@ -914,14 +920,21 @@ class AsyncAlloyProvider(
         """Initialize the instance."""
         self._provider = rust_provider
 
+    # Six arguments, each a distinct transport or binding knob: the endpoint,
+    # the two tuning values, the opt-in rate-limit pair, and the chain to bind
+    # the endpoint to. Folding any two of them would hide one behind another.
     @staticmethod
-    async def create(
+    async def create(  # ruff: ignore[too-many-arguments]
         rpc_url: str,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
+        *,
         requests_per_second: int | None = None,
         burst: int | None = None,
+        chain_id: int | None = None,
     ) -> "AsyncAlloyProvider":
+        # The optional arguments are keyword-only: a positional sixth
+        # argument is a rate limit in one call and a chain in the next.
         """Create an ``AsyncAlloyProvider`` asynchronously.
 
         Args:
@@ -930,6 +943,8 @@ class AsyncAlloyProvider(
             max_blocks_per_request: Maximum blocks per log request.
             requests_per_second: Optional rate limit.
             burst: Optional burst size for rate limiting.
+            chain_id: Chain to bind the endpoint to; the Rust core raises
+                :class:`ValueError` when the endpoint serves another chain.
 
         Returns:
             An ``AsyncAlloyProvider`` instance.
@@ -941,6 +956,7 @@ class AsyncAlloyProvider(
             max_blocks_per_request,
             requests_per_second,
             burst,
+            chain_id,
         )
         return AsyncAlloyProvider(rust)
 

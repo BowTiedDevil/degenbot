@@ -30,7 +30,7 @@ use degenbot_core::{op_error, op_warn};
 use rand::RngExt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 /// Constants for retry logic. `pub(crate)` so the subscription watchdog
@@ -821,6 +821,11 @@ pub struct AlloyProvider {
     /// Default `DEFAULT_CALL_TIMEOUT` (30s); raise via the constructor for
     /// `eth_simulate_v1` / large `eth_getLogs` ranges.
     call_timeout: Duration,
+    /// The chain this endpoint was BOUND to, verified once at bind time.
+    /// A `OnceLock` because the verification is a fact about the endpoint, not
+    /// about the handle: every clone reads the one verified value, and no
+    /// hot-path call re-reads `eth_chainId`.
+    verified_chain_id: Arc<OnceLock<u64>>,
 }
 
 // Manual Clone impl makes Arc::clone sharing semantics explicit
@@ -832,6 +837,7 @@ impl Clone for AlloyProvider {
             rpc_url: self.rpc_url.clone(),
             max_attempts: self.max_attempts,
             call_timeout: self.call_timeout,
+            verified_chain_id: Arc::clone(&self.verified_chain_id),
         }
     }
 }
@@ -860,6 +866,7 @@ impl AlloyProvider {
             rpc_url: self.rpc_url.clone(),
             max_attempts: SIM_MAX_ATTEMPTS,
             call_timeout: SIM_CALL_TIMEOUT,
+            verified_chain_id: Arc::clone(&self.verified_chain_id),
         }
     }
 }
@@ -902,6 +909,81 @@ impl AlloyProvider {
         burst: NonZeroU32,
     ) -> ProviderResult<Self> {
         Self::build_provider(rpc_url, max_retries, Some((requests_per_second, burst))).await
+    }
+
+    /// Create a provider over an endpoint BOUND to `chain_id`.
+    ///
+    /// The transport is constructed exactly as [`Self::new`] constructs it
+    /// (HTTP/WS/IPC by scheme), then the binding is verified: one
+    /// `eth_chainId` round-trip, refused with
+    /// [`ProviderError::ChainMismatch`] when the endpoint serves another
+    /// chain, before any pool or token I/O runs. The verified id is cached on
+    /// the provider, so [`Self::get_chain_id`] and every later consumer read
+    /// it without another round-trip.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::ConnectionFailed`] when the endpoint cannot be
+    /// reached, or [`ProviderError::ChainMismatch`] when it answers with a
+    /// different chain.
+    pub async fn for_chain(rpc_url: &str, chain_id: u64, max_retries: u32) -> ProviderResult<Self> {
+        let provider = Self::new(rpc_url, max_retries).await?;
+        provider.bind_to_chain(chain_id).await?;
+        Ok(provider)
+    }
+
+    /// [`Self::for_chain`] over a rate-limited HTTP transport.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::ConnectionFailed`] when the endpoint cannot be
+    /// reached, or [`ProviderError::ChainMismatch`] when it answers with a
+    /// different chain.
+    pub async fn for_chain_with_rate_limit(
+        rpc_url: &str,
+        chain_id: u64,
+        max_retries: u32,
+        requests_per_second: u32,
+        burst: NonZeroU32,
+    ) -> ProviderResult<Self> {
+        let provider =
+            Self::with_rate_limit(rpc_url, max_retries, requests_per_second, burst).await?;
+        provider.bind_to_chain(chain_id).await?;
+        Ok(provider)
+    }
+
+    /// Verify this provider's endpoint against the chain its consumer resolved.
+    ///
+    /// Idempotent: an already-verified provider is not re-verified, so binding
+    /// it a second time costs no round-trip. A refusal caches nothing, so a
+    /// later bind re-reads the endpoint rather than trusting a failed check.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::ChainMismatch`] when the endpoint's `eth_chainId` is
+    /// not `chain_id`, or the read's own error when the endpoint cannot be
+    /// reached.
+    pub async fn bind_to_chain(&self, chain_id: u64) -> ProviderResult<()> {
+        if self.verified_chain_id().is_some() {
+            return Ok(());
+        }
+        let actual = self.get_chain_id().await?;
+        if actual != chain_id {
+            return Err(ProviderError::ChainMismatch {
+                expected: chain_id,
+                actual,
+                endpoint: self.rpc_url.clone(),
+            });
+        }
+        let _ = self.verified_chain_id.set(actual);
+        Ok(())
+    }
+
+    /// The chain this endpoint was verified to serve, or `None` when no
+    /// binding has verified it (an unbound provider, an offline recording).
+    #[must_use]
+    pub fn verified_chain_id(&self) -> Option<u64> {
+        self.verified_chain_id.get().copied()
     }
 
     /// Internal constructor shared by `new` and `with_rate_limit`.
@@ -1014,6 +1096,7 @@ impl AlloyProvider {
             rpc_url: rpc_url.to_string(),
             max_attempts: max_retries.saturating_add(1),
             call_timeout: DEFAULT_CALL_TIMEOUT,
+            verified_chain_id: Arc::new(OnceLock::new()),
         })
     }
 
@@ -1032,10 +1115,17 @@ impl AlloyProvider {
 
     /// Get chain ID.
     ///
+    /// An endpoint bound to a chain answers from the value its binding
+    /// verified, so a hot-path read costs no round-trip; an unbound provider
+    /// reads `eth_chainId` as usual.
+    ///
     /// # Errors
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_chain_id(&self) -> ProviderResult<u64> {
+        if let Some(verified) = self.verified_chain_id() {
+            return Ok(verified);
+        }
         rpc_call!(self, "Failed to get chain ID", self.inner.get_chain_id())
     }
 
@@ -1560,6 +1650,7 @@ impl AlloyProvider {
             rpc_url: String::from("test"),
             max_attempts: DEFAULT_MAX_RETRIES,
             call_timeout: DEFAULT_CALL_TIMEOUT,
+            verified_chain_id: Arc::new(OnceLock::new()),
         }
     }
 }

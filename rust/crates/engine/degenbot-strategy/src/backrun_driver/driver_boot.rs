@@ -78,6 +78,20 @@ pub enum BackrunBootError {
     /// than assuming one.
     #[error("backrun session chain unresolved: {0}")]
     SessionChain(String),
+    /// The endpoint the join names serves a different chain than the join was
+    /// resolved for. A node pointed at another chain answers every later read
+    /// with that other chain, so the boot refuses here — before the connector
+    /// DB is opened and before any lane is built.
+    #[error("node endpoint {endpoint} reports chain id {actual}, not the resolved session chain {chain_id}")]
+    ChainMismatch {
+        /// The chain the join resolved for.
+        chain_id: u64,
+        /// The chain the endpoint actually serves.
+        actual: u64,
+        /// The endpoint the join named.
+        endpoint: String,
+    },
+
     /// The connector DB yielded no usable roster for the configured chain. A
     /// database built for another chain reads as an EMPTY index (every load
     /// filters by chain), so this refusal is the only thing a mismatched
@@ -365,6 +379,37 @@ pub async fn resolve_backrun_boot(
     join: BackrunNodeJoin,
 ) -> BackrunBootResources {
     let chain_id = join.chain_id;
+    // The endpoint is bound to the chain the join already resolved, so the
+    // guard reads `join.chain_id` rather than resolving a chain of its own:
+    // a second resolution could name a different chain than the connector
+    // index below loads. Only a disagreement refuses — an endpoint that
+    // cannot be reached is the same inconclusive-at-boot case the layout
+    // probe treats as "unverified this boot", and a hermetic boot has no
+    // node at all.
+    let binding = join.provider.bind_to_chain(chain_id).await;
+    match binding {
+        Ok(()) => {}
+        Err(degenbot_core::errors::ProviderError::ChainMismatch { actual, .. }) => {
+            return BackrunBootResources {
+                boot_error: Some(BackrunBootError::ChainMismatch {
+                    chain_id,
+                    actual,
+                    endpoint: join.rpc_url.clone(),
+                }),
+                config,
+                join: Some(join),
+                connector_db: None,
+                registry: empty_registry(),
+            };
+        }
+        Err(error) => {
+            tracing::warn!(
+                chain_id,
+                %error,
+                "chain binding unverified this boot - the node could not be asked which chain it serves"
+            );
+        }
+    }
     // The roster is read for the chain the join resolved, and every load
     // filters by it: a database built for another chain yields an EMPTY
     // index rather than an error, so the emptiness check in the roster is
