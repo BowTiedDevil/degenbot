@@ -75,7 +75,7 @@ async def main() -> None:
             env,
             live=not dry_run,
             permutation=args.permutation,
-            rpc=RpcCascadeOverrides(cli_http=args.node_http, cli_ws=args.node_ws),
+            rpc=RpcCascadeOverrides(node=args.node),
         )
     except ValueError as exc:
         bot_logger.error(str(exc))
