@@ -88,12 +88,16 @@ just bootstrap  # or: pip install -e . for release-equivalent defaults
 The `Bot` class is the central session object for all degenbot operations. It manages connections, registries, and provides factory methods for creating pools and tokens:
 
 <!-- invisible-code-block: python
+# Executed but never shown: the live-RPC examples read historical state, so
+# they need an archive-capable node, which is what the harness name resolves.
 import degenbot
 from degenbot.config import DegenbotConfig
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
 ```python
+# RPC_URL is any HTTP RPC endpoint for chain 1, for example
+#   "https://eth-mainnet.example.com"
 # Initialize Bot from config file or explicit settings
 bot = degenbot.Bot(
     config=DegenbotConfig(
@@ -167,6 +171,8 @@ Degenbot pools follow an **I/O-free architecture** where on-chain data is fetche
 `Bot` is the central session object that owns all runtime state:
 
 <!-- invisible-code-block: python
+# Executed but never shown: the live-RPC examples read historical state, so
+# they need an archive-capable node, which is what the harness name resolves.
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
@@ -174,6 +180,8 @@ from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 import degenbot
 from degenbot.config import DegenbotConfig
 
+# RPC_URL is any HTTP RPC endpoint for chain 1, for example
+#   "https://eth-mainnet.example.com"
 # Bot manages connections, registries, and provides factory methods
 bot = degenbot.Bot(
     config=DegenbotConfig(
@@ -324,6 +332,8 @@ All pool and token creation should flow through the `Bot` class for proper regis
 import degenbot
 from degenbot.config import DegenbotConfig
 
+# RPC_URL is any HTTP RPC endpoint for chain 1, for example
+#   "https://eth-mainnet.example.com"
 # Initialize Bot (handles config, connections, registries)
 bot = degenbot.Bot(
     config=DegenbotConfig(
@@ -931,6 +941,8 @@ Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `A
 import asyncio
 import degenbot
 from degenbot.config import DegenbotConfig
+# Executed but never shown: the live-RPC examples read historical state, so
+# they need an archive-capable node, which is what the harness name resolves.
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -1076,6 +1088,8 @@ The `Bot` class is the primary entry point for degenbot usage. Access factories,
 import degenbot
 from degenbot.config import DegenbotConfig
 
+# RPC_URL is any HTTP RPC endpoint for chain 1, for example
+#   "https://eth-mainnet.example.com"
 # With explicit config
 bot = degenbot.Bot(
     config=DegenbotConfig(
@@ -1488,12 +1502,16 @@ assert values == ["0x0000000000000000000000000000000000000001", "100"]
 <!-- invisible-code-block: python
 from degenbot._ffi.contract import Contract
 from degenbot._ffi.provider import AlloyProvider
+# Executed but never shown: the live-RPC examples read historical state, so
+# they need an archive-capable node, which is what the harness name resolves.
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
 <!-- live-rpc: start "requires live RPC" -->
 
 ```python
+# RPC_URL is any HTTP RPC endpoint for chain 1, for example
+#   "https://eth-mainnet.example.com"
 # Create provider with connection pooling
 provider = AlloyProvider(RPC_URL)
 

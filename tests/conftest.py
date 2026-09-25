@@ -50,6 +50,17 @@ def _rpc(key: str, default: str) -> str:
     endpoint without editing the (gitignored) ``tests.env``. Checking ``os.environ``
     first makes ad-hoc overrides (``ETHEREUM_ARCHIVE_NODE_HTTP_URI='…' pytest …``)
     work across machines and CI without touching any file.
+
+    The names this resolves are the harness's own vocabulary, deliberately kept
+    out of the operator namespace: the suite needs two node tiers per chain
+    (archive and full), while the operator file's ``[nodes]`` tables hold one
+    endpoint per transport per chain, so a second HTTP endpoint for the same
+    chain has nowhere to fold into. They are therefore not
+    ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>`` names and must not grow a fallback
+    onto them — a second namespace that shares a fallback is how the next
+    ambiguity starts. ``executor/ape-config.yaml`` reads
+    ``${ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
+    ``_FULL_`` names outlive the suite that defines them.
     """
     return os.environ.get(key, env_values.get(key, default))
 
