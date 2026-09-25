@@ -179,8 +179,8 @@ def test_fresh_init_creates_no_config_file(
     )
     monkeypatch.setattr(
         config_module,
-        "create_new_sqlite_database",
-        lambda **_kwargs: None,
+        "db_create_new_database",
+        lambda _path: None,
     )
     monkeypatch.setenv(_CHAIN_ID_ENV_VAR, "1")
 

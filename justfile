@@ -851,6 +851,12 @@ check-no-alembic:
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_alembic_references --exact --nocapture
 
+# ADR-052 D7: SQLAlchemy and the Python ORM are retired from the runtime and
+# test-owned Python surfaces. The gate also checks the root dependency and lock
+# declarations and proves its AST detector rejects a synthetic import.
+check-no-sqlalchemy:
+    uv run --no-sync pytest -q tests/test_no_sqlalchemy_test_imports.py
+
 # ========== Stub-to-Runtime Drift Gate (ADR-053, ergo XNEJRD) ==========
 #
 # mypy.stubtest replaces the bespoke drift gate's R1/R3/R4 mechanics (and R2,

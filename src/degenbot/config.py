@@ -16,7 +16,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from degenbot.database.operations import create_new_sqlite_database
+from degenbot.db import db_create_new_database
 from degenbot.logging import logger
 from degenbot.types.aliases import ChainId
 
@@ -527,6 +527,7 @@ def _init_config() -> DegenbotConfig:
     if config.database.path.name != ":memory:":
         config.database.path.parent.mkdir(parents=True, exist_ok=True)
         if not config.database.path.exists():
-            create_new_sqlite_database(db_path=config.database.path)
+            db_create_new_database(str(config.database.path))
+            logger.info(f"Initialized new SQLite database at {config.database.path}")
 
     return config

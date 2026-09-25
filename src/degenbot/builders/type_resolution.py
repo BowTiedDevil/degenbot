@@ -6,7 +6,6 @@ defined once and used by the Bot build path.
 
 Pure functions (no I/O):
 - pool_class_for_descriptor()
-- _build_descriptor_from_db_result()
 - _descriptor_from_probing_result()
 
 Sync functions (accept BotIo):
@@ -30,7 +29,6 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
     from degenbot._ffi import BotIo
-    from degenbot.database.models.pools import LiquidityPoolTable
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.types.chain import ChecksummedAddress
@@ -95,38 +93,6 @@ def pool_class_for_descriptor(
             raise DegenbotValueError(message=msg)
 
 
-def _build_descriptor_from_db_result(
-    pool_from_db: LiquidityPoolTable,
-) -> PoolTypeDescriptor:
-    """Map a DB row to a PoolTypeDescriptor.
-
-    Read-only dependency on pool_type_registry.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        DegenbotValueError: On a kind the registry does not know. A present
-            but unrecognized DB kind is a seed/registry gap; falling through
-            to on-chain probing would silently re-classify the pool.
-
-    """
-    kind = pool_from_db.kind
-    descriptor = pool_type_registry.get_descriptor_by_kind(kind)
-    if descriptor is None:
-        msg = (
-            f"Unrecognized pool kind {kind!r} from the database; "
-            f"pool_type_registry has no descriptor for it."
-        )
-        raise DegenbotValueError(message=msg)
-    return PoolTypeDescriptor(
-        family=descriptor.family,
-        variant=descriptor.variant,
-        kind=descriptor.kind,
-        factory=get_checksum_address(pool_from_db.exchange.factory),
-    )
-
-
 def _build_descriptor_from_seam_rows(
     *,
     pool_kind: str,
@@ -134,10 +100,8 @@ def _build_descriptor_from_seam_rows(
 ) -> PoolTypeDescriptor:
     """Map Rust-seam rows to a `PoolTypeDescriptor` (QVMWQC).
 
-    The seam version of [`_build_descriptor_from_db_result`]: instead of a
-    hydrated ORM row, takes the two fields the builder reads (`pool.kind` +
-    `pool.exchange.factory`) fetched via `BotIo.fetch_pool_row` /
-    `fetch_exchange`.
+    Takes the two fields the builder reads (`pool.kind` + `pool.exchange.factory`)
+    fetched via `BotIo.fetch_pool_row` / `fetch_exchange`.
 
     Returns:
         The computed value.

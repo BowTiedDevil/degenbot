@@ -5,7 +5,7 @@ This module is intentionally empty; it is kept as an import target for
 
 History:
 
-- DADWUP retired the per-pool SQLAlchemy ``yield_per`` ingestion loops
+- DADWUP retired the per-pool ``yield_per`` ingestion loops
   (``stream_*_snapshot_to_engine`` / ``insert_*_pool_snapshot``).
 - XEANMB retired the whole-dict ``load_*_from_py`` engine surface and, with
   the in-memory ``SnapshotStore``, the ``_v3_snapshot_to_py_dict`` /

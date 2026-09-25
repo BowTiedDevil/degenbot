@@ -19,10 +19,9 @@ functional namespace marker for the ~45 database operations.
 
 The classes are ADR-005 ``Py*`` aliases / ``*Row``/``*RowInput`` types.
 
-Split from ``degenbot.database`` (ADR-013): ``degenbot.db`` owns the
-Rust-backed row types + operations; ``degenbot.database`` keeps the
-SQLAlchemy ORM (``DatabaseSessionManager``, ``models/``). The schema is
-Rust-owned and upgrades itself at open (ADR-052).
+This is the sole Python database mirror: it owns the Rust-backed row types and
+operations, while the pure-Rust ``degenbot-db`` crate owns the schema and
+upgrades it at open (ADR-052).
 """
 
 from degenbot._ffi import Erc20TokenRow

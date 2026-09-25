@@ -1,65 +1,13 @@
-"""Tests for the pure functions extracted from type_resolution.py.
-
-Plan 066, Slice 1: _build_descriptor_from_db_result and
-_descriptor_from_probing_result are the first pure-logic extractions.
-These tests verify behavior through the public interface of each function.
-"""
-
-from unittest.mock import MagicMock
+"""Tests for the pure probing descriptor logic extracted from type_resolution.py."""
 
 import pytest
 
-from degenbot.builders.type_resolution import (
-    _build_descriptor_from_db_result,
-    _descriptor_from_probing_result,
-)
+from degenbot.builders.type_resolution import _descriptor_from_probing_result
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.types.pool_type import PoolFamily, PoolProbe
 
 CHAIN_ID = 1
 UNKNOWN_FACTORY = "0x0000000000000000000000000000000000000001"
-
-
-class TestBuildDescriptorFromDbResult:
-    """_build_descriptor_from_db_result maps a DB row to a PoolTypeDescriptor."""
-
-    def test_known_kind_returns_descriptor(self) -> None:
-        """A registered kind maps to a PoolTypeDescriptor with the right family."""
-        mock_row = MagicMock()
-        mock_row.kind = "uniswap_v2"
-        mock_row.exchange.factory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-        result = _build_descriptor_from_db_result(mock_row)
-        assert result is not None
-        assert result.family == PoolFamily.CONSTANT_PRODUCT
-        assert result.kind == "uniswap_v2"
-
-    def test_unknown_kind_raises(self) -> None:
-        """A present-but-unrecognized DB kind raises — it must not be silently
-        dropped, which would fall through to on-chain re-classification."""
-        mock_row = MagicMock()
-        mock_row.kind = "nonexistent_kind"
-        mock_row.exchange.factory = "0xABCD"
-        with pytest.raises(DegenbotValueError, match="Unrecognized pool kind"):
-            _build_descriptor_from_db_result(mock_row)
-
-    def test_returns_factory_from_exchange(self) -> None:
-        """The descriptor carries the factory from the DB exchange row."""
-        factory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-        mock_row = MagicMock()
-        mock_row.kind = "uniswap_v2"
-        mock_row.exchange.factory = factory
-        result = _build_descriptor_from_db_result(mock_row)
-        assert result is not None
-        assert result.factory == factory
-
-    def test_concentrated_liquidity_kind(self) -> None:
-        """A V3 kind maps to CONCENTRATED_LIQUIDITY."""
-        mock_row = MagicMock()
-        mock_row.kind = "uniswap_v3"
-        mock_row.exchange.factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-        result = _build_descriptor_from_db_result(mock_row)
-        assert result is not None
-        assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
 
 
 class TestDescriptorFromProbingResult:

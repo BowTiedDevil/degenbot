@@ -274,8 +274,8 @@ class Bot(AccountQueryMixin):
             # via ``load_*_from_py``).
             if config.database.path is not None:
                 db_path = config.database.path
-                # The DB file may not exist yet (SQLAlchemy creates it lazily on
-                # the first write). A missing file is a cold-start: no snapshot
+                # The DB file may not exist yet (the Rust database owner creates it on first
+                # write). A missing file is a cold-start: no snapshot
                 # pools to load, `S = None`. The store stays empty; pool
                 # registration falls back to sparse. The file will be created by
                 # the first write, at which point a `Bot` restart will load it.

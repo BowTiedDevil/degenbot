@@ -19,7 +19,6 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic ~= 2.13",
     "pydantic-settings ~= 2.15",
-    "sqlalchemy ~= 2.0",
     "tenacity ~= 9.1",
     "tomlkit ~= 0.15",
 ]
@@ -134,14 +133,13 @@ allow-star-arg-any = true
     "try-except-pass",     # the optional event-fetcher import's try/except/pass is intentional
     "hardcoded-sql-expression",     # the table-name is from a hardcoded _TABLE_ORDER list, not user input
     "SIM",      # the compare dict-comprehensions are clarity over comprehension
-    "private-member-access",   # sqlalchemy's `row._mapping` is the documented dict-access API
     "raise-vanilla-args",   # raise-vanilla-args on the SystemExit messages
     "raise-within-try",   # re-raising the worker-thread error from within the try is intentional
     "print",     # the CLI prints its summary to stdout by design
 ]
 "tests/pathfinding/fixtures/generate_mainnet_snapshot.py" = [
     # The snapshot generator copies rows verbatim out of the live operator DB
-    # with raw sql (ATTACH + INSERT SELECT): SQLAlchemy ORM re-inserts would
+    # with raw sql (ATTACH + INSERT SELECT): ORM re-inserts would
     # re-derive values and lose fidelity, and the selection queries
     # deliberately mirror the shapes of `degenbot_db::pathfinding`'s SQL so a
     # schema drift surfaces here first. All identifiers are internal ints /
@@ -272,8 +270,8 @@ extra-paths = ["examples"]
 # Dead-code detector. Output is a triage list, not a gate: each hit
 # needs a human call (rg for refs) before deletion — vulture is static
 # and can't see FFI-seam callers (Rust core) or framework dispatch
-# (pydantic validators, SQLAlchemy TypeDecorator signatures, protocol
-# params). 80% confidence is the operating point — the 60% tier is
+# (pydantic validators, protocol params). 80% confidence is the operating point
+# — the 60% tier is
 # mostly framework-dispatched methods (validators, properties on
 # models, enum members referenced dynamically).
 min_confidence = 80
