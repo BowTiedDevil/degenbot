@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV4PoolTable
-from degenbot.database.operations import resolve_token_ids
+from degenbot.db import db_resolve_token_ids
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.pathfinding import (
@@ -30,11 +30,9 @@ from degenbot.pathfinding import (
 )
 
 if TYPE_CHECKING:
+    import pathlib
     from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
 
-    from sqlalchemy.orm import Session
-
-    from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.types.chain import ChecksummedAddress
 
 type PoolId = int
@@ -64,34 +62,20 @@ class _PreparedGraph:
 def _prepare_graph(
     chain_id: int,
     pool_types: Sequence[type],
-    session: Session,
+    database_path: pathlib.Path,
     allowed_intermediate_tokens: set[TokenId] | None = None,
 ) -> _PreparedGraph:
     """Build the flat edge list + step builder for the Rust DFS.
 
-    The DB must be file-backed: the Rust `build_path_graph` seam opens its own
-    connection on the session's database path.
+    The Rust `build_path_graph` seam opens the explicit file path.
 
     Returns:
         A ``_PreparedGraph`` with flat edges + the Rust step builder.
 
-    Raises:
-        DegenbotValueError: The session is not file-backed.
-
     """
-    engine = session.bind
-    db_path = getattr(getattr(engine, "url", None), "database", None) if engine else None
-    if not db_path or db_path == ":memory:":
-        msg = (
-            "Pathfinding requires a file-backed database "
-            "(the Rust build_path_graph seam opens its own connection); "
-            ":memory: sessions are not supported."
-        )
-        raise DegenbotValueError(message=msg)
-
     start = time.perf_counter()
     raw = build_path_graph(
-        database_path=str(db_path),
+        database_path=str(database_path),
         chain_id=chain_id,
         pool_kinds=classify_pool_kinds(pool_types),
         allowed_intermediate_token_ids=allowed_intermediate_tokens,
@@ -134,7 +118,7 @@ class PathfindingRequest:
         chain_id: Chain ID restricting pool and token queries.
         start_tokens: Token addresses that begin a path.
         end_tokens: Token addresses that end a path.
-        db: Database session manager used to open a read session.
+        database_path: File-backed SQLite database opened by Rust read seams.
         min_depth: Minimum hops in yielded paths.
         max_depth: Optional maximum hops in yielded paths.
         pool_types: Pool-table classes to include (default V2/V3 + V4).
@@ -147,7 +131,7 @@ class PathfindingRequest:
     chain_id: int
     start_tokens: Iterable[ChecksummedAddress | str]
     end_tokens: Iterable[ChecksummedAddress | str]
-    db: DatabaseSessionManager
+    database_path: pathlib.Path
     min_depth: int = 2
     max_depth: int | None = None
     pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable)
@@ -158,7 +142,7 @@ class PathfindingRequest:
 def _resolve_boundary_token_ids(
     chain_id: int,
     tokens: set[ChecksummedAddress],
-    session: Session,
+    database_path: pathlib.Path,
     label: str,
 ) -> list[TokenId]:
     """Resolve every boundary address to its token id, preserving set order.
@@ -170,7 +154,7 @@ def _resolve_boundary_token_ids(
         DegenbotValueError: A boundary token is absent from the database.
 
     """
-    resolved = resolve_token_ids(chain_id, tokens, session)
+    resolved = db_resolve_token_ids(str(database_path), chain_id, list(tokens))
     ordered: list[TokenId] = []
     for token in tokens:
         token_id = resolved.get(token)
@@ -190,56 +174,55 @@ def _prepare_traversals(request: PathfindingRequest) -> list[_Traversal]:
     """
     # @dev Liquidity pool lookups using a token ID are implicitly filtered for
     # the chain ID, since token addresses are unique to the chain.
-    with request.db() as session:
-        allowed_token_ids: set[TokenId] | None = None
-        if request.allowed_intermediate_tokens is not None:
-            allowed_token_ids = set(
-                resolve_token_ids(
-                    request.chain_id,
-                    (get_checksum_address(tok) for tok in request.allowed_intermediate_tokens),
-                    session,
-                ).values(),
-            )
-
-        prepared = _prepare_graph(
-            chain_id=request.chain_id,
-            pool_types=request.pool_types,
-            session=session,
-            allowed_intermediate_tokens=allowed_token_ids,
-        )
-        rust_filter = convert_pool_type_filter(request.pool_type_per_depth)
-        start_ids = _resolve_boundary_token_ids(
-            request.chain_id,
-            {get_checksum_address(token) for token in request.start_tokens},
-            session,
-            "Start",
-        )
-        end_ids = _resolve_boundary_token_ids(
-            request.chain_id,
-            {get_checksum_address(token) for token in request.end_tokens},
-            session,
-            "End",
-        )
-        filter_len = (
-            len(request.pool_type_per_depth) if request.pool_type_per_depth is not None else None
+    allowed_token_ids: set[TokenId] | None = None
+    if request.allowed_intermediate_tokens is not None:
+        allowed_token_ids = set(
+            db_resolve_token_ids(
+                str(request.database_path),
+                request.chain_id,
+                [get_checksum_address(tok) for tok in request.allowed_intermediate_tokens],
+            ).values(),
         )
 
-        traversals: list[_Traversal] = []
-        for start_id, end_id, include_reverse, min_depth in prepare_traversal_plan(
-            start_ids, end_ids, request.min_depth, filter_len
-        ):
-            logger.debug(f"Finding paths from token {start_id} -> token {end_id}")
-            logger.debug(f"Performing generic {request.max_depth}-pool path search")
-            traversals.append(
-                _Traversal(
-                    prepared=prepared,
-                    start_token_id=start_id,
-                    end_token_id=end_id,
-                    include_reverse=include_reverse,
-                    min_depth=min_depth,
-                    pool_kind_filter=rust_filter,
-                )
+    prepared = _prepare_graph(
+        chain_id=request.chain_id,
+        pool_types=request.pool_types,
+        database_path=request.database_path,
+        allowed_intermediate_tokens=allowed_token_ids,
+    )
+    rust_filter = convert_pool_type_filter(request.pool_type_per_depth)
+    start_ids = _resolve_boundary_token_ids(
+        request.chain_id,
+        {get_checksum_address(token) for token in request.start_tokens},
+        request.database_path,
+        "Start",
+    )
+    end_ids = _resolve_boundary_token_ids(
+        request.chain_id,
+        {get_checksum_address(token) for token in request.end_tokens},
+        request.database_path,
+        "End",
+    )
+    filter_len = (
+        len(request.pool_type_per_depth) if request.pool_type_per_depth is not None else None
+    )
+
+    traversals: list[_Traversal] = []
+    for start_id, end_id, include_reverse, min_depth in prepare_traversal_plan(
+        start_ids, end_ids, request.min_depth, filter_len
+    ):
+        logger.debug(f"Finding paths from token {start_id} -> token {end_id}")
+        logger.debug(f"Performing generic {request.max_depth}-pool path search")
+        traversals.append(
+            _Traversal(
+                prepared=prepared,
+                start_token_id=start_id,
+                end_token_id=end_id,
+                include_reverse=include_reverse,
+                min_depth=min_depth,
+                pool_kind_filter=rust_filter,
             )
+        )
     return traversals
 
 

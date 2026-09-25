@@ -3544,7 +3544,7 @@ mod tests {
             )
             .expect("PyAlloyProvider construction");
             let provider_any: pyo3::Py<pyo3::PyAny> = pyalloy.into_any().unbind();
-            let io_struct = crate::bot::py_bot_io::PyBotIo::new(py, provider_any, None, None);
+            let io_struct = crate::bot::py_bot_io::PyBotIo::new(py, provider_any, None);
             let io_bound = pyo3::Bound::new(py, io_struct).expect("wrap PyBotIo as Bound");
 
             // 3. Cold-start PyBot + assemble_v3_tick_map with `io=Some`.

@@ -21,11 +21,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-
-from degenbot._ffi import Bot
 
 
 @pytest.fixture(autouse=True)
@@ -188,6 +185,7 @@ def test_fleet_station_executes_callables_on_named_fleet_seats() -> None:
 _LEGACY_CHILD = """
 import os
 import sys
+from pathlib import Path
 
 # FF-T5 determinism (the addendum): a FRESH process - no engine
 # constructed, no stance env - so the legacy-stance view is what the
@@ -213,7 +211,7 @@ from degenbot.runner.build_paths import PathRegistrationPipeline
 ctx = SimpleNamespace(
     bot=bot,
     chain_id=1,
-    db=None,
+    database_path=Path("unused.db"),
     uniswap_v3_tracker=None,
     sushiswap_v3_tracker=None,
     pancakeswap_v3_tracker=None,

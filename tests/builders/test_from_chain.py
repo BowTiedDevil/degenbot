@@ -4,6 +4,7 @@
 # anvil to the `UniswapV2Pool` + `dex.variant` model. See
 # docs/migration-guides/dex-subclass-collapse.md (removed in the stale-docs cleanup `71ec78b2`).
 from fractions import Fraction
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,7 +22,6 @@ from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.crypto import function_selector
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -85,12 +85,8 @@ def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilde
 
     erc20_builder.build = _build_token
 
-    # DB mock: raise on enter so contextlib.suppress skips it
-    db = MagicMock(spec=DatabaseSessionManager)
-    db.side_effect = RuntimeError("no db")
-
     ctx = BuilderContext(
-        db=db,
+        database_path=Path("unused.db"),
         pools=MagicMock(spec=PoolRegistry),
         tokens=MagicMock(spec=TokenRegistry),
         erc20_builder=erc20_builder,

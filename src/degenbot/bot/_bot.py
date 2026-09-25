@@ -35,8 +35,6 @@ from degenbot.builders.type_resolution import (
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.database.operations import get_scoped_sqlite_session
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import BrokenPool, TrackerAlreadyInitialized
 from degenbot.logging import logger
@@ -237,6 +235,7 @@ class Bot(AccountQueryMixin):
         _driver_boot()
 
         self.config = config
+        self.database_path = config.database.path
 
         if config.default_chain_id is None:
             msg = (
@@ -294,9 +293,6 @@ class Bot(AccountQueryMixin):
             # engine only.
             self._py_bot = py_bot
 
-        self.db = DatabaseSessionManager(
-            get_scoped_sqlite_session(database_path=config.database.path),
-        )
         if py_bot is None:
             # Architecture review 2025-07-18 / candidate 1: attach the core
             # `ConstructionIo` handle to the `Bot` engine (built from the extracted
@@ -321,8 +317,7 @@ class Bot(AccountQueryMixin):
             # a different executor) changes one site, not eight.
             self._io = BotIo(
                 provider=self._provider,
-                db=self.db,
-                database_path=str(config.database.path),
+                database_path=str(self.database_path),
             )
             # Wire the `ConstructionIo` handle attached above onto `BotIo` so its
             # 12 DB + 7 generic RPC methods delegate through the core trait objects.
@@ -341,13 +336,12 @@ class Bot(AccountQueryMixin):
             if erc20_builder is not None
             else Erc20Builder(
                 default_chain_id=self._chain_id,
-                db=self.db,
                 tokens=self.tokens,
                 py_bot=self._py_bot,
             )
         )
         ctx = BuilderContext(
-            db=self.db,
+            database_path=self.database_path,
             pools=self.pools,
             tokens=self.tokens,
             erc20_builder=self._erc20_builder,
@@ -536,12 +530,11 @@ class Bot(AccountQueryMixin):
         """Release all Python handles owned by this Bot session.
 
         End-of-life teardown that composes :meth:`release_python_state` and
-        adds the connection teardown the Bot was previously missing: the
-        provider connection is closed, the scoped DB session is removed,
-        and the the Rust ``Bot`` engine / provider references are dropped. Idempotent —
+        closes the provider connection and drops the Rust ``Bot`` engine /
+        provider references. Idempotent —
         safe to call directly and again from a ``with`` block's ``__exit__``.
 
-        The Rust the Rust ``Bot`` engine is reference-counted; closing this Python wrapper
+        The Rust ``Bot`` engine is reference-counted; closing this Python wrapper
         only drops *this* Bot's ref. A running engine that took its own ref
         (via ``EngineRegistry(bot=bot)`` → ``ArbitrageEngine(py_bot=...)``)
         is unaffected.

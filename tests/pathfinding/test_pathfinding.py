@@ -8,8 +8,6 @@ from degenbot.database.models.pools import (
     UniswapV3PoolTable,
     UniswapV4PoolTable,
 )
-from degenbot.database.operations import get_scoped_sqlite_session
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import PathfindingRequest, PathStep, find_paths, find_paths_async
 from degenbot.types.chain import ChainId
 
@@ -26,16 +24,15 @@ def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:
 
 @pytest.fixture
 def db():
-    """Provide the module-level database session manager."""
-    cfg = _init_config()
-    return DatabaseSessionManager(get_scoped_sqlite_session(database_path=cfg.database.path))
+    """Provide the configured file-backed database path."""
+    return _init_config().database.path
 
 
 def test_two_pool_pathfinding_cycling_weth(db):
     paths = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -56,7 +53,7 @@ async def test_two_pool_pathfinding_cycling_weth_async(db):
         path
         async for path in find_paths_async(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -82,7 +79,7 @@ def test_generic_algo_multiple_tokens(db):
     generic_paths_weth_to_weth = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -95,7 +92,7 @@ def test_generic_algo_multiple_tokens(db):
     generic_paths_weth_to_native = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[ZERO_ADDRESS],
@@ -108,7 +105,7 @@ def test_generic_algo_multiple_tokens(db):
     generic_paths_weth_to_weth_or_native = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
@@ -133,7 +130,7 @@ def test_generic_algo_multiple_tokens(db):
     generic_paths_native_to_weth = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[ZERO_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -146,7 +143,7 @@ def test_generic_algo_multiple_tokens(db):
     generic_paths_native_to_native = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[ZERO_ADDRESS],
                 end_tokens=[ZERO_ADDRESS],
@@ -159,7 +156,7 @@ def test_generic_algo_multiple_tokens(db):
     generic_paths_native_to_weth_or_native = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[ZERO_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
@@ -183,7 +180,7 @@ def test_generic_algo_multiple_tokens(db):
     generic_paths_weth_or_native_to_weth_or_native = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
@@ -213,7 +210,7 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types(db):
     for i, _ in enumerate(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -238,7 +235,7 @@ def test_three_pool_pathfinding_cycling_weth_native_with_limited_types(db):
     for i, _ in enumerate(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
@@ -258,7 +255,7 @@ def test_three_pool_pathfinding_cycling_weth(db):
     paths = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -274,7 +271,7 @@ def test_four_pool_pathfinding_cycling_weth_with_limited_types(db):
     paths = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -297,7 +294,7 @@ def test_whitelist_restricts_intermediate_tokens(db):
     all_paths = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -316,7 +313,7 @@ def test_whitelist_restricts_intermediate_tokens(db):
     weth_only_paths = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -342,7 +339,7 @@ def test_whitelist_none_is_same_as_no_whitelist(db):
     paths_no_arg = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
@@ -357,7 +354,7 @@ def test_whitelist_none_is_same_as_no_whitelist(db):
     paths_none_arg = list(
         find_paths(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],

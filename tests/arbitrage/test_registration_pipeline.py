@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -156,7 +157,7 @@ def _pipeline_with_bot(
     ctx = SimpleNamespace(
         bot=constr_bot,
         chain_id=1,
-        db=None,
+        database_path=Path("unused.db"),
         uniswap_v3_tracker=None,
         sushiswap_v3_tracker=None,
         pancakeswap_v3_tracker=None,
@@ -314,7 +315,7 @@ def test_legacy_stance_pipeline_construction_refuses() -> None:
     ctx = SimpleNamespace(
         bot=SimpleNamespace(registration_fleet_hosted=lambda: False),
         chain_id=1,
-        db=None,
+        database_path=Path("unused.db"),
         uniswap_v3_tracker=None,
         sushiswap_v3_tracker=None,
         pancakeswap_v3_tracker=None,
@@ -398,7 +399,7 @@ def _pipeline_over_registry(
     ctx = SimpleNamespace(
         bot=bot,
         chain_id=1,
-        db=None,
+        database_path=Path("unused.db"),
         uniswap_v3_tracker=_Tracker(),
         sushiswap_v3_tracker=None,
         pancakeswap_v3_tracker=None,
@@ -527,7 +528,7 @@ def _pipeline_over_registry_three_pools(
     ctx = SimpleNamespace(
         bot=bot,
         chain_id=1,
-        db=None,
+        database_path=Path("unused.db"),
         uniswap_v3_tracker=_Tracker(),
         sushiswap_v3_tracker=None,
         pancakeswap_v3_tracker=None,
@@ -724,11 +725,10 @@ async def test_trigger_discovery_bound_truncation_does_not_latch() -> None:
     assert sweep_count["n"] == 2
 
 
-async def test_trigger_discovery_no_db_never_latches() -> None:
-    """Without a DB handle the edition probe is None — the latch stays
-    disabled and every trigger enumerates (the pre-existing behavior)."""
+async def test_trigger_discovery_probe_failure_never_latches() -> None:
+    """A failed Rust graph-edition probe leaves the latch disabled."""
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)  # context db=None
+    pipeline, _bot = _pipeline_with_bot(bot)  # context uses an explicit unused path
 
     paths = [_closed_v3_cycle_steps() for _ in range(2)]
     sweep_count = {"n": 0}
@@ -738,6 +738,7 @@ async def test_trigger_discovery_no_db_never_latches() -> None:
         return _producer(list(paths))
 
     pipeline.discovery_sweep = _sweep  # type: ignore[method-assign]
+    pipeline._graph_edition = lambda: None  # type: ignore[method-assign]
 
     assert await pipeline.trigger_discovery() == 2
     assert await pipeline.trigger_discovery() == 2

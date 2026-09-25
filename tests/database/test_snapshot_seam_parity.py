@@ -10,6 +10,7 @@ the right args.
 
 import json
 import pathlib
+from collections.abc import Iterator
 
 import pytest
 
@@ -26,13 +27,21 @@ def _expected() -> dict:
 
 
 @pytest.fixture(scope="module")
-def v3_snapshot() -> V3DatabaseSnapshot:
-    return V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH)
+def v3_snapshot() -> Iterator[V3DatabaseSnapshot]:
+    snapshot = V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH)
+    try:
+        yield snapshot
+    finally:
+        snapshot.close()
 
 
 @pytest.fixture(scope="module")
-def v4_snapshot() -> V4DatabaseSnapshot:
-    return V4DatabaseSnapshot(chain_id=8453, database_path=DB_PATH)
+def v4_snapshot() -> Iterator[V4DatabaseSnapshot]:
+    snapshot = V4DatabaseSnapshot(chain_id=8453, database_path=DB_PATH)
+    try:
+        yield snapshot
+    finally:
+        snapshot.close()
 
 
 # ── §4.2 parity: Rust-backed reads == frozen SQLAlchemy oracle ─────────
@@ -112,29 +121,29 @@ class TestSnapshotDelegation:
         pyclass (whose methods are read-only) need not be monkeypatched.
         """
         calls: list[str] = []
-        snap = V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH)
-        real_rust = snap._rust()
+        with V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH) as snap:
+            real_rust = snap._rust()
 
-        class _Spy:
-            def get_newest_block_v3(self) -> int | None:
-                calls.append("get_newest_block_v3")
-                return real_rust.get_newest_block_v3()
+            class _Spy:
+                def get_newest_block_v3(self) -> int | None:
+                    calls.append("get_newest_block_v3")
+                    return real_rust.get_newest_block_v3()
 
-        monkeypatch.setattr(snap, "_rust_snapshot", _Spy())
-        snap.get_newest_block()
-        assert calls == ["get_newest_block_v3"]
+            monkeypatch.setattr(snap, "_rust_snapshot", _Spy())
+            snap.get_newest_block()
+            assert calls == ["get_newest_block_v3"]
 
     def test_get_pools_delegates_to_rust(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_pools calls DatabaseSnapshot.get_pools_v3."""
         calls: list[str] = []
-        snap = V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH)
-        real_rust = snap._rust()
+        with V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH) as snap:
+            real_rust = snap._rust()
 
-        class _Spy:
-            def get_pools_v3(self) -> set[str]:
-                calls.append("get_pools_v3")
-                return real_rust.get_pools_v3()
+            class _Spy:
+                def get_pools_v3(self) -> set[str]:
+                    calls.append("get_pools_v3")
+                    return real_rust.get_pools_v3()
 
-        monkeypatch.setattr(snap, "_rust_snapshot", _Spy())
-        snap.get_pools()
-        assert calls == ["get_pools_v3"]
+            monkeypatch.setattr(snap, "_rust_snapshot", _Spy())
+            snap.get_pools()
+            assert calls == ["get_pools_v3"]

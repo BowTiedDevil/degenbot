@@ -1,6 +1,9 @@
+from collections.abc import Iterator
+
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.config import _init_config
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.fork import AnvilFork
@@ -45,10 +48,15 @@ def mainnet_snapshot_at_block_12_369_870_from_dir() -> UniswapV3LiquiditySnapsho
 @pytest.fixture
 def base_snapshot_from_database(
     fork_base_full: AnvilFork,
-) -> UniswapV3LiquiditySnapshot:
-    return UniswapV3LiquiditySnapshot(
-        source=DatabaseSnapshot(chain_id=8453),
+) -> Iterator[UniswapV3LiquiditySnapshot]:
+    source = DatabaseSnapshot(
+        chain_id=8453,
+        database_path=_init_config().database.path,
     )
+    try:
+        yield UniswapV3LiquiditySnapshot(source=source)
+    finally:
+        source.close()
 
 
 @pytest.mark.base

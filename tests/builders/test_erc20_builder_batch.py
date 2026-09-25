@@ -17,7 +17,6 @@ import json
 from degenbot._ffi import Bot
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.erc20_builder import Erc20Builder
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.registry import TokenRegistry
 
 TOKEN_A = "0x00000000000000000000000000000000000000A1"
@@ -64,10 +63,9 @@ class _RecFakeIo:
 def test_build_many_issues_single_batched_fetch() -> None:
     """Two DB/registry-missing tokens resolve via ONE batched metadata fetch."""
     py_bot = Bot(chain_id=1)
-    fake_db = object.__new__(DatabaseSessionManager)
     tokens = TokenRegistry()
     io = _RecFakeIo()
-    erc20 = Erc20Builder(default_chain_id=1, db=fake_db, tokens=tokens, py_bot=py_bot)
+    erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
 
     t_a, t_b = erc20.build_many([TOKEN_A, TOKEN_B], chain_id=1, silent=True, io=io)
 
@@ -100,10 +98,9 @@ def test_build_many_falls_back_per_token_for_none_meta() -> None:
         })
     )
     py_bot.attach_construction_io(provider, None)
-    fake_db = object.__new__(DatabaseSessionManager)
     tokens = TokenRegistry()
     io = _RecFakeIo()
-    erc20 = Erc20Builder(default_chain_id=1, db=fake_db, tokens=tokens, py_bot=py_bot)
+    erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
 
     # Patch the batch to return None for the second token (simulating a revert
     # / decode failure in the multicall for TOKEN_B).

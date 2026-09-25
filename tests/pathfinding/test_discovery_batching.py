@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import gc
 import os
+import pathlib
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import threading
@@ -38,12 +39,11 @@ from degenbot.database.operations import (
     create_new_sqlite_database,
     get_scoped_sqlite_session,
 )
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.pathfinding import (
-    _pathfinding,
     PathfindingRequest,
     PoolKind,
+    _pathfinding,
     find_paths,
     find_paths_async,
     find_paths_async_rust,
@@ -53,7 +53,6 @@ from degenbot.runner.build_paths import PathRegistrationPipeline
 from degenbot.types.chain import ChainId
 
 if TYPE_CHECKING:
-    import pathlib
     from collections.abc import AsyncGenerator
 
 CHAIN = ChainId.ETH
@@ -63,7 +62,7 @@ POOL_A_ADDR = "0x" + "11" * 20
 POOL_B_ADDR = "0x" + "12" * 20
 
 
-def _base_request(db: DatabaseSessionManager | None) -> PathfindingRequest:
+def _base_request(database_path: pathlib.Path) -> PathfindingRequest:
     """Build the shared two-pool synthetic search request for the parity tests."""
     return PathfindingRequest(
         chain_id=CHAIN,
@@ -71,11 +70,21 @@ def _base_request(db: DatabaseSessionManager | None) -> PathfindingRequest:
         end_tokens=[WETH_ADDR],
         max_depth=2,
         pool_types=[UniswapV2PoolTable],
-        db=db,  # type: ignore[arg-type]
+        database_path=database_path,
     )
 
 
-def _seed_two_pool_db(db_path: pathlib.Path) -> DatabaseSessionManager:
+def _adapter_request() -> PathfindingRequest:
+    """Build a path-only request for tests that replace the prep seam."""
+    return PathfindingRequest(
+        chain_id=1,
+        start_tokens=[],
+        end_tokens=[],
+        database_path=pathlib.Path("unused.db"),
+    )
+
+
+def _seed_two_pool_db(db_path: pathlib.Path) -> pathlib.Path:
     """Seed a file-backed temp SQLite with a WETH<->A two-pool cycle."""
     create_new_sqlite_database(db_path)
     scoped = get_scoped_sqlite_session(database_path=db_path)
@@ -115,11 +124,13 @@ def _seed_two_pool_db(db_path: pathlib.Path) -> DatabaseSessionManager:
         session.commit()
     finally:
         session.close()
-    return DatabaseSessionManager(scoped)
+        scoped.remove()
+        scoped.get_bind().dispose()
+    return db_path
 
 
 @pytest.fixture
-def db(tmp_path: pathlib.Path) -> DatabaseSessionManager:
+def db(tmp_path: pathlib.Path) -> pathlib.Path:
     return _seed_two_pool_db(tmp_path / "discovery_batching.db")
 
 
@@ -150,7 +161,7 @@ async def _drain_into(producer: AsyncGenerator[object, None], sink: list[object]
 # ---------------------------------------------------------------------------
 
 
-def test_batched_async_matches_sync_stream(db: DatabaseSessionManager) -> None:
+def test_batched_async_matches_sync_stream(db: pathlib.Path) -> None:
     """Content + order parity: 1, small, default, and oversized batches."""
     expected = list(find_paths(request=_base_request(db)))
     assert expected, "fixture graph produced no paths"
@@ -321,7 +332,7 @@ def test_adapter_forwards_batch_size_to_rust_seam(monkeypatch: pytest.MonkeyPatc
 
     got = asyncio.run(
         _collect(
-            request=PathfindingRequest(chain_id=1, start_tokens=[], end_tokens=[], db=None),
+            request=_adapter_request(),
             batch_size=7,
         )
     )
@@ -345,7 +356,7 @@ async def test_producer_exception_reraises_at_consumer(monkeypatch: pytest.Monke
     with pytest.raises(_BoomError, match="producer died"):
         await _drain_into(
             find_paths_async(
-                request=PathfindingRequest(chain_id=1, start_tokens=[], end_tokens=[], db=None),
+                request=_adapter_request(),
                 batch_size=2,
             ),
             got,
@@ -363,10 +374,7 @@ async def test_aclose_releases_the_rust_iterator(monkeypatch: pytest.MonkeyPatch
         dropped=dropped,
     )
 
-    agen = find_paths_async(
-        request=PathfindingRequest(chain_id=1, start_tokens=[], end_tokens=[], db=None),
-        batch_size=2,
-    )
+    agen = find_paths_async(request=_adapter_request(), batch_size=2)
     seen = 0
     async for _path in agen:
         seen += 1
@@ -378,7 +386,7 @@ async def test_aclose_releases_the_rust_iterator(monkeypatch: pytest.MonkeyPatch
     assert dropped, "the adapter must release the Rust batch iterator on aclose"
 
 
-async def _partial_sweep(db: DatabaseSessionManager | None, *, take: int) -> int:
+async def _partial_sweep(db: pathlib.Path, *, take: int) -> int:
     agen = find_paths_async(request=_base_request(db))
     seen = 0
     async for _path in agen:
@@ -408,7 +416,7 @@ def _persistent_threads() -> dict[int, str]:
     }
 
 
-async def test_aclose_leaves_no_worker_threads(db: DatabaseSessionManager) -> None:
+async def test_aclose_leaves_no_worker_threads(db: pathlib.Path) -> None:
     """Repeated mid-sweep closes leave no stray discovery worker threads."""
     # Warm any lazily-created runtime/executor threads first.
     await _partial_sweep(db, take=1)
@@ -431,7 +439,7 @@ async def test_aclose_leaves_no_worker_threads(db: DatabaseSessionManager) -> No
 async def test_prep_never_blocks_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """A slow prep must not stall the asyncio loop (canary keeps ticking).
 
-    Pre-FYZMAF the one-time prep (`_prepare_traversals`: SQLAlchemy token
+    Pre-FYZMAF the one-time prep (`_prepare_traversals`: Rust token
     resolution + the `build_path_graph` bulk read) ran INLINE on the event
     loop at first `__anext__`, so a canary coroutine made no progress for the
     whole prep. It now runs on the Rust async seam's blocking pool, so the
@@ -455,9 +463,7 @@ async def test_prep_never_blocks_the_event_loop(monkeypatch: pytest.MonkeyPatch)
     )
 
     canary_task = asyncio.ensure_future(canary())
-    agen = find_paths_async(
-        request=PathfindingRequest(chain_id=1, start_tokens=[], end_tokens=[], db=None)
-    )
+    agen = find_paths_async(request=_adapter_request())
     started = time.perf_counter()
     with pytest.raises(StopAsyncIteration):
         await anext(agen)
@@ -470,7 +476,7 @@ async def test_prep_never_blocks_the_event_loop(monkeypatch: pytest.MonkeyPatch)
     assert ticks >= 10, f"event loop stalled during prep: {ticks} canary ticks in {elapsed:.2f}s"
 
 
-async def test_missing_start_token_raises_at_first_next(db: DatabaseSessionManager) -> None:
+async def test_missing_start_token_raises_at_first_next(db: pathlib.Path) -> None:
     """Token-resolution errors keep today's lazy DegenbotValueError shape.
 
     The prep (and therefore the DB token lookup) runs at first `__anext__`,
@@ -480,7 +486,7 @@ async def test_missing_start_token_raises_at_first_next(db: DatabaseSessionManag
     """
     agen = find_paths_async(
         request=PathfindingRequest(
-            db=db,
+            database_path=db,
             chain_id=CHAIN,
             start_tokens=[ZERO_ADDRESS],
             end_tokens=[WETH_ADDR],
@@ -527,7 +533,7 @@ def _make_pipeline() -> PathRegistrationPipeline:
     ctx = SimpleNamespace(
         bot=SimpleNamespace(registration_fleet_hosted=lambda: True, _py_bot=None),
         chain_id=1,
-        db=None,
+        database_path=pathlib.Path("unused.db"),
         uniswap_v3_tracker=None,
         sushiswap_v3_tracker=None,
         pancakeswap_v3_tracker=None,

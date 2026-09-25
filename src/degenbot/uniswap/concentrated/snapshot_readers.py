@@ -10,18 +10,14 @@ import pydantic_core
 
 from degenbot._ffi.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.logging import logger
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from typing import Any, ClassVar
+    from typing import Any, ClassVar, Self
 
-    from sqlalchemy.orm import Session, scoped_session
-
-    from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.types.aliases import BlockNumber, ChainId
 
 
@@ -212,72 +208,60 @@ class DatabaseSnapshotBase[K]:
 
     Routes every read through the Rust `degenbot-db` core crate via the
     `_EngineSnapshot` PyO3 seam (ADR-005 three-layer architecture). The
-    `session` / `database_path` are retained for explicit-deps construction +
-    migration tooling; reads no longer use the SQLAlchemy session.
+    explicit file path is retained as the authority for the lazy Rust handle.
     """
 
     storage_kind = "db"
-    session: DatabaseSessionManager | scoped_session[Session]
 
-    def __init__(
-        self,
-        chain_id: ChainId,
-        *,
-        db: DatabaseSessionManager | None = None,
-        database_path: pathlib.Path | None = None,
-    ) -> None:
-        """Initialize the instance.
-
-        Raises:
-            ValueError: If neither db nor database_path is provided.
-
-        """
-        if db is not None:
-            self.session = db
-            self.database_path = database_path or pathlib.Path()
-        else:
-            if database_path is None:
-                msg = "Either db or database_path must be provided"
-                raise ValueError(msg)
-            self.session = get_scoped_sqlite_session(database_path)
-            self.database_path = database_path
+    def __init__(self, chain_id: ChainId, *, database_path: pathlib.Path) -> None:
+        """Initialize the instance from an explicit file-backed database path."""
+        self.database_path = database_path
 
         self.chain_id = chain_id
-        # Lazily-constructed Rust read handle (opened on first read so a
-        # `db=-only` construction with no resolvable path doesn't fail until
-        # a read is actually attempted).
+        # Open the Rust read handle only when snapshot data is first requested.
         self._rust_snapshot: _EngineSnapshot | None = None
-
-    def _rust_db_path(self) -> pathlib.Path:
-        """Resolve the SQLite file path the Rust reader will open.
-
-        Prefer an explicit `database_path`; fall back to the bound engine's
-        file URL (the `db=bot.db` case where no path was passed).
-
-        Returns:
-            The resolved database file path.
-
-        Raises:
-            ValueError: If no file path can be resolved (e.g. an in-memory engine).
-
-        """
-        if self.database_path and self.database_path.name:
-            return self.database_path
-        engine = getattr(self.session, "_engine", None)
-        if engine is not None:
-            db_path = engine.url.database
-            if db_path and db_path != ":memory:":
-                return pathlib.Path(db_path)
-        msg = "database_path is required for Rust-backed snapshot reads"
-        raise ValueError(msg)
+        self._closed = False
 
     def _rust(self) -> _EngineSnapshot:
+        if self._closed:
+            msg = "Database snapshot is closed"
+            raise RuntimeError(msg)
         if self._rust_snapshot is None:
             self._rust_snapshot = _EngineSnapshot(
                 chain_id=self.chain_id,
-                database_path=str(self._rust_db_path()),
+                database_path=str(self.database_path),
             )
         return self._rust_snapshot
+
+    def close(self) -> None:
+        """Release the Rust handle and its SQLite connection.
+
+        Closing is idempotent. A closed snapshot cannot lazily reopen its
+        database handle.
+        """
+        # This wrapper is the handle's sole public owner; dropping the final
+        # reference deallocates the PyO3 object and closes its Rust connection.
+        self._rust_snapshot = None
+        self._closed = True
+
+    def __enter__(self) -> Self:
+        """Enter a context that closes the Rust handle on exit.
+
+        Returns:
+            This open snapshot.
+
+        Raises:
+            RuntimeError: If the snapshot has already been closed.
+
+        """
+        if self._closed:
+            msg = "Database snapshot is closed"
+            raise RuntimeError(msg)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """Release the Rust handle when leaving the context."""
+        self.close()
 
     def _seam_liquidity_map(self, pool_key: K) -> dict[str, Any] | None:
         raise NotImplementedError(pool_key)

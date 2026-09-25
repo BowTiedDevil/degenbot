@@ -1,25 +1,24 @@
 """Tests for BuilderContext."""
 
 import dataclasses
+import pathlib
 
 import pytest
 
 from degenbot._ffi import Bot
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.registry import PoolRegistry, TokenRegistry
 
 
 def _make_ctx(**overrides) -> BuilderContext:
     """Create a BuilderContext with fakes for required fields."""
-    fake_db = object.__new__(DatabaseSessionManager)
     fake_pools = object.__new__(PoolRegistry)
     fake_tokens = object.__new__(TokenRegistry)
     fake_erc20 = object.__new__(Erc20Builder)
 
     defaults = {
-        "db": fake_db,
+        "database_path": pathlib.Path("test.db"),
         "pools": fake_pools,
         "tokens": fake_tokens,
         "erc20_builder": fake_erc20,
@@ -35,7 +34,7 @@ class TestBuilderContextConstruction:
 
     def test_required_fields(self) -> None:
         ctx = _make_ctx()
-        assert ctx.db is not None
+        assert ctx.database_path == pathlib.Path("test.db")
         assert ctx.pools is not None
         assert ctx.tokens is not None
         assert ctx.erc20_builder is not None
@@ -45,7 +44,7 @@ class TestBuilderContextConstruction:
     def test_frozen(self) -> None:
         ctx = _make_ctx()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            ctx.db = None  # type: ignore[misc]
+            ctx.database_path = pathlib.Path("other.db")  # type: ignore[misc]
 
     def test_slots_frozen_blocks_new_attrs(self) -> None:
         ctx = _make_ctx()
@@ -58,7 +57,7 @@ class TestBuilderContextConstruction:
         assert len(fields) == 6
         field_names = {f.name for f in fields}
         assert field_names == {
-            "db",
+            "database_path",
             "pools",
             "tokens",
             "erc20_builder",

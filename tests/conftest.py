@@ -23,7 +23,6 @@ os.environ.setdefault(
 )
 
 from degenbot.bot import Bot
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.logging import set_log_level
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
@@ -201,20 +200,6 @@ def pytest_collection_modifyitems(config: Config, items: list[Item]):
     if deselected_items:
         items[:] = remaining_items
         config.hook.pytest_deselected(items=deselected_items)
-
-
-@pytest.fixture(autouse=True)
-def _initialize_and_reset_after_each_test():
-    """Before each test, clear/reset global values and singletons"""
-    # Global singletons have been removed. Bot-owned connections and registries
-    # are scoped to each Bot instance and do not need inter-test resets.
-    yield
-    # Safety net: dispose any SQLAlchemy engine a test left dangling (a Bot or
-    # DatabaseSessionManager constructed inline and never ``close()`` ed). Without
-    # this, the Engine's connection pool keeps the ``sqlite3.Connection`` open and
-    # surfaces as ``ResourceWarning: unclosed database`` when GC eventually runs
-    # (notably at xdist worker teardown).
-    DatabaseSessionManager.dispose_all()
 
 
 @pytest.fixture(scope="session", autouse=True)

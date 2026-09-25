@@ -20,6 +20,7 @@ import contextlib
 import signal
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -728,7 +729,7 @@ class TestBotRunnerSigintHandler:
 class TestConstructionContext:
     """Sub-A seam: `ConstructionContext` bundles the registration-owned
     construction resources (Rust-build Bot entry + the three V3 trackers + a
-    retained DB read handle + chain_id + WETH) so a background registration
+    database path + chain_id + WETH) so a background registration
     task owns them out of run()'s main-loop trim."""
 
     def test_for_bot_builds_trackers_weth_db_once(self) -> None:
@@ -743,7 +744,7 @@ class TestConstructionContext:
         class _BuildBot:
             def __init__(self) -> None:
                 self.chain_id = 1
-                self.db = object()
+                self.database_path = Path("unused.db")
                 self.factory_addresses: list[str] = []
                 self.weth_addresses: list[str] = []
 
@@ -764,9 +765,9 @@ class TestConstructionContext:
             SUSHISWAP_V3_MAINNET_FACTORY,
             PANCAKESWAP_V3_MAINNET_FACTORY,
         ])
-        # Trackers + WETH + DB + chain_id all bundled into the single context.
+        # Trackers + WETH + database path + chain_id are bundled into the context.
         assert ctx.chain_id == 1
-        assert ctx.db is bot.db
+        assert ctx.database_path is bot.database_path
         assert ctx.weth == f"weth:{WETH_ADDRESS}"
         # One construction pass: exactly one WETH token requested.
         assert bot.weth_addresses == [WETH_ADDRESS]
@@ -1293,7 +1294,7 @@ class TestPathRegistrationPipeline:
     class _FakeCtxBot:
         def __init__(self) -> None:
             self.chain_id = 1
-            self.db = object()
+            self.database_path = Path("unused.db")
             self.receipts: list[object] = []
 
         # PRG-5: the pipeline constructs ONLY over the fleet intake.
@@ -1366,7 +1367,7 @@ class TestPathRegistrationPipeline:
         ctx = ConstructionContext(
             bot=bot,
             chain_id=1,
-            db=bot.db,
+            database_path=bot.database_path,
             uniswap_v3_tracker=object(),
             sushiswap_v3_tracker=object(),
             pancakeswap_v3_tracker=object(),

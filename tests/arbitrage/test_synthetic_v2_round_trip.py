@@ -29,7 +29,6 @@ from degenbot.database.operations import (
     create_new_sqlite_database,
     get_scoped_sqlite_session,
 )
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import PathfindingRequest, find_paths_async
 from degenbot.runner.build_paths import resolve_directions
 from degenbot.types.chain import ChainId
@@ -61,7 +60,7 @@ _RESERVES: dict[str, tuple[int, int]] = {
 }
 
 
-def _build_file_db(db_path: pathlib.Path) -> DatabaseSessionManager:
+def _build_file_db(db_path: pathlib.Path) -> pathlib.Path:
     """Seed a file-backed temp SQLite with two V2 pools forming a WETH-A-WETH cycle.
 
     Same pattern as tests/pathfinding/test_permutation_filter_min_depth.py.
@@ -112,8 +111,10 @@ def _build_file_db(db_path: pathlib.Path) -> DatabaseSessionManager:
         session.commit()
     finally:
         session.close()
+        scoped.remove()
+        scoped.get_bind().dispose()
 
-    return DatabaseSessionManager(scoped)
+    return db_path
 
 
 @pytest.fixture
@@ -155,12 +156,12 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
         POOL_B_ADDR: (token_a, weth),
     }
 
-    # Discover the WETH→A→WETH 2-hop cycle from the in-memory DB.
+    # Discover the WETH→A→WETH 2-hop cycle from the file-backed DB.
     discovered = [
         path
         async for path in find_paths_async(
             request=PathfindingRequest(
-                db=db,
+                database_path=db,
                 chain_id=CHAIN,
                 start_tokens=[WETH_ADDR],
                 end_tokens=[WETH_ADDR],

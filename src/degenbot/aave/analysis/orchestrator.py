@@ -17,8 +17,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.engine import Engine
-
 from degenbot._ffi.db import DatabasePositionQuery as _EnginePositionQuery
 from degenbot.aave import AavePriceOracle
 from degenbot.checksum_cache import get_checksum_address
@@ -26,7 +24,7 @@ from degenbot.db import UserPositionSummary, analyze_aave_user_position
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
+    import pathlib
 
     from degenbot._ffi import ChecksummedAddress
     from degenbot.provider import AlloyProvider
@@ -35,43 +33,15 @@ if TYPE_CHECKING:
 class DatabasePositionQuery:
     """PositionQuery backed by the Rust ``_EnginePositionQuery`` reader.
 
-    Routes every read through the PyO3 seam (ADR-005). The ``session`` is
-    retained for resolving the DB file path + the ``AaveV3Market`` lookup at
-    the CLI boundary; reads no longer use the SQLAlchemy session.
+    Routes every read through the PyO3 seam (ADR-005) over one explicit,
+    file-backed database path.
     """
 
-    def __init__(self, session: Session) -> None:
-        """Initialize the instance.
-
-        Args:
-            session: A SQLAlchemy session (used to resolve the database file
-                path + look up the ``AaveV3Market`` id at the CLI boundary).
-
-        """
-        self._session = session
-        self._rust: _EnginePositionQuery | None = None
-
-    def _db_path(self) -> str:
-        """Resolve the SQLite file path the Rust reader opens.
-
-        Returns:
-            The resolved database file path.
-
-        Raises:
-            ValueError: If no file path can be resolved (e.g. an in-memory engine).
-
-        """
-        engine = self._session.get_bind()
-        if isinstance(engine, Engine):
-            db_path = engine.url.database
-            if db_path and db_path != ":memory:":
-                return db_path
-        msg = "a file-backed database is required for Rust-backed position reads"
-        raise ValueError(msg)
+    def __init__(self, database_path: pathlib.Path) -> None:
+        """Open the Rust read handle over ``database_path``."""
+        self._rust = _EnginePositionQuery(str(database_path))
 
     def _handle(self) -> _EnginePositionQuery:
-        if self._rust is None:
-            self._rust = _EnginePositionQuery(self._db_path())
         return self._rust
 
     def get_users_with_debt(self, market_id: int, limit: int | None = None) -> list[dict[str, Any]]:
@@ -221,7 +191,7 @@ class PositionAnalysisResult:
 
 
 def analyze_positions_for_market(
-    session: Session,
+    database_path: pathlib.Path,
     market_id: int,
     health_factor_threshold: float = 1.1,
     limit: int | None = None,
@@ -235,7 +205,7 @@ def analyze_positions_for_market(
     (``degenbot-aave::analysis``).
 
     Args:
-        session: A SQLAlchemy session (for DB path resolution).
+        database_path: File-backed SQLite database opened by the Rust reader.
         market_id: The Aave V3 market id.
         health_factor_threshold: The at-risk threshold (default 1.1).
         limit: Optional cap on the number of users analyzed.
@@ -246,7 +216,7 @@ def analyze_positions_for_market(
         The bucketed analysis result.
 
     """
-    position_query = DatabasePositionQuery(session)
+    position_query = DatabasePositionQuery(database_path)
 
     price_map: dict[ChecksummedAddress, int] = {}
     if provider is not None:

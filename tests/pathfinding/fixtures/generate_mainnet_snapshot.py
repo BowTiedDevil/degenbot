@@ -62,8 +62,7 @@ from degenbot.database.models.pools import (
     UniswapV3PoolTableBase,
     UniswapV4PoolTable,
 )
-from degenbot.database.operations import create_new_sqlite_database, get_scoped_sqlite_session
-from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.database.operations import create_new_sqlite_database
 from degenbot.pathfinding import PathfindingRequest, find_paths
 from degenbot.runner._driver_constants import ETH_MAINNET_ALLOWED_TOKENS, WETH_ADDRESS
 from degenbot.types.chain import ChainId
@@ -367,31 +366,27 @@ def _capture_baselines(snapshot_path: Path) -> dict[str, dict[str, object]]:
     (pool address, or V4 pool hash), the same convention
     ``tests/pathfinding/test_pathfinding.py::path_step_identifiers`` uses.
     """
-    db = DatabaseSessionManager(get_scoped_sqlite_session(database_path=snapshot_path))
     out: dict[str, dict[str, object]] = {}
-    try:
-        for name, depth, pool_types, per_depth in BASELINE_VARIANTS:
-            request = PathfindingRequest(
-                db=db,
-                chain_id=CHAIN_ID,
-                start_tokens=[WETH_ADDRESS, NATIVE_ADDRESS],
-                end_tokens=[WETH_ADDRESS, NATIVE_ADDRESS],
-                max_depth=depth,
-                pool_types=pool_types,
-                pool_type_per_depth=per_depth,
-            )
-            paths = sorted(
-                tuple((step.hash or step.address) for step in steps)
-                for steps in find_paths(request=request)
-            )
-            canonical = "\n".join(json.dumps(p) for p in paths)
-            out[name] = {
-                "path_count": len(paths),
-                "multiset_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
-                "head_sample": [json.dumps(p) for p in paths[:20]],
-            }
-    finally:
-        db.close()
+    for name, depth, pool_types, per_depth in BASELINE_VARIANTS:
+        request = PathfindingRequest(
+            database_path=snapshot_path,
+            chain_id=CHAIN_ID,
+            start_tokens=[WETH_ADDRESS, NATIVE_ADDRESS],
+            end_tokens=[WETH_ADDRESS, NATIVE_ADDRESS],
+            max_depth=depth,
+            pool_types=pool_types,
+            pool_type_per_depth=per_depth,
+        )
+        paths = sorted(
+            tuple((step.hash or step.address) for step in steps)
+            for steps in find_paths(request=request)
+        )
+        canonical = "\n".join(json.dumps(p) for p in paths)
+        out[name] = {
+            "path_count": len(paths),
+            "multiset_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+            "head_sample": [json.dumps(p) for p in paths[:20]],
+        }
     return out
 
 

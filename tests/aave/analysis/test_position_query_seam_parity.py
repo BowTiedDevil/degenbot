@@ -26,18 +26,8 @@ def _expected() -> dict:
 
 
 @pytest.fixture
-def session():
-    """Open a SQLAlchemy session over the fixture DB (for the query's path resolution)."""
-    from degenbot.database.operations import get_scoped_sqlite_session
-
-    scoped = get_scoped_sqlite_session(DB_PATH)
-    with scoped() as s:
-        yield s
-
-
-@pytest.fixture
-def query(session) -> DatabasePositionQuery:
-    return DatabasePositionQuery(session)
+def query() -> DatabasePositionQuery:
+    return DatabasePositionQuery(DB_PATH)
 
 
 @pytest.fixture

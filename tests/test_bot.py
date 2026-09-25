@@ -48,7 +48,6 @@ from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.provider import OfflineProvider
@@ -86,10 +85,14 @@ def _fake_provider(chain_id: int = 1) -> OfflineProvider:
 class TestBotInit:
     """Bot constructor tests (single-chain)."""
 
-    def test_bot_creates_database_session_manager(self, tmp_path: pathlib.Path) -> None:
+    def test_bot_exposes_database_path_without_sqlalchemy_session(
+        self, tmp_path: pathlib.Path
+    ) -> None:
         config = _make_test_config(tmp_path)
         bot = Bot(config, provider=_fake_provider(1))
-        assert isinstance(bot.db, DatabaseSessionManager)
+
+        assert bot.database_path == config.database.path
+        assert not hasattr(bot, "db")
 
     def test_bot_creates_pool_registry(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
@@ -208,7 +211,7 @@ class TestMultipleBots:
         assert bot1.tokens is not bot2.tokens
         assert bot1.managed_pools is not bot2.managed_pools
         assert bot1.provider is not bot2.provider
-        assert bot1.db is not bot2.db
+        assert bot1.database_path != bot2.database_path
 
     def test_independent_trackers(self, tmp_path: pathlib.Path) -> None:
         bot1 = Bot(_make_test_config(tmp_path / "bot1"), provider=_fake_provider(1))

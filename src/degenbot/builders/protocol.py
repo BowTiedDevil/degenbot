@@ -8,7 +8,7 @@ Each builder owns:
 Builders do NOT own:
 - Pool type resolution (Bot's job)
 - I/O routing (received via BotIo — the single Rust-backed executor)
-- Database lifecycle (received via DatabaseSessionManager)
+- Database I/O (owned by the Rust ConstructionIo handle attached to Bot)
 """
 
 from __future__ import annotations

@@ -11,9 +11,10 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import pathlib
+
     from degenbot._ffi import Bot
     from degenbot.builders.erc20_builder import Erc20Builder
-    from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import PoolRegistry, TokenRegistry
     from degenbot.types.aliases import ChainId
 
@@ -27,7 +28,7 @@ class BuilderContext:
     dependency — it is constructed before the context and passed in.
     """
 
-    db: DatabaseSessionManager
+    database_path: pathlib.Path
     pools: PoolRegistry
     tokens: TokenRegistry
     erc20_builder: Erc20Builder

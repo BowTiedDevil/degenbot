@@ -23,6 +23,8 @@ registry list, only requires the reads below; every other detection probe
 
 from __future__ import annotations
 
+import pathlib
+
 from degenbot._ffi import Bot
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
@@ -275,22 +277,19 @@ def _make_curve_builder(
     """
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.erc20_builder import Erc20Builder
-    from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import PoolRegistry, TokenRegistry
 
     py_bot = Bot(chain_id=1)
     py_bot.attach_construction_io(provider, None)
-    fake_db = object.__new__(DatabaseSessionManager)
     tokens = TokenRegistry()
     pools = PoolRegistry(py_bot=py_bot)
     erc20 = Erc20Builder(
         default_chain_id=1,
-        db=fake_db,
         tokens=tokens,
         py_bot=py_bot,
     )
     ctx = BuilderContext(
-        db=fake_db,
+        database_path=pathlib.Path("curve.db"),
         pools=pools,
         tokens=tokens,
         erc20_builder=erc20,

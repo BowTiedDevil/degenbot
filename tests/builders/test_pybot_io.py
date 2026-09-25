@@ -2,7 +2,7 @@
 
 `BotIo` is the Rust `#[pyclass]` I/O façade that builders receive in place
 of the Python `SyncPoolIO` adapter. It holds a Python provider (the
-`AlloyProvider` the `Bot` was constructed with) + an optional DB handle, and
+`AlloyProvider` the `Bot` was constructed with) + an optional file-backed DB path, and
 exposes the 3-method RPC-primitive surface still on `BotIo`
 (`get_block_number`, `get_code`, `get_balance`) by delegating to the held
 provider (the raw `call`/`get_block`/`get_block_timestamp` primitives retired
@@ -38,8 +38,12 @@ def _min_offline_provider() -> RustAlloyProvider:
     return RustAlloyProvider.offline_from_json_string(_MIN_OFFLINE_JSON)
 
 
-class _FakeDb:
-    """A ``DatabaseSessionManager``-shaped double (cannot be called; presence only)."""
+def test_bot_io_uses_path_only_db_contract() -> None:
+    io = BotIo(provider=_min_offline_provider())
+
+    assert not hasattr(io, "db")
+    with pytest.raises(TypeError, match="db"):
+        BotIo(provider=_min_offline_provider(), db=object())
 
 
 # The 7-method `PoolIO` delegation seam is exercised natively against a
@@ -47,14 +51,6 @@ class _FakeDb:
 # former `_FakeProvider`-based delegation tests (get_block_number / call /
 # get_code / get_balance returning arbitrary canned values) are collapsed
 # there, per O3.
-
-
-def test_pybot_io_holds_optional_db_handle():
-    """BotIo stores the DB handle and exposes it back (held, not called yet)."""
-    db = _FakeDb()
-    io = BotIo(provider=_min_offline_provider(), db=db)
-    # The held handle round-trips through the pyclass.
-    assert io.db is db
 
 
 @pytest.mark.parametrize(

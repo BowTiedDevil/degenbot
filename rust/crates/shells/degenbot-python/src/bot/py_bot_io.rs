@@ -62,14 +62,9 @@ fn address_lower_hex(a: alloy::primitives::Address) -> String {
 ///
 /// Construct with an existing `ProviderAdapter` (the `Bot.provider`):
 /// ```python
-/// io = PyBotIo(provider=bot.provider, db=bot.db)
+/// io = PyBotIo(provider=bot.provider, database_path=str(bot.database_path))
 /// ```
 /// then pass `io` where a builder expects an `io: PoolIO`.
-///
-/// Holds the optional `db` (`DatabaseSessionManager`) handle too; 14a stores
-/// it so the `PyBotIo` surface mirrors `BuilderContext`'s dependencies, but
-/// does not yet route DB queries through it (the DB-query choreography ports
-/// in slice 14c).
 /// A typed ERC-20 token DB row returned by [`PyBotIo::fetch_erc20_token`]
 /// (QVMWQC). Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
 /// attributes (`.id` / `.chain` / `.address` / `.name` / `.symbol` /
@@ -147,7 +142,6 @@ pub struct PyBotIo {
     /// round-trip); `get_block_timestamp` derives from `get_block(n).header.timestamp`.
     /// `None` only for non-alloy Python providers (retired by O3).
     alloy: Option<Arc<AlloyProvider>>,
-    db: Option<Py<PyAny>>,
     /// The on-disk `SQLite` database path (QVMWQC). Retained for the `getter`
     /// (Python introspection) + the `database_path` is now opened ONCE at
     /// `attach_construction_io` time into a held `DegenbotDbConstruction`; the
@@ -168,7 +162,7 @@ pub struct PyBotIo {
 #[pymethods]
 impl PyBotIo {
     /// Construct the I/O façade over an alloy-backed `ProviderAdapter`
-    /// (+ optional DB).
+    /// (+ optional file-backed database).
     ///
     /// `provider` is the `ProviderAdapter` the `Bot` was constructed with; the
     /// held `Arc<AlloyProvider>` is extracted from it (live alloy or the
@@ -177,10 +171,6 @@ impl PyBotIo {
     /// legacy-double fallback) yield `alloy = None` and every RPC + choreography
     /// method errors loudly (ADR-023 D1).
     ///
-    /// `db`, when provided, is the `DatabaseSessionManager` handle; it's stored
-    /// so the `PyBotIo` surface mirrors `BuilderContext`, and accessed via the
-    /// [`db` getter][Self::db].
-    ///
     /// `database_path` (QVMWQC) is the on-disk `SQLite` path; when set, the
     /// DB-query methods (`fetch_erc20_token`, `update_erc20_token_metadata`, …)
     /// open a `degenbot_db::DegenbotDb` handle from it + route the
@@ -188,13 +178,8 @@ impl PyBotIo {
     /// `session.scalar(select(...))` / `session.commit()` bodies retire).
     #[new]
     #[expect(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (provider, db=None, database_path=None))]
-    pub(crate) fn new(
-        py: Python<'_>,
-        provider: Py<PyAny>,
-        db: Option<Py<PyAny>>,
-        database_path: Option<String>,
-    ) -> Self {
+    #[pyo3(signature = (provider, database_path=None))]
+    pub(crate) fn new(py: Python<'_>, provider: Py<PyAny>, database_path: Option<String>) -> Self {
         // Extract a native Rust `AlloyProvider` when the held Python provider
         // is `PyAlloyProvider`-backed (live alloy or the offline shell); non-
         // alloy providers yield `None` and error loudly on use (ADR-023 D1).
@@ -236,7 +221,6 @@ impl PyBotIo {
         };
         Self {
             alloy,
-            db,
             database_path,
             construction_io: parking_lot::Mutex::new(construction_io),
         }
@@ -251,12 +235,6 @@ impl PyBotIo {
     fn attach_construction_io(&self, py_bot: &Bound<'_, crate::bot::PyBot>) -> PyResult<()> {
         *self.construction_io.lock() = py_bot.borrow().bot.construction_io_arc();
         Ok(())
-    }
-
-    /// The held `DatabaseSessionManager`, if any (None when the `Bot` has no DB).
-    #[getter]
-    fn db(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.db.as_ref().map(|h| h.clone_ref(py))
     }
 
     /// The on-disk `SQLite` database path, if any (QVMWQC). The DB-query methods
@@ -1455,8 +1433,7 @@ impl PyBotIo {
     }
 
     fn __repr__(&self) -> String {
-        let has_db = self.db.is_some();
-        format!("BotIo(alloy={}, db={has_db})", self.alloy.is_some())
+        format!("BotIo(alloy={})", self.alloy.is_some())
     }
 }
 

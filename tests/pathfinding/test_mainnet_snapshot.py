@@ -26,8 +26,6 @@ from pathlib import Path
 import pytest
 
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV4PoolTable
-from degenbot.database.operations import get_scoped_sqlite_session
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import PathfindingRequest, find_paths
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -90,22 +88,17 @@ def test_depth2_all_kinds_matches_baseline(tmp_path: Path) -> None:
     """THE lossless wall: enumeration over the snapshot must reproduce the
     recorded pre-optimization multiset exactly."""
     expected = _expected()["baselines"]["depth2_all_kinds"]
-    db = DatabaseSessionManager(
-        get_scoped_sqlite_session(database_path=_snapshot_copy(tmp_path))
-    )
-    try:
-        count, digest = _multiset_sha256(
-            PathfindingRequest(
-                db=db,
-                chain_id=1,
-                start_tokens=[WETH_MAINNET, NATIVE_MAINNET],
-                end_tokens=[WETH_MAINNET, NATIVE_MAINNET],
-                max_depth=2,
-                pool_types=[LiquidityPoolTable, UniswapV4PoolTable],
-            )
+    database_path = _snapshot_copy(tmp_path)
+    count, digest = _multiset_sha256(
+        PathfindingRequest(
+            database_path=database_path,
+            chain_id=1,
+            start_tokens=[WETH_MAINNET, NATIVE_MAINNET],
+            end_tokens=[WETH_MAINNET, NATIVE_MAINNET],
+            max_depth=2,
+            pool_types=[LiquidityPoolTable, UniswapV4PoolTable],
         )
-    finally:
-        db.close()
+    )
     assert count == expected["path_count"]
     assert digest == expected["multiset_sha256"]
 

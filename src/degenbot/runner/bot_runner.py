@@ -1280,7 +1280,7 @@ def get_snapshots(
     v3_snapshot = None
     try:
         v3_snapshot = UniswapV3LiquiditySnapshot(
-            source=V3DatabaseSnapshot(chain_id=1, db=bot.db),
+            source=V3DatabaseSnapshot(chain_id=1, database_path=bot.database_path),
         )
     except ValueError:
         bot_logger.info("[backfill] V3: no snapshot data in database, skipping")
@@ -1292,7 +1292,7 @@ def get_snapshots(
     # ── V4 snapshot ──────────────────────────────────────────────
     v4_snapshot = None
     try:
-        v4_db_snapshot = V4DatabaseSnapshot(chain_id=1, db=bot.db)
+        v4_db_snapshot = V4DatabaseSnapshot(chain_id=1, database_path=bot.database_path)
         v4_snapshot = UniswapV4LiquiditySnapshot(source=v4_db_snapshot)
     except ValueError:
         bot_logger.info("[backfill] V4: no snapshot data in database, skipping")

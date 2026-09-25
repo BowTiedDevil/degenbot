@@ -10,8 +10,6 @@ import pytest
 from degenbot.config import _init_config
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.database.models.pools import UniswapV2PoolTable, UniswapV3PoolTable
-from degenbot.database.operations import get_scoped_sqlite_session
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import PathfindingRequest, find_paths, find_paths_async
 from degenbot.types.chain import ChainId
 
@@ -24,7 +22,7 @@ pytestmark = pytest.mark.slow(reason="Use -m 'slow' to run slow pathfinding test
 @pytest.fixture
 def db():
     cfg = _init_config()
-    return DatabaseSessionManager(get_scoped_sqlite_session(database_path=cfg.database.path))
+    return cfg.database.path
 
 
 class TestPoolTypePerDepthBounds:
@@ -46,7 +44,7 @@ class TestPoolTypePerDepthBounds:
         paths = list(
             find_paths(
                 request=PathfindingRequest(
-                    db=db,
+                    database_path=db,
                     chain_id=BASE_CHAIN_ID,
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
@@ -71,7 +69,7 @@ class TestPoolTypePerDepthBounds:
         paths = list(
             find_paths(
                 request=PathfindingRequest(
-                    db=db,
+                    database_path=db,
                     chain_id=BASE_CHAIN_ID,
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
@@ -94,7 +92,7 @@ class TestPoolTypePerDepthBounds:
             path
             async for path in find_paths_async(
                 request=PathfindingRequest(
-                    db=db,
+                    database_path=db,
                     chain_id=BASE_CHAIN_ID,
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
@@ -117,7 +115,7 @@ class TestPoolTypePerDepthBounds:
         paths = list(
             find_paths(
                 request=PathfindingRequest(
-                    db=db,
+                    database_path=db,
                     chain_id=BASE_CHAIN_ID,
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
@@ -139,7 +137,7 @@ class TestPoolTypePerDepthBounds:
         paths = list(
             find_paths(
                 request=PathfindingRequest(
-                    db=db,
+                    database_path=db,
                     chain_id=BASE_CHAIN_ID,
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],

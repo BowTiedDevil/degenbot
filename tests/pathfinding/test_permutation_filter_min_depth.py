@@ -34,7 +34,6 @@ from degenbot.database.operations import (
     create_new_sqlite_database,
     get_scoped_sqlite_session,
 )
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import PathfindingRequest, find_paths, find_paths_async
 from degenbot.types.chain import ChainId
 
@@ -55,7 +54,7 @@ POOL_A_B_ADDR = "0x2100000000000000000000000000000000000000"
 POOL_B_WETH_ADDR = "0x3100000000000000000000000000000000000000"
 
 
-def _build_file_db(db_path: pathlib.Path) -> DatabaseSessionManager:
+def _build_file_db(db_path: pathlib.Path) -> pathlib.Path:
     """Build a file-backed temp SQLite DB with a synthetic 4-pool V2 graph.
 
     ZNWXNC: the Rust build_path_graph seam opens its own connection, so the
@@ -111,8 +110,10 @@ def _build_file_db(db_path: pathlib.Path) -> DatabaseSessionManager:
         session.commit()
     finally:
         session.close()
+        scoped.remove()
+        scoped.get_bind().dispose()
 
-    return DatabaseSessionManager(scoped)
+    return db_path
 
 
 @pytest.fixture
@@ -144,7 +145,7 @@ class TestPermutationFilterMinDepth:
         paths = list(
             find_paths(
                 request=PathfindingRequest(
-                    db=db,
+                    database_path=db,
                     chain_id=CHAIN,
                     start_tokens=[WETH_ADDR],
                     end_tokens=[WETH_ADDR],
@@ -178,7 +179,7 @@ class TestPermutationFilterMinDepth:
             p
             async for p in find_paths_async(
                 request=PathfindingRequest(
-                    db=db,
+                    database_path=db,
                     chain_id=CHAIN,
                     start_tokens=[WETH_ADDR],
                     end_tokens=[WETH_ADDR],

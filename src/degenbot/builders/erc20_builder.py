@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
     from degenbot._ffi import Bot, BotIo
     from degenbot.database import Erc20TokenRow
-    from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier
@@ -43,13 +42,11 @@ class Erc20Builder:
         self,
         *,
         default_chain_id: ChainId | None = None,
-        db: DatabaseSessionManager,
         tokens: TokenRegistry,
         py_bot: Bot,
     ) -> None:
         """Initialize the instance."""
         self._default_chain_id = default_chain_id
-        self._db = db
         self._tokens = tokens
         self._py_bot = py_bot
 

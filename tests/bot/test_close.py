@@ -3,16 +3,14 @@
 ``with Bot(...) as bot:`` exit (and an explicit ``close()``) must:
 
 (a) close the provider connection,
-(b) remove + dispose the scoped DB session,
-(c) release the tracker/registry caches,
-(d) be idempotent, and
-(e) never suppress an exception raised by the ``with`` body.
+(b) release the tracker/registry caches,
+(c) be idempotent, and
+(d) never suppress an exception raised by the ``with`` body.
 
 These are behavioural postcondition tests against the *real* objects Bot
-owns — a real ``DatabaseSessionManager`` bound to a real SQLAlchemy engine, a
-real ``UniswapV2PoolTracker`` populated through its own ``get_pool()`` path,
-and real Rust-registered pools. The only stand-in is the injected provider
-(the external RPC boundary, whose real ``AlloyProvider.close()`` is an
+owns — a real ``UniswapV2PoolTracker`` populated through its own
+``get_pool()`` path, and real Rust-registered pools. The only stand-in is
+the injected provider (the external RPC boundary, whose real ``AlloyProvider.close()`` is an
 unobservable no-op). No call-count assertions on doubles.
 """
 
@@ -122,16 +120,12 @@ def _seed_tracker_caches(bot: Bot, tracker: UniswapV2PoolTracker) -> None:
 
 class TestBotContextManager:
     def test_context_manager_releases_all_handles_on_exit(self, tmp_path: pathlib.Path) -> None:
-        """Contracts (a)-(c): exit closes provider, removes/disposes DB, drops caches."""
+        """Contracts (a)-(b): exit closes the provider and drops caches."""
         config = _make_test_config(tmp_path)
         provider = _BoundaryProvider(1)
 
         with Bot(config, provider=provider) as bot:
-            # Observable pre-state: engine bound, a live scoped session open,
-            # and both tracker caches + the pool registry populated.
-            assert bot.db._engine is not None
-            bot.db()  # open a scoped session so its removal is observable
-            assert bot.db._session.registry.has()
+            # Observable pre-state: both tracker caches + the pool registry populated.
             tracker = bot.add_tracker(UniswapV2PoolTracker, factory_address=_V2_FACTORY)
             _seed_tracker_caches(bot, tracker)
             assert tracker.tracked_pool_count() == 1
@@ -142,27 +136,23 @@ class TestBotContextManager:
         # (a) provider connection closed and the Bot's handle released
         assert provider.closed is True
         assert bot._provider is None
-        # (b) scoped session removed + its engine disposed (probe: no engine)
-        assert not bot.db._session.registry.has()
-        assert bot.db._engine is None
-        # (c) tracker caches and pool registry released
+        # (b) tracker caches and pool registry released
         assert tracker.tracked_pool_count() == 0
         assert tracker.untracked_pool_count() == 0
         assert bot.pools is None
         assert bot._closed is True
 
     def test_close_is_idempotent(self, tmp_path: pathlib.Path) -> None:
-        """Contract (d): a second close() is a no-op (provider double raises if re-closed)."""
+        """Contract (c): a second close() is a no-op (provider double raises if re-closed)."""
         bot, provider = _make_bot(tmp_path)
         bot.close()
 
-        after_first = (provider.closed, bot.db._engine, bot._closed, bot._provider, bot.pools)
-        assert after_first == (True, None, True, None, None)
+        after_first = (provider.closed, bot._closed, bot._provider, bot.pools)
+        assert after_first == (True, True, None, None)
 
         bot.close()  # must not re-close the provider or raise
         assert (
             provider.closed,
-            bot.db._engine,
             bot._closed,
             bot._provider,
             bot.pools,
@@ -173,7 +163,7 @@ class TestBotContextManager:
         assert bot._closed is True
 
     def test_exit_does_not_suppress_exceptions(self, tmp_path: pathlib.Path) -> None:
-        """Contract (e): the exception propagates *and* teardown still runs."""
+        """Contract (d): the exception propagates *and* teardown still runs."""
         config = _make_test_config(tmp_path)
         provider = _BoundaryProvider(1)
         boom_msg = "boom"
@@ -183,35 +173,8 @@ class TestBotContextManager:
 
         assert provider.closed is True
 
-    def test_close_disposes_real_database_engine(self, tmp_path: pathlib.Path) -> None:
-        """Contract (b): close() disposes the SQLAlchemy engine bound by __init__.
-
-        ``db.remove()`` only returns the thread-local Session; the Engine's
-        connection pool would keep the ``sqlite3.Connection`` alive
-        (``ResourceWarning: unclosed database`` under GC). The real DSM's
-        ``_engine`` going from bound to ``None`` is the observable proof that
-        the engine was disposed — no call-count spy needed.
-        """
-        bot, provider = _make_bot(tmp_path)
-        assert bot.db._engine is not None
-
-        bot.close()
-
-        assert bot.db._engine is None
-        assert provider.closed is True
-
-    def test_close_removes_scoped_session(self, tmp_path: pathlib.Path) -> None:
-        """Contract (b): close() removes the live scoped session from its registry."""
-        bot, _provider = _make_bot(tmp_path)
-        bot.db()  # register a live scoped session
-        assert bot.db._session.registry.has()
-
-        bot.close()
-
-        assert not bot.db._session.registry.has()
-
     def test_close_composes_release_python_state(self, tmp_path: pathlib.Path) -> None:
-        """Contract (c): release_python_state mid-lifecycle, then close stays safe."""
+        """Contract (b): release_python_state mid-lifecycle, then close stays safe."""
         bot, provider = _make_bot(tmp_path)
         tracker = bot.add_tracker(UniswapV2PoolTracker, factory_address=_V2_FACTORY)
         _seed_tracker_caches(bot, tracker)
@@ -222,7 +185,6 @@ class TestBotContextManager:
         assert tracker.tracked_pool_count() == 0
         assert tracker.untracked_pool_count() == 0
         assert len(bot.pools) == 0
-        assert bot.db._engine is not None
         assert provider.closed is False
 
         # End-of-life close must not raise despite the already-released caches,
@@ -230,4 +192,3 @@ class TestBotContextManager:
         bot.close()
         assert bot._closed is True
         assert provider.closed is True
-        assert bot.db._engine is None

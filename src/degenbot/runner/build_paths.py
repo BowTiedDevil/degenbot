@@ -21,9 +21,6 @@ from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool, get_checksum_address
 from degenbot.arbitrage._claims import ThreadEventWake, VerifyClaims
 from degenbot.arbitrage.engine_registry import EngineRegistry
@@ -43,6 +40,7 @@ from degenbot.database.species_manifest import (
 from degenbot.database.species_manifest import (
     pool_version_map,
 )
+from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
     DirectionResolutionError,
     PathRegistryFullError,
@@ -72,6 +70,7 @@ from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
+    import pathlib
     import threading
 
 
@@ -328,7 +327,7 @@ class ConstructionContext:
 
     bot: Bot
     chain_id: int
-    db: Any
+    database_path: pathlib.Path
     uniswap_v3_tracker: UniswapV3PoolTracker
     sushiswap_v3_tracker: UniswapV3PoolTracker
     pancakeswap_v3_tracker: UniswapV3PoolTracker
@@ -360,7 +359,7 @@ class ConstructionContext:
         return cls(
             bot=bot,
             chain_id=bot.chain_id,
-            db=bot.db,
+            database_path=bot.database_path,
             uniswap_v3_tracker=uniswap_v3_tracker,
             sushiswap_v3_tracker=sushiswap_v3_tracker,
             pancakeswap_v3_tracker=pancakeswap_v3_tracker,
@@ -402,7 +401,7 @@ class PathRegistrationPipeline:
         self.constr_ctx = context
         self.constr_bot = context.bot
         self.constr_chain_id = context.chain_id
-        self.constr_db = context.db
+        self.constr_database_path = context.database_path
         self.uniswap_v3_tracker = context.uniswap_v3_tracker
         self.sushiswap_v3_tracker = context.sushiswap_v3_tracker
         self.pancakeswap_v3_tracker = context.pancakeswap_v3_tracker
@@ -973,33 +972,10 @@ class PathRegistrationPipeline:
         (fail-open): the latch stays disabled and every sweep runs — the
         pre-latch behavior. A failed probe never blocks discovery.
         """
-        db = self.constr_db
-        if db is None:
-            return None
         try:
-            chain = self.constr_chain_id
-            with cast("Session", db()) as session:
-                v2v3 = session.execute(
-                    text("SELECT count(*), COALESCE(max(id), 0) FROM pools WHERE chain = :chain"),
-                    {"chain": chain},
-                ).one()
-                v4 = session.execute(
-                    text(
-                        "SELECT count(*), COALESCE(max(mp.id), 0) "
-                        "FROM managed_pools mp "
-                        "JOIN pool_managers pm ON pm.id = mp.manager_id "
-                        "WHERE pm.chain = :chain"
-                    ),
-                    {"chain": chain},
-                ).one()
+            return db_fetch_graph_edition(str(self.constr_database_path), self.constr_chain_id)
         except Exception:
             return None
-        return (
-            int(v2v3[0]),
-            int(v2v3[1]),
-            int(v4[0]),
-            int(v4[1]),
-        )
 
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
         """Trigger a bounded one-shot discovery sweep (NWTUM3 / D1c).
@@ -1053,7 +1029,7 @@ class PathRegistrationPipeline:
                 ],
                 max_depth=3,
                 pool_types=self.pool_types,
-                db=self.constr_db,
+                database_path=self.constr_database_path,
                 pool_type_per_depth=self.pool_type_per_depth,
                 allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
             ),
