@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 
 from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.pools import PoolManagerTable
 from degenbot.db import (
+    ExchangeRow,
+    PoolManagerRow,
     db_apply_v3_liquidity_updates,
     db_apply_v4_liquidity_updates,
     db_fetch_pool_row,
@@ -103,14 +103,15 @@ class V4PoolUpdateConfig:
 class PoolUpdateRequest[ConfigT: V2PoolUpdateConfig | V3PoolUpdateConfig | V4PoolUpdateConfig]:
     """Typed request for one pool-creation event update run.
 
-    Bundles the block bounds, target exchange, DB sink, decode config, and
-    event-fetch callable so each updater shell takes a single argument.
+    Bundles the block bounds, Rust-backed exchange row, database path,
+    decode config, and event-fetch callable so each updater shell takes a
+    single argument.
     """
 
     provider: AlloyProvider
     start_block: int
     end_block: int
-    exchange: ExchangeTable
+    exchange: ExchangeRow
     database_path: str
     config: ConfigT
     get_events_fn: Callable[..., list[LogReceipt]]
@@ -300,7 +301,7 @@ def apply_v3_liquidity_updates(
     provider: AlloyProvider,
     pool_address: str,
     liquidity_events: list[LogReceipt],
-    exchanges_in_scope: set[ExchangeTable],
+    exchanges_in_scope: set[ExchangeRow],
     *,
     database_path: str,
 ) -> None:
@@ -355,7 +356,7 @@ def apply_v3_liquidity_updates(
 def apply_v4_liquidity_updates(
     pool_id: bytes,
     liquidity_events: list[LogReceipt],
-    pool_manager: PoolManagerTable,
+    pool_manager: PoolManagerRow,
     *,
     database_path: str,
 ) -> None:

@@ -32,10 +32,10 @@ class _TokenMetadata:
 
 
 class Erc20Builder:
-    """Builds Erc20Token instances from DB lookups and RPC calls.
+    """Builds Erc20Token instances from Rust-backed metadata and RPC calls.
 
-    Owns the full I/O choreography: check registry → check DB → fetch
-    from chain → construct token → register.
+    Owns the companion I/O choreography: check the registry → ask the Rust
+    construction core for metadata → wrap and register the token.
     """
 
     def __init__(

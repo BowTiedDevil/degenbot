@@ -247,10 +247,12 @@ def test_update_v2_pools_shell_routes_through_rust(seeded_db: pathlib.Path) -> N
         fee_denominator=1000,
     )
 
-    session = get_scoped_sqlite_session(seeded_db)
-    with session() as s:
-        exchange = s.scalar(select(ExchangeTable).where(ExchangeTable.name == "uniswap_v2"))
-    _dispose(session)
+    exchange = db_fetch_exchange_by_name(
+        database_path=str(seeded_db),
+        chain_id=CHAIN,
+        name="uniswap_v2",
+    )
+    assert exchange is not None
 
     update_v2_pools(
         PoolUpdateRequest(
@@ -296,18 +298,20 @@ def test_update_v2_aerodrome_stable_flag(seeded_db: pathlib.Path) -> None:
         has_stable_flag=True,
     )
 
-    session = get_scoped_sqlite_session(seeded_db)
-    with session() as s:
-        ex = s.scalar(select(ExchangeTable).where(ExchangeTable.name == "uniswap_v2"))
-        ex.name = "aerodrome_v2"  # the shell passes name→kind
-    _dispose(session)
+    exchange = db_upsert_exchange(
+        database_path=str(seeded_db),
+        chain_id=CHAIN,
+        name="aerodrome_v2",
+        factory=UNISWAP_V2_FACTORY,
+        deployer=None,
+    )
 
     update_v2_pools(
         PoolUpdateRequest(
             provider=_StubProvider(),  # type: ignore[arg-type]
             start_block=100,
             end_block=100,
-            exchange=ex,
+            exchange=exchange,
             database_path=str(seeded_db),
             config=config,
             get_events_fn=_events_fn_factory(events),
@@ -339,18 +343,20 @@ def test_update_v3_pools_shell_routes_through_rust(seeded_db: pathlib.Path) -> N
         fee_denominator=1_000_000,
     )
 
-    session = get_scoped_sqlite_session(seeded_db)
-    with session() as s:
-        ex = s.scalar(select(ExchangeTable).where(ExchangeTable.name == "uniswap_v2"))
-        ex.name = "uniswap_v3"  # the shell passes name→kind (in-memory override; no commit)
-    _dispose(session)
+    exchange = db_upsert_exchange(
+        database_path=str(seeded_db),
+        chain_id=CHAIN,
+        name="uniswap_v3",
+        factory=UNISWAP_V2_FACTORY,
+        deployer=None,
+    )
 
     update_v3_pools(
         PoolUpdateRequest(
             provider=_StubProvider(),  # type: ignore[arg-type]
             start_block=100,
             end_block=100,
-            exchange=ex,
+            exchange=exchange,
             database_path=str(seeded_db),
             config=config,
             get_events_fn=_events_fn_factory(events),
@@ -399,17 +405,19 @@ def test_update_v4_pools_shell_routes_through_rust(seeded_db: pathlib.Path) -> N
         fee_denominator=1_000_000,
     )
 
-    session = get_scoped_sqlite_session(seeded_db)
-    with session() as s:
-        ex4 = s.scalar(select(ExchangeTable).where(ExchangeTable.name == "uniswap_v4"))
-    _dispose(session)
+    exchange = db_fetch_exchange_by_name(
+        database_path=str(seeded_db),
+        chain_id=CHAIN,
+        name="uniswap_v4",
+    )
+    assert exchange is not None
 
     update_v4_pools(
         PoolUpdateRequest(
             provider=_StubProvider(),  # type: ignore[arg-type]
             start_block=100,
             end_block=100,
-            exchange=ex4,
+            exchange=exchange,
             database_path=str(seeded_db),
             config=config,
             get_events_fn=_events_fn_factory(events),

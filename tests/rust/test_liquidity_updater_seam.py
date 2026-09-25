@@ -45,6 +45,7 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
 )
 from degenbot.database.operations import get_scoped_sqlite_session
+from degenbot.db import db_fetch_exchange, db_upsert_pool_manager
 from degenbot.types.rpc_types import LogReceipt
 from degenbot.utils.bytes import to_bytes
 
@@ -290,7 +291,10 @@ def test_apply_v3_seam_matches_expected_oracle(v3_apply_copy: pathlib.Path) -> N
         )
         assert pool is not None
         pool_id = pool.id
-        exchange = s.get(ExchangeTable, pool.exchange_id)
+        exchange = db_fetch_exchange(
+            database_path=str(v3_apply_copy),
+            exchange_id=pool.exchange_id,
+        )
         assert exchange is not None
         exchanges_in_scope = {exchange}
     _dispose(session)
@@ -331,12 +335,20 @@ def test_apply_v4_seam_matches_expected_oracle(v4_apply_copy: pathlib.Path) -> N
         )
         assert pool is not None
         managed_pool_id = pool.managed_pool_id
+        manager_row = db_upsert_pool_manager(
+            database_path=str(v4_apply_copy),
+            address=manager.address,
+            chain=manager.chain,
+            kind=manager.kind,
+            state_view=manager.state_view,
+            exchange_id=manager.exchange_id,
+        )
     _dispose(session)
 
     apply_v4_liquidity_updates(
         pool_id=to_bytes(V4_POOL_HASH),
         liquidity_events=events,
-        pool_manager=manager,
+        pool_manager=manager_row,
         database_path=str(v4_apply_copy),
     )
     _checkpoint(v4_apply_copy)

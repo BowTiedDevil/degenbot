@@ -1,7 +1,7 @@
 """Protocol for pool construction and state updates.
 
 Each builder owns:
-- The I/O choreography (DB lookup → RPC fetch → decode → construct)
+- The I/O choreography (Rust-backed metadata lookup → RPC fetch → decode → construct)
 - Pool registration in the Pool Registry
 - State updates via pool.external_update()
 
