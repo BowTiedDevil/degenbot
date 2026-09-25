@@ -9,8 +9,8 @@ that delegates RPC resolution to the library `resolve_rpc_uris` cascade
 
 Node resolution no longer defaults to `localhost`. A chain with no configured
 endpoint in any layer raises `RpcNotConfiguredError` (a `ValueError` subclass)
-pointing at `DEGENBOT_RPC_*_CHAINID_{cid}` / config.toml. The legacy
-`NODE_HOST_*`/`NODE_PORT_*` variables are retired and ignored.
+pointing at the `DEGENBOT_RPC_*_CHAINID_{cid}` env families and the
+`[nodes.*]` file tables. The legacy `NODE_HOST_*`/`NODE_PORT_*`\nvariables are retired and ignored.
 """
 
 from __future__ import annotations
@@ -20,22 +20,33 @@ import warnings
 
 import pytest
 
-from degenbot import config as config_module
 from degenbot.config import RpcNotConfiguredError
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
-_HTTP_ENV = "DEGENBOT_RPC_HTTP_CHAINID_1"
-_WS_ENV = "DEGENBOT_RPC_WS_CHAINID_1"
+# A chain id no operator file, environment, or harness sets, so a refusal is
+# genuinely the absence of every layer rather than a leak.
+_UNCONFIGURED_CHAIN = 988877
+
+# The explicit override layer, used wherever a test only needs the cascade to
+# answer: one endpoint, classified by the core, serves both capabilities.
+_NODE = "wss://override.example"
+_OVERRIDE = RpcCascadeOverrides(chain_id=1, node=_NODE)
 
 
-def _set_rpc_env(monkeypatch: pytest.MonkeyPatch, *, http: str, ws: str) -> None:
-    """Set the chain-1 RPC OS envvars (the new cascade mechanism)."""
-    monkeypatch.setenv(_HTTP_ENV, http)
-    monkeypatch.setenv(_WS_ENV, ws)
+def _cfg(env, *, live=False, permutation=None, rpc=None) -> ArbitrageConfig:
+    """Build a config with the RPC override pinned.
+
+    Every test here is about a non-RPC field, so the endpoint is supplied
+    through the explicit layer rather than by mutating an environment the
+    installed config has already read.
+    """
+    return ArbitrageConfig.from_env(
+        env, live=live, permutation=permutation, rpc=rpc if rpc is not None else _OVERRIDE
+    )
 
 
 def _full_env() -> dict[str, str]:
-    """Operator + executor fields. RPC is set via OS env (the new mechanism)."""
+    """Operator + executor fields; the RPC override is supplied by :func:`_cfg`."""
     return {
         "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
         "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
@@ -48,15 +59,14 @@ def _full_env() -> dict[str, str]:
 
 class TestFromEnvFull:
     def test_full_env_populates_all_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
-        cfg = ArbitrageConfig.from_env(_full_env(), live=True, permutation=None)
+        cfg = _cfg(_full_env(), live=True, permutation=None)
 
         assert cfg.dry_run is False
         assert cfg.operator_address == "0x9C56a29c7231974c269E24F9FB3c29203039089E"
         assert cfg.operator_private_key == "0x" + "a" * 64
         assert cfg.chain_id == 1
-        assert cfg.node_http == "https://eth.example.com"
-        assert cfg.node_ws == "wss://ws.eth.example.com"
+        assert cfg.node_http == _NODE
+        assert cfg.node_ws == _NODE
         assert cfg.executor_address == "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"
         assert cfg.inject_executor_code is False
         # main() behavior: inject=False keeps the env executor address
@@ -67,19 +77,17 @@ class TestFromEnvFull:
     def test_inject_code_true_overrides_executor_to_injected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"INJECT_EXECUTOR_CODE": "1"}
-        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+        cfg = _cfg(env, live=False, permutation=None)
 
         assert cfg.inject_executor_code is True
         # injection overrides the executor with the injected address
         assert cfg.executor_address == cfg.injected_address
 
     def test_live_with_injection_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"INJECT_EXECUTOR_CODE": "1"}
         with pytest.raises(ValueError, match="inject"):
-            ArbitrageConfig.from_env(env, live=True, permutation=None)
+            _cfg(env, live=True, permutation=None)
 
 
 class TestInjectExecutorCodeUnifiedResolution:
@@ -96,31 +104,28 @@ class TestInjectExecutorCodeUnifiedResolution:
     def test_legacy_bare_os_env_name_raises_with_migration_message(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         monkeypatch.setenv(self._LEGACY, "1")
         monkeypatch.delenv(self._TYPED, raising=False)
         with pytest.raises(ValueError, match=self._TYPED):
-            ArbitrageConfig.from_env({}, live=False, permutation=None)
+            _cfg({}, live=False, permutation=None)
 
     def test_typed_os_env_beats_dotenv_layer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         monkeypatch.delenv(self._LEGACY, raising=False)
         monkeypatch.setenv(self._TYPED, "1")
         env = _full_env() | {"INJECT_EXECUTOR_CODE": "0"}
-        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+        cfg = _cfg(env, live=False, permutation=None)
         assert cfg.inject_executor_code is True
 
     def test_dotenv_only_and_env_only_agree(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         monkeypatch.delenv(self._LEGACY, raising=False)
         monkeypatch.delenv(self._TYPED, raising=False)
         for value, expected in (("0", False), ("1", True)):
-            via_dotenv = ArbitrageConfig.from_env(
+            via_dotenv = _cfg(
                 _full_env() | {"INJECT_EXECUTOR_CODE": value}, live=False, permutation=None
             )
             dotenv_free = {k: v for k, v in _full_env().items() if k != "INJECT_EXECUTOR_CODE"}
             monkeypatch.setenv(self._TYPED, value)
-            via_env = ArbitrageConfig.from_env(dotenv_free, live=False, permutation=None)
+            via_env = _cfg(dotenv_free, live=False, permutation=None)
             monkeypatch.delenv(self._TYPED, raising=False)
             assert via_dotenv.inject_executor_code == expected
             assert via_env.inject_executor_code == expected
@@ -128,11 +133,10 @@ class TestInjectExecutorCodeUnifiedResolution:
     def test_unset_everywhere_defaults_to_no_injection(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         monkeypatch.delenv(self._LEGACY, raising=False)
         monkeypatch.delenv(self._TYPED, raising=False)
         env = {k: v for k, v in _full_env().items() if k != "INJECT_EXECUTOR_CODE"}
-        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+        cfg = _cfg(env, live=False, permutation=None)
         assert cfg.inject_executor_code is False
 
 
@@ -153,9 +157,8 @@ class TestDryRunDefaults:
         # (the Rust submit leaf's `dry_run` guard skips `sign_eip1559`).
         from degenbot._ffi.submission import TxSigner
 
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"OPERATOR_ADDRESS": "", "OPERATOR_PRIVATE_KEY": ""}
-        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+        cfg = _cfg(env, live=False, permutation=None)
 
         assert cfg.dry_run is True
         assert cfg.operator_address == self._DRY_RUN_ADDR
@@ -170,10 +173,9 @@ class TestDryRunDefaults:
 class TestLiveModeRequiresOperator:
     def test_live_mode_missing_operator_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # operator check happens before node resolution — ValueError raised, no DeprecationWarning
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"OPERATOR_ADDRESS": "", "OPERATOR_PRIVATE_KEY": ""}
         with pytest.raises(ValueError, match="OPERATOR"):
-            ArbitrageConfig.from_env(env, live=True, permutation=None)
+            _cfg(env, live=True, permutation=None)
 
 
 class TestLiveOwnerOperatorTriangle:
@@ -185,21 +187,18 @@ class TestLiveOwnerOperatorTriangle:
     """
 
     def test_live_mismatched_owner_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"EXECUTOR_OWNER_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"}
         with pytest.raises(ValueError, match="EXECUTOR_OWNER_ADDRESS"):
-            ArbitrageConfig.from_env(env, live=True, permutation=None)
+            _cfg(env, live=True, permutation=None)
 
     def test_live_empty_owner_defaults_to_operator(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = {k: v for k, v in _full_env().items() if k != "EXECUTOR_OWNER_ADDRESS"}
-        cfg = ArbitrageConfig.from_env(env, live=True, permutation=None)
+        cfg = _cfg(env, live=True, permutation=None)
         assert cfg.executor_owner == cfg.operator_address
 
     def test_dry_run_mismatched_owner_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"EXECUTOR_OWNER_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"}
-        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+        cfg = _cfg(env, live=False, permutation=None)
         assert cfg.executor_owner == "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"
 
 
@@ -215,12 +214,11 @@ class TestRunnerKnobResolution:
     )
 
     def _cfg(self, monkeypatch: pytest.MonkeyPatch, extra: dict[str, str]) -> ArbitrageConfig:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         # The layer-under-test is the dotenv dict: ambient OS env (the
         # devcontainer exports DEGENBOT_MAX_PATHS) must not leak in.
         for name in self._KNOB_ENVS:
             monkeypatch.delenv(name, raising=False)
-        return ArbitrageConfig.from_env(_full_env() | extra, live=False, permutation=None)
+        return _cfg(_full_env() | extra, live=False, permutation=None)
 
     def test_dotenv_layer_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = self._cfg(
@@ -238,13 +236,10 @@ class TestRunnerKnobResolution:
         assert cfg.reg_progress_secs == 15.0
 
     def test_os_env_beats_dotenv(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         # Bypass _cfg: the helper strips knob OS env to isolate layers, but
         # THIS test is the OS-env-beats-dotenv layer.
         monkeypatch.setenv("DEGENBOT_MAX_PATHS", "70000")
-        cfg = ArbitrageConfig.from_env(
-            _full_env() | {"DEGENBOT_MAX_PATHS": "50000"}, live=False, permutation=None
-        )
+        cfg = _cfg(_full_env() | {"DEGENBOT_MAX_PATHS": "50000"}, live=False, permutation=None)
         assert cfg.max_registered_paths == 70000
 
     def test_invalid_numeric_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,114 +255,103 @@ class TestRunnerKnobResolution:
 
 
 class TestRpcCascade:
-    """from_env delegates to resolve_rpc_uris: CLI > OS env > legacy > config.toml > raise."""
+    """from_env delegates to resolve_rpc_uris, so the four-layer cascade applies.
 
-    def test_missing_everywhere_raises_with_envvar_pointers(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv(_HTTP_ENV, raising=False)
-        monkeypatch.delenv(_WS_ENV, raising=False)
+    The config is installed once at FFI module init, so what a per-call
+    argument can reach is the explicit ``node`` override and the refusal when
+    nothing in the installed config supplies the chain.
+    """
 
-        # also isolate config.toml so the devcontainer's real config doesn't satisfy chain 1
-        monkeypatch.setattr(
-            config_module, "CONFIG_FILE", type("P", (), {"exists": lambda self: False})()
-        )
+    def test_the_explicit_node_override_fills_both_capabilities(self) -> None:
+        """One endpoint, classified by the core, serves whichever slot it fits."""
+        cfg = _cfg(_full_env(), live=False, permutation=None)
 
+        assert cfg.chain_id == 1
+        assert cfg.node_http == _NODE
+        assert cfg.node_ws == _NODE
+
+    def test_an_unconfigured_chain_refuses_with_envvar_pointers(self) -> None:
         with pytest.raises(RpcNotConfiguredError) as exc_info:
-            ArbitrageConfig.from_env({}, live=False, permutation=None)
+            _cfg(
+                {},
+                live=False,
+                permutation=None,
+                rpc=RpcCascadeOverrides(chain_id=_UNCONFIGURED_CHAIN),
+            )
 
         msg = str(exc_info.value)
-        assert _HTTP_ENV in msg
-        assert "config" in msg.lower()
+        assert f"DEGENBOT_RPC_HTTP_CHAINID_{_UNCONFIGURED_CHAIN}" in msg
+        assert "nodes.http" in msg
 
-    def test_cli_override_beats_os_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://from-env.example", ws="wss://ws-env.example")
-        cfg = ArbitrageConfig.from_env(
-            _full_env(),
-            live=False,
-            permutation=None,
-            rpc=RpcCascadeOverrides(
-                cli_http="https://from-cli.example", cli_ws="wss://from-cli.example"
-            ),
-        )
-        assert cfg.node_http == "https://from-cli.example"
-        assert cfg.node_ws == "wss://from-cli.example"
+    def test_a_chain_named_only_by_the_file_refuses_on_the_subscription_scope(
+        self,
+    ) -> None:
+        """A chain the file serves by HTTP alone cannot host a feed."""
+        with pytest.raises(RpcNotConfiguredError) as exc_info:
+            _cfg(
+                {},
+                live=False,
+                permutation=None,
+                rpc=RpcCascadeOverrides(
+                    chain_id=_UNCONFIGURED_CHAIN, node="http://only-a-read.example"
+                ),
+            )
 
-    def test_cli_http_only_ws_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://from-env.example", ws="wss://ws-env.example")
-        cfg = ArbitrageConfig.from_env(
-            _full_env(),
-            live=False,
-            permutation=None,
-            rpc=RpcCascadeOverrides(cli_http="https://from-cli.example"),
-        )
-        assert cfg.node_http == "https://from-cli.example"
-        assert cfg.node_ws == "wss://ws-env.example"
+        assert "subscription" in str(exc_info.value)
 
 
 class TestLegacyNodeHostIgnored:
     """NODE_HOST_*/NODE_PORT_* are retired: the variables are ignored (no warning)."""
 
-    def test_legacy_vars_are_fully_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv(_HTTP_ENV, raising=False)
-        monkeypatch.delenv(_WS_ENV, raising=False)
-
-        monkeypatch.setattr(
-            config_module, "CONFIG_FILE", type("P", (), {"exists": lambda self: False})()
-        )
+    def test_legacy_vars_are_fully_ignored(self) -> None:
         env = _full_env() | {
             "NODE_HOST_HTTP": "https://legacy.example",
             "NODE_PORT_HTTP": "8545",
             "NODE_HOST_WEBSOCKET": "wss://legacy.example",
             "NODE_PORT_WEBSOCKET": "8546",
         }
-        # No RPC source in any layer → RpcNotConfiguredError, and no
-        # DeprecationWarning either (the variables are not consulted at all).
+        # No layer carries them and nothing warns: the variables are not
+        # consulted at all, so the override is the only endpoint in play.
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
-            with pytest.raises(RpcNotConfiguredError):
-                ArbitrageConfig.from_env(env, live=False, permutation=None)
+            cfg = _cfg(env, live=False, permutation=None)
 
-    def test_legacy_vars_lose_to_os_env_without_warnings(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _set_rpc_env(monkeypatch, http="https://from-env.example", ws="wss://ws-env.example")
+        assert cfg.node_http == _NODE
+        assert cfg.node_ws == _NODE
+
+    def test_legacy_vars_do_not_reach_the_cascade_without_warnings(self) -> None:
         env = _full_env() | {
             "NODE_HOST_HTTP": "https://legacy.example",
             "NODE_PORT_HTTP": "8545",
         }
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
-            cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
+            cfg = _cfg(env, live=False, permutation=None)
 
-        assert cfg.node_http == "https://from-env.example"
+        assert cfg.node_http == _NODE
 
 
 class TestPermutationOverride:
     def test_permutation_string_becomes_singleton_frozenset(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
-        cfg = ArbitrageConfig.from_env(_full_env(), live=False, permutation="V3-V4-V3")
+        cfg = _cfg(_full_env(), live=False, permutation="V3-V4-V3")
         assert cfg.permutation_filter == frozenset({"V3-V4-V3"})
 
     def test_no_permutation_is_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
-        cfg = ArbitrageConfig.from_env(_full_env(), live=False, permutation=None)
+        cfg = _cfg(_full_env(), live=False, permutation=None)
         assert cfg.permutation_filter is None
 
 
 class TestExecutorZeroAddress:
     def test_zero_executor_address_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"EXECUTOR_CONTRACT_ADDRESS": "0x" + "0" * 40}
         with pytest.raises(ValueError, match=r"zero address|EXECUTOR_CONTRACT_ADDRESS"):
-            ArbitrageConfig.from_env(env, live=False, permutation=None)
+            _cfg(env, live=False, permutation=None)
 
 
 class TestImmutability:
     def test_config_is_frozen(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
-        cfg = ArbitrageConfig.from_env(_full_env(), live=False, permutation=None)
+        cfg = _cfg(_full_env(), live=False, permutation=None)
         with pytest.raises(dataclasses.FrozenInstanceError):
             cfg.operator_address = "0x" + "1" * 40  # type: ignore[misc]

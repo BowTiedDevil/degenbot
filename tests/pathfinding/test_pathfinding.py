@@ -1,6 +1,6 @@
 import pytest
 
-from degenbot.config import _init_config
+from degenbot.config import resolve_database_path
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.pathfinding import (
     PathfindingRequest,
@@ -25,7 +25,7 @@ def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:
 @pytest.fixture
 def db():
     """Provide the configured file-backed database path."""
-    return _init_config().database.path
+    return resolve_database_path()
 
 
 def test_two_pool_pathfinding_cycling_weth(db):

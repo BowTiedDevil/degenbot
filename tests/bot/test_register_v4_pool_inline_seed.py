@@ -23,7 +23,6 @@ from unittest.mock import MagicMock
 
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
-from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.provider import AlloyProvider
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
@@ -34,12 +33,9 @@ if TYPE_CHECKING:
 V4_POOL_MANAGER = "0x000000000004444c5DC75cB358380D2e3dE08A90"
 
 
-def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
-    return DegenbotConfig(
-        database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: "http://localhost:8545/"},
-        default_chain_id=chain_id,
-    )
+def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object]:
+    """The explicit keyword overrides a session under test runs with."""
+    return {"chain_id": chain_id, "database": str(tmp_path / "test.db")}
 
 
 def _fake_provider(chain_id: int = 1) -> AlloyProvider:
@@ -119,8 +115,8 @@ def test_release_python_state_keeps_rust_v4_pool_registered(tmp_path: pathlib.Pa
     release (the engine still solves against them).
     """
 
-    config = _make_test_config(tmp_path)
-    bot = Bot(config, provider=_fake_provider(1))
+    session = _test_session(tmp_path)
+    bot = Bot(**session, provider=_fake_provider(1))
     py_bot = bot._py_bot
     weth, usdc = _make_tokens(py_bot)
 

@@ -4,14 +4,14 @@ Design note — public-seam testing. Every double enters Bot through a
 constructor parameter or a public method: no mock/``patch`` of module
 privates, no assignment to ``bot._*`` attributes.
 
-Seams used here (all additive to ``Bot.__init__`` / ``from_config_file``;
-omitted kwargs keep today's production bindings, matching the runner's
+Seams used here (all additive to ``Bot.__init__``; omitted kwargs resolve from
+the installed typed config, matching the runner's
 ``SimSubmitPipeline`` candidate_builder/simulator/renderer/submitter and
 ``_submit_batch_records`` submitter/relay_providers precedents):
 
-- ``from_config_file(config=..., provider=...)`` — a real config + a real
-  ``OfflineProvider`` are handed in, replacing a patch of the private
-  ``_init_config`` / ``get_provider_from_config`` module factories.
+- ``Bot(chain_id=..., database=..., provider=...)`` — the explicit override
+  keywords plus a real ``OfflineProvider``, replacing a patch of the private
+  ``resolve_*`` / ``get_provider_from_config`` module factories.
 - ``Bot(py_bot=..., io=..., erc20_builder=...)`` — engine / I/O / token-builder
   doubles for the build-path tests. An injected object skips the
   construction-time wiring that belongs to the default instance (engine DB
@@ -47,33 +47,27 @@ from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.provider import OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.pool_type import PoolProbe
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 # Not in the deployments registry, so the type resolver falls back to probing.
 _UNREGISTERED_FACTORY = "0x" + "f" * 40
 
 
-def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
-    """Create a DegenbotConfig pointing at a temporary database."""
-    return DegenbotConfig(
-        database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
-        default_chain_id=chain_id,
-    )
+def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object]:
+    """The explicit keyword overrides a session under test runs with."""
+    return {"chain_id": chain_id, "database": str(tmp_path / "test.db")}
 
 
 def _fake_provider(chain_id: int = 1) -> OfflineProvider:
     """A real offline provider (recorded JSON, no RPC) with the given chain_id.
 
     `Bot.__init__` reads `provider.chain_id` (the recorded chain_id) to enforce
-    config/chain alignment; no RPC is issued at construction, so an offline
+    session/chain alignment; no RPC is issued at construction, so an offline
     provider over an in-memory Rust transport suffices — no mock double.
     """
     return OfflineProvider(
@@ -86,41 +80,46 @@ class TestBotInit:
     """Bot constructor tests (single-chain)."""
 
     def test_bot_exposes_database_path_without_legacy_session(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
 
-        assert bot.database_path == config.database.path
+        assert bot.database_path == tmp_path / "test.db"
         assert not hasattr(bot, "db")
 
     def test_bot_creates_pool_registry(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
         assert isinstance(bot.pools, PoolRegistry)
 
     def test_bot_creates_token_registry(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
         assert isinstance(bot.tokens, TokenRegistry)
 
     def test_bot_creates_managed_pool_registry(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
         assert isinstance(bot.managed_pools, ManagedPoolRegistry)
 
-    def test_bot_stores_config(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
-        assert bot.config is config
+    def test_bot_carries_no_config_object(self, tmp_path: pathlib.Path) -> None:
+        """The resolved values are the session's own; nothing holds a config.
+
+        Python is a driver over the installed typed config, so no config value
+        object is left on the session to drift from the core's.
+        """
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
+        assert not hasattr(bot, "config")
 
     def test_bot_trackers_empty_at_start(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
         assert bot._trackers == {}
 
     def test_bot_exposes_chain_id_and_provider(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path, chain_id=1)
+        session = _test_session(tmp_path, chain_id=1)
         provider = _fake_provider(1)
-        bot = Bot(config, provider=provider)
+        bot = Bot(**session, provider=provider)
         assert bot.chain_id == 1
         assert bot.provider is provider
 
@@ -129,54 +128,41 @@ class TestBotPyBotHandle:
     """Bot constructs and owns a PyO3 _Engine handle (ADR-005)."""
 
     def test_bot_constructs_py_bot(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
         assert isinstance(bot._py_bot, _Engine)
 
     def test_each_bot_has_independent_py_bot(self, tmp_path: pathlib.Path) -> None:
-        bot1 = Bot(_make_test_config(tmp_path / "bot1"), provider=_fake_provider(1))
-        bot2 = Bot(_make_test_config(tmp_path / "bot2"), provider=_fake_provider(1))
+        bot1 = Bot(**_test_session(tmp_path / "bot1"), provider=_fake_provider(1))
+        bot2 = Bot(**_test_session(tmp_path / "bot2"), provider=_fake_provider(1))
         assert isinstance(bot1._py_bot, _Engine)
         assert isinstance(bot2._py_bot, _Engine)
         assert bot1._py_bot is not bot2._py_bot
 
-    def test_py_bot_carries_configured_chain_id(self, tmp_path: pathlib.Path) -> None:
-        """The Bot facade wires its ``default_chain_id`` into the Rust ``_Engine``
-        (ADR-006 D4: ``Bot::new(chain_id)``). No more ``chain_id = 0`` placeholder.
+    def test_py_bot_carries_the_resolved_chain_id(self, tmp_path: pathlib.Path) -> None:
+        """The Bot facade wires its resolved session chain into the Rust
+        ``_Engine`` (ADR-006 D4: ``Bot::new(chain_id)``), with no
+        ``chain_id = 0`` placeholder.
         """
-        config = _make_test_config(tmp_path, chain_id=1)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path, chain_id=1)
+        bot = Bot(**session, provider=_fake_provider(1))
         assert bot._py_bot.chain_id == 1
 
-    def test_py_bot_chain_id_follows_config(self, tmp_path: pathlib.Path) -> None:
-        """A non-default ``default_chain_id`` propagates to the ``_Engine`` (the
-        wiring is real, not a hard-coded constant).
+    def test_py_bot_chain_id_follows_the_override(self, tmp_path: pathlib.Path) -> None:
+        """A non-default session chain propagates to the ``_Engine`` (the wiring
+        is real, not a hard-coded constant).
         """
-        config = _make_test_config(tmp_path, chain_id=10)
-        bot = Bot(config, provider=_fake_provider(10))
+        session = _test_session(tmp_path, chain_id=10)
+        bot = Bot(**session, provider=_fake_provider(10))
         assert bot._py_bot.chain_id == 10
-
-
-class TestBotFromConfigFile:
-    """Bot.from_config_file() tests."""
-
-    def test_from_config_file_creates_bot(self, tmp_path: pathlib.Path) -> None:
-        # Real config + real provider through the from_config_file DI seams —
-        # the default-argument path (file discovery + provider factory) is
-        # unchanged production behavior.
-        bot = Bot.from_config_file(
-            config=_make_test_config(tmp_path),
-            provider=_fake_provider(1),
-        )
-        assert isinstance(bot, Bot)
 
 
 class TestBotAddTracker:
     """Bot.add_tracker() tests (single-chain — no chain_id arg)."""
 
     def test_add_tracker_stores_manager(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
 
         manager = bot.add_tracker(
             UniswapV2PoolTracker,
@@ -188,8 +174,8 @@ class TestBotAddTracker:
         assert bot._trackers[key] is manager
 
     def test_add_tracker_rejects_duplicate(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
 
         factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
         bot.add_tracker(UniswapV2PoolTracker, factory_address=factory)
@@ -202,8 +188,8 @@ class TestMultipleBots:
     """Multiple Bot instances must have independent state."""
 
     def test_independent_registries(self, tmp_path: pathlib.Path) -> None:
-        bot1 = Bot(_make_test_config(tmp_path / "bot1"), provider=_fake_provider(1))
-        bot2 = Bot(_make_test_config(tmp_path / "bot2"), provider=_fake_provider(1))
+        bot1 = Bot(**_test_session(tmp_path / "bot1"), provider=_fake_provider(1))
+        bot2 = Bot(**_test_session(tmp_path / "bot2"), provider=_fake_provider(1))
 
         assert bot1.pools is not bot2.pools
         assert bot1.tokens is not bot2.tokens
@@ -212,8 +198,8 @@ class TestMultipleBots:
         assert bot1.database_path != bot2.database_path
 
     def test_independent_trackers(self, tmp_path: pathlib.Path) -> None:
-        bot1 = Bot(_make_test_config(tmp_path / "bot1"), provider=_fake_provider(1))
-        bot2 = Bot(_make_test_config(tmp_path / "bot2"), provider=_fake_provider(1))
+        bot1 = Bot(**_test_session(tmp_path / "bot1"), provider=_fake_provider(1))
+        bot2 = Bot(**_test_session(tmp_path / "bot2"), provider=_fake_provider(1))
 
         factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
         manager1 = bot1.add_tracker(UniswapV2PoolTracker, factory_address=factory)
@@ -234,11 +220,7 @@ class TestBuildDelegatedIdentityReturnSurface:
         public ``build_pool`` entry: the io double routes type resolution to
         the V2 delegated path (no DB row, unregistered factory, probe says V2).
         """
-        config = DegenbotConfig(
-            database=DatabaseSettings(path=str(tmp_path / "t.db")),
-            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
-            default_chain_id=1,
-        )
+        session = _test_session(tmp_path)
         io = SimpleNamespace(
             get_block_number=lambda: 100,
             fetch_factory_address=lambda address: _UNREGISTERED_FACTORY,
@@ -260,7 +242,7 @@ class TestBuildDelegatedIdentityReturnSurface:
             ),
             get_pool=lambda pid: handle,
         )
-        bot = Bot(config, provider=_fake_provider(1), py_bot=py_bot, io=io)
+        bot = Bot(**session, provider=_fake_provider(1), py_bot=py_bot, io=io)
 
         with pytest.raises(DegenbotValueError):
             bot.build_pool("0x" + "e" * 40)
@@ -274,11 +256,7 @@ class TestBuildManagedPoolIdentityReturnSurface:
     def test_build_v4_parity_mismatch_raises(self, tmp_path: pathlib.Path) -> None:
         """A builder identity that diverges from the resolver identity raises
         — the return-surface parity guard."""
-        config = DegenbotConfig(
-            database=DatabaseSettings(path=str(tmp_path / "t.db")),
-            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
-            default_chain_id=1,
-        )
+        session = _test_session(tmp_path)
         io = SimpleNamespace(get_block_number=lambda: 100)
 
         # Token-builder double: the real Erc20Builder's per-token build needs
@@ -322,7 +300,7 @@ class TestBuildManagedPoolIdentityReturnSurface:
             ),
         )
         bot = Bot(
-            config,
+            **session,
             provider=_fake_provider(1),
             py_bot=py_bot,
             io=io,
@@ -350,18 +328,14 @@ class TestBuildManagedPoolResolveErrorMapping:
     def test_resolve_missing_identity_raises_degenbot(self, tmp_path: pathlib.Path) -> None:
         """When resolve_v4_identity raises ValueError (no DB row, no overrides),
         the V4 build path re-raises DegenbotValueError."""
-        config = DegenbotConfig(
-            database=DatabaseSettings(path=str(tmp_path / "t.db")),
-            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
-            default_chain_id=1,
-        )
+        session = _test_session(tmp_path)
         io = SimpleNamespace(get_block_number=lambda: 100)
         py_bot = SimpleNamespace(
             resolve_v4_identity=lambda **k: (_ for _ in ()).throw(
                 ValueError("V4 identity incomplete: pool not in the database")
             ),
         )
-        bot = Bot(config, provider=_fake_provider(1), py_bot=py_bot, io=io)
+        bot = Bot(**session, provider=_fake_provider(1), py_bot=py_bot, io=io)
 
         pm = "0x" + "aa" * 20
         pool_id_hex = "0x" + "11" * 32

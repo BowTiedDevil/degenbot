@@ -66,7 +66,7 @@ from tests.pool_companion._helpers import (
     WETH_ADDR,
     WETH_USDC_V2_POOL,
     make_native_eth,
-    make_test_config,
+    make_test_database,
     make_usdc,
     make_weth,
     v2_offline_provider,
@@ -304,7 +304,7 @@ def test_construction_touches_no_provider(case: NoIOCase, tmp_path: pathlib.Path
     provider = MagicMock()
     provider.chain_id = 1
     provider.is_connected.return_value = True
-    bot = Bot(make_test_config(tmp_path), provider=provider)
+    bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
 
     companion = case.build(bot)
 
@@ -361,9 +361,10 @@ class TestBotBuildV2Pool:
         usdc_addr = USDC_ADDR
         factory_addr = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
 
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         bot = Bot(
-            config,
+            database=database,
+            chain_id=1,
             provider=v2_offline_provider(
                 weth_addr=weth_addr,
                 usdc_addr=usdc_addr,
@@ -451,9 +452,10 @@ class TestBotBuildV3Pool:
         tick = -76020
         liquidity = 1234567890
 
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         bot = Bot(
-            config,
+            database=database,
+            chain_id=1,
             provider=v3_offline_provider(
                 weth_addr=weth_addr,
                 usdc_addr=usdc_addr,
@@ -572,9 +574,10 @@ class TestBotBuildV4Pool:
         lp_fee = 500000
         liquidity = 1234567890
 
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         bot = Bot(
-            config,
+            database=database,
+            chain_id=1,
             provider=v4_offline_provider(
                 pool_manager=V4_POOL_MANAGER,
                 state_view=V4_STATE_VIEW,
@@ -706,8 +709,8 @@ class TestBotBuildErc20Token:
     """Bot.build_erc20token() fetches metadata and constructs the companion."""
 
     def test_build_token_from_chain(self, tmp_path: pathlib.Path) -> None:
-        config = make_test_config(tmp_path)
-        db_create_new_database(str(config.database.path))
+        database = make_test_database(tmp_path)
+        db_create_new_database(database)
         token_address = WETH_ADDR
         offline = OfflineProvider(
             chain_id=1,
@@ -729,7 +732,7 @@ class TestBotBuildErc20Token:
                 }
             },
         )
-        bot = Bot(config, provider=offline)
+        bot = Bot(database=database, chain_id=1, provider=offline)
 
         token = bot.build_erc20token(token_address)
         assert isinstance(token, Erc20Token)

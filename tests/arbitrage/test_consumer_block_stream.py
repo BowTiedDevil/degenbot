@@ -182,7 +182,7 @@ async def _run(
             },
             live=False,
             permutation=None,
-            rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
+            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
         ),
         current_block=dispatcher.current_block,
         pipeline_factory=StubPipeline,

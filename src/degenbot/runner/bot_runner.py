@@ -44,7 +44,6 @@ from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
 )
-from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.dispatch import Dispatcher, SimulateContext, fetch_fee_history
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
@@ -72,46 +71,6 @@ from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
-
-# _make_arbitrage_config
-
-
-def _make_arbitrage_config(node_http: str) -> DegenbotConfig:
-    """Build a single-chain DegenbotConfig for the arbitrage session (ADR-006).
-
-    The chain identity is Ethereum mainnet (1); the RPC is the caller's
-    ``node_http`` — the cascade-resolved endpoint from
-    :func:`degenbot.config.resolve_rpc_uris` (CLI > OS env
-    ``DEGENBOT_RPC_HTTP_CHAINID_1`` > config.toml ``rpc[1]``). When
-    config.toml was the winning source, ``node_http`` already
-    equals ``rpc[1]``, so the injection here is consistent rather than a bypass.
-    The Bot enforces the connected RPC's ``eth_chainId`` matches at construction.
-
-    The database path is read from the existing user config at the standard
-    config file (``$XDG_CONFIG_HOME``/``$HOME/.config`` ``degenbot/config.toml``,
-    so locally-configured DB paths are honored) and falls back to the XDG
-    state-home default if no config exists.
-    """
-    from degenbot.config import CONFIG_FILE, load_config_from_file
-
-    if CONFIG_FILE.exists():
-        base = load_config_from_file(CONFIG_FILE)
-        # Override the RPC with the env-derived endpoint while keeping
-        # the database path (and any other settings) from the config file.
-        return DegenbotConfig(
-            database=base.database,
-            rpc={1: cast("Any", node_http)},
-            default_chain_id=1,
-        )
-
-    from degenbot.config import DB_PATH
-
-    return DegenbotConfig(
-        database=DatabaseSettings(path=DB_PATH),
-        rpc={1: cast("Any", node_http)},
-        default_chain_id=1,
-    )
-
 
 # ──────────────────────────────────────────────────────────────────
 # Direction resolver
@@ -1077,7 +1036,6 @@ class BotRunner:
     # ── Actor builders (production path — only used when not injected) ──
     @staticmethod
     def _build_bot(cfg: ArbitrageConfig) -> Bot:
-        config_obj = _make_arbitrage_config(cfg.node_http)
         # ADR-005: the Bot's build path (ERC20 + V2/V3/V4 pool construction)
         # issues many `eth_call`s via `BotIo` → `provider.call`. A web3.py
         # sync backend (`from_web3`) holds the GIL through every
@@ -1085,8 +1043,12 @@ class BotRunner:
         # during `build_paths`. Use the Rust `AlloyProvider` instead —
         # `PyAlloyProvider.call` releases the GIL (`py.detach`) and does HTTP
         # in Rust, so the pump/consumer can proceed and RPC is faster.
-        alloy = AlloyProvider(cfg.node_http)
-        return Bot(config_obj, provider=alloy)
+        #
+        # The session chain and the database path resolve through the installed
+        # typed config's cascade; `cfg.node_http` is the endpoint the runner's
+        # own cascade already resolved, handed over rather than re-resolved.
+        alloy = AlloyProvider(cfg.node_http, chain_id=cfg.chain_id)
+        return Bot(chain_id=cfg.chain_id, provider=alloy)
 
     @staticmethod
     async def _build_async_w3(cfg: ArbitrageConfig) -> AsyncAlloyProvider:

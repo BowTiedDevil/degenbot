@@ -41,6 +41,7 @@ from typing import Any, Self
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi.provider import AsyncAlloyProvider as RustAsyncAlloyProvider
 from degenbot.provider.factory import (
+    ChainIdentityMismatchError,
     get_async_provider_from_config,
     get_provider_from_config,
 )
@@ -964,6 +965,7 @@ class AsyncAlloyProvider(
 __all__ = [
     "AlloyProvider",
     "AsyncAlloyProvider",
+    "ChainIdentityMismatchError",
     "LogFilter",
     "OfflineProvider",
     "get_async_provider_from_config",

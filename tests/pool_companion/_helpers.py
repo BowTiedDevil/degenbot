@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 from degenbot._ffi import Bot as _Engine
 from degenbot.abi import encode as abi_encode
-from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.provider import OfflineProvider
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -51,13 +50,9 @@ V4_TICK_SPACING = 10
 V4_HOOKS = ZERO_ADDRESS
 
 
-def make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
-    """A throwaway config bound to ``tmp_path`` and the archive-node RPC URI."""
-    return DegenbotConfig(
-        database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
-        default_chain_id=1,
-    )
+def make_test_database(tmp_path: pathlib.Path) -> str:
+    """A throwaway database path bound to ``tmp_path``."""
+    return str(tmp_path / "test.db")
 
 
 def make_weth(py_bot: _Engine = PY_BOT) -> Erc20Token:

@@ -128,7 +128,7 @@ jaeger_endpoint = "http://localhost:4318"
 [failure_policy]  # unchanged, still free-form
 ```
 
-The Python driver's own cascade is unchanged: `BotConfig(rpc={1: "http://localhost:8545"}, default_chain_id=1)` still works, and its `resolve_rpc_uris` still reads the `DEGENBOT_RPC_*` names above the file (`src/degenbot/config.py`). Note the asymmetry for a SHARED file: the Python model still parses `[rpc]`/`[ws]`/`[database]`, but those spellings no longer boot the Rust CLI, so a file the Rust core accepts is read by Python for its Rust-domain sections only and delivers its endpoints through the env family above.
+The Python driver resolves through the same cascade. `Bot(chain_id=1, node="http://localhost:8545")` still works — each keyword is the explicit override layer — and with no keywords at all `Bot` reads the same `[nodes.*]`, `[session]`, and `[database]` tables the console reads, from the same file, with the same `DEGENBOT_RPC_*` and `DEGENBOT_DEFAULT_CHAIN_ID` overrides above it. There is no second config authority and no asymmetry: the console, a pure-Rust consumer, and a Python-launched bot that boot from the same file and environment resolve the same endpoints, and `degenbot config show --resolved` names the winning layer for each.
 
 CAUTION (2026-09-10 incident): inside the degenbot devcontainer, do NOT export the
 `DEGENBOT_RPC_*` names from a shell rc file (`.bashrc` etc.), and do not use

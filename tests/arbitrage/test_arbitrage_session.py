@@ -28,23 +28,17 @@ import pytest
 from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors
-from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
 
-@pytest.fixture(autouse=True)
-def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Set chain-1 RPC OS envvars for every test in this module.
-
-    The session tests inject fakes for bot/engine_registry/async_w3, so the RPC
-    URIs are never connected — they only need to be *present* on the config so
-    ``ArbitrageConfig.from_env`` does not raise ``RpcNotConfiguredError``. Keeping
-    them ``http://localhost:8545`` / ``ws://localhost:8546`` preserves the legacy
-    assertions in ``test_start_orchestrates_pre_resume_ritual``.
-    """
-    monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "http://localhost:8545")
-    monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "ws://localhost:8546")
+# The endpoint every test in this module resolves to. The session tests inject
+# fakes for bot/engine_registry/async_w3, so the URI is never connected — it
+# only has to be *present* so ``ArbitrageConfig.from_env`` answers. It arrives
+# through the explicit override layer, because the installed config reads the
+# environment at FFI module init, long before a test could set it.
+_NODE = "ws://localhost:8546"
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +64,12 @@ def _cfg(**overrides) -> ArbitrageConfig:
         "INJECT_EXECUTOR_CODE": "0",
     }
     base.update(overrides)
-    return ArbitrageConfig.from_env(base, live=True, permutation=None)
+    return ArbitrageConfig.from_env(
+        base,
+        live=True,
+        permutation=None,
+        rpc=RpcCascadeOverrides(chain_id=1, node=_NODE),
+    )
 
 
 class _FakeBot:
@@ -262,8 +261,8 @@ class TestBotRunnerStart:
         # engine_registry.start called with cfg's node URLs + the injected snapshots
         assert len(engine_registry.start_calls) == 1
         call = engine_registry.start_calls[0]
-        assert call["node_http"] == "http://localhost:8545"
-        assert call["node_ws"] == "ws://localhost:8546"
+        assert call["node_http"] == _NODE
+        assert call["node_ws"] == _NODE
         assert call["v3_snapshot"] is v3_snap
         assert call["v4_snapshot"] is v4_snap
         # verify_state_view is the V4 state view constant (non-empty)

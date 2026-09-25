@@ -7,7 +7,7 @@ the implicit max depth from pool_type_per_depth's length.
 
 import pytest
 
-from degenbot.config import _init_config
+from degenbot.config import resolve_database_path
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.pathfinding import (
     PathfindingRequest,
@@ -25,8 +25,7 @@ pytestmark = pytest.mark.slow(reason="Use -m 'slow' to run slow pathfinding test
 
 @pytest.fixture
 def db():
-    cfg = _init_config()
-    return cfg.database.path
+    return resolve_database_path()
 
 
 class TestPoolTypePerDepthBounds:

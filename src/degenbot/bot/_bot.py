@@ -33,7 +33,7 @@ from degenbot.builders.type_resolution import (
     resolve_pool_type as _resolve_pool_type_impl,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import DegenbotConfig, _init_config
+from degenbot.config import resolve_chain_id, resolve_database_path
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import BrokenPool, TrackerAlreadyInitialized
@@ -194,10 +194,12 @@ class Bot(AccountQueryMixin):
       public-method complexity bar; the facade surface is unchanged
     """
 
-    def __init__(
+    def __init__(  # ruff:ignore[too-many-arguments]
         self,
-        config: DegenbotConfig,
         *,
+        chain_id: int | None = None,
+        node: str | None = None,
+        database: str | None = None,
         provider: AlloyProvider | None = None,
         py_bot: _Engine | None = None,
         io: BotIo | None = None,
@@ -205,15 +207,19 @@ class Bot(AccountQueryMixin):
     ) -> None:
         """Initialize the single-chain Bot session.
 
-        One Bot per chain (ADR-006 D5). The chain identity comes from
-        ``config.default_chain_id`` — a ``Bot`` refuses to construct without
-        it. Two construction modes:
+        One Bot per chain (ADR-006 D5). The three keyword overrides are the
+        explicit layer of the installed typed config's cascade; with none
+        supplied, the chain id, the endpoint, and the database path all resolve
+        through ``degenbot-config``'s four layers and report the layer that won.
+
+        Two construction modes:
 
         - ``provider`` given (injection seam — for fork tests or a caller-built
-          Web3/Alloy backend): enforce `provider.chain_id` ==
-          ``config.default_chain_id`` (fail-fast), use it directly.
-        - ``provider`` omitted: build one from ``config.rpc[default_chain_id]``
-          via :func:`get_provider_from_config`, which itself enforces the match.
+          Web3/Alloy backend): enforce `provider.chain_id` == the resolved chain
+          (fail-fast), use it directly.
+        - ``provider`` omitted: build one through :func:`get_provider_from_config`
+          with the resolved chain and the ``node`` override; the factory hands
+          the chain to the core, which enforces the match itself.
 
         ``py_bot``/``io``/``erc20_builder`` are DI seams (the
         runner-pipeline ``SimSubmitPipeline`` constructor-seam pattern):
@@ -224,34 +230,36 @@ class Bot(AccountQueryMixin):
         (engine DB snapshot load + ``ConstructionIo`` attach; ``BotIo``
         ``ConstructionIo`` attach) — the injector owns that wiring.
 
-        Raises:
-            DegenbotValueError: If ``config.default_chain_id`` is ``None``, or
-                an injected provider's ``chain_id`` mismatches the configured
-                chain.
+        Args:
+            chain_id: The explicit session chain override.
+            node: The explicit endpoint override, classified by its own value.
+            database: The explicit database-path override.
+            provider: An already-built provider to bind instead of resolving one.
+            py_bot: An injected Rust engine handle.
+            io: An injected ``BotIo`` handle.
+            erc20_builder: An injected ERC-20 builder.
+
+        Refuses with a :class:`ValueError` when no layer names a chain or an
+        endpoint (naming what to declare, export, or pass), and with a
+        :class:`DegenbotValueError` when an injected provider serves another
+        chain than the resolved one.
 
         """
         # A driver session is constructing its engine: bind the shared
         # runtime + telemetry stack now (idempotent), not at import time.
         _driver_boot()
 
-        self.config = config
-        self.database_path = config.database.path
-
-        if config.default_chain_id is None:
-            msg = (
-                "Bot requires a default_chain_id in the config. Set "
-                "`default_chain_id` in your config file or pass a config with it set."
-            )
-            raise DegenbotValueError(message=msg)
-        self._chain_id: ChainId = config.default_chain_id
+        self._chain_id: ChainId = resolve_chain_id(chain_id)
+        self.database_path = Path(resolve_database_path(database))
 
         if provider is not None:
-            # Explicit injection — enforce chain_id == config.default_chain_id.
+            # Explicit injection — enforce chain_id == the resolved session chain.
             self._enforce_provider_chain(provider, self._chain_id)
             self._provider = provider
         else:
-            # Build from config — the factory enforces the chain match itself.
-            self._provider = get_provider_from_config(chain_id=self._chain_id, config=config)
+            # Resolved from the cascade — the factory hands the chain to the core,
+            # which enforces the match itself.
+            self._provider = get_provider_from_config(chain_id=self._chain_id, node=node)
 
         # Polars-inspired three-layer architecture (ADR-005): a the Rust ``Bot`` engine
         # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.
@@ -272,20 +280,18 @@ class Bot(AccountQueryMixin):
             # ``None``/cold-start (no pools) is NOT an error. The file/memory
             # snapshot path stays non-DB-only (loaded at ``engine_registry.start``
             # via ``load_*_from_py``).
-            if config.database.path is not None:
-                db_path = config.database.path
-                # The DB file may not exist yet (the Rust database owner creates it on first
-                # write). A missing file is a cold-start: no snapshot
-                # pools to load, `S = None`. The store stays empty; pool
-                # registration falls back to sparse. The file will be created by
-                # the first write, at which point a `Bot` restart will load it.
-                if Path(db_path).exists():
-                    self._py_bot.load_snapshot_from_db(str(db_path), self._chain_id)
-                else:
-                    logger.debug(
-                        "DB file %s does not exist; cold-start (no snapshot loaded).",
-                        db_path,
-                    )
+            # The DB file may not exist yet (the Rust database owner creates it on first
+            # write). A missing file is a cold-start: no snapshot pools to load,
+            # `S = None`. The store stays empty; pool registration falls back to
+            # sparse. The file will be created by the first write, at which point a
+            # `Bot` restart will load it.
+            if Path(self.database_path).exists():
+                self._py_bot.load_snapshot_from_db(str(self.database_path), self._chain_id)
+            else:
+                logger.debug(
+                    "DB file %s does not exist; cold-start (no snapshot loaded).",
+                    self.database_path,
+                )
         else:
             # Injection seam (see __init__ docstring): the injector owns
             # this engine's construction-time wiring (DB snapshot load +
@@ -303,7 +309,7 @@ class Bot(AccountQueryMixin):
             # `RuntimeError`.
             self._py_bot.attach_construction_io(
                 provider=self._provider,
-                database_path=str(config.database.path) if config.database.path else None,
+                database_path=str(self.database_path),
             )
         if io is not None:
             # Injection seam (see __init__ docstring): the injector owns
@@ -430,30 +436,6 @@ class Bot(AccountQueryMixin):
     def provider(self) -> AlloyProvider:
         """The single RPC provider for this Bot's chain."""
         return self._provider
-
-    @classmethod
-    def from_config_file(
-        cls,
-        config: DegenbotConfig | None = None,
-        *,
-        provider: AlloyProvider | None = None,
-    ) -> Bot:
-        """From config file.
-
-        Builds a single-chain Bot from the config's ``default_chain_id``
-        (ADR-006 D5). The provider is constructed from ``config.rpc`` and its
-        ``eth_chainId`` is enforced to match.
-
-        ``config``/``provider`` are the DI seams (the ``Bot.__init__``
-        provider pattern): tests inject an already-built config/provider;
-        omitted arguments keep production behavior (config-file discovery +
-        ``get_provider_from_config``).
-
-        Returns:
-            An instance wrapping the given config_file.
-
-        """
-        return cls(config=config if config is not None else _init_config(), provider=provider)
 
     def add_tracker[M: AbstractPoolTracker[Any]](
         self,

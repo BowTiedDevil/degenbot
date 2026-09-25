@@ -1,10 +1,9 @@
 """Tests for the settlement-arbitrage bot's argument parser.
 
 The parser is extracted into :func:`degenbot.runner.cli.build_arbitrage_arg_parser`
-so the CLI surface — especially the ``--node-http`` / ``--node-ws`` cascade
-overrides — is verifiable without running the full async session. ``from_env``'s
-handling of ``cli_http`` / ``cli_ws`` is covered by
-``test_arbitrage_config.py::TestCliOverride``.
+so the CLI surface — especially the ``--node`` cascade override — is verifiable
+without running the full async session. ``from_env``'s handling of the override
+is covered by ``test_arbitrage_config.py::TestRpcCascade``.
 """
 
 from __future__ import annotations
@@ -14,23 +13,21 @@ import pytest
 from degenbot.runner.cli import build_arbitrage_arg_parser
 
 
-class TestParserNodeFlags:
-    def test_node_http_node_ws_default_none(self) -> None:
+class TestParserNodeFlag:
+    def test_node_defaults_to_none(self) -> None:
         parser = build_arbitrage_arg_parser()
         args = parser.parse_args([])
-        assert args.node_http is None
-        assert args.node_ws is None
+        assert args.node is None
 
-    def test_node_http_node_ws_parsed(self) -> None:
+    @pytest.mark.parametrize(
+        "value",
+        ["https://from-cli.example", "wss://from-cli.example", "ipc:///tmp/anvil.ipc"],
+    )
+    def test_node_is_parsed_verbatim(self, value: str) -> None:
+        """The flag does not classify; the core does, from the value itself."""
         parser = build_arbitrage_arg_parser()
-        args = parser.parse_args([
-            "--node-http",
-            "https://from-cli.example",
-            "--node-ws",
-            "wss://from-cli.example",
-        ])
-        assert args.node_http == "https://from-cli.example"
-        assert args.node_ws == "wss://from-cli.example"
+        args = parser.parse_args(["--node", value])
+        assert args.node == value
 
     def test_existing_flags_still_present(self) -> None:
         parser = build_arbitrage_arg_parser()
@@ -38,8 +35,9 @@ class TestParserNodeFlags:
         assert args.live is True
         assert args.permutation == "V3-V4-V3"
 
-    @pytest.mark.parametrize("flag", ["--node-http", "--node-ws"])
-    def test_flags_appear_in_help(self, flag: str) -> None:
+    def test_the_flag_appears_in_help(self) -> None:
         parser = build_arbitrage_arg_parser()
         help_text = parser.format_help()
-        assert flag in help_text
+        assert "--node" in help_text
+        assert "--node-http" not in help_text
+        assert "--node-ws" not in help_text

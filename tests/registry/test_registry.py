@@ -5,7 +5,6 @@ import pytest
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import OfflineProvider
@@ -24,13 +23,8 @@ _PY_BOT = _Engine()
 
 def _offline_bot() -> Bot:
     """A single-chain Bot with a no-op offline provider (registry tests need no network)."""
-    config = DegenbotConfig(
-        database=DatabaseSettings(path=Path(":memory:")),
-        rpc={},
-        default_chain_id=1,
-    )
     provider = OfflineProvider(chain_id=1, blocks={"1": {"timestamp": 0, "calls": {}, "code": {}}})
-    return Bot(config, provider=provider)
+    return Bot(chain_id=1, database=":memory:", provider=provider)
 
 
 def _recorded_pool() -> UniswapV2Pool:

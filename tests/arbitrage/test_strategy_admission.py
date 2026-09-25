@@ -2,12 +2,12 @@
 
 Selection lives in the per-facet ``strategy.<facet>.active`` flags (ADR-055);
 the retired single-arm ``strategy.name`` selector is gone from the Rust schema
-(pinned by ``strategy_arm_selector_is_retired``) and must be gone from the
-Python surface too. The settlement runner carries no Python-side arm gate: the
-host boot registers each configured facet and ``enable_strategy`` surfaces the
-typed refusal, so there is one admission authority. These tests pin the retired
-selector's refusal and the host's typed refusal; the runner is deliberately
-silent on the arm.
+(pinned by ``strategy_arm_selector_is_retired``) and the Python config model
+that mirrored it is gone too, so there is no second spelling left to refuse.
+The settlement runner carries no Python-side arm gate: the host boot registers
+each configured facet and ``enable_strategy`` surfaces the typed refusal, so
+there is one admission authority. These tests pin the host's typed refusal;
+the runner is deliberately silent on the arm.
 """
 
 from __future__ import annotations
@@ -15,32 +15,10 @@ from __future__ import annotations
 import pytest
 
 from degenbot._ffi import ArbitrageEngine, Bot, UnconfiguredStrategyError
-from degenbot.config import DegenbotConfig
 from degenbot.runner.bot_runner import BotRunner
 from degenbot.strategy import validate_strategy_readiness
 
 STRATEGY_ENV = "DEGENBOT_STRATEGY_NAME"
-
-
-@pytest.mark.usefixtures("monkeypatch")
-class TestRetiredStrategySelector:
-    def test_init_kwarg_is_refused(self, monkeypatch):
-        monkeypatch.delenv(STRATEGY_ENV, raising=False)
-        with pytest.raises(ValueError, match="strategy"):
-            DegenbotConfig(strategy_name="settlement")
-
-    def test_retired_dotted_file_key_is_refused(self, monkeypatch):
-        monkeypatch.delenv(STRATEGY_ENV, raising=False)
-        with pytest.raises(ValueError, match="strategy"):
-            DegenbotConfig.model_validate({"strategy": {"name": "settlement"}})
-
-    def test_config_exposes_no_strategy_name_attribute(self, monkeypatch):
-        monkeypatch.delenv(STRATEGY_ENV, raising=False)
-        assert not hasattr(DegenbotConfig(), "strategy_name")
-
-    def test_retired_env_name_is_inert(self, monkeypatch):
-        monkeypatch.setenv(STRATEGY_ENV, "settlement")
-        assert not hasattr(DegenbotConfig(), "strategy_name")
 
 
 @pytest.mark.usefixtures("monkeypatch")

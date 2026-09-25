@@ -3,7 +3,7 @@ from collections.abc import Iterator
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import _init_config
+from degenbot.config import resolve_database_path
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.fork import AnvilFork
@@ -51,7 +51,7 @@ def base_snapshot_from_database(
 ) -> Iterator[UniswapV3LiquiditySnapshot]:
     source = DatabaseSnapshot(
         chain_id=8453,
-        database_path=_init_config().database.path,
+        database_path=resolve_database_path(),
     )
     try:
         yield UniswapV3LiquiditySnapshot(source=source)

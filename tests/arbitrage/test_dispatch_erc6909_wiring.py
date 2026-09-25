@@ -41,7 +41,7 @@ def test_erc6909_default_is_off() -> None:
         {"INJECT_EXECUTOR_CODE": "0"},
         live=False,
         permutation=None,
-        rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
+        rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
     )
     assert cfg.erc6909_profit is False
 
@@ -74,7 +74,7 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
             },
             live=False,
             permutation=None,
-            rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
+            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
         ),
         current_block=10,
     )

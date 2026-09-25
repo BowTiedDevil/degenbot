@@ -18,11 +18,8 @@ from typing import Any
 
 import pytest
 
-from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.provider.factory import get_provider_from_config
-
-_HTTP_ENV = "DEGENBOT_RPC_HTTP_CHAINID_1"
 
 
 class _FakeHttpNode:
@@ -163,18 +160,13 @@ class TestBindingRefusesAnotherChain:
         assert "8453" in str(refusal.value)
 
     def test_the_factory_binds_the_chain_it_was_configured_for(
-        self, http_node: _FakeHttpNode, monkeypatch: pytest.MonkeyPatch
+        self, http_node: _FakeHttpNode
     ) -> None:
-        # A `rpc = {1: <base node>}` config: the chain the caller declared is 1,
-        # the endpoint answers 8453, so the factory must fail fast.
-        monkeypatch.delenv(_HTTP_ENV, raising=False)
-        config = DegenbotConfig(
-            database=DatabaseSettings(path=Path(":memory:")),
-            rpc={1: http_node.url},
-        )
-
+        # The endpoint answers chain 8453 while the session declares 137 — a
+        # chain no configured layer supplies, so the explicit override is the
+        # only endpoint in play and the factory must fail fast at binding.
         with pytest.raises(ValueError, match="8453"):
-            get_provider_from_config(chain_id=1, config=config)
+            get_provider_from_config(chain_id=137, node=http_node.url)
 
 
 class TestBindingTheMatchingChain:
@@ -188,16 +180,8 @@ class TestBindingTheMatchingChain:
 
         assert http_node.chain_id_reads == 1, "a hot-path chain read never re-verifies the binding"
 
-    def test_the_factory_binds_a_matching_endpoint(
-        self, http_node: _FakeHttpNode, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv(_HTTP_ENV, raising=False)
-        config = DegenbotConfig(
-            database=DatabaseSettings(path=Path(":memory:")),
-            rpc={8453: http_node.url},
-        )
-
-        provider = get_provider_from_config(chain_id=8453, config=config)
+    def test_the_factory_binds_a_matching_endpoint(self, http_node: _FakeHttpNode) -> None:
+        provider = get_provider_from_config(chain_id=8453, node=http_node.url)
 
         assert provider.chain_id == 8453
         assert http_node.chain_id_reads == 1

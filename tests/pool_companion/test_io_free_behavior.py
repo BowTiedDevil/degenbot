@@ -41,7 +41,7 @@ from tests.pool_companion._helpers import (
     V3_FEE,
     V3_TICK_SPACING,
     WETH_USDC_V2_POOL,
-    make_test_config,
+    make_test_database,
     make_usdc,
     make_weth,
     v2_offline_provider,
@@ -274,12 +274,12 @@ class TestV2PoolTrackerWithBot:
 
     def test_tracker_uses_bot_build_pool(self, tmp_path: pathlib.Path) -> None:
         """When a manager has a bot, get_pool delegates to bot.build_pool."""
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         provider = MagicMock()
         provider.chain_id = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        bot = Bot(config, provider=provider)
+        bot = Bot(database=database, chain_id=1, provider=provider)
 
         factory = UNISWAP_V2_FACTORY
         manager = bot.add_tracker(UniswapV2PoolTracker, factory_address=factory)
@@ -313,9 +313,10 @@ class TestV2PoolTrackerWithBot:
         usdc_addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         factory_addr = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
 
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         bot = Bot(
-            config,
+            database=database,
+            chain_id=1,
             provider=v2_offline_provider(
                 weth_addr=weth_addr,
                 usdc_addr=usdc_addr,
@@ -353,12 +354,12 @@ class TestV3PoolTrackerWithBot:
 
     def test_tracker_uses_bot_pools_registry(self, tmp_path: pathlib.Path) -> None:
         """When a manager has a bot, get_pool checks bot.pools first."""
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         provider = MagicMock()
         provider.chain_id = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        bot = Bot(config, provider=provider)
+        bot = Bot(database=database, chain_id=1, provider=provider)
 
         factory = UNISWAP_V3_FACTORY
         manager = bot.add_tracker(UniswapV3PoolTracker, factory_address=factory)
@@ -401,10 +402,10 @@ class TestBotTokenIOMethods:
         holder = "0x" + "11" * 20
         token.set_cached_balance(holder, block_number=100, balance=10**18)
 
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         provider = MagicMock()
         provider.chain_id = 1
-        bot = Bot(config, provider=provider)
+        bot = Bot(database=database, chain_id=1, provider=provider)
         provider.is_connected.return_value = True
 
         balance = bot.get_token_balance(token, holder, block_identifier=100)
@@ -424,7 +425,7 @@ class TestBotTokenIOMethods:
         holder = "0x" + "11" * 20
         expected_balance = 5 * 10**18
 
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
 
         balance_of_calldata = (
             bytes.fromhex("70a08231") + abi_encode(types=["address"], args=[holder])
@@ -442,7 +443,7 @@ class TestBotTokenIOMethods:
                 }
             },
         )
-        bot = Bot(config, provider=offline)
+        bot = Bot(database=database, chain_id=1, provider=offline)
 
         balance = bot.get_token_balance(token, holder)
         assert balance == expected_balance
@@ -461,10 +462,10 @@ class TestBotTokenIOMethods:
         spender = "0x" + "22" * 20
         token.set_cached_approval(block_number=100, owner=owner, spender=spender, amount=500)
 
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         provider = MagicMock()
         provider.chain_id = 1
-        bot = Bot(config, provider=provider)
+        bot = Bot(database=database, chain_id=1, provider=provider)
         provider.is_connected.return_value = True
 
         approval = bot.get_token_approval(token, owner, spender, block_identifier=100)
@@ -482,10 +483,10 @@ class TestBotTokenIOMethods:
         )
         token.set_cached_total_supply(block_number=100, total_supply=10**27)
 
-        config = make_test_config(tmp_path)
+        database = make_test_database(tmp_path)
         provider = MagicMock()
         provider.chain_id = 1
-        bot = Bot(config, provider=provider)
+        bot = Bot(database=database, chain_id=1, provider=provider)
         provider.is_connected.return_value = True
 
         supply = bot.get_token_total_supply(token, block_identifier=100)

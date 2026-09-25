@@ -64,7 +64,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import CONFIG_FILE
+from degenbot.config import config_file_path
 from degenbot.logging import logger
 from degenbot.registry.pool_type import PoolRegistration
 from degenbot.types import dex_identity
@@ -216,21 +216,22 @@ def _read_json(path: Path) -> list[DeploymentRecord]:
 
 
 def _overlay_path_from_config() -> Path | None:
-    """Read the ``[deployments] overlay`` path from ``config.toml``, if set.
+    """Read the ``[deployments] overlay`` path from the operator file, if set.
+
+    ``[deployments]`` is free-form: the typed schema does not declare it, so it
+    is read as a raw table from the file the loader selected — the same file
+    the typed load read, not a re-derived path.
 
     Returns:
-        The overlay path (expanded + absolute), or ``None`` when no config
-        exists or the section/key is absent.
-
-    Expands ``~`` and resolves to an absolute path (mirrors
-    :func:`~degenbot.config.load_config_from_file`'s path handling for the
-    database setting).
+        The overlay path (expanded + absolute), or ``None`` when the process has
+        no file layer or the section/key is absent.
 
     """
-    if not CONFIG_FILE.exists():
+    selected = config_file_path()
+    if selected is None:
         return None
     try:
-        with CONFIG_FILE.open("rb") as fh:
+        with Path(selected).open("rb") as fh:
             data = tomllib.load(fh)
     except (OSError, tomllib.TOMLDecodeError):
         return None

@@ -22,10 +22,8 @@ from unittest.mock import MagicMock
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.provider import AlloyProvider
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 # V3 Mint topic — keccak256("Mint(address,address,int24,int24,uint128,uint256,uint256)").
 _V3_MINT_TOPIC = "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde"
@@ -52,12 +50,9 @@ def _mint_data(amount: int) -> str:
     return "0x" + (sender + word1 + zero + zero).hex()
 
 
-def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
-    return DegenbotConfig(
-        database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
-        default_chain_id=chain_id,
-    )
+def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object]:
+    """The explicit keyword overrides a session under test runs with."""
+    return {"chain_id": chain_id, "database": str(tmp_path / "test.db")}
 
 
 def _fake_provider(chain_id: int = 1) -> AlloyProvider:
@@ -87,8 +82,8 @@ class TestReleasePythonState:
     """Bot.release_python_state() — drop Python caches after Rust owns state."""
 
     def test_release_clears_tracker_caches(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
 
         factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
         tracker = bot.add_tracker(UniswapV2PoolTracker, factory_address=factory)
@@ -103,8 +98,8 @@ class TestReleasePythonState:
         assert tracker._untracked_pools == set()
 
     def test_release_calls_unload_snapshot_where_present(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
 
         fake_key = get_checksum_address("0x0000000000000000000000000000000000000001")
         fake = _FakeTrackerWithSnapshot()
@@ -117,8 +112,8 @@ class TestReleasePythonState:
         assert fake._untracked_pools == set()
 
     def test_release_resets_pool_and_token_registries(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
 
         # seed the registries with sentinel storage via their _storage()
         bot.pools.add(
@@ -135,8 +130,8 @@ class TestReleasePythonState:
         assert len(bot.tokens) == 0
 
     def test_release_is_idempotent(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
         bot.add_tracker(
             UniswapV2PoolTracker,
             factory_address="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
@@ -159,8 +154,8 @@ class TestReleasePythonState:
         every Swap was dropped, and the tick map froze at its verify-time value
         (the V3 desync in the permutation run — e.g. 0x88e6A0c2 tick 201020).
         """
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
         py_bot = bot._py_bot
 
         address = get_checksum_address("0x88e6A0c2dDD26FEEb64F039a2c41296Fcb3F5640")
@@ -206,8 +201,8 @@ class TestReleasePythonState:
         (``registered=false``) instead of applying it. This asserts the exact
         delivery path — the seeded tick's gross reflects the Mint after release.
         """
-        config = _make_test_config(tmp_path)
-        bot = Bot(config, provider=_fake_provider(1))
+        session = _test_session(tmp_path)
+        bot = Bot(**session, provider=_fake_provider(1))
         py_bot = bot._py_bot
         engine = ArbitrageEngine(py_bot=py_bot)
 

@@ -44,7 +44,7 @@ def _cfg(env: dict[str, str] | None = None) -> ArbitrageConfig:
         base,
         live=False,
         permutation=None,
-        rpc=RpcCascadeOverrides(cli_http="http://localhost:8545", cli_ws="ws://localhost:8546"),
+        rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
     )
 
 

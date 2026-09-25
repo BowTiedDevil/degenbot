@@ -247,14 +247,16 @@ def _checksum_or_empty(addr: str | None) -> str:
 class RpcCascadeOverrides:
     """The :func:`degenbot.config.resolve_rpc_uris` inputs for :meth:`ArbitrageConfig.from_env`.
 
-    The chain identity and the CLI-layer endpoint overrides travel together:
-    they are exactly the arguments the RPC cascade consumes, so bundling them
-    keeps the factory's keyword surface one concept per parameter.
+    The chain identity and the explicit-override endpoint travel together: they
+    are exactly the arguments the RPC cascade consumes, so bundling them keeps
+    the factory's keyword surface one concept per parameter. One ``node`` fills
+    one transport slot and the core classifies which, so a driver that needs
+    both an HTTP and a WS endpoint declares one of them here and takes the other
+    from the file or the environment.
     """
 
     chain_id: int = 1
-    cli_http: str | None = None
-    cli_ws: str | None = None
+    node: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -276,7 +278,9 @@ class ArbitrageConfig:
     # signed transaction by the submit leaf's TxSigner — signing against a
     # different chain than sims/RPC would be a silent replay-fail.
     chain_id: int
-    # Node endpoints
+    # Node endpoints, one per capability: the request endpoint (pool reads,
+    # eth_callMany, submission) and the subscription endpoint a feed holds
+    # open. Each resolves independently through the same four layers.
     node_http: str
     node_ws: str
     # Executor contract + code-injection
@@ -334,11 +338,12 @@ class ArbitrageConfig:
         Behavior:
         - operator: live mode requires both OPERATOR_ADDRESS/PRIVATE_KEY
           (raises ValueError); dry-run defaults to ZERO_ADDRESS + a 0x00..00 key.
-        - nodes: delegated to :func:`degenbot.config.resolve_rpc_uris` so the
-          standard cascade (CLI > OS env ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_{cid}``
-          > caller fallback > config.toml > raise) applies. There is **no
-          ``localhost`` default** — a chain with no configured endpoint in any
-          layer raises :class:`RpcNotConfiguredError`.
+        - nodes: delegated to :func:`degenbot.config.resolve_rpc_uris`, so the
+          four-layer cascade (explicit ``node`` > OS env
+          ``DEGENBOT_RPC_{IPC,WS,HTTP}_CHAINID_{cid}`` > the operator file's
+          ``[nodes.*]`` tables > a declared default) applies, per capability.
+          There is **no ``localhost`` default** — a chain with no configured
+          endpoint in any layer raises :class:`RpcNotConfiguredError`.
         - executor: zero address is a fatal ``ValueError`` (a factory cannot
           return early like ``main()``'s ``return``).
         - inject code: when ``INJECT_EXECUTOR_CODE=="1"``, the executor address
@@ -379,11 +384,7 @@ class ArbitrageConfig:
 
         # ── Node URLs — delegated to the library cascade (resolve_rpc_uris) ──
 
-        node_http, node_ws = resolve_rpc_uris(
-            overrides.chain_id,
-            cli_http=overrides.cli_http,
-            cli_ws=overrides.cli_ws,
-        )
+        node_http, node_ws = resolve_rpc_uris(overrides.chain_id, node=overrides.node)
 
         # ── Executor ──
         executor_address = _checksum_or_empty(

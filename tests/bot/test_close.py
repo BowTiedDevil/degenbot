@@ -22,10 +22,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from degenbot.bot import Bot
-from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.exceptions.pool import PoolNotAssociated
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
@@ -65,17 +63,14 @@ class _BoundaryProvider:
         self.closed = True
 
 
-def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
-    return DegenbotConfig(
-        database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
-        default_chain_id=chain_id,
-    )
+def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object]:
+    """The explicit keyword overrides a session under test runs with."""
+    return {"chain_id": chain_id, "database": str(tmp_path / "test.db")}
 
 
 def _make_bot(tmp_path: pathlib.Path) -> tuple[Bot, _BoundaryProvider]:
     provider = _BoundaryProvider(1)
-    return Bot(_make_test_config(tmp_path), provider=provider), provider
+    return Bot(**_test_session(tmp_path), provider=provider), provider
 
 
 def _seed_tracker_caches(bot: Bot, tracker: UniswapV2PoolTracker) -> None:
@@ -121,10 +116,10 @@ def _seed_tracker_caches(bot: Bot, tracker: UniswapV2PoolTracker) -> None:
 class TestBotContextManager:
     def test_context_manager_releases_all_handles_on_exit(self, tmp_path: pathlib.Path) -> None:
         """Contracts (a)-(b): exit closes the provider and drops caches."""
-        config = _make_test_config(tmp_path)
+        session = _test_session(tmp_path)
         provider = _BoundaryProvider(1)
 
-        with Bot(config, provider=provider) as bot:
+        with Bot(**session, provider=provider) as bot:
             # Observable pre-state: both tracker caches + the pool registry populated.
             tracker = bot.add_tracker(UniswapV2PoolTracker, factory_address=_V2_FACTORY)
             _seed_tracker_caches(bot, tracker)
@@ -164,11 +159,11 @@ class TestBotContextManager:
 
     def test_exit_does_not_suppress_exceptions(self, tmp_path: pathlib.Path) -> None:
         """Contract (d): the exception propagates *and* teardown still runs."""
-        config = _make_test_config(tmp_path)
+        session = _test_session(tmp_path)
         provider = _BoundaryProvider(1)
         boom_msg = "boom"
 
-        with pytest.raises(RuntimeError, match=boom_msg), Bot(config, provider=provider):
+        with pytest.raises(RuntimeError, match=boom_msg), Bot(**session, provider=provider):
             raise RuntimeError(boom_msg)
 
         assert provider.closed is True
