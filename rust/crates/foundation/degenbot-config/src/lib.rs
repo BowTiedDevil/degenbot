@@ -132,6 +132,44 @@ where
     Ok(out)
 }
 
+/// Parse an operator-keyed `key=value` table: a comma-separated list, the
+/// env encoding of a [`BaseKind::StrMap`] key and the flat-string twin of its
+/// TOML table form. Surrounding whitespace around an entry and around its key
+/// and value is trimmed; empty input is the empty table (an unset env value
+/// means "no entries", not a malformed list). A repeated key keeps the last
+/// value. An entry value MAY be empty — whether an entry is meaningful
+/// (a transport URL, a chain id) is the declaring key's own validation, not
+/// this parse's.
+///
+/// # Errors
+///
+/// Returns a description for an entry with no `=`, or an entry whose key
+/// side is empty. An empty entry inside a non-empty list is refused for the
+/// same reason: a dropped `1=x,,` would silently lose a value the operator
+/// typed.
+pub fn parse_string_map(raw: &str) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut out = std::collections::BTreeMap::new();
+    if raw.trim().is_empty() {
+        return Ok(out);
+    }
+    for part in raw.split(',') {
+        let part = part.trim();
+        let Some((key, value)) = part.split_once('=') else {
+            return Err(format!(
+                "invalid table entry {part:?} (expected key=value, comma-separated)"
+            ));
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(format!(
+                "invalid table entry {part:?} (the key side is empty; expected key=value)"
+            ));
+        }
+        out.insert(key.to_string(), value.trim().to_string());
+    }
+    Ok(out)
+}
+
 /// Parse a boolean flag value using the bot-wide truthy/falsey word lists.
 ///
 /// Truthy: `1`, `true`, `yes`, `on`, `y`. Falsey: `0`, `false`, `off`, `no`,

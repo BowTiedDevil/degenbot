@@ -39,6 +39,17 @@ impl std::fmt::Display for Source {
 pub trait EnvVars {
     /// Env lookup; `None` when unset.
     fn get(&self, name: &str) -> Option<String>;
+
+    /// Every name this source holds that starts with `prefix`, sorted.
+    ///
+    /// A family-shaped key is one env name per operator-chosen entry, so
+    /// reading it needs enumeration rather than a lookup. The default
+    /// reports no names: a source that cannot list its own environment stays
+    /// usable for every single-name key instead of being forced to fake an
+    /// inventory.
+    fn names_with_prefix(&self, _prefix: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// The real process environment.
@@ -47,6 +58,20 @@ pub struct ProcessEnv;
 impl EnvVars for ProcessEnv {
     fn get(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
+    }
+
+    fn names_with_prefix(&self, prefix: &str) -> Vec<String> {
+        // The process environment has no ordering, and a name that is not
+        // valid UTF-8 cannot be spelled in a config file, so it is not a
+        // member of any name family an operator can write.
+        let mut names: Vec<String> = std::env::vars_os()
+            .filter_map(|(name, _)| {
+                let name = name.to_str()?;
+                name.starts_with(prefix).then_some(name.to_string())
+            })
+            .collect();
+        names.sort_unstable();
+        names
     }
 }
 
@@ -65,6 +90,16 @@ impl MapEnv {
 impl EnvVars for MapEnv {
     fn get(&self, name: &str) -> Option<String> {
         self.0.get(name).cloned()
+    }
+
+    fn names_with_prefix(&self, prefix: &str) -> Vec<String> {
+        // `BTreeMap` iterates in key order, so the filtered scan already is
+        // the sorted answer the trait promises.
+        self.0
+            .keys()
+            .filter(|name| name.starts_with(prefix))
+            .cloned()
+            .collect()
     }
 }
 
@@ -141,6 +176,13 @@ struct EnvRef<'a>(&'a dyn EnvVars);
 impl EnvVars for EnvRef<'_> {
     fn get(&self, name: &str) -> Option<String> {
         self.0.get(name)
+    }
+
+    fn names_with_prefix(&self, prefix: &str) -> Vec<String> {
+        // Forwarded, not defaulted: the borrowed source is the real one, and
+        // falling back to the empty default here would report "no family
+        // names" for a host whose environment does have them.
+        self.0.names_with_prefix(prefix)
     }
 }
 

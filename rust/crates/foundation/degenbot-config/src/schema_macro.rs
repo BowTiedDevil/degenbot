@@ -10,8 +10,11 @@
 /// `SCHEMA` registry — all from ONE invocation line per key.
 ///
 /// A section body is a sequence of key declarations and facet declarations
-/// (`name Type { ... }`). A facet generates a typed sub-struct field on its
-/// parent and a dotted section path (`strategy.mevblocker_backrun`); a facet body may
+/// (`name Type { ... }`). A key names its env layer either `env = "NAME"` (one
+/// name for the key) or `env_prefix = "PREFIX_"` (one name per entry, for a
+/// table whose keys the operator picks at runtime). A facet generates a typed
+/// sub-struct field on its parent and a dotted section path
+/// (`strategy.mevblocker_backrun`); a facet body may
 /// itself declare keys, which are flattened to `@fk` leaf markers under the
 /// facet's dotted section path (`strategy.mevblocker_backrun.bid_mode`) and generate a
 /// two-level `assign` arm. `SECTION_PATHS` records every section path so the
@@ -70,6 +73,22 @@ macro_rules! config_schema_flat {
         }
     };
 
+    // A family-shaped key declaration (`env_prefix` in place of one env
+    // name) passes through with its prefix intact: the flat pass only
+    // restructures nesting, it does not decide what the env layer is.
+    (
+        @body [$sec:ident] [$Sec:ident]
+        [ $(#[$m:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env_prefix = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
+        @fout [ $($fout:tt)* ]
+        @sections [ $($sr:tt)* ] @out [ $($out:tt)* ]
+    ) => {
+        $crate::config_schema_flat! {
+            @body [$sec] [$Sec] [ $($rest)* ]
+            @fout [ $($fout)* $(#[$m])* $f [ $($kt)+ ] = $def, env_prefix = $env, def = $def_repr, doc = $doc; ]
+            @sections [ $($sr)* ] @out [ $($out)* ]
+        }
+    };
+
     // A normal key declaration passes through unchanged.
     (
         @body [$sec:ident] [$Sec:ident]
@@ -109,6 +128,27 @@ macro_rules! config_schema_flat {
         $crate::config_schema_flat! {
             @body [$sec] [$Sec] [ $($rest)* ]
             @fout [ $($cfout)* $($fkeys)* ]
+            @sections [ $($sr)* ] @out [ $($out)* ]
+        }
+    };
+
+    // A family-shaped facet inner key becomes an `@fk` leaf marker too; the
+    // facet body is opaque to the flattening pass, so the marker carries the
+    // prefix form and the emitter splits it.
+    (
+        @facet [$sec:ident] [$Sec:ident] [$sub:ident]
+        [ $(#[$m:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env_prefix = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
+        @fkeys [ $($fkeys:tt)* ]
+        @cont_body [ $($cb:tt)* ] @cont_fout [ $($cf:tt)* ]
+        @sections [ $($sr:tt)* ] @out [ $($out:tt)* ]
+    ) => {
+        $crate::config_schema_flat! {
+            @facet [$sec] [$Sec] [$sub] [ $($rest)* ]
+            @fkeys [
+                $($fkeys)*
+                @fk $sec $sub $(#[$m])* $f [ $($kt)+ ] = $def, env_prefix = $env, def = $def_repr, doc = $doc;
+            ]
+            @cont_body [ $($cb)* ] @cont_fout [ $($cf)* ]
             @sections [ $($sr)* ] @out [ $($out)* ]
         }
     };
@@ -242,6 +282,58 @@ macro_rules! config_schema_impl {
         }
     };
 
+    // A family-shaped flattened facet leaf: the prefix is the entry's env
+    // layer AND the one name labels and the shadow check print, so the
+    // registry carries it in both slots.
+    (
+        @body [$sec:ident] [$Sec:ident]
+        [ @fk $fsec:ident $fsub:ident $(#[$fmeta:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env_prefix = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
+        @fields [$($fields:tt)*]
+        @defaults [$($defaults:tt)*]
+        @aux [$($aux:tt)*]
+        @key_schema [$($key_schema:tt)*]
+        @key_arms [$($key_arms:tt)*]
+        @key_facet_arms [$($key_facet_arms:tt)*]
+        @key_paths [$($key_paths:tt)*]
+        @rest [$($body_rest:tt)*]
+        @bot [$($bot:tt)*]
+        @botdef [$($botdef:tt)*]
+        @items [$($items:tt)*]
+        @schema_out [$($schema_out:tt)*]
+        @arms_out [$($arms_out:tt)*]
+        @arms_facet_out [$($arms_facet_out:tt)*]
+        @paths_out [$($paths_out:tt)*]
+    ) => {
+        $crate::config_schema_impl! {
+            @body [$sec] [$Sec] [ $($rest)* ]
+            @fields [$($fields)*]
+            @defaults [$($defaults)*]
+            @aux [$($aux)*]
+            @key_schema [
+                $($key_schema)*
+                $crate::schema::KeyDecl {
+                    section: concat!(stringify!($fsec), ".", stringify!($fsub)),
+                    field: stringify!($f),
+                    env: $env,
+                    env_prefix: ::core::option::Option::Some($env),
+                    toml_path: concat!(
+                        stringify!($fsec), ".", stringify!($fsub), ".", stringify!($f)
+                    ),
+                    kind: $crate::cfg_kind!($($kt)+),
+                    default_repr: $def_repr,
+                    description: $doc,
+                },
+            ]
+            @key_arms [$($key_arms)*]
+            @key_facet_arms [ $($key_facet_arms)* [$fsec, $fsub, $f, $($kt)+], ]
+            @key_paths [$($key_paths)*]
+            @rest [$($body_rest)*]
+            @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
+            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*]
+            @arms_facet_out [$($arms_facet_out)*] @paths_out [$($paths_out)*]
+        }
+    };
+
     // A flattened facet leaf (`@fk <sec> <facet> <key>`): the key lands under
     // the facet's dotted section path and gets a two-level `assign` arm.
     (
@@ -274,6 +366,7 @@ macro_rules! config_schema_impl {
                     section: concat!(stringify!($fsec), ".", stringify!($fsub)),
                     field: stringify!($f),
                     env: $env,
+                    env_prefix: ::core::option::Option::None,
                     toml_path: concat!(
                         stringify!($fsec), ".", stringify!($fsub), ".", stringify!($f)
                     ),
@@ -284,6 +377,55 @@ macro_rules! config_schema_impl {
             ]
             @key_arms [$($key_arms)*]
             @key_facet_arms [ $($key_facet_arms)* [$fsec, $fsub, $f, $($kt)+], ]
+            @key_paths [$($key_paths)*]
+            @rest [$($body_rest)*]
+            @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
+            @schema_out [$($schema_out)*] @arms_out [$($arms_out)*]
+            @arms_facet_out [$($arms_facet_out)*] @paths_out [$($paths_out)*]
+        }
+    };
+
+    // A family-shaped key declaration inside a section body: the prefix
+    // stands in for the env name and is recorded as the family too.
+    (
+        @body [$sec:ident] [$Sec:ident]
+        [ $(#[$fmeta:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env_prefix = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
+        @fields [$($fields:tt)*]
+        @defaults [$($defaults:tt)*]
+        @aux [$($aux:tt)*]
+        @key_schema [$($key_schema:tt)*]
+        @key_arms [$($key_arms:tt)*]
+        @key_facet_arms [$($key_facet_arms:tt)*]
+        @key_paths [$($key_paths:tt)*]
+        @rest [$($body_rest:tt)*]
+        @bot [$($bot:tt)*]
+        @botdef [$($botdef:tt)*]
+        @items [$($items:tt)*]
+        @schema_out [$($schema_out:tt)*]
+        @arms_out [$($arms_out:tt)*]
+        @arms_facet_out [$($arms_facet_out:tt)*]
+        @paths_out [$($paths_out:tt)*]
+    ) => {
+        $crate::config_schema_impl! {
+            @body [$sec] [$Sec] [ $($rest)* ]
+            @fields [$($fields)* pub $f: $crate::cfg_ty!($($kt)+), ]
+            @defaults [$($defaults)* $f: $def, ]
+            @aux [$($aux)* $crate::cfg_enum!($($kt)+); ]
+            @key_schema [
+                $($key_schema)*
+                $crate::schema::KeyDecl {
+                    section: stringify!($sec),
+                    field: stringify!($f),
+                    env: $env,
+                    env_prefix: ::core::option::Option::Some($env),
+                    toml_path: concat!(stringify!($sec), ".", stringify!($f)),
+                    kind: $crate::cfg_kind!($($kt)+),
+                    default_repr: $def_repr,
+                    description: $doc,
+                },
+            ]
+            @key_arms [ $($key_arms)* [$sec, $f, $($kt)+], ]
+            @key_facet_arms [$($key_facet_arms)*]
             @key_paths [$($key_paths)*]
             @rest [$($body_rest)*]
             @bot [$($bot)*] @botdef [$($botdef)*] @items [$($items)*]
@@ -323,6 +465,7 @@ macro_rules! config_schema_impl {
                     section: stringify!($sec),
                     field: stringify!($f),
                     env: $env,
+                    env_prefix: ::core::option::Option::None,
                     toml_path: concat!(stringify!($sec), ".", stringify!($f)),
                     kind: $crate::cfg_kind!($($kt)+),
                     default_repr: $def_repr,
@@ -455,6 +598,20 @@ macro_rules! config_facet_emit_impl {
         }
     };
 
+    // A family-shaped facet key: the sub-struct needs only the field, type
+    // and default, so the env form is matched and dropped here.
+    (
+        $Sub:ident { $(#[$m:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env_prefix = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* }
+        @fields [ $($fields:tt)* ]
+        @defaults [ $($defaults:tt)* ]
+    ) => {
+        $crate::config_facet_emit_impl! {
+            $Sub { $($rest)* }
+            @fields [ $($fields)* pub $f: $crate::cfg_ty!($($kt)+), ]
+            @defaults [ $($defaults)* $f: $def, ]
+        }
+    };
+
     (
         $Sub:ident { $(#[$m:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* }
         @fields [ $($fields:tt)* ]
@@ -494,6 +651,8 @@ macro_rules! cfg_ty {
     (opt f64) => { Option<f64> };
     (opt enum $e:ident $( $v:ident $( = $alias:literal )? )+) => { Option<$e> };
     (map $e:ident) => { ::std::collections::BTreeMap<::std::string::String, $e> };
+    (strmap) => { ::std::collections::BTreeMap<::std::string::String, ::std::string::String> };
+    (opt strmap) => { Option<::std::collections::BTreeMap<::std::string::String, ::std::string::String>> };
     (enum $e:ident $( $v:ident $( = $alias:literal )? )+) => { $e };
 }
 
@@ -600,6 +759,12 @@ macro_rules! cfg_base {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! cfg_kind {
+    (opt strmap) => {
+        $crate::schema::ValueKind { base: $crate::schema::BaseKind::StrMap, optional: true }
+    };
+    (strmap) => {
+        $crate::schema::ValueKind { base: $crate::schema::BaseKind::StrMap, optional: false }
+    };
     (opt $b:ident) => {
         $crate::schema::ValueKind { base: $crate::cfg_base!($b), optional: true }
     };
@@ -646,6 +811,9 @@ macro_rules! cfg_parse_single {
     };
     (map $e:ident, $raw:expr) => {
         $crate::parse_level_map::<$e>($raw)
+    };
+    (strmap, $raw:expr) => {
+        $crate::parse_string_map($raw)
     };
     (opt $b:tt, $raw:expr) => {
         $crate::cfg_parse_single!($b, $raw).map(Some)

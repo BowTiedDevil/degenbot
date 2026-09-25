@@ -50,6 +50,12 @@ pub enum BaseKind {
     /// A validated domain -> level map (the generated key type is
     /// `BTreeMap<String, E>`; the element enum name is carried for docs).
     Map(&'static str),
+    /// An operator-keyed `string -> string` table (the generated key type is
+    /// `BTreeMap<String, String>`). A per-chain endpoint table holds one entry
+    /// per chain, and the operator picks those keys at runtime: no closed
+    /// element enum can type the value, so the value stays text and the key
+    /// is paired with a [`KeyDecl::env_prefix`] family.
+    StrMap,
 }
 
 impl fmt::Display for BaseKind {
@@ -68,6 +74,7 @@ impl fmt::Display for BaseKind {
             Self::F64 => f.write_str("f64"),
             Self::Enum(name, variants) => write!(f, "{name}({})", variants.join("|")),
             Self::Map(name) => write!(f, "map<string, {name}>"),
+            Self::StrMap => f.write_str("map<string, string>"),
         }
     }
 }
@@ -100,8 +107,16 @@ pub struct KeyDecl {
     pub section: &'static str,
     /// Field name within the section (TOML leaf key, `snake_case`).
     pub field: &'static str,
-    /// `DEGENBOT_*` environment variable name (operator continuity).
+    /// `DEGENBOT_*` environment variable name (operator continuity). For a
+    /// family-shaped key this holds the family's prefix (see
+    /// [`Self::env_prefix`]), so error labels and the writer's shadow check
+    /// still have exactly one name to print.
     pub env: &'static str,
+    /// Family prefix (`PREFIX_`) when the env layer is a SET of names sharing
+    /// it rather than one name — a per-chain table sets
+    /// `PREFIX_<chain_id>=<value>`, which no single env name can express.
+    /// `None` for every single-env key.
+    pub env_prefix: Option<&'static str>,
     /// Dotted TOML path (`section.field`).
     pub toml_path: &'static str,
     /// Declared kind (drives typed parsing).
@@ -1083,5 +1098,296 @@ mod tests {
             !SCHEMA.iter().any(|k| k.env == "DEGENBOT_DETACHED_SOLVES"),
             "DEGENBOT_DETACHED_SOLVES must be retired from the schema"
         );
+    }
+
+    // `strmap` and the family-shaped `env_prefix` exist for tables whose KEYS
+    // the operator picks at runtime (a per-chain endpoint table holds one
+    // entry per chain): no closed element enum and no single env name can
+    // describe one. The fixture expands the REAL declaration macro through
+    // the same path a runtime key takes, so the vocabulary is pinned end to
+    // end while the shipped SCHEMA — and the generated doc — stay unchanged.
+    //
+    // The family form is declared in BOTH positions a facet-aware key can
+    // take — a section body and a facet body — because each position is a
+    // separate set of macro arms that joins the section path before it reads
+    // the env layer. A facet is the shape production uses (every `strategy.*`
+    // arm), so covering only the section body would leave the facet arms
+    // exercised by nothing.
+    mod strmap_vocabulary {
+        crate::config_schema! {
+            strmap_fixture StrmapFixtureConfig {
+                http [strmap] = ::std::collections::BTreeMap::new(), env_prefix = "FIXTURE_STRMAP_HTTP_", def = "(empty)",
+                    doc = "Family-shaped per-key table (one env name per entry).";
+                routes [strmap] = ::std::collections::BTreeMap::new(), env = "FIXTURE_STRMAP_ROUTES", def = "(empty)",
+                    doc = "Single-name per-key table (one comma-separated env value).";
+                probe [opt strmap] = None, env = "FIXTURE_STRMAP_PROBE", def = "(unset)",
+                    doc = "Unset-able per-key table.";
+                endpoints StrmapFixtureEndpointsConfig {
+                    active [bool] = false, env = "FIXTURE_STRMAP_FACET_ACTIVE", def = "false",
+                        doc = "Single-env key sharing the facet, mirroring the production strategy facets.";
+                    rpc_urls [strmap] = ::std::collections::BTreeMap::new(), env_prefix = "FIXTURE_STRMAP_FACET_RPC_",
+                        def = "(empty)", doc = "Family-shaped key inside a facet (one env name per entry).";
+                    probe_urls [opt strmap] = None, env_prefix = "FIXTURE_STRMAP_FACET_PROBE_",
+                        def = "(unset)", doc = "Unset-able family-shaped key inside a facet.";
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn strmap_keys_declare_an_empty_table_and_their_env_shape() {
+        let config = strmap_vocabulary::BotConfig::default();
+        assert!(config.strmap_fixture.http.is_empty());
+        assert!(config.strmap_fixture.routes.is_empty());
+        assert!(config.strmap_fixture.probe.is_none());
+
+        let http = strmap_vocabulary::SCHEMA.iter().find(|k| k.field == "http");
+        assert_eq!(
+            http.map(|k| k.kind),
+            Some(ValueKind {
+                base: BaseKind::StrMap,
+                optional: false
+            })
+        );
+        // A family-shaped key keeps ONE name to print (the prefix) so error
+        // labels and the writer's shadow check stay single-valued.
+        assert_eq!(
+            http.and_then(|k| k.env_prefix),
+            Some("FIXTURE_STRMAP_HTTP_")
+        );
+        assert_eq!(http.map(|k| k.env), Some("FIXTURE_STRMAP_HTTP_"));
+        assert_eq!(
+            http.map(KeyDecl::label),
+            Some("strmap_fixture.http (FIXTURE_STRMAP_HTTP_ / map<string, string>)".to_string())
+        );
+
+        let routes = strmap_vocabulary::SCHEMA
+            .iter()
+            .find(|k| k.field == "routes");
+        assert_eq!(
+            routes.map(|k| k.kind),
+            Some(ValueKind {
+                base: BaseKind::StrMap,
+                optional: false
+            })
+        );
+        assert_eq!(routes.and_then(|k| k.env_prefix), None);
+        assert_eq!(routes.map(|k| k.env), Some("FIXTURE_STRMAP_ROUTES"));
+
+        let probe = strmap_vocabulary::SCHEMA
+            .iter()
+            .find(|k| k.field == "probe");
+        assert_eq!(
+            probe.map(|k| k.kind),
+            Some(ValueKind {
+                base: BaseKind::StrMap,
+                optional: true
+            })
+        );
+        assert_eq!(
+            probe.map(KeyDecl::label),
+            Some(
+                "strmap_fixture.probe (FIXTURE_STRMAP_PROBE / Option<map<string, string>>)"
+                    .to_string()
+            )
+        );
+        assert!(
+            strmap_vocabulary::SECTION_PATHS.contains(&"strmap_fixture"),
+            "the fixture section is recorded like any declared section"
+        );
+    }
+
+    #[test]
+    fn a_family_shaped_key_inside_a_facet_registers_its_dotted_path() {
+        // A facet leaf is flattened to a two-part section path BEFORE the
+        // env layer is read, so the family form must survive the join: the
+        // registry facts below are the only thing pinning the dotted section
+        // path, the `<dotted>.<field>` TOML path, and the prefix in both the
+        // `env` and `env_prefix` slots.
+        let rpc = strmap_vocabulary::SCHEMA
+            .iter()
+            .find(|k| k.field == "rpc_urls");
+        assert_eq!(rpc.map(|k| k.section), Some("strmap_fixture.endpoints"));
+        assert_eq!(
+            rpc.map(|k| k.toml_path),
+            Some("strmap_fixture.endpoints.rpc_urls")
+        );
+        assert_eq!(rpc.map(|k| k.env), Some("FIXTURE_STRMAP_FACET_RPC_"));
+        assert_eq!(
+            rpc.and_then(|k| k.env_prefix),
+            Some("FIXTURE_STRMAP_FACET_RPC_")
+        );
+        assert_eq!(
+            rpc.map(|k| k.kind),
+            Some(ValueKind {
+                base: BaseKind::StrMap,
+                optional: false
+            })
+        );
+        assert_eq!(
+            rpc.map(KeyDecl::label),
+            Some(
+                "strmap_fixture.endpoints.rpc_urls (FIXTURE_STRMAP_FACET_RPC_ / map<string, string>)"
+                    .to_string()
+            )
+        );
+
+        // A second family key in the same facet pins the prefix PER KEY: a
+        // declaration that reused the first key's prefix (or dropped it)
+        // would still satisfy the assertions above.
+        let probe = strmap_vocabulary::SCHEMA
+            .iter()
+            .find(|k| k.field == "probe_urls");
+        assert_eq!(probe.map(|k| k.section), Some("strmap_fixture.endpoints"));
+        assert_eq!(probe.map(|k| k.env), Some("FIXTURE_STRMAP_FACET_PROBE_"));
+        assert_eq!(
+            probe.and_then(|k| k.env_prefix),
+            Some("FIXTURE_STRMAP_FACET_PROBE_")
+        );
+        assert_eq!(
+            probe.map(|k| k.kind),
+            Some(ValueKind {
+                base: BaseKind::StrMap,
+                optional: true
+            })
+        );
+
+        // The single-env key in the same facet still gets `env_prefix: None`,
+        // so the two forms do not bleed into each other.
+        let active = strmap_vocabulary::SCHEMA
+            .iter()
+            .find(|k| k.field == "active");
+        assert_eq!(active.map(|k| k.section), Some("strmap_fixture.endpoints"));
+        assert_eq!(active.map(|k| k.env), Some("FIXTURE_STRMAP_FACET_ACTIVE"));
+        assert_eq!(active.and_then(|k| k.env_prefix), None);
+
+        assert!(
+            strmap_vocabulary::SECTION_PATHS.contains(&"strmap_fixture.endpoints"),
+            "the facet's dotted path is recorded like any declared section"
+        );
+    }
+
+    #[test]
+    fn a_family_shaped_key_inside_a_facet_assigns_through_the_two_level_arm() {
+        let mut config = strmap_vocabulary::BotConfig::default();
+        assert!(!config.strmap_fixture.endpoints.active);
+        assert!(config.strmap_fixture.endpoints.rpc_urls.is_empty());
+        assert!(config.strmap_fixture.endpoints.probe_urls.is_none());
+
+        assert!(config
+            .assign("strmap_fixture.endpoints", "active", "1")
+            .is_ok());
+        assert!(config.strmap_fixture.endpoints.active);
+        assert!(config
+            .assign(
+                "strmap_fixture.endpoints",
+                "rpc_urls",
+                "1=https://a, 8453 = https://b"
+            )
+            .is_ok());
+        let rpc = &config.strmap_fixture.endpoints.rpc_urls;
+        assert_eq!(rpc.len(), 2);
+        assert_eq!(rpc.get("1").map(String::as_str), Some("https://a"));
+        assert_eq!(rpc.get("8453").map(String::as_str), Some("https://b"));
+        assert!(config
+            .assign("strmap_fixture.endpoints", "probe_urls", "1=https://c")
+            .is_ok());
+        assert_eq!(
+            config
+                .strmap_fixture
+                .endpoints
+                .probe_urls
+                .as_ref()
+                .and_then(|p| p.get("1"))
+                .map(String::as_str),
+            Some("https://c")
+        );
+
+        // The two-level arm labels a refusal with the FULL dotted path, so an
+        // operator sees the facet-qualified key rather than a bare field name.
+        let message = config
+            .assign("strmap_fixture.endpoints", "rpc_urls", "1")
+            .err();
+        assert!(
+            message
+                .as_deref()
+                .is_some_and(|m| m.starts_with("strmap_fixture.endpoints.rpc_urls: ")),
+            "a refused facet assign names the dotted key: {message:?}"
+        );
+        assert_eq!(
+            config
+                .strmap_fixture
+                .endpoints
+                .rpc_urls
+                .get("1")
+                .map(String::as_str),
+            Some("https://a"),
+            "a refused assign leaves the loaded table untouched"
+        );
+    }
+
+    #[test]
+    fn strmap_assign_parses_a_trimmed_key_value_list() {
+        let mut config = strmap_vocabulary::BotConfig::default();
+        assert!(config
+            .assign("strmap_fixture", "http", "1=https://a, 8453 = https://b")
+            .is_ok());
+        let http = &config.strmap_fixture.http;
+        assert_eq!(http.len(), 2);
+        assert_eq!(http.get("1").map(String::as_str), Some("https://a"));
+        assert_eq!(http.get("8453").map(String::as_str), Some("https://b"));
+
+        assert!(config
+            .assign("strmap_fixture", "probe", "1=https://a")
+            .is_ok());
+        assert_eq!(
+            config
+                .strmap_fixture
+                .probe
+                .as_ref()
+                .map(std::collections::BTreeMap::len),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn strmap_assign_refuses_a_malformed_list_and_keeps_the_previous_table() {
+        let mut config = strmap_vocabulary::BotConfig::default();
+        assert!(config
+            .assign("strmap_fixture", "routes", "1=https://a")
+            .is_ok());
+        for bad in [
+            "1",
+            "1=https://a,",
+            "1=https://a,,2=https://b",
+            "=https://a",
+        ] {
+            let message = config.assign("strmap_fixture", "routes", bad).err();
+            assert!(
+                message.as_deref().is_some_and(|m| m.contains("key=value")),
+                "{bad:?} must be refused naming the key=value shape: {message:?}"
+            );
+        }
+        assert_eq!(
+            config.strmap_fixture.routes.get("1").map(String::as_str),
+            Some("https://a"),
+            "a refused assign leaves the loaded table untouched"
+        );
+    }
+
+    #[test]
+    fn a_later_strmap_assign_replaces_the_whole_table() {
+        // The layer model is last-writer-wins per key, so a later env/file
+        // value REPLACES the table rather than merging into it.
+        let mut config = strmap_vocabulary::BotConfig::default();
+        assert!(config
+            .assign("strmap_fixture", "routes", "1=https://a,2=https://b")
+            .is_ok());
+        assert!(config
+            .assign("strmap_fixture", "routes", "8453=https://c")
+            .is_ok());
+        let routes = &config.strmap_fixture.routes;
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes.get("8453").map(String::as_str), Some("https://c"));
     }
 }
