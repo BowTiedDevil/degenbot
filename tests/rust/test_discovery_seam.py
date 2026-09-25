@@ -17,31 +17,15 @@ flag, + the exchange stamp).
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
 
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.updater.pool_updater_configs import (
-    V2PoolUpdateConfig,
-    V3PoolUpdateConfig,
-    V4PoolUpdateConfig,
-    update_v2_pools,
-    update_v3_pools,
-    update_v4_pools,
-    PoolUpdateRequest,
-)
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.erc20 import Erc20TokenTable
-from degenbot.database.models.pools import (
-    LiquidityPoolTable,
-    PoolManagerTable,
-    UniswapV4PoolTable,
-)
-from degenbot.database.operations import create_new_sqlite_database, get_scoped_sqlite_session
 from degenbot.db import (
+    db_create_new_database,
     db_fetch_exchange,
     db_fetch_exchange_by_name,
     db_set_exchange_active,
@@ -50,7 +34,17 @@ from degenbot.db import (
     db_upsert_pool_manager,
 )
 from degenbot.types.rpc_types import LogReceipt
+from degenbot.updater.pool_updater_configs import (
+    PoolUpdateRequest,
+    V2PoolUpdateConfig,
+    V3PoolUpdateConfig,
+    V4PoolUpdateConfig,
+    update_v2_pools,
+    update_v3_pools,
+    update_v4_pools,
+)
 from degenbot.utils.bytes import to_bytes
+from tests.helpers.database import sqlite_connection
 
 if TYPE_CHECKING:
     import pathlib
@@ -173,54 +167,34 @@ def _seed_db(db_path: pathlib.Path) -> tuple[int, int]:
 
     Returns `(exchange_id, pool_manager_id)` for the assert phase.
     """
-    create_new_sqlite_database(db_path)
-    session = get_scoped_sqlite_session(db_path)
-    with session() as s:  # type: Session
-        # V2/V3 exchange (factory doubles as the V3 factory + the V2 family
-        # exchange). `name` doubles as the `kind` discriminator the shell
-        # passes to the Rust seam.
-        ex2 = ExchangeTable(
-            chain_id=CHAIN,
-            name="uniswap_v2",
-            active=True,
-            last_update_block=None,
-            factory=UNISWAP_V2_FACTORY,
-            deployer=None,
-        )
-        s.add(ex2)
-        s.flush()
-        exchange_id = ex2.id
+    db_create_new_database(str(db_path))
+    exchange = db_upsert_exchange(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v2",
+        factory=UNISWAP_V2_FACTORY,
+        deployer=None,
+    )
+    db_set_exchange_active(str(db_path), exchange_id=exchange.id, active=True)
+    exchange_id = exchange.id
 
-        # V4 exchange + PoolManager (manager address = this exchange's factory).
-        ex4 = ExchangeTable(
-            chain_id=CHAIN,
-            name="uniswap_v4",
-            active=True,
-            last_update_block=None,
-            factory=V2_POOL_MANAGER_ADDRESS,
-            deployer=None,
-        )
-        s.add(ex4)
-        s.flush()
-        pm = PoolManagerTable(
-            address=V2_POOL_MANAGER_ADDRESS,
-            chain=CHAIN,
-            kind="uniswap_v4",
-            state_view=None,
-            exchange_id=ex4.id,
-        )
-        s.add(pm)
-        s.flush()
-        pool_manager_id = pm.id
-        s.commit()
-    session.get_bind().dispose()
-    session.remove()
-    return exchange_id, pool_manager_id
-
-
-def _dispose(session) -> None:
-    session.get_bind().dispose()
-    session.remove()
+    exchange_v4 = db_upsert_exchange(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v4",
+        factory=V2_POOL_MANAGER_ADDRESS,
+        deployer=None,
+    )
+    db_set_exchange_active(str(db_path), exchange_id=exchange_v4.id, active=True)
+    pool_manager = db_upsert_pool_manager(
+        database_path=str(db_path),
+        address=V2_POOL_MANAGER_ADDRESS,
+        chain=CHAIN,
+        kind="uniswap_v4",
+        state_view=None,
+        exchange_id=exchange_v4.id,
+    )
+    return exchange_id, pool_manager.id
 
 
 @pytest.fixture
@@ -266,20 +240,18 @@ def test_update_v2_pools_shell_routes_through_rust(seeded_db: pathlib.Path) -> N
         )
     )
 
-    session = get_scoped_sqlite_session(seeded_db)
-    with session() as s:  # type: Session
-        pool = s.scalar(select(LiquidityPoolTable))
+    with sqlite_connection(seeded_db) as connection:
+        connection.row_factory = sqlite3.Row
+        pool = connection.execute("SELECT * FROM pools").fetchone()
         assert pool is not None
-        assert pool.kind == "uniswap_v2"
-        assert pool.address == pool_addr
-        assert pool.chain == CHAIN
-        assert pool.exchange_id is not None
-        # tokens were get-or-create'd through the Rust seam
-        tokens = s.scalars(select(Erc20TokenTable).order_by(Erc20TokenTable.id)).all()
-        assert [t.address for t in tokens] == [token0, token1]
-        assert pool.token0_id == tokens[0].id
-        assert pool.token1_id == tokens[1].id
-    _dispose(session)
+        assert pool["kind"] == "uniswap_v2"
+        assert pool["address"] == pool_addr
+        assert pool["chain"] == CHAIN
+        assert pool["exchange_id"] is not None
+        tokens = connection.execute("SELECT id, address FROM erc20_tokens ORDER BY id").fetchall()
+        assert [token["address"] for token in tokens] == [token0, token1]
+        assert pool["token0_id"] == tokens[0]["id"]
+        assert pool["token1_id"] == tokens[1]["id"]
 
 
 def test_update_v2_aerodrome_stable_flag(seeded_db: pathlib.Path) -> None:
@@ -424,44 +396,35 @@ def test_update_v4_pools_shell_routes_through_rust(seeded_db: pathlib.Path) -> N
         )
     )
 
-    session = get_scoped_sqlite_session(seeded_db)
-    with session() as s:  # type: Session
-        v4 = s.scalar(select(UniswapV4PoolTable))
+    with sqlite_connection(seeded_db) as connection:
+        connection.row_factory = sqlite3.Row
+        v4 = connection.execute("SELECT * FROM uniswap_v4_pools").fetchone()
         assert v4 is not None
-        assert v4.pool_hash == V4_POOL_HASH
-        assert v4.hooks == hooks
-        assert v4.fee_currency0 == 3000
-        assert v4.fee_currency1 == 3000
-        assert v4.fee_denominator == 1_000_000
-        assert v4.tick_spacing == 60
-        assert v4.liquidity_update_block is None  # not stamped by discovery
-        # V4 does NOT write to the V2/V3 `pools` table
-        v2v3_count = s.scalar(select(LiquidityPoolTable.id))  # returns None if empty
-        assert v2v3_count is None
-    _dispose(session)
+        assert v4["pool_hash"] == V4_POOL_HASH
+        assert v4["hooks"] == hooks
+        assert v4["fee_currency0"] == 3000
+        assert v4["fee_currency1"] == 3000
+        assert v4["fee_denominator"] == 1_000_000
+        assert v4["tick_spacing"] == 60
+        assert v4["liquidity_update_block"] is None
+        assert connection.execute("SELECT COUNT(*) FROM pools").fetchone()[0] == 0
 
 
 def test_set_exchange_last_update_block_seam(seeded_db: pathlib.Path) -> None:
-    """The exchange stamp routes through the Rust seam (not the SQLAlchemy
-    `exchange.last_update_block = …` mutation)."""
-    session = get_scoped_sqlite_session(seeded_db)
-    with session() as s:
-        ex = s.scalar(select(ExchangeTable).where(ExchangeTable.name == "uniswap_v2"))
-        exchange_id = ex.id
-    _dispose(session)
+    """The exchange stamp routes through the Rust write seam."""
+    exchange = db_fetch_exchange_by_name(str(seeded_db), CHAIN, "uniswap_v2")
+    assert exchange is not None
 
     db_set_exchange_last_update_block(
         database_path=str(seeded_db),
         chain_id=CHAIN,
-        exchange_id=exchange_id,
+        exchange_id=exchange.id,
         block=99_999,
     )
 
-    session = get_scoped_sqlite_session(seeded_db)
-    with session() as s:
-        ex = s.scalar(select(ExchangeTable).where(ExchangeTable.id == exchange_id))
-        assert ex.last_update_block == 99_999
-    _dispose(session)
+    stamped = db_fetch_exchange(str(seeded_db), exchange.id)
+    assert stamped is not None
+    assert stamped.last_update_block == 99_999
 
 
 # ---------------------------------------------------------------------
@@ -484,7 +447,7 @@ def test_db_upsert_exchange_inserts_active_false_and_is_idempotent(
     `last_update_block=None`, factory/deployer round-tripping; the second call
     returns the SAME id (no new insert) with factory/deployer unchanged."""
     db_path = tmp_path / "exchange.db"
-    create_new_sqlite_database(db_path)
+    db_create_new_database(str(db_path))
     db_path.chmod(0o644)
 
     row = db_upsert_exchange(
@@ -524,7 +487,7 @@ def test_db_set_exchange_active_flips_and_db_fetch_exchange_reads_back(
     """`db_set_exchange_active` flips active false→true→false; `db_fetch_exchange`
     reads the flipped state back (a fresh connection → fresh WAL snapshot)."""
     db_path = tmp_path / "exchange_active.db"
-    create_new_sqlite_database(db_path)
+    db_create_new_database(str(db_path))
     db_path.chmod(0o644)
 
     row = db_upsert_exchange(
@@ -561,7 +524,7 @@ def test_db_set_exchange_active_missing_id_raises_value_error(
     """A nonexistent `exchange_id` surfaces the `DbError::MissingRow` as a
     `ValueError`."""
     db_path = tmp_path / "exchange_missing.db"
-    create_new_sqlite_database(db_path)
+    db_create_new_database(str(db_path))
     db_path.chmod(0o644)
 
     with pytest.raises(ValueError, match="9999"):
@@ -578,7 +541,7 @@ def test_db_upsert_pool_manager_round_trips_and_is_idempotent(
     """`db_upsert_pool_manager` inserts, updates `state_view` in place (same id),
     and is a no-op on identical recall."""
     db_path = tmp_path / "pool_manager.db"
-    create_new_sqlite_database(db_path)
+    db_create_new_database(str(db_path))
     db_path.chmod(0o644)
 
     exchange = db_upsert_exchange(
@@ -635,7 +598,7 @@ def test_db_fetch_exchange_by_name_returns_row_and_none_when_missing(
     """`db_upsert_exchange` then `db_fetch_exchange_by_name` returns the row;
     a missing name returns None; the lookup is scoped by chain_id."""
     db_path = tmp_path / "exchange_by_name.db"
-    create_new_sqlite_database(db_path)
+    db_create_new_database(str(db_path))
     db_path.chmod(0o644)
 
     inserted = db_upsert_exchange(

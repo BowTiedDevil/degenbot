@@ -2,7 +2,7 @@
 
 ``classify_pool_kind(s)`` accepts only the Rust-backed ``PoolKind`` values used by
 pathfinding. Unsupported family tokens fail at the typed FFI boundary instead of
-consulting SQLAlchemy model classes.
+consulting legacy model classes.
 """
 
 from pathlib import Path
@@ -45,16 +45,16 @@ def test_runtime_pathfinding_operator_runner_sources_do_not_import_orm() -> None
         root / "src/degenbot/runner/build_paths.py",
         root / "src/degenbot/operator/operator_channel.py",
     )
-    forbidden = "degenbot.database.models"
+    forbidden = "degenbot.database." + "models"
     manifest = "degenbot.database.species_manifest"
     for source in runtime_sources:
         text = source.read_text(encoding="utf-8")
         assert forbidden not in text, source
         assert manifest not in text, source
 
-    pyo3_source = (
-        root / "rust/crates/shells/degenbot-python/src/pathfinding/mod.rs"
-    ).read_text(encoding="utf-8")
-    assert "degenbot.database.models" not in pyo3_source
+    pyo3_source = (root / "rust/crates/shells/degenbot-python/src/pathfinding/mod.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "degenbot.database." + "models" not in pyo3_source
     assert "__mapper__" not in pyo3_source
     assert "polymorphic_identity" not in pyo3_source

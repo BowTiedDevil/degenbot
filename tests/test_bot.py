@@ -85,9 +85,7 @@ def _fake_provider(chain_id: int = 1) -> OfflineProvider:
 class TestBotInit:
     """Bot constructor tests (single-chain)."""
 
-    def test_bot_exposes_database_path_without_sqlalchemy_session(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    def test_bot_exposes_database_path_without_legacy_session(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
         bot = Bot(config, provider=_fake_provider(1))
 

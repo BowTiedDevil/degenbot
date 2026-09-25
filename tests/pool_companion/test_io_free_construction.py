@@ -31,7 +31,7 @@ from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.database.operations import create_new_sqlite_database
+from degenbot.db import db_create_new_database
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
@@ -707,7 +707,7 @@ class TestBotBuildErc20Token:
 
     def test_build_token_from_chain(self, tmp_path: pathlib.Path) -> None:
         config = make_test_config(tmp_path)
-        create_new_sqlite_database(config.database.path)
+        db_create_new_database(str(config.database.path))
         token_address = WETH_ADDR
         offline = OfflineProvider(
             chain_id=1,

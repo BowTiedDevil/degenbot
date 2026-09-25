@@ -1,6 +1,6 @@
 //! Cross-implementation Aave V3 read-back parity (binding #4 — HARD gate).
 //!
-//! Opens the frozen Alembic-stamped `fixtures/aave_parity.db` (built by
+//! Opens the frozen Rust-owned `fixtures/aave_parity.db` (built by
 //! `fixtures/generate_aave_parity.py`) and asserts the Rust Aave read fns
 //! produce results identical to the Python `DatabasePositionQuery` oracle
 //! (recorded in `fixtures/aave_parity_expected.json`), including the
@@ -21,9 +21,8 @@ use degenbot_db::{DegenbotDb, SchemaState};
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
-/// Pin the ADR-052 D1 heal-at-open killswitch (`DEGENBOT_DB_AUTO_HEAL=0`) so
-/// these fixture-backed parity tests keep the historical `LegacyAlembic`
-/// read-only open and never rewrite the committed fixtures.
+/// Disable auto-heal so fixture-backed parity tests never rewrite committed
+/// files while exercising their existing Rust-owned schema.
 fn pin_auto_heal_off() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| std::env::set_var(degenbot_db::AUTO_HEAL_ENV, "0"));
@@ -60,8 +59,8 @@ fn open_db() -> DegenbotDb {
     );
     let (db, state) = DegenbotDb::open(&path).expect("open aave_parity.db fixture");
     assert!(
-        matches!(state, SchemaState::LegacyAlembic),
-        "fixture DB should be LegacyAlembic, got {state:?}"
+        matches!(state, SchemaState::RustOwned { .. }),
+        "fixture DB should be RustOwned, got {state:?}"
     );
     db
 }

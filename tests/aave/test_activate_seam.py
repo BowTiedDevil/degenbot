@@ -11,16 +11,15 @@ mock server).
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
-
 from degenbot._ffi.aave import activate_aave_market, deactivate_aave_market
 from degenbot.db import db_upgrade_database
 from tests.aave.writer_parity.harness import mock_rpc_server
+from tests.helpers.database import sqlite_connection
 
 # The 4-byte selectors the activation path RPCs (keccak256 of the canonical
 # signatures, first 4 bytes).
@@ -67,22 +66,20 @@ def _fresh_db() -> Path:
 
 
 def _dump_market(db_path: Path) -> dict[str, Any]:
-    engine = create_engine(f"sqlite:///{db_path}")
-    with Session(engine) as session:
-        row = session.execute(
-            text("SELECT id, chain_id, name, active, last_update_block FROM aave_v3_markets")
-        ).one()
-        out = dict(row._mapping)
-    engine.dispose()
-    return out
+    with sqlite_connection(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT id, chain_id, name, active, last_update_block FROM aave_v3_markets"
+        ).fetchone()
+        assert row is not None
+        return dict(row)
 
 
 def _count_rows(db_path: Path, table_and_where: str) -> int:
-    engine = create_engine(f"sqlite:///{db_path}")
-    with Session(engine) as session:
-        n = session.execute(text(f"SELECT COUNT(*) FROM {table_and_where}")).scalar()
-    engine.dispose()
-    return int(n)
+    with sqlite_connection(db_path) as connection:
+        row = connection.execute(f"SELECT COUNT(*) FROM {table_and_where}").fetchone()
+        assert row is not None
+        return int(row[0])
 
 
 def test_activate_seeds_market_contract_gho_token() -> None:
@@ -121,15 +118,13 @@ def test_activate_seeds_market_contract_gho_token() -> None:
     )
 
     # GHO erc20 row with metadata.
-    engine = create_engine(f"sqlite:///{db_path}")
-    with Session(engine) as session:
-        sym, dec = session.execute(
-            text(
-                "SELECT symbol, decimals FROM erc20_tokens "
-                f"WHERE chain = 1 AND address = '{GHO_TOKEN_ADDRESS}'"
-            )
-        ).one()
-    engine.dispose()
+    with sqlite_connection(db_path) as connection:
+        row = connection.execute(
+            "SELECT symbol, decimals FROM erc20_tokens "
+            f"WHERE chain = 1 AND address = '{GHO_TOKEN_ADDRESS}'"
+        ).fetchone()
+        assert row is not None
+        sym, dec = row
     assert sym == "GHO", sym
     assert dec == 18, dec
 

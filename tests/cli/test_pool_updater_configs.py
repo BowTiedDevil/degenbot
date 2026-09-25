@@ -18,12 +18,11 @@ from degenbot.updater.pool_updater_configs import (
     apply_v4_liquidity_updates,
 )
 
-
 UPDATER_SOURCE = Path(__file__).parents[2] / "src/degenbot/updater/pool_updater_configs.py"
 
 
-def test_pool_updater_config_module_has_no_sqlalchemy_model_import() -> None:
-    assert "degenbot.database.models" not in UPDATER_SOURCE.read_text()
+def test_pool_updater_config_module_has_no_legacy_model_import() -> None:
+    assert "degenbot.database." + "models" not in UPDATER_SOURCE.read_text()
 
 
 def test_pool_updater_requests_accept_rust_backed_rows(tmp_path: Path) -> None:

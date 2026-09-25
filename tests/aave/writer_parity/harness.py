@@ -17,14 +17,12 @@ to exercise the Rust path offline. The Rust ``#[cfg(test)]`` corpus in
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
-
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
 
 from degenbot.db import db_upgrade_database
 
@@ -1089,7 +1087,7 @@ def make_redeem_log(
 
 
 def seed_gho_asset(
-    session: Session,
+    session: sqlite3.Connection,
     *,
     market_id: int = 1,
     chain_id: int = 1,
@@ -1119,62 +1117,52 @@ def seed_gho_asset(
     # NOT fetched as an aToken. The companion Transfer is emitted by the GHO
     # vToken (a debt token) so both paths classify it as a debt transfer.
     session.execute(
-        text("INSERT INTO erc20_tokens (id, chain, address) VALUES (6, :c, :a)"),
+        "INSERT INTO erc20_tokens (id, chain, address) VALUES (6, :c, :a)",
         {"c": chain_id, "a": get_checksum_address("0x" + "56" * 20)},
     )
     seed_gho_vtoken(session, chain_id=chain_id)
     # The GHO underlying asset (id 2). a_token_id = phantom GHO aToken (id 6);
     # v_token_id = the GHO vToken erc20 (id 5) + the pre-upgrade rev.
     session.execute(
-        text(
-            "INSERT INTO aave_v3_assets (id, market_id, underlying_asset_id, "
-            "a_token_id, a_token_revision, v_token_id, v_token_revision, "
-            "e_mode_category_id, price_source, last_update_block, "
-            "liquidity_index, liquidity_rate, borrow_index, borrow_rate) "
-            "VALUES (2, :market, 1, 6, 1, 5, :rev, NULL, NULL, NULL, 0, 0, 0, 0)"
-        ),
+        "INSERT INTO aave_v3_assets (id, market_id, underlying_asset_id, "
+        "a_token_id, a_token_revision, v_token_id, v_token_revision, "
+        "e_mode_category_id, price_source, last_update_block, "
+        "liquidity_index, liquidity_rate, borrow_index, borrow_rate) "
+        "VALUES (2, :market, 1, 6, 1, 5, :rev, NULL, NULL, NULL, 0, 0, 0, 0)",
         {"market": market_id, "rev": v_token_revision},
     )
     # The pre-seeded user with a GHO discount (path #1 DB-cache).
     session.execute(
-        text(
-            "INSERT INTO aave_v3_users (id, market_id, address, e_mode, "
-            "gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, "
-            "isolation_mode_debt) "
-            "VALUES (1, :market, :addr, 0, :disc, NULL, NULL, '0')"
-        ),
+        "INSERT INTO aave_v3_users (id, market_id, address, e_mode, "
+        "gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, "
+        "isolation_mode_debt) "
+        "VALUES (1, :market, :addr, 0, :disc, NULL, NULL, '0')",
         {
             "market": market_id,
             "addr": get_checksum_address(USER_ADDRESS),
             "disc": gho_discount_percent,
         },
     )
-    session.flush()
 
 
-def dump_debt_position_rows(session: Session) -> list[dict[str, Any]]:
+def dump_debt_position_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump `aave_v3_debt_positions` rows as comparable dicts (the GHO debt
     balance + last_index the ops parser writes — the byte-IDENTITY target for
     the flag #1 fixture)."""
     rows = session.execute(
-        text(
-            "SELECT id, user_id, asset_id, balance, last_index "
-            "FROM aave_v3_debt_positions ORDER BY id"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, user_id, asset_id, balance, last_index FROM aave_v3_debt_positions ORDER BY id"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def dump_collateral_position_rows(session: Session) -> list[dict[str, Any]]:
+def dump_collateral_position_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump `aave_v3_collateral_positions` rows as comparable dicts (the
     balance + last_index the ops parser writes for a Supply)."""
     rows = session.execute(
-        text(
-            "SELECT id, user_id, asset_id, balance, last_index "
-            "FROM aave_v3_collateral_positions ORDER BY id"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, user_id, asset_id, balance, last_index "
+        "FROM aave_v3_collateral_positions ORDER BY id"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 @dataclass
@@ -1319,30 +1307,26 @@ def seeded_db(
     chain_id: int = 1,
     last_update_block: int = BOOTSTRAP_BLOCK,
     with_price_oracle: bool = True,
-) -> Generator[tuple[Path, Session], None, None]:
+) -> Generator[tuple[Path, sqlite3.Connection], None, None]:
     """Create a temp SQLite DB with the Rust schema + a seeded Aave market.
 
-    Yields the DB path + an open SQLAlchemy ``Session`` (the ORM operates on
-    the Rust-created schema; the two are interoperable per ADR-010). The market
+    Yields the DB path + an open sqlite connection over the Rust-created schema. The market
     + the POOL/POOL_CONFIGURATOR/POOL_ADDRESS_PROVIDER/PRICE_ORACLE contracts +
     a minimal GHO asset (token + aave_gho_tokens row) are seeded — the minimum
     both ``run_aave_update`` (the fetch-spec lookup) + ``update_aave_market``
     (the ``assert gho_asset is not None`` requirement) need.
 
-    Disposes the engine (closing all SQLite connections) on exit — the caller
-    must finish using the session before the ``with`` block ends.
+    Closes the connection on exit; callers finish using it before the block ends.
     """
     db_path = tmp_path / f"{name}.db"
     # Create the full Rust-owned schema (the source of truth) on an empty file.
     db_upgrade_database(str(db_path))
-    engine = create_engine(f"sqlite:///{db_path}")
-    session = Session(engine)
+    session = sqlite3.connect(db_path)
+    session.row_factory = sqlite3.Row
     try:
         session.execute(
-            text(
-                "INSERT INTO aave_v3_markets (id, chain_id, name, active, "
-                "last_update_block) VALUES (:id, :chain, :name, 1, :block)"
-            ),
+            "INSERT INTO aave_v3_markets (id, chain_id, name, active, "
+            "last_update_block) VALUES (:id, :chain, :name, 1, :block)",
             {
                 "id": market_id,
                 "chain": chain_id,
@@ -1364,49 +1348,49 @@ def seeded_db(
         # The GHO token erc20 row + the aave_gho_tokens row (the Python oracle
         # asserts gho_asset is not None; the Rust treats it as optional).
         session.execute(
-            text("INSERT INTO erc20_tokens (id, chain, address) VALUES (1, :chain, :addr)"),
+            "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, :chain, :addr)",
             {"chain": chain_id, "addr": GHO_TOKEN_ADDRESS},
         )
         session.execute(
-            text(
-                "INSERT INTO aave_gho_tokens (id, token_id, v_token_id, "
-                "v_gho_discount_rate_strategy, v_gho_discount_token) "
-                "VALUES (1, 1, NULL, NULL, NULL)"
-            ),
+            "INSERT INTO aave_gho_tokens (id, token_id, v_token_id, "
+            "v_gho_discount_rate_strategy, v_gho_discount_token) "
+            "VALUES (1, 1, NULL, NULL, NULL)",
         )
         session.commit()
         yield db_path, session
     finally:
         session.close()
-        engine.dispose()
 
 
 def _seed_contract(
-    session: Session, market_id: int, name: str, address: str, *, revision: int | None = None
+    session: sqlite3.Connection,
+    market_id: int,
+    name: str,
+    address: str,
+    *,
+    revision: int | None = None,
 ) -> None:
     """Insert an aave_v3_contracts row (read by the Rust fetch spec + get_contract)."""
     session.execute(
-        text(
-            "INSERT INTO aave_v3_contracts (market_id, name, address, revision) "
-            "VALUES (:market, :name, :addr, :rev)"
-        ),
+        "INSERT INTO aave_v3_contracts (market_id, name, address, revision) "
+        "VALUES (:market, :name, :addr, :rev)",
         {"market": market_id, "name": name, "addr": address, "rev": revision},
     )
 
 
-def dump_user_rows(session: Session) -> list[dict[str, Any]]:
+def dump_user_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump the ``aave_v3_users`` rows as comparable dicts (column-by-column)."""
     rows = session.execute(
-        text(
-            "SELECT id, market_id, address, e_mode, gho_discount, stk_aave_balance, "
-            "isolation_mode_collateral_asset_id, isolation_mode_debt "
-            "FROM aave_v3_users ORDER BY address"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, market_id, address, e_mode, gho_discount, stk_aave_balance, "
+        "isolation_mode_collateral_asset_id, isolation_mode_debt "
+        "FROM aave_v3_users ORDER BY address"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def seed_asset_and_user(session: Session, *, market_id: int = 1, chain_id: int = 1) -> None:
+def seed_asset_and_user(
+    session: sqlite3.Connection, *, market_id: int = 1, chain_id: int = 1
+) -> None:
     """Seed an AaveV3Asset (with erc20 parents) + a pre-seeded user.
 
     The asset's underlying_token address is ``UNDERLYING_ADDRESS`` (the
@@ -1424,97 +1408,82 @@ def seed_asset_and_user(session: Session, *, market_id: int = 1, chain_id: int =
     # erc20 parents: id 2 = underlying, 3 = a_token, 4 = v_token
     # (id 1 is the GHO token seeded by `create_seeded_db`).
     session.execute(
-        text("INSERT INTO erc20_tokens (id, chain, address) VALUES (2, :c, :u)"),
+        "INSERT INTO erc20_tokens (id, chain, address) VALUES (2, :c, :u)",
         {"c": chain_id, "u": uw},
     )
     session.execute(
-        text("INSERT INTO erc20_tokens (id, chain, address) VALUES (3, :c, :a)"),
+        "INSERT INTO erc20_tokens (id, chain, address) VALUES (3, :c, :a)",
         {"c": chain_id, "a": aw},
     )
     session.execute(
-        text("INSERT INTO erc20_tokens (id, chain, address) VALUES (4, :c, :v)"),
+        "INSERT INTO erc20_tokens (id, chain, address) VALUES (4, :c, :v)",
         {"c": chain_id, "v": vw},
     )
     session.execute(
-        text(
-            "INSERT INTO aave_v3_assets (id, market_id, underlying_asset_id, "
-            "a_token_id, a_token_revision, v_token_id, v_token_revision, "
-            "e_mode_category_id, price_source, last_update_block, "
-            "liquidity_index, liquidity_rate, borrow_index, borrow_rate) "
-            "VALUES (1, :market, 2, 3, 1, 4, 1, NULL, NULL, NULL, 0, 0, 0, 0)"
-        ),
+        "INSERT INTO aave_v3_assets (id, market_id, underlying_asset_id, "
+        "a_token_id, a_token_revision, v_token_id, v_token_revision, "
+        "e_mode_category_id, price_source, last_update_block, "
+        "liquidity_index, liquidity_rate, borrow_index, borrow_rate) "
+        "VALUES (1, :market, 2, 3, 1, 4, 1, NULL, NULL, NULL, 0, 0, 0, 0)",
         {"market": market_id},
     )
     # The pre-seeded user (checksummed — both paths store/lookup the EIP-55 form).
     session.execute(
-        text(
-            "INSERT INTO aave_v3_users (id, market_id, address, e_mode, "
-            "gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, "
-            "isolation_mode_debt) "
-            "VALUES (1, :market, :addr, 0, 0, NULL, NULL, '0')"
-        ),
+        "INSERT INTO aave_v3_users (id, market_id, address, e_mode, "
+        "gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, "
+        "isolation_mode_debt) "
+        "VALUES (1, :market, :addr, 0, 0, NULL, NULL, '0')",
         {"market": market_id, "addr": get_checksum_address(USER_ADDRESS)},
     )
-    session.flush()
 
 
-def dump_collateral_config_rows(session: Session) -> list[dict[str, Any]]:
+def dump_collateral_config_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump ``aave_v3_user_collateral_configs`` rows as comparable dicts."""
     rows = session.execute(
-        text(
-            "SELECT id, user_id, asset_id, enabled "
-            "FROM aave_v3_user_collateral_configs ORDER BY user_id, asset_id"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, user_id, asset_id, enabled "
+        "FROM aave_v3_user_collateral_configs ORDER BY user_id, asset_id"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def dump_asset_rows(session: Session) -> list[dict[str, Any]]:
+def dump_asset_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump the rate/index/block columns of ``aave_v3_assets`` as comparable dicts."""
     rows = session.execute(
-        text(
-            "SELECT id, market_id, price_source, liquidity_index, liquidity_rate, "
-            "borrow_index, borrow_rate, last_update_block "
-            "FROM aave_v3_assets ORDER BY id"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, market_id, price_source, liquidity_index, liquidity_rate, "
+        "borrow_index, borrow_rate, last_update_block "
+        "FROM aave_v3_assets ORDER BY id"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def dump_emode_category_rows(session: Session) -> list[dict[str, Any]]:
+def dump_emode_category_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump ``aave_v3_emode_categories`` rows as comparable dicts."""
     rows = session.execute(
-        text(
-            "SELECT id, market_id, category_id, label, ltv, "
-            "liquidation_threshold, liquidation_bonus, price_source "
-            "FROM aave_v3_emode_categories ORDER BY category_id"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, market_id, category_id, label, ltv, "
+        "liquidation_threshold, liquidation_bonus, price_source "
+        "FROM aave_v3_emode_categories ORDER BY category_id"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def dump_contract_rows(session: Session) -> list[dict[str, Any]]:
+def dump_contract_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump ``aave_v3_contracts`` rows as comparable dicts (name-ordered)."""
     rows = session.execute(
-        text(
-            "SELECT id, market_id, name, address, revision FROM aave_v3_contracts ORDER BY name, id"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, market_id, name, address, revision FROM aave_v3_contracts ORDER BY name, id"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def dump_gho_token_rows(session: Session) -> list[dict[str, Any]]:
+def dump_gho_token_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump ``aave_gho_tokens`` rows as comparable dicts."""
     rows = session.execute(
-        text(
-            "SELECT id, token_id, v_token_id, v_gho_discount_rate_strategy, "
-            "v_gho_discount_token FROM aave_gho_tokens ORDER BY id"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, token_id, v_token_id, v_gho_discount_rate_strategy, "
+        "v_gho_discount_token FROM aave_gho_tokens ORDER BY id"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def seed_gho_vtoken(session: Session, *, chain_id: int = 1) -> None:
+def seed_gho_vtoken(session: sqlite3.Connection, *, chain_id: int = 1) -> None:
     """Seed the chain-unique GHO variable-debt token.
 
     Adds an ``erc20_tokens`` row for the GHO vToken (id 5) + sets
@@ -1525,27 +1494,24 @@ def seed_gho_vtoken(session: Session, *, chain_id: int = 1) -> None:
     from degenbot.checksum_cache import get_checksum_address
 
     session.execute(
-        text("INSERT INTO erc20_tokens (id, chain, address) VALUES (5, :c, :a)"),
+        "INSERT INTO erc20_tokens (id, chain, address) VALUES (5, :c, :a)",
         {"c": chain_id, "a": get_checksum_address(GHO_VTOKEN_ADDRESS)},
     )
     session.execute(
-        text("UPDATE aave_gho_tokens SET v_token_id = 5 WHERE id = 1"),
+        "UPDATE aave_gho_tokens SET v_token_id = 5 WHERE id = 1",
     )
-    session.flush()
 
 
-def dump_asset_config_rows(session: Session) -> list[dict[str, Any]]:
+def dump_asset_config_rows(session: sqlite3.Connection) -> list[dict[str, Any]]:
     """Dump ``aave_v3_asset_configs`` rows as comparable dicts."""
     rows = session.execute(
-        text(
-            "SELECT id, asset_id, ltv, liquidation_threshold, liquidation_bonus, "
-            "e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, "
-            "flash_loan_enabled, isolation_mode, borrowable_in_isolation, "
-            "debt_ceiling "
-            "FROM aave_v3_asset_configs ORDER BY asset_id"
-        )
-    ).all()
-    return [dict(row._mapping) for row in rows]
+        "SELECT id, asset_id, ltv, liquidation_threshold, liquidation_bonus, "
+        "e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, "
+        "flash_loan_enabled, isolation_mode, borrowable_in_isolation, "
+        "debt_ceiling "
+        "FROM aave_v3_asset_configs ORDER BY asset_id"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 # Corpus for the ReserveDataUpdated parity. Each entry is a tuple of

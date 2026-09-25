@@ -27,13 +27,6 @@ import pathlib
 
 import pytest
 
-from degenbot.constants import ZERO_ADDRESS
-from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.operations import (
-    create_new_sqlite_database,
-    get_scoped_sqlite_session,
-)
 from degenbot.pathfinding import (
     PathfindingRequest,
     PoolKind,
@@ -41,6 +34,7 @@ from degenbot.pathfinding import (
     find_paths_async,
 )
 from degenbot.types.chain import ChainId
+from tests.helpers.database import seed_v2_topology
 
 CHAIN = ChainId.ETH  # value 1; arbitrary but conventional
 
@@ -71,53 +65,16 @@ def _build_file_db(db_path: pathlib.Path) -> pathlib.Path:
         A     ===pool3=== B
         B     ===pool4=== WETH   (completes 3-hop cycle WETH-A-B-WETH)
     """
-    create_new_sqlite_database(db_path)
-    scoped = get_scoped_sqlite_session(database_path=db_path)
-
-    session = scoped()
-    try:
-        exchange = ExchangeTable(
-            chain_id=CHAIN,
-            name="test",
-            active=True,
-            factory=ZERO_ADDRESS,
-        )
-        session.add(exchange)
-        session.flush()  # assigns exchange.id
-
-        weth = Erc20TokenTable(chain=CHAIN, address=WETH_ADDR, symbol="WETH")
-        token_a = Erc20TokenTable(chain=CHAIN, address=TOKEN_A_ADDR, symbol="A")
-        token_b = Erc20TokenTable(chain=CHAIN, address=TOKEN_B_ADDR, symbol="B")
-        session.add_all([weth, token_a, token_b])
-        session.flush()  # assigns token ids
-
-        def _pool(addr: str, t0: Erc20TokenTable, t1: Erc20TokenTable) -> UniswapV2PoolTable:
-            # Joined-table inheritance: constructing the subclass inserts
-            # both the ``pools`` base row (with the correct polymorphic
-            # identity 'uniswap_v2') and the ``uniswap_v2_pools`` sub-row.
-            pool = UniswapV2PoolTable(
-                address=addr,
-                chain=CHAIN,
-                token0_id=t0.id,
-                token1_id=t1.id,
-                exchange_id=exchange.id,
-                fee_token0=3,
-                fee_token1=3,
-                fee_denominator=1000,
-            )
-            session.add(pool)
-            return pool
-
-        _pool(POOL_WETH_A_1_ADDR, weth, token_a)
-        _pool(POOL_WETH_A_2_ADDR, weth, token_a)
-        _pool(POOL_A_B_ADDR, token_a, token_b)
-        _pool(POOL_B_WETH_ADDR, token_b, weth)
-        session.commit()
-    finally:
-        session.close()
-        scoped.remove()
-        scoped.get_bind().dispose()
-
+    seed_v2_topology(
+        db_path,
+        [
+            (POOL_WETH_A_1_ADDR, WETH_ADDR, TOKEN_A_ADDR),
+            (POOL_WETH_A_2_ADDR, WETH_ADDR, TOKEN_A_ADDR),
+            (POOL_A_B_ADDR, TOKEN_A_ADDR, TOKEN_B_ADDR),
+            (POOL_B_WETH_ADDR, TOKEN_B_ADDR, WETH_ADDR),
+        ],
+        chain_id=CHAIN,
+    )
     return db_path
 
 

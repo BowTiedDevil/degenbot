@@ -1,7 +1,7 @@
 //! §4.2 parity for the pathfinding graph-construction read fns.
 //!
 //! Opens the frozen `fixtures/pathfinding.db` (built by
-//! `fixtures/generate_pathfinding.py` — a REAL Alembic-stamped DB seeded with
+//! `fixtures/generate_pathfinding.py` — a REAL Rust-owned DB seeded with
 //! V2 + V3 + V4 pools connecting overlapping tokens, some degree-1 to exercise
 //! the candidate filter) and asserts the Rust read fns produce results
 //! identical to what the Python `_prepare_graph` / `_get_tokens_with_min_degree`
@@ -25,7 +25,7 @@ use tempfile::TempDir;
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 /// Pin the ADR-052 D1 heal-at-open killswitch (`DEGENBOT_DB_AUTO_HEAL=0`) so
-/// these fixture-backed parity tests keep the historical `LegacyAlembic`
+/// these fixture-backed parity tests keep the fixture `RustOwned`
 /// read-only open and never rewrite the committed fixtures.
 fn pin_auto_heal_off() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -66,7 +66,7 @@ struct Expected {
 fn open_db() -> DegenbotDb {
     let (db, state) = DegenbotDb::open(&fixture_db_path())
         .unwrap_or_else(|e| panic!("open {}: {e}", fixture_db_path().display()));
-    assert_eq!(state, SchemaState::LegacyAlembic);
+    assert!(matches!(state, SchemaState::RustOwned { .. }));
     db
 }
 

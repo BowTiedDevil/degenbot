@@ -4,30 +4,30 @@ import pathlib
 
 import pytest
 
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.operations import create_new_sqlite_database, get_scoped_sqlite_session
+from degenbot.db import (
+    db_create_new_database,
+    db_set_exchange_last_update_block,
+    db_upsert_exchange,
+)
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 
 
 def _create_database_with_exchange(db_path: pathlib.Path) -> None:
-    create_new_sqlite_database(db_path)
-    scoped = get_scoped_sqlite_session(db_path)
-    try:
-        with scoped() as session:
-            session.add(
-                ExchangeTable(
-                    chain_id=1,
-                    name="uniswap_v3",
-                    last_update_block=18_000_000,
-                    active=True,
-                    factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
-                )
-            )
-            session.commit()
-    finally:
-        scoped.remove()
-        scoped.get_bind().dispose()
+    db_create_new_database(str(db_path))
+    exchange = db_upsert_exchange(
+        database_path=str(db_path),
+        chain_id=1,
+        name="uniswap_v3",
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        deployer=None,
+    )
+    db_set_exchange_last_update_block(
+        database_path=str(db_path),
+        chain_id=1,
+        exchange_id=exchange.id,
+        block=18_000_000,
+    )
 
 
 class TestV3DatabaseSnapshotExplicitPath:

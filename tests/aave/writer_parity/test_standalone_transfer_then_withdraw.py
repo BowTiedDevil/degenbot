@@ -40,8 +40,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import text
-
 from degenbot._ffi.aave import run_aave_update
 from degenbot._ffi.cancel import CancelHandle
 from tests.aave.writer_parity.harness import (
@@ -258,14 +256,14 @@ def test_standalone_transfer_credit_then_withdraw(tmp_path: Path) -> None:
             cancel_handle=CancelHandle(),
         )
         positions = dump_collateral_position_rows(rust_session)
-        a_token_addr = rust_session.execute(
-            text(
-                "SELECT et.address FROM aave_v3_collateral_positions p "
-                "JOIN aave_v3_assets a ON a.id = p.asset_id "
-                "JOIN erc20_tokens et ON et.id = a.a_token_id "
-                "WHERE p.id = (SELECT MIN(id) FROM aave_v3_collateral_positions)"
-            )
-        ).scalar()
+        row = rust_session.execute(
+            "SELECT et.address FROM aave_v3_collateral_positions p "
+            "JOIN aave_v3_assets a ON a.id = p.asset_id "
+            "JOIN erc20_tokens et ON et.id = a.a_token_id "
+            "WHERE p.id = (SELECT MIN(id) FROM aave_v3_collateral_positions)"
+        ).fetchone()
+        assert row is not None
+        a_token_addr = row[0]
 
     # GREEN: no crash (the standalone Transfer credited USER before the
     # Withdraw debited — the deficit_coverage scavenger no longer steals the

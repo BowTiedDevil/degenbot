@@ -11,14 +11,13 @@ advanced past the failed chunk).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import sqlite3
+from pathlib import Path
 
 import pytest
-from sqlalchemy import select, text
 
 from degenbot._ffi.aave import run_aave_update
 from degenbot._ffi.cancel import CancelHandle
-from degenbot.database.models.aave import AaveV3Market
 from tests.aave.writer_parity.harness import (
     BOOTSTRAP_BLOCK,
     FIXTURE_BLOCK,
@@ -28,11 +27,6 @@ from tests.aave.writer_parity.harness import (
     seed_asset_and_user,
     seeded_db,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from sqlalchemy.orm import Session
 
 # `scaledBalanceOf(address)` selector.
 _SCALED_BALANCE_OF_SELECTOR = "0x1da24f3e"
@@ -44,11 +38,15 @@ def _encode_uint256(value: int) -> str:
     return "0x" + format(value, "064x")
 
 
-def _load_market(session: Session) -> AaveV3Market:
-    return session.scalars(select(AaveV3Market).where(AaveV3Market.id == 1)).one()
+def _load_market(connection: sqlite3.Connection) -> int:
+    row = connection.execute(
+        "SELECT last_update_block FROM aave_v3_markets WHERE id = 1"
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
 
 
-def _seed_debt_position(session: Session, *, balance: str, last_index: str) -> None:
+def _seed_debt_position(connection: sqlite3.Connection, *, balance: str, last_index: str) -> None:
     """Seed a debt position (asset 1) for user 1 with the given balance/index.
 
     The asset was created by ``seed_asset_and_user`` (asset id 1 with
@@ -56,11 +54,9 @@ def _seed_debt_position(session: Session, *, balance: str, last_index: str) -> N
     `aave_v3_debt_positions JOIN aave_v3_assets ON asset_id` → `v_token_id`
     → `erc20_tokens`.
     """
-    session.execute(
-        text(
-            "INSERT INTO aave_v3_debt_positions (id, user_id, asset_id, "
-            "balance, last_index) VALUES (1, 1, 1, :bal, :idx)"
-        ),
+    connection.execute(
+        "INSERT INTO aave_v3_debt_positions (id, user_id, asset_id, "
+        "balance, last_index) VALUES (1, 1, 1, :bal, :idx)",
         {"bal": balance, "idx": last_index},
     )
 
@@ -118,7 +114,7 @@ def test_verify_chunk_divergence_rolls_back_and_does_not_advance_stamp(
         )
         rust_session.commit()
 
-        stamp_before = _load_market(rust_session).last_update_block
+        stamp_before = _load_market(rust_session)
         assert stamp_before == BOOTSTRAP_BLOCK
 
         handle = CancelHandle()
@@ -135,8 +131,7 @@ def test_verify_chunk_divergence_rolls_back_and_does_not_advance_stamp(
             )
 
         # The chunk was rolled back — the stamp did NOT advance.
-        rust_session.expire_all()
-        stamp_after = _load_market(rust_session).last_update_block
+        stamp_after = _load_market(rust_session)
         assert stamp_after == BOOTSTRAP_BLOCK, (
             f"last_update_block advanced {stamp_before}→{stamp_after} "
             "despite a verification divergence (the bad chunk should have "
@@ -194,8 +189,7 @@ def test_verify_chunk_pass_commits_and_advances_stamp(tmp_path: Path) -> None:
         )
 
         # The chunk committed — the stamp advanced.
-        rust_session.expire_all()
-        stamp_after = _load_market(rust_session).last_update_block
+        stamp_after = _load_market(rust_session)
         assert stamp_after == FIXTURE_BLOCK, (
             f"last_update_block is {stamp_after}, expected {FIXTURE_BLOCK} "
             "(verification passed, the chunk should have committed)"

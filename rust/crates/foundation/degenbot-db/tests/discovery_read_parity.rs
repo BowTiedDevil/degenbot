@@ -1,7 +1,7 @@
 //! §4.2 parity for the READ-ONLY candidate-pool discovery surface
 //! (`degenbot-db::discovery_read`, Gap G2).
 //!
-//! Opens the frozen Alembic-stamped `fixtures/parity.db` (chain 8453: one
+//! Opens the frozen Rust-owned `fixtures/parity.db` (chain 8453: one
 //! `uniswap_v3` pool registered under the `aerodrome_v3` exchange + one
 //! Uniswap V4 managed pool under the `uniswap_v4` manager) and asserts the
 //! discovery rows carry every column the Python `build_paths.py` ->
@@ -23,7 +23,7 @@ const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")
 const CHAIN_ID: i64 = 8453;
 
 /// Pin the ADR-052 D1 heal-at-open killswitch (`DEGENBOT_DB_AUTO_HEAL=0`) so
-/// these fixture-backed parity tests keep the historical `LegacyAlembic`
+/// these fixture-backed parity tests keep the fixture `RustOwned`
 /// read-only open and never rewrite the committed fixtures.
 fn pin_auto_heal_off() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -38,7 +38,7 @@ fn fixture_db_path() -> PathBuf {
 fn open_db() -> DegenbotDb {
     let (db, state) = DegenbotDb::open(&fixture_db_path())
         .unwrap_or_else(|e| panic!("open {}: {e}", fixture_db_path().display()));
-    assert_eq!(state, SchemaState::LegacyAlembic);
+    assert!(matches!(state, SchemaState::RustOwned { .. }));
     db
 }
 
@@ -160,7 +160,7 @@ fn discovery_rows_for_unknown_chain_are_empty() {
 fn snapshot_db_discovery_uses_held_tx_and_matches_direct_read() {
     let direct = open_db().fetch_discovery_rows(CHAIN_ID).unwrap();
     let (snap, state) = SnapshotDb::open(&fixture_db_path()).expect("open SnapshotDb");
-    assert_eq!(state, SchemaState::LegacyAlembic);
+    assert!(matches!(state, SchemaState::RustOwned { .. }));
     let from_snapshot = snap
         .fetch_discovery_rows(CHAIN_ID)
         .expect("held-tx discovery read");

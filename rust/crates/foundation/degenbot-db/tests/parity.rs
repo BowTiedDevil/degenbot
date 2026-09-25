@@ -1,20 +1,16 @@
 //! Cross-implementation parity fixture (binding #4 — HARD gate).
 //!
-//! Opens the frozen Alembic-stamped `fixtures/parity.db` (a REAL production-shape
-//! DB built by `fixtures/generate_parity.py` via `create_new_sqlite_database` +
-//! `Base.metadata.create_all` + `alembic stamp head`) and asserts the Rust
-//! read fns produce results identical to what the Python `DatabaseSnapshot`
+//! Opens the frozen Rust-owned `fixtures/parity.db` built by
+//! `fixtures/generate_parity.py` through the Rust database write seams and
+//! asserts the Rust read fns produce results identical to what the Python `DatabaseSnapshot`
 //! oracle returned against the same DB (recorded in
 //! `fixtures/parity_expected.json`), INCLUDING the `VARCHAR(78)` ↔ `U256`
 //! boundary: the seed data carries values exceeding `i64::MAX` (2^70) and
 //! `u128::MAX` (for the gross column), proving the decimal-string round-trip.
 //!
-//! The fixture DB carries the legacy `alembic_version` marker table, so
-//! [`open`] returns [`SchemaState::LegacyAlembic`] and writes NOTHING (the
-//! ADR-052 killswitch is pinned) — exactly the guarantee that the Rust reader
-//! cannot mutate a legacy production DB. `PRAGMA query_only=on` is asserted by
-//! the `connection.rs` unit tests; here we additionally confirm the open
-//! surface detected `LegacyAlembic`.
+//! The fixture DB carries the current Rust schema stamp, so opening it returns
+//! [`SchemaState::RustOwned`] without running a migration. The auto-heal
+//! killswitch remains pinned so fixture-backed tests never rewrite the file.
 //!
 //! To regenerate the fixture (after changing seed data):
 //!   `uv run python rust/crates/foundation/degenbot-db/tests/fixtures/generate_parity.py`
@@ -34,9 +30,8 @@ type StreamedMap = HashMap<i32, (U256, i128)>;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
-/// Pin the ADR-052 D1 heal-at-open killswitch (`DEGENBOT_DB_AUTO_HEAL=0`) so
-/// these fixture-backed parity tests keep the historical `LegacyAlembic`
-/// read-only open and never rewrite the committed fixtures.
+/// Disable auto-heal so fixture-backed tests never rewrite committed files
+/// while exercising the Rust-owned schema.
 fn pin_auto_heal_off() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| std::env::set_var(degenbot_db::AUTO_HEAL_ENV, "0"));
@@ -122,13 +117,12 @@ fn parse_tick(s: &str) -> i32 {
 }
 
 #[test]
-fn opens_alembic_stamped_db_as_current_and_writes_nothing() {
+fn opens_rust_owned_db_as_current_and_writes_nothing() {
     let (db, state) =
-        DegenbotDb::open(&fixture_db_path()).expect("parity.db should open as LegacyAlembic");
-    assert_eq!(state, SchemaState::LegacyAlembic);
-    // No degenbot tables were created by the open (the Alembic DB already has
-    // them; ensure_schema wrote nothing). Spot-check the private stamp table is
-    // ABSENT (it is only written on the fresh-standalone path).
+        DegenbotDb::open(&fixture_db_path()).expect("parity.db should open as RustOwned");
+    assert!(matches!(state, SchemaState::RustOwned { .. }));
+    // Opening the current Rust-owned fixture must not create or alter its
+    // private schema stamp.
     let conn = db.lock();
     let stamp: i64 = conn
         .query_row(
@@ -138,8 +132,8 @@ fn opens_alembic_stamped_db_as_current_and_writes_nothing() {
         )
         .unwrap();
     assert_eq!(
-        stamp, 0,
-        "Rust private stamp table must NOT exist on an Alembic DB"
+        stamp, 1,
+        "Rust-owned fixture must retain its private schema stamp"
     );
 }
 

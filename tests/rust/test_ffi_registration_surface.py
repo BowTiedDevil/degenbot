@@ -168,7 +168,7 @@ def test_every_runtime_submodule_has_a_stub() -> None:
 # so the decision is reviewed rather than silent.
 # ---------------------------------------------------------------------------
 _RETIRED_NAMES: tuple[tuple[str, str], ...] = (
-    # DADWUP: the SQLAlchemy yield_per loops.
+    # DADWUP: the retired pure-Python yield-per loops.
     ("degenbot.uniswap.snapshot_binary", "stream_v3_snapshot_to_engine"),
     ("degenbot.uniswap.snapshot_binary", "stream_v4_snapshot_to_engine"),
 )

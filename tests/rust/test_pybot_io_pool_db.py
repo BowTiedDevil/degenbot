@@ -1,49 +1,14 @@
-"""Parity + functional tests for the `BotIo` pool-builder DB seam (QVMWQC).
-
-`BotIo.fetch_pool_row` / `fetch_exchange`
-route the sync pool builders' construction-time DB reads through
-`degenbot-db`, replacing the `SQLAlchemy` ORM `session.scalar(select(...))`
-+ lazy-loaded relationship traversal. These tests seed a temp DB + assert
-that the Rust seam reads the same rows the ORM does (§4.2 parity):
-
-- `fetch_pool_row` returns a `LiquidityPoolRow` whose scalar + FK-id columns
-  match the ORM `LiquidityPoolTable` row.
-- `fetch_exchange` hydrates the `pool.exchange` FK relationship.
-- the no-`database_path` skip returns `None` (mirrors the prior
-  `contextlib.suppress(Exception)` skip).
-"""
+"""Functional tests for the `BotIo` pool-builder database seam."""
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
-
 from degenbot._ffi import BotIo
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.database.models import Base
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.erc20 import Erc20TokenTable
-from degenbot.database.models.pools import (
-    InitializationMapTable,
-    LiquidityPoolTable,
-    LiquidityPositionTable,
-    UniswapV3PoolTable,
-)
 from degenbot.db import db_create_new_database
+from tests.helpers.database import sqlite_connection
 
 CHAIN = 1
 _POOL_OFFLINE_JSON = '{"chain_id":1,"block_number":1,"timestamp":1,"calls":{},"code":{}}'
-
-
-def _offline_provider() -> RustAlloyProvider:
-    """A one-block `OfflineProvider`-backed `AlloyProvider` (no RPC).
-
-    The pool-builder DB seam never touches the provider; a valid provider
-    keeps the seam honest (no Python `object()` double — see O3).
-    """
-    return RustAlloyProvider.offline_from_json_string(_POOL_OFFLINE_JSON)
-
-
 POOL_ADDR = "0x" + "12" * 20
 TOK0_ADDR = "0x" + "34" * 20
 TOK1_ADDR = "0x" + "56" * 20
@@ -51,98 +16,63 @@ FACTORY = "0x" + "78" * 20
 EXCHANGE_NAME = "uniswap_v3"
 
 
+def _offline_provider() -> RustAlloyProvider:
+    return RustAlloyProvider.offline_from_json_string(_POOL_OFFLINE_JSON)
+
+
 def _seed_v3_pool(database_path: str) -> int:
-    """Seed a V3 pool + exchange + tokens + subclass row + tick snapshot; return pool id."""
-    engine = create_engine(f"sqlite:///{database_path}")
-    Base.metadata.create_all(engine)
-    with Session(engine) as session:
-        exch = ExchangeTable(
-            id=1,
-            chain_id=CHAIN,
-            name=EXCHANGE_NAME,
-            active=True,
-            factory=FACTORY,
-            deployer=None,
+    with sqlite_connection(database_path) as connection:
+        connection.execute(
+            "INSERT INTO exchanges (id, chain_id, name, active, factory) VALUES (1, ?, ?, 1, ?)",
+            (CHAIN, EXCHANGE_NAME, FACTORY),
         )
-        t0 = Erc20TokenTable(
-            id=1, chain=CHAIN, address=TOK0_ADDR, name="T0", symbol="T0SYM", decimals=6
+        connection.executemany(
+            "INSERT INTO erc20_tokens (id, chain, address, name, symbol, decimals) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (1, CHAIN, TOK0_ADDR, "T0", "T0SYM", 6),
+                (2, CHAIN, TOK1_ADDR, "T1", "T1SYM", 18),
+            ],
         )
-        t1 = Erc20TokenTable(
-            id=2, chain=CHAIN, address=TOK1_ADDR, name="T1", symbol="T1SYM", decimals=18
+        connection.execute(
+            "INSERT INTO pools (id, chain, address, kind, token0_id, token1_id, exchange_id) "
+            "VALUES (10, ?, ?, 'uniswap_v3', 1, 2, 1)",
+            (CHAIN, POOL_ADDR),
         )
-        session.add_all([exch, t0, t1])
-        session.flush()
-
-        # Joined-table inheritance: construct the concrete V3 subclass as a
-        # single object (carries both the base `pools` columns + the V3
-        # subclass columns). SQLAlchemy writes both rows + sets the polymorphic
-        # identity (`uniswap_v3`).
-        pool = UniswapV3PoolTable(
-            id=10,
-            chain=CHAIN,
-            address=POOL_ADDR,
-            kind="uniswap_v3",
-            token0_id=t0.id,
-            token1_id=t1.id,
-            exchange_id=exch.id,
-            tick_spacing=60,
-            fee_token0=3,
-            fee_token1=3,
-            fee_denominator=1000,
+        connection.execute(
+            "INSERT INTO uniswap_v3_pools (pool_id, tick_spacing, fee_token0, fee_token1, "
+            "fee_denominator) VALUES (10, 60, 3, 3, 1000)"
         )
-        session.add(pool)
-        session.flush()
-        pool_id = pool.id
-
-        # Tick snapshot: one init-map word + one liquidity position.
-        session.add(InitializationMapTable(id=1, pool_id=pool_id, word=-3, bitmap=str(2**128 + 7)))
-        session.add(
-            LiquidityPositionTable(
-                id=1,
-                pool_id=pool_id,
-                tick=-100,
-                liquidity_net=str(2**128 - 1),  # a big uint128
-                liquidity_gross=str(123456),
-            )
+        connection.execute(
+            "INSERT INTO initialization_maps (id, pool_id, word, bitmap) VALUES (1, 10, -3, ?)",
+            (str(2**128 + 7),),
         )
-        session.commit()
-    engine.dispose()
-    return pool_id
+        connection.execute(
+            "INSERT INTO liquidity_positions (id, pool_id, tick, liquidity_net, liquidity_gross) "
+            "VALUES (1, 10, -100, ?, ?)",
+            (str(2**128 - 1), "123456"),
+        )
+        return 10
 
 
 def _io(database_path: str) -> BotIo:
     return BotIo(provider=_offline_provider(), database_path=database_path)
 
 
-def test_fetch_pool_row_parity(tmp_path):
+def test_fetch_pool_row_returns_seeded_pool(tmp_path):
     database_path = str(tmp_path / "pool_seam.db")
     db_create_new_database(database_path)
     pool_id = _seed_v3_pool(database_path)
 
-    io = _io(database_path)
-    row = io.fetch_pool_row(chain_id=CHAIN, address=POOL_ADDR)
+    row = _io(database_path).fetch_pool_row(chain_id=CHAIN, address=POOL_ADDR)
     assert row is not None
     assert row.id == pool_id
     assert row.chain == CHAIN
     assert row.address.lower() == POOL_ADDR.lower()
     assert row.kind == "uniswap_v3"
-
-    # Parity: the ORM row has the same FK ids.
-    engine = create_engine(f"sqlite:///{database_path}")
-    try:
-        with Session(engine) as session:
-            orm = session.scalar(
-                select(LiquidityPoolTable).where(
-                    LiquidityPoolTable.address == POOL_ADDR,
-                    LiquidityPoolTable.chain == CHAIN,
-                )
-            )
-            assert orm is not None
-            assert orm.token0_id == row.token0_id
-            assert orm.token1_id == row.token1_id
-            assert orm.exchange_id == row.exchange_id
-    finally:
-        engine.dispose()
+    assert row.token0_id == 1
+    assert row.token1_id == 2
+    assert row.exchange_id == 1
 
 
 def test_fetch_exchange(tmp_path):
@@ -153,12 +83,11 @@ def test_fetch_exchange(tmp_path):
     io = _io(database_path)
     pool = io.fetch_pool_row(chain_id=CHAIN, address=POOL_ADDR)
     assert pool is not None
-
-    exch = io.fetch_exchange(pool.exchange_id)
-    assert exch is not None
-    assert exch.factory.lower() == FACTORY.lower()
-    assert exch.name == EXCHANGE_NAME
-    assert exch.deployer is None
+    exchange = io.fetch_exchange(pool.exchange_id)
+    assert exchange is not None
+    assert exchange.factory.lower() == FACTORY.lower()
+    assert exchange.name == EXCHANGE_NAME
+    assert exchange.deployer is None
 
 
 def test_no_database_path_skips_pool_reads():

@@ -31,14 +31,12 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
 
+from degenbot._ffi import call_on_ambient_runtime
 from degenbot._ffi.aave import (
     run_aave_update,
     verify_touched_positions_on_chain,
 )
-from degenbot._ffi import call_on_ambient_runtime
 from degenbot._ffi.cancel import CancelHandle
 from tests.aave.writer_parity.harness import (
     FIXTURE_BLOCK,
@@ -51,6 +49,7 @@ from tests.aave.writer_parity.harness import (
     mock_rpc_server,
     seeded_db,
 )
+from tests.helpers.database import sqlite_connection
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -211,35 +210,26 @@ def _corrupt_balance(rust_path: str, user_address: str, new_balance: int) -> Non
     """Mutate the SENDER's collateral position balance to `new_balance` in
     the DB. Used by the RED case to simulate a regression that left the DB
     state silently wrong."""
-    engine = create_engine(f"sqlite:///{rust_path}")
-    with Session(engine) as s:
-        s.execute(
-            text(
-                "UPDATE aave_v3_collateral_positions \
-                 SET balance = :b \
-                 WHERE user_id IN (SELECT id FROM aave_v3_users WHERE LOWER(address) = LOWER(:a))"
-            ),
+    with sqlite_connection(rust_path) as connection:
+        connection.execute(
+            "UPDATE aave_v3_collateral_positions "
+            "SET balance = :b "
+            "WHERE user_id IN (SELECT id FROM aave_v3_users WHERE LOWER(address) = LOWER(:a))",
             {"b": str(new_balance), "a": user_address},
         )
-        s.commit()
-    engine.dispose()
 
 
 def _scaled_balance_of(rust_path: str, user_address: str) -> int:
     """Helper: read the SENDER's collateral position balance from the DB
     (to confirm the writer seeded the expected scaled balance)."""
-    engine = create_engine(f"sqlite:///{rust_path}")
-    with Session(engine) as s:
-        row = s.execute(
-            text(
-                "SELECT cp.balance FROM aave_v3_collateral_positions cp \
-                 JOIN aave_v3_users u ON u.id = cp.user_id WHERE LOWER(u.address) = LOWER(:a)"
-            ),
+    with sqlite_connection(rust_path) as connection:
+        row = connection.execute(
+            "SELECT cp.balance FROM aave_v3_collateral_positions cp "
+            "JOIN aave_v3_users u ON u.id = cp.user_id WHERE LOWER(u.address) = LOWER(:a)",
             {"a": user_address},
-        ).one()
-        result = int(row[0])
-    engine.dispose()
-    return result
+        ).fetchone()
+        assert row is not None
+        return int(row[0])
 
 
 @pytest.mark.parametrize("corrupt_db", [False, True], ids=["green", "red"])

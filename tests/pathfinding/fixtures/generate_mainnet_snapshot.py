@@ -56,7 +56,7 @@ import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
-from degenbot.database.operations import create_new_sqlite_database
+from degenbot.db import db_create_new_database
 from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths
 from degenbot.runner._driver_constants import ETH_MAINNET_ALLOWED_TOKENS, WETH_ADDRESS
 from degenbot.types.chain import ChainId
@@ -83,9 +83,7 @@ MAX_V4_NATIVE_POOLS = 300
 # (`V3-V4-V3`, `V3-V2`, ... — see `build_paths._parse_permutation_filter`).
 # The permutation filters below ARE production shapes and keep each baseline
 # in the tens-to-hundreds of thousands.
-BASELINE_VARIANTS: list[
-    tuple[str, int, list[PoolKind], list[set[PoolKind]] | None]
-] = [
+BASELINE_VARIANTS: list[tuple[str, int, list[PoolKind], list[set[PoolKind]] | None]] = [
     (
         "depth2_all_kinds",
         2,
@@ -140,9 +138,9 @@ def _resolve_token_ids(cursor: sqlite3.Cursor) -> tuple[dict[str, int], list[int
     if missing:
         print(f"note: {len(missing)} anchor tokens absent from live DB: {missing}")
 
-    anchor_ids = sorted(
-        {by_address[a] for a in ETH_MAINNET_ALLOWED_TOKENS | {WETH_ADDRESS} if a in by_address}
-    )
+    anchor_ids = sorted({
+        by_address[a] for a in ETH_MAINNET_ALLOWED_TOKENS | {WETH_ADDRESS} if a in by_address
+    })
     return by_address, anchor_ids, by_address[NATIVE_ADDRESS], missing
 
 
@@ -215,7 +213,7 @@ def _copy_snapshot(
     """Create the snapshot DB and copy the selected rows verbatim (ATTACH)."""
     if SNAPSHOT_PATH.exists():
         SNAPSHOT_PATH.unlink()
-    create_new_sqlite_database(db_path=SNAPSHOT_PATH)
+    db_create_new_database(str(SNAPSHOT_PATH))
 
     pool_ids = sorted(set(selection["core_v2v3"]) | set(selection["fringe_v2v3"]))
     managed_ids = sorted(set(selection["core_v4"]) | set(selection["v4_native"]))
@@ -297,9 +295,7 @@ def _detect_bridges(snap: sqlite3.Connection, candidates: list[int]) -> list[lis
     candidate_set = set(candidates)
     pair_multiplicity: defaultdict[tuple[int, int], int] = defaultdict(int)
     chain = int(CHAIN_ID)
-    for t0, t1 in snap.execute(
-        "SELECT token0_id, token1_id FROM pools WHERE chain = ?", (chain,)
-    ):
+    for t0, t1 in snap.execute("SELECT token0_id, token1_id FROM pools WHERE chain = ?", (chain,)):
         if int(t0) in candidate_set and int(t1) in candidate_set:
             key = (int(t0), int(t1)) if int(t0) < int(t1) else (int(t1), int(t0))
             pair_multiplicity[key] += 1

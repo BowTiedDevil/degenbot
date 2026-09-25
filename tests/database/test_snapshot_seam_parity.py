@@ -1,9 +1,9 @@
 """§4.2 parity + §4.5 delegation tests for the V3/V4 snapshot DB seam.
 
 Driven by SLHSM4's frozen `parity_expected.json` oracle (dumped from the
-prior SQLAlchemy-backed `DatabaseSnapshot`) + a freshly-regenerated
+prior legacy reader-backed `DatabaseSnapshot`) + a freshly-regenerated
 `parity.db` fixture: the Rust-backed `DatabaseSnapshot` (delegating through
-`DatabaseSnapshot`) produces identical results to the frozen SQLAlchemy
+`DatabaseSnapshot`) produces identical results to the frozen legacy reader
 oracle. Plus a §4.5 delegation spy proving the Python reader hits Rust with
 the right args.
 """
@@ -44,11 +44,11 @@ def v4_snapshot() -> Iterator[V4DatabaseSnapshot]:
         snapshot.close()
 
 
-# ── §4.2 parity: Rust-backed reads == frozen SQLAlchemy oracle ─────────
+# ── §4.2 parity: Rust-backed reads == frozen legacy reader oracle ─────────
 
 
 class TestV3SnapshotParity:
-    """V3 DatabaseSnapshot (Rust-backed) matches the frozen SQLAlchemy oracle."""
+    """V3 DatabaseSnapshot (Rust-backed) matches the frozen legacy reader oracle."""
 
     def test_get_newest_block(self, v3_snapshot: V3DatabaseSnapshot) -> None:
         """get_newest_block matches the oracle."""
@@ -86,7 +86,7 @@ class TestV3SnapshotParity:
 
 
 class TestV4SnapshotParity:
-    """V4 DatabaseSnapshot (Rust-backed) matches the frozen SQLAlchemy oracle."""
+    """V4 DatabaseSnapshot (Rust-backed) matches the frozen legacy reader oracle."""
 
     def test_get_newest_block(self, v4_snapshot: V4DatabaseSnapshot) -> None:
         """get_newest_block matches the oracle."""

@@ -21,37 +21,25 @@ from __future__ import annotations
 import json
 import pathlib
 import shutil
+import sqlite3
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
 
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.db import db_fetch_exchange, db_upsert_pool_manager
+from degenbot.types.rpc_types import LogReceipt
 from degenbot.updater.pool_updater_configs import (
     UNISWAP_V3_BURN_EVENT_HASH,
     UNISWAP_V3_MINT_EVENT_HASH,
     apply_v3_liquidity_updates,
     apply_v4_liquidity_updates,
 )
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.pools import (
-    InitializationMapTable,
-    LiquidityPositionTable,
-    ManagedPoolInitializationMapTable,
-    ManagedPoolLiquidityPositionTable,
-    PoolManagerTable,
-    UniswapV3PoolTable,
-    UniswapV4PoolTable,
-)
-from degenbot.database.operations import get_scoped_sqlite_session
-from degenbot.db import db_fetch_exchange, db_upsert_pool_manager
-from degenbot.types.rpc_types import LogReceipt
 from degenbot.utils.bytes import to_bytes
+from tests.helpers.database import sqlite_connection
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session, scoped_session
-
     from degenbot._ffi import ChecksummedAddress
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / (
@@ -155,103 +143,78 @@ class _DummyProvider:
     chain_id = CHAIN
 
 
-def _dispose(session: scoped_session[Session]) -> None:
-    """Dispose the scoped session + its engine (avoids leaking a pooled
-    sqlite connection — `get_scoped_sqlite_session` builds a fresh engine per
-    call)."""
-    bind = session.get_bind()
-    # `get_bind()` may return an `Engine` or `Connection`; only dispose an engine
-    # (the SQLAlchemy engine pool caches the pooled sqlite connection).
-    if hasattr(bind, "dispose"):
-        bind.dispose()  # type: ignore[union-attr]
-    session.remove()
-
-
 def _checkpoint(path: pathlib.Path) -> None:
-    import sqlite3
-
-    conn = sqlite3.connect(str(path))
+    connection = sqlite3.connect(path)
     try:
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        conn.commit()
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.commit()
     finally:
-        conn.close()
+        connection.close()
 
 
 def _dump_v3(db_path: pathlib.Path, pool_id: int) -> dict[str, object]:
-    session = get_scoped_sqlite_session(db_path)
-    with session() as s:  # type: Session
-        positions = sorted(
-            s.scalars(
-                select(LiquidityPositionTable).where(LiquidityPositionTable.pool_id == pool_id)
-            ).all(),
-            key=lambda r: r.tick,
-        )
-        init_maps = sorted(
-            s.scalars(
-                select(InitializationMapTable).where(InitializationMapTable.pool_id == pool_id)
-            ).all(),
-            key=lambda r: r.word,
-        )
-        pool = s.scalar(select(UniswapV3PoolTable).where(UniswapV3PoolTable.id == pool_id))
+    with sqlite_connection(db_path) as connection:
+        positions = connection.execute(
+            "SELECT tick, liquidity_net, liquidity_gross FROM liquidity_positions "
+            "WHERE pool_id = ? ORDER BY tick",
+            (pool_id,),
+        ).fetchall()
+        init_maps = connection.execute(
+            "SELECT word, bitmap FROM initialization_maps WHERE pool_id = ? ORDER BY word",
+            (pool_id,),
+        ).fetchall()
+        pool = connection.execute(
+            "SELECT liquidity_update_block, liquidity_update_log_index "
+            "FROM uniswap_v3_pools WHERE pool_id = ?",
+            (pool_id,),
+        ).fetchone()
         assert pool is not None
-        result = {
+        return {
             "positions": [
                 {
-                    "tick": r.tick,
-                    "liquidity_net": str(r.liquidity_net),
-                    "liquidity_gross": str(r.liquidity_gross),
+                    "tick": row[0],
+                    "liquidity_net": str(row[1]),
+                    "liquidity_gross": str(row[2]),
                 }
-                for r in positions
+                for row in positions
             ],
-            "initialization_maps": [{"word": r.word, "bitmap": str(r.bitmap)} for r in init_maps],
-            "liquidity_update_block": pool.liquidity_update_block,
-            "liquidity_update_log_index": pool.liquidity_update_log_index,
+            "initialization_maps": [{"word": row[0], "bitmap": str(row[1])} for row in init_maps],
+            "liquidity_update_block": pool[0],
+            "liquidity_update_log_index": pool[1],
         }
-    _dispose(session)
-    return result
 
 
 def _dump_v4(db_path: pathlib.Path, managed_pool_id: int) -> dict[str, object]:
-    session = get_scoped_sqlite_session(db_path)
-    with session() as s:  # type: Session
-        positions = sorted(
-            s.scalars(
-                select(ManagedPoolLiquidityPositionTable).where(
-                    ManagedPoolLiquidityPositionTable.managed_pool_id == managed_pool_id
-                )
-            ).all(),
-            key=lambda r: r.tick,
-        )
-        init_maps = sorted(
-            s.scalars(
-                select(ManagedPoolInitializationMapTable).where(
-                    ManagedPoolInitializationMapTable.managed_pool_id == managed_pool_id
-                )
-            ).all(),
-            key=lambda r: r.word,
-        )
-        pool = s.scalar(
-            select(UniswapV4PoolTable).where(UniswapV4PoolTable.managed_pool_id == managed_pool_id)
-        )
+    with sqlite_connection(db_path) as connection:
+        positions = connection.execute(
+            "SELECT tick, liquidity_net, liquidity_gross "
+            "FROM managed_pool_liquidity_positions WHERE managed_pool_id = ? ORDER BY tick",
+            (managed_pool_id,),
+        ).fetchall()
+        init_maps = connection.execute(
+            "SELECT word, bitmap FROM managed_pool_initialization_maps "
+            "WHERE managed_pool_id = ? ORDER BY word",
+            (managed_pool_id,),
+        ).fetchall()
+        pool = connection.execute(
+            "SELECT liquidity_update_block, liquidity_update_log_index "
+            "FROM uniswap_v4_pools WHERE managed_pool_id = ?",
+            (managed_pool_id,),
+        ).fetchone()
         assert pool is not None
-        result = {
+        return {
             "positions": [
                 {
-                    "tick": r.tick,
-                    "liquidity_net": str(r.liquidity_net),
-                    "liquidity_gross": str(r.liquidity_gross),
+                    "tick": row[0],
+                    "liquidity_net": str(row[1]),
+                    "liquidity_gross": str(row[2]),
                 }
-                for r in positions
+                for row in positions
             ],
-            "initialization_maps": [{"word": r.word, "bitmap": str(r.bitmap)} for r in init_maps],
-            "liquidity_update_block": pool.liquidity_update_block,
-            "liquidity_update_log_index": pool.liquidity_update_log_index,
+            "initialization_maps": [{"word": row[0], "bitmap": str(row[1])} for row in init_maps],
+            "liquidity_update_block": pool[0],
+            "liquidity_update_log_index": pool[1],
         }
-    _dispose(session)
-    return result
-    _dispose(session)
-    return result
 
 
 @pytest.fixture
@@ -281,23 +244,19 @@ def test_apply_v3_seam_matches_expected_oracle(v3_apply_copy: pathlib.Path) -> N
         _v3_burn_log(block=102, log_idx=0, tick_lower=-10, tick_upper=10, amount=1_300_000),
     ]
     # Read the pool id + the in-scope exchange (the shell uses both).
-    session = get_scoped_sqlite_session(v3_apply_copy)
-    with session() as s:
-        pool = s.scalar(
-            select(UniswapV3PoolTable).where(
-                UniswapV3PoolTable.address == V3_POOL_ADDRESS,
-                UniswapV3PoolTable.chain == CHAIN,
-            )
-        )
+    with sqlite_connection(v3_apply_copy) as connection:
+        pool = connection.execute(
+            "SELECT p.id, p.exchange_id FROM pools p WHERE p.address = ? AND p.chain = ?",
+            (V3_POOL_ADDRESS, CHAIN),
+        ).fetchone()
         assert pool is not None
-        pool_id = pool.id
+        pool_id = pool[0]
         exchange = db_fetch_exchange(
             database_path=str(v3_apply_copy),
-            exchange_id=pool.exchange_id,
+            exchange_id=pool[1],
         )
         assert exchange is not None
         exchanges_in_scope = {exchange}
-    _dispose(session)
 
     apply_v3_liquidity_updates(
         provider=_DummyProvider(),  # type: ignore[arg-type]
@@ -326,24 +285,27 @@ def test_apply_v4_seam_matches_expected_oracle(v4_apply_copy: pathlib.Path) -> N
         _v4_modify_log(block=201, log_idx=0, tick_lower=-10, tick_upper=10, delta=-200_000),
         _v4_modify_log(block=202, log_idx=0, tick_lower=-10, tick_upper=10, delta=-1_300_000),
     ]
-    session = get_scoped_sqlite_session(v4_apply_copy)
-    with session() as s:
-        manager = s.scalar(select(PoolManagerTable).where(PoolManagerTable.chain == CHAIN))
+    with sqlite_connection(v4_apply_copy) as connection:
+        manager = connection.execute(
+            "SELECT address, chain, kind, state_view, exchange_id "
+            "FROM pool_managers WHERE chain = ?",
+            (CHAIN,),
+        ).fetchone()
         assert manager is not None
-        pool = s.scalar(
-            select(UniswapV4PoolTable).where(UniswapV4PoolTable.pool_hash == V4_POOL_HASH)
-        )
+        pool = connection.execute(
+            "SELECT managed_pool_id FROM uniswap_v4_pools WHERE pool_hash = ?",
+            (V4_POOL_HASH,),
+        ).fetchone()
         assert pool is not None
-        managed_pool_id = pool.managed_pool_id
+        managed_pool_id = pool[0]
         manager_row = db_upsert_pool_manager(
             database_path=str(v4_apply_copy),
-            address=manager.address,
-            chain=manager.chain,
-            kind=manager.kind,
-            state_view=manager.state_view,
-            exchange_id=manager.exchange_id,
+            address=manager[0],
+            chain=manager[1],
+            kind=manager[2],
+            state_view=manager[3],
+            exchange_id=manager[4],
         )
-    _dispose(session)
 
     apply_v4_liquidity_updates(
         pool_id=to_bytes(V4_POOL_HASH),

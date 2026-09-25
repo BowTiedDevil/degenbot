@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,6 +11,7 @@ from degenbot.db import (
     db_fetch_graph_edition,
     db_resolve_token_ids,
 )
+from tests.helpers.database import sqlite_connection
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -24,7 +24,7 @@ MISSING_ADDRESS = "0x3333333333333333333333333333333333333333"
 
 def _seed_database(path: Path) -> None:
     db_create_new_database(str(path))
-    with sqlite3.connect(path) as connection:
+    with sqlite_connection(path) as connection:
         connection.executemany(
             "INSERT INTO erc20_tokens (id, chain, address) VALUES (?, ?, ?)",
             [(1, 1, ADDRESS_A), (2, 1, ADDRESS_B), (3, 10, ADDRESS_A)],
