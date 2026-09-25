@@ -198,7 +198,7 @@ crate::config_schema! {
         ws [opt strmap] = None, env_prefix = "DEGENBOT_RPC_WS_CHAINID_", def = "(unset)",
             doc = "Per-chain subscription (WebSocket) endpoint per chain id, same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_WS_CHAINID_<chain_id>. Every value must be a ws:// or wss:// URL; a subscription consumer takes this transport or nodes.ipc, never nodes.http.";
         ipc [opt strmap] = None, env_prefix = "DEGENBOT_RPC_IPC_CHAINID_", def = "(unset)",
-            doc = "Per-chain local IPC endpoint per chain id (a node running beside the bot, reachable over a Unix socket or a Windows named pipe), same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_IPC_CHAINID_<chain_id>. Every value must be an ipc:// URL or a socket path; an IPC entry can serve requests and subscriptions alike.";
+            doc = "Per-chain local IPC endpoint per chain id (a node running beside the bot, reachable over a Unix socket or a Windows named pipe), same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_IPC_CHAINID_<chain_id>. Every value must be an `ipc://` URL or an absolute socket path (a leading `/` on Unix, or a Windows named pipe under the `\\\\.\\pipe\\` namespace, e.g. `ipc://\\\\.\\pipe\\node.ipc`). A relative or `~/` path is refused: it resolves against the process working directory, not the config file's directory, and `~` is never expanded here. An IPC entry can serve requests and subscriptions alike.";
     }
 
     // The session's chain identity: the chain the bot runs against unless an
@@ -700,7 +700,7 @@ impl NodeTransport {
         match self {
             Self::Http => "an http:// or https:// URL",
             Self::Ws => "a ws:// or wss:// URL",
-            Self::Ipc => "an ipc:// URL or a socket path",
+            Self::Ipc => "an ipc:// URL or an absolute socket path (a leading `/`, or a Windows named pipe under `\\\\.\\pipe\\`)",
         }
     }
 
@@ -725,21 +725,62 @@ impl NodeTransport {
     }
 }
 
-/// A local socket path an IPC entry may name: an absolute path, a `~/` home
-/// path, an explicitly relative path, a Windows named pipe, or a Windows
-/// drive path. A bare word is NOT one — `localhost:8545` is a typo that
-/// would otherwise be accepted as a relative path and fail at the socket.
+/// A local socket path an IPC entry may name: an absolute path or a Windows
+/// named pipe. These are the path forms the transport's own IPC predicate
+/// dials. A relative path and a `~/` path are NOT ones — they resolve
+/// against the process working directory, not the config file's directory,
+/// and `~` is never expanded by the loader. A drive path is not one either:
+/// it names no named pipe. A bare word is not one — `localhost:8545` is
+/// a typo that would otherwise be accepted as a relative path and fail at
+/// the socket.
 fn is_socket_path(value: &str) -> bool {
     const WINDOWS_NAMED_PIPE: &str = "\\\\.";
-    value.starts_with('/')
-        || value.starts_with("~/")
-        || value.starts_with("./")
-        || value.starts_with("../")
-        || value.starts_with(WINDOWS_NAMED_PIPE)
-        || value
-            .as_bytes()
-            .get(1)
-            .is_some_and(|c| *c == b':' && matches!(value.as_bytes().get(2), Some(b'\\' | b'/')))
+    value.starts_with('/') || value.starts_with(WINDOWS_NAMED_PIPE)
+}
+
+/// The Windows drive-letter form (a drive letter, a colon, then a slash),
+/// which names no socket the transport dials. It is recognized only to give
+/// that operator the named-pipe remedy in the refusal.
+fn is_drive_path(value: &str) -> bool {
+    value
+        .as_bytes()
+        .get(1)
+        .is_some_and(|c| *c == b':' && matches!(value.as_bytes().get(2), Some(b'\\' | b'/')))
+}
+
+/// Why an `ipc` entry was refused when its shape names a path the transport
+/// does not dial. `None` means the value is not one of those path shapes, so
+/// the generic transport-mismatch message is enough.
+fn ipc_path_hint(value: &str) -> Option<&'static str> {
+    if value.starts_with("~/") || value.starts_with("./") || value.starts_with("../") {
+        Some(
+            "a relative or `~` path resolves against the process working directory, not the config file's directory, and `~` is not expanded here — name an absolute socket path (a leading `/`) or an `ipc://` URL",
+        )
+    } else if is_drive_path(value) {
+        Some(
+            "a Windows drive path is not a named pipe — use the pipe namespace (`ipc://\\\\.\\pipe\\node.ipc`) or an absolute path",
+        )
+    } else {
+        None
+    }
+}
+
+/// The refusal for one `[nodes.*]` entry that cannot serve its key's
+/// transport. Http and Ws get the transport-mismatch message; an `ipc` entry
+/// that is a path shape the transport does not dial gets the reason instead,
+/// because the operator's mental model (a path relative to the config file,
+/// or a `~` that expands) is the actual error.
+fn entry_refusal(key: &str, transport: NodeTransport, chain: &str, value: &str) -> String {
+    let prefix = format!(
+        "{key} entry for chain {chain} is {value:?}, which is not {}",
+        transport.expected()
+    );
+    match (transport, ipc_path_hint(value)) {
+        (NodeTransport::Ipc, Some(hint)) => format!("{prefix} \u{2014} {hint}"),
+        _ => format!(
+            "{prefix} \u{2014} put the endpoint in the [nodes.*] table that declares its transport"
+        ),
+    }
 }
 
 /// Validate one `[nodes.*]` table: the table key is a chain id, the entry is
@@ -774,11 +815,7 @@ fn validate_node_table(
             continue;
         }
         if !transport.accepts(value) {
-            problems.push(format!(
-                "{key} entry for chain {chain} is {value:?}, which is not {} \u{2014} put \
-                 the endpoint in the [nodes.*] table that declares its transport",
-                transport.expected()
-            ));
+            problems.push(entry_refusal(key, transport, chain, value));
         }
     }
 }
@@ -917,7 +954,7 @@ mod tests {
             ("wss://eth.example.com/ws", NodeTransport::Ws),
             ("ipc:///tmp/anvil.ipc", NodeTransport::Ipc),
             ("/tmp/anvil.ipc", NodeTransport::Ipc),
-            ("./anvil.ipc", NodeTransport::Ipc),
+            ("\\\\.\\pipe\\geth.ipc", NodeTransport::Ipc),
         ] {
             assert_eq!(
                 NodeTransport::classify(value),
@@ -931,13 +968,81 @@ mod tests {
 
     #[test]
     fn a_value_no_transport_serves_classifies_to_nothing() {
-        for value in ["ftp://x", "localhost:8545", "", "eth.example.com"] {
+        for value in [
+            "ftp://x",
+            "localhost:8545",
+            "",
+            "eth.example.com",
+            "~/node.ipc",
+            "./node.ipc",
+            "../node.ipc",
+            "C:\\node.ipc",
+        ] {
             assert_eq!(
                 NodeTransport::classify(value),
                 None,
                 "{value:?} names no transport"
             );
         }
+    }
+
+    #[test]
+    #[expect(
+        clippy::panic,
+        reason = "test fixtures fail loudly on an unconstructible prerequisite"
+    )]
+    fn ipc_entries_accept_ipc_urls_and_absolute_socket_paths() {
+        for value in [
+            "ipc:///tmp/anvil.ipc",
+            "/tmp/anvil.ipc",
+            "\\\\.\\pipe\\geth.ipc",
+        ] {
+            let mut config = BotConfig::default();
+            config.nodes.ipc = Some(std::collections::BTreeMap::from([(
+                "1".to_string(),
+                value.to_string(),
+            )]));
+            if let Err(error) = config.validate() {
+                panic!("{value:?} must be an accepted ipc entry: {error}");
+            }
+        }
+    }
+
+    #[test]
+    #[expect(
+        clippy::panic,
+        reason = "test fixtures fail loudly on an unconstructible prerequisite"
+    )]
+    fn relative_tilde_and_drive_ipc_entries_are_refused_with_the_reason() {
+        for value in ["~/node.ipc", "./node.ipc", "../node.ipc"] {
+            let mut config = BotConfig::default();
+            config.nodes.ipc = Some(std::collections::BTreeMap::from([(
+                "1".to_string(),
+                value.to_string(),
+            )]));
+            let Err(error) = config.validate() else {
+                panic!("a relative or ~ ipc path must be refused: {value:?}");
+            };
+            let message = error.to_string();
+            assert!(
+                message.contains("process working directory") && message.contains("ipc://"),
+                "the refusal must explain the cwd resolution and name the ipc:// escape: {message}"
+            );
+        }
+
+        let mut config = BotConfig::default();
+        config.nodes.ipc = Some(std::collections::BTreeMap::from([(
+            "1".to_string(),
+            "C:\\node.ipc".to_string(),
+        )]));
+        let Err(error) = config.validate() else {
+            panic!("a drive path must be refused");
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains("named pipe") && message.contains("ipc://"),
+            "the drive-path refusal must point at the named-pipe namespace: {message}"
+        );
     }
 
     #[test]

@@ -362,7 +362,7 @@ pub const DEFAULT_MAX_RETRIES: u32 = 3;
 /// unsupported-scheme error so the typo surfaces immediately instead of
 /// silently routing to a nonexistent IPC file.
 #[must_use]
-fn is_ipc_path(rpc_url: &str) -> bool {
+pub fn is_ipc_path(rpc_url: &str) -> bool {
     rpc_url.starts_with("ipc://") || rpc_url.starts_with('/') || rpc_url.starts_with("\\\\")
 }
 
