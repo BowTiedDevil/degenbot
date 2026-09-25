@@ -1,15 +1,20 @@
-//! Legacy operator config.toml layout cutover (Option B — hard cutover,
-//! no shims). Acceptance criteria:
+//! Legacy operator config.toml layout cutover (hard cutover, no shims).
+//! Acceptance criteria:
 //!
-//! 1. The five retired-layout sections (`[rpc]`, `[ws]`, `[database]`,
-//!    `[otel]`) and the top-level `default_chain_id` key FAIL the load
-//!    with POINTED errors that name `docs/config-migration.md` and, where a
-//!    replacement exists, the env/modern-key replacement.
-//! 2. `[failure_policy]` is NOT retired: ADR-040 reads it as a free-form
+//! 1. The layout items that stay retired (`[otel]`, `default_chain_id`) FAIL
+//!    the load with POINTED errors that name `docs/config-migration.md` and
+//!    the key that replaced them.
+//! 2. `[rpc]`, `[ws]`, and `[database]` are NO LONGER retired-layout items:
+//!    `[database]` is a declared section ([`database.path`]), and `[rpc]`/
+//!    `[ws]` are no declared spelling, so they keep the generic unknown-section
+//!    shape and must not be pointed at the migration doc. ADR-062 D2
+//!    deliberately rejected restoring the pre-0.6 `[rpc]`/`[ws]` spelling, so
+//!    no shim translates them: the endpoint tables live at `[nodes]`.
+//! 3. `[failure_policy]` is NOT retired: ADR-040 reads it as a free-form
 //!    per-bucket table through `BotConfigLoader::file_path()` — the loader
 //!    must SKIP it (not type it, not reject it) so the wired file layer and
 //!    the raw-table reader can share one file.
-//! 3. Genuinely unknown sections keep the generic "unknown section" error
+//! 4. Genuinely unknown sections keep the generic "unknown section" error
 //!    and must NOT be mislabeled as retired-layout problems.
 
 use std::path::PathBuf;
@@ -46,25 +51,21 @@ fn must_find<'a>(problems: &'a [String], needle: &str, why: &str) -> &'a String 
     problems.iter().find(|p| p.contains(needle)).expect(why)
 }
 
-/// (1) The original production boot refusal: all six legacy-layout items in
-/// one file. Every one of them must produce a pointed problem naming the
+/// (1) The layout items that stay retired: one pointed problem each naming the
 /// migration doc — never a bare "unknown section".
 #[test]
-fn legacy_layout_items_fail_with_pointed_errors() {
+fn still_retired_layout_items_fail_with_pointed_errors() {
     let path = temp_toml(
-        "all-legacy",
+        "still-retired",
         concat!(
             "default_chain_id = 1\n",
-            "\n[rpc]\n1 = \"http://localhost:8545\"\n",
-            "\n[ws]\n1 = \"ws://localhost:8546\"\n",
-            "\n[database]\nfilepath = \"./degenbot.db\"\n",
             "\n[otel]\nendpoint = \"http://localhost:4318\"\nenabled = true\n",
         ),
     );
     let problems = must_err_problems(&BotConfigLoader::new().without_env().with_config_path(&path));
     cleanup(&path);
 
-    let retired = ["rpc", "ws", "database", "otel", "default_chain_id"];
+    let retired = ["otel", "default_chain_id"];
     assert_eq!(
         problems.len(),
         retired.len(),
@@ -83,37 +84,92 @@ fn legacy_layout_items_fail_with_pointed_errors() {
     }
 }
 
-/// (1b) The pointed messages name the concrete replacements: rpc/ws per-chain
-/// endpoints -> `DEGENBOT_RPC_HTTP_CHAINID_*/DEGENBOT_RPC_WS_CHAINID_*` env,
-/// database path -> the Python config cascade, otel -> the `telemetry`
+/// (1b) The pointed messages name the keys that replaced them:
+/// `default_chain_id` -> `session.chain_id`, `[otel]` -> the `telemetry`
 /// section.
 #[test]
 fn pointed_errors_name_replacements() {
     let path = temp_toml(
         "replacements",
         concat!(
-            "[rpc]\n1 = \"http://localhost:8545\"\n",
-            "\n[database]\nfilepath = \"./degenbot.db\"\n",
+            "default_chain_id = 1\n",
             "\n[otel]\nendpoint = \"http://localhost:4318\"\n",
         ),
     );
     let problems = must_err_problems(&BotConfigLoader::new().without_env().with_config_path(&path));
     cleanup(&path);
 
-    let rpc = must_find(&problems, "[rpc]", "rpc");
+    let chain = must_find(&problems, "default_chain_id", "chain id");
     assert!(
-        rpc.contains("DEGENBOT_RPC_HTTP_CHAINID_"),
-        "rpc problem must name the per-chain env replacement: {rpc}"
-    );
-    let db = must_find(&problems, "[database]", "db");
-    assert!(
-        db.contains("config.py") || db.contains("Python"),
-        "database problem must name the Python-side replacement: {db}"
+        chain.contains("session.chain_id"),
+        "the chain-id problem must name its replacement key: {chain}"
     );
     let otel = must_find(&problems, "[otel]", "otel");
     assert!(
         otel.contains("telemetry"),
         "otel problem must name the modern telemetry section: {otel}"
+    );
+}
+
+/// (2) `[rpc]`/`[ws]` are no longer a retired-layout item: they are not a
+/// declared spelling either (the endpoint tables live at `[nodes]`), so they
+/// keep the generic shape and are never pointed at the migration doc.
+#[test]
+fn rpc_and_ws_are_no_longer_retired_layout_items() {
+    let path = temp_toml(
+        "rpc-ws",
+        concat!(
+            "[rpc]\n1 = \"http://localhost:8545\"\n",
+            "\n[ws]\n1 = \"ws://localhost:8546\"\n",
+        ),
+    );
+    let problems = must_err_problems(&BotConfigLoader::new().without_env().with_config_path(&path));
+    cleanup(&path);
+
+    for section in ["[rpc]", "[ws]"] {
+        let hit = must_find(&problems, section, &format!("no problem names {section}"));
+        assert!(
+            !hit.contains("retired config-layout item"),
+            "{section} is not a retired-layout refusal any more: {hit}"
+        );
+        assert!(
+            !hit.contains("config-migration"),
+            "{section} must not be pointed at the migration doc: {hit}"
+        );
+        assert!(
+            hit.contains("unknown section"),
+            "{section} is an undeclared spelling and keeps the generic shape: {hit}"
+        );
+    }
+}
+
+/// (2b) `[database]` is a DECLARED section now: the path key loads, and the
+/// pre-0.6 `filepath` spelling inside it is an unknown key (the cutover is
+/// per-key, not a shim).
+#[test]
+fn database_section_carries_the_declared_path_key() {
+    let path = temp_toml("database-path", "[database]\npath = \"/tmp/x.db\"\n");
+    let loaded = match BotConfigLoader::new()
+        .without_env()
+        .with_config_path(&path)
+        .load()
+    {
+        Ok(loaded) => loaded,
+        Err(e) => unreachable!("the declared [database].path must load, refused with: {e}"),
+    };
+    assert_eq!(loaded.config.database.path, PathBuf::from("/tmp/x.db"));
+    cleanup(&path);
+
+    let old = temp_toml(
+        "database-filepath",
+        "[database]\nfilepath = \"./degenbot.db\"\n",
+    );
+    let problems = must_err_problems(&BotConfigLoader::new().without_env().with_config_path(&old));
+    cleanup(&old);
+    let hit = must_find(&problems, "filepath", "the pre-0.6 key is reported");
+    assert!(
+        !hit.contains("retired config-layout item"),
+        "the pre-0.6 key is an unknown key, not a retired-layout item: {hit}"
     );
 }
 

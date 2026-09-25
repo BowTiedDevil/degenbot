@@ -45,15 +45,24 @@
 //! "Migrate env reads onto `BotConfig`" task and re-validate their fallback
 //! semantics there.
 //!
-//! # Dynamic (non-schema) env names and driver-domain resolvers
+//! # Family-shaped keys and driver-domain resolvers
 //!
-//! `DEGENBOT_RPC_WS_CHAINID_<chain_id>` carries a numeric suffix at runtime
-//! and is intentionally NOT a static key (documented next to `SCHEMA`).
+//! A key whose entries the operator picks at runtime (the per-chain
+//! `[nodes.*]` endpoint tables) cannot be spelled as one env variable: its env
+//! layer is a NAME FAMILY. `KeyDecl::env_prefix` holds the `PREFIX_` that
+//! `DEGENBOT_RPC_HTTP_CHAINID_<chain_id>`-style names share, and the loader
+//! reads such a key by ENUMERATION ([`EnvVars::names_with_prefix`]) rather
+//! than by a lookup. The declaration is still one static key, so the
+//! inventory gate and the generated doc cover the family exactly once.
 //!
-//! A second family is not typed at all: the console's driver-domain values
-//! (database path, session chain id, node URIs, ADR-051 D8) never lived in
-//! the file layer, so [`resolvers`] reads them through the same [`EnvVars`]
-//! seam and `Source` provenance without re-adding file vocabulary.
+//! Each entry then keeps the layer that supplied it in
+//! [`LoadedConfig::entry_provenance`], because a family export overrides one
+//! chain of the table and leaves the rest of it on the file layer.
+//!
+//! The console's driver-domain values are declared keys too
+//! (`database.path`, `session.chain_id`, the `nodes.*` tables), and
+//! [`resolvers`] resolves their CLI and environment layers directly — a
+//! resolver must work before a config is loaded.
 
 pub mod doc;
 pub mod error;
@@ -72,8 +81,8 @@ pub mod writer;
 
 pub use error::ConfigError;
 pub use loader::{
-    standard_file_path, standard_file_path_with, BotConfigLoader, EnvVars, LoadedConfig, MapEnv,
-    ProcessEnv, Source,
+    standard_file_path, standard_file_path_with, BotConfigLoader, EntryProvenance, EnvVars,
+    LoadedConfig, MapEnv, ProcessEnv, Source,
 };
 pub use readiness::{
     strategy_readiness, Arm, StrategyReadiness, StrategyReadinessError, DEFAULT_BACKRUN_STREAM_URL,
@@ -83,8 +92,8 @@ pub use resolvers::{
     config_home, expand_state_path, expand_state_path_with, expand_tilde_path, node_http_env_name,
     node_ws_env_name, resolve_chain_id, resolve_database_path, resolve_node_http_uri,
     resolve_node_uris, resolve_node_ws_uri, state_home, Resolved, ResolvedNodeUris,
-    DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX, RPC_WS_ENV_PREFIX,
-    XDG_CONFIG_HOME_ENV, XDG_STATE_HOME_ENV,
+    DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX, RPC_IPC_ENV_PREFIX,
+    RPC_WS_ENV_PREFIX, XDG_CONFIG_HOME_ENV, XDG_STATE_HOME_ENV,
 };
 pub use schema::{
     AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyMevblockerBackrunConfig,

@@ -16,6 +16,23 @@ Highest wins (12-factor parity; recorded here by the schema and asserted by the 
 
 The loader is fail-closed: unparsable values and unknown file keys are reported, never silently ignored.
 
+## `nodes`
+
+| Env var | TOML key | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `DEGENBOT_RPC_HTTP_CHAINID_` | `nodes.http` | `Option<map<string, string>>` | `(unset)` | Per-chain JSON-RPC HTTP endpoint per chain id: [nodes] http = { 1 = "https://eth.example/rpc", 8453 = "https://base.example/rpc" } (or [nodes.http] with one `1 = "..."` line per chain). The env layer is the name family DEGENBOT_RPC_HTTP_CHAINID_<chain_id>, whose entry overrides the file entry for that chain alone. Every value must be an http:// or https:// URL. |
+| `DEGENBOT_RPC_WS_CHAINID_` | `nodes.ws` | `Option<map<string, string>>` | `(unset)` | Per-chain subscription (WebSocket) endpoint per chain id, same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_WS_CHAINID_<chain_id>. Every value must be a ws:// or wss:// URL; a subscription consumer takes this transport or nodes.ipc, never nodes.http. |
+| `DEGENBOT_RPC_IPC_CHAINID_` | `nodes.ipc` | `Option<map<string, string>>` | `(unset)` | Per-chain local IPC endpoint per chain id (a node running beside the bot, reachable over a Unix socket or a Windows named pipe), same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_IPC_CHAINID_<chain_id>. Every value must be an ipc:// URL or a socket path; an IPC entry can serve requests and subscriptions alike. |
+## `session`
+
+| Env var | TOML key | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `DEGENBOT_DEFAULT_CHAIN_ID` | `session.chain_id` | `Option<u64>` | `(unset)` | Chain id the session runs against (a positive integer; the pre-0.6 top-level default_chain_id key is retired and refused with a pointer here). The endpoint tables are keyed by chain id, so this is the chain whose entry the node resolvers read; unset means no chain was named and a node endpoint cannot be selected. |
+## `database`
+
+| Env var | TOML key | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `DEGENBOT_DB_PATH` | `database.path` | `path` | `~/.local/state/degenbot/db/degenbot.db` | SQLite database file this process owns. A leading ~ expands against HOME, and the declared default rebases onto an absolute $XDG_STATE_HOME; an explicit file or environment path expands as written. The pre-0.6 [database] `filepath` key is retired and refused as an unknown key. |
 ## `runtime`
 
 | Env var | TOML key | Type | Default | Description |

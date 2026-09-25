@@ -1,17 +1,19 @@
 //! Driver-domain resolvers (ADR-051 D8): database path, session chain id,
 //! and node (HTTP/WS) RPC URI.
 //!
-//! These three values are needed before any console command runs, but they are
-//! NOT typed-schema keys: they never lived in the `BotConfig` file layer, and
-//! the retired `[rpc]`/`[ws]`/`[database]`/`default_chain_id` TOML vocabulary
-//! stays refused (the config-migration Option-B cutover stands). The resolvers
-//! therefore read the SAME layers the Python cascade reads — a CLI argument and
-//! a `DEGENBOT_*` environment variable — and deliberately do not re-add file
-//! vocabulary.
+//! These three values are needed before any console command runs. Each is now a
+//! declared typed key — `database.path`, `session.chain_id`, and the
+//! `nodes.*` endpoint tables (ADR-062 D1/D2/D4) — so the operator file, the
+//! `DEGENBOT_*` family, and a CLI argument all name the same values. These
+//! functions resolve the two layers that do NOT go through [`BotConfig`]: a
+//! CLI argument and one `DEGENBOT_*` environment variable, read through the
+//! loader's [`EnvVars`] seam (never `std::env`). Reading the file layer out of
+//! a loaded config is the capability-scoped resolver's own work; until a
+//! consumer threads a [`LoadedConfig`] in, these functions deliberately do not
+//! read the tables, and their refusals say so rather than implying the file is
+//! consulted.
 //!
-//! They are plain functions over the loader's [`EnvVars`] seam (never
-//! `std::env`) plus explicit `Option<&str>` CLI-override arguments, and every
-//! result carries the winning [`Source`] exactly as [`LoadedConfig`]
+//! Every result carries the winning [`Source`] exactly as [`LoadedConfig`]
 //! provenance does. The empty string and an absent variable are
 //! indistinguishable (both mean "this layer supplied nothing"), so an
 //! exported-but-blank variable cannot silently become a value.
@@ -69,8 +71,12 @@ pub const DEFAULT_CHAIN_ID_ENV: &str = "DEGENBOT_DEFAULT_CHAIN_ID";
 pub const RPC_HTTP_ENV_PREFIX: &str = "DEGENBOT_RPC_HTTP_CHAINID_";
 
 /// Prefix of the per-chain WS RPC env name; the suffix is the numeric
-/// chain id (dynamic, intentionally not a schema key).
+/// chain id.
 pub const RPC_WS_ENV_PREFIX: &str = "DEGENBOT_RPC_WS_CHAINID_";
+
+/// Prefix of the per-chain IPC RPC env name; the suffix is the numeric
+/// chain id. The local-socket twin of [`RPC_HTTP_ENV_PREFIX`].
+pub const RPC_IPC_ENV_PREFIX: &str = "DEGENBOT_RPC_IPC_CHAINID_";
 
 /// The env variable read for `~` expansion in the database-path default.
 const HOME_ENV: &str = "HOME";
@@ -114,8 +120,9 @@ pub fn node_ws_env_name(chain_id: u64) -> String {
     format!("{RPC_WS_ENV_PREFIX}{chain_id}")
 }
 
-/// Treat an empty string exactly like an absent layer.
-fn non_empty(value: Option<&str>) -> Option<&str> {
+/// Treat an empty string exactly like an absent layer. Shared with the
+/// loader's env-family merge so "supplied nothing" has one spelling.
+pub(crate) fn non_empty(value: Option<&str>) -> Option<&str> {
     value.filter(|v| !v.is_empty())
 }
 
@@ -254,7 +261,8 @@ pub fn resolve_chain_id(
         "no chain id resolved: layers consulted (highest precedence first) were \
          --chain-id (CLI, unset) and {DEFAULT_CHAIN_ID_ENV} (env, unset); the \
          retired default_chain_id file key is deliberately not consulted \
-         (ADR-051 D8) — set {DEFAULT_CHAIN_ID_ENV} or pass --chain-id"
+         (session.chain_id is the declared replacement) — set \
+         {DEFAULT_CHAIN_ID_ENV} or pass --chain-id"
     )]))
 }
 
@@ -284,8 +292,9 @@ fn source_of_layer(layer: &str) -> Source {
 /// # Errors
 ///
 /// [`ConfigError`] when no layer supplied a non-empty value; the message
-/// names every layer consulted. There is deliberately no localhost default
-/// and no file-table layer.
+/// names every layer consulted. There is deliberately no localhost default,
+/// and this function reads the CLI and environment layers only (the declared
+/// `nodes.http` file table is resolved by the capability-scoped resolver).
 pub fn resolve_node_http_uri(
     env: &dyn EnvVars,
     chain_id: u64,
@@ -296,7 +305,7 @@ pub fn resolve_node_http_uri(
         env,
         chain_id,
         "HTTP",
-        "rpc",
+        "nodes.http",
         "--node-http",
         &env_name,
         cli_node_http,
@@ -309,8 +318,9 @@ pub fn resolve_node_http_uri(
 /// # Errors
 ///
 /// [`ConfigError`] when no layer supplied a non-empty value; the message
-/// names every layer consulted. There is deliberately no localhost default
-/// and no file-table layer.
+/// names every layer consulted. There is deliberately no localhost default,
+/// and this function reads the CLI and environment layers only (the declared
+/// `nodes.ws` file table is resolved by the capability-scoped resolver).
 pub fn resolve_node_ws_uri(
     env: &dyn EnvVars,
     chain_id: u64,
@@ -321,7 +331,7 @@ pub fn resolve_node_ws_uri(
         env,
         chain_id,
         "WS",
-        "ws",
+        "nodes.ws",
         "--node-ws",
         &env_name,
         cli_node_ws,
@@ -360,12 +370,14 @@ pub fn resolve_node_uris(
 }
 
 /// Shared single-URI cascade: CLI > per-chain env var > hard error naming
-/// every layer consulted.
+/// every layer consulted. `file_key` names the declared table this resolver
+/// does NOT read, so the refusal says which layer an operator still has to set
+/// instead of implying the file was consulted and found empty.
 fn resolve_node_uri(
     env: &dyn EnvVars,
     chain_id: u64,
     kind: &str,
-    file_section: &str,
+    file_key: &str,
     cli_flag: &str,
     env_name: &str,
     cli_value: Option<&str>,
@@ -379,8 +391,9 @@ fn resolve_node_uri(
     Err(ConfigError::of(vec![format!(
         "no {kind} RPC endpoint resolved for chain {chain_id}: layers consulted \
          (highest precedence first) were {cli_flag} (CLI, unset) and {env_name} \
-         (env, unset); no localhost default is applied and the retired \
-         [{file_section}] file table is deliberately not consulted (ADR-051 D8) \
-         — set {env_name} or pass {cli_flag}"
+         (env, unset); no localhost default is applied and this resolver reads \
+         those two layers only (the {file_key} file table is a declared key, \
+         resolved by the capability-scoped resolver) — set {env_name} or pass \
+         {cli_flag}"
     )]))
 }

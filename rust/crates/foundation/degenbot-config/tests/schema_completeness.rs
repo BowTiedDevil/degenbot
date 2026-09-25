@@ -19,11 +19,6 @@ const SWEEP_ARTIFACTS: &[&str] = &[
     // the family wildcard in the allocator doc comment (the loader
     // owns the four concrete DEGENBOT_MIMALLOC_* keys).
     "DEGENBOT_MIMALLOC_",
-    "DEGENBOT_RPC_WS_CHAINID_",
-    // the family wildcard named by the retired-layout refusal text
-    // in the loader (the dynamic per-chain var
-    // DEGENBOT_RPC_HTTP_CHAINID_<chain_id>).
-    "DEGENBOT_RPC_HTTP_CHAINID_",
     "DEGENBOT_V",
     // the family wildcards in the facet-invariant tests' prefix assertions
     // (the schema owns the concrete per-ecosystem backrun keys).
@@ -59,18 +54,12 @@ const BUILD_ARTIFACT_KEYS: &[&str] = &[
 /// schema key.
 const BOOTSTRAP_KEYS: &[&str] = &["DEGENBOT_CONFIG"];
 
-/// Driver-domain keys resolved by `resolvers.rs` (ADR-051 D8): the database
-/// path, the session chain id, and the per-chain RPC URIs are console inputs
-/// that never lived in the typed file layer, so they are deliberately NOT
-/// schema keys. The resolvers read them through the loader's `EnvVars` seam
-/// and tag each with its own `Source`.
-const DRIVER_DOMAIN_KEYS: &[&str] = &[
-    "DEGENBOT_DB_PATH",
-    "DEGENBOT_DEFAULT_CHAIN_ID",
-    // ADR-051 D8: the operator-socket override, a console shell-environment
-    // input resolved by cli-core's resolve_socket cascade.
-    "DEGENBOT_OPERATOR_SOCKET",
-];
+/// Shell-environment inputs resolved outside the typed schema: the
+/// operator-socket override, a console input resolved by cli-core's
+/// `resolve_socket` cascade (ADR-051 D8). The per-chain RPC families, the
+/// session chain id, and the database path are NOT here: ADR-062 D1/D2/D4
+/// declared them, so the file layer and these env names are one cascade.
+const DRIVER_DOMAIN_KEYS: &[&str] = &["DEGENBOT_OPERATOR_SOCKET"];
 
 /// DB-open toggles read by the persistence layer itself (`degenbot-db`), not
 /// the typed config schema: the ADR-052 D1 heal-at-open killswitch is a

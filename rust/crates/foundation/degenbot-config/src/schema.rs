@@ -186,6 +186,36 @@ impl std::str::FromStr for VerifyTicks {
 
 crate::config_schema! {
 
+    // The operator's deployment, written in the file the loader selected and
+    // overridden per entry by the environment (ADR-062 D1/D2/D4). The three
+    // node tables are one key per transport with one entry per chain: the
+    // chain is the table key, so the env layer is a NAME FAMILY
+    // (`env_prefix`) rather than one variable, and each entry keeps the layer
+    // that supplied it in `LoadedConfig::entry_provenance`.
+    nodes NodesConfig {
+        http [opt strmap] = None, env_prefix = "DEGENBOT_RPC_HTTP_CHAINID_", def = "(unset)",
+            doc = "Per-chain JSON-RPC HTTP endpoint per chain id: [nodes] http = { 1 = \"https://eth.example/rpc\", 8453 = \"https://base.example/rpc\" } (or [nodes.http] with one `1 = \"...\"` line per chain). The env layer is the name family DEGENBOT_RPC_HTTP_CHAINID_<chain_id>, whose entry overrides the file entry for that chain alone. Every value must be an http:// or https:// URL.";
+        ws [opt strmap] = None, env_prefix = "DEGENBOT_RPC_WS_CHAINID_", def = "(unset)",
+            doc = "Per-chain subscription (WebSocket) endpoint per chain id, same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_WS_CHAINID_<chain_id>. Every value must be a ws:// or wss:// URL; a subscription consumer takes this transport or nodes.ipc, never nodes.http.";
+        ipc [opt strmap] = None, env_prefix = "DEGENBOT_RPC_IPC_CHAINID_", def = "(unset)",
+            doc = "Per-chain local IPC endpoint per chain id (a node running beside the bot, reachable over a Unix socket or a Windows named pipe), same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_IPC_CHAINID_<chain_id>. Every value must be an ipc:// URL or a socket path; an IPC entry can serve requests and subscriptions alike.";
+    }
+
+    // The session's chain identity: the chain the bot runs against unless an
+    // explicit override outranks it. It is an ordinary typed key, so the file
+    // layer and DEGENBOT_DEFAULT_CHAIN_ID are one cascade (ADR-062 D4).
+    session SessionConfig {
+        chain_id [opt u64] = None, env = "DEGENBOT_DEFAULT_CHAIN_ID", def = "(unset)",
+            doc = "Chain id the session runs against (a positive integer; the pre-0.6 top-level default_chain_id key is retired and refused with a pointer here). The endpoint tables are keyed by chain id, so this is the chain whose entry the node resolvers read; unset means no chain was named and a node endpoint cannot be selected.";
+    }
+
+    // The stateful core's own file, opened by the core (ADR-052): the default
+    // is the XDG state-home path the resolver already implements.
+    database DatabaseConfig {
+        path [path] = std::path::PathBuf::from(crate::resolvers::DB_PATH_DEFAULT), env = "DEGENBOT_DB_PATH", def = "~/.local/state/degenbot/db/degenbot.db",
+            doc = "SQLite database file this process owns. A leading ~ expands against HOME, and the declared default rebases onto an absolute $XDG_STATE_HOME; an explicit file or environment path expands as written. The pre-0.6 [database] `filepath` key is retired and refused as an unknown key.";
+    }
+
     // the ambient I/O runtime of the two-runtime contract (solve
     // bins on one side, shared I/O runtime on the other) is sized from the
     // cgroup CPU budget; this section carries the explicit operator
@@ -557,6 +587,33 @@ impl BotConfig {
     /// [`ConfigError`](crate::error::ConfigError).
     pub fn validate(&self) -> Result<(), crate::error::ConfigError> {
         let mut problems: Vec<String> = Vec::new();
+        validate_node_table(
+            "nodes.http",
+            crate::resolvers::RPC_HTTP_ENV_PREFIX,
+            NodeTransport::Http,
+            self.nodes.http.as_ref(),
+            &mut problems,
+        );
+        validate_node_table(
+            "nodes.ws",
+            crate::resolvers::RPC_WS_ENV_PREFIX,
+            NodeTransport::Ws,
+            self.nodes.ws.as_ref(),
+            &mut problems,
+        );
+        validate_node_table(
+            "nodes.ipc",
+            crate::resolvers::RPC_IPC_ENV_PREFIX,
+            NodeTransport::Ipc,
+            self.nodes.ipc.as_ref(),
+            &mut problems,
+        );
+        if self.session.chain_id == Some(0) {
+            problems.push(format!(
+                "session.chain_id ({}) is 0; a chain id is a positive integer \u{2014} set it to 1 or more",
+                crate::resolvers::DEFAULT_CHAIN_ID_ENV
+            ));
+        }
         for (path, env, hops) in [
             (
                 "strategy.mevblocker_backrun.cycle_max_hops",
@@ -584,9 +641,98 @@ impl BotConfig {
     }
 }
 
-// Dynamic per-chain vars (documented, intentionally NOT static schema keys):
-//   DEGENBOT_RPC_WS_CHAINID_<chain_id> — per-chain WS RPC override, the
-//   suffix is the numeric chain id (see block_pump chain-id plumbing).
+/// Which transport a `[nodes.*]` key declares, and therefore what one of its
+/// entry values must be able to serve. The transport is a property of the KEY:
+/// a value's capability decides which key may hold it (ADR-062 D3), so the
+/// table it was typed into has to accept the transport or the operator's table
+/// placement is refused instead of silently mis-served.
+#[derive(Debug, Clone, Copy)]
+enum NodeTransport {
+    /// `nodes.http`: request-only.
+    Http,
+    /// `nodes.ws`: subscriptions.
+    Ws,
+    /// `nodes.ipc`: requests and subscriptions over a local socket.
+    Ipc,
+}
+
+impl NodeTransport {
+    /// What a valid entry value looks like, spelled for the refusal message.
+    fn expected(self) -> &'static str {
+        match self {
+            Self::Http => "an http:// or https:// URL",
+            Self::Ws => "a ws:// or wss:// URL",
+            Self::Ipc => "an ipc:// URL or a socket path",
+        }
+    }
+
+    /// Whether `value` can serve this transport.
+    fn accepts(self, value: &str) -> bool {
+        match self {
+            Self::Http => value.starts_with("http://") || value.starts_with("https://"),
+            Self::Ws => value.starts_with("ws://") || value.starts_with("wss://"),
+            Self::Ipc => value.starts_with("ipc://") || is_socket_path(value),
+        }
+    }
+}
+
+/// A local socket path an IPC entry may name: an absolute path, a `~/` home
+/// path, an explicitly relative path, a Windows named pipe, or a Windows
+/// drive path. A bare word is NOT one — `localhost:8545` is a typo that
+/// would otherwise be accepted as a relative path and fail at the socket.
+fn is_socket_path(value: &str) -> bool {
+    const WINDOWS_NAMED_PIPE: &str = "\\\\.";
+    value.starts_with('/')
+        || value.starts_with("~/")
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value.starts_with(WINDOWS_NAMED_PIPE)
+        || value
+            .as_bytes()
+            .get(1)
+            .is_some_and(|c| *c == b':' && matches!(value.as_bytes().get(2), Some(b'\\' | b'/')))
+}
+
+/// Validate one `[nodes.*]` table: the table key is a chain id, the entry is
+/// not blank, and the value can serve the key's transport. Each problem names
+/// the offending entry and the fix, because the table is operator-chosen and a
+/// wrong entry is otherwise found at connection time, in another process.
+fn validate_node_table(
+    key: &str,
+    env_prefix: &str,
+    transport: NodeTransport,
+    table: Option<&std::collections::BTreeMap<String, String>>,
+    problems: &mut Vec<String>,
+) {
+    let Some(table) = table else {
+        return;
+    };
+    for (chain, value) in table {
+        if chain.parse::<u64>().is_err() {
+            problems.push(format!(
+                "{key} ({env_prefix}<chain_id>) is keyed by {chain:?}, which is not a \
+                 chain id \u{2014} key the table by the decimal chain id (e.g. 1 = \"{}\")",
+                transport.expected()
+            ));
+        }
+        if value.trim().is_empty() {
+            problems.push(format!(
+                "{key} entry for chain {chain} is empty \u{2014} a blank value means \
+                 \"this layer supplied nothing\" in the environment, so an empty entry \
+                 is a mistake: give chain {chain} {} or delete the entry",
+                transport.expected()
+            ));
+            continue;
+        }
+        if !transport.accepts(value) {
+            problems.push(format!(
+                "{key} entry for chain {chain} is {value:?}, which is not {} \u{2014} put \
+                 the endpoint in the [nodes.*] table that declares its transport",
+                transport.expected()
+            ));
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -667,6 +813,50 @@ mod tests {
             !SCHEMA.iter().any(|k| k.env == "DEGENBOT_FLEET"),
             "DEGENBOT_FLEET must be retired from the schema"
         );
+    }
+
+    /// The declaration macro needs a literal for the env name, so these keys
+    /// are checked against the resolver constants that own the spelling: one
+    /// constant, one meaning, and a rename cannot drift the two apart.
+    #[test]
+    fn the_node_and_session_keys_reuse_the_resolver_spellings() {
+        use crate::resolvers::{
+            DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX,
+            RPC_IPC_ENV_PREFIX, RPC_WS_ENV_PREFIX,
+        };
+        for (toml_path, env, family) in [
+            ("nodes.http", RPC_HTTP_ENV_PREFIX, Some(RPC_HTTP_ENV_PREFIX)),
+            ("nodes.ws", RPC_WS_ENV_PREFIX, Some(RPC_WS_ENV_PREFIX)),
+            ("nodes.ipc", RPC_IPC_ENV_PREFIX, Some(RPC_IPC_ENV_PREFIX)),
+            ("session.chain_id", DEFAULT_CHAIN_ID_ENV, None),
+            ("database.path", DB_PATH_ENV, None),
+        ] {
+            let key = SCHEMA.iter().find(|k| k.toml_path == toml_path);
+            assert!(key.is_some(), "{toml_path} must be declared exactly once");
+            assert_eq!(key.map(|k| k.env), Some(env), "{toml_path} env drift");
+            assert_eq!(
+                key.and_then(|k| k.env_prefix),
+                family,
+                "{toml_path} env-family drift"
+            );
+        }
+        // The declared default IS the resolver's default, spelling included,
+        // so the file layer and the resolver's built-in fallback cannot name
+        // two different database files.
+        let database = SCHEMA
+            .iter()
+            .find(|k| k.toml_path == "database.path")
+            .map(|k| k.default_repr);
+        assert_eq!(database, Some(DB_PATH_DEFAULT));
+        assert_eq!(
+            BotConfig::default().database.path,
+            std::path::PathBuf::from(DB_PATH_DEFAULT)
+        );
+        // Unset by default: no chain is named and no endpoint is invented.
+        assert_eq!(BotConfig::default().session.chain_id, None);
+        assert!(BotConfig::default().nodes.http.is_none());
+        assert!(BotConfig::default().nodes.ws.is_none());
+        assert!(BotConfig::default().nodes.ipc.is_none());
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::ConfigError;
-use crate::schema::{BotConfig, SCHEMA, SECTION_PATHS};
+use crate::schema::{BotConfig, KeyDecl, SCHEMA, SECTION_PATHS};
 
 /// Which layer supplied a key's value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -106,32 +106,25 @@ impl EnvVars for MapEnv {
 /// Migration doc named by every retired-layout refusal .
 const MIGRATION_DOC: &str = "docs/config-migration.md";
 
-/// Retired operator-file layout items (Option B hard cutover):
-/// top-level keys/section names from the pre-0.6 config.toml vocabulary the
-/// typed schema never carried. A surviving item fails the load with a
-/// POINTED problem naming the replacement surface and the migration doc —
-/// silent fail-open here would trade on settings the typed file layer never
-/// received.
+/// Retired operator-file layout items: top-level keys/section names from the
+/// pre-0.6 config.toml vocabulary that no key replaced. A surviving item fails
+/// the load with a POINTED problem naming the key that replaced it and the
+/// migration doc — silent fail-open here would trade on settings the typed
+/// file layer never received.
+///
+/// The endpoint tables and the database path are NOT here: `[nodes.http]`,
+/// `[nodes.ws]`, `[nodes.ipc]`, and `[database].path` are declared keys
+/// (ADR-062 D2/D4), so the old `[rpc]`/`[ws]` spellings are simply undeclared
+/// sections and keep the generic unknown-section shape. ADR-062 D13 declined a
+/// shim for them, so the refusal is not reshaped into a translation.
 pub(crate) const RETIRED_LAYOUT_ITEMS: &[(&str, &str)] = &[
-    (
-        "rpc",
-        "move per-chain RPC endpoints to the DEGENBOT_RPC_HTTP_CHAINID_<chain> env names (or the Python config.py cascade)",
-    ),
-    (
-        "ws",
-        "move per-chain WebSocket endpoints to the DEGENBOT_RPC_WS_CHAINID_<chain> env names (or the Python config.py cascade)",
-    ),
-    (
-        "database",
-        "the database path is Python-driver domain: set it in the Python config cascade",
-    ),
     (
         "otel",
         "the [otel] table is retired: use the modern telemetry section (telemetry.otel, telemetry.jaeger_endpoint)",
     ),
     (
         "default_chain_id",
-        "default_chain_id is Python-driver domain: set it in the Python config cascade",
+        "default_chain_id is retired: declare the session chain id as session.chain_id in the [session] table, or export DEGENBOT_DEFAULT_CHAIN_ID",
     ),
 ];
 
@@ -143,13 +136,24 @@ pub(crate) const RETIRED_LAYOUT_ITEMS: &[(&str, &str)] = &[
 ///    the typed schema.
 pub(crate) const FREE_FORM_FILE_SECTIONS: &[&str] = &["failure_policy"];
 
+/// Per-ENTRY provenance for the map-kind keys: for each such key (addressed by
+/// its env name — for a family-shaped key the PREFIX), the layer that supplied
+/// each of the operator-chosen entries. A family-shaped env layer overrides
+/// one entry at a time, so the key-level [`LoadedConfig::provenance`] entry
+/// cannot describe the table on its own.
+pub type EntryProvenance = BTreeMap<&'static str, BTreeMap<String, Source>>;
+
 /// Loaded result: the typed config plus per-key provenance.
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
     /// The typed configuration.
     pub config: BotConfig,
-    /// Winning source per env key name (one entry per schema key).
+    /// Winning source per env key name (one entry per schema key). For a
+    /// map-kind key this is the HIGHEST-RANKED layer that contributed an
+    /// entry, not the layer of every entry.
     pub provenance: BTreeMap<&'static str, Source>,
+    /// Winning source per entry of each map-kind key.
+    pub entry_provenance: EntryProvenance,
 }
 
 impl LoadedConfig {
@@ -157,6 +161,14 @@ impl LoadedConfig {
     #[must_use]
     pub fn source_of(&self, env: &str) -> Option<Source> {
         self.provenance.get(env).copied()
+    }
+
+    /// Which layer supplied one entry of a map-kind key: `entry` is the
+    /// operator-chosen table key (the chain id for a `[nodes.*]` table) and
+    /// `env` is the key's env name — the PREFIX for a family-shaped key.
+    #[must_use]
+    pub fn entry_source_of(&self, env: &str, entry: &str) -> Option<Source> {
+        self.entry_provenance.get(env)?.get(entry).copied()
     }
 }
 
@@ -331,82 +343,99 @@ impl<'a> BotConfigLoader<'a> {
     /// # Errors
     ///
     /// [`ConfigError`] when the file is unreadable/unparsable, a TOML key is
-    /// unknown, a value does not parse into the declared kind, or a CLI
-    /// override names an undeclared key.
+    /// unknown, a value does not parse into the declared kind, a family-shaped
+    /// env name does not end in a chain id, or a CLI override names an
+    /// undeclared key.
     pub fn load(&self) -> Result<LoadedConfig, ConfigError> {
-        let mut problems: Vec<String> = Vec::new();
-        let mut config = BotConfig::default();
-
-        // Defaults first: every schema key starts at its declared default.
-        let mut provenance: BTreeMap<&'static str, Source> =
-            SCHEMA.iter().map(|k| (k.env, Source::Default)).collect();
-
-        // Layer 2 (lowest override): --config TOML file.
+        let mut state = LoadState::new();
         if let Some(path) = &self.file {
-            Self::apply_file(path, &mut config, &mut provenance, &mut problems);
+            state.apply_file(path);
         }
-
-        // Layer 3: environment. Iterate the SCHEMA (not the process env) so
-        // foreign DEGENBOT_*-prefixed vars never leak into the typed tree.
         if let Some(env) = &self.env {
-            for key in SCHEMA {
-                if let Some(raw) = env.get(key.env) {
-                    match config.assign(key.section, key.field, &raw) {
-                        Ok(()) => {
-                            provenance.insert(key.env, Source::Env);
-                        }
-                        Err(problem) => problems.push(problem),
-                    }
-                }
-            }
+            state.apply_env(env.as_ref());
         }
+        state.apply_cli(&self.cli);
+        state.finish()
+    }
+}
 
-        // Layer 4 (highest): CLI / explicit argument overrides.
-        for (name, value) in &self.cli {
-            match resolve_key(name) {
-                Some(key) => match config.assign(key.section, key.field, value) {
-                    Ok(()) => {
-                        provenance.insert(key.env, Source::Cli);
-                    }
-                    Err(problem) => problems.push(problem),
-                },
-                None => problems.push(format!(
-                    "cli override {name:?} does not name a schema key (env name or TOML path required)"
-                )),
-            }
-        }
+/// The mutable bookkeeping one load accumulates: the typed value, the
+/// provenance every layer records, and the problems every layer reports.
+/// Bundled into one receiver so the layer functions thread one value instead
+/// of five borrowed fields, and so a new layer's bookkeeping is one field here
+/// rather than a new parameter on every layer.
+struct LoadState {
+    /// The typed value under construction.
+    config: BotConfig,
+    /// Winning layer per declared key.
+    provenance: BTreeMap<&'static str, Source>,
+    /// Winning layer per entry of each map-kind key.
+    entry_provenance: EntryProvenance,
+    /// The file layer's rendered raw text per map-kind key. A family-shaped
+    /// env layer MERGES its entries onto the file's table, so the merge needs
+    /// the entries the file supplied, not only the ones env adds.
+    file_raw: BTreeMap<&'static str, String>,
+    /// Every problem found, in the order the layers found them.
+    problems: Vec<String>,
+}
 
-        // Semantic validation: a value that parses into its declared kind
-        // but cannot serve its domain fails the load here, with the remedy in
-        // the message, rather than at a distant call site.
-        if let Err(error) = config.validate() {
-            problems.extend(error.problems);
-        }
-
-        if problems.is_empty() {
-            Ok(LoadedConfig { config, provenance })
-        } else {
-            Err(ConfigError::of(problems))
+impl LoadState {
+    /// The declared defaults, an empty per-entry map for every map-kind key,
+    /// and no problems. Every declared key starts at `Source::Default` so a
+    /// key no layer touched still reports where its value came from.
+    fn new() -> Self {
+        Self {
+            config: BotConfig::default(),
+            provenance: SCHEMA.iter().map(|k| (k.env, Source::Default)).collect(),
+            entry_provenance: SCHEMA
+                .iter()
+                .filter(|k| is_map_kind(k))
+                .map(|k| (k.env, BTreeMap::new()))
+                .collect(),
+            file_raw: BTreeMap::new(),
+            problems: Vec::new(),
         }
     }
 
-    fn apply_file(
-        path: &Path,
-        config: &mut BotConfig,
-        provenance: &mut BTreeMap<&'static str, Source>,
-        problems: &mut Vec<String>,
-    ) {
+    /// Assign one raw value for `key` from `source` and record the layer. A
+    /// map-kind key takes the WHOLE table from one layer, so its entry
+    /// provenance is exactly the entries the raw form names.
+    fn assign(&mut self, key: &'static KeyDecl, raw: &str, source: Source) {
+        match self.config.assign(key.section, key.field, raw) {
+            Ok(()) => {
+                self.provenance.insert(key.env, source);
+                if is_map_kind(key) {
+                    self.record_entries(key, entry_names(raw), source);
+                }
+            }
+            Err(problem) => self.problems.push(problem),
+        }
+    }
+
+    /// Record the per-entry layer of a map-kind key whose entries are the
+    /// `names` one layer supplied.
+    fn record_entries(&mut self, key: &'static KeyDecl, names: Vec<String>, source: Source) {
+        self.entry_provenance.insert(
+            key.env,
+            names.into_iter().map(|name| (name, source)).collect(),
+        );
+    }
+
+    /// Layer 2 (lowest override): the --config TOML file.
+    fn apply_file(&mut self, path: &Path) {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) => {
-                problems.push(format!("--config {}: unreadable: {e}", path.display()));
+                self.problems
+                    .push(format!("--config {}: unreadable: {e}", path.display()));
                 return;
             }
         };
         let value: toml::Table = match text.parse() {
             Ok(value) => value,
             Err(e) => {
-                problems.push(format!("--config {}: parse error: {e}", path.display()));
+                self.problems
+                    .push(format!("--config {}: parse error: {e}", path.display()));
                 return;
             }
         };
@@ -421,14 +450,13 @@ impl<'a> BotConfigLoader<'a> {
             if FREE_FORM_FILE_SECTIONS.contains(&section.as_str()) {
                 continue;
             }
-            // Retired pre-0.6 layout vocabulary (Option B hard cutover): fail
-            // pointed, naming the replacement surface and the
-            // migration doc.
+            // Layout vocabulary no key replaced: fail pointed, naming the
+            // key that replaced it and the migration doc.
             if let Some((_, replacement)) = RETIRED_LAYOUT_ITEMS
                 .iter()
                 .find(|(name, _)| section.as_str() == *name)
             {
-                problems.push(format!(
+                self.problems.push(format!(
                     "--config {}: retired config-layout item [{section}] is no \
                      longer supported — {replacement}; see {MIGRATION_DOC}",
                     path.display()
@@ -440,7 +468,7 @@ impl<'a> BotConfigLoader<'a> {
                 .filter(|k| k.section == section.as_str())
                 .collect();
             let Some(section_table) = section_value.as_table() else {
-                problems.push(format!(
+                self.problems.push(format!(
                     "--config {}: section [{section}] must be a table",
                     path.display()
                 ));
@@ -456,7 +484,7 @@ impl<'a> BotConfigLoader<'a> {
                         SECTION_PATHS.contains(&format!("{section}.{field}").as_str())
                     });
                 if !only_facets {
-                    problems.push(format!(
+                    self.problems.push(format!(
                         "--config {}: unknown section [{section}]",
                         path.display()
                     ));
@@ -470,16 +498,9 @@ impl<'a> BotConfigLoader<'a> {
                     // and an empty facet is valid.
                     let nested = format!("{section}.{field}");
                     if crate::schema::SECTION_PATHS.contains(&nested.as_str()) {
-                        Self::apply_nested_facet(
-                            &nested,
-                            field_value,
-                            config,
-                            provenance,
-                            path,
-                            problems,
-                        );
+                        self.apply_nested_facet(&nested, field_value, path);
                     } else {
-                        problems.push(format!(
+                        self.problems.push(format!(
                             "--config {}: unknown key {field} in section [{section}]",
                             path.display()
                         ));
@@ -487,20 +508,26 @@ impl<'a> BotConfigLoader<'a> {
                     continue;
                 };
                 // Map-kind keys accept the nested table form (the primary
-                // `[telemetry.diag]` surface) and the flat string form.
-                let raw = if matches!(key.kind.base, crate::schema::BaseKind::Map(_)) {
-                    map_value_to_raw(field_value, key, path, problems)
+                // `[telemetry.diag]` and `[nodes.http]` surfaces) and the flat
+                // string form.
+                let raw = if is_map_kind(key) {
+                    map_value_to_raw(field_value, key, path, &mut self.problems)
                 } else {
-                    toml_value_to_raw(field_value, key.toml_path, path, problems)
+                    toml_value_to_raw(field_value, key.toml_path, path, &mut self.problems)
                 };
                 let Some(raw) = raw else {
                     continue;
                 };
-                match config.assign(key.section, key.field, &raw) {
-                    Ok(()) => {
-                        provenance.insert(key.env, Source::File);
-                    }
-                    Err(problem) => problems.push(problem),
+                if let Err(problem) = self.config.assign(key.section, key.field, &raw) {
+                    self.problems.push(problem);
+                    continue;
+                }
+                self.provenance.insert(key.env, Source::File);
+                if is_map_kind(key) {
+                    // Kept so a later layer can merge onto the file's entries.
+                    let names = entry_names(&raw);
+                    self.file_raw.insert(key.env, raw);
+                    self.record_entries(key, names, Source::File);
                 }
             }
         }
@@ -510,16 +537,9 @@ impl<'a> BotConfigLoader<'a> {
     /// members are either deeper facet paths or declared leaf keys under the
     /// dotted section path; an empty table is valid (the settlement facet
     /// declares no keys yet).
-    fn apply_nested_facet(
-        section: &str,
-        value: &toml::Value,
-        config: &mut BotConfig,
-        provenance: &mut BTreeMap<&'static str, Source>,
-        path: &Path,
-        problems: &mut Vec<String>,
-    ) {
+    fn apply_nested_facet(&mut self, section: &str, value: &toml::Value, path: &Path) {
         let Some(table) = value.as_table() else {
-            problems.push(format!(
+            self.problems.push(format!(
                 "--config {}: section [{section}] must be a table",
                 path.display()
             ));
@@ -528,26 +548,148 @@ impl<'a> BotConfigLoader<'a> {
         for (field, field_value) in table {
             let nested = format!("{section}.{field}");
             if crate::schema::SECTION_PATHS.contains(&nested.as_str()) {
-                Self::apply_nested_facet(&nested, field_value, config, provenance, path, problems);
+                self.apply_nested_facet(&nested, field_value, path);
                 continue;
             }
             let Some(key) = SCHEMA.iter().find(|k| k.toml_path == nested) else {
-                problems.push(format!(
+                self.problems.push(format!(
                     "--config {}: unknown key {field} in section [{section}]",
                     path.display()
                 ));
                 continue;
             };
-            let raw = toml_value_to_raw(field_value, key.toml_path, path, problems);
+            let raw = if is_map_kind(key) {
+                map_value_to_raw(field_value, key, path, &mut self.problems)
+            } else {
+                toml_value_to_raw(field_value, key.toml_path, path, &mut self.problems)
+            };
             let Some(raw) = raw else {
                 continue;
             };
-            match config.assign(key.section, key.field, &raw) {
-                Ok(()) => {
-                    provenance.insert(key.env, Source::File);
-                }
-                Err(problem) => problems.push(problem),
+            if let Err(problem) = self.config.assign(key.section, key.field, &raw) {
+                self.problems.push(problem);
+                continue;
             }
+            self.provenance.insert(key.env, Source::File);
+            if is_map_kind(key) {
+                let names = entry_names(&raw);
+                self.file_raw.insert(key.env, raw);
+                self.record_entries(key, names, Source::File);
+            }
+        }
+    }
+
+    /// Layer 3: the environment. Iterates the SCHEMA (not the process env) so
+    /// foreign DEGENBOT_*-prefixed vars never leak into the typed tree.
+    fn apply_env(&mut self, env: &dyn EnvVars) {
+        for key in SCHEMA {
+            // A family-shaped key is one env name PER entry, so it is read by
+            // enumeration rather than by a lookup.
+            if let Some(prefix) = key.env_prefix {
+                self.apply_env_family(env, key, prefix);
+                continue;
+            }
+            if let Some(raw) = env.get(key.env) {
+                self.assign(key, &raw, Source::Env);
+            }
+        }
+    }
+
+    /// The env layer of a family-shaped key: one name per operator-chosen
+    /// entry (`PREFIX_<chain_id>=<value>`). Each name MERGES onto the entry
+    /// the file supplied for that chain, so a family export overrides exactly
+    /// the chain it names and leaves the rest of the table alone.
+    fn apply_env_family(&mut self, env: &dyn EnvVars, key: &'static KeyDecl, prefix: &str) {
+        let mut merged: BTreeMap<String, String> = self
+            .file_raw
+            .get(key.env)
+            .and_then(|raw| crate::parse_string_map(raw).ok())
+            .unwrap_or_default();
+        let mut supplied: Vec<String> = Vec::new();
+        for name in env.names_with_prefix(prefix) {
+            let Some(chain) = name.strip_prefix(prefix) else {
+                continue;
+            };
+            // The suffix is the chain id the entry is FOR. A name that does
+            // not end in one is a typo, and a typo that became a table key
+            // would only surface as a parse failure in a distant resolver.
+            if chain.parse::<u64>().is_err() {
+                self.problems.push(format!(
+                    "{name} is not a {prefix}<chain_id> name: the suffix after the \
+                     prefix is the decimal chain id the entry is for \u{2014} expected \
+                     {prefix}<chain_id> (e.g. {prefix}1)"
+                ));
+                continue;
+            }
+            // A blank value means "this layer supplied nothing": it must not
+            // win the cascade slot and then surface as a malformed endpoint.
+            let raw_value = env.get(&name);
+            let Some(value) = crate::resolvers::non_empty(raw_value.as_deref()) else {
+                continue;
+            };
+            merged.insert(chain.to_string(), value.to_string());
+            supplied.push(chain.to_string());
+        }
+        if supplied.is_empty() {
+            return;
+        }
+        let raw = render_string_map(&merged);
+        if let Err(problem) = self.config.assign(key.section, key.field, &raw) {
+            self.problems.push(problem);
+            return;
+        }
+        self.provenance.insert(key.env, Source::Env);
+        let entries = self.entry_provenance.entry(key.env).or_default();
+        for chain in supplied {
+            entries.insert(chain, Source::Env);
+        }
+    }
+
+    /// Layer 4 (highest): CLI / explicit argument overrides, keyed by env
+    /// name or dotted TOML path.
+    fn apply_cli(&mut self, cli: &[(String, String)]) {
+        for (name, value) in cli {
+            match resolve_key(name) {
+                Some(key) => self.assign(key, value, Source::Cli),
+                None => self.problems.push(format!(
+                    "cli override {name:?} does not name a schema key (env name or TOML path required)"
+                )),
+            }
+        }
+    }
+
+    /// Close the load: fold the per-entry layers into the aggregate key
+    /// provenance, run semantic validation, and hand back either the config
+    /// or every problem found.
+    fn finish(mut self) -> Result<LoadedConfig, ConfigError> {
+        // `Source` orders as the layers rank (default < file < env < cli), so
+        // the highest entry is the highest-ranked layer that contributed
+        // anything. A family export over one chain of a file table therefore
+        // reports the key as env-sourced rather than file-sourced.
+        let aggregates: Vec<(&'static str, Source)> = self
+            .entry_provenance
+            .iter()
+            .filter_map(|(env, entries)| entries.values().copied().max().map(|top| (*env, top)))
+            .collect();
+        for (env, source) in aggregates {
+            self.provenance.insert(env, source);
+        }
+
+        // Semantic validation: a value that parses into its declared kind
+        // but cannot serve its domain fails the load here, with the remedy in
+        // the message, rather than at a distant call site.
+        if let Err(error) = self.config.validate() {
+            self.problems.extend(error.problems);
+        }
+
+        if self.problems.is_empty() {
+            Ok(LoadedConfig {
+                config: self.config,
+                provenance: self.provenance,
+                entry_provenance: self.entry_provenance,
+            })
+        } else {
+            Err(ConfigError::of(self.problems))
         }
     }
 }
@@ -555,6 +697,36 @@ impl<'a> BotConfigLoader<'a> {
 /// Resolve a CLI override key: exact env name first, then TOML path.
 fn resolve_key(name: &str) -> Option<&'static crate::schema::KeyDecl> {
     SCHEMA.iter().find(|k| k.env == name || k.toml_path == name)
+}
+
+/// Whether a declared key's typed value is a table of operator-chosen
+/// entries (a per-chain endpoint table, a per-domain level map). Such a key
+/// keeps provenance PER ENTRY, because a family-shaped env layer overrides one
+/// entry at a time.
+fn is_map_kind(key: &crate::schema::KeyDecl) -> bool {
+    matches!(
+        key.kind.base,
+        crate::schema::BaseKind::Map(_) | crate::schema::BaseKind::StrMap
+    )
+}
+
+/// Render a table as the comma-separated `key=value` raw form every map-kind
+/// parse consumes. The single encoding of these tables: the file layer, the
+/// env-family merge, and the entry bookkeeping all speak it.
+fn render_string_map(table: &BTreeMap<String, String>) -> String {
+    table
+        .iter()
+        .map(|(entry, value)| format!("{entry}={value}"))
+        .collect::<Vec<String>>()
+        .join(",")
+}
+
+/// The entry names a rendered map raw form carries, for per-entry provenance.
+/// Recovered at the ENCODING level (both map kinds share the comma-separated
+/// `key=value` form), so a malformed raw is not reported twice: the layer's own
+/// assign reports it.
+fn entry_names(raw: &str) -> Vec<String> {
+    crate::parse_string_map(raw).map_or_else(|_| Vec::new(), |table| table.into_keys().collect())
 }
 
 /// Render a TOML `[section.map]` table (or a flat string) into the
@@ -568,24 +740,35 @@ fn map_value_to_raw(
     let toml::Value::Table(t) = value else {
         return toml_value_to_raw(value, key.toml_path, path, problems);
     };
-    let mut parts: Vec<String> = Vec::new();
+    let mut table: BTreeMap<String, String> = BTreeMap::new();
     let mut bad = false;
     for (k, v) in t {
-        if let Some(level) = v.as_str() {
-            parts.push(format!("{k}={level}"));
-        } else {
+        let Some(entry) = v.as_str() else {
             problems.push(format!(
-                "--config {}: {}.{k} must be a string level",
+                "--config {}: {}.{k} must be {}",
                 path.display(),
-                key.toml_path
+                key.toml_path,
+                map_entry_expectation(key.kind.base)
             ));
             bad = true;
-        }
+            continue;
+        };
+        table.insert(k.clone(), entry.to_string());
     }
     if bad {
         return None;
     }
-    Some(parts.join(","))
+    Some(render_string_map(&table))
+}
+
+/// What a map-kind entry's TOML value must be, spelled for the refusal. The
+/// level map carries a typed enum, so its entries are levels; a string map's
+/// entries are plain text.
+fn map_entry_expectation(base: crate::schema::BaseKind) -> &'static str {
+    match base {
+        crate::schema::BaseKind::Map(_) => "a string level",
+        _ => "a string",
+    }
 }
 
 /// Convert a TOML scalar into the normalized raw text the typed parser
