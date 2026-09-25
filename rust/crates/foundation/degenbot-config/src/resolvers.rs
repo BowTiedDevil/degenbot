@@ -168,6 +168,30 @@ impl std::fmt::Display for NodeScope {
     }
 }
 
+impl std::str::FromStr for NodeScope {
+    type Err = ConfigError;
+
+    /// Parse the capability from the name [`NodeScope::as_str`] prints, so a
+    /// surface that carries the scope as text (a console flag, a foreign-
+    /// language binding argument) reads one vocabulary instead of repeating
+    /// the variants as literals.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError`] naming every capability the closed set accepts.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "request" => Ok(Self::Request),
+            "subscription" => Ok(Self::Subscription),
+            other => Err(ConfigError::of(vec![format!(
+                "{other:?} is not a node scope: the capabilities are {} and {}",
+                Self::Request.as_str(),
+                Self::Subscription.as_str()
+            )])),
+        }
+    }
+}
+
 /// The explicit layer a caller threads in (ADR-062 D1 rank 1): the endpoints an
 /// argument named, one slot per transport. An empty value is "this layer
 /// supplied nothing" — the same convention the loader's env-family merge uses,

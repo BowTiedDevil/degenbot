@@ -121,7 +121,7 @@ impl PyAsyncAlloyProvider {
                     .await
                 }
             }
-            .map_err(Into::<PyErr>::into)?;
+            .map_err(crate::rpc::errors::provider_error_to_pyerr)?;
 
             Ok(Self {
                 provider: Arc::new(provider),

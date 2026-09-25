@@ -2,7 +2,9 @@
 //!
 //! Error mapping convention:
 //! - `ProviderError` → Python exception via `From<ProviderError> for PyErr` (preserves
-//!   specific types like `TimeoutError`, `ConnectionError`, `RuntimeError`)
+//!   specific types like `TimeoutError`, `ConnectionError`, `RuntimeError`), except
+//!   the chain-identity refusal, which `crate::rpc::errors` reshapes into a typed
+//!   `ChainMismatchError` carrying both chain ids
 //! - Input validation errors (invalid address, invalid position) → `PyValueError`
 //! - Serialization/conversion errors during Python object creation → `PyValueError`
 
@@ -175,7 +177,7 @@ impl PyAlloyProvider {
                     Ok::<AlloyProvider, degenbot_core::errors::ProviderError>(provider)
                 })
             })
-            .map_err(Into::<PyErr>::into)?;
+            .map_err(crate::rpc::errors::provider_error_to_pyerr)?;
 
         Ok(Self {
             provider: Arc::new(provider),

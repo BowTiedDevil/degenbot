@@ -79,6 +79,19 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
 
+    // ADR-062 D7/D10: the driver-domain resolvers, so the Python driver reads
+    // ONE cascade with the console instead of owning a second config model.
+    // Each returns the value plus the layer that supplied it, and each
+    // pyfunction delegates to `degenbot-config` with no precedence of its own.
+    m.add_class::<crate::config::ResolvedNodeUri>()?;
+    m.add_class::<crate::config::ResolvedChainId>()?;
+    m.add_class::<crate::config::ResolvedDatabasePath>()?;
+    m.add_function(wrap_pyfunction!(crate::config::resolve_node_uri, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::config::resolve_chain_id, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::config::resolve_database_path, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::config::config_file_path, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::config::declared_database_path, m)?)?;
+
     // Ambient-runtime driver seam: lets a Python driver satisfy the
     // ambient-runtime-only policy on the verify seams. Unconditional —
     // degenbot-core (the runtime singleton) is.
@@ -269,6 +282,15 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // authoring the legal-state matrix.
     #[cfg(feature = "bot")]
     m.add_function(wrap_pyfunction!(crate::bot::engine::session_phase_next, m)?)?;
+
+    // The chain-identity refusal (ADR-062 D8): a distinct type so a driver can
+    // read the expected and actual chain ids off the exception instead of
+    // matching a message. (feature = "rpc")
+    #[cfg(feature = "rpc")]
+    m.add(
+        "ChainMismatchError",
+        m.py().get_type::<crate::rpc::errors::ChainMismatchError>(),
+    )?;
 
     // Typed verification exceptions (TODO-53b7453b): distinct `RuntimeError`
     // subclasses so `build_paths` can classify verification failures by type

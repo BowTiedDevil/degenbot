@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::str::FromStr as _;
 
 use degenbot_config::{
     expand_state_path_with, node_http_env_name, node_ipc_env_name, node_ws_env_name,
@@ -315,5 +316,36 @@ fn expand_state_path_sibling_of_state_home_is_not_rebased() {
     assert_eq!(
         expand_state_path_with(&xdg_env, "~/.cache/foo"),
         PathBuf::from("/home/tester/.cache/foo")
+    );
+}
+
+/// A surface that carries the capability as text (a console flag, a foreign-
+/// language binding argument) must accept exactly the names the refusal
+/// prints, or one scope ends up with two vocabularies.
+
+#[test]
+fn scope_parses_from_its_own_refusal_spelling() {
+    for scope in [NodeScope::Request, NodeScope::Subscription] {
+        assert_eq!(
+            NodeScope::from_str(scope.as_str()),
+            Ok(scope),
+            "every scope must round-trip through the name its refusal prints"
+        );
+    }
+}
+
+/// The refusal names both capabilities: a caller that guessed wrong learns the
+/// closed set from the error rather than from the source.
+
+#[test]
+fn unknown_scope_refusal_names_every_capability() {
+    let message = match NodeScope::from_str("polling") {
+        Ok(scope) => unreachable!("{scope:?} is not a node scope"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        message.contains(NodeScope::Request.as_str())
+            && message.contains(NodeScope::Subscription.as_str()),
+        "the refusal must name both capabilities, got: {message}"
     );
 }

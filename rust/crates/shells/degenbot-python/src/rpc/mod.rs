@@ -3,6 +3,8 @@
 
 pub mod backrun_py;
 pub mod contract;
+
+pub mod errors;
 pub mod provider;
 pub mod subscription;
 

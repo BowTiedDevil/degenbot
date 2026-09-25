@@ -277,14 +277,17 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // asked for a specific containment stance; silently ignoring it would
     // trade on a policy the process does not actually have.
     let config_file = ::degenbot_config::standard_file_path();
-    match ::degenbot_config::BotConfigLoader::new()
-        .with_standard_file_paths()
-        .load()
-    {
+    match ::degenbot_config::load_process_config() {
         Ok(loaded) => {
             // First-wins: a test harness or an embedding that installed
             // earlier keeps ITS config; this is the production boot path.
-            let _ = degenbot_bot::bot_core::stance::install(std::sync::Arc::new(loaded.config));
+            let installed =
+                degenbot_bot::bot_core::stance::install(std::sync::Arc::new(loaded.config.clone()));
+            // The driver-domain resolvers read the LAYERS, not just the typed
+            // value, so they need the provenance this same load produced. One
+            // load, published once: a resolver cannot see a different file or
+            // environment than the holder received.
+            crate::config::publish_loaded(loaded, installed);
         }
         Err(e) => {
             #[expect(clippy::print_stderr)]

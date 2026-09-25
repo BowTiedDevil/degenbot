@@ -249,6 +249,85 @@ class RetryPolicyDefaults:
 def verification_retry_policy_defaults() -> RetryPolicyDefaults:
     """Return the shared core verification-retry policy defaults."""
 
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
+class ResolvedNodeUri:
+    """A node endpoint with the layer that supplied it (ADR-062 D7)."""
+
+    uri: str
+    source: str
+
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
+class ResolvedChainId:
+    """A session chain id with the layer that supplied it."""
+
+    chain_id: int
+    source: str
+
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
+class ResolvedDatabasePath:
+    """A database path with the layer that supplied it."""
+
+    path: str
+    source: str
+
+def resolve_node_uri(chain_id: int, scope: str, node: str | None = None) -> ResolvedNodeUri:
+    """Resolve the node endpoint for ``chain_id`` through the config layers.
+
+    ``scope`` is the caller's capability: ``"request"`` (pool reads,
+    ``eth_callMany``, transaction submission) or ``"subscription"`` (a feed
+    that must not degrade to polling). ``node`` is the explicit-override
+    layer — one endpoint, classified by its own value the way the console's
+    ``--node`` is.
+
+    Returns:
+        The endpoint and the layer that supplied it (``default``, ``file``,
+            ``env``, or ``cli``).
+
+    Raises:
+        ValueError: when ``scope`` is not a capability, when ``node`` names
+            no transport, or when no layer supplied an endpoint for the
+            chain — the refusal names the scope, the transports it
+            consulted, and the layers each was read through.
+
+    """
+
+def resolve_chain_id(chain_id: str | None = None) -> ResolvedChainId:
+    """Resolve the session chain id: the explicit override (as text), else the layers.
+
+    Raises:
+        ValueError: when no layer named a chain, or when the explicit value
+            is not an integer (the message names that layer).
+
+    """
+
+def resolve_database_path(database: str | None = None) -> ResolvedDatabasePath:
+    """Resolve the database path: ``--database`` > env > ``database.path`` > default.
+
+    The winning value already has ``~`` and the state home expanded by the
+    resolver, so the path a session opens needs no second expansion.
+
+    """
+
+def config_file_path() -> str | None:
+    """Return the operator file the loader selected (``DEGENBOT_CONFIG`` or the XDG file).
+
+    A raw-table reader (the deployment registry, the failure-policy table)
+    resolves the same file the typed load read. ``None`` means the process
+    has no file layer, which is contractually the schema defaults.
+
+    """
+
+def declared_database_path() -> str:
+    """Return the declared ``database.path`` key of the installed typed config.
+
+    The value the operator wrote, with no cascade and no ``~`` expansion; a
+    caller that wants the path a session opens asks ``resolve_database_path``.
+
+    """
+
 def runtime_status() -> dict[str, Any]:
     """FF-T5 (NT7HJC): the runtime fleet status.
 
@@ -1516,6 +1595,24 @@ class IntakeReceipt:
     def wait(self, timeout: float | None = None) -> object: ...
     def wait_async(self) -> Coroutine[Any, Any, None]: ...
 
+class ChainMismatchError(ValueError):
+    """The endpoint serves a different chain than the one it was bound to.
+
+    Binding an endpoint to a chain reads ``eth_chainId`` once in the Rust
+    core and refuses a disagreement there, so the console, a pure-Rust
+    consumer, and Python share one invariant. The refusal is not retryable —
+    the same endpoint keeps answering with the same chain.
+
+    Subclasses ``ValueError``, so a caller that already handles a
+    misconfigured provider keeps catching it. The two chain ids and the
+    endpoint are attributes, so a driver reads the disagreement as values
+    rather than by matching the message.
+    """
+
+    expected: int
+    actual: int
+    endpoint: str
+
 class VerificationMismatchError(RuntimeError):
     """On-chain verification mismatch: engine tick data != on-chain state.
 
@@ -1721,6 +1818,7 @@ __all__ = [
     "BootRefused",
     "Bot",
     "BotIo",
+    "ChainMismatchError",
     "ConcentratedLiquidityView",
     "DynamicFeePoolRejectedError",
     "Erc20Token",
@@ -1739,6 +1837,9 @@ __all__ = [
     "PoolRegistrationError",
     "PossibleInaccurateResult",
     "ReservePairView",
+    "ResolvedChainId",
+    "ResolvedDatabasePath",
+    "ResolvedNodeUri",
     "RetryPolicyDefaults",
     "SpecViolationError",
     "StrategyHostError",
@@ -1763,12 +1864,14 @@ __all__ = [
     "compute_aerodrome_v2_pool_address",
     "compute_aerodrome_v3_pool_address",
     "concentrated_liquidity_math",
+    "config_file_path",
     "contract",
     "convert_pool_type_filter",
     "create2_address",
     "curve_dy",
     "curve_math",
     "db",
+    "declared_database_path",
     "deployments",
     "dex_identity",
     "diagnostics",
@@ -1790,6 +1893,9 @@ __all__ = [
     "prepare_traversal_plan",
     "price",
     "provider",
+    "resolve_chain_id",
+    "resolve_database_path",
+    "resolve_node_uri",
     "runtime_status",
     "session_phase_next",
     "settlement_broadcast_endpoints",
