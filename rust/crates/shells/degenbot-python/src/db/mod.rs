@@ -1,8 +1,8 @@
 //! `PyO3` seam for the `degenbot-db` `SQLite` file operations.
 //!
 //! Thin `#[pyfunction]` wrappers over [`degenbot_db::ops`]:
-//! [`create_new_database`] / [`backup_database`] / [`compact_database`] /
-//! [`upgrade_database`]. The core owns the file I/O; these extract the path
+//! [`backup_database`] / [`compact_database`] / [`upgrade_database`]. The core
+//! owns the file I/O; these extract the path
 //! from Python, release the GIL via `py.detach(...)`, then map [`DbError`] to a
 //! Python `ValueError`. No business logic (three-layer architecture, ADR-005).
 //!
@@ -31,17 +31,6 @@ use degenbot_db::schema::RUST_SCHEMA_VERSION;
 pub use liquidity_updater::PyLiquidityUpdateEvent;
 pub use pool_read::{PyExchangeRow, PyLiquidityPoolRow, PyPoolManagerRow};
 pub use snapshot::PyDatabaseSnapshot;
-
-/// `degenbot._ffi.db.db_create_new_database(path: str) -> None`
-///
-/// Create a fresh degenbot `SQLite` DB: WAL + head DDL + VACUUM + the Rust
-/// schema stamp. Raises `ValueError` on any failure.
-#[pyfunction]
-fn db_create_new_database(py: Python<'_>, path: &str) -> PyResult<()> {
-    let path = PathBuf::from(path);
-    py.detach(|| ops::create_new_database(&path))
-        .map_err(|e| db_err_to_py(&e))
-}
 
 /// `degenbot._ffi.db.db_backup_database(src: str, dst: str) -> None`
 ///
@@ -241,7 +230,6 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.db")?;
 
-    submod.add_function(wrap_pyfunction!(db_create_new_database, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_backup_database, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_compact_database, &submod)?)?;
     submod.add_function(wrap_pyfunction!(db_schema_version, &submod)?)?;

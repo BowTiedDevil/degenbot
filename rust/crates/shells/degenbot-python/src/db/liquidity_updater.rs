@@ -3,7 +3,7 @@
 //! Wraps `degenbot-db`'s apply-and-persist core
 //! ([`degenbot_db::DegenbotDb::apply_v3_liquidity_updates`] /
 //! [`apply_v4_liquidity_updates`]) as module-level `#[pyfunction]`s taking a
-//! `database_path` (same pattern as `db_create_new_database`). The Python
+//! `database_path` (the path-argument `db_*` seam pattern). The Python
 //! `cli/pool.py::apply_v3/v4_liquidity_updates` shells decode the raw
 //! `LogReceipt`s into [`PyLiquidityUpdateEvent`] records + delegate here —
 //! the Rust core owns the math (`apply_liquidity_mapping_update`) + the DB
