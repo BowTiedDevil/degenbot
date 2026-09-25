@@ -29,8 +29,6 @@ ENGINE_HANDLES: frozenset[str] = frozenset(
         "Bot",
         "BotIo",
         "Erc20Token",
-        "DatabasePositionQuery",
-        "DatabaseSnapshot",
     },
 )
 _ENGINE_HANDLE_MODULES = frozenset({_FFI_ROOT, f"{_FFI_ROOT}.db"})

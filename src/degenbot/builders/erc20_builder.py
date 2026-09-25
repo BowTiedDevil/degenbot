@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from degenbot._ffi import Bot, BotIo
-    from degenbot.database import Erc20TokenRow
+    from degenbot.db import Erc20TokenRow
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier

@@ -17,10 +17,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from degenbot._ffi.db import DatabasePositionQuery as _EnginePositionQuery
 from degenbot.aave import AavePriceOracle
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.db import UserPositionSummary, analyze_aave_user_position
+from degenbot.db import DatabasePositionQuery as _EnginePositionQuery
+from degenbot.db import (
+    UserPositionSummary,
+    analyze_aave_user_position,
+)
 from degenbot.logging import logger
 
 if TYPE_CHECKING:

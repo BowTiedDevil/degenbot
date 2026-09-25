@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Protocol, TypedDict
 
 import pydantic_core
 
-from degenbot._ffi.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.logging import logger
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick

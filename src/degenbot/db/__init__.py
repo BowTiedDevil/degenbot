@@ -25,8 +25,11 @@ SQLAlchemy ORM (``DatabaseSessionManager``, ``models/``). The schema is
 Rust-owned and upgrades itself at open (ADR-052).
 """
 
+from degenbot._ffi import Erc20TokenRow
 from degenbot._ffi.db import (
     CollateralPositionData,
+    DatabasePositionQuery,
+    DatabaseSnapshot,
     DebtPositionData,
     ExchangeRow,
     LiquidityPoolRow,
@@ -37,6 +40,7 @@ from degenbot._ffi.db import (
     db_apply_v4_liquidity_updates,
     db_backup_database,
     db_compact_database,
+    db_convert_alembic_to_rust_owned,
     db_create_new_database,
     db_fetch_exchange,
     db_fetch_exchange_by_name,
@@ -58,7 +62,10 @@ from degenbot._ffi.db import (
 
 __all__ = [
     "CollateralPositionData",
+    "DatabasePositionQuery",
+    "DatabaseSnapshot",
     "DebtPositionData",
+    "Erc20TokenRow",
     "ExchangeRow",
     "LiquidityPoolRow",
     "PoolManagerRow",
@@ -68,6 +75,7 @@ __all__ = [
     "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
+    "db_convert_alembic_to_rust_owned",
     "db_create_new_database",
     "db_fetch_exchange",
     "db_fetch_exchange_by_name",
