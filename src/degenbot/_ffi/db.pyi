@@ -187,6 +187,28 @@ def db_fetch_exchange_by_name(
 ) -> ExchangeRow | None:
     """Fetch an `exchanges` row by `(chain_id, name)` (the deactivate-CLI resolution)."""
 
+def db_resolve_token_ids(
+    database_path: str,
+    chain_id: int,
+    addresses: list[str],
+) -> dict[str, int]:
+    """Resolve chain-scoped token addresses to row ids.
+
+    Input addresses are EIP-55 normalized and deduplicated. Missing token rows
+    are omitted. Raises ``ValueError`` if an address or database read fails.
+    """
+
+def db_fetch_graph_edition(
+    database_path: str,
+    chain_id: int,
+) -> tuple[int, int, int, int]:
+    """Return ``(v2v3_count, v2v3_max_id, v4_count, v4_max_id)`` for a chain.
+
+    The V2/V3 values come from ``pools``; V4 values come from managed pools
+    scoped through their pool manager's chain. Raises ``ValueError`` on a
+    database failure.
+    """
+
 class V2PoolRowInput:
     """One V2 pool-row to upsert (WR7EA6)."""
 
@@ -553,9 +575,11 @@ __all__ = [
     "db_create_new_database",
     "db_fetch_exchange",
     "db_fetch_exchange_by_name",
+    "db_fetch_graph_edition",
     "db_fetch_pool_row",
     "db_heal_database",
     "db_inspect_schema_state",
+    "db_resolve_token_ids",
     "db_schema_version",
     "db_set_exchange_active",
     "db_set_exchange_last_update_block",

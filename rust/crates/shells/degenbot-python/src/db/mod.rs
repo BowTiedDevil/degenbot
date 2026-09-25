@@ -17,6 +17,7 @@ pub mod aave_analysis;
 pub mod discovery;
 pub mod liquidity_updater;
 pub mod pool_read;
+pub mod read_seams;
 pub mod snapshot;
 
 use std::path::PathBuf;
@@ -292,6 +293,11 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_function(wrap_pyfunction!(pool_read::db_fetch_exchange, &submod)?)?;
     submod.add_function(wrap_pyfunction!(
         pool_read::db_fetch_exchange_by_name,
+        &submod
+    )?)?;
+    submod.add_function(wrap_pyfunction!(read_seams::db_resolve_token_ids, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(
+        read_seams::db_fetch_graph_edition,
         &submod
     )?)?;
     discovery::add_discovery_module(&submod)?;

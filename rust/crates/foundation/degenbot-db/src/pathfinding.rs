@@ -373,7 +373,55 @@ impl DegenbotDb {
 
 #[cfg(test)]
 mod tests {
-    // The §4.2 parity tests live in `tests/pathfinding_parity.rs` — they open a
-    // fixture DB and compare against the Python `_prepare_graph` /
-    // `_get_tokens_with_min_degree` oracle output dumped to JSON.
+    #![expect(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::migrate::SchemaState;
+
+    fn write_db() -> DegenbotDb {
+        let (db, state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        assert!(matches!(state, SchemaState::FreshStandalone { .. }));
+        db
+    }
+
+    #[test]
+    fn fetch_token_ids_by_address_omits_missing_and_deduplicates_inputs() {
+        let db = write_db();
+        let first = Address::new([0x11; 20]);
+        let second = Address::new([0x22; 20]);
+        let missing = Address::new([0x33; 20]);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                rusqlite::params![1_i64, first.to_checksum(None)],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                rusqlite::params![2_i64, second.to_checksum(None)],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 10, ?2)",
+                rusqlite::params![3_i64, first.to_checksum(None)],
+            )
+            .unwrap();
+        }
+
+        let resolved = db
+            .fetch_token_ids_by_address(1, &[first, missing, first, second])
+            .unwrap();
+
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved.get(&first), Some(&1));
+        assert_eq!(resolved.get(&second), Some(&2));
+        assert!(!resolved.contains_key(&missing));
+    }
+
+    #[test]
+    fn fetch_token_ids_by_address_empty_input_returns_empty_without_reading() {
+        let db = write_db();
+        assert!(db.fetch_token_ids_by_address(1, &[]).unwrap().is_empty());
+    }
 }

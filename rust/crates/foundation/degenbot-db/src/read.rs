@@ -73,6 +73,18 @@ pub struct ConnectorPoolRow {
     pub kind: String,
 }
 
+/// Structural fingerprint of the discovery graph for one chain.
+///
+/// The first pair describes the unified V2/V3 `pools` table and the second
+/// pair describes `managed_pools` scoped through its pool manager's chain.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphEdition {
+    pub v2v3_count: i64,
+    pub v2v3_max_id: i64,
+    pub v4_count: i64,
+    pub v4_max_id: i64,
+}
+
 impl DegenbotDb {
     /// `SELECT * FROM erc20_tokens WHERE address=? AND chain=?`.
     ///
@@ -502,6 +514,42 @@ impl DegenbotDb {
         Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
     }
 
+    /// Return the structural discovery-graph fingerprint for `chain_id`.
+    ///
+    /// This is the Rust-owned equivalent of the runner's two count/max
+    /// probes. The unified `pools` table is not filtered by `kind`, and the
+    /// managed-pool table is scoped through `pool_managers.chain`, preserving
+    /// the Python query's behavior for future or malformed family strings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] when either aggregate query fails.
+    pub fn fetch_graph_edition(&self, chain_id: i64) -> Result<GraphEdition, DbError> {
+        let conn = self.lock();
+        let (v2v3_count, v2v3_max_id) = conn.query_row(
+            &format!("SELECT count(*), COALESCE(max(id), 0) FROM {POOLS} WHERE chain = ?1"),
+            rusqlite::params![chain_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let (v4_count, v4_max_id) = conn.query_row(
+            &format!(
+                "SELECT count(*), COALESCE(max({MANAGED_POOLS}.id), 0) \
+                 FROM {MANAGED_POOLS} \
+                 JOIN {POOL_MANAGERS} ON {POOL_MANAGERS}.id = {MANAGED_POOLS}.manager_id \
+                 WHERE {POOL_MANAGERS}.chain = ?1"
+            ),
+            rusqlite::params![chain_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        Ok(GraphEdition {
+            v2v3_count,
+            v2v3_max_id,
+            v4_count,
+            v4_max_id,
+        })
+    }
+
     /// Every `pools` row on `chain_id` with its polymorphic `kind`, for the
     /// connector index's V2 edge load.
     ///
@@ -692,6 +740,100 @@ mod tests {
         assert_eq!(both.len(), 2);
         assert_eq!(both[0].id, v2.id, "ordered by id — v2 first");
         assert_eq!(both[1].id, v3.id);
+    }
+
+    #[test]
+    fn fetch_graph_edition_is_empty_and_chain_scoped() {
+        let db = write_db();
+        assert_eq!(db.fetch_graph_edition(1).unwrap(), GraphEdition::default());
+
+        let pool_1 = Address::new([0x11; 20]).to_checksum(None);
+        let pool_2 = Address::new([0x12; 20]).to_checksum(None);
+        let manager = Address::new([0x21; 20]).to_checksum(None);
+        let other_pool = Address::new([0x13; 20]).to_checksum(None);
+        let other_manager = Address::new([0x22; 20]).to_checksum(None);
+        {
+            let conn = db.lock();
+            conn.execute_batch(&format!(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES
+                   (1, 1, '{pool_1}'), (2, 1, '{pool_2}');
+                 INSERT INTO exchanges (id, chain_id, name, active, factory) VALUES
+                   (1, 1, 'chain-one', 1, '{manager}'),
+                   (2, 10, 'chain-ten', 1, '{other_manager}');
+                 INSERT INTO pools
+                   (id, address, chain, kind, token0_id, token1_id, exchange_id) VALUES
+                   (2, '{pool_1}', 1, 'uniswap_v2', 1, 2, 1),
+                   (7, '{pool_2}', 1, 'uniswap_v3', 1, 2, 1),
+                   (100, '{other_pool}', 10, 'uniswap_v2', 1, 2, 2);
+                 INSERT INTO pool_managers
+                   (id, address, chain, kind, exchange_id) VALUES
+                   (20, '{manager}', 1, 'uniswap_v4', 1),
+                   (21, '{other_manager}', 10, 'uniswap_v4', 2);
+                 INSERT INTO managed_pools (id, kind, manager_id) VALUES
+                   (4, 'uniswap_v4', 20), (9, 'uniswap_v4', 20),
+                   (100, 'uniswap_v4', 21);"
+            ))
+            .unwrap();
+        }
+
+        assert_eq!(
+            db.fetch_graph_edition(1).unwrap(),
+            GraphEdition {
+                v2v3_count: 2,
+                v2v3_max_id: 7,
+                v4_count: 2,
+                v4_max_id: 9,
+            }
+        );
+        assert_eq!(
+            db.fetch_graph_edition(10).unwrap(),
+            GraphEdition {
+                v2v3_count: 1,
+                v2v3_max_id: 100,
+                v4_count: 1,
+                v4_max_id: 100,
+            }
+        );
+        assert_eq!(
+            db.fetch_graph_edition(999).unwrap(),
+            GraphEdition::default()
+        );
+    }
+
+    #[test]
+    fn fetch_graph_edition_counts_foreign_kinds_like_python_probe() {
+        let db = write_db();
+        let token_1 = Address::new([0x11; 20]).to_checksum(None);
+        let token_2 = Address::new([0x13; 20]).to_checksum(None);
+        let pool = Address::new([0x12; 20]).to_checksum(None);
+        let manager = Address::new([0x21; 20]).to_checksum(None);
+        {
+            let conn = db.lock();
+            conn.execute_batch(&format!(
+                "INSERT INTO erc20_tokens (id, chain, address)
+                   VALUES (1, 1, '{token_1}'), (2, 1, '{token_2}');
+                 INSERT INTO exchanges (id, chain_id, name, active, factory)
+                   VALUES (1, 1, 'future', 1, '{manager}');
+                 INSERT INTO pool_managers (id, address, chain, kind, exchange_id)
+                   VALUES (1, '{manager}', 1, 'future_managed', 1);
+                 INSERT INTO pools
+                   (id, address, chain, kind, token0_id, token1_id, exchange_id)
+                   VALUES (8, '{pool}', 1, 'future_unified', 1, 2, 1);
+                 INSERT INTO managed_pools (id, kind, manager_id)
+                   VALUES (9, 'future_managed', 1);"
+            ))
+            .unwrap();
+        }
+
+        assert_eq!(
+            db.fetch_graph_edition(1).unwrap(),
+            GraphEdition {
+                v2v3_count: 1,
+                v2v3_max_id: 8,
+                v4_count: 1,
+                v4_max_id: 9,
+            }
+        );
     }
 
     #[test]

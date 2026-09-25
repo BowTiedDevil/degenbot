@@ -84,7 +84,7 @@ pub use ops::{
     inspect_schema_state, upgrade_database, UpgradeOutcome,
 };
 pub use pathfinding::{PathEdge, PathGraphData};
-pub use read::ExchangeFamily;
+pub use read::{ExchangeFamily, GraphEdition};
 pub use rows::{
     InitializationMapRow, LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow,
     ManagedLiquidityPoolRow, ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow,
