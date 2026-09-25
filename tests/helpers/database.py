@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from degenbot.db import (
-    db_create_new_database,
+    db_upgrade_database,
     db_set_exchange_active,
     db_upsert_exchange,
     db_upsert_v2_pools,
@@ -44,7 +44,7 @@ def seed_v2_topology(
     kind: str = "uniswap_v2",
 ) -> None:
     """Create a Rust-owned database and write a V2 topology through Rust seams."""
-    db_create_new_database(str(database_path))
+    db_upgrade_database(str(database_path))
     exchange = db_upsert_exchange(
         database_path=str(database_path),
         chain_id=chain_id,

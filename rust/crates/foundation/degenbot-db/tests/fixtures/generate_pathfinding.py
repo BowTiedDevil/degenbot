@@ -10,7 +10,7 @@ from contextlib import closing
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import (
-    db_create_new_database,
+    db_upgrade_database,
     db_set_exchange_active,
     db_set_exchange_last_update_block,
     db_upsert_exchange,
@@ -47,7 +47,7 @@ def _addr(value: str) -> str:
 def _build_db() -> None:
     for suffix in ("", "-wal", "-shm"):
         DB_PATH.with_name(DB_PATH.name + suffix).unlink(missing_ok=True)
-    db_create_new_database(str(DB_PATH))
+    db_upgrade_database(str(DB_PATH))
     exchanges = {}
     for name, factory, block in (
         ("uniswap_v2", V2_FACTORY, 10_000_000),

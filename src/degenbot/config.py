@@ -14,13 +14,10 @@ started it.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from degenbot import _ffi
 from degenbot._ffi import ResolvedChainId, ResolvedDatabasePath, ResolvedNodeUri
-from degenbot.db import db_create_new_database
-from degenbot.logging import logger
 
 if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
@@ -285,26 +282,3 @@ def declared_database_path() -> str:
 
     """
     return _ffi.declared_database_path()
-
-
-def _init_config() -> str:
-    """Bootstrap the session database, returning the resolved path.
-
-    Python never writes the operator file -- an absent file is contractually
-    schema defaults -- so the only bootstrap left here is the database: its
-    parent directory is created and an empty file is initialized. A ``:memory:``
-    database has neither and is returned as-is.
-
-    Returns:
-        The resolved database path.
-
-    """
-    path = resolve_database_path()
-    if Path(path).name == ":memory:":
-        return path
-    parent = Path(path).parent
-    parent.mkdir(parents=True, exist_ok=True)
-    if not Path(path).exists():
-        db_create_new_database(path)
-        logger.info(f"Initialized new SQLite database at {path}")
-    return path

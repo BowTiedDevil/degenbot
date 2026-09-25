@@ -208,6 +208,7 @@ pub(crate) fn ensure_schema_at_open_with<F>(
 where
     F: FnMut(&Path) -> Result<Connection, DbError>,
 {
+    ensure_parent_dir(path)?;
     let conn = open(path)?;
     let state = ensure_schema(&conn)?;
 
@@ -235,6 +236,31 @@ where
     // the "same code path" guarantee that a heal never strands pending work.
     let healed_state = apply_forward_lock(&reopened, healed_state, steps, target)?;
     Ok((reopened, healed_state))
+}
+
+/// Materialize `path`'s parent directory when it is a real filesystem path.
+///
+/// A boot resolves its database path through the operator cascade, which can
+/// land several directories deep under a state root nothing has created yet
+/// (`$XDG_STATE_HOME/degenbot/db/degenbot.db` on a cold machine). The open owns
+/// creating that directory so the file can be born; an in-memory path and a
+/// parentless relative path have no directory to make.
+///
+/// # Errors
+///
+/// [`DbError::Io`] when the directory cannot be created.
+pub(crate) fn ensure_parent_dir(path: &Path) -> Result<(), DbError> {
+    if path == Path::new(":memory:") {
+        return Ok(());
+    }
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(parent)?;
+    Ok(())
 }
 
 /// Run the ADR-052 D2 forward version-lock on `conn` when `state` is a genuine

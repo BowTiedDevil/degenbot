@@ -71,6 +71,7 @@ pub enum UpgradeOutcome {
 ///
 /// [`DbError::Sqlite`] on any connection/PRAGMA/DDL/stamp failure.
 pub fn create_new_database(path: &Path) -> Result<(), DbError> {
+    crate::migrate::ensure_parent_dir(path)?;
     let conn = open_raw(path)?;
     conn.execute_batch(ADMIN_PRAGMAS)?;
     // auto_vacuum must be set before any tables are created; FULL only takes
@@ -142,6 +143,7 @@ pub fn compact_database(path: &Path) -> Result<(), DbError> {
 ///
 /// See above; [`DbError::Sqlite`] on any I/O / SQL failure.
 pub fn upgrade_database(path: &Path) -> Result<UpgradeOutcome, DbError> {
+    crate::migrate::ensure_parent_dir(path)?;
     let conn = open_raw(path)?;
     conn.execute_batch(ADMIN_PRAGMAS)?;
 

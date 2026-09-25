@@ -12,7 +12,7 @@ from contextlib import closing
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import (
-    db_create_new_database,
+    db_upgrade_database,
     db_fetch_exchange,
     db_fetch_exchange_by_name,
     db_set_exchange_active,
@@ -106,7 +106,7 @@ class _Provider:
 
 def _build_v3(path: pathlib.Path) -> None:
     path.unlink(missing_ok=True)
-    db_create_new_database(str(path))
+    db_upgrade_database(str(path))
     exchange = db_upsert_exchange(str(path), CHAIN, "uniswap_v3", V3_FACTORY, None)
     db_set_exchange_active(str(path), exchange_id=exchange.id, active=True)
     db_upsert_v3_pools(
@@ -143,7 +143,7 @@ def _build_v3(path: pathlib.Path) -> None:
 
 def _build_v4(path: pathlib.Path) -> None:
     path.unlink(missing_ok=True)
-    db_create_new_database(str(path))
+    db_upgrade_database(str(path))
     exchange = db_upsert_exchange(str(path), CHAIN, "uniswap_v4", V4_POOL_MANAGER_ADDRESS, None)
     db_set_exchange_active(str(path), exchange_id=exchange.id, active=True)
     db_upsert_pool_manager(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from degenbot._ffi import BotIo
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.db import db_create_new_database
+from degenbot.db import db_upgrade_database
 from tests.helpers.database import sqlite_connection
 
 CHAIN = 1
@@ -61,7 +61,7 @@ def _io(database_path: str) -> BotIo:
 
 def test_fetch_pool_row_returns_seeded_pool(tmp_path):
     database_path = str(tmp_path / "pool_seam.db")
-    db_create_new_database(database_path)
+    db_upgrade_database(database_path)
     pool_id = _seed_v3_pool(database_path)
 
     row = _io(database_path).fetch_pool_row(chain_id=CHAIN, address=POOL_ADDR)
@@ -77,7 +77,7 @@ def test_fetch_pool_row_returns_seeded_pool(tmp_path):
 
 def test_fetch_exchange(tmp_path):
     database_path = str(tmp_path / "fk_seam.db")
-    db_create_new_database(database_path)
+    db_upgrade_database(database_path)
     _seed_v3_pool(database_path)
 
     io = _io(database_path)

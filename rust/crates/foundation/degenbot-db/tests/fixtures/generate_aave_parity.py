@@ -11,7 +11,7 @@ from typing import Any
 
 from degenbot.aave.analysis.orchestrator import DatabasePositionQuery
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.db import db_create_new_database
+from degenbot.db import db_upgrade_database
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parent
 DB_PATH = FIXTURE_DIR / "aave_parity.db"
@@ -28,7 +28,7 @@ def _address(seed: str) -> str:
 def _build_db() -> None:
     for suffix in ("", "-wal", "-shm"):
         DB_PATH.with_name(DB_PATH.name + suffix).unlink(missing_ok=True)
-    db_create_new_database(str(DB_PATH))
+    db_upgrade_database(str(DB_PATH))
 
     tokens = [
         (1, "4200000000000000000000000000000000000006", "Wrapped Ether", "WETH", 18),

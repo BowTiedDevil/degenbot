@@ -25,7 +25,7 @@ import pytest
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import (
-    db_create_new_database,
+    db_upgrade_database,
     db_fetch_exchange,
     db_fetch_exchange_by_name,
     db_set_exchange_active,
@@ -167,7 +167,7 @@ def _seed_db(db_path: pathlib.Path) -> tuple[int, int]:
 
     Returns `(exchange_id, pool_manager_id)` for the assert phase.
     """
-    db_create_new_database(str(db_path))
+    db_upgrade_database(str(db_path))
     exchange = db_upsert_exchange(
         database_path=str(db_path),
         chain_id=CHAIN,
@@ -447,7 +447,7 @@ def test_db_upsert_exchange_inserts_active_false_and_is_idempotent(
     `last_update_block=None`, factory/deployer round-tripping; the second call
     returns the SAME id (no new insert) with factory/deployer unchanged."""
     db_path = tmp_path / "exchange.db"
-    db_create_new_database(str(db_path))
+    db_upgrade_database(str(db_path))
     db_path.chmod(0o644)
 
     row = db_upsert_exchange(
@@ -487,7 +487,7 @@ def test_db_set_exchange_active_flips_and_db_fetch_exchange_reads_back(
     """`db_set_exchange_active` flips active false→true→false; `db_fetch_exchange`
     reads the flipped state back (a fresh connection → fresh WAL snapshot)."""
     db_path = tmp_path / "exchange_active.db"
-    db_create_new_database(str(db_path))
+    db_upgrade_database(str(db_path))
     db_path.chmod(0o644)
 
     row = db_upsert_exchange(
@@ -524,7 +524,7 @@ def test_db_set_exchange_active_missing_id_raises_value_error(
     """A nonexistent `exchange_id` surfaces the `DbError::MissingRow` as a
     `ValueError`."""
     db_path = tmp_path / "exchange_missing.db"
-    db_create_new_database(str(db_path))
+    db_upgrade_database(str(db_path))
     db_path.chmod(0o644)
 
     with pytest.raises(ValueError, match="9999"):
@@ -541,7 +541,7 @@ def test_db_upsert_pool_manager_round_trips_and_is_idempotent(
     """`db_upsert_pool_manager` inserts, updates `state_view` in place (same id),
     and is a no-op on identical recall."""
     db_path = tmp_path / "pool_manager.db"
-    db_create_new_database(str(db_path))
+    db_upgrade_database(str(db_path))
     db_path.chmod(0o644)
 
     exchange = db_upsert_exchange(
@@ -598,7 +598,7 @@ def test_db_fetch_exchange_by_name_returns_row_and_none_when_missing(
     """`db_upsert_exchange` then `db_fetch_exchange_by_name` returns the row;
     a missing name returns None; the lookup is scoped by chain_id."""
     db_path = tmp_path / "exchange_by_name.db"
-    db_create_new_database(str(db_path))
+    db_upgrade_database(str(db_path))
     db_path.chmod(0o644)
 
     inserted = db_upsert_exchange(

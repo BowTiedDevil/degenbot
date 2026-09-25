@@ -1,16 +1,5 @@
 from typing import Any
 
-def db_create_new_database(path: str) -> None:
-    """Create a fresh degenbot SQLite DB: WAL + head DDL + VACUUM + Rust stamp.
-
-    Args:
-        path: Filesystem path for the new database (created if absent)
-
-    Raises:
-        ValueError: On any connection / PRAGMA / DDL / stamp failure
-
-    """
-
 def db_backup_database(src: str, dst: str) -> None:
     """Back up one SQLite DB into another via online backup.
 
@@ -552,7 +541,6 @@ __all__ = [
     "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
-    "db_create_new_database",
     "db_fetch_exchange",
     "db_fetch_exchange_by_name",
     "db_fetch_graph_edition",

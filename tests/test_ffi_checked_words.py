@@ -159,11 +159,11 @@ def test_assemble_v3_inconsistent_tracked_snapshot_rejected_at_intake(tmp_path):
     import pytest
 
     from degenbot._ffi import Bot
-    from degenbot._ffi.db import db_create_new_database
+    from degenbot._ffi.db import db_upgrade_database
 
     pool_addr = "0x2222222222222222222222222222222222222222"
     db_path = str(tmp_path / "inconsistent.sqlite")
-    db_create_new_database(db_path)
+    db_upgrade_database(db_path)
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(

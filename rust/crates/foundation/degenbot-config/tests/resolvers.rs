@@ -129,6 +129,37 @@ fn database_path_expands_leading_tilde_against_home() {
     assert_eq!(no_home.value, PathBuf::from("~/data/custom.db"));
 }
 
+/// A `database.path` an operator wrote in the file layer resolves the same way
+/// the environment's does: a leading `~` expands against `$HOME`, and the
+/// absent-key default roots under `$XDG_STATE_HOME`. Neither consults the
+/// process cwd, so the file a boot opens does not move with the launch
+/// directory.
+#[test]
+fn operator_file_database_path_roots_at_the_state_home_not_the_cwd() {
+    let cfg = loaded(
+        Some("[database]\npath = \"~/state/degenbot/db/degenbot.db\"\n"),
+        &[("HOME", HOME)],
+    );
+    let from_file = resolve_database_path_with(&cfg, None, &map_env(&[("HOME", HOME)]));
+    assert_eq!(
+        from_file.value,
+        PathBuf::from(format!("{HOME}/state/degenbot/db/degenbot.db"))
+    );
+    assert_eq!(from_file.source, Source::File);
+
+    let defaults = loaded(None, &[("HOME", HOME), (XDG_STATE_HOME_ENV, "/xdg/state")]);
+    let dflt = resolve_database_path_with(
+        &defaults,
+        None,
+        &map_env(&[("HOME", HOME), (XDG_STATE_HOME_ENV, "/xdg/state")]),
+    );
+    assert_eq!(
+        dflt.value,
+        PathBuf::from("/xdg/state/degenbot/db/degenbot.db")
+    );
+    assert_eq!(dflt.source, Source::Default);
+}
+
 #[test]
 fn empty_database_layers_are_indistinguishable_from_absent() {
     let cfg = loaded(None, &[(DB_PATH_ENV, "")]);

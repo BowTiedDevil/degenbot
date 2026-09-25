@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from degenbot.db import (
-    db_create_new_database,
+    db_upgrade_database,
     db_fetch_graph_edition,
     db_resolve_token_ids,
 )
@@ -23,7 +23,7 @@ MISSING_ADDRESS = "0x3333333333333333333333333333333333333333"
 
 
 def _seed_database(path: Path) -> None:
-    db_create_new_database(str(path))
+    db_upgrade_database(str(path))
     with sqlite_connection(path) as connection:
         connection.executemany(
             "INSERT INTO erc20_tokens (id, chain, address) VALUES (?, ?, ?)",

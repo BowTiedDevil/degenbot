@@ -5,7 +5,7 @@ import pathlib
 import pytest
 
 from degenbot.db import (
-    db_create_new_database,
+    db_upgrade_database,
     db_set_exchange_last_update_block,
     db_upsert_exchange,
 )
@@ -14,7 +14,7 @@ from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 
 
 def _create_database_with_exchange(db_path: pathlib.Path) -> None:
-    db_create_new_database(str(db_path))
+    db_upgrade_database(str(db_path))
     exchange = db_upsert_exchange(
         database_path=str(db_path),
         chain_id=1,

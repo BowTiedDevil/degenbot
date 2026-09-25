@@ -56,7 +56,7 @@ import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
-from degenbot.db import db_create_new_database
+from degenbot.db import db_upgrade_database
 from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths
 from degenbot.runner._driver_constants import ETH_MAINNET_ALLOWED_TOKENS, WETH_ADDRESS
 from degenbot.types.chain import ChainId
@@ -213,7 +213,7 @@ def _copy_snapshot(
     """Create the snapshot DB and copy the selected rows verbatim (ATTACH)."""
     if SNAPSHOT_PATH.exists():
         SNAPSHOT_PATH.unlink()
-    db_create_new_database(str(SNAPSHOT_PATH))
+    db_upgrade_database(str(SNAPSHOT_PATH))
 
     pool_ids = sorted(set(selection["core_v2v3"]) | set(selection["fringe_v2v3"]))
     managed_ids = sorted(set(selection["core_v4"]) | set(selection["v4_native"]))

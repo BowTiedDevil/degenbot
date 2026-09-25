@@ -11,7 +11,7 @@ from typing import Any
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import (
-    db_create_new_database,
+    db_upgrade_database,
     db_set_exchange_active,
     db_set_exchange_last_update_block,
     db_upsert_exchange,
@@ -43,7 +43,7 @@ V4_HASH = "0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a"
 def _build_db() -> None:
     for suffix in ("", "-wal", "-shm"):
         DB_PATH.with_name(DB_PATH.name + suffix).unlink(missing_ok=True)
-    db_create_new_database(str(DB_PATH))
+    db_upgrade_database(str(DB_PATH))
     exchange_v3 = db_upsert_exchange(str(DB_PATH), CHAIN, "aerodrome_v3", V3_FACTORY, None)
     db_set_exchange_active(str(DB_PATH), exchange_id=exchange_v3.id, active=True)
     db_set_exchange_last_update_block(str(DB_PATH), CHAIN, exchange_v3.id, 12_345_000)
