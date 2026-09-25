@@ -9,11 +9,12 @@ use std::collections::BTreeMap;
 use clap::Parser as _;
 use degenbot_cli::argv::{resolve_with_env, Cli};
 use degenbot_cli_core::{
-    AaveCommand, CliError, Command, DatabaseCommand, ExchangeCommand, FleetCommand, PathCommand,
-    PathDirection, PoolCommand, PoolFamily, PosturePatchEntry, PosturePatchValue, StrategyCommand,
-    StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
+    AaveCommand, CliError, Command, ConfigCommand, DatabaseCommand, ExchangeCommand, FleetCommand,
+    PathCommand, PathDirection, PoolCommand, PoolFamily, PosturePatchEntry, PosturePatchValue,
+    StrategyCommand, StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK,
+    DEFAULT_VERIFY_ALL_INTERVAL,
 };
-use degenbot_config::MapEnv;
+use degenbot_config::{MapEnv, NodeTransport};
 
 #[expect(
     clippy::expect_used,
@@ -391,19 +392,83 @@ fn root_help_lists_every_group() {
         .render_help()
         .to_string();
     for group in [
-        "database", "exchange", "pool", "aave", "fleet", "path", "strategy",
+        "database", "exchange", "pool", "aave", "fleet", "path", "strategy", "config",
     ] {
         assert!(help.contains(group), "missing {group} in:\n{help}");
     }
-    for flag in [
-        "--database",
-        "--chain-id",
-        "--node-http",
-        "--node-ws",
-        "--version",
-    ] {
+    for flag in ["--database", "--chain-id", "--node", "--version"] {
         assert!(help.contains(flag), "missing {flag} in:\n{help}");
     }
+    // ADR-062 D6 is a hard cutover: the retired per-transport spellings are
+    // gone from the tree, with no alias left behind.
+    for retired in ["--node-http", "--node-ws"] {
+        assert!(
+            !help.contains(retired),
+            "the retired {retired} must not survive in:\n{help}"
+        );
+    }
+}
+
+#[test]
+fn one_repeatable_node_flag_classifies_each_occurrence() {
+    let cli = parse(&[
+        "degenbot",
+        "--node",
+        "http://127.0.0.1:8545",
+        "--node",
+        "wss://eth.example.com/ws",
+        "--node",
+        "/tmp/anvil.ipc",
+    ]);
+    let transports: Vec<NodeTransport> = cli.node.iter().map(|node| node.transport).collect();
+    assert_eq!(
+        transports,
+        vec![NodeTransport::Http, NodeTransport::Ws, NodeTransport::Ipc]
+    );
+    let env = empty_env();
+    let ctx = degenbot_cli::argv::context(&cli, &env);
+    assert_eq!(
+        ctx.node_overrides().http.as_deref(),
+        Some("http://127.0.0.1:8545")
+    );
+    assert_eq!(
+        ctx.node_overrides().ws.as_deref(),
+        Some("wss://eth.example.com/ws")
+    );
+    assert_eq!(ctx.node_overrides().ipc.as_deref(), Some("/tmp/anvil.ipc"));
+}
+
+#[test]
+fn a_node_value_no_transport_serves_is_a_usage_error() {
+    for bad in ["ftp://x", "localhost:8545", ""] {
+        let (code, rendered) = match Cli::try_parse_from(["degenbot", "--node", bad]) {
+            Ok(_) => (0, String::new()),
+            Err(error) => (error.exit_code(), error.render().to_string()),
+        };
+        assert_eq!(code, 2, "rendered: {rendered:?}");
+        for form in ["wss://", "http://", "ipc://"] {
+            assert!(
+                rendered.contains(form),
+                "the refusal names the {form} form: {rendered:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn config_arms_round_trip() {
+    assert_eq!(
+        resolve(&["degenbot", "config", "show"]),
+        Command::Config(ConfigCommand::Show { resolved: false })
+    );
+    assert_eq!(
+        resolve(&["degenbot", "config", "show", "--resolved"]),
+        Command::Config(ConfigCommand::Show { resolved: true })
+    );
+    assert_eq!(
+        resolve(&["degenbot", "config", "path"]),
+        Command::Config(ConfigCommand::Path)
+    );
 }
 
 #[expect(
@@ -423,6 +488,7 @@ fn group_help_renders_the_leaf_commands() {
         ("exchange", vec!["activate", "deactivate"]),
         ("pool", vec!["update", "verify"]),
         ("aave", vec!["activate", "deactivate", "update", "position"]),
+        ("config", vec!["show", "path"]),
         ("fleet", vec!["posture"]),
         ("path", vec!["add", "discover"]),
         (

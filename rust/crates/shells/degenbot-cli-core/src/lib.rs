@@ -38,11 +38,15 @@
 //!   operator command channel (ADR-051 D6).
 //! - `path` ([`PathCommand`]): live add-path / bounded discovery over
 //!   the same operator command channel.
+//! - `config` ([`ConfigCommand`]): the read-only view of the operator file
+//!   (ADR-062 D6) — the values, the winning layer per value, and the file the
+//!   mutating arms write.
 
 pub mod aave;
 pub mod block;
 pub mod cancel;
 pub mod command;
+pub mod config;
 pub mod context;
 pub mod database;
 pub mod error;
@@ -63,6 +67,7 @@ pub use block::{
 };
 pub use cancel::CancelHandle;
 pub use command::{Command, DatabaseCommand};
+pub use config::ConfigCommand;
 pub use context::CliContext;
 pub use database::database_backup_path;
 pub use error::{CliError, ExitCode};
@@ -83,9 +88,9 @@ pub use prompt::{PromptPlan, Prompter};
 pub use registrations::{ensure_supported_registrations, RegistrationReport};
 pub use report::{
     schema_state_label, AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome,
-    ActivateOutcome, CommandOutcome, CommandReport, CutoverOutcome, DatabaseReport,
-    DeactivateOutcome, DryRunKind, ExchangeActiveState, ExchangeListRow, ExchangeReport,
-    FleetReport, PathReport, PoolReport, StrategyReport,
+    ActivateOutcome, CommandOutcome, CommandReport, ConfigReport, ConfigValue, CutoverOutcome,
+    DatabaseReport, DeactivateOutcome, DryRunKind, ExchangeActiveState, ExchangeListRow,
+    ExchangeReport, FleetReport, PathReport, PoolReport, StrategyReport,
 };
 pub use strategy::{
     descriptor, descriptors, EndpointSummary, MutationOutcome, StrategyCommand, StrategyFacet,

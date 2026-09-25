@@ -214,6 +214,20 @@ impl NodeOverrides {
         self
     }
 
+    /// Fill `transport`'s slot, for a caller that classified the endpoint
+    /// itself ([`crate::schema::NodeTransport::classify`]) rather than
+    /// naming the slot.
+    #[must_use]
+    pub fn with_transport(mut self, transport: NodeTransport, uri: impl Into<String>) -> Self {
+        let uri = uri.into();
+        match transport {
+            NodeTransport::Ipc => self.ipc = Some(uri),
+            NodeTransport::Ws => self.ws = Some(uri),
+            NodeTransport::Http => self.http = Some(uri),
+        }
+        self
+    }
+
     /// The explicit value for `transport`, if this layer supplied one.
     #[must_use]
     pub fn get(&self, transport: NodeTransport) -> Option<&str> {

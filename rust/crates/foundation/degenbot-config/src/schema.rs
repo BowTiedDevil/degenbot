@@ -659,6 +659,10 @@ pub enum NodeTransport {
 }
 
 impl NodeTransport {
+    /// Every transport, in declaration order — the order a surface enumerates
+    /// the endpoint tables in.
+    pub const ALL: [Self; 3] = [Self::Http, Self::Ws, Self::Ipc];
+
     /// The transport's short name, as the operator spelled it.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -691,12 +695,24 @@ impl NodeTransport {
     }
 
     /// What a valid entry value looks like, spelled for the refusal message.
-    fn expected(self) -> &'static str {
+    #[must_use]
+    pub const fn expected(self) -> &'static str {
         match self {
             Self::Http => "an http:// or https:// URL",
             Self::Ws => "a ws:// or wss:// URL",
             Self::Ipc => "an ipc:// URL or a socket path",
         }
+    }
+
+    /// The transport that can serve `value`, or `None` when no transport
+    /// accepts it. The value's own shape IS its transport (ADR-062 D6), so a
+    /// single flag can carry every transport without disagreeing with itself,
+    /// and a scheme we have not thought of yet is refused rather than guessed.
+    #[must_use]
+    pub fn classify(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|transport| transport.accepts(value))
     }
 
     /// Whether `value` can serve this transport.
@@ -890,6 +906,38 @@ mod tests {
         assert!(BotConfig::default().nodes.http.is_none());
         assert!(BotConfig::default().nodes.ws.is_none());
         assert!(BotConfig::default().nodes.ipc.is_none());
+    }
+
+    #[test]
+    fn a_node_value_classifies_into_the_transport_it_can_serve() {
+        for (value, transport) in [
+            ("http://127.0.0.1:8545", NodeTransport::Http),
+            ("https://eth.example.com", NodeTransport::Http),
+            ("ws://127.0.0.1:8546", NodeTransport::Ws),
+            ("wss://eth.example.com/ws", NodeTransport::Ws),
+            ("ipc:///tmp/anvil.ipc", NodeTransport::Ipc),
+            ("/tmp/anvil.ipc", NodeTransport::Ipc),
+            ("./anvil.ipc", NodeTransport::Ipc),
+        ] {
+            assert_eq!(
+                NodeTransport::classify(value),
+                Some(transport),
+                "{value:?} classifies into {} over {}",
+                transport.key_path(),
+                transport.expected()
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_no_transport_serves_classifies_to_nothing() {
+        for value in ["ftp://x", "localhost:8545", "", "eth.example.com"] {
+            assert_eq!(
+                NodeTransport::classify(value),
+                None,
+                "{value:?} names no transport"
+            );
+        }
     }
 
     #[test]

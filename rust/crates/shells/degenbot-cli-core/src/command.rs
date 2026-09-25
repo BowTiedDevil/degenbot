@@ -5,6 +5,7 @@
 
 use crate::aave::{self, AaveCommand};
 use crate::cancel::CancelHandle;
+use crate::config::{self, ConfigCommand};
 use crate::context::CliContext;
 use crate::database;
 use crate::error::CliError;
@@ -33,6 +34,8 @@ pub enum Command {
     Path(PathCommand),
     /// The `strategy` command group (ADR-055 facets).
     Strategy(StrategyCommand),
+    /// The `config` command group (ADR-062 D6).
+    Config(ConfigCommand),
 }
 
 impl Command {
@@ -47,6 +50,7 @@ impl Command {
             Self::Fleet(command) => command.prompt_plan(ctx),
             Self::Path(command) => command.prompt_plan(ctx),
             Self::Strategy(command) => command.prompt_plan(ctx),
+            Self::Config(command) => command.prompt_plan(ctx),
         }
     }
 
@@ -98,6 +102,7 @@ impl Command {
             Self::Strategy(command) => {
                 strategy::execute(command, ctx, prompter).map(CommandReport::Strategy)
             }
+            Self::Config(command) => config::execute(*command, ctx).map(CommandReport::Config),
         }
     }
 }

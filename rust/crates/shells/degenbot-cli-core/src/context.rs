@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 
 use degenbot_config::{
     resolve_chain_id, resolve_database_path_with, resolve_node_request_uri,
-    resolve_node_subscription_uri, EnvVars, LoadedConfig, NodeOverrides, Resolved,
+    resolve_node_subscription_uri, EnvVars, LoadedConfig, NodeOverrides, NodeTransport, Resolved,
 };
 
 /// The resolved inputs a console command runs against.
@@ -54,17 +54,20 @@ impl<'a> CliContext<'a> {
         self
     }
 
-    /// Set the `--node-http` override (the `nodes.http` explicit slot).
+    /// Set one `--node` override: an explicit endpoint for the transport its
+    /// own value classified as (ADR-062 D6). The flag cannot name a transport
+    /// its value does not carry, so each occurrence fills exactly one slot.
     #[must_use]
-    pub fn with_node_http(mut self, uri: impl Into<String>) -> Self {
-        self.nodes.http = Some(uri.into());
+    pub fn with_node(mut self, uri: impl Into<String>, transport: NodeTransport) -> Self {
+        self.nodes = self.nodes.with_transport(transport, uri);
         self
     }
 
-    /// Set the `--node-ws` override (the `nodes.ws` explicit slot).
+    /// Set every explicit endpoint at once (a caller that classified a whole
+    /// argv vector itself, e.g. the repeatable `--node`).
     #[must_use]
-    pub fn with_node_ws(mut self, uri: impl Into<String>) -> Self {
-        self.nodes.ws = Some(uri.into());
+    pub fn with_node_overrides(mut self, nodes: NodeOverrides) -> Self {
+        self.nodes = nodes;
         self
     }
 

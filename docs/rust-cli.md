@@ -37,16 +37,17 @@ Accepted before **or** after the subcommand (clap `global = true`).
 |---|---|
 | `--database <PATH>` | SQLite database path: `--database` > `DEGENBOT_DB_PATH` > `~/.local/state/degenbot/db/degenbot.db` (XDG state home) |
 | `--chain-id <CHAIN_ID>` | Session chain id: `--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID` |
-| `--node-http <URI>` | HTTP RPC endpoint: `--node-http` > `DEGENBOT_RPC_HTTP_CHAINID_<id>` |
-| `--node-ws <URI>` | WebSocket RPC endpoint: `--node-ws` > `DEGENBOT_RPC_WS_CHAINID_<id>` |
+| `--node <URI>` (repeatable) | Node RPC endpoint. The value classifies its own transport: `ws://`/`wss://` → `nodes.ws`, `http://`/`https://` → `nodes.http`, `ipc://` or a socket path → `nodes.ipc`. A value no transport can serve (e.g. `ftp://host`) is a usage error, exit 2. The explicit layer outranks the per-chain `DEGENBOT_RPC_*_CHAINID_<id>` env families and the `nodes.*` file tables. |
 | `-h, --help` | Print help and exit 0. |
 | `-V, --version` | Print the workspace version plus the shared build receipt and exit 0. |
 
-The four value options are the **driver-domain resolvers** (ADR-051 D8), owned
+These value options are the **driver-domain resolvers** (ADR-051 D8), owned
 by `degenbot-config` (`rust/crates/foundation/degenbot-config/src/resolvers.rs`): each is a
-CLI-over-env cascade with a provenance tag, and the retired
-`[rpc]`/`[ws]`/`[database]`/`default_chain_id` file keys are deliberately
-**not** consulted (see [config-migration](config-migration.md)).
+cascade over an explicit argument, the environment, and the `database.path` /
+`session.chain_id` / `nodes.*` file tables, with the winning layer reported as
+provenance. The retired `[rpc]`/`[ws]`/`[database]`/`default_chain_id` file keys
+are deliberately **not** consulted (see
+[config-migration](config-migration.md)).
 
 ## Commands
 
@@ -105,6 +106,27 @@ bot's `OperatorServer` is the authority. `--socket` resolves through
 | `fleet posture set` | `--socket <PATH>`, `--cordon-enter-events <COUNT>`, `--cordon-duty-percent <PERCENT>`, `--cordon-enter-window-ms <MS>`, `--cordon-duty-window-ms <MS>`, `--cordon-exit-clean-ms <MS>`, `--cordon-sim-intake-floor <COUNT|null>` | Apply a partial patch to the live cordon thresholds. |
 | `path add` | `--hop <FAMILY:ADDRESS[:HASH]>` (repeatable, required), `--direction <zfo\|ozf>`, `--socket <PATH>` | Add one specific path to the live bot mid-run. |
 | `path discover` | `--bound <COUNT>`, `--socket <PATH>` | Trigger a bounded on-demand discovery sweep. |
+
+### `degenbot config`
+
+The read-only view of the operator file (ADR-062 D6). No arm prompts, and
+neither writes.
+
+| Command | Flags | Behaviour |
+|---|---|---|
+| `config show` | — | The driver-domain values the operator FILE declares: `database.path`, `session.chain_id`, and the `[nodes.*]` endpoint tables, one line per value and no layer column. |
+| `config show --resolved` | `--resolved` | The same keys as the process resolves them, each annotated with its winning layer: `cli` > `env` > `file` > `default`. A key no layer supplied renders `(unresolved)` rather than disappearing. A per-chain entry renders as `nodes.ws[8453] = …`; an explicit `--node` fills the transport's slot and renders unindexed as `nodes.ws = … (cli)`. |
+| `config path` | — | Print the config file the mutating arms read and write: `--config` > `DEGENBOT_CONFIG` > the XDG config home. |
+
+```console
+$ degenbot --config ./config.toml config show --resolved
+config = ./config.toml
+database.path = /home/you/.local/state/degenbot/db/degenbot.db (default)
+session.chain_id = 8453 (file)
+nodes.http[1] = http://127.0.0.1:8545 (file)
+nodes.ws[1] = ws://127.0.0.1:8546 (env)
+nodes.ipc = (unresolved)
+```
 
 ## Exit codes
 

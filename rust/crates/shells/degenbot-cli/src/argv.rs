@@ -37,11 +37,12 @@ use std::io::Write as _;
 
 use clap::{ArgAction, Args, CommandFactory as _, Parser, Subcommand, ValueEnum};
 use degenbot_cli_core::{
-    AaveCommand, CliContext, CliError, Command, DatabaseCommand, ExchangeCommand, FleetCommand,
-    PathCommand, PathDirection, PoolCommand, PoolFamily, PosturePatchEntry, StrategyCommand,
-    StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
+    AaveCommand, CliContext, CliError, Command, ConfigCommand, DatabaseCommand, ExchangeCommand,
+    FleetCommand, PathCommand, PathDirection, PoolCommand, PoolFamily, PosturePatchEntry,
+    StrategyCommand, StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK,
+    DEFAULT_VERIFY_ALL_INTERVAL,
 };
-use degenbot_config::{EnvVars, ProcessEnv, DEFAULT_CHAIN_ID_ENV};
+use degenbot_config::{EnvVars, NodeTransport, ProcessEnv, DEFAULT_CHAIN_ID_ENV};
 
 use crate::VERSION_LINE;
 
@@ -68,13 +69,13 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "CHAIN_ID")]
     pub chain_id: Option<String>,
 
-    /// HTTP RPC endpoint (`--node-http` > `DEGENBOT_RPC_HTTP_CHAINID_<id>`).
-    #[arg(long, global = true, value_name = "URI")]
-    pub node_http: Option<String>,
-
-    /// WebSocket RPC endpoint (`--node-ws` > `DEGENBOT_RPC_WS_CHAINID_<id>`).
-    #[arg(long, global = true, value_name = "URI")]
-    pub node_ws: Option<String>,
+    /// Node RPC endpoint; the value's own scheme picks its transport
+    /// (`wss://` > ws, `http://` > http, `ipc://` or a socket path > ipc).
+    /// Repeat it to set one endpoint per transport. The explicit layer
+    /// outranks the per-chain endpoint env families and the `nodes.*` file
+    /// tables.
+    #[arg(long = "node", global = true, value_name = "URI", value_parser = parse_node)]
+    pub node: Vec<NodeArg>,
 
     /// Typed config file the `strategy` verbs read and write (`--config` >
     /// `DEGENBOT_CONFIG` > the XDG config home).
@@ -120,6 +121,12 @@ pub enum Commands {
         /// The path command.
         #[command(subcommand)]
         command: PathSub,
+    },
+    /// Inspect the operator config file and the values it resolves to.
+    Config {
+        /// The config command.
+        #[command(subcommand)]
+        command: ConfigSub,
     },
     /// Inspect the typed strategy facets (ADR-055).
     Strategy {
@@ -567,6 +574,20 @@ pub enum StrategySub {
     },
 }
 
+/// The `config` command group: the read-only view of the operator file.
+#[derive(Debug, Subcommand)]
+pub enum ConfigSub {
+    /// Show the driver-domain values: the file's own with no flag, or every
+    /// layer's winning value (with its source) under `--resolved`.
+    Show {
+        /// Render each value with the layer that supplied it.
+        #[arg(long)]
+        resolved: bool,
+    },
+    /// Print the config file the mutating arms read and write.
+    Path,
+}
+
 /// The strategy facet selector.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum FacetArg {
@@ -580,6 +601,40 @@ pub enum FacetArg {
     TxpoolBackrun,
 }
 
+/// One `--node` occurrence: the endpoint, plus the transport its own value
+/// classified as (ADR-062 D6). clap carries the classification so a value no
+/// transport can serve is a usage error at parse time, not a later refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeArg {
+    /// The endpoint verbatim.
+    pub uri: String,
+    /// The transport the value serves.
+    pub transport: NodeTransport,
+}
+
+/// Classify one `--node` value into its transport.
+///
+/// # Errors
+///
+/// A usage message naming the three accepted forms, which clap renders as an
+/// invalid-value error (exit 2).
+fn parse_node(raw: &str) -> Result<NodeArg, String> {
+    let Some(transport) = NodeTransport::classify(raw) else {
+        let forms: Vec<String> = NodeTransport::ALL
+            .iter()
+            .map(|transport| format!("{} — {}", transport.key_path(), transport.expected()))
+            .collect();
+        return Err(format!(
+            "{raw:?} names no node transport; accepted forms: {}",
+            forms.join("; ")
+        ));
+    };
+    Ok(NodeArg {
+        uri: raw.to_string(),
+        transport,
+    })
+}
+
 /// The [`CliContext`] the argv overrides describe (ADR-051 D8).
 #[must_use]
 pub fn context<'a>(cli: &Cli, env: &'a dyn EnvVars) -> CliContext<'a> {
@@ -590,11 +645,8 @@ pub fn context<'a>(cli: &Cli, env: &'a dyn EnvVars) -> CliContext<'a> {
     if let Some(chain_id) = &cli.chain_id {
         ctx = ctx.with_chain_id(chain_id.clone());
     }
-    if let Some(node_http) = &cli.node_http {
-        ctx = ctx.with_node_http(node_http.clone());
-    }
-    if let Some(node_ws) = &cli.node_ws {
-        ctx = ctx.with_node_ws(node_ws.clone());
+    for node in &cli.node {
+        ctx = ctx.with_node(node.uri.clone(), node.transport);
     }
     if let Some(config) = &cli.config {
         ctx = ctx.with_config(config.clone());
@@ -638,6 +690,7 @@ pub fn resolve_with_env(cli: &Cli, env: &dyn EnvVars) -> Result<Command, CliErro
         Commands::Fleet { command } => Ok(Command::Fleet(fleet(command)?)),
         Commands::Path { command } => Ok(Command::Path(path(command))),
         Commands::Strategy { command } => Ok(Command::Strategy(strategy(command))),
+        Commands::Config { command } => Ok(Command::Config(config(command))),
     }
 }
 
@@ -856,6 +909,15 @@ fn strategy(command: &StrategySub) -> StrategyCommand {
             facet: facet_of(*facet),
             key: key.clone(),
         },
+    }
+}
+
+fn config(command: &ConfigSub) -> ConfigCommand {
+    match command {
+        ConfigSub::Show { resolved } => ConfigCommand::Show {
+            resolved: *resolved,
+        },
+        ConfigSub::Path => ConfigCommand::Path,
     }
 }
 

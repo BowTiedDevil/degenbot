@@ -83,7 +83,8 @@ container-correct URIs — `http://host.containers.internal:8545` and
 `resolve_rpc_uris` reads `os.environ`, so a later rc-file export silently wins and
 points the bot at the container's own loopback, where nothing listens (connection
 refused at the first `eth_chainId` call). Override endpoints in-container via the
-CLI (`--node-http` / `--node-ws`) or by editing `devcontainer.json` and rebuilding.
+CLI (`--node http://host.containers.internal:8545` / `--node ws://host.containers.internal:8546`) or by editing
+`devcontainer.json` and rebuilding.
 
 Boot behavior: a surviving retired item fails the load and the process exits 2 with a message like
 

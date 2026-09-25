@@ -28,6 +28,8 @@ pub enum CommandReport {
     Path(PathReport),
     /// A `strategy` command report (ADR-055 facets).
     Strategy(StrategyReport),
+    /// A `config` command report.
+    Config(ConfigReport),
 }
 
 impl CommandReport {
@@ -42,6 +44,112 @@ impl CommandReport {
             Self::Fleet(report) => report.render_lines(),
             Self::Path(report) => report.render_lines(),
             Self::Strategy(report) => report.render_lines(),
+            Self::Config(report) => report.render_lines(),
+        }
+    }
+}
+
+/// One resolved (or absent) driver-domain value, as `config show` renders it.
+///
+/// The key is the operator's own spelling: a declared key
+/// (`session.chain_id`, `database.path`), a per-chain endpoint entry
+/// (`nodes.ws[8453]`), or a whole transport's explicit slot (`nodes.ws`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigValue {
+    /// The key as the operator writes it.
+    pub key: String,
+    /// The value, verbatim; `(unresolved)` is carried by the absent source
+    /// rather than a sentinel string.
+    pub value: String,
+    /// The layer that supplied the value, or `None` when no layer did.
+    pub source: Option<degenbot_config::Source>,
+}
+
+impl ConfigValue {
+    /// A value with its winning layer.
+    #[must_use]
+    pub fn new(key: &str, value: String, source: degenbot_config::Source) -> Self {
+        Self {
+            key: key.to_string(),
+            value,
+            source: Some(source),
+        }
+    }
+
+    /// A key no layer supplied: reported, never guessed and never omitted.
+    #[must_use]
+    pub fn unresolved(key: &str) -> Self {
+        Self {
+            key: key.to_string(),
+            value: String::new(),
+            source: None,
+        }
+    }
+
+    /// The `key = value` line (the file view).
+    #[must_use]
+    pub fn line(&self) -> String {
+        match self.source {
+            Some(_) => format!("{} = {}", self.key, self.value),
+            None => format!("{} = (unresolved)", self.key),
+        }
+    }
+
+    /// The `key = value (source)` line (`config show --resolved`).
+    #[must_use]
+    pub fn resolved_line(&self) -> String {
+        match self.source {
+            Some(source) => format!("{} = {} ({source})", self.key, self.value),
+            None => format!("{} = (unresolved)", self.key),
+        }
+    }
+}
+
+/// The typed result of a `config` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigReport {
+    /// `config show`: the driver-domain values, annotated with their winning
+    /// layer when `resolved` was asked for.
+    Shown {
+        /// The config file in play, absent when no location resolves.
+        file: Option<PathBuf>,
+        /// The values, in the operator's key order.
+        values: Vec<ConfigValue>,
+        /// Whether each line carries its winning layer (`--resolved`).
+        resolved: bool,
+    },
+    /// `config path`: the config file the mutating arms read and write.
+    Path(PathBuf),
+}
+
+impl ConfigReport {
+    /// The operator-facing lines for this report.
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        match self {
+            Self::Shown {
+                file,
+                values,
+                resolved,
+            } => {
+                // The file in play is also the mutating arms' write target, so
+                // an absent file is named as such rather than presented as a
+                // file the values were read from.
+                let mut lines = vec![match file {
+                    Some(path) if path.exists() => format!("config = {}", path.display()),
+                    Some(path) => format!("config = {} (not yet created)", path.display()),
+                    None => "config = (no config file location)".to_string(),
+                }];
+                lines.extend(values.iter().map(|value| {
+                    if *resolved {
+                        value.resolved_line()
+                    } else {
+                        value.line()
+                    }
+                }));
+                lines
+            }
+            Self::Path(path) => vec![path.display().to_string()],
         }
     }
 }
