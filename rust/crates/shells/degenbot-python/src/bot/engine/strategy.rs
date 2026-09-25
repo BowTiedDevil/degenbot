@@ -137,7 +137,11 @@ fn backrun_boot_resources(
         }
     };
     let db_path = degenbot_config::resolve_database_path(&loaded, None).value;
-    match degenbot_strategy::backrun_driver::resolve_backrun_node_join() {
+    // The same loaded layers the database path came from: the join resolves
+    // the session chain once and carries it to the connector index and the
+    // head feed, so a hosted backrun lane cannot run against a chain its
+    // operator never named.
+    match degenbot_strategy::backrun_driver::resolve_backrun_node_join(&loaded, None) {
         Ok(join) => degenbot_core::runtime::get_runtime().block_on(
             degenbot_strategy::backrun_driver::resolve_backrun_boot(
                 Arc::clone(&config),

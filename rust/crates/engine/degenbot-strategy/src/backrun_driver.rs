@@ -37,6 +37,6 @@ mod tests;
 pub use driver_boot::{
     backrun_boot, backrun_spawn_factory, resolve_backrun_boot, resolve_backrun_node_join,
     BackrunBoot, BackrunBootError, BackrunBootResources, BackrunEcosystem, BackrunNodeJoin,
-    BackrunStrategyBoot, CHAIN_ID,
+    BackrunStrategyBoot,
 };
 pub use driver_loop::{BackrunDriver, DriverHandle, LoopDecline, LoopPhase};

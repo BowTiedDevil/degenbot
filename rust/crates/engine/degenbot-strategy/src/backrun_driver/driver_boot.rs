@@ -28,11 +28,6 @@ use degenbot_submission::submission_ledger::NonceLane;
 
 use super::driver_loop::BackrunDriver;
 
-/// The chain the driver operates on; the connector index and the node
-/// resolvers (which read this chain's entry in the `nodes.*` tables) both use
-/// it.
-pub const CHAIN_ID: u64 = 1;
-
 /// The `eth_getLogs` chunk size for the ingress's per-pool backfill fetch:
 /// a long Db-to-head lag is closed in ~1000-block requests.
 const BACKFILL_LOG_CHUNK_BLOCKS: u64 = 1_000;
@@ -77,6 +72,25 @@ pub enum BackrunBootError {
     /// environment.
     #[error("backrun node join unresolved: {0}")]
     NodeJoin(String),
+    /// No layer named the chain this session runs against. The endpoint
+    /// tables and the connector index are both keyed by chain id, so a boot
+    /// that cannot name its chain has nothing to select and refuses rather
+    /// than assuming one.
+    #[error("backrun session chain unresolved: {0}")]
+    SessionChain(String),
+    /// The connector DB yielded no usable roster for the configured chain. A
+    /// database built for another chain reads as an EMPTY index (every load
+    /// filters by chain), so this refusal is the only thing a mismatched
+    /// boot would otherwise never see.
+    #[error("connector index for chain {chain_id} unusable at {path}: {reason}")]
+    ConnectorIndex {
+        /// The chain the boot needed rows for.
+        chain_id: u64,
+        /// The database the boot read.
+        path: String,
+        /// Why that database cannot serve the chain.
+        reason: String,
+    },
 }
 
 /// The driver's node join: the resolved chain-node HTTP endpoint and the provider
@@ -87,6 +101,11 @@ pub struct BackrunNodeJoin {
     pub rpc_url: String,
     /// The shared node join.
     pub provider: Arc<AlloyProvider>,
+    /// The chain this join was resolved for. The join carries it so every
+    /// downstream artifact (the connector index, the head feed) reads ONE
+    /// chain: a consumer that chose its own could disagree with the node the
+    /// driver signs against.
+    pub chain_id: u64,
 }
 
 impl BackrunStrategyBoot {
@@ -151,6 +170,13 @@ impl BackrunBootResources {
     pub fn connector_db(&self) -> Option<&Arc<DegenbotDb>> {
         self.connector_db.as_ref()
     }
+    /// The typed refusal this boot carries, if any. A refusing boot still
+    /// hands the host a coherent product; the driver reports the error at its
+    /// driving edge instead of running on facts the boot could not resolve.
+    #[must_use]
+    pub fn boot_error(&self) -> Option<&BackrunBootError> {
+        self.boot_error.as_ref()
+    }
 
     /// Build one concrete ecosystem product over the shared facts.
     ///
@@ -194,17 +220,15 @@ impl BackrunBootResources {
                 .as_ref()
                 .map(|provider| Arc::new(AlloySampleVerifier::new(Arc::clone(provider))) as _),
         );
-        let head_ws_url = degenbot_config::load_process_config()
-            .ok()
-            .and_then(|loaded| {
-                degenbot_config::resolve_node_subscription_uri(
-                    &loaded,
-                    CHAIN_ID,
-                    &degenbot_config::NodeOverrides::new(),
-                )
+        // The head feed reads the chain the join named, so the feed and the
+        // endpoint the driver signs against can never be two chains. A
+        // joinless boot names no chain and so carries no feed; it halts on
+        // its boot error regardless.
+        let head_ws_url = self.join.as_ref().and_then(|join| {
+            degenbot_config::load_process_config()
                 .ok()
-            })
-            .map(|resolved| resolved.value);
+                .and_then(|loaded| head_ws_url(&loaded, join.chain_id))
+        });
 
         let executor = cfg
             .executor
@@ -225,9 +249,28 @@ impl BackrunBootResources {
     }
 }
 
-/// Resolve the driver's node join from this process's own layers: the operator
-/// file the loader selected, the per-chain env families, and the declared
-/// defaults, with no explicit override (a driver is hosted, not typed at).
+/// The `newHeads` feed the subscription scope names for `chain_id`, or `None`
+/// when no layer supplies a feed-capable transport (the driver polls).
+pub(crate) fn head_ws_url(loaded: &degenbot_config::LoadedConfig, chain_id: u64) -> Option<String> {
+    degenbot_config::resolve_node_subscription_uri(
+        loaded,
+        chain_id,
+        &degenbot_config::NodeOverrides::new(),
+    )
+    .ok()
+    .map(|resolved| resolved.value)
+}
+
+/// Resolve the driver's node join, and the chain it is FOR, from the layers the
+/// host booted with: the operator file the host selected, the per-chain env
+/// families, and the declared defaults, plus the host's explicit chain argument
+/// when it has one.
+///
+/// The chain is resolved ONCE here, ahead of any endpoint, because both the
+/// endpoint tables and the connector index are keyed by it: a boot that chose a
+/// chain here would resolve another chain's node and then read a database for
+/// that same other chain. The resolved value rides out on the join, so no
+/// later consumer picks a second one.
 ///
 /// The scope is `request`, so an operator's local `nodes.ipc` entry is the
 /// endpoint this consumer gets. The client below is still the hardcoded HTTP
@@ -236,15 +279,21 @@ impl BackrunBootResources {
 ///
 /// # Errors
 ///
-/// [`BackrunBootError::NodeJoin`] when the config layers do not load, or when
-/// the chain's request endpoint has no layer at all; the message is the
-/// resolver's, which names every layer and transport consulted.
-pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> {
-    let loaded = degenbot_config::load_process_config()
-        .map_err(|error| BackrunBootError::NodeJoin(error.to_string()))?;
+/// [`BackrunBootError::SessionChain`] when no layer named the session chain
+/// (the message names every layer consulted), or
+/// [`BackrunBootError::NodeJoin`] when the resolved chain's request endpoint
+/// has no layer at all (the message is the resolver's, which names the chain,
+/// every layer, and every transport it consulted).
+pub fn resolve_backrun_node_join(
+    loaded: &degenbot_config::LoadedConfig,
+    cli_chain_id: Option<&str>,
+) -> Result<BackrunNodeJoin, BackrunBootError> {
+    let chain_id = degenbot_config::resolve_chain_id(loaded, cli_chain_id)
+        .map_err(|error| BackrunBootError::SessionChain(error.to_string()))?
+        .value;
     let rpc_url = degenbot_config::resolve_node_request_uri(
-        &loaded,
-        CHAIN_ID,
+        loaded,
+        chain_id,
         &degenbot_config::NodeOverrides::new(),
     )
     .map_err(|error| BackrunBootError::NodeJoin(error.to_string()))?
@@ -256,7 +305,11 @@ pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> 
     let provider = Arc::new(AlloyProvider::from_provider(Arc::new(
         alloy::providers::ProviderBuilder::default().connect_client(client),
     )));
-    Ok(BackrunNodeJoin { rpc_url, provider })
+    Ok(BackrunNodeJoin {
+        rpc_url,
+        provider,
+        chain_id,
+    })
 }
 
 /// The driver's boot recipe: the process config, the host-owned hub, and the
@@ -298,75 +351,159 @@ impl BackrunBoot {
 
 /// Resolve every backrun boot fact once for a process.
 ///
-/// The connector DB is opened exactly once. The returned value owns the
-/// held handle and the frozen registry; concrete ecosystem products only
-/// derive their kit and policy over those shared facts.
+/// The connector DB is opened exactly once, for the chain its node join named.
+/// The returned value owns the held handle and the frozen registry; concrete
+/// ecosystem products only derive their kit and policy over those shared facts.
+///
+/// A database that cannot serve that chain yields a product carrying a
+/// [`BackrunBootError::ConnectorIndex`] rather than an empty registry the
+/// driver would run on.
 #[must_use]
 pub async fn resolve_backrun_boot(
     config: Arc<degenbot_config::BotConfig>,
     db_path: PathBuf,
     join: BackrunNodeJoin,
 ) -> BackrunBootResources {
-    let empty_registry = || Arc::new(RouteRegistry::new(V2ConnectorIndex::default()));
+    let chain_id = join.chain_id;
+    // The roster is read for the chain the join resolved, and every load
+    // filters by it: a database built for another chain yields an EMPTY
+    // index rather than an error, so the emptiness check in the roster is
+    // what turns a wrong-chain database into a refusal instead of a
+    // well-formed, wrong boot.
+    let Ok(chain_column) = i64::try_from(chain_id) else {
+        return BackrunBootResources {
+            config,
+            join: Some(join),
+            connector_db: None,
+            registry: empty_registry(),
+            boot_error: Some(BackrunBootError::ConnectorIndex {
+                chain_id,
+                path: db_path.display().to_string(),
+                reason: OVERSIZED_CHAIN_COLUMN_REASON.to_string(),
+            }),
+        };
+    };
+    let roster = load_chain_roster(&db_path, chain_id, chain_column, &join, &config).await;
+    BackrunBootResources {
+        config,
+        join: Some(join),
+        connector_db: roster.connector_db,
+        registry: roster.registry,
+        boot_error: roster.boot_error,
+    }
+}
+
+/// The empty registry a refusing or database-less boot hands the host: a
+/// coherent product, never a fabricated roster.
+fn empty_registry() -> Arc<RouteRegistry> {
+    Arc::new(RouteRegistry::new(V2ConnectorIndex::default()))
+}
+
+/// Why an index with no rows is a refusal rather than an empty lane: the
+/// database answered, and what it holds is not this chain's connectors.
+const EMPTY_CHAIN_ROSTER_REASON: &str =
+    "the database holds no pools for this chain (a database built for another chain, or one \
+     whose discovery has not run)";
+
+/// Why a chain id the DB cannot address is a refusal rather than a truncated
+/// read: a partial chain is not a chain.
+const OVERSIZED_CHAIN_COLUMN_REASON: &str =
+    "the connector DB stores chain ids in a signed column that cannot hold this chain id";
+
+/// One chain's connector roster: the frozen registry, the held DB, and the
+/// refusal when the database cannot serve the chain. Every load filters by the
+/// same chain, so this value can never merge two chains' rows.
+struct ChainRoster {
+    registry: Arc<RouteRegistry>,
+    connector_db: Option<Arc<DegenbotDb>>,
+    boot_error: Option<BackrunBootError>,
+}
+
+/// Read `chain_id`'s roster out of the boot's database.
+///
+/// An absent or unopenable database degrades to the discovery-shut lane (a
+/// process that has not run discovery yet is a normal boot); a database that
+/// opens and then cannot answer for the configured chain is a refusal, because
+/// the only ways to get there are a wrong-chain database or a database whose
+/// schema the load cannot read.
+async fn load_chain_roster(
+    db_path: &Path,
+    chain_id: u64,
+    chain_column: i64,
+    join: &BackrunNodeJoin,
+    config: &degenbot_config::BotConfig,
+) -> ChainRoster {
     let mut connector_db = None;
     let mut registry = empty_registry();
-
+    let mut boot_error = None;
     if db_path.is_file() {
-        match DegenbotDb::open(&db_path) {
-            Ok((db, _)) => {
-                match V2ConnectorIndex::load(&db, 1).and_then(|mut ix| {
-                    ix.load_v3(&db, 1)?;
-                    ix.load_v4(&db, 1)?;
-                    ix.load_unsupported(&db, 1)?;
-                    Ok(ix)
-                }) {
-                    Ok(mut ix) => {
-                        if let Err(probe) = ix.verify_sampled_layouts(&join.provider).await {
-                            tracing::error!(
-                                probe = %probe,
-                                "V3 fork layout probe FAILED - lane disabled until the fork table is fixed"
-                            );
-                        } else {
-                            tracing::info!(
-                                "v3 fork layout probe: sampled layouts agree with the chain"
-                            );
-                            ix.set_ranker(Arc::new(OnChainLiquidityRanker::new(Arc::clone(
-                                &join.provider,
-                            ))));
-                            let next_registry = Arc::new(RouteRegistry::new(ix));
-                            tracing::info!(
-                                edges = next_registry.index().len(),
-                                "connector index loaded"
-                            );
-                            if config.strategy.mevblocker_backrun.rank_evidence
-                                || config.strategy.txpool_backrun.rank_evidence
+        match DegenbotDb::open(db_path) {
+            Ok((db, _)) => match load_connector_roster(&db, chain_column) {
+                Ok(ix) if ix.is_empty() => {
+                    tracing::error!(
+                        chain_id,
+                        path = %db_path.display(),
+                        "connector index has no rows for the configured chain - lane refused"
+                    );
+                    boot_error = Some(BackrunBootError::ConnectorIndex {
+                        chain_id,
+                        path: db_path.display().to_string(),
+                        reason: EMPTY_CHAIN_ROSTER_REASON.to_string(),
+                    });
+                }
+                Ok(mut ix) => {
+                    if let Err(probe) = ix.verify_sampled_layouts(&join.provider).await {
+                        tracing::error!(
+                            probe = %probe,
+                            "V3 fork layout probe FAILED - lane disabled until the fork table is fixed"
+                        );
+                    } else {
+                        tracing::info!(
+                            "v3 fork layout probe: sampled layouts agree with the chain"
+                        );
+                        ix.set_ranker(Arc::new(OnChainLiquidityRanker::new(Arc::clone(
+                            &join.provider,
+                        ))));
+                        let next_registry = Arc::new(RouteRegistry::new(ix));
+                        tracing::info!(
+                            edges = next_registry.index().len(),
+                            "connector index loaded"
+                        );
+                        if config.strategy.mevblocker_backrun.rank_evidence
+                            || config.strategy.txpool_backrun.rank_evidence
+                        {
+                            match degenbot_bot::connector_index::deep_pair_ranking_evidence(
+                                next_registry.index(),
+                                &db,
+                            )
+                            .await
                             {
-                                match degenbot_bot::connector_index::deep_pair_ranking_evidence(
-                                    next_registry.index(),
-                                    &db,
-                                )
-                                .await
-                                {
-                                    Ok(()) => tracing::info!(
-                                        "rank evidence: deep USDC/WETH pair tops the ranking"
-                                    ),
-                                    Err(error) => {
-                                        tracing::warn!(evidence = %error, "rank evidence FAILED");
-                                    }
+                                Ok(()) => tracing::info!(
+                                    "rank evidence: deep USDC/WETH pair tops the ranking"
+                                ),
+                                Err(error) => {
+                                    tracing::warn!(evidence = %error, "rank evidence FAILED");
                                 }
                             }
-                            registry = next_registry;
-                            connector_db = Some(Arc::new(db));
                         }
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            "connector index load failed - lane disabled"
-                        );
+                        registry = next_registry;
+                        connector_db = Some(Arc::new(db));
                     }
                 }
-            }
+                Err(reason) => {
+                    tracing::error!(
+                        chain_id,
+                        reason,
+                        path = %db_path.display(),
+                        "connector index load failed - lane refused"
+                    );
+                    boot_error = Some(BackrunBootError::ConnectorIndex {
+                        chain_id,
+                        path: db_path.display().to_string(),
+                        reason,
+                    });
+                }
+            },
             Err(error) => {
                 tracing::warn!(
                     error = %error,
@@ -379,13 +516,25 @@ pub async fn resolve_backrun_boot(
         tracing::debug!(path = %db_path.display(), "connector DB absent - lane disabled");
     }
 
-    BackrunBootResources {
-        config,
-        join: Some(join),
-        connector_db,
+    ChainRoster {
         registry,
-        boot_error: None,
+        connector_db,
+        boot_error,
     }
+}
+
+/// The whole connector roster for `chain_id`: the V2 scan, then its V3, V4 and
+/// unsupported-family additions. Every load filters by the same chain, so the
+/// roster is a single chain's view of the database and never a merge of two.
+fn load_connector_roster(db: &DegenbotDb, chain_id: i64) -> Result<V2ConnectorIndex, String> {
+    let mut ix = V2ConnectorIndex::load(db, chain_id).map_err(|error| error.to_string())?;
+    ix.load_v3(db, chain_id)
+        .map_err(|error| error.to_string())?;
+    ix.load_v4(db, chain_id)
+        .map_err(|error| error.to_string())?;
+    ix.load_unsupported(db, chain_id)
+        .map_err(|error| error.to_string())?;
+    Ok(ix)
 }
 
 impl BackrunBootResources {

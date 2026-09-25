@@ -92,6 +92,7 @@ async fn one_boot_product_shares_db_registry_graph_and_policy_facts() {
         super::BackrunNodeJoin {
             rpc_url: "http://127.0.0.1:1".to_string(),
             provider,
+            chain_id: 1,
         },
     )
     .await;
@@ -858,4 +859,291 @@ fn lane_root_scopes_the_quarantine_journal() {
         !global.starts_with(&lane),
         "an unscoped driver never writes into a lane namespace"
     );
+}
+
+/// An operator file naming chain 8453 with per-chain endpoint tables for both
+/// chains: the shape a multi-chain host's operator writes.
+const SESSION_8453_FILE: &str = concat!(
+    "[session]\n",
+    "chain_id = 8453\n",
+    "\n",
+    "[nodes]\n",
+    "http = { 1 = \"http://127.0.0.1:1\", 8453 = \"http://127.0.0.1:8453\" }\n",
+    "ws = { 1 = \"ws://127.0.0.1:1\", 8453 = \"ws://127.0.0.1:8453\" }\n",
+);
+
+/// The same endpoint tables with no named chain: endpoints without a chain are
+/// unselectable, because the tables are keyed by chain id.
+const NO_CHAIN_FILE: &str = concat!(
+    "[nodes]\n",
+    "http = { 1 = \"http://127.0.0.1:1\", 8453 = \"http://127.0.0.1:8453\" }\n",
+    "ws = { 1 = \"ws://127.0.0.1:1\", 8453 = \"ws://127.0.0.1:8453\" }\n",
+);
+
+/// The chain-1-only endpoint table: a host whose operator file still names
+/// mainnet while its database was built for another chain.
+const CHAIN_1_ENDPOINTS_FILE: &str = concat!(
+    "[session]\n",
+    "chain_id = 8453\n",
+    "\n",
+    "[nodes]\n",
+    "http = { 1 = \"http://127.0.0.1:1\" }\n",
+    "ws = { 1 = \"ws://127.0.0.1:1\" }\n",
+);
+
+/// The operator file loaded over no environment, so a test reads exactly the
+/// layers it wrote.
+fn layers_from(dir: &std::path::Path, body: &str) -> degenbot_config::LoadedConfig {
+    let path = dir.join("config.toml");
+    std::fs::write(&path, body).expect("write the operator file");
+    degenbot_config::BotConfigLoader::new()
+        .without_env()
+        .with_config_path(&path)
+        .load()
+        .expect("the operator file loads")
+}
+
+/// The node join names the chain it resolved for, and the head feed reads that
+/// same value: a 8453 session reaches the 8453 endpoints of both scopes while
+/// the chain-1 entries sit right beside them in the same file.
+#[test]
+
+fn the_node_join_names_the_session_chain_it_resolved() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let loaded = layers_from(dir.path(), SESSION_8453_FILE);
+
+    let join = super::resolve_backrun_node_join(&loaded, None).expect("the 8453 join resolves");
+
+    assert_eq!(join.chain_id, 8453, "the join carries its resolved chain");
+
+    // The request scope takes the most preferred feed-capable transport it
+
+    // accepts, which here is the ws entry; what the assertion pins is that it
+
+    // is chain 8453's entry and not the chain-1 row beside it in the same table.
+
+    assert_eq!(
+        join.rpc_url, "ws://127.0.0.1:8453",
+        "the request scope reads the 8453 entry"
+    );
+
+    assert_eq!(
+        crate::backrun_driver::driver_boot::head_ws_url(&loaded, join.chain_id).as_deref(),
+        Some("ws://127.0.0.1:8453"),
+        "the head feed reads the same chain's subscription entry"
+    );
+}
+
+/// An explicit argument outranks the file layer, and the endpoints are then
+/// read from the chain that argument named.
+#[test]
+
+fn an_explicit_chain_argument_outranks_the_file_layer() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let loaded = layers_from(dir.path(), SESSION_8453_FILE);
+
+    let join =
+        super::resolve_backrun_node_join(&loaded, Some("1")).expect("the chain-1 join resolves");
+
+    assert_eq!(join.chain_id, 1);
+
+    assert_eq!(
+        join.rpc_url, "ws://127.0.0.1:1",
+        "the override names the chain read from the table"
+    );
+}
+
+/// A boot that cannot name its chain is a typed refusal. There is no
+/// mainnet-shaped default to fall into, because every downstream artifact (the
+/// endpoint tables, the connector index) is keyed by chain.
+#[test]
+
+fn a_boot_that_cannot_name_its_chain_refuses() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let loaded = layers_from(dir.path(), NO_CHAIN_FILE);
+
+    let error = super::resolve_backrun_node_join(&loaded, None)
+        .err()
+        .expect("an unnamed chain never yields a join");
+
+    assert!(
+        matches!(error, super::BackrunBootError::SessionChain(_)),
+        "the refusal is the chain, not the endpoint: {error:?}"
+    );
+}
+
+/// A named chain with no endpoint for it is a refusal whose message names the
+/// chain the boot needed — not a quiet fall-through to another chain's entry.
+#[test]
+
+fn an_unresolved_endpoint_names_the_chain_the_boot_needed() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let loaded = layers_from(dir.path(), CHAIN_1_ENDPOINTS_FILE);
+
+    let error = super::resolve_backrun_node_join(&loaded, None)
+        .err()
+        .expect("8453 has no endpoint in a chain-1-only file");
+
+    let message = error.to_string();
+
+    assert!(
+        message.contains("8453"),
+        "the message names the chain it needed: {message}"
+    );
+
+    assert!(
+        !message.contains("127.0.0.1:1"),
+        "the refusal never points at another chain's endpoint: {message}"
+    );
+}
+
+/// A Base session over a Base-built database loads the Base rows: the registry
+/// the driver runs on is the configured chain's, at the same shape the
+/// mainnet boot produced.
+#[tokio::test]
+
+async fn a_configured_chain_loads_its_own_connector_rows() {
+    use alloy::primitives::address;
+
+    const USDC_WETH_V2: alloy::primitives::Address =
+        address!("b4e16d0168e52d35cacd2c6185b44281ec28c9dc");
+
+    const USDC: alloy::primitives::Address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+
+    const WETH: alloy::primitives::Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let db_path = dir.path().join("connectors.db");
+
+    seed_v2_connector(&db_path, 8453, USDC_WETH_V2, USDC, WETH);
+
+    let resources = super::resolve_backrun_boot(
+        Arc::new(degenbot_config::BotConfig::default()),
+        db_path,
+        join_for_chain(8453).await,
+    )
+    .await;
+
+    assert!(
+        resources.boot_error().is_none(),
+        "a database built for the configured chain is not a refusal: {:?}",
+        resources.boot_error()
+    );
+
+    let strategy = resources.strategy_boot(super::BackrunEcosystem::Txpool);
+
+    assert!(
+        strategy.registry().is_registered_pool(&USDC_WETH_V2),
+        "the 8453 row is the row the driver serves"
+    );
+
+    assert_eq!(strategy.registry().registered_pool_count(), 1);
+}
+
+/// The defect this fixes: a 8453 session pointed at a database that holds only
+/// chain-1 rows must refuse and NAME 8453. Reading chain 1's rows here is a
+/// silent, well-formed, wrong-chain boot.
+#[tokio::test]
+
+async fn a_foreign_chain_database_refuses_and_names_the_chain() {
+    use alloy::primitives::address;
+
+    const USDC_WETH_V2: alloy::primitives::Address =
+        address!("b4e16d0168e52d35cacd2c6185b44281ec28c9dc");
+
+    const USDC: alloy::primitives::Address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+
+    const WETH: alloy::primitives::Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let db_path = dir.path().join("connectors.db");
+
+    seed_v2_connector(&db_path, 1, USDC_WETH_V2, USDC, WETH);
+
+    let resources = super::resolve_backrun_boot(
+        Arc::new(degenbot_config::BotConfig::default()),
+        db_path,
+        join_for_chain(8453).await,
+    )
+    .await;
+
+    let error = resources
+        .boot_error()
+        .expect("chain-1 rows are not a Base session's connector index")
+        .clone();
+
+    let message = error.to_string();
+
+    assert!(
+        message.contains("8453"),
+        "the refusal names the chain it needed: {message}"
+    );
+
+    assert!(
+        matches!(error, super::BackrunBootError::ConnectorIndex { .. }),
+        "an empty index for the configured chain is the refusal: {error:?}"
+    );
+
+    let strategy = resources.strategy_boot(super::BackrunEcosystem::Txpool);
+
+    assert!(
+        !strategy.registry().is_registered_pool(&USDC_WETH_V2),
+        "another chain's rows never enter the registry"
+    );
+
+    assert_eq!(strategy.registry().registered_pool_count(), 0);
+}
+
+/// A provider that dials nothing, over a join that names `chain_id`.
+async fn join_for_chain(chain_id: u64) -> super::BackrunNodeJoin {
+    super::BackrunNodeJoin {
+        rpc_url: "http://127.0.0.1:1".to_string(),
+
+        provider: Arc::new(
+            AlloyProvider::new("http://127.0.0.1:1", DEFAULT_MAX_RETRIES)
+                .await
+                .expect("provider builds without a node"),
+        ),
+
+        chain_id,
+    }
+}
+
+/// One canonical USDC/WETH V2 connector under the exchange that chain's rows
+/// name, written through the same schema the discovery writer uses.
+fn seed_v2_connector(
+    db_path: &std::path::Path,
+    chain_id: i64,
+    pool: alloy::primitives::Address,
+    token0: alloy::primitives::Address,
+    token1: alloy::primitives::Address,
+) {
+    let (db, _) = degenbot_db::DegenbotDb::open_for_writes(db_path).expect("seed db");
+
+    db.lock()
+
+        .execute("INSERT INTO exchanges (id, chain_id, name, active, last_update_block, factory, deployer) VALUES (1, ?1, 'uniswap_v2', 1, NULL, '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f', NULL)", (chain_id,))
+        .expect("seed exchange");
+
+    db.upsert_v2_pools(
+        chain_id,
+        "uniswap_v2",
+        1,
+        10_000,
+        &[degenbot_db::V2PoolRowInput {
+            address: pool,
+            token0_address: token0,
+            token1_address: token1,
+            fee_token0: 300,
+            fee_token1: 300,
+            stable: None,
+        }],
+    )
+    .expect("seed v2 connector");
 }
