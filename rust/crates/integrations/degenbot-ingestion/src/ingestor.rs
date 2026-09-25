@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use alloy::rpc::types::{Filter, Log};
 use degenbot_core::errors::ProviderResult;
-use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::provider::{AlloyProvider, EthBlock};
 use futures_util::{stream, Stream, StreamExt};
 use tokio::time::timeout;
 
@@ -151,6 +151,17 @@ impl WsIngestor {
     /// Provider error (transport / rate-limit).
     pub async fn latest_block(&self) -> ProviderResult<u64> {
         self.provider.get_block_number().await
+    }
+
+    /// Fetch a full block through the same provider that owns the live
+    /// subscriptions. The Tauri feed uses this to enrich `newHeads` with the
+    /// transaction count, which is not part of an Ethereum block header.
+    ///
+    /// # Errors
+    ///
+    /// Provider error (transport / rate-limit).
+    pub async fn get_block(&self, block_number: u64) -> ProviderResult<Option<EthBlock>> {
+        self.provider.get_block(block_number).await
     }
 
     /// Fetch the relevant-topic logs of `[from, to]` INCLUSIVE via

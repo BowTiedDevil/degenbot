@@ -1,0 +1,19 @@
+{
+  "name": "degenbot-tauri-poc",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "tauri": "node scripts/tauri.mjs",
+    "appimage": "node scripts/build-appimage.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "vite": "^7.0.0"
+  }
+}

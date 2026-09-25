@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>degenbot feed PoC</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">DEGENBOT / RUST FEED</p>
+          <h1>Mainnet block stream</h1>
+        </div>
+        <div class="connection">
+          <span id="status-dot" class="status-dot stopped"></span>
+          <span id="status-label">starting</span>
+        </div>
+      </header>
+
+      <section class="summary-grid" aria-label="Feed summary">
+        <article class="summary-card">
+          <span class="summary-label">Latest block</span>
+          <strong id="latest-block">—</strong>
+        </article>
+        <article class="summary-card">
+          <span class="summary-label">Transactions</span>
+          <strong id="latest-transactions">—</strong>
+        </article>
+        <article class="summary-card">
+          <span class="summary-label">Logs in block</span>
+          <strong id="latest-logs">—</strong>
+        </article>
+        <article class="summary-card">
+          <span class="summary-label">Base fee</span>
+          <strong id="latest-base-fee">—</strong>
+        </article>
+      </section>
+
+      <section id="error-panel" class="error-panel hidden" role="alert">
+        <strong>Feed error</strong>
+        <span id="error-message"></span>
+      </section>
+
+      <section class="table-panel">
+        <div class="table-heading">
+          <div>
+            <p class="eyebrow">LIVE HEADERS</p>
+            <h2>Recent blocks</h2>
+          </div>
+          <span id="block-count" class="muted">0 blocks</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Block</th>
+                <th>Age</th>
+                <th>Transactions</th>
+                <th>Logs</th>
+                <th>Base fee</th>
+                <th>Next base fee</th>
+                <th>Gas used / limit</th>
+              </tr>
+            </thead>
+            <tbody id="block-rows">
+              <tr class="empty-row"><td colspan="7">Waiting for the first block header…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="table-panel log-panel">
+        <div class="table-heading">
+          <div>
+            <p class="eyebrow">LIVE LOGS</p>
+            <h2>Recent log deliveries</h2>
+          </div>
+          <span id="log-count" class="muted">0 logs</span>
+        </div>
+        <div class="table-scroll log-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Block</th>
+                <th>Index</th>
+                <th>Address</th>
+                <th>Topic 0</th>
+                <th>Removed</th>
+              </tr>
+            </thead>
+            <tbody id="log-rows">
+              <tr class="empty-row"><td colspan="5">Waiting for log deliveries…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
