@@ -69,7 +69,7 @@ def _base_request(database_path: pathlib.Path) -> PathfindingRequest:
         start_tokens=[WETH_ADDR],
         end_tokens=[WETH_ADDR],
         max_depth=2,
-        pool_types=[UniswapV2PoolTable],
+        pool_types=[PoolKind.V2],
         database_path=database_path,
     )
 
@@ -491,7 +491,7 @@ async def test_missing_start_token_raises_at_first_next(db: pathlib.Path) -> Non
             start_tokens=[ZERO_ADDRESS],
             end_tokens=[WETH_ADDR],
             max_depth=2,
-            pool_types=[UniswapV2PoolTable],
+            pool_types=[PoolKind.V2],
         )
     )
     with pytest.raises(DegenbotValueError, match="was not found in the database"):

@@ -1348,7 +1348,7 @@ class TestPathRegistrationPipeline:
 
     @staticmethod
     def _make_pipeline(fail_on_register: Exception | None = None):
-        from degenbot.database.models.pools import UniswapV2PoolTableBase
+        from degenbot.pathfinding import PoolKind
         from degenbot.runner.build_paths import (
             ConstructionContext,
             PathRegistrationPipeline,
@@ -1378,7 +1378,7 @@ class TestPathRegistrationPipeline:
         # a call-site that drops run()'s bot (and even the local `ctx` ref)
         # still has everything construction needs.
         assert pipeline.constr_bot is bot
-        return pipeline, reg, UniswapV2PoolTableBase
+        return pipeline, reg, PoolKind.V2
 
     async def test_enqueue_path_registers_single_path(self) -> None:
         pipeline, reg, t_base = self._make_pipeline()

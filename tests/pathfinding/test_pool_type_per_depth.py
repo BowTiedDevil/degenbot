@@ -9,8 +9,12 @@ import pytest
 
 from degenbot.config import _init_config
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
-from degenbot.database.models.pools import UniswapV2PoolTable, UniswapV3PoolTable
-from degenbot.pathfinding import PathfindingRequest, find_paths, find_paths_async
+from degenbot.pathfinding import (
+    PathfindingRequest,
+    PoolKind,
+    find_paths,
+    find_paths_async,
+)
 from degenbot.types.chain import ChainId
 
 BASE_CHAIN_ID = ChainId.BASE
@@ -37,8 +41,8 @@ class TestPoolTypePerDepthBounds:
         only had 2 entries, raising IndexError.
         """
         pool_type_per_depth = [
-            {UniswapV2PoolTable},  # depth 0: V2
-            {UniswapV3PoolTable},  # depth 1: V3
+            {PoolKind.V2},  # depth 0: V2
+            {PoolKind.V3},  # depth 1: V3
         ]
         # This must not raise IndexError
         paths = list(
@@ -49,7 +53,7 @@ class TestPoolTypePerDepthBounds:
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
                     max_depth=3,  # exceeds pool_type_per_depth length
-                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_types=[PoolKind.V2, PoolKind.V3],
                     pool_type_per_depth=pool_type_per_depth,
                 )
             )
@@ -61,8 +65,8 @@ class TestPoolTypePerDepthBounds:
     def test_two_hop_filter_with_max_depth_none(self, db):
         """2-hop pool_type_per_depth with max_depth=None must not IndexError."""
         pool_type_per_depth = [
-            {UniswapV2PoolTable},
-            {UniswapV3PoolTable},
+            {PoolKind.V2},
+            {PoolKind.V3},
         ]
         # max_depth=None would normally explore infinitely, but
         # pool_type_per_depth should cap it at 2 hops
@@ -74,7 +78,7 @@ class TestPoolTypePerDepthBounds:
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
                     max_depth=None,
-                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_types=[PoolKind.V2, PoolKind.V3],
                     pool_type_per_depth=pool_type_per_depth,
                 )
             )
@@ -85,8 +89,8 @@ class TestPoolTypePerDepthBounds:
     async def test_two_hop_filter_async(self, db):
         """Async version of the 2-hop filter test."""
         pool_type_per_depth = [
-            {UniswapV2PoolTable},
-            {UniswapV3PoolTable},
+            {PoolKind.V2},
+            {PoolKind.V3},
         ]
         paths = [
             path
@@ -97,7 +101,7 @@ class TestPoolTypePerDepthBounds:
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
                     max_depth=3,
-                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_types=[PoolKind.V2, PoolKind.V3],
                     pool_type_per_depth=pool_type_per_depth,
                 )
             )
@@ -108,9 +112,9 @@ class TestPoolTypePerDepthBounds:
     def test_three_hop_filter_respects_depth(self, db):
         """3-hop pool_type_per_depth should produce only 3-hop paths."""
         pool_type_per_depth = [
-            {UniswapV2PoolTable},  # depth 0
-            {UniswapV2PoolTable},  # depth 1
-            {UniswapV3PoolTable},  # depth 2
+            {PoolKind.V2},  # depth 0
+            {PoolKind.V2},  # depth 1
+            {PoolKind.V3},  # depth 2
         ]
         paths = list(
             find_paths(
@@ -120,7 +124,7 @@ class TestPoolTypePerDepthBounds:
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
                     max_depth=3,
-                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_types=[PoolKind.V2, PoolKind.V3],
                     pool_type_per_depth=pool_type_per_depth,
                 )
             )
@@ -131,8 +135,8 @@ class TestPoolTypePerDepthBounds:
     def test_filter_shorter_than_max_depth_cuts_early(self, db):
         """pool_type_per_depth of length 2 should not produce 3-hop paths."""
         pool_type_per_depth = [
-            {UniswapV2PoolTable},
-            {UniswapV3PoolTable},
+            {PoolKind.V2},
+            {PoolKind.V3},
         ]
         paths = list(
             find_paths(
@@ -142,7 +146,7 @@ class TestPoolTypePerDepthBounds:
                     start_tokens=[WETH_BASE_ADDRESS],
                     end_tokens=[WETH_BASE_ADDRESS],
                     max_depth=3,
-                    pool_types=[UniswapV2PoolTable, UniswapV3PoolTable],
+                    pool_types=[PoolKind.V2, PoolKind.V3],
                     pool_type_per_depth=pool_type_per_depth,
                 )
             )

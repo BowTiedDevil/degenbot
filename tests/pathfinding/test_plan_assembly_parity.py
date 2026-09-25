@@ -1,27 +1,24 @@
-"""Parity oracle for the Rust-ported pathfinding plan assembly.
+"""Parity oracle for the Rust-owned pathfinding plan and step seams.
 
-Pins the behavior formerly implemented by the Python ``_prepare_traversal_plan``,
-``_convert_pool_type_filter``, and ``_build_path_steps`` helpers, now owned by
-the Rust core seams (``prepare_traversal_plan`` / ``convert_pool_type_filter`` /
-``PathStepBuilder``). Fixture-driven; no live RPC, no anvil.
+The public boundary consumes typed ``PoolKind`` values only and preserves V2/V3
+address identity plus V4 manager-address and pool-hash identity.
 """
 
 from __future__ import annotations
 
-from degenbot.database.models.pools import (
-    SushiswapV3PoolTable,
-    UniswapV2PoolTable,
-    UniswapV2PoolTableBase,
-    UniswapV3PoolTable,
-    UniswapV4PoolTable,
-)
 from degenbot.pathfinding import (
+    PathfindingRequest,
     PathStep,
     PathStepBuilder,
     PoolKind,
     convert_pool_type_filter,
     prepare_traversal_plan,
 )
+
+
+def test_pathfinding_request_defaults_to_every_supported_family() -> None:
+    default = PathfindingRequest.__dataclass_fields__["pool_types"].default
+    assert default == (PoolKind.V2, PoolKind.V3, PoolKind.V4)
 
 
 def test_product_plan_is_forward_only() -> None:
@@ -35,8 +32,7 @@ def test_product_plan_is_forward_only() -> None:
 
 
 def test_shared_boundaries_consolidate_reverse() -> None:
-    """Tokens in both boundary sets merge ``(a, b)`` + ``(b, a)`` into one
-    ``FORWARD_AND_REVERSE`` traversal."""
+    """Tokens in both boundary sets merge forward and reverse traversals."""
     assert prepare_traversal_plan([1, 2], [1, 2], 2, None) == [
         (1, 1, False, 2),
         (1, 2, True, 2),
@@ -58,55 +54,29 @@ def test_boundary_ids_are_deduplicated() -> None:
     ]
 
 
-def test_convert_filter_maps_classes_to_typed_kinds() -> None:
+def test_convert_filter_preserves_typed_kinds() -> None:
     assert convert_pool_type_filter(None) is None
     converted = convert_pool_type_filter(
-        [{UniswapV2PoolTable}, None, {UniswapV3PoolTable, UniswapV4PoolTable}],
+        [{PoolKind.V2}, None, {PoolKind.V3, PoolKind.V4}],
     )
     assert converted == [{PoolKind.V2}, None, {PoolKind.V3, PoolKind.V4}]
 
 
-def test_builder_recovers_concrete_subclass() -> None:
-    """The builder maps a raw DB ``kind`` string to the exact concrete table
-    class in ``pool_types`` — not merely the family base."""
+def test_builder_preserves_all_family_identities() -> None:
+    v2_address = "0x" + "22" * 20
+    v3_address = "0x" + "33" * 20
+    v4_manager = "0x" + "44" * 20
+    v4_hash = "0x" + "ab" * 32
     builder = PathStepBuilder(
-        pool_types=[SushiswapV3PoolTable, UniswapV2PoolTable],
-        pool_id_to_kind_string={5: "sushiswap_v3", 6: "uniswap_v2"},
-        v2v3_addresses={5: "0x" + "55" * 20, 6: "0x" + "66" * 20},
-        v4_lookups={},
+        v2v3_addresses={2: v2_address, 3: v3_address},
+        v4_lookups={4: (v4_manager, v4_hash)},
         step_cls=PathStep,
     )
-    steps = builder.build([(5, PoolKind.V3), (6, PoolKind.V2)])
-    assert steps[0].type is SushiswapV3PoolTable
-    assert steps[1].type is UniswapV2PoolTable
-    assert steps[0].hash is None
 
+    steps = builder.build([(2, PoolKind.V2), (3, PoolKind.V3), (4, PoolKind.V4)])
 
-def test_builder_family_fallback_for_absent_concrete_class() -> None:
-    """A pool whose concrete ``kind`` string is not in ``pool_types`` recovers
-    its family-base class."""
-    builder = PathStepBuilder(
-        pool_types=[UniswapV2PoolTable],
-        pool_id_to_kind_string={9: "some_unlisted_v2"},
-        v2v3_addresses={9: "0x" + "99" * 20},
-        v4_lookups={},
-        step_cls=PathStep,
-    )
-    (step,) = builder.build([(9, PoolKind.V2)])
-    assert step.type is UniswapV2PoolTableBase
-
-
-def test_builder_v4_uses_manager_address_and_hash() -> None:
-    manager = "0x" + "aa" * 20
-    pool_hash = "0xdeadbeef"
-    builder = PathStepBuilder(
-        pool_types=[UniswapV4PoolTable],
-        pool_id_to_kind_string={(1 << 32) + 3: "uniswap_v4"},
-        v2v3_addresses={},
-        v4_lookups={(1 << 32) + 3: (manager, pool_hash)},
-        step_cls=PathStep,
-    )
-    (step,) = builder.build([((1 << 32) + 3, PoolKind.V4)])
-    assert step.type is UniswapV4PoolTable
-    assert step.address == manager
-    assert step.hash == pool_hash
+    assert [(step.type, step.address, step.hash) for step in steps] == [
+        (PoolKind.V2, v2_address, None),
+        (PoolKind.V3, v3_address, None),
+        (PoolKind.V4, v4_manager, v4_hash),
+    ]

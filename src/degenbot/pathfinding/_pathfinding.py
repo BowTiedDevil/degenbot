@@ -13,7 +13,6 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.pools import LiquidityPoolTable, UniswapV4PoolTable
 from degenbot.db import db_resolve_token_ids
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
@@ -47,7 +46,7 @@ class PathStep:
     """PathStep class."""
 
     address: ChecksummedAddress
-    type: type[LiquidityPoolTable | UniswapV4PoolTable]
+    type: PoolKind
     hash: str | None = None
 
 
@@ -61,7 +60,7 @@ class _PreparedGraph:
 
 def _prepare_graph(
     chain_id: int,
-    pool_types: Sequence[type],
+    pool_types: Sequence[PoolKind],
     database_path: pathlib.Path,
     allowed_intermediate_tokens: set[TokenId] | None = None,
 ) -> _PreparedGraph:
@@ -86,8 +85,6 @@ def _prepare_graph(
         logger.debug(f"Token whitelist applied: {len(candidate_tokens)} candidate tokens")
 
     step_builder = PathStepBuilder(
-        pool_types=list(pool_types),
-        pool_id_to_kind_string=raw["pool_id_to_kind_string"],
         v2v3_addresses=raw["v2v3_addresses"],
         v4_lookups=raw["v4_lookups"],
         step_cls=PathStep,
@@ -121,8 +118,8 @@ class PathfindingRequest:
         database_path: File-backed SQLite database opened by Rust read seams.
         min_depth: Minimum hops in yielded paths.
         max_depth: Optional maximum hops in yielded paths.
-        pool_types: Pool-table classes to include (default V2/V3 + V4).
-        pool_type_per_depth: Optional per-depth allowed pool-type sets; a
+        pool_types: Typed pool families to include (default V2/V3/V4).
+        pool_type_per_depth: Optional per-depth allowed pool-family sets; a
             ``None`` entry allows all kinds at that depth.
         allowed_intermediate_tokens: Optional intermediate-token whitelist.
 
@@ -134,8 +131,8 @@ class PathfindingRequest:
     database_path: pathlib.Path
     min_depth: int = 2
     max_depth: int | None = None
-    pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable)
-    pool_type_per_depth: Sequence[set[type] | None] | None = None
+    pool_types: Sequence[PoolKind] = (PoolKind.V2, PoolKind.V3, PoolKind.V4)
+    pool_type_per_depth: Sequence[set[PoolKind] | None] | None = None
     allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None
 
 

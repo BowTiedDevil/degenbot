@@ -34,7 +34,6 @@ import pytest
 
 from degenbot._ffi import FleetIntakeFaultedError
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.pools import UniswapV3PoolTable, UniswapV4PoolTable
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
@@ -42,6 +41,7 @@ from degenbot.exceptions import (
     PathRejectedError,
     VerificationMismatchError,
 )
+from degenbot.pathfinding import PoolKind
 from degenbot.runner.build_paths import (
     REG_INTAKE_WINDOW,
     PathRegistrationPipeline,
@@ -143,9 +143,9 @@ class _ScriptedPath:
 
 @dataclass
 class _OpaqueStep:
-    """A step whose `type` is not a pool table — the unit skips it."""
+    """A path step carrying a typed pool family."""
 
-    type: type
+    type: PoolKind
     address: str
     hash: object | None = None
 
@@ -415,8 +415,8 @@ def _pipeline_over_registry(
 def _closed_v3_cycle_steps() -> list[_OpaqueStep]:
     """WETH->T1 (pool A) then T1->WETH (pool B): the cycle closes."""
     return [
-        _OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None),
-        _OpaqueStep(type=UniswapV3PoolTable, address=POOL_B, hash=None),
+        _OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None),
+        _OpaqueStep(type=PoolKind.V3, address=POOL_B, hash=None),
     ]
 
 
@@ -555,14 +555,14 @@ def test_verify_lifecycle_runs_once_per_pool_across_sightings() -> None:
     pipeline = _pipeline_over_registry_three_pools(registry)
 
     first = pipeline._registration_unit([
-        _OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None),
-        _OpaqueStep(type=UniswapV3PoolTable, address=POOL_B, hash=None),
+        _OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None),
+        _OpaqueStep(type=PoolKind.V3, address=POOL_B, hash=None),
     ])
     assert first.kind == "registered"
 
     shared_hop = [
-        _OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None),
-        _OpaqueStep(type=UniswapV3PoolTable, address=POOL_C, hash=None),
+        _OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None),
+        _OpaqueStep(type=PoolKind.V3, address=POOL_C, hash=None),
     ]
     second = pipeline._registration_unit(shared_hop)
     assert second.kind == "register-fail"
@@ -605,8 +605,8 @@ def test_stable_build_refusal_memoizes_the_pool() -> None:
     )
     pipeline, _ = _pipeline_with_bot(bot)
     steps = [
-        _OpaqueStep(type=UniswapV4PoolTable, address=None, hash=0xDEAD),
-        _OpaqueStep(type=UniswapV4PoolTable, address=None, hash=0xBEEF),
+        _OpaqueStep(type=PoolKind.V4, address=None, hash=0xDEAD),
+        _OpaqueStep(type=PoolKind.V4, address=None, hash=0xBEEF),
     ]
 
     first = pipeline._registration_unit(steps)
@@ -821,7 +821,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
         build_managed_pool=_build_managed_pool,
     )
     pipeline3, _ = _pipeline_with_bot(bot)
-    v4_steps = [_OpaqueStep(type=UniswapV4PoolTable, address=None, hash=0xDEAD)]
+    v4_steps = [_OpaqueStep(type=PoolKind.V4, address=None, hash=0xDEAD)]
     assert pipeline3._registration_unit(v4_steps).tag == "v4-hook-rejected"
     key = pipeline3._ledger.pool_memo_key(v4_steps[0], "V4")
     assert pipeline3._ledger.unregistrable_record(key) is not None, "unregistrable-pool memo"
@@ -874,7 +874,7 @@ def test_impostor_class_name_is_never_memoized() -> None:
 
     bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
     pipeline, _ = _pipeline_with_bot(bot)
-    steps = [_OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None)]
+    steps = [_OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)]
 
     assert pipeline._registration_unit(steps).kind == "skip"
     assert pipeline._registration_unit(steps).kind == "skip"
@@ -895,7 +895,7 @@ def test_real_typed_stable_refusal_is_memoized() -> None:
 
     bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
     pipeline, _ = _pipeline_with_bot(bot)
-    steps = [_OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None)]
+    steps = [_OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)]
 
     assert pipeline._registration_unit(steps).kind == "skip"
     assert pipeline._registration_unit(steps).kind == "skip"
@@ -918,7 +918,7 @@ def test_transient_build_skip_tag_uses_the_bounded_vocabulary() -> None:
     bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
     pipeline, _ = _pipeline_with_bot(bot)
     outcome = pipeline._registration_unit([
-        _OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None)
+        _OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)
     ])
     assert outcome.tag in {member.value for member in RegistrationOutcome}
     assert outcome.detail is not None

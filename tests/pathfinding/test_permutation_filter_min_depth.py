@@ -34,7 +34,12 @@ from degenbot.database.operations import (
     create_new_sqlite_database,
     get_scoped_sqlite_session,
 )
-from degenbot.pathfinding import PathfindingRequest, find_paths, find_paths_async
+from degenbot.pathfinding import (
+    PathfindingRequest,
+    PoolKind,
+    find_paths,
+    find_paths_async,
+)
 from degenbot.types.chain import ChainId
 
 CHAIN = ChainId.ETH  # value 1; arbitrary but conventional
@@ -122,7 +127,7 @@ def db(tmp_path):
 
 
 def _v2v2v2_filter():
-    return [{UniswapV2PoolTable}, {UniswapV2PoolTable}, {UniswapV2PoolTable}]
+    return [{PoolKind.V2}, {PoolKind.V2}, {PoolKind.V2}]
 
 
 class TestPermutationFilterMinDepth:
@@ -150,7 +155,7 @@ class TestPermutationFilterMinDepth:
                     start_tokens=[WETH_ADDR],
                     end_tokens=[WETH_ADDR],
                     max_depth=3,
-                    pool_types=[UniswapV2PoolTable],
+                    pool_types=[PoolKind.V2],
                     pool_type_per_depth=_v2v2v2_filter(),
                 )
             )
@@ -184,7 +189,7 @@ class TestPermutationFilterMinDepth:
                     start_tokens=[WETH_ADDR],
                     end_tokens=[WETH_ADDR],
                     max_depth=3,
-                    pool_types=[UniswapV2PoolTable],
+                    pool_types=[PoolKind.V2],
                     pool_type_per_depth=_v2v2v2_filter(),
                 )
             )

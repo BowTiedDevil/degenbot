@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from degenbot.pathfinding import PoolKind
 from degenbot.runner.build_paths import (
     BuildPathsOptions,
     _parse_permutation_filter,
@@ -65,8 +66,12 @@ class TestPermutation:
                 permutation_filter=frozenset({"V3-V4-V3"}),
             ),
         )
-        assert pipe.pool_type_per_depth == _parse_permutation_filter({"V3-V4-V3"})
-        assert pipe.pool_types == _pool_types_from_filter({"V3-V4-V3"})
+        assert pipe.pool_type_per_depth == [
+            {PoolKind.V3},
+            {PoolKind.V4},
+            {PoolKind.V3},
+        ]
+        assert set(pipe.pool_types) == {PoolKind.V3, PoolKind.V4}
 
     async def test_build_paths_without_filter_uses_all_types(self) -> None:
         pipe = _FakePipeline()
@@ -80,7 +85,7 @@ class TestPermutation:
             ),
         )
         assert pipe.pool_type_per_depth is None
-        assert pipe.pool_types == _pool_types_from_filter(None)
+        assert set(pipe.pool_types) == {PoolKind.V2, PoolKind.V3, PoolKind.V4}
 
     def test_driver_constants_has_no_path_permutation_global(self) -> None:
         import degenbot.runner._driver_constants as dc

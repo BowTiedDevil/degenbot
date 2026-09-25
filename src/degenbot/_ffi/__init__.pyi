@@ -281,10 +281,10 @@ class PoolKind:
     V3: PoolKind
     V4: PoolKind
 
-def classify_pool_kind(pool_type: type) -> PoolKind: ...
-def classify_pool_kinds(pool_types: Sequence[type]) -> set[PoolKind]: ...
+def classify_pool_kind(kind: PoolKind) -> PoolKind: ...
+def classify_pool_kinds(kinds: Sequence[PoolKind]) -> set[PoolKind]: ...
 def convert_pool_type_filter(
-    pool_type_per_depth: Sequence[set[type] | None] | None,
+    pool_type_per_depth: Sequence[set[PoolKind] | None] | None,
 ) -> list[set[PoolKind] | None] | None: ...
 def prepare_traversal_plan(
     start_token_ids: list[int],
@@ -298,8 +298,6 @@ def prepare_traversal_plan(
 class PathStepBuilder:
     def __init__(
         self,
-        pool_types: list[type],
-        pool_id_to_kind_string: dict[int, str],
         v2v3_addresses: dict[int, str],
         v4_lookups: dict[int, tuple[str, str]],
         step_cls: type,

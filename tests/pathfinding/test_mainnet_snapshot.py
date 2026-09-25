@@ -25,8 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from degenbot.database.models.pools import LiquidityPoolTable, UniswapV4PoolTable
-from degenbot.pathfinding import PathfindingRequest, find_paths
+from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 SNAPSHOT_PATH = FIXTURE_DIR / "mainnet_snapshot.db"
@@ -96,7 +95,7 @@ def test_depth2_all_kinds_matches_baseline(tmp_path: Path) -> None:
             start_tokens=[WETH_MAINNET, NATIVE_MAINNET],
             end_tokens=[WETH_MAINNET, NATIVE_MAINNET],
             max_depth=2,
-            pool_types=[LiquidityPoolTable, UniswapV4PoolTable],
+            pool_types=[PoolKind.V2, PoolKind.V3, PoolKind.V4],
         )
     )
     assert count == expected["path_count"]

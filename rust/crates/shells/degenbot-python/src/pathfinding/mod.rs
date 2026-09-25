@@ -70,42 +70,31 @@ impl PoolKind {
     }
 }
 
-/// Map a Python pool-table class to its [`PoolKind`] family.
+/// Validate and return one typed Python [`PoolKind`] value.
 ///
-/// The classification is ordered most-specific first (`UniswapV3PoolTableBase`
-/// and `UniswapV2PoolTableBase` both derive from `LiquidityPoolTable`). An
-/// unmapped family aborts loudly — at a use site it is an infrastructure gap,
-/// never a silent omission.
+/// Unsupported values retain the driver's `ValueError` contract without
+/// consulting model metadata.
 ///
 /// # Errors
 ///
-/// Returns `PyValueError` when `pool_type` is not a recognized pool family.
+/// Returns `DegenbotValueError` when `kind` is not a supported `PoolKind`.
 #[pyfunction]
-pub fn classify_pool_kind(pool_type: &Bound<'_, PyAny>) -> PyResult<PoolKind> {
-    let pools = pool_type.py().import("degenbot.database.models.pools")?;
-    let py_type = pool_type.cast::<pyo3::types::PyType>()?;
-    if py_type.is_subclass(&pools.getattr("UniswapV4PoolTable")?)? {
-        return Ok(PoolKind::V4);
+pub fn classify_pool_kind<'py>(py: Python<'py>, kind: &Bound<'py, PyAny>) -> PyResult<PoolKind> {
+    extract_pool_kind(py, kind)
+}
+
+fn extract_pool_kind<'py>(py: Python<'py>, kind: &Bound<'py, PyAny>) -> PyResult<PoolKind> {
+    if let Ok(kind) = kind.extract::<PoolKind>() {
+        return Ok(kind);
     }
-    if py_type.is_subclass(&pools.getattr("UniswapV3PoolTableBase")?)? {
-        return Ok(PoolKind::V3);
-    }
-    if py_type.is_subclass(&pools.getattr("UniswapV2PoolTableBase")?)? {
-        return Ok(PoolKind::V2);
-    }
+    let repr = kind.repr()?.to_string_lossy().into_owned();
     Err(degenbot_value_error(
-        pool_type.py(),
-        format!(
-            "Unsupported pool type: {}",
-            pool_type.repr()?.to_string_lossy()
-        ),
+        py,
+        format!("Unsupported pool kind: {repr}"),
     )?)
 }
 
 /// Build a `degenbot.exceptions.base.DegenbotValueError(message=..)`.
-///
-/// Raises the driver's own exception type (not a bare `PyValueError`) so the
-/// pool-type classification contract is unchanged by the move into Rust.
 fn degenbot_value_error(py: Python<'_>, message: String) -> PyResult<PyErr> {
     let exc_type = py
         .import("degenbot.exceptions.base")?
@@ -115,52 +104,39 @@ fn degenbot_value_error(py: Python<'_>, message: String) -> PyResult<PyErr> {
     Ok(PyErr::from_value(exc_type.call((), Some(&kwargs))?))
 }
 
-/// Map a sequence of Python pool-table classes to the deduped [`PoolKind`] set.
-///
-/// The general `LiquidityPoolTable` base selects single-table-inheritance rows
-/// for BOTH V2 and V3, so it expands to `{V2, V3}`.
+/// Validate a sequence of typed Python [`PoolKind`] values and deduplicate it.
 ///
 /// # Errors
 ///
-/// Returns `PyValueError` when any declared type has no known pool family.
+/// Returns `PyValueError` when any value is not a supported `PoolKind`.
 #[pyfunction]
 #[expect(clippy::needless_pass_by_value)]
-pub fn classify_pool_kinds(pool_types: Vec<Bound<'_, PyAny>>) -> PyResult<HashSet<PoolKind>> {
-    let mut kinds = HashSet::new();
-    for pool_type in &pool_types {
-        let pools = pool_type.py().import("degenbot.database.models.pools")?;
-        if pool_type.is(&pools.getattr("LiquidityPoolTable")?) {
-            kinds.insert(PoolKind::V2);
-            kinds.insert(PoolKind::V3);
-            continue;
-        }
-        let py_type = pool_type.cast::<pyo3::types::PyType>()?;
-        if py_type.is_subclass(&pools.getattr("UniswapV4PoolTable")?)? {
-            kinds.insert(PoolKind::V4);
-        } else if py_type.is_subclass(&pools.getattr("UniswapV3PoolTableBase")?)? {
-            kinds.insert(PoolKind::V3);
-        } else if py_type.is_subclass(&pools.getattr("UniswapV2PoolTableBase")?)? {
-            kinds.insert(PoolKind::V2);
-        } else {
-            let name = pool_type
-                .getattr("__name__")
-                .and_then(|n| n.extract::<String>())
-                .unwrap_or_default();
-            return Err(PyValueError::new_err(format!(
-                "_resolve_pool_kinds cannot serve pool type '{name}': no known pool-kind mapping"
-            )));
-        }
-    }
-    Ok(kinds)
+pub fn classify_pool_kinds<'py>(
+    _py: Python<'py>,
+    kinds: Vec<Bound<'py, PyAny>>,
+) -> PyResult<HashSet<PoolKind>> {
+    kinds
+        .iter()
+        .map(|kind| {
+            kind.extract::<PoolKind>().map_err(|_| {
+                let repr = kind.repr().map_or_else(
+                    |_| "<unknown>".to_string(),
+                    |value| value.to_string_lossy().into_owned(),
+                );
+                PyValueError::new_err(format!("Unsupported pool kind: {repr}"))
+            })
+        })
+        .collect()
 }
 
-/// Convert the Python per-depth `set[type]` filter to typed [`PoolKind`] sets.
+/// Validate and copy a Python per-depth filter of typed [`PoolKind`] sets.
 ///
 /// # Errors
 ///
 /// Returns `PyValueError` when any declared type has no known pool family.
 #[pyfunction]
 pub fn convert_pool_type_filter(
+    py: Python<'_>,
     pool_type_per_depth: Option<Bound<'_, PyAny>>,
 ) -> PyResult<Option<Vec<Option<HashSet<PoolKind>>>>> {
     let Some(value) = pool_type_per_depth else {
@@ -177,8 +153,8 @@ pub fn convert_pool_type_filter(
             continue;
         }
         let mut allowed = HashSet::new();
-        for pool_type in depth.try_iter()? {
-            allowed.insert(classify_pool_kind(&pool_type?)?);
+        for pool_kind in depth.try_iter()? {
+            allowed.insert(classify_pool_kind(py, &pool_kind?)?);
         }
         out.push(Some(allowed));
     }
@@ -218,21 +194,13 @@ pub fn prepare_traversal_plan(
     .collect()
 }
 
-/// Resolves raw `(pool_id, pool_kind)` hops into `PathStep` objects.
+/// Resolves typed `(pool_id, pool_kind)` hops into Python `PathStep` objects.
 ///
-/// Owns the address lookups + the `kind_string -> concrete table class`
-/// registry built once per graph, so neither crosses the FFI per path. The
-/// step class is injected by the caller (the Python `PathStep` dataclass),
-/// keeping the object's public shape Python-owned while the assembly lives
-/// here.
+/// The graph edge already carries the authoritative family discriminant, so
+/// the builder only resolves byte-stable pool identities and instantiates the
+/// Python-owned step class.
 #[pyclass(module = "degenbot._ffi")]
 pub struct PathStepBuilder {
-    /// Namespaced graph pool id → raw DB `kind` string.
-    pool_id_to_kind_string: HashMap<u64, String>,
-    /// Raw `kind` string → concrete table class.
-    kind_string_to_class: HashMap<String, Py<PyAny>>,
-    /// Family-base fallback classes, indexed V2/V3/V4.
-    family_base: [Py<PyAny>; 3],
     /// V2/V3 pool id → checksummed address.
     v2v3_addresses: HashMap<u64, String>,
     /// V4 namespaced pool id → `(manager_address, pool_hash)`.
@@ -241,65 +209,19 @@ pub struct PathStepBuilder {
     step_cls: Py<PyAny>,
 }
 
-impl PathStepBuilder {
-    /// Resolve the concrete table class for one hop.
-    fn resolve_class(&self, py: Python<'_>, pool_id: u64, kind: PoolKind) -> Py<PyAny> {
-        if let Some(kind_string) = self.pool_id_to_kind_string.get(&pool_id) {
-            if let Some(class) = self.kind_string_to_class.get(kind_string) {
-                return class.clone_ref(py);
-            }
-        }
-        let index = match kind {
-            PoolKind::V2 => 0,
-            PoolKind::V3 => 1,
-            PoolKind::V4 => 2,
-        };
-        self.family_base[index].clone_ref(py)
-    }
-}
-
 #[pymethods]
 impl PathStepBuilder {
     #[new]
-    #[expect(clippy::needless_pass_by_value)]
     fn new(
-        py: Python<'_>,
-        pool_types: Vec<Py<PyAny>>,
-        pool_id_to_kind_string: HashMap<u64, String>,
         v2v3_addresses: HashMap<u64, String>,
         v4_lookups: HashMap<u64, (String, String)>,
         step_cls: Py<PyAny>,
-    ) -> PyResult<Self> {
-        let mut kind_string_to_class = HashMap::new();
-        for pool_type in &pool_types {
-            let bound = pool_type.bind(py);
-            let Ok(mapper) = bound.getattr("__mapper__") else {
-                continue;
-            };
-            let Ok(identity) = mapper.getattr("polymorphic_identity") else {
-                continue;
-            };
-            if identity.is_none() {
-                continue;
-            }
-            if let Ok(kind_string) = identity.extract::<String>() {
-                kind_string_to_class.insert(kind_string, pool_type.clone_ref(py));
-            }
-        }
-        let pools = py.import("degenbot.database.models.pools")?;
-        let family_base = [
-            pools.getattr("UniswapV2PoolTableBase")?.unbind(),
-            pools.getattr("UniswapV3PoolTableBase")?.unbind(),
-            pools.getattr("UniswapV4PoolTable")?.unbind(),
-        ];
-        Ok(Self {
-            pool_id_to_kind_string,
-            kind_string_to_class,
-            family_base,
+    ) -> Self {
+        Self {
             v2v3_addresses,
             v4_lookups,
             step_cls,
-        })
+        }
     }
 
     /// Convert a raw `[(pool_id, pool_kind)]` path into `PathStep` objects.
@@ -310,15 +232,16 @@ impl PathStepBuilder {
     fn build(&self, py: Python<'_>, raw_path: Vec<(u64, PoolKind)>) -> PyResult<Vec<Py<PyAny>>> {
         let mut steps = Vec::with_capacity(raw_path.len());
         for (pool_id, kind) in raw_path {
-            let class = self.resolve_class(py, pool_id, kind);
-            if kind == PoolKind::V4 {
+            let is_v4 = kind == PoolKind::V4;
+            let kind = kind.into_pyobject(py)?;
+            if is_v4 {
                 let (manager_address, pool_hash) =
                     self.v4_lookups.get(&pool_id).ok_or_else(|| {
                         PyKeyError::new_err(format!("no V4 lookup for pool id {pool_id}"))
                     })?;
                 steps.push(
                     self.step_cls
-                        .call1(py, (manager_address.clone(), class, pool_hash.clone()))?,
+                        .call1(py, (manager_address.clone(), kind, pool_hash.clone()))?,
                 );
             } else {
                 let address = self.v2v3_addresses.get(&pool_id).ok_or_else(|| {
@@ -326,7 +249,7 @@ impl PathStepBuilder {
                 })?;
                 steps.push(
                     self.step_cls
-                        .call1(py, (address.clone(), class, py.None()))?,
+                        .call1(py, (address.clone(), kind, py.None()))?,
                 );
             }
         }
@@ -502,8 +425,8 @@ fn build_owned_finder(
 /// cycle) → `fetch_path_graph_edges` (the bulk edge + address read) → the
 /// candidate-token edge filter (mirrors Python `_prepare_graph`'s inline
 /// `candidate_tokens` intersection). The filtered edge list is ready to pass
-/// to `find_paths_rust`; the address maps (`v2v3_addresses`/`v4_lookups`)
-/// + `pool_id_to_kind` reconstruct `PathStep`s in `_build_path_steps`.
+/// to `find_paths_rust`; the typed edge families and address maps reconstruct
+/// `PathStep`s through `PathStepBuilder`.
 ///
 /// This replaces Python's `_prepare_graph` + `_get_tokens_with_min_degree`
 /// inline SQLAlchemy selects with a single GIL-released Rust pass. The DFS
@@ -521,16 +444,12 @@ fn build_owned_finder(
 ///
 /// Returns:
 ///     A dict ``{``edges``, ``v2v3_addresses``, ``v4_lookups``,
-///     ``pool_id_to_kind``, ``pool_id_to_kind_string``, ``candidate_tokens``}``:
+///     ``pool_id_to_kind``, ``candidate_tokens``}``:
 ///     - ``edges``: ``list[(token0_id, token1_id, pool_id, pool_kind)]``
 ///       for `find_paths_rust`, with typed [`PoolKind`] values.
 ///     - ``v2v3_addresses``: ``{pool_id: checksum_address_str}``.
 ///     - ``v4_lookups``: ``{pool_id: (manager_address_str, pool_hash_hex)}``.
 ///     - ``pool_id_to_kind``: ``{pool_id: pool_kind}`` for the DFS.
-///     - ``pool_id_to_kind_string``: ``{pool_id: kind_str}`` — the raw
-///       single-table-inheritance polymorphic identity (e.g.
-///       `"uniswap_v3"`); Python rebuilds the concrete `PathStep.type`
-///       class via `pool_type.__mapper__.polymorphic_identity`.
 ///     - ``candidate_tokens``: ``set[int]`` of candidate token IDs (after the
 ///       whitelist intersection) for caller diagnostics.
 ///
@@ -551,14 +470,7 @@ pub fn build_path_graph<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let kinds: Vec<CorePoolKind> = pool_kinds.into_iter().map(PoolKind::to_core).collect();
 
-    let (
-        edges,
-        v2v3_addresses,
-        v4_lookups,
-        pool_id_to_kind,
-        pool_id_to_kind_string,
-        candidate_tokens,
-    ) = py
+    let (edges, v2v3_addresses, v4_lookups, pool_id_to_kind, candidate_tokens) = py
         .detach(|| -> Result<_, degenbot_db::DbError> {
             let db = DegenbotDb::open(Path::new(database_path))?.0;
             fetch_graph_data(
@@ -576,7 +488,6 @@ pub fn build_path_graph<'py>(
         &v2v3_addresses,
         &v4_lookups,
         &pool_id_to_kind,
-        &pool_id_to_kind_string,
         &candidate_tokens,
     )
 }
@@ -598,7 +509,6 @@ type GraphBuildResult = (
     hashbrown::HashMap<u64, String>,
     hashbrown::HashMap<u64, (String, String)>,
     hashbrown::HashMap<u64, CorePoolKind>,
-    hashbrown::HashMap<u64, String>,
     hashbrown::HashSet<u64>,
 );
 
@@ -656,7 +566,6 @@ fn fetch_graph_data(
         v2v3_checksums,
         v4_checksums,
         data.pool_id_to_kind,
-        data.pool_id_to_kind_string,
         candidate_tokens,
     ))
 }
@@ -670,7 +579,6 @@ fn build_graph_dict<'py>(
     v2v3_addresses: &hashbrown::HashMap<u64, String>,
     v4_lookups: &hashbrown::HashMap<u64, (String, String)>,
     pool_id_to_kind: &hashbrown::HashMap<u64, CorePoolKind>,
-    pool_id_to_kind_string: &hashbrown::HashMap<u64, String>,
     candidate_tokens: &hashbrown::HashSet<u64>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let out = PyDict::new(py);
@@ -694,16 +602,6 @@ fn build_graph_dict<'py>(
         kind_map.set_item(pid, PoolKind::from_core(*kind))?;
     }
     out.set_item("pool_id_to_kind", kind_map)?;
-
-    // The raw `kind` STRING per pool — the single-table-inheritance
-    // polymorphic identity (e.g. `"uniswap_v3"`, `"sushiswap_v2"`). Python
-    // rebuilds the concrete `PathStep.type` class from it via
-    // `pool_type.__mapper__.polymorphic_identity` (AF7OEL strict parity).
-    let kind_str_map = PyDict::new(py);
-    for (pid, kind_str) in pool_id_to_kind_string {
-        kind_str_map.set_item(pid, kind_str.clone())?;
-    }
-    out.set_item("pool_id_to_kind_string", kind_str_map)?;
 
     let cand = pyo3::types::PySet::empty(py)?;
     for t in candidate_tokens {

@@ -36,9 +36,9 @@ Response lines::
     #   the six cordon_* values + "posture"
     {"ok": false, "error": "..."}
 
-The server maps a ``family`` string to the pool-table base class the
-registration pipeline classifies steps with, so no Python class object crosses
-the wire. The handler (supplied by the host) turns an ``(op, payload)`` pair
+The server maps a ``family`` string to the typed Rust-backed pool family the
+registration pipeline consumes, so no Python class object crosses the wire. The
+handler (supplied by the host) turns an ``(op, payload)`` pair
 into a response dict; the server guards the wire (JSON decode, op dispatch,
 exception -> ``{"ok": false}``) so a malformed or failing command never crashes
 the host.
@@ -70,20 +70,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from degenbot.database.models.pools import (
-    UniswapV2PoolTableBase,
-    UniswapV3PoolTableBase,
-    UniswapV4PoolTableBase,
-)
 from degenbot.logging import logger
+from degenbot.pathfinding import PoolKind
 
-#: Map a wire ``family`` string to the pool-table base class the registration
-#: pipeline classifies `step.type` with (V2/V3/V4) -- the single source so the
-#: operator wire cannot name a table class directly.
-_FAMILY_TO_TABLE: dict[str, type] = {
-    "V2": UniswapV2PoolTableBase,
-    "V3": UniswapV3PoolTableBase,
-    "V4": UniswapV4PoolTableBase,
+#: Map the public wire labels to the typed pool families used by pathfinding.
+_FAMILY_TO_POOL_KIND: dict[str, PoolKind] = {
+    "V2": PoolKind.V2,
+    "V3": PoolKind.V3,
+    "V4": PoolKind.V4,
 }
 
 #: Handler signature: ``async def (op: str, payload: dict) -> dict`` returning a
@@ -96,13 +90,13 @@ class StepSpec:
     """A hop descriptor in the discovery-item shape the pipeline consumes.
 
     Attributes:
-        type: The pool-table base class for the hop's family (V2/V3/V4).
+        type: The typed pool family for the hop (V2/V3/V4).
         address: The pool address (``0x`` + 40 hex).
-        hash: The V4 pool id (``0x`` + 64 hex) when ``type`` is V4.
+        hash: The V4 pool id (``0x`` + 64 hex) when ``type`` is ``PoolKind.V4``.
 
     """
 
-    type: type
+    type: PoolKind
     address: str
     hash: object | None = None
 
@@ -114,22 +108,22 @@ def step_from_wire(step: dict[str, Any]) -> StepSpec:
         step: ``{"family": "V2|V3|V4", "address": "0x..", "hash": "0x.."?}``.
 
     Returns:
-        A :class:`StepSpec` mapping ``family`` to its pool-table base class.
+        A :class:`StepSpec` mapping ``family`` to its typed pool kind.
 
     Raises:
         ValueError: if ``family`` is not V2/V3/V4 or ``address`` is absent.
 
     """
     family = step.get("family")
-    table = _FAMILY_TO_TABLE.get(family)  # type: ignore[arg-type]
-    if table is None:
+    pool_kind = _FAMILY_TO_POOL_KIND.get(family)  # type: ignore[arg-type]
+    if pool_kind is None:
         msg = f"unknown pool family {family!r} (expected V2|V3|V4)"
         raise ValueError(msg)
     address = step.get("address")
     if not address:
         msg = f"{family} step is missing an address"
         raise ValueError(msg)
-    return StepSpec(type=table, address=address, hash=step.get("hash"))
+    return StepSpec(type=pool_kind, address=address, hash=step.get("hash"))
 
 
 #: The six fleet-posture threshold key names `set_fleet_posture` accepts

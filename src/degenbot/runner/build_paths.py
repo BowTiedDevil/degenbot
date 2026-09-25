@@ -29,17 +29,6 @@ from degenbot.arbitrage.verification_retry import (
     retry_verification_call,
 )
 from degenbot.builders.request import BuildManagedPoolRequest
-from degenbot.database.models.pools import (
-    UniswapV2PoolTableBase,
-    UniswapV3PoolTableBase,
-    UniswapV4PoolTableBase,
-)
-from degenbot.database.species_manifest import (
-    manifest as _species_manifest,
-)
-from degenbot.database.species_manifest import (
-    pool_version_map,
-)
 from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
     DirectionResolutionError,
@@ -49,7 +38,7 @@ from degenbot.exceptions import (
     VerificationRpcError,
 )
 from degenbot.logging import logger as bot_logger
-from degenbot.pathfinding import PathfindingRequest, find_paths_async
+from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths_async
 from degenbot.pathfinding import discovery_batch_size as _rust_discovery_batch_size
 from degenbot.runner._driver_constants import (
     ALLOWED_INTERMEDIATE_TOKENS,
@@ -93,22 +82,29 @@ def _discovery_batch_size() -> int:
 # ──────────────────────────────────────────────────────────────────
 
 
-# The V2/V3/V4 tags are the public permutation API surface (config strings);
-# the concrete classes under each tag come from the species manifest (ADR-059
-# D3), so a new fork needs a manifest row plus a model class — not an edit to
-# a second Python enumeration here.
-_POOL_VERSION_MAP: dict[str, list[type]] = pool_version_map(_species_manifest())
+# The V2/V3/V4 labels are the public permutation API surface and map directly
+# to the typed Rust-backed pathfinding families.
+_POOL_VERSION_MAP: dict[str, PoolKind] = {
+    "V2": PoolKind.V2,
+    "V3": PoolKind.V3,
+    "V4": PoolKind.V4,
+}
+_POOL_KIND_TO_VERSION: dict[PoolKind, str] = {
+    PoolKind.V2: "V2",
+    PoolKind.V3: "V3",
+    PoolKind.V4: "V4",
+}
 
 
 def _parse_permutation_filter(
     perms: set[str] | None,
-) -> list[set[type] | None] | None:
+) -> list[set[PoolKind] | None] | None:
     """Convert a set of permutation strings like {'V3-V4-V3'} into a
     pool_type_per_depth list suitable for find_paths_async.
 
     Returns None if perms is None/empty (no filter).
     Returns a list of sets, one per depth, where each set contains the
-    allowed pool table types at that depth. If all permutations agree
+    allowed pool families at that depth. If all permutations agree
     that any type is allowed at a depth, that entry is None.
     """
     if not perms:
@@ -124,37 +120,22 @@ def _parse_permutation_filter(
         msg = f"All permutations must have the same depth, got: {perms}"
         raise ValueError(msg)
     max_depth = len(parsed[0])
-    result: list[set[type] | None] = []
+    result: list[set[PoolKind] | None] = []
     for depth in range(max_depth):
-        allowed_this_depth: set[type] = set()
-        for perm_parts in parsed:
-            allowed_this_depth.update(_POOL_VERSION_MAP[perm_parts[depth]])
+        allowed_this_depth: set[PoolKind] = {
+            _POOL_VERSION_MAP[perm_parts[depth]] for perm_parts in parsed
+        }
         result.append(allowed_this_depth or None)
     return result
 
 
-def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
-    """Derive the pool_types list from the permutation filter.
-
-    When a permutation filter is set, only include pool table types for
-    the version tags mentioned in the permutations. When the filter is
-    None/empty, include all V2/V3/V4 types so every permutation is
-    discoverable.
-    """
+def _pool_types_from_filter(perms: set[str] | None) -> list[PoolKind]:
+    """Derive the typed pool families needed by the permutation filter."""
     if not perms:
-        types: set[type] = set()
-        for version_types in _POOL_VERSION_MAP.values():
-            types.update(version_types)
-        return list(types)
+        return list(_POOL_VERSION_MAP.values())
 
-    versions_needed: set[str] = set()
-    for perm in perms:
-        versions_needed.update(perm.split("-"))
-
-    types = set()
-    for version in versions_needed:
-        types.update(_POOL_VERSION_MAP[version])
-    return list(types)
+    versions_needed = {version for perm in perms for version in perm.split("-")}
+    return [_POOL_VERSION_MAP[version] for version in sorted(versions_needed)]
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -435,8 +416,8 @@ class PathRegistrationPipeline:
         self._verify_claims = _SeatVerifyClaims()
 
         # Configured discovery inputs (set by the driver before discovery runs).
-        self.pool_types: list[type] = []
-        self.pool_type_per_depth: list[set[type] | None] | None = None
+        self.pool_types: list[PoolKind] = []
+        self.pool_type_per_depth: list[set[PoolKind] | None] | None = None
 
         # PRG-4: the registered-path budget transfers to the engine path
         # registry (MAX_REGISTERED_PATHS, 0 = uncapped). Counters keep the
@@ -564,18 +545,8 @@ class PathRegistrationPipeline:
 
     @staticmethod
     def _hop_pool_types(steps: list[Any]) -> list[str]:
-        """Map each hop's DB table type to its version tag ("" when unknown)."""
-        pool_type_strs: list[str] = []
-        for step in steps:
-            if issubclass(step.type, UniswapV2PoolTableBase):
-                pool_type_strs.append("V2")
-            elif issubclass(step.type, UniswapV3PoolTableBase):
-                pool_type_strs.append("V3")
-            elif issubclass(step.type, UniswapV4PoolTableBase):
-                pool_type_strs.append("V4")
-            else:
-                pool_type_strs.append("")
-        return pool_type_strs
+        """Map typed pool families to registration version labels."""
+        return [_POOL_KIND_TO_VERSION.get(step.type, "") for step in steps]
 
     def _memoized_unregistrable_outcome(
         self,
@@ -1191,7 +1162,9 @@ async def build_paths(
             "[build_paths] Permutation filter active: "
             f"{perms} → depths={pipeline.pool_type_per_depth}",
         )
-    bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pipeline.pool_types]}")
+    bot_logger.info(
+        f"[build_paths] Pool types: {[_POOL_KIND_TO_VERSION[kind] for kind in pipeline.pool_types]}"
+    )
 
     start = time.perf_counter()
 

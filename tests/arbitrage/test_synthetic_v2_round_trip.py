@@ -29,7 +29,7 @@ from degenbot.database.operations import (
     create_new_sqlite_database,
     get_scoped_sqlite_session,
 )
-from degenbot.pathfinding import PathfindingRequest, find_paths_async
+from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths_async
 from degenbot.runner.build_paths import resolve_directions
 from degenbot.types.chain import ChainId
 from tests.helpers.erc20_factory import make_erc20
@@ -166,7 +166,7 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
                 start_tokens=[WETH_ADDR],
                 end_tokens=[WETH_ADDR],
                 max_depth=2,
-                pool_types=[UniswapV2PoolTable],
+                pool_types=[PoolKind.V2],
             )
         )
     ]

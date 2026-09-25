@@ -56,14 +56,8 @@ import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
-from degenbot.database.models.pools import (
-    LiquidityPoolTable,
-    UniswapV2PoolTableBase,
-    UniswapV3PoolTableBase,
-    UniswapV4PoolTable,
-)
 from degenbot.database.operations import create_new_sqlite_database
-from degenbot.pathfinding import PathfindingRequest, find_paths
+from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths
 from degenbot.runner._driver_constants import ETH_MAINNET_ALLOWED_TOKENS, WETH_ADDRESS
 from degenbot.types.chain import ChainId
 
@@ -89,37 +83,39 @@ MAX_V4_NATIVE_POOLS = 300
 # (`V3-V4-V3`, `V3-V2`, ... — see `build_paths._parse_permutation_filter`).
 # The permutation filters below ARE production shapes and keep each baseline
 # in the tens-to-hundreds of thousands.
-BASELINE_VARIANTS: list[tuple[str, int, list[type], list[set[type]] | None]] = [
+BASELINE_VARIANTS: list[
+    tuple[str, int, list[PoolKind], list[set[PoolKind]] | None]
+] = [
     (
         "depth2_all_kinds",
         2,
-        [LiquidityPoolTable, UniswapV4PoolTable],
+        [PoolKind.V2, PoolKind.V3, PoolKind.V4],
         None,
     ),
     (
         "depth2_v4_only",
         2,
-        [UniswapV4PoolTable],
+        [PoolKind.V4],
         None,
     ),
     (
         "depth3_perm_v3v4v3",
         3,
-        [LiquidityPoolTable, UniswapV4PoolTable],
+        [PoolKind.V2, PoolKind.V3, PoolKind.V4],
         [
-            {UniswapV3PoolTableBase},
-            {UniswapV4PoolTable},
-            {UniswapV3PoolTableBase},
+            {PoolKind.V3},
+            {PoolKind.V4},
+            {PoolKind.V3},
         ],
     ),
     (
         "depth3_perm_v3v2",
         3,
-        [LiquidityPoolTable, UniswapV4PoolTable],
+        [PoolKind.V2, PoolKind.V3, PoolKind.V4],
         [
-            {UniswapV3PoolTableBase},
-            {UniswapV3PoolTableBase},
-            {UniswapV2PoolTableBase},
+            {PoolKind.V3},
+            {PoolKind.V3},
+            {PoolKind.V2},
         ],
     ),
 ]

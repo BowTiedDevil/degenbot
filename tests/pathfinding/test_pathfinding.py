@@ -2,13 +2,13 @@ import pytest
 
 from degenbot.config import _init_config
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
-from degenbot.database.models.pools import (
-    SwapbasedV2PoolTable,
-    UniswapV2PoolTable,
-    UniswapV3PoolTable,
-    UniswapV4PoolTable,
+from degenbot.pathfinding import (
+    PathfindingRequest,
+    PathStep,
+    PoolKind,
+    find_paths,
+    find_paths_async,
 )
-from degenbot.pathfinding import PathfindingRequest, PathStep, find_paths, find_paths_async
 from degenbot.types.chain import ChainId
 
 BASE_CHAIN_ID = ChainId.BASE
@@ -38,8 +38,8 @@ def test_two_pool_pathfinding_cycling_weth(db):
                 end_tokens=[WETH_BASE_ADDRESS],
                 max_depth=2,
                 pool_types=[
-                    UniswapV2PoolTable,
-                    UniswapV3PoolTable,
+                    PoolKind.V2,
+                    PoolKind.V3,
                 ],
             )
         )
@@ -59,8 +59,8 @@ async def test_two_pool_pathfinding_cycling_weth_async(db):
                 end_tokens=[WETH_BASE_ADDRESS],
                 max_depth=2,
                 pool_types=[
-                    UniswapV2PoolTable,
-                    UniswapV3PoolTable,
+                    PoolKind.V2,
+                    PoolKind.V3,
                 ],
             )
         )
@@ -74,7 +74,7 @@ def test_generic_algo_multiple_tokens(db):
 
     # UniswapV4 pools hold both native and WETH pairs, so paths to and from both can be found using
     # it only
-    pool_types: list[type] = [UniswapV4PoolTable]
+    pool_types: list[PoolKind] = [PoolKind.V4]
 
     generic_paths_weth_to_weth = list(
         find_paths(
@@ -214,7 +214,7 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types(db):
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
-                pool_types=[UniswapV3PoolTable],
+                pool_types=[PoolKind.V3],
                 min_depth=depth,
                 max_depth=depth,
             )
@@ -239,7 +239,7 @@ def test_three_pool_pathfinding_cycling_weth_native_with_limited_types(db):
                 chain_id=BASE_CHAIN_ID,
                 start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
-                pool_types=[UniswapV4PoolTable],
+                pool_types=[PoolKind.V4],
                 min_depth=depth,
                 max_depth=depth,
             )
@@ -276,9 +276,9 @@ def test_four_pool_pathfinding_cycling_weth_with_limited_types(db):
                 start_tokens=[WETH_BASE_ADDRESS],
                 end_tokens=[WETH_BASE_ADDRESS],
                 pool_types=[
-                    SwapbasedV2PoolTable,
+                    PoolKind.V2,
                     # SushiswapV2PoolTable,
-                    # UniswapV4PoolTable,
+                    # PoolKind.V4,
                 ],
                 max_depth=4,
             )
@@ -300,8 +300,8 @@ def test_whitelist_restricts_intermediate_tokens(db):
                 end_tokens=[WETH_BASE_ADDRESS],
                 max_depth=2,
                 pool_types=[
-                    UniswapV2PoolTable,
-                    UniswapV3PoolTable,
+                    PoolKind.V2,
+                    PoolKind.V3,
                 ],
             )
         )
@@ -319,8 +319,8 @@ def test_whitelist_restricts_intermediate_tokens(db):
                 end_tokens=[WETH_BASE_ADDRESS],
                 max_depth=2,
                 pool_types=[
-                    UniswapV2PoolTable,
-                    UniswapV3PoolTable,
+                    PoolKind.V2,
+                    PoolKind.V3,
                 ],
                 allowed_intermediate_tokens=[WETH_BASE_ADDRESS],
             )
@@ -345,8 +345,8 @@ def test_whitelist_none_is_same_as_no_whitelist(db):
                 end_tokens=[WETH_BASE_ADDRESS],
                 max_depth=2,
                 pool_types=[
-                    UniswapV2PoolTable,
-                    UniswapV3PoolTable,
+                    PoolKind.V2,
+                    PoolKind.V3,
                 ],
             )
         )
@@ -360,8 +360,8 @@ def test_whitelist_none_is_same_as_no_whitelist(db):
                 end_tokens=[WETH_BASE_ADDRESS],
                 max_depth=2,
                 pool_types=[
-                    UniswapV2PoolTable,
-                    UniswapV3PoolTable,
+                    PoolKind.V2,
+                    PoolKind.V3,
                 ],
                 allowed_intermediate_tokens=None,
             )

@@ -26,6 +26,7 @@ from degenbot.database.models.pools import (
     UniswapV3PoolTableBase,
     UniswapV4PoolTable,
 )
+from degenbot.pathfinding import PoolKind
 from degenbot.registry.deployment_loader import load_deployments
 from degenbot.runner.build_paths import (
     _POOL_VERSION_MAP,
@@ -154,18 +155,21 @@ def test_shipped_manifest_path_falls_back_to_repo_cwd(
 # ──────────────────────────────────────────────────────────────────
 
 
-def test_build_paths_version_map_projects_the_manifest() -> None:
-    assert sm.pool_version_map(sm.manifest()) == _POOL_VERSION_MAP
-    assert {t.__name__ for t in _POOL_VERSION_MAP["V2"]} == {t.__name__ for t in _all_v2_models()}
-    assert {t.__name__ for t in _POOL_VERSION_MAP["V3"]} == {t.__name__ for t in _all_v3_models()}
-    assert _POOL_VERSION_MAP["V4"] == [UniswapV4PoolTable]
+def test_build_paths_uses_typed_version_taxonomy() -> None:
+    assert _POOL_VERSION_MAP == {
+        "V2": PoolKind.V2,
+        "V3": PoolKind.V3,
+        "V4": PoolKind.V4,
+    }
 
 
-def test_build_paths_pool_types_from_filter_covers_every_manifest_species() -> None:
-    all_types = {t.__name__ for t in _pool_types_from_filter(None)}
-    assert all_types == {t.__name__ for t in _all_v2_v3_models()} | {"UniswapV4PoolTable"}
-    v3_types = {t.__name__ for t in _pool_types_from_filter({"V3-V4-V3"})}
-    assert v3_types == {t.__name__ for t in _all_v3_models()} | {"UniswapV4PoolTable"}
+def test_build_paths_pool_types_from_filter_uses_families() -> None:
+    assert set(_pool_types_from_filter(None)) == {
+        PoolKind.V2,
+        PoolKind.V3,
+        PoolKind.V4,
+    }
+    assert set(_pool_types_from_filter({"V3-V4-V3"})) == {PoolKind.V3, PoolKind.V4}
 
 
 # ──────────────────────────────────────────────────────────────────

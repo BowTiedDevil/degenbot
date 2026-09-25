@@ -13,11 +13,7 @@ import json
 
 import pytest
 
-from degenbot.database.models.pools import (
-    UniswapV2PoolTableBase,
-    UniswapV3PoolTableBase,
-    UniswapV4PoolTableBase,
-)
+from degenbot.pathfinding import PoolKind
 from degenbot.operator.operator_channel import (
     OperatorServer,
     send_command,
@@ -47,11 +43,12 @@ def _stub_handler(*, fail_on=None):
 
 
 def test_step_from_wire_maps_families_and_rejects_bad_input() -> None:
-    """Family strings map to the right pool-table base classes; bad input raises."""
-    assert step_from_wire({"family": "V2", "address": "0xaa"}).type is UniswapV2PoolTableBase
-    assert step_from_wire({"family": "V3", "address": "0xaa"}).type is UniswapV3PoolTableBase
+    """Family strings map to typed pool kinds; identities remain byte-stable."""
+    assert step_from_wire({"family": "V2", "address": "0xaa"}).type is PoolKind.V2
+    assert step_from_wire({"family": "V3", "address": "0xaa"}).type is PoolKind.V3
     v4 = step_from_wire({"family": "V4", "address": "0x00", "hash": "0x" + "a" * 64})
-    assert v4.type is UniswapV4PoolTableBase
+    assert v4.type is PoolKind.V4
+    assert v4.address == "0x00"
     assert v4.hash == "0x" + "a" * 64
 
     with pytest.raises(ValueError, match="unknown pool family"):
