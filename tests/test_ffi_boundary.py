@@ -1,41 +1,46 @@
-"""Boundary test: ``degenbot._ffi`` may only appear in ``__init__.py`` files.
+"""Enforce ADR-013's private Rust FFI seam.
 
-The Pydantic barrier rule (ADR-013): every Rust ``_ffi`` symbol reaches
-Python through a stable ``degenbot.<domain>`` home, and that home is an
-``__init__.py`` file. No leaf module (a file with real logic) may import
-from ``degenbot._ffi`` — not the flat root, not a typed submodule.
-
-This makes incomplete migrations visible: a non-``__init__.py`` file with an
-``_ffi`` import is automatically suspicious, no allowlist required.
+Every ordinary ``_ffi`` import belongs in a stable ``degenbot.<domain>``
+package barrier. Outside those barriers, only the permanent engine-handle
+exception and the Rust-owned console passthrough are allowed.
 """
 
 from __future__ import annotations
 
-import re
+import ast
+import importlib
+import importlib.util
 from pathlib import Path
 
 import pytest
 
+import degenbot
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCAN_DIR = REPO_ROOT / "src" / "degenbot"
+_FFI_ROOT = "degenbot._ffi"
 
-# Matches any line containing an actual import from degenbot._ffi
-# (flat root or typed submodule). Does NOT match docstring/comment mentions.
-_FFI_IMPORT_RE = re.compile(r"(?:^|\s)(?:from|import)\s+degenbot\._ffi")
-
-# ADR-032 fork (module-path disambiguation): the engine-handle pyclasses
+# ADR-032 fork (module-path disambiguation): these engine-handle pyclasses
 # may be imported directly from _ffi by first-party code. Their clean names
 # collide with same-named Python driver/model classes, and the module path
 # (degenbot._ffi vs the domain home) is the disambiguator.
-ENGINE_HANDLES: frozenset[str] = frozenset({
-    "Bot",
-    "BotIo",
-    "Erc20Token",
-    "DatabasePositionQuery",
-    "DatabaseSnapshot",
-})
+ENGINE_HANDLES: frozenset[str] = frozenset(
+    {
+        "Bot",
+        "BotIo",
+        "Erc20Token",
+        "DatabasePositionQuery",
+        "DatabaseSnapshot",
+    },
+)
+_ENGINE_HANDLE_MODULES = frozenset({_FFI_ROOT, f"{_FFI_ROOT}.db"})
 
-_FFI_NAMES_RE = re.compile(r"^\s*from\s+degenbot\._ffi(?:\.[a-z_]+)?\s+import\s+(.+)$")
+# ADR-051 D3 makes the console a deliberate passthrough rather than a Python
+# command tree. It has no domain home; admit only its Rust-owned entrypoint in
+# the exact process-entry module (module imports and other symbols still fail).
+ALLOWED_LEAF_FFI_IMPORTS: dict[str, frozenset[str]] = {
+    "src/degenbot/_cli.py": frozenset({"cli_main"}),
+}
 
 
 def _iter_python_files() -> list[Path]:
@@ -43,48 +48,122 @@ def _iter_python_files() -> list[Path]:
     return [f for f in SCAN_DIR.rglob("*.py") if "__pycache__" not in f.parts]
 
 
-def test_no_ffi_imports_outside_init_files() -> None:
-    """Fail if any non-``__init__.py`` file imports from ``degenbot._ffi``.
+def _module_package(path: Path) -> str:
+    parts = [SCAN_DIR.name, *path.relative_to(SCAN_DIR).with_suffix("").parts]
+    parts.pop()
+    return ".".join(parts)
 
-    The only files permitted to import from ``_ffi`` are ``__init__.py``
-    files (the barrier modules). Every other file must import from its
-    stable ``degenbot.<domain>`` home.
-    """
+
+def _resolved_from_module(node: ast.ImportFrom, package: str) -> str | None:
+    if node.level == 0:
+        return node.module
+    relative_name = "." * node.level + (node.module or "")
+    try:
+        return importlib.util.resolve_name(relative_name, package)
+    except ImportError:
+        return None
+
+
+def _is_ffi_module(module: str | None) -> bool:
+    return module == _FFI_ROOT or (module is not None and module.startswith(f"{_FFI_ROOT}."))
+
+
+def _find_ffi_import_violations(source: str, path: Path) -> list[str]:
+    """Find runtime imports of the private extension through any spelling."""
+    tree = ast.parse(source, filename=str(path))
+    package = _module_package(path)
+    relative_path = path.relative_to(REPO_ROOT).as_posix()
+    lines = source.splitlines()
     violations: list[str] = []
-    for f in _iter_python_files():
-        if f.name == "__init__.py":
+
+    class RuntimeVisitor(ast.NodeVisitor):
+        def visit_If(self, node: ast.If) -> None:
+            if "TYPE_CHECKING" in ast.unparse(node.test):
+                for statement in node.orelse:
+                    self.visit(statement)
+                return
+            self.generic_visit(node)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            if any(_is_ffi_module(alias.name) for alias in node.names):
+                violations.append(
+                    f"{relative_path}:{node.lineno}: {lines[node.lineno - 1].strip()}"
+                )
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            module = _resolved_from_module(node, package)
+            names = {alias.name for alias in node.names}
+            imports_ffi_module = _is_ffi_module(module)
+            imports_ffi_attribute = module == "degenbot" and "_ffi" in names
+            if not imports_ffi_module and not imports_ffi_attribute:
+                return
+
+            if imports_ffi_module and module in _ENGINE_HANDLE_MODULES and names <= ENGINE_HANDLES:
+                return
+
+            allowed_names = ALLOWED_LEAF_FFI_IMPORTS.get(relative_path, frozenset())
+            if imports_ffi_module and module == _FFI_ROOT and names <= allowed_names:
+                return
+
+            violations.append(f"{relative_path}:{node.lineno}: {lines[node.lineno - 1].strip()}")
+
+    RuntimeVisitor().visit(tree)
+    return violations
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from degenbot._ffi import runtime_status",
+        "import degenbot._ffi",
+        "from ._ffi import runtime_status",
+        "from degenbot import _ffi",
+    ],
+)
+def test_private_ffi_import_forms_are_violations(source: str) -> None:
+    """Relative and top-level spellings cannot bypass the private seam."""
+    assert _find_ffi_import_violations(source, SCAN_DIR / "synthetic_leaf.py")
+
+
+def test_engine_handles_remain_an_explicit_exception() -> None:
+    """Only the ADR-032 handle set may cross the boundary by module path."""
+    assert not _find_ffi_import_violations(
+        "from degenbot._ffi import Bot, BotIo", SCAN_DIR / "synthetic_leaf.py"
+    )
+    assert _find_ffi_import_violations(
+        "from degenbot._ffi import Bot, runtime_status", SCAN_DIR / "synthetic_leaf.py"
+    )
+
+
+def test_console_passthrough_is_an_explicit_exception() -> None:
+    """ADR-051 permits only ``cli_main`` in the exact console entry module."""
+    source = "from degenbot._ffi import cli_main"
+    assert not _find_ffi_import_violations(source, SCAN_DIR / "_cli.py")
+    assert _find_ffi_import_violations(source, SCAN_DIR / "other_leaf.py")
+
+
+def test_runtime_status_is_public_package_barrier() -> None:
+    """The public call remains available from a package-owned FFI barrier."""
+    runtime_status_module = importlib.import_module("degenbot.runtime_status")
+    assert hasattr(runtime_status_module, "__path__")
+
+    assert {"fleet_booted", "profile"} <= degenbot.runtime_status().keys()
+
+
+def test_no_ffi_imports_outside_barriers_and_explicit_seams() -> None:
+    """Fail on every private FFI import outside its approved seam."""
+    violations: list[str] = []
+    for path in _iter_python_files():
+        if path.name == "__init__.py":
             continue
-        rel = str(f.relative_to(REPO_ROOT))
-        source = f.read_text()
-        tc_indent: int | None = None  # indent of an enclosing if-TYPE_CHECKING header
-        for lineno, line in enumerate(source.splitlines(), 1):
-            stripped = line.strip()
-            if stripped:
-                ind = len(line) - len(line.lstrip())
-                if tc_indent is not None and ind <= tc_indent:
-                    tc_indent = None
-            if (
-                stripped.startswith("if ")
-                and "TYPE_CHECKING" in stripped
-                and stripped.endswith(":")
-            ):
-                tc_indent = len(line) - len(line.lstrip())
-            if tc_indent is not None and (len(line) - len(line.lstrip())) > tc_indent:
-                continue  # TYPE_CHECKING-only: annotations are strings, no runtime _ffi touch
-            if not _FFI_IMPORT_RE.search(line):
-                continue
-            m = _FFI_NAMES_RE.match(line)
-            if m:
-                names = {n.split(" as ")[0].strip() for n in m.group(1).split(",") if n.strip()}
-                if names and names <= ENGINE_HANDLES:
-                    continue  # exempt: engine-handle types (ADR-032 fork)
-            violations.append(f"{rel}:{lineno}: {line.strip()}")
+        violations.extend(_find_ffi_import_violations(path.read_text(), path))
+
     if violations:
-        msg = (
-            f"\nFound {len(violations)} `degenbot._ffi` import(s) in "
-            f"non-`__init__.py` files (ADR-013: the Pydantic barrier):\n\n"
-            + "\n".join(f"  - {v}" for v in violations)
-            + "\n\nThese must import from the stable `degenbot.<domain>` "
-            "home instead. See tests/test_ffi_boundary.py for the rule."
+        message = (
+            f"\nFound {len(violations)} private `_ffi` import(s) outside approved seams:\n\n"
+            + "\n".join(f"  - {violation}" for violation in violations)
+            + "\n\nImport Rust symbols from a stable `degenbot.<domain>` package "
+            "barrier instead. ENGINE_HANDLES and ALLOWED_LEAF_FFI_IMPORTS above "
+            "are the only documented leaf exceptions."
         )
-        pytest.fail(msg)
+        pytest.fail(message)

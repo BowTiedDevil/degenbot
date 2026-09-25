@@ -7,6 +7,6 @@ projected budget: seats and shares), and who is executing (the worker
 census rows, with the lane-to-thread binding per resource).
 """
 
-from ._ffi import runtime_status
+from degenbot._ffi import runtime_status
 
 __all__ = ["runtime_status"]

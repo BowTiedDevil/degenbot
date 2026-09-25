@@ -2,7 +2,7 @@
 
 import sys
 
-from degenbot import _ffi
+from degenbot._ffi import cli_main
 
 
 def main() -> None:
@@ -12,4 +12,4 @@ def main() -> None:
         SystemExit: always, carrying the console's process exit code.
 
     """
-    raise SystemExit(_ffi.cli_main(sys.argv[1:]))
+    raise SystemExit(cli_main(sys.argv[1:]))
