@@ -78,6 +78,8 @@ The load-bearing decisions behind the two-consumer architecture:
 | [059](ADR-059-pool-family-kernel.md) | The pool family kernel — one taxonomy, capability tiers, species as data | accepted |
 | [060](ADR-060-collapse-v2-walk-representation-vs-interface.md) | Collapsing the V2 walk dispatch — representation vs interface | accepted |
 | [061](ADR-061-pool-ingress-plane-capability.md) | Pool-state provisioning is a plane capability — pool ingress, sealed seeds, the strategy kit | accepted |
+| [062](ADR-062-one-operator-file-four-layers.md) | One operator file, four layers — node endpoints, chain id, and database path resolve through the typed config on every entry path | accepted |
+| [063](ADR-063-config-env-interpolation.md) | The file is portable, the secret is not — `${env:NAME}` expansion for string-valued config keys | proposed |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 

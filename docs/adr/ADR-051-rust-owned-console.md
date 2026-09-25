@@ -1,6 +1,6 @@
 # ADR-051: The degenbot console is a Rust binary — one command model, an argv passthrough for Python
 
-**Status: accepted** (2026-09-14; settled in a grilling session. Implementation epics: `degenbot-cli` + `rust-db-robustness`, created as ergo **drafts** pending review).
+**Status: accepted** (2026-09-14; **D8's file-vocabulary clause superseded by [ADR-062](ADR-062-one-operator-file-four-layers.md)** (2026-09-25) — the resolvers keep their `Source` tagging and their env/CLI layers, and the operator file becomes layer 3 for node endpoints, chain id, and database path; settled in a grilling session. Implementation epics: `degenbot-cli` + `rust-db-robustness`, created as ergo **drafts** pending review).
 
 ## Context
 
