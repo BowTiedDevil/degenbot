@@ -35,18 +35,15 @@ The `Bot` class is the central session object. It manages connections and regist
 
 ```python
 import degenbot
-from degenbot.config import DegenbotConfig
 
 bot = degenbot.Bot(
-    config=DegenbotConfig(
-        default_chain_id=1,
-        rpc={1: "https://your-archive-node"},
-        database={"path": "~/.local/state/degenbot/db/degenbot.db"},
-    )
+    chain_id=1,
+    node="https://your-archive-node",
+    database="~/.local/state/degenbot/db/degenbot.db",
 )
 
-# Bot constructs the RPC provider from config and checks its eth_chainId
-# matches default_chain_id (fail-fast) — no manual provider registration.
+# Bot constructs the RPC provider from the node endpoint and checks its
+# eth_chainId matches chain_id (fail-fast) — no manual provider registration.
 
 # Create pools and tokens through Bot (I/O-free where possible)
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")

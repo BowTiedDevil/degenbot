@@ -91,24 +91,21 @@ The `Bot` class is the central session object for all degenbot operations. It ma
 # Executed but never shown: the live-RPC examples read historical state, so
 # they need an archive-capable node, which is what the harness name resolves.
 import degenbot
-from degenbot.config import DegenbotConfig
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
 ```python
 # RPC_URL is any HTTP RPC endpoint for chain 1, for example
 #   "https://eth-mainnet.example.com"
-# Initialize Bot from config file or explicit settings
+# Initialize Bot from explicit settings
 bot = degenbot.Bot(
-    config=DegenbotConfig(
-        default_chain_id=1,
-        rpc={1: RPC_URL},
-        database={"path": "~/.local/state/degenbot/db/degenbot.db"},
-    )
+    chain_id=1,
+    node=RPC_URL,
+    database="~/.local/state/degenbot/db/degenbot.db",
 )
 
-# Bot constructs the RPC provider from config and enforces its
-# eth_chainId matches default_chain_id (fail-fast). No manual provider
+# Bot constructs the RPC provider from the node endpoint and enforces its
+# eth_chainId matches chain_id (fail-fast). No manual provider
 # registration is needed.
 ```
 
@@ -178,20 +175,17 @@ from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 
 ```python
 import degenbot
-from degenbot.config import DegenbotConfig
 
 # RPC_URL is any HTTP RPC endpoint for chain 1, for example
 #   "https://eth-mainnet.example.com"
 # Bot manages connections, registries, and provides factory methods
 bot = degenbot.Bot(
-    config=DegenbotConfig(
-        default_chain_id=1,
-        rpc={1: RPC_URL},
-        database={"path": ":memory:"},
-    )
+    chain_id=1,
+    node=RPC_URL,
+    database=":memory:",
 )
-# The RPC provider is built from config; eth_chainId is enforced to equal
-# default_chain_id at construction.
+# The RPC provider is built from the node endpoint; eth_chainId is enforced to
+# equal chain_id at construction.
 bot.provider  # the chain's AlloyProvider (chain_id enforced at construction)
 bot.chain_id  # 1
 ```
@@ -330,17 +324,14 @@ All pool and token creation should flow through the `Bot` class for proper regis
 
 ```python
 import degenbot
-from degenbot.config import DegenbotConfig
 
 # RPC_URL is any HTTP RPC endpoint for chain 1, for example
 #   "https://eth-mainnet.example.com"
-# Initialize Bot (handles config, connections, registries)
+# Initialize Bot (handles connections, registries)
 bot = degenbot.Bot(
-    config=DegenbotConfig(
-        default_chain_id=1,
-        rpc={1: RPC_URL},
-        database={"path": ":memory:"},
-    )
+    chain_id=1,
+    node=RPC_URL,
+    database=":memory:",
 )
 ```
 
@@ -940,7 +931,6 @@ Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `A
 <!-- invisible-code-block: python
 import asyncio
 import degenbot
-from degenbot.config import DegenbotConfig
 # Executed but never shown: the live-RPC examples read historical state, so
 # they need an archive-capable node, which is what the harness name resolves.
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
@@ -952,11 +942,9 @@ from fractions import Fraction
 # A single Bot owns the shared BotState both pools register into. Two
 # USDC/WETH pools (one V2, one V3) form a valid 2-hop cyclic arb.
 bot = degenbot.Bot(
-    config=DegenbotConfig(
-        default_chain_id=1,
-        rpc={1: RPC_URL},
-        database={"path": ":memory:"},
-    )
+    chain_id=1,
+    node=RPC_URL,
+    database=":memory:",
 )
 _py = bot._py_bot
 _usdc = make_erc20(_py,
@@ -1086,22 +1074,17 @@ The `Bot` class is the primary entry point for degenbot usage. Access factories,
 
 ```python
 import degenbot
-from degenbot.config import DegenbotConfig
 
 # RPC_URL is any HTTP RPC endpoint for chain 1, for example
 #   "https://eth-mainnet.example.com"
-# With explicit config
+# With explicit settings
 bot = degenbot.Bot(
-    config=DegenbotConfig(
-        default_chain_id=1,
-        rpc={
-            1: RPC_URL,
-        },
-        database={"path": "~/.local/state/degenbot/db/degenbot.db"},
-    )
+    chain_id=1,
+    node=RPC_URL,
+    database="~/.local/state/degenbot/db/degenbot.db",
 )
-# The RPC provider is built from the config and its eth_chainId is enforced
-# to equal default_chain_id at construction — no manual registration needed.
+# The RPC provider is built from the node endpoint and its eth_chainId is
+# enforced to equal chain_id at construction — no manual registration needed.
 ```
 
 ### Universal Pool Builder
