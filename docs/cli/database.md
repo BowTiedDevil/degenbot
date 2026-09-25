@@ -200,10 +200,16 @@ A stale Alembic-era file is healed at open instead (ADR-052 D1).
 The stable Python mirror in [`src/degenbot/db/__init__.py`](../../src/degenbot/db/__init__.py) is a thin delegation to the Rust `degenbot-db` operations:
 
 - `db_backup_database(src, dst)` - Create an online backup of a database
-- `db_create_new_database(path)` - Create a new database at the Rust schema head
 - `db_compact_database(path)` - Reclaim free space with `VACUUM`
 - `db_heal_database(path)` - Perform an out-of-place dump-and-restore rebuild (ADR-011)
 - `db_inspect_schema_state(path)` - Inspect schema ownership without writing
+
+Database creation has no Python mirror entry: the Rust `degenbot-db` core
+materialises the parent directory, the file, and the schema on first open, so
+an operator points the bot at the resolved `settings.database.path` (see
+[Configuration](#configuration)) and reads the result with
+`db_inspect_schema_state(path)` or `degenbot database inspect`. There is no
+Python function to call to create the file.
 
 For a typed read, pass the database path and chain-scoped key directly to the
 mirror. The result is a Rust-backed row, not an ORM instance:
