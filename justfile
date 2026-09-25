@@ -42,6 +42,12 @@ bump-version version:
 # than release. Release builds keep thin LTO, stripping, and the intentional
 # per-package codegen-unit policy documented in rust/Cargo.toml.
 
+# Build the native Tauri AppImage for the GUI proof of concept. The app-local
+# npm script supplies the AppImage extraction and linuxdeploy NO_STRIP settings
+# required by modern Fedora ELF libraries.
+tauri-appimage:
+    cd apps/tauri-poc && npm run appimage
+
 # Print the active Rust toolchain and the repository policy. The root
 # rust-toolchain.toml pins development and release builds to Rust 1.98.1;
 # the workspace MSRV is Rust 1.97 and is checked separately in CI.
