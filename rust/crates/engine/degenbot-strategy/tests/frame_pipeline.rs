@@ -1139,10 +1139,10 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         gas_floor_wei: U256::from(50_000_000_000_000u64),
         fixture_mode: false,
     };
-    // The bundle-sim client points at the SAME node join (read/sim only, and
-    // only reached if a candidate ever composes — offline-review without a
-    // DB never gets there: connectors are never guessed).
-    let sim_client = alloy::rpc::client::ClientBuilder::default().http(rpc_url.parse().unwrap());
+    // The bundle sim points at the SAME node join (read/sim only, and only
+    // reached if a candidate ever composes — offline-review without a DB never
+    // gets there: connectors are never guessed).
+    let sim_provider = provider.clone();
 
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/frame_replay_capture.jsonl");
@@ -1167,7 +1167,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
             &mut strategy,
             &mut runtime,
             &provider,
-            &sim_client,
+            &sim_provider,
             &knobs,
             &pl,
             &mut handle,

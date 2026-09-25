@@ -27,6 +27,7 @@ use degenbot_rpc::AlloyTickBootstrapRpc;
 use degenbot_submission::submission_ledger::NonceLane;
 
 use super::driver_loop::BackrunDriver;
+use super::node_capability::NodeCapability;
 
 /// The `eth_getLogs` chunk size for the ingress's per-pool backfill fetch:
 /// a long Db-to-head lag is closed in ~1000-block requests.
@@ -51,9 +52,18 @@ pub struct BackrunStrategyBoot {
     /// The boot-resolved strategy kit: the provisioning ingress with its
     /// chain arm + chain-sample policy attached, and the discovery handles.
     pub(crate) kit: StrategyKit,
-    /// The chain node's `newHeads` WS endpoint; `None` polls.
+    /// The chain node's `newHeads` endpoint, as the SUBSCRIPTION scope
+    /// resolved it (ipc or ws; an http entry is not a feed). `None` polls.
     pub(crate) head_ws_url: Option<String>,
     pub(crate) provider: Option<Arc<AlloyProvider>>,
+    /// The chain the node join resolved for, carried so a consumer that needs
+    /// a SECOND endpoint for the same chain (the bundle sim) is handed the
+    /// join's chain rather than choosing one.
+    pub(crate) chain_id: Option<u64>,
+    /// The dialer the join used, carried for the same reason: the sim's
+    /// client is built by the caller's capability, not by a transport this
+    /// module assumes.
+    pub(crate) capability: Option<Arc<dyn NodeCapability>>,
     /// The driver's run-artifact root inside a multi-strategy host, so this
     /// driver's journal never collides with another strategy's. `None` keeps
     /// the process-global state root for the standalone single-strategy
@@ -68,10 +78,22 @@ pub struct BackrunStrategyBoot {
 /// Why a backrun driver could not be booted.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BackrunBootError {
-    /// The chain-node HTTP endpoint did not resolve from the process
-    /// environment.
+    /// The chain-node endpoint did not resolve from the layers the host
+    /// booted with, or the injected capability could not dial what it
+    /// resolved.
     #[error("backrun node join unresolved: {0}")]
     NodeJoin(String),
+    /// The bundle-sim endpoint could not be turned into a client: a scheme no
+    /// transport dials, or a socket the node does not serve. The endpoint is
+    /// the facet's `sim_url` when the operator set one, so the message says
+    /// which of the two the driver was reading.
+    #[error("backrun sim endpoint {endpoint} unusable: {reason}")]
+    SimEndpoint {
+        /// The endpoint the driver read.
+        endpoint: String,
+        /// The capability's own refusal.
+        reason: String,
+    },
     /// No layer named the chain this session runs against. The endpoint
     /// tables and the connector index are both keyed by chain id, so a boot
     /// that cannot name its chain has nothing to select and refuses rather
@@ -120,6 +142,11 @@ pub struct BackrunNodeJoin {
     /// chain: a consumer that chose its own could disagree with the node the
     /// driver signs against.
     pub chain_id: u64,
+    /// The capability that dialed `rpc_url`. The join keeps it because a later
+    /// consumer needs a second endpoint on the same chain — the bundle sim's
+    /// `sim_url` override — and that consumer must dial it the way this join
+    /// was dialed instead of assuming a transport of its own.
+    pub capability: Arc<dyn NodeCapability>,
 }
 
 impl BackrunStrategyBoot {
@@ -258,6 +285,8 @@ impl BackrunBootResources {
             kit,
             head_ws_url,
             provider,
+            chain_id: self.join.as_ref().map(|join| join.chain_id),
+            capability: self.join.as_ref().map(|join| Arc::clone(&join.capability)),
             boot_error: self.boot_error.clone(),
         }
     }
@@ -287,9 +316,12 @@ pub(crate) fn head_ws_url(loaded: &degenbot_config::LoadedConfig, chain_id: u64)
 /// later consumer picks a second one.
 ///
 /// The scope is `request`, so an operator's local `nodes.ipc` entry is the
-/// endpoint this consumer gets. The client below is still the hardcoded HTTP
-/// one; taking an injected capability-scoped provider at construction is the
-/// separate change that makes the ipc entry dialable here.
+/// endpoint this consumer gets. `capability` is the caller's answer to how
+/// that endpoint is dialed: the boot never assumes a transport, so the same
+/// join serves an HTTP node, a WS node, and a unix socket. The chain is
+/// handed to the capability alongside the endpoint, so an implementation can
+/// bind the provider it builds; [`resolve_backrun_boot`] is where this scope's
+/// own verification happens.
 ///
 /// # Errors
 ///
@@ -297,10 +329,12 @@ pub(crate) fn head_ws_url(loaded: &degenbot_config::LoadedConfig, chain_id: u64)
 /// (the message names every layer consulted), or
 /// [`BackrunBootError::NodeJoin`] when the resolved chain's request endpoint
 /// has no layer at all (the message is the resolver's, which names the chain,
-/// every layer, and every transport it consulted).
-pub fn resolve_backrun_node_join(
+/// every layer, and every transport it consulted), or when the capability
+/// could not dial the endpoint it resolved.
+pub async fn resolve_backrun_node_join(
     loaded: &degenbot_config::LoadedConfig,
     cli_chain_id: Option<&str>,
+    capability: Arc<dyn NodeCapability>,
 ) -> Result<BackrunNodeJoin, BackrunBootError> {
     let chain_id = degenbot_config::resolve_chain_id(loaded, cli_chain_id)
         .map_err(|error| BackrunBootError::SessionChain(error.to_string()))?
@@ -312,17 +346,15 @@ pub fn resolve_backrun_node_join(
     )
     .map_err(|error| BackrunBootError::NodeJoin(error.to_string()))?
     .value;
-    let url = rpc_url
-        .parse()
-        .map_err(|error| BackrunBootError::NodeJoin(format!("{error}")))?;
-    let client = alloy::rpc::client::ClientBuilder::default().http(url);
-    let provider = Arc::new(AlloyProvider::from_provider(Arc::new(
-        alloy::providers::ProviderBuilder::default().connect_client(client),
-    )));
+    let provider = capability
+        .request_provider(&rpc_url, chain_id)
+        .await
+        .map_err(|reason| BackrunBootError::NodeJoin(format!("{rpc_url}: {reason}")))?;
     Ok(BackrunNodeJoin {
         rpc_url,
         provider,
         chain_id,
+        capability,
     })
 }
 
@@ -356,7 +388,13 @@ impl BackrunBoot {
             if let Some(error) = strategy.boot_error.clone() {
                 return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
             }
-            let handle = BackrunDriver::start(strategy, hub, namespace_root, nonce_lane).await;
+            let handle = match BackrunDriver::start(strategy, hub, namespace_root, nonce_lane).await
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
+                }
+            };
             handle.wait().await;
             DriverExit::Stopped
         })

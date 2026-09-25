@@ -49,11 +49,12 @@ use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submission_ledger::NonceLane;
 use degenbot_submission::submit::{dispatch_and_submit, SubmitCandidate};
 
-use super::driver_boot::BackrunStrategyBoot;
+use super::driver_boot::{BackrunBootError, BackrunStrategyBoot};
 use super::driver_policy::{
     bid_submission_target, build_broadcast_relays, initial_wallet_gas_cost, priority_fee_wei,
     wallet_gas_cost_at,
 };
+use super::node_capability::NodeCapability;
 
 /// How long the live loop waits on the head watch before servicing the frame
 /// feed. The watch resolves the instant a header arrives (~12s apart), so a
@@ -254,7 +255,7 @@ pub(super) async fn run_frame(
     rt: &mut MarketContext,
     strategy: &mut BackrunStrategy,
     provider: &Arc<AlloyProvider>,
-    sim_client: &alloy::rpc::client::RpcClient,
+    sim_provider: &AlloyProvider,
     cfg: &BackrunConfig,
     pl: &PipelineConfig,
     handle: &mut Option<BlockSimHandle<'_>>,
@@ -304,7 +305,17 @@ pub(super) async fn run_frame(
         }),
     );
     let artifacts = process_frame_with_prefix(
-        strategy, rt, provider, sim_client, cfg, pl, handle, ev, prefix, head, *spent,
+        strategy,
+        rt,
+        provider,
+        sim_provider,
+        cfg,
+        pl,
+        handle,
+        ev,
+        prefix,
+        head,
+        *spent,
     )
     .await;
     trace_jsonl(
@@ -570,8 +581,8 @@ async fn canonical_block_hash(provider: &AlloyProvider, block: u64) -> Option<B2
 /// Nonce-lane evidence gate: only a decoded `u64` counts. A transport error
 /// or an oversized value is NO evidence - the caller must skip, never feed
 /// a sentinel that would read as `nonce_consumed` for every tracked frame.
-pub(super) fn nonce_lane_evidence<E>(read: Result<U256, E>) -> Option<u64> {
-    u64::try_from(read.ok()?).ok()
+pub(super) fn nonce_lane_evidence<E>(read: Result<serde_json::Value, E>) -> Option<u64> {
+    crate::gap_probe::quantity_u64(&read.ok()?)
 }
 
 /// The pool-known predecessor set for one sender tick. A failed pending-lane
@@ -710,7 +721,7 @@ pub(super) fn predecessor_hash(value: &serde_json::Value) -> Option<B256> {
 /// fails the whole prefix. The prefix exists to give the frame replay a
 /// fake-mined queue, so a partially hydrated prefix is worse than none.
 async fn hydrate_predecessors(
-    client: &alloy::rpc::client::RpcClient,
+    sim: &AlloyProvider,
     sender: Address,
     nonces: &[u64],
 ) -> Result<HydratedPredecessors, HydrationFailure> {
@@ -720,10 +731,10 @@ async fn hydrate_predecessors(
     };
     for &nonce in nonces {
         let nonce_hex = format!("0x{nonce:x}");
-        let value = client
-            .request::<(Address, String), serde_json::Value>(
-                std::borrow::Cow::from("eth_getTransactionBySenderAndNonce"),
-                (sender, nonce_hex),
+        let value = sim
+            .make_request(
+                "eth_getTransactionBySenderAndNonce",
+                serde_json::json!([sender, nonce_hex]),
             )
             .await
             .map_err(|_| HydrationFailure::Transient("predecessor lookup failed"))?;
@@ -816,7 +827,7 @@ async fn finalized_block_number(provider: &AlloyProvider) -> Option<u64> {
 /// stays tracked and the next head retries.
 async fn classify_consumption(
     provider: &AlloyProvider,
-    client: &alloy::rpc::client::RpcClient,
+    sim: &AlloyProvider,
     frame: &ParkedFrame,
 ) -> Option<NonceConsumed> {
     let receipt = provider
@@ -831,10 +842,10 @@ async fn classify_consumption(
         return None;
     }
     let nonce_hex = format!("0x{:x}", frame.claimed_nonce);
-    let other = client
-        .request::<(Address, String), serde_json::Value>(
-            std::borrow::Cow::from("eth_getTransactionBySenderAndNonce"),
-            (frame.from, nonce_hex),
+    let other = sim
+        .make_request(
+            "eth_getTransactionBySenderAndNonce",
+            serde_json::json!([frame.from, nonce_hex]),
         )
         .await
         .ok();
@@ -1115,7 +1126,7 @@ struct LoopBoot {
     nonce_lane: Arc<NonceLane>,
     signer: Option<TxSigner>,
     gap_probe: crate::gap_probe::GapProbe,
-    sim_client: alloy::rpc::client::RpcClient,
+    sim_provider: Arc<AlloyProvider>,
     fixture_frames: Option<Vec<degenbot_rpc::backrun_feed::BackrunFeedEvent>>,
     head_ws_url: Option<String>,
     namespace_root: Option<PathBuf>,
@@ -1135,16 +1146,23 @@ impl BackrunDriver {
     ///
     /// # Panics
     ///
-    /// The driver boot panics on a malformed config (an unparseable sim URL, an
-    /// unreadable or malformed key file, an unparseable executor/owner
-    /// address, or a failed head fetch), preserving the single-driver bin's
-    /// loud-failure behavior.
+    /// The driver boot panics on a malformed config (an unreadable or malformed
+    /// key file, an unparseable executor/owner address, or a failed head
+    /// fetch), preserving the single-driver bin's loud-failure behavior.
+    ///
+    /// # Errors
+    ///
+    /// [`BackrunBootError::SimEndpoint`] when the bundle-sim endpoint cannot be
+    /// turned into a client. An endpoint no transport can dial is a boot the
+    /// host can report and act on, not a panic: a socket path or a
+    /// scheme-spelled node is a valid answer here, and a `localhost:8545`
+    /// typo is an operator error with a typed refusal.
     pub async fn start(
         strategy: BackrunStrategyBoot,
         hub: Arc<Hub>,
         namespace_root: Option<PathBuf>,
         nonce_lane: Arc<NonceLane>,
-    ) -> DriverHandle {
+    ) -> Result<DriverHandle, BackrunBootError> {
         let BackrunStrategyBoot {
             cfg,
             execution,
@@ -1152,25 +1170,19 @@ impl BackrunDriver {
             kit,
             head_ws_url,
             provider,
+            chain_id,
+            capability,
             ..
         } = strategy;
         let provider = provider.expect("a resolved strategy boot carries its node join");
-        // The bundle-sim client (the facet's `sim_url`, default: the chain
-        // node the frames replay against). READ/SIM ONLY -- `eth_callMany` never
-        // broadcasts, and this client is passed nothing else. The sim MUST run
-        // on an endpoint that actually serves `eth_callMany`; MEVBlocker's
-        // /fast http tier answers method-missing for it, so the node is the
-        // fallback and /fast stays available as an explicit override.
-        let sim_client = alloy::rpc::client::ClientBuilder::default().http(
-            cfg.sim_url
-                .clone()
-                .unwrap_or_else(|| cfg.rpc_url.clone())
-                .parse()
-                .expect("the facet's sim_url parses as an http url"),
-        );
+        let chain_id = chain_id.expect("a resolved strategy boot names its node join's chain");
+        let capability =
+            capability.expect("a resolved strategy boot carries its node join's dialer");
+        let sim_provider =
+            bundle_sim_provider(capability.as_ref(), &provider, &cfg, chain_id).await?;
         // The gap-boundary probe samples the chain node's pending-pool lanes
         // whenever a frame claims a nonce ahead of the parent state.
-        let gap_probe = crate::gap_probe::GapProbe::new(sim_client.clone());
+        let gap_probe = crate::gap_probe::GapProbe::new(Arc::clone(&sim_provider));
 
         // Bid mode legality was already decided in `decide`; the signer only
         // loads when the key material exists so observe-only runs need none.
@@ -1268,18 +1280,44 @@ impl BackrunDriver {
             nonce_lane,
             signer,
             gap_probe,
-            sim_client,
+            sim_provider,
             fixture_frames,
             head_ws_url,
             namespace_root,
         };
         let shared = Arc::new(LoopShared::new());
         let run = Box::pin(drive(cfg, hub, boot, Arc::clone(&shared)));
-        DriverHandle {
+        Ok(DriverHandle {
             shared,
             run: Some(run),
-        }
+        })
     }
+}
+
+/// The bundle-sim provider: the facet's `sim_url` when it named one, else the
+/// node the driver signs against — so the sim reads the same connection by
+/// default rather than opening a second one.
+///
+/// READ/SIM ONLY: `eth_callMany` never broadcasts, and this provider is passed
+/// nothing else. The sim MUST run on an endpoint that actually serves
+/// `eth_callMany`; `MEVBlocker`'s `/fast` http tier answers method-missing for
+/// it, so the node is the fallback and /fast stays available as an explicit
+/// override. An override is dialed by the caller's injected capability, which
+/// is why a socket path is as good an answer here as an http url.
+async fn bundle_sim_provider(
+    capability: &dyn NodeCapability,
+    node: &Arc<AlloyProvider>,
+    cfg: &BackrunConfig,
+    chain_id: u64,
+) -> Result<Arc<AlloyProvider>, BackrunBootError> {
+    let endpoint = cfg.sim_url.clone().unwrap_or_else(|| cfg.rpc_url.clone());
+    if endpoint == cfg.rpc_url {
+        return Ok(Arc::clone(node));
+    }
+    capability
+        .request_provider(&endpoint, chain_id)
+        .await
+        .map_err(|reason| BackrunBootError::SimEndpoint { endpoint, reason })
 }
 
 /// The loop's pending-tx pump: whichever feed the submission slot named.
@@ -1347,7 +1385,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         nonce_lane,
         signer,
         gap_probe,
-        sim_client,
+        sim_provider,
         fixture_frames,
         head_ws_url,
         namespace_root,
@@ -1404,7 +1442,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                 &mut runtime,
                 &mut strategy,
                 &provider,
-                &sim_client,
+                &sim_provider,
                 &cfg,
                 &pl,
                 &mut handle,
@@ -1639,10 +1677,10 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                     // the sender (the D1 adversarial-review find) - a failed
                     // read skips the tick, holding every frame instead.
                     let Some(head_nonce) = nonce_lane_evidence(
-                        sim_client
-                            .request::<(Address, &str), U256>(
-                                std::borrow::Cow::from("eth_getTransactionCount"),
-                                (sender, "latest"),
+                        sim_provider
+                            .make_request(
+                                "eth_getTransactionCount",
+                                serde_json::json!([sender, "latest"]),
                             )
                             .await,
                     ) else {
@@ -1653,10 +1691,10 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                     // degrades this tick to the latest-lane behavior rather
                     // than skipping the sender's frames entirely.
                     let pending_count = nonce_lane_evidence(
-                        sim_client
-                            .request::<(Address, &str), U256>(
-                                std::borrow::Cow::from("eth_getTransactionCount"),
-                                (sender, "pending"),
+                        sim_provider
+                            .make_request(
+                                "eth_getTransactionCount",
+                                serde_json::json!([sender, "pending"]),
                             )
                             .await,
                     );
@@ -1669,7 +1707,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                     // the nonce + boundary comparison.
                     let predecessor_content =
                         if !pool_known_gap.is_empty() && quarantine.has_guard_for_sender(sender) {
-                            hydrate_predecessors(&sim_client, sender, &pool_known_gap)
+                            hydrate_predecessors(&sim_provider, sender, &pool_known_gap)
                                 .await
                                 .map_or_else(|_| Vec::new(), |prefix| prefix.content())
                         } else {
@@ -1684,7 +1722,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                         match decision {
                             QuarantineDecision::NonceConsumed => {
                                 let Some(consumed) =
-                                    classify_consumption(&provider, &sim_client, &frame).await
+                                    classify_consumption(&provider, &sim_provider, &frame).await
                                 else {
                                     tracing::warn!(
                                         tx = %frame.hash,
@@ -1742,7 +1780,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                 let mut prefix_hashes: Vec<B256> = Vec::new();
                                 if !predecessors.is_empty() {
                                     match hydrate_predecessors(
-                                        &sim_client,
+                                        &sim_provider,
                                         frame.from,
                                         &predecessors,
                                     )
@@ -1807,7 +1845,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                     &mut runtime,
                                     &mut strategy,
                                     &provider,
-                                    &sim_client,
+                                    &sim_provider,
                                     &cfg,
                                     &pl,
                                     &mut handle,
@@ -1956,7 +1994,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                 &mut runtime,
                 &mut strategy,
                 &provider,
-                &sim_client,
+                &sim_provider,
                 &cfg,
                 &pl,
                 &mut handle,

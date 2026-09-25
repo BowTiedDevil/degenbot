@@ -8,7 +8,7 @@ use crate::backrun::{MevblockerBackrun, SubmissionSlot, TxpoolBackrun};
 use crate::frame_pipeline::predecessor_observe_reason;
 use crate::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{ParkRecord, QuarantineJournal};
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ use super::driver_loop::{
     FrameOutcome, GapParkMemo, LoopDecline, LoopPhase, LoopShared, ReentryOutcome, FEED_PREFIX,
 };
 use super::driver_policy::{bid_submission_target, build_broadcast_relays};
+use super::node_capability::NodeCapability;
 
 /// The strategy boot product owns one DB-backed registry, and every concrete
 /// ecosystem composition views those same facts. The fixture seeds the
@@ -93,6 +94,7 @@ async fn one_boot_product_shares_db_registry_graph_and_policy_facts() {
             rpc_url: "http://127.0.0.1:1".to_string(),
             provider,
             chain_id: 1,
+            capability: Arc::new(super::AnyRequestTransport),
         },
     )
     .await;
@@ -551,9 +553,15 @@ fn nonce_lane_failure_is_no_evidence_never_max() {
     // for every tracked frame of the sender - it is no evidence; the
     // caller skips the tick and every frame holds.
     assert!(nonce_lane_evidence::<()>(Err(())).is_none());
-    assert!(nonce_lane_evidence::<()>(Ok(U256::MAX)).is_none());
+    assert!(
+        nonce_lane_evidence::<()>(Ok(serde_json::json!(
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        )))
+        .is_none(),
+        "a nonce too wide for u64 is no evidence, never a saturated one"
+    );
     assert_eq!(
-        nonce_lane_evidence::<()>(Ok(U256::from(29_764u64))),
+        nonce_lane_evidence::<()>(Ok(serde_json::json!("0x7444"))),
         Some(29_764)
     );
 }
@@ -906,14 +914,17 @@ fn layers_from(dir: &std::path::Path, body: &str) -> degenbot_config::LoadedConf
 /// The node join names the chain it resolved for, and the head feed reads that
 /// same value: a 8453 session reaches the 8453 endpoints of both scopes while
 /// the chain-1 entries sit right beside them in the same file.
-#[test]
+#[tokio::test]
 
-fn the_node_join_names_the_session_chain_it_resolved() {
+async fn the_node_join_names_the_session_chain_it_resolved() {
     let dir = tempfile::tempdir().expect("temp dir");
 
     let loaded = layers_from(dir.path(), SESSION_8453_FILE);
 
-    let join = super::resolve_backrun_node_join(&loaded, None).expect("the 8453 join resolves");
+    let join =
+        super::resolve_backrun_node_join(&loaded, None, Arc::new(RecordingCapability::default()))
+            .await
+            .expect("the 8453 join resolves");
 
     assert_eq!(join.chain_id, 8453, "the join carries its resolved chain");
 
@@ -937,15 +948,20 @@ fn the_node_join_names_the_session_chain_it_resolved() {
 
 /// An explicit argument outranks the file layer, and the endpoints are then
 /// read from the chain that argument named.
-#[test]
+#[tokio::test]
 
-fn an_explicit_chain_argument_outranks_the_file_layer() {
+async fn an_explicit_chain_argument_outranks_the_file_layer() {
     let dir = tempfile::tempdir().expect("temp dir");
 
     let loaded = layers_from(dir.path(), SESSION_8453_FILE);
 
-    let join =
-        super::resolve_backrun_node_join(&loaded, Some("1")).expect("the chain-1 join resolves");
+    let join = super::resolve_backrun_node_join(
+        &loaded,
+        Some("1"),
+        Arc::new(RecordingCapability::default()),
+    )
+    .await
+    .expect("the chain-1 join resolves");
 
     assert_eq!(join.chain_id, 1);
 
@@ -958,16 +974,18 @@ fn an_explicit_chain_argument_outranks_the_file_layer() {
 /// A boot that cannot name its chain is a typed refusal. There is no
 /// mainnet-shaped default to fall into, because every downstream artifact (the
 /// endpoint tables, the connector index) is keyed by chain.
-#[test]
+#[tokio::test]
 
-fn a_boot_that_cannot_name_its_chain_refuses() {
+async fn a_boot_that_cannot_name_its_chain_refuses() {
     let dir = tempfile::tempdir().expect("temp dir");
 
     let loaded = layers_from(dir.path(), NO_CHAIN_FILE);
 
-    let error = super::resolve_backrun_node_join(&loaded, None)
-        .err()
-        .expect("an unnamed chain never yields a join");
+    let error =
+        super::resolve_backrun_node_join(&loaded, None, Arc::new(RecordingCapability::default()))
+            .await
+            .err()
+            .expect("an unnamed chain never yields a join");
 
     assert!(
         matches!(error, super::BackrunBootError::SessionChain(_)),
@@ -977,16 +995,18 @@ fn a_boot_that_cannot_name_its_chain_refuses() {
 
 /// A named chain with no endpoint for it is a refusal whose message names the
 /// chain the boot needed — not a quiet fall-through to another chain's entry.
-#[test]
+#[tokio::test]
 
-fn an_unresolved_endpoint_names_the_chain_the_boot_needed() {
+async fn an_unresolved_endpoint_names_the_chain_the_boot_needed() {
     let dir = tempfile::tempdir().expect("temp dir");
 
     let loaded = layers_from(dir.path(), CHAIN_1_ENDPOINTS_FILE);
 
-    let error = super::resolve_backrun_node_join(&loaded, None)
-        .err()
-        .expect("8453 has no endpoint in a chain-1-only file");
+    let error =
+        super::resolve_backrun_node_join(&loaded, None, Arc::new(RecordingCapability::default()))
+            .await
+            .err()
+            .expect("8453 has no endpoint in a chain-1-only file");
 
     let message = error.to_string();
 
@@ -1112,6 +1132,7 @@ async fn join_for_chain(chain_id: u64) -> super::BackrunNodeJoin {
         ),
 
         chain_id,
+        capability: Arc::new(super::AnyRequestTransport),
     }
 }
 
@@ -1168,6 +1189,7 @@ fn join_over_node(chain_id: u64, served_chain_id: u64) -> super::BackrunNodeJoin
             Arc::new(inner) as Arc<dyn Provider<Ethereum>>
         )),
         chain_id,
+        capability: Arc::new(super::AnyRequestTransport),
     }
 }
 
@@ -1227,5 +1249,329 @@ async fn a_node_serving_the_resolved_chain_boots() {
         resources.boot_error().is_none(),
         "an endpoint that serves the boot's chain is not a refusal: {:?}",
         resources.boot_error()
+    );
+}
+
+// ── The injected node capability ─────────────────────────────────────────
+//
+// The boot resolves WHICH endpoint (chain + scope); the caller injects WHO
+// dials it. These tests read both halves: what the scope chose, and whether
+// the consumer that asked for it can actually reach a socket.
+
+/// A dialer that answers every endpoint with a transport it never opens, and
+/// records what it was asked for. A resolution test reads the endpoint the
+/// scope chose without a node behind it.
+#[derive(Default)]
+struct RecordingCapability {
+    asked: std::sync::Mutex<Vec<String>>,
+}
+
+impl RecordingCapability {
+    fn asked(&self) -> Vec<String> {
+        self.asked
+            .lock()
+            .expect("the recording lock is not poisoned")
+            .clone()
+    }
+}
+
+impl super::node_capability::NodeCapability for RecordingCapability {
+    fn request_provider(
+        &self,
+        endpoint: &str,
+        _chain_id: u64,
+    ) -> super::node_capability::RequestProviderFuture<'_> {
+        self.asked
+            .lock()
+            .expect("the recording lock is not poisoned")
+            .push(endpoint.to_string());
+        Box::pin(async move {
+            use alloy::network::Ethereum;
+            use alloy::providers::{Provider, ProviderBuilder};
+            use alloy::rpc::client::ClientBuilder;
+            use alloy::transports::mock::{Asserter, MockTransport};
+
+            let client =
+                ClientBuilder::default().transport(MockTransport::new(Asserter::new()), true);
+            let inner = ProviderBuilder::new().connect_client(client).erased();
+            Ok(Arc::new(AlloyProvider::from_provider(
+                Arc::new(inner) as Arc<dyn Provider<Ethereum>>
+            )))
+        })
+    }
+}
+
+/// An IPC node on a real unix socket: it answers `eth_chainId` and
+/// `eth_callMany` and nothing else. A mock transport would prove nothing
+/// here, because the transport is the subject.
+///
+/// The client frames its requests as bare JSON values with no delimiter, so
+/// the responder parses each buffer as soon as it holds one complete value
+/// rather than waiting for a line that never comes.
+fn ipc_node(dir: &std::path::Path, chain_id: u64) -> std::path::PathBuf {
+    use std::io::{Read, Write};
+
+    let path = dir.join("node.ipc");
+    let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind the IPC socket");
+    let served = format!("0x{chain_id:x}");
+    std::thread::spawn(move || {
+        while let Ok((mut stream, _)) = listener.accept() {
+            let served = served.clone();
+            std::thread::spawn(move || {
+                let mut pending = String::new();
+                let mut chunk = [0_u8; 512];
+                loop {
+                    let Ok(read) = stream.read(&mut chunk) else {
+                        return;
+                    };
+                    if read == 0 {
+                        return;
+                    }
+                    pending.push_str(&String::from_utf8_lossy(&chunk[..read]));
+                    loop {
+                        let Ok(request) = serde_json::from_str::<serde_json::Value>(pending.trim())
+                        else {
+                            break;
+                        };
+                        pending.clear();
+                        let id = request
+                            .get("id")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        let method = request
+                            .get("method")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        let result = match method.as_str() {
+                            "eth_chainId" => serde_json::json!(served),
+                            "eth_callMany" => {
+                                serde_json::json!([{"success": true, "returnData": "0x"}])
+                            }
+                            _ => serde_json::Value::Null,
+                        };
+                        let response =
+                            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result});
+                        if write!(stream, "{response}").is_err() || stream.flush().is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    path
+}
+
+/// The `eth_callMany` request the driver's sim gate sends, built by the same
+/// composer the gate uses.
+fn eth_call_many_probe() -> serde_json::Value {
+    degenbot_submission::bundle::eth_call_many_bundle_sim_params(
+        &[serde_json::json!({
+            "to": "0x0000000000000000000000000000000000000000",
+            "data": "0x",
+        })],
+        "latest",
+    )
+}
+
+/// What one socket endpoint produces for the two consumers that need it: the
+/// chain the join's provider read back over the socket, and the sim
+/// `eth_callMany` answer served by the client the same injected capability
+/// built.
+async fn join_and_sim_over(dir: &std::path::Path, endpoint: &str) -> (u64, serde_json::Value) {
+    let body =
+        format!("[session]\nchain_id = 31337\n\n[nodes]\nipc = {{ 31337 = \"{endpoint}\" }}\n");
+    let loaded = layers_from(dir, &body);
+
+    let join =
+        super::resolve_backrun_node_join(&loaded, None, Arc::new(super::AnyRequestTransport))
+            .await
+            .expect("a socket path resolves a node join");
+
+    assert_eq!(
+        join.chain_id, 31337,
+        "the join carries the chain its endpoint was resolved for"
+    );
+    assert_eq!(
+        join.rpc_url, endpoint,
+        "the join reports the endpoint as written"
+    );
+
+    let served = join
+        .provider
+        .get_chain_id()
+        .await
+        .expect("the join's provider answers which chain the node serves");
+
+    let sim = join
+        .capability
+        .request_provider(&join.rpc_url, join.chain_id)
+        .await
+        .expect("the sim endpoint dials the same socket the join did");
+
+    let result = sim
+        .make_request("eth_callMany", eth_call_many_probe())
+        .await
+        .expect("the socket serves eth_callMany");
+
+    (served, result)
+}
+
+/// The `ipc://` spelling of a local node reaches the driver: the node join's
+/// provider reads the node's chain over the socket, and the sim client built
+/// from the same endpoint serves the frame-sim request.
+#[tokio::test]
+async fn an_ipc_scheme_join_and_its_sim_client_reach_the_local_node() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let socket = ipc_node(dir.path(), 31337);
+
+    let (served, result) =
+        join_and_sim_over(dir.path(), &format!("ipc://{}", socket.display())).await;
+
+    assert_eq!(
+        served, 31337,
+        "the join's provider reached the node over the socket"
+    );
+    assert_eq!(
+        result[0]["success"],
+        serde_json::json!(true),
+        "the sim client served eth_callMany over the socket: {result}"
+    );
+}
+
+/// A bare socket path is the same transport: an operator who wrote the path
+/// without the scheme gets the same join and the same sim client.
+#[tokio::test]
+async fn a_bare_socket_path_join_and_its_sim_client_reach_the_local_node() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let socket = ipc_node(dir.path(), 31337);
+
+    let (served, result) = join_and_sim_over(dir.path(), &socket.display().to_string()).await;
+
+    assert_eq!(
+        served, 31337,
+        "the join's provider reached the node over the socket"
+    );
+    assert_eq!(
+        result[0]["success"],
+        serde_json::json!(true),
+        "the sim client served eth_callMany over the socket: {result}"
+    );
+}
+
+/// The boot hands the capability exactly the endpoint the request scope chose
+/// — the transport is the caller's decision, the endpoint is the boot's.
+#[tokio::test]
+async fn the_boot_dials_exactly_the_endpoint_the_request_scope_chose() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let loaded = layers_from(dir.path(), SESSION_8453_FILE);
+    let capability = Arc::new(RecordingCapability::default());
+
+    let join = super::resolve_backrun_node_join(&loaded, None, capability.clone())
+        .await
+        .expect("the 8453 join resolves");
+
+    assert_eq!(
+        capability.asked(),
+        vec!["ws://127.0.0.1:8453".to_string()],
+        "the capability is asked for the resolved endpoint, and nothing else"
+    );
+    assert_eq!(join.rpc_url, "ws://127.0.0.1:8453");
+}
+
+/// A file whose only entry for the session chain is the http table. A request
+/// consumer can use it; a feed cannot.
+const HTTP_ONLY_FEED_FILE: &str = concat!(
+    "[session]\n",
+    "chain_id = 8453\n",
+    "\n",
+    "[nodes]\n",
+    "http = { 8453 = \"http://127.0.0.1:8453\" }\n",
+);
+
+/// The head feed reads the SUBSCRIPTION scope, and the operator's http entry
+/// is not one: the request scope accepts the same file's http entry, so the
+/// contrast is the capability, not a missing endpoint.
+#[test]
+fn the_head_feed_never_downgrades_to_the_http_entry() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let loaded = layers_from(dir.path(), HTTP_ONLY_FEED_FILE);
+
+    assert_eq!(
+        degenbot_config::resolve_node_request_uri(
+            &loaded,
+            8453,
+            &degenbot_config::NodeOverrides::new(),
+        )
+        .expect("a request consumer accepts the http entry")
+        .value,
+        "http://127.0.0.1:8453",
+        "the file does serve requests"
+    );
+
+    assert_eq!(
+        super::driver_boot::head_ws_url(&loaded, 8453),
+        None,
+        "an http entry never becomes the head feed; the driver polls instead"
+    );
+
+    let error = degenbot_config::resolve_node_subscription_uri(
+        &loaded,
+        8453,
+        &degenbot_config::NodeOverrides::new(),
+    )
+    .expect_err("an http endpoint is not a feed");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("ipc") && message.contains("ws"),
+        "the refusal names the two transports a feed accepts: {message}"
+    );
+}
+
+/// An `ipc` entry the config layer accepts and the transport classifies as a
+/// socket, but whose path has no listener: an absolute path under the temp
+/// directory. The config table is a naming layer and the transport is a dialing
+/// one; the dial fails, and the boot surfaces that failure as a typed refusal
+/// naming the endpoint rather than a panic.
+#[tokio::test]
+async fn an_undialable_join_endpoint_is_a_typed_refusal() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let endpoint = dir.path().join("node.ipc");
+    let body = format!(
+        "[session]\nchain_id = 31337\n\n[nodes]\nipc = {{ 31337 = \"{}\" }}\n",
+        endpoint.display()
+    );
+    let loaded = layers_from(dir.path(), &body);
+
+    let error =
+        super::resolve_backrun_node_join(&loaded, None, Arc::new(super::AnyRequestTransport))
+            .await
+            .err()
+            .expect("a socket path with no listener never yields a join");
+
+    assert!(
+        matches!(error, super::BackrunBootError::NodeJoin(_)),
+        "the refusal is the endpoint: {error:?}"
+    );
+    let rendered = endpoint.display().to_string();
+    assert!(
+        error.to_string().contains(&rendered),
+        "the refusal names the endpoint it could not dial: {error}"
+    );
+}
+
+#[tokio::test]
+async fn an_undialable_sim_endpoint_is_a_typed_refusal() {
+    let error = super::AnyRequestTransport
+        .request_provider("sim.local/fast", 1)
+        .await
+        .err()
+        .expect("a schemeless sim endpoint never yields a client");
+
+    assert!(
+        error.contains("sim.local/fast"),
+        "the refusal names the sim endpoint it could not dial: {error}"
     );
 }

@@ -594,7 +594,7 @@ pub fn honest_observe(
 /// attempted in that order; a parameter-shape or method-missing error on
 /// one endpoint must never read as "the bundle reverted".
 pub async fn simulate_candidate(
-    sim_client: &alloy::rpc::client::RpcClient,
+    sim_provider: &AlloyProvider,
     ev: &BackrunFeedEvent,
     exec: Address,
     owner: Address,
@@ -623,10 +623,7 @@ pub async fn simulate_candidate(
         }
     }
     for attempt in [params, blocks_list] {
-        if let Ok(resp) = sim_client
-            .request::<serde_json::Value, serde_json::Value>("eth_callMany", attempt)
-            .await
-        {
+        if let Ok(resp) = sim_provider.make_request("eth_callMany", attempt).await {
             let txt = serde_json::to_string(&resp).unwrap_or_default();
             if !txt.contains("error") {
                 return true;
@@ -699,7 +696,7 @@ pub async fn process_frame<S: PendingTxReaction>(
     strategy: &mut S,
     ctx: &mut MarketContext,
     provider: &AlloyProvider,
-    sim_client: &alloy::rpc::client::RpcClient,
+    sim_provider: &AlloyProvider,
     knobs: &BackrunConfig,
     pl: &PipelineConfig,
     handle: &mut Option<BlockSimHandle<'_>>,
@@ -711,7 +708,7 @@ pub async fn process_frame<S: PendingTxReaction>(
         strategy,
         ctx,
         provider,
-        sim_client,
+        sim_provider,
         knobs,
         pl,
         handle,
@@ -737,7 +734,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     strategy: &mut S,
     ctx: &mut MarketContext,
     provider: &AlloyProvider,
-    sim_client: &alloy::rpc::client::RpcClient,
+    sim_provider: &AlloyProvider,
     knobs: &BackrunConfig,
     pl: &PipelineConfig,
     handle: &mut Option<BlockSimHandle<'_>>,
@@ -949,7 +946,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
         } else {
             let t = Instant::now();
             sim_ok = simulate_candidate(
-                sim_client,
+                sim_provider,
                 ev,
                 pl.execution.executor(),
                 pl.owner,

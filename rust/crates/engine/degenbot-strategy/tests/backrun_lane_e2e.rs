@@ -105,11 +105,6 @@ fn live_provider() -> Arc<AlloyProvider> {
     Arc::new(AlloyProvider::from_provider(Arc::new(inner)))
 }
 
-fn sim_client() -> alloy::rpc::client::RpcClient {
-    let rpc_url = std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1").unwrap();
-    alloy::rpc::client::ClientBuilder::default().http(rpc_url.parse().unwrap())
-}
-
 fn live_db() -> degenbot_db::connection::DegenbotDb {
     let db_path = std::env::var("DEGENBOT_DB_PATH").unwrap();
     degenbot_db::connection::DegenbotDb::open(std::path::Path::new(&db_path))
@@ -314,7 +309,7 @@ async fn frame_pipeline_replay_staging_bids_with_composed_calldata() {
         &mut strategy,
         &mut rt,
         &provider,
-        &sim_client(),
+        &provider,
         &cfg,
         &pl,
         &mut handle,
@@ -387,7 +382,7 @@ async fn frame_pipeline_reverted_target_observes_truthfully() {
         &mut strategy,
         &mut rt,
         &provider,
-        &sim_client(),
+        &provider,
         &cfg,
         &pl,
         &mut handle,

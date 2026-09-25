@@ -140,8 +140,14 @@ fn backrun_boot_resources(
     // The same loaded layers the database path came from: the join resolves
     // the session chain once and carries it to the connector index and the
     // head feed, so a hosted backrun lane cannot run against a chain its
-    // operator never named.
-    match degenbot_strategy::backrun_driver::resolve_backrun_node_join(&loaded, None) {
+    // operator never named. The capability is the host's transport decision:
+    // this host lets the resolved endpoint name its own scheme, so an
+    // `ipc://` entry in the operator file reaches the hosted driver.
+    let capability = Arc::new(degenbot_strategy::backrun_driver::AnyRequestTransport);
+    let join = degenbot_core::runtime::get_runtime().block_on(
+        degenbot_strategy::backrun_driver::resolve_backrun_node_join(&loaded, None, capability),
+    );
+    match join {
         Ok(join) => degenbot_core::runtime::get_runtime().block_on(
             degenbot_strategy::backrun_driver::resolve_backrun_boot(
                 Arc::clone(&config),

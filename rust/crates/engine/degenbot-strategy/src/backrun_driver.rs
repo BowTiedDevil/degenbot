@@ -30,6 +30,7 @@
 mod driver_boot;
 mod driver_loop;
 mod driver_policy;
+mod node_capability;
 
 #[cfg(test)]
 mod tests;
@@ -40,3 +41,4 @@ pub use driver_boot::{
     BackrunStrategyBoot,
 };
 pub use driver_loop::{BackrunDriver, DriverHandle, LoopDecline, LoopPhase};
+pub use node_capability::{AnyRequestTransport, NodeCapability, RequestProviderFuture};

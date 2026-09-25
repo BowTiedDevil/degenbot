@@ -268,11 +268,20 @@ A family's driver is a facade over three partitions, by invariant
   `BackrunBootResources`; each `BackrunStrategyBoot` derives its concrete kit
   and verification policy over those shared facts. Entry points are
   `backrun_boot(...)`, `backrun_spawn_factory(...)`, and
-  `resolve_backrun_node_join()`.
+  `resolve_backrun_node_join(&loaded, cli_chain_id, capability)`. The join
+  takes the session chain argument (resolved ONCE, then carried out on
+  `BackrunNodeJoin::chain_id` for the connector index and the head feed) AND
+  the caller's `NodeCapability` — the dialer for whatever transport the
+  resolved endpoint names. A family never picks its own transport: an
+  `ipc://` entry and a bare socket path are as valid a node join as an
+  `http://` one, and an endpoint nothing can dial is a typed
+  `BackrunBootError`, not a panic. A new family passes
+  `AnyRequestTransport` (scheme-detected) or its own capability.
 - `driver_loop` (`driver_loop.rs`) — the loop and every runtime surface it
   touches: `BackrunDriver::start(...)` returns a `DriverHandle` driving
-  `LoopPhase`. The loop consumes the strategy boot product and host-minted hub;
-  it does not reopen the DB or reconstruct a registry.
+  `LoopPhase`, or a `BackrunBootError` for an endpoint it cannot dial. The
+  loop consumes the strategy boot product and host-minted hub; it does not
+  reopen the DB or reconstruct a registry.
 - `driver_policy` (`driver_policy.rs`) — the bid's economics: price reads,
   relay fan-out, bundle target. Pure reads/derivations, never lifecycle moves.
 
