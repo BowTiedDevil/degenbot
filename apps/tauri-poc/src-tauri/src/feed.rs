@@ -1,9 +1,9 @@
-use std::env;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use degenbot::config::{resolve_node_ws_uri, ProcessEnv};
 use degenbot::eip_1559;
 use degenbot_ingestion::{IngestEvent, WsIngestor};
 use degenbot_tauri_feed_model::{BlockFeedModel, BlockSnapshot, LogSnapshot};
@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-const WS_ENV_VARS: [&str; 2] = ["DEGENBOT_RPC_WS_CHAINID_1", "ETHEREUM_ARCHIVE_NODE_WS_URI"];
+const MAINNET_CHAIN_ID: u64 = 1;
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,17 +78,9 @@ impl FeedState {
 }
 
 pub fn configured_ws_url() -> Result<String, String> {
-    for name in WS_ENV_VARS {
-        if let Ok(value) = env::var(name) {
-            let value = value.trim();
-            if !value.is_empty() {
-                return Ok(value.to_owned());
-            }
-        }
-    }
-    Err(format!(
-        "set DEGENBOT_RPC_WS_CHAINID_1 or ETHEREUM_ARCHIVE_NODE_WS_URI to a mainnet WebSocket URL"
-    ))
+    resolve_node_ws_uri(&ProcessEnv, MAINNET_CHAIN_ID, None)
+        .map(|resolved| resolved.value)
+        .map_err(|error| error.to_string())
 }
 
 pub fn start_feed(app: AppHandle, state: FeedState, url: String) {

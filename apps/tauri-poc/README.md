@@ -13,7 +13,20 @@ npm install
 npm run tauri dev
 ```
 
-`ETHEREUM_ARCHIVE_NODE_WS_URI` is accepted as a fallback for the repository test environment.
+The GUI calls the canonical `degenbot-config` node resolver. For this mainnet
+PoC it resolves chain `1` through `DEGENBOT_RPC_WS_CHAINID_1`. Node endpoints are
+intentionally not read from `config.toml`: the retired `[ws]`/`[rpc]` file
+vocabulary is deliberately refused by the Rust configuration architecture. The
+`ETHEREUM_ARCHIVE_NODE_WS_URI` name is a test-environment variable, not a
+canonical Rust configuration key.
+
+When launching the packaged AppImage from a desktop session, pass the variable
+explicitly if the desktop environment does not inherit your shell:
+
+```bash
+DEGENBOT_RPC_WS_CHAINID_1=ws://127.0.0.1:8546 \
+  './degenbot feed PoC_0.1.0_amd64.AppImage'
+```
 
 The `npm run tauri dev` script automatically uses `xvfb-run` when neither `DISPLAY` nor `WAYLAND_DISPLAY` is available. In a normal desktop session it launches Tauri directly.
 
