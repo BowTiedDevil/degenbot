@@ -1,5 +1,7 @@
-//! ADR-051 D8: driver-domain resolver acceptance — per-layer precedence,
-//! `Source` provenance, `~` expansion, and the unresolved-endpoint error text.
+//! ADR-051 D8 driver-domain resolver acceptance: per-layer precedence over a
+//! LOADED config, `Source` provenance, `~` expansion, and the unresolved-value
+//! error text. The four-layer node matrix (capability scopes, transport
+//! preference, layers-outrank-transport) lives in `resolver_layers.rs`.
 //!
 //! Every case builds a `MapEnv`, so no test mutates the process environment.
 
@@ -7,9 +9,10 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use degenbot_config::{
-    expand_state_path_with, node_http_env_name, node_ws_env_name, resolve_chain_id,
-    resolve_database_path, resolve_node_http_uri, resolve_node_uris, resolve_node_ws_uri,
-    BotConfig, ConfigError, MapEnv, Source, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, XDG_STATE_HOME_ENV,
+    expand_state_path_with, node_http_env_name, node_ipc_env_name, node_ws_env_name,
+    resolve_chain_id, resolve_database_path, resolve_database_path_with, resolve_node_uri,
+    BotConfig, BotConfigLoader, ConfigError, LoadedConfig, MapEnv, NodeOverrides, NodeScope,
+    Source, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, XDG_STATE_HOME_ENV,
 };
 
 const HOME: &str = "/home/tester";
@@ -22,6 +25,41 @@ fn map_env(pairs: &[(&str, &str)]) -> MapEnv {
             .collect::<BTreeMap<_, _>>(),
     )
 }
+
+/// A loaded config over `env`, with `file` (when given) as the operator-file
+/// layer. The temp file is removed before the load result is returned.
+fn load(file: Option<&str>, env: &[(&str, &str)]) -> Result<LoadedConfig, ConfigError> {
+    let mut loader = BotConfigLoader::new().with_env(Box::new(map_env(env)));
+    let path = file.map(|body| {
+        // The body is TOML text, not a filename: a counter names the fixture.
+        let id = TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "degenbot-config-resolvers-{}-{id}.toml",
+            std::process::id()
+        ));
+        if let Err(e) = std::fs::write(&path, body) {
+            unreachable!("temp toml write failed: {e}");
+        }
+        path
+    });
+    if let Some(path) = &path {
+        loader = loader.with_config_path(path);
+    }
+    let result = loader.load();
+    if let Some(path) = path {
+        // Best-effort cleanup in a sandboxed test tree.
+        if std::fs::remove_file(&path).is_err() {}
+    }
+    result
+}
+
+/// The loaded config every resolver reads, over `file` and `env`.
+fn loaded(file: Option<&str>, env: &[(&str, &str)]) -> LoadedConfig {
+    must_ok(load(file, env))
+}
+
+/// A temp-fixture counter: the operator file bodies are TOML text, not names.
+static TEMP_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn must_ok<T>(result: Result<T, ConfigError>) -> T {
     match result {
@@ -37,46 +75,63 @@ fn must_err(result: Result<impl std::fmt::Debug, ConfigError>) -> ConfigError {
     }
 }
 
+/// A load that MUST fail; panics when it succeeds.
+fn must_fail_to_load(file: Option<&str>, env: &[(&str, &str)]) -> ConfigError {
+    must_err(load(file, env))
+}
+
 #[test]
-fn database_path_precedence_cli_beats_env_beats_default() {
-    let dflt = resolve_database_path(&map_env(&[("HOME", HOME)]), None);
+fn database_path_precedence_runs_explicit_env_file_then_default() {
+    let file = loaded(Some("[database]\npath = \"/file/degenbot.db\"\n"), &[]);
+    let from_file = resolve_database_path(&file, None);
+    assert_eq!(from_file.value, PathBuf::from("/file/degenbot.db"));
+    assert_eq!(from_file.source, Source::File);
+
+    let with_env = loaded(
+        Some("[database]\npath = \"/file/degenbot.db\"\n"),
+        &[(DB_PATH_ENV, "/env/degenbot.db")],
+    );
+    let from_env = resolve_database_path(&with_env, None);
+    assert_eq!(from_env.value, PathBuf::from("/env/degenbot.db"));
+    assert_eq!(from_env.source, Source::Env);
+
+    let from_cli = resolve_database_path(&with_env, Some("/cli/degenbot.db"));
+    assert_eq!(from_cli.value, PathBuf::from("/cli/degenbot.db"));
+    assert_eq!(from_cli.source, Source::Cli);
+
+    // No layer named a path: the schema default under the state home.
+    let defaults = loaded(None, &[]);
+    let dflt = resolve_database_path_with(&defaults, None, &map_env(&[("HOME", HOME)]));
     assert_eq!(
         dflt.value,
         PathBuf::from(format!("{HOME}/.local/state/degenbot/db/degenbot.db"))
     );
     assert_eq!(dflt.source, Source::Default, "absent layers -> default");
-
-    let env = map_env(&[("HOME", HOME), (DB_PATH_ENV, "/env/degenbot.db")]);
-    let from_env = resolve_database_path(&env, None);
-    assert_eq!(from_env.value, PathBuf::from("/env/degenbot.db"));
-    assert_eq!(from_env.source, Source::Env);
-
-    let from_cli = resolve_database_path(&env, Some("/cli/degenbot.db"));
-    assert_eq!(from_cli.value, PathBuf::from("/cli/degenbot.db"));
-    assert_eq!(from_cli.source, Source::Cli);
 }
 
 #[test]
 fn database_path_expands_leading_tilde_against_home() {
-    let env = map_env(&[("HOME", HOME), (DB_PATH_ENV, "~/data/custom.db")]);
-    let expanded = resolve_database_path(&env, None);
+    let cfg = loaded(None, &[(DB_PATH_ENV, "~/data/custom.db")]);
+    let home_env = map_env(&[("HOME", HOME)]);
+    let expanded = resolve_database_path_with(&cfg, None, &home_env);
     assert_eq!(
         expanded.value,
         PathBuf::from(format!("{HOME}/data/custom.db"))
     );
 
-    let bare = resolve_database_path(&map_env(&[("HOME", HOME), (DB_PATH_ENV, "~")]), None);
+    let bare_cfg = loaded(None, &[(DB_PATH_ENV, "~")]);
+    let bare = resolve_database_path_with(&bare_cfg, None, &home_env);
     assert_eq!(bare.value, PathBuf::from(HOME));
 
     // No HOME layer: the text is left literal (never resolved against cwd).
-    let no_home = resolve_database_path(&map_env(&[(DB_PATH_ENV, "~/x.db")]), None);
-    assert_eq!(no_home.value, PathBuf::from("~/x.db"));
+    let no_home = resolve_database_path_with(&cfg, None, &MapEnv::default());
+    assert_eq!(no_home.value, PathBuf::from("~/data/custom.db"));
 }
 
 #[test]
 fn empty_database_layers_are_indistinguishable_from_absent() {
-    let env = map_env(&[("HOME", HOME), (DB_PATH_ENV, "")]);
-    let resolved = resolve_database_path(&env, Some(""));
+    let cfg = loaded(None, &[(DB_PATH_ENV, "")]);
+    let resolved = resolve_database_path_with(&cfg, Some(""), &map_env(&[("HOME", HOME)]));
     assert_eq!(resolved.source, Source::Default);
     assert_eq!(
         resolved.value,
@@ -86,8 +141,9 @@ fn empty_database_layers_are_indistinguishable_from_absent() {
 
 #[test]
 fn xdg_state_home_absolute_drives_the_database_default() {
+    let cfg = loaded(None, &[]);
     let env = map_env(&[("HOME", HOME), (XDG_STATE_HOME_ENV, "/xdg/state")]);
-    let resolved = resolve_database_path(&env, None);
+    let resolved = resolve_database_path_with(&cfg, None, &env);
     assert_eq!(
         resolved.value,
         PathBuf::from("/xdg/state/degenbot/db/degenbot.db"),
@@ -95,16 +151,17 @@ fn xdg_state_home_absolute_drives_the_database_default() {
     );
     assert_eq!(resolved.source, Source::Default);
 
-    // Explicit layers are NOT rebased: only the built-in default consults XDG.
-    let explicit = resolve_database_path(&env, Some("/cli/custom.db"));
+    // Explicit layers are NOT rebased: only the schema default consults XDG.
+    let explicit = resolve_database_path_with(&cfg, Some("/cli/custom.db"), &env);
     assert_eq!(explicit.value, PathBuf::from("/cli/custom.db"));
 }
 
 #[test]
 fn empty_or_relative_xdg_state_home_is_ignored() {
+    let cfg = loaded(None, &[]);
     for xdg in ["", "relative/state"] {
         let env = map_env(&[("HOME", HOME), (XDG_STATE_HOME_ENV, xdg)]);
-        let resolved = resolve_database_path(&env, None);
+        let resolved = resolve_database_path_with(&cfg, None, &env);
         assert_eq!(
             resolved.value,
             PathBuf::from(format!("{HOME}/.local/state/degenbot/db/degenbot.db")),
@@ -149,39 +206,53 @@ fn state_rooted_schema_defaults_resolve_under_the_state_home() {
 }
 
 #[test]
-fn chain_id_precedence_cli_beats_env() {
-    let env = map_env(&[(DEFAULT_CHAIN_ID_ENV, "8453")]);
-    let from_env = must_ok(resolve_chain_id(&env, None));
-    assert_eq!(from_env.value, 8453);
+fn chain_id_precedence_runs_explicit_env_then_file() {
+    let from_file = must_ok(resolve_chain_id(
+        &loaded(Some("[session]\nchain_id = 8453\n"), &[]),
+        None,
+    ));
+    assert_eq!(from_file.value, 8453);
+    assert_eq!(from_file.source, Source::File);
+
+    let cfg = loaded(
+        Some("[session]\nchain_id = 8453\n"),
+        &[(DEFAULT_CHAIN_ID_ENV, "10")],
+    );
+    let from_env = must_ok(resolve_chain_id(&cfg, None));
+    assert_eq!(from_env.value, 10, "env beats the file");
     assert_eq!(from_env.source, Source::Env);
 
-    let from_cli = must_ok(resolve_chain_id(&env, Some("1")));
+    let from_cli = must_ok(resolve_chain_id(&cfg, Some("1")));
     assert_eq!(from_cli.value, 1, "cli beats env");
     assert_eq!(from_cli.source, Source::Cli);
 }
 
 #[test]
 fn chain_id_unresolved_and_invalid_name_their_layers() {
-    let empty = MapEnv::default();
-    let err = must_err(resolve_chain_id(&empty, None));
+    let err = must_err(resolve_chain_id(&loaded(None, &[]), None));
     let text = err.problems.join("\n");
-    assert!(text.contains("--chain-id"), "names the CLI layer: {text}");
+    assert!(
+        text.contains("--chain-id"),
+        "names the explicit layer: {text}"
+    );
     assert!(
         text.contains(DEFAULT_CHAIN_ID_ENV),
         "names the env layer: {text}"
     );
-    assert!(text.contains("unset"), "marks both layers unset: {text}");
-
-    let bad_env = must_err(resolve_chain_id(
-        &map_env(&[(DEFAULT_CHAIN_ID_ENV, "base")]),
-        None,
-    ));
     assert!(
-        bad_env.problems[0].contains(DEFAULT_CHAIN_ID_ENV),
-        "{}",
-        bad_env.problems[0]
+        text.contains("session.chain_id"),
+        "names the file layer: {text}"
     );
-    let bad_cli = must_err(resolve_chain_id(&empty, Some("nope")));
+    assert!(text.contains("unset"), "marks every layer unset: {text}");
+
+    // A non-integer env value is refused by the LOAD, naming the declared key
+    // and the value, rather than reaching the resolver as a string.
+    let bad_env = must_fail_to_load(None, &[(DEFAULT_CHAIN_ID_ENV, "base")]);
+    let text = bad_env.problems.join("\n");
+    assert!(text.contains("session.chain_id"), "names the key: {text}");
+    assert!(text.contains("base"), "names the value: {text}");
+
+    let bad_cli = must_err(resolve_chain_id(&loaded(None, &[]), Some("nope")));
     assert!(
         bad_cli.problems[0].contains("--chain-id"),
         "{}",
@@ -193,88 +264,37 @@ fn chain_id_unresolved_and_invalid_name_their_layers() {
 fn per_chain_env_names_embed_the_chain_id() {
     assert_eq!(node_http_env_name(8453), "DEGENBOT_RPC_HTTP_CHAINID_8453");
     assert_eq!(node_ws_env_name(8453), "DEGENBOT_RPC_WS_CHAINID_8453");
+    assert_eq!(node_ipc_env_name(8453), "DEGENBOT_RPC_IPC_CHAINID_8453");
 }
 
+/// An empty layer value is "this layer supplied nothing": a blank export and a
+/// blank explicit value both leave the file entry standing, and a
+/// blank-LOOKING export is refused by the load rather than becoming a
+/// whitespace endpoint.
 #[test]
-fn node_uri_precedence_cli_beats_env() {
-    let chain = 1_u64;
-    let http_env = node_http_env_name(chain);
-    let ws_env = node_ws_env_name(chain);
-    let env = map_env(&[
-        (http_env.as_str(), "http://env.example"),
-        (ws_env.as_str(), "ws://env.example"),
-    ]);
-
-    let from_env = must_ok(resolve_node_uris(&env, chain, None, None));
-    assert_eq!(from_env.http.value, "http://env.example");
-    assert_eq!(from_env.http.source, Source::Env);
-    assert_eq!(from_env.ws.value, "ws://env.example");
-    assert_eq!(from_env.ws.source, Source::Env);
-
-    let from_cli = must_ok(resolve_node_uris(
-        &env,
-        chain,
-        Some("http://cli.example"),
-        Some("ws://cli.example"),
-    ));
-    assert_eq!(from_cli.http.value, "http://cli.example");
-    assert_eq!(from_cli.http.source, Source::Cli);
-    assert_eq!(from_cli.ws.value, "ws://cli.example");
-    assert_eq!(from_cli.ws.source, Source::Cli);
-}
-
-#[test]
-fn unresolved_node_rpc_names_every_layer_consulted() {
-    let chain = 1_u64;
-    let empty = MapEnv::default();
-
-    let http = must_err(resolve_node_http_uri(&empty, chain, None));
-    let text = http.problems.join("\n");
-    assert!(text.contains("no HTTP RPC endpoint resolved"), "{text}");
-    assert!(text.contains("--node-http"), "names the CLI layer: {text}");
-    assert!(
-        text.contains(&node_http_env_name(chain)),
-        "names the env layer: {text}"
+fn an_empty_node_layer_is_absent_not_a_value() {
+    let empty_export = loaded(
+        Some("[nodes]\nhttp = { 1 = \"https://file.example/rpc\" }\n"),
+        &[("DEGENBOT_RPC_HTTP_CHAINID_1", "")],
     );
-    assert!(text.contains("unset"), "marks both layers unset: {text}");
-    assert!(text.contains("no localhost default"), "{text}");
-
-    let ws = must_err(resolve_node_ws_uri(&empty, chain, None));
-    let text = ws.problems.join("\n");
-    assert!(text.contains("no WS RPC endpoint resolved"), "{text}");
-    assert!(text.contains("--node-ws"), "{text}");
-    assert!(text.contains(&node_ws_env_name(chain)), "{text}");
-
-    // The pair resolver aggregates BOTH missing endpoints in one error.
-    let both = must_err(resolve_node_uris(&empty, chain, None, None));
-    assert_eq!(both.problems.len(), 2, "{:?}", both.problems);
-    assert!(both.problems.iter().any(|p| p.contains("no HTTP")));
-    assert!(both.problems.iter().any(|p| p.contains("no WS")));
-}
-
-#[test]
-fn empty_node_uri_layer_is_absent_not_a_value() {
-    let chain = 1_u64;
-    let http_env = node_http_env_name(chain);
-    let ws_env = node_ws_env_name(chain);
-
-    // Empty env + empty CLI: unresolved, never an empty-string URI.
-    let empty = map_env(&[(http_env.as_str(), "")]);
-    let err = must_err(resolve_node_http_uri(&empty, chain, Some("")));
-    assert!(
-        err.problems[0].contains("no HTTP RPC endpoint resolved"),
-        "{}",
-        err.problems[0]
+    let resolved = must_ok(resolve_node_uri(
+        &empty_export,
+        1,
+        NodeScope::Request,
+        &NodeOverrides::new().with_http(""),
+    ));
+    assert_eq!(
+        (resolved.value.as_str(), resolved.source),
+        ("https://file.example/rpc", Source::File),
+        "blank layers never win the cascade slot"
     );
 
-    // Whitespace-only is a value (parity with the Python cascade's truthiness).
-    let ws = must_ok(resolve_node_ws_uri(
-        &map_env(&[(ws_env.as_str(), " ")]),
-        chain,
-        None,
-    ));
-    assert_eq!(ws.value, " ");
-    assert_eq!(ws.source, Source::Env);
+    let blank = must_fail_to_load(None, &[("DEGENBOT_RPC_WS_CHAINID_1", " ")]);
+    let text = blank.problems.join("\n");
+    assert!(
+        text.contains("nodes.ws") && text.contains("chain 1"),
+        "a blank-looking export is refused, naming the table and the chain: {text}"
+    );
 }
 
 #[test]

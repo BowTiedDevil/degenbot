@@ -160,9 +160,9 @@ fn update(
     verify_all: bool,
     verify_all_interval: u64,
 ) -> Result<PoolReport, CliError> {
-    let database_path = ctx.database_path().value;
+    let database_path = ctx.database_path()?.value;
     let chain_id = ctx.chain_id()?.value;
-    let rpc_url = ctx.node_http_uri()?.value;
+    let rpc_url = ctx.node_request_uri()?.value;
     // Self-serve registration: every supported exchange pair not found in the
     // DB registers inactive, so the update never depends on prior CREATEs.
     crate::registrations::ensure_supported_registrations(&database_path)?;
@@ -209,7 +209,7 @@ fn verify(
     family: PoolFamily,
     pool_manager: Option<&str>,
 ) -> Result<PoolReport, CliError> {
-    let database_path = ctx.database_path().value;
+    let database_path = ctx.database_path()?.value;
     let (computed, target) = {
         let (db, _state) = DegenbotDb::open(&database_path)?;
         let conn = db.lock();

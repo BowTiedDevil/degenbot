@@ -868,8 +868,8 @@ fn facet_of(arg: FacetArg) -> StrategyFacet {
 }
 
 /// The session chain id for the aave arms, which carry Python's Ethereum
-/// default when NO chain layer (`--chain-id` or `DEGENBOT_DEFAULT_CHAIN_ID`)
-/// supplied a value. A layer that IS present and malformed stays an error.
+/// default when NO chain layer named a value. A layer that IS present and
+/// malformed stays an error.
 fn chain_or_default(cli: &Cli, ctx: &CliContext<'_>, default: u64) -> Result<u64, CliError> {
     let cli_layer = cli
         .chain_id
@@ -879,11 +879,11 @@ fn chain_or_default(cli: &Cli, ctx: &CliContext<'_>, default: u64) -> Result<u64
         .env()
         .get(DEFAULT_CHAIN_ID_ENV)
         .is_some_and(|value| !value.is_empty());
-    if cli_layer || env_layer {
-        return ctx
-            .chain_id()
-            .map(|resolved| resolved.value)
-            .map_err(CliError::from);
+    // The loaded config knows every layer, so the operator file's
+    // `session.chain_id` counts exactly like the two argument/env layers.
+    let file_layer = ctx.loaded_config()?.config.session.chain_id.is_some();
+    if cli_layer || env_layer || file_layer {
+        return Ok(ctx.chain_id()?.value);
     }
     Ok(default)
 }

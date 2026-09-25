@@ -121,7 +121,22 @@ pub(crate) struct BootedHost {
 fn backrun_boot_resources(
     config: Arc<degenbot_config::schema::BotConfig>,
 ) -> degenbot_strategy::backrun_driver::BackrunBootResources {
-    let db_path = degenbot_config::resolve_database_path(&degenbot_config::ProcessEnv, None).value;
+    // The four layers this process booted with, so the database path is the
+    // same value the console and a pure-Rust consumer resolve (ADR-062 D7).
+    let loaded = match degenbot_config::load_process_config() {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            tracing::debug!(
+                %error,
+                "config layers unresolved - hosted backrun boot shut"
+            );
+            return degenbot_strategy::backrun_driver::BackrunBootResources::unresolved(
+                config,
+                degenbot_strategy::backrun_driver::BackrunBootError::NodeJoin(error.to_string()),
+            );
+        }
+    };
+    let db_path = degenbot_config::resolve_database_path(&loaded, None).value;
     match degenbot_strategy::backrun_driver::resolve_backrun_node_join() {
         Ok(join) => degenbot_core::runtime::get_runtime().block_on(
             degenbot_strategy::backrun_driver::resolve_backrun_boot(

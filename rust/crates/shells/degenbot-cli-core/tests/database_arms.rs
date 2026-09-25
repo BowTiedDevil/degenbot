@@ -612,22 +612,51 @@ fn prompt_plan_matches_ported_policy() {
     assert!(PromptPlan::OnCondition(true).asks(true));
 }
 
+/// The four layers, in order: an explicit `--database` outranks
+/// `DEGENBOT_DB_PATH`, which outranks `database.path` in the operator file,
+/// which outranks the state-home default.
 #[test]
-fn cli_context_resolves_override_env_and_default() {
-    let override_env = env();
-    let cli = CliContext::new(&override_env).with_database("/tmp/cli.db");
-    assert_eq!(cli.database_path().value, PathBuf::from("/tmp/cli.db"));
+fn cli_context_resolves_explicit_env_file_and_default() {
+    let file = std::env::temp_dir().join(format!(
+        "degenbot-cli-core-database-arms-{}.toml",
+        std::process::id()
+    ));
+    std::fs::write(&file, "[database]\npath = \"/file.db\"\n").unwrap();
 
     let mut map = BTreeMap::new();
     map.insert("DEGENBOT_DB_PATH".to_string(), "/tmp/env.db".to_string());
+    map.insert("DEGENBOT_CONFIG".to_string(), file.display().to_string());
     let env_map = MapEnv::new(map);
+
     let ctx = CliContext::new(&env_map);
-    assert_eq!(ctx.database_path().value, PathBuf::from("/tmp/env.db"));
+    assert_eq!(
+        ctx.database_path().unwrap().value,
+        PathBuf::from("/tmp/env.db"),
+        "env beats the file layer"
+    );
+    let cli = CliContext::new(&env_map).with_database("/tmp/cli.db");
+    assert_eq!(
+        cli.database_path().unwrap().value,
+        PathBuf::from("/tmp/cli.db"),
+        "the explicit layer beats the env"
+    );
+
+    let file_env = MapEnv::new(BTreeMap::from([(
+        "DEGENBOT_CONFIG".to_string(),
+        file.display().to_string(),
+    )]));
+    assert_eq!(
+        CliContext::new(&file_env).database_path().unwrap().value,
+        PathBuf::from("/file.db"),
+        "with no env export the file layer supplies the path"
+    );
+    let _ = std::fs::remove_file(&file);
 
     let empty_env = env();
     let default_ctx = CliContext::new(&empty_env);
     assert!(default_ctx
         .database_path()
+        .unwrap()
         .value
         .ends_with(".local/state/degenbot/db/degenbot.db"));
 }

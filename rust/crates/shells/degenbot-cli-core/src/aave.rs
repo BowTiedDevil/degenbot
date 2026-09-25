@@ -182,8 +182,8 @@ pub(crate) fn execute(
 /// `aave activate`.
 fn activate(ctx: &CliContext<'_>, chain_id: u64) -> Result<AaveReport, CliError> {
     let deployment = resolve_aave_deployment(chain_id)?;
-    let database_path = ctx.database_path().value;
-    let rpc_url = ctx.node_http_uri_for(chain_id)?.value;
+    let database_path = ctx.database_path()?.value;
+    let rpc_url = ctx.node_request_uri_for(chain_id)?.value;
     let chain = i64::try_from(chain_id)
         .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;
     let result = activate_aave_market(
@@ -214,7 +214,7 @@ fn deactivate(
     chain_id: u64,
     market_name: &str,
 ) -> Result<AaveReport, CliError> {
-    let database_path = ctx.database_path().value;
+    let database_path = ctx.database_path()?.value;
     let chain = i64::try_from(chain_id)
         .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;
     let market = {
@@ -268,7 +268,7 @@ fn update(
     cancel: &CancelHandle,
     args: &UpdateArgs<'_>,
 ) -> Result<AaveReport, CliError> {
-    let database_path = ctx.database_path().value;
+    let database_path = ctx.database_path()?.value;
     // Self-serve registration: every supported Aave market not found in the
     // DB registers inactive (a bare row awaiting `aave activate`), so the
     // update never depends on prior CREATEs.
@@ -305,7 +305,7 @@ fn update(
         let chain_unsigned = u64::try_from(chain).map_err(|_| {
             CliError::InvalidArgument(format!("market chain id {chain} is out of range"))
         })?;
-        let rpc_url = ctx.node_http_uri_for(chain_unsigned)?.value;
+        let rpc_url = ctx.node_request_uri_for(chain_unsigned)?.value;
         let resolved = resolve_to_block(spec, &rpc_url)?;
         for market in markets.iter().filter(|m| m.chain_id == chain) {
             if cancel.is_cancelled() {
@@ -426,7 +426,7 @@ fn position_show(
     let user_address = address.to_checksum(None);
     let chain = i64::try_from(chain_id)
         .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;
-    let database_path = ctx.database_path().value;
+    let database_path = ctx.database_path()?.value;
     let db = (DegenbotDb::open(&database_path)?).0;
     let Some(market_row) = db.fetch_aave_market_by_name(chain, market)? else {
         return Ok(AaveReport::PositionNoMarket {

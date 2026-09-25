@@ -645,9 +645,11 @@ impl BotConfig {
 /// entry values must be able to serve. The transport is a property of the KEY:
 /// a value's capability decides which key may hold it (ADR-062 D3), so the
 /// table it was typed into has to accept the transport or the operator's table
-/// placement is refused instead of silently mis-served.
-#[derive(Debug, Clone, Copy)]
-enum NodeTransport {
+/// placement is refused instead of silently mis-served. The resolver reads the
+/// same three transports through this one enumeration, so the capability a
+/// value must have and the key it lands in cannot drift apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeTransport {
     /// `nodes.http`: request-only.
     Http,
     /// `nodes.ws`: subscriptions.
@@ -657,6 +659,37 @@ enum NodeTransport {
 }
 
 impl NodeTransport {
+    /// The transport's short name, as the operator spelled it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Ws => "ws",
+            Self::Ipc => "ipc",
+        }
+    }
+
+    /// The dotted TOML path of the declared key this transport fills.
+    #[must_use]
+    pub const fn key_path(self) -> &'static str {
+        match self {
+            Self::Http => "nodes.http",
+            Self::Ws => "nodes.ws",
+            Self::Ipc => "nodes.ipc",
+        }
+    }
+
+    /// The `PREFIX_` of the per-chain env name family that overrides one entry
+    /// of this transport's table.
+    #[must_use]
+    pub const fn env_prefix(self) -> &'static str {
+        match self {
+            Self::Http => crate::resolvers::RPC_HTTP_ENV_PREFIX,
+            Self::Ws => crate::resolvers::RPC_WS_ENV_PREFIX,
+            Self::Ipc => crate::resolvers::RPC_IPC_ENV_PREFIX,
+        }
+    }
+
     /// What a valid entry value looks like, spelled for the refusal message.
     fn expected(self) -> &'static str {
         match self {

@@ -377,7 +377,7 @@ pub(crate) fn execute(
     ctx: &CliContext<'_>,
     _prompter: &dyn Prompter,
 ) -> Result<ExchangeReport, CliError> {
-    let path = ctx.database_path().value;
+    let path = ctx.database_path()?.value;
     match command {
         ExchangeCommand::Activate { chain, name } => activate(&deployment_for(chain, name)?, &path),
         ExchangeCommand::Deactivate { chain, name } => {

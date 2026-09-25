@@ -151,9 +151,15 @@ impl DatabaseCommand {
     #[must_use]
     pub fn prompt_plan(&self, ctx: &CliContext<'_>) -> PromptPlan {
         match self {
-            Self::Backup => PromptPlan::OnCondition(
-                database::database_backup_path(&ctx.database_path().value).exists(),
-            ),
+            Self::Backup => match ctx.database_path() {
+                Ok(path) => {
+                    PromptPlan::OnCondition(database::database_backup_path(&path.value).exists())
+                }
+                // A context whose config layers do not load must not SKIP the
+                // confirmation: ask, and let the arm fail loudly with the
+                // loader's own message.
+                Err(_) => PromptPlan::UnlessForce,
+            },
             Self::Reset { .. }
             | Self::Upgrade { .. }
             | Self::Cutover { .. }

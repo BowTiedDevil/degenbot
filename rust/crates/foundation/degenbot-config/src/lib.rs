@@ -61,8 +61,9 @@
 //!
 //! The console's driver-domain values are declared keys too
 //! (`database.path`, `session.chain_id`, the `nodes.*` tables), and
-//! [`resolvers`] resolves their CLI and environment layers directly — a
-//! resolver must work before a config is loaded.
+//! [`resolvers`] reads all four layers out of a [`LoadedConfig`]. A resolver
+//! never reads the environment itself: the loader owns that, so a resolver
+//! sees one loaded value per key and reports which layer supplied it.
 
 pub mod doc;
 pub mod error;
@@ -81,8 +82,8 @@ pub mod writer;
 
 pub use error::ConfigError;
 pub use loader::{
-    standard_file_path, standard_file_path_with, BotConfigLoader, EntryProvenance, EnvVars,
-    LoadedConfig, MapEnv, ProcessEnv, Source,
+    load_process_config, standard_file_path, standard_file_path_with, BotConfigLoader,
+    EntryProvenance, EnvVars, LoadedConfig, MapEnv, ProcessEnv, Source,
 };
 pub use readiness::{
     strategy_readiness, Arm, StrategyReadiness, StrategyReadinessError, DEFAULT_BACKRUN_STREAM_URL,
@@ -90,16 +91,17 @@ pub use readiness::{
 };
 pub use resolvers::{
     config_home, expand_state_path, expand_state_path_with, expand_tilde_path, node_http_env_name,
-    node_ws_env_name, resolve_chain_id, resolve_database_path, resolve_node_http_uri,
-    resolve_node_uris, resolve_node_ws_uri, state_home, Resolved, ResolvedNodeUris,
-    DB_PATH_DEFAULT, DB_PATH_ENV, DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX, RPC_IPC_ENV_PREFIX,
-    RPC_WS_ENV_PREFIX, XDG_CONFIG_HOME_ENV, XDG_STATE_HOME_ENV,
+    node_ipc_env_name, node_ws_env_name, resolve_chain_id, resolve_database_path,
+    resolve_database_path_with, resolve_node_request_uri, resolve_node_subscription_uri,
+    resolve_node_uri, state_home, NodeOverrides, NodeScope, Resolved, DB_PATH_DEFAULT, DB_PATH_ENV,
+    DEFAULT_CHAIN_ID_ENV, RPC_HTTP_ENV_PREFIX, RPC_IPC_ENV_PREFIX, RPC_WS_ENV_PREFIX,
+    XDG_CONFIG_HOME_ENV, XDG_STATE_HOME_ENV,
 };
 pub use schema::{
     AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyMevblockerBackrunConfig,
     StrategySettlementConfig, StrategyTxpoolBackrunConfig, VerifyTicks,
 };
-pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA, SECTION_PATHS};
+pub use schema::{BaseKind, BotConfig, KeyDecl, NodeTransport, ValueKind, SCHEMA, SECTION_PATHS};
 
 /// The closed set of observability domains (ADR-043 section 3). A
 /// `TelemetryConfig::diag` entry naming anything else is a boot error, so a

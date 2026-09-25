@@ -31,7 +31,7 @@ pub(crate) fn execute(
     ctx: &CliContext<'_>,
     prompter: &dyn Prompter,
 ) -> Result<DatabaseReport, CliError> {
-    let path = ctx.database_path().value;
+    let path = ctx.database_path()?.value;
     let plan = command.prompt_plan(ctx);
     match command {
         DatabaseCommand::Backup => backup(&path, plan, prompter),

@@ -28,9 +28,9 @@ use degenbot_submission::submission_ledger::NonceLane;
 
 use super::driver_loop::BackrunDriver;
 
-/// The chain the driver operates on; the connector index and the per-chain
-/// `DEGENBOT_RPC_HTTP_CHAINID_<id>` / `DEGENBOT_RPC_WS_CHAINID_<id>` resolver
-/// suffixes both read it.
+/// The chain the driver operates on; the connector index and the node
+/// resolvers (which read this chain's entry in the `nodes.*` tables) both use
+/// it.
 pub const CHAIN_ID: u64 = 1;
 
 /// The `eth_getLogs` chunk size for the ingress's per-pool backfill fetch:
@@ -194,10 +194,17 @@ impl BackrunBootResources {
                 .as_ref()
                 .map(|provider| Arc::new(AlloySampleVerifier::new(Arc::clone(provider))) as _),
         );
-        let head_ws_url =
-            degenbot_config::resolve_node_ws_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
+        let head_ws_url = degenbot_config::load_process_config()
+            .ok()
+            .and_then(|loaded| {
+                degenbot_config::resolve_node_subscription_uri(
+                    &loaded,
+                    CHAIN_ID,
+                    &degenbot_config::NodeOverrides::new(),
+                )
                 .ok()
-                .map(|resolved| resolved.value);
+            })
+            .map(|resolved| resolved.value);
 
         let executor = cfg
             .executor
@@ -218,17 +225,30 @@ impl BackrunBootResources {
     }
 }
 
-/// Resolve the driver's node join from the process environment.
+/// Resolve the driver's node join from this process's own layers: the operator
+/// file the loader selected, the per-chain env families, and the declared
+/// defaults, with no explicit override (a driver is hosted, not typed at).
+///
+/// The scope is `request`, so an operator's local `nodes.ipc` entry is the
+/// endpoint this consumer gets. The client below is still the hardcoded HTTP
+/// one; taking an injected capability-scoped provider at construction is the
+/// separate change that makes the ipc entry dialable here.
 ///
 /// # Errors
 ///
-/// [`BackrunBootError::NodeJoin`] when the chain-node HTTP endpoint has no
-/// layer; the message is the resolver's, which names every layer consulted.
+/// [`BackrunBootError::NodeJoin`] when the config layers do not load, or when
+/// the chain's request endpoint has no layer at all; the message is the
+/// resolver's, which names every layer and transport consulted.
 pub fn resolve_backrun_node_join() -> Result<BackrunNodeJoin, BackrunBootError> {
-    let rpc_url =
-        degenbot_config::resolve_node_http_uri(&degenbot_config::ProcessEnv, CHAIN_ID, None)
-            .map_err(|error| BackrunBootError::NodeJoin(error.to_string()))?
-            .value;
+    let loaded = degenbot_config::load_process_config()
+        .map_err(|error| BackrunBootError::NodeJoin(error.to_string()))?;
+    let rpc_url = degenbot_config::resolve_node_request_uri(
+        &loaded,
+        CHAIN_ID,
+        &degenbot_config::NodeOverrides::new(),
+    )
+    .map_err(|error| BackrunBootError::NodeJoin(error.to_string()))?
+    .value;
     let url = rpc_url
         .parse()
         .map_err(|error| BackrunBootError::NodeJoin(format!("{error}")))?;

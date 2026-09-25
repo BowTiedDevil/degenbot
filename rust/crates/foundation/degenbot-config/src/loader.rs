@@ -261,6 +261,20 @@ pub fn standard_file_path() -> Option<PathBuf> {
     standard_file_path_with(&crate::ProcessEnv)
 }
 
+/// This process's own layers, loaded once: the [`standard_file_path`] file
+/// layer (`DEGENBOT_CONFIG` else the XDG/HOME config file when it exists) over
+/// the process environment. A consumer with no CLI to thread (the strategy
+/// driver's node join, a Python-hosted boot) loads through this so its
+/// resolvers see the same file and environment a console command would.
+///
+/// # Errors
+///
+/// The loader's fail-closed [`ConfigError`]: a config file the operator named
+/// that is unreadable or unparsable, an unknown key, or an invalid value.
+pub fn load_process_config() -> Result<LoadedConfig, ConfigError> {
+    BotConfigLoader::new().with_standard_file_paths().load()
+}
+
 impl<'a> BotConfigLoader<'a> {
     /// Empty loader: defaults only (no env, no file, no CLI) until a layer
     /// is attached with the `with_*` builders.

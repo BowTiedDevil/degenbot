@@ -1,15 +1,19 @@
-//! The driver-domain context a command executes against (ADR-051 D8).
+//! The driver-domain context a command executes against (ADR-051 D8,
+//! ADR-062 D7).
 //!
 //! The database path / chain id / node URIs are resolved through the
 //! `degenbot-config` resolvers — the SAME cascades the Python console reads —
-//! over an injectable [`EnvVars`] seam (never `std::env`), with the CLI override
-//! values the argv facade threaded in.
+//! over a config loaded ONCE from the context's injectable [`EnvVars`] seam
+//! (never `std::env`) plus the CLI override values the argv facade threaded
+//! in. One load, four layers, every value tagged with the layer that supplied
+//! it.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use degenbot_config::{
-    resolve_chain_id, resolve_database_path, resolve_node_http_uri, resolve_node_uris, EnvVars,
-    Resolved, ResolvedNodeUris,
+    resolve_chain_id, resolve_database_path_with, resolve_node_request_uri,
+    resolve_node_subscription_uri, EnvVars, LoadedConfig, NodeOverrides, Resolved,
 };
 
 /// The resolved inputs a console command runs against.
@@ -17,22 +21,22 @@ pub struct CliContext<'a> {
     env: &'a dyn EnvVars,
     database: Option<String>,
     chain_id: Option<String>,
-    node_http: Option<String>,
-    node_ws: Option<String>,
+    nodes: NodeOverrides,
     config: Option<String>,
+    loaded: OnceLock<LoadedConfig>,
 }
 
 impl<'a> CliContext<'a> {
-    /// A context over `env` with no CLI overrides (env + defaults only).
+    /// A context over `env` with no CLI overrides (file + env + defaults only).
     #[must_use]
     pub fn new(env: &'a dyn EnvVars) -> Self {
         Self {
             env,
             database: None,
             chain_id: None,
-            node_http: None,
-            node_ws: None,
+            nodes: NodeOverrides::new(),
             config: None,
+            loaded: OnceLock::new(),
         }
     }
 
@@ -50,17 +54,17 @@ impl<'a> CliContext<'a> {
         self
     }
 
-    /// Set the `--node-http` override.
+    /// Set the `--node-http` override (the `nodes.http` explicit slot).
     #[must_use]
     pub fn with_node_http(mut self, uri: impl Into<String>) -> Self {
-        self.node_http = Some(uri.into());
+        self.nodes.http = Some(uri.into());
         self
     }
 
-    /// Set the `--node-ws` override.
+    /// Set the `--node-ws` override (the `nodes.ws` explicit slot).
     #[must_use]
     pub fn with_node_ws(mut self, uri: impl Into<String>) -> Self {
-        self.node_ws = Some(uri.into());
+        self.nodes.ws = Some(uri.into());
         self
     }
 
@@ -72,7 +76,7 @@ impl<'a> CliContext<'a> {
         self
     }
 
-    /// The env seam (the resolvers' only env reader).
+    /// The env seam (the loaders' only env reader).
     #[must_use]
     pub fn env(&self) -> &'a dyn EnvVars {
         self.env
@@ -84,64 +88,127 @@ impl<'a> CliContext<'a> {
         self.database.as_deref()
     }
 
-    /// Resolve the database path: `--database` > `DEGENBOT_DB_PATH` > the
-    /// built-in default. Never fails.
+    /// The explicit node endpoints the argv facade threaded in.
     #[must_use]
-    pub fn database_path(&self) -> Resolved<PathBuf> {
-        resolve_database_path(self.env, self.database.as_deref())
+    pub fn node_overrides(&self) -> &NodeOverrides {
+        &self.nodes
     }
 
-    /// Resolve the session chain id: `--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`.
+    /// The config file the driver-domain resolvers read: the `--config`
+    /// override when given, else the standard path — `DEGENBOT_CONFIG` (honored
+    /// even when the file is missing: the operator asked for it) else the
+    /// XDG/HOME config file when it exists. `None` means the context has no
+    /// file layer at all, which is contractually the schema defaults.
+    #[must_use]
+    pub fn config_file(&self) -> Option<PathBuf> {
+        match &self.config {
+            Some(path) => Some(PathBuf::from(path)),
+            None => degenbot_config::standard_file_path_with(self.env),
+        }
+    }
+
+    /// The four layers loaded once per context: the file layer
+    /// ([`Self::config_file`]) over the env seam, plus the declared defaults.
+    /// Every driver-domain resolver reads this value, so a command resolves
+    /// its database path, chain id, and endpoints against ONE load.
     ///
     /// # Errors
     ///
-    /// [`degenbot_config::ConfigError`] when neither layer supplied a value, or
-    /// the winning layer is not an integer.
-    pub fn chain_id(&self) -> Result<Resolved<u64>, degenbot_config::ConfigError> {
-        resolve_chain_id(self.env, self.chain_id.as_deref())
+    /// [`crate::error::CliError::Config`] carrying the loader's fail-closed
+    /// [`degenbot_config::ConfigError`] when a file the operator named is
+    /// unreadable, unparsable, or holds an invalid value.
+    pub fn loaded_config(&self) -> Result<&LoadedConfig, crate::error::CliError> {
+        if let Some(loaded) = self.loaded.get() {
+            return Ok(loaded);
+        }
+        let loaded = match self.config_file() {
+            Some(file) => degenbot_config::BotConfigLoader::new()
+                .with_config_path(file)
+                .with_env_ref(self.env)
+                .load(),
+            None => degenbot_config::BotConfigLoader::new()
+                .with_env_ref(self.env)
+                .load(),
+        }
+        .map_err(crate::error::CliError::Config)?;
+        Ok(self.loaded.get_or_init(|| loaded))
     }
 
-    /// Resolve the HTTP node URI for `chain_id`: `--node-http` >
-    /// `DEGENBOT_RPC_HTTP_CHAINID_<id>`.
+    /// Resolve the database path: `--database` > `DEGENBOT_DB_PATH` >
+    /// `database.path` > the state-home default. The env seam supplies
+    /// `HOME` / `$XDG_STATE_HOME` for the `~` expansion of the default.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::error::CliError::Config`] when the context's config layers do
+    /// not load.
+    pub fn database_path(&self) -> Result<Resolved<PathBuf>, crate::error::CliError> {
+        let resolved =
+            resolve_database_path_with(self.loaded_config()?, self.database.as_deref(), self.env);
+        Ok(resolved)
+    }
+
+    /// Resolve the session chain id: `--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`
+    /// > `session.chain_id`.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::error::CliError::Config`] when no layer named a chain, when
+    /// the explicit value is not an integer, or when the config layers do not
+    /// load.
+    pub fn chain_id(&self) -> Result<Resolved<u64>, crate::error::CliError> {
+        Ok(resolve_chain_id(
+            self.loaded_config()?,
+            self.chain_id.as_deref(),
+        )?)
+    }
+
+    /// Resolve the node URI a REQUEST consumer uses for `chain_id`: ipc, then
+    /// ws, then http (ADR-062 D3).
     ///
     /// The updater arms resolve the chain they actually operate on (which may
     /// differ from the session chain id, e.g. a validated Aave deployment).
     ///
     /// # Errors
     ///
-    /// [`degenbot_config::ConfigError`] when no layer supplied the URI.
-    pub fn node_http_uri_for(
+    /// [`crate::error::CliError::Config`] when no layer supplied an endpoint
+    /// for the chain, or when the config layers do not load.
+    pub fn node_request_uri_for(
         &self,
         chain_id: u64,
-    ) -> Result<Resolved<String>, degenbot_config::ConfigError> {
-        resolve_node_http_uri(self.env, chain_id, self.node_http.as_deref())
+    ) -> Result<Resolved<String>, crate::error::CliError> {
+        Ok(resolve_node_request_uri(
+            self.loaded_config()?,
+            chain_id,
+            self.node_overrides(),
+        )?)
     }
 
-    /// Resolve the HTTP node URI for the session chain id.
+    /// Resolve the node URI a REQUEST consumer uses for the session chain id.
     ///
     /// # Errors
     ///
-    /// [`degenbot_config::ConfigError`] when the chain id or endpoint is
-    /// unresolved.
-    pub fn node_http_uri(&self) -> Result<Resolved<String>, degenbot_config::ConfigError> {
+    /// [`crate::error::CliError::Config`] when the chain id or the endpoint is
+    /// unresolved, or when the config layers do not load.
+    pub fn node_request_uri(&self) -> Result<Resolved<String>, crate::error::CliError> {
         let chain_id = self.chain_id()?;
-        self.node_http_uri_for(chain_id.value)
+        self.node_request_uri_for(chain_id.value)
     }
 
-    /// Resolve both node URIs for the session chain id.
+    /// Resolve the node URI a SUBSCRIPTION consumer uses for the session
+    /// chain id: ipc or ws, never http (ADR-062 D3 — a feed never polls).
     ///
     /// # Errors
     ///
-    /// [`degenbot_config::ConfigError`] when the chain id or either endpoint is
-    /// unresolved.
-    pub fn node_uris(&self) -> Result<ResolvedNodeUris, degenbot_config::ConfigError> {
+    /// [`crate::error::CliError::Config`] when the chain id or the feed
+    /// endpoint is unresolved, or when the config layers do not load.
+    pub fn node_subscription_uri(&self) -> Result<Resolved<String>, crate::error::CliError> {
         let chain_id = self.chain_id()?;
-        resolve_node_uris(
-            self.env,
+        Ok(resolve_node_subscription_uri(
+            self.loaded_config()?,
             chain_id.value,
-            self.node_http.as_deref(),
-            self.node_ws.as_deref(),
-        )
+            self.node_overrides(),
+        )?)
     }
 
     /// Resolve the config file the strategy verbs write to: the `--config`
