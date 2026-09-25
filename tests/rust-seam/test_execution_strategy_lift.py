@@ -16,9 +16,27 @@ proven Rust-side in ``crates/shells/degenbot-python/src/execution/mod.rs`` unit 
 
 from __future__ import annotations
 
-from typing import Any
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 import pytest
+
+EXAMPLE_PATH = Path(__file__).resolve().parents[2] / "examples" / "execution_strategy_foreign.py"
+
+
+@pytest.fixture(scope="module")
+def foreign_strategy_example() -> ModuleType:
+    spec = spec_from_file_location("execution_strategy_foreign_example", EXAMPLE_PATH)
+    if spec is None or spec.loader is None:
+        message = f"cannot load public example: {EXAMPLE_PATH}"
+        raise RuntimeError(message)
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _ffi_execution() -> Any:
@@ -81,41 +99,39 @@ class TestAbiEncodeCallHelper:
 class TestPythonForeignStrategySample:
     """OULU5O — the Python driver's foreign Encode blob, exercised end-to-end."""
 
-    def test_foreign_encode_via_abi_helper(self) -> None:
+    def test_foreign_encode_via_abi_helper(self, foreign_strategy_example: ModuleType) -> None:
         from types import SimpleNamespace
-
-        from examples.execution_strategy_foreign import (
-            SIMPLE_EXECUTOR_SIGNATURE,
-            compose_simple_executor,
-        )
 
         result = SimpleNamespace(
             optimal_input=1_000_000_000_000_000_000,
             hop_outputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
             consumed_inputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
         )
-        payload = compose_simple_executor(result)
+        payload = foreign_strategy_example.compose_simple_executor(result)
         # ABI shape distinct from cmd_executor: `execute(uint256,uint256,uint256[])`.
         assert payload[:4] == bytes.fromhex("ead35cae"), "foreign execute() selector"
         assert len(payload) == 4 + 6 * 32, "selector + ABI head + 2 hop words"
         # dynamic uint256[] head — offset word after (selector, opt, final).
         offset = int.from_bytes(payload[68:100], "big")
         assert offset == 0x60, "ABI array offset"
-        assert SIMPLE_EXECUTOR_SIGNATURE == "execute(uint256,uint256,uint256[])"
+        assert (
+            foreign_strategy_example.SIMPLE_EXECUTOR_SIGNATURE
+            == "execute(uint256,uint256,uint256[])"
+        )
 
-    def test_python_strategy_wraps_in_payload_composer(self) -> None:
-        from examples.execution_strategy_foreign import build_strategy
-
-        composer = build_strategy()
+    def test_python_strategy_wraps_in_payload_composer(
+        self, foreign_strategy_example: ModuleType
+    ) -> None:
+        composer = foreign_strategy_example.build_strategy()
         assert composer is not None
 
-    def test_cross_layer_oracle_matches_recorded_corpus(self) -> None:
+    def test_cross_layer_oracle_matches_recorded_corpus(
+        self, foreign_strategy_example: ModuleType
+    ) -> None:
         """UQ6WOG — the Python foreign path reproduces the SAME recorded corpus
         the Rust sample pins (byte-identical across layers), and that corpus is
         distinct from `cmd_executor`."""
         from types import SimpleNamespace
-
-        from examples.execution_strategy_foreign import compose_simple_executor
 
         corpus = bytes.fromhex(
             "ead35cae"
@@ -131,5 +147,5 @@ class TestPythonForeignStrategySample:
             hop_outputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
             consumed_inputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
         )
-        payload = compose_simple_executor(result)
+        payload = foreign_strategy_example.compose_simple_executor(result)
         assert payload == corpus, "Python foreign payload must match the Rust-recorded corpus"
