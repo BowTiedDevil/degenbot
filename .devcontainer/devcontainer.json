@@ -228,23 +228,25 @@
     "ETHEREUM_ARCHIVE_NODE_WS_URI": "ws://host.containers.internal:8546/",
     "ETHEREUM_FULL_NODE_HTTP_URI": "http://host.containers.internal:8545/",
     "ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/",
-    // Canonical degenbot RPC cascade for chain 1 (Ethereum mainnet). The
-    // library/provider-factory resolver (`resolve_rpc_uris`, see
-    // docs/migration-guides/rpc-uri-cascade.md, removed in the stale-docs
-    // cleanup 71ec78b2) is chain-id-discriminated — it
-    // consults `DEGENBOT_RPC_{HTTP,WS}_CHAINID_{cid}` (NOT the test-scoped
-    // ETHEREUM_*_NODE_*_URI pair above) before reading config.toml. Setting
-    // them here reuses the same host anvil endpoint so a plain `uv run degenbot
-    // ...` CLI run resolves to host.containers.internal instead of the
-    // container's own loopback (`rpc[1]=http://localhost:8545` in config.toml).
+    // Node endpoints for chain 1 (Ethereum mainnet), as the container-local
+    // override of the bind-mounted host operator file. The file is the base
+    // layer and names the HOST's endpoints (`[nodes] http = { 1 =
+    // "http://localhost:8545" }`), which the container cannot reach; the
+    // `DEGENBOT_RPC_{HTTP,WS}_CHAINID_{cid}` names are chain-id-discriminated
+    // and outrank the file for that chain alone (NOT the test-scoped
+    // ETHEREUM_*_NODE_*_URI pair above), so these entries re-point the same
+    // host anvil endpoint at host.containers.internal. An explicit `--node`
+    // outranks them both.
     "DEGENBOT_RPC_HTTP_CHAINID_1": "http://host.containers.internal:8545",
     "DEGENBOT_RPC_WS_CHAINID_1": "ws://host.containers.internal:8546",
-    // Python-cascade session chain id (degenbot.config._env_default_chain_id):
-    // the CLI boot's DEGENBOT_DEFAULT_CHAIN_ID layer. The shared operator file
-    // no longer carries top-level default_chain_id (JLFE2F refuses it at the
-    // typed Rust boot). CREATE-TIME field: takes effect on the attach path
-    // only after rebuild.sh (see the edit-drift warning at the top of this
-    // file); until then, export it in the shell.
+    // Session chain id, as the container-local override of the host file's
+    // `[session] chain_id`. It feeds the env layer of both cascades (the
+    // Python `degenbot.config._env_default_chain_id` and the typed Rust boot),
+    // and the env layer outranks the bind-mounted file, which is the point:
+    // the host's file is the base layer, and the container declares only what
+    // differs. CREATE-TIME field: takes effect on the attach path only after
+    // rebuild.sh (see the edit-drift warning at the top of this file); until
+    // then, export it in the shell.
     "DEGENBOT_DEFAULT_CHAIN_ID": "1",
     // T5 (RMH23E): bind the Prometheus scrape endpoint on all interfaces so
     // the -p 9464:9464 publish (runArgs above) can forward host traffic into

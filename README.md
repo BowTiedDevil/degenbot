@@ -1050,7 +1050,7 @@ uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py --permutation V
 uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py --live
 ```
 
-Endpoints and operator keys come from `examples/mainnet.env` + the OS env: `DEGENBOT_RPC_HTTP_CHAINID_1` / `DEGENBOT_RPC_WS_CHAINID_1` (CLI `--node-http` / `--node-ws` take precedence), `OPERATOR_ADDRESS` / `OPERATOR_PRIVATE_KEY` in live mode, and optional `EXECUTOR_CONTRACT_ADDRESS` overrides. `BotRunner` performs the driver-side startup handshake, after which the **Rust core owns the hot loop** — event decode, per-block re-solve, in-process simulation, encoding, submission — and the Python driver owns config, result rendering, and dispatch policy. With `--operator-socket PATH`, the bot also hosts an `OperatorServer` that the `degenbot path add` / `degenbot path discover` CLI commands target to steer the live path set without a restart (protocol + design in [`docs/architecture/operator-add-path-surface.md`](docs/architecture/operator-add-path-surface.md)).
+Endpoints and operator keys come from `examples/mainnet.env` + the OS env: `DEGENBOT_RPC_HTTP_CHAINID_1` / `DEGENBOT_RPC_WS_CHAINID_1` (the example's own `--node-http` / `--node-ws` flags take precedence; the `degenbot` CLI spells that same layer `--node`), `OPERATOR_ADDRESS` / `OPERATOR_PRIVATE_KEY` in live mode, and optional `EXECUTOR_CONTRACT_ADDRESS` overrides. `BotRunner` performs the driver-side startup handshake, after which the **Rust core owns the hot loop** — event decode, per-block re-solve, in-process simulation, encoding, submission — and the Python driver owns config, result rendering, and dispatch policy. With `--operator-socket PATH`, the bot also hosts an `OperatorServer` that the `degenbot path add` / `degenbot path discover` CLI commands target to steer the live path set without a restart (protocol + design in [`docs/architecture/operator-add-path-surface.md`](docs/architecture/operator-add-path-surface.md)).
 
 Both drivers launch through the repo's `./run_bot.sh` wrapper, which owns the
 shared env exports, the RPC-cascade print, build-on-demand for the Rust
@@ -1365,29 +1365,28 @@ Commands accepting `--to-block` support the following formats:
 
 ## Configuration
 
-### Environment Variables
-
-| Variable | Values | Description |
-|----------|--------|-------------|
-| `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Enable debug-level logging output |
-| `DEGENBOT_DEFAULT_CHAIN_ID` | integer chain id | The chain this `Bot` session targets (the Python cascade's env layer — required by the `degenbot` CLI in the 0.6 modern layout; see [docs/config-migration.md](docs/config-migration.md)) |
-| `DEGENBOT_RPC_HTTP_CHAINID_<ID>` | any HTTP(S) URL | HTTP RPC endpoint for chain `<ID>` (cascade layer; the retired file key `[rpc]` is refused at boot) |
-| `DEGENBOT_RPC_WS_CHAINID_<ID>` | any WS(S) URL | WebSocket endpoint for chain `<ID>` (cascade layer; the retired file key `[ws]` is refused at boot) |
-
-```bash
-DEGENBOT_DEBUG=1 python my_script.py
-```
-
 ### Configuration File
 
 The operator file `$XDG_CONFIG_HOME/degenbot/config.toml` (else `~/.config/degenbot/config.toml`, or the `DEGENBOT_CONFIG`
 override) is the typed Rust `BotConfig` file layer: its tables must name
 declared schema sections (see
 [docs/rust-config-keys.md](docs/rust-config-keys.md) for the authoritative,
-generated key reference), plus the free-form `[failure_policy]` table.
-Python-domain settings live in the environment instead:
+generated key reference), plus the free-form `[failure_policy]` table. It is the
+BASE layer of the cascade — the per-chain endpoints, the session chain id, and
+the database path are read from it:
 
 ```toml
+# Per-chain node endpoints, keyed by chain id: the base layer.
+[nodes]
+http = { 1 = "http://localhost:8545" }
+ws = { 1 = "ws://localhost:8546" }
+
+[session]
+chain_id = 1
+
+[database]
+path = "./degenbot.db"
+
 [telemetry]
 otel = true
 jaeger_endpoint = "http://localhost:4318"
@@ -1398,21 +1397,51 @@ metrics_addr = "0.0.0.0:9464"
 [failure_policy]
 ```
 
-Python-domain settings are supplied through the cascade (CLI flags > OS env):
+`[nodes.ipc]` takes a socket path or an `ipc://` URL for a node running beside
+the bot. Treat the file as a secret carrier: `chmod 600` it, and prefer a
+per-machine environment variable for anything credential-shaped.
 
-- `DEGENBOT_DEFAULT_CHAIN_ID` — the single chain this `Bot` targets (ADR-006,
-  one Bot per chain). Required by the `degenbot` CLI; a `Bot` refuses to
-  construct without it, and the connected RPC's `eth_chainId` is enforced to
-  match at construction.
-- `DEGENBOT_RPC_HTTP_CHAINID_<ID>` / `DEGENBOT_RPC_WS_CHAINID_<ID>` — per-chain
-  HTTP/WS RPC endpoints.
+### Layer precedence
+
+| Precedence | Layer | Supplies |
+|---|---|---|
+| 1 | explicit CLI | `--node <uri>`, `--chain-id`, `--database` |
+| 2 | environment | `DEGENBOT_RPC_{HTTP,WS,IPC}_CHAINID_<chain>`, `DEGENBOT_DEFAULT_CHAIN_ID`, `DEGENBOT_DB_PATH` |
+| 3 (base) | `--config` file | `[nodes.*]`, `session.chain_id`, `database.path`, and every other typed section |
+| 4 | declared default | the schema default (`database.path` → the XDG state home) |
+
+An env entry for one chain overrides that chain's file entry ALONE, and
+`--node <uri>` outranks the environment; it is repeatable, and the value
+classifies its own transport — `http(s)://` → `nodes.http`, `ws(s)://` →
+`nodes.ws`, `ipc://` or a socket path → `nodes.ipc`.
+
+`degenbot config show --resolved` prints the whole inventory as the process
+resolves it, each key annotated with the layer that won it, and
+`degenbot config path` prints the file the cascade reads; both are read-only
+(see [docs/rust-cli.md](docs/rust-cli.md)). That is the place to look first when
+an edited file entry appears to be ignored.
+
+A surviving pre-0.6 spelling (`[rpc]`, `[ws]`, `[database] filepath`, top-level
+`default_chain_id`) is refused at boot, as is the `[otel]` table — see
+[docs/config-migration.md](docs/config-migration.md) for the replacement table.
 
 The SQLite database defaults to the XDG state home — `$XDG_STATE_HOME/degenbot/db/degenbot.db`
-when `$XDG_STATE_HOME` is an absolute path, else `~/.local/state/degenbot/db/degenbot.db`. A surviving
-pre-0.6 vocabulary key (`default_chain_id`, `[rpc]`, `[ws]`, `[database]`,
-`[otel]`) is refused at boot — see
-[docs/config-migration.md](docs/config-migration.md) for the replacement
-table.
+when `$XDG_STATE_HOME` is an absolute path, else `~/.local/state/degenbot/db/degenbot.db`.
+
+### Environment Variables
+
+| Variable | Values | Description |
+|----------|--------|-------------|
+| `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Enable debug-level logging output |
+| `DEGENBOT_DEFAULT_CHAIN_ID` | integer chain id | The chain this session targets; overrides the file's `session.chain_id` (ADR-006, one Bot per chain). A `Bot` refuses to construct without a chain id from some layer, and the connected RPC's `eth_chainId` is enforced to match at construction |
+| `DEGENBOT_RPC_HTTP_CHAINID_<ID>` | any HTTP(S) URL | HTTP RPC endpoint for chain `<ID>`; overrides that chain's `[nodes.http]` entry alone |
+| `DEGENBOT_RPC_WS_CHAINID_<ID>` | any WS(S) URL | WebSocket endpoint for chain `<ID>`; overrides that chain's `[nodes.ws]` entry alone |
+| `DEGENBOT_RPC_IPC_CHAINID_<ID>` | any `ipc://` URL or socket path | Local IPC endpoint for chain `<ID>`; overrides that chain's `[nodes.ipc]` entry alone |
+| `DEGENBOT_DB_PATH` | filesystem path | SQLite database file; overrides the file's `database.path` |
+
+```bash
+DEGENBOT_DEBUG=1 python my_script.py
+```
 
 ## The Rust Core (`degenbot_rs` Rust crate, `degenbot._ffi` Python module)
 

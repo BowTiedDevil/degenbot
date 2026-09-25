@@ -45,8 +45,8 @@ These value options are the **driver-domain resolvers** (ADR-051 D8), owned
 by `degenbot-config` (`rust/crates/foundation/degenbot-config/src/resolvers.rs`): each is a
 cascade over an explicit argument, the environment, and the `database.path` /
 `session.chain_id` / `nodes.*` file tables, with the winning layer reported as
-provenance. The retired `[rpc]`/`[ws]`/`[database]`/`default_chain_id` file keys
-are deliberately **not** consulted (see
+provenance, with the file the BASE layer. The pre-0.6 `[rpc]`/`[ws]`/
+`[database] filepath`/`default_chain_id` spellings stay refused (see
 [config-migration](config-migration.md)).
 
 ## Commands

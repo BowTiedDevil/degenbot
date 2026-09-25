@@ -14,11 +14,11 @@ npm run tauri dev
 ```
 
 The GUI calls the canonical `degenbot-config` node resolver. For this mainnet
-PoC it resolves chain `1` through `DEGENBOT_RPC_WS_CHAINID_1`. Node endpoints are
-intentionally not read from `config.toml`: the retired `[ws]`/`[rpc]` file
-vocabulary is deliberately refused by the Rust configuration architecture. The
-`ETHEREUM_ARCHIVE_NODE_WS_URI` name is a test-environment variable, not a
-canonical Rust configuration key.
+PoC it resolves chain `1` through `DEGENBOT_RPC_WS_CHAINID_1`. The operator
+`config.toml` is the BASE layer of that cascade, so `[nodes] ws = { 1 =
+"ws://127.0.0.1:8546" }` works too; the export above simply outranks the
+file for chain `1`. The `ETHEREUM_ARCHIVE_NODE_WS_URI` name is a
+test-environment variable, not a canonical Rust configuration key.
 
 When launching the packaged AppImage from a desktop session, pass the variable
 explicitly if the desktop environment does not inherit your shell:
