@@ -221,6 +221,54 @@ class TestOverlayMerge:
             (r.chain_id, r.factory) for r in shipped
         }
 
+    def test_config_file_overlay_is_read_from_the_selected_file(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The `[deployments] overlay` is read from the file `config_file_path()` selects.
+
+        A real operator file carries `[nodes]`, `[deployments]`, and
+        `[failure_policy]`; the typed loader sanctions all three, and the
+        deployment overlay is read from that same file (not a re-derived
+        path) so both readers share one file.
+        """
+        import json
+
+        factory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+        overlay = {
+            "deployments": [
+                {
+                    "name": "Config-File Uniswap V2",
+                    "chain_id": 1,
+                    "pool_type": "uniswap-v2",
+                    "variant": None,
+                    "dex_variant": "uniswap-v2",
+                    "family": None,
+                    "factory": factory,
+                    "deployer": None,
+                    "init_hash": "0x" + "ef" * 32,
+                }
+            ]
+        }
+        overlay_file = tmp_path / "overlay.json"
+        overlay_file.write_text(json.dumps(overlay), encoding="utf-8")
+
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            "[nodes]\n"
+            'http = { 1 = "http://localhost:8545" }\n'
+            "\n[deployments]\n"
+            f"overlay = {json.dumps(str(overlay_file))}\n"
+            "\n[failure_policy]\n"
+            'rpc.ratelimit = "halt"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("DEGENBOT_CONFIG", str(config_file))
+
+        records = load_deployments()
+        record = {(r.chain_id, r.factory): r for r in records}[1, factory]
+        assert record.name == "Config-File Uniswap V2"
+        assert record.init_hash == "0x" + "ef" * 32
+
 
 class TestRegisterFromDeployments:
     """``register_from_deployments`` populates a fresh registry from records."""

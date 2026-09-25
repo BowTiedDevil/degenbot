@@ -134,7 +134,10 @@ pub(crate) const RETIRED_LAYOUT_ITEMS: &[(&str, &str)] = &[
 ///  - `[failure_policy]` (ADR-040 D3): per-bucket override table owned by
 ///    degenbot-python's failure-policy reader; freedom-of-policy outlives
 ///    the typed schema.
-pub(crate) const FREE_FORM_FILE_SECTIONS: &[&str] = &["failure_policy"];
+///  - `[deployments]` (ADR-062 D7): the Python deployment-registry overlay
+///    table owned by `src/degenbot/registry/deployment_loader.py`; the
+///    overlay lives outside the typed schema and outlives it.
+pub(crate) const FREE_FORM_FILE_SECTIONS: &[&str] = &["failure_policy", "deployments"];
 
 /// Per-ENTRY provenance for the map-kind keys: for each such key (addressed by
 /// its env name — for a family-shaped key the PREFIX), the layer that supplied

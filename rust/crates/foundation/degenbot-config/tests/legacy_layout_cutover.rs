@@ -17,6 +17,7 @@
 //! 4. Genuinely unknown sections keep the generic "unknown section" error
 //!    and must NOT be mislabeled as retired-layout problems.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use degenbot_config::BotConfigLoader;
@@ -201,6 +202,76 @@ fn failure_policy_section_is_skipped_not_rejected() {
     assert!(
         !loaded.provenance.is_empty(),
         "provenance still complete for typed keys"
+    );
+}
+
+/// (2) `[deployments]` is the Python deployment-registry overlay read through
+/// `file_path()` — the same shared-file contract as `[failure_policy]`
+/// (ADR-062 D7). A file that declares `[nodes]` endpoints, the `[deployments]`
+/// overlay, and the `[failure_policy]` table must load typed-clean. The skip is
+/// a SANCTIONED-LIST entry, not a blanket amnesty: a genuinely unknown section
+/// in the same file still gets the generic "unknown section" error, so this
+/// test pins the DISTINCTION rather than only the happy path.
+#[test]
+fn deployments_overlay_section_is_skipped_but_unknown_section_still_refused() {
+    let path = temp_toml(
+        "deployments",
+        concat!(
+            "[nodes]\n",
+            "http = { 1 = \"https://file.example/rpc\" }\n",
+            "\n[deployments]\noverlay = \"/tmp/overlay.json\"\n",
+            "\n[failure_policy]\nrpc.ratelimit = \"halt\"\n",
+        ),
+    );
+    let loaded = match BotConfigLoader::new()
+        .without_env()
+        .with_config_path(&path)
+        .load()
+    {
+        Ok(loaded) => loaded,
+        Err(e) => unreachable!("must be permitted, boot refused with: {e}"),
+    };
+    cleanup(&path);
+
+    let http = loaded
+        .config
+        .nodes
+        .http
+        .as_ref()
+        .map_or_else(BTreeMap::new, Clone::clone);
+    assert_eq!(
+        http.get("1").map(String::as_str),
+        Some("https://file.example/rpc"),
+        "the typed [nodes] table next to [deployments] still loads"
+    );
+
+    // The distinction: a section outside the sanctioned list is still refused
+    // with the generic shape, never silently skipped.
+    let unknown = temp_toml(
+        "deployments-unknown",
+        concat!(
+            "[nodes]\nhttp = { 1 = \"https://file.example/rpc\" }\n",
+            "\n[not_a_sanctioned_section]\nkey = \"v\"\n",
+        ),
+    );
+    let problems = must_err_problems(
+        &BotConfigLoader::new()
+            .without_env()
+            .with_config_path(&unknown),
+    );
+    cleanup(&unknown);
+    let hit = must_find(
+        &problems,
+        "[not_a_sanctioned_section]",
+        "unknown section reported",
+    );
+    assert!(
+        hit.contains("unknown section"),
+        "generic shape preserved next to a sanctioned section: {hit}"
+    );
+    assert!(
+        !hit.contains("config-migration"),
+        "generic path must not name the migration doc: {hit}"
     );
 }
 

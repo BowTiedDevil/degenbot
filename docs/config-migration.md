@@ -82,13 +82,13 @@ or TOML key fails the load loudly with a pointed message, for one release.
 
 `[failure_policy]` is deliberately **not** typed and **not** rejected: it is the ADR-040 D3 free-form per-bucket override table, read as a raw TOML table from the same file the loader selected (`BotConfigLoader::file_path()`). Files may keep it unchanged.
 
-Known adjacent gap (same family as the retired Python-domain keys): the
-`[deployments]` overlay table (Python deployment-registry overlay,
-`src/degenbot/registry/deployment_loader.py`) is in neither the typed schema
-nor the loader's free-form list, so a file carrying it is refused with the
-generic "unknown section" error at the typed boot. It must join
-`FREE_FORM_FILE_SECTIONS` (or the schema) before the overlay is usable in the
-shared file.
+`[deployments]` is deliberately **not** typed and **not** rejected either: it
+is the ADR-062 D7 deployment-registry overlay table, read as a raw TOML table
+by `src/degenbot/registry/deployment_loader.py` from the same file the loader
+selected. It joins `[failure_policy]` in the loader's sanctioned free-form list
+(`FREE_FORM_FILE_SECTIONS`) for the same reason — the overlay is driver-domain
+data the typed schema does not carry, so the typed file layer skips it and the
+raw-table reader owns it. Files may keep it unchanged.
 
 ## Example migration
 
