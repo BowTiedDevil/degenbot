@@ -15,6 +15,35 @@ Both share the same reaction machinery (feed, anchored discovery, decide gate,
 sim, dispatch); they differ only in their config facet and submission slot.
 They are independently activatable and MAY run together in one process.
 
+## One file, four layers
+
+Every driver-domain value resolves through one cascade, highest first: `cli`
+(an explicit `--node` / `--chain-id` / `--database`) > `env` (the `DEGENBOT_*`
+names) > `file` (the operator `config.toml`) > `default` (the schema default).
+The file is the BASE layer — `[nodes]` endpoints, `session.chain_id`, and
+`database.path` live there — and an environment or CLI value overrides one
+chain or key at a time. No environment variable is required.
+
+`degenbot config show --resolved` is the debugging entry point: it lists every
+key as the process will resolve it, each annotated with the layer that won it
+(`cli` > `env` > `file` > `default`), with `(unresolved)` for a key no layer
+supplied. `degenbot config set <key> <value>` writes through the
+validate-before-write path and reports
+`Shadowed { env: DEGENBOT_RPC_HTTP_CHAINID_<id> }` when the environment will
+still win for that chain at load time, so a write that appears to do nothing
+says why.
+
+Every rendered value is redacted: userinfo (`https://user:secret@host`) and
+credential-bearing query values are stripped from `config show`, `config get`,
+and error text. The file on disk keeps exactly what the operator wrote —
+redaction exists because diagnostics get pasted into scrollback and issue
+trackers, not because the file is a secret store (`chmod 600` it anyway).
+
+`${env:NAME}` interpolation for string-valued keys is **proposed, not
+implemented** (ADR-063): today the file's values are read literally, so a
+credential comes from the environment layer or an explicit `--node`. See
+[`docs/adr/ADR-063-config-env-interpolation.md`](adr/ADR-063-config-env-interpolation.md).
+
 ## 1. Activation (observe-only first — always)
 
 ```bash

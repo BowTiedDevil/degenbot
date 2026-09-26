@@ -50,7 +50,7 @@ The pre-0.6 file vocabulary was Python-driver domain the typed schema never carr
 | `[otel]` `endpoint` / `enabled` | **retired** — the modern `telemetry` section: `telemetry.otel` (toggle) and `telemetry.jaeger_endpoint` (OTLP endpoint) |
 | top-level `default_chain_id` | **retired** — `[session] chain_id` in the file, or the `DEGENBOT_DEFAULT_CHAIN_ID` env name / `--chain-id` |
 
-Boot behavior: a surviving pre-0.6 spelling fails the load and the process exits 2 with a message naming what to write instead —
+Boot behavior: a surviving pre-0.6 spelling fails the load and the process exits 2 with a message that names the section and, for an item that had a replacement, the key or section to write instead —
 
 ```
 bot configuration invalid (1 problem(s)):
@@ -64,7 +64,7 @@ bot configuration invalid (1 problem(s)):
   - --config /home/you/.config/degenbot/config.toml: retired config-layout item [otel] is no longer supported — the [otel] table is retired: use the modern telemetry section (telemetry.otel, telemetry.jaeger_endpoint); see docs/config-migration.md
 ```
 
-for the two names that DID have a replacement. A stale `[database] filepath` is refused the same way as any other undeclared key: `unknown key filepath in section [database]`.
+for the two names that DID have a replacement (`[otel]` and the top-level `default_chain_id`). `[rpc]` and `[ws]` are neither declared nor retired — ADR-062 D13 declined a shim — so they get the generic unknown-section shape with no replacement pointer. A stale `[database] filepath` is refused the same way as any other undeclared key: `unknown key filepath in section [database]`.
 
 ## In-schema key retirements (typed migrations)
 
@@ -130,17 +130,17 @@ jaeger_endpoint = "http://localhost:4318"
 
 The Python driver resolves through the same cascade. `Bot(chain_id=1, node="http://localhost:8545")` still works — each keyword is the explicit override layer — and with no keywords at all `Bot` reads the same `[nodes.*]`, `[session]`, and `[database]` tables the console reads, from the same file, with the same `DEGENBOT_RPC_*` and `DEGENBOT_DEFAULT_CHAIN_ID` overrides above it. There is no second config authority and no asymmetry: the console, a pure-Rust consumer, and a Python-launched bot that boot from the same file and environment resolve the same endpoints, and `degenbot config show --resolved` names the winning layer for each.
 
-CAUTION (2026-09-10 incident): inside the degenbot devcontainer, do NOT export the
-`DEGENBOT_RPC_*` names from a shell rc file (`.bashrc` etc.), and do not use
-`localhost:8545` there. `devcontainer.json` `containerEnv` already bakes the
-container-correct URIs — `http://host.containers.internal:8545` and
-`ws://host.containers.internal:8546` — into the container environment, and the
-environment outranks the bind-mounted host `config.toml`, so a later rc-file
-export silently wins and points the bot at the container's own loopback, where
-nothing listens (connection refused at the first `eth_chainId` call). Override
-endpoints in-container via the CLI (`--node http://host.containers.internal:8545` /
-`--node ws://host.containers.internal:8546`), which outranks the environment, or
-by editing `devcontainer.json` and rebuilding.
+CAUTION (2026-09-10 incident): the bind-mounted host `config.toml` is the base
+layer inside the degenbot devcontainer, and `devcontainer.json` `containerEnv`
+legitimately overrides its chain-1 `[nodes]` entries with the container-correct
+URIs — `http://host.containers.internal:8545` and
+`ws://host.containers.internal:8546`. Do not re-export `DEGENBOT_RPC_*` from a
+shell rc file (`.bashrc` etc.) or write `localhost:8545` into the container's
+environment: an rc-file export is applied after `containerEnv` and silently
+wins, pointing the bot at the container's own loopback, where nothing listens
+(connection refused at the first `eth_chainId` call). Override endpoints
+in-container via the CLI (`--node http://host.containers.internal:8545`), which
+outranks the environment, or edit `devcontainer.json` and rebuild.
 
 ### Credentials in the operator file
 
@@ -158,8 +158,10 @@ with `(unresolved)` where no layer supplied it — a per-chain entry reads
 `nodes.ws[8453] = … (env)` when an export shadowed the file entry, which is the
 first place to look when a value seems to be ignored. `degenbot config show` is
 the file layer alone, and `degenbot config path` prints which file the cascade
-reads. All three are read-only; a mutating `config get|set|unset` surface is a
-recorded follow-up (ergo MXFVVI) and does not exist yet.
+reads. The `config show`, `config path`, and `config get` arms are read-only;
+`config set` / `config unset` mutate the file (confirming unless `--force`),
+write through the validate-before-write path, and `config set` warns when the
+environment will shadow the write (`Shadowed { env: DEGENBOT_RPC_HTTP_CHAINID_<id> }`).
 
 ## Database upgrades
 

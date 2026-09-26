@@ -1028,8 +1028,7 @@ The end-to-end settlement-arbitrage bot — the flagship Rust-core-driven worklo
 ```bash
 # Dry run (default): solves, simulates in-process, renders profit lines — nothing is submitted
 uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py \\
-  --node-http "https://eth-mainnet.example.com" \\
-  --node-ws "wss://eth-mainnet.example.com/ws"
+  --node "https://eth-mainnet.example.com"
 
 # Restrict to one 3-hop permutation (overrides the driver's default path filter)
 uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py --permutation V2-V3-V4
@@ -1038,7 +1037,7 @@ uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py --permutation V
 uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py --live
 ```
 
-Endpoints and operator keys come from `examples/mainnet.env` + the OS env: `DEGENBOT_RPC_HTTP_CHAINID_1` / `DEGENBOT_RPC_WS_CHAINID_1` (the example's own `--node-http` / `--node-ws` flags take precedence; the `degenbot` CLI spells that same layer `--node`), `OPERATOR_ADDRESS` / `OPERATOR_PRIVATE_KEY` in live mode, and optional `EXECUTOR_CONTRACT_ADDRESS` overrides. `BotRunner` performs the driver-side startup handshake, after which the **Rust core owns the hot loop** — event decode, per-block re-solve, in-process simulation, encoding, submission — and the Python driver owns config, result rendering, and dispatch policy. With `--operator-socket PATH`, the bot also hosts an `OperatorServer` that the `degenbot path add` / `degenbot path discover` CLI commands target to steer the live path set without a restart (protocol + design in [`docs/architecture/operator-add-path-surface.md`](docs/architecture/operator-add-path-surface.md)).
+Endpoints resolve through the shared four-layer cascade: the operator file's `[nodes]` tables are the base layer, the `DEGENBOT_RPC_HTTP_CHAINID_1` / `DEGENBOT_RPC_WS_CHAINID_1` env names override that chain's file entry alone, and the example's own `--node` flag (one self-classifying URI) outranks the environment. Operator keys come from `examples/mainnet.env` + the OS env: `OPERATOR_ADDRESS` / `OPERATOR_PRIVATE_KEY` in live mode, plus optional `EXECUTOR_CONTRACT_ADDRESS` overrides. `BotRunner` performs the driver-side startup handshake, after which the **Rust core owns the hot loop** — event decode, per-block re-solve, in-process simulation, encoding, submission — and the Python driver owns config, result rendering, and dispatch policy. With `--operator-socket PATH`, the bot also hosts an `OperatorServer` that the `degenbot path add` / `degenbot path discover` CLI commands target to steer the live path set without a restart (protocol + design in [`docs/architecture/operator-add-path-surface.md`](docs/architecture/operator-add-path-surface.md)).
 
 Both drivers launch through the repo's `./run_bot.sh` wrapper, which owns the
 shared env exports, the RPC-cascade print, build-on-demand for the Rust
@@ -1416,7 +1415,7 @@ when `$XDG_STATE_HOME` is an absolute path, else `~/.local/state/degenbot/db/deg
 | Variable | Values | Description |
 |----------|--------|-------------|
 | `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Enable debug-level logging output |
-| `DEGENBOT_DEFAULT_CHAIN_ID` | integer chain id | The chain this session targets; overrides the file's `session.chain_id` (ADR-006, one Bot per chain). A `Bot` refuses to construct without a chain id from some layer, and the connected RPC's `eth_chainId` is enforced to match at construction |
+| `DEGENBOT_DEFAULT_CHAIN_ID` | integer chain id | The env layer of the declared `session.chain_id`; overrides the file's `[session] chain_id` (ADR-006, one Bot per chain). Only the top-level FILE key `default_chain_id` is retired — this env name is live. A `Bot` refuses to construct without a chain id from some layer, and the connected RPC's `eth_chainId` is enforced to match at construction |
 | `DEGENBOT_RPC_HTTP_CHAINID_<ID>` | any HTTP(S) URL | HTTP RPC endpoint for chain `<ID>`; overrides that chain's `[nodes.http]` entry alone |
 | `DEGENBOT_RPC_WS_CHAINID_<ID>` | any WS(S) URL | WebSocket endpoint for chain `<ID>`; overrides that chain's `[nodes.ws]` entry alone |
 | `DEGENBOT_RPC_IPC_CHAINID_<ID>` | any `ipc://` URL or socket path | Local IPC endpoint for chain `<ID>`; overrides that chain's `[nodes.ipc]` entry alone |

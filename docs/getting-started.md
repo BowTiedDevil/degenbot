@@ -29,6 +29,32 @@ just bootstrap    # or: pip install -e . for release-equivalent defaults
 cargo add degenbot
 ```
 
+## Configure once, override per run
+
+The operator file `$XDG_CONFIG_HOME/degenbot/config.toml` (else
+`~/.config/degenbot/config.toml`, or the `DEGENBOT_CONFIG` override) is the base
+layer of the four-layer cascade (`cli` > `env` > `file` > `default`). Declare
+the endpoints, the session chain, and the database path there once:
+
+```toml
+[nodes]
+http = { 1 = "https://your-archive-node" }
+ws = { 1 = "wss://your-archive-node/ws" }
+
+[session]
+chain_id = 1
+
+[database]
+path = "~/.local/state/degenbot/db/degenbot.db"
+```
+
+Explicit `Bot(...)` keywords are the override layer and beat the file; the
+`DEGENBOT_RPC_{HTTP,WS,IPC}_CHAINID_<chain>` and `DEGENBOT_DB_PATH` environment
+names sit between them, so an env entry overrides one chain or key at a time.
+The `degenbot` console spells the same node override `--node <uri>`, which is
+self-classifying (`http://`, `ws://`, or `ipc://`); `degenbot config show
+--resolved` prints the winning layer for every value.
+
 ## Five-minute tour
 
 The `Bot` class is the central session object. It manages connections and registries, provides factory methods for pools and tokens, and enforces chain-id consistency between your RPC endpoints and configuration:
