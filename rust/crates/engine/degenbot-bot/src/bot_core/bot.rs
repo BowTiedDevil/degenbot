@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use crate::bot_core::session_registry::SessionObjectRegistry;
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::EpochDelta;
@@ -45,6 +46,14 @@ pub struct Bot {
     chain_id: u64,
     /// The shared pure-data state. Handles clone this `Arc`.
     state: Arc<StateLock<BotState>>,
+    /// The session object registry — the one per-session owner of canonical
+    /// identity for this session's pools and tokens. Identity only: it holds no
+    /// provider, DB handle, or tick fetcher, and never writes `state`; the live
+    /// state stays with [`BotState`]. Scoped to the session (ADR-006 D5: one
+    /// `Bot` per chain): [`Bot::new`] mints the session's root registry, and
+    /// [`Bot::with_core`] adopts the one the session owner already resolved, so
+    /// every `Bot` in a session shares one identity key space.
+    registry: Arc<SessionObjectRegistry>,
     /// The per-`Bot` event bus (ADR-006 D4). The pump drives
     /// [`dispatch_log`](Self::dispatch_log) per WS log.
     dispatcher: log_dispatcher::LogDispatcher,
@@ -70,7 +79,11 @@ pub struct Bot {
 }
 
 impl Bot {
-    /// Construct a new orchestrator for `chain_id` over a fresh `BotState`.
+    /// Construct a new orchestrator for `chain_id` over a fresh `BotState` and
+    /// the session's freshly minted object registry — the session ROOT, for a
+    /// caller that owns the session rather than adopting one. A caller
+    /// adopting an existing session's core uses [`Bot::with_core`] and hands
+    /// that session's registry in, so it never starts a second one.
     ///
     /// ADR-006 slice 8b: the Python `Bot` facade is single-chain and passes the
     /// real `chain_id` via `PyBot::new(chain_id)`; `0` is the default for the
@@ -89,28 +102,48 @@ impl Bot {
         Self {
             chain_id,
             state: Arc::new(StateLock::new(BotState::new())),
+            registry: Arc::new(SessionObjectRegistry::new(chain_id)),
             dispatcher: log_dispatcher::LogDispatcher::with_uniswap_decoders(),
             delta: Arc::new(EpochDelta::new(0u64)),
             construction_io: parking_lot::RwLock::new(None),
         }
     }
 
-    /// Construct a `Bot` that **adopts** an existing shared `BotState` core + a
-    /// fresh `LogDispatcher` (ADR-006 D4). Used so a `Bot` + a `ArbitrageEngine`
+    /// Construct a `Bot` that **adopts** an already-resolved session: a shared
+    /// `BotState` core, that session's ONE object registry, and a fresh
+    /// `LogDispatcher` (ADR-006 D4). Used so a `Bot` + a `ArbitrageEngine`
     /// (and a sibling `PyBot`) all read/write the SAME `BotState` — the engine
     /// gets the core via `ArbitrageEngine::with_core`, `BlockPump`'s `Bot`
     /// shares it, and `dispatch_log` writes flow through to the engine's reads.
     ///
-    /// The adopting path does not carry a `chain_id` (the original owner did;
-    /// `0` here is a placeholder for the standalone/no-pyo3 adoption path) and
-    /// does not carry a `construction_io` handle (the original owner attached
-    /// one if needed; adopters that need I/O re-attach via
-    /// [`Bot::with_construction_io`]).
+    /// # The registry is supplied, never minted
+    ///
+    /// `session_registry` is an argument because the caller — the session
+    /// owner — has already resolved it. A session is one chain and one
+    /// registry (ADR-006 D5), so a constructor that minted its own would let a
+    /// second adopting `Bot` over the same core silently start a second
+    /// identity key space for the same session: the violation this signature
+    /// removes. Every adopter joins the registry it is handed, and there is no
+    /// other minting path on `Bot` besides [`Bot::new`], which is itself a
+    /// session ROOT (it allocates the `BotState` too). A consumer that needs
+    /// its own identity space is therefore declaring a new session, and
+    /// `Bot::new` is the only way to say that.
+    ///
+    /// The chain scope is read off `session_registry`
+    /// ([`SessionObjectRegistry::chain_id`]) rather than passed separately, so
+    /// the orchestrator's chain and the identity key space's chain are one
+    /// value by construction and cannot drift apart. It does not carry a
+    /// `construction_io` handle (the original owner attached one if needed;
+    /// adopters that need I/O re-attach via [`Bot::with_construction_io`]).
     #[must_use]
-    pub fn with_core(core: Arc<StateLock<BotState>>) -> Self {
+    pub fn with_core(
+        core: Arc<StateLock<BotState>>,
+        session_registry: Arc<SessionObjectRegistry>,
+    ) -> Self {
         Self {
-            chain_id: 0,
+            chain_id: session_registry.chain_id(),
             state: core,
+            registry: session_registry,
             dispatcher: log_dispatcher::LogDispatcher::with_uniswap_decoders(),
             delta: Arc::new(EpochDelta::new(0u64)),
             construction_io: parking_lot::RwLock::new(None),
@@ -154,6 +187,17 @@ impl Bot {
     #[must_use]
     pub fn state_arc(&self) -> Arc<StateLock<BotState>> {
         Arc::clone(&self.state)
+    }
+
+    /// Hand out a handle to this session's object registry so a consumer (the
+    /// engine, a strategy) asks the session's one registry for the canonical
+    /// object rather than keeping a private identity map. Clones share the one
+    /// registry, exactly as [`state_arc`](Self::state_arc) clones share one
+    /// `BotState`: a second `Bot` that adopted the same session reads through
+    /// to the same canonical objects.
+    #[must_use]
+    pub fn session_registry(&self) -> Arc<SessionObjectRegistry> {
+        Arc::clone(&self.registry)
     }
 
     /// Record the snapshot seed block `S` on `BotState` from a held-tx DB
@@ -362,5 +406,102 @@ mod tests {
         assert!(state2
             .read_at(crate::bot_core::state_lock::LockSite::Core)
             .has_pool(1));
+    }
+
+    /// The orchestrator owns the session's ONE object registry and hands out
+    /// shared handles to it, so two consumers (the engine, a strategy) join
+    /// the same canonical object instead of keeping private identity maps. The
+    /// registry is identity only: registering an object writes no live state.
+    #[test]
+    fn session_registry_is_per_bot_shared_and_identity_only() {
+        use crate::bot_core::session_registry::{ObjectRefusal, PoolIdentity};
+        use std::sync::Arc;
+
+        let bot = super::Bot::new(5);
+        let registry = bot.session_registry();
+        assert_eq!(registry.chain_id(), 5, "the registry is session-scoped");
+
+        let identity = PoolIdentity::v2(Address::from([0x44u8; 20]));
+        assert!(matches!(
+            registry.resolve_pool(&identity),
+            Err(ObjectRefusal::UnknownPoolIdentity { .. })
+        ));
+        let engine = registry.get_or_create_pool(identity.clone());
+        let strategy = bot.session_registry().get_or_create_pool(identity.clone());
+        assert!(
+            Arc::ptr_eq(&engine, &strategy),
+            "two consumers share the session's one canonical object"
+        );
+        assert_eq!(registry.pool_count(), 1);
+        assert_eq!(
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Core)
+                .pool_count(),
+            0,
+            "an object registration writes no live state"
+        );
+
+        let other_session = super::Bot::new(5).session_registry();
+        assert!(
+            !Arc::ptr_eq(&engine, &other_session.get_or_create_pool(identity)),
+            "identity is per session, not process-wide"
+        );
+    }
+
+    /// The adoption seam joins the session's ONE registry instead of minting a
+    /// second one: two `Bot`s constructed over the same shared core and the
+    /// same session registry observe the same canonical object, so an adopting
+    /// consumer cannot fork the session's identity key space. The session root
+    /// (`Bot::new`) is the only path that mints, so a genuinely separate
+    /// session still gets its own key space.
+    #[test]
+    fn adopting_bots_over_one_core_share_the_session_registry() {
+        use crate::bot_core::session_registry::{PoolIdentity, SessionObjectRegistry};
+        use crate::bot_core::BotState;
+        use std::sync::Arc;
+
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
+        let registry = Arc::new(SessionObjectRegistry::new(7));
+        let first = super::Bot::with_core(Arc::clone(&core), Arc::clone(&registry));
+        let second = super::Bot::with_core(Arc::clone(&core), Arc::clone(&registry));
+
+        assert_eq!(
+            first.chain_id(),
+            7,
+            "an adopted Bot reports its session registry's chain, never a placeholder"
+        );
+        assert_eq!(second.chain_id(), first.chain_id());
+        assert!(
+            Arc::ptr_eq(&first.state_arc(), &second.state_arc()),
+            "both adopters share the one core, as before"
+        );
+        assert!(
+            Arc::ptr_eq(&first.session_registry(), &second.session_registry()),
+            "adoption joins the session's one registry rather than minting a second"
+        );
+
+        let identity = PoolIdentity::v3(Address::from([0x66u8; 20]));
+        let via_first = first
+            .session_registry()
+            .get_or_create_pool(identity.clone());
+        let via_second = second.session_registry().get_or_create_pool(identity);
+        assert!(
+            Arc::ptr_eq(&via_first, &via_second),
+            "two adopting Bots observe the same canonical object handle"
+        );
+        assert_eq!(registry.pool_count(), 1, "one entry for the shared session");
+
+        // A session ROOT is the only way to get a fresh key space, and it
+        // brings its own core — not a second identity space over this one.
+        let other_session = super::Bot::new(7);
+        assert!(
+            !Arc::ptr_eq(
+                &via_first,
+                &other_session
+                    .session_registry()
+                    .get_or_create_pool(PoolIdentity::v3(Address::from([0x66u8; 20])))
+            ),
+            "a new session root has its own identity key space"
+        );
     }
 }

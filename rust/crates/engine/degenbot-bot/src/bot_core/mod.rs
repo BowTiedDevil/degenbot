@@ -42,6 +42,9 @@ pub mod reorg_coordinator;
 pub mod reserve_pair_orchestration;
 pub(crate) mod resolve;
 pub mod route_registry;
+/// The session object registry: the one per-session owner of pool/token
+/// canonical identity, beside `BotState` (which stays the live-state owner).
+pub mod session_registry;
 pub mod sim_anchor;
 pub mod snapshot_verify;
 pub(crate) mod solve_anchor;

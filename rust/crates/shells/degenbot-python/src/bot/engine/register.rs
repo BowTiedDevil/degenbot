@@ -11,6 +11,7 @@ use super::{
 };
 use crate::prelude::*;
 
+use degenbot_bot::bot_core::session_registry::SessionObjectRegistry;
 use degenbot_bot::bot_core::state_lock::StateLock;
 
 #[pymethods]
@@ -32,7 +33,16 @@ impl PyArbEngine {
             (bot.state_arc(), bot)
         } else {
             let core = Arc::new(StateLock::new(degenbot_bot::bot_core::BotState::new()));
-            let bot = Arc::new(Bot::with_core(Arc::clone(&core)));
+            // No `PyBot` to adopt, so THIS engine is the session owner: it
+            // resolves the session's one object registry here and hands it to
+            // the adopting `Bot` (`Bot::with_core` never mints one, so a second
+            // adopter over this core cannot fork the session's identity space).
+            // The chain scope is the same placeholder `PyBot::new(chain_id = 0)`
+            // uses on this bare/no-shared-session path — there is no configured
+            // chain to read here — and `Bot` reports the registry's chain, so the
+            // orchestrator and its identity key space cannot disagree.
+            let registry = Arc::new(SessionObjectRegistry::new(0));
+            let bot = Arc::new(Bot::with_core(Arc::clone(&core), registry));
             (core, bot)
         };
         // The stage surface IS the engine
