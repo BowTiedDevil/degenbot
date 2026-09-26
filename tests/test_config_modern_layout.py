@@ -10,6 +10,7 @@ touches an operator's state home.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from typing import TYPE_CHECKING
 
@@ -52,7 +53,7 @@ def test_the_core_creates_the_database_with_its_schema(tmp_path: Path) -> None:
     db_upgrade_database(str(db_path))
 
     assert db_path.is_file()
-    with sqlite3.connect(db_path) as connection:
+    with contextlib.closing(sqlite3.connect(db_path)) as connection:
         tables = {
             row[0]
             for row in connection.execute(
