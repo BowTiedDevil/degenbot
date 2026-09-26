@@ -13,6 +13,7 @@ pub mod intake;
 pub mod pool;
 pub mod pump;
 pub mod py_bot_io;
+pub mod session_registry;
 #[cfg(feature = "auto-initialize")]
 pub mod test_gil;
 pub mod token;

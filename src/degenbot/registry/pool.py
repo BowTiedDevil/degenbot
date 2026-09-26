@@ -1,14 +1,26 @@
-"""Pool registry: address-keyed store of built pool instances."""
+"""Pool registry: the Python companion side of the session's pool identities.
+
+Canonical identity for a session's pools is owned by the Rust
+`SessionObjectRegistry`; these registries delegate to it. What lives here is
+the *presentation* object: a `UniswapV2Pool` / `BalancerV2Pool` / … companion
+wrapping live Rust state, which is not a session object. The split matters
+because a companion is a Python value that `release_python_state` drops and a
+later build re-mints, while the identity behind it is session-lifetime.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, overload
 
-from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
+from degenbot.exceptions.base import DegenbotValueError
+from degenbot.registry.session import CompanionCache, SessionObjects, pool_family_of
 from degenbot.types.pool_protocols import ConcentratedLiquidityPool
+from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
-    from degenbot._ffi import Bot
+    from collections.abc import Iterator
+
+    from degenbot._ffi import Bot, SessionObject
     from degenbot.types.abstract import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.types.chain import ChecksummedAddress
@@ -17,14 +29,43 @@ if TYPE_CHECKING:
 type PoolId = bytes
 
 
-class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
-    """Registry for V4 pools keyed by (chain_id, pool_manager_address, pool_id)."""
+class ManagedPoolRegistry:
+    """V4 pool companions, keyed by the session's `(PoolManager, pool_id)` identities.
 
-    def __init__(self) -> None:
-        """Initialize the instance."""
-        super().__init__(
-            address_fields=("pool_manager_address", "pool_id"),
-            name="ManagedPool",
+    A V4 pool is named by its pair, never by the `PoolManager` address alone,
+    so every read here carries both. This is the registry `Bot.managed_pools`
+    and the one `PoolRegistry` delegates its V4 branch to, so the two are one
+    companion store for the session's V4 pools.
+    """
+
+    def __init__(self, *, py_bot: Bot) -> None:
+        """Bind to the session that owns the V4 pool identities.
+
+        Args:
+            py_bot: The session's Rust `Bot` handle. Required: identity is the
+                session's, so a registry cannot stand up without one.
+
+        """
+        self._session = SessionObjects(py_bot)
+        self._companions: CompanionCache[ConcentratedLiquidityPool] = CompanionCache()
+
+    def _handle(
+        self,
+        chain_id: ChainId,
+        pool_manager_address: ChecksummedAddress,
+        pool_id: PoolId,
+    ) -> SessionObject | None:
+        """Resolve the session object naming this V4 pool.
+
+        Returns:
+            The session object, or None when the session does not hold it.
+
+        """
+        return self._session.resolve_pool(
+            chain_id=chain_id,
+            family="v4",
+            address=pool_manager_address,
+            pool_id=to_bytes(pool_id),
         )
 
     def get(
@@ -39,11 +80,8 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
             The registered V4 pool, or None if not found.
 
         """
-        return self._get(
-            chain_id=chain_id,
-            pool_manager_address=pool_manager_address,
-            pool_id=pool_id,
-        )
+        handle = self._handle(chain_id, pool_manager_address, pool_id)
+        return None if handle is None else self._companions.resolve(handle)
 
     def add(
         self,
@@ -52,13 +90,23 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
         pool_manager_address: ChecksummedAddress,
         pool_id: PoolId,
     ) -> None:
-        """Register a V4 pool."""
-        self._add(
-            item=pool,
+        """Register a V4 pool.
+
+        Raises:
+            DegenbotValueError: A companion is already registered for this
+                identity.
+
+        """
+        handle = self._session.get_or_create_pool(
             chain_id=chain_id,
-            pool_manager_address=pool_manager_address,
-            pool_id=pool_id,
+            family="v4",
+            address=pool_manager_address,
+            pool_id=to_bytes(pool_id),
         )
+        if self._companions.resolve(handle) is not None:
+            msg = f"ManagedPool is already registered at key {handle.key}"
+            raise DegenbotValueError(message=msg)
+        self._companions.store(handle, pool)
 
     def get_or_add(
         self,
@@ -77,12 +125,13 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
             The stored pool instance (the existing canonical one on a duplicate).
 
         """
-        return self._get_or_add(
-            item=pool,
+        handle = self._session.get_or_create_pool(
             chain_id=chain_id,
-            pool_manager_address=pool_manager_address,
-            pool_id=pool_id,
+            family="v4",
+            address=pool_manager_address,
+            pool_id=to_bytes(pool_id),
         )
+        return self._companions.get_or_store(handle, pool)
 
     def remove(
         self,
@@ -90,37 +139,75 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
         pool_manager_address: ChecksummedAddress,
         pool_id: PoolId,
     ) -> None:
-        """Remove a V4 pool."""
-        self._remove(
-            chain_id=chain_id,
-            pool_manager_address=pool_manager_address,
-            pool_id=pool_id,
-        )
+        """Drop the V4 companion for this identity.
+
+        The session's identity for the pool is session-lifetime and stays; only
+        the Python companion goes.
+        """
+        handle = self._handle(chain_id, pool_manager_address, pool_id)
+        if handle is not None:
+            self._companions.drop(handle)
+
+    def list_all(self) -> Iterator[ConcentratedLiquidityPool]:
+        """Yield every registered V4 pool.
+
+        Yields:
+            Each V4 pool companion filed in this registry.
+
+        """
+        for entry in self._companions.entries():
+            yield entry.item
+
+    def reset(self) -> None:
+        """Drop every V4 companion. The session's V4 identities are untouched."""
+        self._companions.clear()
+
+    def __len__(self) -> int:
+        """Count the registered V4 pools.
+
+        Returns:
+            The number of V4 pool companions filed.
+
+        """
+        return len(self._companions)
 
 
-class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
-    """Registry for liquidity pools keyed by (chain_id, pool_address)."""
+class PoolRegistry:
+    """Address-keyed pool companions, delegating identity to the session registry.
+
+    The non-V4 families are address-keyed, which is why reads here are
+    family-agnostic: the session resolves the address to whichever family
+    registered it first. Registering a pool, by contrast, names the family —
+    read off the companion's live handle — so a V3 pool and a Balancer pool at
+    one address stay two identities, as they are in the core.
+    """
 
     def __init__(
         self,
-        managed_pool_registry: ManagedPoolRegistry | None = None,
         *,
-        py_bot: Bot | None = None,
+        py_bot: Bot,
+        managed_pool_registry: ManagedPoolRegistry | None = None,
     ) -> None:
-        """Initialize the instance.
+        """Bind to the session that owns the pool identities.
 
         Args:
-            managed_pool_registry: Optional managed (V4) pool sub-registry.
-            py_bot: Optional ``Bot`` handle for Rust-state propagation.
-                When set, ``remove`` and ``_reset`` propagate to the Rust
-                ``BotState`` via ``py_bot.unregister_pool`` (ADR-007). When
-                ``None`` (e.g. tests that construct ``PoolRegistry()``
-                standalone), removal is Python-only — Rust state is untouched.
+            py_bot: The session's Rust `Bot` handle. Required: identity is the
+                session's, so a registry cannot stand up without one.
+            managed_pool_registry: The V4 companion store to delegate to. Pass
+                the session's own `ManagedPoolRegistry` so the V4 pools a build
+                registers are the same companions this registry hands out.
 
         """
-        super().__init__(name="Pool")
-        self._managed_pool_registry = managed_pool_registry or ManagedPoolRegistry()
+        self._session = SessionObjects(py_bot)
         self._py_bot = py_bot
+        # `is None`, never `or`: an empty registry is falsy (`__len__` is 0),
+        # so `or` would silently replace the session's V4 store with a fresh one.
+        self._managed_pool_registry = (
+            managed_pool_registry
+            if managed_pool_registry is not None
+            else ManagedPoolRegistry(py_bot=py_bot)
+        )
+        self._companions: CompanionCache[AbstractLiquidityPool] = CompanionCache()
 
     @overload
     def get(
@@ -156,7 +243,8 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
                 pool_manager_address=pool_address,
                 pool_id=pool_id,
             )
-        return self._get(chain_id=chain_id, address=pool_address)
+        handle = self._session.resolve_pool_by_address(chain_id=chain_id, address=pool_address)
+        return None if handle is None else self._companions.resolve(handle)
 
     def add(
         self,
@@ -174,6 +262,7 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
 
         Raises:
             TypeError: If pool_id is provided but pool does not satisfy ConcentratedLiquidityPool.
+            DegenbotValueError: A companion is already registered for this identity.
 
         """
         if isinstance(pool_id, bytes):
@@ -186,8 +275,16 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
                 pool_manager_address=pool_address,
                 pool_id=pool_id,
             )
-        else:
-            self._add(item=pool, chain_id=chain_id, address=pool_address)
+            return
+        handle = self._session.get_or_create_pool(
+            chain_id=chain_id,
+            family=pool_family_of(pool),
+            address=pool_address,
+        )
+        if self._companions.resolve(handle) is not None:
+            msg = f"Pool is already registered at key {handle.key}"
+            raise DegenbotValueError(message=msg)
+        self._companions.store(handle, pool)
 
     def get_or_add(
         self,
@@ -221,7 +318,12 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
                 pool_manager_address=pool_address,
                 pool_id=pool_id,
             )
-        return self._get_or_add(item=pool, chain_id=chain_id, address=pool_address)
+        handle = self._session.get_or_create_pool(
+            chain_id=chain_id,
+            family=pool_family_of(pool),
+            address=pool_address,
+        )
+        return self._companions.get_or_store(handle, pool)
 
     @overload
     def remove(
@@ -252,6 +354,11 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         stays symmetric with the Python registry (ADR-007). V4 pools
         (``pool_id`` is bytes) are Python-only here — V4 unregister is
         engine-side (see ADR-007 Deferred).
+
+        The removal is of the *companion* and the live pool state; the
+        session's identity for the pool is session-lifetime and is not
+        withdrawn, so a later build of the same address re-files a companion
+        under the same canonical identity.
         """
         if isinstance(pool_id, bytes):
             self._managed_pool_registry.remove(
@@ -259,11 +366,13 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
                 pool_manager_address=pool_address,
                 pool_id=pool_id,
             )
-        elif self._py_bot is not None:
-            # V2/V3 path: propagate to Rust before removing the Python entry
-            # (the Rust side is silent-on-miss, so ordering is safe).
-            self._py_bot.unregister_pool(address=pool_address)
-        self._remove(chain_id=chain_id, address=pool_address)
+            return
+        handle = self._session.resolve_pool_by_address(chain_id=chain_id, address=pool_address)
+        # V2/V3 path: propagate to Rust before dropping the companion (the
+        # Rust side is silent-on-miss, so ordering is safe).
+        self._py_bot.unregister_pool(address=pool_address)
+        if handle is not None:
+            self._companions.drop(handle)
 
     def _reset(self, *, propagate_to_rust: bool = True) -> None:
         """Reset both the main registry and the managed pool registry.
@@ -282,10 +391,35 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         dropped every Swap, freezing the tick map (the V3 desync in the
         permutation run). Only Python storage is dropped; Rust stays canonical.
         """
-        if propagate_to_rust and self._py_bot is not None:
-            # Iterate storage keys (not pool objects) — the key's second
-            # element is the checksummed address; tests may store mocks.
-            for _chain_id, address in self._storage():
-                self._py_bot.unregister_pool(address=address)
+        if propagate_to_rust:
+            # Only address-keyed families are filed here (the V4 branch
+            # delegates), so this cannot unregister a PoolManager. The handle
+            # carries the canonical address, so no key is re-derived.
+            for entry in self._companions.entries():
+                self._py_bot.unregister_pool(address=entry.handle.address)
         self.reset()
+
+    def list_all(self) -> Iterator[AbstractLiquidityPool]:
+        """Yield every registered address-keyed pool.
+
+        Yields:
+            Each address-keyed pool companion filed in this registry.
+
+        """
+        for entry in self._companions.entries():
+            yield entry.item
+
+    def reset(self) -> None:
+        """Drop every companion, V4 included. The session's identities are untouched."""
+        self._companions.clear()
         self._managed_pool_registry.reset()
+
+    def __len__(self) -> int:
+        """Count the registered address-keyed pools.
+
+        Returns:
+            The number of address-keyed pool companions filed; V4 pools, which
+            the managed registry holds, are excluded.
+
+        """
+        return len(self._companions)

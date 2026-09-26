@@ -2,6 +2,7 @@
 
 import pytest
 
+from degenbot._ffi import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.pool import ManagedPoolRegistry
 from tests.fakes.pools import FakeUniswapV4Pool
@@ -11,7 +12,7 @@ FAKE_POOL_ID = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678
 
 
 def test_get_missing_returns_none():
-    registry = ManagedPoolRegistry()
+    registry = ManagedPoolRegistry(py_bot=Bot(chain_id=1))
     assert (
         registry.get(
             chain_id=1,
@@ -23,7 +24,7 @@ def test_get_missing_returns_none():
 
 
 def test_add_and_retrieve_pool():
-    registry = ManagedPoolRegistry()
+    registry = ManagedPoolRegistry(py_bot=Bot(chain_id=1))
     pool = FakeUniswapV4Pool(FAKE_POOL_MANAGER, FAKE_POOL_ID)
 
     registry.add(
@@ -44,7 +45,7 @@ def test_add_and_retrieve_pool():
 
 
 def test_add_duplicate_raises():
-    registry = ManagedPoolRegistry()
+    registry = ManagedPoolRegistry(py_bot=Bot(chain_id=1))
     pool = FakeUniswapV4Pool(FAKE_POOL_MANAGER, FAKE_POOL_ID)
 
     registry.add(
@@ -64,7 +65,7 @@ def test_add_duplicate_raises():
 
 
 def test_remove_pool():
-    registry = ManagedPoolRegistry()
+    registry = ManagedPoolRegistry(py_bot=Bot(chain_id=1))
     pool = FakeUniswapV4Pool(FAKE_POOL_MANAGER, FAKE_POOL_ID)
 
     registry.add(
@@ -89,7 +90,7 @@ def test_remove_pool():
 
 
 def test_remove_missing_is_noop():
-    registry = ManagedPoolRegistry()
+    registry = ManagedPoolRegistry(py_bot=Bot(chain_id=1))
     registry.remove(
         chain_id=1,
         pool_manager_address=FAKE_POOL_MANAGER,

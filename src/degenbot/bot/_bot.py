@@ -328,9 +328,14 @@ class Bot(AccountQueryMixin):
             # Wire the `ConstructionIo` handle attached above onto `BotIo` so its
             # 12 DB + 7 generic RPC methods delegate through the core trait objects.
             self._io.attach_construction_io(self._py_bot)
-        self.pools = PoolRegistry(py_bot=self._py_bot)
-        self.tokens = TokenRegistry()
-        self.managed_pools = ManagedPoolRegistry()
+        # Identity for the session's pools and tokens is the Rust session
+        # registry's; these three are the Python companion side of it. The V4
+        # companion store is constructed once and handed to `PoolRegistry` so
+        # `bot.managed_pools` and `bot.pools`'s V4 branch are one store — a V4
+        # pool registered through either is the same companion.
+        self.managed_pools = ManagedPoolRegistry(py_bot=self._py_bot)
+        self.pools = PoolRegistry(py_bot=self._py_bot, managed_pool_registry=self.managed_pools)
+        self.tokens = TokenRegistry(py_bot=self._py_bot)
         self._trackers: dict[str, AbstractPoolTracker[Any]] = {}
         # Idempotency flag for close(); mirrored by bot_lifecycle.close.
         self._closed: bool = False

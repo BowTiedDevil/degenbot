@@ -44,11 +44,11 @@ def _weth_token() -> Erc20Token:
 
 
 def test_distinct_registry_instances():
-    pool_registry = PoolRegistry()
-    token_registry = TokenRegistry()
+    pool_registry = PoolRegistry(py_bot=_Engine(chain_id=1))
+    token_registry = TokenRegistry(py_bot=_Engine(chain_id=1))
 
-    new_pool_registry = PoolRegistry()
-    new_token_registry = TokenRegistry()
+    new_pool_registry = PoolRegistry(py_bot=_Engine(chain_id=1))
+    new_token_registry = TokenRegistry(py_bot=_Engine(chain_id=1))
 
     assert new_pool_registry is not pool_registry
     assert new_token_registry is not token_registry
@@ -107,7 +107,7 @@ def test_v4_pool_add_and_removal():
     chain_id = 1
     pool_id = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 
-    managed_pool_registry = ManagedPoolRegistry()
+    managed_pool_registry = ManagedPoolRegistry(py_bot=_Engine(chain_id=1))
 
     # Add the V4 pool to the managed pool registry
     managed_pool_registry.add(

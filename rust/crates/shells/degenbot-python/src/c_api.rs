@@ -410,6 +410,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::bot::intake::PyIntakeReceipt>()?;
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::pool::PyLiquidityPool>()?;
+    // Session object identity — the canonical name the session's pool/token
+    // registries resolve through (thin projection of the Rust
+    // `SessionObjectRegistry`; the registry stays the identity authority).
+    #[cfg(feature = "bot")]
+    m.add_class::<crate::bot::session_registry::PySessionObject>()?;
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::pool::PyReservePairView>()?;
     #[cfg(feature = "bot")]

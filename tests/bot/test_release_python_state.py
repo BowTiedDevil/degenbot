@@ -24,6 +24,7 @@ from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import AlloyProvider
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
+from tests.fakes.pools import FakeSessionPool
 
 # V3 Mint topic — keccak256("Mint(address,address,int24,int24,uint128,uint256,uint256)").
 _V3_MINT_TOPIC = "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde"
@@ -118,7 +119,7 @@ class TestReleasePythonState:
         # seed the registries with sentinel storage via their _storage()
         bot.pools.add(
             pool_address="0x0000000000000000000000000000000000000002",
-            pool=object(),  # type: ignore[arg-type]
+            pool=FakeSessionPool("0x0000000000000000000000000000000000000002"),
             chain_id=1,
         )
         # TokenRegistry has a different add signature; just assert reset clears
@@ -177,7 +178,7 @@ class TestReleasePythonState:
         # (Rust, above) AND the Python pool registry (here). release iterates
         # the Python registry, so the pool must be present there for the bug
         # path to touch Rust.
-        bot.pools.add(pool_address=address, pool=object(), chain_id=1)  # type: ignore[arg-type]
+        bot.pools.add(pool_address=address, pool=FakeSessionPool(address), chain_id=1)  # type: ignore[arg-type]
 
         assert py_bot.pool_count() == 1
 
@@ -226,7 +227,7 @@ class TestReleasePythonState:
             # the quarantine lifecycle is honored.
             coverage="sparse",
         )
-        bot.pools.add(pool_address=address, pool=object(), chain_id=1)  # type: ignore[arg-type]
+        bot.pools.add(pool_address=address, pool=FakeSessionPool(address), chain_id=1)  # type: ignore[arg-type]
 
         bot.release_python_state()
 

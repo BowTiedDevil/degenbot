@@ -4,13 +4,44 @@ Minimal protocol-fakes for testing:
 - FakeV2Pool: captures external_update calls (test spy)
 - FakeV3Pool: captures external_update and update_liquidity_map calls (test spy)
 - FakeUniswapV4Pool: minimal V4 pool for registry tests
+- FakeSessionPool: address-keyed companion with the family tag a registry reads
 
 These fake pools are test spies, not mock math engines. For pool math testing,
 use production pool classes (UniswapV2Pool, UniswapV3Pool, etc.) constructed
 with FakeToken arguments.
 """
 
+from dataclasses import dataclass
+
 from degenbot.types.abstract import AbstractLiquidityPool
+
+
+@dataclass(frozen=True)
+class FakePoolHandle:
+    """Stand-in for the live Rust ``Pool`` handle a companion wraps.
+
+    The registries read a companion's registration family off its handle (the
+    handle reports the family the core registered it under), so a fake pool
+    needs one to be nameable in a session.
+    """
+
+    pool_family: str = "v2"
+
+
+@dataclass(frozen=True)
+class FakeSessionPool:
+    """Minimal address-keyed pool companion carrying a family tag.
+
+    Enough for a registry test that is about identity, not pool behavior: the
+    registries only read ``address`` and the handle's family.
+    """
+
+    address: str
+    pool_family: str = "v2"
+
+    @property
+    def _py_pool(self) -> FakePoolHandle:
+        return FakePoolHandle(self.pool_family)
 
 
 class FakeV2Pool:

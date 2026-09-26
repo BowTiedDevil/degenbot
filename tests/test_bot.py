@@ -53,6 +53,7 @@ from degenbot.provider import OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.pool_type import PoolProbe
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
+from tests.fakes.session import session_registry_methods
 
 # Not in the deployments registry, so the type resolver falls back to probing.
 _UNREGISTERED_FACTORY = "0x" + "f" * 40
@@ -241,6 +242,7 @@ class TestBuildDelegatedIdentityReturnSurface:
                 "uniswap-v2",
             ),
             get_pool=lambda pid: handle,
+            **session_registry_methods(),
         )
         bot = Bot(**session, provider=_fake_provider(1), py_bot=py_bot, io=io)
 
@@ -298,6 +300,7 @@ class TestBuildManagedPoolIdentityReturnSurface:
                 5000,  # protocol_fee
                 0,  # lp_fee
             ),
+            **session_registry_methods(),
         )
         bot = Bot(
             **session,
@@ -334,6 +337,7 @@ class TestBuildManagedPoolResolveErrorMapping:
             resolve_v4_identity=lambda **k: (_ for _ in ()).throw(
                 ValueError("V4 identity incomplete: pool not in the database")
             ),
+            **session_registry_methods(),
         )
         bot = Bot(**session, provider=_fake_provider(1), py_bot=py_bot, io=io)
 

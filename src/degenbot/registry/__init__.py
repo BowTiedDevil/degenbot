@@ -1,17 +1,16 @@
-"""Address registry classes for pool and token bookkeeping."""
+"""Session-object registries and DEX deployment data for pool and token bookkeeping."""
 
-from .base import AbstractAddressRegistry, AddressRegistry, MultiKeyAddressRegistry
 from .pool import ManagedPoolRegistry, PoolRegistry
 from .pool_type import PoolTypeRegistry, pool_type_registry
+from .session import CompanionCache, SessionObjects
 from .token import TokenRegistry
 
 __all__ = (
-    "AbstractAddressRegistry",
-    "AddressRegistry",
+    "CompanionCache",
     "ManagedPoolRegistry",
-    "MultiKeyAddressRegistry",
     "PoolRegistry",
     "PoolTypeRegistry",
+    "SessionObjects",
     "TokenRegistry",
     "pool_type_registry",
 )

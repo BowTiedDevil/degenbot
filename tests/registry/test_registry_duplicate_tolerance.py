@@ -16,14 +16,17 @@ it is safe under real concurrent worker threads.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 from dataclasses import dataclass
 
 import pytest
 
+from degenbot._ffi import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.pool import ManagedPoolRegistry, PoolRegistry
 from degenbot.registry.token import TokenRegistry
+from tests.fakes.pools import FakePoolHandle
 
 CHAIN = 1
 ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -34,7 +37,10 @@ POOL_ID = bytes(range(32))
 
 @dataclass(frozen=True)
 class FakePool:
+    """An address-keyed pool companion; the registry reads its family off the handle."""
+
     address: str
+    _py_pool: FakePoolHandle = dataclasses.field(default_factory=lambda: FakePoolHandle("v2"))
 
 
 @dataclass(frozen=True)
@@ -49,7 +55,7 @@ class FakeToken:
 
 
 def test_pool_registry_get_or_add_returns_canonical_on_duplicate() -> None:
-    reg = PoolRegistry()
+    reg = PoolRegistry(py_bot=Bot(chain_id=1))
     first = FakePool(ADDR)
     second = FakePool(ADDR2)
 
@@ -60,7 +66,7 @@ def test_pool_registry_get_or_add_returns_canonical_on_duplicate() -> None:
 
 
 def test_managed_pool_registry_get_or_add_returns_canonical_on_duplicate() -> None:
-    reg = ManagedPoolRegistry()
+    reg = ManagedPoolRegistry(py_bot=Bot(chain_id=1))
     first = FakeManagedPool(MANAGER, POOL_ID)
     dup = FakeManagedPool(MANAGER, POOL_ID)
 
@@ -71,7 +77,7 @@ def test_managed_pool_registry_get_or_add_returns_canonical_on_duplicate() -> No
 
 
 def test_token_registry_get_or_add_returns_canonical_on_duplicate() -> None:
-    reg = TokenRegistry()
+    reg = TokenRegistry(py_bot=Bot(chain_id=1))
     first = FakeToken(ADDR)
     dup = FakeToken(ADDR2)
 
@@ -84,7 +90,7 @@ def test_token_registry_get_or_add_returns_canonical_on_duplicate() -> None:
 def test_pool_registry_public_add_still_raises_on_duplicate() -> None:
     """Guard 1 must NOT change the documented public contract: direct ``add``
     of an already-registered pool still raises (pinned by test_registry.py)."""
-    reg = PoolRegistry()
+    reg = PoolRegistry(py_bot=Bot(chain_id=1))
     reg.add(FakePool(ADDR), CHAIN, ADDR)
     with pytest.raises(DegenbotValueError, match="already registered"):
         reg.add(FakePool(ADDR2), CHAIN, ADDR)
@@ -94,7 +100,7 @@ def test_managed_pool_registry_get_or_add_concurrent_no_raise() -> None:
     """Real concurrency: N registration-worker threads race to register the same
     V4 pool via ``get_or_add``. None may raise and exactly one is stored.
     """
-    reg = ManagedPoolRegistry()
+    reg = ManagedPoolRegistry(py_bot=Bot(chain_id=1))
     n_threads = 8
     barrier = threading.Barrier(n_threads)
     errors: list[BaseException] = []

@@ -281,7 +281,7 @@ def _make_curve_builder(
 
     py_bot = Bot(chain_id=1)
     py_bot.attach_construction_io(provider, None)
-    tokens = TokenRegistry()
+    tokens = TokenRegistry(py_bot=py_bot)
     pools = PoolRegistry(py_bot=py_bot)
     erc20 = Erc20Builder(
         default_chain_id=1,

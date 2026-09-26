@@ -77,11 +77,11 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
 
 def test_distinct_registry_instances():
     """Constructing a new registry instance returns a distinct object."""
-    pool_registry = PoolRegistry()
-    token_registry = TokenRegistry()
+    pool_registry = PoolRegistry(py_bot=Bot(chain_id=1))
+    token_registry = TokenRegistry(py_bot=Bot(chain_id=1))
 
-    new_pool_registry = PoolRegistry()
-    new_token_registry = TokenRegistry()
+    new_pool_registry = PoolRegistry(py_bot=Bot(chain_id=1))
+    new_token_registry = TokenRegistry(py_bot=Bot(chain_id=1))
 
     assert new_pool_registry is not pool_registry
     assert new_token_registry is not token_registry
@@ -89,7 +89,7 @@ def test_distinct_registry_instances():
 
 def test_adding_pool():
     """Adding a pool to the registry makes it retrievable; double-add is an error."""
-    pool_registry = PoolRegistry()
+    pool_registry = PoolRegistry(py_bot=Bot(chain_id=1))
     lp = _get_offline_v2_pool()
     pool_registry.add(pool_address=lp.address, chain_id=1, pool=lp)
     assert pool_registry.get(pool_address=lp.address, chain_id=1) is lp
@@ -100,7 +100,7 @@ def test_adding_pool():
 
 def test_deleting_pool():
     """Removing a pool from the registry makes it unretrievable."""
-    pool_registry = PoolRegistry()
+    pool_registry = PoolRegistry(py_bot=Bot(chain_id=1))
     lp = _get_offline_v2_pool()
     pool_registry.add(pool_address=lp.address, chain_id=1, pool=lp)
     assert pool_registry.get(pool_address=lp.address, chain_id=1) is lp
@@ -110,7 +110,7 @@ def test_deleting_pool():
 
 def test_adding_token():
     """Adding a token to the registry makes it retrievable; double-add is an error."""
-    token_registry = TokenRegistry()
+    token_registry = TokenRegistry(py_bot=Bot(chain_id=1))
     lp = _get_offline_v2_pool()
     weth = lp.token1
     token_registry.add(token_address=weth.address, chain_id=1, token=weth)
@@ -122,7 +122,7 @@ def test_adding_token():
 
 def test_deleting_token():
     """Removing a token from the registry makes it unretrievable."""
-    token_registry = TokenRegistry()
+    token_registry = TokenRegistry(py_bot=Bot(chain_id=1))
     lp = _get_offline_v2_pool()
     weth = lp.token1
     token_registry.add(token_address=weth.address, chain_id=1, token=weth)
@@ -133,7 +133,7 @@ def test_deleting_token():
 
 def test_v4_pool_add_and_removal():
     """Managed pool registry supports V4-style pools with pool_manager_address + pool_id."""
-    managed_pool_registry = ManagedPoolRegistry()
+    managed_pool_registry = ManagedPoolRegistry(py_bot=Bot(chain_id=1))
     fake_pool_manager_address = "0x1234567890123456789012345678901234567890"
     fake_pool_id = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 

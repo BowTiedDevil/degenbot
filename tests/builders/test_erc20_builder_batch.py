@@ -63,7 +63,7 @@ class _RecFakeIo:
 def test_build_many_issues_single_batched_fetch() -> None:
     """Two DB/registry-missing tokens resolve via ONE batched metadata fetch."""
     py_bot = Bot(chain_id=1)
-    tokens = TokenRegistry()
+    tokens = TokenRegistry(py_bot=py_bot)
     io = _RecFakeIo()
     erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
 
@@ -98,7 +98,7 @@ def test_build_many_falls_back_per_token_for_none_meta() -> None:
         })
     )
     py_bot.attach_construction_io(provider, None)
-    tokens = TokenRegistry()
+    tokens = TokenRegistry(py_bot=py_bot)
     io = _RecFakeIo()
     erc20 = Erc20Builder(default_chain_id=1, tokens=tokens, py_bot=py_bot)
 

@@ -372,6 +372,125 @@ fn missing_identity_is_a_typed_refusal_not_a_silent_second_object() {
     assert_eq!(registry.pool_count(), 1);
 }
 
+/// Every family a registered pool can be (`BotState`'s `pool_family` tag
+/// vocabulary) is a first-class canonical identity, so a consumer naming a
+/// Balancer/Aerodrome/Curve pool gets the session's one object for it instead
+/// of keeping a private per-family map. Family is still part of the key: the
+/// same address registered under two families is two identities.
+#[test]
+fn every_registered_family_is_a_canonical_identity() {
+    const FAMILIES: [&str; 6] = [
+        "v2",
+        "v3",
+        "curve",
+        "balancer-weighted",
+        "balancer-stable",
+        "aerodrome-v2",
+    ];
+
+    let registry = SessionObjectRegistry::new(CHAIN_ID);
+    let mut objects = Vec::with_capacity(FAMILIES.len());
+    for family in FAMILIES {
+        let identity = PoolIdentity::for_address_family(family, make_pool_addr())
+            .unwrap_or_else(|| panic!("{family} is a registered family with a canonical identity"));
+        assert_eq!(
+            identity.family_tag(),
+            family,
+            "the identity reports the same family tag the name came in as"
+        );
+        objects.push(registry.get_or_create_pool(identity));
+    }
+
+    let first = &objects[0];
+    assert!(
+        objects[1..]
+            .iter()
+            .all(|object| !Arc::ptr_eq(first, object)),
+        "one address under two families is two canonical identities, not one"
+    );
+    assert_eq!(registry.pool_count(), FAMILIES.len());
+
+    // A V4 pool's identity is the `(PoolManager, pool_id)` pair, never an
+    // address, so the address-keyed constructor must refuse the tag instead of
+    // inventing a V4 identity whose key is only half of it.
+    assert!(
+        PoolIdentity::for_address_family("v4", make_pool_addr()).is_none(),
+        "the V4 family is not address-keyed; it needs a (PoolManager, pool_id) pair"
+    );
+    assert!(
+        PoolIdentity::for_address_family("not-a-family", make_pool_addr()).is_none(),
+        "an unknown family tag names no identity"
+    );
+}
+
+/// A consumer that knows only an address — the shape every address-keyed pool
+/// lookup in the Python facade has — resolves the session's canonical object
+/// through the registry's address index instead of consulting a second map.
+/// The index is an index: it names the object the identity map already holds,
+/// and an unregistered address is a typed refusal, not a miss that invents one.
+#[test]
+fn address_index_resolves_the_object_the_identity_map_holds() {
+    let registry = SessionObjectRegistry::new(CHAIN_ID);
+    assert!(
+        matches!(
+            registry.resolve_pool_by_address(&make_pool_addr()),
+            Err(ObjectRefusal::UnknownPoolAddress { .. })
+        ),
+        "an address this session does not hold is refused by variant"
+    );
+
+    let canonical = registry.get_or_create_pool(PoolIdentity::v3(make_pool_addr()));
+    let resolved = registry
+        .resolve_pool_by_address(&make_pool_addr())
+        .expect("the address is registered now");
+    assert!(
+        Arc::ptr_eq(&canonical, &resolved),
+        "the address index joins the one canonical object, never a twin"
+    );
+
+    // A second family at the same address is a second identity, and the
+    // address view names the first one registered: the index reports which
+    // object an address-only consumer resolves to rather than picking per call.
+    let balancer = registry.get_or_create_pool(
+        PoolIdentity::for_address_family("balancer-weighted", make_pool_addr())
+            .expect("test setup: balancer-weighted is a canonical family"),
+    );
+    assert_eq!(registry.pool_count(), 2);
+    assert!(
+        Arc::ptr_eq(
+            &canonical,
+            &registry
+                .resolve_pool_by_address(&make_pool_addr())
+                .expect("the address is registered")
+        ),
+        "the address view stays on the first identity registered for the address"
+    );
+    assert!(
+        !Arc::ptr_eq(&balancer, &resolved),
+        "the second family is a distinct object even at the same address"
+    );
+}
+
+/// A V4 pool is named by its `(PoolManager, pool_id)` pair, so it is
+/// deliberately absent from the address index: a `PoolManager` contract address
+/// is not a pool address, and indexing it there would let an address-only
+/// consumer resolve a manager to one of the many pools it hosts.
+#[test]
+fn v4_pools_are_not_address_indexed() {
+    let pool_manager = Address::from([0x44u8; 20]);
+    let registry = SessionObjectRegistry::new(CHAIN_ID);
+    let _ = registry.get_or_create_pool(PoolIdentity::v4(pool_manager, [0xeeu8; 32]));
+
+    assert!(
+        matches!(
+            registry.resolve_pool_by_address(&pool_manager),
+            Err(ObjectRefusal::UnknownPoolAddress { .. })
+        ),
+        "a PoolManager address names no address-keyed pool"
+    );
+    assert_eq!(registry.pool_count(), 1);
+}
+
 /// An Object reference is shared: two consumers hold the same canonical
 /// object at once, and neither one's handle going away removes it. The
 /// registry owns the entry for the session's lifetime.

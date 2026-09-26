@@ -70,6 +70,14 @@ pub enum PoolIdentity {
         /// The pool's on-chain id, unique only within its `PoolManager`.
         pool_id: V4PoolId,
     },
+    /// An Aerodrome V2 pool: its contract address, family-scoped.
+    AerodromeV2(Address),
+    /// A Balancer V2 weighted pool: its contract address, family-scoped.
+    BalancerWeighted(Address),
+    /// A Balancer V2 stable pool: its contract address, family-scoped.
+    BalancerStable(Address),
+    /// A Curve stableswap pool: its contract address, family-scoped.
+    Curve(Address),
 }
 
 impl PoolIdentity {
@@ -94,17 +102,55 @@ impl PoolIdentity {
         }
     }
 
+    /// The address-keyed identity for the family named by `family_tag`.
+    ///
+    /// `family_tag` is the same kebab-case vocabulary
+    /// [`PoolIdentity::family_tag`] and
+    /// [`BotState::pool_family`](crate::bot_core::BotState::pool_family)
+    /// report, so a consumer that already knows a pool's family (a Python
+    /// companion reading its live handle, a core registration result) names the
+    /// identity without this module having to expose a constructor per family.
+    /// `None` for a tag this registry does not model, and for `"v4"` — whose
+    /// identity is a `(PoolManager, pool_id)` pair, not an address; a V4
+    /// consumer uses [`PoolIdentity::v4`].
+    #[must_use]
+    pub const fn for_address_family(family_tag: &str, address: Address) -> Option<Self> {
+        match family_tag.as_bytes() {
+            b"v2" => Some(Self::V2(address)),
+            b"v3" => Some(Self::V3(address)),
+            b"curve" => Some(Self::Curve(address)),
+            b"balancer-weighted" => Some(Self::BalancerWeighted(address)),
+            b"balancer-stable" => Some(Self::BalancerStable(address)),
+            b"aerodrome-v2" => Some(Self::AerodromeV2(address)),
+            _ => None,
+        }
+    }
+
     /// The address component of the identity.
     ///
-    /// For V2/V3 this is the pool's own contract address. For V4 it is the
-    /// `PoolManager` contract, which is NOT a pool address — a V4 consumer
-    /// naming a pool reads [`Self::v4_pair`].
+    /// For every address-keyed family this is the pool's own contract
+    /// address. For V4 it is the `PoolManager` contract, which is NOT a pool
+    /// address — a V4 consumer naming a pool reads [`Self::v4_pair`], and the
+    /// registry never indexes a V4 identity by this address.
     #[must_use]
     pub const fn address(&self) -> Address {
         match self {
-            Self::V2(address) | Self::V3(address) => *address,
+            Self::V2(address)
+            | Self::V3(address)
+            | Self::AerodromeV2(address)
+            | Self::BalancerWeighted(address)
+            | Self::BalancerStable(address)
+            | Self::Curve(address) => *address,
             Self::V4 { pool_manager, .. } => *pool_manager,
         }
+    }
+
+    /// Whether this identity is a V4 pool — the one family whose key is a
+    /// `(PoolManager, pool_id)` pair rather than an address, and therefore the
+    /// one family the registry keeps out of the address index.
+    #[must_use]
+    pub const fn is_v4(&self) -> bool {
+        matches!(self, Self::V4 { .. })
     }
 
     /// The `(pool_manager, pool_id)` pair, for a V4 identity. `None` for the
@@ -116,19 +162,32 @@ impl PoolIdentity {
                 pool_manager,
                 pool_id,
             } => Some((*pool_manager, *pool_id)),
-            Self::V2(..) | Self::V3(..) => None,
+            Self::V2(..)
+            | Self::V3(..)
+            | Self::AerodromeV2(..)
+            | Self::BalancerWeighted(..)
+            | Self::BalancerStable(..)
+            | Self::Curve(..) => None,
         }
     }
 
-    /// The family tag (`"v2"` / `"v3"` / `"v4"`) — the same tag vocabulary
+    /// The family tag (`"v2"` / `"v3"` / `"v4"` / `"curve"` /
+    /// `"balancer-weighted"` / `"balancer-stable"` / `"aerodrome-v2"`) — the
+    /// same tag vocabulary
     /// [`BotState::pool_family`](crate::bot_core::BotState::pool_family)
-    /// reports, so an identity-to-live-state join reads one family name.
+    /// reports, so an identity-to-live-state join reads one family name and a
+    /// consumer that already knows a family names its identity through
+    /// [`PoolIdentity::for_address_family`].
     #[must_use]
     pub const fn family_tag(&self) -> &'static str {
         match self {
             Self::V2(..) => "v2",
             Self::V3(..) => "v3",
             Self::V4 { .. } => "v4",
+            Self::AerodromeV2(..) => "aerodrome-v2",
+            Self::BalancerWeighted(..) => "balancer-weighted",
+            Self::BalancerStable(..) => "balancer-stable",
+            Self::Curve(..) => "curve",
         }
     }
 }
@@ -146,6 +205,12 @@ impl fmt::Display for PoolIdentity {
                 "v4 pool {pool_manager}/{}",
                 alloy::hex::encode_prefixed(pool_id)
             ),
+            Self::AerodromeV2(address)
+            | Self::BalancerWeighted(address)
+            | Self::BalancerStable(address)
+            | Self::Curve(address) => {
+                write!(f, "{} pool {address}", self.family_tag())
+            }
         }
     }
 }
@@ -202,6 +267,15 @@ pub enum ObjectRefusal {
     UnknownTokenIdentity {
         /// The identity the request named.
         identity: TokenIdentity,
+    },
+    /// No address-keyed pool object is registered at this address in this
+    /// session. The address view of a pool: it resolves a caller that knows
+    /// only an address to whichever family registered that address first, and
+    /// a V4 pool is deliberately not in it.
+    #[error("no address-keyed pool object is registered at {address} in this session")]
+    UnknownPoolAddress {
+        /// The address the request named.
+        address: Address,
     },
 }
 
@@ -294,6 +368,16 @@ pub struct SessionObjectRegistry {
     chain_id: u64,
     /// Pool identities → the one canonical object per identity.
     pools: DashMap<PoolIdentity, Arc<PoolObject>>,
+    /// Address-keyed pool identity → the identity that address resolved to,
+    /// so a consumer that knows only an address (
+    /// [`Self::resolve_pool_by_address`]) joins the same object instead of
+    /// keeping a second address map of its own. An INDEX over `pools`, not a
+    /// second authority: it holds identities, never objects, and the identity
+    /// it names is the one already in `pools`. First registration for an
+    /// address wins, which is the order an address-keyed consumer observes.
+    /// V4 identities are absent by design — a `PoolManager` address is not a
+    /// pool address.
+    pool_addresses: DashMap<Address, PoolIdentity>,
     /// Token identities → the one canonical object per identity.
     tokens: DashMap<TokenIdentity, Arc<TokenObject>>,
 }
@@ -305,6 +389,7 @@ impl SessionObjectRegistry {
         Self {
             chain_id,
             pools: DashMap::new(),
+            pool_addresses: DashMap::new(),
             tokens: DashMap::new(),
         }
     }
@@ -329,7 +414,44 @@ impl SessionObjectRegistry {
             .pools
             .entry(identity)
             .or_insert_with(move || Arc::new(PoolObject::from_identity(self.chain_id, seed)));
-        Arc::clone(entry.value())
+        let object = Arc::clone(entry.value());
+        if !object.identity().is_v4() {
+            // First identity to claim an address is the one an address-only
+            // consumer resolves to, so a second family at the same address
+            // stays a distinct object without disturbing the address view.
+            self.pool_addresses
+                .entry(object.identity().address())
+                .or_insert_with(|| object.identity().clone());
+        }
+        object
+    }
+
+    /// The canonical pool object at `address`, resolved through the address
+    /// index — the read surface for a consumer that knows a pool's address but
+    /// not its family (a pool lookup by address, a tracker's per-block pool
+    /// read).
+    ///
+    /// It answers with the object whose identity first claimed the address, so
+    /// the answer is a property of the session rather than of the call: when
+    /// two families share an address, the address view names the first
+    /// registered one and a caller that needs the other must name its family
+    /// ([`Self::resolve_pool`]). A V4 pool is not address-keyed and is never
+    /// named here.
+    ///
+    /// # Errors
+    ///
+    /// [`ObjectRefusal::UnknownPoolAddress`] when no address-keyed identity in
+    /// this session claims `address`. The refusal registers nothing.
+    pub fn resolve_pool_by_address(
+        &self,
+        address: &Address,
+    ) -> Result<Arc<PoolObject>, ObjectRefusal> {
+        let identity = self
+            .pool_addresses
+            .get(address)
+            .map(|entry| entry.value().clone())
+            .ok_or(ObjectRefusal::UnknownPoolAddress { address: *address })?;
+        self.resolve_pool(&identity)
     }
 
     /// The canonical pool object for `identity`, without registering anything.

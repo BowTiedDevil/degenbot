@@ -937,6 +937,38 @@ class BotIo:
     def get_code(self, address: str, block: int | None = None) -> bytes: ...
     def get_balance(self, address: str, block: int | None = None) -> int: ...
 
+class SessionObject:
+    """The session's canonical name for one pool or token.
+
+    A read-only identity handle, not a pool and not a token: it carries no live
+    state (that stays in ``BotState``) and no I/O handle. The Rust
+    ``SessionObjectRegistry`` owns the object for the session's lifetime, and
+    two consumers naming one identity get handles whose ``key`` is equal — the
+    string a Python companion cache files its presentation handle under, minted
+    by Rust so Python never re-derives an identity of its own.
+    """
+
+    @property
+    def key(self) -> str:
+        """Canonical, session-unique name of this object.
+
+        Equal for every consumer naming this identity in this session, and
+        unequal for every other object. ``"pool:v3:0x…"``,
+        ``"pool:v4:0x<manager>/0x<pool_id>"``, ``"token:erc20:0x…"``.
+        """
+    @property
+    def kind(self) -> str:
+        """``"pool"`` or ``"token"``."""
+    @property
+    def family(self) -> str:
+        """Family tag — a pool's registration family, or ``"erc20"``."""
+    @property
+    def address(self) -> str:
+        """Address component: the pool address, or a V4 pool's ``PoolManager``."""
+    @property
+    def chain_id(self) -> int:
+        """The chain whose session registered this object."""
+
 class Bot:
     """PyO3 wrapper (exposed as `Bot` in Python) holding `Arc<RwLock<Bot>>`.
 
@@ -1215,6 +1247,47 @@ class Bot:
     ) -> None: ...
     def get_pool(self, pool_id: int) -> Pool | None: ...
     def unregister_pool(self, address: str, pool_id: bytes | None = None) -> bool: ...
+    def get_or_create_session_pool(
+        self,
+        chain_id: int,
+        family: str,
+        address: str,
+        pool_id: bytes | None = None,
+    ) -> SessionObject:
+        """Get-or-create the session's canonical pool object for this identity.
+
+        ``address`` is the pool's own address for every address-keyed family
+        and the ``PoolManager`` for ``v4``, whose identity is the
+        ``(PoolManager, pool_id)`` pair — ``pool_id`` is required there and
+        refused everywhere else. ``family`` is the tag vocabulary ``pool_family``
+        reports (``v2``, ``v3``, ``v4``, ``curve``, ``balancer-weighted``,
+        ``balancer-stable``, ``aerodrome-v2``); anything else raises
+        ``ValueError``, as does a ``chain_id`` outside this session's chain.
+        """
+    def resolve_session_pool(
+        self,
+        chain_id: int,
+        family: str,
+        address: str,
+        pool_id: bytes | None = None,
+    ) -> SessionObject | None:
+        """Return the session's canonical pool object for this identity.
+
+        Registers nothing; a miss is ``None``, not an exception.
+        """
+    def resolve_session_pool_by_address(self, chain_id: int, address: str) -> SessionObject | None:
+        """Return the session's canonical pool object at ``address`` (``None`` if unheld).
+
+        The read surface for a caller that knows a pool's address but not its
+        family: it names the identity that registered the address first. A V4
+        pool is never named here — a ``PoolManager`` is not a pool address.
+        """
+    def get_or_create_session_token(self, chain_id: int, address: str) -> SessionObject:
+        """Get-or-create the session's canonical token object for this ERC-20 address."""
+    def resolve_session_token(self, chain_id: int, address: str) -> SessionObject | None:
+        """Return the session's canonical token object for this address (``None`` if unheld)."""
+    def session_object_counts(self) -> tuple[int, int]:
+        """``(pool_count, token_count)`` — one entry per identity, never per request."""
     def register_v3_pool(
         self,
         address: str,
@@ -1841,6 +1914,7 @@ __all__ = [
     "ResolvedDatabasePath",
     "ResolvedNodeUri",
     "RetryPolicyDefaults",
+    "SessionObject",
     "SpecViolationError",
     "StrategyHostError",
     "StrategyReadinessView",
