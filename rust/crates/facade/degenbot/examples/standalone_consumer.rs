@@ -18,6 +18,17 @@
 //! ```
 //! It `panic!`s on any check failure (exit code != 0), so it doubles as a
 //! standalone-consumer gate.
+//!
+//! ## Operator contract: one file, four layers, no env needed
+//!
+//! A standalone consumer joins its node and its database from ONE operator
+//! file, resolved through `degenbot::config`. The operator writes a single
+//! TOML document — the database path and the per-chain `nodes.*` endpoint
+//! tables — and points the loader at it with `DEGENBOT_CONFIG` (or the
+//! `--config` argument); no environment variable is required. The four layers
+//! resolve `cli > env > file > default`, and every resolved value carries the
+//! [`Source`](degenbot::config::Source) that won, so an operator file alone is
+//! a complete, self-describing boot configuration.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -462,6 +473,128 @@ fn main() {
     //    (mock transport with an empty queue).
     in_process_sim_standalone_slice();
     registration_lifecycle_standalone_slice();
+    operator_config_standalone_slice();
+}
+
+/// Operator-contract slice: a `cargo add degenbot` consumer joins its node
+/// and its database from ONE operator file through `degenbot::config`, with no
+/// Python and no CLI `--config` flag.
+///
+/// A harness writes the operator file the way an operator would — one TOML
+/// document declaring both the database path and the per-chain node endpoint —
+/// and points the loader at it with `DEGENBOT_CONFIG`, the standard-path env
+/// override (the same precedent `DEGENBOT_FIXTURE_DB` sets for the fixture DB
+/// above). The consumer then resolves the node join and the database path and
+/// asserts BOTH the value and the winning [`Source`]: with no override the
+/// FILE layer supplies both, and after exporting the two `DEGENBOT_*` names the
+/// ENV layer wins. The `Source` assertions are the proof that the layers are
+/// real (a value-only check would pass with a single-layer reader).
+///
+/// The join is resolution-only — no provider is constructed and no RPC is
+/// dialed — so this slice stays hermetic in CI: it never leaves the config
+/// surface.
+fn operator_config_standalone_slice() {
+    use degenbot::config::{
+        load_process_config, node_http_env_name, node_ipc_env_name, node_ws_env_name,
+        resolve_database_path, resolve_node_request_uri, NodeOverrides, Source, DB_PATH_ENV,
+    };
+
+    // One operator file, four layers: a single document carries the database
+    // path and the chain's node endpoint. `DEGENBOT_CONFIG` is the standard
+    // path's env override, so the consumer needs no `--config` argument.
+    let chain_id = 8453_u64;
+    let db_file = "/tmp/degenbot-standalone/operator.db";
+    let http_file = "https://file.example/rpc";
+    let operator = std::env::temp_dir().join(format!(
+        "degenbot-standalone-operator-{}.toml",
+        std::process::id()
+    ));
+    std::fs::write(
+        &operator,
+        format!(
+            "[database]\npath = \"{db_file}\"\n\n[nodes]\nhttp = {{ {chain_id} = \"{http_file}\" }}\n"
+        ),
+    )
+    .expect("standalone: temp operator file writes");
+
+    // Hermetic: clear every env layer the resolver consults for this chain
+    // before proving the FILE layer, so a developer's exported override
+    // cannot make the file-layer assertion pass for the wrong reason.
+    std::env::remove_var(DB_PATH_ENV);
+    for env_name in [
+        node_ipc_env_name(chain_id),
+        node_ws_env_name(chain_id),
+        node_http_env_name(chain_id),
+    ] {
+        std::env::remove_var(env_name);
+    }
+    std::env::set_var("DEGENBOT_CONFIG", &operator);
+
+    // 1. No env override: the FILE layer supplies both joins.
+    let file_cfg = load_process_config().expect("standalone: operator file must load");
+    let node = resolve_node_request_uri(&file_cfg, chain_id, &NodeOverrides::new())
+        .expect("standalone: operator file declares the chain's http endpoint");
+    assert_eq!(
+        node.value, http_file,
+        "standalone: node join resolves from the operator file"
+    );
+    assert_eq!(
+        node.source,
+        Source::File,
+        "standalone: the FILE layer supplied the node endpoint"
+    );
+    let db = resolve_database_path(&file_cfg, None);
+    assert_eq!(
+        db.value,
+        PathBuf::from(db_file),
+        "standalone: database path resolves from the operator file"
+    );
+    assert_eq!(
+        db.source,
+        Source::File,
+        "standalone: the FILE layer supplied the database path"
+    );
+
+    // 2. Export the two names: the SAME joins must now come from the ENV
+    //    layer, which is what proves the four layers rather than one.
+    let db_env = "/tmp/degenbot-standalone/env.db";
+    let http_env = "https://env.example/rpc";
+    std::env::set_var(DB_PATH_ENV, db_env);
+    std::env::set_var(node_http_env_name(chain_id), http_env);
+    let env_cfg =
+        load_process_config().expect("standalone: operator file plus env layers must load");
+    let node = resolve_node_request_uri(&env_cfg, chain_id, &NodeOverrides::new())
+        .expect("standalone: env layer supplies the chain's http endpoint");
+    assert_eq!(
+        node.value, http_env,
+        "standalone: env overrides the file node endpoint"
+    );
+    assert_eq!(
+        node.source,
+        Source::Env,
+        "standalone: the ENV layer won the node endpoint"
+    );
+    let db = resolve_database_path(&env_cfg, None);
+    assert_eq!(
+        db.value,
+        PathBuf::from(db_env),
+        "standalone: env overrides the file database path"
+    );
+    assert_eq!(
+        db.source,
+        Source::Env,
+        "standalone: the ENV layer won the database path"
+    );
+
+    // Cleanup so the temp file + env overlay cannot leak into later slices.
+    std::env::remove_var(DB_PATH_ENV);
+    std::env::remove_var(node_http_env_name(chain_id));
+    std::env::remove_var("DEGENBOT_CONFIG");
+    let _ = std::fs::remove_file(&operator);
+
+    println!(
+        "standalone degenbot consumer OK: operator file — node {http_file} + database {db_file} resolved from the FILE layer, env overrides win from the ENV layer"
+    );
 }
 
 /// (IKGQ6F / ADR-022 D1) Standalone-Rust consumer drives the core-owned
