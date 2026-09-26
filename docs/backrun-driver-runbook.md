@@ -41,8 +41,11 @@ publicly and has no private URL.
 Every knob is a typed per-ecosystem key: set it in the config.toml
 `[strategy.mevblocker_backrun]` / `[strategy.txpool_backrun]` table (or its
 `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_*` / `DEGENBOT_STRATEGY_PEER_BACKRUN_*`
-env name). The node/DB resolvers stay env-only (`DEGENBOT_RPC_HTTP_CHAINID_1`,
-`DEGENBOT_RPC_WS_CHAINID_1`, `DEGENBOT_DB_PATH`).
+env name). The node/DB resolvers read the same operator file as the base layer
+(its `[nodes]` and `[database]` tables), with `DEGENBOT_RPC_HTTP_CHAINID_1`,
+`DEGENBOT_RPC_WS_CHAINID_1`, and `DEGENBOT_DB_PATH` as the override layer
+(ADR-062). No environment variable is required, and every resolved value reports
+the layer that supplied it.
 
 | Typed key | Meaning | Hard behavior |
 | --- | --- | --- |
