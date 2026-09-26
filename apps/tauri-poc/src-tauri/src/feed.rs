@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use degenbot::config::{resolve_node_ws_uri, ProcessEnv};
+use degenbot::config::{load_process_config, resolve_node_subscription_uri, NodeOverrides};
 use degenbot::eip_1559;
 use degenbot_ingestion::{IngestEvent, WsIngestor};
 use degenbot_tauri_feed_model::{BlockFeedModel, BlockSnapshot, LogSnapshot};
@@ -78,7 +78,8 @@ impl FeedState {
 }
 
 pub fn configured_ws_url() -> Result<String, String> {
-    resolve_node_ws_uri(&ProcessEnv, MAINNET_CHAIN_ID, None)
+    let cfg = load_process_config().map_err(|error| error.to_string())?;
+    resolve_node_subscription_uri(&cfg, MAINNET_CHAIN_ID, &NodeOverrides::new())
         .map(|resolved| resolved.value)
         .map_err(|error| error.to_string())
 }
