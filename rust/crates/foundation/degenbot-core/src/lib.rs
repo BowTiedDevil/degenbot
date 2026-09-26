@@ -25,6 +25,10 @@
 //!   `degenbot_worker_census` gauge ; NEW SPAWN SITES MUST
 //!   REGISTER — see the module docs.
 //! - [`eip_1559`] — EIP-1559 `next_base_fee` (next-block base fee).
+//! - [`session_positions`] — the position seam: session-canonical position
+//!   identity, the refusal vocabulary a read answers with, and the observer
+//!   trait a lending integration implements. It sits here because the engine and
+//!   the lending integrations already share this layer and no other one.
 
 pub mod address_utils;
 pub mod block_clock_pipe;
@@ -35,5 +39,6 @@ pub mod hex_utils;
 pub mod libzip;
 pub mod retry;
 pub mod runtime;
+pub mod session_positions;
 pub mod telemetry;
 pub mod worker_census;

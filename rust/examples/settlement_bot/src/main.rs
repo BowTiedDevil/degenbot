@@ -948,7 +948,9 @@ fn run() -> Result<(), String> {
             .map_err(|e| format!("open live construction DB {}: {e}", db_path.display()))?;
         let io = degenbot::bot_core::construction_io::ConstructionIo::new(
             std::sync::Arc::new(
-                degenbot::bot_core::construction_io::DegenbotDbConstruction::new(live_db),
+                degenbot::bot_core::construction_io::DegenbotDbConstruction::new(
+                    std::sync::Arc::new(live_db),
+                ),
             ),
             std::sync::Arc::new(
                 degenbot::bot_core::construction_io::AlloyRpcConstruction::new(provider),

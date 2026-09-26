@@ -714,7 +714,36 @@ impl PyBot {
                 // (matching the original `database_path` cold-start skip);
                 // a `Bot` restart after the file exists picks it up.
                 match py.detach(|| degenbot_db::DegenbotDb::open_for_writes(&path_buf)) {
-                    Ok((db, _state)) => std::sync::Arc::new(DegenbotDbConstruction::new(db)),
+                    Ok((db, _state)) => {
+                        let db = std::sync::Arc::new(db);
+                        // Bind the session's position reader HERE, and only
+                        // here: this is the one point in a bot boot where the
+                        // session and the database handle its reads are sourced
+                        // from are both in hand. The reader is a lending
+                        // integration's, the session registry is the engine's,
+                        // and neither may take the other's edge, so the boot
+                        // that already owns both composes them. Nothing about
+                        // the reading is decided at this site — which rows
+                        // answer, how fresh they are, and which faults refuse
+                        // are the observer's own (`degenbot_aave::positions`).
+                        #[cfg(feature = "aave-updater")]
+                        {
+                            let observer: std::sync::Arc<
+                                dyn degenbot_bot::bot_core::session_registry::PositionObserver,
+                            > = std::sync::Arc::new(degenbot_aave::AavePositionObserver::new(
+                                std::sync::Arc::clone(&db),
+                            ));
+                            // A refused second install is the registry's to
+                            // report: it already logs at ERROR and hands the
+                            // observer back, precisely because it cannot be the
+                            // site that installs one.
+                            let _ = self
+                                .bot
+                                .session_registry()
+                                .install_position_observer(observer);
+                        }
+                        std::sync::Arc::new(DegenbotDbConstruction::new(db))
+                    }
                     Err(e) => {
                         diag!(domain = state, path = %path,
                             %e,
@@ -3839,5 +3868,291 @@ mod tests {
             assert!(py_bot.db_handle().is_some());
             drop(handle);
         });
+    }
+
+    // ── the position seam's production wiring ────────────────────────────
+    //
+    // `attach_construction_io` is the method Python's `Bot.__init__` calls
+    // with the resolved provider and the session's database path
+    // (`src/degenbot/bot/_bot.py`), and it is the only point in a bot boot
+    // holding both the session and the database handle a position read is
+    // sourced from. The tests below therefore boot the way a real bot boots
+    // and install nothing: the position reader they find is the one the boot
+    // bound. Every other position test in the workspace installs its own
+    // observer, so deleting the boot's install turns ONLY these red.
+
+    /// A supplied-and-borrowed position in one Aave market, observed at
+    /// [`POSITION_OBSERVED_AT`].
+    #[cfg(feature = "aave-updater")]
+    const POSITION_OBSERVED_AT: u64 = 21_000_000;
+
+    #[cfg(feature = "aave-updater")]
+    fn position_market() -> Address {
+        Address::from([0x7bu8; 20])
+    }
+
+    #[cfg(feature = "aave-updater")]
+    fn position_account() -> Address {
+        Address::from([0x8bu8; 20])
+    }
+
+    /// A throwaway database path, unique per call so a parallel test run
+    /// cannot read another test's rows.
+    #[cfg(feature = "aave-updater")]
+    fn position_db_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "degenbot_{tag}_{}_{:x}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ))
+    }
+
+    /// Write the rows an Aave updater would have left after advancing this
+    /// market to [`POSITION_OBSERVED_AT`]: one market, one supplied-and-
+    /// borrowed account. Seeded through the raw connection so the fixture
+    /// depends on no crate the test target does not already name.
+    #[cfg(feature = "aave-updater")]
+    fn seed_aave_position(path: &std::path::Path) {
+        let (db, _state) =
+            degenbot_db::connection::DegenbotDb::open_for_writes(path).expect("open a temp DB");
+        let user = position_account().to_checksum(None);
+        db.lock()
+            .execute_batch(&format!(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'Aave Ethereum Market', 1, {POSITION_OBSERVED_AT}); \
+                 INSERT INTO erc20_tokens (id, chain, address) \
+                 VALUES (1, 1, '0x0000000000000000000000000000000000000001'); \
+                 INSERT INTO aave_v3_assets \
+                 (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                  v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                  borrow_index, borrow_rate) \
+                 VALUES (1, 1, 1, 1, 1, 1, 1, '1000000000000000000000000000', '0', \
+                 '1000000000000000000000000000', '0'); \
+                 INSERT INTO aave_v3_asset_configs (id, asset_id, ltv, liquidation_threshold, \
+                      liquidation_bonus, borrowing_enabled, stable_borrowing_enabled, \
+                      flash_loan_enabled, isolation_mode, borrowable_in_isolation) \
+                 VALUES (1, 1, 8000, 8500, 10500, 1, 1, 1, 0, 0); \
+                 INSERT INTO aave_v3_users (id, market_id, address, e_mode, gho_discount, \
+                  isolation_mode_debt) VALUES (1, 1, '{user}', 0, 0, '0'); \
+                 INSERT INTO aave_v3_collateral_positions (id, user_id, asset_id, balance) \
+                 VALUES (1, 1, 1, '1000000000000000000000'); \
+                 INSERT INTO aave_v3_debt_positions (id, user_id, asset_id, balance) \
+                 VALUES (1, 1, 1, '1000000000000000000000');"
+            ))
+            .expect("seed the Aave market and position rows");
+        db.lock()
+            .execute(
+                "INSERT INTO aave_v3_contracts (id, market_id, name, address, revision) \
+                 VALUES (1, 1, 'POOL', ?1, 1)",
+                [position_market().to_checksum(None)],
+            )
+            .expect("seed the market's pool contract");
+    }
+
+    /// The production boot's provider argument: a `PyAlloyProvider` over an
+    /// offline transport, which is the shape `extract_native_alloy` accepts
+    /// and the shape a configured session resolves to.
+    #[cfg(feature = "aave-updater")]
+    fn boot_provider(py: pyo3::Python<'_>) -> pyo3::Bound<'_, pyo3::PyAny> {
+        use degenbot_rpc::offline::OfflineProvider;
+        use serde_json::json;
+
+        let offline = OfflineProvider::from_json_str(
+            &json!({
+                "chain_id": 1u64,
+                "block_number": POSITION_OBSERVED_AT,
+                "timestamp": 0u64,
+                "calls": {},
+                "code": {},
+            })
+            .to_string(),
+        )
+        .expect("valid offline JSON")
+        .as_alloy_provider();
+        pyo3::Bound::new(
+            py,
+            crate::rpc::provider::PyAlloyProvider {
+                provider: Arc::new(offline),
+                max_blocks_per_request: 5000,
+            },
+        )
+        .expect("PyAlloyProvider construction")
+        .into_any()
+    }
+
+    /// A session booted exactly as `degenbot.bot.Bot.__init__` boots it, with
+    /// the given database as the session's own.
+    #[cfg(feature = "aave-updater")]
+    fn booted_session(py: pyo3::Python<'_>, db_path: &std::path::Path) -> PyBot {
+        let bot = PyBot::new(1);
+        bot.attach_construction_io(
+            py,
+            boot_provider(py),
+            Some(db_path.to_string_lossy().as_ref()),
+        )
+        .expect("the production boot attaches its construction I/O");
+        bot
+    }
+
+    /// The regression that keeps the wiring: a session booted by the real
+    /// production path, with no observer installed by this test, reads a
+    /// position the updater stored. Delete the install in
+    /// `attach_construction_io` and the first assertion fails here while
+    /// every hand-installing position test in the workspace stays green.
+    #[cfg(feature = "aave-updater")]
+    #[test]
+    fn a_booted_session_reads_a_position_no_test_installed_an_observer_for() {
+        use degenbot_bot::bot_core::session_registry::Freshness;
+
+        let db_path = position_db_path("position_boot_wiring");
+        seed_aave_position(&db_path);
+
+        pyo3::Python::attach(|py| {
+            let bot = booted_session(py, &db_path);
+            let registry = bot.bot.session_registry();
+
+            assert!(
+                registry.has_position_observer(),
+                "a booted session reaches positions through the reader the boot bound"
+            );
+
+            let identity = registry.position_identity(position_market(), position_account());
+            let read = registry.read_position(
+                &identity,
+                &Freshness::AtOrAfter {
+                    block: POSITION_OBSERVED_AT,
+                },
+            );
+            assert!(
+                read.is_ok(),
+                "a booted session reads the position its updater stored; refused {:?}",
+                read.as_ref().err()
+            );
+            let reading = read.unwrap();
+            assert_eq!(reading.identity(), &identity);
+            assert_eq!(reading.observed_block(), POSITION_OBSERVED_AT);
+        });
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// The bound reader is the boot's LIVE handle, not a snapshot taken at
+    /// boot: the updater advancing the market after the boot is visible to the
+    /// next read. A boot that handed the observer a stale copy, or a registry
+    /// that cached a reading, would fail the second read's freshness floor.
+    #[cfg(feature = "aave-updater")]
+    #[test]
+    fn a_read_through_the_boot_bound_observer_sees_a_later_updater_commit() {
+        use degenbot_bot::bot_core::session_registry::Freshness;
+
+        let db_path = position_db_path("position_boot_live");
+        seed_aave_position(&db_path);
+
+        pyo3::Python::attach(|py| {
+            let bot = booted_session(py, &db_path);
+            let registry = bot.bot.session_registry();
+
+            // The updater advances the market, on its own connection, while
+            // the session is already booted and reading.
+            {
+                let (updater_db, _state) =
+                    degenbot_db::connection::DegenbotDb::open_for_writes(&db_path)
+                        .expect("the updater opens its own write connection");
+                updater_db
+                    .lock()
+                    .execute(
+                        "UPDATE aave_v3_markets SET last_update_block = ?1 WHERE id = 1",
+                        [i64::try_from(POSITION_OBSERVED_AT + 5).expect("block fits i64")],
+                    )
+                    .expect("the updater commits a later block");
+            }
+
+            let identity = registry.position_identity(position_market(), position_account());
+            let read = registry.read_position(
+                &identity,
+                &Freshness::AtOrAfter {
+                    block: POSITION_OBSERVED_AT + 5,
+                },
+            );
+            assert!(
+                read.is_ok(),
+                "the boot-bound reader sees the updater's later commit; refused {:?}",
+                read.as_ref().err()
+            );
+            assert_eq!(read.unwrap().observed_block(), POSITION_OBSERVED_AT + 5);
+        });
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// The cross-strategy acceptance claim, resting on production wiring
+    /// rather than on a hand-install: the settlement arm and the
+    /// txpool-backrun arm each ask ONE booted session for the same position,
+    /// agree on one canonical identity, and each receives its own fresh
+    /// reading. Neither arm's configuration reaches the reading.
+    #[cfg(all(feature = "aave-updater", feature = "submission"))]
+    #[test]
+    fn the_settlement_and_backrun_arms_share_one_position_through_the_real_boot() {
+        use degenbot_bot::bot_core::session_registry::Freshness;
+        use degenbot_config::BotConfig;
+        use degenbot_strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
+
+        let db_path = position_db_path("position_cross_strategy");
+        seed_aave_position(&db_path);
+
+        let mut cfg = BotConfig::default();
+        cfg.strategy.settlement.active = true;
+        cfg.strategy.settlement.endpoints = Some(String::from("https://a.local,https://b.local"));
+        cfg.strategy.txpool_backrun.bid_mode = true;
+        cfg.strategy.txpool_backrun.budget_wei = 1_000_000_000_000_000_000u128;
+        cfg.strategy.txpool_backrun.endpoints = Some(String::from("https://rpc.local"));
+
+        pyo3::Python::attach(|py| {
+            let bot = booted_session(py, &db_path);
+            let registry = bot.bot.session_registry();
+            let settlement = Settlement::from_config(&cfg);
+            let backrun = TxpoolBackrun::from_config(&cfg, String::from("http://node.invalid"));
+            assert_eq!(settlement.name(), StrategyName::Settlement);
+            assert_eq!(
+                <TxpoolBackrun as Strategy>::NAME,
+                StrategyName::TxpoolBackrun
+            );
+
+            let identity = registry.position_identity(position_market(), position_account());
+            let floor = Freshness::AtOrAfter {
+                block: POSITION_OBSERVED_AT,
+            };
+            let from_settlement = registry.read_position(&identity, &floor);
+            let from_backrun = registry.read_position(&identity, &floor);
+            assert!(
+                from_settlement.is_ok() && from_backrun.is_ok(),
+                "both arms read through the one booted session; settlement refused {:?}, backrun refused {:?}",
+                from_settlement.as_ref().err(),
+                from_backrun.as_ref().err()
+            );
+            let from_settlement = from_settlement.unwrap();
+            let from_backrun = from_backrun.unwrap();
+
+            // One canonical identity, reached from either arm.
+            assert_eq!(from_settlement.identity(), from_backrun.identity());
+            assert_eq!(from_settlement.identity().market(), position_market());
+            assert_eq!(from_settlement.identity().account(), position_account());
+            assert_eq!(from_settlement.identity().chain_id(), 1);
+            // Neither arm's policy reaches the reading: the same risk report
+            // both arms act on, not a per-arm projection.
+            assert_eq!(
+                from_settlement.health_factor(),
+                from_backrun.health_factor()
+            );
+            let rendered = format!("{from_settlement:?}");
+            assert!(!rendered.contains("a.local"));
+            assert!(!rendered.contains("rpc.local"));
+            assert!(!format!("{settlement:?}{backrun:?}").contains(&rendered));
+        });
+
+        let _ = std::fs::remove_file(&db_path);
     }
 }

@@ -1,7 +1,8 @@
 # Session object registry — design note
 
-**Status: pools, tokens, and paths implemented; positions and the Python/FFI
-cutover outstanding.** This note records the *target* agreed for epic `3CYYH3`
+**Status: pools, tokens, and paths implemented; the position seam is declared and the
+bot boot binds a reader (see *Who installs it, and where*); the Python/FFI
+cutover is outstanding.** This note records the *target* agreed for epic `3CYYH3`
 (task `ZL2JKC`) before any interface work. It deliberately specifies no Python method
 and no FFI signature — those are separate tasks. Terminology is the settled set in
 [CONTEXT.md § Session objects](../CONTEXT.md#session-objects); this note is the
@@ -50,7 +51,7 @@ Consequences that follow from that scope and are settled here:
 | **Pool** | family + chain + pool address (V4 adds `PoolManager` + `PoolId`) | `BotState` | The dominant kind; four separate owners exist today. |
 | **Token** | chain + address | `BotState` token entry | Pools reference tokens; identity is already address-keyed in every owner. |
 | **Path** | ordered `(pool, direction)` hop signature over validated session pool objects, plus the id the path-identity owner allocated | none — `PathRegistry` is already identity-only | Cheapest to fold: the current owner already holds *only* identity, so it is the natural first proof. A path is SHARED across strategies: strategies borrow the canonical object and derive their own plan, so solver, dispatch, and submission stay out of it. |
-| **Position** | — | — | **Explicitly deferred.** Named as the next kind, not designed here. |
+| **Position** | chain + market (pool contract) + account | none — a reading is a fresh projection, not an entry | **Identity only, and the value is NOT an object.** The key is settled; the value decays while a caller holds it, so the registry names the position and reaches the value through an observer that can refuse. See *The position kind*. |
 
 The first cut is deliberately the set for which a canonical key is *already* unambiguous
 in every existing owner. No kind is admitted whose key construction is still contested.
@@ -80,6 +81,87 @@ The two failure modes this rule exists to prevent:
 2. **Re-deriving identity per consumer** — precisely the drift ADR-061 documented when
    four tick-map staging implementations each carried a private notion of "the same V3
    pool" ([ADR-061](../adr/ADR-061-pool-ingress-plane-capability.md), Context).
+
+## The position kind: an identity, and a read that refuses
+
+A position is the one candidate whose **value decays**, so it is not a canonical
+session object and get-or-create is the wrong verb for it: constructing one on a
+failed read would fabricate a position, and caching one would hide its age from a
+strategy that is about to act on it. What the session owns is the position's
+**identity** — `(chain, market, account)`, stamped with the session's own chain —
+and nothing else. The **reading** comes from a `PositionObserver` the session holds
+as a handle, and the seam is collection-free on both sides: no position map, no
+cached value, no second authority that could disagree with the lending integration
+about what a position is.
+
+The caller states the freshness it requires (`Freshness::Any` / `AtOrAfter` /
+`AtMost`) and the refusal vocabulary distinguishes the ways a read can fail: no
+observer installed, an identity for another chain, an unserved market, an account
+with no position, a retryable transport fault, rows that cannot be interpreted, and
+an observation too old for the caller's requirement. Only the transport fault is
+retryable. The freshness check is the **session's**, so a lax observer cannot pass a
+decaying snapshot through as current, and no failure path returns a value.
+
+**Where the seam lives, and why.** The trait, the identity, the refusal vocabulary
+and the reading are declared in `degenbot-core`
+(`degenbot_core::session_positions`), not in the engine's session registry. The
+observer is implemented by a lending integration (`degenbot-aave`), which must not
+depend on the engine, and the engine must not depend on a lending integration.
+`degenbot-core` is the one layer both already depend on, so the seam sits there and
+**no new dependency edge is added in either direction** — a property the
+architecture gates assert mechanically. What the re-export facade and the `PyO3`
+shell may hold is not the adapter but the act of composing one: a shell is a
+composition root, so binding an integration's reader to a session is assembly, and
+assembly is what a binding layer is for. The reading itself stays in the integration.
+
+**Who installs it, and where.** The install is one line,
+`install_position_observer` on the session registry, and the SITE it belongs to
+differs from the path owner's for a structural reason rather than by accident:
+
+| | Path owner | Position observer |
+|---|---|---|
+| The value lives | in the **engine** (`arb_engine::PathRegistry`) | in the **database** the Aave updater maintains |
+| Who holds it | the engine driver, from construction | the bot boot, which opened the connection |
+| Bound at | `EngineDriver::assemble`, beside the session | the bot boot's database-attach step |
+
+The path owner is INSIDE the engine, so the composition point that already holds both
+the session and that owner — driver assembly — binds it, and has since the path kind
+landed. The position reader's backing is database state whose *connection lifetime* the
+bot boot owns, and no engine component opens it: the engine performs no database I/O
+at all (see *Non-I/O scope*). So the bot boot is the composition root that holds both
+halves, and it binds there. The seam's TYPES stay in `degenbot-core`; only the two
+binding lines sit in a shell, and they are delegation — the boot constructs the
+integration's reader from a connection it already owns and hands it to the session.
+Which rows answer a read, how fresh they are, and which faults refuse are the
+reader's own, implemented and tested in `degenbot-aave`.
+
+**The census, and why the seam splits across layers.** Walking every manifest's
+transitive closure, exactly three crates can name both the engine's registry and a
+lending reader: the re-export facade `degenbot`, the `PyO3` shell `degenbot-python`,
+and `degenbot-cli` — and the CLI never builds a session (it takes only telemetry and
+stance config), so the real set is the facade and the binding shell. That census is
+what forces the seam to cross a layer boundary at all: the two halves are in crates
+that are forbidden from depending on each other, so nothing in either domain layer can
+compose them. Given that split, each remaining surface is settled rather than open:
+
+- **The Python-driven bot binds it, in `degenbot-python`.** The binding shell is that
+  bot's composition root, so it is where the install belongs — at the step where the
+  boot opens the session's database, because that is where the session and the
+  database handle are both in hand.
+- **A pure-Rust consumer installs its own, in its own `main`.** The umbrella has no
+  Aave updater, hence no database handle and no session of its own to bind against,
+  so there is nothing there to wire and no wiring layer should be invented for it. A
+  consumer that runs a lending updater composes its own session and installs its own
+  reader in two lines — the same two lines, at its own composition point.
+  `rust/crates/facade/degenbot/tests/session_position_reachability.rs` is that
+  consumer path, written out.
+
+Because the install can now arrive both from the bot boot and from a consumer's own
+code, a **second** install is a hazard the session can genuinely see, so the registry
+refuses it AND reports it at ERROR rather than leaving the diagnostic to a call site
+that cannot be assumed to exist. The observer is handed back so a caller can release
+it, and the bot boot — which installs unconditionally — has no branch of its own to
+get wrong.
 
 ## Relationship to Bot, EngineDriver, and StrategyHost
 
@@ -146,7 +228,14 @@ Sequenced so each step is independently shippable and no step strands an owner:
    at-most-once invariant preserved), then the claim tables go.
 4. **Repoint `StrategyKit` / `MarketContext`.** Replace the per-strategy token joins with
    borrowed references; caches remain, identity does not.
-5. **Position kind**, once its key construction is settled.
+5. **Position kind.** Landed. The identity is settled, the seam is declared
+   (`degenbot_core::session_positions`, reached from the session registry's
+   `position` submodule, implemented by `degenbot-aave`'s observer), and the bot boot
+   binds the reader where it opens the session's database — the composition point
+   that holds both halves, in the same role `EngineDriver::assemble` plays for the
+   path owner. What remains is the user-facing Python/FFI surface, which is the same
+   kind of step as pool/token identity above: the seam is a working boot path before
+   it is a public API.
 
 Each step follows the repository's stated posture: parallel implementation behind a
 feature flag where needed, then a hard cutover, with no permanent backwards-compatibility
@@ -166,4 +255,5 @@ layer.
    keep the allocator and the registry only index it? ADR-045's `PathRegistry` allocates
    its own ids, which argues for the former; `pool_id` is load-bearing in `BotState`'s
    journal and undo surface, which argues for the latter.
-4. **Position kind** key construction, deliberately left open.
+4. **Position kind** key construction — settled: `(chain, market, account)` with the
+   market named by its pool contract, so the key stays family-agnostic.

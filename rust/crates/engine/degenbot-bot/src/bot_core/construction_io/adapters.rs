@@ -15,6 +15,8 @@
 //!
 //! [`AlloyProvider`]: degenbot_rpc::provider::AlloyProvider
 
+use std::sync::Arc;
+
 use alloy::primitives::{Address, Bytes, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
@@ -139,13 +141,19 @@ impl DbConstruction for NoDb {
 /// which already return the core row types + `DbError` — the adapter body is
 /// pure delegation (the choreography can no longer silently swallow or
 /// re-open per call).
+///
+/// The handle is SHARED rather than owned outright because one boot commonly
+/// needs the same connection in more than one of its components: the
+/// construction executor and a session's position observer both read the
+/// database that boot opened, and a second connection to the same file would
+/// be a second view of one session's state, not a second source for it.
 pub struct DegenbotDbConstruction {
-    db: DegenbotDb,
+    db: Arc<DegenbotDb>,
 }
 
 impl DegenbotDbConstruction {
     #[must_use]
-    pub fn new(db: DegenbotDb) -> Self {
+    pub fn new(db: Arc<DegenbotDb>) -> Self {
         Self { db }
     }
 }

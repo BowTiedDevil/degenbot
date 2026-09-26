@@ -659,3 +659,149 @@ fn the_canonical_path_object_carries_no_strategy_policy() {
         "the canonical path surface must not expose strategy policy: {offenders:?}"
     );
 }
+
+/// The position seam has exactly ONE observer implementation, and it lives in
+/// the lending integration.
+///
+/// A second implementation is a second answer for one identity from two
+/// sources, which is the drift the session registry exists to remove — the
+/// same reasoning as the single path-identity owner. The census is a
+/// DECLARATION check over the shipped sources; a test double under a `tests`
+/// path is not a second reader, and a session actually reaching this observer is
+/// behavioral and is proved where a consumer installs it.
+#[test]
+fn one_position_observer_implementation_is_declared_once() {
+    let crates_root = workspace_root().join("crates");
+    let mut impls: Vec<String> = Vec::new();
+    for_each_rust_source(&crates_root, &mut |path, text| {
+        let clean = path.display().to_string().replace('\\', "/");
+        if clean.contains("/tests/") || clean.ends_with("/tests.rs") {
+            return;
+        }
+        for (line_number, line) in text.lines().enumerate() {
+            if line.trim().starts_with("impl PositionObserver for ") {
+                impls.push(format!("{clean}:{}", line_number + 1));
+            }
+        }
+    });
+    assert_eq!(
+        impls.len(),
+        1,
+        "the position observer must be implemented exactly once; found {impls:?}"
+    );
+    assert!(
+        impls[0].contains("integrations/degenbot-aave/src/positions.rs"),
+        "the observer belongs to the lending integration that owns the domain; found {}",
+        impls[0]
+    );
+}
+
+/// Neither the seam's own module nor the session's position surface holds a
+/// collection.
+///
+/// A position is a perishable READ, so a map here would be a cache the session
+/// never asked for: it would hide freshness from a strategy about to act on a
+/// position, and a failed read would have a remembered value to fall back on —
+/// the two failures the seam exists to prevent. (The pool/token kinds
+/// legitimately keep maps in `session_registry.rs` itself; only the position
+/// modules must be collection-free.)
+#[test]
+fn the_session_registers_no_position_store_of_its_own() {
+    let modules = [
+        workspace_root().join("crates/foundation/degenbot-core/src/session_positions.rs"),
+        workspace_root()
+            .join("crates/engine/degenbot-bot/src/bot_core/session_registry/position.rs"),
+    ];
+    let mut offenders = Vec::new();
+    for module in &modules {
+        let read_error = format!("read {}", module.display());
+        let text = std::fs::read_to_string(module).expect(&read_error);
+        for (line_number, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for collection in ["DashMap<", "HashMap<", "BTreeMap<", "HashSet<", "BTreeSet<"] {
+                if trimmed.contains(collection) {
+                    offenders.push(format!("{}:{line_number}: {collection}", module.display()));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the position seam must stay collection-free: {offenders:?}"
+    );
+}
+
+/// The seam adds NO dependency edge between a lending integration and the
+/// engine, in either direction.
+///
+/// Both edges are wrong for a different reason: an integration that depends on
+/// the engine inverts the layering, and an engine that depends on an integration
+/// makes the core own a domain it does not have. The seam therefore sits in the
+/// layer both already share, and this gate is what keeps a future "just add the
+/// dep" from quietly restoring either edge.
+#[test]
+fn the_position_seam_adds_no_lending_edge_to_the_engine_or_the_core() {
+    let mut offenders = Vec::new();
+    for (crate_dir, forbidden) in [
+        ("foundation/degenbot-core", "degenbot-aave"),
+        ("engine/degenbot-bot", "degenbot-aave"),
+        ("engine/degenbot-strategy", "degenbot-aave"),
+    ] {
+        let manifest = workspace_root()
+            .join("crates")
+            .join(crate_dir)
+            .join("Cargo.toml");
+        let read_error = format!("read {}", manifest.display());
+        let text = std::fs::read_to_string(&manifest).expect(&read_error);
+        if text.contains(forbidden) {
+            offenders.push(format!("{crate_dir} -> {forbidden}"));
+        }
+    }
+    // And the other direction: the lending integration may not reach the engine.
+    let aave_manifest = workspace_root().join("crates/integrations/degenbot-aave/Cargo.toml");
+    let aave_read_error = format!("read {}", aave_manifest.display());
+    let aave_text = std::fs::read_to_string(&aave_manifest).expect(&aave_read_error);
+    if aave_text.contains("degenbot-bot") {
+        offenders.push(String::from("degenbot-aave -> degenbot-bot"));
+    }
+    assert!(
+        offenders.is_empty(),
+        "the position seam must not add a dependency edge to a lending integration: {offenders:?}"
+    );
+}
+
+/// The layer the seam sits in is one BOTH sides already depend on — the property
+/// that lets the integration implement the observer and the session hold a
+/// handle to it with no new edge at all.
+///
+/// If either manifest stops naming `degenbot-core`, the seam is unreachable from
+/// that side and the "no new edge" claim above is no longer what holds it up.
+#[test]
+fn the_position_seam_sits_in_the_layer_both_sides_depend_on() {
+    for crate_dir in [
+        "integrations/degenbot-aave",
+        "engine/degenbot-bot",
+        "foundation/degenbot-core",
+    ] {
+        let manifest = workspace_root()
+            .join("crates")
+            .join(crate_dir)
+            .join("Cargo.toml");
+        let read_error = format!("read {}", manifest.display());
+        let text = std::fs::read_to_string(&manifest).expect(&read_error);
+        if crate_dir != "foundation/degenbot-core" {
+            assert!(
+                text.contains("degenbot-core"),
+                "{crate_dir} must already depend on degenbot-core, or the position seam needs a new edge"
+            );
+        }
+    }
+    let seam = workspace_root().join("crates/foundation/degenbot-core/src/session_positions.rs");
+    assert!(
+        seam.exists(),
+        "the position seam must be declared in degenbot-core, the layer both sides share"
+    );
+}

@@ -36,7 +36,18 @@
 //! session, so the chain the registry is constructed for is a constructor
 //! argument and a registry built for another chain is a different key space,
 //! not a filtered view of the same one. The kinds here are pools, ERC-20
-//! tokens, and paths; positions are not a kind yet.
+//! tokens, and paths, plus the position identity and read below.
+//!
+//! # The position kind is an identity and a read
+//!
+//! A position is not a canonical session object: its value decays, so the
+//! session names the position's IDENTITY and reaches the value through an
+//! observer that can refuse — [`PositionIdentity`] and [`PositionObserver`]
+//! re-exported from the [`position`] submodule. There is no position map here
+//! and no get-or-create: a read that fails is a typed [`PositionRefusal`],
+//! never a fabricated position. The seam's types live in `degenbot-core` so a
+//! lending integration can implement the observer without depending on the
+//! engine; see the [`position`] submodule for the reasoning.
 //!
 //! # The path kind is reached, not stored
 //!
@@ -49,8 +60,12 @@
 //! plan is derived from it. See the [`path`] submodule for the split.
 
 mod path;
+mod position;
 
 pub use path::{PathHop, PathIdentity, PathObject, PathObjectAdapter};
+pub use position::{
+    Freshness, HealthFactor, PositionIdentity, PositionObserver, PositionReading, PositionRefusal,
+};
 
 use std::fmt;
 use std::sync::{Arc, OnceLock};
@@ -430,6 +445,11 @@ pub struct SessionObjectRegistry {
     /// because this registry does not store paths: it asks the owner, which
     /// holds the one path id space, dedup index, and cap.
     paths: OnceLock<Arc<dyn PathObjectAdapter>>,
+    /// The session's position observer, installed once. A handle rather than a
+    /// map because a position is a perishable READ, not a session-resident
+    /// object: the registry names the identity and asks the observer, and holds
+    /// no position of its own to cache or fall back on.
+    positions: OnceLock<Arc<dyn PositionObserver>>,
 }
 
 impl fmt::Debug for SessionObjectRegistry {
@@ -443,6 +463,7 @@ impl fmt::Debug for SessionObjectRegistry {
             .field("pool_addresses", &self.pool_addresses.len())
             .field("tokens", &self.tokens.len())
             .field("has_path_owner", &self.paths.get().is_some())
+            .field("has_position_observer", &self.positions.get().is_some())
             .finish()
     }
 }
@@ -457,6 +478,7 @@ impl SessionObjectRegistry {
             pool_addresses: DashMap::new(),
             tokens: DashMap::new(),
             paths: OnceLock::new(),
+            positions: OnceLock::new(),
         }
     }
 

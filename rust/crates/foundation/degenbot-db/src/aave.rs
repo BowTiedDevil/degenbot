@@ -336,6 +336,96 @@ impl DegenbotDb {
         Ok(out)
     }
 
+    /// The active market row (`aave_v3_markets`) whose `POOL` contract is
+    /// `pool` on `chain_id` — the market a position identity's market component
+    /// names, resolved in one query.
+    ///
+    /// A position names its market by the pool CONTRACT rather than by a
+    /// family-specific market id, so a caller holding a market address needs
+    /// this direction of the join (`contracts` → `markets`) and the chunk
+    /// cursor the same row carries.
+    ///
+    /// Inactive markets resolve to `None` rather than to a row: a deactivated
+    /// market is not served, and a caller must be able to tell "this market is
+    /// not there" from "this market has not been read".
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query failure.
+    pub fn fetch_aave_market_by_pool_address(
+        &self,
+        chain_id: i64,
+        pool: &str,
+    ) -> Result<Option<crate::rows::AaveV3MarketRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT m.id, m.chain_id, m.name, m.active, m.last_update_block \
+             FROM aave_v3_markets m \
+             JOIN aave_v3_contracts c ON c.market_id = m.id \
+             WHERE c.name = 'POOL' AND c.address = ?2 COLLATE NOCASE \
+               AND m.chain_id = ?1 AND m.active = 1",
+        )?;
+        let mut rows = stmt.query(params![chain_id, pool])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(crate::rows::AaveV3MarketRow {
+                id: row.get(0)?,
+                chain_id: row.get(1)?,
+                name: row.get(2)?,
+                active: row.get(3)?,
+                last_update_block: row.get(4)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// One user's [`AaveUserRecord`] (with the isolation-debt-ceiling join) by
+    /// `(market_id, address)`, or `None` when the market holds no row for that
+    /// account.
+    ///
+    /// The single-user twin of [`Self::fetch_aave_users_with_debt`]: a caller
+    /// that already knows which account it wants should not pay for the
+    /// market's whole debt-bearing population to find it. The ceiling join is
+    /// the same LEFT JOIN chain, because the isolation cap changes the health
+    /// factor and dropping it would report a different position than the batch
+    /// analysis does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query / `U256` decode failure.
+    pub fn fetch_aave_user_record_by_address(
+        &self,
+        market_id: i64,
+        address: &str,
+    ) -> Result<Option<AaveUserRecord>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT u.id, u.address, u.market_id, u.e_mode, \
+                    (u.isolation_mode_collateral_asset_id IS NOT NULL) AS is_isolation_mode, \
+                    u.isolation_mode_debt, ac.debt_ceiling \
+             FROM aave_v3_users u \
+             LEFT JOIN aave_v3_assets iso ON iso.id = u.isolation_mode_collateral_asset_id \
+             LEFT JOIN aave_v3_asset_configs ac ON ac.asset_id = iso.id \
+             WHERE u.market_id = ?1 AND u.address = ?2 COLLATE NOCASE",
+        )?;
+        let mut rows = stmt.query(params![market_id, address])?;
+        match rows.next()? {
+            Some(row) => {
+                let debt_str: String = row.get(5)?;
+                let ceiling_str: Option<String> = row.get(6)?;
+                Ok(Some(AaveUserRecord {
+                    id: row.get(0)?,
+                    address: row.get(1)?,
+                    market_id: row.get(2)?,
+                    e_mode: row.get(3)?,
+                    is_isolation_mode: row.get(4)?,
+                    isolation_mode_debt: decode_u256(&debt_str)?,
+                    isolation_debt_ceiling: ceiling_str.as_deref().map(decode_u256).transpose()?,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// The `PRICE_ORACLE` contract address for `market_id` (mirrors Python
     /// `get_oracle_address`). Returns `None` when no such contract row exists.
     ///

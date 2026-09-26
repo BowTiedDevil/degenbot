@@ -9,6 +9,7 @@ mod pool_identity;
 mod quarantine;
 mod registration;
 mod session_path;
+mod session_position;
 mod session_registry;
 mod snapshots;
 mod word_fetch;

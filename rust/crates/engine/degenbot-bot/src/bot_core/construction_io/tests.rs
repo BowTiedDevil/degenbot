@@ -282,7 +282,7 @@ async fn degenbot_db_construction_round_trips_erc20_row() {
     db.get_or_create_erc20_token(1, &addr_str, Some("Test"), Some("TST"), Some(18))
         .unwrap();
 
-    let adapter = DegenbotDbConstruction::new(db);
+    let adapter = DegenbotDbConstruction::new(std::sync::Arc::new(db));
     let row = adapter
         .fetch_erc20_token(1, addr)
         .await
@@ -307,7 +307,7 @@ async fn degenbot_db_construction_updates_erc20_metadata() {
     db.get_or_create_erc20_token(1, &addr_str, None, None, None)
         .unwrap();
 
-    let adapter = DegenbotDbConstruction::new(db);
+    let adapter = DegenbotDbConstruction::new(std::sync::Arc::new(db));
     adapter
         .update_erc20_token_metadata(1, &addr_str, Some("X"), Some("Y"), Some(6))
         .await

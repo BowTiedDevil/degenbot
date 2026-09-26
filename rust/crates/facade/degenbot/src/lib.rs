@@ -123,9 +123,12 @@ pub use degenbot_bot::bot_core::registration_lifecycle::{
     run_v4_registration_lifecycle, RegistrationLifecycleError,
 };
 /// The session object registry — the per-session owner of pool/token
-/// canonical identity (also available as [`crate::bot_core::session_registry`]).
+/// canonical identity, the path-identity and position seams (also available as
+/// [`crate::bot_core::session_registry`]).
 pub use degenbot_bot::bot_core::session_registry::{
-    ObjectRefusal, PoolIdentity, PoolObject, SessionObjectRegistry, TokenIdentity, TokenObject,
+    Freshness, HealthFactor, ObjectRefusal, PoolIdentity, PoolObject, PositionIdentity,
+    PositionObserver, PositionReading, PositionRefusal, SessionObjectRegistry, TokenIdentity,
+    TokenObject,
 };
 pub use degenbot_bot::bot_core::{
     BotState, PoolEntry, RegisterAerodromeV2PoolParams, RegisterCurvePoolParams,

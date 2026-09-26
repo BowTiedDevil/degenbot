@@ -154,7 +154,7 @@ _Avoid_: "retry policy", "rebroadcast policy".
 
 The vocabulary for the per-session entity layer. Design record:
 [docs/architecture/session-object-registry.md](docs/architecture/session-object-registry.md).
-Pools, tokens, and paths are implemented; positions and the Python cutover are not.
+Pools, tokens, and paths are implemented; the position seam is declared and the bot boot binds a reader, and the Python cutover is not.
 
 **Object**:
 A session-resident entity the session recognizes by canonical identity and hands out by
@@ -191,6 +191,20 @@ _Avoid_: folding live state into the object entry, or re-deriving it per strateg
 What a consumer holds: a borrowed reference to a canonical object. Consumers never hold a
 private copy and never register through a per-consumer path.
 _Avoid_: "strategy pool cache", "per-strategy handle", "mirror".
+
+**Position identity**:
+The key one position is named by in a session: chain, market (its pool contract), and account.
+Identity only — the value decays while a caller holds it, so the session names the position and
+never stores one.
+_Avoid_: "position object" or "canonical position" (both imply a stored value); a
+get-or-create verb for a position.
+
+**Position reading**:
+One fresh observation of one position: the identity, the block it was observed at, and the
+liquidation posture that block reported. Produced per read by a position observer, at a
+freshness the caller states, and refused — never defaulted — when the source cannot answer.
+_Avoid_: "cached position", "position snapshot" held across a solve, or any read that returns a
+value alongside a refusal.
 
 ## System layers
 

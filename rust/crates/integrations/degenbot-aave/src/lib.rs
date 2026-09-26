@@ -8,6 +8,10 @@
 //!   math (port of `src/degenbot/aave/analysis/core.py`).
 //! - [`wad_ray_math`] + [`percentage_math`] — the Aave V3 fixed-point math
 //!   libraries (ports of `src/degenbot/aave/libraries/{wad_ray,percentage}_math.py`)
+//! - [`positions`] — the Aave side of the session's position seam: a
+//!   `degenbot_core::session_positions::PositionObserver` over the state this
+//!   crate's updater maintains, so a session can read one account's position
+//!   without the engine depending on this integration.
 //!
 //! The updater is the apply half of the standalone-Rust `aave_update` core
 //! (mirroring `degenbot-pool-updater`'s `apply_chunk_writes_on_conn`).
@@ -66,6 +70,7 @@
 
 pub mod analysis;
 pub mod percentage_math;
+pub mod positions;
 pub mod updater;
 pub mod wad_ray_math;
 
@@ -86,4 +91,5 @@ pub use wad_ray_math::{
 // Re-export the updater surface at the crate root so the PyO3 seam +
 // standalone consumers resolve `degenbot_aave::run_aave_update` etc. without
 // the `updater::` prefix. The analysis surface is likewise re-exported.
+pub use positions::AavePositionObserver;
 pub use updater::*;

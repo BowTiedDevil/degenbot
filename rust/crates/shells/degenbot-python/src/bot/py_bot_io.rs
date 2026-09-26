@@ -207,7 +207,9 @@ impl PyBotIo {
                             AlloyRpcConstruction, ConstructionIo, DegenbotDbConstruction,
                         };
                         Some(std::sync::Arc::new(ConstructionIo::new(
-                            std::sync::Arc::new(DegenbotDbConstruction::new(db)),
+                            std::sync::Arc::new(DegenbotDbConstruction::new(std::sync::Arc::new(
+                                db,
+                            ))),
                             std::sync::Arc::new(AlloyRpcConstruction::new((**provider).clone())),
                         )))
                     }
