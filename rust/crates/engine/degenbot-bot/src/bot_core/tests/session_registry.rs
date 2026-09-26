@@ -8,6 +8,16 @@
 //! tests read it through the in-memory registration fixtures in this module
 //! and never write live state through the registry.
 //!
+//! The registry's get-or-create and resolve surfaces hand back owned shared
+//! handles (`Arc<PoolObject>` / `Arc<TokenObject>`), never `&PoolObject`.
+//! An identity-only registry over the workspace's `dashmap` + `parking_lot`
+//! dependencies has no stable-address storage, so a `&self` method cannot
+//! return a borrow tied to an interior-mutable entry; `Arc` is also the
+//! honest shape, because a consumer holds the object beyond the call and the
+//! registry — not the consumer — owns the session's entry. Canonical
+//! identity is therefore observed with `Arc::ptr_eq`, which compares the
+//! allocation, not a field.
+//!
 //! Terminology is the settled set in CONTEXT.md § Session objects (Object,
 //! Session object registry, Canonical identity, Get-or-create, Live state,
 //! Object reference); the rationale is
@@ -18,6 +28,8 @@
 //! a contract change rather than a mechanical edit.
 
 use super::*;
+
+use std::sync::{Arc, Barrier, Mutex};
 
 use crate::bot_core::session_registry::{
     ObjectRefusal, PoolIdentity, PoolObject, SessionObjectRegistry, TokenIdentity, TokenObject,
@@ -69,11 +81,11 @@ fn one_canonical_object_per_chain_scoped_identity() {
         .expect("test setup: V2 registration");
 
     let registry = SessionObjectRegistry::new(CHAIN_ID);
-    let first: &PoolObject = registry.get_or_create_pool(PoolIdentity::v2(make_pool_addr()));
-    let second: &PoolObject = registry.get_or_create_pool(PoolIdentity::v2(make_pool_addr()));
+    let first: Arc<PoolObject> = registry.get_or_create_pool(PoolIdentity::v2(make_pool_addr()));
+    let second: Arc<PoolObject> = registry.get_or_create_pool(PoolIdentity::v2(make_pool_addr()));
 
     assert!(
-        std::ptr::eq(first, second),
+        Arc::ptr_eq(&first, &second),
         "a second request for one identity returns the first object, not a twin"
     );
     assert_eq!(registry.pool_count(), 1, "one identity, one registry entry");
@@ -111,11 +123,11 @@ fn canonical_identity_does_not_cross_chains_or_sessions() {
     let elsewhere = other_session.get_or_create_pool(PoolIdentity::v3(make_pool_addr()));
 
     assert!(
-        !std::ptr::eq(here, there),
+        !Arc::ptr_eq(&here, &there),
         "the same pool address on another chain is another canonical identity"
     );
     assert!(
-        !std::ptr::eq(here, elsewhere),
+        !Arc::ptr_eq(&here, &elsewhere),
         "canonical identity is per session, not a process-wide key space"
     );
     assert_eq!(this_session.pool_count(), 1);
@@ -134,20 +146,20 @@ fn v2_and_v3_pool_identity_is_family_scoped_address() {
     let as_v3 = registry.get_or_create_pool(PoolIdentity::v3(make_pool_addr()));
 
     assert!(
-        !std::ptr::eq(as_v2, as_v3),
+        !Arc::ptr_eq(&as_v2, &as_v3),
         "family is part of a V2/V3 pool's canonical identity"
     );
     assert!(
-        std::ptr::eq(
-            as_v2,
-            registry.get_or_create_pool(PoolIdentity::v2(make_pool_addr()))
+        Arc::ptr_eq(
+            &as_v2,
+            &registry.get_or_create_pool(PoolIdentity::v2(make_pool_addr()))
         ),
         "the V2 object is canonical for its identity"
     );
     assert!(
-        std::ptr::eq(
-            as_v3,
-            registry.get_or_create_pool(PoolIdentity::v3(make_pool_addr()))
+        Arc::ptr_eq(
+            &as_v3,
+            &registry.get_or_create_pool(PoolIdentity::v3(make_pool_addr()))
         ),
         "the V3 object is canonical for its identity"
     );
@@ -187,16 +199,16 @@ fn v4_pool_identity_is_pool_manager_plus_pool_id() {
     let registry = SessionObjectRegistry::new(CHAIN_ID);
     let canonical = registry.get_or_create_pool(PoolIdentity::v4(pool_manager, pool_id));
     assert!(
-        std::ptr::eq(
-            canonical,
-            registry.get_or_create_pool(PoolIdentity::v4(pool_manager, pool_id)),
+        Arc::ptr_eq(
+            &canonical,
+            &registry.get_or_create_pool(PoolIdentity::v4(pool_manager, pool_id)),
         ),
         "the same (pool_manager, pool_id) is one canonical object"
     );
     assert!(
-        !std::ptr::eq(
-            canonical,
-            registry.get_or_create_pool(PoolIdentity::v4(other_manager, pool_id)),
+        !Arc::ptr_eq(
+            &canonical,
+            &registry.get_or_create_pool(PoolIdentity::v4(other_manager, pool_id)),
         ),
         "the same pool_id under another PoolManager is another pool"
     );
@@ -227,16 +239,16 @@ fn erc20_token_identity_is_the_chain_scoped_address() {
     );
 
     let registry = SessionObjectRegistry::new(CHAIN_ID);
-    let first: &TokenObject = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
-    let again: &TokenObject = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
-    let other: &TokenObject = registry.get_or_create_token(TokenIdentity::erc20(make_token1()));
+    let first: Arc<TokenObject> = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
+    let again: Arc<TokenObject> = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
+    let other: Arc<TokenObject> = registry.get_or_create_token(TokenIdentity::erc20(make_token1()));
 
     assert!(
-        std::ptr::eq(first, again),
+        Arc::ptr_eq(&first, &again),
         "one token address is one canonical object"
     );
     assert!(
-        !std::ptr::eq(first, other),
+        !Arc::ptr_eq(&first, &other),
         "a different token address is a different object"
     );
     assert_eq!(registry.token_count(), 2);
@@ -266,19 +278,21 @@ fn erc20_token_identity_is_the_chain_scoped_address() {
 fn duplicate_get_or_create_returns_the_same_canonical_object() {
     let registry = SessionObjectRegistry::new(CHAIN_ID);
 
-    let mut pools = Vec::new();
-    let mut tokens = Vec::new();
+    let mut pools: Vec<Arc<PoolObject>> = Vec::new();
+    let mut tokens: Vec<Arc<TokenObject>> = Vec::new();
     for _ in 0..8 {
         pools.push(registry.get_or_create_pool(PoolIdentity::v2(make_pool_addr())));
         tokens.push(registry.get_or_create_token(TokenIdentity::erc20(make_token0())));
     }
 
+    let first_pool = &pools[0];
     assert!(
-        pools.windows(2).all(|pair| std::ptr::eq(pair[0], pair[1])),
+        pools.iter().all(|pool| Arc::ptr_eq(first_pool, pool)),
         "repeated get-or-create never returns a second pool object"
     );
+    let first_token = &tokens[0];
     assert!(
-        tokens.windows(2).all(|pair| std::ptr::eq(pair[0], pair[1])),
+        tokens.iter().all(|token| Arc::ptr_eq(first_token, token)),
         "repeated get-or-create never returns a second token object"
     );
     assert_eq!(registry.pool_count(), 1);
@@ -295,8 +309,8 @@ fn concurrent_get_or_create_never_produces_two_canonical_objects() {
     const THREADS: usize = 8;
 
     let registry = SessionObjectRegistry::new(CHAIN_ID);
-    let gate = std::sync::Barrier::new(THREADS);
-    let seen = std::sync::Mutex::new(Vec::with_capacity(THREADS));
+    let gate = Barrier::new(THREADS);
+    let seen: Mutex<Vec<Arc<PoolObject>>> = Mutex::new(Vec::with_capacity(THREADS));
 
     std::thread::scope(|scope| {
         for _ in 0..THREADS {
@@ -304,19 +318,20 @@ fn concurrent_get_or_create_never_produces_two_canonical_objects() {
                 gate.wait();
                 let object = registry.get_or_create_pool(PoolIdentity::v3(make_pool_addr()));
                 seen.lock()
-                    .expect("test harness: the seen-address list is not poisoned")
-                    .push(object as *const PoolObject as usize);
+                    .expect("test harness: the seen-handle list is not poisoned")
+                    .push(object);
             });
         }
     });
 
-    let addresses = seen
+    let handles = seen
         .into_inner()
-        .expect("test harness: the seen-address list is not poisoned");
-    assert_eq!(addresses.len(), THREADS);
+        .expect("test harness: the seen-handle list is not poisoned");
+    assert_eq!(handles.len(), THREADS);
+    let first = &handles[0];
     assert!(
-        addresses.windows(2).all(|pair| pair[0] == pair[1]),
-        "racing get-or-create calls observed more than one canonical object: {addresses:?}"
+        handles.iter().all(|handle| Arc::ptr_eq(first, handle)),
+        "racing get-or-create calls observed more than one canonical object"
     );
     assert_eq!(
         registry.pool_count(),
@@ -347,46 +362,45 @@ fn missing_identity_is_a_typed_refusal_not_a_silent_second_object() {
     assert_eq!(registry.token_count(), 0, "a refusal registered nothing");
 
     let created = registry.get_or_create_pool(PoolIdentity::v2(make_pool_addr()));
+    let resolved = registry
+        .resolve_pool(&PoolIdentity::v2(make_pool_addr()))
+        .expect("the identity is registered now");
     assert!(
-        std::ptr::eq(
-            created,
-            registry
-                .resolve_pool(&PoolIdentity::v2(make_pool_addr()))
-                .expect("the identity is registered now")
-        ),
+        Arc::ptr_eq(&created, &resolved),
         "get-or-create after a refusal registers the one object, and resolve joins it"
     );
     assert_eq!(registry.pool_count(), 1);
 }
 
-/// An Object reference is borrowed: two consumers hold the same canonical
-/// object at once, and neither one's reference going away removes it. The
+/// An Object reference is shared: two consumers hold the same canonical
+/// object at once, and neither one's handle going away removes it. The
 /// registry owns the entry for the session's lifetime.
 #[test]
-fn two_consumers_borrow_one_object_and_neither_owns_removal() {
+fn two_consumers_share_one_object_and_neither_owns_removal() {
     let registry = SessionObjectRegistry::new(CHAIN_ID);
 
     // kept alive across the consumers' scope, so the identity check below
     // compares against an entry that was never removed and re-registered.
-    let witness: &TokenObject = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
+    let witness: Arc<TokenObject> =
+        registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
 
     {
         let engine = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
         let strategy = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
         assert!(
-            std::ptr::eq(engine, strategy),
-            "two consumers borrow one canonical object, not one object each"
+            Arc::ptr_eq(&engine, &strategy),
+            "two consumers share one canonical object, not one object each"
         );
     }
 
     assert_eq!(
         registry.token_count(),
         1,
-        "dropping a consumer's object reference did not remove the entry"
+        "dropping a consumer's object handle did not remove the entry"
     );
-    let later: &TokenObject = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
+    let later: Arc<TokenObject> = registry.get_or_create_token(TokenIdentity::erc20(make_token0()));
     assert!(
-        std::ptr::eq(later, witness),
+        Arc::ptr_eq(&later, &witness),
         "a request after both consumers released still joins the first object"
     );
 }
