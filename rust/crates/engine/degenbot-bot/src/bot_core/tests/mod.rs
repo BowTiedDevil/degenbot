@@ -7,6 +7,7 @@ use alloy::primitives::I256;
 mod apply_routes;
 mod quarantine;
 mod registration;
+mod session_registry;
 mod snapshots;
 mod word_fetch;
 
