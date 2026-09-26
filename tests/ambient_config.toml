@@ -8,7 +8,15 @@
 # boot-path tests need a deterministic non-empty fleet; settlement stays
 # inactive so the suite exercises the backrun-only boot. Every other schema
 # key is absent and keeps its default (the posture CI already runs with).
+#
+# The [nodes] table is the file layer end-to-end: a fresh interpreter with
+# every DEGENBOT_* name cleared resolves chain 1's request and subscription
+# endpoints from this file (tests/test_config_parity.py::TestAmbientSuiteConfig).
 
 [strategy.mevblocker_backrun]
 active = true
 endpoints = "wss://searchers.mevblocker.io"
+
+[nodes]
+http = { 1 = "http://ambient-file.example:8545" }
+ws = { 1 = "ws://ambient-file.example:8546" }

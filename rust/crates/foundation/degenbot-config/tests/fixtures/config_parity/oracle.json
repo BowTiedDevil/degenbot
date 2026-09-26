@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "description": "Cross-surface config acceptance ledger (task BZ6W4Y): the Rust degenbot-config verdicts for the fixed operator file + per-case environment, written by rust_resolution_matches_intent_and_writes_the_shared_oracle and read by tests/test_config_parity.py, which resolves the same cases through degenbot._ffi.",
+  "operator_file": "operator.toml",
+  "cases": [
+    {
+      "id": "file_only_request",
+      "chain_id": 101,
+      "scope": "request",
+      "env": {},
+      "verdict": {"uri": "http://file-101.example:8545", "source": "file"}
+    },
+    {
+      "id": "env_http_beats_file_ipc",
+      "chain_id": 102,
+      "scope": "request",
+      "env": {"DEGENBOT_RPC_HTTP_CHAINID_102": "https://env-102.example:8545"},
+      "verdict": {"uri": "https://env-102.example:8545", "source": "env"}
+    },
+    {
+      "id": "file_ipc_preferred_request",
+      "chain_id": 105,
+      "scope": "request",
+      "env": {},
+      "verdict": {"uri": "/tmp/file-105.ipc", "source": "file"}
+    },
+    {
+      "id": "file_ws_subscription",
+      "chain_id": 104,
+      "scope": "subscription",
+      "env": {},
+      "verdict": {"uri": "ws://file-104.example:8546", "source": "file"}
+    },
+    {
+      "id": "subscription_never_selects_http",
+      "chain_id": 103,
+      "scope": "subscription",
+      "env": {},
+      "verdict": {"error": "bot configuration invalid (1 problem(s)):\n  - no subscription endpoint resolved for chain 103: transports consulted (preference order) were ipc, ws; for each, the layers consulted (highest precedence first) were an explicit node argument, the DEGENBOT_RPC_IPC_CHAINID_103, DEGENBOT_RPC_WS_CHAINID_103 env families, and the nodes.ipc, nodes.ws file tables — none of them supplied chain 103; there is no localhost default, and the refusal is the fourth layer — declare the endpoint in the operator file, export DEGENBOT_RPC_IPC_CHAINID_103, or pass the endpoint explicitly (chain 103 does have a http entry in nodes.http, which serves requests but not a subscription feed — give the feed its own nodes.ipc or nodes.ws entry)\n"}
+    }
+  ]
+}
