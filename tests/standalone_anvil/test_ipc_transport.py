@@ -21,6 +21,7 @@ request scope instead of inventing a ``localhost`` default.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import socket
@@ -236,29 +237,58 @@ class _IpcCallManyNode:
         self.requests: list[dict] = []
         self._listener: socket.socket | None = None
         self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._connections: set[socket.socket] = set()
+        self._serve_threads: list[threading.Thread] = []
+        self._state_lock = threading.Lock()
+        self._closed = False
 
     def start(self) -> None:
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         listener.bind(str(self.socket_path))
         listener.listen(4)
+        # A bounded accept timeout lets the loop observe `_stop` even on the
+        # platforms where closing a socket does not wake a blocked `accept()`.
+        listener.settimeout(0.1)
         self._listener = listener
         self._thread = threading.Thread(target=self._accept_loop, daemon=True)
         self._thread.start()
 
     def _accept_loop(self) -> None:
-        assert self._listener is not None
+        listener = self._listener
+        assert listener is not None
         try:
-            while True:
-                conn, _ = self._listener.accept()
-                threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
-        except OSError:
-            return
+            while not self._stop.is_set():
+                try:
+                    conn, _ = listener.accept()
+                except TimeoutError:
+                    continue
+                except OSError:
+                    return
+                conn.settimeout(0.1)
+                with self._state_lock:
+                    if self._stop.is_set():
+                        conn.close()
+                        return
+                    self._connections.add(conn)
+                    serve_thread = threading.Thread(target=self._serve, args=(conn,), daemon=True)
+                    self._serve_threads.append(serve_thread)
+                serve_thread.start()
+        finally:
+            listener.close()
 
     def _serve(self, conn: socket.socket) -> None:
         pending = ""
         try:
             while True:
-                chunk = conn.recv(4096)
+                try:
+                    chunk = conn.recv(4096)
+                except TimeoutError:
+                    if self._stop.is_set():
+                        return
+                    continue
+                except OSError:
+                    return
                 if not chunk:
                     return
                 pending += chunk.decode()
@@ -271,6 +301,8 @@ class _IpcCallManyNode:
                     response = self._respond(request)
                     conn.sendall(json.dumps(response).encode())
         finally:
+            with self._state_lock:
+                self._connections.discard(conn)
             conn.close()
 
     def _respond(self, request: dict) -> dict:
@@ -285,9 +317,37 @@ class _IpcCallManyNode:
         return {"jsonrpc": "2.0", "id": request.get("id"), "result": result}
 
     def close(self) -> None:
-        if self._listener is not None:
-            self._listener.close()
-            self._listener = None
+        """Stop the accept loop and every live connection, deterministically.
+
+        Safe to call more than once. Closing the listener alone does not wake a
+        thread blocked in ``accept()`` on Linux, and an accepted socket whose
+        peer never half-closes keeps its serve thread parked in ``recv``, so
+        both the listener and each connection are shut down before the threads
+        are joined.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._stop.set()
+        listener = self._listener
+        self._listener = None
+        if listener is not None:
+            listener.close()
+        with self._state_lock:
+            connections = list(self._connections)
+            serve_threads = list(self._serve_threads)
+        for conn in connections:
+            with contextlib.suppress(OSError):
+                conn.shutdown(socket.SHUT_RDWR)
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=5.0)
+            assert not thread.is_alive(), "the accept loop did not stop"
+        for serve_thread in serve_threads:
+            serve_thread.join(timeout=5.0)
+        for conn in connections:
+            with contextlib.suppress(OSError):
+                conn.close()
 
 
 def test_sim_client_eth_call_many_over_a_real_ipc_socket(tmp_path: Path) -> None:
