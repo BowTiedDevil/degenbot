@@ -586,6 +586,29 @@ pub enum ConfigSub {
     },
     /// Print the config file the mutating arms read and write.
     Path,
+    /// Print one resolved driver-domain value and the layer that supplied it.
+    Get {
+        /// The dotted key or `table.entry` path (e.g. `nodes.http.1`).
+        key: String,
+    },
+    /// Write one declared key or `str_map` entry through the config writer.
+    Set {
+        /// The dotted key or `table.entry` path.
+        key: String,
+        /// The raw value.
+        value: String,
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove one key or `str_map` entry override so the default applies.
+    Unset {
+        /// The dotted key or `table.entry` path.
+        key: String,
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// The strategy facet selector.
@@ -918,6 +941,16 @@ fn config(command: &ConfigSub) -> ConfigCommand {
             resolved: *resolved,
         },
         ConfigSub::Path => ConfigCommand::Path,
+        ConfigSub::Get { key } => ConfigCommand::Get { key: key.clone() },
+        ConfigSub::Set { key, value, force } => ConfigCommand::Set {
+            key: key.clone(),
+            value: value.clone(),
+            force: *force,
+        },
+        ConfigSub::Unset { key, force } => ConfigCommand::Unset {
+            key: key.clone(),
+            force: *force,
+        },
     }
 }
 

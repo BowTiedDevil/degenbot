@@ -263,8 +263,9 @@ pub enum MutationOutcome {
     /// The write landed in the file but the env layer will shadow it at load
     /// time (the rendered line says so loudly).
     Shadowed {
-        /// The env var name holding the shadowing value.
-        env: &'static str,
+        /// The env var name holding the shadowing value (for a `str_map`
+        /// entry, the family prefix plus the entry key).
+        env: String,
     },
 }
 

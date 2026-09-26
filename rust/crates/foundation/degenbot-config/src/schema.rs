@@ -771,8 +771,11 @@ fn ipc_path_hint(value: &str) -> Option<&'static str> {
 /// because the operator's mental model (a path relative to the config file,
 /// or a `~` that expands) is the actual error.
 fn entry_refusal(key: &str, transport: NodeTransport, chain: &str, value: &str) -> String {
+    // The value is echoed so the operator can see what was refused, but a
+    // credential in it must not survive into a diagnostic (ADR-062 D12).
     let prefix = format!(
-        "{key} entry for chain {chain} is {value:?}, which is not {}",
+        "{key} entry for chain {chain} is {:?}, which is not {}",
+        crate::redact_uri(value),
         transport.expected()
     );
     match (transport, ipc_path_hint(value)) {

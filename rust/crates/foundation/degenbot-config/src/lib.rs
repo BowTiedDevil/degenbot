@@ -74,6 +74,7 @@ pub mod error;
 pub mod holder;
 pub mod loader;
 pub mod readiness;
+pub mod redact;
 pub mod resolvers;
 pub mod schema;
 #[doc(hidden)]
@@ -89,6 +90,7 @@ pub use readiness::{
     strategy_readiness, Arm, StrategyReadiness, StrategyReadinessError, DEFAULT_BACKRUN_STREAM_URL,
     DEFAULT_TXPOOL_BACKRUN_RELAYS, SETTLEMENT_DEFAULT_ENDPOINTS,
 };
+pub use redact::redact_uri;
 pub use resolvers::{
     config_home, expand_state_path, expand_state_path_with, expand_tilde_path, node_http_env_name,
     node_ipc_env_name, node_ws_env_name, resolve_chain_id, resolve_database_path,

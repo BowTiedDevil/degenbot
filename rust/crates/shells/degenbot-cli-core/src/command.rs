@@ -102,7 +102,9 @@ impl Command {
             Self::Strategy(command) => {
                 strategy::execute(command, ctx, prompter).map(CommandReport::Strategy)
             }
-            Self::Config(command) => config::execute(*command, ctx).map(CommandReport::Config),
+            Self::Config(command) => {
+                config::execute(command.clone(), ctx, prompter).map(CommandReport::Config)
+            }
         }
     }
 }

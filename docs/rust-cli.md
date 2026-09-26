@@ -109,14 +109,25 @@ bot's `OperatorServer` is the authority. `--socket` resolves through
 
 ### `degenbot config`
 
-The read-only view of the operator file (ADR-062 D6). No arm prompts, and
-neither writes.
+The read and write surface over the operator file (ADR-062 D6/D12). The
+mutating arms confirm unless `--force`; every rendered value is redacted.
 
 | Command | Flags | Behaviour |
 |---|---|---|
 | `config show` | — | The driver-domain values the operator FILE declares: `database.path`, `session.chain_id`, and the `[nodes.*]` endpoint tables, one line per value and no layer column. |
 | `config show --resolved` | `--resolved` | The same keys as the process resolves them, each annotated with its winning layer: `cli` > `env` > `file` > `default`. A key no layer supplied renders `(unresolved)` rather than disappearing. A per-chain entry renders as `nodes.ws[8453] = …`; an explicit `--node` fills the transport's slot and renders unindexed as `nodes.ws = … (cli)`. |
+| `config get <key>` | — | Resolve one key (`session.chain_id`, `database.path`, `nodes.http.1`) with its winning layer. |
+| `config set <key> <value>` | `--force` | Write one declared key or `str_map` entry through the validate-before-write writer; reports `Shadowed { env: DEGENBOT_RPC_HTTP_CHAINID_<id> }` when the environment will win for that chain. |
+| `config unset <key>` | `--force` | Remove one key's or entry's override so the declared default (or a shadowing env var) applies again. |
 | `config path` | — | Print the config file the mutating arms read and write: `--config` > `DEGENBOT_CONFIG` > the XDG config home. |
+
+Credentials never appear in a rendered line: userinfo (`user:secret@`) and the
+credential-bearing query parameters (`api_key`, `apikey`, `key`, `token`,
+`secret`, `password`, `access_token`) are redacted in `config show`, `config
+get`, write reports, and config error text. The file on disk keeps what the
+operator wrote, so an operator who writes
+`config set nodes.http.1 'https://user:secret@host/x?api_key=abc'` sees
+`nodes.http[1] = https://host/x?api_key=REDACTED (file)` on the next read.
 
 ```console
 $ degenbot --config ./config.toml config show --resolved

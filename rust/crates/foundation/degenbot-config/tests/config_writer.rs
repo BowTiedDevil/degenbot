@@ -6,7 +6,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use degenbot_config::writer::{remove_key, write_key_with_env, WriteOutcome};
+use degenbot_config::writer::{
+    remove_entry, remove_key, write_entry_with_env, write_key_with_env, WriteOutcome,
+};
 use degenbot_config::{BotConfigLoader, KeyDecl, MapEnv, SCHEMA};
 
 fn key(path: &str) -> &'static KeyDecl {
@@ -144,7 +146,7 @@ fn an_env_shadowing_the_key_is_reported() {
     assert_eq!(
         outcome,
         WriteOutcome::Shadowed {
-            env: "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE"
+            env: "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE".to_string()
         }
     );
     // The file still carries the write; the env layer wins at load time.
@@ -168,6 +170,169 @@ fn a_comma_separated_endpoint_list_round_trips() {
     assert_eq!(
         loaded.config.strategy.settlement.endpoints.as_deref(),
         Some(urls)
+    );
+}
+
+#[test]
+fn write_entry_inserts_and_updates_an_entry_preserving_siblings() {
+    let dir = std::env::temp_dir().join(format!("writer-entry-{}", std::process::id()));
+    let file = dir.join("config.toml");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(
+        &file,
+        "# operator note\n[nodes]\nhttp = { 1 = \"http://a:8545\" }\nws = { 1 = \"ws://b:8546\" }\n",
+    )
+    .expect("seed");
+
+    let outcome =
+        write_entry_with_env(&file, key("nodes.http"), "1", "http://c:9999", &empty_env())
+            .expect("write");
+    assert_eq!(outcome, WriteOutcome::Written);
+
+    let text = std::fs::read_to_string(&file).expect("read back");
+    assert!(text.contains("# operator note"), "comment survives: {text}");
+    assert!(
+        text.contains("ws://b:8546"),
+        "the sibling transport survives: {text}"
+    );
+    let loaded = load(&file, None);
+    assert_eq!(
+        loaded.config.nodes.http.as_ref().and_then(|t| t.get("1")),
+        Some(&"http://c:9999".to_string())
+    );
+
+    write_entry_with_env(&file, key("nodes.http"), "2", "http://d:9998", &empty_env())
+        .expect("insert a second entry");
+    let loaded = load(&file, None);
+    assert_eq!(
+        loaded.config.nodes.http.as_ref().map(BTreeMap::len),
+        Some(2)
+    );
+}
+
+#[test]
+fn write_entry_refuses_a_malformed_uri_and_leaves_the_file_untouched() {
+    let dir = std::env::temp_dir().join(format!("writer-entry-refuse-{}", std::process::id()));
+    let file = dir.join("config.toml");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(&file, "[nodes]\nhttp = { 1 = \"http://a:8545\" }\n").expect("seed");
+    let before = std::fs::read(&file).expect("read before");
+
+    let err = write_entry_with_env(&file, key("nodes.http"), "1", "ftp://nope", &empty_env())
+        .expect_err("a malformed URI must refuse");
+    assert!(
+        err.to_string().contains("nodes.http"),
+        "names the key: {err}"
+    );
+    let after = std::fs::read(&file).expect("read after");
+    assert_eq!(before, after, "a refused entry must not touch the file");
+}
+
+#[test]
+fn remove_entry_removes_the_last_entry_and_prunes_the_table() {
+    let dir = std::env::temp_dir().join(format!("writer-entry-remove-{}", std::process::id()));
+    let file = dir.join("config.toml");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(
+        &file,
+        "# keep me\n[logging]\nlog_stderr = true\n[nodes]\nhttp = { 1 = \"http://a:8545\" }\n",
+    )
+    .expect("seed");
+
+    remove_entry(&file, key("nodes.http"), "1").expect("remove");
+    let text = std::fs::read_to_string(&file).expect("read back");
+    assert!(text.contains("# keep me"), "comment survives: {text}");
+    assert!(
+        text.contains("log_stderr = true"),
+        "an unrelated section survives: {text}"
+    );
+    assert!(
+        !text.contains("http"),
+        "the emptied table is pruned: {text}"
+    );
+    let loaded = load(&file, None);
+    assert!(loaded.config.nodes.http.is_none());
+}
+
+#[test]
+fn write_entry_reports_the_shadowing_chain_env() {
+    let dir = std::env::temp_dir().join(format!("writer-entry-shadow-{}", std::process::id()));
+    let file = dir.join("config.toml");
+    let env = MapEnv::new(BTreeMap::from([(
+        "DEGENBOT_RPC_HTTP_CHAINID_1".to_string(),
+        "http://shadowed:8545".to_string(),
+    )]));
+
+    let outcome =
+        write_entry_with_env(&file, key("nodes.http"), "1", "http://a:8545", &env).expect("write");
+    assert_eq!(
+        outcome,
+        WriteOutcome::Shadowed {
+            env: "DEGENBOT_RPC_HTTP_CHAINID_1".to_string()
+        }
+    );
+
+    // The file still carries the write; the env layer wins at load time.
+    let loaded = load(&file, Some(env));
+    assert_eq!(
+        loaded.config.nodes.http.as_ref().and_then(|t| t.get("1")),
+        Some(&"http://shadowed:8545".to_string())
+    );
+}
+
+#[test]
+fn a_refused_entry_redacts_the_credential_it_echoes() {
+    let dir = std::env::temp_dir().join(format!("writer-redact-error-{}", std::process::id()));
+    let file = dir.join("config.toml");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(&file, "[nodes]\nhttp = { 1 = \"http://a:8545\" }\n").expect("seed");
+
+    let err = write_entry_with_env(
+        &file,
+        key("nodes.http"),
+        "2",
+        "ftp://user:secret@host/x?api_key=abc",
+        &empty_env(),
+    )
+    .expect_err("a malformed entry must refuse");
+    let message = err.to_string();
+    assert!(
+        !message.contains("secret"),
+        "userinfo must be redacted in the error: {message}"
+    );
+    assert!(
+        !message.contains("abc"),
+        "the query credential must be redacted in the error: {message}"
+    );
+    assert!(
+        message.contains("nodes.http"),
+        "the key still names itself: {message}"
+    );
+}
+
+#[test]
+fn a_schemeless_refused_entry_redacts_the_credential_it_echoes() {
+    let dir = std::env::temp_dir().join(format!("writer-redact-schemeless-{}", std::process::id()));
+    let file = dir.join("config.toml");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(&file, "[nodes]\nhttp = { 1 = \"http://a:8545\" }\n").expect("seed");
+
+    let err = write_entry_with_env(
+        &file,
+        key("nodes.http"),
+        "2",
+        "rpc.example.com?api_key=abc",
+        &empty_env(),
+    )
+    .expect_err("a schemeless entry must refuse");
+    let message = err.to_string();
+    assert!(
+        !message.contains("abc"),
+        "the query credential must be redacted even without a scheme: {message}"
+    );
+    assert!(
+        message.contains("nodes.http"),
+        "the key still names itself: {message}"
     );
 }
 

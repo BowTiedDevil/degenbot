@@ -80,6 +80,285 @@ fn lines(env: &MapEnv, file: Option<&Path>, command: ConfigCommand) -> Vec<Strin
         .render_lines()
 }
 
+#[test]
+fn set_writes_a_scalar_key_and_get_reads_the_resolved_value() {
+    let file = write_config("set-scalar", "[session]\nchain_id = 1\n");
+    let env = env(&[]);
+    let context = ctx(&env, Some(&file));
+    let prompter = NoPrompt::new();
+    let outcome = run(
+        &Command::Config(ConfigCommand::Set {
+            key: "session.chain_id".to_string(),
+            value: "8453".to_string(),
+            force: true,
+        }),
+        &context,
+        &prompter,
+    );
+    assert_eq!(
+        outcome.exit_code,
+        ExitCode::Success,
+        "{:?}",
+        outcome.error().map(ToString::to_string)
+    );
+    assert_eq!(*prompter.calls.borrow(), 0, "--force skips the prompt");
+
+    let read_ctx = ctx(&env, Some(&file));
+    let read_prompter = NoPrompt::new();
+    let get = run(
+        &Command::Config(ConfigCommand::Get {
+            key: "session.chain_id".to_string(),
+        }),
+        &read_ctx,
+        &read_prompter,
+    );
+    assert_eq!(
+        get.exit_code,
+        ExitCode::Success,
+        "{:?}",
+        get.error().map(ToString::to_string)
+    );
+    assert_eq!(*read_prompter.calls.borrow(), 0, "get never prompts");
+    let lines = get.report().unwrap().render_lines();
+    assert_eq!(
+        line_for(&lines, "session.chain_id"),
+        "session.chain_id = 8453 (file)"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn set_without_force_prompts_and_a_decline_aborts() {
+    let file = write_config("set-decline", "[session]\nchain_id = 1\n");
+    let env = env(&[]);
+    let context = ctx(&env, Some(&file));
+    let prompter = NoPrompt::new();
+    let outcome = run(
+        &Command::Config(ConfigCommand::Set {
+            key: "session.chain_id".to_string(),
+            value: "8453".to_string(),
+            force: false,
+        }),
+        &context,
+        &prompter,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Failure);
+    assert!(
+        matches!(outcome.error(), Some(degenbot_cli_core::CliError::Aborted)),
+        "a declined prompt is the Abort arm: {:?}",
+        outcome.error().map(ToString::to_string)
+    );
+    assert_eq!(*prompter.calls.borrow(), 1, "the arm asked once");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains("chain_id = 1"),
+        "a declined write leaves the file alone: {text}"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn unset_removes_a_scalar_override() {
+    let file = write_config("unset-scalar", "[session]\nchain_id = 8453\n");
+    let env = env(&[]);
+    let context = ctx(&env, Some(&file));
+    let outcome = run(
+        &Command::Config(ConfigCommand::Unset {
+            key: "session.chain_id".to_string(),
+            force: true,
+        }),
+        &context,
+        &NoPrompt::new(),
+    );
+    assert_eq!(
+        outcome.exit_code,
+        ExitCode::Success,
+        "{:?}",
+        outcome.error().map(ToString::to_string)
+    );
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        !text.contains("chain_id"),
+        "the override is gone so the default applies: {text}"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn set_writes_a_node_entry_and_get_returns_it() {
+    let file = write_config("set-entry", "[nodes]\nhttp = { 1 = \"http://a:8545\" }\n");
+    let env = env(&[]);
+    let context = ctx(&env, Some(&file));
+    let outcome = run(
+        &Command::Config(ConfigCommand::Set {
+            key: "nodes.http.2".to_string(),
+            value: "http://b:9999".to_string(),
+            force: true,
+        }),
+        &context,
+        &NoPrompt::new(),
+    );
+    assert_eq!(
+        outcome.exit_code,
+        ExitCode::Success,
+        "{:?}",
+        outcome.error().map(ToString::to_string)
+    );
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("http://b:9999"), "the entry landed: {text}");
+    assert!(text.contains("http://a:8545"), "the sibling stays: {text}");
+
+    let read_ctx = ctx(&env, Some(&file));
+    let get = run(
+        &Command::Config(ConfigCommand::Get {
+            key: "nodes.http.2".to_string(),
+        }),
+        &read_ctx,
+        &NoPrompt::new(),
+    );
+    let lines = get.report().unwrap().render_lines();
+    assert_eq!(
+        line_for(&lines, "nodes.http.2"),
+        "nodes.http.2 = http://b:9999 (file)"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn set_reports_the_shadowing_entry_env() {
+    use degenbot_cli_core::MutationOutcome;
+    let file = write_config(
+        "set-entry-shadow",
+        "[nodes]\nhttp = { 1 = \"http://a:8545\" }\n",
+    );
+    let env = env(&[("DEGENBOT_RPC_HTTP_CHAINID_1", "http://shadow:8545")]);
+    let context = ctx(&env, Some(&file));
+    let outcome = run(
+        &Command::Config(ConfigCommand::Set {
+            key: "nodes.http.1".to_string(),
+            value: "http://b:9999".to_string(),
+            force: true,
+        }),
+        &context,
+        &NoPrompt::new(),
+    );
+    assert_eq!(
+        outcome.exit_code,
+        ExitCode::Success,
+        "{:?}",
+        outcome.error().map(ToString::to_string)
+    );
+    let Some(CommandReport::Config(ConfigReport::Set { outcome, .. })) = outcome.report() else {
+        panic!("a set reports the set variant");
+    };
+    assert_eq!(
+        *outcome,
+        MutationOutcome::Shadowed {
+            env: "DEGENBOT_RPC_HTTP_CHAINID_1".to_string()
+        }
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn mutating_config_arms_prompt_unless_forced() {
+    for command in [
+        ConfigCommand::Set {
+            key: "session.chain_id".to_string(),
+            value: "1".to_string(),
+            force: false,
+        },
+        ConfigCommand::Unset {
+            key: "session.chain_id".to_string(),
+            force: false,
+        },
+    ] {
+        assert_eq!(
+            command.prompt_plan(&ctx(&env(&[]), None)),
+            PromptPlan::UnlessForce
+        );
+    }
+    assert_eq!(
+        ConfigCommand::Get {
+            key: "session.chain_id".to_string()
+        }
+        .prompt_plan(&ctx(&env(&[]), None)),
+        PromptPlan::None
+    );
+}
+
+#[test]
+fn set_redacts_in_render_but_the_file_keeps_the_credential() {
+    let file = write_config("redact-set", "[nodes]\nhttp = { 1 = \"http://a:8545\" }\n");
+    let env = env(&[]);
+    let context = ctx(&env, Some(&file));
+    let outcome = run(
+        &Command::Config(ConfigCommand::Set {
+            key: "nodes.http.1".to_string(),
+            value: "https://user:secret@host/x?api_key=abc".to_string(),
+            force: true,
+        }),
+        &context,
+        &NoPrompt::new(),
+    );
+    assert_eq!(
+        outcome.exit_code,
+        ExitCode::Success,
+        "{:?}",
+        outcome.error().map(ToString::to_string)
+    );
+
+    // The file on disk keeps exactly what the operator wrote.
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains("user:secret@host"),
+        "the secret stays on disk: {text}"
+    );
+    assert!(
+        text.contains("api_key=abc"),
+        "the secret stays on disk: {text}"
+    );
+    for line in outcome.report().unwrap().render_lines() {
+        assert!(
+            !line.contains("secret"),
+            "the set report must not leak: {line}"
+        );
+        assert!(
+            !line.contains("abc"),
+            "the set report must not leak: {line}"
+        );
+    }
+
+    // `config show --resolved` renders the redacted form.
+    let read_ctx = ctx(&env, Some(&file));
+    let show = run(
+        &Command::Config(ConfigCommand::Show { resolved: true }),
+        &read_ctx,
+        &NoPrompt::new(),
+    );
+    let lines = show.report().unwrap().render_lines();
+    assert_eq!(
+        line_for(&lines, "nodes.http[1]"),
+        "nodes.http[1] = https://host/x?api_key=REDACTED (file)"
+    );
+
+    // `config get` uses the same render contract.
+    let get_ctx = ctx(&env, Some(&file));
+    let get = run(
+        &Command::Config(ConfigCommand::Get {
+            key: "nodes.http.1".to_string(),
+        }),
+        &get_ctx,
+        &NoPrompt::new(),
+    );
+    let get_lines = get.report().unwrap().render_lines();
+    assert_eq!(
+        line_for(&get_lines, "nodes.http.1"),
+        "nodes.http.1 = https://host/x?api_key=REDACTED (file)"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
 fn line_for<'a>(lines: &'a [String], key: &str) -> &'a str {
     let matches: Vec<&String> = lines.iter().filter(|line| line.starts_with(key)).collect();
     assert_eq!(

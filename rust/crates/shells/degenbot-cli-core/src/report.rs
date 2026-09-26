@@ -86,20 +86,30 @@ impl ConfigValue {
         }
     }
 
-    /// The `key = value` line (the file view).
+    /// The `key = value` line (the file view). The value is redacted at
+    /// render time: the file keeps the operator's bytes, but a rendered line
+    /// never prints a credential (ADR-062 D12).
     #[must_use]
     pub fn line(&self) -> String {
         match self.source {
-            Some(_) => format!("{} = {}", self.key, self.value),
+            Some(_) => format!(
+                "{} = {}",
+                self.key,
+                degenbot_config::redact_uri(&self.value)
+            ),
             None => format!("{} = (unresolved)", self.key),
         }
     }
 
-    /// The `key = value (source)` line (`config show --resolved`).
+    /// The `key = value (source)` line (`config show --resolved`), redacted.
     #[must_use]
     pub fn resolved_line(&self) -> String {
         match self.source {
-            Some(source) => format!("{} = {} ({source})", self.key, self.value),
+            Some(source) => format!(
+                "{} = {} ({source})",
+                self.key,
+                degenbot_config::redact_uri(&self.value)
+            ),
             None => format!("{} = (unresolved)", self.key),
         }
     }
@@ -120,6 +130,32 @@ pub enum ConfigReport {
     },
     /// `config path`: the config file the mutating arms read and write.
     Path(PathBuf),
+    /// `config get <key>`: one resolved value and its winning layer (or the
+    /// absent layer for an unresolved key).
+    Got {
+        /// The key as the operator spelled it.
+        key: String,
+        /// The resolved value, verbatim (redacted at render time).
+        value: String,
+        /// The layer that supplied it, or `None` when none did.
+        source: Option<degenbot_config::Source>,
+    },
+    /// `config set <key> <value>`: the override was written.
+    Set {
+        /// The key as the operator spelled it.
+        key: String,
+        /// The value written, verbatim (redacted at render time).
+        value: String,
+        /// Whether the write applies or an env var shadows it.
+        outcome: crate::strategy::MutationOutcome,
+    },
+    /// `config unset <key>`: the override was dropped.
+    Unset {
+        /// The key as the operator spelled it.
+        key: String,
+        /// Whether an env var still supplies the key at load time.
+        outcome: crate::strategy::MutationOutcome,
+    },
 }
 
 impl ConfigReport {
@@ -150,6 +186,23 @@ impl ConfigReport {
                 lines
             }
             Self::Path(path) => vec![path.display().to_string()],
+            Self::Got { key, value, source } => vec![match source {
+                Some(source) => {
+                    format!("{key} = {} ({source})", degenbot_config::redact_uri(value))
+                }
+                None => format!("{key} = (unresolved)"),
+            }],
+            Self::Set {
+                key,
+                value,
+                outcome,
+            } => vec![
+                format!("set {key} = {}", degenbot_config::redact_uri(value)),
+                shadow_line(outcome),
+            ],
+            Self::Unset { key, outcome } => {
+                vec![format!("removed {key}"), shadow_line(outcome)]
+            }
         }
     }
 }
