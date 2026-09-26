@@ -43,7 +43,11 @@
 //! Parity sources (constants + error semantics mirrored byte-for-byte):
 //!   - `src/degenbot/runner/cli.py`       — CLI flags
 //!   - `src/degenbot/runner/config.py`    — `ArbitrageConfig.from_env`
-//!   - `src/degenbot/config.py`           — `resolve_rpc_uris` cascade + db path
+//!
+//! The node-endpoint and database-path cascades are NOT mirrored here: they
+//! resolve through `degenbot::config`'s capability-scoped resolvers over the
+//! one operator file + environment (ADR-062), the same four-layer path the
+//! console and the Python driver read.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -160,23 +164,22 @@ const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 struct Cli {
     live: bool,
     permutation: Option<String>,
-    node_http: Option<String>,
-    node_ws: Option<String>,
+    /// `--node`, repeatable: one endpoint per transport, classified by the
+    /// value's own scheme (ADR-062 D6).
+    node: Vec<String>,
     operator_socket: Option<String>,
     operator_inert: bool,
     smoke_offline: bool,
 }
 
 const USAGE: &str = "usage: settlement-bot [--live] [--permutation V2-V3-V4] \
-[--node-http URL] [--node-ws URL] [--operator-socket PATH] [--operator-inert] \
-[--smoke-offline]";
+[--node URL]... [--operator-socket PATH] [--operator-inert] [--smoke-offline]";
 
 fn parse_cli(args: &[String]) -> Result<Cli, String> {
     let mut cli = Cli {
         live: false,
         permutation: None,
-        node_http: None,
-        node_ws: None,
+        node: Vec::new(),
         operator_socket: None,
         operator_inert: false,
         smoke_offline: false,
@@ -199,8 +202,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
         match flag {
             "--live" => cli.live = true,
             "--permutation" => cli.permutation = Some(take_value(&mut i)?),
-            "--node-http" => cli.node_http = Some(take_value(&mut i)?),
-            "--node-ws" => cli.node_ws = Some(take_value(&mut i)?),
+            "--node" => cli.node.push(take_value(&mut i)?),
             "--operator-socket" => cli.operator_socket = Some(take_value(&mut i)?),
             "--operator-inert" => cli.operator_inert = true,
             "--smoke-offline" => cli.smoke_offline = true,
@@ -293,84 +295,6 @@ fn parse_f64_env(raw: Option<&String>, default: f64, suffix: &str) -> Result<f64
     }
 }
 
-/// Read the operator config file (`$XDG_CONFIG_HOME` when absolute, else
-/// `$HOME/.config`) `/degenbot/config.toml` the way the Python cascade's
-/// `config.toml` layer does; a missing/unparseable file yields `None` (that
-/// layer then simply contributes nothing).
-fn read_config_toml() -> Option<toml::Table> {
-    let base = match std::env::var("XDG_CONFIG_HOME") {
-        Ok(xdg) if !xdg.is_empty() && PathBuf::from(&xdg).is_absolute() => PathBuf::from(xdg),
-        _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
-    };
-    let path = base.join("degenbot/config.toml");
-    let text = std::fs::read_to_string(path).ok()?;
-    toml::from_str(&text).ok()
-}
-
-fn config_toml_entry<'a>(
-    toml_value: Option<&'a toml::Table>,
-    section: &str,
-    key: &str,
-) -> Option<&'a str> {
-    toml_value?.get(section)?.get(key)?.as_str()
-}
-
-/// Mirror `resolve_rpc_uris(chain_id, cli_http, cli_ws)`:
-/// CLI > OS env `DEGENBOT_RPC_{HTTP,WS}_CHAINID_1` > config.toml
-/// `rpc[1]`/`ws[1]` > error. **No localhost default** — a chain with no
-/// configured endpoint in any layer is a hard error (Python raises
-/// `RpcNotConfiguredError`; this driver reports + exits, see `main`).
-fn cascade_rpc_uri(
-    kind: &str,
-    cli: Option<&String>,
-    toml_section: &str,
-    config_toml: Option<&toml::Table>,
-) -> Result<String, String> {
-    if let Some(v) = cli.filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
-    let env_name = format!("DEGENBOT_RPC_{kind}_CHAINID_{CHAIN_ID}");
-    if let Ok(v) = std::env::var(&env_name) {
-        if !v.is_empty() {
-            return Ok(v);
-        }
-    }
-    let chain_key = CHAIN_ID.to_string();
-    if let Some(v) = config_toml_entry(config_toml, toml_section, &chain_key) {
-        if !v.is_empty() {
-            return Ok(v.to_string());
-        }
-    }
-    Err(format!(
-        "no {kind} RPC endpoint configured for chain {CHAIN_ID} (cascade: \
-         --node-{kind_lower} > {env_name} > config.toml {toml_section}[{CHAIN_ID}]); \
-         no localhost default",
-        kind_lower = kind.to_lowercase(),
-    ))
-}
-
-/// Mirror `_make_arbitrage_config`'s db path: config.toml `database.path`
-/// else `<state_home>/degenbot/db/degenbot.db` (`$XDG_STATE_HOME` when
-/// absolute, else `$HOME/.local/state`). `DEGENBOT_FIXTURE_DB` overrides, the
-/// same CI test seam `standalone_consumer.rs` uses.
-fn resolve_db_path(config_toml: Option<&toml::Table>) -> PathBuf {
-    if let Ok(fixture) = std::env::var("DEGENBOT_FIXTURE_DB") {
-        if !fixture.is_empty() {
-            return PathBuf::from(fixture);
-        }
-    }
-    if let Some(v) = config_toml_entry(config_toml, "database", "path") {
-        if !v.is_empty() {
-            return PathBuf::from(v);
-        }
-    }
-    let state_home = match std::env::var("XDG_STATE_HOME") {
-        Ok(xdg) if !xdg.is_empty() && PathBuf::from(&xdg).is_absolute() => PathBuf::from(xdg),
-        _ => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/state"),
-    };
-    state_home.join("degenbot/db/degenbot.db")
-}
-
 impl SettlementBotConfig {
     /// Mirror of `ArbitrageConfig.from_env(env, live=..., permutation=...)`:
     /// same defaults, same fail-fast error strings, same cascade order.
@@ -378,7 +302,11 @@ impl SettlementBotConfig {
         clippy::too_many_lines,
         reason = "linear env-parse mirror of ArbitrageConfig.from_env; splitting obscures the field-by-field cascade"
     )]
-    fn from_env(env: &BTreeMap<String, String>, cli: &Cli) -> Result<Self, String> {
+    fn from_env(
+        env: &BTreeMap<String, String>,
+        cli: &Cli,
+        loaded: &degenbot::config::LoadedConfig,
+    ) -> Result<Self, String> {
         // ── Operator ──
         let operator_raw = env.get("OPERATOR_ADDRESS").cloned().unwrap_or_default();
         let mut operator_address = if operator_raw.is_empty() {
@@ -404,11 +332,25 @@ impl SettlementBotConfig {
             }
         }
 
-        // ── Node URLs (standard cascade) ──
-        let config_toml = read_config_toml();
-        let node_http =
-            cascade_rpc_uri("HTTP", cli.node_http.as_ref(), "rpc", config_toml.as_ref())?;
-        let node_ws = cascade_rpc_uri("WS", cli.node_ws.as_ref(), "ws", config_toml.as_ref())?;
+        // ── Node URLs (ADR-062 capability-scoped cascade) ──
+        // One `--node` per transport; the value classifies itself (D6). The
+        // request scope (ipc > ws > http) serves construction and tx IO, the
+        // subscription scope (ipc > ws) serves the engine feed, and both read
+        // the same loaded operator file + environment.
+        let mut overrides = degenbot::config::NodeOverrides::new();
+        for raw in &cli.node {
+            let transport = degenbot::config::NodeTransport::classify(raw).ok_or_else(|| {
+                format!(
+                    "{raw:?} names no node transport; pass an http(s)://, ws(s)://, or ipc:// \
+                     URL or an absolute socket path"
+                )
+            })?;
+            overrides = overrides.with_transport(transport, raw.clone());
+        }
+        let node_http = degenbot::config::resolve_node_request_uri(loaded, CHAIN_ID, &overrides)
+            .map_err(|e| e.to_string())?;
+        let node_ws = degenbot::config::resolve_node_subscription_uri(loaded, CHAIN_ID, &overrides)
+            .map_err(|e| e.to_string())?;
 
         // ── Executor ──
         let mut executor_address = checksum_or_empty(
@@ -481,8 +423,8 @@ impl SettlementBotConfig {
         Ok(Self {
             operator_address,
             operator_private_key,
-            node_http,
-            node_ws,
+            node_http: node_http.value,
+            node_ws: node_ws.value,
             executor_address,
             executor_owner,
             inject_executor_code,
@@ -519,10 +461,10 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
     let s = snapshot_seed_block.map_or("None".to_string(), |s| s.to_string());
     #[rustfmt::skip]
     let rows: &[(&str, &str, &str)] = &[
-        ("01-cli", "REACHABLE", "parse_cli (driver-local, mirrors runner/cli.py)"),
+        ("01-cli", "REACHABLE", "parse_cli (driver-local, mirrors runner/cli.py); one scheme-classified --node per transport (ADR-062 D6)"),
         ("02-driver-config", "REACHABLE", "from_env (mirrors runner/config.py)"),
-        ("03-rpc-cascade", "REACHABLE", "cascade_rpc_uri (mirrors resolve_rpc_uris)"),
-        ("04-db-path", "REACHABLE", "resolve_db_path (+DEGENBOT_FIXTURE_DB seam)"),
+        ("03-rpc-cascade", "REACHABLE", "degenbot::config::{resolve_node_request_uri,resolve_node_subscription_uri} (ADR-062 capability-scoped, file+env)"),
+        ("04-db-path", "REACHABLE", "degenbot::config::resolve_database_path (+ offline.fixture_db typed key)"),
         ("05-snapshot-load", "REACHABLE", "SnapshotDb::open + Bot::load_snapshot_from_db"),
         ("06-engine-subscribe-resume", "REACHED-via-EngineDriver", "EngineDriver::start → subscribe → verify-config (stops pre-resume); resume owns the S+1..W auto-backfill via BlockPump::backfill_with_drain"),
         ("07-result-batch-stream", "REACHED-via-EngineDriver", "EngineDriver::take_result_receiver (attach pre-resume); ResultBatch over the existing unbounded channel"),
@@ -573,20 +515,23 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = parse_cli(&args)?;
 
+    // One layered load (ADR-062 D1): the operator file + environment +
+    // declared defaults. Every driver-domain resolver below, the installed
+    // typed holder the strategy keys read, and the strategy-arm gate all read
+    // THIS value, so the example cannot drift from the shared cascade.
+    let loaded = degenbot::config::load_process_config()
+        .map_err(|e| format!("load operator config: {e}"))?;
+
     // Strategy-arm gate (ADR-055): this driver is the settled-block arm.
     // An inactive settlement facet refuses in both stances, and an
     // activated per-ecosystem backrun facet must boot via its hosted
-    // driver, not this runner; the schema is the load source. A loader
-    // failure does not change behavior: the driver's own boot reads the
-    // config again and reports typed errors there.
-    if let Ok(loaded) = degenbot::config::BotConfigLoader::new().load() {
-        if let Some(msg) = strategy_arm_refusal(
-            loaded.config.strategy.settlement.active,
-            loaded.config.strategy.mevblocker_backrun.active,
-            loaded.config.strategy.txpool_backrun.active,
-        ) {
-            return Err(msg);
-        }
+    // driver, not this runner; the loaded schema is the source.
+    if let Some(msg) = strategy_arm_refusal(
+        loaded.config.strategy.settlement.active,
+        loaded.config.strategy.mevblocker_backrun.active,
+        loaded.config.strategy.txpool_backrun.active,
+    ) {
+        return Err(msg);
     }
 
     // ── Telemetry boot prelude (Gap G6,) ──
@@ -596,7 +541,7 @@ fn run() -> Result<(), String> {
     // boot (logging stays up, telemetry is optional — `telemetry` module docs).
     // The binding's `Drop` flushes + shuts the OTel provider and stops the
     // scrape server on every exit path (ADR-043 section 6).
-    let _telemetry_boot = telemetry::init();
+    let _telemetry_boot = telemetry::init(&loaded);
 
     // The Python example reads `examples/mainnet.env` from the repo root;
     // CARGO_MANIFEST_DIR is rust/examples/settlement_bot, so ../../../mainnet.env
@@ -610,7 +555,7 @@ fn run() -> Result<(), String> {
         println!("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS ***\n");
     }
 
-    let cfg = SettlementBotConfig::from_env(&dotenv, &cli)?;
+    let cfg = SettlementBotConfig::from_env(&dotenv, &cli, &loaded)?;
     // Full (secret-masked) config dump — this line IS the read of every
     // driver-config field, so nothing in the struct is dead state.
     println!(
@@ -661,7 +606,17 @@ fn run() -> Result<(), String> {
     // ── Boot slice (ledger row 5): DB snapshot load → seed block S ──
     // The Python path loads the DB snapshot eagerly inside `Bot.__init__`
     // and stashes S on the shared state before `engine.subscribe(...)`.
-    let db_path = resolve_db_path(read_config_toml().as_ref());
+    // Database path (ADR-062 D1/D4): `--database` > `DEGENBOT_DB_PATH` >
+    // `database.path` > the state-home default, all through the one loaded
+    // config. The `offline.fixture_db` typed key (the old DEGENBOT_FIXTURE_DB
+    // seam) stays available to the fixture tests as the explicit override.
+    let fixture_db = loaded
+        .config
+        .offline
+        .fixture_db
+        .as_deref()
+        .and_then(Path::to_str);
+    let db_path = degenbot::config::resolve_database_path(&loaded, fixture_db).value;
     let (snap, _schema) = degenbot::db::snapshot_db::SnapshotDb::open(&db_path)
         .map_err(|e| format!("open snapshot DB {}: {e}", db_path.display()))?;
     let bot = degenbot::bot_core::Bot::new(CHAIN_ID);

@@ -8,13 +8,12 @@
 //!
 //! # Boot order (mirrors `degenbot-python`'s pymodule init)
 //!
-//! 1. Typed config install — `BotConfigLoader` (schema defaults +
-//!    `DEGENBOT_*` env) is the ONE env-reading site for telemetry keys, so
-//!    `DEGENBOT_LOG_LEVEL`, `DEGENBOT_TELEMETRY_DIAG`, `DEGENBOT_OTEL` and
-//!    `DEGENBOT_METRICS_ADDR` take effect. The driver's manual pre-0.6
-//!    `config.toml` cascade (rpc/ws/database) is untouched: the typed loader
-//!    runs env-only here because those file sections are retired layout items
-//!    the validated modern file layer refuses.
+//! 1. Typed config install — the caller's single `load_process_config()`
+//!    (`BotConfigLoader::new().with_standard_file_paths().load()`: the
+//!    standard operator file + `DEGENBOT_*` env + schema defaults) is the ONE
+//!    env-reading site for telemetry keys, so `DEGENBOT_LOG_LEVEL`,
+//!    `DEGENBOT_TELEMETRY_DIAG`, `DEGENBOT_OTEL` and `DEGENBOT_METRICS_ADDR`
+//!    take effect — and a `[telemetry]` table in the operator file does too.
 //! 2. `tracing_subscriber` console layer — compact fmt on stderr, filtered by
 //!    the shared ADR-043 section 4 plan
 //!    (`bot_telemetry::resolve_filters`). The example is the Python driver's
@@ -104,18 +103,13 @@ impl Drop for TelemetryBoot {
     }
 }
 
-/// Boot the driver telemetry stack (see the module docs for the order and the
-/// degradation rules). Never fails.
-pub(crate) fn init() -> TelemetryBoot {
-    // Step 1: install the typed config (one env-reading site for DEGENBOT_*).
-    let config_error = match degenbot::config::BotConfigLoader::new().load() {
-        Ok(loaded) => {
-            // First-wins, mirroring degenbot-python's production boot path.
-            let _ = degenbot::bot_core::stance::install(std::sync::Arc::new(loaded.config));
-            None
-        }
-        Err(error) => Some(error.to_string()),
-    };
+/// Boot the driver telemetry stack from the caller's single layered load (see
+/// the module docs for the order and the degradation rules). Never fails.
+pub(crate) fn init(loaded: &degenbot::config::LoadedConfig) -> TelemetryBoot {
+    // Step 1: install the typed config the caller loaded once (file + env +
+    // defaults) — first-wins, mirroring degenbot-python's production boot
+    // path.
+    let _ = degenbot::bot_core::stance::install(std::sync::Arc::new(loaded.config.clone()));
 
     // Step 2: resolve the console/OTel record filters (ADR-043 section 4).
     let plan = bot_telemetry::resolve_filters(bot_telemetry::CONSOLE_WIRING_DEFAULT_PYTHON);
@@ -177,9 +171,6 @@ pub(crate) fn init() -> TelemetryBoot {
     degenbot::core::worker_census::emit_boot_table();
 
     // Step 6: boot census announcements on the closed domain targets.
-    if let Some(error) = config_error {
-        op_warn!(domain = pump, error = %error, "typed BotConfig load failed; telemetry keys fall back to schema defaults");
-    }
     if !installed {
         op_warn!(
             domain = pump,
