@@ -150,6 +150,47 @@ submission or a revoked lease, re-evaluate at the decide stage on a stale one, r
 a landed one.
 _Avoid_: "retry policy", "rebroadcast policy".
 
+## Session objects
+
+The vocabulary for the per-session entity layer. Design record (no implementation
+yet): [docs/architecture/session-object-registry.md](docs/architecture/session-object-registry.md).
+
+**Object**:
+A session-resident entity the session recognizes by canonical identity and hands out by
+reference — a pool, a token, a path. An object is identity plus whatever is intrinsically
+its own; it is not the session's live view of chain state.
+_Avoid_: "asset" or "resource" (both untyped here); "manager" for this concept.
+
+**Session object registry**:
+The single per-session owner of object identity: one keyed entry per object, get-or-create
+on first request, and the one place that answers "is this the same object?". It holds
+identity only — no chain or database I/O, no solver behavior, no submission policy.
+_Avoid_: "object store", "entity manager", "universe", or **PoolManager** (that stays the
+Uniswap V4 contract role) for this concept.
+
+**Canonical identity**:
+The key one object is registered under, so a later request for the same thing returns the
+first object instead of a twin. Identity is per session and does not cross sessions.
+_Avoid_: treating "has a unique id" as the whole characterization (how the key is
+constructed is the decision); "handle" for the reference itself.
+
+**Get-or-create**:
+The one registration semantic: an existing object is returned, a new one is registered and
+returned, and a concurrent second request joins the first rather than racing it. There is
+no separate add-then-lookup path, and creation never replaces an existing object.
+_Avoid_: "insert", "upsert", or spelling it as two steps.
+
+**Live state**:
+The session's mutable, block-advanced copy of a pool's on-chain state. It stays with the
+state owner; an object's registry entry is identity, not this. Joining an object to live
+state is a lookup, not a copy.
+_Avoid_: folding live state into the object entry, or re-deriving it per strategy.
+
+**Object reference**:
+What a consumer holds: a borrowed reference to a canonical object. Consumers never hold a
+private copy and never register through a per-consumer path.
+_Avoid_: "strategy pool cache", "per-strategy handle", "mirror".
+
 ## System layers
 
 **Rust core**:
