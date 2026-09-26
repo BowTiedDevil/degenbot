@@ -5,12 +5,13 @@ extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN). Each
 ``degenbot.runner`` module imports what it needs from here instead of the
 example, so the example can be thinned to an entrypoint.
 
-Note: the *canonical defaults* for the same tunables live in
-:class:`degenbot.runner.config.ArbitrageConfig` (the frozen config value object
-``main()`` builds). These module-level values are the driver's live operating
-values — several are read directly by the hot-path modules (e.g.
-``FEE_PERCENTILES`` by :mod:`~degenbot.runner.consume`, ``MIN_PROFIT_NET`` by
-:mod:`~degenbot.runner._dispatch`) and are settable via env vars / CLI.
+The two dispatch tunables below are the driver's live operating values, read
+directly by the hot-path modules: ``FEE_PERCENTILES`` by
+:mod:`~degenbot.runner.consume`, and ``MIN_PROFIT_NET`` by
+:mod:`~degenbot.runner._dispatch` and
+:mod:`~degenbot.runner._sim_submit_pipeline`. Both are hardcoded literals, not
+env-overridable; the rest of the driver's dispatch policy is core-owned and
+applied in the core.
 """
 
 from __future__ import annotations

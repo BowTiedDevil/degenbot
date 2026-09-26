@@ -29,21 +29,6 @@ from degenbot.runner.diag import DiagConfig
 # Arbitrage configuration
 # ──────────────────────────────────────────────────────────────────
 
-# Default dispatch tunables — match the example's current operational values
-# (eth_backrun_v2_v3_v4_rust.py module-top constants) so the BotRunner
-# bridge (slice 5b) is behavior-preserving. Canonical home for the defaults
-# is the config object; the example's constants are its current deployment.
-_MIN_PROFIT_NET = 1
-_FEE_HISTORY_WINDOW = 10
-_FEE_PERCENTILES = (10, 50)
-_TARGET_PROFIT_RATIO = 1.25
-_BLOCKS_BEFORE_NONCE_EXPIRES = 5
-_MAX_SIMULATE_CONCURRENT = 50
-_AGE_DECAY_CONSTANT = 0.25
-_MIN_PRIORITY_FEE_PERCENTILE = 10
-_MAX_PRIORITY_FEE_PERCENTILE = 50
-_PATH_SUPPRESS_THRESHOLD = 10
-_PATH_SUPPRESS_RETRY_INTERVAL = 100
 # VP42BP AC item 4: the default verification retry policy. ``VerificationRetryPolicy()``
 # is seeded from the Rust ``degenbot_core::retry::RetryPolicy`` over ``degenbot._ffi``
 # (ergo 6LC4JB), so an unset env reproduces the one core-owned default set.
@@ -288,18 +273,10 @@ class ArbitrageConfig:
     executor_owner: str
     inject_executor_code: bool
     injected_address: str
-    # Dispatch tunables
-    min_profit_net: int
-    fee_history_window: int
-    fee_percentiles: tuple[int, ...]
-    target_profit_ratio: float
-    blocks_before_nonce_expires: int
-    max_simulate_concurrent: int
-    age_decay_constant: float
-    min_priority_fee_percentile: int
-    max_priority_fee_percentile: int
-    path_suppress_threshold: int
-    path_suppress_retry_interval: int
+    # Dispatch policy is absent by design: the profit floor, fee percentiles,
+    # priority-fee pricing, the sim fan-out cap, and the path-suppression
+    # thresholds are core-owned and applied in the core, so a driver-side copy
+    # of any of them could only be a value the core ignores.
     # Path discovery
     allowed_intermediate_tokens: frozenset[str]
     permutation_filter: frozenset[str] | None
@@ -453,17 +430,6 @@ class ArbitrageConfig:
             executor_owner=executor_owner,
             inject_executor_code=inject_executor_code,
             injected_address=injected_address,
-            min_profit_net=_MIN_PROFIT_NET,
-            fee_history_window=_FEE_HISTORY_WINDOW,
-            fee_percentiles=_FEE_PERCENTILES,
-            target_profit_ratio=_TARGET_PROFIT_RATIO,
-            blocks_before_nonce_expires=_BLOCKS_BEFORE_NONCE_EXPIRES,
-            max_simulate_concurrent=_MAX_SIMULATE_CONCURRENT,
-            age_decay_constant=_AGE_DECAY_CONSTANT,
-            min_priority_fee_percentile=_MIN_PRIORITY_FEE_PERCENTILE,
-            max_priority_fee_percentile=_MAX_PRIORITY_FEE_PERCENTILE,
-            path_suppress_threshold=_PATH_SUPPRESS_THRESHOLD,
-            path_suppress_retry_interval=_PATH_SUPPRESS_RETRY_INTERVAL,
             allowed_intermediate_tokens=_ALLOWED_INTERMEDIATE_TOKENS,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
