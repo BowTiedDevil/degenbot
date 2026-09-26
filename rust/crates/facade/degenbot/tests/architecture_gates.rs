@@ -397,3 +397,265 @@ fn no_alembic_references() {
         "Alembic references remain in src/**/*.py (retired per ADR-052 D6): {violations:?}"
     );
 }
+/// The body of the first `header` block in `text` — the lines up to the brace
+/// that closes it, matched by DEPTH so a nested block cannot end it early —
+/// or `None` when the header is absent.
+fn block_body(text: &str, header: &str) -> Option<String> {
+    let mut body = String::new();
+    let mut inside = false;
+    let mut depth = 0_usize;
+    for line in text.lines() {
+        if !inside {
+            if line.trim() == header {
+                // The header line is the opening brace; start counting there so
+                // a body line that holds no brace is not mistaken for the end.
+                inside = true;
+                depth = 1;
+            }
+            continue;
+        }
+        for ch in line.split("//").next().unwrap_or_default().chars() {
+            match ch {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth == 0 {
+            return Some(body);
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    None
+}
+
+/// The declared field names of a struct body, in declaration order.
+fn field_names(body: &str) -> Vec<String> {
+    body.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .filter_map(|line| line.split_once(':').map(|(name, _)| name.trim().to_owned()))
+        .collect()
+}
+
+/// Every `impl` block in `text`, as `(header, body)`.
+///
+/// Located by brace depth rather than by a hand-listed set of headers: a fixed
+/// list silently skips any `impl` it did not name, and a scanner that cannot
+/// see a block cannot report the policy inside it. Comment-only lines
+/// contribute no depth (no doc comment in the scanned file holds a brace).
+fn impl_blocks(text: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut blocks: Vec<(String, String)> = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let header = lines[index].trim();
+        if !(header.starts_with("impl ") && header.ends_with('{')) {
+            index += 1;
+            continue;
+        }
+        let mut depth = 1_usize;
+        let mut body = String::new();
+        index += 1;
+        while index < lines.len() && depth > 0 {
+            for ch in lines[index].split("//").next().unwrap_or_default().chars() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            body.push_str(lines[index]);
+            body.push('\n');
+            index += 1;
+        }
+        blocks.push((header.to_owned(), body));
+    }
+    blocks
+}
+
+#[test]
+fn one_path_identity_owner_is_declared_once() {
+    // A DECLARATION census, not a wiring check: a session can reach canonical
+    // path identity only through one owner type, one adapter implementation,
+    // and one dedup index, because a second of any of them is a second
+    // path-id space. That the live owner is actually BOUND at the production
+    // boot is a behavioral fact, not a textual one, and it is proved by
+    // booting the real composition (degenbot-bot's `EngineDriver`-backed
+    // session-path tests assert `has_path_owner` without hand-installing).
+    let crates_root = workspace_root().join("crates");
+    let mut object_defs: Vec<String> = Vec::new();
+    let mut adapter_impls: Vec<String> = Vec::new();
+    let mut signature_indexes: Vec<String> = Vec::new();
+    for_each_rust_source(&crates_root, &mut |path, text| {
+        let clean = path.display().to_string().replace('\\', "/");
+        for (line_number, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed == "pub struct PathObject {" {
+                object_defs.push(format!("{clean}:{}", line_number + 1));
+            }
+            if trimmed.starts_with("impl PathObjectAdapter for ") {
+                adapter_impls.push(format!("{clean}:{}", line_number + 1));
+            }
+            // The field DECLARATION, not the constructor initializer: the
+            // type is spelled out only where the index is declared.
+            if trimmed.starts_with("path_signatures: HashMap<") {
+                signature_indexes.push(format!("{clean}:{}", line_number + 1));
+            }
+        }
+    });
+    assert_eq!(
+        object_defs.len(),
+        1,
+        "the canonical path object must be declared exactly once; found {object_defs:?}"
+    );
+    assert!(
+        object_defs[0].contains("bot_core/session_registry/path.rs"),
+        "the canonical path object belongs to the session registry; found {}",
+        object_defs[0]
+    );
+    assert_eq!(
+        adapter_impls.len(),
+        1,
+        "the path-object adapter must be implemented exactly once; found {adapter_impls:?}"
+    );
+    assert!(
+        adapter_impls[0].contains("arb_engine/path_objects.rs"),
+        "the adapter belongs to the path-identity owner; found {}",
+        adapter_impls[0]
+    );
+    assert_eq!(
+        signature_indexes.len(),
+        1,
+        "the path-signature dedup index must be declared exactly once; found {signature_indexes:?}"
+    );
+    assert!(
+        signature_indexes[0].contains("arb_engine/path_registry.rs"),
+        "the path-signature dedup index belongs to the engine's path registry; found {}",
+        signature_indexes[0]
+    );
+}
+
+#[test]
+fn the_session_registers_no_path_store_of_its_own() {
+    // The session registry reaches path identity through the adapter, so the
+    // module that DEFINES the canonical path object must hold no collection
+    // at all: a map keyed by hop signature here would be the second store
+    // that can disagree with the engine's PathRegistry about which route is
+    // which. (The pool/token kinds legitimately keep maps in
+    // `session_registry.rs` itself; only the path module must be collection-free.)
+    let path_module =
+        workspace_root().join("crates/engine/degenbot-bot/src/bot_core/session_registry/path.rs");
+    let text = std::fs::read_to_string(&path_module).expect("read the path module");
+    let mut offenders = Vec::new();
+    for (line_number, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        for collection in ["DashMap<", "HashMap<", "BTreeMap<", "HashSet<", "BTreeSet<"] {
+            if trimmed.contains(collection) {
+                offenders.push(format!(
+                    "{}:{line_number}: {collection}",
+                    path_module.display()
+                ));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the canonical path module must hold no collection (it is reached, not stored): {offenders:?}"
+    );
+
+    // And the registry itself stores the owner as a handle, not a map of paths.
+    let registry = std::fs::read_to_string(
+        workspace_root().join("crates/engine/degenbot-bot/src/bot_core/session_registry.rs"),
+    )
+    .expect("read the session registry");
+    let struct_body = block_body(&registry, "pub struct SessionObjectRegistry {")
+        .expect("the session registry struct");
+    let path_fields: Vec<String> = field_names(&struct_body)
+        .into_iter()
+        .filter(|name| name.contains("path"))
+        .collect();
+    assert_eq!(
+        path_fields,
+        vec![String::from("paths")],
+        "the registry's only path member is the owner handle"
+    );
+    assert!(
+        struct_body.contains("OnceLock<Arc<dyn PathObjectAdapter>>"),
+        "the path owner is a once-installed handle; got {struct_body}"
+    );
+}
+
+#[test]
+fn the_canonical_path_object_carries_no_strategy_policy() {
+    // Identity only: chain, the hop signature, and the owner's id. Solver
+    // choice, dispatch priority, submission posture, and admission rules are
+    // derived per strategy, so a field here would hand one arm's policy to
+    // every other arm that trades the same route.
+    let path_module =
+        workspace_root().join("crates/engine/degenbot-bot/src/bot_core/session_registry/path.rs");
+    let text = std::fs::read_to_string(&path_module).expect("read the path module");
+    let struct_body =
+        block_body(&text, "pub struct PathObject {").expect("the canonical path object");
+    assert_eq!(
+        field_names(&struct_body),
+        vec!["chain_id", "identity", "path_id"],
+        "the canonical path object declares identity fields only"
+    );
+
+    // The same rule for the WHOLE read surface, which is every `impl` block in
+    // the module: a named subset would leave an accessor nobody listed free to
+    // hand out one arm's policy, and the subset a gate names is exactly the
+    // coverage it is credited with. The scan reaches all of them, and the
+    // count assertion below fails rather than passing vacuously if the
+    // extractor ever stops finding blocks.
+    let policy_tokens = [
+        "solver",
+        "dispatch",
+        "priority",
+        "submission",
+        "submit",
+        "bid",
+        "budget",
+        "relay",
+        "nonce",
+        "retry",
+        "admission",
+    ];
+    let blocks = impl_blocks(&text);
+    let declared = text
+        .lines()
+        .filter(|line| line.trim_start().starts_with("impl "))
+        .count();
+    assert_eq!(
+        blocks.len(),
+        declared,
+        "every `impl` in the path module must be scanned, or this gate is not the coverage it claims"
+    );
+    assert!(
+        !blocks.is_empty(),
+        "the path module has impl blocks; a scan that found none proves nothing"
+    );
+    let mut offenders = Vec::new();
+    for (header, accessor) in &blocks {
+        for (line_number, line) in accessor.lines().enumerate() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("pub") {
+                continue;
+            }
+            for token in policy_tokens {
+                if trimmed.contains(token) {
+                    offenders.push(format!("{header} +{line_number}: {trimmed}"));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the canonical path surface must not expose strategy policy: {offenders:?}"
+    );
+}

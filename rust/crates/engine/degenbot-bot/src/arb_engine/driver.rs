@@ -255,6 +255,37 @@ pub struct EngineDriver {
     stopped: AtomicBool,
 }
 
+/// Bind the session's path-identity owner to the engine this driver drives.
+///
+/// A driver's `Bot` IS the session, and this driver's `EngineStages` is the
+/// session's only path registry, so composition is the one place both halves
+/// are in hand. Binding them here is what makes the session's canonical path
+/// identity reachable at all: a registry with no owner answers every path ask
+/// with [`ObjectRefusal::NoPathOwner`](crate::bot_core::session_registry::ObjectRefusal::NoPathOwner),
+/// so the identity the session exposes would be one no consumer can name.
+///
+/// # A second install is reported, not merged
+///
+/// Two engines in one session are two path-id spaces, so a consumer asking
+/// the session which id a route has could be answered by the first engine for
+/// the second engine's route. The session therefore keeps the FIRST owner —
+/// a complete, working identity space — and this site reports the fork at
+/// ERROR rather than absorbing it silently or aborting the boot: a wiring
+/// mistake should be impossible to miss, and killing the process over a second
+/// seam would trade a diagnosable fork for an unbootable bot.
+fn install_session_path_owner(bot: &Bot, stages: &EngineStages) {
+    if let Err(refused) = bot
+        .session_registry()
+        .install_path_objects(stages.session_path_objects())
+    {
+        op_error!(
+            domain = path,
+            rejected_owner_paths = refused.path_count(),
+            "a session already has a path-identity owner; this engine's paths are unreachable from the session and the session answers with the first engine's path ids"
+        );
+    }
+}
+
 impl EngineDriver {
     /// Standalone-Rust construction: adopts the shared `Bot` and builds the
     /// stage seam from the caller's typed config (ADR-050 D2).
@@ -311,6 +342,7 @@ impl EngineDriver {
     ) -> Self {
         stages.set_result_channel(channels.result);
         stages.set_block_channel(channels.block);
+        install_session_path_owner(&bot, &stages);
         let (pump_finished_tx, pump_finished_rx) = watch::channel(false);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         Self {

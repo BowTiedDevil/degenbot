@@ -16,6 +16,13 @@
 //! signature in one call, so `path_pools` and `pool_to_paths` cannot be
 //! desynced by a partial registration. `remove` is the inverse: it drops the
 //! path, prunes the reverse index, and clears the signature.
+//!
+//! `path_objects` is the session's VIEW of these entries, not a second
+//! authority: it is keyed by the ids allocated here, holds no id this registry
+//! did not allocate, and is withdrawn with the path in `remove`. It exists so
+//! the session can hand out one canonical path object per route without a
+//! second store that could disagree with this one about which route is which.
+use crate::bot_core::session_registry::{PathIdentity, PathObject};
 use ::degenbot_solvers::mixed::{HopType, MixedPath, MixedPoolRef};
 use hashbrown::HashMap;
 use std::sync::Arc;
@@ -87,6 +94,12 @@ pub(crate) struct PathRegistry {
     path_cap: Option<usize>,
     /// Dedup hits counted engine-side (PRG-4).
     path_dedups: u64,
+    /// The session's canonical path object per registered path id. An INDEX
+    /// over `path_pools`: the ids are the ones this registry allocated, and
+    /// the objects are minted on the session's first request for a route
+    /// rather than eagerly, so a path registered without one costs nothing
+    /// here.
+    path_objects: HashMap<u64, Arc<PathObject>>,
 }
 impl Default for PathRegistry {
     fn default() -> Self {
@@ -104,7 +117,32 @@ impl PathRegistry {
             next_path_id: 1,
             path_cap: None,
             path_dedups: 0,
+            path_objects: HashMap::new(),
         }
+    }
+    /// The session's canonical path object for `path_id`, recording it on
+    /// first sight.
+    ///
+    /// Get-or-create keyed by the id THIS registry allocated, so a route the
+    /// session names twice yields the same object while the object exists, and
+    /// a re-registered route (which allocates a new id) yields a new one — the
+    /// object cannot outlive the engine's entry it names. `&mut` because
+    /// recording is registration, like `commit`.
+    ///
+    /// This records the session's VIEW of a path, not a path: the id is
+    /// already allocated, the dedup signature and cap are untouched, and
+    /// `remove` withdraws the object with the path it names.
+    pub(crate) fn canonical_path(
+        &mut self,
+        chain_id: u64,
+        path_id: u64,
+        identity: &PathIdentity,
+    ) -> Arc<PathObject> {
+        Arc::clone(
+            self.path_objects
+                .entry(path_id)
+                .or_insert_with(|| Arc::new(PathObject::mint(chain_id, identity.clone(), path_id))),
+        )
     }
     /// The existing path id for `signature`, or `None` when it is new.
     #[must_use]
@@ -208,6 +246,7 @@ impl PathRegistry {
                 .collect();
             self.path_signatures.remove(&signature);
         }
+        self.path_objects.remove(&path_id);
         removed
     }
     /// Set the registered-path cap (`None` = unlimited).

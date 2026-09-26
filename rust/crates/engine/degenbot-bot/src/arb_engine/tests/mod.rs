@@ -146,6 +146,7 @@ mod detached_merge;
 mod lane_unify;
 mod paths_reorg_and_locking;
 mod registration_and_delivery;
+mod session_paths;
 mod solidly;
 
 pub(crate) mod test_keys;

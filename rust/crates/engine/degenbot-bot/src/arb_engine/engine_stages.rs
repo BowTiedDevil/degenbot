@@ -37,6 +37,7 @@ use super::solve_cycle::CycleOutcome;
 use super::ArbitrageEngine;
 use super::EngineRetune;
 use super::PumpPhase;
+use crate::bot_core::session_registry::PathObjectAdapter;
 use crate::bot_core::stage_handlers::StageHandlers;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
@@ -188,6 +189,20 @@ impl EngineStages {
     #[must_use]
     pub fn core(&self) -> Arc<StateLock<BotState>> {
         Arc::clone(self.engine.lock().core())
+    }
+
+    /// The session's path-object ADAPTER over this engine's path identity.
+    ///
+    /// The session's object registry installs this once, so a strategy asks
+    /// the session for a canonical path and reaches the engine's `PathRegistry`
+    /// through it. The engine keeps the id space, the dedup index, and the cap;
+    /// the adapter is a view over them, so there is one path identity rather
+    /// than one per consumer.
+    #[must_use]
+    pub fn session_path_objects(&self) -> Arc<dyn PathObjectAdapter> {
+        Arc::new(super::path_objects::EnginePathObjects::new(Arc::clone(
+            &self.engine,
+        )))
     }
 
     /// Read the current pump-protocol phase (ZU7RAF core-owned truth): the

@@ -143,7 +143,16 @@ fn pool_refusal_to_none(refusal: &ObjectRefusal) -> Option<PySessionObject> {
     match refusal {
         ObjectRefusal::UnknownPoolIdentity { .. }
         | ObjectRefusal::UnknownPoolAddress { .. }
-        | ObjectRefusal::UnknownTokenIdentity { .. } => None,
+        | ObjectRefusal::UnknownTokenIdentity { .. }
+        // The path kinds reach this mapper only as "not held": no path getter
+        // crosses the binding yet, so a pool/token resolve cannot produce one
+        // of these, and the binding cutover maps the path surface on its own
+        // terms. Mapping them here keeps the mapper total without inventing an
+        // exception a pool resolve can never raise.
+        | ObjectRefusal::UnknownPathIdentity { .. }
+        | ObjectRefusal::NoPathOwner
+        | ObjectRefusal::UnroutablePath { .. }
+        | ObjectRefusal::PathCapacityReached { .. } => None,
     }
 }
 

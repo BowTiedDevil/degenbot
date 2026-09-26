@@ -1,10 +1,20 @@
 # Session object registry — design note
 
-**Status: contract frozen, nothing implemented.** This note records the *target* agreed for
-epic `3CYYH3` (task `ZL2JKC`) before any interface work. It deliberately specifies no Rust
-trait, no Python method, and no FFI signature — those are separate tasks. Terminology is
-the settled set in [CONTEXT.md § Session objects](../CONTEXT.md#session-objects); this note
-is the reasoning behind it.
+**Status: pools, tokens, and paths implemented; positions and the Python/FFI
+cutover outstanding.** This note records the *target* agreed for epic `3CYYH3`
+(task `ZL2JKC`) before any interface work. It deliberately specifies no Python method
+and no FFI signature — those are separate tasks. Terminology is the settled set in
+[CONTEXT.md § Session objects](../CONTEXT.md#session-objects); this note is the
+reasoning behind it.
+
+**The path kind landed as a reach, not a move.** `PathRegistry` could not be
+relocated without inverting the layering, so it stayed where it was and the
+registry reached it: `bot_core::session_registry::PathObjectAdapter` is the
+registry's side of the boundary, implemented once in
+`arb_engine::path_objects::EnginePathObjects`. The session registry holds no path
+map, and the engine keeps the id space, the dedup index, and the cap. Every other
+row below that says "the registry owns it" is a claim about the registry struct;
+the path row is a claim about a handle.
 
 ## The decision, in one paragraph
 
@@ -39,7 +49,7 @@ Consequences that follow from that scope and are settled here:
 |---|---|---|---|
 | **Pool** | family + chain + pool address (V4 adds `PoolManager` + `PoolId`) | `BotState` | The dominant kind; four separate owners exist today. |
 | **Token** | chain + address | `BotState` token entry | Pools reference tokens; identity is already address-keyed in every owner. |
-| **Path** | ordered `(pool, direction)` hop signature | none — `PathRegistry` is already identity-only | Cheapest to fold: the current owner already holds *only* identity, so it is the natural first proof. |
+| **Path** | ordered `(pool, direction)` hop signature over validated session pool objects, plus the id the path-identity owner allocated | none — `PathRegistry` is already identity-only | Cheapest to fold: the current owner already holds *only* identity, so it is the natural first proof. A path is SHARED across strategies: strategies borrow the canonical object and derive their own plan, so solver, dispatch, and submission stay out of it. |
 | **Position** | — | — | **Explicitly deferred.** Named as the next kind, not designed here. |
 
 The first cut is deliberately the set for which a canonical key is *already* unambiguous
@@ -81,7 +91,13 @@ The two failure modes this rule exists to prevent:
   [ADR-050](../adr/ADR-050-rust-native-engine-driver.md)) is the engine's single public
   seam. It *consumes* the object registry; it does not own it. The engine's path identity
   moves under the registry, but the engine keeps admission, solve, and per-event reorg
-  coordination.
+  coordination. Driver composition is where the path owner is BOUND: `assemble` — the one
+  point every driver constructor (`new`, `from_stages`, `from_stages_with_hub`) reaches
+  holding both the session `Bot` and its `EngineStages` — installs the engine's path
+  registry as the session's path-identity owner, so a booted session answers path asks
+  rather than refusing them for want of one. A second driver over one session is a second
+  path-id space, so the install is once-per-session and a second one is reported rather
+  than absorbed.
 - **`StrategyHost`** stays process-level governance (ADR-057): it registers and drives
   drivers and owns the nonce authority. Strategies attached to the host borrow object
   references from the session registry.
@@ -110,16 +126,17 @@ grow:
 | Python `TokenRegistry` (`degenbot/registry/token.py`) | Token objects by `(chain_id, address)` | **Replaced** as the identity owner. |
 | `EngineRegistry` (`degenbot/arbitrage/engine_registry.py`) key maps | `_v2_keys` / `_v3_keys` / `_v4_keys`: Python address → Rust `pool_id` mirrors | **Replaced.** This map *is* the cross-layer identity join the registry absorbs. |
 | `EngineRegistry` verify claims | `_v3_inflight` / `_v4_inflight` + `VerifyClaims` — at-most-once claims closing a check-then-act TOCTOU | **Replaced in meaning.** The at-most-once invariant is *kept* — the registration verify lifecycle is core-owned per [ADR-022](../adr/ADR-022-registration-verify-lifecycle-core-ownership.md) — but it becomes a consequence of get-or-create rather than a parallel claim table. This is the subtlest row: the claim machinery carries an invariant, not a cache, and must not simply be deleted. |
-| `PathRegistry` (`degenbot-bot::arb_engine::path_registry.rs`) | Path identity: paths, reverse index, signatures, id allocator, cap | **Folded in** as the path kind. Already identity-only, so this is the lowest-risk move. |
+| `PathRegistry` (`degenbot-bot::arb_engine::path_registry.rs`) | Path identity: paths, reverse index, signatures, id allocator, cap | **Reached, not moved** as the path kind: it stays the single owner of the id space and the dedup/cap state, and the session asks for a canonical path object through `PathObjectAdapter`. Already identity-only, so this is the lowest-risk step; relocating the struct would have made the lower layer name engine machinery. |
 | `StrategyKit` / `MarketContext` (`degenbot-strategy`) | Per-strategy boot-resolved composition and process-lifetime caches (connector index, DFS graph, token joins, warm code cache) | **Coordinated.** These are composition and cache surfaces, not object stores (ADR-061 D3). They keep the cache role but stop owning object identity — the token id/address joins are a per-strategy copy of token identity. |
 
 ## Migration order
 
 Sequenced so each step is independently shippable and no step strands an owner:
 
-1. **Path kind.** Fold `PathRegistry` in first. It is already identity-only with a
-   registration-only mutating surface, so it validates the get-or-create contract with no
-   live-state entanglement.
+1. **Path kind.** Reach `PathRegistry` rather than fold it — it is already identity-only
+   with a registration-only mutating surface, so it validates the get-or-create contract
+   with no live-state entanglement, and an adapter keeps the one owner and the layer order
+   intact. Landed.
 2. **Pool + token identity in the Rust core.** Introduce the registry beside `BotState`,
    keyed by the identity `BotState` already uses. `BotState` keeps live state and becomes
    a consumer of the registry; the `EngineRegistry` key maps are then provable mirrors of

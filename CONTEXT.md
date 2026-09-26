@@ -152,8 +152,9 @@ _Avoid_: "retry policy", "rebroadcast policy".
 
 ## Session objects
 
-The vocabulary for the per-session entity layer. Design record (no implementation
-yet): [docs/architecture/session-object-registry.md](docs/architecture/session-object-registry.md).
+The vocabulary for the per-session entity layer. Design record:
+[docs/architecture/session-object-registry.md](docs/architecture/session-object-registry.md).
+Pools, tokens, and paths are implemented; positions and the Python cutover are not.
 
 **Object**:
 A session-resident entity the session recognizes by canonical identity and hands out by

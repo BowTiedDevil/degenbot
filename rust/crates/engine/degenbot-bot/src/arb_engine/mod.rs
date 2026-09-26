@@ -97,6 +97,10 @@ mod path_lifecycle;
 // ADR-045: the path-identity registry (`PathRegistry`) —
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;
+// the session's path-object ADAPTER over that registry — the owner side of
+// `bot_core::session_registry::PathObjectAdapter`, so the session names
+// canonical paths without a second path store.
+pub mod path_objects;
 // 3WI4EO : the typed operator re-parameterization value crossing
 // the driver seam — `EngineRetune`, applied at construction and at runtime via
 // `EngineStages::apply_retune`.

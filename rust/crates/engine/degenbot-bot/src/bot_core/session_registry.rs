@@ -35,11 +35,25 @@
 //! Identity is **session-local**. A canonical key is meaningful only inside its
 //! session, so the chain the registry is constructed for is a constructor
 //! argument and a registry built for another chain is a different key space,
-//! not a filtered view of the same one. The first cut is pools and ERC-20
-//! tokens; paths and positions are not kinds here yet.
+//! not a filtered view of the same one. The kinds here are pools, ERC-20
+//! tokens, and paths; positions are not a kind yet.
+//!
+//! # The path kind is reached, not stored
+//!
+//! Pools and tokens are registered here, so their identity has one home. A
+//! path is different: its id space, its dedup signature index, and its cap
+//! already have an owner, so the registry reaches them through
+//! [`PathObjectAdapter`] and holds no path map of its own — a second map keyed
+//! by hop signature is exactly the drift the registry exists to remove. The
+//! canonical object is minted by that owner and is identity only; a strategy's
+//! plan is derived from it. See the [`path`] submodule for the split.
+
+mod path;
+
+pub use path::{PathHop, PathIdentity, PathObject, PathObjectAdapter};
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use alloy::primitives::Address;
 use dashmap::DashMap;
@@ -277,6 +291,39 @@ pub enum ObjectRefusal {
         /// The address the request named.
         address: Address,
     },
+    /// No canonical path object is registered for this hop signature. The
+    /// path-identity owner does not hold the route, so a resolve that may not
+    /// register answers with this rather than creating one.
+    #[error("no canonical path object is registered for {hops} in this session")]
+    UnknownPathIdentity {
+        /// The route the request named.
+        hops: PathIdentity,
+    },
+    /// The session has no path-identity owner installed, so it cannot answer
+    /// for a path at all. Distinct from a missing pool: every hop of the
+    /// request resolved, and the refusal is about the owner being unwired.
+    #[error("no path-identity owner is installed on this session's registry")]
+    NoPathOwner,
+    /// The path-identity owner refused the route: the hop shape cannot be
+    /// routed. The owner's own reason, kept verbatim so the diagnosis does not
+    /// get re-worded in transit.
+    #[error("the path-identity owner refused {hops}: {reason}")]
+    UnroutablePath {
+        /// The route the request named.
+        hops: PathIdentity,
+        /// The owner's reason for the refusal.
+        reason: String,
+    },
+    /// The path-identity owner's registered-path capacity is reached. A benign
+    /// stop signal for discovery, not a fault: the route is refused and the
+    /// owner keeps every path it already holds.
+    #[error("the path-identity owner's registered-path cap is reached ({registered}/{cap})")]
+    PathCapacityReached {
+        /// The owner's configured capacity.
+        cap: usize,
+        /// The owner's registered-path count at refusal.
+        registered: usize,
+    },
 }
 
 /// One session's pool object: canonical identity, and nothing else.
@@ -286,7 +333,7 @@ pub enum ObjectRefusal {
 /// advanced through [`BotState`]. This object is the stable name the session's
 /// consumers agree on; it holds no reserves, no liquidity, no journal, and no
 /// I/O handle.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PoolObject {
     chain_id: u64,
     identity: PoolIdentity,
@@ -353,14 +400,13 @@ impl TokenObject {
 }
 
 /// The session object registry: one per session, owning canonical identity for
-/// the session's pools and tokens.
+/// the session's pools, tokens, and paths.
 ///
 /// The registry is the single growth path — get-or-create — so a second
 /// registration seam cannot produce a second object for one identity, and a
 /// racing registration converges on the first rather than duplicating it. It
 /// holds no provider, DB handle, tick fetcher, or construction I/O, and it
 /// never writes [`BotState`]; it is identity only.
-#[derive(Debug)]
 pub struct SessionObjectRegistry {
     /// The chain this session is scoped to. Identity is session-local, so this
     /// is a property of the registry rather than a key component: a registry
@@ -380,6 +426,25 @@ pub struct SessionObjectRegistry {
     pool_addresses: DashMap<Address, PoolIdentity>,
     /// Token identities → the one canonical object per identity.
     tokens: DashMap<TokenIdentity, Arc<TokenObject>>,
+    /// The path-identity owner, installed once. A handle rather than a map
+    /// because this registry does not store paths: it asks the owner, which
+    /// holds the one path id space, dedup index, and cap.
+    paths: OnceLock<Arc<dyn PathObjectAdapter>>,
+}
+
+impl fmt::Debug for SessionObjectRegistry {
+    /// Counts, not contents: a registry handle is shared and an object's
+    /// address is not part of its identity, so dumping entries would report
+    /// allocation trivia where the question is scope.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionObjectRegistry")
+            .field("chain_id", &self.chain_id)
+            .field("pools", &self.pools.len())
+            .field("pool_addresses", &self.pool_addresses.len())
+            .field("tokens", &self.tokens.len())
+            .field("has_path_owner", &self.paths.get().is_some())
+            .finish()
+    }
 }
 
 impl SessionObjectRegistry {
@@ -391,6 +456,7 @@ impl SessionObjectRegistry {
             pools: DashMap::new(),
             pool_addresses: DashMap::new(),
             tokens: DashMap::new(),
+            paths: OnceLock::new(),
         }
     }
 
@@ -513,5 +579,101 @@ impl SessionObjectRegistry {
     #[must_use]
     pub fn token_count(&self) -> usize {
         self.tokens.len()
+    }
+
+    /// Install the session's path-identity owner — the one component that
+    /// holds the path id space, the dedup signature index, and the
+    /// registered-path cap.
+    ///
+    /// First install wins, and a second install is refused with the adapter
+    /// handed back: two owners in one session would be two id spaces, so the
+    /// same route could get a different id depending on which consumer asked,
+    /// which is the drift the registry exists to remove. One session therefore
+    /// installs one owner, once.
+    ///
+    /// # Errors
+    ///
+    /// `Err` carrying `adapter` when an owner is already installed.
+    pub fn install_path_objects(
+        &self,
+        adapter: Arc<dyn PathObjectAdapter>,
+    ) -> Result<(), Arc<dyn PathObjectAdapter>> {
+        self.paths.set(adapter)
+    }
+
+    /// Whether this session has a path-identity owner installed.
+    #[must_use]
+    pub fn has_path_owner(&self) -> bool {
+        self.paths.get().is_some()
+    }
+
+    /// How many canonical paths this session's owner holds — zero while no
+    /// owner is installed, because a session with no owner holds no paths.
+    #[must_use]
+    pub fn path_count(&self) -> usize {
+        self.paths.get().map_or(0, |owner| owner.path_count())
+    }
+
+    /// Get-or-create: the canonical path object for the ordered
+    /// `(pool, direction)` hops, registering the route through the
+    /// path-identity owner when it does not hold it yet.
+    ///
+    /// Each hop is validated against this session's pool objects FIRST, so a
+    /// hop naming a pool the session does not hold is refused before the owner
+    /// is asked to register anything. The twin of
+    /// [`Self::get_or_create_pool`] over hops instead of pools: a strategy
+    /// names the route it wants and gets back the one object every other
+    /// consumer of that route holds.
+    ///
+    /// # Errors
+    ///
+    /// A typed [`ObjectRefusal`]:
+    /// [`ObjectRefusal::UnknownPoolIdentity`] for a hop over a pool this
+    /// session does not hold, [`ObjectRefusal::NoPathOwner`] while no owner is
+    /// installed, and the owner's own typed refusal otherwise (an unroutable
+    /// hop shape, or the registered-path cap). A refusal registers nothing.
+    pub fn get_or_create_path(
+        &self,
+        hops: &[(PoolIdentity, bool)],
+    ) -> Result<Arc<PathObject>, ObjectRefusal> {
+        let identity = self.path_identity(hops)?;
+        let owner = self.path_owner()?;
+        owner.get_or_create_path(self.chain_id, &identity)
+    }
+
+    /// The canonical path object for the ordered hops, without registering a
+    /// route. A resolve that may not grow the owner's path set.
+    ///
+    /// # Errors
+    ///
+    /// A typed [`ObjectRefusal`], as for [`Self::get_or_create_path`], with
+    /// [`ObjectRefusal::UnknownPathIdentity`] when the owner holds no such
+    /// route. The refusal registers nothing and does not pre-empt the
+    /// get-or-create that may legitimately register it next.
+    pub fn resolve_path(
+        &self,
+        hops: &[(PoolIdentity, bool)],
+    ) -> Result<Arc<PathObject>, ObjectRefusal> {
+        let identity = self.path_identity(hops)?;
+        let owner = self.path_owner()?;
+        owner.resolve_path(self.chain_id, &identity)
+    }
+
+    /// The hop signature for a path request, with every hop resolved to the
+    /// session's canonical pool object. This is where "validated pool
+    /// references" is enforced on the registry side.
+    fn path_identity(&self, hops: &[(PoolIdentity, bool)]) -> Result<PathIdentity, ObjectRefusal> {
+        hops.iter()
+            .map(|(identity, zero_for_one)| {
+                self.resolve_pool(identity)
+                    .map(|pool| PathHop::new(pool, *zero_for_one))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(PathIdentity::new)
+    }
+
+    /// The installed path-identity owner.
+    fn path_owner(&self) -> Result<&Arc<dyn PathObjectAdapter>, ObjectRefusal> {
+        self.paths.get().ok_or(ObjectRefusal::NoPathOwner)
     }
 }
