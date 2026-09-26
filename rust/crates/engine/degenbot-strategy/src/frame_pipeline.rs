@@ -1064,4 +1064,303 @@ mod tests {
         };
         assert_eq!(family_label(&family), "v4");
     }
+
+    // ── The `eth_callMany` bundle gate ──────────────────────────────────
+    //
+    // `simulate_candidate` is the only place backrun candidates pass or
+    // fail, and its failure mode is silent: an endpoint that implements
+    // neither envelope drops every candidate with no log. These tests drive
+    // the function against a scripted JSON-RPC node on a real unix socket --
+    // the same transport approach as `backrun_driver::tests::ipc_node` --
+    // and assert on the request shapes the provider actually sent.
+
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    use alloy::primitives::{Address, Bytes, B256, U256};
+    use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+    use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
+
+    use super::simulate_candidate;
+
+    /// The `params` of every request the scripted node received.
+    type RequestLog = Arc<Mutex<Vec<serde_json::Value>>>;
+
+    /// A JSON-RPC endpoint on a real unix socket. It records the `params` of
+    /// every request and answers `eth_callMany` through `reply`. `Ok` is the
+    /// JSON-RPC `result`, `Err` is `(code, message)`.
+    ///
+    /// Follows `backrun_driver::tests::ipc_node`: the IPC client frames bare
+    /// JSON values with no delimiter, so each buffer is parsed as soon as it
+    /// holds one complete value. A mock transport would prove nothing here
+    /// because the emitted request shape is the subject, so the requests are
+    /// read off a socket.
+    #[expect(clippy::expect_used, reason = "test fixtures fail loudly")]
+    fn recording_ipc_node(
+        dir: &std::path::Path,
+        reply: impl Fn(&serde_json::Value) -> Result<serde_json::Value, (i64, String)>
+            + Send
+            + Sync
+            + 'static,
+    ) -> (std::path::PathBuf, RequestLog) {
+        let path = dir.join("node.ipc");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind the IPC socket");
+        let log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+        let reply = Arc::new(reply);
+        let thread_log = Arc::clone(&log);
+        std::thread::spawn(move || {
+            while let Ok((mut stream, _)) = listener.accept() {
+                let log = Arc::clone(&thread_log);
+                let reply = Arc::clone(&reply);
+                std::thread::spawn(move || {
+                    let mut pending = String::new();
+                    let mut chunk = [0_u8; 4096];
+                    loop {
+                        let Ok(read) = stream.read(&mut chunk) else {
+                            return;
+                        };
+                        if read == 0 {
+                            return;
+                        }
+                        pending.push_str(&String::from_utf8_lossy(&chunk[..read]));
+                        loop {
+                            let Ok(request) =
+                                serde_json::from_str::<serde_json::Value>(pending.trim())
+                            else {
+                                break;
+                            };
+                            pending.clear();
+                            let id = request
+                                .get("id")
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null);
+                            let params = request
+                                .get("params")
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null);
+                            log.lock()
+                                .expect("the recording lock is not poisoned")
+                                .push(params.clone());
+                            let response = match reply(&params) {
+                                Ok(result) => {
+                                    serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})
+                                }
+                                Err((code, message)) => serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "error": {"code": code, "message": message},
+                                }),
+                            };
+                            if write!(stream, "{response}").is_err() || stream.flush().is_err() {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        (path, log)
+    }
+
+    /// The searcher-doc shape: `params[0]` is the bundle object.
+    fn is_doc_shape(params: &serde_json::Value) -> bool {
+        params
+            .get(0)
+            .and_then(|p0| p0.get("transactions"))
+            .is_some_and(serde_json::Value::is_array)
+    }
+
+    /// The mev-geth shape reth parses: `params[0]` is a LIST whose first
+    /// element is the bundle object.
+    fn is_mev_geth_shape(params: &serde_json::Value) -> bool {
+        params
+            .get(0)
+            .and_then(serde_json::Value::as_array)
+            .and_then(|blocks| blocks.first())
+            .and_then(|block| block.get("transactions"))
+            .is_some_and(serde_json::Value::is_array)
+    }
+
+    /// A minimal frame: the gate reads only `from`/`to`/`data`/`value`/`gas`/
+    /// `max_fee_per_gas`.
+    fn sim_frame() -> BackrunFeedEvent {
+        BackrunFeedEvent {
+            chain_id: 1,
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
+            value: U256::from(1_u64),
+            data: Bytes::from(vec![0xaa, 0xbb]),
+            gas: 200_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            nonce: 7,
+            hash: B256::repeat_byte(0x33),
+            access_list: serde_json::json!([]),
+            tx_type: 2,
+            received_unix_ms: 0,
+            raw_signed_tx: None,
+        }
+    }
+
+    /// Drive the gate against one scripted endpoint and return whether it
+    /// admitted the bundle plus the exact request params it sent.
+    #[expect(clippy::expect_used, reason = "test fixtures fail loudly")]
+    async fn run_gate(
+        dir: &std::path::Path,
+        reply: impl Fn(&serde_json::Value) -> Result<serde_json::Value, (i64, String)>
+            + Send
+            + Sync
+            + 'static,
+    ) -> (bool, Vec<serde_json::Value>) {
+        let (path, log) = recording_ipc_node(dir, reply);
+        let provider =
+            AlloyProvider::new(&format!("ipc://{}", path.display()), DEFAULT_MAX_RETRIES)
+                .await
+                .expect("a scripted socket builds a provider");
+        let admitted = simulate_candidate(
+            &provider,
+            &sim_frame(),
+            Address::repeat_byte(0x44),
+            Address::repeat_byte(0x55),
+            &Bytes::from(vec![0x01, 0x02]),
+        )
+        .await;
+        let requests = log
+            .lock()
+            .expect("the recording lock is not poisoned")
+            .clone();
+        (admitted, requests)
+    }
+
+    /// The fallback is what makes reth work: an endpoint that rejects the
+    /// searcher-doc shape with -32602 and accepts the mev-geth block-list
+    /// shape admits the bundle. Both requests must have been sent, and the
+    /// second must be the mev-geth shape.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn the_mev_geth_fallback_admits_where_the_doc_shape_is_rejected() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (admitted, requests) = run_gate(dir.path(), |params| {
+            if is_doc_shape(params) {
+                Err((-32602, "invalid type: map, expected a sequence".to_string()))
+            } else {
+                Ok(serde_json::json!([{"success": true, "returnData": "0x"}]))
+            }
+        })
+        .await;
+
+        assert!(
+            admitted,
+            "reth admits the bundle through the mev-geth fallback: {requests:?}"
+        );
+        assert_eq!(
+            requests.len(),
+            2,
+            "the doc shape was tried first, then the fallback: {requests:?}"
+        );
+        assert!(
+            is_doc_shape(&requests[0]),
+            "the first attempt is the searcher-doc shape: {:?}",
+            requests[0]
+        );
+        assert!(
+            is_mev_geth_shape(&requests[1]),
+            "the second attempt wraps the bundle in the mev-geth blocks list: {:?}",
+            requests[1]
+        );
+    }
+
+    /// Fail closed, loudly in the assertion: an endpoint that implements
+    /// neither envelope (`-32601 Method not found`, as anvil v1.7.1 answers)
+    /// drops the candidate. The gate returns `false` rather than assuming the
+    /// bundle reverted; both shapes must have been attempted.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn a_node_without_the_sim_method_fails_closed_after_both_shapes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (admitted, requests) = run_gate(dir.path(), |_params| {
+            Err((-32601, "Method not found".to_string()))
+        })
+        .await;
+
+        assert!(
+            !admitted,
+            "DELIBERATE, not a bug: an endpoint that implements neither \
+             eth_callMany shape must drop the candidate -- the gate fails \
+             closed instead of misreading a method-missing error as a revert \
+             (this is the anvil v1.7.1 case)"
+        );
+        assert_eq!(
+            requests.len(),
+            2,
+            "both shapes were attempted before the gate gave up: {requests:?}"
+        );
+        assert!(
+            is_doc_shape(&requests[0]) && is_mev_geth_shape(&requests[1]),
+            "the two attempts are the doc shape then the mev-geth shape: {requests:?}"
+        );
+    }
+
+    /// Order is pinned: a doc-shape endpoint that accepts on the first
+    /// attempt must receive EXACTLY ONE request, so a future "always try
+    /// both" change cannot double sim traffic.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn a_doc_shape_endpoint_is_asked_exactly_once() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (admitted, requests) = run_gate(dir.path(), |_params| {
+            Ok(serde_json::json!([{"success": true, "returnData": "0x"}]))
+        })
+        .await;
+
+        assert!(admitted, "the doc shape admits the bundle: {requests:?}");
+        assert_eq!(
+            requests.len(),
+            1,
+            "a first-attempt success must stop the loop, not re-send the bundle: {requests:?}"
+        );
+        assert!(
+            is_doc_shape(&requests[0]),
+            "the single request is the doc shape: {:?}",
+            requests[0]
+        );
+    }
+
+    /// A shape error is not a revert, and a revert is not success. The doc
+    /// shape is rejected with -32602 (a shape error, as reth answers) and the
+    /// mev-geth shape returns a well-formed REVERT result: the gate must
+    /// return `false`. This is a distinct branch from the method-missing
+    /// case -- attempt two returns `Ok`, so a change that treated any parsed
+    /// response as a pass would ship green there but fail here.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn a_shape_error_is_not_a_revert_and_a_revert_is_not_success() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (admitted, requests) = run_gate(dir.path(), |params| {
+            if is_doc_shape(params) {
+                Err((-32602, "invalid type: map, expected a sequence".to_string()))
+            } else {
+                Ok(serde_json::json!([
+                    {"success": false, "error": "execution reverted", "returnData": "0x"}
+                ]))
+            }
+        })
+        .await;
+
+        assert!(
+            !admitted,
+            "a reverted bundle never passes the gate: {requests:?}"
+        );
+        assert_eq!(
+            requests.len(),
+            2,
+            "the doc shape was rejected, then the fallback served the revert: {requests:?}"
+        );
+        assert!(
+            is_mev_geth_shape(&requests[1]),
+            "the revert came back on the mev-geth shape, distinct from the \
+             method-missing case: {:?}",
+            requests[1]
+        );
+    }
 }
