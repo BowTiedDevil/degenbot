@@ -154,7 +154,9 @@ _Avoid_: "retry policy", "rebroadcast policy".
 
 The vocabulary for the per-session entity layer. Design record:
 [docs/architecture/session-object-registry.md](docs/architecture/session-object-registry.md).
-Pools, tokens, and paths are implemented; the position seam is declared and the bot boot binds a reader, and the Python cutover is not.
+All four kinds are implemented and the Python cutover is complete: the Python registries
+are adapters over core identity, and the superseded key maps and claim tables are
+deleted. Decision record: [ADR-064](docs/adr/ADR-064-session-object-registry-cutover.md).
 
 **Object**:
 A session-resident entity the session recognizes by canonical identity and hands out by

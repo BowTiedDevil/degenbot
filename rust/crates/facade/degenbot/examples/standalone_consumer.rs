@@ -473,6 +473,7 @@ fn main() {
     //    (mock transport with an empty queue).
     in_process_sim_standalone_slice();
     registration_lifecycle_standalone_slice();
+    session_registry_get_or_create_standalone_slice();
     operator_config_standalone_slice();
 }
 
@@ -595,6 +596,89 @@ fn operator_config_standalone_slice() {
     println!(
         "standalone degenbot consumer OK: operator file — node {http_file} + database {db_file} resolved from the FILE layer, env overrides win from the ENV layer"
     );
+}
+
+/// (Session object registry) A standalone Rust consumer reaches the session's
+/// canonical pool identity through get-or-create, with no Python and no
+/// private dedup map of its own.
+///
+/// The slice is the standalone form of the migration's central claim: identity
+/// is minted once per session, and a second caller naming the same pool gets
+/// the SAME object back rather than a second one. It also pins the property
+/// that makes the registry an identity owner rather than a cache — the entry
+/// count grows only when an identity is genuinely new, and an address-keyed
+/// read answers with the object that first claimed the address.
+fn session_registry_get_or_create_standalone_slice() {
+    use degenbot::bot_core::session_registry::{PoolIdentity, SessionObjectRegistry};
+
+    let registry = SessionObjectRegistry::new(1);
+    assert_eq!(registry.pool_count(), 0, "a fresh session holds no pools");
+
+    let shared_address = address!("000000000000000000000000000000000000000C");
+    let first = registry.get_or_create_pool(PoolIdentity::v2(shared_address));
+    assert_eq!(
+        first.chain_id(),
+        1,
+        "the object names its own session scope"
+    );
+    assert_eq!(first.family_tag(), "v2", "the object names its own family");
+    assert_eq!(
+        registry.pool_count(),
+        1,
+        "get-or-create registered one pool"
+    );
+
+    // The whole point: the same identity answers with the same object, and
+    // the session did not grow a second entry for it.
+    let second = registry.get_or_create_pool(PoolIdentity::v2(shared_address));
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "get-or-create must return the one canonical object for one identity"
+    );
+    assert_eq!(
+        registry.pool_count(),
+        1,
+        "a repeat get-or-create registers nothing"
+    );
+
+    // A different family at the same address is a DIFFERENT object: the
+    // registry is keyed by canonical identity, not by address alone.
+    let other_family = registry.get_or_create_pool(PoolIdentity::v3(shared_address));
+    assert_eq!(
+        registry.pool_count(),
+        2,
+        "a distinct family is a distinct object"
+    );
+    assert_ne!(
+        first.family_tag(),
+        other_family.family_tag(),
+        "family is part of the canonical identity"
+    );
+
+    // The address view answers for a consumer that knows only an address, and
+    // it answers with the object that FIRST claimed it.
+    let by_address = registry
+        .resolve_pool_by_address(&shared_address)
+        .expect("the address view resolves a claimed address");
+    assert!(
+        Arc::ptr_eq(&first, &by_address),
+        "the address view names the object that first claimed the address"
+    );
+
+    // An address no identity has claimed refuses rather than minting: a read
+    // is never a growth path.
+    let unclaimed = address!("00000000000000000000000000000000000000EE");
+    assert!(
+        registry.resolve_pool_by_address(&unclaimed).is_err(),
+        "an unclaimed address refuses instead of registering"
+    );
+    assert_eq!(
+        registry.pool_count(),
+        2,
+        "the refused read registered nothing"
+    );
+
+    println!("standalone degenbot consumer OK: session registry get-or-create returns one canonical object");
 }
 
 /// (IKGQ6F / ADR-022 D1) Standalone-Rust consumer drives the core-owned

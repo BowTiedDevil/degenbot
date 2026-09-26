@@ -1,12 +1,16 @@
 # Session object registry — design note
 
-**Status: pools, tokens, and paths implemented; the position seam is declared and the
-bot boot binds a reader (see *Who installs it, and where*); the Python/FFI
-cutover is outstanding.** This note records the *target* agreed for epic `3CYYH3`
-(task `ZL2JKC`) before any interface work. It deliberately specifies no Python method
-and no FFI signature — those are separate tasks. Terminology is the settled set in
-[CONTEXT.md § Session objects](../CONTEXT.md#session-objects); this note is the
-reasoning behind it.
+**Status: landed.** All four kinds are implemented and the Python/FFI cutover is
+complete — the Python registries are adapters over core identity, the superseded key
+maps and claim tables are deleted, and the architecture gates keep them gone. The
+decision record is [ADR-064](../adr/ADR-064-session-object-registry-cutover.md);
+this note is the reasoning behind the target. Terminology is the settled set in
+[CONTEXT.md § Session objects](../CONTEXT.md#session-objects).
+
+This note was written before the interface work and deliberately specifies no Python
+method and no FFI signature. Where the implementation settled such a question, ADR-064
+records the outcome; where it did not, the *Open questions* section below is the
+record of what was still undecided and is retained as history.
 
 **The path kind landed as a reach, not a move.** `PathRegistry` could not be
 relocated without inverting the layering, so it stayed where it was and the
@@ -219,13 +223,14 @@ Sequenced so each step is independently shippable and no step strands an owner:
    with a registration-only mutating surface, so it validates the get-or-create contract
    with no live-state entanglement, and an adapter keeps the one owner and the layer order
    intact. Landed.
-2. **Pool + token identity in the Rust core.** Introduce the registry beside `BotState`,
-   keyed by the identity `BotState` already uses. `BotState` keeps live state and becomes
-   a consumer of the registry; the `EngineRegistry` key maps are then provable mirrors of
-   a single source.
+2. **Pool + token identity in the Rust core.** The registry landed beside `BotState`,
+   keyed by the identity `BotState` already uses. `BotState` keeps live state and became a
+   consumer of the registry, so the `EngineRegistry` key maps became provable mirrors of a
+   single source. Landed.
 3. **Retire the `EngineRegistry` key maps and the Python `PoolRegistry` / `TokenRegistry`
-   identity roles.** Registration claims are re-expressed as get-or-create (ADR-022's
-   at-most-once invariant preserved), then the claim tables go.
+   identity roles.** Registration claims were re-expressed as get-or-create (ADR-022's
+   at-most-once invariant preserved) and the claim tables were deleted; the Python
+   registries survive as delegates that keep only the presentation object. Landed.
 4. **Repoint `StrategyKit` / `MarketContext`.** Replace the per-strategy token joins with
    borrowed references; caches remain, identity does not.
 5. **Position kind.** Landed. The identity is settled, the seam is declared

@@ -101,6 +101,77 @@ fn for_each_rust_source(dir: &Path, f: &mut dyn FnMut(&Path, &str)) {
     }
 }
 
+/// Every `` Python|Python's `symbol` [noun] <verb> `` occurrence in a comment
+/// line, as `(symbol, following_lowercase_noun, next_word)`.
+///
+/// Returned ungated so the CALLER decides: the same phrase is a definition in
+/// one sentence and a parity note in another, and which one it is depends on
+/// the verb, not the phrase.
+fn python_phrases(line: &str) -> Vec<(String, String, String)> {
+    let bytes: Vec<char> = line.chars().collect();
+    let mut found = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if index + 6 > bytes.len() || !bytes[index..].starts_with(&['P', 'y', 't', 'h', 'o', 'n']) {
+            index += 1;
+            continue;
+        }
+        let mut cursor = index + 6;
+        if bytes.get(cursor) == Some(&'\'') {
+            cursor += 1;
+            if bytes.get(cursor) == Some(&'s') {
+                cursor += 1;
+            }
+        }
+        if bytes.get(cursor) != Some(&' ') {
+            index += 1;
+            continue;
+        }
+        while bytes.get(cursor) == Some(&' ') {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&'`') {
+            index += 1;
+            continue;
+        }
+        let symbol_start = cursor + 1;
+        let Some(symbol_end) = bytes[symbol_start..].iter().position(|c| *c == '`') else {
+            index += 1;
+            continue;
+        };
+        let symbol: String = bytes[symbol_start..symbol_start + symbol_end]
+            .iter()
+            .collect();
+        cursor = symbol_start + symbol_end + 1;
+
+        // An optional lowercase noun travels with the phrase ("the Python
+        // `X` enum uses"); it is part of what names the symbol, so the test
+        // artifact exemption can see it.
+        let mut look = cursor;
+        while look < bytes.len() && bytes[look] == ' ' {
+            look += 1;
+        }
+        let noun_start = look;
+        while look < bytes.len() && bytes[look].is_ascii_lowercase() {
+            look += 1;
+        }
+        let noun: String = bytes[noun_start..look].iter().collect();
+
+        // The next word is the verb, when the phrase names the agent.
+        while look < bytes.len() && bytes[look] == ' ' {
+            look += 1;
+        }
+        let verb_start = look;
+        while look < bytes.len() && (bytes[look].is_ascii_alphanumeric() || bytes[look] == '_') {
+            look += 1;
+        }
+        let verb: String = bytes[verb_start..look].iter().collect();
+        found.push((symbol, noun, verb));
+        index = cursor;
+    }
+    found
+}
+
 #[test]
 fn workspace_membership_is_exact_and_role_grouped() {
     const EXPECTED_NAMES: [&str; 33] = [
@@ -803,5 +874,301 @@ fn the_position_seam_sits_in_the_layer_both_sides_depend_on() {
     assert!(
         seam.exists(),
         "the position seam must be declared in degenbot-core, the layer both sides share"
+    );
+}
+/// A core-crate PUBLIC item may not define its own contract by pointing at a
+/// Python-side symbol, and this gate polices the narrowest decidable form of
+/// that: a doc comment attached to a `pub` item in which a Python-qualified
+/// symbol is the semantic AGENT of a definitional verb ("the 1-based wire code
+/// the Python `PoolProbe` enum uses"), so the core value's meaning is whatever
+/// the Python side happens to say.
+///
+/// The existing pyo3-free gate polices the IMPORT, which is why a reverted
+/// `PoolFamily::probe_wire_code` carrying the doc "The 1-based wire code the
+/// Python `PoolProbe` enum uses" passed it: nothing wrote `use pyo3`.
+///
+/// Why this is not a ban on the word "Python": the core docs are full of
+/// legitimate mentions, and they use Python as a PARITY TARGET ("mirrors the
+/// Python oracle"), never as the DEFINITION. A word ban would report ~331
+/// pre-existing sites. The discriminator here is the GRAMMATICAL ROLE of the
+/// Python phrase, and it is deliberately the decidable subset of the real
+/// rule, not the whole of it:
+///
+///   - the item is `pub` (a private helper's comment is nobody's contract);
+///   - the Python phrase is `Python`/`Python's` + a backticked symbol;
+///   - the symbol is not a TEST artifact — a Python test suite is a witness
+///     that a value agrees, never the definition of one, and this exemption is
+///     load-bearing rather than cosmetic: `degenbot-aave/src/analysis.rs` reads
+///     "tolerance the Python `test_core.py` suite uses", which is
+///     grammatically indistinguishable from the rejected probe and entirely
+///     legitimate;
+///   - the next word is a definitional verb, i.e. the Python symbol is the one
+///     doing the defining.
+///
+/// KNOWN LIMIT, stated rather than papered over: this catches the definitional
+/// shape only. A core comment that defines a value by a Python symbol without
+/// one of these verbs ("mirrors the Python `X` numbering", "as in the Python
+/// `X`") still passes, as does a contract-source comment on a non-`pub` item.
+/// The full rule is a judgment about which entity holds a definition, and no
+/// purely lexical gate can decide it without failing the same-shaped
+/// legitimate comments above — the alternative measured here was a call-graph
+/// rule (no public core API used only by the binding shell), which fails on 48
+/// pre-existing legitimate APIs. Treat this as a real subset of coverage, not
+/// the whole class.
+/// In the RUST CORE, a map keyed by one of the session's four canonical
+/// identity types lives in the session registry and NOWHERE ELSE.
+///
+/// SCOPE, stated because the name used to hide it: this gate is Rust-only. It
+/// walks `for_each_rust_source` over `rust/crates`, so it says nothing about
+/// the Python side, where address-keyed dedup state actually still lives in
+/// this repo. The Python surface is policed by review plus the removal of the
+/// maps that were authority; the maps that remain there are memos and caches
+/// that cannot mint identity (ADR-064 accounts for all five, and
+/// `retired_python_dedup_maps_do_not_reappear` holds the narrow decidable
+/// part).
+///
+/// Identity types are the one key the registry owns outright: a second map
+/// keyed by `PoolIdentity`, `TokenIdentity`, `PathIdentity`, or
+/// `PositionIdentity` is a second answer to "is this the same object?" — a
+/// second id space — which is the exact failure the registry exists to remove,
+/// and it is invisible to a type system because the two maps have the same key
+/// type. All FOUR are listed, not the two this gate shipped with: a list that
+/// omits a kind is not a weaker rule, it is a hole, and the path and position
+/// kinds were unproved until a probe outside the registry showed the gate
+/// passing a second path store.
+///
+/// The rule is deliberately scoped to the registry's OWN identity types rather
+/// than to address-keyed maps generally. An address-keyed map is not
+/// automatically a shadow identity: the core holds 48 pre-existing ones that
+/// are caches, ledgers, and indices with a different lifetime (executor
+/// encoders, the grammar ledger, the connector index, pool-ingress tick maps,
+/// the sim anchor). A gate that flagged all of them would be reporting the
+/// codebase rather than this rule. A map keyed by the registry's identity
+/// types, by contrast, is unambiguously a claim about session object identity,
+/// and there are none outside the registry today.
+#[test]
+fn no_second_map_in_the_rust_core_is_keyed_by_a_session_identity_type() {
+    let identity_keys = [
+        "PoolIdentity",
+        "TokenIdentity",
+        "PathIdentity",
+        "PositionIdentity",
+    ];
+    let collections = [
+        "DashMap<",
+        "HashMap<",
+        "BTreeMap<",
+        "HashSet<",
+        "BTreeSet<",
+        "RwLock<HashMap<",
+        "Mutex<HashMap<",
+    ];
+    let registry_module = "bot_core/session_registry";
+
+    let mut violations = Vec::new();
+    let crates_root = workspace_root().join("crates");
+    for_each_rust_source(&crates_root, &mut |path, text| {
+        let clean = path.display().to_string().replace('\\', "/");
+        if clean.contains("/tests/") || clean.contains("/benches/") {
+            return;
+        }
+        for (line_number, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            let Some(collection) = collections.iter().find(|c| trimmed.contains(**c)) else {
+                continue;
+            };
+            // The KEY type is the first generic argument, not any type in the
+            // line: `HashMap<u64, (V3PoolIdentity, V3PoolState)>` is keyed by a
+            // pool ID whose VALUE mentions an identity, and matching the whole
+            // line flags that unrelated type.
+            let after = &trimmed[trimmed
+                .find(collection)
+                .map_or(0, |i| i + collection.len() - 1)..];
+            let Some(key_type) = after
+                .trim_start()
+                .trim_start_matches('<')
+                .split(',')
+                .next()
+                .map(|k| k.trim().trim_start_matches('&').trim_start_matches('*'))
+            else {
+                continue;
+            };
+            // The FINAL path segment names the type, so a fully-qualified key
+            // (`HashMap<crate::bot_core::session_registry::PathIdentity, u8>`)
+            // is caught too. Comparing the whole key type missed exactly that
+            // spelling, which is the spelling an out-of-registry caller reaches
+            // for when the registry is not in scope unqualified — so the gate
+            // would still have passed the probe written to prove it.
+            let named = key_type.rsplit("::").next().unwrap_or(key_type);
+            if !identity_keys
+                .iter()
+                .any(|k| named == *k || key_type.starts_with(&format!("{k}::")))
+            {
+                continue;
+            }
+            // The registry's own tables are the sanctioned home.
+            if clean.contains(registry_module) {
+                continue;
+            }
+            violations.push(format!("{clean}:{}: {trimmed}", line_number + 1));
+        }
+    });
+    assert!(
+        violations.is_empty(),
+        "only the session registry may key a map by a session identity type: {violations:?}"
+    );
+}
+
+/// The five Python dedup maps this cutover deleted must not come back.
+///
+/// The Rust sibling gate above is Rust-only — it walks `*.rs` — and the Python
+/// side is where address-keyed dedup state actually still lives in this repo,
+/// so the task's "no new private dedup map outside the session registry"
+/// criterion has no automated half on that side. A general Python text gate
+/// cannot decide the real rule (a map that CANNOT mint identity is legitimate,
+/// and there are five), but THIS subset is decidable and false-positive-free:
+/// these five names were the maps that WERE authority, they were removed
+/// because get-or-create replaced them, and no future change may legitimately
+/// reintroduce any of them. Rejecting a name that must never return is not a
+/// judgment call, so there is nothing here to tune.
+///
+/// KNOWN LIMIT, not papered over: this forbids the five RETIRED names, not
+/// dedup maps in general. A new Python map under a fresh name, or an
+/// address-keyed memo of registry-issued handles, is still not caught here —
+/// see ADR-064 for the five maps that legitimately remain and why none of them
+/// can mint identity. The Python surface beyond these names is policed by
+/// review, which is a weaker instrument than a gate and is recorded as such.
+///
+/// Deliberately scoped to `src/degenbot/`, not `tests/`: the regression tests
+/// that PROVE the removal still name these identifiers in prose (they have to,
+/// to document what is gone), and a test witness is not a second owner.
+#[test]
+fn retired_python_dedup_maps_do_not_reappear() {
+    let retired = [
+        "_v2_keys",
+        "_v3_keys",
+        "_v4_keys",
+        "_v3_inflight",
+        "_v4_inflight",
+    ];
+
+    let src = repo_root().join("src/degenbot");
+
+    assert!(
+        src.exists(),
+        "the Python source root moved; this gate's walk would vacuously pass"
+    );
+
+    let mut violations = Vec::new();
+    let mut walk = vec![src];
+    while let Some(dir) = walk.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read_dir src/degenbot") {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            let ft = entry.file_type().expect("file type");
+            if ft.is_dir() {
+                walk.push(path);
+            } else if ft.is_file() && path.extension().is_some_and(|e| e == "py") {
+                let text = std::fs::read_to_string(&path).expect("read python source");
+                for (line_number, line) in text.lines().enumerate() {
+                    for name in retired {
+                        if line.contains(name) {
+                            violations.push(format!(
+                                "{}:{}: {name}",
+                                path.display(),
+                                line_number + 1
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "retired Python dedup maps must not reappear under src/degenbot (ADR-064): {violations:?}"
+    );
+}
+
+#[test]
+fn core_public_docs_do_not_define_contracts_through_python_symbols() {
+    const DEFINITIONAL_VERBS: [&str; 14] = [
+        "uses",
+        "define",
+        "defines",
+        "means",
+        "determines",
+        "enumerates",
+        "numbers",
+        "indexes",
+        "expects",
+        "requires",
+        "produces",
+        "assigns",
+        "encodes",
+        "corresponds",
+    ];
+    // A Python test file witnesses that a core value agrees; it never defines
+    // one. See the note on `analysis.rs` above.
+    const TEST_ARTIFACT_MARKERS: [&str; 6] = ["test_", "_test", "conftest", ".py", "spec", "test"];
+
+    let mut violations = Vec::new();
+    for role in ["foundation", "engine", "integrations", "facade"] {
+        let dir = workspace_root().join("crates").join(role);
+        for_each_rust_source(&dir, &mut |path, text| {
+            let clean = path.display().to_string().replace('\\', "/");
+            if clean.contains("/tests/") || clean.contains("/benches/") {
+                return;
+            }
+            let lines: Vec<&str> = text.lines().collect();
+            for (index, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+                if !(trimmed.starts_with("///") || trimmed.starts_with("//!")) {
+                    continue;
+                }
+                // Only a `pub` item publishes a contract. Skip past the
+                // remaining doc lines, attributes, and blanks to reach it.
+                let mut next = index + 1;
+                while let Some(candidate) = lines.get(next) {
+                    let t = candidate.trim();
+                    let continues = t.is_empty()
+                        || t.starts_with("#[")
+                        || t.starts_with("//")
+                        || t.starts_with("#!");
+                    if !continues {
+                        break;
+                    }
+                    next += 1;
+                }
+                let Some(item) = lines.get(next) else {
+                    continue;
+                };
+                if !item.trim_start().starts_with("pub ") {
+                    continue;
+                }
+                for (symbol, noun, after_verb) in python_phrases(trimmed) {
+                    if TEST_ARTIFACT_MARKERS
+                        .iter()
+                        .any(|marker| symbol.contains(marker) || noun.contains(marker))
+                    {
+                        continue;
+                    }
+                    if DEFINITIONAL_VERBS.contains(&after_verb.as_str()) {
+                        violations.push(format!(
+                            "{clean}:{}: the Python `{symbol}` is the agent of `{after_verb}`",
+                            index + 1
+                        ));
+                    }
+                }
+            }
+        });
+    }
+    assert!(
+        violations.is_empty(),
+        "a core public item must not define its contract through a Python-side symbol: {violations:?}"
     );
 }
