@@ -95,6 +95,20 @@ degenbot pool update --to-block "latest:-128"
 degenbot pool update --chunk 5000
 ```
 
+#### Failure output
+
+A failed run names the endpoint, the chain, and the requested block range.
+When the failure is the RPC-connection class (a dropped or unreachable
+transport — the `backend connection task has stopped` family), the report says
+so directly, states that chunks already committed are kept, points at
+rerunning from the recorded per-exchange cursors, and then lists the
+per-exchange resume state (current at the requested target / behind with the
+last committed block / never updated) read from `exchanges.last_update_block`
+in the operator database. The updater commits per chunk, so this is the
+authoritative outstanding-work record; there is no automatic transport retry
+(retrying a dropped transport has partial-chunk correctness implications and
+needs its own decision).
+
 ### `degenbot exchange activate`
 
 Activate an exchange for pool tracking. Creates the database entry if it does

@@ -24,6 +24,10 @@ workspace = true
 [dependencies]
 degenbot-aave.workspace = true
 degenbot-config.workspace = true
+# The shared process runtime (`get_runtime`) the verify arm drives its one
+# chain-verified provider on — the same runtime the updater cores own, so no
+# ad-hoc runtime (and its freshly-built transport) is created per call.
+degenbot-core.workspace = true
 degenbot-db.workspace = true
 degenbot-pool-updater.workspace = true
 degenbot-rpc.workspace = true
@@ -48,6 +52,12 @@ serde_json = "^1"
 tracing = { version = "^0.1" }
 
 [dev-dependencies]
+# The WS-block-resolution regression test needs a local WebSocket stub (the
+# transport class whose persistent connection task dies when its owning
+# runtime is dropped — the HTTP stub cannot exercise that).
+tokio-tungstenite = { version = "^0.30", default-features = false, features = ["handshake"] }
+# The stub's WebSocketStream is driven through Sink/Stream.
+futures-util = "^0.3"
 # Fixture construction (fresh / Alembic-stamped / stale / foreign SQLite DBs).
 # `bundled` is already unified in via degenbot-db; named explicitly so a cold
 # test build never needs a system SQLite.

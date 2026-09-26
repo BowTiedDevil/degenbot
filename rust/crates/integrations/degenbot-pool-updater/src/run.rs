@@ -54,7 +54,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -80,6 +80,35 @@ use crate::spec::{load_active_exchange_specs, ExchangeSpec};
 /// The max-RPC-retries constant (mirrors the Python `get_v3_liquidity_events`
 /// retry budget — a sane conservative default; not yet configurable).
 const RPC_MAX_RETRIES: u32 = 5;
+
+/// The process-lifetime count of chunk-loop transport builds (the
+/// `AlloyProvider::new` site below). The lifecycle contract to pin: ONE
+/// transport per run regardless of chunk count, and none when the run has
+/// no work — a per-chunk or per-verification build is the runtime/transport
+/// churn that surfaces as alloy's
+/// `TransportErrorKind::BackendGone` ("backend connection task has stopped"),
+/// because every ad-hoc transport dies with its owning runtime.
+static RUN_PROVIDER_BUILDS: AtomicU64 = AtomicU64::new(0);
+
+fn note_run_provider_build() {
+    RUN_PROVIDER_BUILDS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// The instrumented transport-build count — a test-visible seam so the
+/// one-transport-per-run contract is pinnable offline (see the crate's
+/// `provider_lifecycle_contract` test).
+#[doc(hidden)]
+#[must_use]
+pub fn run_provider_build_count() -> u64 {
+    RUN_PROVIDER_BUILDS.load(Ordering::Relaxed)
+}
+
+/// Reset the transport-build counter to zero, returning the previous value.
+#[doc(hidden)]
+#[must_use]
+pub fn reset_run_provider_build_count() -> u64 {
+    RUN_PROVIDER_BUILDS.swap(0, Ordering::Relaxed)
+}
 
 /// The cadence for the chunk loop's operator-facing progress line. A short
 /// time-throttle keeps a long backfill's console output readable while still
@@ -765,6 +794,10 @@ pub fn run_pool_update(
     // the CLI main thread (no ambient tokio context); it panics when called
     // from within any tokio runtime context.
     let rt = degenbot_core::runtime::get_runtime();
+    // ONE transport for the whole chunk loop: the fetches and the pre-commit
+    // verification gate (VerifyCtx / FullVerifyCtx) all borrow this build, so
+    // its connection tasks live exactly as long as the run.
+    note_run_provider_build();
     let provider = rt.block_on(AlloyProvider::new(rpc_url, RPC_MAX_RETRIES))?;
     let provider = Arc::new(provider);
     let fetcher = LogFetcher::new(provider.clone(), chunk_size);

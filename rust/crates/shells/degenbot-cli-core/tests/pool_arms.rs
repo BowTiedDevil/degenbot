@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use degenbot_cli_core::{
-    parse_to_block, resolve_to_block, run, BlockTag, CliContext, CliError, Command, ExitCode,
-    PoolCommand, PoolFamily, PromptPlan, Prompter, ToBlockSpec,
+    ensure_supported_registrations, parse_to_block, resolve_to_block, run, BlockTag, CliContext,
+    CliError, Command, ExitCode, PoolCommand, PoolFamily, PromptPlan, Prompter, ToBlockSpec,
 };
 use degenbot_config::MapEnv;
 use degenbot_db::ops;
@@ -304,5 +304,175 @@ fn prompt_plans_are_none_for_both_pool_arms() {
     assert_eq!(
         ExitCode::from(&CliError::InvalidBlockTag("x".to_string())),
         ExitCode::Failure
+    );
+}
+
+// ── pool update failure rendering ─────────────────────────────────────────
+
+// The connection-class failure is injected honestly through the real seam:
+// an unparseable RPC URL makes `AlloyProvider::new` return
+// `ProviderError::ConnectionFailed` (the variant the transport's
+// `BackendGone` maps onto) before any network is touched.
+const DROP_ENDPOINT: &str = "http://[::1";
+
+/// Register the supported chain-8453 pairs, activate them, and stage their
+/// cursors so all three resume groups exist: the first row is already at the
+/// requested target (current), most sit at block 50 (behind), and every third
+/// remaining row was never updated. Returns the staged `(name, cursor)` pairs.
+fn seed_active_exchanges(db_path: &Path, chain_id: i64) -> Vec<(String, Option<i64>)> {
+    ensure_supported_registrations(db_path).unwrap(); // already registered; idempotent
+    let conn = rusqlite::Connection::open(db_path).unwrap();
+    let rows: Vec<(i64, String)> = {
+        let mut statement = conn
+            .prepare("SELECT id, name FROM exchanges WHERE chain_id = ?1 ORDER BY id")
+            .unwrap();
+        let mapped = statement
+            .query_map([chain_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap();
+        mapped.map(|row| row.unwrap()).collect()
+    };
+    let mut staged = Vec::with_capacity(rows.len());
+    for (index, (id, name)) in rows.iter().enumerate() {
+        let cursor = if index == 0 {
+            Some(500)
+        } else if index % 3 == 2 {
+            None
+        } else {
+            Some(50)
+        };
+        conn.execute(
+            "UPDATE exchanges SET active = 1, last_update_block = ?2 WHERE id = ?1",
+            rusqlite::params![id, cursor],
+        )
+        .unwrap();
+        staged.push((name.clone(), cursor));
+    }
+    staged
+}
+
+/// Run `pool update --to-block 100` against the drop endpoint (no network is
+/// touched) on a temp database and return the rendered failure message.
+fn drop_failure_message(db_path: &Path) -> String {
+    let mut map = BTreeMap::new();
+    map.insert("DEGENBOT_DEFAULT_CHAIN_ID".to_string(), "8453".to_string());
+    map.insert(
+        "DEGENBOT_RPC_HTTP_CHAINID_8453".to_string(),
+        DROP_ENDPOINT.to_string(),
+    );
+    let e = MapEnv::new(map);
+    let ctx = CliContext::new(&e).with_database(db_path.display().to_string());
+    let prompter = NoPrompt::new();
+    let outcome = run(
+        &Command::Pool(PoolCommand::Update {
+            chunk_size: 100,
+            to_block: "100".to_string(),
+            verify_chunk: false,
+            verify_all: false,
+            verify_all_interval: 1_000_000,
+        }),
+        &ctx,
+        &prompter,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Failure);
+    assert!(
+        matches!(outcome.error(), Some(CliError::PoolUpdate(_))),
+        "expected PoolUpdate, got {:?}",
+        outcome.error()
+    );
+    outcome.error().unwrap().message()
+}
+
+#[test]
+fn pool_update_transport_failure_names_endpoint_chain_and_range() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    let staged = seed_active_exchanges(&db, 8453);
+    assert!(!staged.is_empty(), "the fixture must register exchanges");
+    let message = drop_failure_message(&db);
+    // The message never updated these rows — the fixture's own cursors are
+    // still the truth this test pins.
+    assert!(
+        message.contains(&format!(
+            "the RPC connection to {DROP_ENDPOINT} dropped mid-run"
+        )),
+        "endpoint + drop wording missing: {message}"
+    );
+    assert!(message.contains("8453"), "chain missing: {message}");
+    // The never-updated exchanges put the intended start at block 1.
+    assert!(message.contains("blocks 1-100"), "range missing: {message}");
+    assert!(
+        message.contains("chunks already committed are kept"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Rerunning resumes from the recorded per-exchange cursors"),
+        "{message}"
+    );
+    assert!(
+        message.contains("underlying error:"),
+        "the library text is kept as detail: {message}"
+    );
+}
+
+#[test]
+fn pool_update_failure_reports_per_exchange_resume_state() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    seed_active_exchanges(&db, 8453);
+    let message = drop_failure_message(&db);
+    // Classify from the same read-only view the failure report uses, so the
+    // assertions are independent of the staged fixture's id order.
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let mut statement = conn
+        .prepare(
+            "SELECT name, last_update_block FROM exchanges \
+             WHERE chain_id = 8453 AND active = 1 ORDER BY name",
+        )
+        .unwrap();
+    let rows: Vec<(String, Option<i64>)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(|row| row.unwrap())
+        .collect();
+    assert!(!rows.is_empty(), "the fixture must register exchanges");
+    let current: Vec<String> = rows
+        .iter()
+        .filter(|(_, cursor)| matches!(cursor, Some(block) if *block >= 100))
+        .map(|(name, _)| name.clone())
+        .collect();
+    let behind: Vec<String> = rows
+        .iter()
+        .filter(|(_, cursor)| matches!(cursor, Some(block) if *block < 100))
+        .map(|(name, cursor)| format!("{name} (block {})", cursor.unwrap()))
+        .collect();
+    let never: Vec<String> = rows
+        .iter()
+        .filter(|(_, cursor)| cursor.is_none())
+        .map(|(name, _)| name.clone())
+        .collect();
+    if current.is_empty() {
+        assert!(
+            !message.contains("current at the requested target"),
+            "{message}"
+        );
+    } else {
+        assert!(
+            message.contains(&format!(
+                "current at the requested target: {}",
+                current.join(", ")
+            )),
+            "{message}"
+        );
+    }
+    assert!(
+        message.contains(&format!(
+            "behind (last committed block): {}",
+            behind.join(", ")
+        )),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("never updated: {}", never.join(", "))),
+        "{message}"
     );
 }

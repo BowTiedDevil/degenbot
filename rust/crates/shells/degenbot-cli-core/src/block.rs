@@ -163,22 +163,31 @@ pub fn resolve_to_block(spec: ToBlockSpec, rpc_url: &str) -> Result<Option<u64>,
 }
 
 /// Read the block number for `tag` over RPC.
+///
+/// The provider build and the read run on ONE `block_on` runtime, on
+/// purpose: a WebSocket transport spawns a persistent connection task bound
+/// to the runtime that constructed it, so constructing the provider on one
+/// ad-hoc runtime and issuing the read on another kills that task mid-flight
+/// and the request fails with alloy's `TransportErrorKind::BackendGone`
+/// ("backend connection task has stopped").
 fn fetch_tag_block_number(tag: BlockTag, rpc_url: &str) -> Result<u64, CliError> {
-    let provider = match block_on(AlloyProvider::new(rpc_url, RPC_MAX_RETRIES)) {
-        Ok(Ok(provider)) => provider,
-        Ok(Err(err)) => return Err(CliError::BlockResolution(err.to_string())),
-        Err(err) => return Err(err),
-    };
-    let arc = provider.provider_arc();
-    let result = block_on(async move { arc.get_block_by_number(tag.to_alloy()).await })?;
-    let block = result
-        .map_err(|err| CliError::BlockResolution(err.to_string()))?
-        .ok_or_else(|| {
-            CliError::BlockResolution(format!(
-                "eth_getBlockByNumber({}) returned no block",
-                tag.as_str()
-            ))
-        })?;
+    let result = block_on(async move {
+        let provider = match AlloyProvider::new(rpc_url, RPC_MAX_RETRIES).await {
+            Ok(provider) => provider,
+            Err(err) => return Err(CliError::BlockResolution(err.to_string())),
+        };
+        let arc = provider.provider_arc();
+        match arc.get_block_by_number(tag.to_alloy()).await {
+            Ok(block) => Ok(block),
+            Err(err) => Err(CliError::BlockResolution(err.to_string())),
+        }
+    })??;
+    let block = result.ok_or_else(|| {
+        CliError::BlockResolution(format!(
+            "eth_getBlockByNumber({}) returned no block",
+            tag.as_str()
+        ))
+    })?;
     Ok(block.header.number)
 }
 

@@ -12,10 +12,14 @@
 //!   liquidity map, compare against on-chain truth at `--block`, and render
 //!   GREEN / the named divergence list.
 
+use std::future::Future;
+use std::path::Path;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256};
+use degenbot_core::runtime::get_runtime;
 use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
 use degenbot_pool_updater::{
     run_pool_update, verify_v3_liquidity_map_on_chain, verify_v4_liquidity_map_on_chain,
@@ -25,7 +29,7 @@ use degenbot_pool_updater::{
 use crate::block::{parse_to_block, resolve_to_block};
 use crate::cancel::CancelHandle;
 use crate::context::CliContext;
-use crate::error::CliError;
+use crate::error::{CliError, ExchangeResumeState, PoolUpdateFailure};
 use crate::prompt::{PromptPlan, Prompter};
 use crate::report::PoolReport;
 
@@ -174,6 +178,13 @@ fn update(
     } else {
         None
     };
+    // The pre-run resume snapshot, for the failure line's requested-range
+    // bound: it mirrors the core's own `initial_start_block` (the minimum
+    // `last_update_block + 1` across the active exchanges). Read-only, so a
+    // failed diagnostic read must not fail the run — it degrades to the
+    // requested target.
+    let cursors = read_exchange_cursors(database_path.as_path(), chain).unwrap_or_default();
+    let from_block = initial_run_start_block(&cursors, resolved);
     match run_pool_update(
         &database_path,
         chain,
@@ -195,8 +206,62 @@ fn update(
             total_liquidity_applies: report.total_liquidity_applies,
         }),
         Err(RunError::Cancelled) => Ok(PoolReport::UpdateCancelled { chain_id: chain }),
-        Err(err) => Err(CliError::PoolUpdate(err)),
+        Err(err) => {
+            // Post-failure resume snapshot: the committed per-chunk progress
+            // (a chunk-boundary commit advances the exchange cursor), read
+            // only — the outstanding work a rerun resumes from. `None` when
+            // the snapshot read itself failed; the rendering says so.
+            let resume = read_exchange_cursors(database_path.as_path(), chain).ok();
+            Err(CliError::PoolUpdate(Box::new(PoolUpdateFailure {
+                error: err,
+                rpc_url: rpc_url.clone(),
+                chain_id: chain,
+                from_block,
+                to_block: resolved,
+                resume,
+            })))
+        }
     }
+}
+
+/// The read-only per-exchange cursor snapshot for `chain_id` — the resume
+/// state a mid-run failure leaves committed. Plain `SELECT`, so it writes
+/// nothing; `None` cursors are the never-updated exchanges.
+fn read_exchange_cursors(
+    database_path: &Path,
+    chain_id: i64,
+) -> Result<Vec<ExchangeResumeState>, rusqlite::Error> {
+    let conn = rusqlite::Connection::open_with_flags(
+        database_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let mut statement = conn.prepare(
+        "SELECT name, last_update_block FROM exchanges \
+         WHERE chain_id = ?1 AND active = 1 ORDER BY name",
+    )?;
+    let rows = statement.query_map([chain_id], |row| {
+        Ok(ExchangeResumeState {
+            name: row.get(0)?,
+            last_update_block: row.get(1)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// The run's intended start block, mirroring the core's own
+/// `initial_start_block`: the minimum `last_update_block + 1` across the
+/// active exchanges (a never-updated exchange starts at 1). An empty
+/// registration set falls back to the requested target.
+fn initial_run_start_block(cursors: &[ExchangeResumeState], to_block: Option<u64>) -> u64 {
+    cursors
+        .iter()
+        .map(|row| {
+            row.last_update_block
+                .map_or(1, |block| u64::try_from(block).unwrap_or(0) + 1)
+        })
+        .min()
+        .unwrap_or_else(|| to_block.unwrap_or(1))
+        .max(1)
 }
 
 /// `pool verify`.
@@ -221,32 +286,108 @@ fn verify(
     let chain = u64::try_from(chain_id).map_err(|_| {
         CliError::InvalidArgument(format!("chain id {chain_id} is not a valid chain"))
     })?;
-    let divergences = match target {
-        VerifyTarget::V3(address) => crate::block::block_on(async {
-            let provider =
-                degenbot_rpc::provider::AlloyProvider::for_chain(rpc_url, chain, RPC_MAX_RETRIES)
-                    .await
-                    .map_err(|err| CliError::BlockResolution(err.to_string()))?;
-            verify_v3_liquidity_map_on_chain(&provider, address, &computed, block_number)
+    // ONE chain-verified provider for the whole arm, on the process-wide
+    // shared runtime — the pattern `run_pool_update` uses for its chunk
+    // loop — NOT a fresh runtime + transport built inside `block::block_on`
+    // per target family (a per-family, per-verification build with its
+    // connection tasks destroyed alongside the ad-hoc runtime is the churn
+    // that intermittently surfaces as alloy's
+    // `TransportErrorKind::BackendGone`). The construction is lazy (the
+    // node is dialed only after the committed row above is resolved), the
+    // chain binding still runs exactly once (`for_chain` refuses a
+    // foreign-chain endpoint before any comparison), and no retry layer is
+    // added: a transport failure surfaces as the typed run failure.
+    let divergences = shared_runtime_block_on(async {
+        note_verify_provider_build();
+        let provider =
+            degenbot_rpc::provider::AlloyProvider::for_chain(rpc_url, chain, RPC_MAX_RETRIES)
                 .await
-                .map_err(CliError::PoolUpdate)
-        })??,
-        VerifyTarget::V4 { manager, pool_id } => crate::block::block_on(async {
-            let provider =
-                degenbot_rpc::provider::AlloyProvider::for_chain(rpc_url, chain, RPC_MAX_RETRIES)
+                .map_err(|err| CliError::BlockResolution(err.to_string()))?;
+        match target {
+            VerifyTarget::V3(address) => {
+                verify_v3_liquidity_map_on_chain(&provider, address, &computed, block_number)
                     .await
-                    .map_err(|err| CliError::BlockResolution(err.to_string()))?;
-            verify_v4_liquidity_map_on_chain(&provider, manager, pool_id, &computed, block_number)
-                .await
-                .map_err(CliError::PoolUpdate)
-        })??,
-    };
+                    .map_err(|err| {
+                        CliError::PoolUpdate(Box::new(PoolUpdateFailure {
+                            error: err,
+                            rpc_url: rpc_url.to_string(),
+                            chain_id,
+                            from_block: block_number,
+                            to_block: Some(block_number),
+                            resume: None,
+                        }))
+                    })
+            }
+            VerifyTarget::V4 { manager, pool_id } => verify_v4_liquidity_map_on_chain(
+                &provider,
+                manager,
+                pool_id,
+                &computed,
+                block_number,
+            )
+            .await
+            .map_err(|err| {
+                CliError::PoolUpdate(Box::new(PoolUpdateFailure {
+                    error: err,
+                    rpc_url: rpc_url.to_string(),
+                    chain_id,
+                    from_block: block_number,
+                    to_block: Some(block_number),
+                    resume: None,
+                }))
+            }),
+        }
+    })??;
     Ok(PoolReport::Verified {
         pool: pool.to_string(),
         family,
         block_number,
         divergences,
     })
+}
+
+/// Drive `fut` on the process-wide shared runtime — the `&'static`
+/// `degenbot_core::runtime::get_runtime()` singleton the updater cores
+/// drive — instead of building a throwaway `Builder` runtime per call.
+/// Same nesting constraint as [`crate::block::block_on`]: the arm must not
+/// run from inside another runtime.
+///
+/// # Errors
+///
+/// [`CliError::RuntimeNested`] when called from inside an existing runtime.
+fn shared_runtime_block_on<F: Future>(fut: F) -> Result<F::Output, CliError> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(CliError::RuntimeNested);
+    }
+    Ok(get_runtime().block_on(fut))
+}
+
+/// The process-lifetime count of `pool verify` transport builds (the
+/// `for_chain` site above). The lifecycle contract to pin: ONE build per
+/// verify run — zero when the arm fails before the node is needed, and
+/// never one per target family. The companion counter lives at the chunk
+/// loop's own build site (`degenbot-pool-updater`'s
+/// `run_provider_build_count`).
+static VERIFY_PROVIDER_BUILDS: AtomicU64 = AtomicU64::new(0);
+
+fn note_verify_provider_build() {
+    VERIFY_PROVIDER_BUILDS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// The instrumented transport-build count — a test-visible seam so the
+/// one-build-per-run contract is pinnable offline (see the crate's
+/// `pool_verify_lifecycle` test).
+#[doc(hidden)]
+#[must_use]
+pub fn verify_provider_build_count() -> u64 {
+    VERIFY_PROVIDER_BUILDS.load(Ordering::Relaxed)
+}
+
+/// Reset the transport-build counter to zero, returning the previous value.
+#[doc(hidden)]
+#[must_use]
+pub fn reset_verify_provider_build_count() -> u64 {
+    VERIFY_PROVIDER_BUILDS.swap(0, Ordering::Relaxed)
 }
 
 /// Fetch the pool's committed liquidity map + resolve the verify target.

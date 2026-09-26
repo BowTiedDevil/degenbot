@@ -38,6 +38,153 @@ impl ExitCode {
     }
 }
 
+/// One exchange's committed resume state, snapshotted read-only from the
+/// operator database's `exchanges.last_update_block` cursor column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExchangeResumeState {
+    /// The `exchanges.name` slug.
+    pub name: String,
+    /// The committed cursor; `None` when the exchange was never updated.
+    pub last_update_block: Option<i64>,
+}
+
+/// A `pool update` (or `pool verify`) core failure plus the run context the
+/// arm held when the core returned it.
+///
+/// The bare library text (`api error: backend connection task has stopped`)
+/// alone is not an operator diagnostic, and the arm must not have to
+/// reconstruct the run's identity at the print site — so the payload carries
+/// it structurally: the endpoint, the chain, the requested block range, and,
+/// for a mid-run failure, the per-exchange resume state read out of the
+/// operator database. The updater commits per chunk, so a failed run keeps
+/// every committed chunk and leaves the remaining exchanges' outstanding
+/// work recorded in their cursors; the failure report makes it visible.
+#[derive(Debug)]
+pub struct PoolUpdateFailure {
+    /// The underlying core error.
+    pub error: PoolRunError,
+    /// The RPC endpoint the run was bound to.
+    pub rpc_url: String,
+    /// The chain the run advances.
+    pub chain_id: i64,
+    /// The first block the run intended to process (the earliest committed
+    /// cursor + 1; mirrors the core's own `initial_start_block`).
+    pub from_block: u64,
+    /// The requested upper bound; `None` when the run targeted the chain tip.
+    pub to_block: Option<u64>,
+    /// The post-failure per-exchange resume snapshot; `None` when the
+    /// read-only cursor read itself failed (or a non-run failure carried no
+    /// snapshot).
+    pub resume: Option<Vec<ExchangeResumeState>>,
+}
+
+impl PoolUpdateFailure {
+    /// The operator-facing failure text.
+    #[must_use]
+    pub fn message(&self) -> String {
+        let error_text = self.error.to_string();
+        let range = self.range_text();
+        let mut lines = if self.is_rpc_connection_failure(&error_text) {
+            vec![
+                format!(
+                    "Chain {}: the RPC connection to {} dropped mid-run while advancing blocks \
+                     {}; chunks already committed are kept. Rerunning resumes from the recorded \
+                     per-exchange cursors.",
+                    self.chain_id, self.rpc_url, range
+                ),
+                format!("  underlying error: {error_text}"),
+            ]
+        } else {
+            vec![format!(
+                "Chain {}: pool update against {} failed while advancing blocks {}: {error_text}",
+                self.chain_id, self.rpc_url, range
+            )]
+        };
+        lines.extend(self.resume_lines());
+        lines.join("\n")
+    }
+
+    /// The range half of the failure line: `A-B`, or `A onward` for a tip run.
+    fn range_text(&self) -> String {
+        match self.to_block {
+            Some(to) => format!("{}-{to}", self.from_block),
+            None => format!("{} onward (the chain tip)", self.from_block),
+        }
+    }
+
+    /// Whether the core error is the RPC-connection class — a dropped or
+    /// unreachable transport. The provider layer maps the transport's
+    /// `BackendGone` (and the rest of the connection class) onto the
+    /// `Connection failed` / `Request timeout` variants, which is what the
+    /// updater surfaces inside `PoolRunError::Provider`.
+    ///
+    /// The provider error's type is not nameable at this console layer (it
+    /// lives in `degenbot-core`, which the console does not depend on), so the
+    /// class is read off the stable `#[error]` prefixes that layer renders;
+    /// the variant boundary is still matched structurally.
+    fn is_rpc_connection_failure(&self, error_text: &str) -> bool {
+        matches!(&self.error, PoolRunError::Provider(_))
+            && (error_text.starts_with("rpc error: Connection failed: ")
+                || error_text.starts_with("rpc error: Request timeout: "))
+    }
+
+    /// The per-exchange resume lines: which exchanges are current, which are
+    /// behind, and which were never updated — the outstanding work a rerun
+    /// picks up from the recorded cursors.
+    fn resume_lines(&self) -> Vec<String> {
+        let Some(rows) = &self.resume else {
+            return vec![
+                "  exchange cursor state unavailable: the read-only resume check failed"
+                    .to_string(),
+            ];
+        };
+        if rows.is_empty() {
+            return vec![format!(
+                "  no active exchanges were registered for chain {}.",
+                self.chain_id
+            )];
+        }
+        let mut current = Vec::new();
+        let mut behind = Vec::new();
+        let mut never_updated = Vec::new();
+        for row in rows {
+            match (row.last_update_block, self.to_block) {
+                (None, _) => never_updated.push(row.name.clone()),
+                // A run targeting the chain tip leaves unprocessed work in
+                // front of every cursor, so none is current at the target.
+                (Some(block), None) => {
+                    behind.push(format!("{} (block {block})", row.name));
+                }
+                (Some(block), Some(to)) => {
+                    let to = i64::try_from(to).unwrap_or(i64::MAX);
+                    if block >= to {
+                        current.push(row.name.clone());
+                    } else {
+                        behind.push(format!("{} (block {block})", row.name));
+                    }
+                }
+            }
+        }
+        let mut lines = Vec::new();
+        if !current.is_empty() {
+            lines.push(format!(
+                "  current at the requested target: {}",
+                current.join(", ")
+            ));
+        }
+        if !behind.is_empty() {
+            lines.push(format!(
+                "  behind (last committed block): {}",
+                behind.join(", ")
+            ));
+        }
+        if !never_updated.is_empty() {
+            lines.push(format!("  never updated: {}", never_updated.join(", ")));
+        }
+        lines
+    }
+}
+
 /// A typed console failure.
 ///
 /// Every variant carries the data the argv facade needs to render the
@@ -92,8 +239,14 @@ pub enum CliError {
     /// `aave update` found no active Aave markets (the Python
     /// `DegenbotValueError`).
     NoActiveAaveMarkets,
-    /// A `pool update` core failure (DB/RPC cancelled/verification).
-    PoolUpdate(PoolRunError),
+    /// A `pool update` / `pool verify` core failure (DB/RPC/cancelled/
+    /// verification), wrapped with the run context the arm held when the core
+    /// returned it (endpoint, chain, requested range, per-exchange resume
+    /// state) so the rendered diagnostic is complete.
+    ///
+    /// The payload is boxed to keep the variant out of the
+    /// `result_large_err` budget every arm's `Result` shares.
+    PoolUpdate(Box<PoolUpdateFailure>),
     /// An `aave` core failure (DB/RPC/verification/market-not-found).
     AaveUpdate(AaveRunError),
     /// A command arm that `block_on`s the process-wide shared runtime was invoked
@@ -150,7 +303,7 @@ impl CliError {
             Self::InvalidBlockTag(tag) => format!("Invalid block tag: {tag}"),
             Self::InvalidAddress(address) => format!("Invalid address: {address}"),
             Self::NoActiveAaveMarkets => "No active Aave markets found.".to_string(),
-            Self::PoolUpdate(err) => err.to_string(),
+            Self::PoolUpdate(failure) => failure.message(),
             Self::AaveUpdate(err) => err.to_string(),
             Self::RuntimeNested => "the command arms own their tokio runtime; do not run them \
                  from inside an existing runtime"
@@ -170,7 +323,7 @@ impl std::error::Error for CliError {
         match self {
             Self::Database(err) => Some(err),
             Self::Config(err) => Some(err),
-            Self::PoolUpdate(err) => Some(err),
+            Self::PoolUpdate(failure) => Some(&failure.error),
             Self::AaveUpdate(err) => Some(err),
             Self::Io(err) => Some(err),
             _ => None,
@@ -231,5 +384,122 @@ impl From<&CliError> for ExitCode {
 impl From<CliError> for ExitCode {
     fn from(err: CliError) -> Self {
         Self::from(&err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The pool-failure rendering (the `pool update` diagnostic).
+    use super::*;
+    use degenbot_db::DbError;
+
+    #[test]
+    fn non_connection_failure_names_endpoint_chain_range_and_error() {
+        let failure = PoolUpdateFailure {
+            error: PoolRunError::Db(DbError::MissingRow("chunk row".to_string())),
+            rpc_url: "http://reth.local:8545".to_string(),
+            chain_id: 8453,
+            from_block: 26_055_206,
+            to_block: Some(26_059_263),
+            resume: None,
+        };
+        let message = failure.message();
+        assert!(message.contains("http://reth.local:8545"), "{message}");
+        assert!(message.contains("8453"), "{message}");
+        assert!(message.contains("blocks 26055206-26059263"), "{message}");
+        assert!(
+            message.contains("required row not found: chunk row"),
+            "{message}"
+        );
+        assert!(!message.contains("dropped mid-run"), "{message}");
+    }
+
+    #[test]
+    fn tip_run_reports_an_open_ended_range() {
+        let failure = PoolUpdateFailure {
+            error: PoolRunError::Db(DbError::MissingRow("tip".to_string())),
+            rpc_url: "http://reth.local:8545".to_string(),
+            chain_id: 1,
+            from_block: 5,
+            to_block: None,
+            resume: None,
+        };
+        assert!(failure
+            .message()
+            .contains("blocks 5 onward (the chain tip)"));
+    }
+
+    #[test]
+    fn resume_groups_render_current_behind_and_never_updated() {
+        let failure = PoolUpdateFailure {
+            error: PoolRunError::Db(DbError::MissingRow("row".to_string())),
+            rpc_url: "http://reth.local:8545".to_string(),
+            chain_id: 8453,
+            from_block: 1,
+            to_block: Some(100),
+            resume: Some(vec![
+                ExchangeResumeState {
+                    name: "uniswap_v2".to_string(),
+                    last_update_block: Some(100),
+                },
+                ExchangeResumeState {
+                    name: "uniswap_v3".to_string(),
+                    last_update_block: Some(50),
+                },
+                ExchangeResumeState {
+                    name: "uniswap_v4".to_string(),
+                    last_update_block: None,
+                },
+            ]),
+        };
+        let message = failure.message();
+        assert!(
+            message.contains("current at the requested target: uniswap_v2"),
+            "{message}"
+        );
+        assert!(
+            message.contains("behind (last committed block): uniswap_v3 (block 50)"),
+            "{message}"
+        );
+        assert!(message.contains("never updated: uniswap_v4"), "{message}");
+    }
+
+    #[test]
+    fn a_tip_run_leaves_no_exchange_current_at_the_target() {
+        let failure = PoolUpdateFailure {
+            error: PoolRunError::Db(DbError::MissingRow("row".to_string())),
+            rpc_url: "http://reth.local:8545".to_string(),
+            chain_id: 8453,
+            from_block: 1,
+            to_block: None,
+            resume: Some(vec![ExchangeResumeState {
+                name: "uniswap_v2".to_string(),
+                last_update_block: Some(26_059_263),
+            }]),
+        };
+        let message = failure.message();
+        assert!(
+            !message.contains("current at the requested target"),
+            "{message}"
+        );
+        assert!(
+            message.contains("behind (last committed block): uniswap_v2 (block 26059263)"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_unavailable_snapshot_is_said_so() {
+        let failure = PoolUpdateFailure {
+            error: PoolRunError::Db(DbError::MissingRow("row".to_string())),
+            rpc_url: "http://reth.local:8545".to_string(),
+            chain_id: 8453,
+            from_block: 1,
+            to_block: Some(100),
+            resume: None,
+        };
+        assert!(failure
+            .message()
+            .contains("exchange cursor state unavailable"),);
     }
 }

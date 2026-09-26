@@ -36,4 +36,8 @@ default = []
 [dev-dependencies]
 alloy = { version = "^2.5" }
 degenbot-rpc.workspace = true
+# The lifecycle contract test parses the JSON-RPC requests its local stub
+# node receives (method/route matching only — the crate proper never
+# serializes JSON-RPC itself).
+serde_json = { version = "^1" }
 tempfile = { version = "^3.27" }
