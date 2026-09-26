@@ -17,9 +17,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import ChainMismatchError
 from degenbot.config import resolve_chain_id, resolve_http_rpc_uri
 from degenbot.exceptions.base import DegenbotValueError
+from degenbot.provider import ChainMismatchError
 
 if TYPE_CHECKING:
     from degenbot.provider import AlloyProvider, AsyncAlloyProvider

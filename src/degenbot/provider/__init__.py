@@ -38,6 +38,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Self
 
+from degenbot._ffi import ChainMismatchError
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi.provider import AsyncAlloyProvider as RustAsyncAlloyProvider
 from degenbot.provider.factory import (
@@ -966,6 +967,7 @@ __all__ = [
     "AlloyProvider",
     "AsyncAlloyProvider",
     "ChainIdentityMismatchError",
+    "ChainMismatchError",
     "LogFilter",
     "OfflineProvider",
     "get_async_provider_from_config",
