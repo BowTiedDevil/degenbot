@@ -4,12 +4,24 @@
 :class:`~degenbot._ffi.ArbitrageEngine` operator: it runs the
 pre-pump startup ritual (``subscribe`` → stream snapshots → ``backfill`` →
 verify config) and *stops before* ``resume()``, so the caller can attach its
-result consumer before any batches flow. It also maintains the Python pool ↔
-Rust ``pool_id`` key maps and registers paths.
+result consumer before any batches flow. It also registers pools and paths.
 
-Lifted verbatim from ``examples/eth_backrun_v2_v3_v4_rust.py`` — engine-
-operation machinery only. Deployment policy (the main loop, dispatcher,
-simulation overrides) stays example-side (B-mid scope).
+It is a **thin adapter**: every decision it used to own now belongs to the
+Rust core. Pool identity is derived, not mirrored — a pool's engine
+``pool_id`` comes from the shared ``BotState`` through
+``ArbitrageEngine.pool_id_for_pool`` / ``pool_id_for_v4_pool`` (or straight
+off the pool's own core handle), so this module holds no address → id map
+that could disagree with the state owner. The at-most-once verify claim is
+likewise core-owned: ``run_v*_registration_lifecycle`` enters the session's
+``VerifyClaims`` table inside the driver (ADR-022), so concurrent
+registration workers share one lifecycle run without a Python claim table.
+
+The name stays ``EngineRegistry`` because it remains the public registration
+interface for operators; the registration *state* it used to own is gone.
+
+Lifted from ``examples/eth_backrun_v2_v3_v4_rust.py`` — engine-operation
+machinery only. Deployment policy (the main loop, dispatcher, simulation
+overrides) stays example-side (B-mid scope).
 """
 
 from __future__ import annotations
@@ -29,12 +41,10 @@ from degenbot.logging import logger as bot_logger
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.utils.bytes import to_0x_hex
 
-from ._claims import AsyncioFutureWake, ClaimRecord, VerifyClaims
 from .policy import NoOpPathPredicate, PathCompositionPredicate
 
 if TYPE_CHECKING:
-    import asyncio
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Sequence
 
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -42,20 +52,35 @@ if TYPE_CHECKING:
 
 __all__ = ["EngineRegistry"]
 
+#: The core family tag each Python pool class registers under in the shared
+#: ``BotState``. Used to ask the core for a pool's engine ``pool_id`` by
+#: identity; the engine derives the hop family from that same registration, so
+#: the tag is the join between a Python pool object and the core's identity.
+_V2_FAMILY = "v2"
+_AERODROME_FAMILY = "aerodrome-v2"
+_V3_FAMILY = "v3"
+
 
 class EngineRegistry:
-    """Thin wrapper over the Rust ArbitrageEngine.
+    """Thin adapter over the Rust engine: the public registration interface.
 
-    Maintains Python pool ↔ Rust key mappings so events can be routed
-    to the right engine pool, and results can be mapped back to Python
-    pool objects for encoding.
+    Registration is three questions, all answered by the core:
+
+    * **which id does this pool have?** — the shared ``BotState``, either off
+      the pool's own core handle or, for a caller holding only an identity,
+      via :meth:`ArbitrageEngine.pool_id_for_pool` /
+      :meth:`ArbitrageEngine.pool_id_for_v4_pool`.
+    * **has this pool been verified?** — the core's own registration verify
+      lifecycle, run at most once per live claim window and skipped entirely
+      once it has completed (ADR-022 D1). The durable fact lives on the shared
+      driver, never here.
+    * **what is this path's id?** — the engine's signature dedup, via
+      :meth:`register_and_solve_path`.
 
     The first pool in each path provides the flash borrow: V2 via
-    uniswapV2Call, V3 via swapCallback, V4 via unlockCallback.
-
-    V4 pools are keyed by pool_id hex string (sufficient since the bot
-    uses a single PoolManager). The Rust engine additionally receives
-    the pool_manager address at registration time.
+    uniswapV2Call, V3 via swapCallback, V4 via unlockCallback. V4 pools are
+    keyed by the ``(PoolManager, pool_id)`` pair — the engine receives the
+    pool_manager address at registration time.
     """
 
     def __init__(  # ruff:ignore[undocumented-public-init]
@@ -79,33 +104,6 @@ class EngineRegistry:
             raise ValueError(msg)
         else:
             self.engine = ArbitrageEngine(py_bot=bot._py_bot)  # ruff:ignore[private-member-access]
-        self._v2_keys: dict[str, int] = {}  # address → pool_id (shared BotState)
-        self._v3_keys: dict[str, int] = {}
-        # V4 pools keyed by pool_id hex — for event routing from PoolManager logs
-        self._v4_keys: dict[str, int] = {}  # pool_id_hex → pool_id
-        # DMZ3DD (NRHEAC): per-pool in-flight claims that close the
-        # register_v3/v4_pool check-then-act TOCTOU under concurrent
-        # registration workers. The claim record + the leader/peer/
-        # release-on-failure policy live ONCE in `arbitrage._claims`
-        # (VerifyClaims); these are the loop-bound asyncio claim tables — one
-        # per family (address → record for V3, pool_id_hex → record for V4),
-        # read directly by the racing-sibling observers (each record awaits
-        # as its wrapped Future). A worker claims the entry BEFORE the
-        # blocking-RPC verify awaits; a worker that sees the claim awaits the
-        # SAME record instead of re-running the verify, so a pool is verified
-        # at most once. V2 is intentionally not covered: `register_v2_pool`
-        # is SYNC with no await between check and cache-set, so it is already
-        # atomic on the single loop.
-        self._v3_inflight: dict[str, ClaimRecord[asyncio.Future[int]]] = {}
-        self._v4_inflight: dict[str, ClaimRecord[asyncio.Future[int]]] = {}
-        self._v3_claims: VerifyClaims[asyncio.Future[int], int] = VerifyClaims(
-            AsyncioFutureWake(),
-            self._v3_inflight,
-        )
-        self._v4_claims: VerifyClaims[asyncio.Future[int], int] = VerifyClaims(
-            AsyncioFutureWake(),
-            self._v4_inflight,
-        )
         # NXM2BF: the Python `PathInfo` relay is retired. `register_path`
         # returns the Rust `path_id`; `DispatchCandidate` resolves the
         # encoder's `composers::PathInfo` from that `path_id` via
@@ -130,8 +128,6 @@ class EngineRegistry:
         # captured atomically with the drain, so step-2 takes no `block`
         # argument from the registry.)
         self._verify_snapshot_block: int | None = None
-        # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
-        # dicts — NOT thread-safe. All access is on the single asyncio event loop.
 
     def start(
         self,
@@ -159,7 +155,7 @@ class EngineRegistry:
         ``BotState``; the per-pool two-step verify (step-1) reads the stashed
         ``_verify_snapshot_block`` (set below from the same source), and the
         snapshot→WS backfill runs automatically inside ``resume()``
-        (`BlockPump::resume_from_subscribe`) using the pump's own HTTP provider.
+        (``BlockPump::resume_from_subscribe``) using the pump's own HTTP provider.
 
         Non-DB snapshots (file/memory): pass ``v3_snapshot``/``v4_snapshot``
         kwargs; each is converted to a single Python dict and handed to the
@@ -179,11 +175,13 @@ class EngineRegistry:
         # core's `after_subscribe` phase transition sees `core_has_snapshot =
         # true` and advances the engine phase to `SnapshotLoaded` (required by
         # `resume()`). XEANMB: the non-DB path no longer fills a
-        # `SnapshotStore` via `load_*_from_py` (retired); per-pool tick data is
-        # read through the Db arm (held tx) or the Chain arm (RPC) at
+        # `SnapshotStore` via `load_*_from_py` (retired); per-pool tick
+        # data is read through the Db arm (held tx) or the Chain arm (RPC) at
         # registration. `S` is the only thing stashed here — it drives the
         # core auto-backfill inside `resume()` (J3FMDO) that closes the
-        # snapshot→WS gap.
+        # snapshot→WS gap (the pyo3 `backfill_from_snapshot` is retired; the
+        # non-DB path sets S via the `snapshot_seed_block` property setter —
+        # the DB path's `load_snapshot_from_db` already set S).
         if v3_snapshot is not None or v4_snapshot is not None:
             # Non-DB (file/memory) path — `S = min(newest_block)` across the
             # supplied snapshots. The tick-data dicts themselves are NOT
@@ -218,16 +216,22 @@ class EngineRegistry:
         # consumer next, then calls resume() as the single batch-flow gate.
         return backfill_target
 
-    def register_v2_pool(self, pool: UniswapV2Pool) -> int:  # ruff:ignore[undocumented-public-method]
-        if pool.address in self._v2_keys:
-            return self._v2_keys[pool.address]
-        # ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
-        # pool is ALREADY registered there by `bot.build_pool` (the V2 builder
-        # calls `py_bot.register_v2_pool` + hands back the Pool
-        # handle). Re-registering via `engine.register_v2_pool` would panic on
-        # the duplicate address. Cache the shared pool_id for path-building;
-        # orient via zero_for_one at register_path time (no `fwd_key + 1` shim).
-        key = pool._py_pool.pool_id  # ruff:ignore[private-member-access]
+    @staticmethod
+    def register_v2_pool(pool: UniswapV2Pool) -> int:
+        """Return the shared-core ``pool_id`` of a V2 pool.
+
+        ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
+        pool is ALREADY registered there by `bot.build_pool` (the V2 builder
+        calls `py_bot.register_v2_pool` + hands back the Pool
+        handle), and re-registering via `engine.register_v2_pool` would panic
+        on the duplicate address. The id is read off the pool's own core
+        handle — the state owner's answer, not a Python cache — and
+        orientation is decided at register_path time (no `fwd_key + 1` shim).
+
+        Returns:
+            The pool's engine ``pool_id``.
+
+        """
         # Note: _fee_token0/_fee_token1 asymmetry warning retained for
         # diagnostics — the engine reads fees from the shared BotState now, so
         # no engine.register_v2_pool call carries a fee here.
@@ -236,72 +240,70 @@ class EngineRegistry:
                 f"Asymmetric V2 fees detected for {pool.address} "
                 f"(fee_token0={pool._fee_token0}, fee_token1={pool._fee_token1}).",  # ruff:ignore[private-member-access]
             )
-        self._v2_keys[pool.address] = key
-        return key
+        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
-    def register_aerodrome_pool(self, pool: AerodromeV2Pool) -> int:
-        """Register an Aerodrome V2 pool's shared-core key.
+    @staticmethod
+    def register_aerodrome_pool(pool: AerodromeV2Pool) -> int:
+        """Return the shared-core ``pool_id`` of an Aerodrome V2 pool.
 
-        Mirrors :meth:`register_v2_pool` — the pool is already registered in
-        the shared ``BotState`` by the delegated ``build_aerodrome_v2`` path's call to
-        ``py_bot.register_aerodrome_pool``. Cache the ``pool_id`` (the
-        engine derives the Solidly hop family from the ``BotState`` identity at
-        ``register_path`` time, so no engine-side pre-registration carries a
-        family tag).
+        The V2 twin of :meth:`register_v2_pool` — the pool is already
+        registered in the shared ``BotState`` by the delegated
+        ``build_aerodrome_v2`` path's call to ``py_bot.register_aerodrome_pool``,
+        and the engine derives the Solidly hop family from that ``BotState``
+        identity at ``register_path`` time, so no engine-side pre-registration
+        carries a family tag.
 
         Returns:
             The registered pool's engine ``pool_id``.
 
         """
-        if pool.address in self._v2_keys:
-            return self._v2_keys[pool.address]
-        key = pool._py_pool.pool_id  # ruff:ignore[private-member-access]
-        self._v2_keys[pool.address] = key
-        return key
+        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
     async def register_v3_pool(
         self,
         pool: UniswapV3Pool,
     ) -> int:
-        """Register a V3 pool with the Rust engine.
+        """Run a V3 pool's core-owned verify lifecycle and return its ``pool_id``.
 
-        Tick data is resolved automatically by the Rust engine from
-        the loaded snapshot (fed via load_v3_snapshot_from_py or the DB
-        path's load_snapshot_from_db). The engine applies buffered events on
-        top of stale snapshot data.
+        Tick data is resolved by the Rust engine from the loaded snapshot
+        (fed via load_v3_snapshot_from_py or the DB path's load_snapshot_from_db).
+        The engine applies buffered events on top of stale snapshot data.
+
+        ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V3
+        pool is ALREADY registered there by `bot.build_pool` (the V3 builder
+        calls `py_bot.register_v3_pool` + hands back the Pool
+        handle). Re-registering via `engine.register_v3_pool` would PANIC the
+        Rust core on the duplicate address — taking the process down — so this
+        reads the shared-core pool_id off the handle and runs the lifecycle.
+
+        The at-most-once policy and the durable verify-once fact both live in
+        the CORE: the lifecycle call enters the driver's session claim table
+        (ADR-022 D1), so N concurrent workers registering one pool run the
+        choreography once and each receive its outcome, and a completed
+        lifecycle is recorded on the driver so a later registration of the
+        same identity is a no-op. There is deliberately no Python claim table
+        or verified-pool set here — a caller that raced on its own map would
+        have re-run the verify.
 
         Returns:
             The registered pool's engine ``pool_id``.
 
         """
-        # ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V3
-        # pool is ALREADY registered there by `bot.build_pool` (the V3 builder
-        # calls `py_bot.register_v3_pool` + hands back the Pool
-        # handle). Re-registering via `engine.register_v3_pool` would PANIC the
-        # Rust core on the duplicate address — taking the process down. Mirror
-        # the V2 path: read the shared-core pool_id off the handle and cache it
-        # so subsequent paths short-circuit.
-        return await self._register_with_claim(
-            claims=self._v3_claims,
-            keys=self._v3_keys,
-            cache_key=pool.address,
-            key_of=lambda: pool._py_pool.pool_id,  # ruff:ignore[private-member-access]
-            lifecycle=lambda: self.engine.run_v3_registration_lifecycle(
-                pool.address,
-                self._verify_snapshot_block,
-            ),
+        await self.engine.run_v3_registration_lifecycle(
+            pool.address,
+            self._verify_snapshot_block,
         )
+        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
     async def register_v4_pool(
         self,
         pool: UniswapV4Pool,
     ) -> int:
-        """Register a V4 pool with the Rust engine.
+        """Run a V4 pool's core-owned verify lifecycle and return its ``pool_id``.
 
-        Tick data is resolved automatically by the Rust engine from
-        the loaded snapshot (fed via load_v4_snapshot_from_py or the DB
-        path's load_snapshot_from_db). The engine applies buffered events on
-        top of stale snapshot data.
+        Tick data is resolved by the Rust engine from the loaded snapshot
+        (fed via load_v4_snapshot_from_py or the DB path's load_snapshot_from_db).
+        The engine applies buffered events on top of stale snapshot data.
 
         Pool admission (amount-modifying hooks / dynamic fees) is enforced
         by the Rust core as a *correctness floor* — the solver's V3-CL math
@@ -309,105 +311,85 @@ class EngineRegistry:
         typed ``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``
         (both subclass ``ValueError``); ``build_paths`` classifies by type.
 
+        ADR-006 slice 9 / D1: the pool is ALREADY registered in the shared
+        ``BotState`` by `bot.build_managed_pool`; re-registering would raise
+        ``ValueError("V4 pool already registered")`` for every V4 hop in every
+        discovered path. V4 hook/dynamic-fee admission is enforced at
+        `bot.build_managed_pool` time — BEFORE this method is ever called — so
+        it surfaces from the builder, not here. As with V3, the at-most-once
+        verify claim is the driver's (ADR-022 D1), keyed by the
+        ``(PoolManager, pool_id)`` pair.
+
         Returns:
             The registered pool's engine ``pool_id``.
 
         """
-        # ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V4
-        # pool is ALREADY registered there by `bot.build_managed_pool` (the V4
-        # builder calls `py_bot.register_v4_pool` + hands back the
-        # Pool handle). Re-registering via `engine.register_v4_pool`
-        # would raise ValueError("V4 pool already registered") for every V4 hop
-        # in every discovered path — and, since the cache is only set on
-        # success, the same pool would trip it repeatedly. Mirror the V2 path:
-        # read the shared-core pool_id and cache it. V4 hook/dynamic-fee
-        # admission is enforced at `bot.build_managed_pool` time — BEFORE this
-        # method is ever called — so it surfaces from the builder, not here.
-        pool_id_hex = to_0x_hex(pool.pool_id)
-        return await self._register_with_claim(
-            claims=self._v4_claims,
-            keys=self._v4_keys,
-            cache_key=pool_id_hex,
-            key_of=lambda: pool._py_pool.pool_id,  # ruff:ignore[private-member-access]
-            lifecycle=lambda: self.engine.run_v4_registration_lifecycle(
-                pool.address,
-                pool_id_hex,
-                self._verify_snapshot_block,
-            ),
+        await self.engine.run_v4_registration_lifecycle(
+            pool.address,
+            to_0x_hex(pool.pool_id),
+            self._verify_snapshot_block,
         )
+        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
-    @staticmethod
-    async def _register_with_claim(
-        *,
-        claims: VerifyClaims[asyncio.Future[int], int],
-        keys: dict[str, int],
-        cache_key: str,
-        key_of: Callable[[], int],
-        lifecycle: Callable[[], Awaitable[object]],
-    ) -> int:
-        """Run ONE family's DMZ3DD registration dance (the V3/V4 twins, NRHEAC).
+    def pool_id(self, pool: UniswapV2Pool | AerodromeV2Pool | UniswapV3Pool | UniswapV4Pool) -> int:
+        """Resolve the engine ``pool_id`` of a pool from its canonical identity.
 
-        The key-cache short-circuit leads; everything after it is the
-        at-most-once claim dance of `arbitrage._claims` (claim-if-absent /
-        await-if-present / release-on-failure + the unretrieved-exception
-        hygiene band) driven over the asyncio adapter — stated once there,
-        not per family. Family differences are parameters: the claim key
-        shape (``cache_key`` — address for V3, pool_id hex for V4), the key
-        map, and the core-owned lifecycle call.
-
-        The at-most-once claim matters because the lifecycle (IKGQ6F /
-        ADR-022 D1, core-owned) sequences quarantine (6N7XVR) → seed-verify
-        @ snapshot block → drain+pin (single core.write() hold) →
-        post-drain-verify @ the pin's own block → set_live, with the
-        mismatch tripwire as the final gate; double-running it is wasted RPC
-        and, on a tight post-drain-verify, can false-trip the tripwire if
-        the first run's pin moved the anchor (sparse pools are immediate
-        no-ops; tracked pools are Live only after verification).
-
-        The leader settles the claim with the family key exactly where the
-        retired twins called `claim.set_result(key)` (after the lifecycle);
-        the key-cache set now lands after the claim settles — both it and
-        the retired pre-`set_result` cache set sit in the same no-await tail
-        on the loop, so no peer or fresh worker can observe the swap. The
-        family key is read inside the claim window, before the lifecycle (a
-        plain int property read — a dead `_py_pool` handle would surface as
-        a failed, retriable claim instead of a pre-claim raise;
-        pathological only).
+        The read the retired per-family key maps used to serve, now asked of
+        the shared ``BotState``: a family tag plus the pool's own address for
+        the address-keyed families, and the ``(PoolManager, pool_id)`` pair
+        for V4. Identity is the key, so a pool object and the core can never
+        disagree about which id a hop means.
 
         Returns:
-            The registered pool's engine `pool_id` (peers receive the
-            leader's settled key from the shared claim).
+            The pool's engine ``pool_id``.
+
+        Raises:
+            ValueError: If no pool with that identity is registered in the
+                shared ``BotState``.
 
         """
-        if cache_key in keys:
-            return keys[cache_key]
-
-        async def _lifecycle_then_key() -> int:
-            key = key_of()
-            await lifecycle()
-            return key
-
-        key = await claims.run(cache_key, _lifecycle_then_key)
-        keys[cache_key] = key
+        if isinstance(pool, UniswapV4Pool):
+            key = self.engine.pool_id_for_v4_pool(pool.address, to_0x_hex(pool.pool_id))
+        elif isinstance(pool, AerodromeV2Pool):
+            # Aerodrome registers under its own family tag; the engine derives
+            # the Solidly hop family from the same `BotState` identity at
+            # `register_path` time.
+            key = self.engine.pool_id_for_pool(_AERODROME_FAMILY, pool.address)
+        elif isinstance(pool, UniswapV2Pool):
+            key = self.engine.pool_id_for_pool(_V2_FAMILY, pool.address)
+        else:  # V3
+            key = self.engine.pool_id_for_pool(_V3_FAMILY, pool.address)
+        if key is None:
+            msg = f"Pool not registered: {pool}"
+            raise ValueError(msg)
         return key
 
     def knows_pool(self, address: str) -> bool:
         """Return whether a V2 or V3 pool with `address` is registered.
 
-        Returns:
-            True if registered.
-
-        """
-        return address in self._v2_keys or address in self._v3_keys
-
-    def knows_v4_pool(self, pool_id_hex: str) -> bool:
-        """Return whether a V4 pool with `pool_id_hex` is registered.
+        The core-derived question ("does the shared ``BotState`` hold a pool
+        with this address in this family?") — no Python map answers it.
 
         Returns:
             True if registered.
 
         """
-        return pool_id_hex in self._v4_keys
+        return (
+            self.engine.pool_id_for_pool(_V2_FAMILY, address) is not None
+            or self.engine.pool_id_for_pool(_V3_FAMILY, address) is not None
+        )
+
+    def knows_v4_pool(self, pool_manager: str, pool_id_hex: str) -> bool:
+        """Return whether a V4 pool is registered for the given pair.
+
+        A V4 pool is identified by its ``(PoolManager, pool_id)`` pair, so the
+        manager is part of the question: one manager hosts many pools.
+
+        Returns:
+            True if registered.
+
+        """
+        return self.engine.pool_id_for_v4_pool(pool_manager, pool_id_hex) is not None
 
     @property
     def verify_snapshot_block(self) -> int | None:
@@ -423,17 +405,17 @@ class EngineRegistry:
         """Drive a V3 pool's core-owned verify lifecycle, BLOCKING (PRG-5).
 
         The seat-thread twin of the lifecycle inside :meth:`register_v3_pool`:
-        same core choreography and the same snapshot seed block — only the
-        park shape differs (a fleet seat owns no asyncio loop). The retry
-        contract (VerificationRpcError retried; VerificationMismatchError
-        fatal) is applied by the CALLER — the unit wraps this with the
-        pipeline's policy (the registry has none).
+        same core choreography, the same session claim table (the seat and the
+        operator loop share one driver, so they share one at-most-once window),
+        and the same snapshot seed block — only the park shape differs (a fleet
+        seat owns no asyncio loop). The retry contract
+        (VerificationRpcError retried; VerificationMismatchError fatal) is
+        applied by the CALLER — the unit wraps this with the pipeline's
+        policy.
 
-        The loop-bound bookkeeping of :meth:`register_v3_pool` (the key cache
-        + the asyncio in-flight claims, DMZ3DD) is NOT touched here — those
-        structures remain single-loop state for the operator surface; the
-        crawl's own at-most-once verify lifecycle is the pipeline's
-        thread-safe seat claims table.
+        A failed lifecycle releases the claim, so a LATER caller re-runs it;
+        a completed one records a durable verified-pool fact on the shared
+        driver, so a later call for the same identity is a no-op.
         """
         self.engine.run_v3_registration_lifecycle_sync(
             address,
@@ -460,8 +442,7 @@ class EngineRegistry:
 
         The seat-thread pathRegistration used by the crawl units: unlike
         :meth:`register_path` it takes ALREADY-RESOLVED ``(pool_id,
-        zero_for_one)`` hops (the unit gets the ids off the build handles —
-        the loop-bound ``_vN_keys`` caches are not consulted or populated).
+        zero_for_one)`` hops (the unit gets the ids off the build handles).
         The D7KMQO path predicate is evaluated by the caller over the concrete
         pools BEFORE hop building. Returns ``(path_id, created)`` with the
         same semantics as :meth:`register_path` (dedup by construction in the
@@ -481,8 +462,10 @@ class EngineRegistry:
     ) -> tuple[int, bool]:
         """Register a path from concrete pool objects + per-hop directions.
 
-        Each pool's engine key is resolved from this registry's key maps +
-        dispatched as a ``(key, zero_for_one)`` tuple to the engine's
+        Each pool's engine key is DERIVED from the shared ``BotState`` by
+        canonical identity (family + address, or the V4
+        ``(PoolManager, pool_id)`` pair) and dispatched as a
+        ``(key, zero_for_one)`` tuple to the engine's
         ``register_and_solve_path`` (eager solve — the path is immediately
         included in the next result batch). NXM2BF: the Python ``PathInfo``
         relay is retired — ``DispatchCandidate`` resolves the encoder's
@@ -490,15 +473,15 @@ class EngineRegistry:
         ``PyArbitrageEngine.path_info_for_core`` (no Python hop build, no
         stored copy).
 
+        A hop whose pool is not registered in the shared ``BotState`` is
+        refused by :meth:`pool_id` with a ``ValueError`` before the engine is
+        reached.
+
         Returns:
             ``(path_id, created)`` — `created` is `False` when the engine's
             own signature dedup answered with an existing `path_id` (PRG-4:
             dedup is by construction core-side; the Python dedup set
             retired).
-
-        Raises:
-            ValueError: If any pool in the path has not been registered with
-                this registry.
 
         A path-composition policy rejection (when a predicate is injected)
         surfaces as a typed ``PathRejectedError`` subtype (e.g.
@@ -514,26 +497,12 @@ class EngineRegistry:
         self.path_predicate.evaluate(pools_and_zfos)
         engine_hops: list[tuple[int, bool]] = []
         for pool, zfo in pools_and_zfos:
-            if isinstance(pool, UniswapV4Pool):
-                key = self._v4_keys.get(to_0x_hex(pool.pool_id))
-            elif isinstance(pool, AerodromeV2Pool):
-                # Aerodrome shares the same address→pool_id map as V2 (pool
-                # contract addresses are globally unique). The engine's
-                # ``derive_hop_type`` reads the Aerodrome identity off the
-                # shared ``BotState`` and classifies a stable pool as the
-                # Solidly hop family.
-                key = self._v2_keys.get(pool.address)
-            elif isinstance(pool, UniswapV2Pool):
-                key = self._v2_keys.get(pool.address)
-            else:  # V3
-                key = self._v3_keys.get(pool.address)
-            if key is None:
-                msg = f"Pool not registered: {pool}"
-                raise ValueError(msg)
             # ADR-006 D3: register_path takes (pool_id, zero_for_one) — the
-            # engine derives the family from the Bot. One pool_id per pool;
-            # orientation is zero_for_one (the old `fwd_key + 1` reverse-id
-            # shim is gone — Bot is 1-id-per-pool post-ADR-003).
-            engine_hops.append((key, zfo))
+            # engine derives the hop family from the shared `BotState`
+            # identity, so the key is resolved BY IDENTITY here rather than
+            # from a per-family Python map. One pool_id per pool; orientation
+            # is zero_for_one (the old `fwd_key + 1` reverse-id shim is gone —
+            # Bot is 1-id-per-pool post-ADR-003).
+            engine_hops.append((self.pool_id(pool), zfo))
 
         return self.engine.register_and_solve_path(engine_hops)

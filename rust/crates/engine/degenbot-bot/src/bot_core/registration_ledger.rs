@@ -1,25 +1,47 @@
-//! The registration-outcome ledger — the Rust twin of
-//! `src/degenbot/runner/_registration_ledger.py` (parity-ledger row 9,
+//! The registration outcome ledger — the ONE owner of the registration
+//! outcome vocabulary and its negative memos.
 //!
-//! Owns the four memos the Python pipeline carries:
+//! A registration unit ends in exactly one of a small set of outcomes, and
+//! the deployment layer needs that set closed: it feeds bounded metric tags,
+//! skip counters, and per-pool negative memoization. Keeping the vocabulary
+//! in one owner is what makes it checkable — the tag set is pinned by a test
+//! here, and every consumer (the pure-Rust driver, the Python registration
+//! pipeline) reads these same values rather than re-declaring its own.
 //!
-//! - `registered_paths`: hop signatures already answered by a completed
+//! # The four memos
+//!
+//! - **registered paths** — hop signatures already answered by a completed
 //!   registration (the dup fast-path in front of verify).
-//! - `verified_pools`: pools whose verify lifecycle COMPLETED (a pool fact).
-//! - `unregistrable_pools`: STABLE typed build refusals (a pool fact).
-//! - `rejected_paths`: deterministic policy/predicate denies.
+//! - **verified pools** — pools whose verify lifecycle COMPLETED (a pool
+//!   fact, for the pipeline's own lifetime).
+//! - **unregistrable pools** — STABLE typed build refusals (a pool fact: no
+//!   candidate path through that pool can register).
+//! - **rejected paths** — deterministic policy/predicate denies, per hop
+//!   signature.
 //!
-//! TRANSIENT build/register failures are deliberately never memoized.
+//! TRANSIENT build/register failures are deliberately never memoized — a
+//! raced build or an RPC blip must stay retryable.
+//!
+//! # Why the taxonomy is a type, not a string
+//!
+//! Every arm is a variant with a stable tag, so a consumer branches on the
+//! variant and never parses a message. The `V4` admission refusals (hook /
+//! dynamic fee) carry their own counters and do not add to the generic skip
+//! counter, which is what `counts_as_skip` records.
 
 use std::collections::{BTreeSet, HashMap};
 
-use degenbot::pathfinding::PoolKind;
+use degenbot_pathfinding::PoolKind;
 
-/// A path's hop signature: `(engine/BotState pool_id, zero_for_one)` per hop.
+/// A path's hop signature: `(pool_id, zero_for_one)` per hop.
 pub type HopSignature = Vec<(u64, bool)>;
 
-/// The bounded outcome vocabulary (mirrors `RegistrationOutcome`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// The bounded registration-outcome vocabulary.
+///
+/// The tag strings are the cross-language contract: the Python registration
+/// pipeline builds its own label enum from this list, so a tag can never
+/// drift between the core and a driver.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RegistrationOutcome {
     /// A completed registration (`created == true`).
     Registered,
@@ -31,7 +53,7 @@ pub enum RegistrationOutcome {
     DirectionMismatch,
     /// A hop whose table type is not V2/V3/V4.
     UnknownPoolType,
-    /// A V4 hop with no `pool_hash`.
+    /// A V4 hop with no on-chain pool id.
     V4NoHash,
     /// V4 hooked-pool admission refusal.
     V4HookRejected,
@@ -48,6 +70,24 @@ pub enum RegistrationOutcome {
     /// A transient register failure.
     RegisterFailed,
 }
+
+/// Every outcome, in declaration order — the vocabulary a cross-language
+/// consumer enumerates.
+pub const REGISTRATION_OUTCOMES: [RegistrationOutcome; 13] = [
+    RegistrationOutcome::Registered,
+    RegistrationOutcome::Dup,
+    RegistrationOutcome::PathCap,
+    RegistrationOutcome::DirectionMismatch,
+    RegistrationOutcome::UnknownPoolType,
+    RegistrationOutcome::V4NoHash,
+    RegistrationOutcome::V4HookRejected,
+    RegistrationOutcome::V4DynamicFeeRejected,
+    RegistrationOutcome::PathRejected,
+    RegistrationOutcome::BuildV2Refused,
+    RegistrationOutcome::BuildV3Refused,
+    RegistrationOutcome::BuildV4Refused,
+    RegistrationOutcome::RegisterFailed,
+];
 
 impl RegistrationOutcome {
     /// The bounded metric/log tag string.
@@ -70,8 +110,30 @@ impl RegistrationOutcome {
         }
     }
 
-    /// The family-specific build-refusal tag (mirrors `_BUILD_REFUSED`;
-    /// the Python default fallback is `BUILD_V3_REFUSED`).
+    /// The bounded tag of every outcome, for a cross-language consumer that
+    /// builds its label set from this vocabulary.
+    #[must_use]
+    pub fn tags() -> Vec<&'static str> {
+        REGISTRATION_OUTCOMES
+            .iter()
+            .map(|outcome| outcome.as_str())
+            .collect()
+    }
+
+    /// The outcome carrying `tag`, if the vocabulary names it.
+    ///
+    /// The read direction for a consumer that receives a tag as data (a
+    /// config value, a recorded metric) rather than naming a variant.
+    #[must_use]
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        REGISTRATION_OUTCOMES
+            .into_iter()
+            .find(|outcome| outcome.as_str() == tag)
+    }
+
+    /// The family-specific build-refusal tag. The fallback is the V3 tag: a
+    /// build refusal for a family outside the modelled three still has to
+    /// report something bounded.
     #[must_use]
     pub const fn build_refused_for(kind: PoolKind) -> Self {
         match kind {
@@ -82,22 +144,24 @@ impl RegistrationOutcome {
     }
 }
 
-/// Driver-side build failure taxonomy, mapped to the ledger's typed
-/// classification (the Rust analogue of the Python exception types).
+/// The build failure a caller observed, before classification.
+///
+/// The variants are the *typed* refusals a registration can hit; anything
+/// the caller cannot name is [`BuildFailure::Transient`] and stays
+/// retryable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BuildFailure {
-    /// `RegisterV4PoolError::HookedPool` — reserved admission refusal.
+    /// The V4 hooked-pool admission refusal.
     HookedPool,
-    /// `RegisterV4PoolError::DynamicFee`.
+    /// The V4 dynamic-fee admission refusal.
     DynamicFee,
-    /// `RegisterV4PoolError::FeeExceedsEncoderLimit` (and the V2/V3
-    /// high-fee analogue) — a stable pool fact.
+    /// A fee above the encoder's limit — a stable pool fact for every family.
     HighFee,
     /// Any other failure: transient, never memoized.
     Transient(String),
 }
 
-/// The typed classification of one hop-build exception.
+/// The typed classification of one hop-build failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuildRefusal {
     /// The bounded outcome tag.
@@ -105,10 +169,10 @@ pub struct BuildRefusal {
     /// A stable refusal is a pool fact (memoize the pool); a transient
     /// failure stays retryable.
     pub stable: bool,
-    /// V4 admission refusals carry their own counters and do not add to
-    /// `skip_count`.
+    /// Whether the refusal adds to the generic skip counter. The V4
+    /// admission refusals carry their own counters and do not.
     pub counts_as_skip: bool,
-    /// The exception text (log-only).
+    /// The failure text (log-only, never a label).
     pub detail: Option<String>,
 }
 
@@ -121,7 +185,7 @@ pub struct UnregistrableRecord {
     pub counts_as_skip: bool,
 }
 
-/// The four registration memos + the typed build-refusal classification.
+/// The four registration memos plus the typed build-refusal classification.
 #[derive(Debug, Default)]
 pub struct RegistrationLedger {
     registered_paths: BTreeSet<HopSignature>,
@@ -131,11 +195,18 @@ pub struct RegistrationLedger {
 }
 
 impl RegistrationLedger {
-    /// Hop identity the negative memos key on — known BEFORE any build
-    /// (mirrors `pool_memo_key`).
+    /// An empty ledger.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The hop identity the negative memos key on — known BEFORE any build.
     ///
-    /// V2/V3 key off the pool address; V4 off the `pool_hash`. `None` = not
-    /// memoizable (no identity on this hop).
+    /// V2/V3 key off the pool address; V4 off the on-chain pool id, which the
+    /// discovery edge carries pre-build, so a refused pool is recognizable
+    /// without an RPC. `None` means the hop carries no identity and is
+    /// therefore not memoizable.
     #[must_use]
     pub fn pool_memo_key(
         kind: PoolKind,
@@ -143,12 +214,12 @@ impl RegistrationLedger {
         pool_hash: Option<&str>,
     ) -> Option<String> {
         match kind {
-            PoolKind::V4 => pool_hash.map(|h| format!("v4id:{}", h.to_lowercase())),
-            _ => address.map(|a| format!("p:{}", a.to_lowercase())),
+            PoolKind::V4 => pool_hash.map(|hash| format!("v4id:{}", hash.to_lowercase())),
+            _ => address.map(|address| format!("p:{}", address.to_lowercase())),
         }
     }
 
-    /// Classify a hop-build failure by TYPE (never by class name).
+    /// Classify a hop-build failure by TYPE, never by message or class name.
     #[must_use]
     pub fn classify_build_refusal(
         failure: &BuildFailure,
@@ -183,7 +254,7 @@ impl RegistrationLedger {
         }
     }
 
-    /// True when this exact hop signature already completed registration.
+    /// Whether this exact hop signature already completed registration.
     #[must_use]
     pub fn path_registered(&self, hop_sig: &[(u64, bool)]) -> bool {
         self.registered_paths.contains(hop_sig)
@@ -194,7 +265,7 @@ impl RegistrationLedger {
         self.registered_paths.insert(hop_sig);
     }
 
-    /// True when this pool's verify lifecycle already completed.
+    /// Whether this pool's verify lifecycle already completed.
     #[must_use]
     pub fn pool_verified(&self, key: &str) -> bool {
         self.verified_pools.contains(key)
@@ -205,22 +276,30 @@ impl RegistrationLedger {
         self.verified_pools.insert(key);
     }
 
+    /// How many pools have a completed verify-lifecycle fact (test/diagnostic
+    /// witness).
+    #[must_use]
+    pub fn verified_pool_count(&self) -> usize {
+        self.verified_pools.len()
+    }
+
     /// The memoized stable refusal for a pool key, or `None`.
     #[must_use]
     pub fn unregistrable_record(&self, key: Option<&str>) -> Option<&UnregistrableRecord> {
-        key.and_then(|k| self.unregistrable_pools.get(k))
+        key.and_then(|key| self.unregistrable_pools.get(key))
     }
 
-    /// Record a STABLE build refusal (`setdefault` — first tag wins).
+    /// Record a STABLE build refusal (`setdefault` — the first tag wins, so a
+    /// later transient answer cannot overwrite the pool fact).
     pub fn memoize_unregistrable(
         &mut self,
         key: Option<&str>,
         outcome: RegistrationOutcome,
         counts_as_skip: bool,
     ) {
-        if let Some(k) = key {
+        if let Some(key) = key {
             self.unregistrable_pools
-                .entry(k.to_string())
+                .entry(key.to_string())
                 .or_insert(UnregistrableRecord {
                     outcome,
                     counts_as_skip,
@@ -228,7 +307,7 @@ impl RegistrationLedger {
         }
     }
 
-    /// True when this hop signature already hit a deterministic deny.
+    /// Whether this hop signature already hit a deterministic deny.
     #[must_use]
     pub fn path_rejected(&self, hop_sig: &[(u64, bool)]) -> bool {
         self.rejected_paths.contains(hop_sig)
@@ -245,6 +324,39 @@ impl RegistrationLedger {
 mod tests {
     use super::*;
 
+    /// The vocabulary is a cross-language contract, so its exact tag set is
+    /// pinned: a rename must be a deliberate edit here and in the Python
+    /// adapter's parity test, never an accident.
+    #[test]
+    fn outcome_tag_set_is_closed_and_unique() {
+        assert_eq!(
+            RegistrationOutcome::tags(),
+            vec![
+                "registered",
+                "dup",
+                "path-cap",
+                "direction-mismatch",
+                "unknown-pool-type",
+                "v4-no-hash",
+                "v4-hook-rejected",
+                "v4-dynamic-fee-rejected",
+                "path-rejected-memo",
+                "build-v2-refused",
+                "build-v3-refused",
+                "build-v4-refused",
+                "register-fail",
+            ]
+        );
+        for outcome in REGISTRATION_OUTCOMES {
+            assert_eq!(
+                RegistrationOutcome::from_tag(outcome.as_str()),
+                Some(outcome),
+                "every tag must round-trip back to its outcome"
+            );
+        }
+        assert_eq!(RegistrationOutcome::from_tag("not-an-outcome"), None);
+    }
+
     #[test]
     fn pool_memo_key_shapes() {
         assert_eq!(
@@ -259,10 +371,14 @@ mod tests {
             RegistrationLedger::pool_memo_key(PoolKind::V4, None, None),
             None
         );
+        assert_eq!(
+            RegistrationLedger::pool_memo_key(PoolKind::V2, None, None),
+            None
+        );
     }
 
     #[test]
-    fn classify_build_refusal_types() {
+    fn classify_build_refusal_by_type() {
         let hooked = RegistrationLedger::classify_build_refusal(
             &BuildFailure::HookedPool,
             PoolKind::V4,
@@ -281,11 +397,11 @@ mod tests {
         assert!(dynamic.stable);
         assert!(!dynamic.counts_as_skip);
 
-        let high =
+        let high_fee =
             RegistrationLedger::classify_build_refusal(&BuildFailure::HighFee, PoolKind::V3, None);
-        assert_eq!(high.outcome, RegistrationOutcome::BuildV3Refused);
-        assert!(high.stable);
-        assert!(high.counts_as_skip);
+        assert_eq!(high_fee.outcome, RegistrationOutcome::BuildV3Refused);
+        assert!(high_fee.stable);
+        assert!(high_fee.counts_as_skip);
 
         let transient = RegistrationLedger::classify_build_refusal(
             &BuildFailure::Transient("blip".to_string()),
@@ -293,15 +409,20 @@ mod tests {
             Some("blip".to_string()),
         );
         assert_eq!(transient.outcome, RegistrationOutcome::BuildV2Refused);
-        assert!(!transient.stable);
+        assert!(!transient.stable, "a transient failure is not a pool fact");
+        assert!(transient.counts_as_skip);
     }
 
     #[test]
     fn memos_roundtrip_and_first_refusal_wins() {
-        let mut ledger = RegistrationLedger::default();
+        let mut ledger = RegistrationLedger::new();
         assert!(!ledger.path_registered(&[(1, true)]));
         ledger.memoize_registered_path(vec![(1, true)]);
         assert!(ledger.path_registered(&[(1, true)]));
+        assert!(
+            !ledger.path_registered(&[(1, false)]),
+            "orientation is part of the signature"
+        );
 
         assert!(!ledger.pool_verified("v3:0x1"));
         ledger.memoize_verified_pool("v3:0x1".to_string());

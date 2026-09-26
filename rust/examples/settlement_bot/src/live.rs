@@ -17,14 +17,16 @@
 
 use std::time::Instant;
 
-use crate::claims::{VerificationError, VerifyErrorKind};
 use crate::discovery::{BatchedPathFinder, BuiltGraph, DiscoveryParams};
-use crate::ledger::{BuildFailure, RegistrationLedger, RegistrationOutcome};
 use crate::pipeline::{
     CandidateOutcome, PipelineReport, PrepareOutcome, PreparedCandidate, RegistrationPipeline,
 };
 use crate::progress::{progress_line, ProgressCadence};
+use crate::retry::{VerificationError, VerifyErrorKind};
 use alloy::primitives::Address;
+use degenbot::bot::bot_core::registration_ledger::{
+    BuildFailure, RegistrationLedger, RegistrationOutcome,
+};
 use degenbot::bot_core::construction_io::ConstructionIo;
 use degenbot::bot_core::pool_builder::builder::{
     build_v2, build_v3, build_v4, V4PoolBuildIdentity,
@@ -429,23 +431,21 @@ async fn verify_one(
             let address = r.pool.address;
             let block = ctx.block;
             let policy = pipeline.retry_policy;
-            let result = pipeline
-                .verify_claims
-                .run_exclusive(&key, move || async move {
-                    crate::retry::retry_verification_call(&policy, |_attempt| {
-                        let driver = driver;
-                        let address = address;
-                        let block = block;
-                        async move {
-                            driver
-                                .run_v3_registration_lifecycle(address, block)
-                                .await
-                                .map_err(|e| map_driver_error(&e))
-                        }
-                    })
-                    .await
-                })
-                .await;
+            // The at-most-once claim is the DRIVER's, keyed by pool identity
+            // (`EngineDriver::run_v3_registration_lifecycle`); this layer owns
+            // only the bounded retry dance over a released window.
+            let result = crate::retry::retry_verification_call(&policy, |_attempt| {
+                let driver = driver;
+                let address = address;
+                let block = block;
+                async move {
+                    driver
+                        .run_v3_registration_lifecycle(address, block)
+                        .await
+                        .map_err(|e| map_driver_error(&e))
+                }
+            })
+            .await;
             match result {
                 Ok(()) => {
                     pipeline.ledger.memoize_verified_pool(key);
@@ -466,24 +466,21 @@ async fn verify_one(
             pool_id.copy_from_slice(r.pool_hash.as_slice());
             let block = ctx.block;
             let policy = pipeline.retry_policy;
-            let result = pipeline
-                .verify_claims
-                .run_exclusive(&key, move || async move {
-                    crate::retry::retry_verification_call(&policy, |_attempt| {
-                        let driver = driver;
-                        let manager = manager;
-                        let pool_id = pool_id;
-                        let block = block;
-                        async move {
-                            driver
-                                .run_v4_registration_lifecycle(manager, pool_id, block)
-                                .await
-                                .map_err(|e| map_driver_error(&e))
-                        }
-                    })
-                    .await
-                })
-                .await;
+            // The V4 twin: the claim is the driver's, keyed by the
+            // `(PoolManager, pool_id)` pair.
+            let result = crate::retry::retry_verification_call(&policy, |_attempt| {
+                let driver = driver;
+                let manager = manager;
+                let pool_id = pool_id;
+                let block = block;
+                async move {
+                    driver
+                        .run_v4_registration_lifecycle(manager, pool_id, block)
+                        .await
+                        .map_err(|e| map_driver_error(&e))
+                }
+            })
+            .await;
             match result {
                 Ok(()) => {
                     pipeline.ledger.memoize_verified_pool(key);
@@ -604,7 +601,7 @@ pub fn map_driver_error(err: &degenbot::DriverError) -> VerificationError {
 )]
 mod tests {
     use super::*;
-    use crate::ledger::RegistrationOutcome;
+    use degenbot::bot::bot_core::registration_ledger::RegistrationOutcome;
     use degenbot::bot_core::RegisterV2PoolParams;
 
     /// A minimal in-spec V2 fixture keyed by `address`.

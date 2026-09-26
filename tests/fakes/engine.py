@@ -33,6 +33,8 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "install_inline_simulator",
     "last_processed_block",
     "path_count",
+    "pool_id_for_pool",
+    "pool_id_for_v4_pool",
     "pump_finished_future",
     "reconcile_hosted_head",
     "register_and_solve_path",
@@ -91,6 +93,8 @@ class EngineSeam(Protocol):
     def register_and_solve_path(
         self, pool_refs: list[tuple[int, bool]]
     ) -> tuple[int, bool]: ...
+    def pool_id_for_pool(self, family_tag: str, address: str) -> int | None: ...
+    def pool_id_for_v4_pool(self, pool_manager: str, pool_id_hex: str) -> int | None: ...
     def install_inline_simulator(
         self, context: object, erc6909_profit: bool  # ruff: ignore[boolean-type-hint-positional-argument]
     ) -> None: ...
@@ -149,6 +153,10 @@ class FakeEngine:
         self.released_quarantines = 0
         self.inline_sim_installs: list[dict[str, Any]] = []
         self.path_cap: int | None = None
+        #: The declared pool identities this double answers lookups from —
+        #: the double's stand-in for the shared BotState's registration
+        #: tables, NOT a registry-side cache.
+        self._identities: dict[tuple[str, str], int] = {}
         self._pump_finished = asyncio.Event()
         self._strategy_records: list[tuple[str, str, str | None]] = [
             ("settlement", "registered", None),
@@ -213,6 +221,28 @@ class FakeEngine:
         self.register_calls.append(list(pool_refs))
         path_id = len(self.register_calls)
         return path_id, True
+
+    # ── core-derived pool identity (S4) ───────────────────────────
+
+    def register_identity(
+        self, family_tag: str, address: str, pool_id: int
+    ) -> None:
+        """Declare a pool identity the double answers lookups from.
+
+        The double's identity table stands in for the SHARED BotState (the
+        real core's registration tables), so a test that needs a resolvable
+        identity seeds it here rather than reaching into a registry-side map
+        that no longer exists.
+        """
+        self._identities[family_tag, address.lower()] = pool_id
+
+    def pool_id_for_pool(self, family_tag: str, address: str) -> int | None:
+        self._record("pool_id_for_pool")
+        return self._identities.get((family_tag, address.lower()))
+
+    def pool_id_for_v4_pool(self, pool_manager: str, pool_id_hex: str) -> int | None:
+        self._record("pool_id_for_v4_pool")
+        return self._identities.get(("v4", f"{pool_manager}/{pool_id_hex}".lower()))
 
     # ── pre-resume ritual ──────────────────────────────────────────
 

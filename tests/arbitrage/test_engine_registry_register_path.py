@@ -26,11 +26,30 @@ from tests.types.test_concrete_pool_construction import (
 
 
 class FakeArbitrageEngine:
-    """Records register_and_solve_path calls; returns monotonic path ids."""
+    """Records register_and_solve_path calls; returns monotonic path ids.
+
+    Its identity lookups answer from a declared identity table, standing in for
+    the SHARED BotState's registration tables (the core's identity owner). The
+    registry itself holds no map: a test declares the identities it needs here,
+    and the registry resolves each hop by asking.
+    """
 
     def __init__(self) -> None:
         self.calls: list[list[tuple[int, bool]]] = []
+        self.identity_asks: list[tuple[str, str]] = []
+        self._identities: dict[tuple[str, str], int] = {}
         self._next_id = 1
+
+    def register_identity(self, family_tag: str, address: str, pool_id: int) -> None:
+        self._identities[family_tag, address.lower()] = pool_id
+
+    def pool_id_for_pool(self, family_tag: str, address: str) -> int | None:
+        self.identity_asks.append((family_tag, address.lower()))
+        return self._identities.get((family_tag, address.lower()))
+
+    def pool_id_for_v4_pool(self, pool_manager: str, pool_id_hex: str) -> int | None:
+        self.identity_asks.append(("v4", f"{pool_manager}/{pool_id_hex}".lower()))
+        return self._identities.get(("v4", f"{pool_manager}/{pool_id_hex}".lower()))
 
     def register_and_solve_path(self, hops: list[tuple[int, bool]]) -> int:
         self.calls.append(list(hops))
@@ -48,8 +67,8 @@ def test_register_path_dispatches_keys_and_directions() -> None:
 
     v2 = _make_uniswap_v2_pool()
     v3 = _make_uniswap_v3_pool()
-    registry._v2_keys[v2.address] = 100
-    registry._v3_keys[v3.address] = 200
+    fake.register_identity("v2", v2.address, 100)
+    fake.register_identity("v3", v3.address, 200)
 
     pools_and_zfos = [(v2, True), (v3, False)]
 
@@ -61,19 +80,67 @@ def test_register_path_dispatches_keys_and_directions() -> None:
     assert not hasattr(registry, "paths")
 
 
-def test_register_path_v4_keyed_by_pool_id_hex() -> None:
-    """V4 pools resolve their engine key from _v4_keys[pool_id_hex]."""
+def test_register_path_v4_keyed_by_the_manager_and_pool_id_pair() -> None:
+    """A V4 pool resolves its engine key by the (PoolManager, pool_id) pair.
+
+    One manager hosts many pools, so the pair — not the pool id alone — is the
+    identity the core answers with.
+    """
     fake = FakeArbitrageEngine()
     registry = EngineRegistry(bot=None, engine=fake)
 
     v4 = _make_uniswap_v4_pool()
     pool_id_hex = to_0x_hex(v4.pool_id)
-    registry._v4_keys[pool_id_hex] = 999
+    fake.register_identity("v4", f"{v4.address}/{pool_id_hex}", 999)
 
     path_id = registry.register_path([(v4, True)])
 
     assert fake.calls == [[(999, True)]]
+    assert fake.identity_asks == [("v4", f"{v4.address}/{pool_id_hex}".lower())]
     assert isinstance(path_id, int)
+
+
+def test_register_path_refuses_an_unregistered_identity() -> None:
+    """An unregistered identity is a typed ValueError, not a stale cached key."""
+    fake = FakeArbitrageEngine()
+    registry = EngineRegistry(bot=None, engine=fake)
+    v2 = _make_uniswap_v2_pool()
+
+    with pytest.raises(ValueError, match="Pool not registered"):
+        registry.register_path([(v2, True)])
+
+
+def test_pool_identity_is_derived_from_the_real_shared_bot_state() -> None:
+    """Against the REAL pyclass: the id comes from the shared BotState.
+
+    No Python map is seeded. The pool is registered in the core through
+    ``py_bot.register_v2_pool`` and every identity read resolves it from there —
+    the core is the only identity owner left.
+    """
+    bot = _FakeBot()
+    registry = EngineRegistry(bot=bot)
+    address = "0x00000000000000000000000000000000000000aa"
+    key = bot._py_bot.register_v2_pool(
+        address=address,
+        token0="0x00000000000000000000000000000000000000b0",
+        token1="0x00000000000000000000000000000000000000b1",
+        reserve0=1_000_000,
+        reserve1=1_000_000,
+        gamma_numer0=997,
+        fee_denom0=1000,
+        gamma_numer1=997,
+        fee_denom1=1000,
+        factory="0x00000000000000000000000000000000000000b2",
+    )
+
+    assert registry.engine.pool_id_for_pool("v2", address) == key
+    assert registry.knows_pool(address) is True
+    # A family that is not registered at this address has no id of its own.
+    assert registry.engine.pool_id_for_pool("v3", address) is None
+    # And the registry holds no per-family identity map or claim table.
+    assert not any(
+        name.endswith(("_keys", "_inflight", "_claims")) for name in vars(registry)
+    )
 
 
 class _FakeBot:
@@ -152,9 +219,11 @@ def test_register_path_dispatches_aerodrome_key() -> None:
         reserves_token0=1_000_000 * 10**6,
         reserves_token1=1000 * 10**18,
     )
-    # register_aerodrome_pool caches the shared-core pool_id.
+    # The pool's shared-core id, read off its core handle.
     aero_key = registry.register_aerodrome_pool(aero)
     assert aero_key == aero._py_pool.pool_id
+    # The core resolves it back by the aerodrome family identity.
+    fake.register_identity("aerodrome-v2", aero.address, aero_key)
 
     path_id = registry.register_path([(aero, False)])
 

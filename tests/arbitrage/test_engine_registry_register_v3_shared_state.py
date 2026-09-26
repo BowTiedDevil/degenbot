@@ -79,7 +79,9 @@ def test_register_v3_pool_resolves_shared_state_key_without_re_registering() -> 
     key = asyncio.run(registry.register_v3_pool(pool))
 
     assert key == pool._py_pool.pool_id
-    assert registry._v3_keys[pool.address] == key
+    # The identity is answered by the shared core on demand — the registry
+    # keeps no address → id map of its own.
+    assert registry.engine.pool_id_for_pool("v3", pool.address) == key
 
 
 def test_register_tracked_v3_pool_without_provider_fails_fast() -> None:

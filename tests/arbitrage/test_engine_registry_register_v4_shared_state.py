@@ -101,8 +101,11 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
     key = asyncio.run(registry.register_v4_pool(pool))
 
     assert key == pool._py_pool.pool_id
-    # Cache populated so a second call returns the same key (no re-entry).
-    assert registry._v4_keys[to_0x_hex(pool.pool_id)] == key
+    # The identity is answered by the shared core on demand — the registry
+    # keeps no pool_id → key map of its own.
+    assert (
+        registry.engine.pool_id_for_v4_pool(pool.address, to_0x_hex(pool.pool_id)) == key
+    )
 
 
 def test_register_v4_pool_idempotent_across_paths() -> None:

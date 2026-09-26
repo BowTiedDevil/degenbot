@@ -5,6 +5,7 @@ use alloy::primitives::uint;
 use alloy::primitives::I256;
 
 mod apply_routes;
+mod pool_identity;
 mod quarantine;
 mod registration;
 mod session_registry;

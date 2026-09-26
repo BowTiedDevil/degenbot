@@ -41,11 +41,25 @@ USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
 
 class FakeArbitrageEngine:
-    """Records register_and_solve_path calls; returns monotonic path ids."""
+    """Records register_and_solve_path calls; returns monotonic path ids.
+
+    Identity lookups answer from a declared table standing in for the shared
+    BotState (the core's identity owner); the registry keeps no map of its own.
+    """
 
     def __init__(self) -> None:
         self.calls: list[list[tuple[int, bool]]] = []
+        self._identities: dict[tuple[str, str], int] = {}
         self._next_id = 1
+
+    def register_identity(self, family_tag: str, address: str, pool_id: int) -> None:
+        self._identities[family_tag, address.lower()] = pool_id
+
+    def pool_id_for_pool(self, family_tag: str, address: str) -> int | None:
+        return self._identities.get((family_tag, address.lower()))
+
+    def pool_id_for_v4_pool(self, pool_manager: str, pool_id_hex: str) -> int | None:
+        return self._identities.get(("v4", f"{pool_manager}/{pool_id_hex}".lower()))
 
     def register_and_solve_path(self, hops: list[tuple[int, bool]]) -> int:
         self.calls.append(list(hops))
@@ -282,7 +296,7 @@ def test_register_path_invokes_predicate_before_engine() -> None:
         predicate=PathPolicy(disallowed_tokens=frozenset({USDC}))
     )
     v2 = _make_uniswap_v2_pool()
-    registry._v2_keys[v2.address] = 100
+    fake.register_identity("v2", v2.address, 100)
 
     with pytest.raises(TokenDenylistedError):
         registry.register_path([(v2, True)])
@@ -293,7 +307,7 @@ def test_register_path_invokes_predicate_before_engine() -> None:
 def test_register_path_default_predicate_accepts() -> None:
     registry, fake = _registry_with_fake_engine()  # no predicate → NoOp
     v2 = _make_uniswap_v2_pool()
-    registry._v2_keys[v2.address] = 100
+    fake.register_identity("v2", v2.address, 100)
 
     path_id = registry.register_path([(v2, True)])
 
@@ -311,7 +325,7 @@ def test_register_path_custom_predicate_injection() -> None:
 
     registry, fake = _registry_with_fake_engine(predicate=RecordingPredicate())
     v2 = _make_uniswap_v2_pool()
-    registry._v2_keys[v2.address] = 7
+    fake.register_identity("v2", v2.address, 7)
 
     registry.register_path([(v2, True)])
 

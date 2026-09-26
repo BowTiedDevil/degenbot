@@ -158,7 +158,7 @@ pub fn progress_line(report: &PipelineReport) -> String {
 )]
 mod tests {
     use super::*;
-    use crate::ledger::RegistrationOutcome;
+    use degenbot::bot::bot_core::registration_ledger::RegistrationOutcome;
 
     #[test]
     fn max_paths_unset_and_empty_use_the_default() {

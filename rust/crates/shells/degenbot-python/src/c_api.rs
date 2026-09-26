@@ -415,6 +415,26 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // `SessionObjectRegistry`; the registry stays the identity authority).
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::session_registry::PySessionObject>()?;
+
+    // S12: the core registration outcome ledger + its bounded tag vocabulary
+    // (`degenbot_bot::bot_core::registration_ledger`), projected for the
+    // Python registration pipeline. The tags are exported so Python builds its
+    // label enum FROM the core vocabulary rather than re-declaring it.
+    m.add_class::<crate::registration::PyRegistrationLedger>()?;
+    m.add_class::<crate::registration::PyBuildRefusal>()?;
+    m.add_class::<crate::registration::PyUnregistrablePoolRecord>()?;
+    m.add_function(wrap_pyfunction!(
+        crate::registration::registration_outcome_tags,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::registration::registration_pool_memo_key,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::registration::classify_build_refusal,
+        m
+    )?)?;
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::pool::PyReservePairView>()?;
     #[cfg(feature = "bot")]

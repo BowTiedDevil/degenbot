@@ -37,6 +37,10 @@ pub mod pump_telemetry;
 /// PRG-2: the keyed registration-gate table for immutable V4
 /// admission verdicts (see [registration_gate] docs).
 pub mod registration_gate;
+/// The registration outcome vocabulary + its four negative memos: the one
+/// owner of the bounded tags the Rust driver and the Python registration
+/// pipeline both read.
+pub mod registration_ledger;
 pub mod registration_lifecycle;
 pub mod reorg_coordinator;
 pub mod reserve_pair_orchestration;
@@ -59,6 +63,9 @@ pub mod stance;
 pub mod state_lock;
 pub mod swap_simulation;
 pub mod tick_assembly;
+/// The at-most-once verification claim — the one owner of the claim policy
+/// (claim-if-absent / wait-if-present / release-on-settlement).
+pub mod verify_claims;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
@@ -96,9 +103,15 @@ pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams
 pub use degenbot_ingestion::RELEVANT_TOPICS;
 use degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
+use session_registry::PoolIdentity;
+
 pub use epoch::{BlockContext, Epoch, StaleEpoch};
 pub use epoch_delta::EpochDelta;
 pub use pump_control::PumpControl;
+pub use registration_ledger::{
+    BuildFailure, BuildRefusal, HopSignature, RegistrationLedger, RegistrationOutcome,
+    UnregistrableRecord, REGISTRATION_OUTCOMES,
+};
 pub use registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
     run_v4_registration_lifecycle, RegistrationLifecycleError,
@@ -110,6 +123,7 @@ pub use stage_handlers::{
     PublishOutcome, QuiesceOutcome, QuiesceVerdict, Resolve, Rewind, RewindOutcome, Simulate,
     SimulateOutcome, Solve, SolveOutcome, Stage, StageError, StageHandlers,
 };
+pub use verify_claims::{PoolVerifications, VerifyClaims};
 
 pub use ::degenbot_pools::v4_state::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent, BufferedV4SwapEvent,
@@ -704,6 +718,32 @@ impl BotState {
     ) -> Option<RegisteredPoolFamily> {
         let id = self.v4_pool_id_by_key(pool_manager, pool_id)?;
         Some(self.pools.get(&id)?.registered_family())
+    }
+
+    /// The registered pool id for this exact pool identity, DERIVED from the
+    /// registration tables this type already owns, so no second pool-id map
+    /// exists anywhere.
+    ///
+    /// The read direction a driver needs when it holds a pool's *identity*
+    /// (a family tag plus an address, or a V4 `(PoolManager, pool_id)` pair)
+    /// and needs the id the engine hops on. It answers from the same
+    /// `pool_addresses` / `v4_pool_ids` indexes registration writes, so a
+    /// driver cannot hold a mirror that disagrees with the state owner.
+    ///
+    /// Family is part of the answer: an address-keyed identity that names a
+    /// different family than the one registered there is `None` rather than
+    /// the other family's id.
+    #[must_use]
+    pub fn pool_id_for_identity(&self, identity: &PoolIdentity) -> Option<u64> {
+        if let PoolIdentity::V4 {
+            pool_manager,
+            pool_id,
+        } = identity
+        {
+            return self.v4_pool_id_by_key(*pool_manager, pool_id);
+        }
+        let (pool_id, _) = self.registered_pool_by_address(&identity.address())?;
+        (self.pool_family(pool_id) == Some(identity.family_tag())).then_some(pool_id)
     }
 
     /// Unregister a pool. ADR-007 U3.

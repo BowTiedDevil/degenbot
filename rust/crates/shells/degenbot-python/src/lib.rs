@@ -102,6 +102,8 @@ pub mod prelude;
 #[cfg(feature = "price")]
 pub mod price;
 pub mod python_log_layer;
+/// The `PyO3` projection of the core registration outcome ledger (S12).
+pub mod registration;
 #[cfg(feature = "rpc")]
 pub mod rpc;
 /// FF-T5: the runtime fleet status — budget, plan, census

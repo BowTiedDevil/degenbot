@@ -44,7 +44,7 @@ const CHAIN_ID: u64 = 1;
 
 /// V4 registration params for one `(pool_manager, pool_id)` pair — a live
 /// fixture, so the identity assertions below sit beside real live state.
-fn v4_params(pool_manager: Address, pool_id: V4PoolId) -> RegisterV4PoolParams {
+pub(super) fn v4_params(pool_manager: Address, pool_id: V4PoolId) -> RegisterV4PoolParams {
     RegisterV4PoolParams {
         pool_manager,
         pool_id,

@@ -937,6 +937,7 @@ class BotIo:
     def get_code(self, address: str, block: int | None = None) -> bytes: ...
     def get_balance(self, address: str, block: int | None = None) -> int: ...
 
+@final
 class SessionObject:
     """The session's canonical name for one pool or token.
 
@@ -1614,6 +1615,24 @@ class ArbitrageEngine:
         block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
 
+    # ── Core-derived pool identity (S4) ──
+    def pool_id_for_pool(self, family_tag: str, address: str) -> int | None:
+        """Read the registered engine ``pool_id`` for an address-keyed identity.
+
+        Derived from the shared ``BotState``: ``family_tag`` is the vocabulary
+        the live pool handle carries (``"v2"``, ``"v3"``, ``"curve"``,
+        ``"balancer-weighted"``, ``"balancer-stable"``, ``"aerodrome-v2"``) and
+        ``address`` is the pool's own contract address. ``None`` when this
+        session holds no pool with that identity; an unknown family tag is a
+        ``ValueError`` rather than some other family's id.
+        """
+    def pool_id_for_v4_pool(self, pool_manager: str, pool_id_hex: str) -> int | None:
+        """Read the registered engine ``pool_id`` for a V4 ``(PoolManager, pool_id)`` pair.
+
+        One ``PoolManager`` hosts many pools, so the pair — never the manager
+        address alone — is the V4 identity. ``None`` when unregistered.
+        """
+
     # ── Pool + path registration ──
     def register_path(self, pool_refs: list[tuple[int, bool]]) -> tuple[int, bool]: ...
     def register_and_solve_path(self, pool_refs: list[tuple[int, bool]]) -> tuple[int, bool]: ...
@@ -1884,6 +1903,93 @@ def solve_balancer_weighted_basket(
     re-export (ADR-013).
     """
 
+@final
+class BuildRefusalView:
+    """One typed build-refusal classification, projected from the core.
+
+    ``stable`` is the pool-fact verdict: a stable refusal can never appear in a
+    registrable path, so its pool identity is memoized; a transient failure
+    stays retryable. ``counts_as_skip`` preserves the V4 admission counter
+    parity (hook / dynamic-fee refusals carry their own counters and do not add
+    to the generic skip count).
+    """
+
+    @property
+    def outcome(self) -> str:
+        """The bounded outcome tag (a ``RegistrationOutcome`` value)."""
+    @property
+    def stable(self) -> bool: ...
+    @property
+    def counts_as_skip(self) -> bool: ...
+    @property
+    def detail(self) -> str | None:
+        """The failure text (log-only; never a label)."""
+
+@final
+class UnregistrablePoolRecord:
+    """A memoized stable refusal of one pool."""
+
+    @property
+    def outcome(self) -> str:
+        """The bounded outcome tag."""
+    @property
+    def counts_as_skip(self) -> bool: ...
+
+@final
+class RegistrationLedger:
+    """The core registration ledger: four memos + the refusal classification.
+
+    A thin projection of ``degenbot_bot::bot_core::registration_ledger`` — the
+    pure-Rust driver and the Python registration pipeline share this one
+    implementation, so a tag or a memo rule cannot drift between them. A hop
+    signature is a sequence of ``(pool_id, zero_for_one)`` pairs.
+    """
+
+    def __init__(self) -> None: ...
+    def path_registered(self, hop_signature: Sequence[tuple[int, bool]]) -> bool:
+        """Whether this exact hop signature already completed registration."""
+    def memoize_registered_path(self, hop_signature: Sequence[tuple[int, bool]]) -> None:
+        """Record a completed registration (engine-created or engine-dedup'd)."""
+    def pool_verified(self, key: str) -> bool:
+        """Whether this pool's verify lifecycle already completed."""
+    def memoize_verified_pool(self, key: str) -> None:
+        """Record a COMPLETED verify lifecycle (a pool fact)."""
+    def unregistrable_record(self, key: str | None) -> UnregistrablePoolRecord | None:
+        """Read the memoized stable refusal for a pool key, or ``None``."""
+    def memoize_unregistrable(self, key: str | None, outcome: str, counts_as_skip: bool) -> None:
+        """Record a STABLE build refusal under its bounded tag (first tag wins)."""
+    def path_rejected(self, hop_signature: Sequence[tuple[int, bool]]) -> bool:
+        """Whether this hop signature already hit a deterministic deny."""
+    def memoize_rejected_path(self, hop_signature: Sequence[tuple[int, bool]]) -> None:
+        """Record a deterministic policy/predicate deny for a hop signature."""
+
+def registration_outcome_tags() -> list[str]:
+    """Read the bounded registration-outcome tag list — the core's vocabulary.
+
+    A Python consumer builds its label enum FROM this list rather than
+    re-declaring it, so the closed set has exactly one owner.
+    """
+
+def registration_pool_memo_key(
+    pool_type: str, address: str | None, pool_hash: str | None
+) -> str | None:
+    """Build the hop identity the negative memos key on, or ``None`` when there is none.
+
+    V2/V3 key off the pool address (``"p:<address>"``); V4 off the on-chain
+    pool id (``"v4id:<pool_id>"``), which the discovery edge carries pre-build.
+    """
+
+def classify_build_refusal(
+    failure_kind: str, pool_type: str, detail: str | None
+) -> BuildRefusalView:
+    """Classify a hop-build failure by its TYPED kind.
+
+    ``failure_kind`` is ``"hooked-pool"``, ``"dynamic-fee"``, ``"high-fee"``, or
+    ``"transient"`` for anything else; ``detail`` rides the record for logging
+    and never becomes a label. An unknown kind is a ``ValueError`` — a caller
+    that cannot name a failure must not receive a guessed tag.
+    """
+
 __all__ = [
     "ArbitrageEngine",
     "BalanceVectorView",
@@ -1891,6 +1997,7 @@ __all__ = [
     "BootRefused",
     "Bot",
     "BotIo",
+    "BuildRefusalView",
     "ChainMismatchError",
     "ConcentratedLiquidityView",
     "DynamicFeePoolRejectedError",
@@ -1909,6 +2016,7 @@ __all__ = [
     "PoolKind",
     "PoolRegistrationError",
     "PossibleInaccurateResult",
+    "RegistrationLedger",
     "ReservePairView",
     "ResolvedChainId",
     "ResolvedDatabasePath",
@@ -1920,6 +2028,7 @@ __all__ = [
     "StrategyReadinessView",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
+    "UnregistrablePoolRecord",
     "VerificationMismatchError",
     "VerificationRpcError",
     "aave",
@@ -1932,6 +2041,7 @@ __all__ = [
     "call_blocking_on_ambient_runtime",
     "call_on_ambient_runtime",
     "cancel",
+    "classify_build_refusal",
     "classify_pool_kind",
     "classify_pool_kinds",
     "cli_main",
@@ -1967,6 +2077,8 @@ __all__ = [
     "prepare_traversal_plan",
     "price",
     "provider",
+    "registration_outcome_tags",
+    "registration_pool_memo_key",
     "resolve_chain_id",
     "resolve_database_path",
     "resolve_node_uri",

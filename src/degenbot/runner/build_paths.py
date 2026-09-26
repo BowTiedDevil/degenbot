@@ -17,12 +17,11 @@ import asyncio
 import os
 import time
 from collections import Counter, deque
-from collections.abc import AsyncGenerator, AsyncIterable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool, get_checksum_address
-from degenbot.arbitrage._claims import ThreadEventWake, VerifyClaims
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
@@ -60,7 +59,6 @@ from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     import pathlib
-    import threading
 
 
 def _discovery_batch_size() -> int:
@@ -197,34 +195,6 @@ class RegistrationUnitOutcome:
     # object at the skip site; the seat keeps no counters, so the text rides
     #: the outcome).
     detail: str | None = None
-
-
-class _SeatVerifyClaims:
-    """At-most-once seat-thread verify lifecycle claims (the DMZ3DD twin).
-
-    The asyncio in-flight claims in ``EngineRegistry.register_v3/v4_pool``
-    are single-loop state (they are the OPERATOR surface's dedup); the crawl
-    units run on fleet seats — plain threads — so the same check-then-act
-    window needs thread primitives. NRHEAC: the claim record + the
-    leader/peer/release-on-failure policy (first unit claims, peers park,
-    a failed claim is released for a LATER unit to re-run) live ONCE in
-    ``degenbot.arbitrage._claims`` (:class:`VerifyClaims`); this class is
-    the thin ``threading.Event`` adapter shell — seat-thread construction
-    plus the ``run_exclusive`` name the pipeline call sites use. The first unit
-    to claim a pool's verify runs the lifecycle; a concurrent peer parks
-    on the claim's event and re-raises the leader's exact exception (a
-    failed lifecycle stays retriable: the failed claim is released, a
-    LATER unit re-runs it).
-    """
-
-    def __init__(self) -> None:
-        self._claims: VerifyClaims[threading.Event, None] = VerifyClaims(
-            ThreadEventWake(),
-        )
-
-    def run_exclusive(self, key: str, run: Callable[[], object]) -> None:
-        """Run ``run()`` at most once per live claim window; peers wait it."""
-        self._claims.run_sync(key, run)
 
 
 def resolve_directions(
@@ -413,7 +383,6 @@ class PathRegistrationPipeline:
         # The seat-thread at-most-once verify-claims table (the DMZ3DD twin
         # for units running concurrently on seats — the loop-bound asyncio
         # claims in EngineRegistry serve the operator surface only).
-        self._verify_claims = _SeatVerifyClaims()
 
         # Configured discovery inputs (set by the driver before discovery runs).
         self.pool_types: list[PoolKind] = []
@@ -563,7 +532,7 @@ class PathRegistrationPipeline:
             if memo is not None:
                 return RegistrationUnitOutcome(
                     kind="skip",
-                    tag=memo.outcome.value,
+                    tag=memo.outcome,
                     counts_as_skip=memo.counts_as_skip,
                 )
         return None
@@ -612,7 +581,7 @@ class PathRegistrationPipeline:
                     )
                 return RegistrationUnitOutcome(
                     kind="skip",
-                    tag=refusal.outcome.value,
+                    tag=refusal.outcome,
                     counts_as_skip=refusal.counts_as_skip,
                     detail=refusal.detail,
                 )
@@ -653,7 +622,7 @@ class PathRegistrationPipeline:
         if self._ledger.path_rejected(hop_sig):
             return RegistrationUnitOutcome(
                 kind="reject",
-                tag=RegistrationOutcome.PATH_REJECTED.value,
+                tag=RegistrationOutcome.PATH_REJECTED_MEMO.value,
             )
 
         try:
@@ -706,29 +675,37 @@ class PathRegistrationPipeline:
             )
 
     def _verify_v3_pool(self, pool: UniswapV3Pool, reg: EngineRegistry) -> None:
-        """At-most-once V3 verify per pool address (seat + memo dedup)."""
+        """Verify a V3 pool once per pipeline lifetime, at most once concurrently.
+
+        Two layers, neither of them a claim table: the CORE owns the
+        at-most-once window (the driver's session claim table, keyed by pool
+        identity — a concurrent seat parks inside
+        `run_v3_verify_lifecycle_sync` and receives the leader's outcome),
+        and this ledger's verify-once memo turns a COMPLETED lifecycle into a
+        pool fact so later units skip the call entirely.
+        """
         v3_key = f"v3:{pool.address}"
         if self._ledger.pool_verified(v3_key):
             return
-        self._verify_claims.run_exclusive(
-            v3_key,
-            lambda pool=pool, reg=reg: reg.run_v3_verify_lifecycle_sync(pool.address),
-        )
+        reg.run_v3_verify_lifecycle_sync(pool.address)
         self._ledger.memoize_verified_pool(v3_key)
 
     def _verify_v4_pool(self, pool: UniswapV4Pool, reg: EngineRegistry) -> None:
-        """At-most-once V4 verify per pool id, under the retry policy."""
+        """V4 twin of :meth:`_verify_v3_pool`, with the retry policy applied here.
+
+        The retry wraps the core-owned window from OUTSIDE: a transient
+        `VerificationRpcError` releases the claim, so the next attempt
+        re-claims and re-runs the lifecycle — a failed verify stays
+        retryable, and a fatal mismatch propagates immediately.
+        """
         v4_key = f"v4:{to_0x_hex(pool.pool_id)}"
         if self._ledger.pool_verified(v4_key):
             return
-        self._verify_claims.run_exclusive(
-            v4_key,
-            lambda v4_pool=pool, reg=reg, policy=self.retry_policy_obj: retry_verification_call(
-                policy,
-                reg.run_v4_verify_lifecycle_sync,
-                UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                to_0x_hex(v4_pool.pool_id),
-            ),
+        retry_verification_call(
+            self.retry_policy_obj,
+            reg.run_v4_verify_lifecycle_sync,
+            UNISWAP_V4_POOL_MANAGER_ADDRESS,
+            to_0x_hex(pool.pool_id),
         )
         self._ledger.memoize_verified_pool(v4_key)
 
@@ -768,7 +745,7 @@ class PathRegistrationPipeline:
         except Exception as exc:
             return RegistrationUnitOutcome(
                 kind="register-fail",
-                tag=RegistrationOutcome.REGISTER_FAILED.value,
+                tag=RegistrationOutcome.REGISTER_FAIL.value,
                 detail=f"{type(exc).__name__}: {exc}",
                 v4_hops=v4_hops,
             )

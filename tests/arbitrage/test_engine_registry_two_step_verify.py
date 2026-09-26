@@ -120,36 +120,33 @@ def test_register_v4_pool_delegates_to_core_lifecycle() -> None:
 def test_register_fail_fast_surfaces_error_to_racing_sibling(
     family: str,
 ) -> None:
-    """A sibling that claims the DMZ3DD inflight entry while a tripwired
-    lifecycle is in flight must receive the VerificationMismatchError DIRECTLY
-    from the shared claim (not a hang, cancel, or dropped future)."""
+    """A sibling registering the same pool while a tripwired lifecycle is in
+    flight receives the VerificationMismatchError, not a hang or a silent skip.
+
+    The claim table is the CORE's now (ADR-022 D1 + the driver's session
+    `VerifyClaims`), so the sibling is a second caller of the same core-owned
+    entry: it receives the leader's settled outcome. The Python side keeps no
+    claim state to inspect, so this pins the observable contract — both callers
+    fail loudly with the same typed error — rather than a table's internals.
+    """
     registry, fake = _registry_started_with_snapshots()
-    inflight = (
-        (registry._v3_inflight, "0xV3POOL")
-        if family == "v3"
-        else (
-            registry._v4_inflight,
-            _V4_POOL_ID_HEX,
-        )
-    )
-    inflight, key = inflight
     register = getattr(registry, f"register_{family}_pool")
     pool = _FakeV3Pool() if family == "v3" else _FakeV4Pool()
     seen: dict[str, object] = {}
 
-    async def _sibling() -> None:
-        try:
-            await inflight[key]
-        except BaseException as exc:  # ruff: ignore[blind-except] - record whatever surfaces
-            seen["exc"] = exc
-
     async def _failing_lifecycle(*_args, **_kwargs):
-        # Start the sibling, then yield once so it grabs the live claim BEFORE
-        # the mismatch trips (ready-queue FIFO makes this deterministic).
+        # Start the sibling, then yield once so it reaches the claim BEFORE the
+        # mismatch trips (ready-queue FIFO makes this deterministic).
         seen["sibling"] = asyncio.get_running_loop().create_task(_sibling())
         await asyncio.sleep(0)
         msg = f"synthetic {family} seed tick mismatch"
         raise VerificationMismatchError(msg)
+
+    async def _sibling() -> None:
+        try:
+            await register(pool)
+        except BaseException as exc:  # ruff: ignore[blind-except] - record whatever surfaces
+            seen["exc"] = exc
 
     setattr(fake, f"run_{family}_registration_lifecycle", _failing_lifecycle)
 
@@ -209,9 +206,15 @@ def test_register_always_delegates_even_without_verify_config() -> None:
     assert fake.run_calls[0]["snapshot_block"] is None
 
 
-def test_register_v3_pool_idempotent_skips_lifecycle() -> None:
-    """A pool already in the cache short-circuits before the core lifecycle —
-    no second run on the next path that touches the same pool."""
+def test_repeat_registration_delegates_and_reads_the_same_core_id() -> None:
+    """A second path touching the same pool still delegates, and still answers
+    the same id.
+
+    The retired Python key cache short-circuited the second call. Nothing does
+    that now: the cross-window dedup belongs to the core, which makes a repeat
+    verify of an already-live pool a no-op (ADR-022 D1) rather than a Python
+    guess about what the core would have done.
+    """
     registry, fake = _registry_started_with_snapshots()
 
     async def _go() -> int:
@@ -219,5 +222,8 @@ def test_register_v3_pool_idempotent_skips_lifecycle() -> None:
 
     k1 = asyncio.run(_go())
     k2 = asyncio.run(_go())
-    assert k1 == k2 == 7
-    assert len(fake.run_calls) == 1, "second register must short-circuit the lifecycle"
+    assert k1 == k2 == 7, "the id is the core's, and it is stable"
+    assert len(fake.run_calls) == 2, (
+        "each registration enters the core-owned lifecycle; the core decides "
+        "whether a repeat run is a no-op"
+    )

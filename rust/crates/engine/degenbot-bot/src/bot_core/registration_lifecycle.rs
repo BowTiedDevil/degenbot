@@ -47,7 +47,7 @@ use super::{BotState, PoolTickCoverage, TickInfo};
 ///   error. A [`LiquidityVerifyError::Mismatch`] is the **fatal tripwire** that
 ///   must block `Live` (never auto-repair); an [`LiquidityVerifyError::Rpc`] is
 ///   a transient transport failure.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RegistrationLifecycleError {
     /// A seed or post-drain verify step failed (mismatch = fatal; rpc =
     /// transient).

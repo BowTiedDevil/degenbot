@@ -77,7 +77,9 @@ def test_register_v2_pool_resolves_shared_state_key_without_re_registering() -> 
     key = registry.register_v2_pool(pool)  # type: ignore[arg-type]
 
     assert key == pool._py_pool.pool_id
-    assert registry._v2_keys[pool.address] == key
+    # The identity is answered by the shared core on demand — the registry
+    # keeps no address → id map of its own.
+    assert registry.engine.pool_id_for_pool("v2", pool.address) == key
 
 
 def test_register_v2_pool_idempotent_across_paths() -> None:

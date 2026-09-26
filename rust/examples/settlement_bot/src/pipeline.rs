@@ -4,8 +4,11 @@
 //! `PathRegistrationPipeline._registration_unit` (the per-path build/verify/
 //! register unit), `resolve_directions`, the D7KMQO policy gate, the W73FVY
 //! dup fast-path, and the `_absorb_outcome` counter fold; plus the
-//! [`RegistrationLedger`](crate::ledger::RegistrationLedger) memos and the
-//! [`VerifyClaims`](crate::claims::VerifyClaims) at-most-once verify window.
+//! [`RegistrationLedger`](degenbot::bot::bot_core::registration_ledger::RegistrationLedger)
+//! memos. The at-most-once verify window is the CORE's
+//! (`degenbot::bot::bot_core::VerifyClaims`, entered by
+//! `EngineDriver::run_*_registration_lifecycle`); this layer keeps only the
+//! verify-once memo and the bounded retry dance over a released window.
 //!
 //! Two modes:
 //! - **offline-dry** ([`run_offline`]): enumeration + direction resolution +
@@ -20,11 +23,13 @@ use std::collections::BTreeMap;
 
 use degenbot::pathfinding::PoolKind;
 
-use crate::claims::{VerificationError, VerifyClaims, VerifyErrorKind};
 use crate::discovery::{BuiltGraph, DiscoveryParams, PoolNode, NATIVE_CURRENCY};
-use crate::ledger::{HopSignature, RegistrationLedger, RegistrationOutcome};
 use crate::policy::{HopView, PathPolicy};
 use crate::retry::RetryPolicy;
+use crate::retry::{VerificationError, VerifyErrorKind};
+use degenbot::bot::bot_core::registration_ledger::{
+    HopSignature, RegistrationLedger, RegistrationOutcome,
+};
 
 /// The registration unit outcome (mirrors `RegistrationUnitOutcome`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,8 +135,6 @@ pub struct PipelineReport {
 pub struct RegistrationPipeline {
     /// The four memos + typed build-refusal classification.
     pub ledger: RegistrationLedger,
-    /// The at-most-once verify-claim table.
-    pub verify_claims: VerifyClaims,
     /// The driver path-composition policy (row 13).
     pub policy: PathPolicy,
     /// The transient-verify retry policy.
@@ -144,7 +147,6 @@ impl RegistrationPipeline {
     pub fn new(policy: PathPolicy, retry_policy: RetryPolicy) -> Self {
         Self {
             ledger: RegistrationLedger::default(),
-            verify_claims: VerifyClaims::new(),
             policy,
             retry_policy,
         }
@@ -447,31 +449,6 @@ pub async fn run_offline(
     // stays the Python counter it is (0 unless a `PathPolicy` allow/deny set is
     // configured).
     report
-}
-
-/// Run a verification lifecycle under the at-most-once claim table with the
-/// bounded retry dance (mirrors `_SeatVerifyClaims.run_exclusive`): only
-/// [`VerifyErrorKind::Rpc`] failures are retried.
-///
-/// `lifecycle` is invoked with the 1-indexed attempt number; only
-/// [`VerifyErrorKind::Rpc`] failures are retried.
-///
-/// # Errors
-///
-/// Returns the last failure after exhausting attempts, or a fatal immediately.
-pub async fn run_verification_with_claims<F, Fut>(
-    pipeline: &RegistrationPipeline,
-    claim_key: &str,
-    lifecycle: F,
-) -> Result<(), VerificationError>
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<(), VerificationError>>,
-{
-    pipeline
-        .verify_claims
-        .run_exclusive(claim_key, lifecycle)
-        .await
 }
 
 /// Convenience: a `VerificationError` constructor for a mismatch (fatal).

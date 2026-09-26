@@ -14,7 +14,51 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub use degenbot::core::retry::RetryPolicy;
 
-use crate::claims::{VerificationError, VerifyErrorKind};
+/// The two-way verification failure split (drives the retry classification):
+/// a genuine on-chain tick-data divergence is fatal and never retried, a
+/// transient per-call transport failure is retriable, anything else
+/// propagates immediately.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifyErrorKind {
+    /// A genuine on-chain tick-data divergence — fatal, never retried.
+    Mismatch,
+    /// A transient per-call transport / provider-init failure — retryable.
+    Rpc,
+    /// Any other lifecycle failure.
+    Other,
+}
+
+/// A driver-local verification failure: the typed classification the retry
+/// dance reads. The claim that shares one run across concurrent callers lives
+/// in the core (`degenbot::bot::bot_core::VerifyClaims`, entered by
+/// `EngineDriver::run_*_registration_lifecycle`); this type is the driver's own
+/// view of a failed attempt, mapped from the driver's error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerificationError {
+    /// The failure category.
+    pub kind: VerifyErrorKind,
+    /// The human-readable detail.
+    pub message: String,
+}
+
+impl VerificationError {
+    /// Construct a failure.
+    #[must_use]
+    pub fn new(kind: VerifyErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for VerificationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}: {}", self.kind, self.message)
+    }
+}
+
+impl std::error::Error for VerificationError {}
 
 /// A deterministic-per-call pseudo-random fraction in `[0, 1)` (no `rand`
 /// dependency; the jitter only needs to de-correlate retries).

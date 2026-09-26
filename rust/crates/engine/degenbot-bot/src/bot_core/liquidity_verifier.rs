@@ -19,7 +19,7 @@ use hashbrown::HashMap;
 use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState};
 
 /// A single bot verification mismatch.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VerificationMismatch {
     /// Human-readable mismatch description retained for bot error policy.
     pub message: String,
@@ -33,7 +33,7 @@ impl std::fmt::Display for VerificationMismatch {
 impl std::error::Error for VerificationMismatch {}
 
 /// Bot-facing classification between map evidence and inability to read it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LiquidityVerifyError {
     /// A typed map divergence, fatal to bot operation.
     Mismatch(VerificationMismatch),

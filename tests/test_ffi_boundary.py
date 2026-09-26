@@ -38,6 +38,22 @@ _ENGINE_HANDLE_MODULES = frozenset({_FFI_ROOT, f"{_FFI_ROOT}.db"})
 # the exact process-entry module (module imports and other symbols still fail).
 ALLOWED_LEAF_FFI_IMPORTS: dict[str, frozenset[str]] = {
     "src/degenbot/_cli.py": frozenset({"cli_main"}),
+    # S12: the registration outcome ledger moved into the Rust core
+    # (`degenbot_bot::bot_core::registration_ledger`), so this adapter calls
+    # the core's pyclass and the two classification verbs directly. There is
+    # no Python domain home for the vocabulary — it IS the Rust vocabulary, and
+    # re-exporting it through a package would only add a second name for one
+    # owner.
+    "src/degenbot/runner/_registration_ledger.py": frozenset(
+        {
+            "BuildRefusalView",
+            "RegistrationLedger",
+            "UnregistrablePoolRecord",
+            "classify_build_refusal",
+            "registration_outcome_tags",
+            "registration_pool_memo_key",
+        }
+    ),
 }
 
 

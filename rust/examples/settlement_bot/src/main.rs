@@ -56,11 +56,9 @@ use std::process::ExitCode;
 use degenbot::core::address_utils::to_checksum_address_str;
 use degenbot::core::retry::RetryPolicy;
 
-mod claims;
 mod consume;
 mod discovery;
 mod dispatch;
-mod ledger;
 mod live;
 mod operator_channel;
 mod pipeline;
@@ -469,7 +467,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("06-engine-subscribe-resume", "REACHED-via-EngineDriver", "EngineDriver::start → subscribe → verify-config (stops pre-resume); resume owns the S+1..W auto-backfill via BlockPump::backfill_with_drain"),
         ("07-result-batch-stream", "REACHED-via-EngineDriver", "EngineDriver::take_result_receiver (attach pre-resume); ResultBatch over the existing unbounded channel"),
         ("08-register-and-solve-path", "REACHED-via-EngineDriver", "EngineDriver::register_and_solve_path delegates to EngineStages"),
-        ("09-verify-lifecycles", "REACHABLE", "EngineDriver::run_v3/v4_registration_lifecycle(+_sync) expose the core lifecycles; claims.rs VerifyClaims (tokio at-most-once) + retry.rs + ledger.rs shipped by XFEJUG"),
+        ("09-verify-lifecycles", "REACHABLE", "EngineDriver::run_v3/v4_registration_lifecycle(+_sync) expose the core lifecycles and now carry the at-most-once claim (bot_core::VerifyClaims, ZTEUTA); the outcome ledger is the core's (bot_core::registration_ledger, ZTEUTA); retry.rs shipped by XFEJUG"),
         ("10-pool-construction", "REACHABLE", "probe_pool_type + build_v2/v3/v4/... (umbrella)"),
         ("11-discovery-db-enumeration", "REACHABLE", "degenbot::db::SnapshotDb::fetch_discovery_rows (degenbot-db::discovery_read) + tests/discovery_read_parity.rs"),
         ("12-path-discovery-batching", "REACHABLE", "discovery.rs: graph build over G2 rows + batched lazy OwnedPathFinder (batch_size<=1 per-path; one cooperative async hop per batch)"),

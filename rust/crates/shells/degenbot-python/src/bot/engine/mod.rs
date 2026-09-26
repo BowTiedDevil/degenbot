@@ -16,6 +16,7 @@
 //!   existing `crates/engine/degenbot-bot/src/arb_engine/` core split.
 
 mod errors;
+mod identity;
 mod path_info;
 mod payload_path_info;
 mod register;
