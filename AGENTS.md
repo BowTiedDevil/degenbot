@@ -196,3 +196,51 @@ investigate before trusting the build.
 
 ## Python Environment
 Use `uv`.
+
+## Local node identity
+
+The node this environment points at is **reth**, not anvil. `reth` is not on
+`PATH`; `anvil` is (`/home/dev/.foundry/bin/anvil`). Both exist, which is
+exactly how a test ends up reporting an anvil conclusion from a reth response.
+
+Identify a node by asking it, never by which binary is installed:
+
+```bash
+curl -s -X POST -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' \
+  "$ETHEREUM_FULL_NODE_HTTP_URI"
+```
+
+`ETHEREUM_FULL_NODE_HTTP_URI` resolves to `reth/v2.6.0`. A locally spawned
+anvil (`AnvilFork`, `tests/standalone_anvil/`) is a separate process with its
+own socket; `AnvilFork()` without a `fork_url` does not talk to the default
+URI at all. This anvil build also takes only `--port <NUM>` - no `--ws-port`,
+and no `/ws` route - so it is HTTP plus IPC, with no WebSocket.
+
+Measured, both bundle shapes, over both transports:
+
+| node | transport | searcher-doc shape | mev-geth shape |
+| --- | --- | --- | --- |
+| reth v2.6.0 | HTTP | `-32602` map-where-sequence-expected | succeeds |
+| reth v2.6.0 | WS | identical `-32602` | identical success |
+| anvil v1.7.1 | HTTP | `-32601 Method not found` | `-32601` |
+| anvil v1.7.1 | IPC | `-32601` | `-32601` |
+
+Two things follow, and both are worth not re-deriving:
+
+- **Transport makes no difference.** reth's answers are byte-identical over
+  HTTP and WS, so there is no "use WS instead" workaround and no
+  transport-specific concern for the sim gate.
+- **The two-shape fallback is an endpoint-implementation difference, not a
+  transport one.** `degenbot_strategy::frame_pipeline::simulate_candidate`
+  tries the searcher-doc shape and then the mev-geth shape, because
+  MEVBlocker-family nodes and mev-getth/reth-lineage nodes disagree about
+  whether `params[0]` is the bundle or a list of blocks. Its comment is
+  explicit that a shape or method-missing error must never read as "the bundle
+  reverted". Reth accepts the second shape, so the sim path works there.
+
+`eth_callMany` is the pre-submission sim gate: it atomically simulates
+[victim tx, backrun] against post-target state, never broadcasts, and a
+`false` result drops the candidate. It therefore **fails closed** on a node
+that implements neither shape - anvil returns `-32601` for both, so nothing
+would be submitted against anvil.
