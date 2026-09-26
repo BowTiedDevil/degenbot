@@ -292,7 +292,7 @@ async fn build_one(
                 registered,
                 |e| matches!(e, RegisterV4PoolError::AlreadyRegistered { .. }),
                 || reuse_v4_pool(bot, r.manager.address, &pool_id),
-                map_v4_register_error,
+                BuildFailure::from,
             )
         }
     }
@@ -392,19 +392,6 @@ fn fold_already_registered<T, E: std::fmt::Debug>(
             ))
         }),
         Err(err) => Err(map_refusal(err)),
-    }
-}
-
-/// Map the typed V4 admission refusal to the driver build-failure taxonomy.
-fn map_v4_register_error(err: RegisterV4PoolError) -> BuildFailure {
-    match err {
-        RegisterV4PoolError::DynamicFee { .. } => BuildFailure::DynamicFee,
-        RegisterV4PoolError::HookedPool { .. } => BuildFailure::HookedPool,
-        RegisterV4PoolError::FeeExceedsEncoderLimit { .. }
-        | RegisterV4PoolError::SpecViolation(_) => BuildFailure::HighFee,
-        other @ RegisterV4PoolError::AlreadyRegistered { .. } => {
-            BuildFailure::Transient(format!("{other:?}"))
-        }
     }
 }
 

@@ -32,6 +32,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use degenbot_pathfinding::PoolKind;
+use degenbot_pools::v4_state::RegisterV4PoolError;
 
 /// A path's hop signature: `(pool_id, zero_for_one)` per hop.
 pub type HopSignature = Vec<(u64, bool)>;
@@ -159,6 +160,24 @@ pub enum BuildFailure {
     HighFee,
     /// Any other failure: transient, never memoized.
     Transient(String),
+}
+
+impl From<RegisterV4PoolError> for BuildFailure {
+    /// Classify a V4 admission refusal by TYPE. The hook and dynamic-fee
+    /// categories carry their own counters (`counts_as_skip == false`); a fee
+    /// above the encoder limit is a stable pool fact. `AlreadyRegistered` is a
+    /// wiring race, not a pool fact, so it stays retryable.
+    fn from(err: RegisterV4PoolError) -> Self {
+        match err {
+            RegisterV4PoolError::DynamicFee { .. } => Self::DynamicFee,
+            RegisterV4PoolError::HookedPool { .. } => Self::HookedPool,
+            RegisterV4PoolError::FeeExceedsEncoderLimit { .. }
+            | RegisterV4PoolError::SpecViolation(_) => Self::HighFee,
+            other @ RegisterV4PoolError::AlreadyRegistered { .. } => {
+                Self::Transient(format!("{other:?}"))
+            }
+        }
+    }
 }
 
 /// The typed classification of one hop-build failure.
@@ -411,6 +430,39 @@ mod tests {
         assert_eq!(transient.outcome, RegistrationOutcome::BuildV2Refused);
         assert!(!transient.stable, "a transient failure is not a pool fact");
         assert!(transient.counts_as_skip);
+    }
+
+    /// The V4 admission refusal taxonomy has ONE home: the core maps the
+    /// typed `RegisterV4PoolError` into `BuildFailure`, so the Python binding
+    /// and the pure-Rust driver cannot classify one construction refusal two
+    /// different ways.
+    #[test]
+    fn v4_admission_refusal_maps_to_one_build_failure_taxonomy() {
+        use degenbot_pools::v4_state::RegisterV4PoolError;
+
+        assert_eq!(
+            BuildFailure::from(RegisterV4PoolError::HookedPool { hook_flags: 0xCC }),
+            BuildFailure::HookedPool
+        );
+        assert_eq!(
+            BuildFailure::from(RegisterV4PoolError::DynamicFee { fee: 0x10_0000 }),
+            BuildFailure::DynamicFee
+        );
+        assert_eq!(
+            BuildFailure::from(RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 65_536 }),
+            BuildFailure::HighFee
+        );
+
+        // The stable-fact classification is what decides memoization, so the
+        // fee refusal must classify stable+skip through the shared classifier.
+        let refusal = RegistrationLedger::classify_build_refusal(
+            &BuildFailure::from(RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 65_536 }),
+            PoolKind::V4,
+            None,
+        );
+        assert_eq!(refusal.outcome, RegistrationOutcome::BuildV4Refused);
+        assert!(refusal.stable);
+        assert!(refusal.counts_as_skip);
     }
 
     #[test]
