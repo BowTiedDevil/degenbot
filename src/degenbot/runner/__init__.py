@@ -19,7 +19,7 @@ module re-exports):
   the crawl is the fleet-hosted intake now.
 
 Everything else is private by name (``_consume`` / ``_dispatch`` / ``_render``
-/ ``_driver_constants``) and is imported directly by name from its private
+/ ``identity``) and is imported directly by name from its private
 module — nothing is smuggled in via the package root.
 """
 

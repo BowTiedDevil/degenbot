@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from degenbot.runner import config as config_module
+from degenbot.runner import identity as identity_module
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _REPO_ROOT / "src/degenbot/runner/published_operator_private_keys.txt"
@@ -37,7 +37,7 @@ def test_manifest_declares_the_published_keys() -> None:
 
 
 def test_python_refusal_list_is_the_manifest() -> None:
-    assert config_module._PLACEHOLDER_OPERATOR_PRIVATE_KEYS == _manifest_keys()
+    assert identity_module._PLACEHOLDER_OPERATOR_PRIVATE_KEYS == _manifest_keys()
 
 
 def test_rust_example_embeds_the_manifest_instead_of_a_second_list() -> None:

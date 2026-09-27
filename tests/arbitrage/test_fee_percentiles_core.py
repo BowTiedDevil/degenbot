@@ -19,7 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from degenbot.dispatch import Dispatcher
-from degenbot.runner import _driver_constants
+from degenbot.runner import identity
 from degenbot.runner._consume import _apply_block_if_ready
 from degenbot.runner.bot_runner import _SessionState
 from tests.fakes.engine import FakeEngine, FakeEngineRegistry
@@ -85,8 +85,8 @@ async def test_head_tick_requests_core_percentiles(monkeypatch) -> None:
 
 
 def test_retired_python_literal_is_gone() -> None:
-    assert not hasattr(_driver_constants, "FEE_PERCENTILES"), (
-        "_driver_constants.FEE_PERCENTILES is the Python mirror of the core "
+    assert not hasattr(identity, "FEE_PERCENTILES"), (
+        "identity.FEE_PERCENTILES is the Python mirror of the core "
         "percentile pair; the driver reads the core value over the FFI instead"
     )
 

@@ -6,7 +6,8 @@ runtime driver (``BotRunner``) and its tests consume:
 - :class:`ArbitrageConfig` — the unified frozen config value object (built from
   the resolved verdict + CLI flags via :meth:`ArbitrageConfig.build`;
   the operator/executor identity it carries is read from the process
-  environment).
+  environment; the deployment defaults and the checksum helper live in
+  :mod:`degenbot.runner.identity`).
 
 The display renderers (sim-diag / sim-fail / failure-breakdown) live in
 :mod:`degenbot.runner._render`. The thin-margin solver-result pre-filter of the
@@ -22,73 +23,19 @@ from pathlib import Path
 from typing import Any
 
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_rpc_uris, resolved_config
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.runner.diag import DiagConfig
-
-# Arbitrage configuration
-# ──────────────────────────────────────────────────────────────────
-
-# Ethereum mainnet default allowed intermediate tokens — mirrors the example's
-# ETH_MAINNET_ALLOWED_TOKENS set.
-_ALLOWED_INTERMEDIATE_TOKENS = frozenset({
-    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
-    "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
-    "0x6B175474E89094C44Da98b954EedeAC495271d0F",  # DAI
-    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",  # WBTC
-    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",  # UNI
-    "0x514910771AF9Ca656af840dff83E8264EcF986CA",  # LINK
-    "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2",  # SUSHI
-    "0xD533a949740bb3306d119CC777fa900bA034cd52",  # CRV
-    "0xc00e94Cb662C3520282E6f5717214004A7f26888",  # COMP
-    "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
-    "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",  # MATIC/POL
-})
-# Default executor deployment constants — mirror the example's env defaults.
-_DEFAULT_EXECUTOR_ADDRESS = "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"
-_DEFAULT_INJECTED_ADDRESS = "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1"
-_DEFAULT_EXECUTOR_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
-
-# Dry-run operator placeholder: a VALID secp256k1 private key + its derived
-# address, used when the process environment omits `OPERATOR_*` in non-live mode.
-# The (now-eager) `TxSigner(key=operator_private_key, chain_id=1)` site
-# rejects the former all-zero placeholder (zero is not a valid scalar) and
-# raised `ValueError: signature error`. The Anvil account-0 key is a
-# well-known valid throwaway that never signs in dry-run: the Rust submit
-# leaf's `dry_run` guard skips `sign_eip1559` for every candidate.
-_DRY_RUN_OPERATOR_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-_DRY_RUN_OPERATOR_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-
-# Private keys the repository publishes, from their one declared home. The
-# Python driver and the Rust parity example both read this manifest rather
-# than carry a copy that can drift; a live run refuses what it names, because
-# signing with a published key would submit real transactions under a key
-# anyone can read.
-_PUBLISHED_OPERATOR_PRIVATE_KEYS_PATH = Path(__file__).with_name(
-    "published_operator_private_keys.txt"
+from degenbot.runner.identity import (
+    _ALLOWED_INTERMEDIATE_TOKENS,
+    _DEFAULT_EXECUTOR_ADDRESS,
+    _DEFAULT_EXECUTOR_OWNER,
+    _DEFAULT_INJECTED_ADDRESS,
+    _DRY_RUN_OPERATOR_ADDRESS,
+    _DRY_RUN_OPERATOR_PRIVATE_KEY,
+    _PLACEHOLDER_OPERATOR_PRIVATE_KEYS,
+    _checksum_or_empty,
 )
-
-
-def _published_operator_private_keys() -> frozenset[str]:
-    """The lowercased, 0x-prefixed keys the repository publishes.
-
-    Blank lines and ``#`` comments are ignored, so the manifest can carry the
-    classification's rationale beside the keys.
-
-    Returns:
-        The published keys, compared case-insensitively by the live refusal.
-
-    """
-    text = _PUBLISHED_OPERATOR_PRIVATE_KEYS_PATH.read_text(encoding="utf-8")
-    return frozenset(
-        stripped.lower()
-        for raw in text.splitlines()
-        if (stripped := raw.strip()) and not stripped.startswith("#")
-    )
-
-
-_PLACEHOLDER_OPERATOR_PRIVATE_KEYS = _published_operator_private_keys()
 
 
 def _declared(values: Mapping[str, Any] | None, path: str) -> Any:
@@ -205,20 +152,6 @@ def _refuse_retired_injection_key() -> None:
     """
     if _RETIRED_INJECTION_KEY in os.environ:
         raise ValueError(_RETIRED_INJECTION_KEY_REFUSAL)
-
-
-def _checksum_or_empty(addr: str | None) -> str:
-    """Checksum an address, returning "" for empty input.
-
-    Mirrors ``main()``'s ``get_checksum_address`` handling of an unset field.
-
-    Returns:
-        The checksummed address, or ``""`` for empty input.
-
-    """
-    if not addr:
-        return ""
-    return get_checksum_address(addr)
 
 
 @dataclasses.dataclass(frozen=True)

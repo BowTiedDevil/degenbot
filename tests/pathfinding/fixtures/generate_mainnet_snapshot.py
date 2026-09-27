@@ -58,7 +58,7 @@ from pathlib import Path
 
 from degenbot.db import db_upgrade_database
 from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths
-from degenbot.runner._driver_constants import ETH_MAINNET_ALLOWED_TOKENS, WETH_ADDRESS
+from degenbot.runner.identity import ETH_MAINNET_ALLOWED_TOKENS, WETH_ADDRESS
 from degenbot.types.chain import ChainId
 
 FIXTURE_DIR = Path(__file__).resolve().parent

@@ -19,11 +19,15 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from degenbot.logging import logger as bot_logger
-from degenbot.runner._driver_constants import _SIM_FAIL_RENDER_CAP
 
 if TYPE_CHECKING:
     from degenbot.dispatch import Dispatcher, DispatchOutcome
     from degenbot.runner._dispatch import MergedOutcome
+
+# Cap on per-batch `[sim-fail]` lines emitted by the renderer. A thin-margin
+# revert storm can otherwise flood the log during a stalled head.
+_SIM_FAIL_RENDER_CAP = 25
+
 
 # A sim-dispatch outcome handed to the renderers: the FFI batch outcome or
 # MergedOutcome (the payload-stitched adapter — structurally identical view).

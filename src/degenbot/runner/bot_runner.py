@@ -49,12 +49,6 @@ from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner._dispatch import SubmissionSmoke, _load_executor_runtime_bytecode
-from degenbot.runner._driver_constants import (
-    ETH_MAINNET_ALLOWED_TOKENS,
-    MULTICALL3_ADDRESS,
-    UNISWAP_V4_POOL_MANAGER_ADDRESS,
-    WETH_ADDRESS,
-)
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
 from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
@@ -66,6 +60,12 @@ from degenbot.runner.build_paths import (
 )
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.diag import arm_diagnostics
+from degenbot.runner.identity import (
+    ETH_MAINNET_ALLOWED_TOKENS,
+    MULTICALL3_ADDRESS,
+    UNISWAP_V4_POOL_MANAGER_ADDRESS,
+    WETH_ADDRESS,
+)
 
 if TYPE_CHECKING:
     from degenbot.strategy import StrategyReadinessView

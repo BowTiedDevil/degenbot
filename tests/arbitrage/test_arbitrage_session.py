@@ -732,7 +732,7 @@ class TestConstructionContext:
     task owns them out of run()'s main-loop trim."""
 
     def test_for_bot_builds_trackers_weth_db_once(self) -> None:
-        from degenbot.runner._driver_constants import (
+        from degenbot.runner.identity import (
             PANCAKESWAP_V3_MAINNET_FACTORY,
             SUSHISWAP_V3_MAINNET_FACTORY,
             UNISWAP_V3_MAINNET_FACTORY,

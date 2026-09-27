@@ -91,8 +91,8 @@ class TestPermutation:
         assert pipe.pool_type_per_depth is None
         assert set(pipe.pool_types) == {PoolKind.V2, PoolKind.V3, PoolKind.V4}
 
-    def test_driver_constants_has_no_path_permutation_global(self) -> None:
-        import degenbot.runner._driver_constants as dc
+    def test_identity_has_no_path_permutation_global(self) -> None:
+        import degenbot.runner.identity as dc
 
         assert not hasattr(dc, "PATH_PERMUTATION_FILTER"), (
             "the module global must be deleted; the config is the single path"

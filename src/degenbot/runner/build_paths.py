@@ -37,17 +37,17 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths_async
-from degenbot.runner._driver_constants import (
+from degenbot.runner._registration_ledger import (
+    RegistrationLedger,
+    RegistrationOutcome,
+)
+from degenbot.runner.identity import (
     ALLOWED_INTERMEDIATE_TOKENS,
     PANCAKESWAP_V3_MAINNET_FACTORY,
     SUSHISWAP_V3_MAINNET_FACTORY,
     UNISWAP_V3_MAINNET_FACTORY,
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
-)
-from degenbot.runner._registration_ledger import (
-    RegistrationLedger,
-    RegistrationOutcome,
 )
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot

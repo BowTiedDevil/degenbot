@@ -10,7 +10,6 @@ examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 src/degenbot/runner/__init__.py
 src/degenbot/runner/_consume.py
 src/degenbot/runner/_dispatch.py
-src/degenbot/runner/_driver_constants.py
 src/degenbot/runner/_render.py
 src/degenbot/runner/_session_watch.py
 src/degenbot/runner/bot_runner.py

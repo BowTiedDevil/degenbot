@@ -185,7 +185,7 @@ def test_an_explicitly_uncapped_pipeline_tells_the_engine_uncapped() -> None:
 
 # ── The retired crawl-shell knobs ────────────────────────────────────────
 
-_IMPORT_PROBE = """import degenbot.runner._driver_constants as dc
+_IMPORT_PROBE = """import degenbot.runner.identity as dc
 
 print("IMPORTED", dc.WETH_ADDRESS)
 """
