@@ -7,25 +7,23 @@ implementation -- including the asymmetry that used to exist, where a Python
 cascade read an ``[rpc]`` spelling the typed loader refuses and therefore
 ignored ``DEGENBOT_CONFIG`` entirely.
 
-The config is installed once at FFI module init, so the file and environment
-layers are exercised in a subprocess whose environment is fixed BEFORE the
-import; the ``cli`` override and the refusals are per-call and are exercised
-in-process. A subprocess is the only honest way to observe an
-install-at-import cascade, and it is what makes ``DEGENBOT_CONFIG`` a real
-test rather than a re-derivation of the path.
+The file and environment layers are resolution claims, so they are exercised
+through ``resolve_hypothetical`` over a captured environment + file; the
+``cli`` override and the refusals are per-call and are exercised in-process.
+The hypothetical door installs nothing, so the file selection is still a real
+test -- ``DEGENBOT_CONFIG`` decides which file the captured environment
+resolves, rather than the test re-deriving the path.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import pathlib
-import subprocess
-import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from degenbot import _ffi
 from degenbot import config as config_module
 from degenbot.bot import Bot
 from degenbot.config import (
@@ -44,72 +42,24 @@ if TYPE_CHECKING:
 # refusal is genuinely the absence of every layer rather than a leak.
 _UNCONFIGURED_CHAIN = 988877
 
-# The probe drives the PUBLIC surface from a fresh interpreter, so a layer that
-# is only installed at import is observable. It reports one JSON object per op
-# and turns a refusal into {"error": "Type: message"} so a test can assert on
-# the message the operator actually sees.
-_PROBE = """\
-import json
-import sys
-
-from degenbot import _ffi
-from degenbot.config import (
-    config_file_path,
-    resolve_chain_id,
-    resolve_database_path,
-    resolve_http_rpc_uri,
-    resolve_node,
-    resolve_rpc_uris,
-    resolve_ws_rpc_uri,
-)
-
-results = []
-for op in json.loads(sys.argv[1]):
-    kind = op[0]
-    try:
-        if kind == "file":
-            results.append({"file": config_file_path()})
-        elif kind == "node":
-            resolved = resolve_node(op[1], op[2], node=op[3])
-            results.append({"uri": resolved.uri, "source": resolved.source})
-        elif kind == "http":
-            results.append({"uri": resolve_http_rpc_uri(op[1], node=op[2])})
-        elif kind == "ws":
-            results.append({"uri": resolve_ws_rpc_uri(op[1], node=op[2])})
-        elif kind == "pair":
-            results.append({"pair": list(resolve_rpc_uris(op[1], node=op[2]))})
-        elif kind == "chain":
-            results.append({"chain_id": resolve_chain_id(op[1])})
-        elif kind == "chain_source":
-            resolved = _ffi.resolved_config().resolve_chain_id(op[1])
-            results.append({"chain_id": resolved.chain_id, "source": resolved.source})
-        elif kind == "database":
-            results.append({"path": resolve_database_path(op[1])})
-        elif kind == "database_source":
-            resolved = _ffi.resolved_config().resolve_database_path(op[1])
-            results.append({"path": resolved.path, "source": resolved.source})
-        else:
-            raise AssertionError("unknown probe op: " + kind)
-    except BaseException as exc:  # noqa: BLE001 - the message is the assertion
-        results.append({"error": type(exc).__name__ + ": " + str(exc)})
-print(json.dumps(results))
-"""
-
-
 def _probe(tmp_path: Path, file_body: str, *ops: list[Any], **env_overrides: str) -> list[dict]:
-    """Run ``ops`` in a fresh interpreter with a pinned file and environment.
+    """Resolve ``ops`` in-process over a hypothetical environment.
 
-    Every ``DEGENBOT_RPC_*`` / ``DEGENBOT_DEFAULT_CHAIN_ID`` name is cleared
-    first and the XDG homes are pointed into ``tmp_path``, so neither the
-    developer's shell nor their ``~/.config`` file can decide a layer this test
-    is about. ``DEGENBOT_CONFIG`` always names the written file, so the file
-    layer is reachable only through the documented selection.
+    Every ``DEGENBOT_RPC_*`` / ``DEGENBOT_DEFAULT_CHAIN_ID`` name is absent from
+    the captured environment and the XDG homes are pointed into ``tmp_path``, so
+    neither the developer's shell nor their ``~/.config`` file can decide a
+    layer this test is about. ``DEGENBOT_CONFIG`` names the written file, so the
+    file layer is reachable only through the documented selection.
+    ``resolve_hypothetical`` is a pure function of this captured environment and
+    installs nothing, so a resolution claim needs no fresh interpreter; a
+    refusal is reported as ``{"error": "Type: message"}`` so a test can assert on
+    the message the operator actually sees.
 
     Args:
         tmp_path: The per-test scratch directory.
         file_body: The operator file's TOML.
         ops: Probe operations, in order.
-        env_overrides: Extra environment names to set for the child.
+        env_overrides: Extra environment names to capture for the probe.
 
     Returns:
         One result dict per op.
@@ -122,29 +72,51 @@ def _probe(tmp_path: Path, file_body: str, *ops: list[Any], **env_overrides: str
     xdg_config.mkdir(exist_ok=True)
     xdg_state.mkdir(exist_ok=True)
 
-    env = dict(os.environ)
-    for name in list(env):
-        if name.startswith("DEGENBOT_RPC_") or name == "DEGENBOT_DEFAULT_CHAIN_ID":
-            del env[name]
-    env.update(
-        {
-            "DEGENBOT_CONFIG": str(config_file),
-            "XDG_CONFIG_HOME": str(xdg_config),
-            "XDG_STATE_HOME": str(xdg_state),
-        },
-        **env_overrides,
-    )
-    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        [sys.executable, "-c", _PROBE, json.dumps(ops)],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
-    assert completed.returncode == 0, completed.stderr
-    parsed: list[dict] = json.loads(completed.stdout)
-    assert len(parsed) == len(ops)
-    return parsed
+    env: dict[str, str] = {
+        "DEGENBOT_CONFIG": str(config_file),
+        "XDG_CONFIG_HOME": str(xdg_config),
+        "XDG_STATE_HOME": str(xdg_state),
+    }
+    env.update(env_overrides)
+
+    def _node(chain_id: int, scope: str, node: str | None) -> dict[str, object]:
+        resolved = _ffi.resolve_hypothetical_node_uri(env, None, chain_id, scope, node)
+        return {"uri": resolved.uri, "source": resolved.source}
+
+    results: list[dict] = []
+    for op in ops:
+        kind = op[0]
+        try:
+            if kind == "node":
+                results.append(_node(op[1], op[2], op[3]))
+            elif kind == "http":
+                results.append({"uri": _node(op[1], "request", op[2])["uri"]})
+            elif kind == "ws":
+                results.append({"uri": _node(op[1], "subscription", op[2])["uri"]})
+            elif kind == "pair":
+                results.append({
+                    "pair": [
+                        _node(op[1], "request", op[2])["uri"],
+                        _node(op[1], "subscription", op[2])["uri"],
+                    ]
+                })
+            elif kind == "chain":
+                resolved = _ffi.resolve_hypothetical_chain_id(env, None, op[1])
+                results.append({"chain_id": resolved.chain_id})
+            elif kind == "chain_source":
+                resolved = _ffi.resolve_hypothetical_chain_id(env, None, op[1])
+                results.append({"chain_id": resolved.chain_id, "source": resolved.source})
+            elif kind == "database":
+                resolved = _ffi.resolve_hypothetical_database_path(env, None, op[1])
+                results.append({"path": resolved.path})
+            elif kind == "database_source":
+                resolved = _ffi.resolve_hypothetical_database_path(env, None, op[1])
+                results.append({"path": resolved.path, "source": resolved.source})
+            else:
+                raise AssertionError("unknown probe op: " + kind)
+        except BaseException as exc:  # noqa: BLE001 - the message is the assertion
+            results.append({"error": type(exc).__name__ + ": " + str(exc)})
+    return results
 
 
 def _nodes_file(
@@ -190,19 +162,17 @@ class TestFileLayer:
             ipc={3: "/tmp/file.ipc"},
         )
 
-        from_http, from_ws, from_ipc, selected = _probe(
+        from_http, from_ws, from_ipc = _probe(
             tmp_path,
             body,
             ["http", 1, None],
             ["ws", 2, None],
             ["http", 3, None],
-            ["file"],
         )
 
         assert from_http == {"uri": "http://file-http:8545"}
         assert from_ws == {"uri": "ws://file-ws:8546"}
         assert from_ipc == {"uri": "/tmp/file.ipc"}
-        assert selected == {"file": str(tmp_path / "operator.toml")}
 
     def test_degenbot_config_is_the_selected_file(self, tmp_path: Path) -> None:
         """``DEGENBOT_CONFIG`` names the file; the XDG home is not consulted.
@@ -220,14 +190,14 @@ class TestFileLayer:
             encoding="utf-8",
         )
 
-        selected_file, request = _probe(
+        (request,) = _probe(
             tmp_path,
             _nodes_file(http={1: "http://override-http:8545"}),
-            ["file"],
             ["http", 1, None],
         )
 
-        assert selected_file == {"file": str(tmp_path / "operator.toml")}
+        # The override file's endpoint, not the XDG file's: DEGENBOT_CONFIG
+        # selected the file.
         assert request == {"uri": "http://override-http:8545"}
 
     def test_each_layer_reports_itself_as_the_winner(self, tmp_path: Path) -> None:

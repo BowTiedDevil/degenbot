@@ -146,22 +146,9 @@ def test_the_pipeline_refuses_to_invent_its_own_path_cap() -> None:
         )
 
 
-#: Resolve the cap AND install it in a child that declared the env layer:
-#: the cap is a declared key, so the verdict is settled at FFI module init and
-#: a value exported after this process started cannot reach it.
-_CAP_PROBE = """\
-from types import SimpleNamespace
+class _CapEngine:
+    """Records the cap the pipeline installs, so the test reads it back."""
 
-from degenbot.runner.build_paths import PathRegistrationPipeline
-from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
-
-
-class _FleetHostedBot:
-    def registration_fleet_hosted(self) -> bool:
-        return True
-
-
-class _Engine:
     def __init__(self) -> None:
         self.path_cap = None
 
@@ -169,41 +156,19 @@ class _Engine:
         self.path_cap = cap
 
 
-cfg = ArbitrageConfig.build(
-    live=False,
-    permutation=None,
-    rpc=RpcCascadeOverrides(chain_id=1, node="wss://probe.example"),
-)
-engine = _Engine()
-PathRegistrationPipeline(
-    context=SimpleNamespace(
-        bot=_FleetHostedBot(),
-        chain_id=1,
-        database_path="unused.db",
-        uniswap_v3_tracker=None,
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=None,
-    ),
-    engine_registry=SimpleNamespace(engine=engine),
-    max_paths=cfg.max_registered_paths,
-    discovery_batch_size=cfg.discovery_batch_size,
-)
-print("CAP", cfg.max_registered_paths, engine.path_cap)
-"""
-
-
 def test_the_cap_the_caller_resolved_is_the_cap_the_engine_gets() -> None:
     """One cap, one owner: the config resolves it and the pipeline installs it."""
-    completed = probe.run(_CAP_PROBE, env={"DEGENBOT_MAX_PATHS": "1234"})
-
-    assert completed.returncode == 0, completed.stderr
-    line = next(
-        line for line in completed.stdout.splitlines() if line.startswith("CAP")
+    cfg = probe.build_config(env={"DEGENBOT_MAX_PATHS": "1234"})
+    engine = _CapEngine()
+    PathRegistrationPipeline(
+        context=_context(_FleetHostedBot()),
+        engine_registry=SimpleNamespace(engine=engine),
+        max_paths=cfg.max_registered_paths,
+        discovery_batch_size=cfg.discovery_batch_size,
     )
-    resolved, installed = line.split()[1:]
-    assert resolved == "1234"
-    assert installed == "1234", completed.stdout
+
+    assert cfg.max_registered_paths == 1234
+    assert engine.path_cap == 1234
 
 
 def test_an_explicitly_uncapped_pipeline_tells_the_engine_uncapped() -> None:

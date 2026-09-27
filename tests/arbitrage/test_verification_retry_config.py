@@ -80,6 +80,7 @@ verify_retry_jitter = 0.2
     def test_a_non_integer_attempt_count_is_refused_at_boot(self) -> None:
         """A typo must not silently fall back to the default."""
 
+        # Process-level: the refusal is the process exit code at boot.
         completed = probe.run(
             "import degenbot", env={"VERIFICATION_RETRY_MAX_ATTEMPTS": "not-an-int"}
         )
@@ -96,10 +97,5 @@ verify_retry_jitter = 0.2
         ``build_paths``.
 
         """
-        completed = probe.run(
-            probe.build_config_code(["verification_retry_policy.max_attempts"]),
-            env={"VERIFICATION_RETRY_MAX_ATTEMPTS": "0"},
-        )
-
-        assert completed.returncode != 0, completed.stdout
-        assert "max_attempts" in completed.stderr, completed.stderr
+        with pytest.raises(ValueError, match="max_attempts"):
+            probe.build_config(env={"VERIFICATION_RETRY_MAX_ATTEMPTS": "0"})

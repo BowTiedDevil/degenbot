@@ -65,6 +65,7 @@ sys.exit(0)
 
 def test_boot_refusal_is_typed_never_abort() -> None:
     """A sub-floor boot raises a typed error; the process must survive."""
+    # Process-level: the claim is that the process survives the refusal.
     proc = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted binary, args list, no shell
         [sys.executable, "-c", _CHILD],
         capture_output=True,

@@ -167,6 +167,7 @@ print('FLEET-OK')
 # profile-parametrized rewrite over this same shape.
 def test_fleet_station_executes_callables_on_named_fleet_seats() -> None:
     """End-to-end: stance env -> boot install -> named-seat receipts."""
+    # Process-level: the station boot and its named seats are process-global.
     proc = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted binary, args list, no shell
         [sys.executable, "-c", _FLEET_DRIVER],
         capture_output=True,

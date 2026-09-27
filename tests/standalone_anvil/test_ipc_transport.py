@@ -6,9 +6,10 @@ dials a real one: the Anvil IPC socket surfaced by ``AnvilFork.ipc_path`` (the
 same socket the Rust core's ``DynProvider`` connects to).
 
 The endpoint is resolved by the request-scope / subscription-scope resolver
-from a temporary operator file (``[nodes.ipc]``) in a subprocess with every
-``DEGENBOT_RPC_*`` name cleared, so the file layer is the only source. Over the
-resolved socket the test asserts both capabilities:
+from a temporary operator file (``[nodes.ipc]``) through
+``resolve_hypothetical`` -- every ``DEGENBOT_RPC_*`` name is absent from the
+captured environment, so the file layer is the only source. Over the resolved
+socket the test asserts both capabilities:
 
 - a one-shot request path: ``eth_chainId``, a token read (``decimals()``), and
   the sim client's ``eth_callMany`` framing;
@@ -23,15 +24,13 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import socket
-import subprocess  # ruff: ignore[suspicious-subprocess-import]
-import sys
 import threading
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from degenbot import _ffi
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.provider import AlloyProvider
@@ -51,44 +50,17 @@ _OTHER_CHAIN_ID = 999
 _DECIMALS_SELECTOR = bytes.fromhex("313ce567")
 _TOKEN_DECIMALS = 8
 
-# The probe runs the PUBLIC resolver surface in a fresh interpreter, because the
-# config is installed once at FFI import. It reports one JSON object per op and
-# renders a refusal as `{"error": "Type: message"}` so the test asserts on the
-# message an operator actually sees.
-_PROBE = """\
-import json
-import sys
-
-from degenbot.config import resolve_http_rpc_uri, resolve_node, resolve_ws_rpc_uri
-
-results = []
-for op in json.loads(sys.argv[1]):
-    kind = op[0]
-    try:
-        if kind == "node":
-            resolved = resolve_node(op[1], op[2])
-            results.append({"uri": resolved.uri, "source": resolved.source})
-        elif kind == "request":
-            results.append({"uri": resolve_http_rpc_uri(op[1])})
-        elif kind == "subscription":
-            results.append({"uri": resolve_ws_rpc_uri(op[1])})
-        else:
-            raise AssertionError("unknown probe op: " + kind)
-    except BaseException as exc:  # noqa: BLE001 - the message is the assertion
-        results.append({"error": type(exc).__name__ + ": " + str(exc)})
-print(json.dumps(results))
-"""
-
-
 def _resolve_from_operator_file(tmp_path: Path, body: str, *ops: list[Any]) -> list[dict]:
-    """Resolve ``ops`` in a fresh interpreter with a pinned operator file.
+    """Resolve ``ops`` over a hypothetical operator file.
 
-    Every ``DEGENBOT_RPC_*`` / ``DEGENBOT_DEFAULT_CHAIN_ID`` name is cleared and
-    the XDG homes point into ``tmp_path``, so neither the developer's shell nor
-    their ``~/.config`` file can decide a layer. ``DEGENBOT_CONFIG`` only points
-    at the written file (the documented file selection), so the file layer is
-    the sole endpoint source. This mirrors the subprocess pattern of
-    ``tests/test_config_rpc.py`` and the Rust ``operator_file_resolution`` test.
+    Every ``DEGENBOT_RPC_*`` / ``DEGENBOT_DEFAULT_CHAIN_ID`` name is absent from
+    the captured environment and the XDG homes point into ``tmp_path``, so
+    neither the developer's shell nor their ``~/.config`` file can decide a
+    layer. ``DEGENBOT_CONFIG`` points at the written file (the documented file
+    selection), so the file layer is the sole endpoint source.
+    ``resolve_hypothetical`` installs nothing, so the resolution needs no fresh
+    interpreter and a refusal is reported as ``{"error": "Type: message"}`` so
+    the test asserts on the message an operator actually sees.
 
     Args:
         tmp_path: Per-test scratch directory.
@@ -105,27 +77,31 @@ def _resolve_from_operator_file(tmp_path: Path, body: str, *ops: list[Any]) -> l
     xdg_config.mkdir(exist_ok=True)
     xdg_state.mkdir(exist_ok=True)
 
-    env = dict(os.environ)
-    for name in list(env):
-        if name.startswith("DEGENBOT_RPC_") or name == "DEGENBOT_DEFAULT_CHAIN_ID":
-            del env[name]
-    env.update({
+    env: dict[str, str] = {
         "DEGENBOT_CONFIG": str(config_file),
         "XDG_CONFIG_HOME": str(xdg_config),
         "XDG_STATE_HOME": str(xdg_state),
-    })
+    }
 
-    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv, no shell
-        [sys.executable, "-c", _PROBE, json.dumps(ops)],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
-    assert completed.returncode == 0, completed.stderr
-    parsed: list[dict] = json.loads(completed.stdout)
-    assert len(parsed) == len(ops)
-    return parsed
+    def _node(chain_id: int, scope: str) -> dict[str, object]:
+        resolved = _ffi.resolve_hypothetical_node_uri(env, None, chain_id, scope, None)
+        return {"uri": resolved.uri, "source": resolved.source}
+
+    results: list[dict] = []
+    for op in ops:
+        kind = op[0]
+        try:
+            if kind == "node":
+                results.append(_node(op[1], op[2]))
+            elif kind == "request":
+                results.append({"uri": _node(op[1], "request")["uri"]})
+            elif kind == "subscription":
+                results.append({"uri": _node(op[1], "subscription")["uri"]})
+            else:
+                raise AssertionError("unknown probe op: " + kind)
+        except BaseException as exc:  # noqa: BLE001 - the message is the assertion
+            results.append({"error": type(exc).__name__ + ": " + str(exc)})
+    return results
 
 
 def _nodes_file(*, http: dict[int, str] | None = None, ipc: dict[int, str] | None = None) -> str:

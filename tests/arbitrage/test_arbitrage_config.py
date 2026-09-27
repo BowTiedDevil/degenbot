@@ -94,13 +94,12 @@ class TestFromEnvFull:
         """A live run cannot inject: the bytecode exists only in the overlay.
 
         """
-        completed = probe.run(
-            probe.build_config_code([], identity=_full_env(), live=True),
-            env={"DEGENBOT_INJECT_EXECUTOR_CODE": "1"},
-        )
-
-        assert completed.returncode != 0, "live mode with injection active must refuse"
-        assert "injection stance is active" in completed.stderr, completed.stderr
+        with pytest.raises(ValueError, match="injection stance is active"):
+            probe.build_config(
+                env={"DEGENBOT_INJECT_EXECUTOR_CODE": "1"},
+                identity=_full_env(),
+                live=True,
+            )
 
 
 class TestInjectExecutorCodeUnifiedResolution:

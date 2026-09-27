@@ -167,6 +167,7 @@ def test_runtime_status_reports_the_plan_budget_and_census(profile: str) -> None
         .replace("@SET_PROFILE@", repr(None if profile == "auto" else profile))
         .replace("@QUOTA@", repr(_fractional_quota_cpus()))
     )
+    # Process-level: the fleet boot and census are process-global.
     proc = subprocess.run(
         [sys.executable, "-c", child],
         capture_output=True,
@@ -194,6 +195,7 @@ assert s["binding"] in ("pinned", "serial"), s
 assert s["census"] == [], s
 print("PRE-OK")
 """
+    # Process-level: the pre-construction projection is process-global.
     proc = subprocess.run(
         [sys.executable, "-c", child],
         capture_output=True,
@@ -220,6 +222,7 @@ assert before == [], before
 assert any(row["resource"] == "io_runtime_workers" for row in after), after
 print("BOOT-OK")
 """
+    # Process-level: driver_boot installs process-global runtimes.
     proc = subprocess.run(
 
         [sys.executable, "-c", child],

@@ -103,6 +103,7 @@ faulthandler_timeout_secs = 60.0
 
         """
 
+        # Process-level: the refusal is the process exit code at boot.
         completed = probe.run("import degenbot", env={"DEGENBOT_TRACEMALLOC_SECS": "banana"})
 
         assert completed.returncode == 2, completed.stderr

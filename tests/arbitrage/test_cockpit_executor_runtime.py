@@ -28,23 +28,6 @@ from tests.helpers.identity_env import identity_env
 
 FILE = "cmd_executor_runtime_bytecode.txt"
 
-#: Resolve the bytecode in a child, because the contracts directory is a
-#: declared key: the cascade is installed at FFI module init, so a directory
-#: exported after this process started cannot reach it.
-_RESOLVE_PROBE = """\
-from degenbot.runner._dispatch import _load_executor_runtime_bytecode
-from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
-
-
-cfg = ArbitrageConfig.build(
-    live=False,
-    permutation=None,
-    rpc=RpcCascadeOverrides(node="wss://probe.example"),
-)
-print("RESOLVED", _load_executor_runtime_bytecode(cfg))
-"""
-
-
 def _cfg(env: dict[str, str] | None = None) -> ArbitrageConfig:
     base: dict[str, str] = {
         "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
@@ -83,21 +66,15 @@ class TestExecutorRuntime:
     def test_the_contracts_dir_key_provides_the_file(self, tmp_path) -> None:
         (tmp_path / FILE).write_text("0xabcd")
 
-        completed = probe.run(
-            _RESOLVE_PROBE, env={"DEGENBOT_CONTRACTS_DIR": str(tmp_path)}
-        )
+        cfg = probe.build_config(env={"DEGENBOT_CONTRACTS_DIR": str(tmp_path)})
 
-        assert completed.returncode == 0, completed.stderr
-        resolved = [line for line in completed.stdout.splitlines() if line.startswith("RESOLVED")]
-        assert resolved == ["RESOLVED 0xabcd"], completed.stdout
+        assert _load_executor_runtime_bytecode(cfg) == "0xabcd"
 
     def test_a_contracts_dir_without_the_file_raises(self, tmp_path) -> None:
-        completed = probe.run(
-            _RESOLVE_PROBE, env={"DEGENBOT_CONTRACTS_DIR": str(tmp_path)}
-        )
+        cfg = probe.build_config(env={"DEGENBOT_CONTRACTS_DIR": str(tmp_path)})
 
-        assert completed.returncode != 0, completed.stdout
-        assert "DEGENBOT_CONTRACTS_DIR" in completed.stderr, completed.stderr
+        with pytest.raises(RuntimeError, match="DEGENBOT_CONTRACTS_DIR"):
+            _load_executor_runtime_bytecode(cfg)
 
     def test_no_upward_walk_in_resolution(self) -> None:
         """The walk is gone: resolution is explicit paths, no directory search."""

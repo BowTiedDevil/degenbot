@@ -21,9 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gc
-import os
 import pathlib
-import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import threading
 import time
@@ -45,6 +43,7 @@ from degenbot.pathfinding import (
 )
 from degenbot.runner.build_paths import PathRegistrationPipeline
 from degenbot.types.chain import ChainId
+from tests.helpers import verdict_probe as probe
 from tests.helpers.database import seed_v2_topology
 
 if TYPE_CHECKING:
@@ -469,30 +468,17 @@ async def test_missing_start_token_raises_at_first_next(db: pathlib.Path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def _run_ffi_getter(env_overrides: dict[str, str]) -> str:
-    env = dict(os.environ)
-    env.update(env_overrides)
-    out = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from degenbot._ffi import resolved_config as r; print(r().discovery_batch_size)",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=300,
-    )
-    return out.stdout.strip().splitlines()[-1]
+def _run_ffi_getter(env_overrides: dict[str, str]) -> int:
+    """The resolved batch size for a hypothetical environment."""
+    return probe.build_config(env=env_overrides).discovery_batch_size
 
 
 def test_typed_config_env_override_reaches_the_getter() -> None:
-    assert _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "7"}) == "7"
+    assert _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "7"}) == 7
 
 
 def test_typed_config_is_positive_clamped() -> None:
-    assert _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"}) == "1"
+    assert _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"}) == 1
 
 
 def _make_pipeline() -> PathRegistrationPipeline:

@@ -17,9 +17,6 @@ not the retired ``*HopInfo`` dataclasses.
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,38 +25,17 @@ import pytest
 
 from degenbot.runner import _render
 from degenbot.runner._render import _render_sim_failures, format_failure_breakdown
-
-#: The child probe, as source: it fires one failure batch with the per-bucket
-#: policy forced to ``exit``, so the child's exit code IS the armed state.
-_TRAP_CHILD = """import sys
-from types import SimpleNamespace
-
-from degenbot import _ffi
-import degenbot.diagnostics as diag
-import degenbot.runner._render as render
-
-# The per-bucket matrix is Rust-owned and boot-validated; stubbing it makes
-# the probe answer exactly one question -- the ARMED state. With the policy
-# saying "exit", whether the process exits IS the armed state.
-diag.failure_action = lambda kind, reason=None: "exit"
-
-# The child is the consumption boundary: it resolves the installed verdict
-# and threads the trap values into the renderer.
-verdict = _ffi.resolved_config()
-outcome = SimpleNamespace(
-    failures=[{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}],
-    path_infos={},
-)
-render._render_sim_failures(
-    outcome,
-    current_block=100,
-    sim_exit_on_fail=bool(verdict.values["simulation.sim_exit_on_fail"]),
-    exit_ignore_buckets=str(verdict.values["simulation.exit_ignore_buckets"]),
-)
-print("NO_TRAP")
-"""
+from tests.helpers import verdict_probe as probe
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
+
+#: One failure in the bucket the ignore-set tests name.
+_EMPTY_FAILURE: dict[str, Any] = {
+    "path_id": 1,
+    "bucket": "empty",
+    "fail_index": 3,
+    "revert_data": "0x",
+}
 
 WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -286,32 +262,42 @@ def test_sim_failures_continue_by_default(caplog: pytest.LogCaptureFixture) -> N
     assert any("[sim-fail]" in r.message for r in caplog.records)
 
 
-def test_ignoring_a_bucket_opts_the_trap_out() -> None:
+def test_ignoring_a_bucket_opts_the_trap_out(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Narrowing an armed trap is an EXPLICIT operator opt-in, not a default.
     The ignore set is the declared ``simulation.exit_ignore_buckets`` key, so
     the trap stays armed and the named bucket stops counting. There is no
     implicit mask: an armed process with no list still traps.
     """
-    proc = _run_trap_child(
-        DEGENBOT_SIM_EXIT_ON_FAIL="1",
-        DEGENBOT_SIM_EXIT_IGNORE_BUCKETS="empty",
+    import degenbot.diagnostics as diag
+
+    armed, ignore = _arm_from(
+        {"DEGENBOT_SIM_EXIT_ON_FAIL": "1", "DEGENBOT_SIM_EXIT_IGNORE_BUCKETS": "empty"},
+        operator_file=None,
     )
+    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
+    with caplog.at_level("INFO", logger="degenbot"):
+        _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
+    assert armed is True
+    # The ignored bucket short-circuits the trap: reaching here without a
+    # SystemExit is the assertion, and the failure line still rendered.
+    assert any("[sim-fail]" in r.message for r in caplog.records)
 
-    assert proc.returncode == 0, f"the ignored bucket must not halt: {_why(proc)}"
-    assert "NO_TRAP" in proc.stdout, _why(proc)
 
-
-def test_the_operator_file_can_ignore_a_bucket_too(tmp_path: Path) -> None:
+def test_the_operator_file_can_ignore_a_bucket_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The file layer narrows the trap, which only the environment could."""
+    import degenbot.diagnostics as diag
 
-    proc = _run_trap_child(
-        DEGENBOT_CONFIG=_operator_file(
-            tmp_path, "sim_exit_on_fail = true\nexit_ignore_buckets = 'empty'\n"
-        ),
-    )
-
-    assert proc.returncode == 0, f"the file-declared opt-out must not halt: {_why(proc)}"
-    assert "NO_TRAP" in proc.stdout, _why(proc)
+    body = "sim_exit_on_fail = true\nexit_ignore_buckets = 'empty'\n"
+    with probe.operator_file(f"[simulation]\n{body}") as written:
+        armed, ignore = _arm_from(operator_file=written)
+    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
+    _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
+    assert armed is True
+    assert ignore == "empty"
 
 
 def test_operator_exit_override_still_traps(
@@ -339,40 +325,21 @@ def test_operator_exit_override_still_traps(
 # ── Which layer decides the armed state ──────────────────────────────────
 
 
-def _run_trap_child(**env: str) -> subprocess.CompletedProcess[str]:
-    """Fire one failure batch in a fresh interpreter whose config layers are known.
+def _arm_from(
+    env: dict[str, str] | None = None,
+    *,
+    operator_file: Path | None = None,
+) -> tuple[bool, str]:
+    """The trap's armed state and ignore set for a hypothetical cascade.
 
-    The verdict is installed once at FFI module init and frozen, so an
-    operator's setting is only observable from a process that started with it.
-    The child inherits no ``DEGENBOT_*`` name: every layer these probes
-    exercise, they declare.
+    The renderer takes both as values its caller resolved, so a test resolves
+    them through ``resolve_hypothetical`` and hands them in: the declared
+    ``simulation.*`` keys decide, with no fresh interpreter involved.
     """
-    child_env = {
-        name: value for name, value in os.environ.items() if not name.startswith("DEGENBOT_")
-    }
-    child_env.update(env)
-    return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted source, args list, no shell
-        [sys.executable, "-X", "utf8", "-c", _TRAP_CHILD],
-        capture_output=True,
-        text=True,
-        cwd=Path(__file__).resolve().parents[2],
-        env=child_env,
-        timeout=120,
-        check=False,
-    )
-
-
-def _operator_file(tmp_path: Path, body: str) -> str:
-    """Write an operator file carrying ``body`` and return its path."""
-    path = tmp_path / "config.toml"
-    path.write_text(f"[simulation]\n{body}")
-    return str(path)
-
-
-def _why(proc: subprocess.CompletedProcess[str]) -> str:
+    values = probe.hypothetical_values(env, operator_file=operator_file)
     return (
-        f"returncode={proc.returncode} stdout_tail={proc.stdout[-400:]!r} "
-        f"stderr_tail={proc.stderr[-400:]!r}"
+        bool(values["simulation.sim_exit_on_fail"]),
+        str(values["simulation.exit_ignore_buckets"]),
     )
 
 
@@ -387,20 +354,29 @@ def test_a_bare_invocation_leaves_the_tripwire_disarmed(tmp_path: Path) -> None:
     schema already declared. What this pins is that a process which
     configures nothing no longer inherits a tripwire from Python.
     """
-    proc = _run_trap_child(DEGENBOT_CONFIG=_operator_file(tmp_path, ""))
-    assert proc.returncode == 0, f"an unarmed trap must not exit the process: {_why(proc)}"
-    assert "NO_TRAP" in proc.stdout, _why(proc)
+    with probe.operator_file("[simulation]\n") as written:
+        armed, ignore = _arm_from(operator_file=written)
+    assert armed is False, "an invocation that names no layer is disarmed"
+    _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
 
 
-def test_the_operator_file_can_arm_the_tripwire(tmp_path: Path) -> None:
+def test_the_operator_file_can_arm_the_tripwire(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The file layer reaches the trap in the arming direction too.
 
     The pair of file-layer tests is the point: a change that left the trap
     permanently off would pass the disarming test alone.
     """
-    proc = _run_trap_child(DEGENBOT_CONFIG=_operator_file(tmp_path, "sim_exit_on_fail = true\n"))
-    assert proc.returncode == 3, f"an armed trap with an exit policy must halt: {_why(proc)}"
-    assert "NO_TRAP" not in proc.stdout, _why(proc)
+    import degenbot.diagnostics as diag
+
+    with probe.operator_file("[simulation]\nsim_exit_on_fail = true\n") as written:
+        armed, ignore = _arm_from(operator_file=written)
+    assert armed is True, "the file layer must be able to arm the trap"
+    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
+    with pytest.raises(SystemExit) as ei:
+        _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
+    assert ei.value.code == 3
 
 
 def test_the_operator_file_can_disarm_the_tripwire(tmp_path: Path) -> None:
@@ -410,6 +386,7 @@ def test_the_operator_file_can_disarm_the_tripwire(tmp_path: Path) -> None:
     -- the primary layer -- had it ignored, because the trap read only the
     process environment and armed itself otherwise.
     """
-    proc = _run_trap_child(DEGENBOT_CONFIG=_operator_file(tmp_path, "sim_exit_on_fail = false\n"))
-    assert proc.returncode == 0, f"the operator file must be able to disarm: {_why(proc)}"
-    assert "NO_TRAP" in proc.stdout, _why(proc)
+    with probe.operator_file("[simulation]\nsim_exit_on_fail = false\n") as written:
+        armed, ignore = _arm_from(operator_file=written)
+    assert armed is False, "the operator file must be able to disarm"
+    _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
