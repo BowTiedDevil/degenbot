@@ -19,11 +19,11 @@ import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
+from degenbot.arbitrage import fee_percentiles
 from degenbot.calculations import next_base_fee
 from degenbot.diagnostics import mark_progress
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._dispatch import BatchContext, _dispatch_profitable
-from degenbot.runner._driver_constants import FEE_PERCENTILES
 from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
 
 if TYPE_CHECKING:
@@ -163,7 +163,7 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
             dispatcher=dispatcher,
             block_count=1,
             last_block=block_number,
-            reward_percentiles=[float(p) for p in FEE_PERCENTILES],
+            reward_percentiles=[float(p) for p in fee_percentiles()],
         )
         # The same head tick drives the hosted per-head reconciliation: refresh
         # the confirmed chain nonce, close outstanding submission records out,

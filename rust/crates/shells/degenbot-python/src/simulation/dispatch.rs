@@ -66,6 +66,23 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::Instrument as _;
 
+/// The core's fee-history percentile pair (`p10`, `p50`) — the market bounds
+/// `compute_priority_fee` clamps against, and the percentiles `eth_feeHistory`
+/// is polled for.
+///
+/// A module function like `verification_retry_policy_defaults`: nothing here
+/// was configured, so there is no layer to report. The driver reads the same
+/// pair the core already owns (`degenbot-arbitrage`) instead of carrying a
+/// second literal that could drift.
+#[pyfunction]
+#[must_use]
+pub fn fee_percentiles() -> (u64, u64) {
+    (
+        degenbot_arbitrage::MIN_PRIORITY_FEE_PERCENTILE,
+        degenbot_arbitrage::MAX_PRIORITY_FEE_PERCENTILE,
+    )
+}
+
 /// The signature re-exported so the `#[pyo3(signature)]` reference stays in
 /// sync with the exposed type (mirrors the convention in `submit.rs`).
 ///

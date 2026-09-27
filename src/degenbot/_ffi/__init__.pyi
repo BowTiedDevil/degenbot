@@ -380,6 +380,15 @@ class ResolvedConfig:
 
         """
 
+def fee_percentiles() -> tuple[int, int]:
+    """Return the core fee-history percentile pair ``(p10, p50)``.
+
+    A module function rather than a member of the resolved verdict: the
+    percentiles are a core default (``degenbot-arbitrage``'s
+    ``MIN/MAX_PRIORITY_FEE_PERCENTILE``), not an operator-configured
+    resolution.
+    """
+
 def verification_retry_policy_defaults() -> RetryPolicyDefaults:
     """Return the shared core verification-retry policy defaults.
 
@@ -2131,6 +2140,7 @@ __all__ = [
     "event_topic",
     "execution",
     "executor",
+    "fee_percentiles",
     "find_paths_async_rust",
     "find_paths_rust",
     "fleet",

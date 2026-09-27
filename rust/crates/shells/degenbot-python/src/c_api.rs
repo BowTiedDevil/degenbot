@@ -460,6 +460,15 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "simulation")]
     crate::fleet::add_fleet_module(m)?;
 
+    // The core fee-history percentile pair the settlement driver polls. A
+    // module function like `verification_retry_policy_defaults`: a core
+    // default, not a member of the resolved config verdict.
+    #[cfg(feature = "simulation")]
+    m.add_function(wrap_pyfunction!(
+        crate::simulation::dispatch::fee_percentiles,
+        m
+    )?)?;
+
     // `QuantAMM` closed-form N-token Balancer weighted basket solver
     // (feature = "bot") — `solve_balancer_weighted_basket`.
     #[cfg(feature = "bot")]
