@@ -7,7 +7,10 @@ The gate lives in
 `rust/crates/foundation/degenbot-config/tests/no_stray_env_reads.rs` and
 enforces ADR-062 D7: `degenbot-config` is the one env-reading owner, so the
 Python companion may read `os.environ` / `os.getenv` / `os.environb` only at
-the sites the test's allowlist enumerates. The Python half of the gate is a
+the sites the test's allowlist enumerates. The single env-reading owner this
+gate polices is one half of the contract recorded in
+[ADR-065](../adr/ADR-065-verdict-single-configuration-authority.md): the
+verdict is the single configuration authority. The Python half of the gate is a
 hand-rolled lexer (`PythonWalk` plus its name-resolution helpers) rather than
 a parser. This note records an evaluation of replacing it with a Python `ast`
 walk: the verdict match, the implementation cost, and the reason the

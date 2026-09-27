@@ -8,7 +8,9 @@ tree). Amends **ADR-051 D8** (the driver-domain resolvers keep their
 file vocabulary" clause is superseded below). Reverses the pre-0.6
 file-vocabulary retirement of `[rpc]`, `[ws]`, `[database]`, and
 `default_chain_id` recorded in `docs/config-migration.md`; `[otel]` stays
-retired. Companion: **ADR-063** (secrets stay in the environment). Predecessors:
+retired. Companion: **ADR-063** (secrets stay in the environment). Successor:
+**ADR-065** (the verdict is the single configuration authority) records the
+enforcement of the cascade this decision defines. Predecessors:
 ADR-051 (the console owns the driver domain), ADR-052 (the database heals itself
 at open, so its path is configuration, not migration), ADR-053 (FFI stubs are
 generated from Rust), ADR-006 D5 (one `Bot` per chain), ADR-040 D3
@@ -320,3 +322,6 @@ The hypothetical lives on the raw FFI seam (ADR-013) and is deliberately not
 re-exported from `degenbot.config`. The driver-domain leaves consume resolved
 values threaded from the construction boundary — the Python companion to the
 engine's instance-scoped `SolveRuntimeConfig` — never the verdict.
+
+The install-once contract this amendment makes type-enforced has its first home
+in [ADR-065](ADR-065-verdict-single-configuration-authority.md).
