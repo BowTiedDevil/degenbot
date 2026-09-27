@@ -510,10 +510,10 @@ pub fn resolved_config(py: ::pyo3::Python<'_>) -> PyResult<::pyo3::Py<ResolvedCo
 /// and a refusal is the loader's own typed [`::degenbot_config::ConfigError`]
 /// rather than a process exit.
 fn hypothetical_layers(
-    env: &::std::collections::BTreeMap<String, String>,
+    env: ::std::collections::BTreeMap<String, String>,
     file: Option<&str>,
 ) -> Result<::degenbot_config::LoadedConfig, ::degenbot_config::ConfigError> {
-    let captured = ::degenbot_config::MapEnv::new(env.clone());
+    let captured = ::degenbot_config::MapEnv::new(env);
     let selected = match file.filter(|path| !path.is_empty()) {
         Some(path) => Some(::std::path::PathBuf::from(path)),
         None => ::degenbot_config::standard_file_path_with(&captured),
@@ -587,9 +587,9 @@ impl HypotheticalConfig {
 pub fn resolve_hypothetical(
     py: ::pyo3::Python<'_>,
     env: ::std::collections::BTreeMap<String, String>,
-    file: Option<String>,
+    file: Option<&str>,
 ) -> PyResult<::pyo3::Py<HypotheticalConfig>> {
-    let layers = hypothetical_layers(&env, file.as_deref()).map_err(|error| refusal(&error))?;
+    let layers = hypothetical_layers(env, file).map_err(|error| refusal(&error))?;
     ::pyo3::Py::new(py, HypotheticalConfig { layers })
 }
 
@@ -604,12 +604,12 @@ pub fn resolve_hypothetical(
 #[pyo3(signature = (env, file, chain_id, scope, node=None))]
 pub fn resolve_hypothetical_node_uri(
     env: ::std::collections::BTreeMap<String, String>,
-    file: Option<String>,
+    file: Option<&str>,
     chain_id: u64,
     scope: &str,
     node: Option<&str>,
 ) -> PyResult<ResolvedNodeUri> {
-    let layers = hypothetical_layers(&env, file.as_deref()).map_err(|error| refusal(&error))?;
+    let layers = hypothetical_layers(env, file).map_err(|error| refusal(&error))?;
     node_uri_in(&layers, chain_id, scope, node)
 }
 
@@ -623,10 +623,10 @@ pub fn resolve_hypothetical_node_uri(
 #[pyo3(signature = (env, file, chain_id=None))]
 pub fn resolve_hypothetical_chain_id(
     env: ::std::collections::BTreeMap<String, String>,
-    file: Option<String>,
+    file: Option<&str>,
     chain_id: Option<&str>,
 ) -> PyResult<ResolvedChainId> {
-    let layers = hypothetical_layers(&env, file.as_deref()).map_err(|error| refusal(&error))?;
+    let layers = hypothetical_layers(env, file).map_err(|error| refusal(&error))?;
     chain_id_in(&layers, chain_id)
 }
 
@@ -641,10 +641,10 @@ pub fn resolve_hypothetical_chain_id(
 #[pyo3(signature = (env, file, database=None))]
 pub fn resolve_hypothetical_database_path(
     env: ::std::collections::BTreeMap<String, String>,
-    file: Option<String>,
+    file: Option<&str>,
     database: Option<&str>,
 ) -> PyResult<ResolvedDatabasePath> {
-    let layers = hypothetical_layers(&env, file.as_deref()).map_err(|error| refusal(&error))?;
+    let layers = hypothetical_layers(env, file).map_err(|error| refusal(&error))?;
     Ok(database_path_in(&layers, database))
 }
 

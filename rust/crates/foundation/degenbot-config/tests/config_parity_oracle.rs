@@ -8,7 +8,8 @@
 //! declared key's value, its winning `Source`, and the per-entry layer of each
 //! table — to `tests/fixtures/config_parity/oracle.json`. The Python companion
 //! (`tests/test_config_parity.py`) loads the same file + environments through
-//! `degenbot._ffi` in a fresh interpreter per environment and compares. A
+//! the raw-FFI hypothetical entry (`degenbot._ffi.resolve_hypothetical`) in
+//! ONE process and compares. A
 //! resolver regression on either side, a stale or foreign holder install, or
 //! an unknown-layer provenance map that reports the wrong winner shows up as a
 //! non-empty diff.
