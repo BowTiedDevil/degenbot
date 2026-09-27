@@ -13,9 +13,13 @@ npm install
 npm run tauri dev
 ```
 
-The GUI calls the canonical `degenbot-config` node resolver. For this mainnet
-PoC it resolves chain `1` through `DEGENBOT_RPC_WS_CHAINID_1`. The operator
-`config.toml` is the BASE layer of that cascade, so `[nodes] ws = { 1 =
+The GUI calls the canonical `degenbot-config` node resolver for the SESSION
+chain, then resolves that chain's subscription endpoint. The chain comes from
+the same cascade every other consumer reads (`DEGENBOT_DEFAULT_CHAIN_ID` >
+`session.chain_id`), so the app is not mainnet-only: point it at another
+chain's websocket endpoint and it streams that chain. The example above names
+chain `1` through `DEGENBOT_RPC_WS_CHAINID_1`. The operator `config.toml` is
+the BASE layer of that cascade, so `[nodes] ws = { 1 =
 "ws://127.0.0.1:8546" }` works too; the export above simply outranks the
 file for chain `1`. The `ETHEREUM_ARCHIVE_NODE_WS_URI` name is a
 test-environment variable, not a canonical Rust configuration key.

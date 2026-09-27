@@ -3,15 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use degenbot::config::{load_process_config, resolve_node_subscription_uri, NodeOverrides};
+use degenbot::config::{
+    load_process_config, resolve_chain_id, resolve_node_subscription_uri, NodeOverrides,
+};
 use degenbot::eip_1559;
 use degenbot_ingestion::{IngestEvent, WsIngestor};
 use degenbot_tauri_feed_model::{BlockFeedModel, BlockSnapshot, LogSnapshot};
 use futures_util::StreamExt;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-
-const MAINNET_CHAIN_ID: u64 = 1;
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,7 +79,13 @@ impl FeedState {
 
 pub fn configured_ws_url() -> Result<String, String> {
     let cfg = load_process_config().map_err(|error| error.to_string())?;
-    resolve_node_subscription_uri(&cfg, MAINNET_CHAIN_ID, &NodeOverrides::new())
+    // The session cascade owns the chain: naming one here would silently
+    // override the operator's configured chain for the one consumer whose
+    // job is to show them their feed.
+    let chain_id = resolve_chain_id(&cfg, None)
+        .map_err(|error| error.to_string())?
+        .value;
+    resolve_node_subscription_uri(&cfg, chain_id, &NodeOverrides::new())
         .map(|resolved| resolved.value)
         .map_err(|error| error.to_string())
 }
@@ -213,5 +219,32 @@ async fn run_feed(app: AppHandle, url: String, shutdown: Arc<AtomicBool>) {
             }
             _ = tokio::time::sleep(Duration::from_millis(250)) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configured_ws_url;
+
+    /// The operator's configured session chain decides the feed endpoint: a
+    /// session on 8453 must never be fed from chain 1's endpoint.
+    #[test]
+    fn configured_ws_url_follows_the_session_chain() {
+        let config_home = std::env::temp_dir().join(format!(
+            "degenbot-tauri-feed-config-home-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&config_home).expect("temp config home");
+
+        // An operator file named by DEGENBOT_CONFIG outranks the environment
+        // this test sets; the absent-file contract needs the name unset.
+        std::env::remove_var("DEGENBOT_CONFIG");
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+        std::env::set_var("DEGENBOT_DEFAULT_CHAIN_ID", "8453");
+        std::env::set_var("DEGENBOT_RPC_WS_CHAINID_8453", "wss://base.example/rpc");
+        std::env::set_var("DEGENBOT_RPC_WS_CHAINID_1", "wss://mainnet.example/rpc");
+
+        let url = configured_ws_url().expect("the 8453 endpoint is configured");
+        assert_eq!(url, "wss://base.example/rpc");
     }
 }
