@@ -62,10 +62,6 @@ _RELAY_SUBMIT_PROVIDERS: list[tuple[str, Any]] | None = None
 #: batch stream delivers.
 _RawResult = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]
 
-from degenbot.runner._driver_constants import (  # ruff: ignore[module-import-not-at-top-of-file] - after the type alias block
-    MIN_PROFIT_NET,
-)
-
 # The executor runtime bytecode file (one canonical filename in any
 # contracts directory).
 _EXECUTOR_RUNTIME_FILE = "cmd_executor_runtime_bytecode.txt"
@@ -382,7 +378,6 @@ async def _simulate_batch(
         base_fee_next=base_fee_next,
         current_block=current_block,
         block_timestamp=block_timestamp,
-        min_profit_net=MIN_PROFIT_NET,
         min_profit_margin_bps=session.cfg.min_profit_margin_bps,
         engine=session.engine_registry.engine,
     )

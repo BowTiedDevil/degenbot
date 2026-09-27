@@ -84,7 +84,6 @@ class TestDispatchEmptyInput:
             base_fee_next=1_000_000_000,
             current_block=100,
             block_timestamp=0,
-            min_profit_net=1,
             min_profit_margin_bps=0,
         )
         assert isinstance(outcome, DispatchOutcome)
@@ -124,7 +123,6 @@ class TestDispatchEmptyInput:
             base_fee_next=1_000_000_000,
             current_block=100,
             block_timestamp=0,
-            min_profit_net=1,
             min_profit_margin_bps=0,
         )
         assert hasattr(coro, "__await__")
@@ -151,7 +149,6 @@ class TestDispatchArgumentValidation:
                 base_fee_next=1_000_000_000,
                 current_block=100,
                 block_timestamp=0,
-                min_profit_net=1,
                 min_profit_margin_bps=0,
             )
 
@@ -168,7 +165,6 @@ class TestDispatchArgumentValidation:
                 base_fee_next=1_000_000_000,
                 current_block=100,
                 block_timestamp=0,
-                min_profit_net=1,
                 min_profit_margin_bps=0,
             )
 
@@ -191,7 +187,6 @@ class TestDispatchJoinShape:
             base_fee_next=1_000_000_000,
             current_block=100,
             block_timestamp=0,
-            min_profit_net=1,
             min_profit_margin_bps=0,
         )
         assert isinstance(outcome.gas_profitable, list)
@@ -256,7 +251,6 @@ class TestDispatchWithCandidateButNoRpc:
             base_fee_next=1_000_000_000,
             current_block=50,  # < PATH_SUPPRESS_RETRY_INTERVAL (100) → still suppressed
             block_timestamp=0,
-            min_profit_net=1,
             min_profit_margin_bps=0,
         )
         assert isinstance(outcome, DispatchOutcome)
@@ -323,3 +317,30 @@ class TestPoolDivergenceFfiGetters:
         assert isinstance(pools, list)
         # DivergentPool is registered on the submission submodule.
         assert DivergentPool is not None
+
+
+class TestDispatchProfitFloor:
+    """The dispatch profit floor is core-owned (``MIN_PROFIT_NET``), not a
+    per-call argument.
+
+    The inline-payload arm never accepted a floor; the batch arm did. A floor
+    only one arm honoured meant a caller could size one arm and not the other,
+    so the two categorizations could silently disagree. The floor now has one
+    home and the batch arm accepts no per-call override.
+    """
+
+    async def test_batch_arm_does_not_accept_a_per_call_profit_floor(self) -> None:
+        ctx = _make_ctx()
+        dispatcher = Dispatcher.for_block(100)
+        # No `min_profit_net=`: the floor is the core constant, shared with the
+        # payload arm. A TypeError here would mean a caller can size only one arm.
+        outcome = await dispatch_profitable_py(
+            candidates=[],
+            context=ctx,
+            dispatcher=dispatcher,
+            base_fee_next=1_000_000_000,
+            current_block=100,
+            block_timestamp=0,
+            min_profit_margin_bps=0,
+        )
+        assert isinstance(outcome, DispatchOutcome)

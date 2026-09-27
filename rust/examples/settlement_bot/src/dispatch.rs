@@ -350,10 +350,6 @@ pub fn classify_revert(revert_data: &[u8]) -> String {
 /// RPC-gated: requires a live [`SimulateContext`] + `BotState`. This is the
 /// live-arm path only; the offline tests exercise [`plan_batch`] +
 /// [`priority_fee`] + the taxonomy helpers.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "linear mirror of the dispatch_profitable_results seam signature"
-)]
 #[must_use]
 pub fn run_sim_fanout(
     candidates: Vec<DispatchCandidate>,
@@ -362,7 +358,6 @@ pub fn run_sim_fanout(
     pool_divergence: &Arc<Mutex<PoolDivergence>>,
     fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
     current_block: u64,
-    min_profit_net: u128,
     min_profit_margin_bps: u64,
 ) -> DispatchOutcome {
     dispatch_profitable_results(
@@ -370,7 +365,6 @@ pub fn run_sim_fanout(
         ctx,
         suppression,
         current_block,
-        min_profit_net,
         min_profit_margin_bps,
         pool_divergence,
         fot_registry,

@@ -106,7 +106,6 @@ def dispatch_profitable_py(
     base_fee_next: int,
     current_block: int,
     block_timestamp: int,
-    min_profit_net: int,
     min_profit_margin_bps: int,
     *,
     engine: ArbitrageEngine | None = None,

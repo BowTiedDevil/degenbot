@@ -12,13 +12,12 @@
 //!
 //! # §4.2 parity
 //!
-//! The oracle is the Python `classify_revert` in
-//! `examples/eth_backrun_helpers.py` (L336–L377). Every revert category
-//! produces the **identical label string** in Rust and Python — pinned by the
+//! Every revert category produces a **stable label string** — pinned by the
 //! `revert::tests::parity_vs_python_oracle` fixture corpus covering every
-//! category + the truncation / empty / undecodable edge cases. The Python
-//! taxonomy is the source of truth; the Rust port reproduces its hex-string
-//! slicing + UTF-8-lossy decode byte-for-byte.
+//! category + the truncation / empty / undecodable edge cases. The corpus was
+//! captured from the Python `classify_revert` porting oracle, which has since
+//! been retired; [`classify_revert`] is now the sole implementation and these
+//! fixtures are its contract.
 
 use alloy::hex;
 use alloy::primitives::U256;
@@ -32,8 +31,9 @@ pub const PANIC_SELECTOR: &str = "4e487b71";
 /// Selector (8 lowercase hex chars) → full custom-error signature for the V4
 /// `PoolManager` revert selectors. The label drops the params (everything
 /// before the first `(`), so `InsufficientProfit(1,2)` and
-/// `InsufficientProfit(3,4)` tally together. Ported verbatim from the Python
-/// `_V4_REVERT_SELECTORS` (`examples/eth_backrun_helpers.py` L304–L314).
+/// `InsufficientProfit(3,4)` tally together. Ported from the Python
+/// `_V4_REVERT_SELECTORS`, which has since been retired with the rest of the
+/// porting oracle.
 pub const V4_REVERT_SELECTORS: &[(&str, &str)] = &[
     ("5212cba1", "CurrencyNotSettled()"),
     ("486aa307", "PoolNotInitialized()"),
@@ -48,8 +48,8 @@ pub const V4_REVERT_SELECTORS: &[(&str, &str)] = &[
 
 /// Selector → full custom-error signature for the `cmd_executor` revert
 /// selectors (legacy bare-assert labels + Vyper 0.5.0a3+ custom errors). Ported
-/// verbatim from the Python `_EXECUTOR_REVERT_SELECTORS`
-/// (`examples/eth_backrun_helpers.py` L316–L327).
+/// from the Python `_EXECUTOR_REVERT_SELECTORS`, which has since been retired
+/// with the rest of the porting oracle.
 pub const EXECUTOR_REVERT_SELECTORS: &[(&str, &str)] = &[
     // Legacy (bare assert)
     ("4b9dfc58", "!OWNER"),
@@ -142,9 +142,7 @@ impl RevertClass {
         ])
     }
 
-    /// Render the exact Python label for this category (§4.2 parity).
-    ///
-    /// Matches `examples/eth_backrun_helpers.py::classify_revert` byte-for-byte.
+    /// Render the canonical label for this category (§4.2 parity).
     #[must_use]
     pub fn label(&self) -> String {
         match self {
@@ -249,18 +247,18 @@ pub fn classify_revert(revert_data: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    // ── §4.2 parity vs the Python `classify_revert` oracle ──────────────
+    // ── §4.2 parity vs the retired Python `classify_revert` oracle ──────
     //
-    // The oracle is `examples/eth_backrun_helpers.py::classify_revert`
-    // (L336–L377 + the selector constants L304–L333). Every fixture's
-    // expected label was captured from the Python oracle directly (the
+    // Every fixture's expected label was captured from the Python
+    // `classify_revert` porting oracle, which has since been retired (the
     // corpus was validated against the live Python function — 0 mismatches).
     // The fixtures cover every category + the truncation / empty /
-    // undecodable / odd-boundary edge cases.
+    // undecodable / odd-boundary edge cases; they are the contract the Rust
+    // taxonomy must meet.
 
     /// `(revert_data_hex, expected_python_label)` — the §4.2 parity corpus.
     /// Built at runtime (Rust `&str` has no repeat operator); the strings are
-    /// the same bytes the Python oracle was run against.
+    /// the same bytes the retired Python oracle was run against.
     fn parity_fixtures() -> Vec<(String, &'static str)> {
         let z = |n: usize| "0".repeat(n * 2);
         vec![
@@ -327,7 +325,7 @@ mod tests {
             let label = classify_revert(&bytes);
             assert_eq!(
                 &label, expected,
-                "revert_data=0x{hex_str}: Rust label {label:?} != Python oracle {expected:?}"
+                "revert_data=0x{hex_str}: Rust label {label:?} != expected {expected:?}"
             );
         }
     }

@@ -122,6 +122,16 @@ pub const MAX_SIMULATE_CONCURRENT: usize = 50;
 /// paths for the operator to inspect.
 pub const MIN_PROFIT_NET: u128 = 1;
 
+/// The gas-profitability predicate — the one dispatch-floor comparison both
+/// dispatch arms route through: the FFI batch fan-out (step 8 below) and the
+/// inline-payload join. A net profit that reaches [`MIN_PROFIT_NET`] is
+/// submitted; anything below it is tallied gas-unprofitable. Keeping the
+/// comparison here keeps it out of either adapter.
+#[must_use]
+pub fn is_gas_profitable(net_profit: U256) -> bool {
+    net_profit >= U256::from(MIN_PROFIT_NET)
+}
+
 /// The basis-points denominator (`BPS_DENOM = 10_000`,
 /// `examples/eth_backrun_helpers.py::BPS_DENOM`, L400).
 pub const BPS_DENOM: u128 = 10_000;
@@ -360,7 +370,7 @@ impl DispatchOutcome {
 ///    failure, record divergence for the diverging hop's pool key (derived
 ///    from `path_info.hops[i]`); the NEXT block's skip (step 2) drops paths
 ///    through it pre-sim.
-/// 8. **Categorize** — gas-profitable (`net ≥ min_profit_net`) /
+/// 8. **Categorize** — gas-profitable (`net ≥ MIN_PROFIT_NET`) /
 ///    gas-unprofitable (`None`-filtered, gross > 0, net below threshold) /
 ///    exception. Sort both categories by net profit descending (L2561/L2563).
 /// 9. **Record suppression outcomes** — `record_success(pid)` for paths that
@@ -436,7 +446,6 @@ pub fn dispatch_profitable_results(
     ctx: &SimulateContext<'_>,
     path_suppression: &Arc<Mutex<PathSuppression>>,
     current_block: u64,
-    min_profit_net: u128,
     min_profit_margin_bps: u64,
     // The per-pool solver-divergence memo. Parallels
     // `path_suppression` — a standalone `Arc<Mutex<PoolDivergence>>` (NOT
@@ -795,7 +804,7 @@ pub fn dispatch_profitable_results(
         match result {
             Ok(Some(r)) => {
                 succeeded_path_ids.insert(pid);
-                if r.net_profit >= U256::from(min_profit_net) {
+                if is_gas_profitable(r.net_profit) {
                     outcome.gas_profitable.push(r);
                 } else {
                     outcome.gas_unprofitable.push(r);
@@ -1242,6 +1251,18 @@ mod tests {
         assert_eq!(kept[0].path_id, 2);
     }
 
+    /// The dispatch floor has one home: `is_gas_profitable` is the single
+    /// comparison both dispatch arms use, and it flips exactly at
+    /// `MIN_PROFIT_NET`. Zero net is unprofitable; one wei (the constant) is
+    /// profitable.
+    #[test]
+    fn gas_profitability_boundary_is_the_core_floor() {
+        assert!(!is_gas_profitable(U256::ZERO));
+        assert!(!is_gas_profitable(U256::from(MIN_PROFIT_NET - 1)));
+        assert!(is_gas_profitable(U256::from(MIN_PROFIT_NET)));
+        assert!(is_gas_profitable(U256::from(MIN_PROFIT_NET) + U256::ONE));
+    }
+
     // ── Tier 1: in-process serial branch ─────────────────────
 
     // ── ULUWNI: no BotState guard across provider I/O ──────────────────
@@ -1331,7 +1352,6 @@ mod tests {
                     &ctx(&provider),
                     &suppression,
                     100,
-                    MIN_PROFIT_NET,
                     0,
                     &pool_divergence,
                     &fot_registry,
@@ -1399,7 +1419,6 @@ mod tests {
             &ctx(&provider),
             &suppression,
             100,
-            MIN_PROFIT_NET,
             0,
             &pool_divergence,
             &fot_registry,
@@ -1467,7 +1486,6 @@ mod tests {
             &ctx(&provider),
             &suppression,
             100,
-            MIN_PROFIT_NET,
             0,
             &pool_divergence,
             &fot_registry,
@@ -1522,7 +1540,6 @@ mod tests {
             &ctx(&provider),
             &suppression,
             100,
-            MIN_PROFIT_NET,
             0,
             &pool_divergence,
             &fot_registry,

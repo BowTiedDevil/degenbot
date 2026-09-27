@@ -220,7 +220,7 @@ def test_an_explicitly_uncapped_pipeline_tells_the_engine_uncapped() -> None:
 
 _IMPORT_PROBE = """import degenbot.runner._driver_constants as dc
 
-print("IMPORTED", dc.MIN_PROFIT_NET)
+print("IMPORTED", dc.WETH_ADDRESS)
 """
 
 
@@ -236,7 +236,7 @@ def test_a_retired_shell_knob_does_not_break_an_unrelated_import(knob: str) -> N
     assert proc.returncode == 0, (
         f"{knob} must not break an import: stdout={proc.stdout!r} stderr={proc.stderr!r}"
     )
-    assert "IMPORTED 1" in proc.stdout
+    assert "IMPORTED 0x" in proc.stdout
 
 
 @pytest.mark.parametrize("knob", _RETIRED_SHELL_KNOBS)

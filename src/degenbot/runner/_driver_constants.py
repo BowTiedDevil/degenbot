@@ -5,13 +5,10 @@ extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN). Each
 ``degenbot.runner`` module imports what it needs from here instead of the
 example, so the example can be thinned to an entrypoint.
 
-The two dispatch tunables below are the driver's live operating values, read
-directly by the hot-path modules: ``FEE_PERCENTILES`` by
-:mod:`~degenbot.runner.consume`, and ``MIN_PROFIT_NET`` by
-:mod:`~degenbot.runner._dispatch` and
-:mod:`~degenbot.runner._sim_submit_pipeline`. Both are hardcoded literals, not
-env-overridable; the rest of the driver's dispatch policy is core-owned and
-applied in the core.
+The remaining tunable below — ``FEE_PERCENTILES`` — is a driver's live
+operating value, read directly by :mod:`~degenbot.runner.consume`. It is a
+hardcoded literal, not env-overridable. The driver's dispatch policy,
+including the net-profit floor, is core-owned and applied in the core.
 """
 
 from __future__ import annotations
@@ -68,11 +65,10 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
 # eliminating tax/fee-on-transfer tokens that waste sim gas and always revert.
 ALLOWED_INTERMEDIATE_TOKENS: set[str] | None = ETH_MAINNET_ALLOWED_TOKENS
 
-#: Dispatch tunables read directly by the hot-path modules. The sibling
-#: knobs (margin bps, ERC6909 capture) moved to ArbitrageConfig runner-knob
-#: fields — env-layer surprises at import time bit us with a silently
-#: non-submitting live bot once; config objects, once.
-MIN_PROFIT_NET = 1
+#: Fee-history percentiles read directly by the consume hot path. The
+#: sibling knobs (margin bps, ERC6909 capture) moved to ArbitrageConfig
+#: runner-knob fields — env-layer surprises at import time bit us with a
+#: silently non-submitting live bot once; config objects, once.
 FEE_PERCENTILES = (10, 50)
 
 # V3 factories (Ethereum mainnet).

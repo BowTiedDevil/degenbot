@@ -52,7 +52,7 @@ use crate::simulation::outcome::{path_info_to_py_dict, PyDispatchOutcome};
 use crate::submission::dispatcher::PyDispatcher;
 use degenbot_arbitrage::BlockPriorityFees;
 use degenbot_arbitrage::{
-    dispatch_profitable_results, DispatchCandidate, DispatchOutcome, MIN_PROFIT_NET,
+    dispatch_profitable_results, is_gas_profitable, DispatchCandidate, DispatchOutcome,
 };
 use degenbot_arbitrage::{CapturedSwap, SimResult, SimulateContext};
 use degenbot_bot::bot_core::state_lock::StateLock;
@@ -83,7 +83,7 @@ use tracing::Instrument as _;
 /// indicates a bug in a sibling task (the dispatcher/suppression mutexes are
 /// only ever locked for short synchronous spans).
 #[pyfunction]
-#[pyo3(signature = (candidates, context, dispatcher, base_fee_next, current_block, block_timestamp, min_profit_net, min_profit_margin_bps, *, engine=None))]
+#[pyo3(signature = (candidates, context, dispatcher, base_fee_next, current_block, block_timestamp, min_profit_margin_bps, *, engine=None))]
 #[expect(
     clippy::too_many_arguments,
     clippy::needless_pass_by_value,
@@ -97,7 +97,6 @@ pub fn dispatch_profitable_py<'py>(
     base_fee_next: u128,
     current_block: u64,
     block_timestamp: u64,
-    min_profit_net: u128,
     min_profit_margin_bps: u64,
     engine: Option<Py<crate::bot::engine::PyArbEngine>>,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -243,7 +242,6 @@ pub fn dispatch_profitable_py<'py>(
             &ctx,
             &suppression_arc,
             current_block,
-            min_profit_net,
             min_profit_margin_bps,
             &pool_divergence_arc,
             &fot_registry_arc,
@@ -380,8 +378,8 @@ fn derive_path_pools(hops: &[HopInfo]) -> HashSet<PoolKey> {
 // (derive_path_pools' mirror) and the payload net profit was re-compared
 // against the MIN_PROFIT_NET threshold value. Both facts are Rust-owned —
 // this seam reuses the FFI batch's own join (join_sim_result →
-// derive_path_pools) + the core's threshold constant so the policy is
-// evaluated exactly once, here, for both arms. Python renders the returned
+// derive_path_pools) + the core's is_gas_profitable predicate so the policy
+// is evaluated by one rule, here, for both arms. Python renders the returned
 // rows/verdicts only (the _dispatch.py docstring's contract).
 
 /// The payload arm of the sim seam (NUUJFA): derive the dispatch-policy
@@ -398,9 +396,10 @@ fn derive_path_pools(hops: &[HopInfo]) -> HashSet<PoolKey> {
 ///    `join_sim_result` → `derive_path_pools` — the mutual-exclusion set is
 ///    byte-identical to the FFI batch row for the same path id, by
 ///    construction (V4 → `pool_id_hex`; V2/V3 → EIP-55 Display).
-/// 2. Categorization applies the core's `MIN_PROFIT_NET` constant ONCE
-///    (the dispatch step-6 arm: 'net >= `MIN_PROFIT_NET`' submits; below
-///    counts gas-unprofitable). A failure payload becomes a sim-fail row.
+/// 2. Categorization applies the core's `is_gas_profitable` predicate ONCE
+///    (the same `MIN_PROFIT_NET` floor the FFI batch fan-out applies: 'net
+///    >= `MIN_PROFIT_NET`' submits; below counts gas-unprofitable). A failure
+///    payload becomes a sim-fail row.
 ///    Python receives the verdict as a `kind` string only — it never reads
 ///    the threshold value.
 /// 3. The join reassembles the payload's primitive fields into the core
@@ -490,13 +489,13 @@ pub fn merge_payload_results_py(
 
     // ── Join + categorize (the FFI batch arm's exact shape) ──
     // join_sim_result derives EACH row's path_pools from the typed hops in
-    // this map; the threshold arm reads the core MIN_PROFIT_NET constant —
-    // the same comparison dispatch_profitable_results step 6 applies.
+    // this map; the floor is the shared core predicate is_gas_profitable —
+    // the same comparison dispatch_profitable_results applies.
     let mut candidates: Vec<SubmitCandidate> = Vec::with_capacity(sim_results.len());
     let mut verdicts: Vec<Py<PyPayloadVerdict>> = Vec::with_capacity(sim_results.len());
     for r in &sim_results {
         let joined = join_sim_result(r, &path_info_by_id, executor);
-        if r.net_profit >= alloy::primitives::U256::from(MIN_PROFIT_NET) {
+        if is_gas_profitable(r.net_profit) {
             candidates.push(joined);
             verdicts.push(PyPayloadVerdict::wrap(py, r.path_id, "submit"));
         } else {

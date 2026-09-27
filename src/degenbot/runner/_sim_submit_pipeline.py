@@ -40,9 +40,6 @@ from degenbot.runner._dispatch import (
     _submit_batch_records,
     dispatch_profitable,
 )
-from degenbot.runner._driver_constants import (
-    MIN_PROFIT_NET,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -118,7 +115,6 @@ async def _run_sim(
                 base_fee_next=work.base_fee_next,
                 current_block=work.current_block,
                 block_timestamp=work.block_timestamp,
-                min_profit_net=MIN_PROFIT_NET,
                 min_profit_margin_bps=session.cfg.min_profit_margin_bps,
                 engine=session.engine_registry.engine,
             )

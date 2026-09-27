@@ -189,6 +189,23 @@ class TestPayloadSeamArms:
         assert out.path_infos[v2_pid]["path_type"] == "V2-V2"
         assert out.path_infos[v4v2_pid]["path_type"] == "V4-V2"
 
+    def test_payload_floor_is_the_core_min_profit_net(self, mixed_engine_and_paths) -> None:
+        """net == 1 (the core ``MIN_PROFIT_NET``) submits; net == 0 does not.
+
+        The payload arm applies the same single floor the FFI batch arm does
+        (the core ``is_gas_profitable`` predicate), so a caller cannot size
+        one arm and not the other.
+        """
+        engine, v2_pid, _v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
+        out = merge_payload_results_py(
+            [_payload(v2_pid, net=1), _payload(v2_pid, net=0)],
+            engine,
+            EXECUTOR,
+        )
+        assert {v.kind for v in out.verdicts} == {"submit", "unprofitable"}
+        assert out.unprofitable_count == 1
+        assert [c.path_id for c in out.candidates] == [v2_pid]
+
 
 # ── THE NUUJFA PARITY GATE: one rule, byte-identical on both arms ────────
 

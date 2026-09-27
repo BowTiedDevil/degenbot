@@ -82,7 +82,6 @@ const CHAIN_ID: u64 = 1;
 
 // ── Driver-config defaults (mirrored from runner/config.py) ───────────────
 
-const MIN_PROFIT_NET: u64 = 1;
 const FEE_HISTORY_WINDOW: u64 = 10;
 const FEE_PERCENTILES: [u64; 2] = [10, 50];
 const TARGET_PROFIT_RATIO: f64 = 1.25;
@@ -233,7 +232,6 @@ struct SettlementBotConfig {
     executor_owner: String,
     inject_executor_code: bool,
     injected_address: String,
-    min_profit_net: u64,
     fee_history_window: u64,
     fee_percentiles: [u64; 2],
     target_profit_ratio: f64,
@@ -389,7 +387,6 @@ impl SettlementBotConfig {
             executor_owner,
             inject_executor_code,
             injected_address,
-            min_profit_net: MIN_PROFIT_NET,
             fee_history_window: FEE_HISTORY_WINDOW,
             fee_percentiles: FEE_PERCENTILES,
             target_profit_ratio: TARGET_PROFIT_RATIO,
@@ -534,11 +531,10 @@ fn run() -> Result<(), String> {
         cfg.executor_runtime,
     );
     println!(
-        "[config] min_profit_net={} fee_history_window={} fee_percentiles={:?} \
+        "[config] fee_history_window={} fee_percentiles={:?} \
         target_profit_ratio={} nonce_expires_blocks={} max_sim_concurrent={} \
         age_decay={} priority_fee_percentiles=[{},{}] path_suppress=[{},{}] \
         allowed_intermediate_tokens={} permutation={:?}",
-        cfg.min_profit_net,
         cfg.fee_history_window,
         cfg.fee_percentiles,
         cfg.target_profit_ratio,
