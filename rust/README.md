@@ -366,9 +366,11 @@ The recipes make the following rules executable:
 | `just check-no-inner-allow` | Rust sources do not use file-level inner `allow` attributes. |
 
 `just lint-rust-check` runs the applicable architecture subset before the
-workspace default-feature Clippy gate. The feature lanes above must remain
-separate so an exhaustive diagnostic cannot hide a default or release
-regression.
+workspace default-feature Clippy gate. `just lint-rust` is the default,
+CI-identical, non-mutating alias of it; `just lint-rust-fix` is the opt-in
+`clippy --fix` variant, which mutates the tree and is never part of a default
+gate. The feature lanes above must remain separate so an exhaustive diagnostic
+cannot hide a default or release regression.
 
 ## Python extension freshness
 

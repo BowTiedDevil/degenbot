@@ -138,17 +138,25 @@ publish-dry-run:
     cd rust
     cargo publish --locked --workspace --dry-run --allow-dirty
 
-# Run Rust linter (clippy) with each workspace member's declared default features.
-# This is the local fix command; `lint-rust-check` below is the non-mutating gate.
-lint-rust:
-    cargo clippy --locked --workspace --fix --all-targets --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
-
-# Lint Rust (check-only; non-mutating). This is the authoritative CI/pre-push
-# Clippy gate. It deliberately checks default features without `--all-features`,
-# so test-only and mutually exclusive build variants cannot hide a default
-# regression. `lint-rust` above remains the explicit local fix command.
+# Authoritative CI/pre-push Clippy gate. It deliberately checks default
+# features without `--all-features`, so test-only and mutually exclusive build
+# variants cannot hide a default regression; it runs the architecture subset
+# first, matching CI exactly, and never edits the tree.
+# Run the non-mutating Rust Clippy check (CI-identical gate).
 lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity
     cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml -- --deny warnings
+
+# Default Rust lint lane: a CI-identical, non-mutating alias of
+# `lint-rust-check`, so a green run here is exactly what CI will accept.
+# Run the default non-mutating Rust Clippy check (alias of `lint-rust-check`).
+lint-rust: lint-rust-check
+
+# Opt-in Rust lint auto-fixer. It MUTATES the working tree (`clippy --fix`) and
+# is never part of a default gate; re-run `just lint-rust` afterwards to confirm
+# the tree passes the non-mutating CI check.
+# Auto-fix Rust lint findings (mutates the tree; opt-in only).
+lint-rust-fix:
+    cargo clippy --locked --workspace --fix --all-targets --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Check every workspace member with its declared default features. This is the
 # independent default-feature check; it is not an all-features build.
