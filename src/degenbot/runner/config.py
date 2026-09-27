@@ -1,18 +1,18 @@
 """Driver configuration for the settlement-arbitrage ``BotRunner``.
 
-Extracted from ``examples/eth_backrun_helpers.py`` (epic 5TSYKN, task RVSYWB).
 This module owns the Python-companion, ``stays-python`` surface that the
 runtime driver (``BotRunner``) and its tests consume:
 
-- :class:`ArbitrageConfig` — the unified frozen config value object (built from a
+- :class:`ArbitrageConfig` — the unified frozen config value object (built from
   the resolved verdict + CLI flags via :meth:`ArbitrageConfig.from_env`;
   the operator/executor identity it carries is read from the process
   environment).
 
-The display renderers (sim-diag / sim-fail / failure-breakdown) moved to
-:mod:`degenbot.runner._render`, and the helpers that served only the deleted
-legacy ``main()`` (``filter_thin_margin_results`` with its ``BPS_DENOM`` /
-``EngineResult`` pair) were deleted (epic Y7PA5A, task 34XJ6C).
+The display renderers (sim-diag / sim-fail / failure-breakdown) live in
+:mod:`degenbot.runner._render`. The thin-margin solver-result pre-filter of the
+legacy ``main()`` path is core-owned: the drop lives in the Rust dispatch leaf
+alongside its basis-points denominator and candidate tuple, so this module
+carries no filtering state.
 """
 
 import dataclasses
@@ -423,8 +423,3 @@ class ArbitrageConfig:
             executor_runtime=executor_runtime,
             diag=diag,
         )
-
-
-BPS_DENOM = 10_000
-
-EngineResult = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]
