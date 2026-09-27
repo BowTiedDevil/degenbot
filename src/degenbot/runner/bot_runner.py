@@ -803,6 +803,7 @@ class BotRunner:
                 bot=session.bot,
                 engine_registry=session.engine_registry,
                 options=BuildPathsOptions(
+                    max_registered_paths=cfg.max_registered_paths,
                     v3_snapshot=self.v3_snapshot,
                     v4_snapshot=self.v4_snapshot,
                     retry_policy=cfg.verification_retry_policy,
@@ -920,6 +921,7 @@ class BotRunner:
                 bot=self.bot,
                 engine_registry=self.engine_registry,
                 options=BuildPathsOptions(
+                    max_registered_paths=self.cfg.max_registered_paths,
                     v3_snapshot=self.v3_snapshot,
                     v4_snapshot=self.v4_snapshot,
                     retry_policy=retry_policy,

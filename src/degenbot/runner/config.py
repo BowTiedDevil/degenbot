@@ -152,6 +152,36 @@ def _parse_float_env(raw: str | None, default: float, name_suffix: str) -> float
         raise ValueError(msg) from None
 
 
+#: The crawl shell's sizing knobs, retired at the PRG-5 hard cutover: pool
+#: builds and the registration work host on the fleet's duty-counted
+#: ``PoolStateUpdater`` intake seats (ADR-042), so there is no crawl queue or
+#: worker pool left to size.
+_RETIRED_SHELL_KNOBS = ("DEGENBOT_REG_QUEUE_BOUND", "DEGENBOT_REG_WORKERS")
+
+
+def _refuse_retired_shell_knobs() -> None:
+    """Refuse a retired crawl-shell knob at config load, not at import.
+
+    A closed list read through one computed name, so the refusal is one site
+    rather than two literals. Presence is the whole signal: no value would be
+    honored even if one were offered, and a tool that never builds a config is
+    not a misconfigured bot.
+
+    Raises:
+        ValueError: A retired knob is present in the OS environment.
+
+    """
+    for name in _RETIRED_SHELL_KNOBS:
+        if name in os.environ:
+            msg = (
+                f"{name} was retired at the PRG-5 hard cutover: the registration "
+                "crawl is hosted by the fleet PoolStateUpdater intake "
+                "(fleet.pool_state_updater_slots) — there is no crawl queue or "
+                "worker pool to size. Remove the knob."
+            )
+            raise ValueError(msg)
+
+
 def _knob_raw(env: Mapping[str, str | None], name: str, default: str) -> str:
     """One override layer for runner knobs: OS env wins over the dotenv dict.
 
@@ -336,6 +366,7 @@ class ArbitrageConfig:
                 RPC endpoint is configured for ``chain_id`` in any cascade layer.
 
         """
+        _refuse_retired_shell_knobs()
         overrides = rpc if rpc is not None else RpcCascadeOverrides()
 
         # ── Operator ──

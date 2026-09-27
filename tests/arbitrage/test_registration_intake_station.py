@@ -218,7 +218,7 @@ ctx = SimpleNamespace(
     weth=None,
 )
 try:
-    PathRegistrationPipeline(context=ctx, engine_registry=None)
+    PathRegistrationPipeline(context=ctx, engine_registry=None, max_paths=0)
 except RuntimeError as exc:
     assert "fleet-hosted only" in str(exc), exc
 else:

@@ -505,7 +505,9 @@ def _make_pipeline() -> PathRegistrationPipeline:
         pancakeswap_v3_tracker=None,
         weth=None,
     )
-    return PathRegistrationPipeline(context=ctx, engine_registry=None)  # type: ignore[arg-type]
+    return PathRegistrationPipeline(
+        context=ctx, engine_registry=None, max_paths=0  # type: ignore[arg-type]
+    )
 
 
 def test_discovery_sweep_passes_typed_batch_size(monkeypatch: pytest.MonkeyPatch) -> None:

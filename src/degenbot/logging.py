@@ -29,7 +29,10 @@ The fix lives here, in the base config that runs at ``import degenbot`` time —
 operation runs, never during import). Configuring the crate-root loggers up
 front at the lowered level makes forwarded records visible with no caller
 wiring. The Rust-side ``tracing`` ``EnvFilter`` (``RUST_LOG``) is the first
-gate; Python ``logging`` is the second.
+gate; Python ``logging`` is the second. The level that base config installs is
+decided by :func:`base_log_level` when :func:`apply_base_log_level` runs, not
+frozen into a module constant, so the import installs the process default and
+a later caller can install another.
 """
 
 import atexit
@@ -45,14 +48,6 @@ Create a global logger instance.
 
 logger = logging.getLogger(__name__)
 logger.propagate = False
-
-# Check DEGENBOT_DEBUG environment variable for debug mode
-if os.environ.get("DEGENBOT_DEBUG", "").lower() in {"1", "true", "yes"}:
-    _LOG_LEVEL = logging.DEBUG
-else:
-    _LOG_LEVEL = logging.INFO
-
-logger.setLevel(_LOG_LEVEL)
 
 # The real stdout writer — owned SOLELY by the ``QueueListener`` thread below
 # (never attached directly to any logger). When stdout is piped (e.g. the
@@ -134,7 +129,6 @@ _STDOUT_HANDLER.setFormatter(_AreaFormatter())
 # destination handler's level (mirrors direct-emit semantics).
 _LOG_QUEUE: queue.SimpleQueue = queue.SimpleQueue()
 _QUEUED_HANDLER = logging.handlers.QueueHandler(_LOG_QUEUE)
-_QUEUED_HANDLER.setLevel(_LOG_LEVEL)
 _LOG_LISTENER = logging.handlers.QueueListener(
     _LOG_QUEUE,
     _STDOUT_HANDLER,
@@ -207,7 +201,6 @@ PY_PACKAGE_ROOT_LOGGER_NAMES = ("degenbot",)
 # degenbot format).
 for _name in RUST_BRIDGE_LOGGER_NAMES:
     _rust_logger = logging.getLogger(_name)
-    _rust_logger.setLevel(_LOG_LEVEL)
     _rust_logger.addHandler(_QUEUED_HANDLER)
     _rust_logger.propagate = False
 
@@ -220,7 +213,6 @@ for _name in RUST_BRIDGE_LOGGER_NAMES:
 # configuring the shared parent does NOT duplicate its records.
 for _name in PY_PACKAGE_ROOT_LOGGER_NAMES:
     _pkg_logger = logging.getLogger(_name)
-    _pkg_logger.setLevel(_LOG_LEVEL)
     _pkg_logger.addHandler(_QUEUED_HANDLER)
     _pkg_logger.propagate = False
 
@@ -230,12 +222,51 @@ def set_log_level(level: int) -> None:
 
     Mirrors the historical conftest behaviour of bumping the package logger to
     ``DEBUG`` for the test run, extended to cover the Rust bridge loggers so
-    Rust ``debug!`` records are not left behind by the crate-root level set at
+    Rust ``debug!`` records are not left behind by the base level applied at
     import. Lowering the level here is effective because no Rust path logs at
-    import time.
+    import time. The queued handler keeps whatever level the base config gave
+    it (see :func:`apply_base_log_level`); only the knob path lowers that too.
     """
     logger.setLevel(level)
     for name in RUST_BRIDGE_LOGGER_NAMES:
         logging.getLogger(name).setLevel(level)
     for name in PY_PACKAGE_ROOT_LOGGER_NAMES:
         logging.getLogger(name).setLevel(level)
+
+
+def base_log_level() -> int:
+    """Resolve the console level this process asks for, when it is asked for.
+
+    ``DEGENBOT_DEBUG`` is a logging-plumbing signal, the same class as
+    ``RUST_LOG``: it says where records go, not how the bot is configured. It
+    used to be read into a module constant, which left the level decided
+    before any caller could speak and no way to change it afterwards; reading
+    it here makes the answer belong to whoever applies the level.
+
+    Returns:
+        ``logging.DEBUG`` when the knob is set to a true word, else
+        ``logging.INFO``.
+
+    """
+    if os.environ.get("DEGENBOT_DEBUG", "").lower() in {"1", "true", "yes"}:
+        return logging.DEBUG
+    return logging.INFO
+
+
+def apply_base_log_level() -> None:
+    """Install the ``DEGENBOT_DEBUG``-derived level on every degenbot logger.
+
+    Runs once at import -- before any Rust record can exist, since ``log::``
+    fires at pump/verify/register time and never during import -- and again
+    for any caller that changes the environment afterwards. The queued
+    handler's level moves with the loggers': it is the ceiling every record
+    passes on its way to the listener, so a logger-only level would leave the
+    import-time ceiling standing and the knob a no-op for the records it
+    names.
+    """
+    level = base_log_level()
+    _QUEUED_HANDLER.setLevel(level)
+    set_log_level(level)
+
+
+apply_base_log_level()

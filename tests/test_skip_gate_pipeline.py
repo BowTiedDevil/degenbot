@@ -26,7 +26,7 @@ def make_pipeline(py_bot: object | None = None) -> PathRegistrationPipeline:
         pancakeswap_v3_tracker=None,
         weth=None,
     )
-    return PathRegistrationPipeline(context=ctx, engine_registry=None)
+    return PathRegistrationPipeline(context=ctx, engine_registry=None, max_paths=0)
 
 
 class _RecordingPyBot:
@@ -66,6 +66,6 @@ def test_record_skip_without_a_bot_only_counts() -> None:
         pancakeswap_v3_tracker=None,
         weth=None,
     )
-    p = PathRegistrationPipeline(context=ctx, engine_registry=None)
+    p = PathRegistrationPipeline(context=ctx, engine_registry=None, max_paths=0)
     p._record_skip("v4-no-hash")
     assert p._skip_reasons["v4-no-hash"] == 1

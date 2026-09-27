@@ -166,6 +166,8 @@ def _pipeline_with_bot(
     pipeline = PathRegistrationPipeline(
         context=ctx,
         engine_registry=engine_registry,
+        # The cap is configuration, and these tests configure none: uncapped.
+        max_paths=0,
         # Keep progress logs out of the capture buffer for CI readability.
         progress_interval_secs=1_000_000.0,
     )
@@ -322,7 +324,7 @@ def test_legacy_stance_pipeline_construction_refuses() -> None:
         weth=None,
     )
     with pytest.raises(RuntimeError, match="fleet-hosted only"):
-        PathRegistrationPipeline(context=ctx, engine_registry=None)
+        PathRegistrationPipeline(context=ctx, engine_registry=None, max_paths=0)
 
 
 def test_retired_skip_gate_pipeline_tests_upgraded_shape() -> None:
@@ -408,6 +410,7 @@ def _pipeline_over_registry(
     return PathRegistrationPipeline(
         context=ctx,
         engine_registry=registry,  # type: ignore[arg-type]
+        max_paths=0,
         progress_interval_secs=1_000_000.0,
     )
 
@@ -537,6 +540,7 @@ def _pipeline_over_registry_three_pools(
     return PathRegistrationPipeline(
         context=ctx,
         engine_registry=registry,  # type: ignore[arg-type]
+        max_paths=0,
         progress_interval_secs=1_000_000.0,
     )
 

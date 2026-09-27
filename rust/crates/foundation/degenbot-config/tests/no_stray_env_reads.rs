@@ -166,24 +166,15 @@ fn insert_python_entries(map: &mut BTreeMap<&'static str, &'static [&'static str
         "src/degenbot/runner/_sim_submit_pipeline.py",
         &["DEGENBOT_SIM_PIPELINE_CONCURRENCY"][..],
     );
-    // The sim-failure tripwire's posture. The first is the tripwire's own
-    // armed state, the second the operator's per-bucket opt-out; both
-    // govern whether a tool exits, not how a bot is deployed.
+    // The sim-failure trap's per-bucket opt-out, read when a failure batch
+    // arrives. The tripwire's ARMED state is not here: it is the declared
+    // `simulation.sim_exit_on_fail` key, read from the verdict, so every
+    // cascade layer reaches it. This one is the operator's undeclared
+    // narrowing of an armed trap -- a tool posture, not a bot setting, and
+    // the next schema chunk is where it belongs.
     map.insert(
         "src/degenbot/runner/_render.py",
-        &[
-            "DEGENBOT_SIM_EXIT_ON_FAIL",
-            "DEGENBOT_SIM_EXIT_IGNORE_BUCKETS",
-        ][..],
-    );
-    // Retired-knob boot detection, the same shape as the Rust retired-name
-    // scan above: a closed list iterated at the call site, so the name is
-    // the loop variable rather than a literal. The two names it carries
-    // are DEGENBOT_REG_QUEUE_BOUND and DEGENBOT_REG_WORKERS. Presence
-    // fails loudly; no alias is honored.
-    map.insert(
-        "src/degenbot/runner/_driver_constants.py",
-        &["_RETIRED_SHELL_KNOB"][..],
+        &["DEGENBOT_SIM_EXIT_IGNORE_BUCKETS"][..],
     );
     // Where the shipped executor bundle lives, consulted only when the
     // in-process `executor_runtime` override is absent. A filesystem
@@ -206,15 +197,11 @@ fn insert_python_entries(map: &mut BTreeMap<&'static str, &'static [&'static str
             "DEGENBOT_INJECT_EXECUTOR_CODE",
         ][..],
     );
-    // The path-universe cap, whose point is that the code default and a
-    // devcontainer's export differ while the soak runs.
-    map.insert(
-        "src/degenbot/runner/build_paths.py",
-        &["DEGENBOT_MAX_PATHS"][..],
-    );
-    // Process-local debug logging before the logging stack is configured,
-    // the same class as the Rust `RUST_LOG` tooling signal: output
-    // plumbing, not config.
+    // The console level for the Python side of the log pipeline, the same
+    // class as the Rust `RUST_LOG` tooling signal: output plumbing, not
+    // config. It is read by `base_log_level()` when the base level is
+    // applied -- at import, and again for any caller that re-applies it --
+    // rather than frozen into a module constant.
     map.insert("src/degenbot/logging.py", &["DEGENBOT_DEBUG"][..]);
 }
 
@@ -854,9 +841,15 @@ fn python_env_read_shapes_are_classified() {
         // Computed reads report the identifier they compute from, as the Rust
         // half reports the loader's `env::var(name)` seam.
         (&["raw = os.environ.get(name)\n"], &["name"]),
+        // A retired-knob sweep is a closed list walked for PRESENCE, so the
+        // name is the loop variable the membership test names, not a literal.
         (
-            &["raw = os.environ.get(_RETIRED_SHELL_KNOB)\n"],
-            &["_RETIRED_SHELL_KNOB"],
+            &[
+                "for name in _RETIRED:\n",
+                "    if name in os.environ:\n",
+                "        raise ValueError\n",
+            ],
+            &["name"],
         ),
         // No name is reducible from these, so the whole mapping is reported.
         (&["env = os.environ\n"], &["<computed>"]),

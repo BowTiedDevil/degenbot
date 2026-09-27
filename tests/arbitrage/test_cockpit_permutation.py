@@ -60,6 +60,7 @@ class TestPermutation:
             bot=object(),  # type: ignore[arg-type]
             engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
             options=BuildPathsOptions(
+                max_registered_paths=0,
                 context=object(),  # type: ignore[arg-type]
                 pipeline=pipe,  # type: ignore[arg-type]
                 retry_policy=None,
@@ -79,6 +80,7 @@ class TestPermutation:
             bot=object(),  # type: ignore[arg-type]
             engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
             options=BuildPathsOptions(
+                max_registered_paths=0,
                 context=object(),  # type: ignore[arg-type]
                 pipeline=pipe,  # type: ignore[arg-type]
                 retry_policy=None,

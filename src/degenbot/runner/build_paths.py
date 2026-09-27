@@ -14,7 +14,6 @@ paths with the Rust-owned engine (``EngineRegistry``) but owns no pool state.
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from collections import Counter, deque
 from collections.abc import AsyncGenerator, AsyncIterable
@@ -139,16 +138,6 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[PoolKind]:
 # ──────────────────────────────────────────────────────────────────
 # Direction resolver
 # ──────────────────────────────────────────────────────────────────
-
-
-#: Hard cap on registered paths per process. Registration stops accepting
-#: new paths once ``path_count`` reaches this value (each capped candidate is
-#: counted as a ``path-cap`` skip); the engine then reaches steady state with
-#: a bounded path universe so solve performance is observable without ongoing
-#: registration load. Override with DEGENBOT_MAX_PATHS (0 = uncapped). The
-#: code default and the running environment may diverge (devcontainers export
-#: their own value), so the pipeline announces the effective cap at startup.
-MAX_REGISTERED_PATHS = int(os.environ.get("DEGENBOT_MAX_PATHS", "100000"))
 
 
 #: Paths legally in flight on the fleet intake at once (PRG-5). The bounded
@@ -335,6 +324,16 @@ class PathRegistrationPipeline:
     methods never need the dropped Python ``bot``. The pipeline never awaits
     the pump, so adds/discovery cannot block update/solve/dispatch.
 
+    ``max_paths`` is the registered-path cap (``0`` = uncapped) and is
+    REQUIRED, because it is a configuration value: the caller that resolved it
+    (:attr:`~degenbot.runner.config.ArbitrageConfig.max_registered_paths` in
+    production) states it, and a default here would be a second authority that
+    no config layer can reach. Registration stops accepting new paths once the
+    engine path registry reaches the cap; the engine then reaches steady state
+    with a bounded path universe, so solve performance is observable without
+    ongoing registration load. The pipeline announces the cap it was given at
+    startup, since the code default and the running environment may differ.
+
     The fail-fast tripwire is preserved: a fatal ``VerificationMismatchError``
     / ``VerificationRpcError`` is NOT swallowed here — it propagates out of the
     worker and must abort the pipeline loudly.
@@ -346,7 +345,7 @@ class PathRegistrationPipeline:
         context: ConstructionContext,
         engine_registry: EngineRegistry,
         retry_policy: VerificationRetryPolicy | None = None,
-        max_paths: int = MAX_REGISTERED_PATHS,
+        max_paths: int,
         progress_interval_secs: float | None = None,
     ) -> None:
         self.constr_ctx = context
@@ -389,9 +388,9 @@ class PathRegistrationPipeline:
         self.pool_type_per_depth: list[set[PoolKind] | None] | None = None
 
         # PRG-4: the registered-path budget transfers to the engine path
-        # registry (MAX_REGISTERED_PATHS, 0 = uncapped). Counters keep the
-        # Progress summary; the dedup set and the pre-count cap gate retire.
-        # (Pipeline tests run with engine_registry=None.)
+        # registry. Counters keep the Progress summary; the dedup set and the
+        # pre-count cap gate retire. (Pipeline tests run with
+        # engine_registry=None.)
         py_engine = getattr(self.engine_registry, "engine", None)
         if py_engine is not None and hasattr(py_engine, "set_path_cap"):
             py_engine.set_path_cap(max_paths or None)
@@ -402,7 +401,7 @@ class PathRegistrationPipeline:
         )
         bot_logger.info(
             f"[build_paths] registered-path cap: {max_paths or 'uncapped'} "
-            "(change with DEGENBOT_MAX_PATHS); progress cadence "
+            "(from the configured path cap); progress cadence "
             f"{self._progress_interval_s:.0f}s"
         )
 
@@ -1084,13 +1083,20 @@ class PathRegistrationPipeline:
 
 @dataclass
 class BuildPathsOptions:
-    """Optional knobs for :func:`build_paths`, all defaulted.
+    """The knobs :func:`build_paths` takes, one options object.
 
-    Bundling the optional construction/registration inputs keeps the
-    ``build_paths`` call site to the two required resources plus one options
-    object; each field mirrors the former keyword parameter.
+    Bundling the construction/registration inputs keeps the ``build_paths``
+    call site to the two required resources plus one options object; each field
+    mirrors the former keyword parameter.
+
+    ``max_registered_paths`` is the only non-defaulted field, and it is
+    required for the same reason the pipeline's ``max_paths`` is: it is a
+    configuration value, so the caller states the cap it resolved and no code
+    path invents one. A caller that supplies ``pipeline`` already carries the
+    cap on the pipeline it passes.
     """
 
+    max_registered_paths: int
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None
     retry_policy: VerificationRetryPolicy | None = None
@@ -1103,7 +1109,7 @@ async def build_paths(
     *,
     bot: Bot,
     engine_registry: EngineRegistry,
-    options: BuildPathsOptions | None = None,
+    options: BuildPathsOptions,
 ) -> None:
     """Discover V2/V3/V4 arb paths, build Python pools, register with Rust engine.
 
@@ -1118,20 +1124,24 @@ async def build_paths(
     Discovery is a single pass over the DB subgraph driven through a reusable
     :class:`PathRegistrationPipeline`; after it completes the orphan sweep
     releases Tracked pools whose path was skipped before ``register_vN_pool``.
+
+    ``options`` is required because it carries the registered-path cap: the
+    caller that resolved the cap states it, and this function never invents
+    one for a pipeline it builds itself.
     """
-    opts = options if options is not None else BuildPathsOptions()
     constr_ctx = (
-        opts.context
-        if opts.context is not None
-        else ConstructionContext.for_bot(bot, opts.v3_snapshot)
+        options.context
+        if options.context is not None
+        else ConstructionContext.for_bot(bot, options.v3_snapshot)
     )
 
-    pipeline = opts.pipeline or PathRegistrationPipeline(
+    pipeline = options.pipeline or PathRegistrationPipeline(
         context=constr_ctx,
         engine_registry=engine_registry,
-        retry_policy=opts.retry_policy,
+        retry_policy=options.retry_policy,
+        max_paths=options.max_registered_paths,
     )
-    perms = set(opts.permutation_filter) if opts.permutation_filter else None
+    perms = set(options.permutation_filter) if options.permutation_filter else None
     pipeline.pool_type_per_depth = _parse_permutation_filter(perms)
     pipeline.pool_types = _pool_types_from_filter(perms)
     if pipeline.pool_type_per_depth is not None:

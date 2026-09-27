@@ -20,6 +20,7 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any
 
+from degenbot.config import resolved_config
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._driver_constants import _SIM_FAIL_RENDER_CAP
 
@@ -236,9 +237,11 @@ def _render_sim_failures(outcome: _SimOutcome, *, current_block: int) -> None:
     """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted / failed
     candidate (D3 + AM5AJW). Capped at :data:`_SIM_FAIL_RENDER_CAP` records.
 
-    If ``DEGENBOT_SIM_EXIT_ON_FAIL=1`` is set, dump the full hop-detail for the
-    FIRST failing record then ``sys.exit(3)`` — a trap for capturing a mainnet
-    fixture to pin a RED byte-exact calc test (ergo W2UWZO).
+    When the operator has armed the sim-failure trap
+    (``simulation.sim_exit_on_fail``), dump the full hop-detail for the FIRST
+    failing record and then follow the ``sim_failure`` bucket's action —
+    ``sys.exit(3)`` under an ``exit`` policy. The trap exists to capture a
+    mainnet fixture to pin a RED byte-exact calc test.
     """
     failures = outcome.failures
     if not failures:
@@ -338,16 +341,32 @@ def _render_reverted_swaps(rec: dict[str, Any], path_id: int) -> None:
     bot_logger.debug(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
 
 
+def _sim_exit_armed() -> bool:
+    """Whether the operator armed the sim-failure tripwire.
+
+    One declared key — ``simulation.sim_exit_on_fail`` (``false`` by
+    declaration) — read from the resolved verdict, so every cascade layer
+    reaches the trap, the operator file included, and no Python-side default
+    decides it separately. What an ARMED trap does is still the Rust
+    per-bucket matrix's answer; this says only whether the trap is on.
+
+    Returns:
+        ``True`` when the resolved configuration arms the tripwire.
+
+    """
+    return bool(resolved_config().values["simulation.sim_exit_on_fail"])
+
+
 def _enforce_sim_failure_policy(
     failures: list[dict[str, Any]],
     path_infos: dict[int, dict[str, Any]],
     current_block: int,
 ) -> None:
-    """Apply the ``DEGENBOT_SIM_EXIT_*`` tripwire over one failure batch."""
-    if os.environ.get("DEGENBOT_SIM_EXIT_ON_FAIL", "1") != "1":
+    """Apply the sim-failure tripwire over one failure batch."""
+    if not _sim_exit_armed():
         return
-    # Fail HARD and LOUD: ANY un-ignored failure bucket halts the bot
-    # (ADR-021 / ergo W2UWZO — detect/classify/stop loudly, never mask).
+    # Fail HARD and LOUD: ANY un-ignored failure bucket reaches the bot's
+    # stop decision below (ADR-021 — detect/classify/stop loudly, never mask).
     # There is NO default ignore set; the operator OPT-IN dumbs the tripwire
     # down per-bucket via DEGENBOT_SIM_EXIT_IGNORE_BUCKETS.
     ignore = {
