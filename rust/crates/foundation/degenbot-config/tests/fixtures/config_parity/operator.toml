@@ -1,12 +1,13 @@
-# Cross-surface config acceptance ledger (task BZ6W4Y) fixed operator file.
+# Cross-surface config acceptance ledger fixed operator file.
 #
-# The Rust half (config_parity_oracle.rs) resolves this file through
-# `degenbot-config` and writes the verdicts to `oracle.json`; the Python half
-# (tests/test_config_parity.py) resolves the SAME file + environment through
-# `degenbot._ffi` and compares. The file is the only layer either side passes
-# beyond the environment recorded per case, so a resolver regression, a stale
-# or foreign holder install, or an unknown-layer provenance map shows up as a
-# disagreement rather than agreeing with itself.
+# The Rust half (config_parity_oracle.rs) loads this file through
+# `degenbot-config` and writes the WHOLE verdict -- every declared key's value,
+# its winning layer, and the per-entry layer of each table -- to `oracle.json`;
+# the Python half (tests/test_config_parity.py) loads the SAME file +
+# environment through `degenbot._ffi` and compares. The file is the only layer
+# either side passes beyond the environment recorded per case, so a resolver
+# regression, a stale or foreign holder install, or an unknown-layer provenance
+# map shows up as a disagreement rather than agreeing with itself.
 #
 # Layout of the entries, by case:
 #   chain 101 (http)              -> file_only_request
@@ -14,6 +15,14 @@
 #   chain 103 (http)              -> subscription_never_selects_http
 #   chain 104 (ws)                -> file_ws_subscription
 #   chain 105 (ipc + http)        -> file_ipc_preferred_request
+#
+# [session] is the scalar half of the file layer: `session.chain_id` resolves
+# from this file in the base environment and from DEGENBOT_DEFAULT_CHAIN_ID in
+# the env_chain environment, so the ledger pins file-vs-env precedence for a
+# declared scalar key, not only for the endpoint tables.
+
+[session]
+chain_id = 201
 
 [nodes]
 http = { 101 = "http://file-101.example:8545", 103 = "http://file-103.example:8545", 105 = "http://file-105.example:8545" }
