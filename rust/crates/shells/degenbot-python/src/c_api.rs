@@ -63,6 +63,20 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::config::ResolvedChainId>()?;
     m.add_class::<crate::config::ResolvedDatabasePath>()?;
     m.add_function(wrap_pyfunction!(crate::config::resolved_config, m)?)?;
+    m.add_class::<crate::config::HypotheticalConfig>()?;
+    m.add_function(wrap_pyfunction!(crate::config::resolve_hypothetical, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::config::resolve_hypothetical_node_uri,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::config::resolve_hypothetical_chain_id,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::config::resolve_hypothetical_database_path,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(
         crate::config::verification_retry_policy_defaults,
         m

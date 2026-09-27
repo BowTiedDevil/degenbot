@@ -34,6 +34,7 @@ from degenbot.runner._render import _render_sim_failures, format_failure_breakdo
 _TRAP_CHILD = """import sys
 from types import SimpleNamespace
 
+from degenbot import _ffi
 import degenbot.diagnostics as diag
 import degenbot.runner._render as render
 
@@ -42,11 +43,19 @@ import degenbot.runner._render as render
 # saying "exit", whether the process exits IS the armed state.
 diag.failure_action = lambda kind, reason=None: "exit"
 
+# The child is the consumption boundary: it resolves the installed verdict
+# and threads the trap values into the renderer.
+verdict = _ffi.resolved_config()
 outcome = SimpleNamespace(
     failures=[{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}],
     path_infos={},
 )
-render._render_sim_failures(outcome, current_block=100)
+render._render_sim_failures(
+    outcome,
+    current_block=100,
+    sim_exit_on_fail=bool(verdict.values["simulation.sim_exit_on_fail"]),
+    exit_ignore_buckets=str(verdict.values["simulation.exit_ignore_buckets"]),
+)
 print("NO_TRAP")
 """
 
@@ -92,28 +101,23 @@ def _outcome(failures: list[dict[str, Any]]) -> Any:
     )
 
 
-@pytest.fixture(autouse=True)
-def _disarm_sim_failure_trap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Disarm the tripwire for the rendering tests.
+def _render(
+    outcome: Any,
+    *,
+    armed: bool = False,
+    ignore: str = "",
+) -> None:
+    """Render one failure batch with the tripwire values threaded explicitly.
 
-    These tests exercise the RENDERING contract (the ``[sim-fail]`` /
-    ``[sim-diag]`` lines), not the trap, so the armed state is stubbed off to
-    keep the failure records renderable. It is stubbed rather than unset in
-    the environment because the armed state is the resolved verdict, which is
-    installed once at FFI module init: nothing a test does afterwards can move
-    it, and that is the property the change bought.
+    The renderer takes the resolved trap values as parameters, so a test arms
+    or disarms by passing them rather than by poking the process verdict.
     """
-    monkeypatch.setattr(_render, "_sim_exit_armed", lambda: False)
-
-
-def _arm_sim_failure_trap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Arm the tripwire the way an operator does, through the verdict's key.
-
-    Called from the test body so it lands after the autouse disarm above. The
-    layer → verdict edge is proved by the fresh-interpreter probes at the
-    bottom of this module; these tests are the armed-side wiring.
-    """
-    monkeypatch.setattr(_render, "_sim_exit_armed", lambda: True)
+    _render_sim_failures(
+        outcome,
+        current_block=100,
+        sim_exit_on_fail=armed,
+        exit_ignore_buckets=ignore,
+    )
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────
@@ -121,7 +125,7 @@ def _arm_sim_failure_trap(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_no_failures_emits_nothing(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome([]), current_block=100)
+        _render(_outcome([]))
     assert not any("[sim-fail]" in r.message for r in caplog.records)
 
 
@@ -141,7 +145,7 @@ def test_each_failure_emits_one_line_with_attribution(caplog: pytest.LogCaptureF
         },
     ]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures), current_block=100)
+        _render(_outcome(failures))
 
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     assert len(lines) == 2
@@ -162,7 +166,7 @@ def test_missing_path_info_falls_back_gracefully(caplog: pytest.LogCaptureFixtur
     # path_id 99 isn't in path_infos → renderer must not crash, emits "(path_info missing)".
     failures = [{"path_id": 777, "bucket": "rpc-failed", "fail_index": None, "revert_data": "0x"}]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures), current_block=100)
+        _render(_outcome(failures))
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     assert len(lines) == 1
     assert "path=777" in lines[0]
@@ -180,7 +184,7 @@ def test_overflow_emits_summary_trailing_line(caplog: pytest.LogCaptureFixture) 
         for i in range(30)
     ]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures), current_block=100)
+        _render(_outcome(failures))
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     detail_lines = [m for m in lines if "path=" in m]
     summary_lines = [m for m in lines if "(+5 more)" in m]
@@ -220,7 +224,7 @@ def test_reverting_frame_surfaces_deep_attribution(caplog: pytest.LogCaptureFixt
         }
     ]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures), current_block=100)
+        _render(_outcome(failures))
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     assert len(lines) == 1
     line = lines[0]
@@ -266,19 +270,16 @@ def test_format_breakdown_empty() -> None:
 # ── Tripwire bucket-fatal semantics (fail hard + loud, no default mask) ──
 
 
-def test_sim_failures_continue_by_default(
-    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sim_failures_continue_by_default(caplog: pytest.LogCaptureFixture) -> None:
     """ADR-040: the default ``sim_failure`` bucket action is ``event`` - the
     renderer logs the keyed loud event and the bot KEEPS RUNNING. The
     D63GSE-era fail-fast-by-default is retired; exit is now an explicit
     per-bucket operator override (``[failure_policy]`` in config.toml), not an
     implicit default.
     """
-    _arm_sim_failure_trap(monkeypatch)
     failures = [{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures), current_block=100)
+        _render(_outcome(failures), armed=True)
     # No exit: the trap logs the loud continuing event instead.
     traps = [r.message for r in caplog.records if "[sim-trap]" in r.message]
     assert any("continuing" in m for m in traps), "default must continue, not exit"
@@ -326,12 +327,11 @@ def test_operator_exit_override_still_traps(
     import degenbot.diagnostics as diag
 
     monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
-    _arm_sim_failure_trap(monkeypatch)
     failures = [
         {"path_id": 1, "bucket": "Error(string)", "fail_index": 3, "revert_data": "0x08c379a0"}
     ]
     with pytest.raises(SystemExit) as ei, caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures), current_block=100)
+        _render(_outcome(failures), armed=True)
     assert ei.value.code == 3
     assert any("[sim-trap]" in r.message for r in caplog.records)
 

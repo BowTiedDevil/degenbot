@@ -291,3 +291,32 @@ provide per-chain endpoint *lists* or failover (one endpoint per transport per
 chain; a ladder is separate work), it does not relax the fail-loud posture when a
 chain has no endpoint in any layer, and it does not add secret storage (ADR-063
 covers portability, not a secret store).
+
+
+## Amendment (2026-09-27): resolution as a value — the hypothetical door
+
+`ResolvedConfig` holds `verdict: &'static Verdict` from a `OnceLock`, so the
+install-once contract is enforced by the compiler: re-installing a global would
+require the `OnceLock` to become an `RwLock` and the borrow an `Arc` across the
+whole FFI surface. That convenience is not taken. A test that needs a second
+cascade constructs one instead.
+
+`degenbot._ffi.resolve_hypothetical(env, file)` is that constructor: a pure
+function of its inputs
+(`BotConfigLoader::new().with_env(...).with_config_path(file).load()`), projected
+exactly as the verdict projects. It installs nothing and returns a
+`HypotheticalConfig`; it cannot return a `ResolvedConfig`, which holds
+`&'static`. The argument-taking cascade methods get the same treatment as
+standalone siblings (`resolve_hypothetical_node_uri`, `..._chain_id`,
+`..._database_path`) — envy's `from_env` / `from_iter` split.
+
+Two doors follow, and using the wrong one is a tautology:
+
+- `resolve_hypothetical(env, file)` for claims about HOW the cascade resolves
+  inputs.
+- `resolved_config()` for claims about WHAT this process installed.
+
+The hypothetical lives on the raw FFI seam (ADR-013) and is deliberately not
+re-exported from `degenbot.config`. The driver-domain leaves consume resolved
+values threaded from the construction boundary — the Python companion to the
+engine's instance-scoped `SolveRuntimeConfig` — never the verdict.

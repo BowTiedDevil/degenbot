@@ -25,7 +25,6 @@ from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import (
     ActivationGateRefused,
     BotRunner,
-    SettlementArmGateRefused,
 )
 
 
@@ -185,76 +184,51 @@ class TestBootGate:
         a backrun facet active, the hosted session boots an arm whose submit
         seam is NOT settlement — so no settlement posture exists in either
         stance, and nothing refuses."""
-        outcomes = {}
+        readiness = _view(settlement_active=False, mevblocker_backrun_active=True)
         for stance in (True, False):
             try:
-                outcomes[stance] = BotRunner._resolve_relay_posture(live=stance)
+                outcome = BotRunner._resolve_relay_posture(readiness=readiness, live=stance)
             except RuntimeError as refusal:
-                outcomes[stance] = refusal
-        assert isinstance(outcomes[True], types.SimpleNamespace) or outcomes[True] is None, (
-            f"live must not refuse a backrun-only boot: {outcomes[True]!r}"
-        )
-        assert outcomes[True] is None and outcomes[False] is None, (
-            "a settlement-deactivated boot carries no settlement posture — "
-            "in live or dry — instead of refusing the boot"
-        )
+                outcome = refusal
+            assert outcome is None, (
+                "a settlement-deactivated boot carries no settlement posture — "
+                f"in live or dry — instead of refusing the boot: {outcome!r}"
+            )
 
-    def test_an_empty_fleet_refuses_in_both_stances(self, monkeypatch) -> None:
+    def test_an_empty_fleet_refuses_in_both_stances(self) -> None:
         """No activated facet, no work: the boot refuses with the activation
         remediation in dry-run exactly as it refuses live."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _view(settlement_active=False),
-        )
+        readiness = _view(settlement_active=False)
         for stance in (True, False):
             with pytest.raises(ActivationGateRefused, match="no active strategy"):
-                BotRunner._resolve_relay_posture(live=stance)
+                BotRunner._resolve_relay_posture(readiness=readiness, live=stance)
 
-    def test_a_dry_run_boot_refuses_failed_readiness(self, monkeypatch) -> None:
-        """A readiness refusal aborts the dry-run boot the same way it aborts
-        live: the runner never enters run() on an unreadiness activation."""
+    def test_a_readiness_refusal_is_an_activation_refusal(self, monkeypatch) -> None:
+        """A readiness refusal aborts the boot the same way in either stance:
+        the runner never enters run() on an unreadiness activation."""
         monkeypatch.setattr(
             _strategy_home,
             "validate_strategy_readiness",
             lambda: _raise(ValueError("facet unreadiness: degenbot strategy activate")),
         )
         with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
-            BotRunner._resolve_relay_posture(live=False)
+            BotRunner._gate_readiness()
 
-    def test_a_backrun_only_boot_ignores_the_settlement_endpoints_seam(self, monkeypatch) -> None:
+    def test_a_backrun_only_boot_ignores_the_settlement_endpoints_seam(self) -> None:
         """With the settlement facet inactive the runner never consults the
-        settlement broadcast posture: a refuse-y settlement-endpoints seam is
-        unreachable from a backrun-only boot."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _view(settlement_active=False, mevblocker_backrun_active=True),
-        )
-        monkeypatch.setattr(
-            _strategy_home,
-            "settlement_broadcast_endpoints",
-            lambda: _raise(ValueError("strategy settlement is not active: unreachable")),
-        )
-        assert BotRunner._resolve_relay_posture(live=False) is None
-        assert BotRunner._resolve_relay_posture(live=True) is None
+        settlement broadcast posture: a view whose settlement endpoints are
+        unset is unreachable from a backrun-only boot."""
+        readiness = _view(settlement_active=False, mevblocker_backrun_active=True)
+        assert BotRunner._resolve_relay_posture(readiness=readiness, live=False) is None
+        assert BotRunner._resolve_relay_posture(readiness=readiness, live=True) is None
 
-    def test_a_settled_dry_run_boot_carries_no_posture(self, monkeypatch) -> None:
+    def test_a_settled_dry_run_boot_carries_no_posture(self) -> None:
         """Refusal symmetry, not posture symmetry: a settled dry-run boot has
         no signing surface, so no fan-out posture is minted — while the same
         readiness settles into a live RelayPosture."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _view(),
-        )
-        monkeypatch.setattr(
-            _strategy_home,
-            "settlement_broadcast_endpoints",
-            lambda: ["http://relay-a"],
-        )
-        assert BotRunner._resolve_relay_posture(live=False) is None
-        posture = BotRunner._resolve_relay_posture(live=True)
+        readiness = _view(settlement_endpoints=["http://relay-a"])
+        assert BotRunner._resolve_relay_posture(readiness=readiness, live=False) is None
+        posture = BotRunner._resolve_relay_posture(readiness=readiness, live=True)
         assert posture is not None
         assert posture.relay_urls == ["http://relay-a"]
 
@@ -268,13 +242,14 @@ def _view(
     settlement_active: bool = True,
     mevblocker_backrun_active: bool = False,
     txpool_backrun_active: bool = False,
+    settlement_endpoints: list[str] | None = None,
 ) -> types.SimpleNamespace:
     """A readiness view stand-in with the settled-block arm on by default."""
     return types.SimpleNamespace(
         settlement_active=settlement_active,
         mevblocker_backrun_active=mevblocker_backrun_active,
         txpool_backrun_active=txpool_backrun_active,
-        settlement_endpoints=[],
+        settlement_endpoints=[] if settlement_endpoints is None else settlement_endpoints,
         mevblocker_backrun_endpoints=[],
         txpool_backrun_endpoints=[],
     )

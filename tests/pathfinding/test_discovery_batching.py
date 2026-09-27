@@ -506,15 +506,16 @@ def _make_pipeline() -> PathRegistrationPipeline:
         weth=None,
     )
     return PathRegistrationPipeline(
-        context=ctx, engine_registry=None, max_paths=0  # type: ignore[arg-type]
+        context=ctx,
+        engine_registry=None,
+        max_paths=0,  # type: ignore[arg-type]
+        discovery_batch_size=1000,
     )
 
 
 def test_discovery_sweep_passes_typed_batch_size(monkeypatch: pytest.MonkeyPatch) -> None:
-    """discovery_sweep reads the typed key and forwards it to find_paths_async."""
+    """discovery_sweep forwards the pipeline's resolved batch size."""
     build_paths_module = sys.modules["degenbot.runner.build_paths"]
-
-    monkeypatch.setattr(build_paths_module, "_discovery_batch_size", lambda: 42)
     captured: dict[str, object] = {}
 
     def fake_find_paths_async(**kwargs: object) -> None:
@@ -522,5 +523,7 @@ def test_discovery_sweep_passes_typed_batch_size(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(build_paths_module, "find_paths_async", fake_find_paths_async)
 
-    _make_pipeline().discovery_sweep()
+    pipeline = _make_pipeline()
+    pipeline.discovery_batch_size = 42
+    pipeline.discovery_sweep()
     assert captured["batch_size"] == 42

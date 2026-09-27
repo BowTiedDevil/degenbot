@@ -36,7 +36,7 @@ import signal
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot import Bot
 from degenbot.arbitrage import session_phase_next
@@ -66,6 +66,9 @@ from degenbot.runner.build_paths import (
 )
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.diag import arm_diagnostics
+
+if TYPE_CHECKING:
+    from degenbot.strategy import StrategyReadinessView
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -365,6 +368,10 @@ class BotRunner:
         # — Started re-entry is the no-op; Running/Closed re-entry is the
         # phase error).
         self._phase: _Phase = _Phase.NEW
+        # The resolved strategy-readiness value, resolved ONCE at the
+        # start() boundary and threaded to the arms — never re-read from the
+        # process verdict per call. ``None`` before start().
+        self._readiness: StrategyReadinessView | None = None
         # THE session (built in start()): the one owner of the coordination
         # state — actors, dispatcher, block clock, sim context, pipelines.
         # ``None`` only before start() (there is no session yet; shutdown()'s
@@ -514,6 +521,10 @@ class BotRunner:
             current_block = backfill_target
             dispatcher.advance_block(backfill_target)
 
+        # The activation gate resolves ONCE here; the arms and run() consume
+        # the resolved value.
+        self._readiness = self._gate_readiness()
+
         # ── THE session: real from here on — the one owner of the
         # coordination state. The runner keeps no stored copies (its
         # same-named attributes are the facade over this owner); the two
@@ -534,7 +545,10 @@ class BotRunner:
             relay_posture=(
                 self._injected_relay_posture
                 if self._injected_relay_posture is not None
-                else self._resolve_relay_posture(live=not cfg.dry_run)
+                else self._resolve_relay_posture(
+                    readiness=self._readiness,
+                    live=not cfg.dry_run,
+                )
             ),
         )
         self._resolve_settlement_arm()
@@ -552,9 +566,9 @@ class BotRunner:
         if self._injected_settlement_arm is not None:
             self._settlement_active = self._injected_settlement_arm
             return
-        from degenbot.strategy import validate_strategy_readiness
-
-        self._settlement_active = bool(validate_strategy_readiness().settlement_active)
+        readiness = self._readiness
+        assert readiness is not None, "start() resolved the readiness before the arm"
+        self._settlement_active = bool(readiness.settlement_active)
 
     async def _build_actors(
         self, cfg: ArbitrageConfig
@@ -566,47 +580,53 @@ class BotRunner:
         return bot, async_w3, engine_registry
 
     @staticmethod
-    def _resolve_relay_posture(*, live: bool) -> RelayPosture | None:
-        """The settlement broadcast posture from the resolved typed config.
+    def _gate_readiness() -> StrategyReadinessView:
+        """Resolve the activation gate; a typed readiness refusal is a boot refusal.
 
-        The fail-closed boot gate is stance-independent: the Rust readiness
-        resolution refuses an activated facet with an unsettled endpoint set
-        (naming the `degenbot strategy activate` remedies), and the hosted
-        runner IS the settlement arm, so an inactive settlement facet is a
-        refusal too — aborting the session in BOTH stances instead of
-        degrading a broadcast to the public mempool or simulating a strategy
-        the operator deactivated. Dry-run sessions still keep no posture:
-        nothing is signed, so no fan-out surface exists once the gate
-        settles."""
+        The one place this driver reads the process verdict for strategy
+        posture. A caller that needs HOW a cascade would resolve an input uses
+        the hypothetical seam instead; the resolved view is the value the arms
+        consume.
+        """
+        from degenbot.strategy import validate_strategy_readiness
 
-        from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
+        try:
+            return validate_strategy_readiness()
+        except ValueError as refusal:
+            raise ActivationGateRefused(refusal) from refusal
 
+    @staticmethod
+    def _resolve_relay_posture(
+        *,
+        readiness: StrategyReadinessView,
+        live: bool,
+    ) -> RelayPosture | None:
+        """The settlement broadcast posture from the readiness the boot gate resolved.
+
+        The readiness value refuses an activated facet with an unsettled
+        endpoint set (naming the `degenbot strategy activate` remedies), and
+        the hosted runner IS the settlement arm, so an inactive settlement
+        facet yields no posture. Dry-run sessions keep no posture either:
+        nothing is signed, so no fan-out surface exists once the gate settles.
+        """
         # The posture gate is stance-independent over the resolved facet
         # postures: the operator's active facets RUN; the inactive facets do
         # not load. An empty fleet refuses (there is nothing to host); an
-        # active-settlement boot needs settled endpoints; a backrun-only boot
-        # runs no settlement pipeline, so no settlement posture exists.
-        try:
-            view = validate_strategy_readiness()
-        except ValueError as refusal:
-            raise ActivationGateRefused(refusal) from refusal
+        # active-settlement boot carries its settled endpoints on the view; a
+        # backrun-only boot runs no settlement pipeline, so no posture exists.
         if not (
-            view.settlement_active or view.mevblocker_backrun_active or view.txpool_backrun_active
+            readiness.settlement_active
+            or readiness.mevblocker_backrun_active
+            or readiness.txpool_backrun_active
         ):
             refusal = ValueError(
                 "no active strategy: activate at least one facet "
                 "(degenbot strategy activate settlement|mevblocker_backrun|txpool_backrun)"
             )
             raise ActivationGateRefused(refusal) from refusal
-        if not view.settlement_active:
+        if not readiness.settlement_active or not live:
             return None
-        try:
-            relay_urls = settlement_broadcast_endpoints()
-        except ValueError as refusal:
-            raise SettlementArmGateRefused(refusal) from refusal
-        if not live:
-            return None
-        return RelayPosture(relay_urls=relay_urls)
+        return RelayPosture(relay_urls=list(readiness.settlement_endpoints))
 
     @staticmethod
     def _build_sim_ctx(
@@ -708,9 +728,8 @@ class BotRunner:
         # resolution already refused an active facet with unsettled endpoints
         # at the boot gate, so this follows the same config surface.
         if not self._settlement_active:
-            from degenbot.strategy import validate_strategy_readiness
-
-            view = validate_strategy_readiness()
+            view = self._readiness
+            assert view is not None, "start() resolved the readiness before run()"
             enabled: list[str] = []
             for facet, active in (
                 ("mevblocker_backrun", view.mevblocker_backrun_active),
@@ -759,6 +778,7 @@ class BotRunner:
                 engine_registry=session.engine_registry,
                 retry_policy=cfg.verification_retry_policy,
                 max_paths=cfg.max_registered_paths,
+                discovery_batch_size=cfg.discovery_batch_size,
                 progress_interval_secs=cfg.reg_progress_secs,
             )
             session.attach_registration_pipeline(pipeline)
@@ -802,6 +822,7 @@ class BotRunner:
                 engine_registry=session.engine_registry,
                 options=BuildPathsOptions(
                     max_registered_paths=cfg.max_registered_paths,
+                    discovery_batch_size=cfg.discovery_batch_size,
                     v3_snapshot=self.v3_snapshot,
                     v4_snapshot=self.v4_snapshot,
                     retry_policy=cfg.verification_retry_policy,
@@ -920,6 +941,7 @@ class BotRunner:
                 engine_registry=self.engine_registry,
                 options=BuildPathsOptions(
                     max_registered_paths=self.cfg.max_registered_paths,
+                    discovery_batch_size=self.cfg.discovery_batch_size,
                     v3_snapshot=self.v3_snapshot,
                     v4_snapshot=self.v4_snapshot,
                     retry_policy=retry_policy,

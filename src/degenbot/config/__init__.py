@@ -18,6 +18,12 @@ operator file, and a declared default -- and reports the layer that won. The
 config is installed once at FFI module init, so a process resolves the same
 file and the same environment as the Rust console no matter which entry path
 started it.
+
+Two doors exist, and using the wrong one is a tautology:
+``degenbot._ffi.resolve_hypothetical`` answers HOW the cascade resolves a
+captured environment + file (a pure function that installs nothing, reachable
+only from the raw FFI seam and deliberately not re-exported here), while the
+installed :func:`resolved_config` answers WHAT this process installed.
 """
 
 from __future__ import annotations

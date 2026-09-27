@@ -494,6 +494,160 @@ pub fn resolved_config(py: ::pyo3::Python<'_>) -> PyResult<::pyo3::Py<ResolvedCo
     ::pyo3::Py::new(py, ResolvedConfig::installed())
 }
 
+// =============================================================================
+// Hypothetical resolution (ADR-013 private seam): a pure function of a
+// captured environment and an operator file. It installs NOTHING and is
+// reachable only from the raw FFI, never from `degenbot.config`, so a caller
+// that asks HOW the cascade resolves an input cannot be reading the answer
+// this process happened to install.
+// =============================================================================
+
+/// The layered load a hypothetical resolution reads: the captured environment
+/// (never the process environment) over the named file (or the standard file
+/// the CAPTURED env selects when `file` is `None`).
+///
+/// A pure function of its inputs: it reads no `OnceLock`, publishes nothing,
+/// and a refusal is the loader's own typed [`::degenbot_config::ConfigError`]
+/// rather than a process exit.
+fn hypothetical_layers(
+    env: &::std::collections::BTreeMap<String, String>,
+    file: Option<&str>,
+) -> Result<::degenbot_config::LoadedConfig, ::degenbot_config::ConfigError> {
+    let captured = ::degenbot_config::MapEnv::new(env.clone());
+    let selected = match file.filter(|path| !path.is_empty()) {
+        Some(path) => Some(::std::path::PathBuf::from(path)),
+        None => ::degenbot_config::standard_file_path_with(&captured),
+    };
+    let mut loader = ::degenbot_config::BotConfigLoader::new().with_env(Box::new(captured));
+    if let Some(path) = selected {
+        loader = loader.with_config_path(path);
+    }
+    loader.load()
+}
+
+/// The verdict a hypothetical load produces, as the Python driver reads it:
+/// the same three schema-driven projections [`ResolvedConfig`] exposes, with
+/// no install and no `&'static` borrow.
+///
+/// A `ResolvedConfig` CANNOT be built here — it holds `&'static Verdict` from
+/// the process-wide `OnceLock` — so a hypothetical is its own value type. The
+/// name carries the warning: this object answers what a cascade WOULD resolve
+/// for the inputs given, never what this process installed.
+#[pyclass(frozen, module = "degenbot._ffi")]
+pub struct HypotheticalConfig {
+    layers: ::degenbot_config::LoadedConfig,
+}
+
+#[pymethods]
+impl HypotheticalConfig {
+    /// Every declared key's typed value, keyed by its dotted TOML path.
+    #[getter]
+    fn values<'py>(
+        &self,
+        py: ::pyo3::Python<'py>,
+    ) -> ::pyo3::PyResult<
+        ::std::collections::BTreeMap<String, ::pyo3::prelude::Bound<'py, ::pyo3::PyAny>>,
+    > {
+        values_by_path(&self.layers.config)
+            .iter()
+            .map(|(path, value)| Ok((path.clone(), value_into_py(py, value.as_ref())?)))
+            .collect()
+    }
+
+    /// The layer that supplied each declared key, keyed by its dotted TOML path.
+    #[getter]
+    fn provenance(&self) -> ::std::collections::BTreeMap<String, String> {
+        provenance_by_path(&self.layers)
+    }
+
+    /// Per-entry layers for the table-shaped keys.
+    #[getter]
+    fn entry_provenance(
+        &self,
+    ) -> ::std::collections::BTreeMap<String, ::std::collections::BTreeMap<String, String>> {
+        entry_provenance_by_env(&self.layers)
+    }
+}
+
+/// The whole resolved configuration a cascade WOULD produce for `env` + `file`,
+/// installing nothing and reachable only through the raw FFI (ADR-013).
+///
+/// The comparison door for claims about HOW the cascade resolves inputs; the
+/// installed [`ResolvedConfig`] is the door for claims about WHAT this process
+/// installed. Using the wrong one is a tautology, so the name says
+/// "hypothetical" and the Python home (`degenbot.config`) deliberately does not
+/// re-export it.
+///
+/// # Errors
+///
+/// `ValueError` carrying the loader's aggregated refusal — the typed error the
+/// module-init boot path turns into an exit(2) wrapper.
+#[pyfunction]
+#[pyo3(signature = (env, file=None))]
+pub fn resolve_hypothetical(
+    py: ::pyo3::Python<'_>,
+    env: ::std::collections::BTreeMap<String, String>,
+    file: Option<String>,
+) -> PyResult<::pyo3::Py<HypotheticalConfig>> {
+    let layers = hypothetical_layers(&env, file.as_deref()).map_err(|error| refusal(&error))?;
+    ::pyo3::Py::new(py, HypotheticalConfig { layers })
+}
+
+/// [`ResolvedConfig::node_uri`] over a hypothetical load: the standalone
+/// sibling for the argument-taking cascade method (envy's `from_env` /
+/// `from_iter` split). Installs nothing.
+///
+/// # Errors
+///
+/// `ValueError` on a load refusal or the resolution's own refusal.
+#[pyfunction]
+#[pyo3(signature = (env, file, chain_id, scope, node=None))]
+pub fn resolve_hypothetical_node_uri(
+    env: ::std::collections::BTreeMap<String, String>,
+    file: Option<String>,
+    chain_id: u64,
+    scope: &str,
+    node: Option<&str>,
+) -> PyResult<ResolvedNodeUri> {
+    let layers = hypothetical_layers(&env, file.as_deref()).map_err(|error| refusal(&error))?;
+    node_uri_in(&layers, chain_id, scope, node)
+}
+
+/// [`ResolvedConfig::resolve_chain_id`] over a hypothetical load. Installs
+/// nothing.
+///
+/// # Errors
+///
+/// `ValueError` on a load refusal or the resolution's own refusal.
+#[pyfunction]
+#[pyo3(signature = (env, file, chain_id=None))]
+pub fn resolve_hypothetical_chain_id(
+    env: ::std::collections::BTreeMap<String, String>,
+    file: Option<String>,
+    chain_id: Option<&str>,
+) -> PyResult<ResolvedChainId> {
+    let layers = hypothetical_layers(&env, file.as_deref()).map_err(|error| refusal(&error))?;
+    chain_id_in(&layers, chain_id)
+}
+
+/// [`ResolvedConfig::resolve_database_path`] over a hypothetical load.
+/// Installs nothing.
+///
+/// # Errors
+///
+/// `ValueError` on a load refusal; the resolution itself is fallible by
+/// contract but cannot refuse today.
+#[pyfunction]
+#[pyo3(signature = (env, file, database=None))]
+pub fn resolve_hypothetical_database_path(
+    env: ::std::collections::BTreeMap<String, String>,
+    file: Option<String>,
+    database: Option<&str>,
+) -> PyResult<ResolvedDatabasePath> {
+    let layers = hypothetical_layers(&env, file.as_deref()).map_err(|error| refusal(&error))?;
+    Ok(database_path_in(&layers, database))
+}
+
 /// The shared core verification-retry policy defaults: the numbers a driver
 /// seeds its retry policy from instead of carrying its own literal set.
 ///

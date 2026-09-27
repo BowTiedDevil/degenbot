@@ -242,6 +242,31 @@ class ResolvedDatabasePath:
     source: str
 
 # frozen pyclass (pyo3): the runtime forbids subclassing.
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
+class HypotheticalConfig:
+    """A resolved configuration a cascade WOULD produce, installing nothing.
+
+    Built by :func:`resolve_hypothetical` from a captured environment and an
+    operator file. A pure function of its inputs: it reads no process-wide
+    verdict, so it answers HOW the cascade resolves rather than WHAT this
+    process installed. Reachable only through the raw FFI (ADR-013); the
+    Python home deliberately does not re-export it.
+    """
+
+    @property
+    def values(self) -> dict[str, Any]:
+        """Every declared key's typed value, keyed by its dotted TOML path."""
+
+    @property
+    def provenance(self) -> dict[str, str]:
+        """The layer that supplied each declared key, keyed by dotted TOML path."""
+
+    @property
+    def entry_provenance(self) -> dict[str, dict[str, str]]:
+        """Per-entry layers for the table-shaped keys."""
+
+# frozen pyclass (pyo3): the runtime forbids subclassing.
 @final
 class ResolvedConfig:
     """The whole resolved configuration for this process (ADR-062 D7/D10).
@@ -403,6 +428,55 @@ def resolved_config() -> ResolvedConfig:
     value, the layer each came from, and the resolutions that take a
     capability or an override. Frozen, and built from the load published
     at FFI module init.
+    """
+
+def resolve_hypothetical(env: dict[str, str], file: str | None = None) -> HypotheticalConfig:
+    """Resolve what a cascade WOULD produce for ``env`` + ``file``, installing nothing.
+
+    A pure function of its inputs: it reads the captured ``env`` and the
+    named operator file (or the standard file the captured env selects when
+    ``file`` is ``None``), never the installed process verdict. The
+    comparison door for claims about HOW the cascade resolves inputs; the
+    installed verdict is the door for claims about WHAT this process
+    installed. Reachable only through the raw FFI.
+
+    Raises:
+        ValueError: the loader's aggregated refusal for the inputs.
+
+    """
+
+def resolve_hypothetical_node_uri(
+    env: dict[str, str],
+    file: str | None,
+    chain_id: int,
+    scope: str,
+    node: str | None = None,
+) -> ResolvedNodeUri:
+    """Resolve a node endpoint over a hypothetical load, installing nothing.
+
+    Raises:
+        ValueError: on a load refusal or the resolution's own refusal.
+
+    """
+
+def resolve_hypothetical_chain_id(
+    env: dict[str, str], file: str | None, chain_id: str | None = None
+) -> ResolvedChainId:
+    """Resolve the session chain id over a hypothetical load, installing nothing.
+
+    Raises:
+        ValueError: on a load refusal or the resolution's own refusal.
+
+    """
+
+def resolve_hypothetical_database_path(
+    env: dict[str, str], file: str | None, database: str | None = None
+) -> ResolvedDatabasePath:
+    """Resolve the database path over a hypothetical load, installing nothing.
+
+    Raises:
+        ValueError: on a load refusal; the resolution cannot refuse today.
+
     """
 
 def runtime_status() -> dict[str, Any]:
@@ -2083,6 +2157,7 @@ __all__ = [
     "FleetIntakeFaultedError",
     "HighFeePoolRejectedError",
     "HookedPoolRejectedError",
+    "HypotheticalConfig",
     "IntakeReceipt",
     "PathBatchIterator",
     "PathIterator",
@@ -2155,6 +2230,10 @@ __all__ = [
     "provider",
     "registration_outcome_tags",
     "registration_pool_memo_key",
+    "resolve_hypothetical",
+    "resolve_hypothetical_chain_id",
+    "resolve_hypothetical_database_path",
+    "resolve_hypothetical_node_uri",
     "resolved_config",
     "runtime_status",
     "session_phase_next",

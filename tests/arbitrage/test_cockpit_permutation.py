@@ -61,6 +61,7 @@ class TestPermutation:
             engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
             options=BuildPathsOptions(
                 max_registered_paths=0,
+                discovery_batch_size=1000,
                 context=object(),  # type: ignore[arg-type]
                 pipeline=pipe,  # type: ignore[arg-type]
                 retry_policy=None,
@@ -81,6 +82,7 @@ class TestPermutation:
             engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
             options=BuildPathsOptions(
                 max_registered_paths=0,
+                discovery_batch_size=1000,
                 context=object(),  # type: ignore[arg-type]
                 pipeline=pipe,  # type: ignore[arg-type]
                 retry_policy=None,

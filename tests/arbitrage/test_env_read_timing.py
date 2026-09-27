@@ -187,6 +187,7 @@ PathRegistrationPipeline(
     ),
     engine_registry=SimpleNamespace(engine=engine),
     max_paths=cfg.max_registered_paths,
+    discovery_batch_size=cfg.discovery_batch_size,
 )
 print("CAP", cfg.max_registered_paths, engine.path_cap)
 """
@@ -212,6 +213,7 @@ def test_an_explicitly_uncapped_pipeline_tells_the_engine_uncapped() -> None:
         context=_context(_FleetHostedBot()),
         engine_registry=SimpleNamespace(engine=engine),
         max_paths=0,
+        discovery_batch_size=1000,
     )
     assert engine.path_cap is None
 

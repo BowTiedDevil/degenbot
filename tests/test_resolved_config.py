@@ -129,3 +129,70 @@ def test_discovery_batch_size_is_clamped_to_a_positive_batch() -> None:
     A zero would collapse the batched iterator into a per-path busy loop.
     """
     assert _ffi.resolved_config().discovery_batch_size >= 1
+
+
+
+class TestHypotheticalResolution:
+    """The private comparison door: how a cascade WOULD resolve, installs nothing.
+
+    ``_ffi.resolve_hypothetical`` is a pure function of its inputs, so it
+    answers a claim about HOW the cascade resolves rather than a claim about
+    WHAT this process installed. It is deliberately absent from
+    ``degenbot.config`` — using the installed verdict where a hypothetical is
+    meant is a tautology.
+    """
+
+    def test_it_resolves_the_environment_without_installing(self) -> None:
+        """A hypothetical resolves its captured env and leaves the verdict alone."""
+        installed = _ffi.resolved_config()
+        before_values = dict(installed.values)
+        before_provenance = dict(installed.provenance)
+
+        hypothetical = _ffi.resolve_hypothetical({"DEGENBOT_DEFAULT_CHAIN_ID": "8453"}, None)
+
+        assert hypothetical.values["session.chain_id"] == 8453
+        assert hypothetical.provenance["session.chain_id"] == "env"
+        # The install-once contract held: the verdict and its file did not move.
+        assert dict(_ffi.resolved_config().values) == before_values
+        assert dict(_ffi.resolved_config().provenance) == before_provenance
+        assert _ffi.resolved_config().config_file_path == installed.config_file_path
+
+    def test_a_var_set_after_install_does_not_move_the_verdict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A freeze is an in-process NEGATIVE assertion, not a fresh process."""
+        before = dict(_ffi.resolved_config().values)
+        monkeypatch.setenv("DEGENBOT_DEFAULT_CHAIN_ID", "424242")
+        assert dict(_ffi.resolved_config().values) == before
+
+    def test_it_is_unreachable_from_the_python_config_home(self) -> None:
+        """The hypothetical lives on the raw FFI seam, not the driver home."""
+        from degenbot import config as config_home
+
+        assert not hasattr(config_home, "resolve_hypothetical")
+        assert "resolve_hypothetical" not in config_home.__all__
+
+    def test_a_load_refusal_is_a_typed_error_not_a_process_exit(self) -> None:
+        """The boot-refusal error survives as a typed refusal."""
+        with pytest.raises(ValueError, match="pathfinding.max_registered_paths") as excinfo:
+            _ffi.resolve_hypothetical({"DEGENBOT_MAX_PATHS": "not-a-number"}, None)
+        assert "not-a-number" in str(excinfo.value)
+
+    def test_the_siblings_cover_the_three_cascade_methods(self) -> None:
+        """Every argument-taking cascade method has an installing-free sibling."""
+        node = _ffi.resolve_hypothetical_node_uri(
+            {"DEGENBOT_RPC_WS_CHAINID_1": "wss://hypothetical.example/ws"},
+            None,
+            1,
+            "request",
+        )
+        assert node.uri == "wss://hypothetical.example/ws"
+        assert node.source == "env"
+
+        chain = _ffi.resolve_hypothetical_chain_id({"DEGENBOT_DEFAULT_CHAIN_ID": "10"}, None)
+        assert chain.chain_id == 10
+        assert chain.source == "env"
+
+        database = _ffi.resolve_hypothetical_database_path({}, None, "/tmp/override.db")
+        assert database.path == "/tmp/override.db"
+        assert database.source == "cli"

@@ -6,10 +6,9 @@ outcomes and engine failure records. The dispatch path
 :func:`_render_profit_logs`, and :func:`_render_sim_failures`; outside
 that, only tests import this module. Nothing here touches the Rust core.
 
-Carved out of ``dispatch.py`` / ``config.py`` by epic Y7PA5A (task
-34XJ6C) so that ``degenbot.runner`` presents one face: the driver
-cockpit.
-
+The sim-failure tripwire reads its armed state and ignore set as values the
+caller resolved, never the process verdict: the arm/disarm decision is the
+driver's, made once at the construction boundary and handed down.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any
 
-from degenbot.config import resolved_config
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._driver_constants import _SIM_FAIL_RENDER_CAP
 
@@ -232,15 +230,26 @@ def _dump_failure_fixture(
         )
 
 
-def _render_sim_failures(outcome: _SimOutcome, *, current_block: int) -> None:
+def _render_sim_failures(
+    outcome: _SimOutcome,
+    *,
+    current_block: int,
+    sim_exit_on_fail: bool,
+    exit_ignore_buckets: str,
+) -> None:
     """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted / failed
     candidate (D3 + AM5AJW). Capped at :data:`_SIM_FAIL_RENDER_CAP` records.
+
+    ``sim_exit_on_fail`` and ``exit_ignore_buckets`` are the resolved
+    ``simulation.*`` values the caller threads down: the tripwire never reads
+    the process verdict, so the arm/disarm decision is a value at the
+    consumption boundary rather than an ambient reach.
 
     When the operator has armed the sim-failure trap
     (``simulation.sim_exit_on_fail``), dump the full hop-detail for the FIRST
     failing record and then follow the ``sim_failure`` bucket's action —
     ``sys.exit(3)`` under an ``exit`` policy. The trap exists to capture a
-    mainnet fixture to pin a RED byte-exact calc test.
+    mainnet fixture to pin a byte-exact calc test.
     """
     failures = outcome.failures
     if not failures:
@@ -251,7 +260,13 @@ def _render_sim_failures(outcome: _SimOutcome, *, current_block: int) -> None:
     for rec in failures[:cap]:
         _render_one_failure(rec, path_infos, current_block)
 
-    _enforce_sim_failure_policy(failures, path_infos, current_block)
+    _enforce_sim_failure_policy(
+        failures,
+        path_infos,
+        current_block,
+        sim_exit_on_fail=sim_exit_on_fail,
+        exit_ignore_buckets=exit_ignore_buckets,
+    )
 
     overflow = len(failures) - cap
     if overflow > 0:
@@ -340,40 +355,23 @@ def _render_reverted_swaps(rec: dict[str, Any], path_id: int) -> None:
     bot_logger.debug(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
 
 
-def _sim_exit_armed() -> bool:
-    """Whether the operator armed the sim-failure tripwire.
-
-    One declared key — ``simulation.sim_exit_on_fail`` (``false`` by
-    declaration) — read from the resolved verdict, so every cascade layer
-    reaches the trap, the operator file included, and no Python-side default
-    decides it separately. What an ARMED trap does is still the Rust
-    per-bucket matrix's answer; this says only whether the trap is on.
-
-    Returns:
-        ``True`` when the resolved configuration arms the tripwire.
-
-    """
-    return bool(resolved_config().values["simulation.sim_exit_on_fail"])
-
-
 def _enforce_sim_failure_policy(
     failures: list[dict[str, Any]],
     path_infos: dict[int, dict[str, Any]],
     current_block: int,
+    *,
+    sim_exit_on_fail: bool,
+    exit_ignore_buckets: str,
 ) -> None:
     """Apply the sim-failure tripwire over one failure batch."""
-    if not _sim_exit_armed():
+    if not sim_exit_on_fail:
         return
     # Fail HARD and LOUD: ANY un-ignored failure bucket reaches the bot's
     # stop decision below (ADR-021 — detect/classify/stop loudly, never mask).
     # There is NO default ignore set; the operator OPT-IN dumbs the tripwire
     # down per-bucket through the declared `simulation.exit_ignore_buckets`
     # key, so the file layer narrows the trap as readily as the environment.
-    ignore = {
-        bucket.strip()
-        for bucket in str(resolved_config().values["simulation.exit_ignore_buckets"]).split(",")
-        if bucket.strip()
-    }
+    ignore = {bucket.strip() for bucket in exit_ignore_buckets.split(",") if bucket.strip()}
     trap_failures = [f for f in failures if f.get("bucket") not in ignore]
     if not trap_failures:
         return

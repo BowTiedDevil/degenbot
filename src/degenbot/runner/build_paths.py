@@ -27,7 +27,6 @@ from degenbot.arbitrage.verification_retry import (
     retry_verification_call,
 )
 from degenbot.builders.request import BuildManagedPoolRequest
-from degenbot.config import resolved_config
 from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
     DirectionResolutionError,
@@ -58,20 +57,6 @@ from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     import pathlib
-
-
-def _discovery_batch_size() -> int:
-    """Read the typed pathfinding.discovery_batch_size off the resolved config.
-
-    The Rust config loader is the only env reader and the verdict carries its
-    value positive-clamped; find_paths_async clamps to >= 1 as well, so every
-    batch_size forwards straight to the Rust batched async iterator.
-
-    Returns:
-        The effective discovery delivery batch size.
-
-    """
-    return max(1, int(resolved_config().discovery_batch_size))
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -339,13 +324,14 @@ class PathRegistrationPipeline:
     worker and must abort the pipeline loudly.
     """
 
-    def __init__(
+    def __init__(  # ruff: ignore[too-many-arguments] - two resolved budgets plus three wiring seams
         self,
         *,
         context: ConstructionContext,
         engine_registry: EngineRegistry,
         retry_policy: VerificationRetryPolicy | None = None,
         max_paths: int,
+        discovery_batch_size: int,
         progress_interval_secs: float | None = None,
     ) -> None:
         self.constr_ctx = context
@@ -358,6 +344,10 @@ class PathRegistrationPipeline:
         self.weth = context.weth
         self.engine_registry = engine_registry
         self.retry_policy_obj = retry_policy or VerificationRetryPolicy()
+        # The resolved discovery delivery batch size, positive-clamped at the
+        # construction boundary; the sweep forwards it to the Rust batched
+        # async iterator without reading the process verdict.
+        self.discovery_batch_size = max(1, discovery_batch_size)
 
         # PRG-5 hard cutover (IRUMXD): the crawl shell (the bounded
         # producer/consumer queue + the bounded offload executor) retired.
@@ -980,7 +970,7 @@ class PathRegistrationPipeline:
                 pool_type_per_depth=self.pool_type_per_depth,
                 allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
             ),
-            batch_size=_discovery_batch_size(),
+            batch_size=self.discovery_batch_size,
         )
 
     def _resolve_path_directions(
@@ -1089,14 +1079,16 @@ class BuildPathsOptions:
     call site to the two required resources plus one options object; each field
     mirrors the former keyword parameter.
 
-    ``max_registered_paths`` is the only non-defaulted field, and it is
-    required for the same reason the pipeline's ``max_paths`` is: it is a
-    configuration value, so the caller states the cap it resolved and no code
-    path invents one. A caller that supplies ``pipeline`` already carries the
-    cap on the pipeline it passes.
+    ``max_registered_paths`` and ``discovery_batch_size`` are the
+    non-defaulted fields, and they are required for the same reason the
+    pipeline's ``max_paths`` and ``discovery_batch_size`` are: both are
+    configuration values, so the caller states what it resolved and no code
+    path invents one. A caller that supplies ``pipeline`` already carries them
+    on the pipeline it passes.
     """
 
     max_registered_paths: int
+    discovery_batch_size: int
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None
     retry_policy: VerificationRetryPolicy | None = None
@@ -1140,6 +1132,7 @@ async def build_paths(
         engine_registry=engine_registry,
         retry_policy=options.retry_policy,
         max_paths=options.max_registered_paths,
+        discovery_batch_size=options.discovery_batch_size,
     )
     perms = set(options.permutation_filter) if options.permutation_filter else None
     pipeline.pool_type_per_depth = _parse_permutation_filter(perms)

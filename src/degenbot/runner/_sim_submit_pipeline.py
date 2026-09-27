@@ -31,7 +31,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from degenbot.config import resolved_config
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._dispatch import (
     _build_dispatch_candidates,
@@ -53,21 +52,6 @@ if TYPE_CHECKING:
     _Renderer = Callable[..., None]
     _Simulator = Callable[..., Any]
     _Submitter = Callable[..., Any]
-
-
-def pipeline_concurrency() -> int:
-    """The resolved in-flight sim cap, floored at one.
-
-    The declared ``simulation.pipeline_concurrency`` key: the operator file
-    and the environment reach it through the one cascade. ``1`` reproduces the
-    serial reference exactly (one sim in flight, FIFO submit) - the A/B arm
-    for an offline soak.
-
-    Returns:
-        The number of sims in flight per block, at least 1.
-
-    """
-    return max(1, int(resolved_config().values["simulation.pipeline_concurrency"]))
 
 
 @dataclass
@@ -183,7 +167,12 @@ class SimSubmitPipeline:
         leaves keep the production bindings unchanged.
         """
         self._session = session
-        self._concurrency = concurrency if concurrency is not None else pipeline_concurrency()
+        # The resolved cap arrives on the session's config value (the
+        # construction boundary resolved it once), never from a module-level
+        # verdict read. ``1`` reproduces the serial reference exactly.
+        self._concurrency = (
+            concurrency if concurrency is not None else session.cfg.sim_pipeline_concurrency
+        )
         self._sem = asyncio.Semaphore(self._concurrency)
         self._queue: asyncio.Queue[_BatchWork | None] = asyncio.Queue()
         self._submitter: asyncio.Task[None] | None = None

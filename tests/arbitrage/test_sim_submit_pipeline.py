@@ -93,10 +93,16 @@ async def test_leaf_failure_aborts_loudly() -> None:
 #: Read the resolved cap in a child, because the cascade is installed at FFI
 #: module init: a value exported after this process started cannot reach it.
 _CONCURRENCY_PROBE = """\
-import degenbot.runner._sim_submit_pipeline as mod
+from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+
+cfg = ArbitrageConfig.from_env(
+    live=False,
+    permutation=None,
+    rpc=RpcCascadeOverrides(chain_id=1, node="wss://probe.example"),
+)
 
 
-print("CONCURRENCY", mod.pipeline_concurrency())
+print("CONCURRENCY", cfg.sim_pipeline_concurrency)
 """
 
 

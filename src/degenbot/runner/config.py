@@ -17,6 +17,7 @@ carries no filtering state.
 
 import dataclasses
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -68,15 +69,17 @@ _PLACEHOLDER_OPERATOR_PRIVATE_KEYS = frozenset({
 })
 
 
-def _declared(path: str) -> Any:
+def _declared(values: Mapping[str, Any] | None, path: str) -> Any:
     """One declared key's resolved value, addressed by its dotted TOML path.
 
-    The verdict is the driver's only configuration authority, so every
-    ``DEGENBOT_*`` stance this module carries is read here rather than
-    resolved a second time. The projection is schema-driven, so a key added to
-    the core needs no edit in this file.
+    ``values`` is a resolved projection handed in by the construction
+    boundary — the installed verdict's projection in production, a
+    hypothetical projection in a test that resolves a cascade without
+    installing it. The projection is schema-driven, so a key added to the core
+    needs no edit in this file.
 
     Args:
+        values: A resolved declared-key projection.
         path: The declared key's dotted TOML path.
 
     Returns:
@@ -86,10 +89,13 @@ def _declared(path: str) -> Any:
         accessor, and each caller narrows it where it consumes it.
 
     """
-    return resolved_config().values[path]
+    resolved_values = resolved_config().values if values is None else values
+    return resolved_values[path]
 
 
-def _verification_retry_policy() -> VerificationRetryPolicy:
+def _verification_retry_policy(
+    values: Mapping[str, Any] | None,
+) -> VerificationRetryPolicy:
     """The bounded verification retry policy, from the resolved verdict.
 
     The four ``verify.verify_retry_*`` keys are declared in the core schema
@@ -104,10 +110,10 @@ def _verification_retry_policy() -> VerificationRetryPolicy:
 
     """
     return VerificationRetryPolicy(
-        max_attempts=int(_declared("verify.verify_retry_max_attempts")),
-        base_delay=float(_declared("verify.verify_retry_base_delay")),
-        max_delay=float(_declared("verify.verify_retry_max_delay")),
-        jitter=float(_declared("verify.verify_retry_jitter")),
+        max_attempts=int(_declared(values, "verify.verify_retry_max_attempts")),
+        base_delay=float(_declared(values, "verify.verify_retry_base_delay")),
+        max_delay=float(_declared(values, "verify.verify_retry_max_delay")),
+        jitter=float(_declared(values, "verify.verify_retry_jitter")),
     )
 
 
@@ -256,6 +262,15 @@ class ArbitrageConfig:
     min_profit_margin_bps: int
     reg_progress_secs: float
     max_registered_paths: int
+    # The runtime values the driver's leaves consume. Resolved once here, at
+    # the construction boundary, so a leaf reads the value it was handed rather
+    # than reaching for the process verdict — the Python companion to the
+    # engine's instance-scoped `SolveRuntimeConfig`.
+    discovery_batch_size: int
+    contracts_dir: str
+    sim_pipeline_concurrency: int
+    sim_exit_on_fail: bool
+    sim_exit_ignore_buckets: str
     # Run mode
     dry_run: bool
     # The incident probes the cockpit arms at start(). Required, because the
@@ -273,6 +288,7 @@ class ArbitrageConfig:
         live: bool,
         permutation: str | None,
         rpc: RpcCascadeOverrides | None = None,
+        values: Mapping[str, Any] | None = None,
     ) -> "ArbitrageConfig":
         """Build an ArbitrageConfig from the process environment + CLI flags + the verdict.
 
@@ -355,7 +371,7 @@ class ArbitrageConfig:
             msg = "EXECUTOR_CONTRACT_ADDRESS is the zero address"
             raise ValueError(msg)
 
-        inject_executor_code = bool(_declared("simulation.inject_executor_code"))
+        inject_executor_code = bool(_declared(values, "simulation.inject_executor_code"))
         injected_address = _checksum_or_empty(
             os.environ.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
         )
@@ -390,16 +406,18 @@ class ArbitrageConfig:
         if inject_executor_code:
             executor_address = injected_address
 
-        verification_retry_policy = _verification_retry_policy()
+        verification_retry_policy = _verification_retry_policy(values)
         executor_runtime = os.environ.get("EXECUTOR_RUNTIME") or None
         # The incident probes' intervals come from the declared
         # `diagnostics.*` keys; zero is the declared default, so there is no
         # second "off" spelling here.
         diag = DiagConfig(
-            tracemalloc_secs=float(_declared("diagnostics.tracemalloc_secs")),
-            procmem_secs=float(_declared("diagnostics.procmem_secs")),
-            procmem_csv=str(_declared("diagnostics.procmem_csv")),
-            faulthandler_timeout_secs=float(_declared("diagnostics.faulthandler_timeout_secs")),
+            tracemalloc_secs=float(_declared(values, "diagnostics.tracemalloc_secs")),
+            procmem_secs=float(_declared(values, "diagnostics.procmem_secs")),
+            procmem_csv=str(_declared(values, "diagnostics.procmem_csv")),
+            faulthandler_timeout_secs=float(
+                _declared(values, "diagnostics.faulthandler_timeout_secs")
+            ),
         )
 
         return cls(
@@ -415,10 +433,17 @@ class ArbitrageConfig:
             allowed_intermediate_tokens=_ALLOWED_INTERMEDIATE_TOKENS,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
-            erc6909_profit=bool(_declared("dispatch.erc6909_profit")),
-            min_profit_margin_bps=int(_declared("dispatch.min_profit_margin_bps")),
-            reg_progress_secs=float(_declared("pathfinding.reg_progress_secs")),
-            max_registered_paths=int(_declared("pathfinding.max_registered_paths")),
+            erc6909_profit=bool(_declared(values, "dispatch.erc6909_profit")),
+            min_profit_margin_bps=int(_declared(values, "dispatch.min_profit_margin_bps")),
+            reg_progress_secs=float(_declared(values, "pathfinding.reg_progress_secs")),
+            max_registered_paths=int(_declared(values, "pathfinding.max_registered_paths")),
+            discovery_batch_size=max(1, int(_declared(values, "pathfinding.discovery_batch_size"))),
+            contracts_dir=str(_declared(values, "dispatch.contracts_dir") or ""),
+            sim_pipeline_concurrency=max(
+                1, int(_declared(values, "simulation.pipeline_concurrency"))
+            ),
+            sim_exit_on_fail=bool(_declared(values, "simulation.sim_exit_on_fail")),
+            sim_exit_ignore_buckets=str(_declared(values, "simulation.exit_ignore_buckets")),
             verification_retry_policy=verification_retry_policy,
             executor_runtime=executor_runtime,
             diag=diag,

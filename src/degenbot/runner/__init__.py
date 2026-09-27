@@ -20,8 +20,7 @@ module re-exports):
 
 Everything else is private by name (``_consume`` / ``_dispatch`` / ``_render``
 / ``_driver_constants``) and is imported directly by name from its private
-module — nothing is smuggled in via the package root. (Epic Y7PA5A, task
-34XJ6C.)
+module — nothing is smuggled in via the package root.
 """
 
 from degenbot.runner.bot_runner import BotRunner

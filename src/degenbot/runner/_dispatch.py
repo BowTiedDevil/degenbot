@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from degenbot.dispatch import DispatchOutcome
     from degenbot.runner.bot_runner import _SessionState
 
-from degenbot.config import resolved_config
 from degenbot.dispatch import (
     DispatchCandidate,
     SkippedRecord,
@@ -81,7 +80,7 @@ def _resolve_executor_runtime_path(cfg: ArbitrageConfig) -> pathlib.Path:
     """
     if cfg.executor_runtime is not None:
         return pathlib.Path(cfg.executor_runtime)
-    contracts_dir = resolved_config().values["dispatch.contracts_dir"]
+    contracts_dir = cfg.contracts_dir
     if contracts_dir:
         return pathlib.Path(contracts_dir) / _EXECUTOR_RUNTIME_FILE
     root = pathlib.Path(__file__).resolve().parents[3]
@@ -390,7 +389,12 @@ def _render_outcome(
 ) -> None:
     """The display-only renderers over a sim outcome (``stays-python``)."""
     _render_sim_summary(outcome)
-    _render_sim_failures(outcome, current_block=current_block)
+    _render_sim_failures(
+        outcome,
+        current_block=current_block,
+        sim_exit_on_fail=session.cfg.sim_exit_on_fail,
+        exit_ignore_buckets=session.cfg.sim_exit_ignore_buckets,
+    )
     _render_fot_tokens(session.dispatcher, current_block)
     _render_profit_logs(outcome)
 

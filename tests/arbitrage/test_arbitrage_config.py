@@ -312,17 +312,18 @@ class TestRunnerKnobResolution:
     def test_a_bad_value_is_refused_at_boot(self) -> None:
         """A typo'd knob is a loud refusal, not a silent default.
 
-        The refusal moved earlier in the process: the loader owns the parse,
-        and a process whose configuration cannot be loaded exits 2 naming the
-        key. Same fail-loud outcome the Python parser gave it, asked at a point
-        where the bot cannot start at all.
-
+        The refusal is the typed error the hypothetical entry returns: the
+        loader owns the parse, and the module-init boot path turns the same
+        error into an exit(2) wrapper. Asked in-process, it names the key and
+        the unparsable value without spawning a process.
         """
-        completed = probe.run("import degenbot", env={"DEGENBOT_MAX_PATHS": "not-a-number"})
+        from degenbot import _ffi
 
-        assert completed.returncode == 2, completed.stderr
-        assert "pathfinding.max_registered_paths" in completed.stderr, completed.stderr
-        assert "not-a-number" in completed.stderr, completed.stderr
+        with pytest.raises(ValueError, match="pathfinding.max_registered_paths") as excinfo:
+            _ffi.resolve_hypothetical({"DEGENBOT_MAX_PATHS": "not-a-number"}, None)
+
+        assert "not-a-number" in str(excinfo.value)
+
 
     def test_the_declared_defaults_apply_when_no_layer_supplies_a_knob(self) -> None:
         values = self._probe()

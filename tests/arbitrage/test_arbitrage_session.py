@@ -1372,7 +1372,7 @@ class TestPathRegistrationPipeline:
             pancakeswap_v3_tracker=object(),
             weth=weth,
         )
-        pipeline = PathRegistrationPipeline(context=ctx, engine_registry=reg, max_paths=0)
+        pipeline = PathRegistrationPipeline(context=ctx, engine_registry=reg, max_paths=0, discovery_batch_size=1000)
         # The pipeline retains its own context (NWTUM3 trimmed-state guarantee):
         # a call-site that drops run()'s bot (and even the local `ctx` ref)
         # still has everything construction needs.

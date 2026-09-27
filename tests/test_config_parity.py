@@ -12,8 +12,10 @@ asserts the operator intent, and writes the WHOLE verdict — every declared
 key's value, its winning layer, and the per-entry layer of each table — to the
 shared artifact
 `rust/crates/foundation/degenbot-config/tests/fixtures/config_parity/oracle.json`.
-This half loads the same file + environments through `degenbot._ffi` in a fresh
-interpreter per environment and compares.
+This half loads the same file + environments through the raw FFI hypothetical
+entry (`degenbot._ffi.resolve_hypothetical`) in ONE process and compares. A
+hypothetical installs nothing, so the comparison can cross every environment
+the oracle recorded without a fresh interpreter per environment.
 
 Why this can fail:
 
@@ -35,13 +37,12 @@ provenance map must produce a non-empty diff.
 from __future__ import annotations
 
 import json
-import os
-import subprocess  # ruff: ignore[suspicious-subprocess-import]
-import sys
 import tomllib
 from pathlib import Path
 
 import pytest
+
+from degenbot import _ffi
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _FIXTURE_DIR = _REPO_ROOT / "rust/crates/foundation/degenbot-config/tests/fixtures/config_parity"
@@ -52,43 +53,63 @@ _AMBIENT_FILE = Path(__file__).resolve().parent / "ambient_config.toml"
 _LAYERS = {"default", "file", "env", "cli"}
 
 
-# A fresh interpreter installs the config at FFI module init, so a layer that
-# is only installed at import is observable. `_ffi.resolved_config()` is the
-# raw FFI boundary -- NOT the Python `degenbot.config` wrapper. The probe
-# prints the whole verdict plus one result per requested resolution.
-_PROBE = """\
-import json
-import sys
+# The comparison crosses the raw FFI hypothetical entry -- NOT the Python
+# `degenbot.config` wrapper and NOT the installed verdict. The hypothetical
+# resolves a captured environment + file without installing anything, so ONE
+# process can compare every environment the oracle recorded.
+def _hypothetical_verdict(environment: dict, operator_file: Path) -> dict:
+    """The whole hypothetical verdict for one oracle environment."""
+    config = _ffi.resolve_hypothetical(dict(environment["env"]), str(operator_file))
+    return {
+        "values": dict(config.values),
+        "provenance": dict(config.provenance),
+        "entry_provenance": {
+            key: dict(entries) for key, entries in config.entry_provenance.items()
+        },
+    }
 
-from degenbot import _ffi
 
-verdict = _ffi.resolved_config()
-out = {
-    "values": dict(verdict.values),
-    "provenance": dict(verdict.provenance),
-    "entry_provenance": {
-        key: dict(entries) for key, entries in verdict.entry_provenance.items()
-    },
-    "ops": [],
-}
-for op in json.loads(sys.argv[1]):
+def _hypothetical_op(environment: dict, operator_file: Path, op: dict) -> dict:
+    """One hypothetical resolution, in the shape the oracle records."""
+    env = dict(environment["env"])
     kind = op["kind"]
+    if kind == "node_uri":
+        return _node_uri_result(env, operator_file, op)
+    if kind == "chain_id":
+        return _chain_id_result(env, operator_file, op)
+    if kind == "database_path":
+        return _database_path_result(env, operator_file, op)
+    msg = f"unknown resolution kind {kind!r}"
+    raise AssertionError(msg)
+
+
+def _node_uri_result(env: dict, operator_file: Path, op: dict) -> dict:
+    """A node-uri hypothetical, with a refusal captured as the oracle records it."""
     try:
-        if kind == "node_uri":
-            resolved = verdict.node_uri(op["chain_id"], op["scope"], op.get("node"))
-            out["ops"].append({"value": resolved.uri, "source": resolved.source})
-        elif kind == "chain_id":
-            resolved = verdict.resolve_chain_id(op["value"])
-            out["ops"].append({"value": resolved.chain_id, "source": resolved.source})
-        elif kind == "database_path":
-            resolved = verdict.resolve_database_path(op["value"])
-            out["ops"].append({"value": resolved.path, "source": resolved.source})
-        else:
-            raise AssertionError(f"unknown resolution kind {kind!r}")
-    except BaseException as exc:  # noqa: BLE001 - the refusal message is the assertion
-        out["ops"].append({"error": str(exc), "error_type": type(exc).__name__})
-print(json.dumps(out, sort_keys=True))
-"""
+        resolved = _ffi.resolve_hypothetical_node_uri(
+            env, str(operator_file), op["chain_id"], op["scope"], op.get("node")
+        )
+    except ValueError as exc:
+        return {"error": str(exc), "error_type": type(exc).__name__}
+    return {"value": resolved.uri, "source": resolved.source}
+
+
+def _chain_id_result(env: dict, operator_file: Path, op: dict) -> dict:
+    """A chain-id hypothetical, with a refusal captured as the oracle records it."""
+    try:
+        resolved = _ffi.resolve_hypothetical_chain_id(env, str(operator_file), op["value"])
+    except ValueError as exc:
+        return {"error": str(exc), "error_type": type(exc).__name__}
+    return {"value": resolved.chain_id, "source": resolved.source}
+
+
+def _database_path_result(env: dict, operator_file: Path, op: dict) -> dict:
+    """A database-path hypothetical, with a refusal captured as the oracle records it."""
+    try:
+        resolved = _ffi.resolve_hypothetical_database_path(env, str(operator_file), op["value"])
+    except ValueError as exc:
+        return {"error": str(exc), "error_type": type(exc).__name__}
+    return {"value": resolved.path, "source": resolved.source}
 
 
 def _load_oracle() -> dict:
@@ -96,66 +117,23 @@ def _load_oracle() -> dict:
         return json.load(handle)
 
 
-def _run_probe(
-    operator_file: Path,
-    ops: list[dict],
-    env_overrides: dict[str, str],
-    tmp_path: Path,
-) -> dict:
-    """Load ``operator_file`` + ``env_overrides`` in a fresh interpreter.
-
-    Every declared env name is cleared first -- the ``DEGENBOT_`` names and the
-    unprefixed ``VERIFICATION_RETRY_*`` exception -- so neither the developer's
-    shell nor the suite's ambient config decides a layer this test is about.
-    The only layers are the written operator file and ``env_overrides``.
-    """
-    xdg_config = tmp_path / "xdg-config"
-    xdg_state = tmp_path / "xdg-state"
-    xdg_config.mkdir(exist_ok=True)
-    xdg_state.mkdir(exist_ok=True)
-
-    env = {
-        name: value
-        for name, value in os.environ.items()
-        if not name.startswith(("DEGENBOT_", "VERIFICATION_RETRY_"))
+def _resolve_environments(oracle: dict) -> dict[str, dict]:
+    """The whole hypothetical verdict for every recorded environment, in-process."""
+    return {
+        environment["id"]: _hypothetical_verdict(environment, _OPERATOR_FILE)
+        for environment in oracle["environments"]
     }
-    env.update(
-        {
-            "DEGENBOT_CONFIG": str(operator_file),
-            "XDG_CONFIG_HOME": str(xdg_config),
-            "XDG_STATE_HOME": str(xdg_state),
-        },
-        **env_overrides,
-    )
-    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv, no shell
-        [sys.executable, "-c", _PROBE, json.dumps(ops)],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
-    assert completed.returncode == 0, completed.stderr
-    return json.loads(completed.stdout)
 
 
-def _resolve_environments(oracle: dict, tmp_path: Path) -> dict[str, dict]:
-    """The whole FFI verdict, one fresh interpreter per environment."""
-    resolved: dict[str, dict] = {}
-    for environment in oracle["environments"]:
-        resolved[environment["id"]] = _run_probe(_OPERATOR_FILE, [], environment["env"], tmp_path)
-    return resolved
-
-
-def _resolve_cases(oracle: dict, tmp_path: Path) -> dict[str, dict]:
-    """One resolution per case, each in a fresh interpreter."""
+def _resolve_cases(oracle: dict) -> dict[str, dict]:
+    """One hypothetical resolution per case, in-process."""
     by_environment = {environment["id"]: environment for environment in oracle["environments"]}
-    resolved: dict[str, dict] = {}
-    for case in oracle["cases"]:
-        environment = by_environment[case["environment"]]
-        probe = _run_probe(_OPERATOR_FILE, [case["resolution"]], environment["env"], tmp_path)
-        assert len(probe["ops"]) == 1
-        resolved[case["id"]] = probe["ops"][0]
-    return resolved
+    return {
+        case["id"]: _hypothetical_op(
+            by_environment[case["environment"]], _OPERATOR_FILE, case["resolution"]
+        )
+        for case in oracle["cases"]
+    }
 
 
 def _verdict_diffs(expected: dict, actual: dict) -> list[str]:
@@ -200,14 +178,14 @@ def _case_diffs(verdict: dict, actual: dict) -> list[str]:
 
 
 class TestCrossSurfaceParity:
-    def test_ffi_whole_verdict_matches_the_rust_oracle(self, tmp_path: Path) -> None:
+    def test_ffi_whole_verdict_matches_the_rust_oracle(self) -> None:
         """Every declared key, its value, and its layer equal the Rust oracle."""
         oracle = _load_oracle()
         assert oracle["schema"] == 2
         assert oracle["operator_file"] == "operator.toml"
         assert _OPERATOR_FILE.is_file(), "the shared operator file must be checked in"
 
-        results = _resolve_environments(oracle, tmp_path)
+        results = _resolve_environments(oracle)
 
         failures: list[str] = [
             f"environment {environment['id']}: {diff}"
@@ -218,10 +196,10 @@ class TestCrossSurfaceParity:
             failures
         )
 
-    def test_ffi_resolutions_match_the_rust_oracle(self, tmp_path: Path) -> None:
+    def test_ffi_resolutions_match_the_rust_oracle(self) -> None:
         """Each node/chain/database resolution equals the Rust-written oracle."""
         oracle = _load_oracle()
-        results = _resolve_cases(oracle, tmp_path)
+        results = _resolve_cases(oracle)
 
         failures: list[str] = [
             f"{case['id']}: {diff}"
@@ -287,11 +265,11 @@ class TestCrossSurfaceParity:
         }
         assert not unknown, f"every layer must be one of {sorted(_LAYERS)}, got {unknown}"
 
-    def test_seeded_value_mutation_fails_the_comparator(self, tmp_path: Path) -> None:
+    def test_seeded_value_mutation_fails_the_comparator(self) -> None:
         """Teeth proof: a mutated declared value must produce a non-empty diff."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _run_probe(_OPERATOR_FILE, [], expected["env"], tmp_path)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
         assert _verdict_diffs(expected, actual) == []
 
         mutated = json.loads(json.dumps(expected))
@@ -300,11 +278,11 @@ class TestCrossSurfaceParity:
         assert diffs, "a mutated value must fail the comparator"
         assert any("values[telemetry.otel]" in diff for diff in diffs)
 
-    def test_seeded_provenance_mutation_fails_the_comparator(self, tmp_path: Path) -> None:
+    def test_seeded_provenance_mutation_fails_the_comparator(self) -> None:
         """Teeth proof: a mutated winning layer must produce a non-empty diff."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _run_probe(_OPERATOR_FILE, [], expected["env"], tmp_path)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
         assert _verdict_diffs(expected, actual) == []
 
         mutated = json.loads(json.dumps(expected))
@@ -313,11 +291,11 @@ class TestCrossSurfaceParity:
         assert diffs, "a mutated reported layer must fail the comparator"
         assert any("provenance[session.chain_id]" in diff for diff in diffs)
 
-    def test_seeded_entry_provenance_mutation_fails_the_comparator(self, tmp_path: Path) -> None:
+    def test_seeded_entry_provenance_mutation_fails_the_comparator(self) -> None:
         """Teeth proof: a mutated per-entry layer must produce a non-empty diff."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _run_probe(_OPERATOR_FILE, [], expected["env"], tmp_path)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
         assert _verdict_diffs(expected, actual) == []
 
         mutated = json.loads(json.dumps(expected))
@@ -326,11 +304,11 @@ class TestCrossSurfaceParity:
         assert diffs, "a mutated per-entry layer must fail the comparator"
         assert any("entry_provenance" in diff for diff in diffs)
 
-    def test_an_empty_provenance_map_fails_the_comparator(self, tmp_path: Path) -> None:
+    def test_an_empty_provenance_map_fails_the_comparator(self) -> None:
         """An empty provenance map is a divergence, never an unknown layer."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _run_probe(_OPERATOR_FILE, [], expected["env"], tmp_path)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
 
         mutated = json.loads(json.dumps(expected))
         mutated["provenance"] = {}
@@ -338,11 +316,11 @@ class TestCrossSurfaceParity:
         assert diffs, "an empty provenance map must fail the comparator"
         assert any("provenance key set" in diff for diff in diffs)
 
-    def test_a_foreign_provenance_layer_fails_the_comparator(self, tmp_path: Path) -> None:
+    def test_a_foreign_provenance_layer_fails_the_comparator(self) -> None:
         """A layer the schema never reports is a divergence, not a synonym."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _run_probe(_OPERATOR_FILE, [], expected["env"], tmp_path)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
 
         mutated = json.loads(json.dumps(expected))
         mutated["provenance"]["session.chain_id"] = "elsewhere"
@@ -350,11 +328,11 @@ class TestCrossSurfaceParity:
         assert diffs, "a foreign provenance layer must fail the comparator"
         assert any("provenance[session.chain_id]" in diff for diff in diffs)
 
-    def test_seeded_case_layer_mutation_fails_the_comparator(self, tmp_path: Path) -> None:
+    def test_seeded_case_layer_mutation_fails_the_comparator(self) -> None:
         """Teeth proof: a mutated resolution layer must produce a non-empty diff."""
         oracle = _load_oracle()
         case = next(c for c in oracle["cases"] if c["id"] == "file_only_request")
-        actual = _resolve_cases(oracle, tmp_path)[case["id"]]
+        actual = _resolve_cases(oracle)[case["id"]]
         assert _case_diffs(case["verdict"], actual) == []
 
         mutated = json.loads(json.dumps(case["verdict"]))
@@ -363,11 +341,11 @@ class TestCrossSurfaceParity:
         assert diffs, "a mutated reported layer must fail the comparator"
         assert any("source" in diff for diff in diffs)
 
-    def test_seeded_case_value_mutation_fails_the_comparator(self, tmp_path: Path) -> None:
+    def test_seeded_case_value_mutation_fails_the_comparator(self) -> None:
         """Teeth proof: a mutated resolution value must produce a non-empty diff."""
         oracle = _load_oracle()
         case = next(c for c in oracle["cases"] if c["id"] == "env_http_beats_file_ipc")
-        actual = _resolve_cases(oracle, tmp_path)[case["id"]]
+        actual = _resolve_cases(oracle)[case["id"]]
         assert _case_diffs(case["verdict"], actual) == []
 
         mutated = json.loads(json.dumps(case["verdict"]))
@@ -376,11 +354,11 @@ class TestCrossSurfaceParity:
         assert diffs, "a mutated resolution value must fail the comparator"
         assert any("value" in diff for diff in diffs)
 
-    def test_seeded_refusal_mutation_fails_the_comparator(self, tmp_path: Path) -> None:
+    def test_seeded_refusal_mutation_fails_the_comparator(self) -> None:
         """Teeth proof: a mutated refusal message must produce a non-empty diff."""
         oracle = _load_oracle()
         case = next(c for c in oracle["cases"] if c["id"] == "subscription_never_selects_http")
-        actual = _resolve_cases(oracle, tmp_path)[case["id"]]
+        actual = _resolve_cases(oracle)[case["id"]]
         assert _case_diffs(case["verdict"], actual) == []
 
         mutated = json.loads(json.dumps(case["verdict"]))
@@ -391,31 +369,33 @@ class TestCrossSurfaceParity:
 
 
 class TestAmbientSuiteConfig:
-    def test_ambient_suite_config_exercises_the_file_layer(self, tmp_path: Path) -> None:
+    def test_ambient_suite_config_exercises_the_file_layer(self) -> None:
         """The suite's ambient config declares ``[nodes]``, and it resolves live.
 
-        Loading the ambient file in a fresh interpreter with every declared env
-        name cleared leaves the file as the only layer, so the reported layer
-        proves the file layer is wired end-to-end.
+        A hypothetical load of the ambient file with no environment layer
+        leaves the file as the only layer, so the reported layer proves the
+        file layer is wired end-to-end — in-process, with nothing installed.
         """
+        environment = {"id": "ambient", "env": {}}
+        request = _hypothetical_op(
+            environment,
+            _AMBIENT_FILE,
+            {"kind": "node_uri", "chain_id": 1, "scope": "request"},
+        )
+        subscription = _hypothetical_op(
+            environment,
+            _AMBIENT_FILE,
+            {"kind": "node_uri", "chain_id": 1, "scope": "subscription"},
+        )
+
         with _AMBIENT_FILE.open("rb") as handle:
             ambient = tomllib.load(handle)
         nodes = ambient["nodes"]
         http_uri = nodes["http"]["1"]
         ws_uri = nodes["ws"]["1"]
 
-        probe = _run_probe(
-            _AMBIENT_FILE,
-            [
-                {"kind": "node_uri", "chain_id": 1, "scope": "request"},
-                {"kind": "node_uri", "chain_id": 1, "scope": "subscription"},
-            ],
-            {},
-            tmp_path,
-        )
-
         # Request scope prefers ws over http, so the file's ws entry wins; the
         # subscription scope can only take ws. Both report the file layer.
-        assert probe["ops"][0] == {"value": ws_uri, "source": "file"}
-        assert probe["ops"][1] == {"value": ws_uri, "source": "file"}
+        assert request == {"value": ws_uri, "source": "file"}
+        assert subscription == {"value": ws_uri, "source": "file"}
         assert ws_uri != http_uri, "the ambient config declares both transports"
