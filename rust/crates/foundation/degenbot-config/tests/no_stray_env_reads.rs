@@ -11,6 +11,28 @@
 //!
 //! The allowlist is the ratchet: a deletion has to keep this test green, so a
 //! read that comes back cannot stay.
+//!
+//! ## Known limits of the companion scanner
+//!
+//! The Python half is a hand-rolled lexer, not a parser, so its silence is only
+//! as good as its mode tracking. Two measured gaps are worth reading before
+//! trusting a green run:
+//!
+//! - **A file that opens a triple-quoted literal and never closes it silences
+//!   every later read in that file.** The unterminated literal leaves the walk
+//!   stuck in string mode, so the rest of the file reads as prose and the gate
+//!   passes — a syntax error fails the gate *open*. Silence therefore means
+//!   "no read was recognised", not "no read exists"; the shape table pins the
+//!   behaviour.
+//! - **Module and name aliasing are invisible.** `import os as o` followed by
+//!   `o.environ.get(...)`, and `from os import environ` followed by
+//!   `environ[...]`, are not detected. That is a naming limit, not a lexing
+//!   one: the read is recognised, its spelling is not, because the scanner
+//!   matches the literal `os.environ` / `os.getenv` tokens.
+//!
+//! A replacement by an interpreter-backed `ast` walk was evaluated; the
+//! comparison and the decision to keep this scanner are recorded in
+//! `docs/architecture/env-read-gate-scanner-evaluation.md`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -458,6 +480,10 @@ enum PyMode {
 /// spans them inside one. So a line that begins inside a string is string on
 /// that line too — prose stays prose on every line a docstring spans, and a
 /// read interpolated into a message is a read on every line its hole spans.
+///
+/// The walk fails open on an unterminated triple-quoted literal: nothing pops
+/// the string mode, so every later line reads as string and its reads go
+/// unreported. The file header states the limit and the shape table pins it.
 struct PythonWalk {
     /// Innermost last: an f-string hole is a code region nested in a string.
     modes: Vec<PyMode>,
@@ -875,6 +901,17 @@ fn python_env_read_shapes_are_classified() {
                 "raw = os.environ.get(\"DEGENBOT_GATE_CANARY\")",
             ],
             &["DEGENBOT_GATE_CANARY"],
+        ),
+        // A triple-quote that never closes leaves the walk stuck in string
+        // mode, so the read after it is silenced and the gate fails OPEN.
+        // Pinned here so a future scanner replacement is made knowingly.
+        (
+            &[
+                "note = \"\"\"",
+                "    the literal never closes",
+                "raw = os.environ.get(\"DEGENBOT_GATE_CANARY\")",
+            ],
+            &[],
         ),
         // A comment ends at the newline; the hole it sits in does not.
         (
