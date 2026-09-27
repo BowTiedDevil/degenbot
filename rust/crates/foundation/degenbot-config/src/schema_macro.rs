@@ -249,6 +249,49 @@ macro_rules! config_schema_impl {
             }
         }
 
+        impl BotConfig {
+            /// Read ONE declared key's typed value, addressed by its section
+            /// and field. Generated from the same arms as [`Self::assign`], so
+            /// a key becomes readable the moment it is declared: a surface
+            /// that walks the schema reads every key without a hand-written
+            /// accessor beside it.
+            ///
+            /// Returns `None` for an undeclared key AND for a declared
+            /// unset-able key the operator left alone. The two absences are
+            /// deliberately the same answer, because neither has a value to
+            /// report, and reporting the declared default instead would let a
+            /// consumer read "the operator said nothing" as "the operator
+            /// chose this".
+            #[must_use]
+            pub fn value(
+                &self,
+                section: &str,
+                field: &str,
+            ) -> Option<$crate::schema::ConfigValue<'_>> {
+                match (section, field) {
+                    $(
+                        (stringify!($as), stringify!($af)) => {
+                            $crate::cfg_readable!([$($akt)+] &self.$as.$af)
+                        }
+                    )*
+                    $(
+                        (concat!(stringify!($fs), ".", stringify!($fsu)), stringify!($ff)) => {
+                            $crate::cfg_readable!([$($fkt)+] &self.$fs.$fsu.$ff)
+                        }
+                    )*
+                    _ => None,
+                }
+            }
+        }
+
+        /// Every `(section, field)` the generated [`BotConfig::value`] reader
+        /// answers, so a census can compare the reader against `SCHEMA`
+        /// instead of trusting the expansion to have covered every arm.
+        pub const READABLE_KEYS: &[(&str, &str)] = &[
+            $( (stringify!($as), stringify!($af)), )*
+            $( (concat!(stringify!($fs), ".", stringify!($fsu)), stringify!($ff)), )*
+        ];
+
         /// The self-describing key registry: one entry per declared key, in
         /// declaration order (which fixes doc + loader iteration order).
         pub const SCHEMA: &[$crate::schema::KeyDecl] = &[ $($schema)* ];
@@ -625,6 +668,81 @@ macro_rules! config_facet_emit_impl {
     };
 }
 
+/// Read one declared field as a [`$crate::schema::ConfigValue`], preserving the
+/// kind the declaration named.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! cfg_value {
+    (bool, $v:expr) => {
+        $crate::schema::ConfigValue::Bool(*$v)
+    };
+    (bool_not, $v:expr) => {
+        $crate::schema::ConfigValue::Bool(*$v)
+    };
+    (ms, $v:expr) => {
+        $crate::schema::ConfigValue::Uint(u128::from(*$v))
+    };
+    (string, $v:expr) => {
+        $crate::schema::ConfigValue::Text(::std::borrow::Cow::Borrowed($v.as_str()))
+    };
+    (path, $v:expr) => {
+        $crate::schema::ConfigValue::Path(::std::borrow::Cow::Borrowed($v.as_path()))
+    };
+    (usize, $v:expr) => {
+        $crate::schema::ConfigValue::Uint(u128::from(*$v as u64))
+    };
+    (u64, $v:expr) => {
+        $crate::schema::ConfigValue::Uint(u128::from(*$v))
+    };
+    (u128, $v:expr) => {
+        $crate::schema::ConfigValue::Uint(*$v)
+    };
+    (i64, $v:expr) => {
+        $crate::schema::ConfigValue::Int(*$v)
+    };
+    (i32, $v:expr) => {
+        $crate::schema::ConfigValue::Int(i64::from(*$v))
+    };
+    (f64, $v:expr) => {
+        $crate::schema::ConfigValue::Float(*$v)
+    };
+    (enum $e:ident $( $v:ident $( = $alias:literal )? )+, $val:expr) => {
+        $crate::schema::ConfigValue::Enum(::std::borrow::Cow::Owned($val.to_string()))
+    };
+    (map $e:ident, $v:expr) => {
+        $crate::schema::ConfigValue::Map(
+            $v.iter()
+                .map(|(key, value)| (key.clone(), value.to_string()))
+                .collect(),
+        )
+    };
+    (strmap, $v:expr) => {
+        $crate::schema::ConfigValue::Map(
+            $v.iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        )
+    };
+}
+
+/// Read one declared field as an `Option` of the value its kind names: a
+/// required key always has one, an unset-able key has one only when the
+/// operator supplied it. The kind tokens arrive bracketed so the repetition
+/// cannot swallow the separator (a bare `tt` repetition ahead of a comma is a
+/// local-ambiguity error).
+#[doc(hidden)]
+#[macro_export]
+macro_rules! cfg_readable {
+    ([opt enum $e:ident $( $v:ident $( = $alias:literal )? )+] $val:expr) => {
+        $val.as_ref().map(|inner| $crate::cfg_value!(enum $e $( $v $( = $alias )? )+, inner))
+    };
+    ([opt $inner:tt] $val:expr) => {
+        $val.as_ref().map(|inner| $crate::cfg_value!($inner, inner))
+    };
+    ([$($kind:tt)+] $val:expr) => {
+        ::core::option::Option::Some($crate::cfg_value!($($kind)+, $val))
+    };
+}
 /// Field type from a kind token sequence.
 #[doc(hidden)]
 #[macro_export]

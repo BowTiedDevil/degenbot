@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot._ffi import resolve_chain_id as _ffi_resolve_chain_id
+from degenbot._ffi import resolved_config
 from degenbot.bot import Bot
 from degenbot.config import declared_database_path, resolve_chain_id, resolve_database_path
 from degenbot.provider import get_provider_from_config
@@ -39,7 +39,7 @@ class _BoundaryProvider:
 class TestSessionChainId:
     def test_the_explicit_override_wins(self) -> None:
         """The override is the top layer, so it is what the session adopts."""
-        resolved = _ffi_resolve_chain_id("4242")
+        resolved = resolved_config().resolve_chain_id("4242")
 
         assert resolved.chain_id == 4242
         assert resolved.source == "cli"
@@ -50,7 +50,7 @@ class TestSessionChainId:
 
     def test_the_python_delegation_matches_the_core(self) -> None:
         """Python adds no layer of its own on top of the core's answer."""
-        assert resolve_chain_id("8453") == _ffi_resolve_chain_id("8453").chain_id
+        assert resolve_chain_id("8453") == resolved_config().resolve_chain_id("8453").chain_id
 
 
 class TestFactoryReExport:

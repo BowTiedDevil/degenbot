@@ -51,46 +51,22 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // census ("degenbot.runtime_status()").
     m.add_function(wrap_pyfunction!(crate::runtime_status::runtime_status, m)?)?;
 
-    // 4IOEVT: the typed discovery-delivery batch size
-    // (`pathfinding.discovery_batch_size` / `DEGENBOT_DISCOVERY_BATCH_SIZE`).
-    // The Python discovery pipeline reads it and forwards it to
-    // `find_paths_async`.
-    m.add_function(wrap_pyfunction!(crate::config::discovery_batch_size, m)?)?;
-    // The readiness view is the documented return type of the readiness
-    // verbs: exposing the pyclass keeps the stub's `StrategyReadinessView`
-    // introspectable (and stubtest honest) at `degenbot._ffi` top level.
+    // ADR-062 D7/D10: the resolved config verdict. ONE frozen object carries
+    // every declared key, the layer each came from, and the resolutions that
+    // need a capability or an override, so the seam stops growing one
+    // function per config key. Registered unconditionally: the loader that
+    // produced the layers is unconditional.
+    m.add_class::<crate::config::ResolvedConfig>()?;
     m.add_class::<crate::config::StrategyReadinessView>()?;
-    m.add_function(wrap_pyfunction!(
-        crate::config::validate_strategy_readiness,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(
-        crate::config::settlement_broadcast_endpoints,
-        m
-    )?)?;
-
-    // 6LC4JB: the shared core verification-retry policy defaults, so the
-    // Python driver shell reads them from the one Rust-owned declaration site.
-    // The pyclass (`RetryPolicyDefaults`) is self-describing: a Rust-side
-    // field reorder cannot silently mis-assign a positional tuple read.
     m.add_class::<crate::config::RetryPolicyDefaults>()?;
+    m.add_class::<crate::config::ResolvedNodeUri>()?;
+    m.add_class::<crate::config::ResolvedChainId>()?;
+    m.add_class::<crate::config::ResolvedDatabasePath>()?;
+    m.add_function(wrap_pyfunction!(crate::config::resolved_config, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::config::verification_retry_policy_defaults,
         m
     )?)?;
-
-    // ADR-062 D7/D10: the driver-domain resolvers, so the Python driver reads
-    // ONE cascade with the console instead of owning a second config model.
-    // Each returns the value plus the layer that supplied it, and each
-    // pyfunction delegates to `degenbot-config` with no precedence of its own.
-    m.add_class::<crate::config::ResolvedNodeUri>()?;
-    m.add_class::<crate::config::ResolvedChainId>()?;
-    m.add_class::<crate::config::ResolvedDatabasePath>()?;
-    m.add_function(wrap_pyfunction!(crate::config::resolve_node_uri, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::config::resolve_chain_id, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::config::resolve_database_path, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::config::config_file_path, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::config::declared_database_path, m)?)?;
 
     // Ambient-runtime driver seam: lets a Python driver satisfy the
     // ambient-runtime-only policy on the verify seams. Unconditional —

@@ -1,34 +1,34 @@
-//! Typed `BotConfig` accessors for the Python driver shell (4IOEVT).
+//! The resolved configuration verdict the Python driver reads.
 //!
-//! The 12-factor loader is the ONLY environment reader; it installs the
-//! process-wide typed config through `degenbot_config::holder::install` at
-//! `_ffi` import. These thin `#[pyfunction]` getters expose a typed field to
-//! Python without introducing a second (parallel) declaration site.
+//! `degenbot-config` owns the operator file, the environment, and the
+//! resolution order end to end; the loader is the only environment reader and
+//! the FFI module init installs the process-wide typed config it produced.
+//! What crosses the seam is ONE object — [`ResolvedConfig`] — built from that
+//! one load and installed once at module init.
+//!
+//! The verdict answers three kinds of question, and the difference matters:
+//! a `#[getter]` for a value that is settled when the load lands (the file,
+//! the declared keys, the layer each key came from), a schema-driven
+//! [`ResolvedConfig::values`] projection for every declared key, and a
+//! `#[pymethods]` entry for a resolution that takes an argument or can refuse
+//! (which chain's endpoint, the activation gate). A getter that could refuse
+//! would make the verdict unconstructible in exactly the processes that need
+//! it most, and an argument-taking resolution is not a value the load settled.
+//!
+//! The projection is what keeps the seam from growing with the schema: it
+//! walks `degenbot_config::SCHEMA` through the generated `BotConfig::value`
+//! reader, so declaring a key is the only edit a new key needs anywhere in
+//! the workspace.
 
 use crate::prelude::*;
 
-/// The typed `pathfinding.discovery_batch_size` value (env
-/// `DEGENBOT_DISCOVERY_BATCH_SIZE`), positive-clamped to `>= 1` so a zero /
-/// garbage value degrades to the legacy per-path delivery instead of a busy
-/// loop.
-#[pyfunction]
-#[must_use]
-pub fn discovery_batch_size() -> usize {
-    ::degenbot_config::holder::config()
-        .pathfinding
-        .discovery_batch_size
-        .max(1)
-}
-
 /// The shared core verification-retry policy defaults as a SELF-DESCRIBING
 /// value — a positional 4-tuple would silently mis-assign on a Rust-side
-/// field reorder:
-/// in seconds for the float fields.
+/// field reorder.
 ///
 /// The Python `VerificationRetryPolicy` dataclass reads these instead of
-/// carrying its own literal set, so the Rust `RetryPolicy`  is
-/// the one declaration site for both the driver shell and the pure-Rust
-/// example.
+/// carrying its own literal set, so the Rust `RetryPolicy` is the one
+/// declaration site for both the driver shell and the pure-Rust example.
 #[pyclass(frozen, get_all, module = "degenbot._ffi")]
 pub struct RetryPolicyDefaults {
     pub max_attempts: u32,
@@ -41,7 +41,7 @@ pub struct RetryPolicyDefaults {
 /// view: the settlement and two per-ecosystem backrun arms with their settled
 /// endpoint posture.
 ///
-/// Built from the process-wide typed config through the SAME
+/// Built from the same typed config the verdict holds, through the SAME
 /// `strategy_readiness` authority the operators' `degenbot strategy` verbs
 /// and the backrun driver boot use, so the Python driver shell cannot disagree
 /// with the console about what "settled" means.
@@ -85,50 +85,8 @@ impl StrategyReadinessView {
     }
 }
 
-/// Resolve the strategy readiness of the installed typed config.
-///
-/// # Errors
-///
-/// `ValueError` carrying the typed refusal's remediation message (e.g. the
-/// activation/endpoint remedies from the console verbs) — a live boot that
-/// cannot settle STRATEGY endpoints refuses instead of degrading to the
-/// public mempool.
-#[pyfunction]
-pub fn validate_strategy_readiness() -> PyResult<StrategyReadinessView> {
-    ::degenbot_config::strategy_readiness(::degenbot_config::holder::config())
-        .map(|readiness| StrategyReadinessView::from_readiness(&readiness))
-        .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))
-}
-
-/// The resolved settlement broadcast endpoints (this process's settlement
-/// arm). Raises `ValueError` when the settlement facet is not active — a
-/// hosted runner is the settlement arm, so its broadcast posture is never
-/// optional.
-///
-/// # Errors
-///
-/// `ValueError` when the facet is inactive.
-#[pyfunction]
-pub fn settlement_broadcast_endpoints() -> PyResult<Vec<String>> {
-    let config = ::degenbot_config::holder::config();
-    let readiness = ::degenbot_config::strategy_readiness(config)
-        .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-    if matches!(readiness.settlement, ::degenbot_config::Arm::Inactive) {
-        return Err(::pyo3::exceptions::PyValueError::new_err(
-            "strategy settlement is not active: this hosted runner IS the settlement arm; \
-             activate it first (degenbot strategy activate settlement --endpoints-default)",
-        ));
-    }
-    // The endpoints come from the settlement strategy composition, so the
-    // broadcast posture and the strategy plane read one config surface.
-    Ok(::degenbot_strategy::Settlement::from_config(config)
-        .into_config()
-        .endpoints)
-}
-/// Read the shared core verification-retry policy defaults.
-#[pyfunction]
-#[must_use]
-pub fn verification_retry_policy_defaults() -> RetryPolicyDefaults {
+/// Build the retry-policy defaults the verdict carries.
+fn verification_retry_defaults() -> RetryPolicyDefaults {
     let policy = ::degenbot_core::retry::RetryPolicy::verification_default();
     RetryPolicyDefaults {
         max_attempts: policy.max_attempts,
@@ -223,31 +181,333 @@ fn refusal(error: &::degenbot_config::ConfigError) -> ::pyo3::PyErr {
     ::pyo3::exceptions::PyValueError::new_err(error.to_string())
 }
 
-/// The node endpoint a consumer with `scope` capability resolves for
-/// `chain_id`, through the layers `degenbot-config` owns.
+/// The one load's layers plus the file it read.
+struct Verdict {
+    layers: &'static ::degenbot_config::LoadedConfig,
+    file: Option<String>,
+}
+
+static VERDICT: ::std::sync::OnceLock<Verdict> = ::std::sync::OnceLock::new();
+
+/// The installed verdict, built from the layers [`publish_loaded`] recorded.
 ///
-/// `node` is the explicit-override layer: one endpoint, classified by its own
-/// value the way the console's `--node` is, so a driver passes a URL and the
-/// transport is not a second thing to get right.
+/// Both `OnceLock`s resolve to the same load whichever is read first, so the
+/// verdict is a value rather than a race: the eager install only makes the
+/// module-init ordering a property instead of a coincidence.
+fn verdict() -> &'static Verdict {
+    VERDICT.get_or_init(|| Verdict {
+        layers: loaded(),
+        file: ::degenbot_config::standard_file_path()
+            .map(|path| path.to_string_lossy().into_owned()),
+    })
+}
+
+/// Build and install the verdict. Module init calls this right after
+/// publishing the layers, so the verdict cannot be built from a load the
+/// holder never received.
+pub(crate) fn install_verdict() {
+    let _ = verdict();
+}
+
+/// Every declared key's value, keyed by its dotted TOML path.
+///
+/// Walked out of `degenbot_config::SCHEMA` through the generated
+/// `BotConfig::value` reader, so this is the schema and nothing beside it: a
+/// key declared in `config_schema!` appears here with no FFI edit, which is
+/// the property that keeps the seam from growing one accessor per key.
+fn values_by_path(
+    cfg: &::degenbot_config::BotConfig,
+) -> ::std::collections::BTreeMap<String, Option<::degenbot_config::ConfigValue<'_>>> {
+    ::degenbot_config::SCHEMA
+        .iter()
+        .map(|key| (key.toml_path.to_string(), cfg.value(key.section, key.field)))
+        .collect()
+}
+
+/// The winning layer per DECLARED key, keyed by its dotted TOML path.
+///
+/// The projection is schema-driven so the vocabulary a caller reads is the
+/// operator's rather than the loader's internal env names. A key no layer
+/// supplied is ABSENT, and a layer recorded against a name no key declares has
+/// no dotted path to appear under. Both absences are the answer, because
+/// filling them in with the floor layer is how an `env` winner gets reported
+/// as a `file` — the divergence a cross-language oracle exists to catch.
+fn provenance_by_path(
+    layers: &::degenbot_config::LoadedConfig,
+) -> ::std::collections::BTreeMap<String, String> {
+    ::degenbot_config::SCHEMA
+        .iter()
+        .filter_map(|key| {
+            layers
+                .source_of(key.env)
+                .map(|source| (key.toml_path.to_string(), source.to_string()))
+        })
+        .collect()
+}
+
+/// Per-ENTRY provenance for the table-shaped keys, keyed by the key's env name
+/// (the family prefix) and then by the operator-chosen entry — a per-chain
+/// endpoint table is overridden one entry at a time, so the key-level map
+/// cannot describe it.
+fn entry_provenance_by_env(
+    layers: &::degenbot_config::LoadedConfig,
+) -> ::std::collections::BTreeMap<String, ::std::collections::BTreeMap<String, String>> {
+    layers
+        .entry_provenance
+        .iter()
+        .map(|(env, entries)| {
+            (
+                (*env).to_string(),
+                entries
+                    .iter()
+                    .map(|(entry, source)| (entry.clone(), source.to_string()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// One declared value as the Python object its kind names. An unset optional
+/// key is `None`, never its declared default: "the operator said nothing" and
+/// "the operator chose this" are different facts and a caller must be able to
+/// tell them apart.
+fn value_into_py<'py>(
+    py: ::pyo3::Python<'py>,
+    value: Option<&::degenbot_config::ConfigValue<'_>>,
+) -> ::pyo3::PyResult<::pyo3::prelude::Bound<'py, ::pyo3::PyAny>> {
+    use ::degenbot_config::ConfigValue as V;
+    Ok(match value {
+        None => py.None().into_bound(py),
+        Some(V::Bool(inner)) => (*inner).into_pyobject(py)?.to_owned().into_any(),
+        Some(V::Text(inner) | V::Enum(inner)) => inner.as_ref().into_pyobject(py)?.into_any(),
+        Some(V::Path(inner)) => inner
+            .to_string_lossy()
+            .into_owned()
+            .into_pyobject(py)?
+            .into_any(),
+        Some(V::Uint(inner)) => (*inner).into_pyobject(py)?.into_any(),
+        Some(V::Int(inner)) => (*inner).into_pyobject(py)?.into_any(),
+        Some(V::Float(inner)) => (*inner).into_pyobject(py)?.into_any(),
+        Some(V::Map(entries)) => {
+            let table = ::pyo3::types::PyDict::new(py);
+            for (key, entry) in entries {
+                table.set_item(key, entry)?;
+            }
+            table.into_any()
+        }
+    })
+}
+
+/// The whole resolved configuration for this process: the values, the layer
+/// each came from, and the resolutions that need a capability or an override.
+///
+/// Frozen, so a Python driver cannot edit a verdict the console also read, and
+/// constructed only from the load published at module init — one process, one
+/// cascade, one answer.
+#[pyclass(frozen, module = "degenbot._ffi")]
+pub struct ResolvedConfig {
+    verdict: &'static Verdict,
+}
+
+impl ResolvedConfig {
+    /// The installed verdict.
+    #[must_use]
+    pub fn installed() -> Self {
+        Self { verdict: verdict() }
+    }
+}
+
+#[pymethods]
+impl ResolvedConfig {
+    /// The operator file the loader selected: the `DEGENBOT_CONFIG` override
+    /// when set, else the XDG/HOME config file when it exists, else `None` (an
+    /// absent user file is contractually defaults).
+    ///
+    /// A raw-table reader (the deployment registry, the failure-policy table)
+    /// resolves the SAME file the typed load read instead of re-deriving the
+    /// discovery rule.
+    #[getter]
+    fn config_file_path(&self) -> Option<String> {
+        self.verdict.file.clone()
+    }
+
+    /// The database path through the full cascade, with `~` and the state home
+    /// expanded by the resolver.
+    #[getter]
+    fn database_path(&self) -> ResolvedDatabasePath {
+        database_path_in(self.verdict.layers, None)
+    }
+
+    /// The DECLARED `database.path` key — the value the operator wrote, with no
+    /// cascade and no `~` expansion.
+    ///
+    /// A caller that wants the path a session will actually open reads
+    /// [`Self::database_path`]; this is the declared key behind it, for the
+    /// readers that need to know what the config said rather than what won.
+    #[getter]
+    fn declared_database_path(&self) -> String {
+        declared_database_path_of(&self.verdict.layers.config)
+    }
+
+    /// The database path through the full cascade, with an explicit override
+    /// in the same slot a `--database` flag occupies.
+    #[pyo3(signature = (database=None))]
+    fn resolve_database_path(&self, database: Option<&str>) -> ResolvedDatabasePath {
+        database_path_in(self.verdict.layers, database)
+    }
+
+    /// The typed `pathfinding.discovery_batch_size` value (env
+    /// `DEGENBOT_DISCOVERY_BATCH_SIZE`), positive-clamped to `>= 1` so a zero /
+    /// garbage value degrades to the legacy per-path delivery instead of a busy
+    /// loop.
+    #[getter]
+    fn discovery_batch_size(&self) -> usize {
+        self.verdict
+            .layers
+            .config
+            .pathfinding
+            .discovery_batch_size
+            .max(1)
+    }
+
+    /// Every declared key's typed value, keyed by its dotted TOML path.
+    ///
+    /// The seam's whole schema surface in one object: a key added to
+    /// `config_schema!` appears here with no change to the FFI interface.
+    #[getter]
+    fn values<'py>(
+        &self,
+        py: ::pyo3::Python<'py>,
+    ) -> ::pyo3::PyResult<
+        ::std::collections::BTreeMap<String, ::pyo3::prelude::Bound<'py, ::pyo3::PyAny>>,
+    > {
+        values_by_path(&self.verdict.layers.config)
+            .iter()
+            .map(|(path, value)| Ok((path.clone(), value_into_py(py, value.as_ref())?)))
+            .collect()
+    }
+
+    /// The layer that supplied each declared key, keyed by its dotted TOML path
+    /// (`default`, `file`, `env`, or `cli`).
+    ///
+    /// A key no layer supplied is absent rather than reported as the floor, so
+    /// an unrecorded provenance map is visible as an unrecorded one.
+    #[getter]
+    fn provenance(&self) -> ::std::collections::BTreeMap<String, String> {
+        provenance_by_path(self.verdict.layers)
+    }
+
+    /// Per-entry layers for the table-shaped keys, keyed by the key's env name
+    /// and then by the operator-chosen entry (a chain id for `[nodes.*]`).
+    #[getter]
+    fn entry_provenance(
+        &self,
+    ) -> ::std::collections::BTreeMap<String, ::std::collections::BTreeMap<String, String>> {
+        entry_provenance_by_env(self.verdict.layers)
+    }
+
+    /// The node endpoint a consumer with `scope` capability resolves for
+    /// `chain_id`, through the layers `degenbot-config` owns.
+    ///
+    /// `node` is the explicit-override layer: one endpoint, classified by its
+    /// own value the way the console's `--node` is, so a driver passes a URL
+    /// and the transport is not a second thing to get right. A method rather
+    /// than a getter because the chain and the capability are the CALLER's,
+    /// not facts this load settled.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` when `scope` is not a capability, when `node` names no
+    /// transport, or when no layer supplied an endpoint for the chain (the
+    /// refusal names the scope, the transports, and the layers each was read
+    /// through).
+    #[pyo3(signature = (chain_id, scope, node=None))]
+    fn node_uri(
+        &self,
+        chain_id: u64,
+        scope: &str,
+        node: Option<&str>,
+    ) -> PyResult<ResolvedNodeUri> {
+        node_uri_in(self.verdict.layers, chain_id, scope, node)
+    }
+
+    /// The session chain id: the explicit override when given, else the layers
+    /// `degenbot-config` owns.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` when no layer named a chain, or when the explicit value is
+    /// not an integer.
+    #[pyo3(signature = (chain_id=None))]
+    fn resolve_chain_id(&self, chain_id: Option<&str>) -> PyResult<ResolvedChainId> {
+        chain_id_in(self.verdict.layers, chain_id)
+    }
+
+    /// The resolved strategy readiness of this process's config.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` carrying the typed refusal's remediation message (e.g. the
+    /// activation/endpoint remedies from the console verbs) — a live boot that
+    /// cannot settle STRATEGY endpoints refuses instead of degrading to the
+    /// public mempool.
+    fn strategy_readiness(&self) -> PyResult<StrategyReadinessView> {
+        ::degenbot_config::strategy_readiness(&self.verdict.layers.config)
+            .map(|readiness| StrategyReadinessView::from_readiness(&readiness))
+            .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// The resolved settlement broadcast endpoints (this process's settlement
+    /// arm).
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` when the settlement facet is not active — a hosted runner
+    /// is the settlement arm, so its broadcast posture is never optional.
+    fn settlement_broadcast_endpoints(&self) -> PyResult<Vec<String>> {
+        let config = &self.verdict.layers.config;
+        let readiness = ::degenbot_config::strategy_readiness(config)
+            .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        if matches!(readiness.settlement, ::degenbot_config::Arm::Inactive) {
+            return Err(::pyo3::exceptions::PyValueError::new_err(
+                "strategy settlement is not active: this hosted runner IS the settlement arm; \
+                 activate it first (degenbot strategy activate settlement --endpoints-default)",
+            ));
+        }
+        // The endpoints come from the settlement strategy composition, so the
+        // broadcast posture and the strategy plane read one config surface.
+        Ok(::degenbot_strategy::Settlement::from_config(config)
+            .into_config()
+            .endpoints)
+    }
+}
+
+/// The installed verdict, as the Python driver reads it.
 ///
 /// # Errors
 ///
-/// `ValueError` when `scope` is not a capability, when `node` names no
-/// transport, or when no layer supplied an endpoint for the chain (the
-/// refusal names the scope, the transports, and the layers each was read
-/// through).
+/// `PyErr` when the interpreter refuses the allocation. The verdict itself
+/// cannot fail: a process that named no chain or refused an endpoint still has
+/// a configuration to report.
 #[pyfunction]
-#[pyo3(signature = (chain_id, scope, node=None))]
-pub fn resolve_node_uri(
-    chain_id: u64,
-    scope: &str,
-    node: Option<&str>,
-) -> PyResult<ResolvedNodeUri> {
-    node_uri_in(loaded(), chain_id, scope, node)
+pub fn resolved_config(py: ::pyo3::Python<'_>) -> PyResult<::pyo3::Py<ResolvedConfig>> {
+    ::pyo3::Py::new(py, ResolvedConfig::installed())
 }
 
-/// [`resolve_node_uri`] over an explicit set of layers (the shape a caller
-/// outside the process boot, or a test, resolves against).
+/// The shared core verification-retry policy defaults: the numbers a driver
+/// seeds its retry policy from instead of carrying its own literal set.
+///
+/// A module function rather than a verdict member, because it answers a
+/// different question: nothing here was configured, so there is no layer to
+/// report and nothing for a cross-language comparison to compare.
+#[pyfunction]
+#[must_use]
+pub fn verification_retry_policy_defaults() -> RetryPolicyDefaults {
+    verification_retry_defaults()
+}
+
+/// [`ResolvedConfig::node_uri`] over an explicit set of layers (the shape a
+/// caller outside the process boot, or a test, resolves against).
 fn node_uri_in(
     cfg: &::degenbot_config::LoadedConfig,
     chain_id: u64,
@@ -281,20 +541,7 @@ fn node_uri_in(
     })
 }
 
-/// The session chain id: the explicit override when given, else the layers
-/// `degenbot-config` owns.
-///
-/// # Errors
-///
-/// `ValueError` when no layer named a chain, or when the explicit value is not
-/// an integer.
-#[pyfunction]
-#[pyo3(signature = (chain_id=None))]
-pub fn resolve_chain_id(chain_id: Option<&str>) -> PyResult<ResolvedChainId> {
-    chain_id_in(loaded(), chain_id)
-}
-
-/// [`resolve_chain_id`] over an explicit set of layers.
+/// [`ResolvedConfig::resolve_chain_id`] over an explicit set of layers.
 fn chain_id_in(
     cfg: &::degenbot_config::LoadedConfig,
     chain_id: Option<&str>,
@@ -307,20 +554,7 @@ fn chain_id_in(
     })
 }
 
-/// The database path through the full cascade, with `~` and the state home
-/// expanded by the resolver.
-///
-/// # Errors
-///
-/// Never today, but the resolver is fallible by contract, so the refusal path
-/// exists rather than being invented when a layer grows one.
-#[pyfunction]
-#[pyo3(signature = (database=None))]
-pub fn resolve_database_path(database: Option<&str>) -> PyResult<ResolvedDatabasePath> {
-    Ok(database_path_in(loaded(), database))
-}
-
-/// [`resolve_database_path`] over an explicit set of layers.
+/// [`ResolvedConfig::database_path`] over an explicit set of layers.
 fn database_path_in(
     cfg: &::degenbot_config::LoadedConfig,
     database: Option<&str>,
@@ -332,32 +566,7 @@ fn database_path_in(
     }
 }
 
-/// The operator file the loader selected: the `DEGENBOT_CONFIG` override when
-/// set, else the XDG/HOME config file when it exists, else `None` (an absent
-/// user file is contractually defaults).
-///
-/// A raw-table reader (the deployment registry, the failure-policy table)
-/// resolves the SAME file the typed load read instead of re-deriving the
-/// discovery rule.
-#[pyfunction]
-#[must_use]
-pub fn config_file_path() -> Option<String> {
-    ::degenbot_config::standard_file_path().map(|path| path.to_string_lossy().into_owned())
-}
-
-/// The DECLARED `database.path` key of the installed typed config — the value
-/// the operator wrote, with no cascade and no `~` expansion.
-///
-/// A caller that wants the path a session will actually open asks
-/// [`resolve_database_path`]; this is the declared key behind it, for the
-/// readers that need to know what the config said rather than what won.
-#[pyfunction]
-#[must_use]
-pub fn declared_database_path() -> String {
-    declared_database_path_of(::degenbot_config::holder::config())
-}
-
-/// [`declared_database_path`] over an explicit typed config.
+/// The declared `database.path` key over an explicit typed config.
 fn declared_database_path_of(cfg: &::degenbot_config::BotConfig) -> String {
     cfg.database.path.to_string_lossy().into_owned()
 }
@@ -366,11 +575,14 @@ fn declared_database_path_of(cfg: &::degenbot_config::BotConfig) -> String {
 mod tests {
     #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use ::degenbot_config::{BotConfigLoader, MapEnv, NodeScope, Source};
 
-    use super::{chain_id_in, database_path_in, declared_database_path_of, node_uri_in};
+    use super::{
+        chain_id_in, database_path_in, declared_database_path_of, entry_provenance_by_env,
+        node_uri_in, provenance_by_path, values_by_path, ResolvedConfig,
+    };
 
     /// The layers a `MapEnv` supplies, with no file layer and no process
     /// environment, so every case names its own winning layer.
@@ -472,5 +684,132 @@ mod tests {
             database_path_in(&cfg, Some("/tmp/session.db")).path,
             "/tmp/session.db"
         );
+    }
+
+    /// The value projection carries every declared key and nothing else, so a
+    /// key added to `config_schema!` reaches the driver with no FFI edit — the
+    /// property that makes the verdict, not a per-key accessor, the interface.
+    #[test]
+    fn the_projection_carries_every_declared_key_and_nothing_else() {
+        let cfg = ::degenbot_config::BotConfig::default();
+        let projected: BTreeSet<String> = values_by_path(&cfg).into_keys().collect();
+        let declared: BTreeSet<String> = ::degenbot_config::SCHEMA
+            .iter()
+            .map(|key| key.toml_path.to_string())
+            .collect();
+        assert_eq!(
+            projected, declared,
+            "the projection is walked out of SCHEMA, so a key declared without \
+             reaching it means the walk is no longer the schema"
+        );
+    }
+
+    /// A loaded key names the layer that supplied it, in the operator's dotted
+    /// path vocabulary rather than the loader's internal env names.
+    #[test]
+    fn provenance_names_a_layer_for_every_key_the_load_recorded() {
+        let cfg = loaded(&[("DEGENBOT_DEFAULT_CHAIN_ID", "8453")]);
+        let provenance = provenance_by_path(&cfg);
+        assert_eq!(
+            provenance.get("session.chain_id").map(String::as_str),
+            Some("env")
+        );
+        assert_eq!(
+            provenance.get("telemetry.otel").map(String::as_str),
+            Some("default"),
+            "an untouched key still names the layer that won it"
+        );
+        let declared: BTreeSet<&str> = ::degenbot_config::SCHEMA
+            .iter()
+            .map(|key| key.toml_path)
+            .collect();
+        assert_eq!(
+            provenance
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            declared
+        );
+    }
+
+    /// A load that recorded no layer reports NO layer. Filling the gap with
+    /// the floor would report an `env` winner as a `file` winner, which is
+    /// exactly the divergence a cross-language oracle exists to catch.
+    #[test]
+    fn an_unrecorded_layer_is_absent_rather_than_the_floor() {
+        let mut cfg = loaded(&[("DEGENBOT_DEFAULT_CHAIN_ID", "8453")]);
+        cfg.provenance.clear();
+        assert!(
+            provenance_by_path(&cfg).is_empty(),
+            "a map with no recorded layer must project to no layers at all"
+        );
+    }
+
+    /// A layer recorded against a name no key declares has no dotted path to
+    /// appear under, so it cannot masquerade as a declared key's layer.
+    #[test]
+    fn a_foreign_layer_name_never_becomes_a_declared_key() {
+        // Named without the `DEGENBOT_` prefix on purpose: a prefixed
+        // literal here would enter the schema-inventory sweep, which is a
+        // different gate answering a different question.
+        let mut cfg = loaded(&[]);
+        cfg.provenance.insert("NOT_A_DECLARED_KEY", Source::Env);
+        let provenance = provenance_by_path(&cfg);
+        assert!(
+            provenance.keys().all(|path| ::degenbot_config::SCHEMA
+                .iter()
+                .any(|k| k.toml_path == path)),
+            "every projected path must be a declared key"
+        );
+    }
+
+    /// A per-chain endpoint table is overridden one entry at a time, so the
+    /// per-entry layers are carried beside the key-level one.
+    #[test]
+    fn entry_provenance_reports_the_layer_of_each_table_entry() {
+        let cfg = loaded(&[("DEGENBOT_RPC_WS_CHAINID_1", "wss://node.example/ws")]);
+        let entries = entry_provenance_by_env(&cfg);
+        assert_eq!(
+            entries
+                .get("DEGENBOT_RPC_WS_CHAINID_")
+                .and_then(|table| table.get("1"))
+                .map(String::as_str),
+            Some("env")
+        );
+    }
+
+    /// The verdict Python receives is the installed one, and its value
+    /// projection is built under the GIL from that same load — the two halves
+    /// of the interface cannot describe different configurations.
+    #[test]
+    fn the_installed_verdict_projects_the_installed_load() {
+        ::pyo3::Python::attach(|py| {
+            let verdict = ResolvedConfig::installed();
+            let values = verdict
+                .values(py)
+                .expect("every declared key projects into a Python object");
+            assert_eq!(
+                values.keys().cloned().collect::<BTreeSet<_>>(),
+                ::degenbot_config::SCHEMA
+                    .iter()
+                    .map(|key| key.toml_path.to_string())
+                    .collect::<BTreeSet<_>>()
+            );
+            // This binary never runs the module init that publishes a load, so
+            // the verdict stands on the floor: every declared key is still
+            // projected, and no key claims a layer nobody recorded.
+            assert!(
+                verdict.provenance().keys().all(|path| {
+                    ::degenbot_config::SCHEMA
+                        .iter()
+                        .any(|key| key.toml_path == path)
+                }),
+                "every projected layer must belong to a declared key"
+            );
+            assert!(
+                verdict.discovery_batch_size() >= 1,
+                "the forwarded batch size must never collapse to a busy loop"
+            );
+        });
     }
 }

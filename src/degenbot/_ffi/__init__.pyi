@@ -185,15 +185,6 @@ def driver_boot() -> None:
     rather than a missing subscriber.
     """
 
-def discovery_batch_size() -> int:
-    """Return the typed `pathfinding.discovery_batch_size` (4IOEVT).
-
-    Env name `DEGENBOT_DISCOVERY_BATCH_SIZE`, default 1000, positive-clamped
-    to `>= 1`. Read from the process-wide installed `BotConfig` (the loader
-    is the only env reader). The Python discovery pipeline forwards this to
-    `find_paths_async`.
-    """
-
 # frozen pyclass (pyo3): the runtime forbids subclassing.
 @final
 class StrategyReadinessView:
@@ -206,26 +197,6 @@ class StrategyReadinessView:
     txpool_backrun_active: bool
     txpool_backrun_endpoints: list[str]
 
-def validate_strategy_readiness() -> StrategyReadinessView:
-    """Resolve the strategy readiness of the installed typed config.
-
-    Raises:
-        ValueError: a typed refusal carrying the remediation message (an
-            activated facet with an unsettled endpoint set names both the
-            `degenbot strategy activate` remedies).
-
-    """
-
-def settlement_broadcast_endpoints() -> list[str]:
-    """Return the resolved settlement broadcast endpoints (this process's arm).
-
-    Raises:
-        ValueError: when the settlement facet is inactive or its endpoints
-            are unsettled — a hosted runner IS the settlement arm, so its
-            broadcast posture is never optional.
-
-    """
-
 class RetryPolicyDefaults:
     """Self-describing verification-retry policy defaults.
 
@@ -234,7 +205,7 @@ class RetryPolicyDefaults:
 
     Seconds for the float fields; read from
     ``degenbot_core::retry::RetryPolicy`` — the one declaration site the
-    Python ``VerificationRetryPolicy`` dataclass uses.
+    Python ``VerificationRetryPolicy`` dataclass seeds itself from.
     """
 
     @property
@@ -245,9 +216,6 @@ class RetryPolicyDefaults:
     def max_delay(self) -> float: ...
     @property
     def jitter(self) -> float: ...
-
-def verification_retry_policy_defaults() -> RetryPolicyDefaults:
-    """Return the shared core verification-retry policy defaults."""
 
 # frozen pyclass (pyo3): the runtime forbids subclassing.
 @final
@@ -273,59 +241,159 @@ class ResolvedDatabasePath:
     path: str
     source: str
 
-def resolve_node_uri(chain_id: int, scope: str, node: str | None = None) -> ResolvedNodeUri:
-    """Resolve the node endpoint for ``chain_id`` through the config layers.
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
+class ResolvedConfig:
+    """The whole resolved configuration for this process (ADR-062 D7/D10).
 
-    ``scope`` is the caller's capability: ``"request"`` (pool reads,
-    ``eth_callMany``, transaction submission) or ``"subscription"`` (a feed
-    that must not degrade to polling). ``node`` is the explicit-override
-    layer — one endpoint, classified by its own value the way the console's
-    ``--node`` is.
-
-    Returns:
-        The endpoint and the layer that supplied it (``default``, ``file``,
-            ``env``, or ``cli``).
-
-    Raises:
-        ValueError: when ``scope`` is not a capability, when ``node`` names
-            no transport, or when no layer supplied an endpoint for the
-            chain — the refusal names the scope, the transports it
-            consulted, and the layers each was read through.
-
+    One frozen object built from the load published at FFI module init, so
+    the Python driver reads the same cascade the console read. Getters
+    answer what the load settled; ``node_uri`` and the ``resolve_*``
+    methods answer a resolution that takes an argument (the
+    explicit-override layer) and therefore cannot be a value the load
+    already holds.
     """
 
-def resolve_chain_id(chain_id: str | None = None) -> ResolvedChainId:
-    """Resolve the session chain id: the explicit override (as text), else the layers.
+    @property
+    def config_file_path(self) -> str | None:
+        """The operator file the loader selected (``DEGENBOT_CONFIG`` or the XDG file).
 
-    Raises:
-        ValueError: when no layer named a chain, or when the explicit value
-            is not an integer (the message names that layer).
+        ``None`` means the process has no file layer, which is
+        contractually the schema defaults. A raw-table reader (the
+        deployment registry, the failure-policy table) resolves this same
+        file rather than re-deriving the discovery rule.
+        """
 
+    @property
+    def database_path(self) -> ResolvedDatabasePath:
+        """The database path a session opens: env > ``database.path`` > default.
+
+        The winning value already has ``~`` and the state home expanded,
+        so a caller needs no second expansion.
+        """
+
+    @property
+    def declared_database_path(self) -> str:
+        """The declared ``database.path`` key, with no cascade and no expansion.
+
+        The value the operator wrote; ``database_path`` is the cascade
+        answer behind it.
+        """
+
+    @property
+    def discovery_batch_size(self) -> int:
+        """The typed ``pathfinding.discovery_batch_size``, clamped to ``>= 1``.
+
+        Env name ``DEGENBOT_DISCOVERY_BATCH_SIZE``, default 1000. A zero
+        or garbage value degrades to the legacy per-path delivery rather
+        than a busy loop. The Python discovery pipeline forwards this to
+        ``find_paths_async``.
+        """
+
+    @property
+    def values(self) -> dict[str, Any]:
+        """Every declared key's typed value, keyed by its dotted TOML path.
+
+        Walked out of ``degenbot_config::SCHEMA`` through the schema's
+        generated ``BotConfig::value`` reader, so a key added to the
+        schema appears here with NO change to this interface. A path key
+        projects as ``str``, a millisecond or wei key as ``int``, an enum
+        key as its rendered lowercase ``str``, and a table key as
+        ``dict[str, str]``. An unset-able key the operator left alone is
+        ``None``, never its declared default.
+        """
+
+    @property
+    def provenance(self) -> dict[str, str]:
+        """The layer that supplied each declared key, keyed by dotted TOML path.
+
+        ``default``, ``file``, ``env``, or ``cli``. A key no layer
+        supplied is ABSENT rather than reported as the floor, so a stale
+        or foreign provenance map is visible as one.
+        """
+
+    @property
+    def entry_provenance(self) -> dict[str, dict[str, str]]:
+        """Per-entry layers for the table-shaped keys.
+
+        Keyed by the key's env name (the family prefix, e.g.
+        ``DEGENBOT_RPC_WS_CHAINID_``) and then by the operator-chosen
+        entry (a chain id). A per-chain endpoint table is overridden one
+        entry at a time, so the key-level map cannot describe it.
+        """
+
+    def node_uri(self, chain_id: int, scope: str, node: str | None = None) -> ResolvedNodeUri:
+        """Resolve the node endpoint for ``chain_id`` through the config layers.
+
+        ``scope`` is the caller's capability: ``"request"`` (pool reads,
+        ``eth_callMany``, transaction submission) or ``"subscription"``
+        (a feed that must not degrade to polling). ``node`` is the
+        explicit-override layer — one endpoint, classified by its own
+        value the way the console's ``--node`` is.
+
+        Returns:
+            The endpoint and the layer that supplied it.
+
+        Raises:
+            ValueError: when ``scope`` is not a capability, when ``node``
+                names no transport, or when no layer supplied an endpoint
+                for the chain — the refusal names the scope, the
+                transports it consulted, and the layers each was read
+                through.
+
+        """
+
+    def resolve_chain_id(self, chain_id: str | None = None) -> ResolvedChainId:
+        """Resolve the session chain id: the explicit override (as text), else the layers.
+
+        Raises:
+            ValueError: when no layer named a chain, or when the explicit
+                value is not an integer (the message names that layer).
+
+        """
+
+    def resolve_database_path(self, database: str | None = None) -> ResolvedDatabasePath:
+        """Resolve the database path with an explicit override in the ``--database`` slot.
+
+        Raises:
+            ValueError: never today; the resolver is fallible by contract.
+
+        """
+
+    def strategy_readiness(self) -> StrategyReadinessView:
+        """Resolve the strategy readiness of this process's config.
+
+        Raises:
+            ValueError: a typed refusal carrying the remediation message
+                (an activated facet with an unsettled endpoint set names
+                both the ``degenbot strategy activate`` remedies).
+
+        """
+
+    def settlement_broadcast_endpoints(self) -> list[str]:
+        """Return the resolved settlement broadcast endpoints (this process's arm).
+
+        Raises:
+            ValueError: when the settlement facet is inactive or its
+                endpoints are unsettled — a hosted runner IS the
+                settlement arm, so its broadcast posture is never optional.
+
+        """
+
+def verification_retry_policy_defaults() -> RetryPolicyDefaults:
+    """Return the shared core verification-retry policy defaults.
+
+    A module function rather than a member of the resolved verdict: nothing
+    here was configured, so there is no layer to report.
     """
 
-def resolve_database_path(database: str | None = None) -> ResolvedDatabasePath:
-    """Resolve the database path: ``--database`` > env > ``database.path`` > default.
+def resolved_config() -> ResolvedConfig:
+    """Return the installed resolved configuration verdict for this process.
 
-    The winning value already has ``~`` and the state home expanded by the
-    resolver, so the path a session opens needs no second expansion.
-
-    """
-
-def config_file_path() -> str | None:
-    """Return the operator file the loader selected (``DEGENBOT_CONFIG`` or the XDG file).
-
-    A raw-table reader (the deployment registry, the failure-policy table)
-    resolves the same file the typed load read. ``None`` means the process
-    has no file layer, which is contractually the schema defaults.
-
-    """
-
-def declared_database_path() -> str:
-    """Return the declared ``database.path`` key of the installed typed config.
-
-    The value the operator wrote, with no cascade and no ``~`` expansion; a
-    caller that wants the path a session opens asks ``resolve_database_path``.
-
+    The one object the Python driver reads: every declared key with its
+    value, the layer each came from, and the resolutions that take a
+    capability or an override. Frozen, and built from the load published
+    at FFI module init.
     """
 
 def runtime_status() -> dict[str, Any]:
@@ -2019,6 +2087,7 @@ __all__ = [
     "RegistrationLedger",
     "ReservePairView",
     "ResolvedChainId",
+    "ResolvedConfig",
     "ResolvedDatabasePath",
     "ResolvedNodeUri",
     "RetryPolicyDefaults",
@@ -2048,18 +2117,15 @@ __all__ = [
     "compute_aerodrome_v2_pool_address",
     "compute_aerodrome_v3_pool_address",
     "concentrated_liquidity_math",
-    "config_file_path",
     "contract",
     "convert_pool_type_filter",
     "create2_address",
     "curve_dy",
     "curve_math",
     "db",
-    "declared_database_path",
     "deployments",
     "dex_identity",
     "diagnostics",
-    "discovery_batch_size",
     "driver_boot",
     "eip_1559",
     "event_topic",
@@ -2079,12 +2145,9 @@ __all__ = [
     "provider",
     "registration_outcome_tags",
     "registration_pool_memo_key",
-    "resolve_chain_id",
-    "resolve_database_path",
-    "resolve_node_uri",
+    "resolved_config",
     "runtime_status",
     "session_phase_next",
-    "settlement_broadcast_endpoints",
     "shutdown_log_drainer",
     "simulation",
     "solady",
@@ -2093,6 +2156,5 @@ __all__ = [
     "submission",
     "to_checksum_address",
     "v2_math",
-    "validate_strategy_readiness",
     "verification_retry_policy_defaults",
 ]

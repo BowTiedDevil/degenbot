@@ -81,12 +81,12 @@ for op in json.loads(sys.argv[1]):
         elif kind == "chain":
             results.append({"chain_id": resolve_chain_id(op[1])})
         elif kind == "chain_source":
-            resolved = _ffi.resolve_chain_id(op[1])
+            resolved = _ffi.resolved_config().resolve_chain_id(op[1])
             results.append({"chain_id": resolved.chain_id, "source": resolved.source})
         elif kind == "database":
             results.append({"path": resolve_database_path(op[1])})
         elif kind == "database_source":
-            resolved = _ffi.resolve_database_path(op[1])
+            resolved = _ffi.resolved_config().resolve_database_path(op[1])
             results.append({"path": resolved.path, "source": resolved.source})
         else:
             raise AssertionError("unknown probe op: " + kind)
@@ -476,6 +476,6 @@ class TestDatabaseAndChainCascade:
 
     def test_the_module_no_longer_owns_the_file_location(self) -> None:
         """The duplicated XDG/path logic is gone; the core reports the file."""
-        assert config_module.config_file_path() == config_module._ffi.config_file_path()
+        assert config_module.config_file_path() == config_module._ffi.resolved_config().config_file_path
         for retired in ("CONFIG_DIR", "CONFIG_FILE", "DB_PATH", "DegenbotConfig"):
             assert not hasattr(config_module, retired)

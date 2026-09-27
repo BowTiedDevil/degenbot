@@ -103,7 +103,10 @@ pub use schema::{
     AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode, StrategyMevblockerBackrunConfig,
     StrategySettlementConfig, StrategyTxpoolBackrunConfig, VerifyTicks,
 };
-pub use schema::{BaseKind, BotConfig, KeyDecl, NodeTransport, ValueKind, SCHEMA, SECTION_PATHS};
+pub use schema::{
+    BaseKind, BotConfig, ConfigValue, KeyDecl, NodeTransport, ValueKind, READABLE_KEYS, SCHEMA,
+    SECTION_PATHS,
+};
 
 /// The closed set of observability domains (ADR-043 section 3). A
 /// `TelemetryConfig::diag` entry naming anything else is a boot error, so a

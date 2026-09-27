@@ -290,6 +290,9 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
             // load, published once: a resolver cannot see a different file or
             // environment than the holder received.
             crate::config::publish_loaded(loaded, installed);
+            // The verdict is the seam's one object, so it is built from the
+            // layers this same load published rather than on first read.
+            crate::config::install_verdict();
         }
         Err(e) => {
             #[expect(clippy::print_stderr)]

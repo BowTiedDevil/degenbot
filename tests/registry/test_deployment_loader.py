@@ -13,10 +13,14 @@ field-level diff keyed by ``(chain_id, factory)``.
 
 from __future__ import annotations
 
+import os
+import subprocess  # ruff: ignore[suspicious-subprocess-import] - a fresh interpreter is the subject
+import sys
 from operator import itemgetter
 
 import pytest
 
+from degenbot.config import config_file_path
 from degenbot.registry.deployment_loader import (
     DeploymentRecord,
     _pool_type_map,
@@ -221,9 +225,7 @@ class TestOverlayMerge:
             (r.chain_id, r.factory) for r in shipped
         }
 
-    def test_config_file_overlay_is_read_from_the_selected_file(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_config_file_overlay_is_read_from_the_selected_file(self, tmp_path) -> None:
         """The `[deployments] overlay` is read from the file `config_file_path()` selects.
 
         A real operator file carries `[nodes]`, `[deployments]`, and
@@ -258,16 +260,84 @@ class TestOverlayMerge:
             'http = { 1 = "http://localhost:8545" }\n'
             "\n[deployments]\n"
             f"overlay = {json.dumps(str(overlay_file))}\n"
+            # A DECLARED bucket: this table is free-form to the typed loader,
+            # which skips it, but the failure-policy reader closes over its
+            # own bucket set and refuses the boot on an undeclared key or
+            # action. It reads the file at import, so a file only written
+            # during the test never reached it.
             "\n[failure_policy]\n"
-            'rpc.ratelimit = "halt"\n',
+            'sim_failure.revert_economics = "observe"\n',
             encoding="utf-8",
         )
-        monkeypatch.setenv("DEGENBOT_CONFIG", str(config_file))
 
-        records = load_deployments()
-        record = {(r.chain_id, r.factory): r for r in records}[1, factory]
-        assert record.name == "Config-File Uniswap V2"
-        assert record.init_hash == "0x" + "ef" * 32
+        # A fresh interpreter, because the file is selected when the process
+        # installs its config: a `DEGENBOT_CONFIG` set after that names a file
+        # this process never read (see the freeze test below for the other
+        # side of the same property).
+        env = dict(os.environ)
+        env["DEGENBOT_CONFIG"] = str(config_file)
+        probe = (
+            "import json\n"
+            "from degenbot.registry.deployment_loader import load_deployments\n"
+            "from degenbot.config import config_file_path\n"
+            "print(json.dumps({'file': config_file_path(),"
+            " 'names': [r.name for r in load_deployments()]}))\n"
+        )
+        completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv, no shell
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        assert completed.returncode == 0, completed.stderr
+        answer = json.loads(completed.stdout)
+        assert answer["file"] == str(config_file)
+        assert "Config-File Uniswap V2" in answer["names"]
+
+    def test_a_config_file_named_after_install_is_not_the_file_the_overlay_reads(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A `DEGENBOT_CONFIG` set after the process installed its config is not the file read.
+
+        The overlay is a raw-table reader, and it resolves the file the
+        installed verdict selected rather than re-running the discovery rule
+        against a live environment. A raw table's licence to carry a key the
+        typed schema does not declare is a property of the READER, not of when
+        the file was chosen: giving the two readers different files is what
+        would make this a second config authority.
+        """
+        import json
+
+        late_overlay = tmp_path / "late-overlay.json"
+        late_overlay.write_text(
+            json.dumps({
+                "deployments": [
+                    {
+                        "name": "Late-Config DEX",
+                        "chain_id": 424242,
+                        "pool_type": "uniswap-v2",
+                        "variant": None,
+                        "dex_variant": "uniswap-v2",
+                        "family": None,
+                        "factory": "0x" + "ab" * 20,
+                        "deployer": None,
+                        "init_hash": "0x" + "cd" * 32,
+                    }
+                ]
+            }),
+            encoding="utf-8",
+        )
+        late_config = tmp_path / "late-config.toml"
+        late_config.write_text(
+            f"[deployments]\noverlay = {json.dumps(str(late_overlay))}\n", encoding="utf-8"
+        )
+
+        installed = config_file_path()
+        monkeypatch.setenv("DEGENBOT_CONFIG", str(late_config))
+
+        assert config_file_path() == installed
+        assert "Late-Config DEX" not in {r.name for r in load_deployments()}
 
 
 class TestRegisterFromDeployments:

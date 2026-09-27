@@ -476,7 +476,7 @@ def _run_ffi_getter(env_overrides: dict[str, str]) -> str:
         [
             sys.executable,
             "-c",
-            "from degenbot._ffi import discovery_batch_size as f; print(f())",
+            "from degenbot._ffi import resolved_config as r; print(r().discovery_batch_size)",
         ],
         env=env,
         capture_output=True,

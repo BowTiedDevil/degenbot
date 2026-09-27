@@ -5,6 +5,14 @@ order end to end (ADR-062 D7/D10). The Python driver is a consumer of that
 verdict, never a second authority: this module translates the FFI surface into
 the shapes Python callers use and adds nothing to the resolution itself.
 
+The verdict is ONE frozen object -- :func:`resolved_config` -- built from the
+load published at FFI module init. The helpers here are translation (a wider
+``int``/``str`` signature, the ``RpcNotConfiguredError`` the driver catches,
+the retired-keyword refusal) over that one object; none of them re-derives a
+layer or re-reads a key. A config key the driver wants that has no helper yet is
+``resolved_config().values["<dotted.path>"]`` -- reading one does not require an
+edit anywhere, which is the point of the verdict.
+
 The cascade has four layers -- an explicit override, the environment, the
 operator file, and a declared default -- and reports the layer that won. The
 config is installed once at FFI module init, so a process resolves the same
@@ -17,13 +25,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from degenbot import _ffi
-from degenbot._ffi import ResolvedChainId, ResolvedDatabasePath, ResolvedNodeUri
+from degenbot._ffi import ResolvedChainId, ResolvedConfig, ResolvedDatabasePath, ResolvedNodeUri
 
 if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
 
 __all__ = [
     "ResolvedChainId",
+    "ResolvedConfig",
     "ResolvedDatabasePath",
     "ResolvedNodeUri",
     "RpcNotConfiguredError",
@@ -35,7 +44,25 @@ __all__ = [
     "resolve_node",
     "resolve_rpc_uris",
     "resolve_ws_rpc_uri",
+    "resolved_config",
 ]
+
+
+def resolved_config() -> ResolvedConfig:
+    """Return the whole resolved configuration for this process.
+
+    The one object the driver reads: every declared key with its typed value
+    (:attr:`~degenbot._ffi.ResolvedConfig.values`), the layer each came from
+    (:attr:`~degenbot._ffi.ResolvedConfig.provenance`), and the resolutions
+    that take a capability or an override. Frozen, and built from the load
+    published at FFI module init, so it cannot drift from what the console read.
+
+    Returns:
+        The installed verdict.
+
+    """
+    return _ffi.resolved_config()
+
 
 # A caller asks for a request (pool reads, ``eth_callMany``, submission) or a
 # subscription (a feed that must not degrade to polling). The core owns the
@@ -120,7 +147,7 @@ def resolve_node(
 
     """
     try:
-        return _ffi.resolve_node_uri(int(chain_id), scope, node)
+        return _ffi.resolved_config().node_uri(int(chain_id), scope, node)
     except ValueError as exc:
         raise RpcNotConfiguredError(str(exc)) from exc
 
@@ -153,7 +180,7 @@ def resolve_http_rpc_uri(
     """
     _refuse_retired_overrides("resolve_http_rpc_uri", retired)
     try:
-        return _ffi.resolve_node_uri(int(chain_id), _REQUEST_SCOPE, node).uri
+        return _ffi.resolved_config().node_uri(int(chain_id), _REQUEST_SCOPE, node).uri
     except ValueError as exc:
         raise RpcNotConfiguredError(str(exc)) from exc
 
@@ -183,7 +210,7 @@ def resolve_ws_rpc_uri(chain_id: ChainId, /, *, node: str | None = None, **retir
     """
     _refuse_retired_overrides("resolve_ws_rpc_uri", retired)
     try:
-        return _ffi.resolve_node_uri(int(chain_id), _SUBSCRIPTION_SCOPE, node).uri
+        return _ffi.resolved_config().node_uri(int(chain_id), _SUBSCRIPTION_SCOPE, node).uri
     except ValueError as exc:
         raise RpcNotConfiguredError(str(exc)) from exc
 
@@ -216,8 +243,9 @@ def resolve_rpc_uris(
     """
     _refuse_retired_overrides("resolve_rpc_uris", retired)
     try:
-        request = _ffi.resolve_node_uri(int(chain_id), _REQUEST_SCOPE, node).uri
-        subscription = _ffi.resolve_node_uri(int(chain_id), _SUBSCRIPTION_SCOPE, node).uri
+        verdict = _ffi.resolved_config()
+        request = verdict.node_uri(int(chain_id), _REQUEST_SCOPE, node).uri
+        subscription = verdict.node_uri(int(chain_id), _SUBSCRIPTION_SCOPE, node).uri
     except ValueError as exc:
         raise RpcNotConfiguredError(str(exc)) from exc
     return request, subscription
@@ -238,7 +266,8 @@ def resolve_chain_id(chain_id: int | str | None = None) -> int:
         The chain id the session targets.
 
     """
-    return _ffi.resolve_chain_id(None if chain_id is None else str(chain_id)).chain_id
+    override = None if chain_id is None else str(chain_id)
+    return _ffi.resolved_config().resolve_chain_id(override).chain_id
 
 
 def resolve_database_path(database: str | None = None) -> str:
@@ -254,7 +283,7 @@ def resolve_database_path(database: str | None = None) -> str:
         The resolved database path.
 
     """
-    return _ffi.resolve_database_path(database).path
+    return _ffi.resolved_config().resolve_database_path(database).path
 
 
 def config_file_path() -> str | None:
@@ -268,7 +297,7 @@ def config_file_path() -> str | None:
         The selected file's path, or ``None``.
 
     """
-    return _ffi.config_file_path()
+    return _ffi.resolved_config().config_file_path
 
 
 def declared_database_path() -> str:
@@ -281,4 +310,4 @@ def declared_database_path() -> str:
         The declared ``database.path`` value.
 
     """
-    return _ffi.declared_database_path()
+    return _ffi.resolved_config().declared_database_path

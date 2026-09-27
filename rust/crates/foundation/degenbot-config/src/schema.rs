@@ -99,6 +99,61 @@ impl fmt::Display for ValueKind {
     }
 }
 
+/// One declared key's typed value, borrowed from the config that holds it.
+///
+/// The generated [`BotConfig::value`] reader returns this, so a surface that
+/// walks [`SCHEMA`] — the Python driver's resolved verdict, the console's
+/// resolved print — reads every key with its declared kind intact and without
+/// one hand-written accessor per key.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConfigValue<'a> {
+    /// A flag (`bool`, or an inverted one already read into a flag).
+    Bool(bool),
+    /// Free-form text.
+    Text(std::borrow::Cow<'a, str>),
+    /// A filesystem path AS WRITTEN — no `~` or state-home expansion, because
+    /// expansion is the cascade's answer and this is the declared key.
+    Path(std::borrow::Cow<'a, std::path::Path>),
+    /// An unsigned count or amount (a millisecond duration, a `usize`, a
+    /// `u64`, a `u128` wei value).
+    Uint(u128),
+    /// A signed count.
+    Int(i64),
+    /// A multiplier or ratio.
+    Float(f64),
+    /// A closed variant, rendered through its `Display` (lowercase).
+    Enum(std::borrow::Cow<'a, str>),
+    /// An operator-keyed table in key order.
+    Map(Vec<(String, String)>),
+}
+
+impl ConfigValue<'_> {
+    /// The value as text, for a surface that reports values rather than
+    /// consuming them (a diagnostic print, a refusal message).
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        match self {
+            Self::Bool(value) => value.to_string(),
+            Self::Text(value) | Self::Enum(value) => value.to_string(),
+            Self::Path(value) => value.display().to_string(),
+            Self::Uint(value) => value.to_string(),
+            Self::Int(value) => value.to_string(),
+            Self::Float(value) => value.to_string(),
+            Self::Map(entries) => entries
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(","),
+        }
+    }
+}
+
+impl std::fmt::Display for ConfigValue<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_text())
+    }
+}
+
 /// One declared configuration key: the machine-checkable registry entry
 /// produced by the single declaration in [`SCHEMA`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -825,7 +880,127 @@ fn validate_node_table(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
+
     use super::*;
+
+    /// The generated reader answers exactly the keys the schema declares, in
+    /// both directions: a key with no reader arm is unreachable by every
+    /// surface that walks `SCHEMA`, and a reader arm for a key nobody
+    /// declared is a value nothing can set. Either defect is a silent hole
+    /// in the one declaration site, so the census pins the set equality
+    /// rather than counting arms.
+    #[test]
+    fn declared_keys_and_readable_keys_are_the_same_set() {
+        let declared: std::collections::BTreeSet<(&str, &str)> =
+            SCHEMA.iter().map(|k| (k.section, k.field)).collect();
+        let readable: std::collections::BTreeSet<(&str, &str)> =
+            READABLE_KEYS.iter().copied().collect();
+        assert_eq!(
+            readable, declared,
+            "the generated reader and the declared schema must cover the same keys"
+        );
+    }
+
+    /// A value read back through the schema keeps the kind the key declared,
+    /// so a consumer of the projection cannot be handed a number where a path
+    /// belongs. One key per kind family.
+    #[test]
+    fn a_value_reads_back_with_the_kind_its_key_declared() {
+        let mut config = BotConfig::default();
+        let set = |cfg: &mut BotConfig, section: &str, field: &str, raw: &str| {
+            cfg.assign(section, field, raw)
+                .expect("a declared key accepts a raw value its kind names");
+        };
+        set(&mut config, "telemetry", "otel", "0");
+        set(&mut config, "pump", "pump_debounce_ms", "75");
+        set(&mut config, "telemetry", "metrics_addr", "127.0.0.1:1");
+        set(&mut config, "database", "path", "/var/lib/x.db");
+        set(&mut config, "pathfinding", "discovery_batch_size", "7");
+        set(&mut config, "verify", "verify_spotcheck_permyriad", "3");
+        set(&mut config, "allocator", "mimalloc_purge_delay_ms", "-2");
+        set(&mut config, "allocator", "mimalloc_purge_delay_mult", "2.5");
+        set(
+            &mut config,
+            "solve",
+            "min_profit_wei",
+            "1000000000000000000",
+        );
+        set(&mut config, "pump", "quiesce_mode", "fixed");
+        set(&mut config, "telemetry", "diag", "sim=debug,solver=trace");
+        set(&mut config, "nodes", "http", "1=https://eth.example");
+
+        let value = |section: &str, field: &str| config.value(section, field);
+        assert_eq!(value("telemetry", "otel"), Some(ConfigValue::Bool(false)));
+        assert_eq!(
+            value("pump", "pump_debounce_ms"),
+            Some(ConfigValue::Uint(75))
+        );
+        assert_eq!(
+            value("telemetry", "metrics_addr"),
+            Some(ConfigValue::Text("127.0.0.1:1".into()))
+        );
+        assert_eq!(
+            value("database", "path"),
+            Some(ConfigValue::Path(
+                std::path::Path::new("/var/lib/x.db").into()
+            ))
+        );
+        assert_eq!(
+            value("pathfinding", "discovery_batch_size"),
+            Some(ConfigValue::Uint(7))
+        );
+        assert_eq!(
+            value("verify", "verify_spotcheck_permyriad"),
+            Some(ConfigValue::Uint(3))
+        );
+        assert_eq!(
+            value("allocator", "mimalloc_purge_delay_ms"),
+            Some(ConfigValue::Int(-2))
+        );
+        assert_eq!(
+            value("allocator", "mimalloc_purge_delay_mult"),
+            Some(ConfigValue::Float(2.5))
+        );
+        assert_eq!(
+            value("solve", "min_profit_wei"),
+            Some(ConfigValue::Uint(1_000_000_000_000_000_000))
+        );
+        assert_eq!(
+            value("pump", "quiesce_mode"),
+            Some(ConfigValue::Enum("fixed".into()))
+        );
+        assert_eq!(
+            value("telemetry", "diag"),
+            Some(ConfigValue::Map(vec![
+                ("sim".to_string(), "debug".to_string()),
+                ("solver".to_string(), "trace".to_string()),
+            ]))
+        );
+        assert_eq!(
+            value("nodes", "http"),
+            Some(ConfigValue::Map(vec![(
+                "1".to_string(),
+                "https://eth.example".to_string()
+            )]))
+        );
+    }
+
+    /// An unset optional key reads as absent rather than as its declared
+    /// default: "the operator said nothing" and "the operator said the
+    /// default" are different facts, and a consumer that cannot tell them
+    /// apart invents provenance.
+    #[test]
+    fn an_unset_optional_key_reads_as_absent() {
+        let config = BotConfig::default();
+        assert_eq!(config.value("session", "chain_id"), None);
+        assert_eq!(config.value("nodes", "ipc"), None);
+        assert_eq!(
+            config.value("session", "no_such_key"),
+            None,
+            "an undeclared key is not a value"
+        );
+    }
 
     #[test]
     fn schema_paths_are_wellformed_and_unique() {
@@ -1511,6 +1686,59 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The generated reader answers the fixture's keys in BOTH positions a
+    /// family-shaped key can take, so a reader arm covering only a section
+    /// body fails here rather than at the first runtime read of a facet key.
+    #[test]
+    fn the_generated_reader_answers_a_family_shaped_key_in_both_positions() {
+        assert_eq!(
+            strmap_vocabulary::READABLE_KEYS.len(),
+            strmap_vocabulary::SCHEMA.len()
+        );
+        let mut config = strmap_vocabulary::BotConfig::default();
+        let set =
+            |cfg: &mut strmap_vocabulary::BotConfig, section: &str, field: &str, raw: &str| {
+                cfg.assign(section, field, raw)
+                    .expect("a declared family key parses its raw form");
+            };
+        set(&mut config, "strmap_fixture", "http", "1=https://a.example");
+        set(
+            &mut config,
+            "strmap_fixture",
+            "probe",
+            "1=https://b.example",
+        );
+        set(
+            &mut config,
+            "strmap_fixture.endpoints",
+            "rpc_urls",
+            "1=https://c.example",
+        );
+        set(
+            &mut config,
+            "strmap_fixture.endpoints",
+            "probe_urls",
+            "1=https://d.example",
+        );
+        let entry = |value: &str| ConfigValue::Map(vec![("1".to_string(), value.to_string())]);
+        assert_eq!(
+            config.value("strmap_fixture", "http"),
+            Some(entry("https://a.example"))
+        );
+        assert_eq!(
+            config.value("strmap_fixture", "probe"),
+            Some(entry("https://b.example"))
+        );
+        assert_eq!(
+            config.value("strmap_fixture.endpoints", "rpc_urls"),
+            Some(entry("https://c.example"))
+        );
+        assert_eq!(
+            config.value("strmap_fixture.endpoints", "probe_urls"),
+            Some(entry("https://d.example"))
+        );
     }
 
     #[test]

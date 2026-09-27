@@ -46,9 +46,9 @@ _AMBIENT_FILE = Path(__file__).resolve().parent / "ambient_config.toml"
 
 
 # A fresh interpreter installs the config at FFI module init, so a layer that
-# is only installed at import is observable. `resolve_node_uri` is the raw FFI
-# boundary -- NOT the Python `resolve_node` wrapper, which is a one-line
-# delegation to this exact function.
+# is only installed at import is observable. `ResolvedConfig.node_uri` is the raw
+# FFI boundary -- NOT the Python `resolve_node` wrapper, which is a one-line
+# delegation to this exact method.
 _PROBE = """\
 import json
 import sys
@@ -58,7 +58,7 @@ from degenbot import _ffi
 results = []
 for chain_id, scope in json.loads(sys.argv[1]):
     try:
-        resolved = _ffi.resolve_node_uri(chain_id, scope)
+        resolved = _ffi.resolved_config().node_uri(chain_id, scope)
         results.append({"uri": resolved.uri, "source": resolved.source})
     except BaseException as exc:  # noqa: BLE001 - the refusal message is the assertion
         results.append({"error": str(exc), "error_type": type(exc).__name__})

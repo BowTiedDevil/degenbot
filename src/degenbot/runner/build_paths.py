@@ -28,6 +28,7 @@ from degenbot.arbitrage.verification_retry import (
     retry_verification_call,
 )
 from degenbot.builders.request import BuildManagedPoolRequest
+from degenbot.config import resolved_config
 from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
     DirectionResolutionError,
@@ -38,7 +39,6 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths_async
-from degenbot.pathfinding import discovery_batch_size as _rust_discovery_batch_size
 from degenbot.runner._driver_constants import (
     ALLOWED_INTERMEDIATE_TOKENS,
     PANCAKESWAP_V3_MAINNET_FACTORY,
@@ -62,17 +62,17 @@ if TYPE_CHECKING:
 
 
 def _discovery_batch_size() -> int:
-    """Read the typed pathfinding.discovery_batch_size (4IOEVT).
+    """Read the typed pathfinding.discovery_batch_size off the resolved config.
 
-    The Rust config loader is the only env reader; the value is
-    positive-clamped there and find_paths_async clamps to >= 1, so every
+    The Rust config loader is the only env reader and the verdict carries its
+    value positive-clamped; find_paths_async clamps to >= 1 as well, so every
     batch_size forwards straight to the Rust batched async iterator.
 
     Returns:
         The effective discovery delivery batch size.
 
     """
-    return max(1, int(_rust_discovery_batch_size()))
+    return max(1, int(resolved_config().discovery_batch_size))
 
 
 # ──────────────────────────────────────────────────────────────────
