@@ -22,16 +22,20 @@ from degenbot.logging import logger as bot_logger
 
 @dataclasses.dataclass(frozen=True)
 class DiagConfig:
-    """The three probe toggles; zero values mean OFF (production default)."""
+    """The three probe toggles, carried from the declared diagnostics keys.
+
+    No field has a default: the core schema declaration owns them (zero is
+    OFF, the production posture), so a second literal here could drift from
+    what an operator set."""
 
     #: >0 arms the tracemalloc diff thread (one snapshot per interval).
-    tracemalloc_secs: float = 0.0
+    tracemalloc_secs: float
     #: >0 arms the read-only ``/proc/self`` RSS/VmHWM CSV sampler.
-    procmem_secs: float = 0.0
+    procmem_secs: float
     #: CSV output path for the proc-mem sampler.
-    procmem_csv: str = "logs/procmem.csv"
+    procmem_csv: str
     #: >0 arms the faulthandler repeat dump (all-thread stacks each timeout).
-    faulthandler_timeout_secs: float = 0.0
+    faulthandler_timeout_secs: float
 
 
 def _arm_tracemalloc(interval: float) -> None:

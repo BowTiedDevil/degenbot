@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
-use degenbot_config::SCHEMA;
+use degenbot_config::{SCHEMA, UNPREFIXED_ENV_NAMES};
 
 /// Raw regex matches that are NOT real static keys:
 /// - `DEGENBOT_JAEGER_E` — the sweep regex stops at the digit of `DEGENBOT_JAEGER_E2E`.
@@ -16,6 +16,9 @@ use degenbot_config::SCHEMA;
 ///   `DEGENBOT_RPC_WS_CHAINID_<chain_id>` (documented next to `SCHEMA`).
 const SWEEP_ARTIFACTS: &[&str] = &[
     "DEGENBOT_JAEGER_E",
+    // the sweep regex stops at the digit of the dispatch profit-capture
+    // stance's env name (see SWEEP_EXPANSIONS).
+    "DEGENBOT_ERC",
     // the family wildcard in the allocator doc comment (the loader
     // owns the four concrete DEGENBOT_MIMALLOC_* keys).
     "DEGENBOT_MIMALLOC_",
@@ -122,6 +125,7 @@ const RETIRED_KEYS: &[&str] = &[
 /// matches expand to these full names).
 const SWEEP_EXPANSIONS: &[&str] = &[
     "DEGENBOT_JAEGER_E2E",
+    "DEGENBOT_ERC6909_PROFIT",
     "DEGENBOT_V3_FIXTURE_RPC",
     "DEGENBOT_V3_FIXTURE_BLOCK",
 ];
@@ -165,6 +169,19 @@ fn inventory() -> Vec<String> {
     }
 }
 
+/// Every `DEGENBOT_*` name the schema declares: the one set an inventory
+/// sweep can produce. A declared name that predates the prefix is filtered by
+/// the schema's own named exception list rather than by a second copy of it
+/// here, so a key added to that list cannot pass this gate by being forgotten
+/// in two places.
+fn declared_prefixed_names() -> BTreeSet<String> {
+    SCHEMA
+        .iter()
+        .map(|k| k.env.to_string())
+        .filter(|env| !UNPREFIXED_ENV_NAMES.contains(&env.as_str()))
+        .collect()
+}
+
 #[test]
 fn schema_covers_the_full_key_inventory() {
     let sweep: BTreeSet<String> = inventory().into_iter().collect();
@@ -191,7 +208,7 @@ fn schema_covers_the_full_key_inventory() {
         }
     }
 
-    let actual: BTreeSet<String> = SCHEMA.iter().map(|k| k.env.to_string()).collect();
+    let actual = declared_prefixed_names();
 
     let unknown: Vec<_> = actual.difference(&expected).collect();
     let uncovered: Vec<_> = expected.difference(&actual).collect();
@@ -231,6 +248,5 @@ fn snapshot_fallback_agrees_with_schema() {
             let _ = expected.insert((*expansion).to_string());
         }
     }
-    let actual: BTreeSet<String> = SCHEMA.iter().map(|k| k.env.to_string()).collect();
-    assert_eq!(actual, expected);
+    assert_eq!(declared_prefixed_names(), expected);
 }

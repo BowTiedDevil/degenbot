@@ -32,10 +32,31 @@ pub fn render_key_reference() -> String {
     out.push_str(
         "1. CLI / explicit argument (loader override keys accept the env name or the TOML path)\n",
     );
-    out.push_str("2. Environment variable (`DEGENBOT_*`)\n");
+    out.push_str("2. Environment variable (the `Env var` column)\n");
     out.push_str("3. Config file (TOML tree selected by `--config <path>`)\n");
     out.push_str("4. Built-in defaults (shown below)\n\n");
     out.push_str("The loader is fail-closed: unparsable values and unknown file keys are reported, never silently ignored.\n\n");
+    // Rendered from the schema so the exception cannot go stale: a declared
+    // name that is not `DEGENBOT_*` is an operator-visible naming fact, and
+    // the table's own column would otherwise be the only place to learn it.
+    let unprefixed: Vec<&str> = SCHEMA
+        .iter()
+        .map(|key| key.env)
+        .filter(|env| !env.starts_with("DEGENBOT_"))
+        .collect();
+    if !unprefixed.is_empty() {
+        let _ = writeln!(
+            out,
+            "Env names that are not `DEGENBOT_*`: {}. They predate the prefix and keep \
+             their names, so an export an operator has already written stays honored.",
+            unprefixed
+                .iter()
+                .map(|env| format!("`{env}`"))
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
+        out.push('\n');
+    }
 
     let mut current_section: Option<&str> = None;
     for key in SCHEMA {

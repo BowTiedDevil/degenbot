@@ -178,8 +178,7 @@ async def _run(
                 "OPERATOR_PRIVATE_KEY": "0x"
                 + "11" * 32,  # valid secp256k1 scalar, cosmetic (leaf stubbed)
                 "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-                "INJECT_EXECUTOR_CODE": "0",
-            },
+                    },
             live=False,
             permutation=None,
             rpc=RpcCascadeOverrides(node="ws://localhost:8546"),

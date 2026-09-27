@@ -10,11 +10,13 @@ One typed `BotConfig` value is the single source of truth for all runtime config
 Highest wins (12-factor parity; recorded here by the schema and asserted by the loader tests):
 
 1. CLI / explicit argument (loader override keys accept the env name or the TOML path)
-2. Environment variable (`DEGENBOT_*`)
+2. Environment variable (the `Env var` column)
 3. Config file (TOML tree selected by `--config <path>`)
 4. Built-in defaults (shown below)
 
 The loader is fail-closed: unparsable values and unknown file keys are reported, never silently ignored.
+
+Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFICATION_RETRY_BASE_DELAY`, `VERIFICATION_RETRY_MAX_DELAY`, `VERIFICATION_RETRY_JITTER`. They predate the prefix and keep their names, so an export an operator has already written stays honored.
 
 ## `nodes`
 
@@ -49,6 +51,14 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_METRICS_ADDR` | `telemetry.metrics_addr` | `string` | `127.0.0.1:9464` | Prometheus scrape endpoint bind address (only active when otel is on). |
 | `DEGENBOT_JAEGER_ENDPOINT` | `telemetry.jaeger_endpoint` | `string` | `http://127.0.0.1:4318` | OTLP endpoint used by the opt-in Jaeger E2E test. |
 | `DEGENBOT_JAEGER_E2E` | `telemetry.jaeger_e2e` | `bool` | `false` | Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint). |
+## `diagnostics`
+
+| Env var | TOML key | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `DEGENBOT_TRACEMALLOC_SECS` | `diagnostics.tracemalloc_secs` | `f64` | `0.0` | Interval in seconds between tracemalloc snapshot-diff dumps to stderr; 0 (or unset) arms nothing. A flat traced-current under a climbing RSS pins the growth outside the Python object graph, so the probe splits a memory diagnosis in half. |
+| `DEGENBOT_PROCMEM_SECS` | `diagnostics.procmem_secs` | `f64` | `0.0` | Interval in seconds between /proc/self RSS/VmHWM CSV sampler rows; 0 (or unset) arms nothing. The sampler is read-only -- no snapshots, no allocator calls -- so it never perturbs the behavior being measured. |
+| `DEGENBOT_PROCMEM_CSV` | `diagnostics.procmem_csv` | `path` | `logs/procmem.csv` | CSV output file for the procmem sampler, one row per procmem_secs interval. The parent directory is created when the probe arms. |
+| `DEGENBOT_FAULTHANDLER_TIMEOUT_SECS` | `diagnostics.faulthandler_timeout_secs` | `f64` | `0.0` | Seconds after which faulthandler dumps every thread's stack; 0 (or unset) arms no watchdog. A dump is the only record of where a wedged process was when it stopped answering. |
 ## `logging`
 
 | Env var | TOML key | Type | Default | Description |
@@ -153,6 +163,10 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD` | `verify.verify_spotcheck_permyriad` | `u64` | `0` | Per-myriad (1/10_000) sampling rate for verify spot-checks (0 = off). |
+| `VERIFICATION_RETRY_MAX_ATTEMPTS` | `verify.verify_retry_max_attempts` | `usize` | `4` | Attempts for a transient verification RPC failure (per-call transport / provider-init) before it propagates. A genuine on-chain mismatch is never retried. Below 1 the policy is not a policy, so building one refuses rather than retrying nothing. |
+| `VERIFICATION_RETRY_BASE_DELAY` | `verify.verify_retry_base_delay` | `f64` | `0.5` | First backoff wait in seconds for a retried verification call; grows exponentially from here. A negative or non-finite value is refused when the policy is built. |
+| `VERIFICATION_RETRY_MAX_DELAY` | `verify.verify_retry_max_delay` | `f64` | `4.0` | Ceiling in seconds on one verification backoff wait. A value below verify_retry_base_delay is refused when the policy is built, because the cap would sit under the first wait it is meant to bound. |
+| `VERIFICATION_RETRY_JITTER` | `verify.verify_retry_jitter` | `f64` | `0.5` | Upper bound in seconds of the uniform jitter added to one backoff wait, so a recovering node is not hit by a synchronized retry herd. A value outside 0..=1 is refused when the policy is built. |
 ## `simulation`
 
 | Env var | TOML key | Type | Default | Description |
@@ -163,11 +177,22 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_PROBE_FIXTURE` | `simulation.probe_fixture` | `Option<path>` | `(unset)` | Corpus fixture for the offline executor A/B probe (ignore-listed test). |
 | `DEGENBOT_PROBE_NS` | `simulation.probe_ns` | `string` | `1,2,4,8,16` | Comma-separated thread-count arms for the offline executor A/B probe. |
 | `DEGENBOT_PROBE_PASSES` | `simulation.probe_passes` | `usize` | `3` | Passes per arm for the offline executor A/B probe. |
+| `DEGENBOT_SIM_PIPELINE_CONCURRENCY` | `simulation.pipeline_concurrency` | `usize` | `8` | Sims in flight per block before the pipeline's submitter is held back; 1 reproduces the serial reference (one sim, FIFO submit) for an offline soak. Clamped to >= 1 at the use site. |
+| `DEGENBOT_SIM_EXIT_IGNORE_BUCKETS` | `simulation.exit_ignore_buckets` | `string` | `(empty)` | Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot. |
 ## `pathfinding`
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery. |
+| `DEGENBOT_MAX_PATHS` | `pathfinding.max_registered_paths` | `usize` | `100000` | Ceiling on total registered arbitrage paths, applied before discovery runs so a discovery-heavy skip-fest stops instead of registering millions. 0 means uncapped. |
+| `DEGENBOT_REG_PROGRESS_SECS` | `pathfinding.reg_progress_secs` | `f64` | `30.0` | Seconds between registration-progress summaries, which fire on the interval even when the path count never crosses a discovery_batch_size boundary. 0 emits on every update. |
+## `dispatch`
+
+| Env var | TOML key | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `DEGENBOT_ERC6909_PROFIT` | `dispatch.erc6909_profit` | `bool` | `false` | Capture profit through an ERC-6909 vault claim instead of a plain transfer; `1` opts in. The two capture paths need different executor bytecode, so this selects the whole post-profit seam. |
+| `DEGENBOT_MIN_PROFIT_MARGIN_BPS` | `dispatch.min_profit_margin_bps` | `i32` | `0` | Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other. |
+| `DEGENBOT_CONTRACTS_DIR` | `dispatch.contracts_dir` | `Option<path>` | `(unset)` | Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly). |
 ## `strategy.settlement`
 
 | Env var | TOML key | Type | Default | Description |

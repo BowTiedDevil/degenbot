@@ -17,7 +17,6 @@ Rust-side, for both entry arms.
 from __future__ import annotations
 
 import dataclasses
-import os
 import pathlib
 import time
 from dataclasses import dataclass
@@ -37,6 +36,7 @@ if TYPE_CHECKING:
     from degenbot.dispatch import DispatchOutcome
     from degenbot.runner.bot_runner import _SessionState
 
+from degenbot.config import resolved_config
 from degenbot.dispatch import (
     DispatchCandidate,
     SkippedRecord,
@@ -76,7 +76,7 @@ def _resolve_executor_runtime_path(cfg: ArbitrageConfig) -> pathlib.Path:
 
     Resolution order (first hit wins):
     1. ``cfg.executor_runtime`` — the operator's explicit path.
-    2. ``$DEGENBOT_CONTRACTS_DIR/<file>`` — one explicit contracts dir.
+    2. The declared ``dispatch.contracts_dir`` key.
     3. Exactly one computed candidate for the source layout: the repo root
        reached by a fixed-depth hop from this module
        (``<root>/src/degenbot/runner/dispatch.py`` -> ``<root>``), then
@@ -85,9 +85,9 @@ def _resolve_executor_runtime_path(cfg: ArbitrageConfig) -> pathlib.Path:
     """
     if cfg.executor_runtime is not None:
         return pathlib.Path(cfg.executor_runtime)
-    env_dir = os.environ.get("DEGENBOT_CONTRACTS_DIR")
-    if env_dir:
-        return pathlib.Path(env_dir) / _EXECUTOR_RUNTIME_FILE
+    contracts_dir = resolved_config().values["dispatch.contracts_dir"]
+    if contracts_dir:
+        return pathlib.Path(contracts_dir) / _EXECUTOR_RUNTIME_FILE
     root = pathlib.Path(__file__).resolve().parents[3]
     return root / "contracts" / _EXECUTOR_RUNTIME_FILE
 
@@ -104,7 +104,7 @@ def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
         msg = (
             f"executor runtime bytecode not found at {bytecode_path}. "
             "Set ArbitrageConfig.executor_runtime to the file path, or set "
-            "DEGENBOT_CONTRACTS_DIR to the directory containing "
+            "DEGENBOT_CONTRACTS_DIR (dispatch.contracts_dir) to the directory containing "
             f"{_EXECUTOR_RUNTIME_FILE} (wheel installs: pass executor_runtime explicitly)."
         )
         raise RuntimeError(msg)

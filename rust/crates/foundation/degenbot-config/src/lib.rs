@@ -105,7 +105,7 @@ pub use schema::{
 };
 pub use schema::{
     BaseKind, BotConfig, ConfigValue, KeyDecl, NodeTransport, ValueKind, READABLE_KEYS, SCHEMA,
-    SECTION_PATHS,
+    SECTION_PATHS, UNPREFIXED_ENV_NAMES,
 };
 
 /// The closed set of observability domains (ADR-043 section 3). A

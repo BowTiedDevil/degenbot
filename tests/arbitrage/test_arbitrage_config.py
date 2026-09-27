@@ -22,6 +22,7 @@ import pytest
 
 from degenbot.config import RpcNotConfiguredError
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+from tests.helpers import verdict_probe as probe
 
 # A chain id no operator file, environment, or harness sets, so a refusal is
 # genuinely the absence of every layer rather than a leak.
@@ -51,7 +52,6 @@ def _full_env() -> dict[str, str]:
         "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
         "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-        "INJECT_EXECUTOR_CODE": "0",
         "INJECTED_EXECUTOR_ADDRESS": "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1",
         "EXECUTOR_OWNER_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
     }
@@ -74,69 +74,118 @@ class TestFromEnvFull:
         assert cfg.injected_address == "0x0D6d4C3CF3bD3b769De1821F2Be0D7d99913e4F1"
         assert cfg.executor_owner == "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 
-    def test_inject_code_true_overrides_executor_to_injected(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        env = _full_env() | {"INJECT_EXECUTOR_CODE": "1"}
-        cfg = _cfg(env, live=False, permutation=None)
+    def test_inject_code_true_overrides_executor_to_injected(self) -> None:
+        """The stance swaps in the overlay address the sim injects bytecode at.
 
-        assert cfg.inject_executor_code is True
-        # injection overrides the executor with the injected address
-        assert cfg.executor_address == cfg.injected_address
+        """
+        values = probe.config_values(
+            ["inject_executor_code", "executor_address", "injected_address"],
+            dotenv=_full_env(),
+            env={"DEGENBOT_INJECT_EXECUTOR_CODE": "1"},
+        )
 
-    def test_live_with_injection_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        env = _full_env() | {"INJECT_EXECUTOR_CODE": "1"}
-        with pytest.raises(ValueError, match="inject"):
-            _cfg(env, live=True, permutation=None)
+        assert values["inject_executor_code"] is True
+        assert values["executor_address"] == values["injected_address"]
+
+    def test_live_with_injection_is_refused(self) -> None:
+        """A live run cannot inject: the bytecode exists only in the overlay.
+
+        """
+        completed = probe.run(
+            probe.build_config_code([], dotenv=_full_env(), live=True),
+            env={"DEGENBOT_INJECT_EXECUTOR_CODE": "1"},
+        )
+
+        assert completed.returncode != 0, "live mode with injection active must refuse"
+        assert "injection stance is active" in completed.stderr, completed.stderr
 
 
 class TestInjectExecutorCodeUnifiedResolution:
-    """One flag, one surface: the injection stance resolves once in from_env.
+    """One declared key, one name, and the bare spelling refused everywhere.
 
     The retired arrangement read the bare name from two layers with opposite
-    defaults (dotenv dict here, module constant off os.environ elsewhere), so
-    a file-only override produced a bot that booted live but never submitted.
+    answers (authoritative in the dotenv mapping, a hard error in the OS
+    environment), so a dotenv-only ``INJECT_EXECUTOR_CODE=1`` produced a bot
+    that booted live and never submitted. The stance is the declared
+    ``simulation.inject_executor_code`` key now, and the bare name is refused
+    in every layer it can appear in.
+
     """
 
     _LEGACY = "INJECT_EXECUTOR_CODE"
     _TYPED = "DEGENBOT_INJECT_EXECUTOR_CODE"
 
-    def test_legacy_bare_os_env_name_raises_with_migration_message(
+    def test_the_bare_name_is_refused_from_the_os_environment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(self._LEGACY, "1")
-        monkeypatch.delenv(self._TYPED, raising=False)
+
         with pytest.raises(ValueError, match=self._TYPED):
             _cfg({}, live=False, permutation=None)
 
-    def test_typed_os_env_beats_dotenv_layer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv(self._LEGACY, raising=False)
-        monkeypatch.setenv(self._TYPED, "1")
-        env = _full_env() | {"INJECT_EXECUTOR_CODE": "0"}
-        cfg = _cfg(env, live=False, permutation=None)
-        assert cfg.inject_executor_code is True
+    def test_the_bare_name_is_refused_from_the_dotenv_mapping(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The layer that used to make the bare name authoritative.
 
-    def test_dotenv_only_and_env_only_agree(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        Quietly ignoring it here would reproduce the same bot: the operator
+        asked for injection in the file they edit, and a run that quietly uses
+        a deployed executor instead is the defect, not a default.
+
+        """
         monkeypatch.delenv(self._LEGACY, raising=False)
-        monkeypatch.delenv(self._TYPED, raising=False)
-        for value, expected in (("0", False), ("1", True)):
-            via_dotenv = _cfg(
-                _full_env() | {"INJECT_EXECUTOR_CODE": value}, live=False, permutation=None
-            )
-            dotenv_free = {k: v for k, v in _full_env().items() if k != "INJECT_EXECUTOR_CODE"}
-            monkeypatch.setenv(self._TYPED, value)
-            via_env = _cfg(dotenv_free, live=False, permutation=None)
-            monkeypatch.delenv(self._TYPED, raising=False)
-            assert via_dotenv.inject_executor_code == expected
-            assert via_env.inject_executor_code == expected
+
+        with pytest.raises(ValueError, match=self._TYPED):
+            _cfg(_full_env() | {self._LEGACY: "1"}, live=False, permutation=None)
+
+    def test_the_refusal_names_the_replacement_and_the_divergence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The message must say what to set and what the old name cost."""
+        monkeypatch.setenv(self._LEGACY, "0")
+
+        with pytest.raises(ValueError, match=self._TYPED) as excinfo:
+            _cfg({}, live=False, permutation=None)
+
+        message = str(excinfo.value)
+
+        assert self._TYPED in message
+        assert "simulation.inject_executor_code" in message
+        assert "never submitted" in message
+
+    def test_the_declared_key_resolves_from_the_typed_env_name(self) -> None:
+        """The honored spelling is the typed key env name, through the env layer.
+
+        """
+        values = probe.config_values(
+            ["inject_executor_code"],
+            dotenv=_full_env(),
+            env={self._TYPED: "1"},
+        )
+
+        assert values["inject_executor_code"] is True
+
+    def test_the_declared_key_reaches_the_operator_file_too(self) -> None:
+        """File-layer reach is new: the typed name was OS-only before.
+
+        A declared key an operator wrote in their file used to be ignored
+        because only the OS environment carried the typed spelling, which is
+        the same class of defect as the dotenv-only divergence above.
+
+        """
+        with probe.operator_file("[simulation]\ninject_executor_code = true\n") as written:
+            values = probe.config_values(["inject_executor_code"], operator_file=written)
+
+        assert values["inject_executor_code"] is True
 
     def test_unset_everywhere_defaults_to_no_injection(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv(self._LEGACY, raising=False)
         monkeypatch.delenv(self._TYPED, raising=False)
-        env = {k: v for k, v in _full_env().items() if k != "INJECT_EXECUTOR_CODE"}
-        cfg = _cfg(env, live=False, permutation=None)
+
+        cfg = _cfg(_full_env(), live=False, permutation=None)
+
         assert cfg.inject_executor_code is False
 
 
@@ -203,55 +252,104 @@ class TestLiveOwnerOperatorTriangle:
 
 
 class TestRunnerKnobResolution:
-    """Runner knobs resolve once: OS env > example dotenv > code default,
-    with fail-loud numeric parsing (a typo'd knob is a loud error)."""
+    """The declared driver stances resolve through the core cascade.
 
-    _KNOB_ENVS = (
-        "DEGENBOT_MAX_PATHS",
-        "DEGENBOT_MIN_PROFIT_MARGIN_BPS",
-        "DEGENBOT_ERC6909_PROFIT",
-        "DEGENBOT_REG_PROGRESS_SECS",
+    Each knob is a ``config_schema!`` key now, so a value reaches the config
+    from the environment OR the operator file, with the declared default as the
+    only fallback — and a value the schema cannot parse is refused at boot by
+    the loader rather than by this layer.
+
+    The example dotenv mapping is NOT one of those layers: it carries the
+    ``OPERATOR_*``/``EXECUTOR_*`` keys only, and a ``DEGENBOT_*`` name left in
+    it changes nothing.
+
+    """
+
+    _KNOB_FIELDS = (
+        "max_registered_paths",
+        "min_profit_margin_bps",
+        "erc6909_profit",
+        "reg_progress_secs",
     )
 
-    def _cfg(self, monkeypatch: pytest.MonkeyPatch, extra: dict[str, str]) -> ArbitrageConfig:
-        # The layer-under-test is the dotenv dict: ambient OS env (the
-        # devcontainer exports DEGENBOT_MAX_PATHS) must not leak in.
-        for name in self._KNOB_ENVS:
-            monkeypatch.delenv(name, raising=False)
-        return _cfg(_full_env() | extra, live=False, permutation=None)
+    def _probe(self, **env: str) -> dict[str, object]:
+        """Build the config in a child that declares exactly this env."""
+        return probe.config_values(self._KNOB_FIELDS, env=env)
 
-    def test_dotenv_layer_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cfg = self._cfg(
-            monkeypatch,
-            {
-                "DEGENBOT_MAX_PATHS": "50000",
-                "DEGENBOT_MIN_PROFIT_MARGIN_BPS": "25",
-                "DEGENBOT_ERC6909_PROFIT": "1",
-                "DEGENBOT_REG_PROGRESS_SECS": "15",
-            },
+    def test_the_env_layer_reaches_every_knob(self) -> None:
+        """One OS export each, all four honored."""
+        values = self._probe(
+            DEGENBOT_MAX_PATHS="50000",
+            DEGENBOT_MIN_PROFIT_MARGIN_BPS="25",
+            DEGENBOT_ERC6909_PROFIT="1",
+            DEGENBOT_REG_PROGRESS_SECS="15",
         )
-        assert cfg.max_registered_paths == 50000
-        assert cfg.min_profit_margin_bps == 25
-        assert cfg.erc6909_profit is True
-        assert cfg.reg_progress_secs == 15.0
 
-    def test_os_env_beats_dotenv(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Bypass _cfg: the helper strips knob OS env to isolate layers, but
-        # THIS test is the OS-env-beats-dotenv layer.
-        monkeypatch.setenv("DEGENBOT_MAX_PATHS", "70000")
-        cfg = _cfg(_full_env() | {"DEGENBOT_MAX_PATHS": "50000"}, live=False, permutation=None)
-        assert cfg.max_registered_paths == 70000
+        assert values["max_registered_paths"] == 50000
+        assert values["min_profit_margin_bps"] == 25
+        assert values["erc6909_profit"] is True
+        assert values["reg_progress_secs"] == pytest.approx(15.0)
 
-    def test_invalid_numeric_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        with pytest.raises(ValueError, match="DEGENBOT_MAX_PATHS"):
-            self._cfg(monkeypatch, {"DEGENBOT_MAX_PATHS": "not-a-number"})
+    def test_the_file_layer_reaches_every_knob(self) -> None:
+        """The same four keys, written as an operator file.
 
-    def test_defaults_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cfg = self._cfg(monkeypatch, {})
-        assert cfg.max_registered_paths == 100000
-        assert cfg.min_profit_margin_bps == 0
-        assert cfg.erc6909_profit is False
-        assert cfg.reg_progress_secs == 30.0
+        The dotenv-only half of the old chain could not do this: the defaults
+        lived beside the reader, and the file the operator edits was not a
+        layer at all.
+
+        """
+        with probe.operator_file(
+            "[dispatch]\nmin_profit_margin_bps = 30\nerc6909_profit = true\n"
+            "[pathfinding]\nmax_registered_paths = 40000\nreg_progress_secs = 12.5\n"
+        ) as written:
+            values = probe.config_values(self._KNOB_FIELDS, operator_file=written)
+
+        assert values["max_registered_paths"] == 40000
+        assert values["min_profit_margin_bps"] == 30
+        assert values["erc6909_profit"] is True
+        assert values["reg_progress_secs"] == pytest.approx(12.5)
+
+    def test_the_env_layer_beats_the_file_layer(self) -> None:
+        """The cascade order, proven on a declared key."""
+        with probe.operator_file("[pathfinding]\nmax_registered_paths = 40000\n") as written:
+            values = probe.config_values(
+                ["max_registered_paths"],
+                env={"DEGENBOT_MAX_PATHS": "70000"},
+                operator_file=written,
+            )
+
+        assert values["max_registered_paths"] == 70000
+
+    def test_a_bad_value_is_refused_at_boot(self) -> None:
+        """A typo'd knob is a loud refusal, not a silent default.
+
+        The refusal moved earlier in the process: the loader owns the parse,
+        and a process whose configuration cannot be loaded exits 2 naming the
+        key. Same fail-loud outcome the Python parser gave it, asked at a point
+        where the bot cannot start at all.
+
+        """
+        completed = probe.run("import degenbot", env={"DEGENBOT_MAX_PATHS": "not-a-number"})
+
+        assert completed.returncode == 2, completed.stderr
+        assert "pathfinding.max_registered_paths" in completed.stderr, completed.stderr
+        assert "not-a-number" in completed.stderr, completed.stderr
+
+    def test_the_declared_defaults_apply_when_no_layer_supplies_a_knob(self) -> None:
+        values = self._probe()
+
+        assert values["max_registered_paths"] == 100000
+        assert values["min_profit_margin_bps"] == 0
+        assert values["erc6909_profit"] is False
+        assert values["reg_progress_secs"] == pytest.approx(30.0)
+
+    def test_a_knob_left_in_the_dotenv_mapping_changes_nothing(self) -> None:
+        """The dotenv mapping is not a cascade layer for these keys."""
+        values = probe.config_values(
+            ["max_registered_paths"], dotenv={"DEGENBOT_MAX_PATHS": "12345"}
+        )
+
+        assert values["max_registered_paths"] == 100000
 
 
 class TestRpcCascade:

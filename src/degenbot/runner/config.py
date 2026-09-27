@@ -19,20 +19,17 @@ import dataclasses
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import resolve_rpc_uris
+from degenbot.config import resolve_rpc_uris, resolved_config
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.runner.diag import DiagConfig
 
 # Arbitrage configuration
 # ──────────────────────────────────────────────────────────────────
 
-# VP42BP AC item 4: the default verification retry policy. ``VerificationRetryPolicy()``
-# is seeded from the Rust ``degenbot_core::retry::RetryPolicy`` over ``degenbot._ffi``
-# (ergo 6LC4JB), so an unset env reproduces the one core-owned default set.
-_DEFAULT_VERIFICATION_RETRY_POLICY = VerificationRetryPolicy()
 # Ethereum mainnet default allowed intermediate tokens — mirrors the example's
 # ETH_MAINNET_ALLOWED_TOKENS set.
 _ALLOWED_INTERMEDIATE_TOKENS = frozenset({
@@ -64,92 +61,47 @@ _DRY_RUN_OPERATOR_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5
 _DRY_RUN_OPERATOR_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
 
-def _verification_retry_policy_from_env(env: Mapping[str, str | None]) -> VerificationRetryPolicy:
-    """Build the ``VerificationRetryPolicy`` from ``VERIFICATION_RETRY_*`` env vars.
+def _declared(path: str) -> Any:
+    """One declared key's resolved value, addressed by its dotted TOML path.
 
-    Unset vars fall back to the module defaults (mirroring
-    ``VerificationRetryPolicy()``). Non-integer / non-float values raise
-    ``ValueError`` (fail fast — a typo'd env var must NOT silently fall back to
-    defaults, masking the misconfiguration).
+    The verdict is the driver's only configuration authority, so every
+    ``DEGENBOT_*`` stance this module carries is read here rather than
+    resolved a second time. The projection is schema-driven, so a key added to
+    the core needs no edit in this file.
+
+    Args:
+        path: The declared key's dotted TOML path.
 
     Returns:
-        A :class:`VerificationRetryPolicy` built from the env overrides.
+        The resolved value, in the Python type its declared kind names. The
+        static type is deliberately loose: the projection is schema-driven, so
+        a value's kind is a property of the declaration rather than of this
+        accessor, and each caller narrows it where it consumes it.
 
     """
-    raw_attempts = env.get("VERIFICATION_RETRY_MAX_ATTEMPTS")
-    raw_base = env.get("VERIFICATION_RETRY_BASE_DELAY")
-    raw_max = env.get("VERIFICATION_RETRY_MAX_DELAY")
-    raw_jitter = env.get("VERIFICATION_RETRY_JITTER")
+    return resolved_config().values[path]
 
-    max_attempts = _parse_int_env(
-        raw_attempts, _DEFAULT_VERIFICATION_RETRY_POLICY.max_attempts, "MAX_ATTEMPTS"
-    )
-    base_delay = _parse_float_env(
-        raw_base, _DEFAULT_VERIFICATION_RETRY_POLICY.base_delay, "BASE_DELAY"
-    )
-    max_delay = _parse_float_env(raw_max, _DEFAULT_VERIFICATION_RETRY_POLICY.max_delay, "MAX_DELAY")
-    jitter = _parse_float_env(raw_jitter, _DEFAULT_VERIFICATION_RETRY_POLICY.jitter, "JITTER")
 
+def _verification_retry_policy() -> VerificationRetryPolicy:
+    """The bounded verification retry policy, from the resolved verdict.
+
+    The four ``verify.verify_retry_*`` keys are declared in the core schema
+    (``VERIFICATION_RETRY_*`` in the env layer), so the operator file and the
+    environment reach them through the one cascade and the declared default is
+    the only fallback left. A value the schema cannot parse is refused by the
+    loader at boot rather than here, which is the same fail-loud outcome at an
+    earlier point.
+
+    Returns:
+        The resolved :class:`VerificationRetryPolicy`.
+
+    """
     return VerificationRetryPolicy(
-        max_attempts=max_attempts,
-        base_delay=base_delay,
-        max_delay=max_delay,
-        jitter=jitter,
+        max_attempts=int(_declared("verify.verify_retry_max_attempts")),
+        base_delay=float(_declared("verify.verify_retry_base_delay")),
+        max_delay=float(_declared("verify.verify_retry_max_delay")),
+        jitter=float(_declared("verify.verify_retry_jitter")),
     )
-
-
-def _parse_int_env(raw: str | None, default: int, name_suffix: str) -> int:
-    """Parse a ``VERIFICATION_RETRY_*`` int env var, falling back to ``default``.
-
-    Returns:
-        ``int(raw)`` when ``raw`` is set/non-empty, else ``default``.
-
-    Raises:
-        ValueError: ``raw`` is set but not an integer.
-
-    """
-    if raw is None or not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        msg = f"VERIFICATION_RETRY_{name_suffix} must be an integer, got {raw!r}"
-        raise ValueError(msg) from None
-
-
-def _parse_diag_secs(raw: str | None, name: str) -> float:
-    """Parse a diag toggle as float seconds (0/unset = off), fail-loud on typos.
-
-    Raises:
-        ValueError: ``raw`` is set but not numeric.
-
-    """
-    if raw is None or not raw:
-        return 0.0
-    try:
-        return float(raw)
-    except ValueError:
-        msg = f"{name} must be numeric seconds, got {raw!r}"
-        raise ValueError(msg) from None
-
-
-def _parse_float_env(raw: str | None, default: float, name_suffix: str) -> float:
-    """Parse a ``VERIFICATION_RETRY_*`` float env var, falling back to ``default``.
-
-    Returns:
-        ``float(raw)`` when ``raw`` is set/non-empty, else ``default``.
-
-    Raises:
-        ValueError: ``raw`` is set but not a float.
-
-    """
-    if raw is None or not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        msg = f"VERIFICATION_RETRY_{name_suffix} must be a float, got {raw!r}"
-        raise ValueError(msg) from None
 
 
 #: The crawl shell's sizing knobs, retired at the PRG-5 hard cutover: pool
@@ -182,66 +134,46 @@ def _refuse_retired_shell_knobs() -> None:
             raise ValueError(msg)
 
 
-def _knob_raw(env: Mapping[str, str | None], name: str, default: str) -> str:
-    """One override layer for runner knobs: OS env wins over the dotenv dict.
+#: The retired bare spelling of the injection stance, and the declared key
+#: that replaced it. The bare name is refused in every layer it can appear in.
+_RETIRED_INJECTION_KEY = "INJECT_EXECUTOR_CODE"
+_TYPED_INJECTION_KEY = "DEGENBOT_INJECT_EXECUTOR_CODE"
 
-    Same spelling in both layers; empty strings are unset.
+#: One message for both layers, so the refusal names the replacement and the
+#: divergence the bare name cost whichever layer the operator reached for.
+_RETIRED_INJECTION_KEY_REFUSAL = (
+    f"{_RETIRED_INJECTION_KEY} is retired in every layer: set "
+    f"{_TYPED_INJECTION_KEY} instead (typed key simulation.inject_executor_code, "
+    "docs/rust-config-keys.md). The example dotenv mapping is no longer a layer "
+    "for the injection stance, and the bare name used to be honored there with "
+    "the opposite default the OS environment refused — a divergence that "
+    "produced a live bot which never submitted."
+)
+
+
+def _refuse_retired_injection_key(env: Mapping[str, str | None]) -> None:
+    """Refuse the bare injection name wherever an operator can set it.
+
+    The bare name was a hard ``ValueError`` from the OS environment but
+    authoritative from the example dotenv mapping, so the same spelling meant
+    two different things depending on the layer and an operator's dotenv-only
+    ``INJECT_EXECUTOR_CODE=1`` produced a live bot that never submitted (the
+    divergence surfaced as WARNING-only skip lines, not an error). One
+    declaration means one name: the bare spelling is refused in the OS
+    environment AND in the dotenv mapping, and the stance itself is the
+    declared ``simulation.inject_executor_code`` key.
+
+    Args:
+        env: the example dotenv mapping ``from_env`` was handed.
+
+    Raises:
+        ValueError: The retired bare name is present in either layer.
+
     """
-    raw = os.environ.get(name)
-    if not raw:
-        raw = env.get(name)
-    return raw or default
-
-
-def _knob_int(env: Mapping[str, str | None], name: str, default: int) -> int:
-    raw = _knob_raw(env, name, str(default))
-    try:
-        return int(raw)
-    except ValueError:
-        msg = f"{name} must be an integer, got {raw!r}"
-        raise ValueError(msg) from None
-
-
-def _knob_float(env: Mapping[str, str | None], name: str, default: float) -> float:
-    raw = _knob_raw(env, name, str(default))
-    try:
-        return float(raw)
-    except ValueError:
-        msg = f"{name} must be numeric, got {raw!r}"
-        raise ValueError(msg) from None
-
-
-def _knob_bool(env: Mapping[str, str | None], name: str, default: bool) -> bool:
-    raw = _knob_raw(env, name, "1" if default else "0")
-    return raw.lower() in {"1", "true", "on"}
-
-
-def _resolve_inject_executor_code(env: Mapping[str, str | None]) -> bool:
-    """Resolve the executor code-injection stance from one precedence chain.
-
-    Chain: OS env ``DEGENBOT_INJECT_EXECUTOR_CODE`` > the example dotenv's
-    ``INJECT_EXECUTOR_CODE`` > ``False``. Injection is opt-in: the default is
-    the deployed-executor posture a live run needs.
-
-    The bare name is refused in the OS environment: it historically fed a
-    second import-time constant with the opposite default, and a dotenv-only
-    override then produced a live bot that never submitted (the divergence
-    went to WARNING-only skip lines, not an error). A ValueError at config
-    load is cheap; a silently non-submitting live bot is not.
-    """
-    if "INJECT_EXECUTOR_CODE" in os.environ:
-        msg = (
-            "INJECT_EXECUTOR_CODE is retired as an OS environment variable. "
-            "Set DEGENBOT_INJECT_EXECUTOR_CODE instead (typed key "
-            "simulation.inject_executor_code, docs/rust-config-keys.md). "
-            "The example dotenv file may still carry INJECT_EXECUTOR_CODE as "
-            "its file-layer spelling of the same stance."
-        )
-        raise ValueError(msg)
-    typed = os.environ.get("DEGENBOT_INJECT_EXECUTOR_CODE")
-    if typed is not None:
-        return typed.lower() in {"1", "true", "on"}
-    return (env.get("INJECT_EXECUTOR_CODE") or "0") == "1"
+    if _RETIRED_INJECTION_KEY in os.environ:
+        raise ValueError(_RETIRED_INJECTION_KEY_REFUSAL)
+    if _RETIRED_INJECTION_KEY in env:
+        raise ValueError(_RETIRED_INJECTION_KEY_REFUSAL)
 
 
 def _checksum_or_empty(addr: str | None) -> str:
@@ -310,26 +242,25 @@ class ArbitrageConfig:
     # Path discovery
     allowed_intermediate_tokens: frozenset[str]
     permutation_filter: frozenset[str] | None
-    # VP42BP AC item 4: bounded retry-with-backoff for transient verification
-    # RPC failures (per-call transport / provider-init). Mismatch stays fatal.
+    # Bounded retry-with-backoff for transient verification RPC failures
+    # (per-call transport / provider-init). Mismatch stays fatal.
     verification_retry_policy: VerificationRetryPolicy
-    # Runner knobs — the DEGENBOT_* operational stances. One resolution
-    # chain (OS env > example dotenv > default), fail-loud parse; the
-    # import-time module constants that used to carry them diverged from the
-    # dotenv silently when set in only one layer.
+    # The declared driver stances (the `dispatch.*` and `pathfinding.*` keys).
+    # Each arrives from the resolved verdict, so the operator file and the
+    # environment reach them through the one cascade `degenbot-config` owns.
     erc6909_profit: bool
     min_profit_margin_bps: int
     reg_progress_secs: float
     max_registered_paths: int
     # Run mode
     dry_run: bool
+    # The incident probes the cockpit arms at start(). Required, because the
+    # declared `diagnostics.*` keys are the only place their defaults live.
+    diag: DiagConfig
     # Explicit executor-runtime bytecode path (file containing 0x-prefixed hex).
-    # None -> DEGENBOT_CONTRACTS_DIR -> one computed source-layout candidate
-    # (NO filesystem walk). Wheel installs: pass this explicitly.
+    # None -> the `dispatch.contracts_dir` key -> one computed source-layout
+    # candidate (NO filesystem walk). Wheel installs: pass this explicitly.
     executor_runtime: str | Path | None = None
-    # Diagnostics harnesses: the cockpit arms these probes at start().
-    # Zero-config arms nothing (production default).
-    diag: DiagConfig = dataclasses.field(default_factory=DiagConfig)
 
     @classmethod
     def from_env(
@@ -340,7 +271,13 @@ class ArbitrageConfig:
         permutation: str | None,
         rpc: RpcCascadeOverrides | None = None,
     ) -> "ArbitrageConfig":
-        """Build a ArbitrageConfig from a dotenv-style env mapping + CLI flags.
+        """Build a ArbitrageConfig from a dotenv mapping + CLI flags + the verdict.
+
+        The ``env`` mapping carries the example's own ``OPERATOR_*`` /
+        ``EXECUTOR_*`` dotenv keys only. Every ``DEGENBOT_*`` operational
+        stance is a declared schema key, so those arrive from
+        :func:`degenbot.config.resolved_config` and reach the operator file as
+        well as the environment; nothing here re-resolves a layer.
 
         Behavior:
         - operator: live mode requires both OPERATOR_ADDRESS/PRIVATE_KEY
@@ -353,20 +290,22 @@ class ArbitrageConfig:
           endpoint in any layer raises :class:`RpcNotConfiguredError`.
         - executor: zero address is a fatal ``ValueError`` (a factory cannot
           return early like ``main()``'s ``return``).
-        - inject code: when ``INJECT_EXECUTOR_CODE=="1"``, the executor address
-          is overridden to ``INJECTED_EXECUTOR_ADDRESS``.
+        - inject code: when ``simulation.inject_executor_code`` resolves true,
+          the executor address is overridden to ``INJECTED_EXECUTOR_ADDRESS``.
         - permutation: a CLI string becomes a singleton frozenset; ``None`` stays ``None``.
 
         Returns:
             A frozen ``ArbitrageConfig`` with cascade-resolved ``node_http``/``node_ws``.
 
         Raises:
-            ValueError: missing operator in live mode, zero-address executor,
-                or ``RpcNotConfiguredError`` (a ``ValueError`` subclass) when no
-                RPC endpoint is configured for ``chain_id`` in any cascade layer.
+            ValueError: missing operator in live mode, zero-address executor, a
+                retired knob present, or ``RpcNotConfiguredError`` (a
+                ``ValueError`` subclass) when no RPC endpoint is configured for
+                ``chain_id`` in any cascade layer.
 
         """
         _refuse_retired_shell_knobs()
+        _refuse_retired_injection_key(env)
         overrides = rpc if rpc is not None else RpcCascadeOverrides()
 
         # ── Operator ──
@@ -402,7 +341,7 @@ class ArbitrageConfig:
             msg = "EXECUTOR_CONTRACT_ADDRESS is the zero address"
             raise ValueError(msg)
 
-        inject_executor_code = _resolve_inject_executor_code(env)
+        inject_executor_code = bool(_declared("simulation.inject_executor_code"))
         injected_address = _checksum_or_empty(
             env.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
         )
@@ -426,29 +365,25 @@ class ArbitrageConfig:
             # veto made it *look* like a live run; refuse it at config load.
             msg = (
                 "live mode requires a deployed executor: the injection stance is active "
-                "(simulation.inject_executor_code / DEGENBOT_INJECT_EXECUTOR_CODE / the "
-                "dotenv INJECT_EXECUTOR_CODE). Set it to 0 and deploy the executor first."
+                "(simulation.inject_executor_code / DEGENBOT_INJECT_EXECUTOR_CODE). "
+                "Set it to 0 and deploy the executor first."
             )
             raise ValueError(msg)
-        # main() behavior: when INJECT_EXECUTOR_CODE, override executor with injected
+        # The injection stance swaps in the overlay address the sim injects
+        # bytecode at, so the executor the bot dispatches to follows it.
         if inject_executor_code:
             executor_address = injected_address
 
-        verification_retry_policy = _verification_retry_policy_from_env(env)
+        verification_retry_policy = _verification_retry_policy()
         executor_runtime = env.get("EXECUTOR_RUNTIME") or None
-        # The diagnostics harnesses' knobs, parsed here (the only
-        # env-reading site) instead of the example's raw os.environ.get.
+        # The incident probes' intervals come from the declared
+        # `diagnostics.*` keys; zero is the declared default, so there is no
+        # second "off" spelling here.
         diag = DiagConfig(
-            tracemalloc_secs=_parse_diag_secs(
-                env.get("DEGENBOT_TRACEMALLOC_SECS"), "DEGENBOT_TRACEMALLOC_SECS"
-            ),
-            procmem_secs=_parse_diag_secs(
-                env.get("DEGENBOT_PROCMEM_SECS"), "DEGENBOT_PROCMEM_SECS"
-            ),
-            procmem_csv=env.get("DEGENBOT_PROCMEM_CSV") or "logs/procmem.csv",
-            faulthandler_timeout_secs=_parse_diag_secs(
-                env.get("DEGENBOT_FAULTHANDLER_TIMEOUT_SECS"), "DEGENBOT_FAULTHANDLER_TIMEOUT_SECS"
-            ),
+            tracemalloc_secs=float(_declared("diagnostics.tracemalloc_secs")),
+            procmem_secs=float(_declared("diagnostics.procmem_secs")),
+            procmem_csv=str(_declared("diagnostics.procmem_csv")),
+            faulthandler_timeout_secs=float(_declared("diagnostics.faulthandler_timeout_secs")),
         )
 
         return cls(
@@ -464,10 +399,10 @@ class ArbitrageConfig:
             allowed_intermediate_tokens=_ALLOWED_INTERMEDIATE_TOKENS,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
-            erc6909_profit=_knob_bool(env, "DEGENBOT_ERC6909_PROFIT", default=False),
-            min_profit_margin_bps=_knob_int(env, "DEGENBOT_MIN_PROFIT_MARGIN_BPS", 0),
-            reg_progress_secs=_knob_float(env, "DEGENBOT_REG_PROGRESS_SECS", 30.0),
-            max_registered_paths=_knob_int(env, "DEGENBOT_MAX_PATHS", 100_000),
+            erc6909_profit=bool(_declared("dispatch.erc6909_profit")),
+            min_profit_margin_bps=int(_declared("dispatch.min_profit_margin_bps")),
+            reg_progress_secs=float(_declared("pathfinding.reg_progress_secs")),
+            max_registered_paths=int(_declared("pathfinding.max_registered_paths")),
             verification_retry_policy=verification_retry_policy,
             executor_runtime=executor_runtime,
             diag=diag,

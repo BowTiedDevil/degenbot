@@ -250,7 +250,6 @@ def test_sim_failures_continue_by_default(
     implicit default.
     """
     _arm_sim_failure_trap(monkeypatch)
-    monkeypatch.delenv("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", raising=False)
     failures = [{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}]
     with caplog.at_level("INFO", logger="degenbot"):
         _render_sim_failures(_outcome(failures), current_block=100)
@@ -260,22 +259,32 @@ def test_sim_failures_continue_by_default(
     assert any("[sim-fail]" in r.message for r in caplog.records)
 
 
-def test_explicitly_ignoring_a_bucket_opts_out(
-    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Dumbing the tripwire down is an EXPLICIT operator opt-in (the env var),
-    not a default: setting DEGENBOT_SIM_EXIT_IGNORE_BUCKETS=empty makes that
-    bucket non-fatal. There is no implicit mask otherwise.
+def test_ignoring_a_bucket_opts_the_trap_out() -> None:
+    """Narrowing an armed trap is an EXPLICIT operator opt-in, not a default.
+    The ignore set is the declared ``simulation.exit_ignore_buckets`` key, so
+    the trap stays armed and the named bucket stops counting. There is no
+    implicit mask: an armed process with no list still traps.
     """
-    _arm_sim_failure_trap(monkeypatch)
-    monkeypatch.setenv("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "empty")
-    failures = [{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}]
-    with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures), current_block=100)
-    lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
-    assert len(lines) == 1
-    assert "bucket=empty" in lines[0]
-    assert not any("[sim-trap]" in r.message for r in caplog.records)
+    proc = _run_trap_child(
+        DEGENBOT_SIM_EXIT_ON_FAIL="1",
+        DEGENBOT_SIM_EXIT_IGNORE_BUCKETS="empty",
+    )
+
+    assert proc.returncode == 0, f"the ignored bucket must not halt: {_why(proc)}"
+    assert "NO_TRAP" in proc.stdout, _why(proc)
+
+
+def test_the_operator_file_can_ignore_a_bucket_too(tmp_path: Path) -> None:
+    """The file layer narrows the trap, which only the environment could."""
+
+    proc = _run_trap_child(
+        DEGENBOT_CONFIG=_operator_file(
+            tmp_path, "sim_exit_on_fail = true\nexit_ignore_buckets = 'empty'\n"
+        ),
+    )
+
+    assert proc.returncode == 0, f"the file-declared opt-out must not halt: {_why(proc)}"
+    assert "NO_TRAP" in proc.stdout, _why(proc)
 
 
 def test_operator_exit_override_still_traps(
@@ -292,7 +301,6 @@ def test_operator_exit_override_still_traps(
 
     monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
     _arm_sim_failure_trap(monkeypatch)
-    monkeypatch.delenv("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", raising=False)
     failures = [
         {"path_id": 1, "bucket": "Error(string)", "fail_index": 3, "revert_data": "0x08c379a0"}
     ]

@@ -28,10 +28,10 @@ death" rule (incident 2026-08-20).
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from degenbot.config import resolved_config
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._dispatch import (
     _build_dispatch_candidates,
@@ -58,20 +58,19 @@ if TYPE_CHECKING:
     _Submitter = Callable[..., Any]
 
 
-def pipeline_concurrency_from_env() -> int:
-    """Parse ``DEGENBOT_SIM_PIPELINE_CONCURRENCY`` (default 8, floor 1).
+def pipeline_concurrency() -> int:
+    """The resolved in-flight sim cap, floored at one.
 
-    ``1`` reproduces the legacy serial behavior exactly (one sim in flight,
-    FIFO submit) - the A/B arm for the T5 soak.
+    The declared ``simulation.pipeline_concurrency`` key: the operator file
+    and the environment reach it through the one cascade. ``1`` reproduces the
+    serial reference exactly (one sim in flight, FIFO submit) - the A/B arm
+    for an offline soak.
+
+    Returns:
+        The number of sims in flight per block, at least 1.
+
     """
-    raw = os.environ.get("DEGENBOT_SIM_PIPELINE_CONCURRENCY")
-    if raw is None or not raw.strip():
-        return 8
-    try:
-        value = int(raw)
-    except ValueError:
-        return 8
-    return max(1, value)
+    return max(1, int(resolved_config().values["simulation.pipeline_concurrency"]))
 
 
 @dataclass
@@ -188,9 +187,7 @@ class SimSubmitPipeline:
         leaves keep the production bindings unchanged.
         """
         self._session = session
-        self._concurrency = (
-            concurrency if concurrency is not None else pipeline_concurrency_from_env()
-        )
+        self._concurrency = concurrency if concurrency is not None else pipeline_concurrency()
         self._sem = asyncio.Semaphore(self._concurrency)
         self._queue: asyncio.Queue[_BatchWork | None] = asyncio.Queue()
         self._submitter: asyncio.Task[None] | None = None

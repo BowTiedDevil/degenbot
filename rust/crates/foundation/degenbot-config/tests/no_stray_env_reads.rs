@@ -27,7 +27,8 @@ use std::sync::OnceLock;
 ///
 /// A name is reported as written at the call site, so a read whose name is
 /// computed is enumerated by the identifier it computes from -- the loader's
-/// `env::var(name)` seam and the companion's `_knob_raw` alike. An expression
+/// `env::var(name)` seam and the companion's retired-key identifiers alike.
+/// An expression
 /// no name is reducible from is reported `<computed>`, which no file may be
 /// enumerated for by accident.
 fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
@@ -159,43 +160,19 @@ fn insert_python_entries(map: &mut BTreeMap<&'static str, &'static [&'static str
     // schema does not own, read at a site that predates the cascade, or a
     // tooling posture the cascade does not express.
     //
-    // The sim pipeline's A/B arm: `1` reproduces the serial reference for
-    // an offline soak, so it selects a measurement condition rather than
-    // bot configuration.
-    map.insert(
-        "src/degenbot/runner/_sim_submit_pipeline.py",
-        &["DEGENBOT_SIM_PIPELINE_CONCURRENCY"][..],
-    );
-    // The sim-failure trap's per-bucket opt-out, read when a failure batch
-    // arrives. The tripwire's ARMED state is not here: it is the declared
-    // `simulation.sim_exit_on_fail` key, read from the verdict, so every
-    // cascade layer reaches it. This one is the operator's undeclared
-    // narrowing of an armed trap -- a tool posture, not a bot setting, and
-    // the next schema chunk is where it belongs.
-    map.insert(
-        "src/degenbot/runner/_render.py",
-        &["DEGENBOT_SIM_EXIT_IGNORE_BUCKETS"][..],
-    );
-    // Where the shipped executor bundle lives, consulted only when the
-    // in-process `executor_runtime` override is absent. A filesystem
-    // location, the same class as the CLI's manifest-dir plumbing.
-    map.insert(
-        "src/degenbot/runner/_dispatch.py",
-        &["DEGENBOT_CONTRACTS_DIR"][..],
-    );
-    // `name` is `_knob_raw`'s parameter: the runner's own knob reader takes
-    // the name from its caller, so the read is reported by the identifier
-    // it computes from. `INJECT_EXECUTOR_CODE` is present only to be
-    // refused -- its presence in the OS environment is a hard error, never
-    // an honored value. `DEGENBOT_INJECT_EXECUTOR_CODE` is the typed
-    // injection stance's env spelling.
+    // The only env reads the companion still owns are refusals, and neither
+    // honors a value:
+    //   - `name` is the closed retired-knob list's element: presence of
+    //     `DEGENBOT_REG_QUEUE_BOUND` / `DEGENBOT_REG_WORKERS` in the OS
+    //     environment fails the config load, and nothing would consume the
+    //     value if one were offered.
+    //   - `_RETIRED_INJECTION_KEY` is the retired bare spelling of the
+    //     injection stance, refused in every layer; the honored spelling is
+    //     the declared `simulation.inject_executor_code` key, which arrives
+    //     through the verdict.
     map.insert(
         "src/degenbot/runner/config.py",
-        &[
-            "name",
-            "INJECT_EXECUTOR_CODE",
-            "DEGENBOT_INJECT_EXECUTOR_CODE",
-        ][..],
+        &["name", "_RETIRED_INJECTION_KEY"][..],
     );
     // The console level for the Python side of the log pipeline, the same
     // class as the Rust `RUST_LOG` tooling signal: output plumbing, not

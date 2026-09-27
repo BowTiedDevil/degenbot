@@ -1,18 +1,20 @@
-"""C6: diagnostic harnesses move from the example entrypoint to the driver
-cockpit (degenbot.runner.diag), configured through the typed loader
-(``ArbitrageConfig.from_env`` — the only env-reading site, KAHU5W).
+"""The incident probes are declared keys, configured through the verdict.
 
-The example used to read ``DEGENBOT_TRACEMALLOC_SECS`` /
-``DEGENBOT_PROCMEM_SECS`` / ``DEGENBOT_PROCMEM_CSV`` /
-``DEGENBOT_FAULTHANDLER_TIMEOUT_SECS`` with raw ``os.environ.get`` calls.
+Each of ``DEGENBOT_TRACEMALLOC_SECS`` / ``DEGENBOT_PROCMEM_SECS`` /
+``DEGENBOT_PROCMEM_CSV`` / ``DEGENBOT_FAULTHANDLER_TIMEOUT_SECS`` is a
+``config_schema!`` key now. They used to be read off the example dotenv
+mapping alone, so an OS export never reached them and the defaults were
+written down twice — beside the reader and in the schema. One
+declaration answers for both, and the operator file reaches the probes as
+readily as the environment.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.diag import DiagConfig, arm_diagnostics
+from tests.helpers import verdict_probe as probe
 
 
 @pytest.fixture(autouse=True)
@@ -26,43 +28,102 @@ def _full_env() -> dict[str, str]:
         "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
         "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-        "INJECT_EXECUTOR_CODE": "0",
         "INJECTED_EXECUTOR_ADDRESS": "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1",
         "EXECUTOR_OWNER_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
     }
 
 
+#: The four probe fields, as the config names them.
+_DIAG_FIELDS = tuple(
+    f"diag.{name}"
+    for name in (
+        "tracemalloc_secs",
+        "procmem_secs",
+        "procmem_csv",
+        "faulthandler_timeout_secs",
+    )
+)
+
+#: Every probe declared off, spelled out because ``DiagConfig`` carries no
+#: defaults of its own: the schema declaration owns them.
+_PROBES_OFF = {
+    "tracemalloc_secs": 0.0,
+    "procmem_secs": 0.0,
+    "procmem_csv": "logs/procmem.csv",
+    "faulthandler_timeout_secs": 0.0,
+}
+
+
 class TestDiagConfigFromEnv:
-    """``ArbitrageConfig.from_env`` resolves the diag knobs off the env mapping."""
+    """The probe intervals are declared keys, so every layer reaches them."""
 
-    def test_defaults_all_off(self) -> None:
-        cfg = ArbitrageConfig.from_env(_full_env(), live=False, permutation=None)
-        assert cfg.diag == DiagConfig()
+    def test_the_declared_defaults_arm_nothing(self) -> None:
+        values = probe.config_values(_DIAG_FIELDS)
 
-    def test_env_keys_resolved(self) -> None:
-        env = _full_env() | {
-            "DEGENBOT_TRACEMALLOC_SECS": "30",
-            "DEGENBOT_PROCMEM_SECS": "5",
-            "DEGENBOT_PROCMEM_CSV": "custom/procmem.csv",
-            "DEGENBOT_FAULTHANDLER_TIMEOUT_SECS": "60",
-        }
-        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
-        assert cfg.diag.tracemalloc_secs == pytest.approx(30.0)
-        assert cfg.diag.procmem_secs == pytest.approx(5.0)
-        assert cfg.diag.procmem_csv == "custom/procmem.csv"
-        assert cfg.diag.faulthandler_timeout_secs == pytest.approx(60.0)
+        assert values == {f"diag.{name}": value for name, value in _PROBES_OFF.items()}
 
-    def test_non_numeric_value_raises(self) -> None:
-        env = _full_env() | {"DEGENBOT_TRACEMALLOC_SECS": "banana"}
-        with pytest.raises(ValueError, match="DEGENBOT_TRACEMALLOC_SECS"):
-            ArbitrageConfig.from_env(env, live=False, permutation=None)
+    def test_the_env_layer_reaches_every_probe(self) -> None:
+        values = probe.config_values(
+            _DIAG_FIELDS,
+            env={
+                "DEGENBOT_TRACEMALLOC_SECS": "30",
+                "DEGENBOT_PROCMEM_SECS": "5",
+                "DEGENBOT_PROCMEM_CSV": "custom/procmem.csv",
+                "DEGENBOT_FAULTHANDLER_TIMEOUT_SECS": "60",
+            },
+        )
+
+        assert values["diag.tracemalloc_secs"] == pytest.approx(30.0)
+        assert values["diag.procmem_secs"] == pytest.approx(5.0)
+        assert values["diag.procmem_csv"] == "custom/procmem.csv"
+        assert values["diag.faulthandler_timeout_secs"] == pytest.approx(60.0)
+
+    def test_the_file_layer_reaches_every_probe(self) -> None:
+        """Reach the old dotenv-only chain could not offer."""
+
+        body = """[diagnostics]
+tracemalloc_secs = 30.0
+procmem_secs = 5.0
+procmem_csv = 'custom/procmem.csv'
+faulthandler_timeout_secs = 60.0
+ """
+        with probe.operator_file(body) as written:
+            values = probe.config_values(_DIAG_FIELDS, operator_file=written)
+
+        assert values["diag.tracemalloc_secs"] == pytest.approx(30.0)
+        assert values["diag.procmem_secs"] == pytest.approx(5.0)
+        assert values["diag.procmem_csv"] == "custom/procmem.csv"
+        assert values["diag.faulthandler_timeout_secs"] == pytest.approx(60.0)
+
+    def test_a_probe_key_left_in_the_dotenv_mapping_changes_nothing(self) -> None:
+        """The dotenv mapping is not a cascade layer for these keys."""
+
+        values = probe.config_values(
+            ["diag.tracemalloc_secs"], dotenv={"DEGENBOT_TRACEMALLOC_SECS": "30"}
+        )
+
+        assert values["diag.tracemalloc_secs"] == pytest.approx(0.0)
+
+    def test_a_non_numeric_interval_is_refused_at_boot(self) -> None:
+        """A typo'd interval is a loud refusal, not a silent default.
+
+        The loader owns the parse now, so the refusal is the process refusing
+        to start at all.
+
+        """
+
+        completed = probe.run("import degenbot", env={"DEGENBOT_TRACEMALLOC_SECS": "banana"})
+
+        assert completed.returncode == 2, completed.stderr
+        assert "diagnostics.tracemalloc_secs" in completed.stderr, completed.stderr
+        assert "banana" in completed.stderr, completed.stderr
 
 
 class TestArmDiagnostics:
     """``arm_diagnostics`` arms only configured probes, each exactly once."""
 
     def test_zero_config_arms_nothing(self) -> None:
-        assert arm_diagnostics(DiagConfig()) == []
+        assert arm_diagnostics(DiagConfig(**_PROBES_OFF)) == []
 
     def test_detached_probes_start(self, tmp_path) -> None:
         cfg = DiagConfig(

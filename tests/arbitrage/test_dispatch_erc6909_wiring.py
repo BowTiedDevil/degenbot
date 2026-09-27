@@ -34,11 +34,13 @@ class _EngineRegistry:
 
 
 def test_erc6909_default_is_off() -> None:
-    # Custody capture (the long-standing production behavior) stays the
-    # default: the knob is off unless the operator opts in (dotenv or
-    # DEGENBOT_ERC6909_PROFIT at the from_env layer).
+    """Custody capture stays the default: the declared key is off.
+
+    ``dispatch.erc6909_profit`` declares ``false``, so a process that names no
+    layer runs the custody-transfer path. The opt-in is the key (env or file).
+    """
     cfg = ArbitrageConfig.from_env(
-        {"INJECT_EXECUTOR_CODE": "0"},
+        {},
         live=False,
         permutation=None,
         rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
@@ -70,8 +72,7 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
                 "OPERATOR_PRIVATE_KEY": "0x"
                 + "11" * 32,  # valid secp256k1 scalar, cosmetic (sim gate first)
                 "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-                "INJECT_EXECUTOR_CODE": "0",
-            },
+                    },
             live=False,
             permutation=None,
             rpc=RpcCascadeOverrides(node="ws://localhost:8546"),

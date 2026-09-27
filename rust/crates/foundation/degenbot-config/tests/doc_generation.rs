@@ -51,11 +51,11 @@ fn rendered_doc_covers_every_key_with_all_columns() {
             key.toml_path
         );
     }
-    // Every key contributes exactly one table row.
-    let row_count = rendered
-        .lines()
-        .filter(|l| l.starts_with("| `DEGENBOT_"))
-        .count();
+    // Every key contributes exactly one table row. The counter is anchored on
+    // the row shape, not on the `DEGENBOT_` prefix: the declared names that
+    // predate the prefix are still rows, and a prefix-anchored count would
+    // quietly stop counting them.
+    let row_count = rendered.lines().filter(|l| l.starts_with("| `")).count();
     assert_eq!(row_count, SCHEMA.len(), "one row per schema key");
 }
 

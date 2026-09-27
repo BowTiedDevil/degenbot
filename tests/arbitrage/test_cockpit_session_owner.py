@@ -50,8 +50,7 @@ def _cfg() -> ArbitrageConfig:
             "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
             "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
             "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-            "INJECT_EXECUTOR_CODE": "0",
-        },
+            },
         live=True,
         permutation=None,
     )

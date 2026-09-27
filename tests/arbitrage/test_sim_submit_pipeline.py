@@ -18,11 +18,13 @@ live RPC, no Rust engine, no wall-clock sleeps.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
 import degenbot.runner._sim_submit_pipeline as mod
 from tests.fakes.runner_pipelines import SimSubmitHarness
+from tests.helpers import verdict_probe as probe
 
 Raw = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]
 
@@ -88,16 +90,45 @@ async def test_leaf_failure_aborts_loudly() -> None:
         pipe.raise_if_failed()
 
 
-def test_concurrency_env_parse(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Floor at 1, default 8, garbage tolerated."""
-    monkeypatch.delenv("DEGENBOT_SIM_PIPELINE_CONCURRENCY", raising=False)
-    assert mod.pipeline_concurrency_from_env() == 8
-    monkeypatch.setenv("DEGENBOT_SIM_PIPELINE_CONCURRENCY", "1")
-    assert mod.pipeline_concurrency_from_env() == 1
-    monkeypatch.setenv("DEGENBOT_SIM_PIPELINE_CONCURRENCY", "0")
-    assert mod.pipeline_concurrency_from_env() == 1
-    monkeypatch.setenv("DEGENBOT_SIM_PIPELINE_CONCURRENCY", "garbage")
-    assert mod.pipeline_concurrency_from_env() == 8
+#: Read the resolved cap in a child, because the cascade is installed at FFI
+#: module init: a value exported after this process started cannot reach it.
+_CONCURRENCY_PROBE = """\
+import degenbot.runner._sim_submit_pipeline as mod
+
+
+print("CONCURRENCY", mod.pipeline_concurrency())
+"""
+
+
+def _concurrency(**env: str) -> int:
+    """The resolved cap, from a process that declared these layers."""
+    completed = probe.run(_CONCURRENCY_PROBE, env=env)
+    assert completed.returncode == 0, completed.stderr
+    line = next(
+        line for line in completed.stdout.splitlines() if line.startswith("CONCURRENCY")
+    )
+    return int(line.split()[1])
+
+
+def test_the_declared_default_is_eight() -> None:
+    assert _concurrency() == 8
+
+
+def test_one_reproduces_the_serial_reference() -> None:
+    assert _concurrency(DEGENBOT_SIM_PIPELINE_CONCURRENCY="1") == 1
+
+
+def test_zero_is_floored_at_one() -> None:
+    """A cap of zero sims would wedge the pipeline, not serialize it."""
+    assert _concurrency(DEGENBOT_SIM_PIPELINE_CONCURRENCY="0") == 1
+
+
+def test_the_operator_file_reaches_the_cap(tmp_path: Path) -> None:
+    """The A/B arm is a declared key, so the file layer arms it too."""
+    with probe.operator_file("[simulation]\npipeline_concurrency = 3\n") as written:
+        assert probe.resolved_value("simulation.pipeline_concurrency", operator_file=written)[
+            "value"
+        ] == 3
 
 
 def _raw(pid: int) -> Raw:

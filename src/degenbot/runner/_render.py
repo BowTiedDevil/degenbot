@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -368,11 +367,12 @@ def _enforce_sim_failure_policy(
     # Fail HARD and LOUD: ANY un-ignored failure bucket reaches the bot's
     # stop decision below (ADR-021 — detect/classify/stop loudly, never mask).
     # There is NO default ignore set; the operator OPT-IN dumbs the tripwire
-    # down per-bucket via DEGENBOT_SIM_EXIT_IGNORE_BUCKETS.
+    # down per-bucket through the declared `simulation.exit_ignore_buckets`
+    # key, so the file layer narrows the trap as readily as the environment.
     ignore = {
-        b.strip()
-        for b in os.environ.get("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "").split(",")
-        if b.strip()
+        bucket.strip()
+        for bucket in str(resolved_config().values["simulation.exit_ignore_buckets"]).split(",")
+        if bucket.strip()
     }
     trap_failures = [f for f in failures if f.get("bucket") not in ignore]
     if not trap_failures:
