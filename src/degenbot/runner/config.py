@@ -4,7 +4,7 @@ This module owns the Python-companion, ``stays-python`` surface that the
 runtime driver (``BotRunner``) and its tests consume:
 
 - :class:`ArbitrageConfig` — the unified frozen config value object (built from
-  the resolved verdict + CLI flags via :meth:`ArbitrageConfig.from_env`;
+  the resolved verdict + CLI flags via :meth:`ArbitrageConfig.build`;
   the operator/executor identity it carries is read from the process
   environment).
 
@@ -60,13 +60,35 @@ _DEFAULT_EXECUTOR_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 _DRY_RUN_OPERATOR_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 _DRY_RUN_OPERATOR_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
-# Private keys the repository publishes. A live run must never sign with one:
-# it would submit real transactions under a key anyone can read. Compared
-# case-insensitively against the normalized (0x-prefixed) spelling.
-_PLACEHOLDER_OPERATOR_PRIVATE_KEYS = frozenset({
-    "0x" + "0" * 64,  # the former all-zero dry-run placeholder
-    _DRY_RUN_OPERATOR_PRIVATE_KEY,  # the Anvil account-0 throwaway
-})
+# Private keys the repository publishes, from their one declared home. The
+# Python driver and the Rust parity example both read this manifest rather
+# than carry a copy that can drift; a live run refuses what it names, because
+# signing with a published key would submit real transactions under a key
+# anyone can read.
+_PUBLISHED_OPERATOR_PRIVATE_KEYS_PATH = Path(__file__).with_name(
+    "published_operator_private_keys.txt"
+)
+
+
+def _published_operator_private_keys() -> frozenset[str]:
+    """The lowercased, 0x-prefixed keys the repository publishes.
+
+    Blank lines and ``#`` comments are ignored, so the manifest can carry the
+    classification's rationale beside the keys.
+
+    Returns:
+        The published keys, compared case-insensitively by the live refusal.
+
+    """
+    text = _PUBLISHED_OPERATOR_PRIVATE_KEYS_PATH.read_text(encoding="utf-8")
+    return frozenset(
+        stripped.lower()
+        for raw in text.splitlines()
+        if (stripped := raw.strip()) and not stripped.startswith("#")
+    )
+
+
+_PLACEHOLDER_OPERATOR_PRIVATE_KEYS = _published_operator_private_keys()
 
 
 def _declared(values: Mapping[str, Any] | None, path: str) -> Any:
@@ -201,7 +223,7 @@ def _checksum_or_empty(addr: str | None) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class RpcCascadeOverrides:
-    """The :func:`degenbot.config.resolve_rpc_uris` inputs for :meth:`ArbitrageConfig.from_env`.
+    """The :func:`degenbot.config.resolve_rpc_uris` inputs for :meth:`ArbitrageConfig.build`.
 
     The chain identity and the explicit-override endpoint travel together: they
     are exactly the arguments the RPC cascade consumes, so bundling them keeps
@@ -221,7 +243,7 @@ class ArbitrageConfig:
 
     Replaces the scattered config sources (the example's dotenv file,
     module-top constants, and CLI flags) with a single frozen value object.
-    Construct via :meth:`from_env`; the bridge onto ``main()`` lives in the
+    Construct via :meth:`build`; the bridge onto ``main()`` lives in the
     ``BotRunner`` orchestration. The operational stances resolve through the
     core verdict, and the operator/executor identity is read from the process
     environment. Live defaults reproduce ``main()``'s behavior exactly — no
@@ -282,7 +304,7 @@ class ArbitrageConfig:
     executor_runtime: str | Path | None = None
 
     @classmethod
-    def from_env(
+    def build(
         cls,
         *,
         live: bool,
@@ -290,7 +312,7 @@ class ArbitrageConfig:
         rpc: RpcCascadeOverrides | None = None,
         values: Mapping[str, Any] | None = None,
     ) -> "ArbitrageConfig":
-        """Build an ArbitrageConfig from the process environment + CLI flags + the verdict.
+        """Build an ArbitrageConfig from the resolved verdict + CLI flags + process identity.
 
         The dotenv file is no longer a source: operator/executor identity is
         read from the process environment (the launch shell exports it from

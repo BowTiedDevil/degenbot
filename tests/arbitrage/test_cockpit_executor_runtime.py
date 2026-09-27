@@ -36,7 +36,7 @@ from degenbot.runner._dispatch import _load_executor_runtime_bytecode
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 
-cfg = ArbitrageConfig.from_env(
+cfg = ArbitrageConfig.build(
     live=False,
     permutation=None,
     rpc=RpcCascadeOverrides(node="wss://probe.example"),
@@ -53,7 +53,7 @@ def _cfg(env: dict[str, str] | None = None) -> ArbitrageConfig:
     }
     base.update(env or {})
     with identity_env(base):
-        return ArbitrageConfig.from_env(
+        return ArbitrageConfig.build(
             live=False,
             permutation=None,
             rpc=RpcCascadeOverrides(node="ws://localhost:8546"),

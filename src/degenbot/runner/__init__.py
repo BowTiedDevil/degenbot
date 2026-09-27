@@ -12,7 +12,7 @@ module re-exports):
 
 - :class:`BotRunner` — the runtime driver facade (the ``start / build_paths /
   consume / dispatch`` seams).
-- :class:`ArbitrageConfig` — the unified frozen config (``from_env``).
+- :class:`ArbitrageConfig` — the unified frozen config (``build``).
 - The build family (``build_paths`` / ``PathRegistrationPipeline`` /
   ``ConstructionContext`` / ``resolve_directions``) and the CLI arg parser
   (:mod:`degenbot.runner.cli`). PRG-5: the bounded crawl shell retired —

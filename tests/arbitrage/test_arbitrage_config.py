@@ -3,7 +3,7 @@
 `ArbitrageConfig` bundles the ~20 scattered arbitrage tunables (operator identity,
 node endpoints, executor contract, dispatch knobs, path filters, dry-run)
 that `main()` once read ad-hoc from three sources: the example dotenv
-dict, module-top constants, and CLI flags. `from_env` is the factory
+dict, module-top constants, and CLI flags. `ArbitrageConfig.build` is the factory
 that delegates RPC resolution to the library `resolve_rpc_uris` cascade
 (`examples/eth_backrun_helpers.py` → `degenbot.config.resolve_rpc_uris`).
 
@@ -40,11 +40,11 @@ def _cfg(env=None, *, live=False, permutation=None, rpc=None) -> ArbitrageConfig
 
     Every test here is about a non-RPC field, so the endpoint is supplied
     through the explicit layer. The operator/executor identity is installed in
-    the process environment for the build, because that is where ``from_env``
+    the process environment for the build, because that is where ``ArbitrageConfig.build``
     reads it.
     """
     with identity_env(env):
-        return ArbitrageConfig.from_env(
+        return ArbitrageConfig.build(
             live=live, permutation=permutation, rpc=rpc if rpc is not None else _OVERRIDE
         )
 
@@ -335,7 +335,7 @@ class TestRunnerKnobResolution:
 
 
 class TestRpcCascade:
-    """from_env delegates to resolve_rpc_uris, so the four-layer cascade applies.
+    """ArbitrageConfig.build delegates to resolve_rpc_uris, so the four-layer cascade applies.
 
     The config is installed once at FFI module init, so what a per-call
     argument can reach is the explicit ``node`` override and the refusal when

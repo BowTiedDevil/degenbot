@@ -293,7 +293,7 @@ class BotRunner:
 
     Usage (production)::
 
-        cfg = ArbitrageConfig.from_env(live=not dry_run, permutation=args.permutation)
+        cfg = ArbitrageConfig.build(live=not dry_run, permutation=args.permutation)
         async with BotRunner(cfg) as session:
             await session.run()
 

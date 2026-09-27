@@ -42,7 +42,7 @@
 //!
 //! Parity sources (constants + error semantics mirrored byte-for-byte):
 //!   - `src/degenbot/runner/cli.py`       — CLI flags
-//!   - `src/degenbot/runner/config.py`    — `ArbitrageConfig.from_env`
+//!   - `src/degenbot/runner/config.py`    — `ArbitrageConfig.build`
 //!
 //! The node-endpoint and database-path cascades are NOT mirrored here: they
 //! resolve through `degenbot::config`'s capability-scoped resolvers over the
@@ -77,7 +77,7 @@ use crate::policy::{parse_permutation_filter, PathPolicy};
 use degenbot::pathfinding::PoolKind;
 
 /// The settled arbitration chain for this driver (Ethereum mainnet),
-/// mirroring `ArbitrageConfig.from_env(chain_id=1)`.
+/// mirroring `ArbitrageConfig.build(chain_id=1)`.
 const CHAIN_ID: u64 = 1;
 
 // ── Driver-config defaults (mirrored from runner/config.py) ───────────────
@@ -153,12 +153,22 @@ const DRY_RUN_OPERATOR_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const DRY_RUN_OPERATOR_ADDRESS: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
-/// Private keys the repository publishes; live mode refuses them
-/// (`runner/config.py`).
-const PLACEHOLDER_OPERATOR_PRIVATE_KEYS: [&str; 2] = [
-    DRY_RUN_OPERATOR_PRIVATE_KEY,
-    "0x0000000000000000000000000000000000000000000000000000000000000000",
-];
+/// The private-key manifest the repository publishes, embedded from its one
+/// declared home so the Rust parity example and the Python driver cannot
+/// drift. Live mode refuses any key it names (`runner/config.py`).
+const PUBLISHED_OPERATOR_PRIVATE_KEYS: &str =
+    include_str!("../../../../src/degenbot/runner/published_operator_private_keys.txt");
+
+/// Whether `key` is one the repository publishes, compared without case.
+///
+/// The manifest is one 0x-prefixed key per line; blank lines and `#` comments
+/// are ignored.
+fn is_published_operator_private_key(key: &str) -> bool {
+    PUBLISHED_OPERATOR_PRIVATE_KEYS.lines().any(|line| {
+        let line = line.trim();
+        !line.is_empty() && !line.starts_with('#') && line.eq_ignore_ascii_case(key)
+    })
+}
 
 /// `degenbot.constants.ZERO_ADDRESS`.
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
@@ -271,15 +281,15 @@ fn env_or(name: &str, default: &str) -> String {
 }
 
 impl SettlementBotConfig {
-    /// Mirror of `ArbitrageConfig.from_env(live=..., permutation=...)`: same
+    /// Mirror of `ArbitrageConfig.build(live=..., permutation=...)`: same
     /// defaults, same fail-fast error strings, same cascade order. Identity is
     /// read from the process environment, which the launch shell exports from
     /// `bot.env`.
     #[expect(
         clippy::too_many_lines,
-        reason = "linear env-parse mirror of ArbitrageConfig.from_env; splitting obscures the field-by-field cascade"
+        reason = "linear env-parse mirror of ArbitrageConfig.build; splitting obscures the field-by-field cascade"
     )]
-    fn from_env(cli: &Cli, loaded: &degenbot::config::LoadedConfig) -> Result<Self, String> {
+    fn build(cli: &Cli, loaded: &degenbot::config::LoadedConfig) -> Result<Self, String> {
         // ── Operator ──
         let operator_raw = env_value("OPERATOR_ADDRESS");
         let mut operator_address = if operator_raw.is_empty() {
@@ -296,10 +306,7 @@ impl SettlementBotConfig {
                         .to_string(),
                 );
             }
-            if PLACEHOLDER_OPERATOR_PRIVATE_KEYS
-                .iter()
-                .any(|k| k.eq_ignore_ascii_case(&operator_private_key))
-            {
+            if is_published_operator_private_key(&operator_private_key) {
                 return Err(
                     "OPERATOR_PRIVATE_KEY is a known placeholder (the dry-run throwaway or \
                      the all-zero scalar): refusing to run live with a key the repository \
@@ -419,7 +426,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
     #[rustfmt::skip]
     let rows: &[(&str, &str, &str)] = &[
         ("01-cli", "REACHABLE", "parse_cli (driver-local, mirrors runner/cli.py); one scheme-classified --node per transport (ADR-062 D6)"),
-        ("02-driver-config", "REACHABLE", "from_env (mirrors runner/config.py)"),
+        ("02-driver-config", "REACHABLE", "build (mirrors runner/config.py)"),
         ("03-rpc-cascade", "REACHABLE", "degenbot::config::{resolve_node_request_uri,resolve_node_subscription_uri} (ADR-062 capability-scoped, file+env)"),
         ("04-db-path", "REACHABLE", "degenbot::config::resolve_database_path (+ offline.fixture_db typed key)"),
         ("05-snapshot-load", "REACHABLE", "SnapshotDb::open + Bot::load_snapshot_from_db"),
@@ -509,7 +516,7 @@ fn run() -> Result<(), String> {
         println!("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS ***\n");
     }
 
-    let cfg = SettlementBotConfig::from_env(&cli, &loaded)?;
+    let cfg = SettlementBotConfig::build(&cli, &loaded)?;
     // Full (secret-masked) config dump — this line IS the read of every
     // driver-config field, so nothing in the struct is dead state.
     println!(

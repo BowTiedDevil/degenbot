@@ -2,7 +2,7 @@
 
 The example used to mutate ``driver_constants.PATH_PERMUTATION_FILTER``
 before construction while ALSO passing ``permutation=`` into
-``ArbitrageConfig.from_env`` — two paths for one value. The decision:
+``ArbitrageConfig.build`` — two paths for one value. The decision:
 the config is the single path; the global is deleted and ``build_paths``
 takes the filter from its (config-derived) parameter.
 """

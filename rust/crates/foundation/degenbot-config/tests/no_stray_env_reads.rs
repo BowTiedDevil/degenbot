@@ -191,7 +191,7 @@ fn insert_python_entries(map: &mut BTreeMap<&'static str, &'static [&'static str
     //     declared `simulation.inject_executor_code` key, which arrives
     //     through the verdict.
     //   - operator/executor identity, which the typed schema does not
-    //     declare: the launch shell exports it from `bot.env`, and `from_env`
+    //     declare: the launch shell exports it from `bot.env`, and `build`
     //     reads it so a live run signs with the operator's key. Live mode
     //     additionally refuses a placeholder key the repository publishes.
     map.insert(

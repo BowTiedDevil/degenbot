@@ -91,7 +91,7 @@ def _runner(path_builder) -> BotRunner:
             "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
         }
     ):
-        cfg = ArbitrageConfig.from_env(live=True, permutation=None)
+        cfg = ArbitrageConfig.build(live=True, permutation=None)
     return BotRunner(
         cfg,
         actors=InjectedActors(

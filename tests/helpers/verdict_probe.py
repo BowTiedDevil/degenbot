@@ -15,7 +15,7 @@ Two questions are asked here, and they are different:
 
 * :func:`resolved_value` — what did the cascade settle for one declared key,
   and which layer won. (No config object involved.)
-* :func:`config_values` — what did :meth:`ArbitrageConfig.from_env` build from
+* :func:`config_values` — what did :meth:`ArbitrageConfig.build` build from
   that verdict, which is the surface a driver consumes. An identity mapping is
   installed in the child's process environment first, because operator and
   executor identity are read from there rather than from a dotenv file.
@@ -175,7 +175,7 @@ from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 os.environ.update(json.loads(IDENTITY))
 
-cfg = ArbitrageConfig.from_env(
+cfg = ArbitrageConfig.build(
     live=LIVE,
     permutation=None,
     rpc=RpcCascadeOverrides(chain_id=1, node=NODE),

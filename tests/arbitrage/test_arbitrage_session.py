@@ -36,7 +36,7 @@ from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
 # The endpoint every test in this module resolves to. The session tests inject
 # fakes for bot/engine_registry/async_w3, so the URI is never connected — it
-# only has to be *present* so ``ArbitrageConfig.from_env`` answers. It arrives
+# only has to be *present* so ``ArbitrageConfig.build`` answers. It arrives
 # through the explicit override layer, because the installed config reads the
 # environment at FFI module init, long before a test could set it.
 _NODE = "ws://localhost:8546"
@@ -65,7 +65,7 @@ def _cfg(**overrides) -> ArbitrageConfig:
     }
     base.update(overrides)
     with identity_env(base):
-        return ArbitrageConfig.from_env(
+        return ArbitrageConfig.build(
             live=True,
             permutation=None,
             rpc=RpcCascadeOverrides(chain_id=1, node=_NODE),

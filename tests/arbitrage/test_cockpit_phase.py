@@ -28,7 +28,7 @@ from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
 @pytest.fixture(autouse=True)
 def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Chain-1 RPC envvars must be present for ``from_env`` (never connected)."""
+    """Chain-1 RPC envvars must be present for ``ArbitrageConfig.build`` (never connected)."""
     monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "http://localhost:8545")
     monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "ws://localhost:8546")
 
@@ -47,7 +47,7 @@ def _cfg() -> ArbitrageConfig:
             "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
         }
     ):
-        return ArbitrageConfig.from_env(live=True, permutation=None)
+        return ArbitrageConfig.build(live=True, permutation=None)
 
 
 class _FakeBot:

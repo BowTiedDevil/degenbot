@@ -1,0 +1,11 @@
+# Private keys this repository publishes. A live run must never sign with
+# one: it would submit real transactions under a key anyone can read.
+#
+# This file is the one declared home for that classification. Both consumers
+# read it: the Python driver parses it at runtime, and the Rust parity example
+# embeds it at compile time, so a key added here reaches both and the two
+# refusal sites cannot drift apart.
+#
+# One 0x-prefixed key per line; blank lines and #-comments are ignored.
+0x0000000000000000000000000000000000000000000000000000000000000000
+0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80

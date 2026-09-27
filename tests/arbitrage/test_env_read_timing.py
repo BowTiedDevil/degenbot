@@ -169,7 +169,7 @@ class _Engine:
         self.path_cap = cap
 
 
-cfg = ArbitrageConfig.from_env(
+cfg = ArbitrageConfig.build(
     live=False,
     permutation=None,
     rpc=RpcCascadeOverrides(chain_id=1, node="wss://probe.example"),
@@ -248,7 +248,7 @@ def test_building_a_config_refuses_a_retired_shell_knob(
     """A caller building a config is told, in the shape every other refusal uses."""
     monkeypatch.setenv(knob, "8")
     with pytest.raises(ValueError, match=knob) as excinfo:
-        ArbitrageConfig.from_env(live=False, permutation=None, rpc=_OVERRIDE)
+        ArbitrageConfig.build(live=False, permutation=None, rpc=_OVERRIDE)
     message = str(excinfo.value)
     assert "retired" in message.lower(), message
     assert "PoolStateUpdater" in message, (
@@ -266,7 +266,7 @@ def test_a_config_load_succeeds_with_no_retired_knob_present(
     # so the value this build carries is whatever the process installed. What
     # this test is about is that the load completes at all, so it asserts the
     # declared shape rather than an ambient number.
-    cfg = ArbitrageConfig.from_env(live=False, permutation=None, rpc=_OVERRIDE)
+    cfg = ArbitrageConfig.build(live=False, permutation=None, rpc=_OVERRIDE)
 
     assert isinstance(cfg.max_registered_paths, int)
     assert cfg.max_registered_paths >= 0

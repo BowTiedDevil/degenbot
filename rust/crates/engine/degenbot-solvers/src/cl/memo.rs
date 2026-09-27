@@ -61,7 +61,7 @@ impl Default for WalkMemoState {
 /// The engine's OWNED cross-block walk-composition handle (SU7MAE T3 / Q12a):
 /// an `Arc<WalkMemo>` passed into the CL solve entry — no global state, and
 /// no environment read inside the solver (the enabled flags are constructor
-/// fields; the owner builds them from its config, `from_env` at the
+/// fields; the owner builds them from its config, `build` at the
 /// engine-construction boundary). Internal mutex is shared under rayon.
 pub struct WalkMemo {
     inner: std::sync::Mutex<WalkMemoState>,

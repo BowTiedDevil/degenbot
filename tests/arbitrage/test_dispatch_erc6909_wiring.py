@@ -40,7 +40,7 @@ def test_erc6909_default_is_off() -> None:
     ``dispatch.erc6909_profit`` declares ``false``, so a process that names no
     layer runs the custody-transfer path. The opt-in is the key (env or file).
     """
-    cfg = ArbitrageConfig.from_env(
+    cfg = ArbitrageConfig.build(
         live=False,
         permutation=None,
         rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
@@ -68,7 +68,7 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
             "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
         }
     ):
-        cfg = ArbitrageConfig.from_env(
+        cfg = ArbitrageConfig.build(
             live=False,
             permutation=None,
             rpc=RpcCascadeOverrides(node="ws://localhost:8546"),

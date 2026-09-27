@@ -1,6 +1,6 @@
 """Every ``ArbitrageConfig`` field must have a reader; the retired ones must be gone.
 
-A frozen-dataclass field assigned in ``from_env`` and never read is *not*
+A frozen-dataclass field assigned in ``ArbitrageConfig.build`` and never read is *not*
 statically unreachable — the assignment is itself a use — so vulture
 (``just dead-code``) passes such a field. What the analyser cannot see is the
 defect that matters to an operator: the field survives as a declared,
@@ -45,7 +45,7 @@ _READER_ROOTS = ("src", "tests", "examples", "scripts")
 
 #: Internal-policy fields removed from the config surface. Each duplicated a
 #: value the core or a hot-path module constant already owns, and each had no
-#: reader outside ``from_env``'s own construction keyword.
+#: reader outside ``ArbitrageConfig.build``'s own construction keyword.
 RETIRED_FIELDS = (
     "min_profit_net",
     "fee_history_window",
@@ -123,8 +123,8 @@ def test_every_config_field_has_a_reader() -> None:
     readers = {name: _reader_sites(name) for name in _declared_fields()}
     unread = sorted(name for name, sites in readers.items() if not sites)
     assert not unread, (
-        f"{len(unread)} ArbitrageConfig field(s) are constructed by from_env and read "
-        f"nowhere: {unread}. The from_env assignment keeps such a field statically "
+        f"{len(unread)} ArbitrageConfig field(s) are constructed by ArbitrageConfig.build and read "
+        f"nowhere: {unread}. The build assignment keeps such a field statically "
         f"reachable, so dead-code analysis passes it; only this census sees it. Delete "
         f"the field, or read it at the call site that should honour it."
     )

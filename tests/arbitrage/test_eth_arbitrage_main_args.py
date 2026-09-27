@@ -2,7 +2,7 @@
 
 The parser is extracted into :func:`degenbot.runner.cli.build_arbitrage_arg_parser`
 so the CLI surface — especially the ``--node`` cascade override — is verifiable
-without running the full async session. ``from_env``'s handling of the override
+without running the full async session. ``ArbitrageConfig.build``'s handling of the override
 is covered by ``test_arbitrage_config.py::TestRpcCascade``.
 """
 

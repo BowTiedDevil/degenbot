@@ -1,6 +1,6 @@
 """Install operator/executor identity for an ``ArbitrageConfig`` build.
 
-``ArbitrageConfig.from_env`` reads operator and executor identity from
+``ArbitrageConfig.build`` reads operator and executor identity from
 ``os.environ`` now that ``examples/mainnet.env`` is retired as a config source.
 Tests carry an identity mapping instead of a dotenv file, so this context
 manager installs it for the build. The other identity keys are blanked first so
@@ -17,7 +17,7 @@ from unittest import mock
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
-#: The operator/executor keys ``from_env`` reads from the process environment.
+#: The operator/executor keys ``ArbitrageConfig.build`` reads from the process environment.
 IDENTITY_KEYS = (
     "OPERATOR_ADDRESS",
     "OPERATOR_PRIVATE_KEY",

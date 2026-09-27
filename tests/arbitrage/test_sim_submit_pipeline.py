@@ -95,7 +95,7 @@ async def test_leaf_failure_aborts_loudly() -> None:
 _CONCURRENCY_PROBE = """\
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
-cfg = ArbitrageConfig.from_env(
+cfg = ArbitrageConfig.build(
     live=False,
     permutation=None,
     rpc=RpcCascadeOverrides(chain_id=1, node="wss://probe.example"),

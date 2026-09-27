@@ -5,7 +5,7 @@ A thin Python entrypoint over the Rust-owned ArbitrageEngine and the
 path registration, result consumption, dispatch — lives in the
 ``degenbot.runner`` package; this file is an ``argv → BotRunner`` entrypoint
 that owns only the CLI policy (argparse, SIGINT wrapper). Operator identity
-reaches ``from_env`` through the process environment, exported by the launch
+reaches ``ArbitrageConfig.build`` through the process environment, exported by the launch
 shell from ``bot.env``.
 
 Startup sequence (owned by :class:`~degenbot.runner.BotRunner`):
@@ -58,7 +58,7 @@ async def main() -> None:
     # injection stance is a declared key (:data:`DEGENBOT_INJECT_EXECUTOR_CODE`),
     # and the retired bare spelling is refused with a loud error.
     try:
-        cfg = ArbitrageConfig.from_env(
+        cfg = ArbitrageConfig.build(
             live=not dry_run,
             permutation=args.permutation,
             rpc=RpcCascadeOverrides(node=args.node),

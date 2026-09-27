@@ -51,7 +51,7 @@ def _cfg() -> ArbitrageConfig:
             "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
         }
     ):
-        return ArbitrageConfig.from_env(live=True, permutation=None)
+        return ArbitrageConfig.build(live=True, permutation=None)
 
 
 def _stub_arbitrage_engine_members() -> set[str]:
