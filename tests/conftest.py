@@ -24,7 +24,7 @@ os.environ.setdefault(
 
 from degenbot.bot import Bot
 from degenbot.fork import AnvilFork, ForkLaunchConfig
-from degenbot.logging import set_log_level
+from degenbot.logging import _QUEUED_HANDLER, set_log_level
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.golden.recorded_pool import RecordedPool
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -215,13 +215,20 @@ def pytest_collection_modifyitems(config: Config, items: list[Item]):
 
 @pytest.fixture(scope="session", autouse=True)
 def _set_degenbot_logging():
-    """Set the logging level to DEBUG for the test run.
+    """Run the suite with Python-side DEBUG records visible on the console queue.
 
-    Covers both the package logger and the Rust ``log::`` bridge (pyo3-log)
-    loggers, so ``log::debug!`` records from the Rust extension are visible in
-    the test run too.
+    ``set_log_level`` moves the package logger and the Rust-bridge loggers to
+    DEBUG, but a handler's own level is the ceiling every record passes at
+    ``callHandlers``: leaving the queued handler at INFO drops DEBUG before it
+    can be queued, so the handler must move with the loggers.
+
+    That covers the Python side only. The Rust ``tracing`` ``EnvFilter`` is the
+    first gate and defaults to ``info`` for the Python driver, so Rust
+    ``debug!`` records cross into Python only when a test raises ``RUST_LOG``
+    (or the telemetry level); without it, no handler level can surface them.
     """
     set_log_level(logging.DEBUG)
+    _QUEUED_HANDLER.setLevel(logging.DEBUG)
 
 
 @pytest.fixture
