@@ -798,12 +798,13 @@ fn run() -> Result<(), String> {
         std::sync::Arc::clone(&bot),
         degenbot::config::holder::config_arc(),
     );
-    // RSP-11 (KETJNN): bind the registered-path budget from DEGENBOT_MAX_PATHS
-    // (default 100000; 0 = uncapped) onto the engine registry BEFORE the crawl,
-    // mirroring build_paths.py's `engine.set_path_cap(MAX_REGISTERED_PATHS or None)`.
-    let max_paths = progress::parse_max_paths(std::env::var("DEGENBOT_MAX_PATHS").ok().as_deref())?;
+    // Bind the registered-path budget from the loaded schema
+    // (`pathfinding.max_registered_paths`, declared default 100 000; 0 =
+    // uncapped) onto the engine registry BEFORE the crawl, mirroring
+    // build_paths.py's `engine.set_path_cap(MAX_REGISTERED_PATHS or None)`.
+    let max_paths = progress::path_cap(loaded.config.pathfinding.max_registered_paths);
     driver.set_path_cap(max_paths);
-    println!("[registration] path cap = {max_paths:?} (DEGENBOT_MAX_PATHS)");
+    println!("[registration] path cap = {max_paths:?} (pathfinding.max_registered_paths)");
     degenbot::op_info!(domain = path, path_cap = ?max_paths, "registration: path cap bound");
     // Attach the result consumer BEFORE resume — the BotRunner ordering
     // invariant (`BotRunner.run`: create the consumer, THEN resume). The
@@ -921,12 +922,11 @@ fn run() -> Result<(), String> {
             io: &io,
             db: Some(&snap),
         };
-        // RSP-11 (KETJNN): the time-throttled registration-progress summary
-        // (DEGENBOT_REG_PROGRESS_SECS, default 30s) keeps the crawl visible
-        // even when path_count never crosses a 1000-boundary.
-        let progress_secs = progress::parse_progress_secs(
-            std::env::var("DEGENBOT_REG_PROGRESS_SECS").ok().as_deref(),
-        )?;
+        // The time-throttled registration-progress summary
+        // (`pathfinding.reg_progress_secs`, declared default 30s) keeps the
+        // crawl visible even when path_count never crosses a 1000-boundary.
+        let progress_secs =
+            progress::progress_interval(loaded.config.pathfinding.reg_progress_secs)?;
         let mut reg_progress = progress::ProgressCadence::new(progress_secs);
         let live_report = live::run_live(
             &driver,

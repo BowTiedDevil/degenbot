@@ -2,14 +2,16 @@
 //! `DEGENBOT_MAX_PATHS` cap and the time-throttled registration-progress
 //! summary, mirroring `src/degenbot/runner/build_paths.py`.
 //!
-//! Python semantics mirrored here:
-//! - `MAX_REGISTERED_PATHS = int(os.environ.get("DEGENBOT_MAX_PATHS", "100000"))`,
-//!   applied via `engine.set_path_cap(MAX_REGISTERED_PATHS or None)` BEFORE
-//!   discovery runs — so `0` (or unset) means uncapped.
-//! - `RegistrationPipeline._PROGRESS_INTERVAL_S = float(os.environ.get(
-//!   "DEGENBOT_REG_PROGRESS_SECS", "30"))` gates a summary that fires even when
-//!   `path_count` never crosses a 1000-boundary, so a discovery-heavy
-//!   skip-fest stays visible mid-crawl.
+//! The values arrive through the schema, not a private parse: the loader
+//! resolves `pathfinding.max_registered_paths` (declared default 100 000; `0`
+//! means uncapped) and `pathfinding.reg_progress_secs` (declared default 30.0;
+//! `0` emits on every update). The declared default IS the unset behaviour, so
+//! an operator who exports nothing is capped at 100 000 — the same as Python's
+//! `int(os.environ.get("DEGENBOT_MAX_PATHS", "100000")) or None`.
+//!
+//! `pathfinding.reg_progress_secs` still gates a summary that fires even when
+//! `path_count` never crosses a 1000-boundary, so a discovery-heavy
+//! skip-fest stays visible mid-crawl.
 //!
 //! The cadence is a pure function of an injected `Instant` clock so the
 //! throttle is unit-testable without sleeping or RPC.
@@ -18,50 +20,31 @@ use std::time::{Duration, Instant};
 
 use crate::pipeline::PipelineReport;
 
-/// The `MAX_REGISTERED_PATHS` default (`build_paths.py`).
-pub const DEFAULT_MAX_PATHS: usize = 100_000;
-
-/// The `_PROGRESS_INTERVAL_S` default (`build_paths.py`).
-pub const DEFAULT_PROGRESS_SECS: f64 = 30.0;
-
-/// Parse `DEGENBOT_MAX_PATHS` with Python semantics: unset/empty → the
-/// 100 000 default; `0` → uncapped (`None`); a positive integer → the cap.
+/// The engine's registered-path cap from the schema's
+/// `pathfinding.max_registered_paths`. `0` is the operator's uncapped
+/// sentinel (`set_path_cap(None)`); any other value is a real ceiling.
 ///
-/// # Errors
-///
-/// Refuses a negative or non-integer value loudly (Python's `int()` raises).
-pub fn parse_max_paths(raw: Option<&str>) -> Result<Option<usize>, String> {
-    let raw = match raw {
-        None | Some("") => return Ok(Some(DEFAULT_MAX_PATHS)),
-        Some(value) => value,
-    };
-    let parsed = raw
-        .parse::<i128>()
-        .map_err(|e| format!("DEGENBOT_MAX_PATHS must be an integer, got {raw:?}: {e}"))?;
-    if parsed < 0 {
-        return Err(format!("DEGENBOT_MAX_PATHS must be >= 0, got {parsed}"));
-    }
-    let cap = usize::try_from(parsed)
-        .map_err(|_| format!("DEGENBOT_MAX_PATHS exceeds the platform usize: {parsed}"))?;
-    Ok(if cap == 0 { None } else { Some(cap) })
+/// The schema types the key as a plain `usize`, so `0` and "unset" would
+/// otherwise collapse; the declared default (100 000) is what an unset key
+/// resolves to, so unset means capped. Pinned by
+/// `unset_max_registered_paths_is_the_declared_default_cap_not_uncapped`.
+#[must_use]
+pub fn path_cap(max_registered_paths: usize) -> Option<usize> {
+    (max_registered_paths != 0).then_some(max_registered_paths)
 }
 
-/// Parse `DEGENBOT_REG_PROGRESS_SECS` (default 30.0). A value of `0` keeps
-/// Python's always-due cadence; a negative or non-finite value is refused.
+/// The registration-progress reporting cadence from the schema's
+/// `pathfinding.reg_progress_secs`. `0` keeps Python's always-due cadence; a
+/// negative or non-finite value is refused here because the schema type is an
+/// unconstrained `f64`.
 ///
 /// # Errors
 ///
-/// Refuses a non-numeric, negative, or non-finite value.
-pub fn parse_progress_secs(raw: Option<&str>) -> Result<Duration, String> {
-    let secs = match raw {
-        None | Some("") => DEFAULT_PROGRESS_SECS,
-        Some(value) => value.parse::<f64>().map_err(|e| {
-            format!("DEGENBOT_REG_PROGRESS_SECS must be a number, got {value:?}: {e}")
-        })?,
-    };
+/// Refuses a negative or non-finite value.
+pub fn progress_interval(secs: f64) -> Result<Duration, String> {
     if !secs.is_finite() || secs < 0.0 {
         return Err(format!(
-            "DEGENBOT_REG_PROGRESS_SECS must be a finite value >= 0, got {secs}"
+            "pathfinding.reg_progress_secs must be a finite value >= 0, got {secs}"
         ));
     }
     Ok(Duration::from_secs_f64(secs))
@@ -154,48 +137,53 @@ pub fn progress_line(report: &PipelineReport) -> String {
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
-    reason = "tests assert on known-valid parsed values"
+    clippy::float_cmp,
+    reason = "tests assert on known-valid parsed values and exact declared literals"
 )]
 mod tests {
     use super::*;
     use degenbot::bot::bot_core::registration_ledger::RegistrationOutcome;
 
     #[test]
-    fn max_paths_unset_and_empty_use_the_default() {
-        assert_eq!(parse_max_paths(None).unwrap(), Some(DEFAULT_MAX_PATHS));
-        assert_eq!(parse_max_paths(Some("")).unwrap(), Some(DEFAULT_MAX_PATHS));
-    }
-
-    #[test]
-    fn max_paths_zero_is_uncapped() {
-        assert_eq!(parse_max_paths(Some("0")).unwrap(), None);
-    }
-
-    #[test]
-    fn max_paths_positive_is_the_cap() {
-        assert_eq!(parse_max_paths(Some("42")).unwrap(), Some(42));
-    }
-
-    #[test]
-    fn max_paths_rejects_negative_and_junk() {
-        assert!(parse_max_paths(Some("-1")).is_err());
-        assert!(parse_max_paths(Some("nope")).is_err());
-    }
-
-    #[test]
-    fn progress_secs_defaults_and_zero_mirror_python() {
+    fn the_env_layer_resolves_the_six_schema_owned_keys() {
+        // The example is a `cargo add degenbot` consumer, so these six names
+        // are the schema's contract: the two `DEGENBOT_`-prefixed pathfinding
+        // keys plus the four unprefixed verification-retry names. The loader
+        // owns the spelling; the example never re-parses them from `std::env`.
+        let env = degenbot::config::MapEnv::new(std::collections::BTreeMap::from([
+            ("DEGENBOT_MAX_PATHS".to_string(), "0".to_string()),
+            ("DEGENBOT_REG_PROGRESS_SECS".to_string(), "5".to_string()),
+            (
+                "VERIFICATION_RETRY_MAX_ATTEMPTS".to_string(),
+                "7".to_string(),
+            ),
+            (
+                "VERIFICATION_RETRY_BASE_DELAY".to_string(),
+                "0.25".to_string(),
+            ),
+            (
+                "VERIFICATION_RETRY_MAX_DELAY".to_string(),
+                "3.0".to_string(),
+            ),
+            ("VERIFICATION_RETRY_JITTER".to_string(), "0.75".to_string()),
+        ]));
+        let loaded = degenbot::config::BotConfigLoader::new()
+            .with_env(Box::new(env))
+            .load()
+            .unwrap();
         assert_eq!(
-            parse_progress_secs(None).unwrap(),
-            Duration::from_secs_f64(DEFAULT_PROGRESS_SECS)
+            path_cap(loaded.config.pathfinding.max_registered_paths),
+            None,
+            "DEGENBOT_MAX_PATHS=0 is the uncapped sentinel"
         );
         assert_eq!(
-            parse_progress_secs(Some("")).unwrap(),
-            Duration::from_secs_f64(DEFAULT_PROGRESS_SECS)
+            progress_interval(loaded.config.pathfinding.reg_progress_secs).unwrap(),
+            Duration::from_secs(5)
         );
-        assert_eq!(parse_progress_secs(Some("0")).unwrap(), Duration::ZERO);
-        assert!(parse_progress_secs(Some("-3")).is_err());
-        assert!(parse_progress_secs(Some("nan")).is_err());
-        assert!(parse_progress_secs(Some("junk")).is_err());
+        assert_eq!(loaded.config.verify.verify_retry_max_attempts, 7);
+        assert_eq!(loaded.config.verify.verify_retry_base_delay, 0.25);
+        assert_eq!(loaded.config.verify.verify_retry_max_delay, 3.0);
+        assert_eq!(loaded.config.verify.verify_retry_jitter, 0.75);
     }
 
     #[test]
@@ -231,5 +219,63 @@ mod tests {
             line.contains(&format!("{}=", RegistrationOutcome::PathCap.as_str())),
             "{line}"
         );
+    }
+
+    #[test]
+    fn path_cap_reads_zero_as_uncapped_and_any_other_value_as_the_cap() {
+        assert_eq!(path_cap(0), None, "an explicit 0 is the uncapped sentinel");
+        assert_eq!(path_cap(1), Some(1));
+        assert_eq!(path_cap(100_000), Some(100_000));
+    }
+
+    #[test]
+    fn unset_max_registered_paths_is_the_declared_default_cap_not_uncapped() {
+        // The loader fills the schema's declared default when the key is
+        // absent, so an operator who sets nothing gets 100_000. Only an
+        // explicit 0 is uncapped. Python:
+        // `set_path_cap(int(os.environ.get("DEGENBOT_MAX_PATHS", "100000")) or None)`.
+        let defaulted = degenbot::config::BotConfig::default();
+        let declared = defaulted.pathfinding.max_registered_paths;
+        assert_eq!(declared, 100_000, "the schema's declared default moved");
+        assert_eq!(path_cap(declared), Some(100_000));
+        assert_ne!(path_cap(declared), None, "unset must not read as uncapped");
+    }
+
+    #[test]
+    fn the_example_resolves_the_pathfinding_keys_through_the_loaded_cascade() {
+        // The example is a `cargo add degenbot` consumer: the values must
+        // arrive through the schema cascade, not a private env parse.
+        let loaded = degenbot::config::BotConfigLoader::new()
+            .without_env()
+            .with_cli("pathfinding.max_registered_paths", "0")
+            .with_cli("pathfinding.reg_progress_secs", "5")
+            .load()
+            .unwrap();
+        assert_eq!(
+            path_cap(loaded.config.pathfinding.max_registered_paths),
+            None
+        );
+        assert_eq!(
+            progress_interval(loaded.config.pathfinding.reg_progress_secs).unwrap(),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn progress_interval_defaults_and_zero_mirror_python() {
+        let defaulted = degenbot::config::BotConfig::default();
+        assert_eq!(defaulted.pathfinding.reg_progress_secs, 30.0);
+        assert_eq!(
+            progress_interval(defaulted.pathfinding.reg_progress_secs).unwrap(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(progress_interval(0.0).unwrap(), Duration::ZERO);
+    }
+
+    #[test]
+    fn progress_interval_refuses_negative_and_non_finite() {
+        assert!(progress_interval(-3.0).is_err());
+        assert!(progress_interval(f64::NAN).is_err());
+        assert!(progress_interval(f64::INFINITY).is_err());
     }
 }
