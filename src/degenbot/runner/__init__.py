@@ -13,7 +13,6 @@ module re-exports):
 - :class:`BotRunner` — the runtime driver facade (the ``start / build_paths /
   consume / dispatch`` seams).
 - :class:`ArbitrageConfig` — the unified frozen config (``from_env``).
-- :func:`classify_revert` — the public revert-taxonimizer leaf.
 - The build family (``build_paths`` / ``PathRegistrationPipeline`` /
   ``ConstructionContext`` / ``resolve_directions``) and the CLI arg parser
   (:mod:`degenbot.runner.cli`). PRG-5: the bounded crawl shell retired —
@@ -32,7 +31,7 @@ from degenbot.runner.build_paths import (
     build_paths,
     resolve_directions,
 )
-from degenbot.runner.config import ArbitrageConfig, classify_revert
+from degenbot.runner.config import ArbitrageConfig
 
 __all__ = [
     "ArbitrageConfig",
@@ -40,6 +39,5 @@ __all__ = [
     "ConstructionContext",
     "PathRegistrationPipeline",
     "build_paths",
-    "classify_revert",
     "resolve_directions",
 ]

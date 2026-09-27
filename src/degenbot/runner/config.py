@@ -8,8 +8,6 @@ runtime driver (``BotRunner``) and its tests consume:
   the resolved verdict + CLI flags via :meth:`ArbitrageConfig.from_env`;
   the operator/executor identity it carries is read from the process
   environment).
-- :func:`classify_revert` — the canonical simulation-revert labeler
-  (public leaf; the dual-driver parity test imports it directly).
 
 The display renderers (sim-diag / sim-fail / failure-breakdown) moved to
 :mod:`degenbot.runner._render`, and the helpers that served only the deleted
@@ -425,117 +423,6 @@ class ArbitrageConfig:
             executor_runtime=executor_runtime,
             diag=diag,
         )
-
-
-# ──────────────────────────────────────────────────────────────────
-# Simulation revert taxonomy
-# ──────────────────────────────────────────────────────────────────
-
-# Selector → human name for the revert selectors the cmd_executor / V4
-# PoolManager emit. Kept as canonical data so both the (verbose) per-fail
-# diagnostic decode in the driver and the (short) bucket label produced by
-# ``classify_revert`` stay in sync.
-_V4_REVERT_SELECTORS: dict[str, str] = {
-    "5212cba1": "CurrencyNotSettled()",
-    "486aa307": "PoolNotInitialized()",
-    "1e048e1d": "InvalidHookResponse()",
-    "a3603d66": "SwapQuantityCannotBeZero()",
-    "38606b01": "PriceLimitAlreadyExceeded()",
-    "30d6072a": "PriceLimitOutOfBounds()",
-    "a40afa38": "LockFailure()",
-    "5090d6c6": "AlreadyUnlocked()",
-    "54e3ca0d": "ManagerLocked()",
-}
-
-_EXECUTOR_REVERT_SELECTORS: dict[str, str] = {
-    # Legacy (bare assert)
-    "4b9dfc58": "!OWNER",
-    "49494100": "IIA(insufficient-input-amount)",
-    # Custom errors (Vyper 0.5.0a3+)
-    "8e4a23d6": "Unauthorized(caller)",
-    "b028a63a": "InvalidCallback(caller)",
-    "cf479181": "InsufficientBalance(amount,available)",
-    "4e88422a": "InsufficientProfit(actual,expected)",
-    "83276224": "InvalidCommand(opcode)",
-    "60ef0bb0": "BipsTooHigh(bips)",
-    "a61be9f0": "InvalidMsgValue(value)",
-    "e5b6bf32": "NotPlainEthTransfer()",
-}
-
-# Solidity revert selectors shared across all contracts.
-_ERROR_STRING_SELECTOR = "08c379a0"  # Error(string)
-_PANIC_SELECTOR = "4e487b71"  # Panic(uint256)
-
-# Hex-string layout constants for revert return-data (bytes are hex-encoded,
-# so one byte = two chars). Used by ``classify_revert`` below.
-_HEX_SELECTOR_LEN = 8  # 4-byte function selector
-_HEX_WORD_LEN = 64  # one 32-byte word
-_HEX_PANIC_ARG_END = _HEX_SELECTOR_LEN + _HEX_WORD_LEN  # after Panic's uint256 arg
-
-
-def classify_revert(revert_data: bytes) -> str:
-    """Classify raw simulation revert return-data into a short stable label.
-
-    Used by the ``[sim]`` summary to break the ``N failed`` bucket down by root
-    cause. Returns the canonical error *name* for custom-error selectors (params
-    dropped, so ``InsufficientProfit(1,2)`` and ``InsufficientProfit(3,4)``
-    tally together), the decoded message for ``Error(string)``, the panic code
-    for ``Panic``, or ``unknown:0x........`` for anything unrecognised.
-
-    Deliberately never raises — a taxonomy must classify every revert, even
-    malformed ones, so the summary always adds up.
-
-    Returns:
-        A short stable label for the revert (error name, decoded message,
-        panic code, or ``unknown:0x<selector>``).
-
-    """
-    if not revert_data:
-        return "empty"
-    hexed = revert_data.hex()
-    if len(hexed) < _HEX_SELECTOR_LEN:
-        return f"short:{hexed}"
-    return _classify_selector(hexed[:_HEX_SELECTOR_LEN], hexed)
-
-
-def _classify_selector(selector: str, hexed: str) -> str:
-    """Label one full revert payload from its leading 4-byte selector."""
-    if selector == _PANIC_SELECTOR:
-        return _decode_panic(hexed)
-    if selector == _ERROR_STRING_SELECTOR:
-        return _decode_error_string(hexed)
-    named = _V4_REVERT_SELECTORS.get(selector) or _EXECUTOR_REVERT_SELECTORS.get(selector)
-    if named is not None:
-        return named.split("(", 1)[0]
-    # Bare 32-byte numeric revert (Vyper): 0x00..00<value>
-    if len(hexed) >= _HEX_WORD_LEN and hexed[:24] == "0" * 24:
-        return "numeric-revert"
-    return f"unknown:0x{selector}"
-
-
-def _decode_panic(hexed: str) -> str:
-    """Decode ``Panic(uint256)``'s code (0 when the arg is missing)."""
-    # Panic(uint256 code) — code is the first 32-byte arg.
-    code = (
-        int(hexed[_HEX_SELECTOR_LEN:_HEX_PANIC_ARG_END], 16)
-        if len(hexed) >= _HEX_PANIC_ARG_END
-        else 0
-    )
-    return f"Panic(0x{code:x})"
-
-
-def _decode_error_string(hexed: str) -> str:
-    """Decode ``Error(string)``'s message, best-effort (never raises)."""
-    # Error(string): [sel][offset:32][len:32][data:N]
-    try:
-        str_len = int(hexed[8 + 64 : 8 + 128], 16)
-        str_start = 8 + 64 + 64
-        msg = bytes.fromhex(hexed[str_start : str_start + str_len * 2]).decode(
-            "utf-8", errors="replace"
-        )
-    except (ValueError, IndexError):
-        return "Error(string:undecodable)"
-    return msg or "Error(string:empty)"
 
 
 BPS_DENOM = 10_000

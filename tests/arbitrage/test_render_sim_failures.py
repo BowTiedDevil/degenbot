@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from degenbot.runner import _render
-from degenbot.runner._render import _render_sim_failures
+from degenbot.runner._render import _render_sim_failures, format_failure_breakdown
 
 #: The child probe, as source: it fires one failure batch with the per-bucket
 #: policy forced to ``exit``, so the child's exit code IS the armed state.
@@ -235,6 +235,32 @@ def test_reverting_frame_surfaces_deep_attribution(caplog: pytest.LogCaptureFixt
     assert "hops=" in line
     # The top-level bubble fallback must NOT appear when reverting_frame is set.
     assert "fail_idx=" not in line
+
+
+# ── format_failure_breakdown ─────────────────────────────────────────────
+
+
+def test_format_breakdown_sorts_by_count_desc_then_name() -> None:
+    """Breakdown lists the most common root cause first for at-a-glance reading."""
+    buckets = {
+        "CurrencyNotSettled": 9,
+        "no-profit": 5,
+        "ERC20: transfer amount exceeds balance": 2,
+        "rpc-failed": 9,  # tie with CurrencyNotSettled → name breaks tie
+    }
+    breakdown = format_failure_breakdown(buckets)
+    # Ties (9==9) broken by name → "CurrencyNotSettled" before "rpc-failed".
+    # Remaining entries ordered by count desc → no-profit(5) before ERC20…(2).
+    assert breakdown == (
+        "CurrencyNotSettled=9 rpc-failed=9 no-profit=5 ERC20: transfer amount exceeds balance=2"
+    )
+
+
+def test_format_breakdown_empty() -> None:
+    """An empty tally yields the empty string (caller skips the suffix)."""
+    result = format_failure_breakdown({})
+    assert isinstance(result, str)
+    assert len(result) == 0
 
 
 # ── Tripwire bucket-fatal semantics (fail hard + loud, no default mask) ──
