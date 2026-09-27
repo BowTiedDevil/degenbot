@@ -27,7 +27,11 @@ from typing import Any
 import pytest
 
 from degenbot.runner.build_paths import PathRegistrationPipeline
-from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+from degenbot.runner.config import (
+    ArbitrageConfig,
+    RpcCascadeOverrides,
+    _RETIRED_SHELL_KNOBS,
+)
 from tests.fakes.engine import FakeEngine
 from tests.helpers import verdict_probe as probe
 
@@ -43,7 +47,13 @@ _BUILD_PATHS_MODULE = importlib.import_module("degenbot.runner.build_paths")
 #: whichever operator file the machine running it happens to carry.
 _OVERRIDE = RpcCascadeOverrides(chain_id=1, node="wss://override.example")
 
-_RETIRED_SHELL_KNOBS = ("DEGENBOT_REG_QUEUE_BOUND", "DEGENBOT_REG_WORKERS")
+#: The env-read gate's Python sanction for the retired-knob refusal. The gate
+#: is a cross-language scanner and cannot import the runner's list, so it names
+#: the home instead; the names themselves live only in ``config``.
+_ENV_READ_GATE = (
+    _REPO_ROOT / "rust/crates/foundation/degenbot-config/tests/no_stray_env_reads.rs"
+)
+
 
 
 def _run(code: str, **env: str) -> subprocess.CompletedProcess[str]:
@@ -235,3 +245,20 @@ def test_a_config_load_succeeds_with_no_retired_knob_present(
 
     assert isinstance(cfg.max_registered_paths, int)
     assert cfg.max_registered_paths >= 0
+
+
+def test_the_env_gate_points_at_the_retired_knob_home() -> None:
+    """The names' one functional home is ``config._RETIRED_SHELL_KNOBS``.
+
+    The env-read gate is a cross-language scanner, so it cannot import the
+    list; it must point at the home rather than re-list the names.
+    """
+    gate = _ENV_READ_GATE.read_text(encoding="utf-8")
+    for knob in _RETIRED_SHELL_KNOBS:
+        assert knob not in gate, (
+            "the env-read gate must point at the runner's retired-knob home, "
+            f"not carry its own copy of {knob}"
+        )
+    assert "_RETIRED_SHELL_KNOBS" in gate, (
+        "the gate's textual sanction must name the home it points at"
+    )

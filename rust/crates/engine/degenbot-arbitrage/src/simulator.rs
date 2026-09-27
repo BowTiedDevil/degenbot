@@ -37,6 +37,7 @@ use std::collections::BTreeMap;
 use alloy::primitives::{Address, I256, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
+use degenbot_core::fee_percentiles::{P10_INDEX, P50_INDEX, PRIORITY_FEE_PERCENTILES};
 use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo,
     PathInfo, V2HopInfo, V4HopInfo,
@@ -77,13 +78,15 @@ pub const TARGET_PROFIT_RATIO: f64 = 1.25;
 /// are worth exponentially less: `priority_fee *= 1/(1 + 0.25*age)`.
 pub const AGE_DECAY_CONSTANT: f64 = 0.25;
 
-/// The min-priority-fee percentile index (`MIN_PRIORITY_FEE_PERCENTILE = 10`,
-/// L151) — the floor is `p10 + 1`.
-pub const MIN_PRIORITY_FEE_PERCENTILE: u64 = 10;
+/// The p10 element of the shared percentile pair
+/// ([`degenbot_core::fee_percentiles::PRIORITY_FEE_PERCENTILES`]) — the
+/// priority fee's floor is `p10 + 1`.
+pub const MIN_PRIORITY_FEE_PERCENTILE: u64 = PRIORITY_FEE_PERCENTILES[P10_INDEX];
 
-/// The max-priority-fee percentile index (`MAX_PRIORITY_FEE_PERCENTILE = 50`,
-/// L152) — the ceiling is `p50 + 1`.
-pub const MAX_PRIORITY_FEE_PERCENTILE: u64 = 50;
+/// The p50 element of the shared percentile pair
+/// ([`degenbot_core::fee_percentiles::PRIORITY_FEE_PERCENTILES`]) — the
+/// priority fee's ceiling is `p50 + 1`.
+pub const MAX_PRIORITY_FEE_PERCENTILE: u64 = PRIORITY_FEE_PERCENTILES[P50_INDEX];
 
 /// The 1.5× gas safety margin (`gas_used * 1.5`, L2421) — the simulate's
 /// `gasUsed` for the `execute()` call is inflated before being assigned to

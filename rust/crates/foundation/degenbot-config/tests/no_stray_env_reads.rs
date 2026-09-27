@@ -183,9 +183,10 @@ fn insert_python_entries(map: &mut BTreeMap<&'static str, &'static [&'static str
     // tooling posture the cascade does not express.
     //
     // The companion owns two classes of env read:
-    //   - refusals: `name` is the closed retired-knob list's element
-    //     (presence of `DEGENBOT_REG_QUEUE_BOUND` / `DEGENBOT_REG_WORKERS`
-    //     fails the config load, and nothing would consume a value), and
+    //   - refusals: `name` is the element of the closed retired-knob list
+    //     `src/degenbot/runner/config.py::_RETIRED_SHELL_KNOBS` (presence of
+    //     any list member fails the config load, and nothing would consume a
+    //     value), and
     //     `_RETIRED_INJECTION_KEY` is the retired bare spelling of the
     //     injection stance, refused everywhere; the honored spelling is the
     //     declared `simulation.inject_executor_code` key, which arrives

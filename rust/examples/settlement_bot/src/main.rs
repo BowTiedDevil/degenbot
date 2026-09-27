@@ -43,6 +43,8 @@
 //! Parity sources (constants + error semantics mirrored byte-for-byte):
 //!   - `src/degenbot/runner/cli.py`       — CLI flags
 //!   - `src/degenbot/runner/config.py`    — `ArbitrageConfig.build`
+//!   - `src/degenbot/runner/identity.py`  — deployment addresses, dry-run
+//!     placeholders, and the published-key manifest this example mirrors
 //!
 //! The node-endpoint and database-path cascades are NOT mirrored here: they
 //! resolve through `degenbot::config`'s capability-scoped resolvers over the
@@ -54,6 +56,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use degenbot::core::address_utils::to_checksum_address_str;
+use degenbot::core::fee_percentiles::{P10_INDEX, P50_INDEX, PRIORITY_FEE_PERCENTILES};
 use degenbot::core::retry::RetryPolicy;
 
 mod consume;
@@ -80,22 +83,19 @@ use degenbot::pathfinding::PoolKind;
 /// mirroring `ArbitrageConfig.build(chain_id=1)`.
 const CHAIN_ID: u64 = 1;
 
-// ── Driver-config defaults (mirrored from runner/config.py) ───────────────
+// ── Driver-config defaults (identity mirrored from runner/identity.py) ────
 
 const FEE_HISTORY_WINDOW: u64 = 10;
-const FEE_PERCENTILES: [u64; 2] = [10, 50];
 const TARGET_PROFIT_RATIO: f64 = 1.25;
 const BLOCKS_BEFORE_NONCE_EXPIRES: u64 = 5;
 const MAX_SIMULATE_CONCURRENT: u64 = 50;
 const AGE_DECAY_CONSTANT: f64 = 0.25;
-const MIN_PRIORITY_FEE_PERCENTILE: u64 = 10;
-const MAX_PRIORITY_FEE_PERCENTILE: u64 = 50;
 const PATH_SUPPRESS_THRESHOLD: u64 = 10;
 const PATH_SUPPRESS_RETRY_INTERVAL: u64 = 100;
 
-/// `ETH_MAINNET_ALLOWED_TOKENS` (runner/config.py) — checksummed, lowercase-
-/// compared by the path predicate (row 13; implemented by the `policy` module,
-///). Kept here so the config dump reports the same value the
+/// `_ALLOWED_INTERMEDIATE_TOKENS` (runner/identity.py) — checksummed,
+/// lowercase-compared by the path predicate (row 13; implemented by the
+/// `policy` module). Kept here so the config dump reports the same value the
 /// Python config would.
 const ALLOWED_INTERMEDIATE_TOKENS: [&str; 11] = [
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
@@ -111,19 +111,20 @@ const ALLOWED_INTERMEDIATE_TOKENS: [&str; 11] = [
     "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", // MATIC/POL
 ];
 
-/// `_driver_constants.WETH_ADDRESS` (Ethereum mainnet wrapped native).
+/// `WETH_ADDRESS` (runner/identity.py) — Ethereum mainnet wrapped native.
 const WETH_ADDRESS: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
-/// `_driver_constants.ETH_MAINNET_ALLOWED_TOKENS` — the DISCOVERY allowlist
+/// `ETH_MAINNET_ALLOWED_TOKENS` (runner/identity.py) — the DISCOVERY allowlist
 /// `build_paths.py::discovery_sweep` passes to `find_paths_async`.
 ///
-/// NOTE: Python has two distinct sets. `config.py::_ALLOWED_INTERMEDIATE_TOKENS`
+/// NOTE: Python has two distinct sets. `identity.py::_ALLOWED_INTERMEDIATE_TOKENS`
 /// (11 tokens, mirrored by `ALLOWED_INTERMEDIATE_TOKENS` above) is the config
-/// FIELD; the discovery path actually passes the 15-token
-/// `_driver_constants.ETH_MAINNET_ALLOWED_TOKENS` (which includes WETH —
-/// required, because `build_path_graph` intersects the candidate-token set
-/// with it). The example mirrors the DISCOVERY set here so the graph filter is
-/// faithful; the config field stays the 11-token list for row-2 parity.
+/// FIELD; the discovery path passes `identity.py::ETH_MAINNET_ALLOWED_TOKENS`
+/// (which includes WETH — required, because `build_path_graph` intersects the
+/// candidate-token set with it). This example mirrors the discovery subset as
+/// it stood when the mirror was written; the Python set has since gained
+/// curated second-tier tokens. The config field stays the 11-token list for
+/// row-2 parity.
 const ETH_MAINNET_DISCOVERY_ALLOWED_TOKENS: [&str; 15] = [
     "0x163f8C2467924be0ae7B5347228CABF260318753", // WLD
     "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8", // PyUSD
@@ -142,11 +143,19 @@ const ETH_MAINNET_DISCOVERY_ALLOWED_TOKENS: [&str; 15] = [
     "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", // MATIC/POL
 ];
 
+// Deployment identity is an independent parity mirror, not a core re-export:
+// a `cargo add degenbot` consumer deploys its own executor, so the core does
+// not own one deployment's defaults. The Python home is
+// `src/degenbot/runner/identity.py`; a change there must change here to keep
+// the parity twin faithful, and the Python side pins the mirror in
+// `tests/arbitrage/test_published_operator_keys_single_home.py`. If this
+// example stops being a parity twin, delete these defaults rather than extend
+// the mirror.
 const DEFAULT_EXECUTOR_ADDRESS: &str = "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5";
 const DEFAULT_INJECTED_ADDRESS: &str = "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1";
 const DEFAULT_EXECUTOR_OWNER: &str = "0x9C56a29c7231974c269E24F9FB3c29203039089E";
 
-/// Dry-run operator placeholders (runner/config.py): Anvil account-0 — a
+/// Dry-run operator placeholders (runner/identity.py): Anvil account-0 — a
 /// valid secp256k1 key that never signs; the not-yet-wired submit leaf (G4,
 ///) must keep the same never-sign guarantee.
 const DRY_RUN_OPERATOR_PRIVATE_KEY: &str =
@@ -155,7 +164,7 @@ const DRY_RUN_OPERATOR_ADDRESS: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb922
 
 /// The private-key manifest the repository publishes, embedded from its one
 /// declared home so the Rust parity example and the Python driver cannot
-/// drift. Live mode refuses any key it names (`runner/config.py`).
+/// drift. Live mode refuses any key it names (`runner/identity.py`).
 const PUBLISHED_OPERATOR_PRIVATE_KEYS: &str =
     include_str!("../../../../src/degenbot/runner/published_operator_private_keys.txt");
 
@@ -395,13 +404,13 @@ impl SettlementBotConfig {
             inject_executor_code,
             injected_address,
             fee_history_window: FEE_HISTORY_WINDOW,
-            fee_percentiles: FEE_PERCENTILES,
+            fee_percentiles: PRIORITY_FEE_PERCENTILES,
             target_profit_ratio: TARGET_PROFIT_RATIO,
             blocks_before_nonce_expires: BLOCKS_BEFORE_NONCE_EXPIRES,
             max_simulate_concurrent: MAX_SIMULATE_CONCURRENT,
             age_decay_constant: AGE_DECAY_CONSTANT,
-            min_priority_fee_percentile: MIN_PRIORITY_FEE_PERCENTILE,
-            max_priority_fee_percentile: MAX_PRIORITY_FEE_PERCENTILE,
+            min_priority_fee_percentile: PRIORITY_FEE_PERCENTILES[P10_INDEX],
+            max_priority_fee_percentile: PRIORITY_FEE_PERCENTILES[P50_INDEX],
             path_suppress_threshold: PATH_SUPPRESS_THRESHOLD,
             path_suppress_retry_interval: PATH_SUPPRESS_RETRY_INTERVAL,
             allowed_intermediate_tokens: ALLOWED_INTERMEDIATE_TOKENS
@@ -437,7 +446,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("10-pool-construction", "REACHABLE", "probe_pool_type + build_v2/v3/v4/... (umbrella)"),
         ("11-discovery-db-enumeration", "REACHABLE", "degenbot::db::SnapshotDb::fetch_discovery_rows (degenbot-db::discovery_read) + tests/discovery_read_parity.rs"),
         ("12-path-discovery-batching", "REACHABLE", "discovery.rs: graph build over G2 rows + batched lazy OwnedPathFinder (batch_size<=1 per-path; one cooperative async hop per batch)"),
-        ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation) + discovery allowlist graph filter; config.py 11-token + _driver_constants 15-token sets"),
+        ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation) + discovery allowlist graph filter; identity.py 11-token config field + ETH_MAINNET_ALLOWED_TOKENS discovery set"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
         ("15-dispatch-selection", "REACHABLE", "degenbot::arbitrage::{dispatch_profitable_results,filter_thin_margin_results} + driver dispatch.rs plan_batch typed decisions (skip/suppressed/thin-margin/sim)"),
         ("16-sim-fanout-submitter", "DRIVER-POLICY", "sim_submit.rs: tokio Semaphore(max_simulate_concurrent) + single ordered FIFO submitter; consume.rs consumes the EngineDriver result stream (row 7); no core lift"),

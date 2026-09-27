@@ -23,18 +23,21 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::U256;
 use alloy::rpc::types::eth::FeeHistory;
 use degenbot_core::errors::{ProviderError, ProviderResult};
+use degenbot_core::fee_percentiles::{P10_INDEX, P50_INDEX, PRIORITY_FEE_PERCENTILES};
 
 use crate::provider::AlloyProvider;
 
-/// The fee-history percentiles the Python oracle polls
-/// (`FEE_PERCENTILES = (10, 50)` — L146). Indexed 0/1 in the
-/// [`FeeHistory::reward`] vector per the same order.
-pub const FEE_PERCENTILES: [f64; 2] = [10.0, 50.0];
-
-/// The p10 / p50 percentile indices in [`FEE_PERCENTILES`] /
-/// [`FeeHistory::reward`].
-pub const P10_INDEX: usize = 0;
-pub const P50_INDEX: usize = 1;
+/// The wire-shaped (`f64`) view of the shared percentile pair
+/// ([`PRIORITY_FEE_PERCENTILES`]) the `eth_feeHistory` request carries.
+///
+/// Derived rather than declared: the integer pair is the one home, and this is
+/// the spelling the RPC parameter's `&[f64]` requires. Indexed by [`P10_INDEX`]
+/// / [`P50_INDEX`] into the [`FeeHistory::reward`] vector, in the same order.
+#[expect(clippy::cast_precision_loss)]
+pub const FEE_PERCENTILES: [f64; 2] = [
+    PRIORITY_FEE_PERCENTILES[P10_INDEX] as f64,
+    PRIORITY_FEE_PERCENTILES[P50_INDEX] as f64,
+];
 
 /// A per-block percentile fee summary the `_compute_priority_fee` consumer reads.
 ///
@@ -151,11 +154,13 @@ mod tests {
     }
 
     #[test]
-    fn fee_percentiles_match_python_oracle() {
-        // FEE_PERCENTILES = (10.0, 50.0) — L146. Compare element-wise (clippy
-        // forbids exact f64 array equality).
-        assert_eq!(FEE_PERCENTILES.len(), 2);
-        assert!((FEE_PERCENTILES[0] - 10.0).abs() < f64::EPSILON);
-        assert!((FEE_PERCENTILES[1] - 50.0).abs() < f64::EPSILON);
+    #[expect(clippy::cast_precision_loss)]
+    fn fee_percentiles_are_the_shared_foundation_pair() {
+        // The wire view must be exactly the shared integer pair, in order.
+        // Compare element-wise (clippy forbids exact f64 array equality).
+        assert_eq!(FEE_PERCENTILES.len(), PRIORITY_FEE_PERCENTILES.len());
+        for (wire, shared) in FEE_PERCENTILES.iter().zip(PRIORITY_FEE_PERCENTILES) {
+            assert!((wire - shared as f64).abs() < f64::EPSILON);
+        }
     }
 }

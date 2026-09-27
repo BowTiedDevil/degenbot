@@ -50,3 +50,38 @@ def test_rust_example_embeds_the_manifest_instead_of_a_second_list() -> None:
     assert "PLACEHOLDER_OPERATOR_PRIVATE_KEYS: [&str; 2]" not in source, (
         "a hand-maintained key array in the Rust example is the second home this test forbids"
     )
+
+
+def test_rust_example_cites_the_identity_home() -> None:
+    """The example's stale ``_driver_constants`` citations name a deleted module."""
+    source = _RUST_EXAMPLE.read_text(encoding="utf-8")
+    assert "driver_constants" not in source, (
+        "the retired _driver_constants module must not be cited; the identity "
+        "home is src/degenbot/runner/identity.py"
+    )
+    assert "runner/identity.py" in source, (
+        "the example must cite the identity home it mirrors"
+    )
+
+
+def test_rust_example_mirrors_the_python_identity_literals() -> None:
+    """The example's deployment defaults are a contingent parity mirror.
+
+    The core must not own one deployment's executor/operator identity, so the
+    example carries its own copy to reproduce the Python driver byte-for-byte.
+    This test is the revisit trigger pinned at the Python side: if the example
+    stops being a parity mirror, delete the mirror rather than let it drift.
+    """
+    source = _RUST_EXAMPLE.read_text(encoding="utf-8")
+    mirrors = (
+        ("DEFAULT_EXECUTOR_ADDRESS", identity_module._DEFAULT_EXECUTOR_ADDRESS),
+        ("DEFAULT_INJECTED_ADDRESS", identity_module._DEFAULT_INJECTED_ADDRESS),
+        ("DEFAULT_EXECUTOR_OWNER", identity_module._DEFAULT_EXECUTOR_OWNER),
+        ("DRY_RUN_OPERATOR_ADDRESS", identity_module._DRY_RUN_OPERATOR_ADDRESS),
+        ("DRY_RUN_OPERATOR_PRIVATE_KEY", identity_module._DRY_RUN_OPERATOR_PRIVATE_KEY),
+        ("WETH_ADDRESS", identity_module.WETH_ADDRESS),
+    )
+    for name, value in mirrors:
+        assert re.search(
+            rf'{name}:\s*&str\s*=\s*"{re.escape(value)}"', source
+        ), f"the example must mirror identity.{name} = {value}"

@@ -7,8 +7,12 @@ and of the operator's deployment, not of the config schema, so they live apart
 from the config value object and its factory.
 
 The pure-Rust parity example (``rust/examples/settlement_bot/src/main.rs``)
-mirrors the defaults and the checksum helper declared here; a default changed
-here has a Rust twin there.
+carries its own copy of the deployment identity below. The core deliberately
+does not own one deployment's executor/operator identity — a ``cargo add
+degenbot`` consumer deploys its own — so the example's copy is an independent
+parity mirror rather than a re-export, and a default changed here must change
+there to keep the parity twin faithful. If the example stops being a parity
+mirror, delete its copy; do not grow a second home.
 """
 
 from __future__ import annotations

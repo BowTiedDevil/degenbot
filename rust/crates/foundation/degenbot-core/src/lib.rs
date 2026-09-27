@@ -25,6 +25,8 @@
 //!   `degenbot_worker_census` gauge ; NEW SPAWN SITES MUST
 //!   REGISTER — see the module docs.
 //! - [`eip_1559`] — EIP-1559 `next_base_fee` (next-block base fee).
+//! - [`fee_percentiles`] — the shared priority-fee percentile pair the RPC
+//!   oracle polls and the settlement-arbitrage strategy sizes against.
 //! - [`session_positions`] — the position seam: session-canonical position
 //!   identity, the refusal vocabulary a read answers with, and the observer
 //!   trait a lending integration implements. It sits here because the engine and
@@ -35,6 +37,7 @@ pub mod block_clock_pipe;
 pub mod cpu_budget;
 pub mod eip_1559;
 pub mod errors;
+pub mod fee_percentiles;
 pub mod hex_utils;
 pub mod libzip;
 pub mod retry;
