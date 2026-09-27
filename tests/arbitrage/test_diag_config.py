@@ -95,15 +95,6 @@ faulthandler_timeout_secs = 60.0
         assert values["diag.procmem_csv"] == "custom/procmem.csv"
         assert values["diag.faulthandler_timeout_secs"] == pytest.approx(60.0)
 
-    def test_a_probe_key_left_in_the_dotenv_mapping_changes_nothing(self) -> None:
-        """The dotenv mapping is not a cascade layer for these keys."""
-
-        values = probe.config_values(
-            ["diag.tracemalloc_secs"], dotenv={"DEGENBOT_TRACEMALLOC_SECS": "30"}
-        )
-
-        assert values["diag.tracemalloc_secs"] == pytest.approx(0.0)
-
     def test_a_non_numeric_interval_is_refused_at_boot(self) -> None:
         """A typo'd interval is a loud refusal, not a silent default.
 

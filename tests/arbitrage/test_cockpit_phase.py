@@ -21,6 +21,7 @@ from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors, PhaseError
 from degenbot.runner.config import ArbitrageConfig
+from tests.helpers.identity_env import identity_env
 from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
@@ -39,15 +40,14 @@ def _restore_sigint() -> None:
 
 
 def _cfg() -> ArbitrageConfig:
-    return ArbitrageConfig.from_env(
+    with identity_env(
         {
             "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
             "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
             "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-            },
-        live=True,
-        permutation=None,
-    )
+        }
+    ):
+        return ArbitrageConfig.from_env(live=True, permutation=None)
 
 
 class _FakeBot:

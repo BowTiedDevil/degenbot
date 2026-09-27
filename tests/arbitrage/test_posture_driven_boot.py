@@ -16,6 +16,7 @@ import pytest
 from degenbot.runner import BotRunner
 from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
+from tests.helpers.identity_env import identity_env
 from degenbot.strategy import validate_strategy_readiness
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
@@ -83,16 +84,16 @@ class _FakeAsyncW3:
 
 
 def _runner(path_builder) -> BotRunner:
+    with identity_env(
+        {
+            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+            "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
+            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+        }
+    ):
+        cfg = ArbitrageConfig.from_env(live=True, permutation=None)
     return BotRunner(
-        ArbitrageConfig.from_env(
-            {
-                "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-                "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-                "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-                    },
-            live=True,
-            permutation=None,
-        ),
+        cfg,
         actors=InjectedActors(
             bot=_FakeBot(),
             engine_registry=_FakeEngineRegistry(backfill_target=12_000),

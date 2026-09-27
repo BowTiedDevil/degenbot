@@ -108,13 +108,16 @@ uv run --no-sync python -m degenbot.build_info > logs/user-journey/observer/buil
 
 Then collect all `<OP>` transactions in the run's block range and compute
 gas totals + the Phase-4 balance ledger (the acceptance doc has the exact
-formula). Preserve `examples/mainnet.env` as-run before any reset.
+formula). Record the run's deployed executor address(es) and the exported
+`EXECUTOR_*` wiring before any reset. Operator identity lives only in `bot.env`
+and is never copied. `examples/mainnet.env` is retired and is not read at
+runtime.
 
 ## 6. Reset for the next run (repeatability)
 
-- Restore `examples/mainnet.env` to the pristine minimal version
-  (`git checkout -- examples/mainnet.env` if it was committed-pristine;
-  otherwise restore from your backup).
+- Clear the run's `EXECUTOR_*` process exports (the executor address is
+  per-run; operator identity stays in `bot.env`). `examples/mainnet.env` is
+  retired: there is no file wiring to restore.
 - `rm -f STOP`, clear `logs/user-journey/` after archiving.
 - Nonce continuity: the key's on-chain nonce persists across runs — a fresh
   PRD run with the same key continues from that nonce; nothing to reset

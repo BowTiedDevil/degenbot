@@ -32,7 +32,7 @@ The driver is a script, not a module, and the tests reach *into* the script for 
 
 **The driver stays in the Python companion.** It is Python-ecosystem orchestration:
 
-- it owns the asyncio event loop, the `main()` policy, SIGINT install/restore, `dotenv`,
+- it owns the asyncio event loop, the `main()` policy, SIGINT install/restore,
   and the CLI (`_build_arg_parser`) — every one of which `docs/migration-guides/
   three-layer-transition.md` (removed in the stale-docs cleanup `71ec78b2`) §2.4 /
   `rust-owned-bot.md` class as `stays-python`;
@@ -106,7 +106,7 @@ class BotRunner:
 | Config + pure helpers | `BackrunConfig`, `classify_revert`, `format_failure_breakdown`, `filter_thin_margin_results`, `format_sim_diag_line` (moved from `eth_backrun_helpers.py`) | — |
 | Pure pool direction | `resolve_directions` (moved to `runner/build_paths.py` — see §10 deviation) | — |
 | Module constants | factory/pool-manager/WETH/executor constants, `REG_*`, `PATH_PERMUTATION_FILTER`, `MIN_*` (→ `runner/driver_constants.py`) | — |
-| CLI + entrypoint | `build_backrun_arg_parser` (→ `runner/cli.py` — see §10 deviation) | `main()`, `if __name__ == "__main__"`, SIGINT wrapper, `dotenv` read |
+| CLI + entrypoint | `build_backrun_arg_parser` (→ `runner/cli.py` — see §10 deviation) | `main()`, `if __name__ == "__main__"`, SIGINT wrapper |
 
 `_build_arg_parser` was to stay example-side (CLI policy) per this spike, but the final
 gate (zero `from examples.eth_backrun` imports in `tests/`/`src/`) forced it into the

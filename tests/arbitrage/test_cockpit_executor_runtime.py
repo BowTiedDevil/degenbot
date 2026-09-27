@@ -24,6 +24,7 @@ import pytest
 from degenbot.runner._dispatch import _load_executor_runtime_bytecode
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers import verdict_probe as probe
+from tests.helpers.identity_env import identity_env
 
 FILE = "cmd_executor_runtime_bytecode.txt"
 
@@ -36,7 +37,6 @@ from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 
 cfg = ArbitrageConfig.from_env(
-    {},
     live=False,
     permutation=None,
     rpc=RpcCascadeOverrides(node="wss://probe.example"),
@@ -52,12 +52,12 @@ def _cfg(env: dict[str, str] | None = None) -> ArbitrageConfig:
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
     }
     base.update(env or {})
-    return ArbitrageConfig.from_env(
-        base,
-        live=False,
-        permutation=None,
-        rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
-    )
+    with identity_env(base):
+        return ArbitrageConfig.from_env(
+            live=False,
+            permutation=None,
+            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
+        )
 
 
 class TestExecutorRuntime:

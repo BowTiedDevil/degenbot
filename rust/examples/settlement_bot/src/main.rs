@@ -49,8 +49,8 @@
 //! one operator file + environment (ADR-062), the same four-layer path the
 //! console and the Python driver read.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::collections::BTreeSet;
+use std::path::Path;
 use std::process::ExitCode;
 
 use degenbot::core::address_utils::to_checksum_address_str;
@@ -154,6 +154,13 @@ const DRY_RUN_OPERATOR_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const DRY_RUN_OPERATOR_ADDRESS: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
+/// Private keys the repository publishes; live mode refuses them
+/// (`runner/config.py`).
+const PLACEHOLDER_OPERATOR_PRIVATE_KEYS: [&str; 2] = [
+    DRY_RUN_OPERATOR_PRIVATE_KEY,
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
+];
+
 /// `degenbot.constants.ZERO_ADDRESS`.
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
@@ -215,28 +222,6 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
     Ok(cli)
 }
 
-// ── Dotenv (mirrors dotenv.dotenv_values("examples/mainnet.env")) ─────────
-
-fn read_dotenv(path: &Path) -> BTreeMap<String, String> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        // Python's dotenv_values on a missing file yields an empty mapping;
-        // the cascade then falls through to defaults/env exactly as here.
-        return BTreeMap::new();
-    };
-    let mut map = BTreeMap::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once('=') {
-            let v = v.trim().trim_matches('"').trim_matches('\'');
-            map.insert(k.trim().to_string(), v.to_string());
-        }
-    }
-    map
-}
-
 // ── Driver config (mirrors runner/config.py::ArbitrageConfig) ─────────────
 
 struct SettlementBotConfig {
@@ -273,51 +258,54 @@ fn checksum_or_empty(addr: &str) -> Result<String, String> {
     to_checksum_address_str(addr).map_err(|e| format!("invalid address {addr}: {e}"))
 }
 
-fn parse_u64_env(raw: Option<&String>, default: u64, suffix: &str) -> Result<u64, String> {
-    match raw {
-        None => Ok(default),
-        Some(v) if v.is_empty() => Ok(default),
-        Some(v) => v
-            .parse::<u64>()
-            .map_err(|_| format!("VERIFICATION_RETRY_{suffix} must be an integer, got {v:?}")),
-    }
+/// One process-environment value, empty when unset. The launch shell exports
+/// operator and executor identity from `bot.env`.
+fn env_value(name: &str) -> String {
+    std::env::var(name).unwrap_or_default()
 }
 
-fn parse_f64_env(raw: Option<&String>, default: f64, suffix: &str) -> Result<f64, String> {
-    match raw {
-        None => Ok(default),
-        Some(v) if v.is_empty() => Ok(default),
-        Some(v) => v
-            .parse::<f64>()
-            .map_err(|_| format!("VERIFICATION_RETRY_{suffix} must be a float, got {v:?}")),
+/// One process-environment value with a declared fallback for unset/empty.
+fn env_or(name: &str, default: &str) -> String {
+    match std::env::var(name) {
+        Ok(v) if !v.is_empty() => v,
+        _ => default.to_string(),
     }
 }
 
 impl SettlementBotConfig {
-    /// Mirror of `ArbitrageConfig.from_env(env, live=..., permutation=...)`:
-    /// same defaults, same fail-fast error strings, same cascade order.
+    /// Mirror of `ArbitrageConfig.from_env(live=..., permutation=...)`: same
+    /// defaults, same fail-fast error strings, same cascade order. Identity is
+    /// read from the process environment, which the launch shell exports from
+    /// `bot.env`.
     #[expect(
         clippy::too_many_lines,
         reason = "linear env-parse mirror of ArbitrageConfig.from_env; splitting obscures the field-by-field cascade"
     )]
-    fn from_env(
-        env: &BTreeMap<String, String>,
-        cli: &Cli,
-        loaded: &degenbot::config::LoadedConfig,
-    ) -> Result<Self, String> {
+    fn from_env(cli: &Cli, loaded: &degenbot::config::LoadedConfig) -> Result<Self, String> {
         // ── Operator ──
-        let operator_raw = env.get("OPERATOR_ADDRESS").cloned().unwrap_or_default();
+        let operator_raw = env_value("OPERATOR_ADDRESS");
         let mut operator_address = if operator_raw.is_empty() {
             String::new()
         } else {
             checksum_or_empty(&operator_raw)?
         };
-        let mut operator_private_key = env.get("OPERATOR_PRIVATE_KEY").cloned().unwrap_or_default();
+        let mut operator_private_key = env_value("OPERATOR_PRIVATE_KEY");
         if cli.live {
             if operator_address.is_empty() || operator_private_key.is_empty() {
                 return Err(
-                    "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in mainnet.env \
-                     for live mode"
+                    "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in the process \
+                     environment (the launch shell exports them from bot.env) for live mode"
+                        .to_string(),
+                );
+            }
+            if PLACEHOLDER_OPERATOR_PRIVATE_KEYS
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case(&operator_private_key))
+            {
+                return Err(
+                    "OPERATOR_PRIVATE_KEY is a known placeholder (the dry-run throwaway or \
+                     the all-zero scalar): refusing to run live with a key the repository \
+                     publishes"
                         .to_string(),
                 );
             }
@@ -351,71 +339,45 @@ impl SettlementBotConfig {
             .map_err(|e| e.to_string())?;
 
         // ── Executor ──
-        let mut executor_address = checksum_or_empty(
-            env.get("EXECUTOR_CONTRACT_ADDRESS")
-                .map_or(DEFAULT_EXECUTOR_ADDRESS, String::as_str),
-        )?;
+        let mut executor_address = checksum_or_empty(&env_or(
+            "EXECUTOR_CONTRACT_ADDRESS",
+            DEFAULT_EXECUTOR_ADDRESS,
+        ))?;
         if executor_address == ZERO_ADDRESS {
             return Err("EXECUTOR_CONTRACT_ADDRESS is the zero address".to_string());
         }
-        // Injection stance resolves from one precedence chain (env > dotenv
-        // > deployed-default false), mirroring the Python runner's
-        // from_env: the bare dotenv/OsEnv name with the old implicit-true
-        // default used to overlap a second import-time read, and divergence
-        // silently vetoed live submission. A bare INJECT_EXECUTOR_CODE in the
-        // process environment is refused rather than re-admitted.
-        let inject_executor_code = if std::env::var_os("INJECT_EXECUTOR_CODE").is_some() {
+        // The injection stance is a declared key; the retired bare name is
+        // refused rather than re-admitted, mirroring the Python runner.
+        if std::env::var_os("INJECT_EXECUTOR_CODE").is_some() {
             return Err(
                 "INJECT_EXECUTOR_CODE is retired as an OS environment variable; set \
                  DEGENBOT_INJECT_EXECUTOR_CODE (typed key simulation.inject_executor_code)"
                     .to_string(),
             );
-        } else if let Ok(typed) = std::env::var("DEGENBOT_INJECT_EXECUTOR_CODE") {
-            matches!(typed.to_ascii_lowercase().as_str(), "1" | "true" | "on")
-        } else {
-            env.get("INJECT_EXECUTOR_CODE").map_or("0", String::as_str) == "1"
-        };
-        let injected_address = checksum_or_empty(
-            env.get("INJECTED_EXECUTOR_ADDRESS")
-                .map_or(DEFAULT_INJECTED_ADDRESS, String::as_str),
-        )?;
-        let executor_owner = checksum_or_empty(
-            env.get("EXECUTOR_OWNER_ADDRESS")
-                .map_or(DEFAULT_EXECUTOR_OWNER, String::as_str),
-        )?;
+        }
+        let inject_executor_code = loaded.config.simulation.inject_executor_code;
+        let injected_address = checksum_or_empty(&env_or(
+            "INJECTED_EXECUTOR_ADDRESS",
+            DEFAULT_INJECTED_ADDRESS,
+        ))?;
+        let executor_owner =
+            checksum_or_empty(&env_or("EXECUTOR_OWNER_ADDRESS", DEFAULT_EXECUTOR_OWNER))?;
         if inject_executor_code {
             executor_address.clone_from(&injected_address);
         }
-        let executor_runtime = env
-            .get("EXECUTOR_RUNTIME")
-            .filter(|v| !v.is_empty())
-            .cloned();
+        let executor_runtime = std::env::var("EXECUTOR_RUNTIME")
+            .ok()
+            .filter(|v| !v.is_empty());
 
-        // Defaults come from the workspace-canonical policy type; the env
-        // knobs override them field-by-field.
-        let retry_defaults = RetryPolicy::verification_default();
+        // The retry policy is declared in the core schema; the loaded verdict
+        // carries it, so the operator file and the environment reach it through
+        // the one cascade.
         let verification_retry_policy = RetryPolicy {
-            max_attempts: u32::try_from(parse_u64_env(
-                env.get("VERIFICATION_RETRY_MAX_ATTEMPTS"),
-                u64::from(retry_defaults.max_attempts),
-                "MAX_ATTEMPTS",
-            )?)
-            .unwrap_or(u32::MAX),
-            base_delay: parse_f64_env(
-                env.get("VERIFICATION_RETRY_BASE_DELAY"),
-                retry_defaults.base_delay,
-                "BASE_DELAY",
-            )?,
-            max_delay: parse_f64_env(
-                env.get("VERIFICATION_RETRY_MAX_DELAY"),
-                retry_defaults.max_delay,
-                "MAX_DELAY",
-            )?,
-            jitter: parse_f64_env(
-                env.get("VERIFICATION_RETRY_JITTER"),
-                retry_defaults.jitter,
-                "JITTER",
-            )?,
+            max_attempts: u32::try_from(loaded.config.verify.verify_retry_max_attempts)
+                .unwrap_or(u32::MAX),
+            base_delay: loaded.config.verify.verify_retry_base_delay,
+            max_delay: loaded.config.verify.verify_retry_max_delay,
+            jitter: loaded.config.verify.verify_retry_jitter,
         };
 
         Ok(Self {
@@ -541,11 +503,8 @@ fn run() -> Result<(), String> {
     // scrape server on every exit path (ADR-043 section 6).
     let _telemetry_boot = telemetry::init(&loaded);
 
-    // The Python example reads `examples/mainnet.env` from the repo root;
-    // CARGO_MANIFEST_DIR is rust/examples/settlement_bot, so ../../../mainnet.env
-    // is that same file.
-    let env_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../mainnet.env");
-    let dotenv = read_dotenv(&env_path);
+    // Operator/executor identity comes from the process environment, which the
+    // launch shell fills from bot.env — the same source the Python example reads.
     if let Some(p) = &cli.permutation {
         println!("[startup] Permutation filter from CLI: {p}");
     }
@@ -553,7 +512,7 @@ fn run() -> Result<(), String> {
         println!("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS ***\n");
     }
 
-    let cfg = SettlementBotConfig::from_env(&dotenv, &cli, &loaded)?;
+    let cfg = SettlementBotConfig::from_env(&cli, &loaded)?;
     // Full (secret-masked) config dump — this line IS the read of every
     // driver-config field, so nothing in the struct is dead state.
     println!(

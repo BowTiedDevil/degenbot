@@ -2,8 +2,8 @@
 
 `ArbitrageConfig` bundles the ~20 scattered arbitrage tunables (operator identity,
 node endpoints, executor contract, dispatch knobs, path filters, dry-run)
-that `main()` currently reads ad-hoc from three sources: a `mainnet.env`
-dotenv dict, module-top constants, and CLI args. `from_env` is the factory
+that `main()` once read ad-hoc from three sources: the example dotenv
+dict, module-top constants, and CLI flags. `from_env` is the factory
 that delegates RPC resolution to the library `resolve_rpc_uris` cascade
 (`examples/eth_backrun_helpers.py` → `degenbot.config.resolve_rpc_uris`).
 
@@ -23,6 +23,7 @@ import pytest
 from degenbot.config import RpcNotConfiguredError
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers import verdict_probe as probe
+from tests.helpers.identity_env import identity_env
 
 # A chain id no operator file, environment, or harness sets, so a refusal is
 # genuinely the absence of every layer rather than a leak.
@@ -34,16 +35,18 @@ _NODE = "wss://override.example"
 _OVERRIDE = RpcCascadeOverrides(chain_id=1, node=_NODE)
 
 
-def _cfg(env, *, live=False, permutation=None, rpc=None) -> ArbitrageConfig:
-    """Build a config with the RPC override pinned.
+def _cfg(env=None, *, live=False, permutation=None, rpc=None) -> ArbitrageConfig:
+    """Build a config with the identity installed and the RPC override pinned.
 
     Every test here is about a non-RPC field, so the endpoint is supplied
-    through the explicit layer rather than by mutating an environment the
-    installed config has already read.
+    through the explicit layer. The operator/executor identity is installed in
+    the process environment for the build, because that is where ``from_env``
+    reads it.
     """
-    return ArbitrageConfig.from_env(
-        env, live=live, permutation=permutation, rpc=rpc if rpc is not None else _OVERRIDE
-    )
+    with identity_env(env):
+        return ArbitrageConfig.from_env(
+            live=live, permutation=permutation, rpc=rpc if rpc is not None else _OVERRIDE
+        )
 
 
 def _full_env() -> dict[str, str]:
@@ -80,7 +83,7 @@ class TestFromEnvFull:
         """
         values = probe.config_values(
             ["inject_executor_code", "executor_address", "injected_address"],
-            dotenv=_full_env(),
+            identity=_full_env(),
             env={"DEGENBOT_INJECT_EXECUTOR_CODE": "1"},
         )
 
@@ -92,7 +95,7 @@ class TestFromEnvFull:
 
         """
         completed = probe.run(
-            probe.build_config_code([], dotenv=_full_env(), live=True),
+            probe.build_config_code([], identity=_full_env(), live=True),
             env={"DEGENBOT_INJECT_EXECUTOR_CODE": "1"},
         )
 
@@ -108,7 +111,7 @@ class TestInjectExecutorCodeUnifiedResolution:
     environment), so a dotenv-only ``INJECT_EXECUTOR_CODE=1`` produced a bot
     that booted live and never submitted. The stance is the declared
     ``simulation.inject_executor_code`` key now, and the bare name is refused
-    in every layer it can appear in.
+    in the process environment, the only layer left that can carry it.
 
     """
 
@@ -122,21 +125,6 @@ class TestInjectExecutorCodeUnifiedResolution:
 
         with pytest.raises(ValueError, match=self._TYPED):
             _cfg({}, live=False, permutation=None)
-
-    def test_the_bare_name_is_refused_from_the_dotenv_mapping(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The layer that used to make the bare name authoritative.
-
-        Quietly ignoring it here would reproduce the same bot: the operator
-        asked for injection in the file they edit, and a run that quietly uses
-        a deployed executor instead is the defect, not a default.
-
-        """
-        monkeypatch.delenv(self._LEGACY, raising=False)
-
-        with pytest.raises(ValueError, match=self._TYPED):
-            _cfg(_full_env() | {self._LEGACY: "1"}, live=False, permutation=None)
 
     def test_the_refusal_names_the_replacement_and_the_divergence(
         self, monkeypatch: pytest.MonkeyPatch
@@ -159,7 +147,7 @@ class TestInjectExecutorCodeUnifiedResolution:
         """
         values = probe.config_values(
             ["inject_executor_code"],
-            dotenv=_full_env(),
+            identity=_full_env(),
             env={self._TYPED: "1"},
         )
 
@@ -259,9 +247,10 @@ class TestRunnerKnobResolution:
     only fallback — and a value the schema cannot parse is refused at boot by
     the loader rather than by this layer.
 
-    The example dotenv mapping is NOT one of those layers: it carries the
-    ``OPERATOR_*``/``EXECUTOR_*`` keys only, and a ``DEGENBOT_*`` name left in
-    it changes nothing.
+    The retired ``examples/mainnet.env`` is not one of those layers: it held
+    the ``OPERATOR_*``/``EXECUTOR_*`` identity keys only, and a ``DEGENBOT_*``
+    name left in it changed nothing. Identity now comes from the process
+    environment.
 
     """
 
@@ -342,14 +331,6 @@ class TestRunnerKnobResolution:
         assert values["min_profit_margin_bps"] == 0
         assert values["erc6909_profit"] is False
         assert values["reg_progress_secs"] == pytest.approx(30.0)
-
-    def test_a_knob_left_in_the_dotenv_mapping_changes_nothing(self) -> None:
-        """The dotenv mapping is not a cascade layer for these keys."""
-        values = probe.config_values(
-            ["max_registered_paths"], dotenv={"DEGENBOT_MAX_PATHS": "12345"}
-        )
-
-        assert values["max_registered_paths"] == 100000
 
 
 class TestRpcCascade:
@@ -453,3 +434,25 @@ class TestImmutability:
         cfg = _cfg(_full_env(), live=False, permutation=None)
         with pytest.raises(dataclasses.FrozenInstanceError):
             cfg.operator_address = "0x" + "1" * 40  # type: ignore[misc]
+
+
+class TestLiveModeRefusesPlaceholderKey:
+    """A live run must never sign with a key the repo already publishes.
+
+    The module ships two known placeholders: the dry-run throwaway key and the
+    all-zero scalar. Either one reaching live mode is an operator who never
+    replaced the placeholder, and the bot would submit signed transactions
+    under a key anyone can read.
+    """
+
+    _DRY_RUN_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+    def test_live_mode_refuses_the_dry_run_throwaway_key(self) -> None:
+        env = _full_env() | {"OPERATOR_PRIVATE_KEY": self._DRY_RUN_KEY}
+        with pytest.raises(ValueError, match="placeholder"):
+            _cfg(env, live=True, permutation=None)
+
+    def test_live_mode_refuses_the_all_zero_key(self) -> None:
+        env = _full_env() | {"OPERATOR_PRIVATE_KEY": "0x" + "0" * 64}
+        with pytest.raises(ValueError, match="placeholder"):
+            _cfg(env, live=True, permutation=None)

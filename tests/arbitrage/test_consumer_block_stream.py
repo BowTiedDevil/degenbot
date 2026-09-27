@@ -22,6 +22,7 @@ import pytest
 from degenbot.dispatch import Dispatcher
 from degenbot.runner._consume import consume_result_batches
 from tests.fakes.runner_pipelines import StubPipeline
+from tests.helpers.identity_env import identity_env
 
 
 class _Eth:
@@ -167,22 +168,24 @@ async def _run(
     # the dispatch clock at enqueue. That clock is what `dispatched` proves —
     # the stub stands in for the serial leaf's own dispatch clock capture.
     StubPipeline.instances.clear()
+    with identity_env(
+        {
+            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+            "OPERATOR_PRIVATE_KEY": "0x" + "11" * 32,
+            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+        }
+    ):
+        cfg = ArbitrageConfig.from_env(
+            live=False,
+            permutation=None,
+            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
+        )
     owner = _SessionState(
         engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
         async_w3=w3,  # type: ignore[arg-type]
         sim_ctx=None,
         dispatcher=dispatcher,
-        cfg=ArbitrageConfig.from_env(
-            {
-                "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-                "OPERATOR_PRIVATE_KEY": "0x"
-                + "11" * 32,  # valid secp256k1 scalar, cosmetic (leaf stubbed)
-                "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-                    },
-            live=False,
-            permutation=None,
-            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
-        ),
+        cfg=cfg,
         current_block=dispatcher.current_block,
         pipeline_factory=StubPipeline,
     )

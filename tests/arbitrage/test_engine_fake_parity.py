@@ -23,6 +23,7 @@ from degenbot._ffi import ArbitrageEngine, Bot
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner.bot_runner import _SessionState
 from degenbot.runner.config import ArbitrageConfig
+from tests.helpers.identity_env import identity_env
 from degenbot.strategy import validate_strategy_readiness as readiness
 from tests.fakes.engine import (
     ENGINE_SEAM_MEMBERS,
@@ -43,15 +44,14 @@ def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _cfg() -> ArbitrageConfig:
-    return ArbitrageConfig.from_env(
+    with identity_env(
         {
             "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
             "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
             "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-            },
-        live=True,
-        permutation=None,
-    )
+        }
+    ):
+        return ArbitrageConfig.from_env(live=True, permutation=None)
 
 
 def _stub_arbitrage_engine_members() -> set[str]:

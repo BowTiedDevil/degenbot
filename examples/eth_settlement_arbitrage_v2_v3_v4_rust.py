@@ -4,7 +4,9 @@ A thin Python entrypoint over the Rust-owned ArbitrageEngine and the
 ``degenbot.runner`` driver (epic 5TSYKN). The runtime driver — config,
 path registration, result consumption, dispatch — lives in the
 ``degenbot.runner`` package; this file is an ``argv → BotRunner`` entrypoint
-that owns only the CLI policy (argparse, SIGINT wrapper, dotenv read).
+that owns only the CLI policy (argparse, SIGINT wrapper). Operator identity
+reaches ``from_env`` through the process environment, exported by the launch
+shell from ``bot.env``.
 
 Startup sequence (owned by :class:`~degenbot.runner.BotRunner`):
 1. Subscribe to WS (event buffering begins)
@@ -22,11 +24,8 @@ the shared constants) has moved to ``degenbot.runner`` (epic 5TSYKN).
 
 import asyncio
 import contextlib
-import os
 import sys
 import time
-
-import dotenv
 
 from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.exceptions import BootRefused
@@ -54,25 +53,12 @@ async def main() -> None:
     if not dry_run:
         bot_logger.info("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS! ***\n")
 
-    env = dotenv.dotenv_values("examples/mainnet.env")
-    # OS-env overlay: the launcher sources bot.env and exports the operator
-    # identity + executor address, so no secret ever lands in a workspace file.
-    # Injection stance is intentionally absent here: DEGENBOT_INJECT_EXECUTOR_CODE
-    # reaches from_env directly (its own env layer beats the dotenv), and the bare
-    # name is retired with a loud refusal.
-    for _k in (
-        "OPERATOR_ADDRESS",
-        "OPERATOR_PRIVATE_KEY",
-        "EXECUTOR_CONTRACT_ADDRESS",
-        "EXECUTOR_OWNER_ADDRESS",
-        "EXECUTOR_RUNTIME",
-    ):
-        _v = os.environ.get(_k)
-        if _v:
-            env[_k] = _v
+    # Operator/executor identity comes from the process environment, which the
+    # launch shell fills from bot.env — no secret lands in a workspace file. The
+    # injection stance is a declared key (:data:`DEGENBOT_INJECT_EXECUTOR_CODE`),
+    # and the retired bare spelling is refused with a loud error.
     try:
         cfg = ArbitrageConfig.from_env(
-            env,
             live=not dry_run,
             permutation=args.permutation,
             rpc=RpcCascadeOverrides(node=args.node),

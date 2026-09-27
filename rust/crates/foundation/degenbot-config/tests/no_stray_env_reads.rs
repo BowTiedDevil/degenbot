@@ -160,19 +160,30 @@ fn insert_python_entries(map: &mut BTreeMap<&'static str, &'static [&'static str
     // schema does not own, read at a site that predates the cascade, or a
     // tooling posture the cascade does not express.
     //
-    // The only env reads the companion still owns are refusals, and neither
-    // honors a value:
-    //   - `name` is the closed retired-knob list's element: presence of
-    //     `DEGENBOT_REG_QUEUE_BOUND` / `DEGENBOT_REG_WORKERS` in the OS
-    //     environment fails the config load, and nothing would consume the
-    //     value if one were offered.
-    //   - `_RETIRED_INJECTION_KEY` is the retired bare spelling of the
-    //     injection stance, refused in every layer; the honored spelling is
-    //     the declared `simulation.inject_executor_code` key, which arrives
+    // The companion owns two classes of env read:
+    //   - refusals: `name` is the closed retired-knob list's element
+    //     (presence of `DEGENBOT_REG_QUEUE_BOUND` / `DEGENBOT_REG_WORKERS`
+    //     fails the config load, and nothing would consume a value), and
+    //     `_RETIRED_INJECTION_KEY` is the retired bare spelling of the
+    //     injection stance, refused everywhere; the honored spelling is the
+    //     declared `simulation.inject_executor_code` key, which arrives
     //     through the verdict.
+    //   - operator/executor identity, which the typed schema does not
+    //     declare: the launch shell exports it from `bot.env`, and `from_env`
+    //     reads it so a live run signs with the operator's key. Live mode
+    //     additionally refuses a placeholder key the repository publishes.
     map.insert(
         "src/degenbot/runner/config.py",
-        &["name", "_RETIRED_INJECTION_KEY"][..],
+        &[
+            "name",
+            "_RETIRED_INJECTION_KEY",
+            "OPERATOR_ADDRESS",
+            "OPERATOR_PRIVATE_KEY",
+            "EXECUTOR_CONTRACT_ADDRESS",
+            "INJECTED_EXECUTOR_ADDRESS",
+            "EXECUTOR_OWNER_ADDRESS",
+            "EXECUTOR_RUNTIME",
+        ][..],
     );
     // The console level for the Python side of the log pipeline, the same
     // class as the Rust `RUST_LOG` tooling signal: output plumbing, not

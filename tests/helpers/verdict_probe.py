@@ -16,7 +16,9 @@ Two questions are asked here, and they are different:
 * :func:`resolved_value` — what did the cascade settle for one declared key,
   and which layer won. (No config object involved.)
 * :func:`config_values` — what did :meth:`ArbitrageConfig.from_env` build from
-  that verdict, which is the surface a driver consumes.
+  that verdict, which is the surface a driver consumes. An identity mapping is
+  installed in the child's process environment first, because operator and
+  executor identity are read from there rather than from a dotenv file.
 
 A value is declared as a dotted field path (``diag.tracemalloc_secs``) or a
 dotted TOML path (``diagnostics.tracemalloc_secs``) — same shape, different
@@ -166,12 +168,14 @@ def resolved_value(
 _FIELD_PROBE = """\
 import dataclasses
 import json
+import os
 
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 
 
+os.environ.update(json.loads(IDENTITY))
+
 cfg = ArbitrageConfig.from_env(
-    json.loads(DOTENV),
     live=LIVE,
     permutation=None,
     rpc=RpcCascadeOverrides(chain_id=1, node=NODE),
@@ -190,14 +194,15 @@ print(json.dumps(out, default=str))
 def build_config_code(
     fields: Sequence[str],
     *,
-    dotenv: Mapping[str, str] | None = None,
+    identity: Mapping[str, str] | None = None,
     live: bool = False,
 ) -> str:
     """The child program that builds a config and prints `fields` by dotted path.
 
     Args:
         fields: Dotted paths off the built config.
-        dotenv: The example dotenv mapping handed to ``from_env``.
+        identity: The operator/executor identity installed in the child's
+            process environment before the build.
         live: Whether the child builds the config in live mode.
 
     Returns:
@@ -207,7 +212,7 @@ def build_config_code(
 
     """
     return _NL.join([
-        f"DOTENV = {json.dumps(dict(dotenv or {}))!r}",
+        f"IDENTITY = {json.dumps(dict(identity or {}))!r}",
         f"FIELDS = {list(fields)!r}",
         f"LIVE = {live!r}",
         f"NODE = {_OVERRIDE_NODE!r}",
@@ -219,7 +224,7 @@ def config_values(
     fields: Sequence[str],
     *,
     env: Mapping[str, str] | None = None,
-    dotenv: Mapping[str, str] | None = None,
+    identity: Mapping[str, str] | None = None,
     live: bool = False,
     operator_file: Path | None = AMBIENT_OPERATOR_FILE,
 ) -> dict[str, object]:
@@ -229,7 +234,8 @@ def config_values(
         fields: Dotted paths off the built config, e.g. ``diag.tracemalloc_secs``
             or ``verification_retry_policy.max_attempts``.
         env: Extra environment for the child (the declared env layer).
-        dotenv: The example dotenv mapping handed to ``from_env``.
+        identity: The operator/executor identity installed in the child's
+            process environment before the build.
         live: Whether the child builds the config in live mode.
         operator_file: The operator file to pin, or ``None`` for none.
 
@@ -238,7 +244,7 @@ def config_values(
 
     """
     completed = run(
-        build_config_code(fields, dotenv=dotenv, live=live),
+        build_config_code(fields, identity=identity, live=live),
         env=env,
         operator_file=operator_file,
     )

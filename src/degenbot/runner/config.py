@@ -5,7 +5,9 @@ This module owns the Python-companion, ``stays-python`` surface that the
 runtime driver (``BotRunner``) and its tests consume:
 
 - :class:`ArbitrageConfig` — the unified frozen config value object (built from a
-  dotenv mapping + CLI flags via :meth:`ArbitrageConfig.from_env`).
+  the resolved verdict + CLI flags via :meth:`ArbitrageConfig.from_env`;
+  the operator/executor identity it carries is read from the process
+  environment).
 - :func:`classify_revert` — the canonical simulation-revert labeler
   (public leaf; the dual-driver parity test imports it directly).
 
@@ -17,7 +19,6 @@ legacy ``main()`` (``filter_thin_margin_results`` with its ``BPS_DENOM`` /
 
 import dataclasses
 import os
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +52,7 @@ _DEFAULT_INJECTED_ADDRESS = "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1"
 _DEFAULT_EXECUTOR_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 
 # Dry-run operator placeholder: a VALID secp256k1 private key + its derived
-# address, used when `mainnet.env` omits `OPERATOR_*` in non-live mode.
+# address, used when the process environment omits `OPERATOR_*` in non-live mode.
 # The (now-eager) `TxSigner(key=operator_private_key, chain_id=1)` site
 # rejects the former all-zero placeholder (zero is not a valid scalar) and
 # raised `ValueError: signature error`. The Anvil account-0 key is a
@@ -59,6 +60,14 @@ _DEFAULT_EXECUTOR_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 # leaf's `dry_run` guard skips `sign_eip1559` for every candidate.
 _DRY_RUN_OPERATOR_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 _DRY_RUN_OPERATOR_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+# Private keys the repository publishes. A live run must never sign with one:
+# it would submit real transactions under a key anyone can read. Compared
+# case-insensitively against the normalized (0x-prefixed) spelling.
+_PLACEHOLDER_OPERATOR_PRIVATE_KEYS = frozenset({
+    "0x" + "0" * 64,  # the former all-zero dry-run placeholder
+    _DRY_RUN_OPERATOR_PRIVATE_KEY,  # the Anvil account-0 throwaway
+})
 
 
 def _declared(path: str) -> Any:
@@ -135,7 +144,8 @@ def _refuse_retired_shell_knobs() -> None:
 
 
 #: The retired bare spelling of the injection stance, and the declared key
-#: that replaced it. The bare name is refused in every layer it can appear in.
+#: that replaced it. The bare name is refused anywhere it can still appear:
+#: the process environment.
 _RETIRED_INJECTION_KEY = "INJECT_EXECUTOR_CODE"
 _TYPED_INJECTION_KEY = "DEGENBOT_INJECT_EXECUTOR_CODE"
 
@@ -151,28 +161,23 @@ _RETIRED_INJECTION_KEY_REFUSAL = (
 )
 
 
-def _refuse_retired_injection_key(env: Mapping[str, str | None]) -> None:
-    """Refuse the bare injection name wherever an operator can set it.
+def _refuse_retired_injection_key() -> None:
+    """Refuse the retired bare injection name in the process environment.
 
     The bare name was a hard ``ValueError`` from the OS environment but
     authoritative from the example dotenv mapping, so the same spelling meant
     two different things depending on the layer and an operator's dotenv-only
     ``INJECT_EXECUTOR_CODE=1`` produced a live bot that never submitted (the
     divergence surfaced as WARNING-only skip lines, not an error). One
-    declaration means one name: the bare spelling is refused in the OS
-    environment AND in the dotenv mapping, and the stance itself is the
+    declaration means one name: the dotenv mapping is gone, the bare spelling
+    is refused in the process environment, and the stance itself is the
     declared ``simulation.inject_executor_code`` key.
 
-    Args:
-        env: the example dotenv mapping ``from_env`` was handed.
-
     Raises:
-        ValueError: The retired bare name is present in either layer.
+        ValueError: The retired bare name is present in the environment.
 
     """
     if _RETIRED_INJECTION_KEY in os.environ:
-        raise ValueError(_RETIRED_INJECTION_KEY_REFUSAL)
-    if _RETIRED_INJECTION_KEY in env:
         raise ValueError(_RETIRED_INJECTION_KEY_REFUSAL)
 
 
@@ -210,12 +215,13 @@ class RpcCascadeOverrides:
 class ArbitrageConfig:
     """Unified settlement-arbitrage configuration — one object for the ~20 tunables `main()` reads.
 
-    Replaces the three scattered config sources (a ``mainnet.env`` dotenv
-    dict, module-top constants, and CLI args) with a single frozen value object.
+    Replaces the scattered config sources (the example's dotenv file,
+    module-top constants, and CLI flags) with a single frozen value object.
     Construct via :meth:`from_env`; the bridge onto ``main()`` lives in the
-    ``BotRunner`` orchestration. Live defaults (zero-address operator + dummy
-    key in dry-run, localhost nodes) reproduce ``main()``'s current behavior
-    exactly — no new defaults invented.
+    ``BotRunner`` orchestration. The operational stances resolve through the
+    core verdict, and the operator/executor identity is read from the process
+    environment. Live defaults reproduce ``main()``'s behavior exactly — no
+    new defaults invented.
     """
 
     # Operator identity
@@ -265,23 +271,25 @@ class ArbitrageConfig:
     @classmethod
     def from_env(
         cls,
-        env: Mapping[str, str | None],
         *,
         live: bool,
         permutation: str | None,
         rpc: RpcCascadeOverrides | None = None,
     ) -> "ArbitrageConfig":
-        """Build a ArbitrageConfig from a dotenv mapping + CLI flags + the verdict.
+        """Build an ArbitrageConfig from the process environment + CLI flags + the verdict.
 
-        The ``env`` mapping carries the example's own ``OPERATOR_*`` /
-        ``EXECUTOR_*`` dotenv keys only. Every ``DEGENBOT_*`` operational
-        stance is a declared schema key, so those arrive from
-        :func:`degenbot.config.resolved_config` and reach the operator file as
-        well as the environment; nothing here re-resolves a layer.
+        The dotenv file is no longer a source: operator/executor identity is
+        read from the process environment (the launch shell exports it from
+        ``bot.env``), and every ``DEGENBOT_*`` operational stance is a declared
+        schema key that arrives from :func:`degenbot.config.resolved_config`
+        and reaches the operator file as well as the environment; nothing here
+        re-resolves a layer.
 
         Behavior:
-        - operator: live mode requires both OPERATOR_ADDRESS/PRIVATE_KEY
-          (raises ValueError); dry-run defaults to ZERO_ADDRESS + a 0x00..00 key.
+        - operator: live mode requires both OPERATOR_ADDRESS/OPERATOR_PRIVATE_KEY
+          from the process environment and refuses a known placeholder key
+          (raises ValueError); dry-run defaults to a valid throwaway key + its
+          derived address.
         - nodes: delegated to :func:`degenbot.config.resolve_rpc_uris`, so the
           four-layer cascade (explicit ``node`` > OS env
           ``DEGENBOT_RPC_{IPC,WS,HTTP}_CHAINID_{cid}`` > the operator file's
@@ -298,19 +306,19 @@ class ArbitrageConfig:
             A frozen ``ArbitrageConfig`` with cascade-resolved ``node_http``/``node_ws``.
 
         Raises:
-            ValueError: missing operator in live mode, zero-address executor, a
+            ValueError: missing or placeholder operator in live mode, zero-address executor, a
                 retired knob present, or ``RpcNotConfiguredError`` (a
                 ``ValueError`` subclass) when no RPC endpoint is configured for
                 ``chain_id`` in any cascade layer.
 
         """
         _refuse_retired_shell_knobs()
-        _refuse_retired_injection_key(env)
+        _refuse_retired_injection_key()
         overrides = rpc if rpc is not None else RpcCascadeOverrides()
 
         # ── Operator ──
-        operator_address_raw = env.get("OPERATOR_ADDRESS") or ""
-        operator_private_key = env.get("OPERATOR_PRIVATE_KEY") or ""
+        operator_address_raw = os.environ.get("OPERATOR_ADDRESS") or ""
+        operator_private_key = os.environ.get("OPERATOR_PRIVATE_KEY") or ""
         operator_address = _checksum_or_empty(operator_address_raw) if operator_address_raw else ""
         if not live:
             # dry-run: allow missing operator → a valid throwaway key + its
@@ -323,10 +331,18 @@ class ArbitrageConfig:
             if not operator_private_key:
                 operator_private_key = _DRY_RUN_OPERATOR_PRIVATE_KEY
         else:
-            msg = (
-                "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in mainnet.env for live mode"
-            )
             if not operator_address or not operator_private_key:
+                msg = (
+                    "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in the process "
+                    "environment (the launch shell exports them from bot.env) for live mode"
+                )
+                raise ValueError(msg)
+            if operator_private_key.lower() in _PLACEHOLDER_OPERATOR_PRIVATE_KEYS:
+                msg = (
+                    "OPERATOR_PRIVATE_KEY is a known placeholder (the dry-run throwaway or "
+                    "the all-zero scalar): refusing to run live with a key the repository "
+                    "publishes. Set the real operator key in the process environment."
+                )
                 raise ValueError(msg)
 
         # ── Node URLs — delegated to the library cascade (resolve_rpc_uris) ──
@@ -335,7 +351,7 @@ class ArbitrageConfig:
 
         # ── Executor ──
         executor_address = _checksum_or_empty(
-            env.get("EXECUTOR_CONTRACT_ADDRESS") or _DEFAULT_EXECUTOR_ADDRESS
+            os.environ.get("EXECUTOR_CONTRACT_ADDRESS") or _DEFAULT_EXECUTOR_ADDRESS
         )
         if executor_address == _ZERO_ADDRESS:
             msg = "EXECUTOR_CONTRACT_ADDRESS is the zero address"
@@ -343,14 +359,16 @@ class ArbitrageConfig:
 
         inject_executor_code = bool(_declared("simulation.inject_executor_code"))
         injected_address = _checksum_or_empty(
-            env.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
+            os.environ.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
         )
         # Owner defaulting follows the deployment invariant: a real
         # deployment makes the owner the deployer, and the operator IS the
         # deployer (bot.env key), so an unset owner is the operator — with
         # the dry-run placeholder pair as the only non-live fallback.
         default_owner = operator_address if live else _DEFAULT_EXECUTOR_OWNER
-        executor_owner = _checksum_or_empty(env.get("EXECUTOR_OWNER_ADDRESS") or default_owner)
+        executor_owner = _checksum_or_empty(
+            os.environ.get("EXECUTOR_OWNER_ADDRESS") or default_owner
+        )
         if live and executor_owner != operator_address:
             msg = (
                 "EXECUTOR_OWNER_ADDRESS must equal OPERATOR_ADDRESS in live mode "
@@ -375,7 +393,7 @@ class ArbitrageConfig:
             executor_address = injected_address
 
         verification_retry_policy = _verification_retry_policy()
-        executor_runtime = env.get("EXECUTOR_RUNTIME") or None
+        executor_runtime = os.environ.get("EXECUTOR_RUNTIME") or None
         # The incident probes' intervals come from the declared
         # `diagnostics.*` keys; zero is the declared default, so there is no
         # second "off" spelling here.
