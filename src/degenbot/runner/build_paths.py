@@ -356,10 +356,10 @@ class PathRegistrationPipeline:
         )
         if not self._fleet_intake:
             msg = (
-                "registration is fleet-hosted only (PRG-5 hard cutover, epic "
-                "IRUMXD): the legacy crawl shell (bounded queue + offload "
-                "executor) is retired and the worker fleet is the only "
-                "behavior (CQLMM2 stance cutover) — the fleet intake boot "
+                "registration is fleet-hosted only (PRG-5 hard cutover): the "
+                "legacy crawl shell (bounded queue + offload executor) is "
+                "retired and the worker fleet is the only behavior after the "
+                "stance cutover — the fleet intake boot "
                 "descriptor is missing, so the engine was not constructed "
                 "or its fleet boot failed; check the worker-census boot "
                 "table for fleet_pool_state_updater_slots."

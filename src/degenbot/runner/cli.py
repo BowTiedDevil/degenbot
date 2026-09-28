@@ -54,8 +54,8 @@ def build_arbitrage_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Optional Unix domain socket path for the operator command channel "
-            "(NWTUM3). When set, the bot hosts an OperatorServer here so the "
+            "Optional Unix domain socket path for the operator command channel. "
+            "When set, the bot hosts an OperatorServer here so the "
             "`degenbot path add` / `degenbot path discover` CLI can add a path "
             "or trigger bounded on-demand discovery on the LIVE pump without "
             "restarting it."
