@@ -3126,7 +3126,7 @@ type ClSnapshotFields = (
     Vec<(i32, (u128, i128, u64))>,
     Vec<(i32, (U256, u64))>,
     u64,
-    String,
+    PyPoolTickCoverage,
 );
 
 fn cl_snapshot_fields(
@@ -3169,11 +3169,7 @@ fn cl_snapshot_fields(
                 .or_insert((U256::ZERO, state.tick_data_block()));
         }
     }
-    let coverage = match state.coverage() {
-        PoolTickCoverage::Sparse => "sparse",
-        PoolTickCoverage::Tracked => "tracked",
-    }
-    .to_string();
+    let coverage = PyPoolTickCoverage::from_core(state.coverage());
     (
         token0,
         token1,
@@ -3274,6 +3270,43 @@ impl PyReservePairView {
     }
 }
 
+/// The CL tick-map coverage discriminant crossing the FFI (survey C7):
+/// Python compares this enum instead of probing a stringified twin.
+/// Mirrors `degenbot_pools::v3_state::PoolTickCoverage` (the fact's home).
+#[pyclass(
+    name = "PoolTickCoverage",
+    eq,
+    hash,
+    frozen,
+    from_py_object,
+    module = "degenbot._ffi"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PyPoolTickCoverage {
+    Sparse,
+    Tracked,
+}
+
+impl PyPoolTickCoverage {
+    /// Convert from the core enum.
+    #[must_use]
+    pub const fn from_core(coverage: degenbot_bot::bot_core::PoolTickCoverage) -> Self {
+        match coverage {
+            degenbot_bot::bot_core::PoolTickCoverage::Sparse => Self::Sparse,
+            degenbot_bot::bot_core::PoolTickCoverage::Tracked => Self::Tracked,
+        }
+    }
+
+    /// The matching core enum.
+    #[must_use]
+    pub const fn to_core(self) -> degenbot_bot::bot_core::PoolTickCoverage {
+        match self {
+            Self::Sparse => degenbot_bot::bot_core::PoolTickCoverage::Sparse,
+            Self::Tracked => degenbot_bot::bot_core::PoolTickCoverage::Tracked,
+        }
+    }
+}
+
 /// Read-only concentrated-liquidity view exposed to Python.
 #[pyclass(name = "ConcentratedLiquidityView", module = "degenbot._ffi")]
 pub struct PyConcentratedLiquidityView {
@@ -3288,7 +3321,7 @@ pub struct PyConcentratedLiquidityView {
     tick_data: Vec<(i32, (u128, i128, u64))>,
     tick_bitmap: Vec<(i32, (U256, u64))>,
     tick_data_block: u64,
-    coverage: String,
+    coverage: PyPoolTickCoverage,
 }
 
 #[pymethods]
@@ -3339,8 +3372,8 @@ impl PyConcentratedLiquidityView {
     }
 
     #[getter]
-    fn coverage(&self) -> String {
-        self.coverage.clone()
+    fn coverage(&self) -> PyPoolTickCoverage {
+        self.coverage
     }
 
     #[getter]

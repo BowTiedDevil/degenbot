@@ -538,6 +538,14 @@ class PoolKind:
     V3: PoolKind
     V4: PoolKind
 
+# frozen pyclass (pyo3): the runtime forbids subclassing.
+@final
+class PoolTickCoverage:
+    """The typed CL tick-map coverage discriminant crossing the FFI."""
+
+    Sparse: PoolTickCoverage
+    Tracked: PoolTickCoverage
+
 def classify_pool_kind(kind: PoolKind) -> PoolKind: ...
 def classify_pool_kinds(kinds: Sequence[PoolKind]) -> set[PoolKind]: ...
 def convert_pool_type_filter(
@@ -993,7 +1001,7 @@ class ConcentratedLiquidityView:
     @property
     def tick_data_block(self) -> int: ...
     @property
-    def coverage(self) -> str: ...
+    def coverage(self) -> PoolTickCoverage: ...
     @property
     def tick_data(self) -> dict[int, tuple[int, int, int]]: ...
     @property
@@ -2214,6 +2222,7 @@ __all__ = [
     "PoolAlreadyRegisteredError",
     "PoolKind",
     "PoolRegistrationError",
+    "PoolTickCoverage",
     "PossibleInaccurateResult",
     "RegistrationLedger",
     "ReservePairView",

@@ -15,13 +15,15 @@ V4-specific state:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from degenbot.uniswap.cl_pool_state import ConcentratedLiquidityPoolState
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
 
 
-class V4PoolState:
+class V4PoolState(ConcentratedLiquidityPoolState):
     """State for V4-style concentrated-liquidity pools.
 
     Immutable data set at construction:
@@ -34,9 +36,6 @@ class V4PoolState:
     # Immutable — set once at construction
     _token0: Erc20Token
     _token1: Erc20Token
-    # The CL handle (set by the companion's _from_py_pool); the
-    # sparse_liquidity_map property reads Rust coverage through it.
-    _py_pool: Any
 
     @property
     def token0(self) -> Erc20Token:
@@ -47,16 +46,6 @@ class V4PoolState:
     def token1(self) -> Erc20Token:
         """Token1."""
         return self._token1
-
-    @property
-    def sparse_liquidity_map(self) -> bool:
-        """Determine sparse liquidity map.
-
-        Rust ``coverage`` is the fact (the double-tracked Python
-        flag is retired; the V3/V4 state owns the read).
-
-        """
-        return self._py_pool.concentrated_liquidity().coverage == "sparse"
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:

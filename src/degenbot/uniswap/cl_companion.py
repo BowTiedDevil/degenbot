@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from degenbot._ffi import PoolTickCoverage
 from degenbot.exceptions import ExternalUpdateError
 from degenbot.exceptions.pool import LiquidityMapWordMissing, NoPoolStateAvailable
 from degenbot.types.abstract import AbstractLiquidityPool
@@ -264,7 +265,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         # rather than applying over an unknown word (the reorg journal's
         # priors for those ticks would be wrong). Tracked pools: inert (the
         # bitmap is complete; absent word = known-empty).
-        if self._py_pool.concentrated_liquidity().coverage == "sparse":
+        if self._py_pool.concentrated_liquidity().coverage == PoolTickCoverage.Sparse:
             for tick in (update.tick_lower, update.tick_upper):
                 word, _ = cl_get_tick_word_and_bit_position(tick, self.tick_spacing)
                 # Short-circuit: ensure_word_known is only called for a word
