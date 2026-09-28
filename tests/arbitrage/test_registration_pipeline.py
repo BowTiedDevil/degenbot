@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -47,9 +46,53 @@ from degenbot.runner.build_paths import (
     PathRegistrationPipeline,
     RegistrationUnitOutcome,
 )
+from tests.fakes.tokens import FakeToken
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
+
+
+@dataclass
+class _PipelineContext:
+    """The construction context slice ``PathRegistrationPipeline`` reads."""
+
+    bot: object
+    chain_id: int = 1
+    database_path: Path = Path("unused.db")
+    uniswap_v3_tracker: object | None = None
+    sushiswap_v3_tracker: object | None = None
+    pancakeswap_v3_tracker: object | None = None
+    weth: object | None = None
+
+
+@dataclass
+class _ConstrBot:
+    """Construction-Bot double for the pipeline's build surfaces.
+
+    ``registration_fleet_hosted`` is the intake gate; a build method a test
+    leaves unset is one its scripted pool family never drives.
+    """
+
+    fleet_hosted: bool = True
+    build_pool: Callable[..., object] | None = None
+    build_managed_pool: Callable[..., object] | None = None
+
+    def registration_fleet_hosted(self) -> bool:
+        return self.fleet_hosted
+
+
+@dataclass(frozen=True)
+class _PoolIdentity:
+    """The Rust pool-handle slice the pipeline reads: the engine pool id."""
+
+    pool_id: int
+
+
+@dataclass
+class _PathPredicate:
+    """Engine path-predicate double: the D7KMQO policy-gate surface."""
+
+    evaluate: Callable[[object], None] = lambda pools_and_zfos: None
 
 
 class _Receipt:
@@ -154,15 +197,7 @@ def _pipeline_with_bot(
     constr_bot: object, engine_registry: object = None
 ) -> tuple[PathRegistrationPipeline, object]:
     """A pipeline over a supplied construction Bot (the skip-gate pattern)."""
-    ctx = SimpleNamespace(
-        bot=constr_bot,
-        chain_id=1,
-        database_path=Path("unused.db"),
-        uniswap_v3_tracker=None,
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=None,
-    )
+    ctx = _PipelineContext(bot=constr_bot)
     pipeline = PathRegistrationPipeline(
         context=ctx,
         engine_registry=engine_registry,
@@ -315,15 +350,7 @@ def test_absorb_outcome_counter_parity() -> None:
 
 def test_legacy_stance_pipeline_construction_refuses() -> None:
     """The hard cutover: no fleet intake, no crawl (loud, actionable)."""
-    ctx = SimpleNamespace(
-        bot=SimpleNamespace(registration_fleet_hosted=lambda: False),
-        chain_id=1,
-        database_path=Path("unused.db"),
-        uniswap_v3_tracker=None,
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=None,
-    )
+    ctx = _PipelineContext(bot=_ConstrBot(fleet_hosted=False))
     with pytest.raises(RuntimeError, match="fleet-hosted only"):
         PathRegistrationPipeline(context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000)
 
@@ -356,9 +383,9 @@ class _FakeV3Pool:
 
     def __init__(self, address: str, token0: str, token1: str, pool_id: int) -> None:
         self.address = address
-        self.token0 = SimpleNamespace(address=token0)
-        self.token1 = SimpleNamespace(address=token1)
-        self._py_pool = SimpleNamespace(pool_id=pool_id)
+        self.token0 = FakeToken(address=token0)
+        self.token1 = FakeToken(address=token1)
+        self._py_pool = _PoolIdentity(pool_id=pool_id)
 
 
 class _RecordingRegistry:
@@ -368,7 +395,7 @@ class _RecordingRegistry:
         self.verifies: list[str] = []
         self.registrations: list[list] = []
         self._next_path_id = 0
-        self.path_predicate = SimpleNamespace(evaluate=lambda pools_and_zfos: None)
+        self.path_predicate = _PathPredicate()
 
     def run_v3_verify_lifecycle_sync(self, address: str) -> None:
         self.verifies.append(address)
@@ -403,15 +430,11 @@ def _pipeline_over_registry(
         ) -> _FakeV3Pool:
             return pools[pool_address]
 
-    bot = SimpleNamespace(registration_fleet_hosted=lambda: True)
-    ctx = SimpleNamespace(
+    bot = _ConstrBot()
+    ctx = _PipelineContext(
         bot=bot,
-        chain_id=1,
-        database_path=Path("unused.db"),
         uniswap_v3_tracker=_Tracker(),
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=SimpleNamespace(address=WETH_CHECKSUM),
+        weth=FakeToken(address=WETH_CHECKSUM),
     )
     return PathRegistrationPipeline(
         context=ctx,
@@ -481,7 +504,7 @@ def test_path_predicate_evaluates_before_verify() -> None:
         msg = "policy: not deployed"
         raise _PolicyRejection(msg)
 
-    registry.path_predicate = SimpleNamespace(evaluate=_refuse)
+    registry.path_predicate = _PathPredicate(evaluate=_refuse)
 
     outcome = pipeline._registration_unit(_closed_v3_cycle_steps())
     assert outcome.kind == "reject"
@@ -534,15 +557,11 @@ def _pipeline_over_registry_three_pools(
         ) -> _FakeV3Pool:
             return pools[pool_address]
 
-    bot = SimpleNamespace(registration_fleet_hosted=lambda: True)
-    ctx = SimpleNamespace(
+    bot = _ConstrBot()
+    ctx = _PipelineContext(
         bot=bot,
-        chain_id=1,
-        database_path=Path("unused.db"),
         uniswap_v3_tracker=_Tracker(),
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=SimpleNamespace(address=WETH_CHECKSUM),
+        weth=FakeToken(address=WETH_CHECKSUM),
     )
     return PathRegistrationPipeline(
         context=ctx,
@@ -610,8 +629,7 @@ def test_stable_build_refusal_memoizes_the_pool() -> None:
         hooked: HookedPoolRejectedError = HookedPoolRejectedError
         raise hooked
 
-    bot = SimpleNamespace(
-        registration_fleet_hosted=lambda: True,
+    bot = _ConstrBot(
         build_managed_pool=_build_managed_pool,
         build_pool=lambda *a, **k: None,
     )
@@ -655,7 +673,7 @@ def test_policy_gate_denial_memoizes_the_path() -> None:
         raise policy_denied
 
     registry = _ScriptedRegistry()
-    registry.path_predicate = SimpleNamespace(evaluate=_evaluate)
+    registry.path_predicate = _PathPredicate(evaluate=_evaluate)
     pipeline = _pipeline_over_registry(registry)
     steps = _closed_v3_cycle_steps()
 
@@ -819,7 +837,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
 
     # Rejected-path concept (the D7KMQO deny memoizes per hop signature).
     denied = _RecordingRegistry()
-    denied.path_predicate = SimpleNamespace(evaluate=_raise_path_rejected)
+    denied.path_predicate = _PathPredicate(evaluate=_raise_path_rejected)
     pipeline2 = _pipeline_over_registry(denied)
     assert pipeline2._registration_unit(_closed_v3_cycle_steps()).kind == "reject"
     assert pipeline2._ledger.path_rejected(hop_sig), "rejected-path memo"
@@ -828,10 +846,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
     def _build_managed_pool(_address: object, _request: object) -> None:
         raise HookedPoolRejectedError
 
-    bot = SimpleNamespace(
-        registration_fleet_hosted=lambda: True,
-        build_managed_pool=_build_managed_pool,
-    )
+    bot = _ConstrBot(build_managed_pool=_build_managed_pool)
     pipeline3, _ = _pipeline_with_bot(bot)
     v4_steps = [_OpaqueStep(type=PoolKind.V4, address=None, hash=0xDEAD)]
     assert pipeline3._registration_unit(v4_steps).tag == "v4-hook-rejected"
@@ -884,7 +899,7 @@ def test_impostor_class_name_is_never_memoized() -> None:
         msg = "name matches, type does not"
         raise impostor(msg)
 
-    bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
+    bot = _ConstrBot(build_pool=_build_pool)
     pipeline, _ = _pipeline_with_bot(bot)
     steps = [_OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)]
 
@@ -905,7 +920,7 @@ def test_real_typed_stable_refusal_is_memoized() -> None:
         builds.append(address)
         raise HighFeePoolRejectedError
 
-    bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
+    bot = _ConstrBot(build_pool=_build_pool)
     pipeline, _ = _pipeline_with_bot(bot)
     steps = [_OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)]
 
@@ -927,7 +942,7 @@ def test_transient_build_skip_tag_uses_the_bounded_vocabulary() -> None:
         msg = "rpc blip"
         raise ConnectionError(msg)
 
-    bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
+    bot = _ConstrBot(build_pool=_build_pool)
     pipeline, _ = _pipeline_with_bot(bot)
     outcome = pipeline._registration_unit([
         _OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)

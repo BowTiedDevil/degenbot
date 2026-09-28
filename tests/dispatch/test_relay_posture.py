@@ -13,19 +13,27 @@ injected relay providers (the ``submitter``/``relay_providers`` seams on
 
 from __future__ import annotations
 
-import types
 import warnings
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
-from degenbot.runner._dispatch import SubmissionSmoke, _submit_batch_records
+from degenbot.runner._dispatch import _submit_batch_records
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import (
     ActivationGateRefused,
     BotRunner,
 )
 from degenbot.runner.config import ArbitrageConfig
+from tests.fakes.session import (
+    FakeAsyncW3,
+    FakeCandidate,
+    FakeRelayProvider,
+    FakeSession,
+    FakeSubmitOutcome,
+    fake_session,
+)
 from tests.helpers.boot_actors import boot_runner
 from tests.helpers.identity_env import identity_env
 
@@ -78,33 +86,24 @@ def _runner(
     )
 
 
-def _session(relay_posture: RelayPosture | None) -> Any:
-    return types.SimpleNamespace(
-        async_w3=types.SimpleNamespace(as_async_alloy=_opaque_rust_provider),
-        cfg=types.SimpleNamespace(
-            operator_private_key="0x" + "a" * 64,
-            chain_id=1,
-            dry_run=False,
-            inject_executor_code=False,
-        ),
-        dispatcher=types.SimpleNamespace(current_block=100),
+def _session(relay_posture: RelayPosture | None) -> FakeSession:
+    return fake_session(
         relay_posture=relay_posture,
-        submission_smoke=SubmissionSmoke(),
+        current_block=100,
+        async_w3=FakeAsyncW3(as_async_alloy=_opaque_rust_provider),
     )
 
 
-def _relays() -> list[Any]:
-    return [types.SimpleNamespace(as_async_alloy=_opaque_rust_provider)]
+def _relays() -> list[FakeRelayProvider]:
+    return [FakeRelayProvider(as_async_alloy=_opaque_rust_provider)]
 
 
-def _candidate(path_id: int = 7) -> Any:
-    return types.SimpleNamespace(
-        path_id=path_id, solve_block=1, net_profit=1, gas_used=1, execute_calldata=None
-    )
+def _candidate(path_id: int = 7) -> FakeCandidate:
+    return FakeCandidate(path_id=path_id, net_profit=1, gas_used=1)
 
 
-def _outcome(candidates: list[Any]) -> Any:
-    return types.SimpleNamespace(gas_profitable=candidates)
+def _outcome(candidates: list[FakeCandidate]) -> FakeSubmitOutcome:
+    return FakeSubmitOutcome(gas_profitable=candidates)
 
 
 async def _submit_relay(
@@ -322,25 +321,35 @@ class TestBootGate:
         )
 
 
+@dataclass
+class _ReadinessView:
+    """A readiness view stand-in with the settled-block arm on by default."""
+
+    settlement_active: bool = True
+    mevblocker_backrun_active: bool = False
+    txpool_backrun_active: bool = False
+    settlement_endpoints: list[str] = field(default_factory=list)
+    mevblocker_backrun_endpoints: list[str] = field(default_factory=list)
+    txpool_backrun_endpoints: list[str] = field(default_factory=list)
+    active_backrun_facets: list[str] = field(default_factory=list)
+
+
 def _view(
     *,
     settlement_active: bool = True,
     mevblocker_backrun_active: bool = False,
     txpool_backrun_active: bool = False,
     settlement_endpoints: list[str] | None = None,
-) -> types.SimpleNamespace:
-    """A readiness view stand-in with the settled-block arm on by default."""
+) -> _ReadinessView:
     active_backrun_facets: list[str] = []
     if mevblocker_backrun_active:
         active_backrun_facets.append("mevblocker_backrun")
     if txpool_backrun_active:
         active_backrun_facets.append("txpool_backrun")
-    return types.SimpleNamespace(
+    return _ReadinessView(
         settlement_active=settlement_active,
         mevblocker_backrun_active=mevblocker_backrun_active,
         txpool_backrun_active=txpool_backrun_active,
         settlement_endpoints=[] if settlement_endpoints is None else settlement_endpoints,
-        mevblocker_backrun_endpoints=[],
-        txpool_backrun_endpoints=[],
         active_backrun_facets=active_backrun_facets,
     )

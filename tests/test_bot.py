@@ -38,7 +38,8 @@ Rejected alternatives:
 """
 
 import pathlib
-from types import SimpleNamespace
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import pytest
 
@@ -53,6 +54,7 @@ from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.pool_type import PoolProbe
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.fakes.session import session_registry_methods
+from tests.fakes.tokens import FakeToken
 
 # Not in the deployments registry, so the type resolver falls back to probing.
 _UNREGISTERED_FACTORY = "0x" + "f" * 40
@@ -74,6 +76,50 @@ def _fake_provider(chain_id: int = 1) -> OfflineProvider:
         chain_id=chain_id,
         blocks={"1": {"timestamp": 1, "calls": {}, "code": {}}},
     )
+
+
+@dataclass
+class _ScriptedIo:
+    """``BotIo`` double for construction reads; a test scripts only the reads
+    its build path drives (an unscripted read is one the path never calls)."""
+
+    get_block_number: Callable[[], int] = lambda: 100
+    fetch_factory_address: Callable[[str], str] | None = None
+    probe_pool_type: Callable[[str], int] | None = None
+
+
+@dataclass(frozen=True)
+class _PoolHandle:
+    """The registered pool-handle slice the build parity guard reads."""
+
+    token0_address: str
+    token1_address: str
+
+
+@dataclass
+class _ScriptedEngine:
+    """Engine (``py_bot``) double for build-path tests.
+
+    A test scripts only the build-path methods its facade entry drives; the
+    session-registry identity surface comes from a real ``Bot`` handle.
+    """
+
+    build_v2_pool: Callable[..., object] | None = None
+    get_pool: Callable[..., object] | None = None
+    resolve_v4_identity: Callable[..., object] | None = None
+    build_v4_pool: Callable[..., object] | None = None
+
+    def __post_init__(self) -> None:
+        for name, method in session_registry_methods().items():
+            setattr(self, name, method)
+
+
+@dataclass
+class _ScriptedErc20Builder:
+    """Token-builder double: the real builder's per-token build needs DB/RPC reads."""
+
+    build: Callable[..., object]
+    build_many: Callable[..., object]
 
 
 class TestBotInit:
@@ -221,8 +267,7 @@ class TestBuildDelegatedIdentityReturnSurface:
         the V2 delegated path (no DB row, unregistered factory, probe says V2).
         """
         session = _test_session(tmp_path)
-        io = SimpleNamespace(
-            get_block_number=lambda: 100,
+        io = _ScriptedIo(
             fetch_factory_address=lambda address: _UNREGISTERED_FACTORY,
             # BotIo.probe_pool_type returns the 1-based PoolProbe code; V2 = 1.
             probe_pool_type=lambda address: int(PoolProbe.V2),
@@ -231,8 +276,8 @@ class TestBuildDelegatedIdentityReturnSurface:
         # Engine double: build_v2_pool returns the tuple return surface (core
         # identity), get_pool returns a handle whose tokens DIFFER -> the
         # parity guard must raise.
-        handle = SimpleNamespace(token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40)
-        py_bot = SimpleNamespace(
+        handle = _PoolHandle(token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40)
+        py_bot = _ScriptedEngine(
             build_v2_pool=lambda address, block=None: (
                 7,
                 "0x" + "C" * 40,
@@ -241,7 +286,6 @@ class TestBuildDelegatedIdentityReturnSurface:
                 "uniswap-v2",
             ),
             get_pool=lambda pid: handle,
-            **session_registry_methods(),
         )
         bot = Bot(**session, provider=_fake_provider(1), py_bot=py_bot, io=io)
 
@@ -258,12 +302,12 @@ class TestBuildManagedPoolIdentityReturnSurface:
         """A builder identity that diverges from the resolver identity raises
         — the return-surface parity guard."""
         session = _test_session(tmp_path)
-        io = SimpleNamespace(get_block_number=lambda: 100)
+        io = _ScriptedIo()
 
         # Token-builder double: the real Erc20Builder's per-token build needs
         # DB/RPC reads the io double does not carry.
-        token = SimpleNamespace(address="0x" + "cc" * 20)
-        erc20_builder = SimpleNamespace(
+        token = FakeToken(address="0x" + "cc" * 20)
+        erc20_builder = _ScriptedErc20Builder(
             build=lambda *a, **k: token,
             build_many=lambda *a, **k: [token, token],
         )
@@ -276,7 +320,7 @@ class TestBuildManagedPoolIdentityReturnSurface:
         # a DIFFERENT currency0 -> parity guard must raise. Return surface:
         # (pool_id, coverage, currency0, currency1, pool_manager, fee,
         # tick_spacing, hook_flags, pool_id_hex, protocol_fee, lp_fee).
-        py_bot = SimpleNamespace(
+        py_bot = _ScriptedEngine(
             resolve_v4_identity=lambda **k: (
                 "0x" + "cc" * 20,
                 "0x" + "dd" * 20,
@@ -299,7 +343,6 @@ class TestBuildManagedPoolIdentityReturnSurface:
                 5000,  # protocol_fee
                 0,  # lp_fee
             ),
-            **session_registry_methods(),
         )
         bot = Bot(
             **session,
@@ -331,12 +374,11 @@ class TestBuildManagedPoolResolveErrorMapping:
         """When resolve_v4_identity raises ValueError (no DB row, no overrides),
         the V4 build path re-raises DegenbotValueError."""
         session = _test_session(tmp_path)
-        io = SimpleNamespace(get_block_number=lambda: 100)
-        py_bot = SimpleNamespace(
+        io = _ScriptedIo()
+        py_bot = _ScriptedEngine(
             resolve_v4_identity=lambda **k: (_ for _ in ()).throw(
                 ValueError("V4 identity incomplete: pool not in the database")
             ),
-            **session_registry_methods(),
         )
         bot = Bot(**session, provider=_fake_provider(1), py_bot=py_bot, io=io)
 

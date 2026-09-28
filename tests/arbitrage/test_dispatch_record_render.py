@@ -7,12 +7,16 @@ outage or an underpriced replacement could silence a live bot for hours.
 
 from __future__ import annotations
 
-import types
-
 import pytest
 
 from degenbot.runner import _dispatch as dispatch_module
 from degenbot.runner._relay_posture import RelayPosture
+from tests.fakes.session import (
+    FakeCandidate,
+    FakeSession,
+    FakeSubmitOutcome,
+    fake_session,
+)
 
 
 class _CapturingLogger:
@@ -51,26 +55,11 @@ async def test_broadcast_failure_renders_at_warning(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(dispatch_module, "dispatch_and_submit", fake_dispatch_and_submit)
 
-    session = types.SimpleNamespace(
-        async_w3=types.SimpleNamespace(as_async_alloy=lambda: object()),
-        cfg=types.SimpleNamespace(
-            operator_private_key="0x" + "a" * 64,
-            chain_id=1,
-            dry_run=False,
-            inject_executor_code=False,
-        ),
-        dispatcher=types.SimpleNamespace(current_block=1),
-        relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
-        submission_smoke=dispatch_module.SubmissionSmoke(),
+    session = fake_session(
+        relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"])
     )
-    candidate = types.SimpleNamespace(
-        path_id=7,
-        solve_block=1,
-        net_profit=0,
-        gas_used=0,
-        execute_calldata=None,
-    )
-    outcome = types.SimpleNamespace(gas_profitable=[candidate])
+    candidate = FakeCandidate()
+    outcome = FakeSubmitOutcome(gas_profitable=[candidate])
 
     await dispatch_module._submit_batch_records(session, outcome, operator_nonce=3)
 
@@ -79,27 +68,15 @@ async def test_broadcast_failure_renders_at_warning(monkeypatch: pytest.MonkeyPa
     ), f"expected a warning naming the failure detail, got {captured.calls}"
 
 
-def _live_session(cfg_overrides: dict) -> types.SimpleNamespace:
-    cfg = types.SimpleNamespace(
-        operator_private_key="0x" + "a" * 64,
-        chain_id=1,
-        dry_run=False,
-        inject_executor_code=False,
-        **cfg_overrides,
-    )
-    return types.SimpleNamespace(
-        async_w3=types.SimpleNamespace(as_async_alloy=lambda: object()),
-        cfg=cfg,
-        dispatcher=types.SimpleNamespace(current_block=1),
+def _live_session(cfg_overrides: dict) -> FakeSession:
+    return fake_session(
         relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
-        submission_smoke=dispatch_module.SubmissionSmoke(),
+        cfg_overrides=cfg_overrides,
     )
 
 
-def _candidate() -> types.SimpleNamespace:
-    return types.SimpleNamespace(
-        path_id=7, solve_block=1, net_profit=0, gas_used=0, execute_calldata=None
-    )
+def _candidate() -> FakeCandidate:
+    return FakeCandidate()
 
 
 @pytest.mark.asyncio
@@ -118,7 +95,7 @@ async def test_silent_veto_streak_warns_once(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(dispatch_module, "dispatch_and_submit", all_skipped)
     session = _live_session({})
-    outcome = types.SimpleNamespace(gas_profitable=[_candidate()])
+    outcome = FakeSubmitOutcome(gas_profitable=[_candidate()])
 
     for _ in range(4):
         await dispatch_module._submit_batch_records(session, outcome, operator_nonce=3)
