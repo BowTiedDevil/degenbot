@@ -83,7 +83,7 @@ class _FakeAsyncW3:
         return None
 
 
-def _runner(path_builder) -> BotRunner:
+def _runner(path_builder, *, settlement_arm: bool = False) -> BotRunner:
     with identity_env(
         {
             "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
@@ -101,7 +101,7 @@ def _runner(path_builder) -> BotRunner:
             snapshots=(None, None, None, None),
             path_builder=path_builder,
             consumer=lambda **kw: _noop_coro(),
-            settlement_arm=False,
+            settlement_arm=settlement_arm,
         ),
     )
 
@@ -140,6 +140,17 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
     await session.run()
 
     readiness = validate_strategy_readiness()
+    expected_facets = [
+        facet
+        for facet, active in (
+            ("mevblocker_backrun", readiness.mevblocker_backrun_active),
+            ("txpool_backrun", readiness.txpool_backrun_active),
+        )
+        if active
+    ]
+    assert session.engine_registry.engine.resume_facets == expected_facets, (
+        "resume() must receive the active hosted arms"
+    )
     records = dict((name, state) for name, state, _halt in session.engine_registry.engine.strategies())
     for facet, active in (
         ("mevblocker_backrun", readiness.mevblocker_backrun_active),
@@ -151,3 +162,19 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
     # The settlement arm's engine state is advisory for its pump arm; it is
     # never gated through enable_strategy.
     assert records["settlement"] == "registered"
+
+
+async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
+    """A settlement-active boot passes NO hosted arms to resume, even when a
+    backrun facet is also active: the settlement pump arm is this runner's arm,
+    so the enabled-facet set is empty under that disposition."""
+    session = _runner(lambda **kw: _noop_coro(), settlement_arm=True)
+    await session.start()
+    await session.run()
+
+    assert session.engine_registry.engine.resume_facets == [], (
+        "a settlement-active boot must not host backrun lanes"
+    )
+    records = dict((name, state) for name, state, _halt in session.engine_registry.engine.strategies())
+    assert records["mevblocker_backrun"] == "registered"
+    assert records["txpool_backrun"] == "registered"

@@ -106,7 +106,7 @@ class EngineSeam(Protocol):
     def v4_pool_count(self) -> int: ...
     def path_count(self) -> int: ...
     def pump_finished_future(self) -> Any: ...
-    def resume(self) -> None: ...
+    def resume(self, facets: list[str]) -> None: ...
     def stop(self) -> None: ...
     def reconcile_hosted_head(
         self, provider: AsyncAlloyProvider, operator_address: str
@@ -158,6 +158,9 @@ class FakeEngine:
         #: tables, NOT a registry-side cache.
         self._identities: dict[tuple[str, str], int] = {}
         self._pump_finished = asyncio.Event()
+        #: The facet set the last resume() received (the engine owns enabling
+        #: it before driving hosted loops).
+        self.resume_facets: list[str] = []
         self._strategy_records: list[tuple[str, str, str | None]] = [
             ("settlement", "registered", None),
             ("mevblocker_backrun", "registered", None),
@@ -177,8 +180,13 @@ class FakeEngine:
 
     # ── lifecycle ──────────────────────────────────────────────────
 
-    def resume(self) -> None:
+    def resume(self, facets: list[str]) -> None:
+        """Enable the named facets, then resume the pump (the engine-owned
+        enable-then-resume ordering, mirrored in-process)."""
         self.resumed = True
+        self.resume_facets = list(facets)
+        for facet in facets:
+            self.enable_strategy(facet)
         self._record("resume")
 
     def stop(self) -> None:

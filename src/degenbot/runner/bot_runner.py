@@ -701,25 +701,26 @@ class BotRunner:
             name="result-consumer",
         )
 
-        # Posture-driven arms: resume() drives hosted loops only for facets
-        # the operator ENABLED, so every active non-settlement facet enables
-        # now. enable_strategy refuses an unconfigured facet, and the readiness
-        # resolution already refused an active facet with unsettled endpoints
-        # at the boot gate, so this follows the same config surface.
+        # Posture-driven arms: the enabled-facet set is a data read over the
+        # same readiness view the boot gate consumed. resume() owns enabling
+        # each facet before it drives a hosted loop, so the enable-then-resume
+        # ordering lives in the engine, not here. A settlement-active boot is
+        # this runner's settlement arm, so it hosts no backrun lane.
+        facets: list[str] = []
         if not self._settlement_active:
             view = self._readiness
             assert view is not None, "start() resolved the readiness before run()"
-            enabled: list[str] = []
-            for facet, active in (
-                ("mevblocker_backrun", view.mevblocker_backrun_active),
-                ("txpool_backrun", view.txpool_backrun_active),
-            ):
-                if active:
-                    session.engine_registry.engine.enable_strategy(facet)
-                    enabled.append(facet)
+            facets = [
+                facet
+                for facet, active in (
+                    ("mevblocker_backrun", view.mevblocker_backrun_active),
+                    ("txpool_backrun", view.txpool_backrun_active),
+                )
+                if active
+            ]
             bot_logger.info(
                 f"[host-arms] settlement facet inactive — hosted arms: "
-                f"{', '.join(enabled) if enabled else 'NONE'}"
+                f"{', '.join(facets) if facets else 'NONE'}"
             )
         # Attach the consumer to the session watch the moment it exists — a
         # teardown after any later run() failure (an inline build_paths
@@ -730,7 +731,9 @@ class BotRunner:
         )
 
         # 2. Resume the pump — the single gate after which result batches flow.
-        session.engine_registry.engine.resume()
+        # The engine enables the passed facet set first and boots the hosted
+        # loops, so this is the one ordered enable-then-resume call.
+        session.engine_registry.engine.resume(facets=facets)
 
         # 3. Build paths with the pump live (rolling start).
         path_builder = self._path_builder or build_paths

@@ -328,6 +328,21 @@ impl PyArbEngine {
         self.supervisor.supervise(tasks);
         Ok(count)
     }
+
+    /// Enable each named facet through the host's admission gate.
+    ///
+    /// The engine's start flow owns the enable-then-resume ordering: a hosted
+    /// driver's loop starts only for an ENABLED facet, so the facet set and
+    /// the pump resume are one ordered operation. Refusals map exactly as
+    /// [`Self::enable_strategy`]'s.
+    pub(crate) fn enable_facets(&self, py: Python<'_>, facets: &[String]) -> PyResult<()> {
+        for facet in facets {
+            let id = StrategyId::new(facet.as_str());
+            self.with_host(py, |host| host.enable(&id))
+                .map_err(map_host_error)?;
+        }
+        Ok(())
+    }
 }
 
 #[pymethods]

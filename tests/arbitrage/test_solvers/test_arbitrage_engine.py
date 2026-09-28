@@ -62,7 +62,7 @@ class TestSubscribeResume:
         """resume() without subscribe() should raise RuntimeError."""
         engine = ArbitrageEngine()
         with pytest.raises(RuntimeError, match="SnapshotLoaded|subscribe"):
-            engine.resume()
+            engine.resume([])
 
     def test_double_subscribe_raises(self):
         """Calling subscribe() twice without resume() should raise."""

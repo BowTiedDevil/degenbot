@@ -257,10 +257,16 @@ impl PyArbEngine {
     ///
     /// Raises `RuntimeError` if `subscribe()` has not been called first.
     ///
-    /// Resuming the pump is the engine's start flow: it also boots every
-    /// strategy the operator enabled that owns a hosted loop (the backrun
-    /// lane), retaining a supervisor per driver so a self-halt is queryable.
-    fn resume(&self, py: Python<'_>) -> PyResult<()> {
+    /// Resuming the pump is the engine's start flow, and the flow owns the
+    /// enable-then-resume ordering: each named facet enables through the host
+    /// admission gate first, then the pump resumes, then every enabled facet
+    /// owning a hosted loop (the backrun lane) boots with a supervisor per
+    /// driver so a self-halt is queryable. A facet name the host does not
+    /// admit fails the call before the pump resumes.
+    #[pyo3(signature = (facets))]
+    #[expect(clippy::needless_pass_by_value)]
+    fn resume(&self, py: Python<'_>, facets: Vec<String>) -> PyResult<()> {
+        self.enable_facets(py, &facets)?;
         crate::bot::pump::resume(py, &self.driver)?;
         self.start_hosted_strategies()
             .map_err(super::strategy::map_host_error)?;
