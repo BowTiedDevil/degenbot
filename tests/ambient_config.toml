@@ -6,8 +6,14 @@
 # Exactly one facet is activated: the mevblocker backrun arm with its default
 # searcher channel. The posture-driven boot gate refuses an empty fleet, so
 # boot-path tests need a deterministic non-empty fleet; settlement stays
-# inactive so the suite exercises the backrun-only boot. Every other schema
-# key is absent and keeps its default (the posture CI already runs with).
+# inactive so the suite exercises the backrun-only boot. Apart from the
+# [session] chain id pinned below, every other schema key is absent and keeps
+# its default (the posture CI already runs with).
+#
+# The chain id is pinned here rather than left to DEGENBOT_DEFAULT_CHAIN_ID:
+# a developer's devcontainer exports that env name (one machine resolves, CI
+# refuses), and the resolver is fail-loud when no layer names a chain. The
+# value must match the chain the [nodes] tables below are keyed to.
 #
 # The [nodes] table is the file layer end-to-end: a fresh interpreter with
 # every DEGENBOT_* name cleared resolves chain 1's request and subscription
@@ -16,6 +22,9 @@
 [strategy.mevblocker_backrun]
 active = true
 endpoints = "wss://searchers.mevblocker.io"
+
+[session]
+chain_id = 1
 
 [nodes]
 http = { 1 = "http://ambient-file.example:8545" }
