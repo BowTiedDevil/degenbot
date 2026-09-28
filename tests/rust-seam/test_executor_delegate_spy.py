@@ -210,19 +210,21 @@ class TestExampleRoutesThroughRust:
         class previously enforced: the five encoder/warmup symbols moved INTO
         the Rust core (``degenbot_simulation`` / ``degenbot_executor``), called
         internally by ``dispatch_profitable`` + ``SimulateContext``
-        construction. The dispatch route (``degenbot.runner._dispatch``) is
-        ``dispatch_profitable`` (simulate) → ``dispatch_and_submit``
-        (submit): the submit leaf exposes ``submitter``/``relay_providers``
-        DI seams whose defaults are the Rust pyfunctions, so the production
-        path (no injected submitter) stays Rust-bound. Both pyfunctions are
-        imported via the companion package ``degenbot.dispatch`` (stable
-        re-exports of the FFI symbols — the driver does not import
-        ``degenbot_rs`` directly).
+        construction. The sim-submit pipeline split the route across two
+        leaves: the simulate leaf (``degenbot.runner._sim_submit``) calls
+        ``dispatch_profitable``, and the submit leaf
+        (``degenbot.runner._dispatch``) exposes ``submitter``/
+        ``relay_providers`` DI seams whose default is the Rust pyfunction
+        ``dispatch_and_submit``, so the production path (no injected
+        submitter) stays Rust-bound. Both pyfunctions are imported via the
+        companion package ``degenbot.dispatch`` (stable re-exports of the FFI
+        symbols — the driver does not import ``degenbot_rs`` directly).
         """
-        src = (REPO / "src" / "degenbot" / "runner" / "_dispatch.py").read_text()
-        assert "dispatch_profitable(" in src, (
+        sim_src = (REPO / "src" / "degenbot" / "runner" / "_sim_submit.py").read_text()
+        assert "dispatch_profitable(" in sim_src, (
             "driver must route simulation through dispatch_profitable (A5)"
         )
+        src = (REPO / "src" / "degenbot" / "runner" / "_dispatch.py").read_text()
         assert "submitter if submitter is not None else dispatch_and_submit" in src, (
             "driver must default the submitter DI seam to dispatch_and_submit "
             "(the Rust submit pyfunction) — an injected submitter is test-only "
