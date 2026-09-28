@@ -52,20 +52,46 @@ pub const VERSION_LINE: &str = concat!(
     ")"
 );
 
-/// Parse argv, boot the sinks, resolve the argv into a
-/// [`Command`](degenbot_cli_core::Command), run it and render the result.
+/// Parse `args` (argv WITHOUT the program name), boot the sinks, resolve the
+/// argv into a [`Command`](degenbot_cli_core::Command), run it and render the
+/// result. This is the ONE console composition root: the `degenbot` binary and
+/// the Python `cli_main` passthrough both land here, so their sequences cannot
+/// drift apart.
 ///
-/// Returns the process exit code: clap owns `--help`/`--version`/usage errors
-/// (its own exit codes apply), a refused typed config is `2` (the same refusal
-/// exit the Python module init uses), and every command outcome maps through
-/// cli-core's single `CliError -> ExitCode` site.
+/// Returns the process exit code and never exits the process, so an embedded
+/// host can drive the console directly: clap owns `--help`/`--version`/usage
+/// errors (its own exit codes apply), a refused typed config is `2` (the same
+/// refusal exit the Python module init uses), and every command outcome maps
+/// through cli-core's single `CliError -> ExitCode` site.
+///
+/// There is deliberately no host parameter here. The native and Python hosts
+/// are not abstracted behind a flag: their genuine difference lives upstream
+/// of this function — the Python `#[pymodule]` init has already installed the
+/// typed config and the driver's log forwarder by the time this runs, while
+/// the native path gets both from `sinks::boot()` below — and `boot`'s
+/// first-wins installs keep that difference in place. A switch would hide the
+/// difference it cannot actually remove.
 #[must_use]
-pub fn run() -> i32 {
-    let cli = <Cli as clap::Parser>::parse();
-    execute(&cli)
-}
+pub fn run_args<T>(args: &[T]) -> i32
+where
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let parsed = <Cli as clap::Parser>::try_parse_from(
+        std::iter::once(std::ffi::OsString::from("degenbot"))
+            .chain(args.iter().map(|arg| arg.clone().into())),
+    );
+    let cli = match parsed {
+        Ok(cli) => cli,
+        Err(error) => {
+            // clap's `Error::exit` is print-then-exit-code with the print
+            // result discarded; a broken pipe on `--help` is swallowed the
+            // same way here.
+            let code = error.exit_code();
+            let _ = error.print();
+            return code;
+        }
+    };
 
-fn execute(cli: &Cli) -> i32 {
     let env = ProcessEnv;
     if cli.command.is_none() {
         argv::write_missing_subcommand_error();
@@ -81,8 +107,8 @@ fn execute(cli: &Cli) -> i32 {
         }
     };
 
-    let ctx = argv::context(cli, &env);
-    let command = match argv::resolve_with_env(cli, &env) {
+    let ctx = argv::context(&cli, &env);
+    let command = match argv::resolve_with_env(&cli, &env) {
         Ok(command) => command,
         Err(error) => return render::error(&error),
     };
@@ -93,4 +119,12 @@ fn execute(cli: &Cli) -> i32 {
 
     let outcome = degenbot_cli_core::run_with_cancel(&command, &ctx, &prompter, &cancel);
     render::outcome(&outcome)
+}
+
+/// The binary entry: collect the process argv (minus the program name) and
+/// delegate to the console composition root.
+#[must_use]
+pub fn run() -> i32 {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    run_args(&args)
 }

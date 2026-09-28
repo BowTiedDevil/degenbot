@@ -58,11 +58,9 @@ degenbot-aave = { workspace = true, optional = true }
 degenbot-core = { workspace = true, features = ["pyo3"] }
 # ADR-051 D3: the Python console is a passthrough, so the binding depends on
 # the argv facade (degenbot-cli, which owns the ONE clap tree + the console
-# sinks) and its clap-free semantics crate (degenbot-cli-core, for
-# CancelHandle + the single run_with_cancel entry). Both are pyo3-free cores;
-# the binding layer reaches UP into the console, never the reverse.
+# sinks). Both are pyo3-free cores; the binding layer reaches UP into the
+# console, never the reverse.
 degenbot-cli.workspace = true
-degenbot-cli-core.workspace = true
 dashmap = { version = "^6.2" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }
@@ -156,6 +154,9 @@ mimalloc = ["dep:mimalloc", "mimalloc/local_dynamic_tls"]
 otel = ['bot', 'degenbot-bot/otel']
 
 [dev-dependencies]
+# The console's clap-free semantics crate (also pyo3-free): the seam's tests
+# pin the typed `CliError -> ExitCode` mapping directly.
+degenbot-cli-core.workspace = true
 ctor = "^1"
 proptest = "^1.11"
 # Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for

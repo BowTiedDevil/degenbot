@@ -552,3 +552,27 @@ fn missing_subcommand_is_a_typed_refusal() {
         Err(CliError::InvalidArgument(_))
     ));
 }
+
+#[test]
+fn run_args_pins_the_console_exit_codes() {
+    // clap owns --help/--version (exit 0) and usage diagnostics (exit 2);
+    // the facade returns the code rather than exiting the process, so both
+    // entry surfaces share one contract.
+    assert_eq!(degenbot_cli::run_args(&["--help".to_string()]), 0);
+    assert_eq!(degenbot_cli::run_args(&["--version".to_string()]), 0);
+    assert_eq!(
+        degenbot_cli::run_args(&["definitely-not-a-command".to_string()]),
+        2
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_args_tolerates_non_utf8_argv() {
+    // The binary parses `std::env::args_os()`, so argv bytes outside UTF-8
+    // reach the composition root intact; clap's UnknownArgument usage code
+    // is the correct refusal, never a panic.
+    use std::os::unix::ffi::OsStringExt as _;
+    let invalid = std::ffi::OsString::from_vec(vec![0xff, 0xfe]);
+    assert_eq!(degenbot_cli::run_args(&[invalid]), 2);
+}
