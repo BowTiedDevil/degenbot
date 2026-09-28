@@ -79,7 +79,7 @@ test-standalone:
 # net-gated suites (`record-golden`, `verify-deployments`).
 
 # Default gate: standalone smoke + cargo workspace + full pytest.
-test: test-rust test-python
+test: test-rust-nextest test-python
 
 # Run every pre-push gate manually, in hook order and fail-fast — the
 # object-DB GC brake, the commitlint push-range re-lint, then the Rust/Python
@@ -110,7 +110,7 @@ pre-push:
     run_gate "Python lint"             just lint-python-check
     run_gate "Stubtest drift gate"     just lint-stubtest
     run_gate "Rust build"              just build-rust-extension
-    run_gate "Rust tests"              just test-rust
+    run_gate "Rust tests"              just test-rust-nextest
     run_gate "Python build (maturin)"  just dev
     run_gate "Python tests"            just test-python
 
