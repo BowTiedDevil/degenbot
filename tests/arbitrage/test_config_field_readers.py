@@ -24,8 +24,12 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 from degenbot.runner import config as config_module
 from degenbot.runner.config import ArbitrageConfig
@@ -90,13 +94,18 @@ def _declared_fields() -> list[str]:
     raise AssertionError(f"class {ArbitrageConfig.__name__} not found in {_CONFIG_PATH}")
 
 
-def _reader_sites(field: str) -> list[str]:
-    """Every ``file:line`` that attribute-*loads* ``field`` in the tree.
+def _reader_census(fields: Iterable[str]) -> dict[str, list[str]]:
+    """Every ``file:line`` that attribute-*loads* each field, in one tree walk.
 
     A store (``cfg.field = ...``) is not a read; a frozen dataclass has no
     legitimate one, and counting it would let a write pose as a consumer.
+
+    One parse per source file, bucketed by the declared fields, instead of a
+    re-parse per field: the tree size dwarfs the field count, so the per-field
+    form costs O(fields x files) parses for a census whose answer is O(files).
     """
-    sites: list[str] = []
+    wanted = set(fields)
+    sites: dict[str, list[str]] = {field: [] for field in fields}
     for path in _python_sources():
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -109,20 +118,22 @@ def _reader_sites(field: str) -> list[str]:
         # module's own import, a broken ``tests`` file breaks pytest collection.
         except SyntaxError:  # pragma: no cover
             continue
+        rel = path.relative_to(_repo_root())
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Attribute)
-                and node.attr == field
                 and isinstance(node.ctx, ast.Load)
+                and node.attr in wanted
             ):
-                sites.append(f"{path.relative_to(_repo_root())}:{node.lineno}")
+                sites[node.attr].append(f"{rel}:{node.lineno}")
     return sites
 
 
 def test_every_config_field_has_a_reader() -> None:
     """No declared field may be a knob nothing reads."""
-    readers = {name: _reader_sites(name) for name in _declared_fields()}
-    unread = sorted(name for name, sites in readers.items() if not sites)
+    fields = _declared_fields()
+    readers = _reader_census(fields)
+    unread = sorted(name for name in fields if not readers[name])
     assert not unread, (
         f"{len(unread)} ArbitrageConfig field(s) are constructed by ArbitrageConfig.build and read "
         f"nowhere: {unread}. The build assignment keeps such a field statically "

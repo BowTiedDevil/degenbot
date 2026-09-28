@@ -1,6 +1,8 @@
+import atexit
 import logging
 import os
 import shutil
+import tempfile
 from collections.abc import Generator
 from pathlib import Path
 
@@ -21,6 +23,23 @@ from hypothesis import settings
 os.environ.setdefault(
     "DEGENBOT_CONFIG",
     str(Path(__file__).resolve().parent / "ambient_config.toml"),
+)
+
+# Hermetic state: the declared default database is the developer's real
+# ``~/.local/state/degenbot/db/degenbot.db`` (hundreds of MB). Booting an
+# engine reads it, so tests that only need an offline engine pay disk/CPU for
+# user state, and the connector-index load runs as a background thread that
+# can emit records after pytest closes its capture stream (a swallowed
+# ``ValueError: I/O operation on closed file``). Pin an absent, per-session
+# path so the connector lane takes its discovery-shut branch; an operator who
+# wants the real DB for an on-demand run sets ``DEGENBOT_DB_PATH`` explicitly
+# (``setdefault`` honors it). The directory is removed at exit so repeated
+# runs leave no state behind.
+_pytest_state_dir = tempfile.mkdtemp(prefix="degenbot-pytest-state-")
+atexit.register(shutil.rmtree, _pytest_state_dir, ignore_errors=True)
+os.environ.setdefault(
+    "DEGENBOT_DB_PATH",
+    str(Path(_pytest_state_dir) / "degenbot.db"),
 )
 
 from degenbot.bot import Bot
