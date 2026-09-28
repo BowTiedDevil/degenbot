@@ -55,7 +55,7 @@ tracing = { version = "^0.1" }
 # The WS-block-resolution regression test needs a local WebSocket stub (the
 # transport class whose persistent connection task dies when its owning
 # runtime is dropped — the HTTP stub cannot exercise that).
-tokio-tungstenite = { version = "^0.30", default-features = false, features = ["handshake"] }
+tokio-tungstenite = { version = "^0.30", default-features = false, features = ["handshake", "connect"] }
 # The stub's WebSocketStream is driven through Sink/Stream.
 futures-util = "^0.3"
 # Fixture construction (fresh / Alembic-stamped / stale / foreign SQLite DBs).
