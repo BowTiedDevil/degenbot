@@ -61,11 +61,33 @@ fn create_in_seeds_the_session_layout() {
 
 #[cfg(unix)]
 #[test]
+fn same_second_boots_get_distinct_session_dirs() {
+    // Two boots within one wall-clock second used to collide on the
+    // second-granularity `<stamp>-<pid>` name and refuse the second boot
+    // with AlreadyExists — the defect the old 1.1s sleeps in
+    // `latest_symlink_replaces_atomically_to_newest_session` papered over.
+    let root = scratch("same-second");
+    let first = RunDirectory::create_in(&root, "engine").expect("first");
+    let second = RunDirectory::create_in(&root, "engine").expect("second (no sleep)");
+
+    assert_ne!(first.session_dir(), second.session_dir());
+    let latest = std::fs::read_link(root.join("engine").join("latest")).expect("latest symlink");
+    assert_eq!(
+        latest,
+        PathBuf::from(second.session_dir().file_name().expect("name")),
+        "latest points at the newest session"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(unix)]
+#[test]
 fn latest_symlink_replaces_atomically_to_newest_session() {
     let root = scratch("latest");
     let first = RunDirectory::create_in(&root, "engine").expect("first");
-    // A monotonic stamp distinguishes sessions within one second.
-    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    // Same-second boots no longer collide (the `<n>` serial in `create_in`),
+    // so no sleep is needed for distinct session names.
     let second = RunDirectory::create_in(&root, "engine").expect("second");
 
     let latest = root.join("engine").join("latest");
@@ -81,7 +103,6 @@ fn latest_symlink_replaces_atomically_to_newest_session() {
     // best-effort and leaves the session dir intact.
     let _ = std::fs::remove_file(&latest);
     std::fs::write(&latest, b"stale").expect("write stale file");
-    std::thread::sleep(std::time::Duration::from_millis(1_100));
     let third = RunDirectory::create_in(&root, "engine").expect("third");
     assert!(third.session_dir().is_dir());
 

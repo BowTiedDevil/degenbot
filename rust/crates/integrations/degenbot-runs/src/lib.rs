@@ -115,9 +115,26 @@ impl RunDirectory {
         std::fs::create_dir_all(&engine_dir)?;
 
         let stamp = utc_stamp(SystemTime::now());
-        let session_name = format!("{stamp}-{}", std::process::id());
-        let session_dir = engine_dir.join(session_name);
-        std::fs::create_dir(&session_dir)?;
+        let pid = std::process::id();
+        // Second-granularity names collide when a boot lands twice within one
+        // wall-clock second (a fast supervisor restart). The name grows a
+        // `-<n>` serial only on collision, so the documented shape survives
+        // the common case and a restart never refuses.
+        let mut serial = 1u64;
+        let session_dir = loop {
+            let candidate = if serial == 1 {
+                engine_dir.join(format!("{stamp}-{pid}"))
+            } else {
+                engine_dir.join(format!("{stamp}-{pid}-{serial}"))
+            };
+            match std::fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    serial += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        };
 
         let stdout_path = session_dir.join("stdout.log");
         let trace_jsonl_path = session_dir.join("trace.jsonl");
@@ -134,7 +151,8 @@ impl RunDirectory {
         })
     }
 
-    /// The session directory (`<runs_dir>/<engine>/<stamp>-<pid>`).
+    /// The session directory (`<runs_dir>/<engine>/<stamp>-<pid>`, growing a
+    /// `-<n>` serial when the same second already holds that name).
     #[must_use]
     pub fn session_dir(&self) -> &Path {
         &self.session_dir

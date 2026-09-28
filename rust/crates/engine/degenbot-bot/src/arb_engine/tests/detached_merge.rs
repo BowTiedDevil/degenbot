@@ -4,7 +4,7 @@ use super::*;
 // detached enqueue + sidecar merge
 // -------------------------------------------------------------------
 /// Structural acceptance (red/green): with the one (detached) arm and an
-/// injected 3000ms slow path, `run_epoch` — driven via
+/// injected 400ms slow path, `run_epoch` — driven via
 /// the production `EngineStages` solve seam, which also spawns the
 /// merge sidecar — RETURNS before the merge lands, and the sidecar
 /// populates every result (slow + fast) shortly after enqueue.
@@ -14,7 +14,7 @@ fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
         eprintln!("skipping: detached-cycle structural test requires >=2 cores");
         return;
     }
-    let (engine, pool_ids, path_ids) = detached_fixture(3000);
+    let (engine, pool_ids, path_ids) = detached_fixture(400);
     let slow_pid = path_ids[0];
     let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
     let affected_keys_v2: Vec<degenbot_solvers::affected_keys::AffectedKey> = pool_ids
@@ -28,11 +28,11 @@ fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
     let t0 = std::time::Instant::now();
     handle.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
     let returned = t0.elapsed();
-    // RETURNS before the merge lands: strictly inside the injected 3000ms
+    // RETURNS before the merge lands: strictly inside the injected 400ms
     // slow-solve window, and the slow path's result is NOT in the map yet.
     assert!(
-        returned < std::time::Duration::from_millis(2500),
-        "detached cycle must return at enqueue end (before the 3000ms slow \
+        returned < std::time::Duration::from_millis(250),
+        "detached cycle must return at enqueue end (before the 400ms slow \
              solve can merge); took {returned:?}"
     );
     {
@@ -448,7 +448,7 @@ fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
 /// cycles ON through the PRODUCTION stage surface (`EngineStages` — the
 /// shipped `solve_dirty` cadence the driver executes INLINE at the machine's
 /// decision points), each solve call RETURNS at enqueue-end (µs) while the
-/// 3000ms straggler still merges on the sidecar — consecutive stage cycles
+/// 400ms straggler still merges on the sidecar — consecutive stage cycles
 /// interleave with the merges, and the dissolved B3 frozen-drainer
 /// detector has no queue left to stall across detached cycles (the
 /// no-progress obligation lives on the machine's `WatchdogPhase`). The
@@ -456,7 +456,7 @@ fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
 /// (enqueue-end, not apply-end), and the stragglers must still land.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn detached_stragglers_do_not_block_inline_stage_work() {
-    let (engine, pool_ids, path_ids) = detached_fixture(3000);
+    let (engine, pool_ids, path_ids) = detached_fixture(400);
     let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
     let delta = std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64));
     for &p in &pool_ids {
@@ -472,7 +472,7 @@ async fn detached_stragglers_do_not_block_inline_stage_work() {
         .collect();
     let t0 = std::time::Instant::now();
     // The detached cycle: the solve call RETURNS (enqueue-end) while the
-    // 3000ms slow solve still runs — no in-cycle multi-second hold.
+    // 400ms slow solve still runs — no in-cycle multi-second hold.
     stages.run_solve_cycle(&affected_keys_v2, 100, &meta);
     // The shipped cadence continues UNCHANGED mid-merge: a debounce publish
     // + further block cycles interleave with the sidecar's merges.
@@ -480,8 +480,8 @@ async fn detached_stragglers_do_not_block_inline_stage_work() {
     stages.run_solve_cycle(&[], 101, &meta);
     stages.run_solve_cycle(&[], 102, &meta);
     assert!(
-            t0.elapsed() < std::time::Duration::from_millis(2500),
-            "the whole cadence must complete inside the 3000ms slow-solve window (enqueue-end, not apply-end)"
+            t0.elapsed() < std::time::Duration::from_millis(250),
+            "the whole cadence must complete inside the 400ms slow-solve window (enqueue-end, not apply-end)"
         );
     // The stragglers DID land via the sidecar (cross-cycle merge),
     // without ever blocking the inline stage work along the way.

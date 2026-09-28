@@ -1231,7 +1231,9 @@ fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
         .cycle
         .set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
             if pid == slow_pid {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2500);
+                // The park only needs to outlast the fast paths' solve; the
+                // window is scaled to that, not to a multi-second wall.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
                 while std::time::Instant::now() < deadline {
                     if hook_observed.load(std::sync::atomic::Ordering::Relaxed) {
                         return;
@@ -1260,7 +1262,7 @@ fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
     // holds the engine Mutex; declare success as soon as any batch carries
     // a fast path.
     let mut saw_fast_batch = false;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2200);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
     while std::time::Instant::now() < deadline {
         if observed.load(std::sync::atomic::Ordering::Relaxed) {
             break;
