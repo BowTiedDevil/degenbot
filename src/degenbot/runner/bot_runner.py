@@ -287,8 +287,8 @@ class BotRunner:
     In production ``run()`` spawns discovery+registration as a
     background task and enters the main loop immediately; the state-trim runs
     on registration completion (in the background task), not on the main-loop
-    entry path, so it cannot clobber the shared registries mid-flight. A fatal
-    verification error still crashes loudly through the cross-task channel.
+    entry path. A fatal verification error still crashes loudly through the
+    cross-task channel.
     The hot loop keeps only ``engine_registry`` + ``async_w3`` + dispatcher
     once trimmed — the Python pool/token caches are scaffolding once the Rust
     engine owns canonical state.
@@ -905,12 +905,11 @@ class BotRunner:
 
         Production decoupling: called via ``asyncio.create_task`` so the
         main loop starts before discovery completes. ``path_builder`` is the real
-        ``build_paths``; after it returns the state-trim runs HERE — not on the
-        main-loop entry path — so the trim's clearing of the shared
-        tracker/pool/token registries cannot clobber a still-running
-        registration (the ``ConstructionContext`` holds the same mutable
-        objects). A fatal verification error propagates out of ``build_paths``
-        and is surfaced by the step-5 fail-fast channel.
+        ``build_paths``; after it returns the state-trim runs HERE as this
+        task's own completion hand-off, which the guard in
+        :meth:`_trim_python_state` admits from this task while refusing an
+        outside mid-climb caller. A fatal verification error propagates out of
+        ``build_paths`` and is surfaced by the step-5 fail-fast channel.
 
         Cooperative concurrency note: this task runs on the asyncio loop, so it
         interleaves with the consumer only at `await` points (synchronous
@@ -955,9 +954,11 @@ class BotRunner:
     def _trim_python_state(self, *, close_read_tx: bool = True) -> None:
         """Trim redundant Python state once registration is done.
 
-        Shared by the injected-sync and background-registration paths. Releases
-        the held snapshot read tx, then drops the Python-side caches and nulls
-        run()'s bot ref so the hot loop isn't pinning Python pool objects.
+        Refuses while a background registration is live and still climbing:
+        only the registration task may trim its own state (its completion
+        hand-off, or the cancel branch). Releases the held snapshot read tx,
+        then drops the Python-side caches and nulls run()'s bot ref so the hot
+        loop isn't pinning Python pool objects.
 
         ``close_read_tx``: on the healthy path (``build_paths`` completed) the
         ``Arc<SnapshotDb>`` canary fires and the read tx is committed to
@@ -968,6 +969,26 @@ class BotRunner:
         at process teardown. Callers must keep the canary active whenever
         registration actually finished.
         """
+        # The shared tracker/pool/token registries this trim clears are also
+        # held, mutably, by a still-climbing registration's
+        # ConstructionContext. Only the registration task may trim while it is
+        # live (its own completion hand-off, or its cancel branch); an outside
+        # caller is mid-climb and would clobber them.
+        registration_task = self._registration_task
+        if registration_task is not None and not registration_task.done():
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:  # no running loop: not the registration task
+                current = None
+            if current is not registration_task:
+                msg = (
+                    "refusing to trim Python state while background "
+                    "registration is still climbing: the registration's "
+                    "ConstructionContext holds the same tracker/pool/token "
+                    "registries this trim clears; only the registration task "
+                    "may trim its own state"
+                )
+                raise RuntimeError(msg)
         registry = self.engine_registry
         assert registry is not None
         # 3b. Release the held snapshot read transaction:

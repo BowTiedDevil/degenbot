@@ -890,6 +890,53 @@ class TestSubBBackgroundRegistration:
         assert bot.released is True
         assert session.bot is None
 
+    async def test_trim_refused_while_registration_climbs(self) -> None:
+        """An outside caller may not trim while the background registration is
+        live and still climbing — the registration's ConstructionContext holds
+        the same registries the trim clears, and the refusal is side-effect free."""
+        bot = _FakeBot()
+        started = asyncio.Event()
+        climb = asyncio.Event()
+
+        async def blocking_path_builder(**_kwargs):
+            started.set()
+            await climb.wait()
+
+        async def hanging_consumer(**_kwargs):
+            await asyncio.Event().wait()
+
+        session = BotRunner(
+            _cfg(),
+            actors=InjectedActors(settlement_arm=True,
+                bot=bot,
+                engine_registry=_FakeEngineRegistry(),
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=blocking_path_builder,
+                consumer=hanging_consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+            ),
+            background_registration=True,
+        )
+        await session.start()
+        run_task = asyncio.create_task(session.run())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+            registration_task = session._registration_task
+            assert registration_task is not None
+            assert not registration_task.done()
+
+            with pytest.raises(RuntimeError, match="still climbing"):
+                session._trim_python_state()
+
+            # Refused before any mutation: nothing released, bot ref intact.
+            assert bot.released is False
+            assert session.bot is bot
+        finally:
+            run_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await run_task
+
     async def test_background_completion_closes_snapshot_tx(self) -> None:
         """A *healthy* (non-cancelled) registration must still close the
         snapshot read-tx after `build_paths` completes — the XEANMB canary stays
